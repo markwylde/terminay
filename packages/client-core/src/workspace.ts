@@ -59,7 +59,8 @@ export interface PanelUpdateRequest {
 export interface ProjectCreateRequest {
 	readonly projectId: string;
 	readonly viewId: string;
-	readonly root: string;
+	/** Absent means the server's default project folder. */
+	readonly root?: string;
 	/** Absent means the server assigns the next unique default name. */
 	readonly name?: string;
 	readonly color?: string;
@@ -245,7 +246,7 @@ export class WorkspaceClient {
 		if (
 			!isBoundedId(request.projectId) ||
 			!isBoundedId(request.viewId) ||
-			!boundedPath(request.root) ||
+			(request.root !== undefined && !boundedPath(request.root)) ||
 			(request.name !== undefined && !boundedLabel(request.name)) ||
 			(request.color !== undefined && !boundedLabel(request.color)) ||
 			(request.icon !== undefined &&

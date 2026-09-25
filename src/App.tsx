@@ -5704,6 +5704,11 @@ function App({
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		sidebarVisibilityScope: currentServerId,
+		// The main window shows the workspace's first view; it stays open on
+		// Home when its last project closes. A popped-out view's window does not.
+		stayOpenWhenEmpty:
+			requestedWorkspaceViewId === null ||
+			requestedWorkspaceViewId === workspaceSnapshot?.viewOrder[0],
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
@@ -6055,7 +6060,9 @@ function App({
 			await workspaceStore.createProject({
 				projectId,
 				viewId: boundWorkspaceViewId,
-				root: homePath,
+				// A window with no project has no folder to reuse; the server
+				// then creates the project in its own default folder.
+				...(homePath.trim().length > 0 ? { root: homePath } : {}),
 				color: presentation.color,
 				icon: presentation.emoji,
 			});
@@ -6067,8 +6074,9 @@ function App({
 			projectCreationInFlightRef.current = false;
 			setPendingProjectCreation(null);
 			if (desiredProjectId === initialActiveProjectId) {
-				activeProjectIdRef.current = projectId;
-				setActiveProjectId(projectId);
+				// Show the project just created, including when it was created
+				// from Home.
+				activateProject(projectId);
 				window.requestAnimationFrame(() =>
 					scheduleCreatedTerminalFocus(sessionId),
 				);
