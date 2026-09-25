@@ -3,6 +3,11 @@ import { scopeAllows } from '../auth.js';
 import type { CommandRequest, QueryRequest } from '../types.js';
 import { boundGitQueryResult } from './protocolBound.js';
 import type { GitQuickPushService } from './quickPush.js';
+import type { WorktreeProperties } from '@terminay/extension-api';
+import type {
+	WorktreeSignInChoice,
+	WorktreeSignInPrompt,
+} from '../worktreeInsights/service.js';
 import { type GitService } from './service.js';
 import {
 	type GitQuickPushApprovalRequest,
@@ -11,6 +16,7 @@ import {
 	GitServiceError,
 	type GitServiceEvent,
 	type GitWorktreeId,
+	type GitWorktreeListResult,
 	type GitWorktreePullRequest,
 } from './types.js';
 
@@ -31,7 +37,27 @@ export const GIT_OPERATIONS = Object.freeze({
 	moveWorktree: 'git.worktree.move',
 	quickPushPropose: 'git.quick-push.propose',
 	quickPushApprove: 'git.quick-push.approve',
+	worktreeProperties: 'git.worktree.properties',
+	signIn: 'git.worktree.sign-in',
+	insightPreferences: 'git.worktree-insights.preferences',
+	setInsightPrompts: 'git.worktree-insights.set-prompts',
 } as const);
+
+/** The slice of the worktree insight service the Git protocol exposes. */
+export interface GitWorktreeInsights {
+	observeListing(listing: GitWorktreeListResult): Promise<void>;
+	propertiesFor(projectId: string): ReadonlyMap<string, WorktreeProperties>;
+	signInFor(projectId: string): WorktreeSignInPrompt | undefined;
+	respond(
+		projectId: string,
+		origin: string,
+		choice: WorktreeSignInChoice,
+		token?: string,
+	): Promise<void>;
+	suppressedExtensions(): Promise<readonly string[]>;
+	setPromptsSuppressed(extensionId: string, suppressed: boolean): Promise<void>;
+	closeProject(projectId: string): void;
+}
 
 export type GitHostCapability = 'nativeWindows' | 'clipboard';
 
@@ -117,6 +143,8 @@ export interface GitProtocolAdapterOptions {
 	readonly resolveProjectRoot?: (
 		projectId: string,
 	) => Promise<string | null | undefined> | string | null | undefined;
+	/** Extension-published worktree properties and forge sign-in prompts. */
+	readonly insights?: GitWorktreeInsights;
 }
 
 export interface GitOperationHandlers {
@@ -150,6 +178,7 @@ export class ServerGitAdapter {
 	private readonly hostCapabilities: ReadonlySet<GitHostCapability>;
 	private readonly resolveProjectRoot: GitProtocolAdapterOptions['resolveProjectRoot'];
 	private readonly proposalProjects = new Map<string, string>();
+	private readonly insights: GitWorktreeInsights | undefined;
 
 	constructor(options: GitProtocolAdapterOptions) {
 		if (
@@ -162,6 +191,7 @@ export class ServerGitAdapter {
 		this.quickPush = options.quickPush;
 		this.actions = options.actions ?? {};
 		this.resolveProjectRoot = options.resolveProjectRoot;
+		this.insights = options.insights;
 		this.hostCapabilities = new Set(
 			options.hostCapabilities ?? inferHostCapabilities(this.actions),
 		);
@@ -170,6 +200,7 @@ export class ServerGitAdapter {
 	/** Release a closed project's binding and watches. */
 	releaseProject(projectId: string): void {
 		this.git.releaseProject(projectId);
+		this.insights?.closeProject(projectId);
 	}
 
 	subscribeEvents(listener: (event: GitServiceEvent) => void): () => void {
@@ -196,7 +227,105 @@ export class ServerGitAdapter {
 				? {}
 				: { worktreeId: request.worktreeId }),
 		});
-		return boundGitQueryResult(result as unknown as JsonValue);
+		return boundGitQueryResult(this.withInsights(result));
+	}
+
+	/**
+	 * Listings carry what a row shows: the pull request and the check counts.
+	 * Check items are fetched per worktree, so one busy repository cannot push
+	 * a listing past the protocol header limit.
+	 */
+	private withInsights(result: GitWorktreeListResult): JsonValue {
+		const insights = this.insights;
+		if (insights === undefined) return result as unknown as JsonValue;
+		void insights.observeListing(result).catch(() => undefined);
+		const properties = insights.propertiesFor(result.projectId);
+		const signIn = insights.signInFor(result.projectId);
+		return {
+			...(result as unknown as Record<string, JsonValue>),
+			worktrees: result.worktrees.map((worktree) => {
+				const value = properties.get(worktree.id);
+				if (value === undefined) return worktree as unknown as JsonValue;
+				return {
+					...(worktree as unknown as Record<string, JsonValue>),
+					properties: {
+						...(value.pullRequest === undefined
+							? {}
+							: { pullRequest: { ...value.pullRequest } }),
+						...(value.checks === undefined
+							? {}
+							: { checks: { ...value.checks, items: [] } }),
+					},
+				};
+			}),
+			...(signIn === undefined ? {} : { signIn: { ...signIn } }),
+		} as JsonValue;
+	}
+
+	/** One worktree's full properties, including every check item. */
+	async worktreeProperties(request: QueryRequest): Promise<JsonValue> {
+		const payload = objectPayload(request);
+		const authorization = this.authorization(request);
+		this.requireScope(authorization, 'read');
+		const projectId = this.requireProject(
+			authorization,
+			stringValue(payload.projectId),
+		);
+		const worktreeId = requiredId(payload.worktreeId, 'worktreeId');
+		const value = this.insights?.propertiesFor(projectId).get(worktreeId);
+		return { properties: (value ?? null) as unknown as JsonValue };
+	}
+
+	/** The user's answer to a forge sign-in prompt shown for a project. */
+	async signIn(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request);
+		const authorization = this.authorization(request);
+		this.requireScope(authorization, 'write');
+		const projectId = this.requireProject(
+			authorization,
+			stringValue(payload.projectId),
+		);
+		const origin = boundedString(payload.origin, 'origin', 2048);
+		const choice = payload.choice;
+		if (choice !== 'accept' && choice !== 'later' && choice !== 'never')
+			throw new GitServiceError('invalid-operation', 'choice is invalid');
+		const token =
+			payload.token === undefined
+				? undefined
+				: boundedString(payload.token, 'token', 4096);
+		if (this.insights === undefined)
+			throw new GitServiceError(
+				'invalid-operation',
+				'worktree insights are unavailable in this server host',
+			);
+		try {
+			await this.insights.respond(projectId, origin, choice, token);
+		} catch (error) {
+			throw new GitServiceError(
+				'invalid-operation',
+				error instanceof Error ? error.message : 'sign-in failed',
+			);
+		}
+		return { ok: true };
+	}
+
+	async insightPreferences(request: QueryRequest): Promise<JsonValue> {
+		this.requireScope(this.authorization(request), 'read');
+		return {
+			suppressedExtensions: [
+				...((await this.insights?.suppressedExtensions()) ?? []),
+			],
+		};
+	}
+
+	async setInsightPrompts(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request);
+		this.requireScope(this.authorization(request), 'write');
+		const extensionId = boundedString(payload.extensionId, 'extensionId', 128);
+		if (typeof payload.enabled !== 'boolean')
+			throw new GitServiceError('invalid-operation', 'enabled is invalid');
+		await this.insights?.setPromptsSuppressed(extensionId, !payload.enabled);
+		return { ok: true };
 	}
 
 	async read(
@@ -464,6 +593,10 @@ export class ServerGitAdapter {
 				[GIT_OPERATIONS.diff]: (request) => this.read(request, 'diff'),
 				[GIT_OPERATIONS.listWorktrees]: (request) =>
 					this.list(this.listRequest(request)),
+				[GIT_OPERATIONS.worktreeProperties]: (request) =>
+					this.worktreeProperties(request),
+				[GIT_OPERATIONS.insightPreferences]: (request) =>
+					this.insightPreferences(request),
 			},
 			commands: {
 				[GIT_OPERATIONS.openTerminal]: (request) =>
@@ -490,6 +623,10 @@ export class ServerGitAdapter {
 					),
 				[GIT_OPERATIONS.quickPushApprove]: (request) =>
 					this.approveQuickPush(this.quickPushApprovalRequest(request)),
+				[GIT_OPERATIONS.signIn]: (request) =>
+					this.commandResult(this.signIn(request)),
+				[GIT_OPERATIONS.setInsightPrompts]: (request) =>
+					this.commandResult(this.setInsightPrompts(request)),
 			},
 		};
 	}

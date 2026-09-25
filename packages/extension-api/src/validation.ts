@@ -27,6 +27,7 @@ import type {
 	ProviderVaultWithSecretRequest,
 	TerminayExtensionManifest,
 } from './types.js';
+import type { WorktreeInsightSourceContribution } from './worktree.js';
 
 export interface SchemaIssue {
 	path: string;
@@ -48,6 +49,7 @@ const permissions = new Set<ExtensionPermission>([
 	'secrets:resolve',
 	'agent-observation',
 	'mcp-registration',
+	'worktree-observation',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -231,17 +233,27 @@ export function validateExtensionManifest(
 	else {
 		closed(
 			value.contributes,
-			new Set(['agentSessionSources', 'mcpInstallTargets', 'languageServers']),
+			new Set([
+				'agentSessionSources',
+				'mcpInstallTargets',
+				'languageServers',
+				'worktreeInsights',
+			]),
 			'$.contributes',
 			out,
 		);
 		const extensionId = typeof value.id === 'string' ? value.id : '';
-		const { agentSessionSources, mcpInstallTargets, languageServers } =
-			value.contributes;
+		const {
+			agentSessionSources,
+			mcpInstallTargets,
+			languageServers,
+			worktreeInsights,
+		} = value.contributes;
 		if (
 			agentSessionSources === undefined &&
 			mcpInstallTargets === undefined &&
-			languageServers === undefined
+			languageServers === undefined &&
+			worktreeInsights === undefined
 		) {
 			out.push({
 				path: '$.contributes',
@@ -269,6 +281,15 @@ export function validateExtensionManifest(
 			);
 		if (languageServers !== undefined)
 			validateLanguageServerContributions(languageServers, out);
+		if (worktreeInsights !== undefined)
+			validateNamespacedContributions(
+				worktreeInsights,
+				'worktreeInsights',
+				EXTENSION_LIMITS.worktreeInsightSources,
+				extensionId,
+				validateWorktreeInsightSourceContribution,
+				out,
+			);
 		// The permission array validator reports a malformed array itself.
 		if (Array.isArray(value.permissions)) {
 			if (
@@ -290,6 +311,16 @@ export function validateExtensionManifest(
 					path: '$.permissions',
 					code: 'missing_permission',
 					message: 'MCP install targets require mcp-registration',
+				});
+			if (
+				Array.isArray(worktreeInsights) &&
+				worktreeInsights.length > 0 &&
+				!value.permissions.includes('worktree-observation')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'Worktree insight sources require worktree-observation',
 				});
 		}
 	}
@@ -544,7 +575,7 @@ export function validateLanguageServerLaunch(
 
 function validateNamespacedContributions(
 	value: unknown,
-	key: 'agentSessionSources' | 'mcpInstallTargets',
+	key: 'agentSessionSources' | 'mcpInstallTargets' | 'worktreeInsights',
 	maximum: number,
 	extensionId: string,
 	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
@@ -682,6 +713,33 @@ export function validateMcpInstallTargetContribution(
 	);
 	return out.length === 0
 		? { ok: true, value: value as unknown as McpInstallTargetContribution }
+		: { ok: false, issues: out };
+}
+
+/** Validates a standalone worktree insight source manifest contribution. */
+export function validateWorktreeInsightSourceContribution(
+	value: unknown,
+	extensionId: string,
+): ValidationResult<WorktreeInsightSourceContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['id', 'displayName', 'description']), '$', out);
+	namespacedContributionId(value.id, extensionId, out);
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	return out.length === 0
+		? { ok: true, value: value as unknown as WorktreeInsightSourceContribution }
 		: { ok: false, issues: out };
 }
 

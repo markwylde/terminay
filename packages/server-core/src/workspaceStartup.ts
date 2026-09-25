@@ -86,7 +86,7 @@ export function restoredProjectsInPresentationOrder(
 		for (const projectId of view?.projectIds ?? []) remember(projectId);
 	}
 	// The automation space is not a project the user restores; its terminals
-	// are created by automation runs only (ADR-0029).
+	// are created by automation runs only (ADR-0030).
 	for (const project of Object.values(state.projects))
 		if (!isAutomationSpace(project)) remember(project.id);
 	return projects;

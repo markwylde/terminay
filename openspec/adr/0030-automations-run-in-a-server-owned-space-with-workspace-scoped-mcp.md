@@ -1,4 +1,4 @@
-# ADR-0029: Automations run in a server-owned terminal space outside every project, and only that space holds workspace-scoped MCP
+# ADR-0030: Automations run in a server-owned terminal space outside every project, and only that space holds workspace-scoped MCP
 
 Status: accepted
 Date: 2026-09-24
