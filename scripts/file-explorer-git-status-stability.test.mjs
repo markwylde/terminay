@@ -96,12 +96,14 @@ test('file explorer git status is stable across transient refresh churn', () => 
   assert.doesNotMatch(reloadEffect, /setGitStatuses\(\{\}\)|setWorktreePanelStatus\(null\)/u)
 })
 
-test('server owns Git status polling and event delivery', () => {
-  assert.match(gitServiceSource, /statusPollIntervalMs = options\.statusPollIntervalMs \?\? 10_000/u)
-  assert.match(gitServiceSource, /this\.startStatusPoll\(projectId\)/u)
-  assert.match(gitServiceSource, /void this\.worktrees\(\{ projectId \}\)[\s\S]*finally\(schedule\)/u)
+test('server owns watch-driven Git status and event delivery', () => {
+  // ADR-0028: status follows watch events; nothing re-runs Git on a timer.
+  assert.doesNotMatch(gitServiceSource, /statusPoll/u)
+  assert.doesNotMatch(gitServiceSource, /setInterval\(/u)
+  assert.match(gitServiceSource, /this\.watcher\.watch\(/u)
+  assert.match(gitServiceSource, /createRefreshSchedule\(\{/u)
   assert.match(gitServiceSource, /this\.publishStatusChange\(status\)/u)
-  assert.match(gitServiceSource, /this\.publishStatusChange\(\{\s*projectId: target\.projectId/u)
+  assert.match(gitServiceSource, /this\.publishStatusChange\(\{\s*projectId,/u)
   assert.match(serverCompositionSource, /eventJournal\.append\(event\.type, event as unknown as JsonValue\)/u)
   assert.match(gitClientSource, /subscribeStatusChanges\(/u)
   assert.match(gitClientSource, /subscribeClientEvents\("git\.status\.changed"/u)

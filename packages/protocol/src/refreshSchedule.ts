@@ -1,5 +1,6 @@
 /**
- * Rate limit for Git status refreshes.
+ * The shared ramp that damps work scheduled by an observed change (ADR-0028).
+ * The server's Git watches and the UI's Git refreshes both run through it.
  *
  * A trailing debounce bounds latency, not frequency: it re-fires for every
  * event spaced wider than its delay, so a steady trickle of filesystem
@@ -14,7 +15,7 @@
  * bounded no matter how the events arrive.
  */
 /**
- * The ramp, per ADR-0022. Sustained change widens the gap between runs; a quiet
+ * The ramp, per ADR-0028 (carried forward from ADR-0022). Sustained change widens the gap between runs; a quiet
  * period drops back to the fastest step. Held at the last value rather than
  * growing without bound.
  */
@@ -56,7 +57,9 @@ export function createRefreshSchedule(
 	if (ramp.length === 0) throw new RangeError('rampMs must not be empty');
 	for (const step of ramp)
 		if (!Number.isFinite(step) || step < 0)
-			throw new RangeError('every ramp step must be a non-negative finite number');
+			throw new RangeError(
+				'every ramp step must be a non-negative finite number',
+			);
 	const resetAfterMs = options.resetAfterMs ?? ramp[ramp.length - 1] * 2;
 	if (!Number.isFinite(resetAfterMs) || resetAfterMs < 0)
 		throw new RangeError('resetAfterMs must be a non-negative finite number');
@@ -67,7 +70,8 @@ export function createRefreshSchedule(
 		((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
 	const clearTimer =
 		options.clearTimer ??
-		((timer) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
+		((timer) =>
+			globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
 
 	let lastRunAt: number | undefined;
 	let timer: unknown;

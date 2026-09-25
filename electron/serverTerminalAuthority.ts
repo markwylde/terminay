@@ -807,6 +807,7 @@ export class ServerTerminalAuthority {
 			workspaceOperations: {
 				prepareProjectRootUpdate: (projectId, root) =>
 					this.prepareProjectRootUpdate(projectId, root),
+				releaseProject: (projectId) => this.releaseProject(projectId),
 			},
 			activity: this.activity,
 			agents: this.agents,
@@ -1298,6 +1299,22 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+	}
+
+	/**
+	 * Drop everything this host keeps for a closed project. The composition
+	 * releases Git, file observations, and language sessions itself; these maps
+	 * are the embedded host's own.
+	 */
+	private releaseProject(projectId: string): void {
+		this.mdxRuntimeProjects.get(projectId)?.runtime.disposeAll();
+		this.mdxRuntimeProjects.delete(projectId);
+		this.fileCatalogProjects.delete(projectId);
+		this.documentationProjects.delete(projectId);
+		this.fileContentProjects.delete(projectId);
+		this.fileSessionProjects.delete(projectId);
+		this.fileProjectRoots.delete(projectId);
+		this.agentScope.removeProject(projectId);
 	}
 
 	private async prepareProjectRootUpdate(projectId: string, root: string) {
