@@ -22,7 +22,9 @@ export type { Clock, GiteaRuntimeOptions } from './refresh.js';
 export {
 	createGiteaInsightRuntime,
 	FAILURE_BACKOFF_MS,
-	REFRESH_INTERVAL_MS,
+	ACTIVE_REFRESH_INTERVAL_MS,
+	INACTIVE_REFRESH_INTERVAL_MS,
+	refreshIntervalFor,
 } from './refresh.js';
 export type { ForgeRepository } from './remote.js';
 export { parseRemoteUrl, pickRemote } from './remote.js';

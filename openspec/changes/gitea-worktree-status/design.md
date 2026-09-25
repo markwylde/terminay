@@ -87,18 +87,24 @@ poll. Remote forge state has no event source Terminay can use: the only push
 channel is a Gitea webhook, which needs the server to be reachable from Gitea.
 
 **Approved poll (ADR-0028):** the Gitea extension's per-repository refresh,
-every **60 s**, while that repository's context is live. Why no event source
+every **10 s** for a project a client has active and every **45 s** for any
+other open project, plus an immediate refresh when a project becomes active,
+while that repository's context is live. Why no event source
 works: forge state is remote, and webhooks need inbound reachability that a
 desktop server does not have. Approved by the repository owner, Mark Wylde,
 on **2026-09-24**, in the planning conversation for this change ("let's just
-poll then once a minute… I am happy to use `fetch` once a minute"). The timer
+poll then once a minute… I am happy to use `fetch` once a minute"), and revised
+by the owner on **2026-09-25** to "active project: every 10 seconds, inactive
+project: every 45 seconds (plus on focus)". "Active" is the server's canonical
+`activeProjectId` of any workspace view; a change of it re-issues the context
+with `active` set. The timer
 site in `extensions/gitea/src/refresh.ts` cites ADR-0028 and this change.
 
 Around that poll:
 
 - Change-driven first: a context re-issue (push, branch switch, new worktree)
   triggers an immediate refresh behind the shared minimum-interval schedule.
-- Otherwise one refresh per repository every 60 s. Cost per refresh is
+- Otherwise one refresh per repository every 10 s (active) or 45 s. Cost per refresh is
   `1 + N` HTTPS requests (N = worktrees with an upstream), not per terminal.
 - Nothing scheduled for cancelled contexts; nothing while the extension is
   disabled or the sign-in is outstanding.
@@ -106,8 +112,8 @@ Around that poll:
   resets.
 - Zero spawns (ADR-0021): `fetch` only.
 
-Alternative: faster polling while a run is pending. Deferred — 60 s matches the
-user's request and keeps load predictable across many repositories.
+Alternative: faster polling only while a run is pending. Not taken — activity is
+a better signal of what the user is watching, and the owner chose 10 s / 45 s.
 
 ### 4. Detection by probe, not by URL guess
 
@@ -198,7 +204,7 @@ resolves it against the origin before the HTTPS check.
 
 ## Risks / Trade-offs
 
-- [60 s staleness after CI finishes] → acceptable per request; a push re-issues
+- [Up to 10 s (active) or 45 s (inactive) staleness after CI finishes] → acceptable per request; a push re-issues
   the context immediately, which covers the moment the user cares most about.
 - [Many repositories × many worktrees on one Gitea] → 1+N requests per repo per
   minute; back-off on failures; requests serialized per origin with a small

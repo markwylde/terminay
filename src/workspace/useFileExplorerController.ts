@@ -16,7 +16,7 @@ import {
 	toContainedProjectRelativePath,
 } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
-import { parseWorktreeProperties } from '../services/git/worktreeProperties';
+import { parseWorktreeProperties } from '../services/git/worktreeProperties.ts';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
 	FileExplorerEntry,

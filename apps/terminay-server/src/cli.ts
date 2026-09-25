@@ -610,6 +610,7 @@ async function createServerComposition(
 		),
 		isProjectOpen: (projectId) =>
 			workspace.state.projects[projectId] !== undefined,
+		activeProjectIds: () => workspace.activeProjectIds(),
 		onProjectChanged: (projectId, worktreeId) =>
 			gitService.announceWorktreeChange(projectId, worktreeId),
 		onError: (message) => {
@@ -638,6 +639,7 @@ async function createServerComposition(
 	});
 	agentSources.attach(extensions.hosts);
 	worktreeInsights.attach(extensions.hosts);
+	workspace.subscribe(() => worktreeInsights.refreshActivity());
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,

@@ -479,6 +479,7 @@ export class ServerTerminalAuthority {
 					}),
 			isProjectOpen: (projectId) =>
 				this.workspace.state.projects[projectId] !== undefined,
+			activeProjectIds: () => this.workspace.activeProjectIds(),
 			onProjectChanged: (projectId, worktreeId) =>
 				git.announceWorktreeChange(projectId, worktreeId),
 		});
@@ -700,6 +701,7 @@ export class ServerTerminalAuthority {
 			this.agentSources.attach(extensionManagement.hosts);
 			this.worktreeInsights.attach(extensionManagement.hosts);
 		}
+		this.workspace.subscribe(() => this.worktreeInsights.refreshActivity());
 		const mcpRouter =
 			mcpInstall === undefined
 				? undefined
