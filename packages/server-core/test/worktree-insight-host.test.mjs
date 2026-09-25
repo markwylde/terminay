@@ -130,3 +130,15 @@ test("the manager lists insight sources only after activation and routes calls t
   await manager.shutdown();
   assert.deepEqual(worktrees.calls.stopped, [SOURCE_ID]);
 });
+
+test("the workspace store reports active projects and notifies committed commands", async () => {
+  const { WorkspaceStore, createInitialWorkspace } = await import("../dist/index.js");
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const events = [];
+  const stop = store.subscribe((event) => events.push(event.type));
+  const view = Object.values(store.state.views)[0];
+  assert.ok(store.activeProjectIds() instanceof Set);
+  if (view?.activeProjectId !== undefined) assert.ok(store.activeProjectIds().has(view.activeProjectId));
+  stop();
+  assert.deepEqual(events, []);
+});

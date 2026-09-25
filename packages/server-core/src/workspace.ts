@@ -876,6 +876,21 @@ export class WorkspaceStore {
 			throw new RangeError('maxHistory must be positive');
 	}
 	private readonly commit: ((state: WorkspaceState) => void) | undefined;
+	private readonly listeners = new Set<(event: WorkspaceEvent) => void>();
+
+	/** Observe committed commands. Observers cannot affect the command. */
+	subscribe(listener: (event: WorkspaceEvent) => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	/** Projects that are the active project of some view, without a clone. */
+	activeProjectIds(): ReadonlySet<ProtocolId> {
+		const ids = new Set<ProtocolId>();
+		for (const view of Object.values(this.current.views))
+			if (view.activeProjectId !== undefined) ids.add(view.activeProjectId);
+		return ids;
+	}
 
 	get state(): WorkspaceState {
 		return clone(this.current);
@@ -966,6 +981,13 @@ export class WorkspaceStore {
 			state: clone(next),
 		};
 		this.outcomes.set(envelope.commandId, result);
+		for (const listener of this.listeners) {
+			try {
+				listener(event);
+			} catch {
+				/* observers cannot roll back a committed command */
+			}
+		}
 		return clone(result);
 	}
 

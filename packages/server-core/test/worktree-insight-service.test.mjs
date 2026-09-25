@@ -255,3 +255,22 @@ test("sources stop when their contribution disappears", async () => {
   await hosts.changed();
   assert.deepEqual(hosts.calls.stopped, [SOURCE]);
 });
+
+test("contexts carry whether their project is active, and focus re-issues them", async () => {
+  const active = new Set();
+  const { insights, hosts } = service({ activeProjectIds: () => active });
+  await insights.observeListing(listing("p1"));
+  await settle(); await settle();
+  assert.equal(hosts.calls.contexts.at(-1).contexts[0].active, false);
+  const issued = hosts.calls.contexts.length;
+  insights.refreshActivity();
+  await settle(); await settle();
+  assert.equal(hosts.calls.contexts.length, issued, "no change, no re-issue");
+  active.add("p1");
+  insights.refreshActivity();
+  await settle(); await settle();
+  assert.equal(hosts.calls.contexts.at(-1).contexts[0].active, true);
+  await insights.observeListing(listing("p1"));
+  await settle(); await settle();
+  assert.equal(hosts.calls.contexts.length, issued + 1, "an unchanged listing keeps the active context");
+});

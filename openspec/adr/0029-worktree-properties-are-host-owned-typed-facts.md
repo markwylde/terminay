@@ -36,9 +36,10 @@ owner can approve, so how this state stays fresh has to be decided explicitly.
 4. **Forge state is refreshed by events first, and by a poll only with the
    owner's approval under ADR-0028.** A context issue or re-issue (a push, a
    branch switch, a new worktree) triggers an immediate refresh. The Gitea
-   extension's 60 s per-repository refresh is a poll: the repository owner
-   approved it on 2026-09-24 in change `gitea-worktree-status`, whose
-   `design.md` records it. Any other extension's forge poll needs its own
+   extension's per-repository refresh (10 s for an active project, 45 s
+   otherwise, and at once on focus) is a poll: the repository owner approved it
+   on 2026-09-24 and revised it on 2026-09-25 in change `gitea-worktree-status`,
+   whose `design.md` records it. Any other extension's forge poll needs its own
    approval. Failure back-off is a bounded retry, not a poll.
 
 ## Consequences

@@ -112,7 +112,7 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 2, `${label} must expose the complete built-in inventory`)
+  assert.equal(artifacts.length, 3, `${label} must expose the complete built-in inventory`)
   const agentsArtifact = artifacts.find((artifact) => artifact.extensionId === AGENTS_ID)
   assert.ok(agentsArtifact)
   const registry = new OverrideRegistry(agentsArtifact.manifestMetadata)
@@ -121,7 +121,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const initialSource = new FilteredBuiltIns(source, new Set([LATE_BUNDLED_ID]))
     let installer = new ExtensionInstaller({ dataRoot, registryClient: registry, materializer: registry, builtIns: initialSource })
     let state = await installer.initialize()
-    assert.equal(Object.keys(state.extensions).length, 1)
+    assert.equal(Object.keys(state.extensions).length, artifacts.length - 1)
     assert.ok(Object.values(state.extensions).every((record) => record.enabled))
 
     await installer.disable(AGENTS_ID)

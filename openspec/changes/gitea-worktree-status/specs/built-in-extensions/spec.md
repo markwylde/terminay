@@ -54,10 +54,11 @@ stored token, report it rejected.
 `terminay-gitea` SHALL use HTTPS requests to the Gitea API and SHALL NOT spawn
 processes. Per repository context and refresh it SHALL list the repository's
 open pull requests once and fetch one combined commit status per worktree whose
-branch has an upstream. It SHALL refresh when a context is issued or re-issued
-and otherwise at most once every 60 seconds, SHALL schedule nothing for
-cancelled contexts, and SHALL widen the interval after consecutive request
-failures.
+branch has an upstream. It SHALL refresh when a context is issued, when its
+content changes, and when its project becomes active; otherwise it SHALL refresh
+at most once every 10 seconds for an active project and once every 45 seconds
+for any other. It SHALL schedule nothing for cancelled contexts, and SHALL widen
+the interval after consecutive request failures.
 
 #### Scenario: Several worktrees in one repository
 
@@ -65,10 +66,20 @@ failures.
 - **THEN** one refresh makes one pull-request listing request and five commit
   status requests
 
-#### Scenario: Idle project
+#### Scenario: Idle inactive project
 
-- **WHEN** a project stays open and nothing changes locally
-- **THEN** the extension refreshes at most once every 60 seconds
+- **WHEN** a project stays open, is not active, and nothing changes locally
+- **THEN** the extension refreshes at most once every 45 seconds
+
+#### Scenario: Active project
+
+- **WHEN** a project is active in a client
+- **THEN** the extension refreshes it at most once every 10 seconds
+
+#### Scenario: Project gains focus
+
+- **WHEN** a project becomes active
+- **THEN** the extension refreshes it at once
 
 #### Scenario: Project closed
 

@@ -67,6 +67,8 @@ export interface WorktreeInsightServiceOptions {
 	readonly onError?: (message: string) => void;
 	/** Whether a project is still open; closed projects' contexts are cancelled. */
 	readonly isProjectOpen?: (projectId: string) => boolean;
+	/** Projects a client has active; their contexts are marked `active`. */
+	readonly activeProjectIds?: () => ReadonlySet<string>;
 }
 
 interface ProjectContext {
@@ -149,6 +151,7 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		const contextId = opaqueId('ctx', listing.projectId, listing.repositoryId);
 		const context: RepositoryContext = {
 			id: contextId,
+			active: this.isActive(listing.projectId),
 			repositoryRoot: listing.repositoryRoot,
 			remotes: config.remotes.map((remote) => ({ ...remote })),
 			worktrees: listing.worktrees
@@ -181,6 +184,30 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 			this.contextProjects.delete(previous.context.id);
 		this.dropDepartedWorktrees(listing.projectId, context);
 		this.schedulePush();
+	}
+
+	/**
+	 * Re-mark contexts after the set of active projects changed. A project
+	 * that becomes active is re-issued, which its sources treat as focus.
+	 */
+	refreshActivity(): void {
+		let changed = false;
+		for (const [projectId, project] of this.contexts) {
+			const active = this.isActive(projectId);
+			if (project.context.active === active) continue;
+			const context = { ...project.context, active };
+			this.contexts.set(projectId, {
+				...project,
+				context,
+				fingerprint: JSON.stringify(context),
+			});
+			changed = true;
+		}
+		if (changed) this.schedulePush();
+	}
+
+	private isActive(projectId: string): boolean {
+		return this.options.activeProjectIds?.().has(projectId) ?? false;
 	}
 
 	/** Cancel a project's context and drop everything published for it. */

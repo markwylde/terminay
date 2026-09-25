@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	ACTIVE_REFRESH_INTERVAL_MS,
 	createGiteaInsightRuntime,
 	FAILURE_BACKOFF_MS,
-	REFRESH_INTERVAL_MS,
+	INACTIVE_REFRESH_INTERVAL_MS,
 } from '../dist/index.js';
 
 const ORIGIN = 'https://git.example.net';
@@ -246,13 +247,13 @@ test('one refresh is one pull request listing plus one status per worktree with 
 	run.controller.abort();
 });
 
-test('an idle project refreshes on the 60 second floor and republishes only changes', async () => {
+test('an idle project refreshes on the 45 second inactive floor and republishes only changes', async () => {
 	const run = harness();
 	await flush();
-	assert.deepEqual(run.clock.pending(), [REFRESH_INTERVAL_MS]);
+	assert.deepEqual(run.clock.pending(), [INACTIVE_REFRESH_INTERVAL_MS]);
 	const firstCalls = run.gitea.calls.length;
 	const firstPublished = run.published.length;
-	await run.clock.advance(REFRESH_INTERVAL_MS - 1);
+	await run.clock.advance(INACTIVE_REFRESH_INTERVAL_MS - 1);
 	assert.equal(run.gitea.calls.length, firstCalls);
 	await run.clock.advance(1);
 	await flush();
@@ -278,7 +279,7 @@ test('a re-issued context refreshes at once and a cancelled one stops', async ()
 	assert.equal(run.gitea.calls.length, before * 2);
 	run.setContexts([]);
 	assert.deepEqual(run.clock.pending(), []);
-	await run.clock.advance(REFRESH_INTERVAL_MS * 10);
+	await run.clock.advance(INACTIVE_REFRESH_INTERVAL_MS * 10);
 	assert.equal(run.gitea.calls.length, before * 2);
 });
 
@@ -288,7 +289,7 @@ test('aborting the source stops every timer and request', async () => {
 	const calls = run.gitea.calls.length;
 	run.controller.abort();
 	assert.deepEqual(run.clock.pending(), []);
-	await run.clock.advance(REFRESH_INTERVAL_MS * 10);
+	await run.clock.advance(INACTIVE_REFRESH_INTERVAL_MS * 10);
 	assert.equal(run.gitea.calls.length, calls);
 });
 
@@ -306,7 +307,7 @@ test('failures back off and a success resets the interval', async () => {
 	failing = false;
 	await run.clock.advance(FAILURE_BACKOFF_MS[1]);
 	await flush();
-	assert.deepEqual(run.clock.pending(), [REFRESH_INTERVAL_MS]);
+	assert.deepEqual(run.clock.pending(), [INACTIVE_REFRESH_INTERVAL_MS]);
 	run.controller.abort();
 });
 
@@ -370,4 +371,28 @@ test('a revoked stored token is reported rejected and sign-in is requested again
 	assert.deepEqual(run.rejected, [ORIGIN]);
 	assert.equal(run.signIns.length, 1);
 	assert.deepEqual(run.published, []);
+});
+
+test('an active project refreshes every 10 seconds', async () => {
+	const run = harness({ contexts: [context({ active: true })] });
+	await flush();
+	assert.deepEqual(run.clock.pending(), [ACTIVE_REFRESH_INTERVAL_MS]);
+	run.controller.abort();
+});
+
+test('becoming active refreshes at once; becoming inactive only slows the next refresh', async () => {
+	const run = harness();
+	await flush();
+	const calls = run.gitea.calls.length;
+	run.setContexts([context({ active: true })]);
+	await flush();
+	assert.equal(run.gitea.calls.length, calls * 2, 'focus refreshes immediately');
+	assert.deepEqual(run.clock.pending(), [ACTIVE_REFRESH_INTERVAL_MS]);
+	run.setContexts([context({ active: false })]);
+	await flush();
+	assert.equal(run.gitea.calls.length, calls * 2, 'losing focus makes no request');
+	await run.clock.advance(ACTIVE_REFRESH_INTERVAL_MS);
+	await flush();
+	assert.deepEqual(run.clock.pending(), [INACTIVE_REFRESH_INTERVAL_MS]);
+	run.controller.abort();
 });
