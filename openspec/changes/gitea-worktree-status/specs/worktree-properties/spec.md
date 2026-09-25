@@ -61,8 +61,8 @@ any extension installed.
 ### Requirement: Worktree property interactions
 
 Activating the pull request number SHALL open the pull request URL through the
-guarded external-link path. Activating the checks indicator SHALL expand the
-worktree's row to a host-rendered list of its check items with their states,
+guarded external-link path. Activating the checks indicator SHALL show or hide a
+host-rendered list of the worktree's check items with their states,
 failures and pending checks first, where activating an item with a URL opens it
 through the guarded external-link path. Both SHALL be keyboard reachable and SHALL expose an accessible name that includes
 the pull request number or the check counts.
@@ -75,7 +75,7 @@ the pull request number or the check counts.
 #### Scenario: Inspecting checks
 
 - **WHEN** a user activates a worktree's checks indicator
-- **THEN** its row expands to list that worktree's checks, and activating a
+- **THEN** a list of that worktree's checks is shown, and activating a
   check with a URL opens that check's run
 
 ### Requirement: Worktree properties are project-scoped
