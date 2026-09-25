@@ -18,6 +18,7 @@ export * from './mcp/controlEndpoint.js';
 export * from './mcp/dispatcher.js';
 export * from './mcp/stdio.js';
 export * from './mcp/terminalAdapter.js';
+export * from './mcp/workspaceReach.js';
 export * from './remote/hostedHostKey.js';
 export * from './remote/hostedPairingHost.js';
 export * from './remote/hostedPairingSecrets.js';

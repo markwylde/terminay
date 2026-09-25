@@ -7,6 +7,11 @@ import { dirname, join, } from 'node:path';
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const workspaces = {
+	'@terminay/cron': {
+		dependencies: [],
+		tsconfig: 'packages/cron/tsconfig.json',
+		outputDirectory: 'packages/cron/dist',
+	},
 	'@terminay/protocol': {
 		dependencies: [],
 		tsconfig: 'packages/protocol/tsconfig.json',
@@ -34,6 +39,7 @@ const workspaces = {
 	},
 	'@terminay/server-core': {
 		dependencies: [
+			'@terminay/cron',
 			'@terminay/protocol',
 			'@terminay/extension-api',
 			'@terminay/ui-bundle',

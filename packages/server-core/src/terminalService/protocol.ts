@@ -72,6 +72,26 @@ export interface TerminalOperationRegistryOptions {
 	/** Reconcile a newly-created PTY with other server-owned authorities before
 	 * its identity is returned to the client. */
 	readonly onSessionCreated?: (snapshot: TerminalSessionSnapshot) => void;
+	/** Refuse a creation before any PTY is spawned, for example when the
+	 * target project is at a server-owned terminal limit. Throws to refuse. */
+	readonly beforeSessionCreate?: (
+		request: CommandRequest,
+		projectId: string,
+	) => void;
+	/** Whether a project's terminals are withheld from this connection (for
+	 * example the automation space for a client without `automations.v1`).
+	 * A hidden project's sessions are never listed, attached, or controlled. */
+	readonly isProjectHidden?: (
+		request: CommandRequest | QueryRequest,
+		projectId: string,
+	) => boolean;
+	/**
+	 * Whether an exited session is still retained for viewing — for example a
+	 * kept automation run terminal whose panel stays open until a person
+	 * closes it. Only such a session accepts a `readOnly` attach, which
+	 * replays its bounded retained output and its exit and never controls it.
+	 */
+	readonly retainsExitedSession?: (identity: TerminalIdentity) => boolean;
 	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
 	readonly clipboardScratchDirectory?: string;
 }
@@ -276,7 +296,7 @@ export function createTerminalOperationRegistry(
 			...identity,
 			...(await options.service.currentCwd(
 				identity,
-				authorizationFor(identity, request, 'read'),
+				authorize(identity, request, 'read'),
 			)),
 		};
 	}
@@ -308,7 +328,7 @@ export function createTerminalOperationRegistry(
 			throw new RangeError('terminal inactivity duration is invalid');
 		}
 		await options.service.waitForInactivity(identity, durationMs as number, {
-			authorization: authorizationFor(identity, request, 'read'),
+			authorization: authorize(identity, request, 'read'),
 			signal: request.context.signal,
 		});
 		return { ...identity, inactive: true };
@@ -340,7 +360,7 @@ export function createTerminalOperationRegistry(
 				'terminal checkpoint identity is invalid',
 			);
 		}
-		authorizationFor(identity, request, 'read');
+		authorize(identity, request, 'read');
 		// The immutable checkpoint pin is the authority for this short binary
 		// handoff. Do not re-authorize it through protocolAttachments: a renderer
 		// can replace a panel after terminal.attach has bound the pin but before
@@ -392,6 +412,7 @@ export function createTerminalOperationRegistry(
 			);
 		}
 		assertProjectClaim(request, projectId);
+		options.beforeSessionCreate?.(request, projectId);
 		const cwd = payload.cwd;
 		if (
 			cwd !== undefined &&
@@ -475,10 +496,32 @@ export function createTerminalOperationRegistry(
 		return value;
 	}
 
+	function assertProjectVisible(
+		request: QueryRequest | CommandRequest,
+		projectId: string,
+	): void {
+		if (options.isProjectHidden?.(request, projectId) === true)
+			throw new TerminalServiceError(
+				'session_not_found',
+				'terminal project was not found',
+			);
+	}
+
+	function authorize(
+		identity: TerminalIdentity,
+		request: CommandRequest | QueryRequest,
+		required: 'read' | 'write',
+	): TerminalAuthorization {
+		const authorization = authorizationFor(identity, request, required);
+		assertProjectVisible(request, identity.projectId);
+		return authorization;
+	}
+
 	function assertProjectClaim(
 		request: QueryRequest | CommandRequest,
 		projectId: string,
 	): void {
+		assertProjectVisible(request, projectId);
 		const claims = request.context.claims;
 		const claimedProjectId =
 			typeof claims === 'object' &&
@@ -511,6 +554,8 @@ export function createTerminalOperationRegistry(
 		const payload = objectPayload(request.envelope.payload);
 		const identity = parseIdentity(payload.identity, options.service.serverId);
 		const clientId = assertClient(request.context.clientId, payload.clientId);
+		if (payload.readOnly === true)
+			return attachExited(request, payload, identity, clientId);
 		const requestedFromPosition = position(payload.fromPosition ?? 0);
 		const freshPresentation = payload.freshPresentation === true;
 		if (freshPresentation && requestedFromPosition !== 0)
@@ -526,7 +571,7 @@ export function createTerminalOperationRegistry(
 			requestedInitialReplayBytes === undefined
 				? MAX_INITIAL_REPLAY_BYTES
 				: Math.min(requestedInitialReplayBytes, MAX_INITIAL_REPLAY_BYTES);
-		const authorization = authorizationFor(identity, request, 'read');
+		const authorization = authorize(identity, request, 'read');
 		const snapshot = options.service.getSession(identity);
 		// A blank xterm needs canonical emulator state, not an arbitrary suffix of
 		// its PTY transcript. A parser-safe checkpoint supplies serialized state C
@@ -929,6 +974,136 @@ export function createTerminalOperationRegistry(
 		};
 	}
 
+	/**
+	 * A read-only view of an exited session the host still retains (a kept
+	 * automation run terminal). It replays at most the newest
+	 * MAX_INITIAL_REPLAY_BYTES of retained output, stating anything older as a
+	 * hydration skip, followed by the exit. It holds no presentation lease, no
+	 * checkpoint, and no write authority; a running or unretained session is
+	 * refused, so every other attach keeps its rules.
+	 */
+	function attachExited(
+		request: CommandRequest,
+		payload: Readonly<Record<string, JsonValue>>,
+		identity: TerminalIdentity,
+		clientId: string,
+	): JsonValue {
+		if (payload.freshPresentation === true)
+			throw new TerminalServiceError(
+				'invalid_position',
+				'a read-only attach replays retained output, not a fresh presentation',
+			);
+		const authorization = authorize(identity, request, 'read');
+		const snapshot = options.service.getSession(identity);
+		if (snapshot === undefined)
+			throw new TerminalServiceError(
+				'session_not_found',
+				'terminal session not found',
+			);
+		if (snapshot.status === 'running')
+			throw new TerminalServiceError(
+				'forbidden',
+				'a read-only attach is only for an exited terminal',
+			);
+		if (options.retainsExitedSession?.(identity) !== true)
+			throw new TerminalServiceError(
+				'session_exited',
+				'terminal session has exited',
+				{ sessionId: identity.sessionId },
+			);
+		const fromPosition = Math.max(
+			snapshot.replayFrom,
+			snapshot.outputPosition - MAX_INITIAL_REPLAY_BYTES,
+		);
+		const key = sessionKey(clientId, identity);
+		const priorId = byClientSession.get(key);
+		const prior =
+			priorId === undefined ? undefined : protocolAttachments.get(priorId);
+		if (priorId !== undefined) {
+			if (prior !== undefined) {
+				prior.discardPendingOutput();
+				if (prior.connectionId === request.context.connectionId)
+					prior.suppressCloseNotification();
+				presentations.releaseAttachment({
+					...prior.identity,
+					clientId: prior.clientId,
+					attachmentId: prior.attachment.attachmentId,
+				});
+				options.checkpoints?.releaseAttachment({
+					...prior.identity,
+					clientId: prior.clientId,
+					attachmentId: prior.attachment.attachmentId,
+				});
+			}
+			attachments.detach(priorId);
+			protocolAttachments.delete(priorId);
+		}
+		// An exited PTY emits nothing further, so the sink has nothing to
+		// publish: the replay and the exit travel in this result.
+		const attachment = attachments.attach(
+			{ clientId, identity, authorization, fromPosition },
+			{ onEvent: () => undefined },
+		);
+		protocolAttachments.set(attachment.attachmentId, {
+			clientId,
+			connectionId: request.context.connectionId,
+			identity,
+			attachment,
+			canWrite: false,
+			outputSuppressed: false,
+			discardPendingOutput: () => undefined,
+			suppressCloseNotification: () => undefined,
+		});
+		byClientSession.set(key, attachment.attachmentId);
+		recordStreamDiagnostic('attach', 'attached', {
+			connectionId: request.context.connectionId,
+			clientId,
+			projectId: identity.projectId,
+			sessionId: identity.sessionId,
+			attachmentId: attachment.attachmentId,
+			replacedAttachmentId: priorId,
+			readOnly: true,
+			fromPosition,
+		});
+		return {
+			attachmentId: attachment.attachmentId,
+			...(priorId === undefined ? {} : { replacedAttachmentId: priorId }),
+			readOnly: true,
+			fromPosition: 0,
+			position: snapshot.outputPosition,
+			events: [
+				dimensionsPayload(
+					identity,
+					attachment.attachmentId,
+					clientId,
+					snapshot.dimensions.cols,
+					snapshot.dimensions.rows,
+				),
+				...(fromPosition === 0
+					? []
+					: [
+							{
+								clientId,
+								attachmentId: attachment.attachmentId,
+								type: 'skip',
+								...identity,
+								fromPosition: 0,
+								toPosition: fromPosition,
+								reason: 'hydration',
+							},
+						]),
+				...compactInitialEvents(attachment.initialEvents).map((event) =>
+					terminalEventPayload(event, attachment.attachmentId, clientId),
+				),
+			],
+			presentation: presentationPayload(
+				presentations.state(identity),
+				clientId,
+				attachment.attachmentId,
+			),
+		};
+	}
+
 	async function acknowledge(request: CommandRequest): Promise<JsonValue> {
 		const value = attachmentFor(request, 'read');
 		const positionValue = position(
@@ -963,7 +1138,7 @@ export function createTerminalOperationRegistry(
 			clientId: value.clientId,
 			source,
 			data: bytes,
-			authorization: authorizationFor(value.identity, request, 'write'),
+			authorization: authorize(value.identity, request, 'write'),
 			...(payload.sequence === undefined
 				? {}
 				: { sequence: position(payload.sequence) }),
@@ -996,7 +1171,7 @@ export function createTerminalOperationRegistry(
 			mode: 'claim',
 			cols,
 			rows,
-			authorization: authorizationFor(value.identity, request, 'write'),
+			authorization: authorize(value.identity, request, 'write'),
 		});
 		const accepted = result.ownership;
 		if (accepted === undefined)
@@ -1086,7 +1261,7 @@ export function createTerminalOperationRegistry(
 			);
 		await options.service.kill(
 			value.identity,
-			authorizationFor(value.identity, request, 'write'),
+			authorize(value.identity, request, 'write'),
 			signal as number | string | undefined,
 		);
 		releaseInitialPresentationReservation(value.identity, false);
@@ -1133,7 +1308,7 @@ export function createTerminalOperationRegistry(
 				);
 		}
 		const identity = parseIdentity(payload.identity, options.service.serverId);
-		authorizationFor(identity, request, 'write');
+		authorize(identity, request, 'write');
 		assertProjectClaim(request, identity.projectId);
 		const session = options.service.getSession(identity);
 		if (
@@ -1304,7 +1479,7 @@ export function createTerminalOperationRegistry(
 				'forbidden',
 				'terminal attachment identity mismatch',
 			);
-		authorizationFor(value.identity, request, required);
+		authorize(value.identity, request, required);
 		return value;
 	}
 
