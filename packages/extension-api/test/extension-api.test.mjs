@@ -41,7 +41,7 @@ const snapshot = Object.freeze({
 });
 
 test("the SDK is major version 3", () => {
-  assert.equal(EXTENSION_API_VERSION, "3.0.0");
+  assert.equal(EXTENSION_API_VERSION, "3.1.0");
 });
 
 test("every public extension operation and event obeys the wire protocol grammar", () => {

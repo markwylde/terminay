@@ -50,7 +50,7 @@ export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
 export type ControlOp = ControlOperation;
 export type ControlScope = 'none' | 'read' | 'write' | 'admin';
 /**
- * Which terminals a capability may address (ADR-0029). `project` reaches the
+ * Which terminals a capability may address (ADR-0030). `project` reaches the
  * terminal's own project. `workspace` reaches every project and the automation
  * terminal space on the same server, and is held only by terminals in that
  * space. Reach never widens the operation set and never crosses servers.
@@ -366,7 +366,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 
 	/**
 	 * Mint the terminal's single capability, replacing any it held. Reach is
-	 * derived here from canonical placement alone (ADR-0029).
+	 * derived here from canonical placement alone (ADR-0030).
 	 */
 	mint(
 		terminalSessionId: string,

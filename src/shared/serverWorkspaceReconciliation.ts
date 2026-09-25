@@ -15,7 +15,7 @@ export type ServerWorkspacePanel = Readonly<{
 export type ServerWorkspaceProject = Readonly<{
 	id: string;
 	/** Absent for an ordinary project. Any kind (today only `automations`, the
-	 * automation terminal space of ADR-0029) is a reserved, server-owned
+	 * automation terminal space of ADR-0030) is a reserved, server-owned
 	 * project that is never presented, ordered, or selected as a project. */
 	kind?: string;
 	serverId: string;

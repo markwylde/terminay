@@ -295,6 +295,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 		for (const packageName of [
 			'terminay-builtin-agents',
 			'terminay-language-typescript',
+			'terminay-gitea',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
 			await card.waitFor({ state: 'visible', timeout: 15_000 });

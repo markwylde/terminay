@@ -282,7 +282,7 @@ export function automationSpaceRetainsExitedSession(
 }
 
 /** A connection that did not negotiate `automations.v1` never learns of the
- * automation space, its panels, or its terminals (ADR-0029). */
+ * automation space, its panels, or its terminals (ADR-0030). */
 function connectionVisibleState(
 	state: WorkspaceState,
 	request: QueryRequest | CommandRequest,

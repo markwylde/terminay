@@ -574,6 +574,7 @@ export class ExtensionInstaller {
 			agentSessionSources: readonly import('@terminay/extension-api').AgentSessionSourceContribution[];
 			mcpInstallTargets: readonly import('@terminay/extension-api').McpInstallTargetContribution[];
 			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
+			worktreeInsights: readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -597,6 +598,11 @@ export class ExtensionInstaller {
 			),
 			languageServers: Object.freeze(
 				structuredClone(slot.receipt.manifest.contributes.languageServers ?? []),
+			),
+			worktreeInsights: Object.freeze(
+				structuredClone(
+					slot.receipt.manifest.contributes.worktreeInsights ?? [],
+				),
 			),
 			manifest: slot.receipt.manifest,
 		});

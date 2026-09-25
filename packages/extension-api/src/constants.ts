@@ -5,9 +5,10 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * server contribution kind. 3.0 replaced terminal-scoped agent providers, the
  * observation broker, the lifecycle publisher, and the driver toolkit with
  * machine-wide agent session sources, and added MCP install targets, so every
- * extension declaring `^2.x` is incompatible with this host.
+ * extension declaring `^2.x` is incompatible with this host. 3.1 added
+ * worktree insight sources.
  */
-export const EXTENSION_API_VERSION = '3.0.0' as const;
+export const EXTENSION_API_VERSION = '3.1.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -59,6 +60,14 @@ export const EXTENSION_LIMITS = Object.freeze({
 	maxLaunchArgs: 64,
 	maxLaunchEnvEntries: 32,
 	maxLaunchDescriptionLength: 200,
+	/** Worktree insight sources and the properties they may publish. */
+	worktreeInsightSources: 8,
+	worktreeTitleLength: 512,
+	worktreeUrlLength: 2_048,
+	worktreeCheckNameLength: 256,
+	worktreeCheckItems: 100,
+	worktreeCheckCount: 10_000,
+	worktreeProviderNameLength: 64,
 } as const);
 
 /** A language id such as `typescriptreact`; never a path or a selector. */

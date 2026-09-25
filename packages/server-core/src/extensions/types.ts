@@ -3,6 +3,7 @@ import type {
 	ExtensionDependency,
 	LanguageServerContribution,
 	McpInstallTargetContribution,
+	WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 
 export type ExtensionHostState =
@@ -29,6 +30,8 @@ export interface ExtensionLaunchDescriptor {
 	/** Declared language servers. The host refuses a child registration that
 	 * this array does not contain. */
 	readonly languageServers?: readonly LanguageServerContribution[];
+	/** Declared worktree insight sources, checked the same way. */
+	readonly worktreeInsights?: readonly WorktreeInsightSourceContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -41,6 +44,7 @@ export interface ExtensionHostStatus {
 	readonly agentSessionSources?: readonly AgentSessionSourceContribution[];
 	readonly mcpInstallTargets?: readonly McpInstallTargetContribution[];
 	readonly languageServers?: readonly LanguageServerContribution[];
+	readonly worktreeInsightSources?: readonly WorktreeInsightSourceContribution[];
 }
 
 export interface ExtensionInvocation {
@@ -97,6 +101,50 @@ export interface ExtensionAgentBroker {
 			diagnostic: unknown;
 		}>,
 	): void;
+	/** A source stopped: disposed, its extension stopped, or its child died. */
+	sourceStopped?(
+		request: Readonly<{ extensionId: string; sourceId: string }>,
+	): void;
+}
+
+/**
+ * Private host bridge for worktree insight sources. The host checks each
+ * frame's shape and that the source is running; the broker validates every
+ * value, scopes it to the contexts it issued, and owns credentials.
+ */
+export interface ExtensionWorktreeBroker {
+	publish(
+		request: Readonly<{
+			extensionId: string;
+			sourceId: string;
+			contextId: unknown;
+			worktreeId: unknown;
+			properties: unknown;
+		}>,
+	): void;
+	requestSignIn(
+		request: Readonly<{
+			extensionId: string;
+			sourceId: string;
+			request: unknown;
+		}>,
+	): void;
+	token(
+		request: Readonly<{
+			extensionId: string;
+			sourceId: string;
+			origin: unknown;
+		}>,
+		signal: AbortSignal,
+	): Promise<string | undefined>;
+	rejectToken(
+		request: Readonly<{
+			extensionId: string;
+			sourceId: string;
+			origin: unknown;
+		}>,
+		signal: AbortSignal,
+	): Promise<void>;
 	/** A source stopped: disposed, its extension stopped, or its child died. */
 	sourceStopped?(
 		request: Readonly<{ extensionId: string; sourceId: string }>,
