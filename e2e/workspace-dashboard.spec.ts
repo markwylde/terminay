@@ -351,6 +351,15 @@ test.describe('workspace dashboard', () => {
 		await expect(
 			mainWindow.locator('[data-terminay-dashboard-column]'),
 		).toHaveCount(4);
+		expect(
+			await mainWindow
+				.locator('[data-terminay-dashboard-column]')
+				.evaluateAll((columns) =>
+					columns.map((column) =>
+						column.getAttribute('data-terminay-dashboard-column'),
+					),
+				),
+		).toEqual(['idle', 'working', 'attention', 'done']);
 		await expect(
 			mainWindow.locator('[data-terminay-dashboard-column="idle"] .workspace-dashboard__card'),
 		).not.toHaveCount(0);
@@ -391,6 +400,15 @@ test.describe('workspace dashboard', () => {
 		await expect(lane.locator('[data-terminay-dashboard-column]')).toHaveCount(
 			4,
 		);
+		expect(
+			await lane
+				.locator('[data-terminay-dashboard-column]')
+				.evaluateAll((columns) =>
+					columns.map((column) =>
+						column.getAttribute('data-terminay-dashboard-column'),
+					),
+				),
+		).toEqual(['idle', 'working', 'attention', 'done']);
 		await expect(cards).toHaveCount(ungroupedCards);
 
 		// Leaving Home and coming back keeps the grouping.
