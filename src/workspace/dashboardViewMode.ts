@@ -44,11 +44,12 @@ export const DASHBOARD_VIEW_MODE_LABELS: Record<DashboardViewMode, string> = {
 /** A Board column. `attention` merges waiting and blocked: both want a person. */
 export type DashboardBoardColumn = 'attention' | 'working' | 'done' | 'idle';
 
+/** Lifecycle order: an agent rests, works, may stop for a person, then finishes. */
 export const DASHBOARD_BOARD_COLUMNS: readonly DashboardBoardColumn[] = [
-	'attention',
-	'working',
-	'done',
 	'idle',
+	'working',
+	'attention',
+	'done',
 ];
 
 export const DASHBOARD_BOARD_COLUMN_LABELS: Record<
