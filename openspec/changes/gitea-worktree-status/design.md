@@ -44,7 +44,7 @@ poll), ADR-0026 (extension packaging), ADR-0003 (vault).
 ### 1. Typed host-owned properties, not extension UI
 
 Extensions publish a closed, versioned DTO (`pullRequest`, `checks`) and
-Terminay maps it to chips and a popover. Alternative: a generic "badge" list
+Terminay maps it to table columns and an expandable row. Alternative: a generic "badge" list
 (label, tone, icon, link). Rejected because it lets each provider invent its own
 vocabulary, which breaks the consistent UI the user asked for and pushes
 presentation choices into extensions. New property kinds are added to the model
@@ -176,24 +176,34 @@ it and lets the prompt appear again.
   `success`→passed; `failure`,`error`→failed; `pending`→pending;
   `skipped`,`warning`→skipped. Items truncated to 100; counts reflect all.
 - Checks URL: the PR's `/checks`-equivalent is not stable across Gitea
-  versions, so the chip opens the host popover and items link to each
+  versions, so the checks ring expands the row and items link to each
   `target_url`.
 
 ### 8. Rendering
 
-Row layout gains a compact third line only when properties exist:
+The owner chose layout D of five mockups: one aligned row per worktree.
 
 ```
- terminay-about
- +420 -3  No changes
- [#285]  [x 2  v 12  o 2]
+ WORKTREE                Δ      PR    CI
+ terminay            clean       —     —   ⋮
+ terminay-gitea-sta… +7.0k    #289   ◔ 1   ⋮
+                       −30
+   feat/gitea-worktree-status
+   ⤴ feat(gitea): show worktree pull requests…
+   ✕ CI / Build, lint, and unit tests
+   ◌ CI / E2E (7/10)
+   + 9 more
+   <changed files>
 ```
 
-Tones map to the panel's existing addition/deletion/warning colours. The checks
-popover reuses the context menu surface. No layout change for rows without
-properties.
+The CI ring splits into failed, pending, and passed arcs; the headline count is
+failures, else pending, else passed. PR and CI columns appear only when some
+worktree has properties, so repositories without a forge keep a two-column
+table. The upload button becomes a ⋮ actions button that opens the worktree
+context menu, now led by "Commit & push with AI…", so every row action lives in
+one place. Tones map to the panel's existing addition/deletion/warning colours.
 
-Listings carry the pull request and check counts only; the popover fetches every
+Listings carry the pull request and check counts only; an expanded row fetches every
 check item with `git.worktree.properties`, so a busy repository cannot push a
 listing past the protocol's 64 KiB header limit. A property change raises a
 `git.status.changed` event for that worktree, and clients re-list as they do for

@@ -293,7 +293,7 @@
 }
 
 .worktrees-panel__worktree-toggle:focus-visible,
-.worktrees-panel__push-button:focus-visible {
+.worktrees-panel__row-menu:focus-visible {
 	background: rgba(255, 255, 255, 0.08);
 	outline: 1px solid rgba(87, 183, 255, 0.5);
 	outline-offset: -1px;
@@ -331,24 +331,7 @@
 	color: #e2c08d;
 }
 
-.worktrees-panel__worktree-main {
-	flex: 1 1 auto;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-}
-
-.worktrees-panel__worktree-topline,
-.worktrees-panel__worktree-meta {
-	display: flex;
-	align-items: center;
-	min-width: 0;
-	gap: 6px;
-}
-
-.worktrees-panel__worktree-name,
-.worktrees-panel__date {
+.worktrees-panel__worktree-name {
 	min-width: 0;
 	white-space: nowrap;
 	overflow: hidden;
@@ -363,12 +346,6 @@
 	color: rgba(220, 226, 240, 0.9);
 	font-size: 13px;
 	line-height: 18px;
-}
-
-.worktrees-panel__worktree-meta {
-	color: rgba(220, 226, 240, 0.34);
-	font-size: 11px;
-	line-height: 16px;
 }
 
 .worktrees-panel__pill {
@@ -394,30 +371,30 @@
 	color: #57b7ff;
 }
 
-.worktrees-panel__push-button {
+.worktrees-panel__row-menu {
 	all: unset;
 	box-sizing: border-box;
 	flex: 0 0 auto;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 28px;
-	border-radius: 6px;
-	color: rgba(220, 226, 240, 0.64);
+	width: 22px;
+	height: 22px;
+	border-radius: 5px;
+	color: rgba(220, 226, 240, 0.5);
 	cursor: pointer;
 	transition:
 		background 100ms ease,
 		color 100ms ease;
 }
 
-.worktrees-panel__push-button:hover,
-.worktrees-panel__push-button--active {
+.worktrees-panel__row-menu:hover,
+.worktrees-panel__row-menu--active {
 	background: rgba(87, 183, 255, 0.12);
 	color: #57b7ff;
 }
 
-.worktrees-panel__push-button:disabled {
+.worktrees-panel__row-menu:disabled {
 	background: transparent;
 	color: rgba(220, 226, 240, 0.24);
 	cursor: default;
@@ -435,10 +412,6 @@
 
 .worktrees-panel__delta--deletions {
 	color: #f14c4c;
-}
-
-.worktrees-panel__date {
-	color: rgba(220, 226, 240, 0.45);
 }
 
 .worktrees-panel__clean {
@@ -506,94 +479,6 @@
 	padding-left: 20px;
 }
 
-/* Extension-published worktree properties: pull request and check chips. */
-.worktrees-panel__properties {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	margin-top: -6px;
-	padding: 0 8px 6px 32px;
-}
-
-.worktree-chip {
-	all: unset;
-	box-sizing: border-box;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	height: 18px;
-	padding: 0 6px;
-	border-radius: 9px;
-	background: rgba(255, 255, 255, 0.08);
-	color: rgba(220, 226, 240, 0.72);
-	font-size: 10px;
-	font-weight: 600;
-	line-height: 1;
-	white-space: nowrap;
-	cursor: pointer;
-}
-
-.worktree-chip:hover {
-	background: rgba(255, 255, 255, 0.14);
-}
-
-.worktree-chip:focus-visible {
-	outline: 1px solid #57b7ff;
-	outline-offset: 1px;
-}
-
-.worktree-chip--pr-open {
-	color: #73c991;
-}
-
-.worktree-chip--pr-draft,
-.worktree-chip--pr-closed {
-	color: rgba(220, 226, 240, 0.58);
-}
-
-.worktree-chip--pr-merged {
-	color: #b180d7;
-}
-
-.worktree-chip--failed {
-	box-shadow: inset 0 0 0 1px rgba(241, 76, 76, 0.45);
-}
-
-.worktree-chip--pending {
-	box-shadow: inset 0 0 0 1px rgba(204, 167, 0, 0.45);
-}
-
-.worktree-chip--passed {
-	box-shadow: inset 0 0 0 1px rgba(115, 201, 145, 0.4);
-}
-
-.worktree-chip__count {
-	display: inline-flex;
-	align-items: center;
-	gap: 2px;
-}
-
-.worktree-chip__count--failed,
-.worktree-chip__check-icon--failed {
-	color: #f14c4c;
-}
-
-.worktree-chip__count--passed,
-.worktree-chip__check-icon--passed {
-	color: #73c991;
-}
-
-.worktree-chip__count--pending,
-.worktree-chip__check-icon--pending {
-	color: #cca700;
-}
-
-.worktree-chip__check-icon--skipped {
-	color: rgba(220, 226, 240, 0.42);
-}
-
 .worktree-sign-in-dialog__text,
 .worktree-sign-in-dialog__hint {
 	margin: 12px 0;
@@ -641,4 +526,223 @@
 .worktree-sign-in-dialog .project-edit-actions .worktree-sign-in-dialog__primary:hover:not(:disabled) {
 	border-color: #2563eb;
 	background: #2563eb;
+}
+
+/* Table layout: one aligned row per worktree, detail on expand. */
+.worktrees-panel--table {
+	--worktree-columns: minmax(0, 1fr) 58px 22px;
+}
+
+.worktrees-panel--table.worktrees-panel--forge-columns {
+	--worktree-columns: minmax(0, 1fr) 58px 42px 42px 22px;
+}
+
+.worktrees-panel__columns,
+.worktrees-panel--table .worktrees-panel__worktree-header {
+	display: grid;
+	grid-template-columns: var(--worktree-columns);
+	align-items: center;
+	column-gap: 6px;
+	padding: 0 6px 0 12px;
+}
+
+.worktrees-panel__columns {
+	height: 24px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	color: rgba(220, 226, 240, 0.34);
+	font-size: 9.5px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	user-select: none;
+}
+
+.worktrees-panel__columns > span:not(:first-child) {
+	text-align: right;
+}
+
+.worktrees-panel--table .worktrees-panel__worktree-header {
+	min-height: 32px;
+}
+
+.worktrees-panel--table .worktrees-panel__worktree-header:not(.worktrees-panel__worktree-header--collapsed) {
+	background: rgba(87, 183, 255, 0.06);
+	box-shadow: inset 2px 0 0 #57b7ff;
+}
+
+.worktrees-panel--table .worktrees-panel__worktree-toggle {
+	min-height: 30px;
+	gap: 5px;
+}
+
+.worktrees-panel--table .worktrees-panel__worktree-name {
+	font-weight: 600;
+}
+
+.worktrees-panel__cell {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	min-width: 0;
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.worktrees-panel__cell--delta {
+	flex-direction: column;
+	align-items: flex-end;
+	line-height: 1.15;
+	white-space: nowrap;
+}
+
+.worktrees-panel__cell--delta .worktrees-panel__clean,
+.worktrees-panel__cell--delta .worktrees-panel__changed,
+.worktrees-panel__cell--delta .worktrees-panel__deleting,
+.worktrees-panel__cell--delta .worktrees-panel__pulling {
+	font-weight: 500;
+}
+
+.worktrees-panel__cell--delta .worktrees-panel__clean {
+	color: rgba(220, 226, 240, 0.34);
+}
+
+.worktrees-panel__none {
+	color: rgba(220, 226, 240, 0.24);
+}
+
+.worktrees-panel__pr,
+.worktrees-panel__ci {
+	all: unset;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border-radius: 4px;
+	padding: 1px 2px;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.worktrees-panel__pr:hover,
+.worktrees-panel__ci:hover {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.worktrees-panel__pr:focus-visible,
+.worktrees-panel__ci:focus-visible,
+.worktrees-panel__summary-link:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.5);
+}
+
+.worktrees-panel__pr--open {
+	color: #73c991;
+}
+
+.worktrees-panel__pr--draft,
+.worktrees-panel__pr--closed {
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.worktrees-panel__pr--merged {
+	color: #b180d7;
+}
+
+.worktrees-panel__ci--failed,
+.worktrees-panel__check-icon--failed {
+	color: #f14c4c;
+}
+
+.worktrees-panel__ci--pending,
+.worktrees-panel__check-icon--pending {
+	color: #cca700;
+}
+
+.worktrees-panel__ci--passed,
+.worktrees-panel__check-icon--passed {
+	color: #73c991;
+}
+
+.worktrees-panel__check-icon--skipped {
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.worktrees-panel__ring {
+	flex: 0 0 auto;
+}
+
+.worktrees-panel__ring-track,
+.worktrees-panel__ring-segment {
+	fill: none;
+	stroke-width: 2.4;
+}
+
+.worktrees-panel__ring-track {
+	stroke: rgba(255, 255, 255, 0.1);
+}
+
+.worktrees-panel__ring-segment--failed {
+	stroke: #f14c4c;
+}
+
+.worktrees-panel__ring-segment--pending {
+	stroke: #cca700;
+}
+
+.worktrees-panel__ring-segment--passed {
+	stroke: #73c991;
+}
+
+.worktrees-panel__detail {
+	background: rgba(255, 255, 255, 0.02);
+	border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.worktrees-panel__summary {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 6px 12px 6px 33px;
+	color: rgba(220, 226, 240, 0.72);
+	font-size: 11px;
+}
+
+.worktrees-panel__summary-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 2px 0;
+}
+
+.worktrees-panel__summary-line > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.worktrees-panel__summary-link {
+	all: unset;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 2px 4px;
+	margin: 0 -4px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.worktrees-panel__summary-link:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: #ffffff;
+}
+
+.worktrees-panel__summary-branch {
+	color: rgba(220, 226, 240, 0.4);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 10.5px;
+}
+
+.worktrees-panel__summary-more {
+	color: rgba(220, 226, 240, 0.4);
 }
