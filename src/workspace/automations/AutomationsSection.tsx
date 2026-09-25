@@ -19,7 +19,17 @@ import type {
 	AutomationDraft,
 	AutomationRunEntry,
 } from '@terminay/client-core';
-import { ChevronLeft, ChevronRight, Play, Plus, SquareTerminal } from 'lucide-react';
+import {
+	BellRing,
+	ChevronLeft,
+	ChevronRight,
+	Clock,
+	Play,
+	Plus,
+	SquareTerminal,
+	Workflow,
+	Zap,
+} from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceConnectionContext } from '../../shared/connections/connectionRegistry';
 import {
@@ -368,6 +378,52 @@ function TerminalRow({
 		</button>
 	);
 }
+
+/** One-click starting points for an empty list: the editor, pre-filled. */
+const STARTING_POINTS = [
+	{
+		id: 'agent-needs-input',
+		icon: BellRing,
+		title: 'Tell me when an agent needs me',
+		detail: 'When an agent needs input · run a command',
+		form: {
+			name: 'Tell me when an agent needs me',
+			triggerKind: 'event',
+			event: 'agent.needsInput',
+			command: 'echo "$TERMINAY_TERMINAL_TITLE needs you"',
+		},
+	},
+	{
+		id: 'agent-finished',
+		icon: Zap,
+		title: 'Count finished agents',
+		detail: 'When an agent finishes · run a command',
+		form: {
+			name: 'Count finished agents',
+			triggerKind: 'event',
+			event: 'agent.finished',
+			command: 'echo 1 >> ~/agent-stats.txt',
+		},
+	},
+	{
+		id: 'hourly-script',
+		icon: Clock,
+		title: 'Run a script every hour',
+		detail: 'Every hour, on the hour · run a command',
+		form: {
+			name: 'Hourly script',
+			triggerKind: 'schedule',
+			cron: '0 * * * *',
+			command: '~/bin/hourly.sh',
+		},
+	},
+] as const satisfies readonly Readonly<{
+	id: string;
+	icon: typeof Clock;
+	title: string;
+	detail: string;
+	form: Partial<AutomationForm>;
+}>[];
 
 export function AutomationsSection({
 	automations,
@@ -957,7 +1013,7 @@ export function AutomationsSection({
 		<div className="home-section home-automations" data-terminay-automations>
 			<PageHeader title="Automations" subtitle={listSubtitle}>
 				{serverSelector}
-				{newButton}
+				{list.length === 0 ? null : newButton}
 			</PageHeader>
 			{selection.unsupported.length > 0 ? (
 				<p className="automations-banner" data-terminay-automations-unsupported-note>
@@ -969,20 +1025,60 @@ export function AutomationsSection({
 			{errorBanner}
 			<div className="workspace-dashboard__list automations-body">
 				{list.length === 0 ? (
-					<div className="workspace-dashboard__empty automations-empty">
-						<p>No automations yet.</p>
-						<p>
-							An automation runs a command, a Macro, or some text on a schedule
-							— every hour, say — or when something happens, like an agent
-							finishing or a terminal needing you.
+					<div className="automations-empty-state">
+						<div className="automations-empty-state__icon" aria-hidden="true">
+							<Workflow size={20} />
+						</div>
+						<h3 className="automations-empty-state__title">No automations yet</h3>
+						<p className="automations-empty-state__text">
+							Run a command, a Macro, or some text on a schedule, or when
+							something happens in your workspace.
 						</p>
 						<button
 							type="button"
-							className="automations-link"
+							className="automations-button automations-button--primary"
+							data-terminay-automation-new="true"
 							onClick={() => go({ kind: 'edit', form: emptyAutomationForm() })}
 						>
-							Create your first automation
+							<Plus size={13} aria-hidden="true" />
+							New automation
 						</button>
+						<div className="automations-starts">
+							<span className="automations-starts__label">Or start from</span>
+							{STARTING_POINTS.map((start) => (
+								<button
+									key={start.id}
+									type="button"
+									className="automations-start"
+									data-terminay-automation-start={start.id}
+									onClick={() =>
+										go({
+											kind: 'edit',
+											form: { ...emptyAutomationForm(), ...start.form },
+										})
+									}
+								>
+									<start.icon
+										size={14}
+										className="automations-start__icon"
+										aria-hidden="true"
+									/>
+									<span className="automations-start__text">
+										<span className="automations-start__title">
+											{start.title}
+										</span>
+										<span className="automations-start__detail">
+											{start.detail}
+										</span>
+									</span>
+									<ChevronRight
+										size={13}
+										className="automations-start__chevron"
+										aria-hidden="true"
+									/>
+								</button>
+							))}
+						</div>
 					</div>
 				) : (
 					<ul className="automations-list" aria-label="Automations">
