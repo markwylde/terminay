@@ -6581,14 +6581,18 @@ function App({
 		[connections, primary, primaryClientContext],
 	);
 	// Next-run times and "today" phrasing move with the clock, not with state.
+	// Presentation driven only by the passage of time, and only while Home is
+	// shown (ADR-0028 allows it; it reads no external state).
 	const [automationClock, setAutomationClock] = useState(() => Date.now());
 	useEffect(() => {
+		if (!isHomeSelected) return;
+		setAutomationClock(Date.now());
 		const timer = window.setInterval(
 			() => setAutomationClock(Date.now()),
 			30_000,
 		);
 		return () => window.clearInterval(timer);
-	}, []);
+	}, [isHomeSelected]);
 	const automationSources = useMemo(
 		() =>
 			[...serverAutomations.values()].map((server) => {

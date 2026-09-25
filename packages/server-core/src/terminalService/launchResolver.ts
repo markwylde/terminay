@@ -50,7 +50,7 @@ export interface TerminalLaunchResolverOptions {
 	 * This is reserved for ephemeral capability material which must not be
 	 * expressible or overridden by a user shell profile. `placement` is read
 	 * from the canonical workspace snapshot, never from the launch intent, so a
-	 * host may derive authority (such as MCP workspace scope, ADR-0028) from it. */
+	 * host may derive authority (such as MCP workspace scope, ADR-0029) from it. */
 	readonly environmentFor?: (
 		intent: TerminalLaunchIntent,
 		placement: TerminalLaunchPlacement,

@@ -149,7 +149,7 @@ export function defaultWorkspaceSidebarState(): WorkspaceSidebarState {
 	};
 }
 /** A reserved, server-owned project kind. Ordinary user projects carry no
- * kind. See ADR-0028: the `automations` kind is the automation terminal space,
+ * kind. See ADR-0029: the `automations` kind is the automation terminal space,
  * which is never presented, ordered, or selected as a project. */
 export type WorkspaceProjectKind = 'automations';
 export const AUTOMATION_PROJECT_KIND = 'automations' as const;
