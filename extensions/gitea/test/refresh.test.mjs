@@ -107,6 +107,13 @@ function context(overrides = {}) {
 				upstream: null,
 				head: '3',
 			},
+			{
+				id: 'wt-detached',
+				path: '/repo-detached',
+				branch: null,
+				upstream: null,
+				head: '4',
+			},
 		],
 		...overrides,
 	};
@@ -182,7 +189,7 @@ function harness({
 	};
 }
 
-test('one refresh is one pull request listing plus one status per worktree with an upstream', async () => {
+test('one refresh is one pull request listing plus one status per worktree on a branch', async () => {
 	const gitea = fakeGitea({
 		statuses: {
 			abc: [
@@ -199,7 +206,7 @@ test('one refresh is one pull request listing plus one status per worktree with 
 	await flush();
 	const urls = gitea.calls.map((call) => call.url);
 	assert.equal(urls.filter((url) => url.includes('/pulls?')).length, 1);
-	assert.equal(urls.filter((url) => url.includes('/status')).length, 2);
+	assert.equal(urls.filter((url) => url.includes('/status')).length, 3);
 	assert.ok(
 		urls.includes(
 			`${ORIGIN}/api/v1/repos/owner/repo/commits/abc/status?limit=100`,
@@ -211,6 +218,12 @@ test('one refresh is one pull request listing plus one status per worktree with 
 			`${ORIGIN}/api/v1/repos/owner/repo/commits/main/status?limit=100`,
 		),
 		'upstream branch is used without a PR',
+	);
+	assert.ok(
+		urls.includes(
+			`${ORIGIN}/api/v1/repos/owner/repo/commits/local/status?limit=100`,
+		),
+		'a branch without an upstream uses its same-named remote branch',
 	);
 	assert.ok(
 		gitea.calls.every((call) => call.authorization === 'token tea-token'),
