@@ -3,6 +3,7 @@ import {
 	fileExplorerItem,
 	openFileExplorer,
 	setProjectRoot,
+	viewDocumentSource,
 } from './support/ui';
 
 test('File explorer opens MDX through the isolated preview surface', async ({
@@ -27,6 +28,7 @@ test('File explorer opens MDX through the isolated preview surface', async ({
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openFileExplorer(mainWindow);
 	await fileExplorerItem(mainWindow, 'guide.mdx').dblclick();
+	await viewDocumentSource(mainWindow);
 	await expect(mainWindow.locator('.file-panel')).toBeVisible();
 	const previewTab = mainWindow
 		.locator('.file-panel')

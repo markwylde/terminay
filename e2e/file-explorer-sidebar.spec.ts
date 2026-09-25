@@ -327,9 +327,12 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await mainWindow.keyboard.press('Escape')
   await expect(gitPane).not.toHaveClass(/sidebar-pane--collapsed/)
 
-  // Clicking a tracked change opens it in the file viewer.
+  // Clicking a tracked change opens it in the file viewer's Diff mode, even
+  // for Markdown, which otherwise opens as a document.
   await modifiedRow.click()
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
+  await expect(mainWindow.locator('.file-mode-switcher__button--active')).toHaveText('Diff')
+  await expect(mainWindow.locator('.documentation-editor')).toHaveCount(0)
 
   // Collapsing the Git pane hides the change list...
   await gitPane.locator('.sidebar-pane__header').click()
@@ -408,7 +411,8 @@ test('git sidebar switches project root before opening a file from another workt
   await linked.locator('.worktrees-panel__worktree-toggle').click()
   await linked.locator('.git-panel__row').filter({ hasText: '30-local-desktop-diagnostics.md' }).click()
 
-  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Opened safely.', { timeout: 6000 })
+  // An untracked Markdown file has no diff, so it opens as a document.
+  await expect(mainWindow.locator('.documentation-editor')).toContainText('Opened safely.', { timeout: 6000 })
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
 })
 
