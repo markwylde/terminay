@@ -16,9 +16,10 @@ the row UI belongs to Terminay.
 - Terminay defines a generic, host-owned set of **worktree properties** — a pull
   request (number, title, URL, state, mergeability) and a checks summary
   (passed, failed, pending, skipped, total, plus bounded per-check items with
-  links). The Worktrees panel renders them with its own components: a pull
-  request chip that opens the pull request, and a checks chip that opens a
-  host-rendered list of checks, each linking to its run.
+  links). The Worktrees panel becomes an aligned table (name, change size, PR,
+  CI ring, actions) rendered by Terminay: the PR number opens the pull request,
+  and the checks ring expands the row to list checks, each linking to its run.
+  The row's push button becomes a ⋮ actions menu that includes Commit & push.
 - A new extension contribution, `worktreeInsights`, and permission,
   `worktree-observation`, let an extension receive a host-issued repository
   context (repository root, remotes, worktrees with branch, upstream, and head)
@@ -72,8 +73,8 @@ the row UI belongs to Terminay.
   (worktree set, branch, upstream, head) to the insight registry.
 - Application protocol: project-scoped worktree-property snapshot and change
   events; sign-in prompt state and responses.
-- `src/components/git-panel/WorktreesPanel.tsx`: property chips and checks
-  popover; `src/` onboarding modal.
+- `src/components/git-panel/WorktreesPanel.tsx`: table layout, PR and
+  CI columns, expandable detail, ⋮ actions menu; `src/` onboarding modal.
 - New package `extensions/gitea/`, listed in `extensions/builtins.json` and the
   built-in artifact inventory.
 - Network: outbound HTTPS from the server to Gitea hosts the user's remotes

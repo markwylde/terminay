@@ -39,44 +39,44 @@ worktree.
 ### Requirement: Worktree properties are rendered by Terminay
 
 Terminay alone SHALL render worktree properties, using its own components and
-theme. A worktree with a pull request SHALL show a chip with the pull request
-number and a state indication. A worktree with a checks summary SHALL show a
-chip with the failed, passed, and pending counts and an overall tone: failed
-when any check failed, pending when none failed and any is pending, passed
-otherwise. Worktrees without properties SHALL render exactly as they do without
+theme. A worktree with a pull request SHALL show the pull request number with a
+state indication. A worktree with a checks summary SHALL show a checks indicator
+whose ring is divided in proportion to failed, pending, and passed checks, with
+a headline count and an overall tone: failed when any check failed, pending when
+none failed and any is pending, passed otherwise. Worktrees without properties SHALL render exactly as they do without
 any extension installed.
 
 #### Scenario: Pull request with failing checks
 
 - **WHEN** a worktree has an open pull request #285 and a checks summary with 2
   failed, 12 passed, and 2 pending
-- **THEN** its row shows a `#285` chip and a checks chip in the failed tone
-  showing 2 failed, 12 passed, and 2 pending
+- **THEN** its row shows `#285` and a checks indicator in the failed tone whose
+  ring shows 2 failed, 2 pending, and 12 passed
 
 #### Scenario: No properties
 
 - **WHEN** no extension has published properties for a worktree
-- **THEN** its row shows no pull request or checks chip
+- **THEN** its row shows no pull request or checks indicator
 
 ### Requirement: Worktree property interactions
 
-Activating the pull request chip SHALL open the pull request URL through the
-guarded external-link path. Activating the checks chip SHALL open a
-host-rendered list of the check items with their states, where activating an
-item with a URL opens it through the guarded external-link path. Both chips
-SHALL be keyboard reachable and SHALL expose an accessible name that includes
+Activating the pull request number SHALL open the pull request URL through the
+guarded external-link path. Activating the checks indicator SHALL expand the
+worktree's row to a host-rendered list of its check items with their states,
+failures and pending checks first, where activating an item with a URL opens it
+through the guarded external-link path. Both SHALL be keyboard reachable and SHALL expose an accessible name that includes
 the pull request number or the check counts.
 
 #### Scenario: Opening a pull request
 
-- **WHEN** a user activates a worktree's pull request chip
+- **WHEN** a user activates a worktree's pull request number
 - **THEN** the pull request URL opens through the guarded external-link path
 
 #### Scenario: Inspecting checks
 
-- **WHEN** a user activates a worktree's checks chip
-- **THEN** a list of that worktree's checks opens, and activating a check with a
-  URL opens that check's run
+- **WHEN** a user activates a worktree's checks indicator
+- **THEN** its row expands to list that worktree's checks, and activating a
+  check with a URL opens that check's run
 
 ### Requirement: Worktree properties are project-scoped
 
