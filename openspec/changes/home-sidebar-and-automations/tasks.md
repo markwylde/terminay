@@ -196,6 +196,11 @@
       and the Home band case in `e2e/home-sidebar.spec.ts` under
       `npm run test:e2e`.
 
+- [x] 11.2 Keep the main window open on Home when its last project closes, and
+      create a project from an empty window in the server's default folder.
+      Verified by `packages/server-core/test/workspace-empty-view.test.mjs` and
+      the "closing the only project" case in `e2e/project-tabs.spec.ts`.
+
 ## 10. End-to-end scenarios and checks
 
 - [x] 10.1 Add `e2e/automations.spec.ts` covering the user's scenarios with

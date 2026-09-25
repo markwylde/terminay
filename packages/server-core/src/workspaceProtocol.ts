@@ -59,6 +59,13 @@ export interface PreparedProjectRootUpdate {
 }
 
 export interface WorkspaceOperationRegistryOptions {
+	/**
+	 * The server's default project folder. A `project.create` that names no
+	 * root — a window creating its first project while it holds none, so it has
+	 * no project whose folder to reuse — is created here, with a
+	 * `server-default` origin.
+	 */
+	readonly defaultProjectRoot?: () => Promise<string | null>;
 	readonly prepareProjectRootUpdate?: (
 		projectId: string,
 		root: string,
@@ -484,8 +491,9 @@ async function applyCommand(
 	workspace: WorkspaceStore,
 	options: WorkspaceOperationRegistryOptions,
 	request: CommandRequest,
-	command: WorkspaceCommand,
+	requested: WorkspaceCommand,
 ): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+	const command = await withDefaultProjectRoot(options, requested);
 	enforceProjectClaim(workspace.state, request, command);
 	enforceAutomationSpace(workspace.state, request, command);
 	if (
@@ -747,6 +755,20 @@ function projectClaim(
 		typeof claims.projectId === 'string'
 		? claims.projectId
 		: undefined;
+}
+
+/** A project created without a root is created in the server's default folder. */
+async function withDefaultProjectRoot(
+	options: WorkspaceOperationRegistryOptions,
+	command: WorkspaceCommand,
+): Promise<WorkspaceCommand> {
+	if (command.type !== 'project.create') return command;
+	const root = (command as { root?: unknown }).root;
+	if (root !== undefined && root !== '') return command;
+	const fallback = await options.defaultProjectRoot?.().catch(() => null);
+	if (typeof fallback !== 'string' || fallback.length === 0)
+		throw protocolError('validation', 'project root is required');
+	return { ...command, root: fallback, rootOrigin: 'server-default' };
 }
 
 function commandPayload(value: JsonValue): WorkspaceCommand {
