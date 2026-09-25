@@ -181,14 +181,13 @@ it and lets the prompt appear again.
 
 ### 8. Rendering
 
-The owner chose layout D of five mockups: one aligned row per worktree.
+The owner chose layout D of five mockups (aligned columns), then asked for two
+lines per row so worktree names stay readable:
 
 ```
- WORKTREE                Δ      PR    CI
- terminay            clean       —     —   ⋮
- terminay-gitea-sta… +7.0k    #289   ◔ 1   ⋮
-                       −30
-   feat/gitea-worktree-status
+ ⎇ terminay-gitea-status                         ⋮
+   +7.0k −30      #289    ◔ 1
+   feat/gitea-worktree-status              (expanded)
    ⤴ feat(gitea): show worktree pull requests…
    ✕ CI / Build, lint, and unit tests
    ◌ CI / E2E (7/10)
@@ -197,9 +196,8 @@ The owner chose layout D of five mockups: one aligned row per worktree.
 ```
 
 The CI ring splits into failed, pending, and passed arcs; the headline count is
-failures, else pending, else passed. PR and CI columns appear only when some
-worktree has properties, so repositories without a forge keep a two-column
-table. The upload button becomes a ⋮ actions button that opens the worktree
+failures, else pending, else passed. PR and CI slots appear only when some
+worktree has properties. The upload button becomes a ⋮ actions button that opens the worktree
 context menu, now led by "Commit & push with AI…", so every row action lives in
 one place. Tones map to the panel's existing addition/deletion/warning colours.
 
