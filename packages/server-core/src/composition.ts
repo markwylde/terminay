@@ -1,3 +1,4 @@
+import { nodeTerminalLaunchPathAuthority } from './terminalService/launchResolver.js';
 import {
 	FEATURE_CAPABILITIES,
 	LANGUAGE_CAPABILITY,
@@ -465,6 +466,10 @@ export function createServerCoreComposition(
 		options.workspace === undefined
 			? undefined
 			: createWorkspaceOperationRegistry(options.workspace, {
+					defaultProjectRoot: (
+						options.terminalLaunchPathAuthority ??
+						nodeTerminalLaunchPathAuthority
+					).homeDirectory,
 					...options.workspaceOperations,
 					closeTerminalSessions: async (sessionIds) => {
 						await Promise.allSettled(

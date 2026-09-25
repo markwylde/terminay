@@ -132,6 +132,7 @@ export function useProjectCollection<TTerminal>({
 	holdProjectOrderRef,
 	holdActiveProjectIdRef,
 	sidebarSettings,
+	stayOpenWhenEmpty = false,
 	workspaceSnapshotStore,
 	workspaceViewId,
 }: {
@@ -157,6 +158,12 @@ export function useProjectCollection<TTerminal>({
 	 * background project-creation journey. */
 	holdActiveProjectIdRef?: MutableRefObject<string | null>;
 	sidebarSettings: SidebarSettings;
+	/**
+	 * Whether this window outlives its last project. The main window does: with
+	 * no project it shows Home. A popped-out window's only purpose is its
+	 * projects, so closing its last one closes it.
+	 */
+	stayOpenWhenEmpty?: boolean;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
 }) {
@@ -421,18 +428,18 @@ export function useProjectCollection<TTerminal>({
 			const suffix = projectCounterRef.current;
 			const projectId = `project-${Date.now().toString(36)}-${suffix}`;
 			const activeView = snapshot.views[viewId];
-			const fallbackProjectRoot =
-				defaultProjectRoot.trim().length > 0 ? defaultProjectRoot : '.';
 			const presentable = presentableViewProjects(snapshot, activeView);
-			const serverRoot =
+			// With no project to take a folder from, the server picks its own
+			// default folder rather than this window guessing one.
+			const serverRoot: string | undefined =
 				presentable.find(
 					(project) => project.id === activeView?.activeProjectId,
 				)?.root ??
 				presentable[0]?.root ??
-				fallbackProjectRoot;
+				(defaultProjectRoot.trim().length > 0 ? defaultProjectRoot : undefined);
 			const presentation = createProjectTab(
 				suffix,
-				serverRoot,
+				serverRoot ?? '',
 				[
 					...projectsRef.current.map((project) => project.color),
 					...reservedProjectColorsRef.current,
@@ -442,11 +449,14 @@ export function useProjectCollection<TTerminal>({
 				Math.random,
 			);
 			reservedProjectColorsRef.current.add(presentation.color);
+			// The first project of an empty window is where the person wants to
+			// go: leave Home for it once it exists.
+			if (projectsRef.current.length === 0) setIsHomeSelected(false);
 			void workspaceSnapshotStore
 				.createProject({
 					projectId,
 					viewId,
-					root: serverRoot,
+					...(serverRoot === undefined ? {} : { root: serverRoot }),
 					color: presentation.color,
 					icon: presentation.emoji,
 					sidebar: {
@@ -499,8 +509,12 @@ export function useProjectCollection<TTerminal>({
 				return;
 			}
 			if (current.length === 1) {
-				void closeHostPresentation();
-				return;
+				if (!stayOpenWhenEmpty) {
+					void closeHostPresentation();
+					return;
+				}
+				// The main window outlives its last project and shows Home.
+				setIsHomeSelected(true);
 			}
 			if (workspaceSnapshotStore !== undefined) {
 				const next = current.filter((project) => project.id !== projectId);
@@ -535,12 +549,12 @@ export function useProjectCollection<TTerminal>({
 				return rest;
 			});
 			if (activeProjectIdRef.current === projectId) {
-				const nextId = next[Math.max(0, index - 1)]?.id ?? next[0].id;
+				const nextId = next[Math.max(0, index - 1)]?.id ?? next[0]?.id ?? '';
 				activeProjectIdRef.current = nextId;
 				setActiveProjectId(nextId);
 			}
 		},
-		[confirmProjectClose, workspaceSnapshotStore],
+		[confirmProjectClose, stayOpenWhenEmpty, workspaceSnapshotStore],
 	);
 
 	const adoptProject = useCallback(
@@ -808,7 +822,12 @@ export function useProjectCollection<TTerminal>({
 			workspaceSnapshotStore.snapshot !== null,
 		closeProject,
 		homePath: defaultProjectRoot,
-		isHomeSelected,
+		// A window holding no project has nothing but Home to show.
+		isHomeSelected:
+			isHomeSelected ||
+			(workspaceSnapshotStore !== undefined &&
+				workspaceSnapshotStore.snapshot !== null &&
+				projects.length === 0),
 		isWorkspaceHydrating:
 			workspaceSnapshotStore !== undefined &&
 			workspaceSnapshotStore.snapshot === null,
