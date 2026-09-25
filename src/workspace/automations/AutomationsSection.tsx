@@ -7,6 +7,11 @@
  * person creates, edits, duplicates, enables, disables, deletes, and runs
  * automations, reads each one's run history, and works with the terminals the
  * automation space holds.
+ *
+ * It is laid out the way the Tabs section is: a full-width list of one-line
+ * rows under a header. Opening an automation, editing one, or opening one of
+ * the automation space's terminals replaces the list with that page, and a
+ * back link returns to it.
  */
 
 import type {
@@ -14,8 +19,8 @@ import type {
 	AutomationDraft,
 	AutomationRunEntry,
 } from '@terminay/client-core';
-import { Play, Plus, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Play, Plus, SquareTerminal } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceConnectionContext } from '../../shared/connections/connectionRegistry';
 import {
 	isReservedWorkspaceProject,
@@ -43,6 +48,7 @@ import {
 	selectAutomationServer,
 } from './automationsModel';
 import type { ServerAutomations } from './useServerAutomations';
+import '../workspaceDashboard.css';
 import './automations.css';
 
 /** One attached connection, with the context the section talks through. */
@@ -66,10 +72,11 @@ export type AutomationsSectionProps = Readonly<{
 
 const AUTOMATION_SPACE_KIND = 'automations';
 
-type Pane =
-	| Readonly<{ kind: 'none' }>
+type Page =
+	| Readonly<{ kind: 'list' }>
 	| Readonly<{ kind: 'automation'; automationId: string; runId?: string }>
-	| Readonly<{ kind: 'edit'; form: AutomationForm }>;
+	| Readonly<{ kind: 'edit'; form: AutomationForm }>
+	| Readonly<{ kind: 'terminal'; panelId: string }>;
 
 function formatTime(at: number, now: number): string {
 	const date = new Date(at);
@@ -151,22 +158,69 @@ function OutcomeBadge({ run }: Readonly<{ run: AutomationRunEntry }>) {
 		<span
 			className={`automations-outcome automations-outcome--${outcome.tone}`}
 			data-terminay-automation-outcome={run.outcome ?? run.status}
+			title={outcome.label}
 		>
 			{outcome.label}
 		</span>
 	);
 }
 
+/** The header every page of the section shares, styled as the Tabs header. */
+function PageHeader({
+	children,
+	onBack,
+	subtitle,
+	title,
+}: Readonly<{
+	title: string;
+	subtitle?: ReactNode;
+	onBack?: () => void;
+	children?: ReactNode;
+}>) {
+	return (
+		<header className="workspace-dashboard__header automations-header">
+			<div className="workspace-dashboard__header-top">
+				<div className="workspace-dashboard__heading-box automations-header__heading-box">
+					{onBack === undefined ? null : (
+						<button
+							type="button"
+							className="automations-crumb"
+							onClick={onBack}
+							data-terminay-automations-back="true"
+						>
+							<ChevronLeft size={13} aria-hidden="true" />
+							Automations
+						</button>
+					)}
+					<h2 className="workspace-dashboard__heading automations-header__title">
+						{title}
+					</h2>
+					{subtitle === undefined ? null : (
+						<p className="workspace-dashboard__subheading automations-header__subtitle">
+							{subtitle}
+						</p>
+					)}
+				</div>
+				{children === undefined ? null : (
+					<div className="workspace-dashboard__controls">{children}</div>
+				)}
+			</div>
+		</header>
+	);
+}
+
 function RunDetail({
 	context,
+	onOpenTerminal,
 	onStop,
 	run,
-	now,
+	terminals,
 }: Readonly<{
 	context?: WorkspaceConnectionContext;
 	run: AutomationRunEntry;
-	now: number;
+	terminals: readonly AutomationSpaceTerminal[];
 	onStop: (runId: string) => void;
+	onOpenTerminal: (panelId: string) => void;
 }>) {
 	const [revealError, setRevealError] = useState<string>();
 	return (
@@ -175,22 +229,15 @@ function RunDetail({
 			data-terminay-automation-run-detail={run.runId}
 			aria-label="Run detail"
 		>
-			<dl className="automations-run-detail__facts">
+			<dl className="automations-facts">
 				<dt>Outcome</dt>
 				<dd>
 					<OutcomeBadge run={run} />
-				</dd>
-				<dt>Started</dt>
-				<dd>
-					{formatTime(run.startedAt, now)} ·{' '}
-					{run.startedBy === 'user' ? 'by you' : 'by its trigger'}
 				</dd>
 				<dt>Exit code</dt>
 				<dd data-terminay-automation-run-exit-code="true">
 					{run.exitCode ?? '—'}
 				</dd>
-				<dt>Duration</dt>
-				<dd>{formatDuration(run.durationMs)}</dd>
 				{run.subject === undefined ? null : (
 					<>
 						<dt>Subject</dt>
@@ -207,7 +254,7 @@ function RunDetail({
 				)}
 				{run.suppressedEvents > 0 ? (
 					<>
-						<dt>Suppressed</dt>
+						<dt>Cooldown</dt>
 						<dd>
 							{run.suppressedEvents} repeated{' '}
 							{run.suppressedEvents === 1 ? 'event' : 'events'} during the
@@ -222,44 +269,56 @@ function RunDetail({
 					</>
 				)}
 			</dl>
-			<div className="automations-run-detail__actions">
-				{run.status === 'running' ? (
-					<button
-						type="button"
-						className="automations-button"
-						onClick={() => onStop(run.runId)}
-					>
-						Stop run
-					</button>
-				) : null}
-				{run.recordingId === undefined ? null : (
-					<button
-						type="button"
-						className="automations-button"
-						data-terminay-automation-run-recording={run.recordingId}
-						onClick={() => {
-							const recordingId = run.recordingId;
-							if (recordingId === undefined) return;
-							setRevealError(undefined);
-							void context?.recordingsClient
-								?.reveal(recordingId)
-								.catch((error: unknown) =>
-									setRevealError(refusalMessage(error)),
-								);
-						}}
-					>
-						Show recording
-					</button>
-				)}
-			</div>
+			{run.status === 'running' || run.recordingId !== undefined ? (
+				<div className="automations-run-detail__actions">
+					{run.status === 'running' ? (
+						<button
+							type="button"
+							className="automations-button"
+							onClick={() => onStop(run.runId)}
+						>
+							Stop run
+						</button>
+					) : null}
+					{run.recordingId === undefined ? null : (
+						<button
+							type="button"
+							className="automations-button"
+							data-terminay-automation-run-recording={run.recordingId}
+							onClick={() => {
+								const recordingId = run.recordingId;
+								if (recordingId === undefined) return;
+								setRevealError(undefined);
+								void context?.recordingsClient
+									?.reveal(recordingId)
+									.catch((error: unknown) =>
+										setRevealError(refusalMessage(error)),
+									);
+							}}
+						>
+							Show recording
+						</button>
+					)}
+				</div>
+			) : null}
 			{revealError === undefined ? null : (
 				<p className="automations-error" role="alert">
 					{revealError}
 				</p>
 			)}
-			<h4 className="automations-subheading">Output</h4>
+			{terminals.length === 0 ? null : (
+				<div className="automations-run-detail__terminals">
+					{terminals.map((terminal) => (
+						<TerminalRow
+							key={terminal.panelId}
+							terminal={terminal}
+							onOpen={onOpenTerminal}
+						/>
+					))}
+				</div>
+			)}
 			{run.outputTail === undefined || run.outputTail.length === 0 ? (
-				<p className="automations-muted">
+				<p className="automations-muted automations-run-detail__no-output">
 					{run.status === 'running'
 						? 'The output is kept when the run ends.'
 						: 'No output was kept for this run.'}
@@ -273,6 +332,40 @@ function RunDetail({
 				</pre>
 			)}
 		</section>
+	);
+}
+
+function TerminalRow({
+	detail,
+	onOpen,
+	terminal,
+}: Readonly<{
+	terminal: AutomationSpaceTerminal;
+	detail?: string;
+	onOpen: (panelId: string) => void;
+}>) {
+	const running = terminal.status === 'running';
+	return (
+		<button
+			type="button"
+			className="workspace-dashboard__row automations-terminal-row"
+			data-terminay-automation-terminal={terminal.sessionId}
+			onClick={() => onOpen(terminal.panelId)}
+		>
+			<span
+				className={`automations-dot${running ? ' automations-dot--running' : ''}`}
+				aria-hidden="true"
+			/>
+			<SquareTerminal
+				size={13}
+				className="workspace-dashboard__kind"
+				aria-hidden="true"
+			/>
+			<span className="workspace-dashboard__title">{terminal.title}</span>
+			<span className="workspace-dashboard__row-detail">
+				{[running ? 'Running' : 'Exited', detail].filter(Boolean).join(' · ')}
+			</span>
+		</button>
 	);
 }
 
@@ -293,87 +386,53 @@ export function AutomationsSection({
 	const context = server?.context;
 	const data = serverId === undefined ? undefined : automations.get(serverId);
 	const { space, subjects } = useAutomationSpace(context);
-	const [pane, setPane] = useState<Pane>({ kind: 'none' });
+	const [page, setPage] = useState<Page>({ kind: 'list' });
 	const [actionError, setActionError] = useState<string>();
 	const [confirmingDelete, setConfirmingDelete] = useState<string>();
 	const [choosingSubject, setChoosingSubject] = useState<string>();
 	const [subjectSessionId, setSubjectSessionId] = useState('');
-	const [selectedTerminal, setSelectedTerminal] = useState<string>();
+
+	const go = useCallback((next: Page) => {
+		setActionError(undefined);
+		setConfirmingDelete(undefined);
+		setChoosingSubject(undefined);
+		setPage(next);
+	}, []);
 
 	// A request from the overview picks the server, then what to show on it.
 	useEffect(() => {
 		if (focus === undefined) return;
 		const { target } = focus;
-		setActionError(undefined);
 		switch (target.kind) {
 			case 'list':
-				setPane({ kind: 'none' });
+				go({ kind: 'list' });
 				return;
 			case 'create':
-				setPane({ kind: 'edit', form: emptyAutomationForm() });
+				go({ kind: 'edit', form: emptyAutomationForm() });
 				return;
 			case 'automation':
 				setRequestedServer(target.serverId);
-				setPane({ kind: 'automation', automationId: target.automationId });
+				go({ kind: 'automation', automationId: target.automationId });
 				return;
 			case 'run':
 				setRequestedServer(target.serverId);
-				setPane({
+				go({
 					kind: 'automation',
 					automationId: target.automationId,
 					runId: target.runId,
 				});
 				return;
 		}
-	}, [focus]);
+	}, [focus, go]);
 
 	const selectServer = (next: string) => {
 		setRequestedServer(next);
-		setPane({ kind: 'none' });
-		setActionError(undefined);
+		go({ kind: 'list' });
 	};
 
 	const list = data?.automations ?? [];
 	const runs = data?.runs ?? [];
 	const latest = useMemo(() => latestRuns(runs), [runs]);
-	const selectedAutomation =
-		pane.kind === 'automation'
-			? list.find((automation) => automation.id === pane.automationId)
-			: undefined;
-	const history = useMemo(
-		() =>
-			selectedAutomation === undefined
-				? []
-				: runs.filter((run) => run.automationId === selectedAutomation.id),
-		[runs, selectedAutomation],
-	);
-	const selectedRun =
-		pane.kind === 'automation'
-			? (history.find((run) => run.runId === pane.runId) ?? undefined)
-			: undefined;
-	// Running terminals mount as live terminals. A kept terminal whose process
-	// exited has nothing to type into; it is shown read-only on its own, with
-	// its retained output, until a person closes it.
-	const liveTerminals = useMemo(
-		() =>
-			(space?.terminals ?? []).filter(
-				(terminal) => terminal.status === 'running',
-			),
-		[space?.terminals],
-	);
-	const shownExitedTerminal = useMemo(() => {
-		const exited = (space?.terminals ?? []).filter(
-			(terminal) => terminal.status !== 'running',
-		);
-		return (
-			exited.find((terminal) => terminal.panelId === selectedTerminal) ??
-			(liveTerminals.some((terminal) => terminal.panelId === selectedTerminal)
-				? undefined
-				: liveTerminals.length === 0
-					? exited[0]
-					: undefined)
-		);
-	}, [liveTerminals, selectedTerminal, space?.terminals]);
 	const groups = useMemo(
 		() => groupSpaceTerminals(space?.terminals ?? [], runs),
 		[runs, space?.terminals],
@@ -407,12 +466,21 @@ export function AutomationsSection({
 					)
 				: state.automations.find((automation) => automation.id === draft.id);
 		data.refresh();
-		setPane(
+		go(
 			saved === undefined
-				? { kind: 'none' }
+				? { kind: 'list' }
 				: { kind: 'automation', automationId: saved.id },
 		);
 	};
+
+	const setEnabled = (automation: AutomationDefinition, enabled: boolean) =>
+		void perform(async () => {
+			if (data === undefined) return;
+			await data.client.setEnabled(automation.id, enabled, {
+				expectedRevision: data.revision,
+			});
+			data.refresh();
+		});
 
 	const runNow = (automation: AutomationDefinition, sessionId?: string) =>
 		perform(async () => {
@@ -433,7 +501,7 @@ export function AutomationsSection({
 			);
 			setChoosingSubject(undefined);
 			data.refresh();
-			setPane({
+			setPage({
 				kind: 'automation',
 				automationId: automation.id,
 				runId: run.runId,
@@ -443,137 +511,311 @@ export function AutomationsSection({
 	const closeTerminal = (panelId: string) =>
 		void perform(async () => {
 			await context?.workspaceSnapshotStore?.closePanel(panelId);
+			setPage((current) =>
+				current.kind === 'terminal' && current.panelId === panelId
+					? { kind: 'list' }
+					: current,
+			);
 		});
 
-	const renderDetail = () => {
-		if (data === undefined) return null;
-		if (pane.kind === 'edit')
-			return (
+	const errorBanner =
+		actionError === undefined ? null : (
+			<p
+				className="automations-banner automations-banner--error"
+				role="alert"
+				data-terminay-automation-action-error="true"
+			>
+				{actionError}
+			</p>
+		);
+
+	const serverSelector = selection.showsSelector ? (
+		<label className="automations-server">
+			<span className="automations-server__label">Server</span>
+			<select
+				className="automation-editor__input automations-server__select"
+				value={serverId ?? ''}
+				onChange={(event) => selectServer(event.target.value)}
+				data-terminay-automations-server-selector="true"
+			>
+				{selection.choices.map((choice) => (
+					<option key={choice.serverId} value={choice.serverId}>
+						{choice.label}
+					</option>
+				))}
+			</select>
+		</label>
+	) : null;
+
+	const newButton = (
+		<button
+			type="button"
+			className="automations-button automations-button--primary"
+			data-terminay-automation-new="true"
+			onClick={() => go({ kind: 'edit', form: emptyAutomationForm() })}
+		>
+			<Plus size={13} aria-hidden="true" />
+			New automation
+		</button>
+	);
+
+	const listSubtitle =
+		'Commands, Macros, and text that run on a schedule or when something happens.';
+
+	// --- Pages that do not need the server's list -----------------------------
+
+	if (selection.selected === undefined)
+		return (
+			<div className="home-section home-automations" data-terminay-automations>
+				<PageHeader title="Automations" subtitle={listSubtitle} />
+				<p
+					className="workspace-dashboard__empty automations-empty"
+					data-terminay-automations-unsupported="true"
+				>
+					{selection.unsupported.length === 0
+						? 'Automations appear here once a server is connected.'
+						: `${selection.unsupported.map((choice) => choice.label).join(', ')} ${selection.unsupported.length === 1 ? 'does' : 'do'} not support automations. Update Terminay Server there to use them.`}
+				</p>
+			</div>
+		);
+
+	if (data === undefined || data.status !== 'ready')
+		return (
+			<div className="home-section home-automations" data-terminay-automations>
+				<PageHeader title="Automations" subtitle={listSubtitle}>
+					{serverSelector}
+				</PageHeader>
+				{data?.status === 'error' ? (
+					<div className="workspace-dashboard__empty automations-empty" role="alert">
+						<p>{data.error ?? 'This server’s automations are unavailable.'}</p>
+						<button
+							type="button"
+							className="automations-button"
+							onClick={data.refresh}
+						>
+							Try again
+						</button>
+					</div>
+				) : (
+					<p className="workspace-dashboard__empty automations-empty" role="status">
+						Loading automations…
+					</p>
+				)}
+			</div>
+		);
+
+	// --- Editor ------------------------------------------------------------------
+
+	if (page.kind === 'edit') {
+		const back = () =>
+			go(
+				page.form.id === undefined
+					? { kind: 'list' }
+					: { kind: 'automation', automationId: page.form.id },
+			);
+		return (
+			<div className="home-section home-automations" data-terminay-automations>
 				<AutomationEditor
-					key={pane.form.id ?? 'new'}
-					initial={pane.form}
+					key={page.form.id ?? 'new'}
+					initial={page.form}
 					now={now}
 					{...(data.timeZone === undefined ? {} : { timeZone: data.timeZone })}
-					onCancel={() =>
-						setPane(
-							pane.form.id === undefined
-								? { kind: 'none' }
-								: { kind: 'automation', automationId: pane.form.id },
-						)
-					}
+					onCancel={back}
 					onSave={save}
+					renderHeader={(controls) => (
+						<PageHeader
+							title={
+								page.form.id === undefined
+									? 'New automation'
+									: `Edit ${page.form.name || 'automation'}`
+							}
+							onBack={back}
+						>
+							{controls}
+						</PageHeader>
+					)}
 					{...(context?.applicationClient === undefined
 						? {}
 						: { applicationClient: context.applicationClient })}
 				/>
+			</div>
+		);
+	}
+
+	// --- One automation space terminal --------------------------------------------
+
+	if (page.kind === 'terminal' && space !== undefined) {
+		const terminal = space.terminals.find(
+			(candidate) => candidate.panelId === page.panelId,
+		);
+		if (terminal !== undefined && context !== undefined && serverId !== undefined) {
+			const group = groups.find((candidate) =>
+				candidate.terminals.some((item) => item.panelId === terminal.panelId),
 			);
-		if (selectedAutomation === undefined)
+			const running = space.terminals.filter(
+				(candidate) => candidate.status === 'running',
+			);
 			return (
-				<div className="automations-placeholder">
-					<p className="automations-muted">
-						{list.length === 0
-							? 'Automations run a command, a Macro, or some text on a schedule or when something happens in your workspace.'
-							: 'Choose an automation to see its runs.'}
-					</p>
-					{list.length === 0 ? (
+				<div
+					className="home-section home-automations home-automations--terminal"
+					data-terminay-automations
+				>
+					<PageHeader
+						title={terminal.title}
+						subtitle={
+							group?.run === undefined
+								? 'Automation terminal'
+								: `${automationName(group.run.automationId)} · ${formatTime(group.run.startedAt, now)}`
+						}
+						onBack={() => go({ kind: 'list' })}
+					>
 						<button
 							type="button"
-							className="automations-button automations-button--primary"
-							onClick={() =>
-								setPane({ kind: 'edit', form: emptyAutomationForm() })
-							}
+							className="automations-button"
+							aria-label={`Close ${terminal.title}`}
+							onClick={() => closeTerminal(terminal.panelId)}
 						>
-							Create an automation
+							Close terminal
 						</button>
-					) : null}
+					</PageHeader>
+					{errorBanner}
+					<div className="automations-terminal-page">
+						{terminal.status === 'running' ? (
+							<AutomationTerminalView
+								context={context}
+								serverId={serverId}
+								projectId={space.projectId}
+								projectRoot={space.root}
+								terminals={running}
+								selectedPanelId={terminal.panelId}
+								onSelect={(panelId) => setPage({ kind: 'terminal', panelId })}
+								onClose={closeTerminal}
+							/>
+						) : (
+							<ExitedAutomationTerminalView
+								key={terminal.panelId}
+								context={context}
+								serverId={serverId}
+								projectId={space.projectId}
+								terminal={terminal}
+								onClose={closeTerminal}
+							/>
+						)}
+					</div>
 				</div>
 			);
+		}
+	}
+
+	// --- One automation ---------------------------------------------------------
+
+	const selectedAutomation =
+		page.kind === 'automation'
+			? list.find((automation) => automation.id === page.automationId)
+			: undefined;
+
+	if (page.kind === 'automation' && selectedAutomation !== undefined) {
 		const automation = selectedAutomation;
-		const next = nextRunAt(automation, now, data?.timeZone);
-		const needsSubject = hasTerminalSubject(automation.trigger) &&
+		const history = runs.filter((run) => run.automationId === automation.id);
+		const next = nextRunAt(automation, now, data.timeZone);
+		const needsSubject =
+			hasTerminalSubject(automation.trigger) &&
 			automation.action.kind !== 'runCommand';
+		const runTerminals = (run: AutomationRunEntry) =>
+			groups.find((group) => group.run?.runId === run.runId)?.terminals ?? [];
 		return (
-			<section
-				className="automations-detail"
+			<div
+				className="home-section home-automations"
+				data-terminay-automations
 				data-terminay-automation-detail={automation.id}
-				aria-label={automation.name}
 			>
-				<header className="automations-detail__header">
-					<div className="automations-detail__heading">
-						<h3 className="automations-detail__title">{automation.name}</h3>
-						<p className="automations-muted">
+				<PageHeader
+					title={automation.name}
+					onBack={() => go({ kind: 'list' })}
+					subtitle={
+						<>
 							{describeTrigger(automation.trigger)} ·{' '}
 							{ACTION_LABELS[automation.action.kind]}
 							{automation.action.kind === 'runCommand' ? (
 								<>
-									{': '}
-									<code>{automation.action.command}</code>
+									{' '}
+									<code className="automations-code">
+										{automation.action.command}
+									</code>
 								</>
 							) : null}
-						</p>
-						<p className="automations-muted">
-							{automation.enabled
-								? next === undefined
-									? 'Enabled'
-									: `Enabled · next run ${formatTime(next, now)}`
-								: 'Disabled'}
-						</p>
-					</div>
-					<div className="automations-detail__actions">
-						<button
-							type="button"
-							className="automations-button automations-button--primary"
-							data-terminay-automation-run-now="true"
-							onClick={() => {
-								if (needsSubject) {
-									setChoosingSubject(automation.id);
-									setSubjectSessionId(subjects[0]?.sessionId ?? '');
-									return;
-								}
-								void runNow(automation);
-							}}
-						>
-							<Play size={13} aria-hidden="true" /> Run now
-						</button>
-						<button
-							type="button"
-							className="automations-button"
-							onClick={() =>
-								setPane({ kind: 'edit', form: formFromAutomation(automation) })
+						</>
+					}
+				>
+					<label
+						className="automations-switch automations-switch--labelled"
+						title={automation.enabled ? 'Disable' : 'Enable'}
+					>
+						<input
+							type="checkbox"
+							role="switch"
+							aria-checked={automation.enabled}
+							aria-label={`${automation.name} enabled`}
+							checked={automation.enabled}
+							onChange={(event) => setEnabled(automation, event.target.checked)}
+						/>
+						<span aria-hidden="true" className="automations-switch__track" />
+						<span className="automations-switch__text">
+							{automation.enabled ? 'Enabled' : 'Disabled'}
+						</span>
+					</label>
+					<button
+						type="button"
+						className="automations-button automations-button--primary"
+						data-terminay-automation-run-now="true"
+						onClick={() => {
+							if (needsSubject) {
+								setChoosingSubject(automation.id);
+								setSubjectSessionId(subjects[0]?.sessionId ?? '');
+								return;
 							}
-						>
-							Edit
-						</button>
-						<button
-							type="button"
-							className="automations-button"
-							onClick={() =>
-								setPane({
-									kind: 'edit',
-									form: formFromAutomation(automation, true),
-								})
-							}
-						>
-							Duplicate
-						</button>
-						<button
-							type="button"
-							className="automations-button automations-button--danger"
-							onClick={() => setConfirmingDelete(automation.id)}
-						>
-							Delete
-						</button>
-					</div>
-				</header>
+							void runNow(automation);
+						}}
+					>
+						<Play size={12} aria-hidden="true" />
+						Run now
+					</button>
+					<button
+						type="button"
+						className="automations-button"
+						onClick={() =>
+							go({ kind: 'edit', form: formFromAutomation(automation) })
+						}
+					>
+						Edit
+					</button>
+					<button
+						type="button"
+						className="automations-button"
+						onClick={() =>
+							go({ kind: 'edit', form: formFromAutomation(automation, true) })
+						}
+					>
+						Duplicate
+					</button>
+					<button
+						type="button"
+						className="automations-button automations-button--danger"
+						onClick={() => setConfirmingDelete(automation.id)}
+					>
+						Delete
+					</button>
+				</PageHeader>
+				{errorBanner}
 				{confirmingDelete === automation.id ? (
 					<div
-						className="automations-confirm"
+						className="automations-banner"
 						role="alertdialog"
 						aria-label="Delete automation"
 					>
-						<p>
+						<span>
 							Delete “{automation.name}”? Runs already in progress keep going.
-						</p>
+						</span>
 						<button
 							type="button"
 							className="automations-button automations-button--danger"
@@ -583,9 +825,8 @@ export function AutomationsSection({
 									await data.client.remove(automation.id, {
 										expectedRevision: data.revision,
 									});
-									setConfirmingDelete(undefined);
-									setPane({ kind: 'none' });
 									data.refresh();
+									go({ kind: 'list' });
 								})
 							}
 						>
@@ -601,13 +842,13 @@ export function AutomationsSection({
 					</div>
 				) : null}
 				{choosingSubject === automation.id ? (
-					<div className="automations-confirm" data-terminay-automation-subject-chooser>
+					<div className="automations-banner" data-terminay-automation-subject-chooser>
 						{subjects.length === 0 ? (
-							<p>This automation acts on a terminal, and there is none open.</p>
+							<span>This automation acts on a terminal, and none is open.</span>
 						) : (
 							<>
-								<label className="automations-inline-field">
-									Run on
+								<label className="automations-banner__field">
+									<span>Run on</span>
 									<select
 										className="automation-editor__input"
 										value={subjectSessionId}
@@ -639,341 +880,212 @@ export function AutomationsSection({
 						</button>
 					</div>
 				) : null}
-				<div className="automations-detail__runs">
-					<section className="automations-history" aria-label="Run history">
-						<h4 className="automations-subheading">Runs</h4>
-						{history.length === 0 ? (
-							<p className="automations-muted">No runs yet.</p>
-						) : (
-							<ul className="automations-history__list">
-								{history.map((run) => (
+				<div className="workspace-dashboard__list automations-body">
+					<div className="automations-group-head">
+						<span>Runs</span>
+						<span className="automations-group-head__meta">
+							{automation.enabled
+								? next === undefined
+									? ''
+									: `Next run ${formatTime(next, now)}`
+								: 'Disabled — runs only when you run it'}
+						</span>
+					</div>
+					{history.length === 0 ? (
+						<p className="workspace-dashboard__empty">No runs yet.</p>
+					) : (
+						<ul className="automations-runs" aria-label="Run history">
+							{history.map((run) => {
+								const open = run.runId === page.runId;
+								return (
 									<li key={run.runId}>
 										<button
 											type="button"
-											className={`automations-history__row${run.runId === selectedRun?.runId ? ' automations-history__row--selected' : ''}`}
-											aria-current={run.runId === selectedRun?.runId}
+											className={`workspace-dashboard__row automations-run-row${open ? ' automations-run-row--open' : ''}`}
+											aria-expanded={open}
 											data-terminay-automation-run={run.runId}
 											onClick={() =>
-												setPane({
+												setPage({
 													kind: 'automation',
 													automationId: automation.id,
-													runId: run.runId,
+													...(open ? {} : { runId: run.runId }),
 												})
 											}
 										>
+											<ChevronRight
+												size={12}
+												className="automations-run-row__chevron"
+												aria-hidden="true"
+											/>
 											<OutcomeBadge run={run} />
-											<span className="automations-history__time">
+											<span className="workspace-dashboard__title">
 												{formatTime(run.startedAt, now)}
 											</span>
-											<span className="automations-muted">
+											<span className="workspace-dashboard__row-detail">
 												{run.startedBy === 'user' ? 'Run by you' : 'Triggered'}
+												{run.durationMs === undefined
+													? ''
+													: ` · ${formatDuration(run.durationMs)}`}
 											</span>
 										</button>
+										{open ? (
+											<RunDetail
+												run={run}
+												terminals={runTerminals(run)}
+												onOpenTerminal={(panelId) =>
+													go({ kind: 'terminal', panelId })
+												}
+												onStop={(runId) =>
+													void perform(() => data.client.stop(runId))
+												}
+												{...(context === undefined ? {} : { context })}
+											/>
+										) : null}
 									</li>
-								))}
-							</ul>
-						)}
-					</section>
-					{selectedRun === undefined ? null : (
-						<RunDetail
-							run={selectedRun}
-							now={now}
-							onStop={(runId) =>
-								void perform(() => data.client.stop(runId))
-							}
-							{...(context === undefined ? {} : { context })}
-						/>
+								);
+							})}
+						</ul>
 					)}
 				</div>
-			</section>
+			</div>
 		);
-	};
+	}
+
+	// --- The list -------------------------------------------------------------
 
 	return (
 		<div className="home-section home-automations" data-terminay-automations>
-			<header className="home-section__header home-automations__header">
-				<div>
-					<h2 className="home-section__heading">Automations</h2>
-					<p className="home-section__subheading">
-						Rules that run on a schedule or when something happens in your
-						workspace.
-					</p>
-				</div>
-				<div className="home-automations__toolbar">
-					{selection.showsSelector ? (
-						<label className="server-selector home-automations__server">
-							<span className="server-selector__label">Server</span>
-							<select
-								className="server-selector__select automation-editor__input"
-								value={serverId ?? ''}
-								onChange={(event) => selectServer(event.target.value)}
-								data-terminay-automations-server-selector="true"
-							>
-								{selection.choices.map((choice) => (
-									<option key={choice.serverId} value={choice.serverId}>
-										{choice.label}
-									</option>
-								))}
-							</select>
-						</label>
-					) : null}
-					{data === undefined ? null : (
-						<>
-							<button
-								type="button"
-								className="automations-button automations-button--icon"
-								aria-label="Refresh automations"
-								title="Refresh"
-								onClick={data.refresh}
-							>
-								<RefreshCw size={13} aria-hidden="true" />
-							</button>
-							<button
-								type="button"
-								className="automations-button automations-button--primary"
-								data-terminay-automation-new="true"
-								onClick={() => {
-									setActionError(undefined);
-									setPane({ kind: 'edit', form: emptyAutomationForm() });
-								}}
-							>
-								<Plus size={13} aria-hidden="true" /> New automation
-							</button>
-						</>
-					)}
-				</div>
-			</header>
-
-			{selection.selected === undefined ? (
-				<div
-					className="automations-placeholder"
-					data-terminay-automations-unsupported="true"
-				>
-					<p>
-						{selection.unsupported.length === 0
-							? 'Automations appear here once a server is connected.'
-							: `${selection.unsupported.map((choice) => choice.label).join(', ')} ${selection.unsupported.length === 1 ? 'does' : 'do'} not support automations. Update Terminay Server there to use them.`}
-					</p>
-				</div>
-			) : data === undefined || data.status === 'loading' ? (
-				<p className="automations-placeholder automations-muted" role="status">
-					Loading automations…
+			<PageHeader title="Automations" subtitle={listSubtitle}>
+				{serverSelector}
+				{newButton}
+			</PageHeader>
+			{selection.unsupported.length > 0 ? (
+				<p className="automations-banner" data-terminay-automations-unsupported-note>
+					{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
+					{selection.unsupported.length === 1 ? 'does' : 'do'} not support
+					automations.
 				</p>
-			) : data.status === 'error' ? (
-				<div className="automations-placeholder" role="alert">
-					<p>{data.error ?? 'This server’s automations are unavailable.'}</p>
-					<button type="button" className="automations-button" onClick={data.refresh}>
-						Try again
-					</button>
-				</div>
-			) : (
-				<>
-					{selection.unsupported.length > 0 ? (
-						<p className="automations-note" data-terminay-automations-unsupported-note>
-							{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
-							{selection.unsupported.length === 1 ? 'does' : 'do'} not support
-							automations.
+			) : null}
+			{errorBanner}
+			<div className="workspace-dashboard__list automations-body">
+				{list.length === 0 ? (
+					<div className="workspace-dashboard__empty automations-empty">
+						<p>No automations yet.</p>
+						<p>
+							An automation runs a command, a Macro, or some text on a schedule
+							— every hour, say — or when something happens, like an agent
+							finishing or a terminal needing you.
 						</p>
-					) : null}
-					{actionError === undefined ? null : (
-						<p
-							className="automations-error"
-							role="alert"
-							data-terminay-automation-action-error="true"
+						<button
+							type="button"
+							className="automations-link"
+							onClick={() => go({ kind: 'edit', form: emptyAutomationForm() })}
 						>
-							{actionError}
-						</p>
-					)}
-					<div className="home-automations__body">
-						<section className="automations-list" aria-label="Automations">
-							{list.length === 0 ? (
-								<p className="automations-muted automations-list__empty">
-									No automations yet.
-								</p>
-							) : (
-								<ul className="automations-list__items">
-									{list.map((automation) => {
-										const next = nextRunAt(automation, now, data?.timeZone);
-										const last = latest.get(automation.id);
-										const selected =
-											(pane.kind === 'automation' &&
-												pane.automationId === automation.id) ||
-											(pane.kind === 'edit' && pane.form.id === automation.id);
-										return (
-											<li
-												key={automation.id}
-												className={`automations-row${selected ? ' automations-row--selected' : ''}${automation.enabled ? '' : ' automations-row--disabled'}`}
-												data-terminay-automation-row={automation.id}
-											>
-												<button
-													type="button"
-													className="automations-row__main"
-													aria-current={selected}
-													onClick={() => {
-														setActionError(undefined);
-														setPane({
-															kind: 'automation',
-															automationId: automation.id,
-														});
-													}}
-												>
-													<span
-														className="automations-row__name"
-														data-terminay-automation-name="true"
-													>
-														{automation.name}
-													</span>
-													<span
-														className="automations-row__trigger"
-														data-terminay-automation-trigger="true"
-													>
-														{describeTrigger(automation.trigger)}
-													</span>
-													<span className="automations-row__meta">
-														{next === undefined ? null : (
-															<span data-terminay-automation-next-run="true">
-																Next {formatTime(next, now)}
-															</span>
-														)}
-														{last === undefined ? (
-															<span className="automations-muted">Never run</span>
-														) : (
-															<OutcomeBadge run={last} />
-														)}
-													</span>
-												</button>
-												<label
-													className="automations-switch"
-													title={automation.enabled ? 'Disable' : 'Enable'}
-												>
-													<input
-														type="checkbox"
-														role="switch"
-														aria-checked={automation.enabled}
-														aria-label={`${automation.name} enabled`}
-														checked={automation.enabled}
-														data-terminay-automation-enabled="true"
-														onChange={(event) => {
-															const enabled = event.target.checked;
-															void perform(async () => {
-																await data.client.setEnabled(
-																	automation.id,
-																	enabled,
-																	{ expectedRevision: data.revision },
-																);
-																data.refresh();
-															});
-														}}
-													/>
-													<span aria-hidden="true" className="automations-switch__track" />
-												</label>
-											</li>
-										);
-									})}
-								</ul>
-							)}
-						</section>
-						<div className="automations-pane">{renderDetail()}</div>
+							Create your first automation
+						</button>
 					</div>
+				) : (
+					<ul className="automations-list" aria-label="Automations">
+						{list.map((automation) => {
+							const next = nextRunAt(automation, now, data.timeZone);
+							const last = latest.get(automation.id);
+							return (
+								<li
+									key={automation.id}
+									className={`automations-row${automation.enabled ? '' : ' automations-row--disabled'}`}
+									data-terminay-automation-row={automation.id}
+								>
+									<label
+										className="automations-switch"
+										title={automation.enabled ? 'Disable' : 'Enable'}
+									>
+										<input
+											type="checkbox"
+											role="switch"
+											aria-checked={automation.enabled}
+											aria-label={`${automation.name} enabled`}
+											checked={automation.enabled}
+											data-terminay-automation-enabled="true"
+											onChange={(event) =>
+												setEnabled(automation, event.target.checked)
+											}
+										/>
+										<span aria-hidden="true" className="automations-switch__track" />
+									</label>
+									<button
+										type="button"
+										className="workspace-dashboard__row automations-row__main"
+										onClick={() =>
+											go({ kind: 'automation', automationId: automation.id })
+										}
+									>
+										<span
+											className="workspace-dashboard__title automations-row__name"
+											data-terminay-automation-name="true"
+										>
+											{automation.name}
+										</span>
+										<span
+											className="workspace-dashboard__row-detail"
+											data-terminay-automation-trigger="true"
+										>
+											{describeTrigger(automation.trigger)}
+										</span>
+										<span className="automations-row__next">
+											{automation.enabled && next !== undefined ? (
+												<span data-terminay-automation-next-run="true">
+													Next {formatTime(next, now)}
+												</span>
+											) : null}
+										</span>
+										<span className="automations-row__last">
+											{last === undefined ? (
+												<span className="automations-muted">Never run</span>
+											) : (
+												<OutcomeBadge run={last} />
+											)}
+										</span>
+									</button>
+								</li>
+							);
+						})}
+					</ul>
+				)}
 
+				{space === undefined || space.terminals.length === 0 ? null : (
 					<section
 						className="automations-terminals"
 						aria-label="Automation terminals"
 						data-terminay-automation-terminals="true"
 					>
-						<h3 className="automations-subheading">Automation terminals</h3>
-						{space === undefined || space.terminals.length === 0 ? (
-							<p className="automations-muted">
-								Terminals that automations open appear here. They are not
-								part of any project.
-							</p>
-						) : (
-							<div className="automations-terminals__layout">
-								<ul className="automations-terminals__groups">
-									{groups.map((group) => (
-										<li
-											key={group.run?.runId ?? 'unowned'}
-											className="automations-terminals__group"
-											data-terminay-automation-terminal-group={
-												group.run?.runId ?? 'other'
-											}
-										>
-											<p className="automations-terminals__group-title">
-												{group.run === undefined
-													? 'Other automation terminals'
-													: `${automationName(group.run.automationId)} · ${formatTime(group.run.startedAt, now)}`}
-											</p>
-											<ul className="automations-terminals__items">
-												{group.terminals.map((terminal) => (
-													<li
-														key={terminal.panelId}
-														className={`automations-terminals__item${selectedTerminal === terminal.panelId ? ' automations-terminals__item--selected' : ''}`}
-														data-terminay-automation-terminal={terminal.sessionId}
-													>
-														<button
-															type="button"
-															className="automations-terminals__open"
-															onClick={() => setSelectedTerminal(terminal.panelId)}
-														>
-															{terminal.title}
-															<span className="automations-muted">
-																{terminal.status === 'running' ? 'Running' : 'Exited'}
-															</span>
-														</button>
-														<button
-															type="button"
-															className="automations-button automations-button--quiet"
-															aria-label={`Close ${terminal.title}`}
-															onClick={() => closeTerminal(terminal.panelId)}
-														>
-															Close
-														</button>
-													</li>
-												))}
-											</ul>
-										</li>
-									))}
-								</ul>
-								{context === undefined || serverId === undefined ? null : (
-									<div className="automations-terminals__views">
-										{shownExitedTerminal === undefined ? null : (
-											<ExitedAutomationTerminalView
-												key={shownExitedTerminal.panelId}
-												context={context}
-												serverId={serverId}
-												projectId={space.projectId}
-												terminal={shownExitedTerminal}
-												onClose={closeTerminal}
-											/>
-										)}
-										{liveTerminals.length === 0 ? null : (
-											// Kept mounted while an exited terminal is shown, so the
-											// live terminals stay attached.
-											<div
-												className="automations-terminals__live"
-												hidden={shownExitedTerminal !== undefined}
-											>
-												<AutomationTerminalView
-													context={context}
-													serverId={serverId}
-													projectId={space.projectId}
-													projectRoot={space.root}
-													terminals={liveTerminals}
-													onSelect={setSelectedTerminal}
-													onClose={closeTerminal}
-													{...(selectedTerminal === undefined
-														? {}
-														: { selectedPanelId: selectedTerminal })}
-												/>
-											</div>
-										)}
-									</div>
-								)}
+						<div className="automations-group-head">
+							<span>Terminals</span>
+							<span className="automations-group-head__meta">
+								Opened by automations · not part of any project
+							</span>
+						</div>
+						{groups.map((group) => (
+							<div
+								key={group.run?.runId ?? 'unowned'}
+								data-terminay-automation-terminal-group={group.run?.runId ?? 'other'}
+							>
+								{group.terminals.map((terminal) => (
+									<TerminalRow
+										key={terminal.panelId}
+										terminal={terminal}
+										detail={
+											group.run === undefined
+												? undefined
+												: `${automationName(group.run.automationId)} · ${formatTime(group.run.startedAt, now)}`
+										}
+										onOpen={(panelId) => go({ kind: 'terminal', panelId })}
+									/>
+								))}
 							</div>
-						)}
+						))}
 					</section>
-				</>
-			)}
+				)}
+			</div>
 		</div>
 	);
 }

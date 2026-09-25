@@ -221,6 +221,12 @@
 	font-size: 12.5px;
 }
 
+.home-widget__link.home-widget__count {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+}
+
 .home-widget__link:hover {
 	text-decoration: underline;
 }
