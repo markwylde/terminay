@@ -140,6 +140,7 @@ export {
 	validIgnorePattern,
 } from './fileService/index.js';
 export * from './gitService/index.js';
+export * from './worktreeInsights/index.js';
 export * from './languageService/index.js';
 export * from './macroService/index.js';
 export * from './mdxRuntime/index.js';

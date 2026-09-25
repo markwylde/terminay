@@ -2,6 +2,7 @@ import {
 	ExtensionsClient,
 	TerminayClientFacade,
 	type TerminayClient,
+	TerminayGitClient,
 } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ExtensionManager, type ExtensionSummaryDto } from './ExtensionManager';
@@ -24,12 +25,29 @@ export function ExtensionSettingsSection({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState('');
 	const [announcement, setAnnouncement] = useState('');
+	const [suppressedSignInPrompts, setSuppressedSignInPrompts] = useState<ReadonlySet<string>>(() => new Set());
 	const client = useMemo(
 		() => applicationClient === undefined
 			? undefined
 			: new ExtensionsClient(new TerminayClientFacade(applicationClient)),
 		[applicationClient],
 	);
+	const gitClient = useMemo(
+		() => applicationClient === undefined
+			? undefined
+			: new TerminayGitClient(new TerminayClientFacade(applicationClient)),
+		[applicationClient],
+	);
+	const refreshSignInPrompts = useCallback(async () => {
+		try {
+			const result = await gitClient?.insightPreferences();
+			const list = typeof result === 'object' && result !== null && !Array.isArray(result) ? result.suppressedExtensions : undefined;
+			setSuppressedSignInPrompts(new Set(Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : []));
+		} catch {
+			/* a server without worktree insights has nothing to switch */
+		}
+	}, [gitClient]);
+	useEffect(() => { void refreshSignInPrompts(); }, [refreshSignInPrompts]);
 	const refresh = useCallback(async () => {
 		if (client === undefined) {
 			setError('Connect to a Terminay Server to manage its extensions.');
@@ -90,6 +108,13 @@ export function ExtensionSettingsSection({
 					onAction={(action, id) => run(() => client!.action(action, id, revision), `Extension ${action} completed.`)}
 					harnessSwitches={harnessSwitches}
 					onHarnessSwitchChange={onHarnessSwitchChange}
+					suppressedSignInPrompts={suppressedSignInPrompts}
+					onSignInPromptsChange={gitClient === undefined ? undefined : (extensionId, enabled) => {
+						void run(async () => {
+							await gitClient.setInsightPrompts(extensionId, enabled);
+							await refreshSignInPrompts();
+						}, enabled ? 'Sign-in prompts switched on.' : 'Sign-in prompts switched off.');
+					}}
 			/>
 			{busy ? <div className="settings-status-message" role="status"><progress /> Working on {authorityLabel}…</div> : null}
 			{announcement ? <div className="settings-status-message" role="status">{announcement}</div> : null}
