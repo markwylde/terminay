@@ -2,6 +2,7 @@ import {
 	AdmonitionDirectiveDescriptor,
 	BlockTypeSelect,
 	BoldItalicUnderlineToggles,
+	ButtonWithTooltip,
 	CodeToggle,
 	CreateLink,
 	codeBlockPlugin,
@@ -110,10 +111,11 @@ export const softLineBreakPlugin = realmPlugin({
 
 /**
  * Built once per Documentation editor instance, so each can load the images
- * its own document references.
+ * its own document references and offer View source for its own panel.
  */
 export const createDocumentationEditorPlugins = (
 	imagePreviewHandler?: ImagePreviewHandler,
+	onViewSource?: () => void,
 ) => [
 	softLineBreakPlugin(),
 	headingsPlugin(),
@@ -161,6 +163,15 @@ export const createDocumentationEditorPlugins = (
 				<InsertAdmonition />
 				<InsertFrontmatter />
 				<InsertThematicBreak />
+				{onViewSource ? (
+					<ButtonWithTooltip
+						className="documentation-editor__view-source"
+						onClick={onViewSource}
+						title="View source"
+					>
+						View source
+					</ButtonWithTooltip>
+				) : null}
 			</DiffSourceToggleWrapper>
 		),
 	}),

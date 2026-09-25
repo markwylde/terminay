@@ -41,6 +41,18 @@
 	background: rgba(9, 11, 14, 0.55);
 }
 
+.file-panel__toolbar-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+
+.file-panel__open-as-document {
+	margin-left: auto;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .file-panel__body {
 	flex: 1;
 	min-height: 0;
@@ -181,6 +193,15 @@
 .documentation-editor__surface .mdxeditor-toolbar [role="combobox"] {
 	min-height: 30px;
 	border-radius: 6px;
+}
+
+.documentation-editor__surface .mdxeditor-toolbar .documentation-editor__view-source {
+	margin-left: auto;
+	padding: 0 10px;
+	border: 1px solid #303846;
+	font-size: 13px;
+	font-weight: 600;
+	white-space: nowrap;
 }
 
 .documentation-editor__surface .mdxeditor-toolbar [role="combobox"] {
