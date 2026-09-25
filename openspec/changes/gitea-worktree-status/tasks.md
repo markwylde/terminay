@@ -48,3 +48,4 @@
 - [x] 8.1 Worktrees panel as an aligned table (name, Δ, PR, CI ring, ⋮), row expands to branch, pull request, checks, and changed files; PR and CI columns only when some worktree has properties — verified by typecheck, lint, and a static render of the real component
 - [x] 8.2 The row's upload button becomes a vertical-ellipsis actions button opening the worktree context menu, whose first item is "Commit & push with AI…" — verified by the updated `e2e/file-explorer-sidebar.spec.ts` push-menu test
 - [x] 8.3 Rows return to two lines (full-width name and ⋮, then Δ, PR, and CI in aligned slots) so worktree names stay readable — verified by typecheck, lint, and a static render of the real component
+- [x] 8.4 Row click and chevron expand/collapse changed files as on main; the checks ring separately shows/hides branch, PR, and checks — verified by typecheck, lint, and a static render

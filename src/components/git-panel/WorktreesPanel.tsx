@@ -1,4 +1,5 @@
 import {
+	ChevronDown,
 	CircleCheck,
 	CircleDashed,
 	CircleX,
@@ -156,6 +157,18 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	const [collapsedWorktrees, setCollapsedWorktrees] = useState<Set<string>>(
 		() => new Set(),
 	);
+	/** Worktrees whose checks list is shown; independent of their files. */
+	const [openChecks, setOpenChecks] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const toggleChecks = (worktreePath: string) => {
+		setOpenChecks((prev) => {
+			const next = new Set(prev);
+			if (next.has(worktreePath)) next.delete(worktreePath);
+			else next.add(worktreePath);
+			return next;
+		});
+	};
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -279,6 +292,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 					contextMenu?.worktree.path === worktree.path;
 				const pullRequest = worktree.properties?.pullRequest;
 				const checks = worktree.properties?.checks;
+				const checksOpen = openChecks.has(worktree.path);
 				const worktreeStatus = {
 					gitAvailable: status.gitAvailable,
 					repoRoot: worktree.path,
@@ -330,6 +344,14 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								onClick={() => toggleWorktree(worktree.path)}
 								aria-expanded={!collapsed}
 							>
+								<span
+									className={`git-panel__folder-chevron${
+										collapsed ? ' git-panel__folder-chevron--collapsed' : ''
+									}`}
+									aria-hidden="true"
+								>
+									<ChevronDown size={14} aria-hidden />
+								</span>
 								<span
 									className={`worktrees-panel__worktree-icon${
 										hasUnmergedOrUncommittedWork
@@ -424,12 +446,12 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 													type="button"
 													className={`worktrees-panel__ci worktrees-panel__ci--${checksTone(checks)}`}
 													aria-label={checksAccessibleName(checks)}
-													aria-expanded={!collapsed}
+													aria-expanded={checksOpen}
 													title={checksAccessibleName(checks).replace(
 														/\. Show checks$/,
 														'',
 													)}
-													onClick={() => toggleWorktree(worktree.path)}
+													onClick={() => toggleChecks(worktree.path)}
 												>
 													<ChecksRing checks={checks} />
 													{checksHeadline(checks)}
@@ -440,35 +462,33 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								) : null}
 							</div>
 						</div>
-						{isDeleting || collapsed ? null : (
+						{isDeleting || !checksOpen ? null : (
 							<div className="worktrees-panel__detail">
 								<WorktreeDetailSummary
 									worktree={worktree}
 									onLoadChecks={onLoadWorktreeChecks}
 								/>
-								{worktree.errorMessage ? (
-									<div className="git-panel__message">
-										{worktree.errorMessage}
-									</div>
-								) : worktree.isBare ? (
-									<div className="git-panel__message">Bare worktree</div>
-								) : worktree.isPrunable ? (
-									<div className="git-panel__message">Prunable worktree</div>
-								) : (
-									<div className="worktrees-panel__changes">
-										<GitPanel
-											status={worktreeStatus}
-											viewMode={viewMode}
-											onDelete={onDeletePath}
-											onNewFile={onNewFile}
-											onNewFolder={onNewFolder}
-											onOpenEntry={onOpenEntry}
-											onOpenFolder={(path) => onOpenFolder(path, worktree.path)}
-											onOpenTerminal={onOpenTerminalAtPath}
-											onRename={onRenamePath}
-										/>
-									</div>
-								)}
+							</div>
+						)}
+						{isDeleting || collapsed ? null : worktree.errorMessage ? (
+							<div className="git-panel__message">{worktree.errorMessage}</div>
+						) : worktree.isBare ? (
+							<div className="git-panel__message">Bare worktree</div>
+						) : worktree.isPrunable ? (
+							<div className="git-panel__message">Prunable worktree</div>
+						) : (
+							<div className="worktrees-panel__changes">
+								<GitPanel
+									status={worktreeStatus}
+									viewMode={viewMode}
+									onDelete={onDeletePath}
+									onNewFile={onNewFile}
+									onNewFolder={onNewFolder}
+									onOpenEntry={onOpenEntry}
+									onOpenFolder={(path) => onOpenFolder(path, worktree.path)}
+									onOpenTerminal={onOpenTerminalAtPath}
+									onRename={onRenamePath}
+								/>
 							</div>
 						)}
 					</section>
