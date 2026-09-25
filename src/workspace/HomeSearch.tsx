@@ -151,7 +151,7 @@ export function HomeSearch({ automations, onChoose, sources }: HomeSearchProps) 
 	return (
 		<div className="home-search" data-terminay-home-search="true">
 			<div className="home-search__field">
-				<Search size={15} className="home-search__icon" aria-hidden="true" />
+				<Search size={13} className="home-search__icon" aria-hidden="true" />
 				<input
 					ref={inputRef}
 					className="home-search__input"
