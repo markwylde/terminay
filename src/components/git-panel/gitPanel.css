@@ -528,41 +528,24 @@
 	background: #2563eb;
 }
 
-/* Table layout: one aligned row per worktree, detail on expand. */
+/* Two-line rows: name and actions, then change size, PR, and checks in
+ * fixed slots so they line up from row to row. */
 .worktrees-panel--table {
-	--worktree-columns: minmax(0, 1fr) 58px 22px;
+	--worktree-metrics: 1fr;
 }
 
 .worktrees-panel--table.worktrees-panel--forge-columns {
-	--worktree-columns: minmax(0, 1fr) 58px 42px 42px 22px;
+	--worktree-metrics: 84px 52px minmax(0, 1fr);
 }
 
-.worktrees-panel__columns,
 .worktrees-panel--table .worktrees-panel__worktree-header {
 	display: grid;
-	grid-template-columns: var(--worktree-columns);
+	grid-template-columns: minmax(0, 1fr) 22px;
 	align-items: center;
 	column-gap: 6px;
-	padding: 0 6px 0 12px;
-}
-
-.worktrees-panel__columns {
-	height: 24px;
-	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-	color: rgba(220, 226, 240, 0.34);
-	font-size: 9.5px;
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-	user-select: none;
-}
-
-.worktrees-panel__columns > span:not(:first-child) {
-	text-align: right;
-}
-
-.worktrees-panel--table .worktrees-panel__worktree-header {
-	min-height: 32px;
+	row-gap: 1px;
+	min-height: 0;
+	padding: 5px 6px 6px 12px;
 }
 
 .worktrees-panel--table .worktrees-panel__worktree-header:not(.worktrees-panel__worktree-header--collapsed) {
@@ -571,7 +554,7 @@
 }
 
 .worktrees-panel--table .worktrees-panel__worktree-toggle {
-	min-height: 30px;
+	min-height: 22px;
 	gap: 5px;
 }
 
@@ -579,9 +562,21 @@
 	font-weight: 600;
 }
 
+.worktrees-panel__metrics {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: var(--worktree-metrics);
+	align-items: center;
+	column-gap: 8px;
+	min-height: 18px;
+	padding-left: 21px;
+	cursor: pointer;
+}
+
 .worktrees-panel__cell {
 	display: flex;
-	justify-content: flex-end;
+	justify-content: flex-start;
+	gap: 6px;
 	align-items: center;
 	min-width: 0;
 	font-size: 10.5px;
@@ -589,10 +584,8 @@
 }
 
 .worktrees-panel__cell--delta {
-	flex-direction: column;
-	align-items: flex-end;
-	line-height: 1.15;
 	white-space: nowrap;
+	font-size: 11px;
 }
 
 .worktrees-panel__cell--delta .worktrees-panel__clean,
@@ -604,10 +597,6 @@
 
 .worktrees-panel__cell--delta .worktrees-panel__clean {
 	color: rgba(220, 226, 240, 0.34);
-}
-
-.worktrees-panel__none {
-	color: rgba(220, 226, 240, 0.24);
 }
 
 .worktrees-panel__pr,

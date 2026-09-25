@@ -262,17 +262,6 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		<div
 			className={`worktrees-panel worktrees-panel--table${columnsClass}`}
 		>
-			<div className="worktrees-panel__columns" aria-hidden="true">
-				<span>Worktree</span>
-				<span>Δ</span>
-				{showForgeColumns ? (
-					<>
-						<span>PR</span>
-						<span>CI</span>
-					</>
-				) : null}
-				<span />
-			</div>
 			{status.worktrees.map((worktree) => {
 				const isDeleting = deletingWorktreePaths?.has(worktree.path) ?? false;
 				const isPulling = pullingWorktreePaths?.has(worktree.path) ?? false;
@@ -359,65 +348,6 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 									{worktree.name}
 								</span>
 							</button>
-							<span className="worktrees-panel__cell worktrees-panel__cell--delta">
-								{isDeleting ? (
-									<span className="worktrees-panel__deleting">deleting…</span>
-								) : isPulling ? (
-									<span className="worktrees-panel__pulling">pulling…</span>
-								) : hasLineChanges ? (
-									<>
-										<span className="worktrees-panel__delta worktrees-panel__delta--additions">
-											+{formatCount(worktree.lineAdditions ?? 0)}
-										</span>
-										<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
-											−{formatCount(worktree.lineDeletions ?? 0)}
-										</span>
-									</>
-								) : !isWorktreeShownClean(worktree) ? (
-									<span className="worktrees-panel__changed">changed</span>
-								) : (
-									<span className="worktrees-panel__clean">clean</span>
-								)}
-							</span>
-							{showForgeColumns ? (
-								<>
-									<span className="worktrees-panel__cell worktrees-panel__cell--pr">
-										{pullRequest === undefined ? (
-											<span className="worktrees-panel__none">—</span>
-										) : (
-											<button
-												type="button"
-												className={`worktrees-panel__pr worktrees-panel__pr--${pullRequest.state}`}
-												aria-label={pullRequestAccessibleName(pullRequest)}
-												title={pullRequestTitle(pullRequest)}
-												onClick={() => void openExternalUrl(pullRequest.url)}
-											>
-												#{pullRequest.number}
-											</button>
-										)}
-									</span>
-									<span className="worktrees-panel__cell worktrees-panel__cell--ci">
-										{checks === undefined || checks.total === 0 ? (
-											<span className="worktrees-panel__none">—</span>
-										) : (
-											<button
-												type="button"
-												className={`worktrees-panel__ci worktrees-panel__ci--${checksTone(checks)}`}
-												aria-label={checksAccessibleName(checks)}
-												aria-expanded={!collapsed}
-												title={checksAccessibleName(checks).replace(
-													/\. Show checks$/,
-													'',
-												)}
-												onClick={() => toggleWorktree(worktree.path)}
-											>
-												<ChecksRing checks={checks} />
-												{checksHeadline(checks)}
-											</button>
-										)}
-									</span>
-								</>
-							) : null}
 							<button
 								type="button"
 								className={`worktrees-panel__row-menu${
@@ -440,6 +370,75 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							>
 								<EllipsisVertical size={14} aria-hidden="true" />
 							</button>
+							{/* Second line: change size, pull request, and checks in fixed slots
+							    so they line up from row to row. Clicking its gaps toggles too. */}
+							<div
+								className="worktrees-panel__metrics"
+								onClick={(event) => {
+									if (event.target === event.currentTarget)
+										toggleWorktree(worktree.path);
+								}}
+							>
+								<span className="worktrees-panel__cell worktrees-panel__cell--delta">
+									{isDeleting ? (
+										<span className="worktrees-panel__deleting">deleting…</span>
+									) : isPulling ? (
+										<span className="worktrees-panel__pulling">pulling…</span>
+									) : hasLineChanges ? (
+										<>
+											<span className="worktrees-panel__delta worktrees-panel__delta--additions">
+												+{formatCount(worktree.lineAdditions ?? 0)}
+											</span>
+											<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
+												−{formatCount(worktree.lineDeletions ?? 0)}
+											</span>
+										</>
+									) : !isWorktreeShownClean(worktree) ? (
+										<span className="worktrees-panel__changed">changed</span>
+									) : (
+										<span className="worktrees-panel__clean">clean</span>
+									)}
+								</span>
+								{showForgeColumns ? (
+									<>
+										<span className="worktrees-panel__cell worktrees-panel__cell--pr">
+											{pullRequest === undefined ? (
+												<span />
+											) : (
+												<button
+													type="button"
+													className={`worktrees-panel__pr worktrees-panel__pr--${pullRequest.state}`}
+													aria-label={pullRequestAccessibleName(pullRequest)}
+													title={pullRequestTitle(pullRequest)}
+													onClick={() => void openExternalUrl(pullRequest.url)}
+												>
+													#{pullRequest.number}
+												</button>
+											)}
+										</span>
+										<span className="worktrees-panel__cell worktrees-panel__cell--ci">
+											{checks === undefined || checks.total === 0 ? (
+												<span />
+											) : (
+												<button
+													type="button"
+													className={`worktrees-panel__ci worktrees-panel__ci--${checksTone(checks)}`}
+													aria-label={checksAccessibleName(checks)}
+													aria-expanded={!collapsed}
+													title={checksAccessibleName(checks).replace(
+														/\. Show checks$/,
+														'',
+													)}
+													onClick={() => toggleWorktree(worktree.path)}
+												>
+													<ChecksRing checks={checks} />
+													{checksHeadline(checks)}
+												</button>
+											)}
+										</span>
+									</>
+								) : null}
+							</div>
 						</div>
 						{isDeleting || collapsed ? null : (
 							<div className="worktrees-panel__detail">
