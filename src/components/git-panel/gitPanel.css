@@ -698,6 +698,10 @@
 	padding: 2px 0;
 }
 
+.worktrees-panel__summary-line > svg {
+	flex: 0 0 auto;
+}
+
 .worktrees-panel__summary-line > span {
 	overflow: hidden;
 	text-overflow: ellipsis;
