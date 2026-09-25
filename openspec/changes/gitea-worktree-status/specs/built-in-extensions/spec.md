@@ -53,8 +53,9 @@ stored token, report it rejected.
 
 `terminay-gitea` SHALL use HTTPS requests to the Gitea API and SHALL NOT spawn
 processes. Per repository context and refresh it SHALL list the repository's
-open pull requests once and fetch one combined commit status per worktree whose
-branch has an upstream. It SHALL refresh when a context is issued, when its
+open pull requests once and fetch one combined commit status per worktree on a
+branch. A worktree's tracked branch is its configured upstream branch, or, when
+none is configured, the remote branch of the same name. It SHALL refresh when a context is issued, when its
 content changes, and when its project becomes active; otherwise it SHALL refresh
 at most once every 10 seconds for an active project and once every 45 seconds
 for any other. It SHALL schedule nothing for cancelled contexts, and SHALL widen
@@ -62,7 +63,8 @@ the interval after consecutive request failures.
 
 #### Scenario: Several worktrees in one repository
 
-- **WHEN** a repository context has five worktrees with upstream branches
+- **WHEN** a repository context has five worktrees on branches and one detached
+  worktree
 - **THEN** one refresh makes one pull-request listing request and five commit
   status requests
 
@@ -89,9 +91,9 @@ the interval after consecutive request failures.
 ### Requirement: Gitea pull request and checks mapping
 
 `terminay-gitea` SHALL match a worktree to an open pull request whose head
-branch equals the worktree's upstream branch, and SHALL publish it as the
+branch equals the worktree's tracked branch, and SHALL publish it as the
 worktree's pull request, with `draft` for work-in-progress pull requests. It
-SHALL map the commit statuses for the pull request head, or for the upstream
+SHALL map the commit statuses for the pull request head, or for the tracked
 branch when there is no pull request, to checks: `success` to passed, `failure`
 and `error` to failed, `pending` to pending, and `skipped` or `warning` to
 skipped, each with the status's target URL.
@@ -107,3 +109,9 @@ skipped, each with the status's target URL.
 - **WHEN** a worktree's upstream branch has commit statuses and no open pull
   request
 - **THEN** the worktree's properties include checks and no pull request
+
+#### Scenario: Branch without a configured upstream
+
+- **WHEN** the default branch `main` has no configured upstream and the remote's
+  `main` has commit statuses
+- **THEN** the worktree's properties include the checks for the remote's `main`

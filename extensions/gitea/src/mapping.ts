@@ -36,13 +36,22 @@ export interface GiteaCommitStatus {
  * The open pull request whose head is this worktree's upstream branch in
  * this repository. A fork's pull request with the same branch name is not it.
  */
+/**
+ * The remote branch a worktree follows: its configured upstream, else the
+ * same-named branch, as a pull without an upstream does. A detached worktree
+ * follows nothing.
+ */
+export function trackedBranch(worktree: RepositoryWorktree): string | undefined {
+	return worktree.upstream?.branch ?? worktree.branch ?? undefined;
+}
+
 export function matchPullRequest(
 	pulls: readonly GiteaPullRequest[],
 	worktree: RepositoryWorktree,
 	owner: string,
 	repo: string,
 ): GiteaPullRequest | undefined {
-	const branch = worktree.upstream?.branch;
+	const branch = trackedBranch(worktree);
 	if (branch === undefined) return undefined;
 	const fullName = `${owner}/${repo}`.toLowerCase();
 	return pulls.find((pull) => {

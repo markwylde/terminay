@@ -210,7 +210,7 @@ const worktree = (branch, upstream = branch) => ({
 	head: '0'.repeat(40),
 });
 
-test('a pull request matches by upstream branch in the same repository', () => {
+test('a pull request matches by upstream branch, else branch name, in the same repository', () => {
 	const pulls = [
 		{ number: 1, head: { ref: 'feat/a', repo: { full_name: 'fork/repo' } } },
 		{ number: 2, head: { ref: 'feat/a', repo: { full_name: 'Owner/Repo' } } },
@@ -229,7 +229,22 @@ test('a pull request matches by upstream branch in the same repository', () => {
 		undefined,
 	);
 	assert.equal(
-		matchPullRequest(pulls, worktree('feat/a', null), 'owner', 'repo'),
+		matchPullRequest(pulls, worktree('feat/a', null), 'owner', 'repo').number,
+		2,
+	);
+	assert.equal(
+		matchPullRequest(pulls, worktree('local', 'feat/b'), 'owner', 'repo')
+			.number,
+		3,
+		'a configured upstream wins over the branch name',
+	);
+	assert.equal(
+		matchPullRequest(
+			pulls,
+			{ ...worktree('feat/a', null), branch: null },
+			'owner',
+			'repo',
+		),
 		undefined,
 	);
 });
