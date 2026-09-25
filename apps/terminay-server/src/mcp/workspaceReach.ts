@@ -12,7 +12,7 @@ import {
 import { PROJECT_HANDLE_PATTERN } from './dispatcher.js';
 
 /**
- * Workspace reach (ADR-0028) for MCP adapters. A capability's reach is fixed
+ * Workspace reach (ADR-0029) for MCP adapters. A capability's reach is fixed
  * when it is minted; nothing here reads a caller-supplied value to decide it.
  * These helpers are shared by every host adapter so project reach keeps its
  * exact contract and workspace reach widens only which terminals are
