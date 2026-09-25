@@ -352,7 +352,21 @@ scheduled(
 
 		const assertWorkerUnder = async (runId: string) => {
 			// The run terminal closed ("keep terminal after run" is off); the
-			// terminal the script opened stays, running, under the run.
+			// terminal the script opened stays, running, under the run — in the
+			// run's detail, and in the list's terminals grouped by run.
+			const openRun = mainWindow.locator(
+				`[data-terminay-automation-run-detail="${runId}"]`,
+			);
+			if ((await openRun.count()) === 0)
+				await mainWindow
+					.locator(`[data-terminay-automation-run="${runId}"]`)
+					.click();
+			const inRun = mainWindow.locator(
+				`[data-terminay-automation-run-detail="${runId}"] [data-terminay-automation-terminal]`,
+			);
+			await expect(inRun).toHaveCount(1);
+			await expect(inRun).toContainText('MCP worker');
+			await mainWindow.locator('[data-terminay-automations-back]').click();
 			const group = mainWindow.locator(
 				`[data-terminay-automation-terminal-group="${runId}"]`,
 			);
@@ -361,6 +375,7 @@ scheduled(
 			await expect(terminals).toHaveCount(1);
 			await expect(terminals).toContainText('MCP worker');
 			await expect(terminals).toContainText('Running');
+			await openAutomation(mainWindow, 'Spawn a worker');
 		};
 
 		// The schedule fires at the next minute boundary, with no one pressing a

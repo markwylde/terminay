@@ -19,7 +19,14 @@ import {
 	type TerminayClient,
 } from '@terminay/client-core';
 import type { CronPreset, CronWeekday } from '@terminay/cron';
-import { type FormEvent, useEffect, useId, useMemo, useState } from 'react';
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useId,
+	useMemo,
+	useState,
+} from 'react';
 import {
 	ACTION_LABELS,
 	AUTOMATION_EVENT_LABELS,
@@ -56,6 +63,8 @@ export type AutomationEditorProps = Readonly<{
 	now: number;
 	/** The IANA zone the server evaluates schedules in. Previews use it. */
 	timeZone?: string;
+	/** The page header, given the Cancel and Save controls to place in it. */
+	renderHeader: (controls: ReactNode) => ReactNode;
 }>;
 
 function pad(value: number): string {
@@ -112,34 +121,30 @@ function MacroFieldInput({
 	onChange: (value: MacroFieldValue) => void;
 }>) {
 	const id = useId();
-	const label = (
-		<label className="automation-editor__label" htmlFor={id}>
-			{field.label || field.name}
-			{field.required ? ' *' : ''}
-		</label>
-	);
+	const label = `${field.label || field.name}${field.required ? ' *' : ''}`;
 	switch (field.type) {
 		case 'checkbox':
 			return (
-				<label className="automation-editor__check">
-					<input
-						id={id}
-						type="checkbox"
-						checked={
-							typeof value === 'boolean' ? value : field.defaultValue === true
-						}
-						onChange={(event) => onChange(event.target.checked)}
-					/>
-					{field.label || field.name}
-				</label>
+				<Row label={label}>
+					<label className="automation-editor__check">
+						<input
+							id={id}
+							type="checkbox"
+							checked={
+								typeof value === 'boolean' ? value : field.defaultValue === true
+							}
+							onChange={(event) => onChange(event.target.checked)}
+						/>
+						{field.label || field.name}
+					</label>
+				</Row>
 			);
 		case 'select':
 			return (
-				<div className="automation-editor__field">
-					{label}
+				<Row label={label} htmlFor={id}>
 					<select
 						id={id}
-						className="automation-editor__input"
+						className="automation-editor__input automation-editor__input--auto"
 						value={String(value ?? field.defaultValue ?? '')}
 						onChange={(event) => onChange(event.target.value)}
 					>
@@ -150,16 +155,15 @@ function MacroFieldInput({
 							</option>
 						))}
 					</select>
-				</div>
+				</Row>
 			);
 		case 'number':
 			return (
-				<div className="automation-editor__field">
-					{label}
+				<Row label={label} htmlFor={id}>
 					<input
 						id={id}
 						type="number"
-						className="automation-editor__input"
+						className="automation-editor__input automation-editor__input--number"
 						value={String(value ?? '')}
 						placeholder={String(field.defaultValue ?? field.placeholder)}
 						onChange={(event) =>
@@ -168,22 +172,19 @@ function MacroFieldInput({
 							)
 						}
 					/>
-				</div>
+				</Row>
 			);
 		default:
 			return (
-				<div className="automation-editor__field">
-					{label}
+				<Row label={label} htmlFor={id}>
 					<input
 						id={id}
 						className="automation-editor__input"
 						value={String(value ?? '')}
-						placeholder={
-							field.placeholder || String(field.defaultValue ?? '')
-						}
+						placeholder={field.placeholder || String(field.defaultValue ?? '')}
 						onChange={(event) => onChange(event.target.value)}
 					/>
-				</div>
+				</Row>
 			);
 	}
 }
@@ -194,6 +195,7 @@ export function AutomationEditor({
 	now,
 	onCancel,
 	onSave,
+	renderHeader,
 	timeZone,
 }: AutomationEditorProps) {
 	const clientTimeZone = useMemo(
@@ -273,6 +275,27 @@ export function AutomationEditor({
 		}
 	};
 
+	const controls = (
+		<>
+			<button
+				type="button"
+				className="automations-button"
+				onClick={onCancel}
+				disabled={saving}
+			>
+				Cancel
+			</button>
+			<button
+				type="submit"
+				className="automations-button automations-button--primary"
+				disabled={saving}
+				data-terminay-automation-save="true"
+			>
+				{saving ? 'Saving…' : 'Save'}
+			</button>
+		</>
+	);
+
 	return (
 		<form
 			className="automation-editor"
@@ -280,17 +303,19 @@ export function AutomationEditor({
 			onSubmit={(event) => void submit(event)}
 			noValidate
 		>
-			<header className="automation-editor__header">
-				<h3 className="automation-editor__title">
-					{form.id === undefined ? 'New automation' : 'Edit automation'}
-				</h3>
-			</header>
+			{renderHeader(controls)}
+			<div className="automation-editor__body">
+				{error === undefined ? null : (
+					<p
+						className="automations-banner automations-banner--error automation-editor__error"
+						role="alert"
+						data-terminay-automation-error="true"
+					>
+						{error}
+					</p>
+				)}
 
-			<div className="automation-editor__row">
-				<div className="automation-editor__field automation-editor__field--grow">
-					<label className="automation-editor__label" htmlFor={fieldId('name')}>
-						Name
-					</label>
+				<Row label="Name" htmlFor={fieldId('name')}>
 					<input
 						id={fieldId('name')}
 						className="automation-editor__input"
@@ -299,48 +324,52 @@ export function AutomationEditor({
 						onChange={(event) => update({ name: event.target.value })}
 						data-terminay-automation-field="name"
 					/>
-				</div>
-				<label className="automation-editor__check">
-					<input
-						type="checkbox"
-						checked={form.enabled}
-						onChange={(event) => update({ enabled: event.target.checked })}
-						data-terminay-automation-field="enabled"
-					/>
-					Enabled
-				</label>
-			</div>
+				</Row>
+				<Row label="Enabled">
+					<label className="automation-editor__check">
+						<input
+							type="checkbox"
+							checked={form.enabled}
+							onChange={(event) => update({ enabled: event.target.checked })}
+							data-terminay-automation-field="enabled"
+						/>
+						Run on its trigger
+					</label>
+				</Row>
 
-			<fieldset className="automation-editor__group">
-				<legend className="automation-editor__legend">When</legend>
-				<div className="automation-editor__segmented" role="radiogroup">
-					{(['schedule', 'event'] as const).map((kind) => (
-						<label key={kind} className="automation-editor__radio">
-							<input
-								type="radio"
-								name={fieldId('trigger-kind')}
-								checked={form.triggerKind === kind}
-								onChange={() => update({ triggerKind: kind })}
-								data-terminay-automation-trigger-kind={kind}
-							/>
-							{kind === 'schedule' ? 'On a schedule' : 'When something happens'}
-						</label>
-					))}
-				</div>
+				<h3 className="automation-editor__section">When</h3>
+				<Row label="Trigger">
+					<div
+						className="workspace-dashboard__modes automation-editor__modes"
+						role="radiogroup"
+						aria-label="Trigger"
+					>
+						{(['schedule', 'event'] as const).map((kind) => (
+							<label
+								key={kind}
+								className={`workspace-dashboard__mode${form.triggerKind === kind ? ' workspace-dashboard__mode--selected' : ''}`}
+							>
+								<input
+									type="radio"
+									className="automation-editor__radio-input"
+									name={fieldId('trigger-kind')}
+									checked={form.triggerKind === kind}
+									onChange={() => update({ triggerKind: kind })}
+									data-terminay-automation-trigger-kind={kind}
+								/>
+								{kind === 'schedule' ? 'On a schedule' : 'When something happens'}
+							</label>
+						))}
+					</div>
+				</Row>
 
 				{form.triggerKind === 'schedule' ? (
 					<>
-						<div className="automation-editor__row">
-							<div className="automation-editor__field">
-								<label
-									className="automation-editor__label"
-									htmlFor={fieldId('preset')}
-								>
-									Repeat
-								</label>
+						<Row label="Repeat" htmlFor={fieldId('preset')}>
+							<div className="automation-editor__inline">
 								<select
 									id={fieldId('preset')}
-									className="automation-editor__input"
+									className="automation-editor__input automation-editor__input--auto"
 									value={preset.kind}
 									onChange={(event) =>
 										setPresetKind(event.target.value as SchedulePresetKind)
@@ -353,153 +382,140 @@ export function AutomationEditor({
 										</option>
 									))}
 								</select>
+								{preset.kind === 'everyNMinutes' ? (
+									<label className="automation-editor__inline-field">
+										<span>every</span>
+										<input
+											type="number"
+											min={1}
+											max={59}
+											className="automation-editor__input automation-editor__input--number"
+											value={preset.minutes}
+											aria-label="Minutes"
+											onChange={(event) => {
+												const minutes = Number(event.target.value);
+												if (
+													Number.isInteger(minutes) &&
+													minutes >= 1 &&
+													minutes <= 59
+												)
+													setPreset({ ...preset, minutes });
+											}}
+										/>
+										<span>minutes</span>
+									</label>
+								) : null}
+								{preset.kind === 'hourly' ? (
+									<label className="automation-editor__inline-field">
+										<span>at minute</span>
+										<input
+											type="number"
+											min={0}
+											max={59}
+											className="automation-editor__input automation-editor__input--number"
+											value={preset.minute}
+											aria-label="At minute"
+											onChange={(event) => {
+												const minute = Number(event.target.value);
+												if (
+													Number.isInteger(minute) &&
+													minute >= 0 &&
+													minute <= 59
+												)
+													setPreset({ ...preset, minute });
+											}}
+										/>
+									</label>
+								) : null}
+								{preset.kind === 'weekly' ? (
+									<label className="automation-editor__inline-field">
+										<span>on</span>
+										<select
+											className="automation-editor__input automation-editor__input--auto"
+											value={preset.dayOfWeek}
+											aria-label="Day"
+											onChange={(event) =>
+												setPreset({
+													...preset,
+													dayOfWeek: Number(event.target.value) as CronWeekday,
+												})
+											}
+										>
+											{WEEKDAYS.map((day, index) => (
+												<option key={day} value={index}>
+													{day}
+												</option>
+											))}
+										</select>
+									</label>
+								) : null}
+								{'hour' in preset ? (
+									<label className="automation-editor__inline-field">
+										<span>at</span>
+										<input
+											type="time"
+											className="automation-editor__input automation-editor__input--time"
+											value={`${pad(preset.hour)}:${pad(preset.minute)}`}
+											aria-label="At"
+											onChange={(event) => setTime(event.target.value)}
+										/>
+									</label>
+								) : null}
 							</div>
-							{preset.kind === 'everyNMinutes' ? (
-								<div className="automation-editor__field">
-									<label
-										className="automation-editor__label"
-										htmlFor={fieldId('minutes')}
-									>
-										Minutes
-									</label>
-									<input
-										id={fieldId('minutes')}
-										type="number"
-										min={1}
-										max={59}
-										className="automation-editor__input"
-										value={preset.minutes}
-										onChange={(event) => {
-											const minutes = Number(event.target.value);
-											if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 59)
-												setPreset({ ...preset, minutes });
-										}}
-									/>
-								</div>
-							) : null}
-							{preset.kind === 'hourly' ? (
-								<div className="automation-editor__field">
-									<label
-										className="automation-editor__label"
-										htmlFor={fieldId('minute')}
-									>
-										At minute
-									</label>
-									<input
-										id={fieldId('minute')}
-										type="number"
-										min={0}
-										max={59}
-										className="automation-editor__input"
-										value={preset.minute}
-										onChange={(event) => {
-											const minute = Number(event.target.value);
-											if (Number.isInteger(minute) && minute >= 0 && minute <= 59)
-												setPreset({ ...preset, minute });
-										}}
-									/>
-								</div>
-							) : null}
-							{preset.kind === 'weekly' ? (
-								<div className="automation-editor__field">
-									<label
-										className="automation-editor__label"
-										htmlFor={fieldId('day')}
-									>
-										On
-									</label>
-									<select
-										id={fieldId('day')}
-										className="automation-editor__input"
-										value={preset.dayOfWeek}
-										onChange={(event) =>
-											setPreset({
-												...preset,
-												dayOfWeek: Number(event.target.value) as CronWeekday,
-											})
-										}
-									>
-										{WEEKDAYS.map((day, index) => (
-											<option key={day} value={index}>
-												{day}
-											</option>
-										))}
-									</select>
-								</div>
-							) : null}
-							{'hour' in preset ? (
-								<div className="automation-editor__field">
-									<label
-										className="automation-editor__label"
-										htmlFor={fieldId('time')}
-									>
-										At
-									</label>
-									<input
-										id={fieldId('time')}
-										type="time"
-										className="automation-editor__input"
-										value={`${pad(preset.hour)}:${pad(preset.minute)}`}
-										onChange={(event) => setTime(event.target.value)}
-									/>
-								</div>
-							) : null}
-						</div>
-						<div className="automation-editor__field">
-							<label className="automation-editor__label" htmlFor={fieldId('cron')}>
-								Cron expression
-							</label>
+						</Row>
+						<Row label="Cron" htmlFor={fieldId('cron')}>
 							<input
 								id={fieldId('cron')}
-								className="automation-editor__input automation-editor__input--mono"
+								className="automation-editor__input automation-editor__input--mono automation-editor__input--cron"
 								value={form.cron}
 								spellCheck={false}
 								onChange={(event) => update({ cron: event.target.value })}
 								data-terminay-automation-field="cron"
 							/>
-						</div>
-						<div
-							className="automation-editor__preview"
-							data-terminay-automation-schedule-preview={
-								preview?.ok === true ? 'valid' : 'invalid'
-							}
-							aria-live="polite"
-						>
-							{preview === null ? null : preview.ok ? (
-								<>
-									<p
-										className="automation-editor__description"
-										data-terminay-automation-schedule-description="true"
-									>
-										{preview.description}
-									</p>
-									<ol className="automation-editor__next">
-										{preview.next.map((at) => (
-											<li key={at}>{formatPreviewTime(at, timeZone)}</li>
-										))}
-									</ol>
-									{timeZone !== undefined && timeZone !== clientTimeZone ? (
-										<p
-											className="automations-muted"
-											data-terminay-automation-schedule-zone={timeZone}
+						</Row>
+						<Row label="">
+							<div
+								className="automation-editor__preview"
+								data-terminay-automation-schedule-preview={
+									preview?.ok === true ? 'valid' : 'invalid'
+								}
+								aria-live="polite"
+							>
+								{preview === null ? null : preview.ok ? (
+									<>
+										<span
+											className="automation-editor__description"
+											data-terminay-automation-schedule-description="true"
 										>
-											Times are in {timeZone}, the server’s time zone.
-										</p>
-									) : null}
-								</>
-							) : (
-								<p className="automation-editor__warning">{preview.error}</p>
-							)}
-						</div>
+											{preview.description}
+										</span>
+										<ol className="automation-editor__next-list">
+											{preview.next.map((at) => (
+												<li key={at}>{formatPreviewTime(at, timeZone)}</li>
+											))}
+										</ol>
+										{timeZone !== undefined && timeZone !== clientTimeZone ? (
+											<span
+												className="automation-editor__next"
+												data-terminay-automation-schedule-zone={timeZone}
+											>
+												Times are in {timeZone}, the server’s time zone.
+											</span>
+										) : null}
+									</>
+								) : (
+									<span className="automation-editor__warning">
+										{preview.error}
+									</span>
+								)}
+							</div>
+						</Row>
 					</>
 				) : (
-					<div className="automation-editor__field">
-						<label className="automation-editor__label" htmlFor={fieldId('event')}>
-							Event
-						</label>
+					<Row label="Event" htmlFor={fieldId('event')}>
 						<select
 							id={fieldId('event')}
-							className="automation-editor__input"
+							className="automation-editor__input automation-editor__input--auto"
 							value={form.event}
 							onChange={(event) =>
 								update({
@@ -514,19 +530,14 @@ export function AutomationEditor({
 								</option>
 							))}
 						</select>
-					</div>
+					</Row>
 				)}
-			</fieldset>
 
-			<fieldset className="automation-editor__group">
-				<legend className="automation-editor__legend">Do</legend>
-				<div className="automation-editor__field">
-					<label className="automation-editor__label" htmlFor={fieldId('action')}>
-						Action
-					</label>
+				<h3 className="automation-editor__section">Do</h3>
+				<Row label="Action" htmlFor={fieldId('action')}>
 					<select
 						id={fieldId('action')}
-						className="automation-editor__input"
+						className="automation-editor__input automation-editor__input--auto"
 						value={form.actionKind}
 						onChange={(event) =>
 							update({ actionKind: event.target.value as AutomationActionKind })
@@ -540,21 +551,18 @@ export function AutomationEditor({
 						))}
 					</select>
 					{problem === undefined ? null : (
-						<p className="automation-editor__hint" data-terminay-automation-combination-hint>
+						<p
+							className="automation-editor__hint"
+							data-terminay-automation-combination-hint
+						>
 							{problem} Choose “Run a command”, or a terminal event.
 						</p>
 					)}
-				</div>
+				</Row>
 
 				{form.actionKind === 'runCommand' ? (
 					<>
-						<div className="automation-editor__field">
-							<label
-								className="automation-editor__label"
-								htmlFor={fieldId('command')}
-							>
-								Command
-							</label>
+						<Row label="Command" htmlFor={fieldId('command')}>
 							<input
 								id={fieldId('command')}
 								className="automation-editor__input automation-editor__input--mono"
@@ -564,85 +572,62 @@ export function AutomationEditor({
 								onChange={(event) => update({ command: event.target.value })}
 								data-terminay-automation-field="command"
 							/>
-						</div>
-						<div className="automation-editor__row">
-							<div className="automation-editor__field">
-								<label
-									className="automation-editor__label"
-									htmlFor={fieldId('profile')}
-								>
-									Shell profile
-								</label>
-								<select
-									id={fieldId('profile')}
-									className="automation-editor__input"
-									value={form.shellProfileId}
-									onChange={(event) =>
-										update({ shellProfileId: event.target.value })
-									}
-								>
-									<option value="">Server default</option>
-									{profiles.map((profile) => (
-										<option
-											key={profile.id}
-											value={profile.id}
-											disabled={!profile.availability.available}
-										>
-											{profile.name}
-										</option>
-									))}
-								</select>
-							</div>
-							<div className="automation-editor__field automation-editor__field--grow">
-								<label
-									className="automation-editor__label"
-									htmlFor={fieldId('cwd')}
-								>
-									Working directory
-								</label>
-								<input
-									id={fieldId('cwd')}
-									className="automation-editor__input automation-editor__input--mono"
-									value={form.cwd}
-									placeholder="Home directory"
-									spellCheck={false}
-									onChange={(event) => update({ cwd: event.target.value })}
-								/>
-							</div>
-							<div className="automation-editor__field">
-								<label
-									className="automation-editor__label"
-									htmlFor={fieldId('max')}
-								>
-									Stop after (minutes)
-								</label>
+						</Row>
+						<Row label="Working directory" htmlFor={fieldId('cwd')}>
+							<input
+								id={fieldId('cwd')}
+								className="automation-editor__input automation-editor__input--mono"
+								value={form.cwd}
+								placeholder="~ (home directory)"
+								spellCheck={false}
+								onChange={(event) => update({ cwd: event.target.value })}
+							/>
+						</Row>
+						<Row label="Shell" htmlFor={fieldId('profile')}>
+							<select
+								id={fieldId('profile')}
+								className="automation-editor__input automation-editor__input--auto"
+								value={form.shellProfileId}
+								onChange={(event) =>
+									update({ shellProfileId: event.target.value })
+								}
+							>
+								<option value="">Server default</option>
+								{profiles.map((profile) => (
+									<option
+										key={profile.id}
+										value={profile.id}
+										disabled={!profile.availability.available}
+									>
+										{profile.name}
+									</option>
+								))}
+							</select>
+						</Row>
+						<Row label="Stop after" htmlFor={fieldId('max')}>
+							<label className="automation-editor__inline-field">
 								<input
 									id={fieldId('max')}
 									type="number"
 									min={1}
-									className="automation-editor__input"
+									className="automation-editor__input automation-editor__input--number"
 									value={form.maxDurationMinutes}
 									onChange={(event) =>
 										update({ maxDurationMinutes: event.target.value })
 									}
 								/>
-							</div>
-						</div>
+								<span>minutes</span>
+							</label>
+						</Row>
 					</>
 				) : null}
 
 				{form.actionKind === 'runMacro' ? (
 					<>
-						<div className="automation-editor__field">
-							<label
-								className="automation-editor__label"
-								htmlFor={fieldId('macro')}
-							>
-								Macro
-							</label>
+						<Row label="Macro" htmlFor={fieldId('macro')}>
 							<select
 								id={fieldId('macro')}
-								className="automation-editor__input"
+								className="automation-editor__input automation-editor__input--auto"
 								value={form.macroId}
 								onChange={(event) =>
 									update({ macroId: event.target.value, fieldValues: {} })
@@ -656,7 +641,7 @@ export function AutomationEditor({
 									</option>
 								))}
 							</select>
-						</div>
+						</Row>
 						{macro?.fields.map((field) => (
 							<MacroFieldInput
 								key={field.id}
@@ -674,34 +659,31 @@ export function AutomationEditor({
 
 				{form.actionKind === 'writeText' ? (
 					<>
-						<div className="automation-editor__field">
-							<label className="automation-editor__label" htmlFor={fieldId('text')}>
-								Text
-							</label>
+						<Row label="Text" htmlFor={fieldId('text')}>
 							<textarea
 								id={fieldId('text')}
-								className="automation-editor__input automation-editor__input--mono"
+								className="automation-editor__input automation-editor__input--mono automation-editor__textarea"
 								rows={3}
 								value={form.text}
 								onChange={(event) => update({ text: event.target.value })}
 								data-terminay-automation-field="text"
 							/>
-						</div>
-						<label className="automation-editor__check">
-							<input
-								type="checkbox"
-								checked={form.submit}
-								onChange={(event) => update({ submit: event.target.checked })}
-							/>
-							Press Enter after writing
-						</label>
+						</Row>
+						<Row label="">
+							<label className="automation-editor__check">
+								<input
+									type="checkbox"
+									checked={form.submit}
+									onChange={(event) => update({ submit: event.target.checked })}
+								/>
+								Press Enter after writing
+							</label>
+						</Row>
 					</>
 				) : null}
-			</fieldset>
 
-			<fieldset className="automation-editor__group">
-				<legend className="automation-editor__legend">Run settings</legend>
-				<div className="automation-editor__row">
+				<h3 className="automation-editor__section">After it runs</h3>
+				<Row label="Terminal">
 					<label className="automation-editor__check">
 						<input
 							type="checkbox"
@@ -711,8 +693,10 @@ export function AutomationEditor({
 							}
 							data-terminay-automation-field="keep-terminal"
 						/>
-						Keep terminal after run
+						Keep it open after the command exits
 					</label>
+				</Row>
+				<Row label="Recording">
 					<label className="automation-editor__check">
 						<input
 							type="checkbox"
@@ -721,57 +705,44 @@ export function AutomationEditor({
 								update({ recordSession: event.target.checked })
 							}
 						/>
-						Record session
+						Record the session
 					</label>
-					<div className="automation-editor__field">
-						<label
-							className="automation-editor__label"
-							htmlFor={fieldId('cooldown')}
-						>
-							Cooldown (seconds)
-						</label>
+				</Row>
+				<Row label="Cooldown" htmlFor={fieldId('cooldown')}>
+					<label className="automation-editor__inline-field">
 						<input
 							id={fieldId('cooldown')}
 							type="number"
 							min={0}
-							className="automation-editor__input"
+							className="automation-editor__input automation-editor__input--number"
 							value={form.cooldownSeconds}
 							onChange={(event) =>
 								update({ cooldownSeconds: event.target.value })
 							}
 						/>
-					</div>
-				</div>
-			</fieldset>
-
-			{error === undefined ? null : (
-				<p
-					className="automation-editor__error"
-					role="alert"
-					data-terminay-automation-error="true"
-				>
-					{error}
-				</p>
-			)}
-
-			<footer className="automation-editor__footer">
-				<button
-					type="button"
-					className="automations-button"
-					onClick={onCancel}
-					disabled={saving}
-				>
-					Cancel
-				</button>
-				<button
-					type="submit"
-					className="automations-button automations-button--primary"
-					disabled={saving}
-					data-terminay-automation-save="true"
-				>
-					{saving ? 'Saving…' : 'Save'}
-				</button>
-			</footer>
+						<span>seconds before firing again for the same terminal</span>
+					</label>
+				</Row>
+			</div>
 		</form>
+	);
+}
+
+function Row({
+	children,
+	htmlFor,
+	label,
+}: Readonly<{ label: string; htmlFor?: string; children: ReactNode }>) {
+	return (
+		<div className="automation-editor__row">
+			{htmlFor === undefined ? (
+				<span className="automation-editor__label">{label}</span>
+			) : (
+				<label className="automation-editor__label" htmlFor={htmlFor}>
+					{label}
+				</label>
+			)}
+			<div className="automation-editor__control">{children}</div>
+		</div>
 	);
 }

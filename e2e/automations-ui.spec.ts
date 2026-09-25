@@ -50,9 +50,10 @@ async function createCommandAutomation(
 	if (options.keepTerminal === true)
 		await field(page, 'keep-terminal').check();
 	await page.locator('[data-terminay-automation-save]').click();
-	const row = rowNamed(page, options.name);
-	await expect(row).toBeVisible();
-	const id = await row.getAttribute('data-terminay-automation-row');
+	// Saving opens the automation it saved.
+	const detail = page.locator('[data-terminay-automation-detail]');
+	await expect(detail).toContainText(options.name);
+	const id = await detail.getAttribute('data-terminay-automation-detail');
 	if (id === null) throw new Error('Saved automation has no id');
 	return id;
 }
@@ -97,6 +98,10 @@ test.describe('Automations section', () => {
 		await field(mainWindow, 'cron').fill('0 * * * *');
 		await field(mainWindow, 'command').fill('echo report');
 		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await expect(
+			mainWindow.locator('[data-terminay-automation-detail]'),
+		).toBeVisible();
+		await mainWindow.locator('[data-terminay-automations-back]').click();
 
 		const row = rowNamed(mainWindow, 'Hourly report');
 		await expect(row).toBeVisible();
@@ -150,6 +155,10 @@ test.describe('Automations section', () => {
 		await action.selectOption('writeText');
 		await field(mainWindow, 'text').fill('continue');
 		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await expect(
+			mainWindow.locator('[data-terminay-automation-detail]'),
+		).toContainText('Write text into the terminal');
+		await mainWindow.locator('[data-terminay-automations-back]').click();
 
 		const row = rowNamed(mainWindow, 'Keep going');
 		await expect(row.locator('[data-terminay-automation-trigger]')).toHaveText(
@@ -159,9 +168,6 @@ test.describe('Automations section', () => {
 		await expect(row.locator('[data-terminay-automation-next-run]')).toHaveCount(
 			0,
 		);
-		await expect(
-			mainWindow.locator('[data-terminay-automation-detail]'),
-		).toContainText('Write text into the terminal');
 	});
 
 	test('the server’s refusal is shown beside the form', async ({
@@ -354,6 +360,7 @@ test.describe('Automation runs', () => {
 		const kept = mainWindow.locator('[data-terminay-automation-terminal]');
 		await expect(kept).toHaveCount(1);
 		await expect(kept).toContainText('Exited');
+		await kept.click();
 		const view = mainWindow.locator('[data-terminay-automation-exited-terminal]');
 		await expect(view).toHaveAttribute(
 			'data-terminay-automation-exited-terminal-state',
@@ -385,6 +392,8 @@ test.describe('Automation runs', () => {
 
 		// Closing it from its view closes it on the server.
 		await sectionTab(mainWindow, 'automations').click();
+		// Automations opens on its list; the kept terminal is listed there.
+		await kept.click();
 		await expect(view.locator('.xterm-rows')).toContainText(
 			'automation-e2e-kept',
 		);
