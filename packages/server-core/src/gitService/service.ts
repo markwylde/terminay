@@ -1,5 +1,19 @@
 import { createHash } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import {
+	createRefreshSchedule,
+	REFRESH_RAMP_MS,
+	type RefreshSchedule,
+} from '@terminay/protocol';
+import {
+	attributeGitDirChange,
+	attributeWorkingTreeChange,
+	type GitChangeScope,
+	linkedGitDirName,
+	type ObservedRepositoryLayout,
+	type ObservedWorktree,
+	workingTreeWatchRoots,
+} from './observation.js';
 import { dirname, isAbsolute, normalize, relative, resolve } from 'node:path';
 import {
 	parseDiff,
@@ -29,6 +43,7 @@ import {
 	type GitServiceOperation,
 	type GitServiceOptions,
 	type GitServiceReplay,
+	type GitStateWatcher,
 	type GitStatusChangeEvent,
 	type GitStatusEntry,
 	type GitStatusResult,
@@ -42,7 +57,9 @@ import {
 	type GitWorktreeRemoveRequest,
 	type GitWorktreeRemoveResult,
 	type GitWorktreeSummary,
+	type GitWatchHandle,
 } from './types.js';
+import { NodeGitStateWatcher } from './watcher.js';
 
 export class NodeGitPathAdapter implements GitPathAdapter {
 	realpath(path: string): Promise<string> {
@@ -55,7 +72,44 @@ export class NodeGitPathAdapter implements GitPathAdapter {
 }
 
 type GitTargetRequest = Omit<GitReadOnlyRequest, 'operation'>;
-type GitStatusPollTimer = ReturnType<typeof setTimeout>;
+
+/**
+ * Everything watched for one repository, shared by every project bound to it.
+ * The cached listing is trusted only while the Git directory watch is live and
+ * no event has arrived since it was measured.
+ */
+interface RepositoryObservation {
+	readonly repositoryId: GitRepositoryId;
+	readonly repositoryRoot: string;
+	readonly projects: Set<string>;
+	/** Keyed by the watched path. */
+	readonly watches: Map<string, GitWatchHandle>;
+	readonly schedule: RefreshSchedule;
+	/** Aborts this observation's own refreshes when it is disposed. */
+	readonly abort: AbortController;
+	readonly dirty: Set<GitWorktreeId>;
+	layout: ObservedRepositoryLayout;
+	/** Null until the Git directory watch is established. */
+	commonDir: string | null;
+	listing: GitWorktreeListResult | undefined;
+	dirtyAll: boolean;
+	unavailable: boolean;
+	closed: boolean;
+	refreshing: boolean;
+	refreshAgain: boolean;
+	/** The measurement in progress. Measurements of one repository run one at a
+	 *  time, so none can claim an empty dirty set while another still holds the
+	 *  changes and then cache summaries that predate them. */
+	measuring: Promise<unknown> | undefined;
+}
+
+/** The invalidations a measurement took responsibility for. */
+interface DirtyClaim {
+	readonly all: boolean;
+	readonly ids: ReadonlySet<GitWorktreeId>;
+	/** Whether the cache could be trusted when the measurement began. */
+	readonly trusted: boolean;
+}
 
 interface Discovery {
 	readonly state: GitDiscoveryState;
@@ -81,7 +135,8 @@ export class GitService {
 	private readonly runner: GitCommandRunner;
 	private readonly pathAdapter: GitPathAdapter;
 	private readonly limits: Required<GitServiceLimits>;
-	private readonly statusPollIntervalMs: number | false;
+	private readonly watcher: GitStateWatcher;
+	private readonly refreshRampMs: readonly number[];
 	private readonly bindings = new Map<string, GitProjectBinding>();
 	private readonly listeners = new Set<GitServiceListener>();
 	private readonly mutatingWorktreeIds = new Set<string>();
@@ -91,7 +146,13 @@ export class GitService {
 	>();
 	private readonly events: GitServiceEvent[] = [];
 	private readonly maxEvents: number;
-	private readonly statusPollTimers = new Map<string, GitStatusPollTimer>();
+	private readonly observations = new Map<string, RepositoryObservation>();
+	/** Watches a project root that is not yet a repository for `.git` to appear. */
+	private readonly discoveryWatches = new Map<string, GitWatchHandle>();
+	/** Changes on every bind and on release, so work started under an older
+	 *  binding can tell it no longer applies. */
+	private readonly projectGenerations = new Map<string, number>();
+	private generationCounter = 0;
 	private revisionValue = 0;
 	private readonly statusFingerprints = new Map<string, string>();
 	/** Last measured summary per worktree, by repository. Lets a listing that
@@ -111,16 +172,8 @@ export class GitService {
 		this.maxEvents = options.maxEvents ?? 1024;
 		if (!Number.isSafeInteger(this.maxEvents) || this.maxEvents <= 0)
 			throw new RangeError('maxEvents must be positive');
-		this.statusPollIntervalMs = options.statusPollIntervalMs ?? 10_000;
-		if (
-			this.statusPollIntervalMs !== false &&
-			(!Number.isSafeInteger(this.statusPollIntervalMs) ||
-				this.statusPollIntervalMs < 1_000 ||
-				this.statusPollIntervalMs > 300_000)
-		)
-			throw new RangeError(
-				'statusPollIntervalMs must be false or between 1000 and 300000',
-			);
+		this.watcher = options.watcher ?? new NodeGitStateWatcher();
+		this.refreshRampMs = options.refreshRampMs ?? REFRESH_RAMP_MS;
 	}
 
 	get revision(): number {
@@ -168,20 +221,42 @@ export class GitService {
 			worktreeRoot: discovered.worktreeRoot,
 			state: discovered.state,
 		};
+		if (this.closed)
+			throw new GitServiceError('invalid-project', 'Git service is closed');
+		const previous = this.bindings.get(projectId);
 		this.bindings.set(projectId, binding);
-		this.startStatusPoll(projectId);
+		this.projectGenerations.set(projectId, ++this.generationCounter);
+		this.rebindObservation(projectId, previous, binding);
 		return binding;
 	}
 
+	/**
+	 * Release everything held for a project: its binding, its share of the
+	 * repository's watches, and any pending refresh. Work already in flight for
+	 * it finishes without publishing or caching anything.
+	 */
+	releaseProject(projectId: string): boolean {
+		const binding = this.bindings.get(projectId);
+		if (binding === undefined) return false;
+		this.bindings.delete(projectId);
+		this.projectGenerations.delete(projectId);
+		this.stopObserving(projectId, binding);
+		const prefix = `${projectId}\0`;
+		for (const key of [...this.statusFingerprints.keys()])
+			if (key.startsWith(prefix)) this.statusFingerprints.delete(key);
+		return true;
+	}
+
 	unbindProject(projectId: string): boolean {
-		this.stopStatusPoll(projectId);
-		return this.bindings.delete(projectId);
+		return this.releaseProject(projectId);
 	}
 
 	close(): void {
 		this.closed = true;
-		for (const projectId of [...this.statusPollTimers.keys()])
-			this.stopStatusPoll(projectId);
+		for (const observation of [...this.observations.values()])
+			this.disposeObservation(observation);
+		for (const handle of this.discoveryWatches.values()) handle.close();
+		this.discoveryWatches.clear();
 		this.listeners.clear();
 	}
 
@@ -378,7 +453,49 @@ export class GitService {
 		signal?: AbortSignal,
 	): Promise<GitWorktreeListResult> {
 		const target = normalizeTarget(request, signal);
+		for (;;) {
+			const cached = this.cachedListing(target);
+			if (cached !== undefined) return cached;
+			const pending = this.observationFor(target.projectId)?.measuring;
+			if (pending === undefined) break;
+			await pending.catch(() => undefined);
+			target.signal?.throwIfAborted();
+		}
+		const generation = this.projectGenerations.get(target.projectId);
+		const observation = this.observationFor(target.projectId);
+		const claim =
+			observation === undefined ? undefined : this.claimDirty(observation);
+		const measurement = this.measureWorktrees(
+			target,
+			generation,
+			observation,
+			claim,
+		).catch((error: unknown) => {
+			if (observation !== undefined && claim !== undefined)
+				this.restoreDirty(observation, claim);
+			throw error;
+		});
+		if (observation === undefined) return measurement;
+		observation.measuring = measurement;
+		try {
+			return await measurement;
+		} finally {
+			if (observation.measuring === measurement)
+				observation.measuring = undefined;
+		}
+	}
+
+	private async measureWorktrees(
+		target: GitTargetRequest,
+		generation: number | undefined,
+		observation: RepositoryObservation | undefined,
+		claim: DirtyClaim | undefined,
+	): Promise<GitWorktreeListResult> {
 		const discovery = await this.resolveDiscovery(target);
+		const unmeasured = (): void => {
+			if (observation !== undefined && claim !== undefined)
+				this.restoreDirty(observation, claim);
+		};
 		const empty: GitWorktreeListResult = {
 			projectId: target.projectId,
 			repositoryId: discovery.repositoryId,
@@ -389,8 +506,10 @@ export class GitService {
 			bounded: false,
 			...(discovery.error === undefined ? {} : { error: discovery.error }),
 		};
-		if (discovery.state !== 'ready' || discovery.repositoryRoot === null)
+		if (discovery.state !== 'ready' || discovery.repositoryRoot === null) {
+			unmeasured();
 			return empty;
+		}
 		// Listing is repository-scoped. The requested worktree may itself be a
 		// stale registration whose directory no longer exists, so it must never
 		// be used as the command cwd.
@@ -400,6 +519,7 @@ export class GitService {
 			target.signal,
 		);
 		if (result.exitCode !== 0 || result.truncated) {
+			unmeasured();
 			return {
 				...empty,
 				state: 'command-error',
@@ -422,27 +542,80 @@ export class GitService {
 		);
 		const mainPath = records.find((record) => !record.isBare)?.path;
 		const summaries: GitWorktreeSummary[] = [];
+		// The observation only speaks for the repository it watches; a project
+		// whose discovery moved to another repository is measured in full.
+		const observed =
+			observation !== undefined &&
+			claim !== undefined &&
+			observation.repositoryId === discovery.repositoryId
+				? observation
+				: undefined;
+		if (
+			observation !== undefined &&
+			claim !== undefined &&
+			observed === undefined
+		)
+			this.restoreDirty(observation, claim);
+		let newlyWatched = false;
+		if (observed !== undefined) {
+			// Watch every worktree before measuring it, so a change made while it
+			// is measured is an event rather than a gap.
+			observed.layout = await this.observedLayout(
+				observed.repositoryId,
+				defaultBranch,
+				mainPath,
+				selected,
+			);
+			// A worktree newly watched has never been measured under its watch.
+			if (this.syncWorkingTreeWatches(observed).length > 0) newlyWatched = true;
+		}
 		// A status change names the worktree it came from, so a listing raised by
 		// one worktree's change need not re-run four Git commands against every
 		// other worktree in the repository. Reuse is exact — the summary the
-		// previous listing produced — rather than time-based: a worktree is
-		// skipped only when the caller said the change was somewhere else, and an
-		// unattributed listing still measures all of them.
+		// previous listing produced — rather than time-based. With live watches a
+		// worktree is re-measured only when an event named it; without them, only
+		// when the caller named it, and an unattributed listing measures all.
 		const previous = this.lastWorktreeSummaries.get(
 			discovery.repositoryId ?? '',
 		);
+		const watchedScope =
+			observed !== undefined &&
+			claim?.trusted === true &&
+			!claim.all &&
+			!newlyWatched
+				? claim.ids
+				: undefined;
 		const scopeTo =
-			target.worktreeId !== undefined && previous !== undefined
+			watchedScope === undefined &&
+			!newlyWatched &&
+			target.worktreeId !== undefined &&
+			previous !== undefined
 				? target.worktreeId
 				: undefined;
+		const carry = (id: GitWorktreeId): boolean =>
+			watchedScope !== undefined
+				? !watchedScope.has(id)
+				: scopeTo !== undefined && id !== scopeTo;
+		const current = () =>
+			this.isCurrentGeneration(target.projectId, generation);
+		const publishTo =
+			observed === undefined ? [target.projectId] : [...observed.projects];
+		const remeasure = new Set<GitWorktreeId>();
 		const measured = new Map<GitWorktreeId, GitWorktreeSummary>();
 		for (const record of selected) {
+			// Released or re-bound: stop spawning Git for a binding that is gone.
+			if (!current())
+				throw new GitServiceError(
+					'invalid-project',
+					'project is not bound to this server',
+					{ projectId: target.projectId },
+				);
 			const canonicalPath = await this.canonicalWorktreePath(record.path);
 			const id = worktreeId(
 				discovery.repositoryId as GitRepositoryId,
 				canonicalPath,
 			);
-			if (scopeTo !== undefined && id !== scopeTo) {
+			if (carry(id)) {
 				const carried = previous?.get(id);
 				if (carried !== undefined) {
 					summaries.push(carried);
@@ -471,6 +644,8 @@ export class GitService {
 			let hasCommittedChanges: boolean | null = null;
 			let discoveryState: GitDiscoveryState = 'ready';
 			const mutating = this.mutatingWorktreeIds.has(id);
+			// A worktree skipped mid-mutation has not been measured.
+			if (mutating) remeasure.add(id);
 			if (!record.isBare && !record.isPrunable && !mutating) {
 				const statusResult = await this.runGit(
 					[
@@ -549,30 +724,47 @@ export class GitService {
 			} satisfies GitWorktreeSummary;
 			summaries.push(summary);
 			measured.set(id, summary);
-			if (!mutating) {
-				this.publishStatusChange({
-					projectId: target.projectId,
-					repositoryId: discovery.repositoryId,
-					repositoryRoot: discovery.repositoryRoot,
-					worktreeId: id,
-					worktreeRoot: canonicalPath,
-					state: discoveryState,
-					branch,
-					entries,
-					head: record.head,
-					bounded: statusBounded,
-					...(error === undefined ? {} : { error }),
-				});
+			if (!mutating && current()) {
+				for (const projectId of publishTo)
+					this.publishStatusChange({
+						projectId,
+						repositoryId: discovery.repositoryId,
+						repositoryRoot: discovery.repositoryRoot,
+						worktreeId: id,
+						worktreeRoot: canonicalPath,
+						state: discoveryState,
+						branch,
+						entries,
+						head: record.head,
+						bounded: statusBounded,
+						...(error === undefined ? {} : { error }),
+					});
 			}
 		}
-		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
-		return {
+		const listing: GitWorktreeListResult = {
 			...empty,
 			state: 'ready',
 			defaultBranch,
 			worktrees: summaries,
 			bounded,
 		};
+		if (!current()) {
+			// Released or re-bound while measuring: nothing here may be kept.
+			if (observed !== undefined && claim !== undefined)
+				this.restoreDirty(observed, claim);
+			return listing;
+		}
+		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
+		if (observed !== undefined) {
+			for (const id of remeasure) observed.dirty.add(id);
+			// Cache only what was measured under watches that were already live and
+			// are live still; otherwise the next request measures again.
+			observed.listing =
+				claim?.trusted === true && this.observationTrusted(observed)
+					? listing
+					: undefined;
+		}
+		return listing;
 	}
 
 	listWorktrees(
@@ -1284,6 +1476,10 @@ export class GitService {
 					return await work();
 				} finally {
 					this.mutatingWorktreeIds.delete(worktreeId);
+					// A mutation can move, remove, or rewrite any worktree; never
+					// answer the next listing from a cache taken before it.
+					const observation = this.observations.get(repositoryId);
+					if (observation !== undefined) observation.dirtyAll = true;
 				}
 			});
 		this.repositoryMutationTails.set(repositoryId, run);
@@ -1392,7 +1588,9 @@ export class GitService {
 			const listed = await this.findWorktree(target, discovery);
 			return { ...discovery, worktreeId: listed.id, worktreeRoot: listed.path };
 		}
-		this.bindings.set(target.projectId, {
+		// Released while discovering: never resurrect the binding.
+		if (this.bindings.get(target.projectId) !== binding) return discovery;
+		const rediscovered: GitProjectBinding = {
 			projectId: target.projectId,
 			projectRoot: binding.projectRoot,
 			repositoryId: discovery.repositoryId,
@@ -1400,7 +1598,13 @@ export class GitService {
 			worktreeId: discovery.worktreeId,
 			worktreeRoot: discovery.worktreeRoot,
 			state: discovery.state,
-		});
+		};
+		this.bindings.set(target.projectId, rediscovered);
+		if (
+			binding.repositoryId !== rediscovered.repositoryId ||
+			binding.state !== rediscovered.state
+		)
+			this.rebindObservation(target.projectId, binding, rediscovered);
 		return discovery;
 	}
 
@@ -1810,6 +2014,10 @@ export class GitService {
 		signal?: AbortSignal,
 		maxOutputBytes = this.limits.maxOutputBytes,
 	): Promise<GitCommandResult> {
+		// Nothing spawns for a closed service or a cancelled caller.
+		if (this.closed)
+			throw new GitServiceError('invalid-project', 'Git service is closed');
+		signal?.throwIfAborted();
 		try {
 			return await this.runner.run(args, cwd, { signal, maxOutputBytes });
 		} catch (error) {
@@ -1931,37 +2139,406 @@ export class GitService {
 		}
 	}
 
-	private startStatusPoll(projectId: string): void {
+	// ---- Observation ------------------------------------------------------
+	// Status follows watch events (ADR-0028). Nothing here runs on a timer
+	// except the ramp that damps work after an observed change.
+
+	private rebindObservation(
+		projectId: string,
+		previous: GitProjectBinding | undefined,
+		next: GitProjectBinding,
+	): void {
 		if (
-			this.statusPollIntervalMs === false ||
-			this.statusPollTimers.has(projectId) ||
-			this.closed
+			previous !== undefined &&
+			previous.repositoryId !== null &&
+			previous.repositoryId === next.repositoryId &&
+			this.observations.get(previous.repositoryId)?.projects.has(projectId)
 		)
 			return;
-		const schedule = (): void => {
-			if (
-				this.statusPollIntervalMs === false ||
-				this.closed ||
-				!this.bindings.has(projectId)
-			)
-				return;
-			const timer = setTimeout(() => {
-				this.statusPollTimers.delete(projectId);
-				if (this.closed || !this.bindings.has(projectId)) return;
-				void this.worktrees({ projectId })
-					.catch(() => undefined)
-					.finally(schedule);
-			}, this.statusPollIntervalMs);
-			timer.unref?.();
-			this.statusPollTimers.set(projectId, timer);
-		};
-		schedule();
+		if (previous !== undefined) this.stopObserving(projectId, previous);
+		this.observe(next);
 	}
 
-	private stopStatusPoll(projectId: string): void {
-		const timer = this.statusPollTimers.get(projectId);
-		if (timer !== undefined) clearTimeout(timer);
-		this.statusPollTimers.delete(projectId);
+	private observe(binding: GitProjectBinding): void {
+		if (this.closed) return;
+		if (
+			binding.state !== 'ready' ||
+			binding.repositoryId === null ||
+			binding.repositoryRoot === null
+		) {
+			this.watchForRepository(binding);
+			return;
+		}
+		const existing = this.observations.get(binding.repositoryId);
+		if (existing !== undefined) {
+			existing.projects.add(binding.projectId);
+			return;
+		}
+		const observation: RepositoryObservation = {
+			repositoryId: binding.repositoryId,
+			repositoryRoot: binding.repositoryRoot,
+			projects: new Set([binding.projectId]),
+			watches: new Map(),
+			schedule: createRefreshSchedule({
+				rampMs: this.refreshRampMs,
+				run: () => this.refreshObservation(observation),
+				setTimer: (callback, delayMs) => {
+					const timer = setTimeout(callback, delayMs);
+					timer.unref?.();
+					return timer;
+				},
+				clearTimer: (timer) =>
+					clearTimeout(timer as ReturnType<typeof setTimeout>),
+			}),
+			abort: new AbortController(),
+			dirty: new Set(),
+			// Until a listing names the worktrees, the repository root is the only
+			// working tree known, and it may be a linked worktree.
+			layout: {
+				mainWorktreeId: null,
+				defaultBranch: null,
+				worktrees:
+					binding.worktreeId === null
+						? []
+						: [
+								{
+									id: binding.worktreeId,
+									path: binding.repositoryRoot,
+									branch: null,
+									gitDirName: null,
+									hasWorkingTree: true,
+								},
+							],
+			},
+			commonDir: null,
+			listing: undefined,
+			dirtyAll: true,
+			unavailable: false,
+			closed: false,
+			refreshing: false,
+			refreshAgain: false,
+			measuring: undefined,
+		};
+		this.observations.set(binding.repositoryId, observation);
+		this.syncWorkingTreeWatches(observation);
+		void this.watchGitDirectory(observation);
+	}
+
+	private stopObserving(projectId: string, binding: GitProjectBinding): void {
+		this.discoveryWatches.get(projectId)?.close();
+		this.discoveryWatches.delete(projectId);
+		if (binding.repositoryId === null) return;
+		const observation = this.observations.get(binding.repositoryId);
+		if (observation === undefined) return;
+		observation.projects.delete(projectId);
+		if (observation.projects.size === 0) this.disposeObservation(observation);
+	}
+
+	private disposeObservation(observation: RepositoryObservation): void {
+		observation.closed = true;
+		observation.schedule.cancel();
+		observation.abort.abort();
+		for (const handle of observation.watches.values()) handle.close();
+		observation.watches.clear();
+		observation.listing = undefined;
+		if (this.observations.get(observation.repositoryId) === observation) {
+			this.observations.delete(observation.repositoryId);
+			this.lastWorktreeSummaries.delete(observation.repositoryId);
+		}
+	}
+
+	/** A project root that is not a repository yet becomes one when `.git`
+	 *  appears in it; nothing else about it is observed. */
+	private watchForRepository(binding: GitProjectBinding): void {
+		const { projectId, projectRoot } = binding;
+		this.discoveryWatches.get(projectId)?.close();
+		const handle = this.watcher.watch(projectRoot, {
+			recursive: false,
+			onChange: (entry) => {
+				if (entry !== null && entry !== '.git') return;
+				if (this.discoveryWatches.get(projectId) !== handle) return;
+				void this.rediscover(projectId, projectRoot);
+			},
+			// Without a watch the project is measured when a client asks.
+			onError: () => {
+				if (this.discoveryWatches.get(projectId) !== handle) return;
+				handle.close();
+				this.discoveryWatches.delete(projectId);
+			},
+		});
+		this.discoveryWatches.set(projectId, handle);
+	}
+
+	private async rediscover(projectId: string, projectRoot: string) {
+		const generation = this.projectGenerations.get(projectId);
+		const current = this.bindings.get(projectId);
+		if (current === undefined || current.projectRoot !== projectRoot) return;
+		const discovered = await this.discover(projectRoot).catch(() => undefined);
+		if (
+			discovered === undefined ||
+			discovered.state !== 'ready' ||
+			this.projectGenerations.get(projectId) !== generation
+		)
+			return;
+		const binding = await this.bindProject(projectId, projectRoot).catch(
+			() => undefined,
+		);
+		if (binding !== undefined) this.publishUnattributedChange(binding);
+	}
+
+	private async watchGitDirectory(
+		observation: RepositoryObservation,
+	): Promise<void> {
+		let commonDir: string;
+		try {
+			const result = await this.runGit(
+				['rev-parse', '--git-common-dir'],
+				observation.repositoryRoot,
+			);
+			const reported = result.stdout.trim();
+			if (result.exitCode !== 0 || result.truncated || reported.length === 0)
+				throw new Error('Git common directory is unavailable');
+			commonDir = await this.pathAdapter.realpath(
+				resolve(observation.repositoryRoot, reported),
+			);
+		} catch (error) {
+			this.observationFailed(observation, error);
+			return;
+		}
+		if (observation.closed || observation.unavailable) return;
+		this.addWatch(observation, commonDir, true, (entry) =>
+			attributeGitDirChange(entry, observation.layout),
+		);
+		observation.commonDir = commonDir;
+	}
+
+	private addWatch(
+		observation: RepositoryObservation,
+		path: string,
+		recursive: boolean,
+		attribute: (entry: string | null) => GitChangeScope,
+	): void {
+		const handle = this.watcher.watch(path, {
+			recursive,
+			onChange: (entry) => {
+				if (observation.watches.get(path) !== handle) return;
+				this.observedChange(observation, attribute(entry));
+			},
+			onError: (error) => {
+				if (observation.watches.get(path) !== handle) return;
+				this.observationFailed(observation, error);
+			},
+		});
+		observation.watches.set(path, handle);
+	}
+
+	/** Watch every working tree the layout names, and stop watching any that
+	 *  went away. A root inside another watched root is already covered. */
+	private syncWorkingTreeWatches(
+		observation: RepositoryObservation,
+	): readonly string[] {
+		const added: string[] = [];
+		if (observation.closed || observation.unavailable) return added;
+		const wanted = new Set(workingTreeWatchRoots(observation.layout));
+		for (const [path, handle] of [...observation.watches]) {
+			if (path === observation.commonDir || wanted.has(path)) continue;
+			handle.close();
+			observation.watches.delete(path);
+		}
+		for (const root of wanted) {
+			if (observation.watches.has(root)) continue;
+			added.push(root);
+			this.addWatch(observation, root, true, (entry) =>
+				attributeWorkingTreeChange(root, entry, observation.layout),
+			);
+		}
+		return added;
+	}
+
+	private observedChange(
+		observation: RepositoryObservation,
+		scope: GitChangeScope,
+	): void {
+		if (observation.closed || observation.unavailable) return;
+		if (scope.kind === 'ignore') return;
+		if (scope.kind === 'all') observation.dirtyAll = true;
+		else for (const id of scope.ids) observation.dirty.add(id);
+		observation.schedule.request();
+	}
+
+	private refreshObservation(observation: RepositoryObservation): void {
+		if (observation.closed || observation.unavailable) return;
+		if (observation.refreshing) {
+			observation.refreshAgain = true;
+			return;
+		}
+		const [projectId] = observation.projects;
+		if (projectId === undefined) return;
+		observation.refreshing = true;
+		void this.worktrees({ projectId, signal: observation.abort.signal })
+			.catch(() => undefined)
+			.finally(() => {
+				observation.refreshing = false;
+				if (!observation.refreshAgain) return;
+				observation.refreshAgain = false;
+				observation.schedule.request();
+			});
+	}
+
+	/**
+	 * A watch that fails leaves the repository measured on demand. No timer
+	 * replaces it (ADR-0028): clients re-query once, then whenever they ask.
+	 */
+	private observationFailed(
+		observation: RepositoryObservation,
+		_error: unknown,
+	): void {
+		if (observation.closed || observation.unavailable) return;
+		observation.unavailable = true;
+		observation.schedule.cancel();
+		for (const handle of observation.watches.values()) handle.close();
+		observation.watches.clear();
+		observation.listing = undefined;
+		observation.dirtyAll = true;
+		for (const projectId of observation.projects) {
+			const binding = this.bindings.get(projectId);
+			if (binding !== undefined) this.publishUnattributedChange(binding);
+		}
+	}
+
+	private observationTrusted(observation: RepositoryObservation): boolean {
+		return (
+			!observation.closed &&
+			!observation.unavailable &&
+			observation.commonDir !== null
+		);
+	}
+
+	private observationFor(projectId: string): RepositoryObservation | undefined {
+		const repositoryId = this.bindings.get(projectId)?.repositoryId;
+		if (repositoryId === null || repositoryId === undefined) return undefined;
+		const observation = this.observations.get(repositoryId);
+		return observation?.projects.has(projectId) === true
+			? observation
+			: undefined;
+	}
+
+	/** The last measured listing, when the watches say nothing has changed. */
+	private cachedListing(
+		target: GitTargetRequest,
+	): GitWorktreeListResult | undefined {
+		const observation = this.observationFor(target.projectId);
+		if (
+			observation === undefined ||
+			!this.observationTrusted(observation) ||
+			// A measurement in flight holds changes the cache does not have yet.
+			observation.measuring !== undefined ||
+			observation.listing === undefined ||
+			observation.dirtyAll ||
+			observation.dirty.size > 0
+		)
+			return undefined;
+		if (
+			target.repositoryId !== undefined &&
+			target.repositoryId !== observation.repositoryId
+		)
+			return undefined;
+		if (
+			target.worktreeId !== undefined &&
+			!observation.layout.worktrees.some(
+				(worktree) => worktree.id === target.worktreeId,
+			)
+		)
+			return undefined;
+		return { ...observation.listing, projectId: target.projectId };
+	}
+
+	private claimDirty(observation: RepositoryObservation): DirtyClaim {
+		const claim: DirtyClaim = {
+			all: observation.dirtyAll || observation.listing === undefined,
+			ids: new Set(observation.dirty),
+			trusted: this.observationTrusted(observation),
+		};
+		observation.dirtyAll = false;
+		observation.dirty.clear();
+		return claim;
+	}
+
+	private restoreDirty(
+		observation: RepositoryObservation,
+		claim: DirtyClaim,
+	): void {
+		if (claim.all) observation.dirtyAll = true;
+		for (const id of claim.ids) observation.dirty.add(id);
+	}
+
+	/** Read each linked worktree's `.git` file for its registry name, so a
+	 *  change under `worktrees/<name>/` is attributed without spawning Git. */
+	private async observedLayout(
+		repositoryId: GitRepositoryId,
+		defaultBranch: string | null,
+		mainPath: string | undefined,
+		records: readonly {
+			readonly path: string;
+			readonly branch: string | null;
+			readonly isBare: boolean;
+			readonly isPrunable: boolean;
+		}[],
+	): Promise<ObservedRepositoryLayout> {
+		const worktrees: ObservedWorktree[] = [];
+		let mainWorktreeId: GitWorktreeId | null = null;
+		for (const record of records) {
+			const path = await this.canonicalWorktreePath(record.path);
+			const id = worktreeId(repositoryId, path);
+			const isMain = mainPath !== undefined && samePath(mainPath, record.path);
+			if (isMain) mainWorktreeId = id;
+			const hasWorkingTree = !record.isBare && !record.isPrunable;
+			let gitDirName: string | null = null;
+			if (!isMain && hasWorkingTree) {
+				gitDirName = await readFile(resolve(path, '.git'), 'utf8')
+					.then(linkedGitDirName)
+					.catch(() => null);
+			}
+			worktrees.push({
+				id,
+				path,
+				branch: record.branch,
+				gitDirName,
+				hasWorkingTree,
+			});
+		}
+		return { mainWorktreeId, defaultBranch, worktrees };
+	}
+
+	private isCurrentGeneration(
+		projectId: string,
+		generation: number | undefined,
+	) {
+		return (
+			generation !== undefined &&
+			this.projectGenerations.get(projectId) === generation
+		);
+	}
+
+	private publishUnattributedChange(binding: GitProjectBinding): void {
+		const prefix = `${binding.projectId}\0`;
+		for (const key of [...this.statusFingerprints.keys()])
+			if (key.startsWith(prefix)) this.statusFingerprints.delete(key);
+		this.record(
+			Object.freeze({
+				revision: this.nextRevision(),
+				cursor: String(this.revisionValue),
+				type: 'git.status.changed',
+				projectId: binding.projectId,
+				repositoryId: binding.repositoryId,
+				worktreeId: null,
+				state: binding.state,
+				branch: null,
+				head: null,
+				changedFiles: 0,
+				bounded: false,
+			}),
+		);
 	}
 }
 

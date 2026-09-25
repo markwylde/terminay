@@ -23,6 +23,10 @@ export class NodeGitCommandRunner implements GitCommandRunner {
 		return new Promise<GitCommandResult>((resolve, reject) => {
 			const child = spawn('git', [...args], {
 				cwd,
+				// Read-only commands such as `status` otherwise refresh and rewrite
+				// the index, which the server's own Git directory watch would observe
+				// as a change and answer with another refresh.
+				env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
 				stdio: ['ignore', 'pipe', 'pipe'],
 				windowsHide: true,
 				signal: options.signal,

@@ -428,6 +428,24 @@ export function createServerCoreComposition(
 							sessionIds,
 						);
 					},
+					releaseProject: async (projectId) => {
+						// Each owner releases independently: one failing must not leave
+						// the others running for a project that no longer exists.
+						await Promise.allSettled([
+							Promise.resolve().then(() =>
+								options.git?.releaseProject(projectId),
+							),
+							Promise.resolve().then(() =>
+								options.fileObservations?.closeProject(projectId),
+							),
+							Promise.resolve().then(() =>
+								language?.sessions.closeProject(projectId),
+							),
+							Promise.resolve().then(() =>
+								options.workspaceOperations?.releaseProject?.(projectId),
+							),
+						]);
+					},
 					eventJournal,
 					...(options.shellProfiles === undefined
 						? {}
