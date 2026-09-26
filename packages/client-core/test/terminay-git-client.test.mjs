@@ -58,12 +58,18 @@ test("TerminayGitClient sends clean-only removal as its own operation and requir
   assert.equal(fake.calls.length, 1);
 });
 
-test("TerminayGitClient fails closed for unavailable reveal/copy capabilities", async () => {
+test("TerminayGitClient fails closed for an unavailable copy capability", async () => {
   const fake = transport();
   const client = new TerminayGitClient(fake, { capabilities: {} });
-  assert.throws(() => client.reveal(reference), /capability is unavailable: nativeWindows/);
   assert.throws(() => client.copy(reference), /capability is unavailable: clipboard/);
   assert.equal(fake.calls.length, 0);
+});
+
+test("TerminayGitClient leaves reveal to the server host", async () => {
+  const fake = transport();
+  const client = new TerminayGitClient(fake, { capabilities: {} });
+  await client.reveal(reference);
+  assert.equal(fake.calls.length, 1);
 });
 
 test("TerminayGitClient rejects path-like and unsafe reviewed values before transport", async () => {
