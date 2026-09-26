@@ -279,6 +279,8 @@ export interface ServerTerminalAuthorityOptions {
 	/** Extension host lifecycle, including the error behind a crash. Without it
 	 * a host that dies leaves no evidence anywhere. */
 	readonly onExtensionHostDiagnostic?: ExtensionHostDiagnosticListener;
+	/** Show a worktree in the OS file manager, for this machine's own windows. */
+	readonly revealPathOnHost?: (path: string) => Promise<void> | void;
 	/** Metadata-only observer for failed server-owned filesystem operations. */
 	readonly onFileOperationFailure?: (
 		failure: ServerFileOperationFailure,
@@ -368,6 +370,8 @@ export class ServerTerminalAuthority {
 	private readonly consumers: DetachableTerminalConsumerRegistry;
 	private readonly buffers = new Map<string, Uint8Array>();
 	private readonly listeners = new Set<(event: TerminalEvent) => void>();
+	/** Clients on this machine's renderer ports, as opposed to remote peers. */
+	private readonly embeddedRendererClientIds = new Set<string>();
 	private readonly rendererConnectionsByOwner = new Map<
 		string,
 		ServerConnectionLike
@@ -490,6 +494,35 @@ export class ServerTerminalAuthority {
 			resolveProjectRoot: (projectId) =>
 				this.workspace.state.projects[projectId]?.root ?? null,
 			insights: this.worktreeInsights,
+			...(options.revealPathOnHost === undefined
+				? {}
+				: {
+						actions: {
+							reveal: async (request) => {
+								const revealPath = options.revealPathOnHost;
+								// The adapter has already bound and authorized the project.
+								const listing = await git.worktrees({
+									projectId:
+										request.projectId ?? request.authorization.projectId ?? '',
+								});
+								const worktree = listing.worktrees.find(
+									(candidate) =>
+										candidate.id === request.worktreeId &&
+										candidate.repositoryId === request.repositoryId,
+								);
+								if (worktree === undefined || revealPath === undefined)
+									throw new Error('The worktree is no longer available.');
+								await revealPath(worktree.path);
+								return { revealed: true };
+							},
+						},
+						// Only the reveal action is wired; terminals and project
+						// switching stay with the renderer.
+						hostCapabilities: ['nativeWindows'],
+						canRevealOnHost: (authorization) =>
+							authorization.clientId !== undefined &&
+							this.embeddedRendererClientIds.has(authorization.clientId),
+					}),
 		});
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
@@ -1439,9 +1472,11 @@ export class ServerTerminalAuthority {
 			this.service.serverId,
 		);
 		const transport = new ServerPortTransport(scopedPort);
+		const clientId = `embedded-renderer-${randomBytes(16).toString('hex')}`;
+		this.embeddedRendererClientIds.add(clientId);
 		const connection = this.composition.core.accept(transport, {
 			authenticatedClient: {
-				clientId: `embedded-renderer-${randomBytes(16).toString('hex')}`,
+				clientId,
 				authScope: 'admin',
 				permissions: [
 					'workspace:write',
@@ -1450,6 +1485,7 @@ export class ServerTerminalAuthority {
 				],
 			},
 			onClosed: () => {
+				this.embeddedRendererClientIds.delete(clientId);
 				if (this.rendererConnectionsByOwner.get(ownerId) === connection) {
 					this.rendererConnectionsByOwner.delete(ownerId);
 				}

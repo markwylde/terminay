@@ -392,6 +392,8 @@ export type WorktreePanelStatus = {
 	repoRoot: string | null;
 	defaultBranch: string | null;
 	worktrees: GitWorktreeStatus[];
+	/** The server shows worktrees in this machine's file manager for us. */
+	revealAvailable?: boolean;
 	signIn?: WorktreeSignInPrompt;
 };
 

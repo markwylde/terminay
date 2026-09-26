@@ -12,6 +12,7 @@ type GitState =
 			status: 'ready';
 			worktrees: readonly Worktree[];
 			bounded: boolean;
+			revealAvailable: boolean;
 	  }>;
 
 interface Worktree extends GitWorktreeReference {
@@ -275,20 +276,22 @@ export function SharedGitRouteBody({
 											>
 												Switch project
 											</button>
-											<button
-												disabled={busy !== undefined}
-												type="button"
-												onClick={() =>
-													void run(
-														`reveal:${key}`,
-														() => gitClient.reveal(worktree),
-														'Worktree revealed.',
-													)
-												}
-											>
-												Reveal worktree
-											</button>
 										</>
+									)}
+									{state.revealAvailable && gitClient !== undefined && (
+										<button
+											disabled={busy !== undefined}
+											type="button"
+											onClick={() =>
+												void run(
+													`reveal:${key}`,
+													() => gitClient.reveal(worktree),
+													'Worktree revealed.',
+												)
+											}
+										>
+											Reveal worktree
+										</button>
 									)}
 									{gitClient?.host.has('clipboard') === true && (
 										<button
@@ -405,11 +408,16 @@ export function SharedGitRouteBody({
 function parseWorktreeList(
 	value: JsonValue,
 	projectId: string,
-): { worktrees: readonly Worktree[]; bounded: boolean } {
+): {
+	worktrees: readonly Worktree[];
+	bounded: boolean;
+	revealAvailable: boolean;
+} {
 	if (!isRecord(value) || !Array.isArray(value.worktrees))
 		throw new Error('The server returned an incompatible Git worktree list.');
 	return {
 		bounded: value.bounded === true,
+		revealAvailable: value.revealAvailable === true,
 		worktrees: value.worktrees.map((candidate) => {
 			if (
 				!isRecord(candidate) ||

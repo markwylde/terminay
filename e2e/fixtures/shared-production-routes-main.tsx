@@ -135,6 +135,7 @@ const readyGitClient = {
 		projectId: 'project:test',
 		repositoryId: 'repo:test',
 		bounded: true,
+		revealAvailable: true,
 		worktrees: [
 			{
 				id: 'worktree:main',
