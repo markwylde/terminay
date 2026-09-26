@@ -1766,6 +1766,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				{ channel: 'lifecycle' },
 			);
 		},
+		revealPathOnHost: (target) => shell.showItemInFolder(target),
 		onFileOperationFailure: (failure) => {
 			void desktopDiagnostics.record(
 				{

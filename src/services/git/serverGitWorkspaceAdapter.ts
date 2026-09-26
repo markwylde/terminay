@@ -82,6 +82,7 @@ export async function loadServerGitWorkspace(
 					? null
 					: text(result.defaultBranch, 'default branch'),
 			worktrees,
+			revealAvailable: result.revealAvailable === true,
 			...(signIn === undefined ? {} : { signIn }),
 		},
 	};

@@ -21,6 +21,58 @@ const context = (scope = 'write') => ({
 	signal: new AbortController().signal,
 });
 
+test('Git protocol adapter offers reveal only to clients at the server host', async () => {
+	const { GitService, ServerGitAdapter } = await import(
+		'../dist/gitService/index.js'
+	);
+	const root = await mkdtemp(join(tmpdir(), 'terminay-git-adapter-reveal-'));
+	try {
+		await initialise(root);
+		const git = new GitService();
+		const binding = await git.bindProject('project-a', root);
+		const revealed = [];
+		const adapter = new ServerGitAdapter({
+			serverId: 'server-a',
+			git,
+			actions: {
+				reveal: (request) => {
+					revealed.push(request.authorization.clientId);
+					return { revealed: true };
+				},
+			},
+			canRevealOnHost: (auth) => auth.clientId === 'local-window',
+		});
+		const as = (clientId) => ({ ...authorization(), clientId });
+		const local = await adapter.list({ authorization: as('local-window') });
+		const remote = await adapter.list({ authorization: as('remote-peer') });
+		assert.equal(local.revealAvailable, true);
+		assert.equal(remote.revealAvailable, false);
+		const reference = {
+			repositoryId: binding.repositoryId,
+			worktreeId: local.worktrees[0].id,
+		};
+		assert.deepEqual(
+			await adapter.reveal({ ...reference, authorization: as('local-window') }),
+			{ revealed: true },
+		);
+		await assert.rejects(
+			adapter.reveal({ ...reference, authorization: as('remote-peer') }),
+			/available only from the server host/,
+		);
+		assert.deepEqual(revealed, ['local-window']);
+
+		const withoutReveal = new ServerGitAdapter({ serverId: 'server-a', git });
+		assert.equal(
+			(await withoutReveal.list({ authorization: as('local-window') }))
+				.revealAvailable,
+			false,
+		);
+		git.close();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('Git protocol adapter lists canonical worktrees and delegates opaque worktree actions', async () => {
 	const { GitService, ServerGitAdapter, GIT_OPERATIONS, GitServiceError } =
 		await import('../dist/gitService/index.js');
@@ -131,8 +183,9 @@ test('Git protocol adapter lists canonical worktrees and delegates opaque worktr
 });
 
 test('Git protocol adapter lazily binds a workspace project root before listing worktrees', async () => {
-	const { GitService, ServerGitAdapter } =
-		await import('../dist/gitService/index.js');
+	const { GitService, ServerGitAdapter } = await import(
+		'../dist/gitService/index.js'
+	);
 	const root = await mkdtemp(join(tmpdir(), 'terminay-git-adapter-lazy-bind-'));
 	try {
 		await initialise(root);
@@ -159,8 +212,9 @@ test('Git protocol adapter lazily binds a workspace project root before listing 
 });
 
 test('Git protocol adapter rebinds Git when the workspace project root changes', async () => {
-	const { GitService, ServerGitAdapter } =
-		await import('../dist/gitService/index.js');
+	const { GitService, ServerGitAdapter } = await import(
+		'../dist/gitService/index.js'
+	);
 	const plainRoot = await mkdtemp(
 		join(tmpdir(), 'terminay-git-adapter-plain-root-'),
 	);

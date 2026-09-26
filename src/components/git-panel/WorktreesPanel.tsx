@@ -518,7 +518,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 						onOpenTerminal,
 						onPullFromOrigin,
 						onRenameWorktree,
-						onRevealWorktree,
+						...(status.revealAvailable === true ? { onRevealWorktree } : {}),
 						onSwitchProjectRoot,
 						rootPath: status.repoRoot,
 						worktree: contextMenu.worktree,
@@ -698,7 +698,8 @@ export function buildWorktreeContextMenuItems(options: {
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
 	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
-	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
+	/** Omitted when the server cannot reveal for this client. */
+	onRevealWorktree?: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
 	rootPath: string;
 	worktree: GitWorktreeStatus;
@@ -786,11 +787,15 @@ export function buildWorktreeContextMenuItems(options: {
 			disabled: unavailable,
 			onClick: () => onOpenTerminal(worktree),
 		},
-		{
-			label: 'Reveal in OS',
-			icon: <FolderOpen size={14} />,
-			disabled: unavailable,
-			onClick: () => onRevealWorktree(worktree),
-		},
+		...(onRevealWorktree === undefined
+			? []
+			: [
+					{
+						label: 'Reveal in OS',
+						icon: <FolderOpen size={14} />,
+						disabled: unavailable,
+						onClick: () => onRevealWorktree(worktree),
+					},
+				]),
 	];
 }

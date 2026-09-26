@@ -155,3 +155,25 @@ test('a worktree that is already pulling cannot start a second pull', () => {
 	assert.ok(pulling);
 	assert.equal(pulling.disabled, true);
 });
+
+test('Reveal in OS is offered only when the server can reveal for this client', () => {
+	const options = {
+		onDeleteWorktree: () => {},
+		onOpenTerminal: () => {},
+		onPullFromOrigin: () => {},
+		onRenameWorktree: () => {},
+		onSwitchProjectRoot: () => {},
+		rootPath: '/workspace/repo',
+		worktree: makeWorktree(),
+	};
+	const labels = (items) => items.map((item) => item.label);
+
+	assert.ok(
+		!labels(buildWorktreeContextMenuItems(options)).includes('Reveal in OS'),
+	);
+	assert.ok(
+		labels(
+			buildWorktreeContextMenuItems({ ...options, onRevealWorktree: () => {} }),
+		).includes('Reveal in OS'),
+	);
+});
