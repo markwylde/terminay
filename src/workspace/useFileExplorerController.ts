@@ -934,11 +934,13 @@ export function useFileExplorerController({
 	const handleRevealWorktree = useCallback(
 		(worktree: GitWorktreeStatus) => {
 			const reference = referencesRef.current.get(worktree.path);
-			if (gitClient !== undefined && reference !== undefined) {
-				void gitClient.reveal(reference);
-			}
+			if (gitClient === undefined || reference === undefined) return;
+			gitClient.reveal(reference).catch((error: unknown) => {
+				console.error('[terminay] git.worktree.reveal failed', error);
+				onOperationError('Git', error);
+			});
 		},
-		[gitClient],
+		[gitClient, onOperationError],
 	);
 	const handleOpenTerminalAtWorktree = useCallback(
 		(worktree: GitWorktreeStatus) =>

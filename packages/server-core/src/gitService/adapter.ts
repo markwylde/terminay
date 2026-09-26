@@ -139,6 +139,11 @@ export interface GitProtocolAdapterOptions {
 	readonly actions?: GitWorktreeActionHandlers;
 	/** Capabilities available on the server host for presentation actions. */
 	readonly hostCapabilities?: readonly GitHostCapability[];
+	/**
+	 * Whether a client sits at the server host's desktop, so a native reveal
+	 * lands in front of the person who asked. Omitted, every client may reveal.
+	 */
+	readonly canRevealOnHost?: (authorization: GitAuthorization) => boolean;
 	/** Trusted server-side lookup for lazily binding workspace projects to Git. */
 	readonly resolveProjectRoot?: (
 		projectId: string,
@@ -177,6 +182,7 @@ export class ServerGitAdapter {
 	private readonly actions: GitWorktreeActionHandlers;
 	private readonly hostCapabilities: ReadonlySet<GitHostCapability>;
 	private readonly resolveProjectRoot: GitProtocolAdapterOptions['resolveProjectRoot'];
+	private readonly canRevealOnHost: GitProtocolAdapterOptions['canRevealOnHost'];
 	private readonly proposalProjects = new Map<string, string>();
 	private readonly insights: GitWorktreeInsights | undefined;
 
@@ -191,6 +197,7 @@ export class ServerGitAdapter {
 		this.quickPush = options.quickPush;
 		this.actions = options.actions ?? {};
 		this.resolveProjectRoot = options.resolveProjectRoot;
+		this.canRevealOnHost = options.canRevealOnHost;
 		this.insights = options.insights;
 		this.hostCapabilities = new Set(
 			options.hostCapabilities ?? inferHostCapabilities(this.actions),
@@ -227,7 +234,19 @@ export class ServerGitAdapter {
 				? {}
 				: { worktreeId: request.worktreeId }),
 		});
-		return boundGitQueryResult(this.withInsights(result));
+		return boundGitQueryResult({
+			...(this.withInsights(result) as Record<string, JsonValue>),
+			revealAvailable: this.revealAvailable(request.authorization),
+		});
+	}
+
+	/** Reveal is offered only where the host can act and the client is there. */
+	private revealAvailable(authorization: GitAuthorization): boolean {
+		return (
+			this.actions.reveal !== undefined &&
+			this.hostCapabilities.has('nativeWindows') &&
+			(this.canRevealOnHost?.(authorization) ?? true)
+		);
 	}
 
 	/**
@@ -410,6 +429,16 @@ export class ServerGitAdapter {
 		);
 	}
 	reveal(request: GitRevealRequest): Promise<JsonValue> {
+		if (
+			this.actions.reveal !== undefined &&
+			this.canRevealOnHost?.(request.authorization) === false
+		)
+			return Promise.reject(
+				new GitServiceError(
+					'invalid-operation',
+					'reveal worktree is available only from the server host',
+				),
+			);
 		return this.action(
 			'reveal worktree',
 			this.actions.reveal,

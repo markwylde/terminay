@@ -63,8 +63,8 @@ export interface GitQuickPushApprovalRequest {
 /**
  * Feature-facing Git client. It sends only canonical identities and reviewed
  * action data to the server; paths and provider credentials are never inputs
- * to this API. Native reveal and clipboard copy fail before transport use
- * when the current host cannot perform the requested presentation action.
+ * to this API. Clipboard copy fails before transport use when the current
+ * host cannot perform it; reveal happens on the server host.
  */
 export class TerminayGitClient {
   readonly host: HostCapabilityProvider;
@@ -111,8 +111,8 @@ export class TerminayGitClient {
     return this.transport.command(GIT_CLIENT_OPERATIONS.renamePresentation, { ...validatedReference(reference), name }, options);
   }
 
+  /** The server host reveals; listings say whether this client may ask. */
   reveal(reference: GitWorktreeReference, options: CommandOptions = {}): Promise<JsonValue> {
-    this.host.require("nativeWindows");
     return this.action(GIT_CLIENT_OPERATIONS.reveal, reference, options);
   }
 
