@@ -1,0 +1,68 @@
+title: MCP permissions and automation tools
+intro: |
+  Heads-up: the shipped automations spec says "an automation SHALL NEVER be created,
+  edited, or enabled through MCP", and ADR-0030 backs that. This change reverses it
+  (gated by the new permission prompt), with a superseding ADR.
+
+  Automations are server-wide, not per-project, so "manage all automations" is the
+  natural scope. My recommendations are in each question's help.
+
+status: submitted
+submitted_at: "2026-09-27T16:12:19+01:00"
+
+questions:
+  - id: defaults
+    type: select
+    prompt: Default permission for each capability on a fresh install?
+    help: |
+      Recommended: Read Terminals = Always, Full Terminal = Always (today's behaviour),
+      Read Automations = Always, Full Automation Management = Ask.
+    required: true
+    options:
+      - "Recommended (terminals Always; read automations Always; manage automations Ask)"
+      - "Read Automations = Ask too"
+      - "Everything Ask"
+    answer: Recommended (terminals Always; read automations Always; manage automations Ask)
+
+  - id: session_scope
+    type: select
+    prompt: What does "Allow This Session" cover?
+    help: |
+      Recommended: the requesting terminal until it exits. Each terminal has its own MCP
+      token, so this lines up with an agent's lifetime and can't leak to another agent.
+    required: true
+    options:
+      - "The requesting terminal until it exits (recommended)"
+      - "Every terminal until Terminay restarts"
+    answer: The requesting terminal until it exits (recommended)
+
+  - id: run_tier
+    type: select
+    prompt: Which tier covers running / stopping an automation now?
+    help: Recommended to treat run/stop as Full Automation Management, same as create/edit/delete/enable.
+    required: true
+    options:
+      - "Full Automation Management (recommended)"
+      - "Its own capability row (Run Automations)"
+    answer: Full Automation Management (recommended)
+
+  - id: timeout
+    type: select
+    prompt: How long does a pending prompt wait before auto-declining?
+    help: |
+      The MCP call blocks until you answer. Today's control request timeout is 2 minutes;
+      I'd raise it for approval-gated calls to 5 minutes, after which the prompt disappears
+      and the agent gets "declined (timed out)".
+    required: true
+    options: ["2 minutes", "5 minutes (recommended)", "15 minutes", "Never (wait until answered or the terminal exits)"]
+    answer: Never (wait until answered or the terminal exits)
+
+  - id: deny_button
+    type: boolean
+    prompt: Add an explicit "Decline" button next to "Allow One Time" / "Allow This Session"?
+    help: Recommended yes, so the agent gets a clear "declined" instead of waiting out the timeout.
+    answer: true
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

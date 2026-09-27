@@ -30,6 +30,15 @@ const expectedTools = [
 	'wait_for_command',
 	'wait_for_idle',
 	'write_terminal',
+	'list_automations',
+	'get_automation',
+	'list_automation_runs',
+	'create_automation',
+	'update_automation',
+	'delete_automation',
+	'set_automation_enabled',
+	'run_automation',
+	'stop_automation_run',
 ];
 
 test('headless MCP rejects non-local sockets and malformed inherited capabilities', async () => {
@@ -464,6 +473,67 @@ test('headless MCP recovers after a malformed local control response closes its 
 		assert.equal(connections, 2);
 	} finally {
 		await client.close().catch(() => {});
+		await new Promise((resolve) => control.close(resolve));
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('cancelling an MCP tool call closes its control connection so a pending approval is withdrawn', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-server-mcp-cancel-'));
+	const socketPath = join(root, 'control.sock');
+	let received;
+	let closed;
+	const connectionClosed = new Promise((resolve) => {
+		closed = resolve;
+	});
+	const control = createServer((socket) => {
+		const decoder = new ControlFrameDecoder();
+		socket.on('data', (chunk) => {
+			for (const request of decoder.push(chunk)) {
+				// Never answer: the request is waiting on a user's approval.
+				if (request.op === 'create_automation') {
+					received = request;
+					socket.once('close', () => closed(true));
+				}
+			}
+		});
+	});
+	await new Promise((resolve) => control.listen(socketPath, resolve));
+	const transport = new StdioClientTransport({
+		command: process.execPath,
+		args: [fileURLToPath(new URL('../dist/mcpEntry.js', import.meta.url))],
+		env: {
+			...process.env,
+			TERMINAY_CONTROL_SOCKET: socketPath,
+			TERMINAY_CONTROL_TOKEN: 'test-token',
+		},
+		stderr: 'pipe',
+	});
+	const client = new Client({ name: 'server-mcp-cancel-test', version: '1.0.0' });
+	try {
+		await client.connect(transport);
+		const controller = new AbortController();
+		const call = client.callTool(
+			{
+				name: 'create_automation',
+				arguments: {
+					name: 'Digest',
+					trigger: { kind: 'schedule', cron: '0 9 * * *' },
+					action: { kind: 'runCommand', command: 'mail-digest' },
+				},
+			},
+			undefined,
+			{ signal: controller.signal },
+		);
+		const started = Date.now();
+		while (received === undefined && Date.now() - started < 5_000)
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(received?.params.action.command, 'mail-digest');
+		controller.abort();
+		await assert.rejects(call);
+		assert.equal(await connectionClosed, true);
+	} finally {
+		await client.close().catch(() => undefined);
 		await new Promise((resolve) => control.close(resolve));
 		await rm(root, { recursive: true, force: true });
 	}

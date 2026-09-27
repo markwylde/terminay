@@ -144,6 +144,7 @@ export * from './worktreeInsights/index.js';
 export * from './languageService/index.js';
 export * from './macroService/index.js';
 export * from './automationService/index.js';
+export * from './mcpApprovals/index.js';
 export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
 export * from './outboundDelivery.js';

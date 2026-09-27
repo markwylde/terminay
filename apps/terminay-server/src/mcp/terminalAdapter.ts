@@ -185,6 +185,18 @@ export function createServerTerminalControlAdapter(
 	};
 }
 
+const AUTOMATION_TOOLS: readonly string[] = [
+	'list_automations',
+	'get_automation',
+	'list_automation_runs',
+	'create_automation',
+	'update_automation',
+	'delete_automation',
+	'set_automation_enabled',
+	'run_automation',
+	'stop_automation_run',
+];
+
 function getMcpCapabilities(options: AdapterOptions): unknown {
 	const activityAvailable = options.activity !== undefined;
 	const workspaceAvailable = options.workspace !== undefined;
@@ -205,10 +217,15 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			'wait_for_idle',
 			'wait_for_command',
 			'wait_for_attention',
+			...AUTOMATION_TOOLS,
 		].map((tool) => ({
 			tool,
 			available:
-				tool === 'wait_for_idle' ||
+				// This adapter binds terminals only; a host that serves
+				// automations binds them separately.
+				AUTOMATION_TOOLS.includes(tool)
+					? false
+					: tool === 'wait_for_idle' ||
 				tool === 'wait_for_command' ||
 				tool === 'wait_for_attention'
 					? activityAvailable

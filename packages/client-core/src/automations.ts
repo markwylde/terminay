@@ -107,7 +107,7 @@ export interface AutomationRunEntry {
   readonly triggerKind: "schedule" | "event";
   readonly event?: AutomationEventKind;
   readonly firedAt: number;
-  readonly startedBy: "trigger" | "user";
+  readonly startedBy: "trigger" | "user" | "mcp";
   readonly subject?: AutomationSubject;
   readonly status: "running" | "finished";
   readonly outcome?: AutomationRunOutcome;
@@ -333,7 +333,7 @@ function validateRun(value: JsonValue): AutomationRunEntry {
   if (
     !isRecord(value) ||
     (value.triggerKind !== "schedule" && value.triggerKind !== "event") ||
-    (value.startedBy !== "trigger" && value.startedBy !== "user") ||
+    (value.startedBy !== "trigger" && value.startedBy !== "user" && value.startedBy !== "mcp") ||
     (value.status !== "running" && value.status !== "finished") ||
     !safeUInt(value.firedAt) ||
     !safeUInt(value.startedAt) ||

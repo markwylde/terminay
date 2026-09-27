@@ -3330,6 +3330,135 @@ body.project-tabbar-reordering .project-tabbar {
   border-radius: 6px;
 }
 
+.terminal-mcp-approval {
+  background: var(--terminal-tab-bg-active, #161c25);
+  border-bottom: 1px solid #b08a2e;
+  box-sizing: border-box;
+  color: #f4f6f8;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  gap: 8px;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.terminal-mcp-approval-summary {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
+}
+
+.terminal-mcp-approval-summary p {
+  flex: 1 1 280px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.terminal-mcp-approval-meta {
+  color: #c9b27a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.terminal-mcp-approval-toggle {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  color: var(--terminal-tab-active-accent, #57b7ff);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.terminal-mcp-approval-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.terminal-mcp-approval-details div {
+  display: grid;
+  gap: 2px 12px;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+}
+
+.terminal-mcp-approval-details dt {
+  color: rgba(214, 227, 240, 0.65);
+}
+
+.terminal-mcp-approval-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.terminal-mcp-approval-details pre {
+  background: #0d1014;
+  border: 1px solid #2b3646;
+  border-radius: 6px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.terminal-mcp-approval-error {
+  color: #ffb4ab;
+  margin: 0;
+}
+
+.terminal-mcp-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.terminal-mcp-approval-actions button {
+  background: #1a2330;
+  border: 1px solid #3a4b61;
+  border-radius: 7px;
+  color: #e7edf5;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 5px 12px;
+}
+
+.terminal-mcp-approval-actions button:hover:not(:disabled) {
+  background: #243246;
+  border-color: #526780;
+}
+
+.terminal-mcp-approval-actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.terminal-mcp-approval-actions .terminal-mcp-approval-decline {
+  border-color: #7a3b37;
+}
+
+.terminal-mcp-approval button:focus-visible {
+  outline: 2px solid var(--terminal-tab-active-accent, #57b7ff);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .terminal-mcp-approval-actions button {
+    flex: 1 1 100%;
+  }
+}
+
 .terminal-presentation-control {
   align-items: center;
   background: var(--terminal-tab-bg-active, #161c25);
