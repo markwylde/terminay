@@ -39,3 +39,24 @@ time.
 
 - **WHEN** the system asks for reduced motion
 - **THEN** the artwork is shown without movement
+
+### Requirement: Browser About
+
+A browser host's in-page Help menu SHALL offer **About Terminay**. It SHALL open
+a dialog over the workspace showing the same About document as the Desktop
+window, with the running version of the served UI. The document SHALL run no
+script, SHALL open its links only in a new browser tab, and SHALL NOT navigate
+the workspace page. Escape, the close control, or a click outside the dialog
+SHALL close it.
+
+#### Scenario: Opening About in a browser
+
+- **WHEN** the user chooses Help, About Terminay in a browser
+- **THEN** the About dialog opens showing the version, the author, the AGPL
+  licence, and links to terminay.com and the GitHub repository, and Settings
+  does not open
+
+#### Scenario: Following a link in a browser
+
+- **WHEN** the user clicks a link in the browser About dialog
+- **THEN** it opens in a new tab and the workspace page stays as it was
