@@ -2950,7 +2950,6 @@ body.project-tabbar-reordering .project-tabbar {
   cursor: grab;
   font-size: 13px;
   font-weight: 500;
-  transition: all 100ms ease;
   user-select: none;
   -webkit-touch-callout: none;
 }
