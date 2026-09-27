@@ -330,9 +330,12 @@ type XtermMouseService = {
   ) => { col: number; row: number; x: number; y: number } | undefined
 }
 
+// xterm 6.1 moved coordinate translation from `_mouseService` to
+// `_mouseCoordsService`. This is private API, so a missing hook must degrade to
+// unscaled mouse coordinates rather than abort opening the replay terminal.
 type XtermTerminalWithMouseService = Terminal & {
   _core?: {
-    _mouseService?: XtermMouseService
+    _mouseCoordsService?: Partial<XtermMouseService>
   }
 }
 
@@ -353,8 +356,8 @@ function scaleReplayMouseEvent(
 }
 
 function patchReplayTerminalMouseCoordinates(terminal: Terminal, getScale: () => number): () => void {
-  const mouseService = (terminal as XtermTerminalWithMouseService)._core?._mouseService
-  if (!mouseService) {
+  const mouseService = (terminal as XtermTerminalWithMouseService)._core?._mouseCoordsService
+  if (!mouseService || typeof mouseService.getCoords !== 'function') {
     return () => {}
   }
 
