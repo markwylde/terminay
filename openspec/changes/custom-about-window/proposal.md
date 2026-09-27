@@ -30,7 +30,7 @@ None.
 
 ## Impact
 
-- `electron/aboutWindowDocument.ts`: the script-free About document and its
+- `src/shared/aboutWindowDocument.ts`: the script-free About document and its
   link allowlist.
 - `electron/main.ts`: the menu items and the window.
 - `scripts/about-window-document.test.mjs`: document and allowlist tests.
