@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
 import {
 	createRefreshSchedule,
 	REFRESH_RAMP_MS,
@@ -14,10 +14,18 @@ import {
 	type ObservedWorktree,
 	workingTreeWatchRoots,
 } from './observation.js';
-import { dirname, isAbsolute, normalize, relative, resolve } from 'node:path';
+import {
+	dirname,
+	isAbsolute,
+	join,
+	normalize,
+	relative,
+	resolve,
+} from 'node:path';
 import {
 	parseDiff,
 	parseStatus,
+	type ParsedWorktree,
 	parseWorktreeList,
 	worktreeState,
 } from './parse.js';
@@ -533,7 +541,7 @@ export class GitService {
 				),
 			};
 		}
-		const records = parseWorktreeList(result.stdout);
+		const records = await this.worktreeRecords(result.stdout);
 		const bounded = records.length > this.limits.maxWorktrees;
 		const selected = records.slice(0, this.limits.maxWorktrees);
 		const defaultBranch = await this.defaultBranch(
@@ -1113,6 +1121,22 @@ export class GitService {
 				},
 			};
 		}
+		if (selected.isPrunable) {
+			const failure = await this.unregisterPrunableWorktree(
+				selected.path,
+				cwd,
+				request.signal,
+			);
+			if (failure !== null)
+				return {
+					...base,
+					applied: false,
+					state: 'command-error',
+					headBefore: selected.head,
+					error: failure,
+				};
+			return this.confirmWorktreeRemoved(request, base, selected.head);
+		}
 		// The client confirmation explicitly authorizes deleting uncommitted,
 		// untracked, and unmerged contents, including a leftover Git lock.
 		// Git requires `--force` twice to remove a locked worktree.
@@ -1141,6 +1165,84 @@ export class GitService {
 			};
 		}
 
+		return this.confirmWorktreeRemoved(request, base, selected.head);
+	}
+
+	/**
+	 * Drop the registration of a worktree that no longer has a working tree:
+	 * its folder is gone, or what sits at its path is no longer that worktree
+	 * (the `.git` file was removed, or the path was replaced). `git worktree
+	 * remove` refuses the second kind outright, and `git worktree prune` would
+	 * sweep every other stale entry too, so this removes exactly the one
+	 * administrative directory prune would have removed. Nothing at the
+	 * worktree's own path is touched: it is not a worktree any more, and a
+	 * reused path may hold someone else's files.
+	 */
+	private async unregisterPrunableWorktree(
+		worktreePath: string,
+		cwd: string,
+		signal: AbortSignal | undefined,
+	): Promise<GitErrorInfo | null> {
+		const common = await this.runGit(
+			['rev-parse', '--git-common-dir'],
+			cwd,
+			signal,
+		);
+		const reported = common.stdout.trim();
+		if (common.exitCode !== 0 || common.truncated || reported.length === 0)
+			return commandError(
+				'worktree.remove',
+				common,
+				'Git common directory could not be read.',
+			);
+		const registry = join(
+			await this.canonicalWorktreePath(resolve(cwd, reported)),
+			'worktrees',
+		);
+		let names: string[];
+		try {
+			names = await readdir(registry);
+		} catch {
+			names = [];
+		}
+		for (const name of names) {
+			let gitdir: string;
+			try {
+				gitdir = (await readFile(join(registry, name, 'gitdir'), 'utf8')).trim();
+			} catch {
+				continue;
+			}
+			if (gitdir.length === 0) continue;
+			const registered = await this.canonicalWorktreePath(
+				dirname(resolve(registry, name, gitdir)),
+			);
+			if (registered !== worktreePath) continue;
+			try {
+				await rm(join(registry, name), { recursive: true, force: true });
+				return null;
+			} catch {
+				return {
+					code: 'mutation-failed',
+					message: 'Git worktree registration could not be removed.',
+					operation: 'worktree.remove',
+				};
+			}
+		}
+		return {
+			code: 'mutation-failed',
+			message: 'Git worktree registration could not be found.',
+			operation: 'worktree.remove',
+		};
+	}
+
+	private async confirmWorktreeRemoved(
+		request: GitWorktreeRemoveRequest,
+		base: Pick<
+			GitWorktreeRemoveResult,
+			'operation' | 'projectId' | 'repositoryId' | 'worktreeId'
+		>,
+		headBefore: string | null,
+	): Promise<GitWorktreeRemoveResult> {
 		// Verify that the exact identity disappeared; a successful command that
 		// leaves the worktree registered is reported as a deterministic failure.
 		const after = await this.listWorktreeIdentities({
@@ -1155,7 +1257,7 @@ export class GitService {
 				...base,
 				applied: false,
 				state: 'command-error',
-				headBefore: selected.head,
+				headBefore,
 				error: {
 					code: 'mutation-failed',
 					message: 'Git reported removal but the worktree is still registered',
@@ -1167,7 +1269,7 @@ export class GitService {
 			...base,
 			applied: true,
 			state: 'removed',
-			headBefore: selected.head,
+			headBefore,
 		};
 	}
 
@@ -1536,7 +1638,7 @@ export class GitService {
 				),
 			};
 		}
-		const records = parseWorktreeList(result.stdout);
+		const records = await this.worktreeRecords(result.stdout);
 		const mainPath = records.find((record) => !record.isBare)?.path;
 		const worktrees: GitWorktreeIdentity[] = [];
 		for (const record of records.slice(0, this.limits.maxWorktrees)) {
@@ -1793,6 +1895,38 @@ export class GitService {
 				'project path is not a directory',
 			);
 		return canonical;
+	}
+
+	/**
+	 * Parse `worktree list --porcelain`, treating a locked linked worktree that
+	 * has lost its working tree as prunable, exactly as Git would were it not
+	 * locked: its `.git` file is gone, whether with the folder or not. Git
+	 * withholds the `prunable` marker while a lock is held, yet such an entry
+	 * has nowhere status can run, so without this it could be neither inspected
+	 * nor removed. An agent session that dies holding its lock leaves these.
+	 */
+	private async worktreeRecords(stdout: string): Promise<ParsedWorktree[]> {
+		const records = parseWorktreeList(stdout);
+		const mainIndex = records.findIndex((record) => !record.isBare);
+		return Promise.all(
+			records.map(async (record, index) => {
+				if (
+					index === mainIndex ||
+					!record.locked ||
+					record.isBare ||
+					record.isPrunable
+				)
+					return record;
+				try {
+					await this.pathAdapter.stat(join(record.path, '.git'));
+					return record;
+				} catch (error) {
+					const code = (error as NodeJS.ErrnoException)?.code;
+					if (code !== 'ENOENT' && code !== 'ENOTDIR') return record;
+					return { ...record, isPrunable: true };
+				}
+			}),
+		);
 	}
 
 	private async canonicalWorktreePath(value: string): Promise<string> {

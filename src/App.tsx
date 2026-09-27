@@ -1514,7 +1514,11 @@ const ProjectWorkspace = forwardRef<
 		const connectionReconnectingRef = useRef(connectionReconnecting);
 		connectionReconnectingRef.current = connectionReconnecting;
 		const reportFeatureFailure = useCallback(
-			(feature: 'Explorer' | 'Agents' | 'Git' | 'Settings', error: unknown) => {
+			(
+				feature: 'Explorer' | 'Agents' | 'Git' | 'Settings',
+				error: unknown,
+				source: 'action' | 'refresh' = 'action',
+			) => {
 				if (featureAvailability.state === 'unavailable') {
 					setErrorText(featureAvailability.reason);
 					return featureAvailability.reason;
@@ -1529,7 +1533,12 @@ const ProjectWorkspace = forwardRef<
 					featureAvailability.authority.scope,
 				);
 				const message = `${failure.title}. ${failure.detail}`;
-				featureFailureRef.current = { feature, message, transport };
+				featureFailureRef.current = {
+					feature,
+					message,
+					transport,
+					refresh: source === 'refresh',
+				};
 				setErrorText(message);
 				return message;
 			},
