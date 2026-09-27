@@ -15,6 +15,8 @@ import {
 	overviewOutcome,
 	presetForCron,
 	previewSchedule,
+	prunableRuns,
+	pruneDays,
 	refusalMessage,
 	selectAutomationServer,
 } from '../src/workspace/automations/automationsModel.ts';
@@ -325,4 +327,47 @@ test('server refusals read as sentences', () => {
 		refusalMessage(new Error('automation name must be 1-200 printable characters')),
 		'Name must be 1-200 printable characters.',
 	);
+});
+
+test('keep history round-trips through the form, empty meaning off', () => {
+	const automation = {
+		id: 'a',
+		name: 'Hourly',
+		enabled: true,
+		trigger: { kind: 'schedule', cron: '0 * * * *' },
+		action: { kind: 'runCommand', command: 'echo hi', maxDurationSeconds: 3600 },
+		settings: { keepTerminalAfterRun: false, recordSession: false, cooldownSeconds: 60, keepHistoryDays: 14 },
+		evaluatedThrough: 0,
+	};
+	const form = formFromAutomation(automation);
+	assert.equal(form.keepHistoryDays, '14');
+	const kept = formToDraft(form);
+	assert.equal(kept.ok, true);
+	assert.equal(kept.draft.settings.keepHistoryDays, 14);
+	const off = formToDraft({ ...form, keepHistoryDays: ' ' });
+	assert.equal(off.ok, true);
+	assert.equal('keepHistoryDays' in off.draft.settings, false);
+	assert.equal(emptyAutomationForm().keepHistoryDays, '');
+	const bad = formToDraft({ ...form, keepHistoryDays: '1.5' });
+	assert.deepEqual(bad, { ok: false, error: 'Keep history must be a whole number of days.' });
+});
+
+test('the prune preview counts finished runs older than the days entered', () => {
+	const day = 86_400_000;
+	const now = 100 * day;
+	const run = (runId, age, status = 'finished') => ({ runId, automationId: 'a', status, startedAt: now - age * day });
+	const runs = [run('r2', 2), run('r10', 10), run('r40', 40), run('live', 50, 'running')];
+	assert.deepEqual(prunableRuns(runs, 7, now).map((entry) => entry.runId), ['r10', 'r40']);
+	assert.deepEqual(prunableRuns(runs, 0, now).map((entry) => entry.runId), ['r2', 'r10', 'r40']);
+	assert.equal(pruneDays('7'), 7);
+	assert.equal(pruneDays('0'), 0);
+	assert.equal(pruneDays(''), undefined);
+	assert.equal(pruneDays('-1'), undefined);
+	assert.equal(pruneDays('3651'), undefined);
+});
+
+test('pruning 0 days counts a run that started after the section clock', () => {
+	const now = 1_000;
+	const runs = [{ runId: 'fresh', automationId: 'a', status: 'finished', startedAt: now + 5_000 }];
+	assert.equal(prunableRuns(runs, 0, now).length, 1);
 });

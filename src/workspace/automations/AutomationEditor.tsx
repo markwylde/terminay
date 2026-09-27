@@ -357,7 +357,9 @@ export function AutomationEditor({
 									onChange={() => update({ triggerKind: kind })}
 									data-terminay-automation-trigger-kind={kind}
 								/>
-								{kind === 'schedule' ? 'On a schedule' : 'When something happens'}
+								{kind === 'schedule'
+									? 'On a schedule'
+									: 'When something happens'}
 							</label>
 						))}
 					</div>
@@ -721,6 +723,24 @@ export function AutomationEditor({
 							}
 						/>
 						<span>seconds before firing again for the same terminal</span>
+					</label>
+				</Row>
+				<Row label="Keep history" htmlFor={fieldId('keep-history')}>
+					<label className="automation-editor__inline-field">
+						<input
+							id={fieldId('keep-history')}
+							type="number"
+							min={1}
+							max={3650}
+							placeholder="Forever"
+							className="automation-editor__input automation-editor__input--number"
+							value={form.keepHistoryDays}
+							onChange={(event) =>
+								update({ keepHistoryDays: event.target.value })
+							}
+							data-terminay-automation-field="keep-history"
+						/>
+						<span>days, then finished runs are removed</span>
 					</label>
 				</Row>
 			</div>

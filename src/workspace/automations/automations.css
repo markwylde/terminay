@@ -229,6 +229,10 @@
 	color: #ffb3b3;
 }
 
+.automations-banner__meta {
+	color: rgba(220, 226, 240, 0.55);
+}
+
 .automations-banner__field {
 	display: flex;
 	align-items: center;
@@ -369,6 +373,25 @@
 	color: rgba(220, 226, 240, 0.5);
 }
 
+.automations-group-head__action {
+	margin-left: auto;
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	font-size: 11px;
+	font-weight: 500;
+	letter-spacing: 0;
+	text-transform: none;
+	color: rgba(220, 226, 240, 0.55);
+	cursor: pointer;
+}
+
+.automations-group-head__action:hover,
+.automations-group-head__action:focus-visible {
+	color: rgba(220, 226, 240, 0.9);
+}
+
 .automations-group-head__meta {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -429,7 +452,7 @@
 }
 
 .automations-switch__track::after {
-	content: '';
+	content: "";
 	position: absolute;
 	top: 2px;
 	left: 2px;
@@ -502,6 +525,42 @@
 .automations-run-row {
 	grid-template-columns: 12px auto minmax(0, auto) minmax(0, 1fr);
 	gap: 8px;
+}
+
+.automations-run-line {
+	display: flex;
+	align-items: center;
+}
+
+.automations-run-line > .automations-run-row {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.automations-run-line__delete {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	margin-left: 4px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: rgba(220, 226, 240, 0.45);
+	cursor: pointer;
+	opacity: 0;
+}
+
+.automations-run-line:hover .automations-run-line__delete,
+.automations-run-line__delete:focus-visible {
+	opacity: 1;
+}
+
+.automations-run-line__delete:hover {
+	background: rgba(255, 107, 107, 0.12);
+	color: #ffb3b3;
 }
 
 .automations-run-row__chevron {

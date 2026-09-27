@@ -5,7 +5,10 @@ import {
 	AUTOMATION_RUN_LOG_LIMIT,
 	AUTOMATION_RUN_LOG_SCHEMA_VERSION,
 	AUTOMATION_RUN_OPENED_SESSIONS_LIMIT,
+	MAX_AUTOMATION_KEEP_HISTORY_DAYS,
 	type AutomationMissedRecord,
+	type AutomationPruneChoice,
+	type AutomationRetentionResolver,
 	type AutomationRunEntry,
 	type AutomationRunLogBackend,
 	type AutomationRunLogChange,
@@ -31,11 +34,20 @@ const SKIP_REASONS: ReadonlySet<string> = new Set<AutomationSkipReason>([
 ]);
 const MAX_REASON_LENGTH = 512;
 const MAX_TITLE_LENGTH = 256;
+const DAY_MS = 86_400_000;
 
 export interface AutomationRunLogOptions {
 	/** Runs kept per automation, oldest dropped first. */
 	readonly limit?: number;
 	readonly outputTailBytes?: number;
+	/** Each automation's keep-history period. Absent keeps every run. */
+	readonly retentionFor?: AutomationRetentionResolver;
+	readonly now?: () => number;
+}
+
+export interface AutomationPruneResult {
+	readonly removed: number;
+	readonly pruneChoice: AutomationPruneChoice;
 }
 
 /** Bounded, server-owned log of automation runs and missed-schedule records.
@@ -43,6 +55,9 @@ export interface AutomationRunLogOptions {
 export class AutomationRunLog {
 	private runs = new Map<string, AutomationRunEntry[]>();
 	private missed = new Map<string, AutomationMissedRecord>();
+	private pruneChoices = new Map<string, AutomationPruneChoice>();
+	private retentionFor: AutomationRetentionResolver | undefined;
+	private readonly now: () => number;
 	private loading: Promise<void> | undefined;
 	private loaded = false;
 	private queue: Promise<unknown> = Promise.resolve();
@@ -59,6 +74,21 @@ export class AutomationRunLog {
 		this.limit = options.limit ?? AUTOMATION_RUN_LOG_LIMIT;
 		this.outputTailBytes =
 			options.outputTailBytes ?? AUTOMATION_OUTPUT_TAIL_BYTES;
+		this.retentionFor = options.retentionFor;
+		this.now = options.now ?? Date.now;
+	}
+
+	/** Set where keep-history periods come from, then apply them. Retention is
+	 * enforced whenever the log is loaded, changed, or read, never on a timer
+	 * (ADR-0028). */
+	setRetention(resolver: AutomationRetentionResolver | undefined): void {
+		this.retentionFor = resolver;
+		if (this.loaded) void this.applyRetention();
+	}
+
+	/** Remove every run past its automation's keep-history period now. */
+	applyRetention(): Promise<void> {
+		return this.mutate(() => ({ result: undefined, change: undefined }));
 	}
 
 	async load(): Promise<AutomationRunLogState> {
@@ -77,16 +107,23 @@ export class AutomationRunLog {
 				[...this.runs].map(([id, entries]) => [id, structuredClone(entries)]),
 			),
 			missed: this.listMissed(),
+			...(this.pruneChoices.size === 0
+				? {}
+				: { pruneChoices: Object.fromEntries(this.pruneChoices) }),
 		};
 	}
 
 	/** Runs newest first, for one automation or all of them. */
 	list(automationId?: string): readonly AutomationRunEntry[] {
 		this.assertLoaded();
-		const entries =
+		const all =
 			automationId === undefined
 				? [...this.runs.values()].flat()
 				: (this.runs.get(automationId) ?? []);
+		const entries = all.filter((entry) => !this.isExpired(entry));
+		// What is shown is already correct; the queued purge makes the stored
+		// log match it (fresh when asked, ADR-0028).
+		if (entries.length !== all.length) void this.applyRetention();
 		return structuredClone(
 			[...entries].sort(
 				(left, right) =>
@@ -100,15 +137,18 @@ export class AutomationRunLog {
 		this.assertLoaded();
 		for (const entries of this.runs.values()) {
 			const found = entries.find((entry) => entry.runId === runId);
-			if (found !== undefined) return structuredClone(found);
+			if (found !== undefined)
+				return this.isExpired(found) ? undefined : structuredClone(found);
 		}
 		return undefined;
 	}
 
 	latest(automationId: string): AutomationRunEntry | undefined {
 		this.assertLoaded();
-		const entries = this.runs.get(automationId);
-		const last = entries?.[entries.length - 1];
+		const entries = (this.runs.get(automationId) ?? []).filter(
+			(entry) => !this.isExpired(entry),
+		);
+		const last = entries[entries.length - 1];
 		return last === undefined ? undefined : structuredClone(last);
 	}
 
@@ -261,10 +301,87 @@ export class AutomationRunLog {
 		});
 	}
 
+	/** The days an automation's runs were last pruned with, if ever. */
+	pruneChoice(automationId: string): AutomationPruneChoice | undefined {
+		this.assertLoaded();
+		const choice = this.pruneChoices.get(automationId);
+		return choice === undefined ? undefined : { ...choice };
+	}
+
+	/** Delete one finished run. A run in progress is refused. */
+	remove(runId: string): Promise<AutomationRunEntry> {
+		return this.mutate(() => {
+			for (const [automationId, entries] of this.runs) {
+				const index = entries.findIndex((entry) => entry.runId === runId);
+				if (index === -1) continue;
+				const entry = entries[index] as AutomationRunEntry;
+				if (entry.status === 'running')
+					throw new AutomationServiceError(
+						'invalid_automation',
+						'a run in progress cannot be deleted',
+					);
+				entries.splice(index, 1);
+				if (entries.length === 0) this.runs.delete(automationId);
+				return {
+					result: structuredClone(entry),
+					change: { type: 'removed', automationId, runIds: [runId] },
+				};
+			}
+			throw new AutomationServiceError(
+				'run_not_found',
+				'automation run is unavailable',
+			);
+		});
+	}
+
+	/** Delete an automation's finished runs that started more than
+	 * `olderThanDays` whole days ago (0: every finished run), and remember the
+	 * choice for the next prune. Runs in progress stay. */
+	prune(
+		automationId: string,
+		olderThanDays: number,
+	): Promise<AutomationPruneResult> {
+		if (!isDays(olderThanDays, 0))
+			return Promise.reject(
+				new AutomationServiceError(
+					'invalid_automation',
+					`prune days must be a whole number from 0 to ${MAX_AUTOMATION_KEEP_HISTORY_DAYS}`,
+				),
+			);
+		return this.mutate(() => {
+			const cutoff =
+				olderThanDays === 0
+					? Number.POSITIVE_INFINITY
+					: this.now() - olderThanDays * DAY_MS;
+			const entries = this.runs.get(automationId) ?? [];
+			const removed = entries.filter(
+				(entry) => entry.status === 'finished' && entry.startedAt < cutoff,
+			);
+			const kept = entries.filter((entry) => !removed.includes(entry));
+			if (kept.length === 0) this.runs.delete(automationId);
+			else this.runs.set(automationId, kept);
+			const pruneChoice = { olderThanDays };
+			this.pruneChoices.set(automationId, pruneChoice);
+			return {
+				result: { removed: removed.length, pruneChoice: { ...pruneChoice } },
+				change:
+					removed.length === 0
+						? undefined
+						: {
+								type: 'removed',
+								automationId,
+								runIds: removed.map((entry) => entry.runId),
+							},
+				dirty: true,
+			};
+		});
+	}
+
 	/** Drop an automation's history and missed record. */
 	forget(automationId: string): Promise<void> {
 		return this.mutate(() => {
 			const hadMissed = this.missed.delete(automationId);
+			this.pruneChoices.delete(automationId);
 			this.runs.delete(automationId);
 			return {
 				result: undefined,
@@ -333,9 +450,58 @@ export class AutomationRunLog {
 						latestDueAt: value.latestDueAt as number,
 					});
 			}
+		const pruneChoices = new Map<string, AutomationPruneChoice>();
+		const rawChoices = asRecord(record.pruneChoices) ?? {};
+		for (const [automationId, candidate] of Object.entries(rawChoices)) {
+			const olderThanDays = asRecord(candidate)?.olderThanDays;
+			if (isId(automationId) && isDays(olderThanDays, 0))
+				pruneChoices.set(automationId, { olderThanDays });
+		}
 		this.runs = runs;
 		this.missed = missed;
+		this.pruneChoices = pruneChoices;
 		this.loaded = true;
+		if (
+			[...runs.values()].some((entries) =>
+				entries.some((entry) => this.isExpired(entry)),
+			)
+		)
+			void this.applyRetention();
+	}
+
+	/** Whether a finished run is past its automation's keep-history period. */
+	private isExpired(entry: AutomationRunEntry): boolean {
+		if (entry.status !== 'finished' || this.retentionFor === undefined)
+			return false;
+		let days: number | undefined;
+		try {
+			days = this.retentionFor(entry.automationId);
+		} catch {
+			return false;
+		}
+		return (
+			days !== undefined &&
+			isDays(days, 1) &&
+			entry.startedAt < this.now() - days * DAY_MS
+		);
+	}
+
+	/** Remove expired runs in memory; one change per automation touched. */
+	private purgeExpired(): AutomationRunLogChange[] {
+		const changes: AutomationRunLogChange[] = [];
+		for (const [automationId, entries] of this.runs) {
+			const expired = entries.filter((entry) => this.isExpired(entry));
+			if (expired.length === 0) continue;
+			const kept = entries.filter((entry) => !expired.includes(entry));
+			if (kept.length === 0) this.runs.delete(automationId);
+			else this.runs.set(automationId, kept);
+			changes.push({
+				type: 'removed',
+				automationId,
+				runIds: expired.map((entry) => entry.runId),
+			});
+		}
+		return changes;
 	}
 
 	private normalizeEntry(value: unknown): AutomationRunEntry | undefined {
@@ -363,7 +529,9 @@ export class AutomationRunLog {
 		)
 			return undefined;
 		const subject =
-			record.subject === undefined ? undefined : normalizeSubject(record.subject);
+			record.subject === undefined
+				? undefined
+				: normalizeSubject(record.subject);
 		if (record.subject !== undefined && subject === undefined) return undefined;
 		const finishedAt = isCount(record.finishedAt)
 			? record.finishedAt
@@ -414,20 +582,27 @@ export class AutomationRunLog {
 		operation: () => {
 			readonly result: T;
 			readonly change: AutomationRunLogChange | undefined;
+			/** Commit even without a change to announce. */
+			readonly dirty?: boolean;
 		},
 	): Promise<T> {
 		const run = async () => {
 			if (!this.loaded) await this.load();
-			const { result, change } = operation();
-			if (change !== undefined) {
+			const { result, change, dirty } = operation();
+			const changes = [
+				...(change === undefined ? [] : [change]),
+				...this.purgeExpired(),
+			];
+			if (changes.length > 0 || dirty === true) {
 				await this.backend.commit(this.snapshot());
-				for (const listener of [...this.listeners]) {
-					try {
-						listener(structuredClone(change));
-					} catch {
-						// An observer failure never undoes a committed change.
+				for (const listener of [...this.listeners])
+					for (const each of changes) {
+						try {
+							listener(structuredClone(each));
+						} catch {
+							// An observer failure never undoes a committed change.
+						}
 					}
-				}
 			}
 			return result;
 		};
@@ -537,13 +712,24 @@ function withOpenedSessions(
 }
 
 function optionalTitle(value: unknown): string | undefined {
-	return typeof value === 'string' ? value.slice(0, MAX_TITLE_LENGTH) : undefined;
+	return typeof value === 'string'
+		? value.slice(0, MAX_TITLE_LENGTH)
+		: undefined;
 }
 
 function isId(value: unknown): value is string {
 	return (
 		typeof value === 'string' &&
 		/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+	);
+}
+
+function isDays(value: unknown, minimum: number): value is number {
+	return (
+		typeof value === 'number' &&
+		Number.isSafeInteger(value) &&
+		value >= minimum &&
+		value <= MAX_AUTOMATION_KEEP_HISTORY_DAYS
 	);
 }
 

@@ -12,6 +12,7 @@ import {
 	type AutomationTrigger,
 	DEFAULT_AUTOMATION_COOLDOWN_SECONDS,
 	DEFAULT_AUTOMATION_MAX_DURATION_SECONDS,
+	MAX_AUTOMATION_KEEP_HISTORY_DAYS,
 	MIN_SUBJECT_ACTION_COOLDOWN_SECONDS,
 } from './types.js';
 
@@ -242,6 +243,17 @@ export function normalizeSettings(
 			false,
 		),
 		cooldownSeconds,
+		...(record.keepHistoryDays === undefined || record.keepHistoryDays === null
+			? {}
+			: {
+					keepHistoryDays: boundedInteger(
+						record.keepHistoryDays,
+						'settings.keepHistoryDays',
+						1,
+						1,
+						MAX_AUTOMATION_KEEP_HISTORY_DAYS,
+					),
+				}),
 	};
 }
 

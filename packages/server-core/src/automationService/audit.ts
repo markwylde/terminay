@@ -18,7 +18,7 @@ export interface AutomationAuditActor {
 export interface AutomationAuditEntry {
 	readonly occurredAt: number;
 	readonly serverId: string;
-	readonly type: 'definition' | 'run';
+	readonly type: 'definition' | 'run' | 'runs';
 	readonly operation: string;
 	/** `client` for a definition change or request by an editing actor;
 	 * `automation` for work a run performs under the automation principal. */
@@ -31,6 +31,8 @@ export interface AutomationAuditEntry {
 	readonly revision?: number;
 	readonly outcome?: AutomationRunOutcome;
 	readonly skipReason?: AutomationSkipReason;
+	/** Runs a delete or prune removed. */
+	readonly removed?: number;
 }
 
 export interface AutomationAuditLogOptions {
@@ -85,6 +87,7 @@ export class AutomationAuditLog {
 			...(entry.skipReason === undefined
 				? {}
 				: { skipReason: entry.skipReason }),
+			...(entry.removed === undefined ? {} : { removed: entry.removed }),
 		});
 		this.entries.push(normalized);
 		if (this.entries.length > this.maxEntries)
@@ -110,6 +113,7 @@ export class AutomationAuditLog {
 				: { automationId: record.automationId }),
 			...(record.type === 'run' ? { runId: record.runId } : {}),
 			...(record.type === 'definition' ? { revision: record.revision } : {}),
+			...(record.type === 'runs' ? { removed: record.removed } : {}),
 		});
 	}
 

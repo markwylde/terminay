@@ -337,6 +337,84 @@ test.describe('Automation runs', () => {
 		).toBeVisible();
 	});
 
+	test('runs can be deleted and pruned, the prune form remembers its days, and keep history saves', async ({
+		mainWindow,
+	}) => {
+		await openAutomations(mainWindow);
+		await createCommandAutomation(mainWindow, {
+			name: 'Prune me',
+			command: 'echo prune-e2e',
+		});
+		const runRows = mainWindow.locator('[data-terminay-automation-run]');
+		const runOnce = async (expected: number) => {
+			await mainWindow.locator('[data-terminay-automation-run-now]').click();
+			await expect(runRows).toHaveCount(expected);
+			await expect(
+				mainWindow.locator(
+					'[data-terminay-automation-run-detail] [data-terminay-automation-outcome]',
+				),
+			).toHaveAttribute('data-terminay-automation-outcome', 'succeeded', {
+				timeout: 20_000,
+			});
+		};
+		await runOnce(1);
+		await runOnce(2);
+
+		// Delete one run: no confirmation.
+		const first = await runRows
+			.first()
+			.getAttribute('data-terminay-automation-run');
+		if (first === null) throw new Error('Run row has no run id');
+		await runRows.first().hover();
+		await mainWindow
+			.locator(`[data-terminay-automation-delete-run="${first}"]`)
+			.click();
+		await expect(runRows).toHaveCount(1);
+		await expect(
+			mainWindow.locator(`[data-terminay-automation-run="${first}"]`),
+		).toHaveCount(0);
+
+		// Prune starts at 30 days, where nothing is old enough.
+		const days = mainWindow.locator('[data-terminay-automation-prune-days]');
+		const confirm = mainWindow.locator(
+			'[data-terminay-automation-confirm-prune]',
+		);
+		await mainWindow.locator('[data-terminay-automation-prune]').click();
+		await expect(days).toHaveValue('30');
+		await expect(confirm).toBeDisabled();
+		await days.fill('0');
+		await expect(
+			mainWindow.locator('[data-terminay-automation-prune-form]'),
+		).toContainText('1 run will be removed.');
+		await confirm.click();
+		await expect(runRows).toHaveCount(0);
+		await expect(
+			mainWindow.locator('[data-terminay-automation-prune-form]'),
+		).toHaveCount(0);
+
+		// The next Prune opens pre-filled with the last choice, still editable.
+		await runOnce(1);
+		await mainWindow.locator('[data-terminay-automation-prune]').click();
+		await expect(days).toHaveValue('0');
+		await days.fill('5');
+		await expect(confirm).toBeDisabled();
+		await mainWindow
+			.getByRole('button', { name: 'Cancel', exact: true })
+			.click();
+		await expect(runRows).toHaveCount(1);
+
+		// Keep history is saved with the automation.
+		await mainWindow.getByRole('button', { name: 'Edit', exact: true }).click();
+		await expect(field(mainWindow, 'keep-history')).toHaveValue('');
+		await field(mainWindow, 'keep-history').fill('7');
+		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await expect(
+			mainWindow.locator('[data-terminay-automation-detail]'),
+		).toBeVisible();
+		await mainWindow.getByRole('button', { name: 'Edit', exact: true }).click();
+		await expect(field(mainWindow, 'keep-history')).toHaveValue('7');
+	});
+
 	test('a kept run terminal is shown in Automations and never as a project', async ({
 		mainWindow,
 	}) => {
