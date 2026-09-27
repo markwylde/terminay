@@ -61,7 +61,12 @@ export interface AutomationSettings {
 	readonly keepTerminalAfterRun: boolean;
 	readonly recordSession: boolean;
 	readonly cooldownSeconds: number;
+	/** Finished runs older than this many days are removed. Absent keeps them
+	 * until the run-log bound drops them. */
+	readonly keepHistoryDays?: number;
 }
+
+export const MAX_AUTOMATION_KEEP_HISTORY_DAYS = 3650;
 
 export interface AutomationDefinition {
 	readonly id: string;
@@ -232,11 +237,18 @@ export interface AutomationMissedRecord {
 	readonly latestDueAt: number;
 }
 
+/** The form values a user last pruned an automation's runs with. */
+export interface AutomationPruneChoice {
+	readonly olderThanDays: number;
+}
+
 export interface AutomationRunLogState {
 	readonly schemaVersion: number;
 	/** Oldest first, per automation. */
 	readonly runs: Readonly<Record<string, readonly AutomationRunEntry[]>>;
 	readonly missed: readonly AutomationMissedRecord[];
+	/** Absent in logs written before prune choices were remembered. */
+	readonly pruneChoices?: Readonly<Record<string, AutomationPruneChoice>>;
 }
 
 export interface AutomationRunLogBackend {
@@ -249,7 +261,18 @@ export type AutomationRunLogChange =
 	| {
 			readonly type: 'missed';
 			readonly missed: readonly AutomationMissedRecord[];
+	  }
+	| {
+			readonly type: 'removed';
+			readonly automationId: string;
+			readonly runIds: readonly string[];
 	  };
+
+/** An automation's keep-history period in days, or undefined when it keeps
+ * runs until the bound drops them. */
+export type AutomationRetentionResolver = (
+	automationId: string,
+) => number | undefined;
 
 // ---------------------------------------------------------------------------
 // Execution seam. The scheduler/executor implements this; the protocol layer

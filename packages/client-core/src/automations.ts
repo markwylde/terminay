@@ -15,6 +15,8 @@ export const AUTOMATION_OPERATIONS = Object.freeze({
   run: "automations.run",
   stop: "automations.stop",
   runs: "automations.runs",
+  removeRun: "automations.runs.remove",
+  pruneRuns: "automations.runs.prune",
   dismissMissed: "automations.missed.dismiss",
 } as const);
 
@@ -22,6 +24,7 @@ export const AUTOMATION_EVENTS = Object.freeze({
   changed: "automations.changed",
   runChanged: "automations.run.changed",
   missedChanged: "automations.missed.changed",
+  runsRemoved: "automations.runs.removed",
 } as const);
 
 export const AUTOMATION_EVENT_KINDS = Object.freeze([
@@ -61,7 +64,12 @@ export interface AutomationSettings {
   readonly keepTerminalAfterRun: boolean;
   readonly recordSession: boolean;
   readonly cooldownSeconds: number;
+  /** Finished runs older than this many days are removed; absent keeps them. */
+  readonly keepHistoryDays?: number;
 }
+
+/** Longest keep-history period, and the most days a prune can reach back. */
+export const MAX_AUTOMATION_KEEP_HISTORY_DAYS = 3650;
 
 export interface AutomationDefinition {
   readonly id: string;
@@ -132,9 +140,22 @@ export interface AutomationMissedRecord {
   readonly latestDueAt: number;
 }
 
+/** The form values a user last pruned an automation's runs with. */
+export interface AutomationPruneChoice {
+  readonly olderThanDays: number;
+}
+
 export interface AutomationRunsSnapshot {
   readonly runs: readonly AutomationRunEntry[];
   readonly missed: readonly AutomationMissedRecord[];
+  /** Present when the query named an automation that has been pruned before. */
+  readonly pruneChoice?: AutomationPruneChoice;
+}
+
+/** Ids only; refetch with `runs()`. */
+export interface AutomationRunsRemovedEvent {
+  readonly automationId: string;
+  readonly runIds: readonly string[];
 }
 
 /** Journal events reach every subscriber whatever its authority, so they
@@ -198,7 +219,24 @@ export class AutomationClient {
   async runs(automationId?: string, options: QueryOptions = {}): Promise<AutomationRunsSnapshot> {
     const result = await this.transport.query<JsonValue>(AUTOMATION_OPERATIONS.runs, automationId === undefined ? {} : { automationId: boundedId(automationId, "automation id") }, options);
     if (!isRecord(result) || !Array.isArray(result.runs)) throw new TypeError("automation runs response is invalid");
-    return Object.freeze({ runs: Object.freeze(result.runs.map(validateRun)), missed: validateMissed(result.missed) });
+    const pruneChoice = result.pruneChoice === undefined ? {} : { pruneChoice: validatePruneChoice(result.pruneChoice) };
+    return Object.freeze({ runs: Object.freeze(result.runs.map(validateRun)), missed: validateMissed(result.missed), ...pruneChoice });
+  }
+
+  /** Delete one finished run. The server refuses a run in progress. */
+  async removeRun(runId: string, options: CommandOptions = {}): Promise<{ readonly runId: string; readonly removed: number }> {
+    const result = await this.transport.command<JsonValue>(AUTOMATION_OPERATIONS.removeRun, { runId: boundedId(runId, "run id") }, options);
+    if (!isRecord(result) || result.runId !== runId || !safeUInt(result.removed)) throw new TypeError("automation run removal response is invalid");
+    return Object.freeze({ runId, removed: result.removed });
+  }
+
+  /** Delete an automation's finished runs that started more than
+   * `olderThanDays` days ago (0: all of them). The server remembers the choice. */
+  async pruneRuns(automationId: string, olderThanDays: number, options: CommandOptions = {}): Promise<{ readonly removed: number; readonly pruneChoice: AutomationPruneChoice }> {
+    if (!isDays(olderThanDays)) throw new TypeError("prune days are invalid");
+    const result = await this.transport.command<JsonValue>(AUTOMATION_OPERATIONS.pruneRuns, { automationId: boundedId(automationId, "automation id"), olderThanDays }, options);
+    if (!isRecord(result) || !safeUInt(result.removed)) throw new TypeError("automation prune response is invalid");
+    return Object.freeze({ removed: result.removed, pruneChoice: validatePruneChoice(result.pruneChoice) });
   }
 
   /** Dismiss one automation's missed notice, or all of them, for every client. */
@@ -216,6 +254,13 @@ export class AutomationClient {
   /** Metadata only (ids, enums, timestamps); refetch detail with `runs()`. */
   onRunChanged(listener: (run: AutomationRunChangedEvent) => void): () => void {
     return this.subscribe(AUTOMATION_EVENTS.runChanged, listener, validateRunChangedEvent);
+  }
+
+  onRunsRemoved(listener: (event: AutomationRunsRemovedEvent) => void): () => void {
+    return this.subscribe(AUTOMATION_EVENTS.runsRemoved, listener, (payload) => {
+      if (!isRecord(payload) || !Array.isArray(payload.runIds)) throw new TypeError("automation runs removed event is invalid");
+      return Object.freeze({ automationId: boundedId(payload.automationId, "automation id"), runIds: Object.freeze(payload.runIds.map((id) => boundedId(id, "run id"))) });
+    });
   }
 
   onMissedChanged(listener: (missed: readonly AutomationMissedRecord[]) => void): () => void {
@@ -322,8 +367,13 @@ function validateAction(value: JsonValue | undefined): AutomationAction {
 }
 
 function validateSettings(value: JsonValue | undefined): AutomationSettings {
-  if (!isRecord(value) || typeof value.keepTerminalAfterRun !== "boolean" || typeof value.recordSession !== "boolean" || !safeUInt(value.cooldownSeconds)) throw new TypeError("automation settings are invalid");
-  return Object.freeze({ keepTerminalAfterRun: value.keepTerminalAfterRun, recordSession: value.recordSession, cooldownSeconds: value.cooldownSeconds });
+  if (!isRecord(value) || typeof value.keepTerminalAfterRun !== "boolean" || typeof value.recordSession !== "boolean" || !safeUInt(value.cooldownSeconds) || (value.keepHistoryDays !== undefined && !(isDays(value.keepHistoryDays) && value.keepHistoryDays >= 1))) throw new TypeError("automation settings are invalid");
+  return Object.freeze({ keepTerminalAfterRun: value.keepTerminalAfterRun, recordSession: value.recordSession, cooldownSeconds: value.cooldownSeconds, ...(value.keepHistoryDays === undefined ? {} : { keepHistoryDays: value.keepHistoryDays }) });
+}
+
+function validatePruneChoice(value: JsonValue | undefined): AutomationPruneChoice {
+  if (!isRecord(value) || !isDays(value.olderThanDays)) throw new TypeError("automation prune choice is invalid");
+  return Object.freeze({ olderThanDays: value.olderThanDays });
 }
 
 const OUTCOMES = new Set(["succeeded", "failed", "timedOut", "stopped", "skipped"]);
@@ -394,5 +444,6 @@ function isEventKind(value: unknown): value is AutomationEventKind {
   return typeof value === "string" && (AUTOMATION_EVENT_KINDS as readonly string[]).includes(value);
 }
 function boundedId(value: unknown, name: string): string { if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) throw new TypeError(`${name} is invalid`); return value; }
+function isDays(value: unknown): value is number { return safeUInt(value) && value <= MAX_AUTOMATION_KEEP_HISTORY_DAYS; }
 function safeUInt(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 function isRecord(value: unknown): value is Record<string, JsonValue> { return typeof value === "object" && value !== null && !Array.isArray(value); }

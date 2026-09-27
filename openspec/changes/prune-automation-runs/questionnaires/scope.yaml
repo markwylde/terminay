@@ -1,0 +1,53 @@
+title: Removing and pruning automation runs
+intro: |
+  You asked for deleting single run entries, a "prune runs older than X days"
+  action, and for Terminay to remember your last choice per automation.
+  A few decisions are still open.
+
+status: submitted
+submitted_at: "2026-09-27T20:12:46+01:00"
+
+questions:
+  - id: remember_meaning
+    type: select
+    prompt: What should "remember my last choice" do?
+    help: |
+      My view is "default only". An ongoing retention policy deletes history
+      silently, and that deserves its own setting. Say so if you want that instead.
+    required: true
+    options:
+      - "Default only: the prune dialog pre-fills my last X days"
+      - "Retention: keep pruning runs older than X days automatically from then on"
+    answer: 'Default only: the prune dialog pre-fills my last X days'
+    comment: Ahh yes, that's a good point actually. there should be two prunes. Per automation, in the settings, there should be a "Keep history for X days". But there should also be a manual "Prune" that prompts the user for how far back they want to remove and remembers that setting for the next time they click. but the next time they clickc it should still prkmmpt them to let them edit the options. it's just a rmembers what the form was filled with.
+
+  - id: remember_where
+    type: select
+    prompt: Where should that remembered choice live?
+    help: |
+      I lean towards the server. It's stored with the automation, so every client and
+      device sees the same value. Local means per-device UI state.
+    required: true
+    options:
+      - "Server, on the automation (syncs across clients)"
+      - "This client only"
+    answer: Server, on the automation (syncs across clients)
+
+  - id: confirm_single
+    type: select
+    prompt: Should deleting a single run ask for confirmation?
+    help: I'd skip the confirmation for a single run and confirm for a prune, showing how many runs will go.
+    options:
+      - "No confirm for one run; confirm prune with a count"
+      - "Confirm both"
+    answer: No confirm for one run; confirm prune with a count
+
+  - id: mcp_tool
+    type: boolean
+    prompt: Should agents also get an MCP tool to delete and prune runs, gated by the MCP permission policy?
+    help: I'd leave it out for now. It adds a new permission surface for something you do by hand.
+    answer: false
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

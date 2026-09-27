@@ -120,9 +120,8 @@ function startController(
 	try {
 		unsubscribes.push(client.onChanged(() => void loadDefinitions()));
 		unsubscribes.push(client.onRunChanged(scheduleRuns));
-		unsubscribes.push(
-			client.onMissedChanged((missed) => set({ missed })),
-		);
+		unsubscribes.push(client.onRunsRemoved(scheduleRuns));
+		unsubscribes.push(client.onMissedChanged((missed) => set({ missed })));
 	} catch {
 		// A transport without subscriptions still answers the initial reads;
 		// the section offers a refresh.

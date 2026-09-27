@@ -27,10 +27,17 @@ import {
 	Play,
 	Plus,
 	SquareTerminal,
+	Trash2,
 	Workflow,
 	Zap,
 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from 'react';
 import type { WorkspaceConnectionContext } from '../../shared/connections/connectionRegistry';
 import {
 	isReservedWorkspaceProject,
@@ -45,6 +52,7 @@ import {
 	type AutomationForm,
 	type AutomationServerCandidate,
 	type AutomationSpaceTerminal,
+	DEFAULT_PRUNE_DAYS,
 	describeRunOutcome,
 	describeTrigger,
 	emptyAutomationForm,
@@ -54,6 +62,8 @@ import {
 	hasTerminalSubject,
 	latestRuns,
 	nextRunAt,
+	prunableRuns,
+	pruneDays,
 	refusalMessage,
 	selectAutomationServer,
 } from './automationsModel';
@@ -447,6 +457,11 @@ export function AutomationsSection({
 	const [confirmingDelete, setConfirmingDelete] = useState<string>();
 	const [choosingSubject, setChoosingSubject] = useState<string>();
 	const [subjectSessionId, setSubjectSessionId] = useState('');
+	/** The open Prune form: which automation, and its days as typed. */
+	const [pruning, setPruning] = useState<{
+		readonly automationId: string;
+		readonly days: string;
+	}>();
 
 	const go = useCallback((next: Page) => {
 		setActionError(undefined);
@@ -564,6 +579,18 @@ export function AutomationsSection({
 			});
 		});
 
+	/** Open the Prune form, pre-filled with the days this automation was
+	 * last pruned with on any client. */
+	const openPrune = (automation: AutomationDefinition) =>
+		perform(async () => {
+			if (data === undefined) return;
+			const snapshot = await data.client.runs(automation.id);
+			setPruning({
+				automationId: automation.id,
+				days: String(snapshot.pruneChoice?.olderThanDays ?? DEFAULT_PRUNE_DAYS),
+			});
+		});
+
 	const closeTerminal = (panelId: string) =>
 		void perform(async () => {
 			await context?.workspaceSnapshotStore?.closePanel(panelId);
@@ -642,7 +669,10 @@ export function AutomationsSection({
 					{serverSelector}
 				</PageHeader>
 				{data?.status === 'error' ? (
-					<div className="workspace-dashboard__empty automations-empty" role="alert">
+					<div
+						className="workspace-dashboard__empty automations-empty"
+						role="alert"
+					>
 						<p>{data.error ?? 'This server’s automations are unavailable.'}</p>
 						<button
 							type="button"
@@ -653,7 +683,10 @@ export function AutomationsSection({
 						</button>
 					</div>
 				) : (
-					<p className="workspace-dashboard__empty automations-empty" role="status">
+					<p
+						className="workspace-dashboard__empty automations-empty"
+						role="status"
+					>
 						Loading automations…
 					</p>
 				)}
@@ -704,7 +737,11 @@ export function AutomationsSection({
 		const terminal = space.terminals.find(
 			(candidate) => candidate.panelId === page.panelId,
 		);
-		if (terminal !== undefined && context !== undefined && serverId !== undefined) {
+		if (
+			terminal !== undefined &&
+			context !== undefined &&
+			serverId !== undefined
+		) {
 			const group = groups.find((candidate) =>
 				candidate.terminals.some((item) => item.panelId === terminal.panelId),
 			);
@@ -898,7 +935,10 @@ export function AutomationsSection({
 					</div>
 				) : null}
 				{choosingSubject === automation.id ? (
-					<div className="automations-banner" data-terminay-automation-subject-chooser>
+					<div
+						className="automations-banner"
+						data-terminay-automation-subject-chooser
+					>
 						{subjects.length === 0 ? (
 							<span>This automation acts on a terminal, and none is open.</span>
 						) : (
@@ -908,7 +948,9 @@ export function AutomationsSection({
 									<select
 										className="automation-editor__input"
 										value={subjectSessionId}
-										onChange={(event) => setSubjectSessionId(event.target.value)}
+										onChange={(event) =>
+											setSubjectSessionId(event.target.value)
+										}
 									>
 										{subjects.map((subject) => (
 											<option key={subject.sessionId} value={subject.sessionId}>
@@ -936,6 +978,77 @@ export function AutomationsSection({
 						</button>
 					</div>
 				) : null}
+				{pruning?.automationId === automation.id
+					? (() => {
+							const days = pruneDays(pruning.days);
+							const count =
+								days === undefined
+									? 0
+									: prunableRuns(history, days, Math.max(now, Date.now()))
+											.length;
+							return (
+								<div
+									className="automations-banner"
+									role="alertdialog"
+									aria-label="Prune runs"
+									data-terminay-automation-prune-form="true"
+								>
+									<label className="automations-banner__field">
+										<span>Remove finished runs older than</span>
+										<input
+											type="number"
+											min={0}
+											max={3650}
+											className="automation-editor__input automation-editor__input--number"
+											value={pruning.days}
+											onChange={(event) =>
+												setPruning({
+													automationId: automation.id,
+													days: event.target.value,
+												})
+											}
+											data-terminay-automation-prune-days="true"
+										/>
+										<span>days</span>
+									</label>
+									<span
+										className="automations-banner__meta"
+										data-terminay-automation-prune-count={count}
+									>
+										{days === undefined
+											? 'Enter a whole number of days; 0 removes every finished run.'
+											: count === 0
+												? 'No finished runs are that old.'
+												: `${count} ${count === 1 ? 'run' : 'runs'} will be removed.`}
+									</span>
+									<button
+										type="button"
+										className="automations-button automations-button--danger"
+										disabled={days === undefined || count === 0}
+										data-terminay-automation-confirm-prune="true"
+										onClick={() =>
+											days === undefined
+												? undefined
+												: void perform(async () => {
+														await data.client.pruneRuns(automation.id, days);
+														setPruning(undefined);
+														data.refresh();
+													})
+										}
+									>
+										Prune
+									</button>
+									<button
+										type="button"
+										className="automations-button"
+										onClick={() => setPruning(undefined)}
+									>
+										Cancel
+									</button>
+								</div>
+							);
+						})()
+					: null}
 				<div className="workspace-dashboard__list automations-body">
 					<div className="automations-group-head">
 						<span>Runs</span>
@@ -946,6 +1059,16 @@ export function AutomationsSection({
 									: `Next run ${formatTime(next, now)}`
 								: 'Disabled — runs only when you run it'}
 						</span>
+						{history.length === 0 ? null : (
+							<button
+								type="button"
+								className="automations-group-head__action"
+								data-terminay-automation-prune="true"
+								onClick={() => void openPrune(automation)}
+							>
+								Prune…
+							</button>
+						)}
 					</div>
 					{history.length === 0 ? (
 						<p className="workspace-dashboard__empty">No runs yet.</p>
@@ -955,39 +1078,63 @@ export function AutomationsSection({
 								const open = run.runId === page.runId;
 								return (
 									<li key={run.runId}>
-										<button
-											type="button"
-											className={`workspace-dashboard__row automations-run-row${open ? ' automations-run-row--open' : ''}`}
-											aria-expanded={open}
-											data-terminay-automation-run={run.runId}
-											onClick={() =>
-												setPage({
-													kind: 'automation',
-													automationId: automation.id,
-													...(open ? {} : { runId: run.runId }),
-												})
-											}
-										>
-											<ChevronRight
-												size={12}
-												className="automations-run-row__chevron"
-												aria-hidden="true"
-											/>
-											<OutcomeBadge run={run} />
-											<span className="workspace-dashboard__title">
-												{formatTime(run.startedAt, now)}
-											</span>
-											<span className="workspace-dashboard__row-detail">
-												{run.startedBy === 'user'
-													? 'Run by you'
-													: run.startedBy === 'mcp'
-														? 'Run by an agent'
-														: 'Triggered'}
-												{run.durationMs === undefined
-													? ''
-													: ` · ${formatDuration(run.durationMs)}`}
-											</span>
-										</button>
+										<div className="automations-run-line">
+											<button
+												type="button"
+												className={`workspace-dashboard__row automations-run-row${open ? ' automations-run-row--open' : ''}`}
+												aria-expanded={open}
+												data-terminay-automation-run={run.runId}
+												onClick={() =>
+													setPage({
+														kind: 'automation',
+														automationId: automation.id,
+														...(open ? {} : { runId: run.runId }),
+													})
+												}
+											>
+												<ChevronRight
+													size={12}
+													className="automations-run-row__chevron"
+													aria-hidden="true"
+												/>
+												<OutcomeBadge run={run} />
+												<span className="workspace-dashboard__title">
+													{formatTime(run.startedAt, now)}
+												</span>
+												<span className="workspace-dashboard__row-detail">
+													{run.startedBy === 'user'
+														? 'Run by you'
+														: run.startedBy === 'mcp'
+															? 'Run by an agent'
+															: 'Triggered'}
+													{run.durationMs === undefined
+														? ''
+														: ` · ${formatDuration(run.durationMs)}`}
+												</span>
+											</button>
+											{run.status === 'running' ? null : (
+												<button
+													type="button"
+													className="automations-run-line__delete"
+													aria-label={`Delete run from ${formatTime(run.startedAt, now)}`}
+													title="Delete run"
+													data-terminay-automation-delete-run={run.runId}
+													onClick={() =>
+														void perform(async () => {
+															await data.client.removeRun(run.runId);
+															if (open)
+																setPage({
+																	kind: 'automation',
+																	automationId: automation.id,
+																});
+															data.refresh();
+														})
+													}
+												>
+													<Trash2 size={12} aria-hidden="true" />
+												</button>
+											)}
+										</div>
 										{open ? (
 											<RunDetail
 												run={run}
@@ -1020,7 +1167,10 @@ export function AutomationsSection({
 				{list.length === 0 ? null : newButton}
 			</PageHeader>
 			{selection.unsupported.length > 0 ? (
-				<p className="automations-banner" data-terminay-automations-unsupported-note>
+				<p
+					className="automations-banner"
+					data-terminay-automations-unsupported-note
+				>
 					{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
 					{selection.unsupported.length === 1 ? 'does' : 'do'} not support
 					automations.
@@ -1033,7 +1183,9 @@ export function AutomationsSection({
 						<div className="automations-empty-state__icon" aria-hidden="true">
 							<Workflow size={20} />
 						</div>
-						<h3 className="automations-empty-state__title">No automations yet</h3>
+						<h3 className="automations-empty-state__title">
+							No automations yet
+						</h3>
 						<p className="automations-empty-state__text">
 							Run a command, a Macro, or some text on a schedule, or when
 							something happens in your workspace.
@@ -1110,7 +1262,10 @@ export function AutomationsSection({
 												setEnabled(automation, event.target.checked)
 											}
 										/>
-										<span aria-hidden="true" className="automations-switch__track" />
+										<span
+											aria-hidden="true"
+											className="automations-switch__track"
+										/>
 									</label>
 									<button
 										type="button"
@@ -1167,7 +1322,9 @@ export function AutomationsSection({
 						{groups.map((group) => (
 							<div
 								key={group.run?.runId ?? 'unowned'}
-								data-terminay-automation-terminal-group={group.run?.runId ?? 'other'}
+								data-terminay-automation-terminal-group={
+									group.run?.runId ?? 'other'
+								}
 							>
 								{group.terminals.map((terminal) => (
 									<TerminalRow
