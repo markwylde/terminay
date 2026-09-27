@@ -79,7 +79,11 @@ type Options = {
 	isServerFileViewer: boolean;
 	onOpenFile: OpenFile;
 	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown;
-	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
+	onOperationError: (
+		feature: 'Explorer' | 'Git',
+		error: unknown,
+		source?: 'action' | 'refresh',
+	) => string;
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 	onSetError: (message: string | null) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
@@ -260,7 +264,11 @@ export async function applyGitWorkspaceRefresh({
 	worktreeId?: string;
 	publish: (projection: GitWorkspaceProjection) => void;
 	preserveLastProjection: () => void;
-	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
+	onOperationError: (
+		feature: 'Explorer' | 'Git',
+		error: unknown,
+		source?: 'action' | 'refresh',
+	) => string;
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 }): Promise<void> {
 	try {
@@ -278,7 +286,7 @@ export async function applyGitWorkspaceRefresh({
 		// projection yet, publish a stable empty state instead of leaving the Git
 		// sidebar in an indefinite loading state.
 		preserveLastProjection();
-		onOperationError('Git', error);
+		onOperationError('Git', error, 'refresh');
 	}
 }
 
@@ -469,7 +477,7 @@ export function useFileExplorerController({
 							)
 						)
 							return;
-						const message = onOperationError('Explorer', error);
+						const message = onOperationError('Explorer', error, 'refresh');
 						setDirectoryErrors((current) => ({
 							...current,
 							[dirPath]: message,
@@ -858,7 +866,9 @@ export function useFileExplorerController({
 		async (worktree: GitWorktreeStatus) => {
 			if (
 				!window.confirm(
-					`Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nThis permanently removes this worktree folder, including uncommitted and untracked files.`,
+					worktree.isPrunable
+						? `Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nIts working tree is already gone. This removes Git's record of it; nothing on disk is deleted.`
+						: `Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nThis permanently removes this worktree folder, including uncommitted and untracked files.`,
 				)
 			)
 				return;
