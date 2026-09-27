@@ -95,6 +95,7 @@ describe('feature failures', () => {
 			feature: 'Explorer' as const,
 			message: 'Explorer could not be loaded. files.list failed.',
 			transport: false,
+			refresh: true,
 		};
 		assert.equal(
 			clearSucceededFeatureFailure(failure, 'Explorer', failure.message),
@@ -104,6 +105,19 @@ describe('feature failures', () => {
 			clearSucceededFeatureFailure(failure, 'Explorer', 'Failed to open terminal.'),
 			failure,
 		);
+		assert.deepEqual(
+			clearSucceededFeatureFailure(failure, 'Git', failure.message),
+			failure,
+		);
+	});
+
+	it('keeps a failed action visible when the follow-up refresh succeeds', () => {
+		const failure = {
+			feature: 'Git' as const,
+			message: 'Git could not complete the request. Git worktree removal failed.',
+			transport: false,
+			refresh: false,
+		};
 		assert.deepEqual(
 			clearSucceededFeatureFailure(failure, 'Git', failure.message),
 			failure,
@@ -185,11 +199,13 @@ describe('feature failures', () => {
 			feature: 'Git' as const,
 			message: 'Git is temporarily unavailable. Reconnect to server-1 and retry git.worktrees.list.',
 			transport: true,
+			refresh: true,
 		};
 		const refusal = {
 			feature: 'Git' as const,
 			message: 'Git access was denied. The selected server account cannot access project project-1 on server server-1.',
 			transport: false,
+			refresh: true,
 		};
 		assert.equal(clearTransportFeatureFailure(outage, outage.message), null);
 		assert.deepEqual(clearTransportFeatureFailure(refusal, refusal.message), refusal);
