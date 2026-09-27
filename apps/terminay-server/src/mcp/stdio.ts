@@ -28,6 +28,11 @@ import {
 	MAX_SEARCH_QUERY_CHARS,
 	PROJECT_HANDLE_PATTERN,
 } from './dispatcher.js';
+import {
+	DEFAULT_AUTOMATION_RUNS_LIMIT,
+	MAX_AUTOMATION_RUNS_LIMIT,
+	MCP_AUTOMATION_EVENT_KINDS,
+} from './automationTools.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
 export { SERVER_MCP_ENTRY } from './ownership.js';
@@ -52,6 +57,10 @@ const CONTROL_ERROR_CODES: ReadonlySet<ControlErrorCode> = new Set([
 	'bad_request',
 	'forbidden',
 	'not_found',
+	'conflict',
+	'permission_denied',
+	'permission_declined',
+	'approval_queue_full',
 	'internal',
 ]);
 const READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
@@ -88,9 +97,13 @@ export interface ServerMcpStdioOptions {
 }
 
 interface LocalControlClient {
+	/** With a signal, the request gets its own connection, and aborting it
+	 * closes that connection so the server cancels the operation (and
+	 * withdraws any approval it is waiting on). */
 	request(
 		operation: ControlOperation,
 		params: Record<string, unknown>,
+		signal?: AbortSignal,
 	): Promise<unknown>;
 	close(): void;
 }
@@ -110,9 +123,10 @@ export async function runServerMcpStdio(
 	const call = async (
 		operation: ControlOperation,
 		params: Record<string, unknown>,
+		signal?: AbortSignal,
 	) => {
 		try {
-			const result = await client.request(operation, params);
+			const result = await client.request(operation, params, signal);
 			const text = boundedResultText(operation, result);
 			return { content: [{ type: 'text' as const, text }] };
 		} catch (error) {
@@ -157,6 +171,7 @@ function registerTools(
 	call: (
 		operation: ControlOperation,
 		params: Record<string, unknown>,
+		signal?: AbortSignal,
 	) => Promise<CallToolResult>,
 ): void {
 	const terminal = boundedIdentifier();
@@ -208,7 +223,7 @@ function registerTools(
 			inputSchema: {},
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
-		async () => call('get_mcp_capabilities', {}),
+		async (_args, extra) => call('get_mcp_capabilities', {}, extra.signal),
 	);
 	server.registerTool(
 		'list_terminals',
@@ -218,7 +233,7 @@ function registerTools(
 			inputSchema: {},
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
-		async () => call('list_terminals', {}),
+		async (_args, extra) => call('list_terminals', {}, extra.signal),
 	);
 	server.registerTool(
 		'read_terminal',
@@ -228,14 +243,21 @@ function registerTools(
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: readTerminal,
 		},
-		async ({ terminal: target, format, max_bytes: maxBytes, lines, after }) =>
-			call('read_terminal', {
-				terminal: target,
-				format,
-				max_bytes: maxBytes,
-				...(lines === undefined ? {} : { lines }),
-				...(after === undefined ? {} : { after }),
-			}),
+		async (
+			{ terminal: target, format, max_bytes: maxBytes, lines, after },
+			extra,
+		) =>
+			call(
+				'read_terminal',
+				{
+					terminal: target,
+					format,
+					max_bytes: maxBytes,
+					...(lines === undefined ? {} : { lines }),
+					...(after === undefined ? {} : { after }),
+				},
+				extra.signal,
+			),
 	);
 	server.registerTool(
 		'search_terminal',
@@ -267,22 +289,29 @@ function registerTools(
 					.default(DEFAULT_SEARCH_MAX_BYTES),
 			},
 		},
-		async ({
-			terminal: target,
-			query,
-			case_sensitive: caseSensitive,
-			context_lines: contextLines,
-			max_matches: maxMatches,
-			max_bytes: maxBytes,
-		}) =>
-			call('search_terminal', {
+		async (
+			{
 				terminal: target,
 				query,
 				case_sensitive: caseSensitive,
 				context_lines: contextLines,
 				max_matches: maxMatches,
 				max_bytes: maxBytes,
-			}),
+			},
+			extra,
+		) =>
+			call(
+				'search_terminal',
+				{
+					terminal: target,
+					query,
+					case_sensitive: caseSensitive,
+					context_lines: contextLines,
+					max_matches: maxMatches,
+					max_bytes: maxBytes,
+				},
+				extra.signal,
+			),
 	);
 	server.registerTool(
 		'get_terminal_status',
@@ -291,8 +320,8 @@ function registerTools(
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal },
 		},
-		async ({ terminal: target }) =>
-			call('get_terminal_status', { terminal: target }),
+		async ({ terminal: target }, extra) =>
+			call('get_terminal_status', { terminal: target }, extra.signal),
 	);
 	server.registerTool(
 		'open_terminal',
@@ -306,7 +335,7 @@ function registerTools(
 				project: z.string().regex(PROJECT_HANDLE_PATTERN).optional(),
 			},
 		},
-		async (params) => call('open_terminal', params),
+		async (params, extra) => call('open_terminal', params, extra.signal),
 	);
 	server.registerTool(
 		'write_terminal',
@@ -314,7 +343,7 @@ function registerTools(
 			description: 'Write exact text to a live sibling terminal.',
 			inputSchema: { terminal, text, submit: z.boolean().optional() },
 		},
-		async (params) => call('write_terminal', params),
+		async (params, extra) => call('write_terminal', params, extra.signal),
 	);
 	server.registerTool(
 		'run_command',
@@ -323,13 +352,13 @@ function registerTools(
 				'Submit one bounded command. The result reports terminal, command_id, from, and submitted_bytes; from is the raw output cursor captured immediately before submission and submitted_bytes measures all UTF-8 bytes written to the PTY, including bracketed-paste framing and the submission carriage return, never output bytes. Typical workflow: run_command, optionally wait_for_command when get_mcp_capabilities says it is available, then read_terminal with format=raw and after=from. command_id identifies this MCP submission only; wait_for_command reports the next observed completion and does not attribute it to command_id.',
 			inputSchema: { terminal, command: text },
 		},
-		async (params) => call('run_command', params),
+		async (params, extra) => call('run_command', params, extra.signal),
 	);
 	server.registerTool(
 		'close_terminal',
 		{ description: 'Close a sibling terminal.', inputSchema: { terminal } },
-		async ({ terminal: target }) =>
-			call('close_terminal', { terminal: target }),
+		async ({ terminal: target }, extra) =>
+			call('close_terminal', { terminal: target }, extra.signal),
 	);
 	server.registerTool(
 		'focus_terminal',
@@ -337,8 +366,8 @@ function registerTools(
 			description: 'Mark a sibling terminal active in the logical workspace.',
 			inputSchema: { terminal },
 		},
-		async ({ terminal: target }) =>
-			call('focus_terminal', { terminal: target }),
+		async ({ terminal: target }, extra) =>
+			call('focus_terminal', { terminal: target }, extra.signal),
 	);
 	server.registerTool(
 		'rename_terminal',
@@ -346,7 +375,7 @@ function registerTools(
 			description: 'Rename a sibling terminal.',
 			inputSchema: { terminal, name },
 		},
-		async (params) => call('rename_terminal', params),
+		async (params, extra) => call('rename_terminal', params, extra.signal),
 	);
 	server.registerTool(
 		'split_terminal',
@@ -354,7 +383,7 @@ function registerTools(
 			description: 'Split beside a sibling terminal.',
 			inputSchema: { terminal, direction },
 		},
-		async (params) => call('split_terminal', params),
+		async (params, extra) => call('split_terminal', params, extra.signal),
 	);
 	server.registerTool(
 		'wait_for_idle',
@@ -367,7 +396,7 @@ function registerTools(
 				timeout,
 			},
 		},
-		async (params) => call('wait_for_idle', params),
+		async (params, extra) => call('wait_for_idle', params, extra.signal),
 	);
 	server.registerTool(
 		'wait_for_command',
@@ -377,7 +406,7 @@ function registerTools(
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal, timeout },
 		},
-		async (params) => call('wait_for_command', params),
+		async (params, extra) => call('wait_for_command', params, extra.signal),
 	);
 	server.registerTool(
 		'wait_for_attention',
@@ -386,7 +415,174 @@ function registerTools(
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal, timeout },
 		},
-		async (params) => call('wait_for_attention', params),
+		async (params, extra) => call('wait_for_attention', params, extra.signal),
+	);
+	registerAutomationTools(server, call);
+}
+
+const APPROVAL_NOTE =
+	'The user may require approval for this in Settings > AI > Terminay MCP; the call then waits until they answer an inline prompt in this terminal and fails with permission_declined if they decline, or permission_denied if the operation is set to Never Allow.';
+
+function registerAutomationTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const automationId = z.string().regex(ID_PATTERN);
+	const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+	const trigger = z.discriminatedUnion('kind', [
+		z.object({
+			kind: z.literal('schedule'),
+			cron: z
+				.string()
+				.min(1)
+				.max(256)
+				.describe(
+					'Five-field cron expression (minute hour day-of-month month day-of-week) in the server time zone, e.g. "0 9 * * 1-5".',
+				),
+		}),
+		z.object({ kind: z.literal('event'), event: z.enum(MCP_AUTOMATION_EVENT_KINDS) }),
+	]);
+	const action = z.discriminatedUnion('kind', [
+		z.object({
+			kind: z.literal('runCommand'),
+			command: z.string().min(1).max(16_384),
+			shellProfileId: z.string().regex(ID_PATTERN).optional(),
+			cwd: z
+				.string()
+				.max(4096)
+				.optional()
+				.describe('Working directory; defaults to the home directory.'),
+			maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
+		}),
+		z.object({
+			kind: z.literal('runMacro'),
+			macroId: z.string().regex(ID_PATTERN),
+			fieldValues: z
+				.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+				.optional(),
+		}),
+		z.object({
+			kind: z.literal('writeText'),
+			text: z.string().max(16_384),
+			submit: z.boolean().optional(),
+		}),
+	]);
+	const settings = z.object({
+		keepTerminalAfterRun: z.boolean().optional(),
+		recordSession: z.boolean().optional(),
+		cooldownSeconds: z.number().int().min(0).max(86_400).optional(),
+	});
+	const definition = {
+		name: z.string().min(1).max(200),
+		enabled: z.boolean().optional(),
+		trigger,
+		action,
+		settings: settings.optional(),
+	};
+	server.registerTool(
+		'list_automations',
+		{
+			description:
+				'List every automation on this Terminay server, with its trigger in plain words, next scheduled run, last run outcome, and the revision to pass when changing one. Automations belong to the server, not to a project.',
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_args, extra) => call('list_automations', {}, extra.signal),
+	);
+	server.registerTool(
+		'get_automation',
+		{
+			description: 'Read one automation\'s full definition and the current revision.',
+			inputSchema: { automation_id: automationId },
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (params, extra) => call('get_automation', params, extra.signal),
+	);
+	server.registerTool(
+		'list_automation_runs',
+		{
+			description:
+				'List one automation\'s most recent runs, newest first, with outcome, exit code, and final output. Runs about another project\'s terminal omit the subject and output.',
+			inputSchema: {
+				automation_id: automationId,
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.max(MAX_AUTOMATION_RUNS_LIMIT)
+					.default(DEFAULT_AUTOMATION_RUNS_LIMIT),
+			},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (params, extra) => call('list_automation_runs', params, extra.signal),
+	);
+	server.registerTool(
+		'create_automation',
+		{
+			description: `Create an automation: one trigger (a cron schedule or a Terminay event) and one action (run a command in a new terminal outside every project, or, for terminal events, run a Macro or write text into the subject terminal). ${APPROVAL_NOTE}`,
+			inputSchema: definition,
+		},
+		async (params, extra) => call('create_automation', params, extra.signal),
+	);
+	server.registerTool(
+		'update_automation',
+		{
+			description: `Change an automation. Fields you omit keep their current values. Pass the revision from list_automations or get_automation; a stale revision fails with conflict. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				automation_id: automationId,
+				revision,
+				name: definition.name.optional(),
+				enabled: definition.enabled,
+				trigger: trigger.optional(),
+				action: action.optional(),
+				settings: definition.settings,
+			},
+		},
+		async (params, extra) => call('update_automation', params, extra.signal),
+	);
+	server.registerTool(
+		'delete_automation',
+		{
+			description: `Delete an automation. Runs already in progress keep running. ${APPROVAL_NOTE}`,
+			inputSchema: { automation_id: automationId, revision: revision.optional() },
+			annotations: { destructiveHint: true, openWorldHint: false },
+		},
+		async (params, extra) => call('delete_automation', params, extra.signal),
+	);
+	server.registerTool(
+		'set_automation_enabled',
+		{
+			description: `Enable or disable an automation. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				automation_id: automationId,
+				enabled: z.boolean(),
+				revision: revision.optional(),
+			},
+		},
+		async (params, extra) => call('set_automation_enabled', params, extra.signal),
+	);
+	server.registerTool(
+		'run_automation',
+		{
+			description: `Start one run of an automation now. A Macro or write-text automation needs terminal: a terminal handle from list_terminals. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				automation_id: automationId,
+				terminal: z.string().min(1).max(MAX_TERMINAL_REF_CHARS).optional(),
+			},
+		},
+		async (params, extra) => call('run_automation', params, extra.signal),
+	);
+	server.registerTool(
+		'stop_automation_run',
+		{
+			description: `Stop an automation run that is in progress. ${APPROVAL_NOTE}`,
+			inputSchema: { run_id: z.string().regex(ID_PATTERN) },
+		},
+		async (params, extra) => call('stop_automation_run', params, extra.signal),
 	);
 }
 
@@ -557,10 +753,13 @@ function createLocalControlClient(
 		});
 		return candidate;
 	};
+	const dedicated = new Set<Socket>();
 	return {
-		request(operation, params) {
+		request(operation, params, signal) {
 			if (closed)
 				return Promise.reject(new Error('Terminay MCP client is closed'));
+			if (signal !== undefined)
+				return requestOnDedicatedSocket(operation, params, signal);
 			if (pending.size >= MAX_IN_FLIGHT)
 				return Promise.reject(
 					new ServerMcpControlError({
@@ -595,11 +794,129 @@ function createLocalControlClient(
 			closed = true;
 			socket?.destroy();
 			socket = undefined;
+			for (const candidate of dedicated) candidate.destroy();
+			dedicated.clear();
 			for (const waiter of pending.values())
 				waiter.reject(new Error('Terminay MCP client closed'));
 			pending.clear();
 		},
 	};
+
+	/**
+	 * One request on its own connection. The control protocol has no cancel
+	 * frame; closing the connection is how a caller cancels, so an MCP
+	 * cancellation reaches the operation and withdraws any pending approval.
+	 */
+	function requestOnDedicatedSocket(
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal: AbortSignal,
+	): Promise<unknown> {
+		if (signal.aborted)
+			return Promise.reject(
+				new ServerMcpControlError({
+					code: 'cancelled',
+					message: 'The MCP request was cancelled.',
+				}),
+			);
+		if (dedicated.size + pending.size >= MAX_IN_FLIGHT)
+			return Promise.reject(
+				new ServerMcpControlError({
+					code: 'limit_exceeded',
+					message: 'The MCP control concurrency limit was exceeded.',
+				}),
+			);
+		const id = randomUUID();
+		let encoded: string;
+		try {
+			encoded = encodeControlMessage({
+				id,
+				token,
+				version: CONTROL_PROTOCOL_VERSION,
+				op: operation,
+				params,
+			});
+		} catch (error) {
+			return Promise.reject(
+				error instanceof Error ? error : new Error(String(error)),
+			);
+		}
+		if (Buffer.byteLength(encoded, 'utf8') > CONTROL_MAX_FRAME_BYTES)
+			return Promise.reject(
+				new ServerMcpControlError({
+					code: 'limit_exceeded',
+					message: 'The MCP control request exceeded its size limit.',
+				}),
+			);
+		return new Promise((resolve, reject) => {
+			const decoder = new ControlFrameDecoder(CONTROL_MAX_RESPONSE_BYTES);
+			const connection = connect(socketPath);
+			dedicated.add(connection);
+			let settled = false;
+			const settle = (outcome: () => void): void => {
+				if (settled) return;
+				settled = true;
+				signal.removeEventListener('abort', onAbort);
+				dedicated.delete(connection);
+				connection.destroy();
+				outcome();
+			};
+			const onAbort = (): void =>
+				settle(() =>
+					reject(
+						new ServerMcpControlError({
+							code: 'cancelled',
+							message: 'The MCP request was cancelled.',
+						}),
+					),
+				);
+			signal.addEventListener('abort', onAbort, { once: true });
+			connection.on('data', (chunk: Buffer) => {
+				let values: unknown[];
+				try {
+					values = decoder.push(chunk);
+				} catch (error) {
+					settle(() =>
+						reject(
+							new ServerMcpControlError({
+								code: 'internal',
+								message:
+									error instanceof Error
+										? error.message
+										: 'Malformed control response',
+							}),
+						),
+					);
+					return;
+				}
+				for (const value of values) {
+					const response = parseControlResponse(value);
+					if (response === null || response.id !== id) {
+						settle(() =>
+							reject(
+								new ServerMcpControlError({
+									code: 'internal',
+									message: 'Malformed control response.',
+								}),
+							),
+						);
+						return;
+					}
+					settle(() =>
+						response.ok
+							? resolve(response.result)
+							: reject(new ServerMcpControlError(response.error)),
+					);
+					return;
+				}
+			});
+			connection.on('error', (error) => settle(() => reject(error)));
+			connection.on('close', () =>
+				settle(() => reject(new Error('Terminay control socket closed'))),
+			);
+			connection.write(encoded);
+		});
+	}
 }
 
 function parseControlResponse(value: unknown): ControlResponse | null {

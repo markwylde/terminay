@@ -653,30 +653,32 @@ test('open_terminal respects the automation-space terminal cap with a bounded er
 
 // --- 8.3 tool surface -------------------------------------------------------
 
-test('no automation operation is reachable through MCP', async () => {
+test('automation tools are the same for project and workspace reach, and unsupported without a host binding', async () => {
 	const { call, workspaceContext, projectContext, dispatch } = await fixture();
-	const automationLike = /automation|schedule|cron|trigger/i;
-	assert.equal(
-		CONTROL_OPERATIONS.some((op) => automationLike.test(op)),
-		false,
-	);
 	const workspaceTools = (
 		await call(workspaceContext, 'get_mcp_capabilities')
-	).tools.map((entry) => entry.tool);
-	const projectTools = (
-		await call(projectContext, 'get_mcp_capabilities')
-	).tools.map((entry) => entry.tool);
+	).tools;
+	const projectTools = (await call(projectContext, 'get_mcp_capabilities'))
+		.tools;
 	// Workspace reach widens which terminals are addressable, never the tool set.
 	assert.deepEqual(workspaceTools, projectTools);
-	assert.deepEqual([...workspaceTools].sort(), [...CONTROL_OPERATIONS].sort());
+	assert.deepEqual(
+		workspaceTools.map((entry) => entry.tool).sort(),
+		[...CONTROL_OPERATIONS].sort(),
+	);
 	for (const op of [
-		'create_automation',
-		'run_automation',
 		'list_automations',
-		'automations.create',
+		'get_automation',
+		'list_automation_runs',
+		'create_automation',
+		'update_automation',
+		'delete_automation',
+		'set_automation_enabled',
+		'run_automation',
+		'stop_automation_run',
 	]) {
 		assert.equal(
-			isControlRequest({ id: 'a', token: 't', version: 1, op, params: {} }),
+			workspaceTools.find((entry) => entry.tool === op)?.available,
 			false,
 		);
 		assert.equal(
@@ -689,6 +691,16 @@ test('no automation operation is reachable through MCP', async () => {
 			'unsupported_op',
 		);
 	}
+	assert.equal(
+		isControlRequest({
+			id: 'a',
+			token: 't',
+			version: 1,
+			op: 'automations.create',
+			params: {},
+		}),
+		false,
+	);
 });
 
 async function request(socketPath, value) {

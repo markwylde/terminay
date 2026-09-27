@@ -57,7 +57,15 @@ import {
 	createControlEndpoint,
 	createTerminalControlAdapter,
 	assertAutomationSpaceCapacity,
+	type AutomationControlAdapter,
+	automationControlError,
+	CONTROL_OPERATIONS,
+	CONTROL_PERMISSION_GROUPS,
+	type ControlOperation,
+	type ControlPermissionGate,
+	createMcpPermissionGate,
 	type LocalControlEndpoint,
+	type McpApprovalDescription,
 	ProjectHandleCodec,
 	reachOf,
 	resolveOpenTerminalProject,
@@ -77,6 +85,7 @@ import { MacroRepository } from '../packages/server-core/src/macroService/reposi
 import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
 import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
 import { AutomationRunLog } from '../packages/server-core/src/automationService/runLog';
+import type { AutomationSubject } from '../packages/server-core/src/automationService/types';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -736,6 +745,7 @@ const mcpCapabilities = new ControlCapabilityStore({
 });
 let mcpControlEndpoint: LocalControlEndpoint | null = null;
 let removeMcpSettingsObserver: (() => void) | undefined;
+let removeMcpApprovalRevocation: (() => void) | undefined;
 let desktopRemoteExposure: DesktopServerOwnedExposure;
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -1591,6 +1601,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			repository: embeddedAutomations,
 			runLog: embeddedAutomationRuns,
 		},
+		mcpApprovals: true,
 		macros: {
 			repository: embeddedMacros,
 			environmentFor: (request, target) => {
@@ -1809,6 +1820,13 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		authority.initializeWorkspace(),
 	);
 	serverTerminalAuthority = authority;
+	// An approval and a session grant live exactly as long as the calling
+	// terminal's capability: exit, move, disable, and restart all end them.
+	removeMcpApprovalRevocation?.();
+	removeMcpApprovalRevocation = mcpCapabilities.onRevoked(
+		(_digest, terminalSessionId) =>
+			authority.composition.mcpApprovals?.revokeTerminal(terminalSessionId),
+	);
 	endStartupPhase('workspace-init');
 	beginStartupPhase('mcp-endpoint');
 	applyMcpSetting(embeddedServerSettings.settings);
@@ -2562,6 +2580,8 @@ async function startMcpControlEndpoint(): Promise<void> {
 		capabilities: mcpCapabilities,
 		dispatch: createTerminalControlAdapter({
 			adapter: createDesktopMcpTerminalAdapter(),
+			automations: createDesktopMcpAutomationAdapter(),
+			permissions: createDesktopMcpPermissionGate(),
 		}),
 		onError: (error) => console.error('[mcp] control endpoint failed', error),
 	});
@@ -2596,8 +2616,8 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				(entry) => entry.projectId === projectId && entry.status === 'running',
 			).length;
 	return {
-		getMcpCapabilities: () => ({
-			tools: desktopMcpToolAvailability(),
+		getMcpCapabilities: (context) => ({
+			tools: desktopMcpToolAvailability(context),
 		}),
 		listTerminals: (context) => {
 			const authority = requireMcpAuthority();
@@ -2886,28 +2906,296 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 	};
 }
 
-function desktopMcpToolAvailability(): readonly {
+function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 	readonly tool: string;
 	readonly available: boolean;
+	readonly permission: 'allow' | 'ask' | 'deny';
 }[] {
-	const unavailable = new Set(['wait_for_command', 'wait_for_attention']);
-	return [
-		'get_mcp_capabilities',
-		'list_terminals',
-		'read_terminal',
-		'search_terminal',
-		'get_terminal_status',
-		'open_terminal',
-		'write_terminal',
-		'run_command',
-		'close_terminal',
-		'focus_terminal',
-		'rename_terminal',
-		'split_terminal',
-		'wait_for_idle',
+	const unavailable = new Set<ControlOperation>([
 		'wait_for_command',
 		'wait_for_attention',
-	].map((tool) => ({ tool, available: !unavailable.has(tool) }));
+	]);
+	const approvals = serverTerminalAuthority?.composition.mcpApprovals;
+	return CONTROL_OPERATIONS.map((tool) => {
+		const group = CONTROL_PERMISSION_GROUPS[tool];
+		return {
+			tool,
+			available: !unavailable.has(tool),
+			permission:
+				group === undefined || approvals === undefined
+					? 'allow'
+					: approvals.effectivePolicy(group, context.terminalSessionId),
+		};
+	});
+}
+
+function requireAutomationMcp() {
+	const automations = requireMcpAuthority().composition.automationMcp;
+	if (automations === undefined)
+		throw new ControlEndpointError(
+			'unsupported_op',
+			'Automations are unavailable on this server.',
+		);
+	return automations;
+}
+
+/** Run an automation call, turning a service refusal into a public error. */
+async function automationMcpCall<T>(work: () => Promise<T>): Promise<T> {
+	try {
+		return await work();
+	} catch (error) {
+		const mapped = automationControlError(error);
+		if (mapped !== undefined)
+			throw new ControlEndpointError(mapped.code, mapped.message);
+		throw error;
+	}
+}
+
+/** A run's subject is visible only when its project is in the caller's reach. */
+function mcpSeesSubject(
+	context: ControlRequestContext,
+	subject: AutomationSubject,
+): boolean {
+	return subject.kind === 'device' || mcpReaches(context, subject.projectId);
+}
+
+function mcpAutomationSubject(
+	context: ControlRequestContext,
+	reference: string,
+): { readonly subject: AutomationSubject; readonly title: string } {
+	const target = resolveMcpTerminal(context, reference);
+	const authority = requireMcpAuthority();
+	const session = authority.service.getSession(target.id);
+	const title = mcpPanelFor(target.id, target.projectId)?.title ?? target.id;
+	return {
+		subject: {
+			kind: 'terminal',
+			serverId: authority.service.serverId,
+			projectId: target.projectId,
+			sessionId: target.id,
+			...(session?.createdAt === undefined
+				? {}
+				: { sessionCreatedAt: session.createdAt }),
+			title,
+		},
+		title,
+	};
+}
+
+function createDesktopMcpAutomationAdapter(): AutomationControlAdapter {
+	const actor = (context: ControlRequestContext) => ({
+		terminalSessionId: context.terminalSessionId,
+	});
+	return {
+		listAutomations: () =>
+			automationMcpCall(() => requireAutomationMcp().list()),
+		getAutomation: (params) =>
+			automationMcpCall(() => requireAutomationMcp().get(params.automationId)),
+		listAutomationRuns: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().runs(params.automationId, params.limit, (subject) =>
+					mcpSeesSubject(context, subject),
+				),
+			),
+		createAutomation: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().create(params.definition, actor(context)),
+			),
+		updateAutomation: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().update(
+					params.automationId,
+					params.definition,
+					params.revision,
+					actor(context),
+				),
+			),
+		deleteAutomation: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().remove(
+					params.automationId,
+					params.revision,
+					actor(context),
+				),
+			),
+		setAutomationEnabled: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().setEnabled(
+					params.automationId,
+					params.enabled,
+					params.revision,
+					actor(context),
+				),
+			),
+		runAutomation: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().run(
+					params.automationId,
+					params.terminal === undefined
+						? undefined
+						: mcpAutomationSubject(context, params.terminal).subject,
+					actor(context),
+				),
+			),
+		stopAutomationRun: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().stop(params.runId, actor(context)),
+			),
+	};
+}
+
+/** The agent detected in a terminal, as its session source names it. */
+function mcpAgentLabel(terminalSessionId: string): string {
+	const entries =
+		serverTerminalAuthority?.agents.entriesForTerminal(terminalSessionId) ?? [];
+	const entry = entries.find((candidate) => candidate.kind === 'root') ?? entries[0];
+	const label =
+		entry?.harnessDisplayName?.trim() || entry?.providerDisplayName?.trim();
+	return label === undefined || label === '' ? 'An agent' : label;
+}
+
+function createDesktopMcpPermissionGate(): ControlPermissionGate {
+	const gate = (): ControlPermissionGate | undefined => {
+		const approvals = serverTerminalAuthority?.composition.mcpApprovals;
+		return approvals === undefined
+			? undefined
+			: createMcpPermissionGate({ approvals, describe: describeMcpRequest });
+	};
+	return {
+		authorize: (request) => gate()?.authorize(request),
+	};
+}
+
+async function describeMcpRequest(request: {
+	readonly op: ControlOperation;
+	readonly params: Readonly<Record<string, unknown>>;
+	readonly context: ControlRequestContext;
+}): Promise<
+	| McpApprovalDescription
+	| { readonly ok: false; readonly error: { code: ControlEndpointError['code']; message: string } }
+> {
+	const { op, params, context } = request;
+	const terminalTitle =
+		mcpPanelFor(context.terminalSessionId, context.projectId)?.title ??
+		'a terminal';
+	const agent = mcpAgentLabel(context.terminalSessionId);
+	try {
+		const described = await describeMcpOperation(op, params, context);
+		return { agent, terminalTitle, ...described };
+	} catch (error) {
+		const mapped =
+			automationControlError(error) ??
+			(error instanceof ControlEndpointError
+				? { code: error.code, message: error.message }
+				: undefined);
+		if (mapped !== undefined) return { ok: false, error: mapped };
+		throw error;
+	}
+}
+
+/** Plain words and full details for one MCP request's approval prompt. */
+async function describeMcpOperation(
+	op: ControlOperation,
+	params: Readonly<Record<string, unknown>>,
+	context: ControlRequestContext,
+): Promise<Pick<McpApprovalDescription, 'summary' | 'details'>> {
+	const text = (value: unknown): string =>
+		typeof value === 'string' ? value : '';
+	const definition = () => {
+		const { automation_id: _id, revision: _revision, ...rest } = params;
+		return rest;
+	};
+	const targetTitle = () => {
+		const reference = text(params.terminal);
+		if (reference === '') return 'a terminal';
+		const target = resolveMcpTerminal(context, reference);
+		return mcpPanelFor(target.id, target.projectId)?.title ?? target.id;
+	};
+	switch (op) {
+		case 'create_automation':
+			return requireAutomationMcp().describe({ kind: 'create', input: definition() });
+		case 'update_automation':
+			return requireAutomationMcp().describe({
+				kind: 'update',
+				automationId: text(params.automation_id),
+				input: definition(),
+			});
+		case 'delete_automation':
+			return requireAutomationMcp().describe({
+				kind: 'delete',
+				automationId: text(params.automation_id),
+			});
+		case 'set_automation_enabled':
+			return requireAutomationMcp().describe({
+				kind: 'setEnabled',
+				automationId: text(params.automation_id),
+				enabled: params.enabled === true,
+			});
+		case 'run_automation':
+			return requireAutomationMcp().describe({
+				kind: 'run',
+				automationId: text(params.automation_id),
+				...(params.terminal === undefined
+					? {}
+					: {
+							subjectTitle: mcpAutomationSubject(context, text(params.terminal))
+								.title,
+						}),
+			});
+		case 'stop_automation_run':
+			return requireAutomationMcp().describe({
+				kind: 'stop',
+				runId: text(params.run_id),
+			});
+		case 'list_automations':
+			return { summary: 'list your automations', details: [] };
+		case 'get_automation':
+		case 'list_automation_runs':
+			return {
+				summary: `read the automation ${text(params.automation_id)}${op === 'list_automation_runs' ? "'s run history" : ''}`,
+				details: [],
+			};
+		case 'run_command':
+			return {
+				summary: `run a command in ${targetTitle()}`,
+				details: [{ label: 'Command', value: text(params.command), code: true }],
+			};
+		case 'write_terminal':
+			return {
+				summary: `type into ${targetTitle()}`,
+				details: [
+					{ label: 'Text', value: text(params.text), code: true },
+					{ label: 'Submit', value: params.submit === true ? 'Yes' : 'No' },
+				],
+			};
+		case 'open_terminal':
+			return {
+				summary: 'open a new terminal',
+				details: [
+					...(typeof params.name === 'string'
+						? [{ label: 'Name', value: params.name }]
+						: []),
+					...(typeof params.cwd === 'string'
+						? [{ label: 'Working directory', value: params.cwd }]
+						: []),
+				],
+			};
+		case 'close_terminal':
+			return { summary: `close ${targetTitle()}`, details: [] };
+		case 'focus_terminal':
+			return { summary: `switch to ${targetTitle()}`, details: [] };
+		case 'rename_terminal':
+			return {
+				summary: `rename ${targetTitle()} to "${text(params.name)}"`,
+				details: [],
+			};
+		case 'split_terminal':
+			return { summary: `split ${targetTitle()}`, details: [] };
+		case 'list_terminals':
+			return { summary: 'list your terminals', details: [] };
+		default:
+			return { summary: `${op.replaceAll('_', ' ')} ${targetTitle()}`, details: [] };
+	}
 }
 
 function buildMcpTerminalSearchResult(

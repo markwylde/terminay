@@ -46,7 +46,15 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		codexModel: '',
 		prompt: '',
 	},
-	terminayMcp: { enabled: true },
+	terminayMcp: {
+		enabled: true,
+		permissions: {
+			terminalsRead: 'allow',
+			terminalsManage: 'allow',
+			automationsRead: 'allow',
+			automationsManage: 'ask',
+		},
+	},
 	ignoreBracketedPasteMode: false,
 	macros: {
 		maxSteps: 256,
