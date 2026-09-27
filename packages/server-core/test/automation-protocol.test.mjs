@@ -132,6 +132,8 @@ test("a client without terminal-create authority is refused every automation ope
       await assert.rejects(() => automations.run("hourly"), forbidden("automations.run"), clientId);
       await assert.rejects(() => automations.stop("run-1"), forbidden("automations.stop"), clientId);
       await assert.rejects(() => automations.dismissMissed(), forbidden("automations.missed.dismiss"), clientId);
+      await assert.rejects(() => automations.removeRun("run-1"), forbidden("automations.runs.remove"), clientId);
+      await assert.rejects(() => automations.pruneRuns("hourly", 0), forbidden("automations.runs.prune"), clientId);
     }
     const state = await writer.get();
     assert.deepEqual(state.automations.map((automation) => [automation.id, automation.enabled]), [["hourly", true]]);
@@ -246,6 +248,72 @@ test("run now is refused until an executor is composed", async () => {
     const { automations } = await fixture.connect("writer");
     await automations.upsert(scheduled);
     await assert.rejects(() => automations.run("hourly"), (error) => error.cause?.code === "unavailable");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("runs can be deleted and pruned, the prune choice is shared, and removals publish ids only", async () => {
+  const fixture = await setup();
+  const day = 86_400_000;
+  const record = (index, overrides = {}) => fixture.runLog.record({
+    runId: `run-${index}`,
+    automationId: "hourly",
+    triggerKind: "schedule",
+    firedAt: Date.now() - index * day,
+    startedBy: "trigger",
+    status: "finished",
+    outcome: "succeeded",
+    startedAt: Date.now() - index * day,
+    outputTail: "secret-ish output",
+    suppressedEvents: 0,
+    ...overrides,
+  });
+  try {
+    const { automations: editor } = await fixture.connect("editor");
+    const { automations: other } = await fixture.connect("other");
+    await editor.upsert(scheduled);
+    await record(1);
+    await record(10);
+    await record(40);
+    await record(50, { status: "running", outcome: undefined });
+    const removedEvents = [];
+    other.onRunsRemoved((event) => removedEvents.push(event));
+
+    assert.equal((await editor.runs("hourly")).pruneChoice, undefined);
+    assert.deepEqual(await editor.removeRun("run-1"), { runId: "run-1", removed: 1 });
+    await assert.rejects(() => editor.removeRun("run-50"), (error) => error.cause?.code === "validation", "a run in progress cannot be deleted");
+    await assert.rejects(() => editor.removeRun("run-1"), (error) => error.cause?.code === "not_found");
+
+    const pruned = await editor.pruneRuns("hourly", 7);
+    assert.deepEqual(pruned, { removed: 2, pruneChoice: { olderThanDays: 7 } });
+    const seen = await other.runs("hourly");
+    assert.deepEqual(seen.pruneChoice, { olderThanDays: 7 }, "every client sees the remembered choice");
+    assert.deepEqual(seen.runs.map((run) => run.runId), ["run-50"]);
+
+    await waitFor(() => removedEvents.length === 2);
+    assert.deepEqual(removedEvents[0], { automationId: "hourly", runIds: ["run-1"] });
+    assert.deepEqual([...removedEvents[1].runIds].sort(), ["run-10", "run-40"]);
+    const journal = fixture.composition.eventJournal.replay().events.filter((event) => event.event === AUTOMATION_EVENTS.runsRemoved);
+    for (const event of journal) assert.deepEqual(Object.keys(event.payload).sort(), ["automationId", "runIds"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a shortened keep-history period removes old runs when the automation is saved", async () => {
+  const fixture = await setup();
+  const day = 86_400_000;
+  try {
+    const { automations: editor } = await fixture.connect("editor");
+    await editor.upsert({ ...scheduled, settings: { keepHistoryDays: 30 } });
+    for (const age of [2, 10])
+      await fixture.runLog.record({ runId: `run-${age}`, automationId: "hourly", triggerKind: "schedule", firedAt: Date.now() - age * day, startedBy: "trigger", status: "finished", outcome: "succeeded", startedAt: Date.now() - age * day, suppressedEvents: 0 });
+    assert.equal((await editor.runs("hourly")).runs.length, 2);
+    const saved = await editor.upsert({ ...scheduled, settings: { keepHistoryDays: 7 } });
+    assert.equal(saved.automations[0].settings.keepHistoryDays, 7);
+    await waitFor(() => fixture.runLog.snapshot().runs.hourly?.length === 1);
+    assert.deepEqual((await editor.runs("hourly")).runs.map((run) => run.runId), ["run-2"]);
   } finally {
     await fixture.close();
   }
