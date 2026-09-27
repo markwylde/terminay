@@ -10,7 +10,7 @@ const directory = await mkdtemp(join(tmpdir(), 'terminay-about-window-'))
 const output = join(directory, 'aboutWindowDocument.mjs')
 await build({
   bundle: true,
-  entryPoints: ['electron/aboutWindowDocument.ts'],
+  entryPoints: ['src/shared/aboutWindowDocument.ts'],
   format: 'esm',
   logLevel: 'silent',
   outfile: output,
@@ -42,6 +42,12 @@ test('the About document runs no script and loads nothing', () => {
     [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]).sort(),
     Object.values(ABOUT_WINDOW_LINKS).sort(),
   )
+})
+
+test('links target a new tab only when a browser host asks', () => {
+  assert.doesNotMatch(aboutWindowDocumentHtml({ version: '1.0.0' }), /target=/)
+  const html = aboutWindowDocumentHtml({ version: '1.0.0', links: 'new-tab' })
+  assert.equal([...html.matchAll(/<a href="[^"]+" target="_blank" rel="noopener noreferrer">/g)].length, Object.values(ABOUT_WINDOW_LINKS).length)
 })
 
 test('the version is escaped', () => {

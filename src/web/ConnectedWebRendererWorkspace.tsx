@@ -28,6 +28,7 @@ import {
 } from '../hooks/useTerminalSettings';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
+import { aboutWindowDocumentHtml } from '../shared/aboutWindowDocument';
 import {
 	type AuxiliaryRouteRequest,
 	type AuxiliaryRouteRequestHandler,
@@ -74,7 +75,12 @@ export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	) => () => void;
 }>;
 
-type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings' | 'remote-control';
+type BrowserAuxiliaryRoute =
+	| 'settings'
+	| 'macros'
+	| 'recordings'
+	| 'remote-control'
+	| 'about';
 
 function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 	const params = new URLSearchParams(window.location.search);
@@ -179,6 +185,7 @@ export function ConnectedWebRendererWorkspace({
 	}, [hostContext]);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
 		useState<AuxiliaryRouteRequest | null>(nativeAuxiliaryDocument);
+	const [aboutOpen, setAboutOpen] = useState(false);
 	const pendingEditRef = useRef<{
 		request: Extract<AuxiliaryRouteRequest, { kind: 'edit-tab' }>;
 		resolve: (result: SharedEditTabResult | null) => void;
@@ -351,6 +358,9 @@ export function ConnectedWebRendererWorkspace({
 					break;
 				case 'remote-control':
 					void auxiliaryRoutes.openRemoteControl();
+					break;
+				case 'about':
+					setAboutOpen(true);
 					break;
 			}
 		},
@@ -557,6 +567,9 @@ export function ConnectedWebRendererWorkspace({
 					{auxiliaryContent(auxiliaryRoute)}
 				</ConnectedBrowserAuxiliaryDialog>
 			)}
+			{aboutOpen ? (
+				<ConnectedBrowserAboutDialog onClose={() => setAboutOpen(false)} />
+			) : null}
 		</div>
 	);
 }
@@ -701,7 +714,7 @@ function ConnectedBrowserMenuBar({
 				{
 					id: 'about',
 					label: 'About Terminay',
-					onSelect: () => onOpenAuxiliaryRoute('settings'),
+					onSelect: () => onOpenAuxiliaryRoute('about'),
 				},
 			],
 			view: [
@@ -1066,6 +1079,74 @@ function ConnectedBrowserAuxiliaryDialog({
 					</header>
 				)}
 				<div className="connected-web-auxiliary-dialog__body">{children}</div>
+			</section>
+		</div>
+	);
+}
+
+/** The Desktop About document, framed. The frame runs no script and may only
+ * open its links in a new tab; it can never navigate this page. */
+function ConnectedBrowserAboutDialog({
+	onClose,
+}: Readonly<{ onClose: () => void }>) {
+	const closeButtonRef = useRef<HTMLButtonElement>(null);
+	const aboutDocument = useMemo(
+		() =>
+			aboutWindowDocumentHtml({
+				version:
+					typeof __TERMINAY_VERSION__ === 'string'
+						? __TERMINAY_VERSION__
+						: 'unknown',
+				links: 'new-tab',
+			}),
+		[],
+	);
+
+	useEffect(() => {
+		const returnFocus = window.document.activeElement;
+		closeButtonRef.current?.focus();
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') onClose();
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+			if (returnFocus instanceof HTMLElement && returnFocus.isConnected) {
+				returnFocus.focus();
+			}
+		};
+	}, [onClose]);
+
+	return (
+		<div
+			className="connected-web-auxiliary-backdrop"
+			role="presentation"
+			onMouseDown={(event) => {
+				if (event.target === event.currentTarget) onClose();
+			}}
+		>
+			<section
+				aria-label="About Terminay"
+				aria-modal="true"
+				className="connected-web-about-dialog"
+				data-connected-web-auxiliary-route="about"
+				role="dialog"
+			>
+				<iframe
+					className="connected-web-about-dialog__frame"
+					sandbox="allow-popups allow-popups-to-escape-sandbox"
+					srcDoc={aboutDocument}
+					title="About Terminay"
+				/>
+				<button
+					ref={closeButtonRef}
+					aria-label="Close"
+					className="connected-web-about-dialog__close"
+					type="button"
+					onClick={onClose}
+				>
+					×
+				</button>
 			</section>
 		</div>
 	);

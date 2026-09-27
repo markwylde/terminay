@@ -196,7 +196,7 @@ import {
 import {
 	aboutWindowDocument,
 	aboutWindowExternalUrl,
-} from './aboutWindowDocument';
+} from '../src/shared/aboutWindowDocument';
 import {
 	assertBoundServerUiEvent,
 	bindServerUiWindow,
