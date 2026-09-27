@@ -95,11 +95,15 @@ A new `mcpApprovals` service in `packages/server-core` holds:
   request, a structured `detail` for display, the agent label, the terminal
   title, and a creation time. They are queued FIFO per terminal, with a bound of
   8 per terminal.
-- **Session grants.** A set of `(capabilityDigest, group)` pairs held in memory
-  only.
+- **Session grants.** A set of `(terminalSessionId, group)` pairs held in
+  memory only. The capability store's revocation listener reports the terminal
+  of each revoked capability, and revocation clears that terminal's grants and
+  approvals. Minting a replacement capability revokes the old one first, so a
+  grant never outlives the capability it was given to.
 
-It publishes `mcp.approvals.changed` with the full pending list, which is small
-and bounded. It answers the query `mcp.approvals.get` and accepts the command
+It publishes `mcp.approvals.changed` with only the ids and terminals of the
+pending approvals, because journal events reach every subscriber whatever its
+authority. Clients refetch the details through the query. It answers the query `mcp.approvals.get` and accepts the command
 `mcp.approvals.decide {approvalId, decision: 'once' | 'session' | 'decline'}`.
 
 Deciding requires the same authority as `terminals.create` on the server. This
@@ -134,6 +138,12 @@ The in-flight connection limit (8 per connection, 64 in total) still bounds
 concurrent waiting requests. The per-terminal queue bound of 8 keeps one
 terminal from occupying the endpoint.
 
+The control protocol has no cancel frame. The stdio adapter therefore gives
+every tool call that carries the MCP request's `AbortSignal` its own
+connection, and it closes that connection on abort. The server sees
+`caller_closed`, aborts the request, and the approval is withdrawn. Pressing
+Esc in an agent therefore removes its prompt.
+
 *Risk accepted:* MCP clients have their own tool-call timeout. Claude Code, for
 example, honours `MCP_TOOL_TIMEOUT`. When that fires, the client cancels, the
 prompt disappears, and the agent sees a cancellation. That is the correct
@@ -153,10 +163,13 @@ The `detail` sent to clients is derived from the same retained params:
 - for updates, the changed fields, computed against the current definition when
   the approval is created.
 
-Clients render the plain-words summary with the existing `describeTrigger`,
-which moves from `src/workspace/automations/automationsModel.ts` into
-`packages/client-core` so the prompt and the Automations section describe
-triggers the same way.
+The server renders the plain-words summary and a list of labelled detail
+lines (`AutomationMcpOperations.describe`, using `@terminay/cron`'s
+`describeCron`). Clients show that text as sent. This is simpler than moving
+the renderer's `describeTrigger` into client-core, and it keeps every client's
+prompt identical. `describe` also validates the request through the
+repository's non-committing `preview`, so an invalid definition is refused
+before anyone is asked to approve it.
 
 ### 6. MCP reaches automations through a dedicated internal principal
 

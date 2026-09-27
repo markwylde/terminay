@@ -116,7 +116,8 @@ test("runs are started by MCP and a subject outside the caller's reach is withhe
   const run = await operations.run(created.automation.id, subject, actor);
   assert.equal(started[0].startedBy, "mcp");
   assert.equal(run.started_by, "mcp");
-  await runLog.record({ ...(await runLog.load(), runLog.get(run.run_id)), status: "finished", outcome: "succeeded", outputTail: "secret output" });
+  await runLog.load();
+  await runLog.record({ ...runLog.get(run.run_id), status: "finished", outcome: "succeeded", outputTail: "secret output" });
   const hidden = await operations.runs(created.automation.id, 10, (candidate) => candidate.projectId === "project-a");
   assert.equal(hidden.runs[0].outcome, "succeeded");
   assert.equal("subject" in hidden.runs[0], false);
