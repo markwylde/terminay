@@ -28,6 +28,8 @@ export const AUTOMATION_OPERATIONS = Object.freeze({
 	run: 'automations.run',
 	stop: 'automations.stop',
 	runs: 'automations.runs',
+	removeRun: 'automations.runs.remove',
+	pruneRuns: 'automations.runs.prune',
 	dismissMissed: 'automations.missed.dismiss',
 } as const);
 
@@ -35,6 +37,7 @@ export const AUTOMATION_EVENTS = Object.freeze({
 	changed: 'automations.changed',
 	runChanged: 'automations.run.changed',
 	missedChanged: 'automations.missed.changed',
+	runsRemoved: 'automations.runs.removed',
 } as const);
 
 export type AutomationAuditRecord =
@@ -50,6 +53,14 @@ export type AutomationAuditRecord =
 			readonly operation: string;
 			readonly automationId: string;
 			readonly runId: string;
+			readonly actor: { readonly clientId: string; readonly connectionId: string };
+	  }
+	| {
+			readonly type: 'runs';
+			readonly operation: string;
+			readonly automationId: string;
+			/** How many runs a delete or prune removed. */
+			readonly removed: number;
 			readonly actor: { readonly clientId: string; readonly connectionId: string };
 	  };
 
@@ -122,16 +133,26 @@ export function createAutomationOperationRegistry(
 	const controller = options.controller ?? unavailableAutomationRunController;
 	const { repository, runLog, eventJournal } = options;
 	const timeZone = options.timeZone ?? localTimeZone();
+	runLog.setRetention(
+		(automationId) => repository.find(automationId)?.settings.keepHistoryDays,
+	);
 
 	const unsubscribes = [
 		repository.subscribe((state) => {
 			eventJournal.append(AUTOMATION_EVENTS.changed, asJson(changedEvent(state)));
+			// A shortened keep-history period applies as soon as it is saved.
+			void runLog.applyRetention().catch(() => undefined);
 		}),
 		runLog.subscribe((change) => {
 			if (change.type === 'run')
 				eventJournal.append(
 					AUTOMATION_EVENTS.runChanged,
 					asJson(eventRun(change.run)),
+				);
+			else if (change.type === 'removed')
+				eventJournal.append(
+					AUTOMATION_EVENTS.runsRemoved,
+					asJson({ automationId: change.automationId, runIds: change.runIds }),
 				);
 			else
 				eventJournal.append(
@@ -156,6 +177,8 @@ export function createAutomationOperationRegistry(
 			[AUTOMATION_OPERATIONS.setEnabled]: guardCommand(setEnabled),
 			[AUTOMATION_OPERATIONS.run]: guardCommand(run),
 			[AUTOMATION_OPERATIONS.stop]: guardCommand(stop),
+			[AUTOMATION_OPERATIONS.removeRun]: guardCommand(removeRun),
+			[AUTOMATION_OPERATIONS.pruneRuns]: guardCommand(pruneRuns),
 			[AUTOMATION_OPERATIONS.dismissMissed]: guardCommand(dismissMissed),
 		},
 		policies: Object.fromEntries(
@@ -170,6 +193,7 @@ export function createAutomationOperationRegistry(
 		operations,
 		dispose: () => {
 			for (const unsubscribe of unsubscribes) unsubscribe();
+			runLog.setRetention(undefined);
 		},
 	};
 
@@ -212,10 +236,48 @@ export function createAutomationOperationRegistry(
 				? undefined
 				: boundedId(payload.automationId, 'automation id');
 		await runLog.load();
+		const pruneChoice =
+			automationId === undefined ? undefined : runLog.pruneChoice(automationId);
 		return asJson({
 			runs: runLog.list(automationId),
 			missed: runLog.listMissed(),
+			...(pruneChoice === undefined ? {} : { pruneChoice }),
 		});
+	}
+
+	async function removeRun(request: CommandRequest): Promise<JsonValue> {
+		const runId = boundedId(
+			objectPayload(request.envelope.payload).runId,
+			'run id',
+		);
+		const entry = await runLog.remove(runId);
+		options.onAudit?.({
+			type: 'runs',
+			operation: request.envelope.operation,
+			automationId: entry.automationId,
+			removed: 1,
+			actor: actorOf(request.context),
+		});
+		return { runId, removed: 1 };
+	}
+
+	async function pruneRuns(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		const automationId = boundedId(payload.automationId, 'automation id');
+		if (typeof payload.olderThanDays !== 'number')
+			throw new AutomationServiceError(
+				'invalid_automation',
+				'prune days must be a whole number',
+			);
+		const result = await runLog.prune(automationId, payload.olderThanDays);
+		options.onAudit?.({
+			type: 'runs',
+			operation: request.envelope.operation,
+			automationId,
+			removed: result.removed,
+			actor: actorOf(request.context),
+		});
+		return asJson(result);
 	}
 
 	async function upsert(request: CommandRequest) {

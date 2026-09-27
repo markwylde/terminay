@@ -296,3 +296,131 @@ test("file backends restore definitions, enabled state, and the run log after a 
     await rm(dataRoot, { recursive: true, force: true });
   }
 });
+
+const DAY = 86_400_000;
+
+test("keepHistoryDays is optional and bounded to 1..3650 days", async () => {
+  const repository = new AutomationRepository(memoryBackend());
+  const kept = await repository.upsert(command({ settings: { keepHistoryDays: 7 } }));
+  assert.equal(kept.state.automations[0].settings.keepHistoryDays, 7);
+  const off = await repository.upsert(command({ id: "off" }));
+  assert.equal("keepHistoryDays" in off.state.automations.find((item) => item.id === "off").settings, false);
+  for (const keepHistoryDays of [0, 3651, 1.5, "7"])
+    await assert.rejects(
+      repository.upsert(command({ id: "bad", settings: { keepHistoryDays } })),
+      (error) => error instanceof AutomationServiceError && error.details?.field === "settings.keepHistoryDays",
+    );
+});
+
+test("remove deletes one finished run durably and refuses a running or missing run", async () => {
+  const backend = memoryBackend();
+  const log = new AutomationRunLog(backend);
+  await log.load();
+  await log.record(run("a", 1));
+  await log.record(run("a", 2));
+  await log.record(run("a", 3, { status: "running", outcome: undefined, finishedAt: undefined }));
+  const changes = [];
+  log.subscribe((change) => changes.push(change));
+
+  const removed = await log.remove("run-a-1");
+  assert.equal(removed.runId, "run-a-1");
+  assert.deepEqual(changes, [{ type: "removed", automationId: "a", runIds: ["run-a-1"] }]);
+  await assert.rejects(log.remove("run-a-3"), (error) => error.code === "invalid_automation");
+  await assert.rejects(log.remove("run-a-9"), (error) => error.code === "run_not_found");
+
+  const reloaded = new AutomationRunLog(backend);
+  await reloaded.load();
+  assert.deepEqual(reloaded.list("a").map((entry) => entry.runId), ["run-a-3", "run-a-2"]);
+});
+
+test("prune removes finished runs older than the cutoff, keeps running ones, and remembers the choice", async () => {
+  const now = 100 * DAY;
+  const backend = memoryBackend();
+  const log = new AutomationRunLog(backend, { now: () => now });
+  await log.load();
+  for (const [index, days] of [[1, 40], [2, 10], [3, 2]])
+    await log.record(run("a", index, { startedAt: now - days * DAY, firedAt: now - days * DAY }));
+  await log.record(run("a", 4, { status: "running", outcome: undefined, startedAt: now - 50 * DAY }));
+  await log.record(run("b", 1, { startedAt: now - 40 * DAY }));
+
+  assert.equal(log.pruneChoice("a"), undefined);
+  const result = await log.prune("a", 7);
+  assert.deepEqual(result, { removed: 2, pruneChoice: { olderThanDays: 7 } });
+  assert.deepEqual(log.list("a").map((entry) => entry.runId).sort(), ["run-a-3", "run-a-4"]);
+  assert.equal(log.list("b").length, 1, "other automations are untouched");
+
+  const all = await log.prune("a", 0);
+  assert.equal(all.removed, 1);
+  assert.deepEqual(log.list("a").map((entry) => entry.runId), ["run-a-4"], "a run in progress is never pruned");
+
+  await assert.rejects(log.prune("a", -1), (error) => error.code === "invalid_automation");
+  await assert.rejects(log.prune("a", 3651), (error) => error.code === "invalid_automation");
+
+  const reloaded = new AutomationRunLog(backend, { now: () => now });
+  await reloaded.load();
+  assert.deepEqual(reloaded.pruneChoice("a"), { olderThanDays: 0 });
+  assert.deepEqual(reloaded.list("a").map((entry) => entry.runId), ["run-a-4"]);
+});
+
+test("a prune that removes nothing still stores the choice", async () => {
+  const backend = memoryBackend();
+  const log = new AutomationRunLog(backend);
+  await log.load();
+  await log.prune("a", 14);
+  assert.deepEqual(backend.persisted.pruneChoices, { a: { olderThanDays: 14 } });
+});
+
+test("a run log without prune choices loads, and malformed choices are dropped", async () => {
+  const log = new AutomationRunLog(memoryBackend({
+    schemaVersion: 1,
+    runs: { a: [run("a", 1)] },
+    missed: [],
+    pruneChoices: { a: { olderThanDays: 3 }, b: { olderThanDays: -1 }, c: "x" },
+  }));
+  await log.load();
+  assert.deepEqual(log.pruneChoice("a"), { olderThanDays: 3 });
+  assert.equal(log.pruneChoice("b"), undefined);
+  assert.equal(log.pruneChoice("c"), undefined);
+  const legacy = new AutomationRunLog(memoryBackend({ schemaVersion: 1, runs: {}, missed: [] }));
+  await legacy.load();
+  assert.equal(legacy.pruneChoice("a"), undefined);
+});
+
+test("retention hides expired runs at once and purges them from storage without a timer", async (t) => {
+  const timers = t.mock.timers;
+  timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let now = 100 * DAY;
+  const backend = memoryBackend();
+  const retention = { a: 7 };
+  const log = new AutomationRunLog(backend, { now: () => now, retentionFor: (id) => retention[id] });
+  await log.load();
+  await log.record(run("a", 1, { startedAt: now - 6 * DAY }));
+  await log.record(run("a", 2, { startedAt: now - 1 * DAY }));
+  await log.record(run("a", 3, { status: "running", outcome: undefined, startedAt: now - 30 * DAY }));
+  await log.record(run("b", 1, { startedAt: now - 30 * DAY }));
+  const changes = [];
+  log.subscribe((change) => changes.push(change));
+
+  now += 2 * DAY; // run-a-1 is now 8 days old
+  assert.deepEqual(log.list("a").map((entry) => entry.runId).sort(), ["run-a-2", "run-a-3"]);
+  assert.equal(log.get("run-a-1"), undefined);
+  await log.applyRetention(); // the queued purge has settled after this one
+  assert.deepEqual(backend.persisted.runs.a.map((entry) => entry.runId).sort(), ["run-a-2", "run-a-3"]);
+  assert.deepEqual(changes, [{ type: "removed", automationId: "a", runIds: ["run-a-1"] }]);
+  assert.equal(backend.persisted.runs.b.length, 1, "no retention keeps every run");
+
+  // Shortening the period applies on the next touch.
+  retention.a = 1;
+  now += 1.5 * DAY;
+  await log.applyRetention();
+  assert.deepEqual(backend.persisted.runs.a.map((entry) => entry.runId), ["run-a-3"]);
+});
+
+test("retention purges expired runs when the log loads", async () => {
+  const now = 100 * DAY;
+  const backend = memoryBackend({ schemaVersion: 1, runs: { a: [run("a", 1, { startedAt: now - 9 * DAY }), run("a", 2, { startedAt: now - DAY })] }, missed: [] });
+  const log = new AutomationRunLog(backend, { now: () => now, retentionFor: () => 7 });
+  await log.load();
+  await log.applyRetention();
+  assert.deepEqual(backend.persisted.runs.a.map((entry) => entry.runId), ["run-a-2"]);
+});
