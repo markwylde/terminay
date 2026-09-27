@@ -288,4 +288,48 @@ test.describe('recordings UI', () => {
     await recordingsWindow.getByRole('option', { name: '2x' }).click()
     await expect(recordingsWindow.getByLabel('Playback speed')).toContainText('2x')
   })
+
+  test('replays a recording into a visible, sanely sized terminal stage', async ({
+    appHarness,
+    mainWindow,
+    tempDir,
+  }) => {
+    const recordingDir = path.join(tempDir, 'replay-recordings')
+    await mkdir(recordingDir, { recursive: true })
+    const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
+    await settingsWindow.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
+    await settingsWindow.getByLabel('Open timeline after saving').uncheck()
+    await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+    await settingsWindow.close()
+
+    const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
+    await terminalTab.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Start Recording').click()
+    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
+    await mainWindow.locator('.project-workspace--active .xterm').first().click()
+    await mainWindow.keyboard.type("printf 'replay-%s\\n' visible-output")
+    await mainWindow.keyboard.press('Enter')
+    // Let the shell print the output before the recording is finalized.
+    await mainWindow.waitForTimeout(1_000)
+    await terminalTab.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Stop Recording').click()
+    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
+
+    const recordingsWindow = await appHarness.openRecordingsWindow(mainWindow)
+    await expect(async () => {
+      await recordingsWindow.getByRole('button', { name: 'Refresh recordings' }).click()
+      await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible({ timeout: 1_000 })
+    }).toPass({ timeout: 10_000 })
+    await recordingsWindow.locator('.recordings-list-item').first().click()
+    await expect(recordingsWindow.getByRole('button', { name: 'Play replay' })).toBeEnabled()
+    await expect(recordingsWindow.locator('.recordings-terminal .xterm-screen')).toBeVisible()
+    await recordingsWindow.getByRole('button', { name: 'Play replay' }).click()
+
+    await expect(recordingsWindow.locator('.recordings-terminal .xterm-rows')).toContainText('replay-visible-output', {
+      timeout: 15_000,
+    })
+    const stage = await recordingsWindow.locator('.recordings-terminal-stage').boundingBox()
+    expect(stage?.width ?? 0).toBeGreaterThan(200)
+    expect(stage?.height ?? 0).toBeGreaterThan(100)
+  })
 })
