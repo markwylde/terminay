@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -521,6 +522,61 @@ test('deleting a sibling worktree does not request its parent through Explorer',
     (event) => event.event === 'local-server.file-operation.failed',
   )
   expect(explorerFailures).toHaveLength(0)
+})
+
+test('deletes a locked agent worktree whose folder was already removed', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  // An agent session creates `.claude/worktrees/<name>`, locks it, and dies.
+  // Removing the folder by hand leaves Git holding a locked registration with
+  // no working tree; the Git panel must still be able to delete it.
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-delete-lost-worktree',
+    seed: { files: { 'README.md': 'main worktree\n' } },
+  })
+  const agentWorktree = join(mainRepo.rootDir, '.claude', 'worktrees', 'agent-session')
+  const dialogs = await appHarness.dialogs()
+
+  await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['worktree', 'add', '-b', 'agent-session', agentWorktree], {
+    cwd: mainRepo.rootDir,
+  })
+  await execFileAsync('git', ['worktree', 'lock', '--reason', 'claude session agent-session (pid 1)', agentWorktree], {
+    cwd: mainRepo.rootDir,
+  })
+  await rm(join(mainRepo.rootDir, '.claude'), { recursive: true, force: true })
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const lost = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'agent-session' })
+  await expect(lost).toBeVisible({ timeout: 6000 })
+  // A registration with no working tree is not "clean"; it is missing.
+  await expect(lost.locator('.worktrees-panel__worktree-header')).toContainText('missing')
+  await expect(lost.locator('.worktrees-panel__worktree-header')).not.toContainText('clean')
+
+  await dialogs.clearCalls()
+  await lost.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
+  await dialogs.queueConfirm(true)
+  await contextMenuItem(mainWindow, 'Delete worktree').click()
+
+  await expect(lost).toHaveCount(0, { timeout: 6000 })
+  const confirms = (await dialogs.getCalls()).filter((call) => call.kind === 'confirm')
+  expect(confirms).toHaveLength(1)
+  expect(confirms[0].message).toContain('nothing on disk is deleted')
+  await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
+  const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: mainRepo.rootDir })
+  expect(stdout).not.toContain('agent-session')
 })
 
 test('git pane menu deletes every clean worktree and leaves changed ones alone', async ({

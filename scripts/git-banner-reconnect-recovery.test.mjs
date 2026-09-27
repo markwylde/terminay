@@ -61,12 +61,12 @@ function createFeatureBanner() {
       if (remaining === null) visible = null
       failure = remaining
     },
-    onOperationError(feature, error) {
+    onOperationError(feature, error, source = 'action') {
       const transport = isTransportFeatureFailure(error)
       if (transport && isConnectionReconnecting(phase)) return ''
       const described = describeFeatureFailure(feature, error, scope)
       const message = `${described.title}. ${described.detail}`
-      failure = { feature, message, transport }
+      failure = { feature, message, transport, refresh: source === 'refresh' }
       visible = message
       return message
     },
@@ -127,6 +127,46 @@ test('a Git refresh that succeeds after a transport outage clears the banner', a
   await refresh()
 
   assert.equal(published.length, 1)
+  assert.equal(banner.visible, null)
+})
+
+test('a failed worktree delete stays visible after the refresh that follows it', async () => {
+  // Deleting a worktree refreshes Git whether or not the delete worked. That
+  // refresh succeeding says nothing about the delete, so it must not retire
+  // the delete's failure: it used to flash for a moment and vanish.
+  const banner = createFeatureBanner()
+  const state = { reachable: true }
+  const refresh = () =>
+    applyGitWorkspaceRefresh({
+      gitClient: createGitClient(state),
+      project: { id: 'default', rootFolder: '/workspace/repo' },
+      isCurrent: () => true,
+      publish: () => undefined,
+      preserveLastProjection: () => undefined,
+      onOperationError: banner.onOperationError,
+      onOperationSucceeded: banner.onOperationSucceeded,
+    })
+
+  const message = banner.onOperationError(
+    'Git',
+    Object.assign(new Error('Git worktree removal failed.'), {
+      operation: 'git.worktree.remove',
+      cause: new ClientError('command-error', 'Git worktree removal failed.'),
+    }),
+  )
+  assert.notEqual(message, '')
+  assert.equal(banner.visible, message)
+
+  await refresh()
+  await refresh()
+  assert.equal(banner.visible, message)
+
+  // A failed refresh after it is a refresh's to clear once Git answers again.
+  state.reachable = false
+  await refresh()
+  assert.notEqual(banner.visible, message)
+  state.reachable = true
+  await refresh()
   assert.equal(banner.visible, null)
 })
 

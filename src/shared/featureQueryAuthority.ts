@@ -90,6 +90,9 @@ export type VisibleFeatureFailure = Readonly<{
 	/** The operation failed because the connection itself was gone, not
 	 * because the feature refused it. Recovery, not the user, repairs it. */
 	transport: boolean;
+	/** A failed background read, which the next successful read repairs. An
+	 * action failure (delete, pull, rename) is not repaired by a refresh. */
+	refresh: boolean;
 }>;
 
 /** Only a failure the transport caused is the reconnect's to explain. A
@@ -103,15 +106,20 @@ export function clearTransportFeatureFailure(
 	return null;
 }
 
-/** Clear only the feature notice which a successful follow-up operation has
+/** Clear only the feature notice which a successful follow-up read has
  * repaired. A success in Explorer must never erase a newer terminal, Git, or
- * other feature failure sharing the global banner. */
+ * other feature failure sharing the global banner, and a refresh must never
+ * erase the failure of an action the user just took. */
 export function clearSucceededFeatureFailure(
 	failure: VisibleFeatureFailure | null,
 	feature: 'Explorer' | 'Git',
 	visibleMessage: string | null,
 ): VisibleFeatureFailure | null {
-	if (failure?.feature !== feature || visibleMessage !== failure.message)
+	if (
+		failure?.feature !== feature ||
+		!failure.refresh ||
+		visibleMessage !== failure.message
+	)
 		return failure;
 	return null;
 }

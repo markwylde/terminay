@@ -406,6 +406,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 										<span className="worktrees-panel__deleting">deleting…</span>
 									) : isPulling ? (
 										<span className="worktrees-panel__pulling">pulling…</span>
+									) : worktree.isPrunable ? (
+										<span className="worktrees-panel__changed">missing</span>
 									) : hasLineChanges ? (
 										<>
 											<span className="worktrees-panel__delta worktrees-panel__delta--additions">
@@ -475,7 +477,9 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 						) : worktree.isBare ? (
 							<div className="git-panel__message">Bare worktree</div>
 						) : worktree.isPrunable ? (
-							<div className="git-panel__message">Prunable worktree</div>
+							<div className="git-panel__message">
+								Working tree is missing. Delete it to remove Git&apos;s record.
+							</div>
 						) : (
 							<div className="worktrees-panel__changes">
 								<GitPanel
