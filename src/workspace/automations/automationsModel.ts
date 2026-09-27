@@ -158,7 +158,12 @@ export function nextRunAt(
 	if (!automation.enabled || automation.trigger.kind !== 'schedule')
 		return undefined;
 	try {
-		return nextOccurrences(automation.trigger.cron, new Date(now), 1, timeZone)[0]?.getTime();
+		return nextOccurrences(
+			automation.trigger.cron,
+			new Date(now),
+			1,
+			timeZone,
+		)[0]?.getTime();
 	} catch {
 		return undefined;
 	}
@@ -236,8 +241,7 @@ export function cronForPresetKind(
 ): string {
 	const hour = 'hour' in current ? current.hour : 9;
 	const minute = 'minute' in current ? current.minute : 0;
-	const dayOfWeek: CronWeekday =
-		'dayOfWeek' in current ? current.dayOfWeek : 1;
+	const dayOfWeek: CronWeekday = 'dayOfWeek' in current ? current.dayOfWeek : 1;
 	switch (kind) {
 		case 'everyMinute':
 			return presetToCron({ kind });
@@ -333,7 +337,8 @@ export function formatDuration(ms: number | undefined): string {
 	if (seconds < 60) return `${seconds} s`;
 	const minutes = Math.floor(seconds / 60);
 	const rest = seconds % 60;
-	if (minutes < 60) return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
+	if (minutes < 60)
+		return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
 	const hours = Math.floor(minutes / 60);
 	return `${hours} h ${minutes % 60} min`;
 }
@@ -462,6 +467,8 @@ export type AutomationForm = Readonly<{
 	keepTerminalAfterRun: boolean;
 	recordSession: boolean;
 	cooldownSeconds: string;
+	/** Whole days; empty keeps runs until the log's bound drops them. */
+	keepHistoryDays: string;
 }>;
 
 export const DEFAULT_SCHEDULE = '0 9 * * *';
@@ -485,6 +492,7 @@ export function emptyAutomationForm(): AutomationForm {
 		keepTerminalAfterRun: false,
 		recordSession: false,
 		cooldownSeconds: '60',
+		keepHistoryDays: '',
 	});
 }
 
@@ -523,6 +531,10 @@ export function formFromAutomation(
 		keepTerminalAfterRun: settings.keepTerminalAfterRun,
 		recordSession: settings.recordSession,
 		cooldownSeconds: String(settings.cooldownSeconds),
+		keepHistoryDays:
+			settings.keepHistoryDays === undefined
+				? ''
+				: String(settings.keepHistoryDays),
 	});
 }
 
@@ -549,6 +561,12 @@ export function formToDraft(form: AutomationForm): DraftResult {
 	const cooldown = wholeNumber(form.cooldownSeconds);
 	if (cooldown === undefined)
 		return fail('Cooldown must be a whole number of seconds.');
+	const keepHistoryDays =
+		form.keepHistoryDays.trim() === ''
+			? undefined
+			: wholeNumber(form.keepHistoryDays);
+	if (form.keepHistoryDays.trim() !== '' && keepHistoryDays === undefined)
+		return fail('Keep history must be a whole number of days.');
 	let action: AutomationDraft['action'];
 	switch (form.actionKind) {
 		case 'runCommand':
@@ -586,6 +604,7 @@ export function formToDraft(form: AutomationForm): DraftResult {
 				keepTerminalAfterRun: form.keepTerminalAfterRun,
 				recordSession: form.recordSession,
 				cooldownSeconds: cooldown,
+				...(keepHistoryDays === undefined ? {} : { keepHistoryDays }),
 			},
 		},
 	});
@@ -607,6 +626,33 @@ function sentence(text: string): string {
 	if (trimmed.length === 0) return trimmed;
 	const capitalised = trimmed[0]?.toUpperCase() + trimmed.slice(1);
 	return /[.!?]$/u.test(capitalised) ? capitalised : `${capitalised}.`;
+}
+
+/** Days a Prune form starts at before an automation has been pruned. */
+export const DEFAULT_PRUNE_DAYS = 30;
+const DAY_MS = 86_400_000;
+
+/** The finished runs a prune of `olderThanDays` would remove, as the server
+ * decides it. A preview only: the server's count is the one that counts. */
+export function prunableRuns(
+	runs: readonly AutomationRunEntry[],
+	olderThanDays: number,
+	now: number,
+): readonly AutomationRunEntry[] {
+	// 0 is every finished run, whatever the clocks say.
+	const cutoff =
+		olderThanDays === 0
+			? Number.POSITIVE_INFINITY
+			: now - olderThanDays * DAY_MS;
+	return runs.filter(
+		(run) => run.status === 'finished' && run.startedAt < cutoff,
+	);
+}
+
+/** The Prune form's days as a number, or undefined while it is not one. */
+export function pruneDays(value: string): number | undefined {
+	const days = wholeNumber(value);
+	return days !== undefined && days <= 3650 ? days : undefined;
 }
 
 function wholeNumber(value: string): number | undefined {
