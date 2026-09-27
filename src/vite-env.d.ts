@@ -4,6 +4,8 @@ import type { HostCapabilitySet } from '@terminay/client-core';
 import type { TerminayTestApi } from './types/terminay';
 
 declare global {
+	/** The package version, defined by the server UI build. */
+	const __TERMINAY_VERSION__: string | undefined;
 	interface Window {
 		terminayHost?: {
 			getContext(): Promise<{

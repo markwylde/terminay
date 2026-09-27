@@ -28,6 +28,9 @@ export default defineConfig({
 	// immutable file-backed cache by packaged Desktop. Relative asset URLs are
 	// valid in both locations; `/assets` resolves to file:///assets when packed.
 	base: './',
+	define: {
+		__TERMINAY_VERSION__: JSON.stringify(packageVersion),
+	},
 	resolve: {
 		alias: useDevelopmentWorkspaceSources
 			? developmentWorkspaceAliases(__dirname)

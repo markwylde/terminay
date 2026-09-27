@@ -3,7 +3,9 @@
  * Like the startup loading document it has no script, no preload, and no
  * network: the CSP allows inline styles and nothing else. Links are plain
  * anchors; Desktop main intercepts every navigation and hands the URL to the
- * operating system only when `aboutWindowExternalUrl` recognises it. */
+ * operating system only when `aboutWindowExternalUrl` recognises it. A browser
+ * host frames the same document and asks for links that open a new tab, since
+ * nothing there can intercept the frame's own navigation. */
 
 export const ABOUT_WINDOW_LINKS = {
 	website: 'https://terminay.com/',
@@ -102,13 +104,18 @@ footer a:hover{color:var(--muted)}
 export type AboutWindowDocumentOptions = {
 	version: string;
 	year?: number;
+	/** `new-tab` targets every link at a new browsing context. */
+	links?: 'navigate' | 'new-tab';
 };
 
 export function aboutWindowDocumentHtml({
 	version,
 	year = new Date().getFullYear(),
+	links = 'navigate',
 }: AboutWindowDocumentOptions): string {
-	return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="color-scheme" content="dark"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>About Terminay</title><style>${STYLE}</style></head><body><div class="hero">${waveArtwork()}${LOGO}</div><main><h1>Terminay</h1><p class="version">Version ${escapeHtml(version)}</p><p class="about">Made with <span class="heart" aria-label="love">♥</span> by <strong>Mark Wylde</strong>. Terminay is free, open source software, built out of a love for open&nbsp;source.</p><nav class="links"><a href="${ABOUT_WINDOW_LINKS.website}">${GLOBE_ICON}terminay.com</a><a href="${ABOUT_WINDOW_LINKS.repository}">${GITHUB_ICON}GitHub</a></nav></main><footer>© ${year} Mark Wylde · Licensed under the <a href="${ABOUT_WINDOW_LINKS.license}">GNU AGPL v3.0 or later</a></footer></body></html>`;
+	const target =
+		links === 'new-tab' ? ' target="_blank" rel="noopener noreferrer"' : '';
+	return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="color-scheme" content="dark"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>About Terminay</title><style>${STYLE}</style></head><body><div class="hero">${waveArtwork()}${LOGO}</div><main><h1>Terminay</h1><p class="version">Version ${escapeHtml(version)}</p><p class="about">Made with <span class="heart" aria-label="love">♥</span> by <strong>Mark Wylde</strong>. Terminay is free, open source software, built out of a love for open&nbsp;source.</p><nav class="links"><a href="${ABOUT_WINDOW_LINKS.website}"${target}>${GLOBE_ICON}terminay.com</a><a href="${ABOUT_WINDOW_LINKS.repository}"${target}>${GITHUB_ICON}GitHub</a></nav></main><footer>© ${year} Mark Wylde · Licensed under the <a href="${ABOUT_WINDOW_LINKS.license}"${target}>GNU AGPL v3.0 or later</a></footer></body></html>`;
 }
 
 export function aboutWindowDocument(
