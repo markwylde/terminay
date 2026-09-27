@@ -157,6 +157,16 @@ Project/window and terminal-session boundaries remain security boundaries for
 remote access, MCP, recordings, and agent status. User-facing titles, current
 focus, and client-supplied paths do not define authority.
 
+MCP authority has two parts, both checked by the server on every request: the
+calling terminal's capability scope (which terminals it can reach) and the
+user's permission policy (which kinds of operation it may perform). The policy
+groups operations into Read Terminals, Full Terminal Management, Read
+Automations, and Full Automation Management, each set to Ask Permission, Always
+Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
+an inline prompt in the calling terminal's pane, answerable from any client
+with authority to create terminals on that server. See
+[MCP permissions](../openspec/specs/mcp-permissions/spec.md).
+
 The server derives every project's root from canonical project state. Labels,
 hostnames, IPs, URLs, and paths supplied by a client cannot redirect an
 operation or widen its root.

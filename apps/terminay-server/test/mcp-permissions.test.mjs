@@ -42,8 +42,10 @@ test("every operation but capability discovery has exactly one fixed permission 
   assert.deepEqual(Object.keys(CONTROL_PERMISSION_GROUPS).sort(), [...CONTROL_OPERATIONS].sort())
   assert.equal(CONTROL_PERMISSION_GROUPS.get_mcp_capabilities, undefined)
   const byGroup = {}
-  for (const [op, group] of Object.entries(CONTROL_PERMISSION_GROUPS))
-    if (group !== undefined) (byGroup[group] ??= []).push(op)
+  for (const [op, group] of Object.entries(CONTROL_PERMISSION_GROUPS)) {
+    if (group === undefined) continue
+    byGroup[group] = [...(byGroup[group] ?? []), op]
+  }
   assert.deepEqual(byGroup.terminalsRead.sort(), [
     "get_terminal_status", "list_terminals", "read_terminal", "search_terminal",
     "wait_for_attention", "wait_for_command", "wait_for_idle",
