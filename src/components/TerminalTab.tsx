@@ -19,6 +19,7 @@ import {
 import {
 	CSSProperties,
 	MouseEvent,
+	useContext,
 	useEffect,
 	useMemo,
 	useRef,
@@ -28,6 +29,8 @@ import { createPortal } from 'react-dom';
 import type { AgentState } from '../types/agentStatus';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DockTabChrome } from './DockTabChrome';
+import { TerminalPanelClientContext } from './TerminalPanel';
+import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
 import { visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
 
 export type TerminalTabMacroRunStep = {
@@ -145,19 +148,28 @@ export function TerminalTab(
 				: displayedActivityState === 'attention'
 					? 'blocked'
 					: undefined;
+	// A pending MCP approval always asks for the user, whatever else the tab shows.
+	const terminalClientContext = useContext(TerminalPanelClientContext);
+	const pendingMcpApproval =
+		useTerminalMcpApprovals(terminalClientContext?.serverId, params?.sessionId) !==
+		undefined;
 	const displayedAgentState =
-		params?.agentState !== undefined
+		pendingMcpApproval
+			? 'blocked'
+			: params?.agentState !== undefined
 			? visibleTerminalTabAgentState(
 					params.agentState,
 					params.agentUnread === true,
 				)
 			: fallbackAgentState;
 	const displayedAgentNeedsAttention =
-		params?.agentState !== undefined
+		pendingMcpApproval ||
+		(params?.agentState !== undefined
 			? params.agentNeedsAttention === true && params.agentUnread === true
-			: displayedActivityState === 'attention';
-	const displayedAgentStatusLabel =
-		params?.agentState !== undefined || displayedAgentState === undefined
+			: displayedActivityState === 'attention');
+	const displayedAgentStatusLabel = pendingMcpApproval
+		? 'Waiting for your approval'
+		: params?.agentState !== undefined || displayedAgentState === undefined
 			? undefined
 			: displayedActivityState === 'attention'
 				? 'Terminal needs attention'

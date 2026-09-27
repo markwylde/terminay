@@ -345,7 +345,9 @@ export class AutomationRunLog {
 			!isId(record.runId) ||
 			!isId(record.automationId) ||
 			(record.triggerKind !== 'schedule' && record.triggerKind !== 'event') ||
-			(record.startedBy !== 'trigger' && record.startedBy !== 'user') ||
+			(record.startedBy !== 'trigger' &&
+				record.startedBy !== 'user' &&
+				record.startedBy !== 'mcp') ||
 			(record.status !== 'running' && record.status !== 'finished') ||
 			!isCount(record.firedAt) ||
 			!isCount(record.startedAt)

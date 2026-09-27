@@ -202,7 +202,7 @@ export interface AutomationRunEntry {
 	readonly event?: AutomationEventKind;
 	/** Epoch ms at which the trigger fired (or the user asked). */
 	readonly firedAt: number;
-	readonly startedBy: 'trigger' | 'user';
+	readonly startedBy: 'trigger' | 'user' | 'mcp';
 	readonly subject?: AutomationSubject;
 	readonly status: AutomationRunStatus;
 	readonly outcome?: AutomationRunOutcome;
@@ -270,7 +270,7 @@ export interface AutomationRunStartRequest {
 	/** The definition snapshot the run executes under. Later edits never
 	 * change a run in progress. */
 	readonly automation: AutomationDefinition;
-	readonly startedBy: 'trigger' | 'user';
+	readonly startedBy: 'trigger' | 'user' | 'mcp';
 	readonly firedAt: number;
 	readonly event?: AutomationEventKind;
 	readonly subject?: AutomationSubject;

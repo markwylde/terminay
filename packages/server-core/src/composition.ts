@@ -47,7 +47,17 @@ import type { MacroRepository, MacroRunner } from './macroService/index.js';
 import {
 	type AutomationOperationRegistry,
 	createAutomationOperationRegistry,
+	unavailableAutomationRunController,
 } from './automationService/protocol.js';
+import {
+	type AutomationMcpOperations,
+	createAutomationMcpOperations,
+} from './automationService/mcp.js';
+import {
+	DEFAULT_MCP_PERMISSIONS,
+	McpApprovalService,
+	mcpPermissionsFromSettings,
+} from './mcpApprovals/index.js';
 import type { AutomationRepository } from './automationService/repository.js';
 import type { AutomationRunLog } from './automationService/runLog.js';
 import type { AutomationRunController } from './automationService/types.js';
@@ -252,6 +262,10 @@ export interface ServerCoreCompositionOptions
 	/** Optional durable server settings authority. No settings capability is
 	 * registered when a host has not supplied a concrete repository. */
 	readonly settings?: ServerSettingsRepository;
+	/** Compose the MCP permission approval service (ADR-0031). Only a host
+	 * that serves the MCP control socket asks for it; its policy is read from
+	 * `settings` when present. */
+	readonly mcpApprovals?: boolean;
 	/** Optional project-scoped filesystem watch and folder-size authority. */
 	readonly fileObservations?: ServerFileObservationAdapter;
 	/**
@@ -345,6 +359,10 @@ export interface ServerCoreComposition {
 	readonly terminalOperations: TerminalOperationRegistry;
 	readonly macroOperations?: MacroOperationRegistry;
 	readonly automationOperations?: AutomationOperationRegistry;
+	/** MCP's route to automations, behind the MCP permission gate. */
+	readonly automationMcp?: AutomationMcpOperations;
+	/** Pending MCP approvals and session grants, when composed. */
+	readonly mcpApprovals?: McpApprovalService;
 	/** The composed run executor, when no host `controller` was supplied. */
 	readonly automationExecutor?: AutomationExecutor;
 	/** Audit trail of automation definition changes and runs. */
@@ -610,7 +628,45 @@ export function createServerCoreComposition(
 								onAudit: (record) => automationAudit.recordRequest(record),
 							}),
 				});
+	const automationMcp =
+		options.automations === undefined
+			? undefined
+			: createAutomationMcpOperations({
+					repository: options.automations.repository,
+					runLog: options.automations.runLog,
+					controller: composedAutomationController ?? unavailableAutomationRunController,
+					timeZone: automationTimeZone,
+					...(automationAudit === undefined
+						? {}
+						: {
+								onAudit: (record) => automationAudit.recordRequest(record),
+							}),
+				});
 	// --- end automations ---
+	// --- MCP permission approvals (ADR-0031) ---
+	// Settings may not be loaded yet; `start` applies the stored policy once
+	// they are, and until then nothing can reach the MCP endpoint.
+	const storedMcpPermissions = () => {
+		try {
+			return mcpPermissionsFromSettings(options.settings?.settings);
+		} catch {
+			return DEFAULT_MCP_PERMISSIONS;
+		}
+	};
+	const mcpApprovals =
+		options.mcpApprovals === true
+			? new McpApprovalService({
+					eventJournal,
+					policies: storedMcpPermissions(),
+				})
+			: undefined;
+	const removeMcpPolicyObserver =
+		mcpApprovals === undefined || options.settings === undefined
+			? undefined
+			: options.settings.onChange((state) =>
+					mcpApprovals.setPolicies(mcpPermissionsFromSettings(state.settings)),
+				);
+	// --- end MCP permission approvals ---
 	// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
 	// Both consume the run controller only through the `automations.controller`
 	// injection point, resolved at fire time.
@@ -930,8 +986,11 @@ export function createServerCoreComposition(
 						options.fileObservations?.operations ?? {},
 					),
 					mergeOperationRegistries(
-						macroOperations?.operations ?? {},
-						automationOperations?.operations ?? {},
+						mergeOperationRegistries(
+							macroOperations?.operations ?? {},
+							automationOperations?.operations ?? {},
+						),
+						mcpApprovals?.operations() ?? {},
 					),
 				),
 				workspaceOperations?.operations ?? {},
@@ -1052,6 +1111,7 @@ export function createServerCoreComposition(
 					await options.extensions?.activateEnabled?.();
 				}
 				await options.settings?.load();
+				mcpApprovals?.setPolicies(storedMcpPermissions());
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
 				// Every service the restore needs is now up, and a host's way of
@@ -1142,6 +1202,10 @@ export function createServerCoreComposition(
 			await attempt(() => options.activity?.shutdown());
 			await attempt(() => language?.dispose());
 			await attempt(() => automationOperations?.dispose());
+			await attempt(() => {
+				removeMcpPolicyObserver?.();
+				mcpApprovals?.revokeAll();
+			});
 			lifecycle = 'stopped';
 			if (failures.length > 0)
 				throw cleanupFailure('server composition shutdown failed', failures);
@@ -1172,6 +1236,8 @@ export function createServerCoreComposition(
 		...(macroOperations === undefined ? {} : { macroOperations }),
 		...(automationOperations === undefined ? {} : { automationOperations }),
 		...(automationExecutor === undefined ? {} : { automationExecutor }),
+		...(automationMcp === undefined ? {} : { automationMcp }),
+		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
 		...(automationAudit === undefined ? {} : { automationAudit }),
 		...(automationScheduler === undefined ? {} : { automationScheduler }),
 		...(automationTriggers === undefined ? {} : { automationTriggers }),
@@ -1386,6 +1452,9 @@ function uniqueCapabilities(
 			...(options.automations === undefined
 				? []
 				: [FEATURE_CAPABILITIES.automations]),
+			...(options.mcpApprovals === true
+				? [FEATURE_CAPABILITIES.mcpApprovals]
+				: []),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
 			...(options.recordings === undefined

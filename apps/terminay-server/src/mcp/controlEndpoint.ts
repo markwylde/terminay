@@ -43,6 +43,15 @@ export const CONTROL_OPERATIONS = [
 	'wait_for_idle',
 	'wait_for_command',
 	'wait_for_attention',
+	'list_automations',
+	'get_automation',
+	'list_automation_runs',
+	'create_automation',
+	'update_automation',
+	'delete_automation',
+	'set_automation_enabled',
+	'run_automation',
+	'stop_automation_run',
 ] as const;
 
 export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
@@ -132,7 +141,12 @@ export interface ControlCapabilityStoreOptions {
 	readonly enabled?: boolean;
 }
 
-export type CapabilityRevocationListener = (tokenDigest: string) => void;
+/** Told the digest of each revoked capability and the terminal it was
+ * minted for, so per-capability state (such as MCP approvals) ends with it. */
+export type CapabilityRevocationListener = (
+	tokenDigest: string,
+	terminalSessionId: string,
+) => void;
 
 export interface ControlCapabilityResolver {
 	resolve(
@@ -172,6 +186,10 @@ export type ControlErrorCode =
 	| 'bad_request'
 	| 'forbidden'
 	| 'not_found'
+	| 'conflict'
+	| 'permission_denied'
+	| 'permission_declined'
+	| 'approval_queue_full'
 	| 'internal';
 
 export interface ControlError {
@@ -188,6 +206,12 @@ export interface ControlRequestContext extends ControlCapabilityScope {
 	readonly connectionId: string;
 	readonly requestId: string;
 	readonly signal: AbortSignal;
+	/**
+	 * Suspend the request deadline while the request waits on a user's
+	 * approval, whose own lifecycle bounds it. Returns a function that
+	 * restarts a full deadline for the work that follows.
+	 */
+	readonly holdDeadline?: () => () => void;
 }
 
 export type ControlDispatchResult =
@@ -276,6 +300,15 @@ const DEFAULT_OPERATION_SCOPES: Readonly<
 	focus_terminal: 'write',
 	rename_terminal: 'write',
 	split_terminal: 'write',
+	list_automations: 'read',
+	get_automation: 'read',
+	list_automation_runs: 'read',
+	create_automation: 'write',
+	update_automation: 'write',
+	delete_automation: 'write',
+	set_automation_enabled: 'write',
+	run_automation: 'write',
+	stop_automation_run: 'write',
 });
 
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -299,6 +332,10 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'bad_request',
 	'forbidden',
 	'not_found',
+	'conflict',
+	'permission_denied',
+	'permission_declined',
+	'approval_queue_full',
 	'internal',
 ]);
 const CONTROL_ERROR_MESSAGE_BYTES = 4 * 1024;
@@ -557,9 +594,12 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 
 	private revokeDigest(digest: Buffer): boolean {
 		const key = digest.toString('hex');
-		const removed = this.capabilities.delete(key);
-		if (removed) for (const listener of this.revocationListeners) listener(key);
-		return removed;
+		const capability = this.capabilities.get(key);
+		if (capability === undefined) return false;
+		this.capabilities.delete(key);
+		for (const listener of this.revocationListeners)
+			listener(key, capability.terminalSessionId);
+		return true;
 	}
 
 	private assertScope(scope: string): asserts scope is ControlScope {
@@ -1001,10 +1041,23 @@ export function createControlEndpoint(
 		inFlight.set(request.id, controller);
 		allControllers.set(controller, hashToken(request.token).toString('hex'));
 		totalInFlight += 1;
-		const timeout = setTimeout(
+		let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
 			() => controller.abort('timeout'),
 			requestTimeoutMs,
 		);
+		const holdDeadline = (): (() => void) => {
+			clearTimeout(timeout);
+			timeout = undefined;
+			let resumed = false;
+			return () => {
+				if (resumed || controller.signal.aborted) return;
+				resumed = true;
+				timeout = setTimeout(
+					() => controller.abort('timeout'),
+					requestTimeoutMs,
+				);
+			};
+		};
 		const aborted = new Promise<ControlResponse>((resolve) =>
 			controller.signal.addEventListener(
 				'abort',
@@ -1059,6 +1112,7 @@ export function createControlEndpoint(
 					connectionId,
 					requestId: request.id,
 					signal: controller.signal,
+					holdDeadline,
 				});
 				if (
 					isPlainObject(dispatchResult) &&

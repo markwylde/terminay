@@ -978,7 +978,11 @@ export function AutomationsSection({
 												{formatTime(run.startedAt, now)}
 											</span>
 											<span className="workspace-dashboard__row-detail">
-												{run.startedBy === 'user' ? 'Run by you' : 'Triggered'}
+												{run.startedBy === 'user'
+													? 'Run by you'
+													: run.startedBy === 'mcp'
+														? 'Run by an agent'
+														: 'Triggered'}
 												{run.durationMs === undefined
 													? ''
 													: ` · ${formatDuration(run.durationMs)}`}

@@ -287,6 +287,10 @@ import {
 } from './workspace/automations/automationsModel';
 import { MissedRunsNotice } from './workspace/automations/MissedRunsNotice';
 import {
+	McpApprovalsContext,
+	useServerMcpApprovals,
+} from './workspace/mcpApprovals/useServerMcpApprovals';
+import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
 } from './workspace/automations/useServerAutomations';
@@ -6587,6 +6591,9 @@ function App({
 		[connections, primary, primaryClientContext],
 	);
 	const serverAutomations = useServerAutomations(automationEntries);
+	// One projection per server; every terminal pane and tab reads its own
+	// pending approvals from it.
+	const serverMcpApprovals = useServerMcpApprovals(automationEntries);
 	const automationSectionServers = useMemo<
 		readonly AutomationsSectionServer[]
 	>(
@@ -7658,83 +7665,85 @@ function App({
 						{connectionFeatureError}
 					</div>
 				) : null}
-				{isHomeSelected ? (
-					<HomeView
-						band={
-							<HomeSearch
-								sources={dashboardSources}
-								automations={homeSearchAutomations}
-								onChoose={chooseHomeSearchResult}
-							/>
-						}
-						isSidebarVisible={isHomeSidebarVisible}
-						onDismissSidebar={() => setHomeSidebarVisibility(false)}
-						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
-						onSelectSection={selectHomeSection}
-						onSidebarWidthCommit={setHomeSidebarWidth}
-						section={homeSection}
-						sidebarWidth={homeSidebarWidth}
-					>
-						{homeSection === 'home' ? (
-							<HomeOverview
-								now={automationClock}
-								overview={homeOverview}
-								onOpenAutomations={openAutomationsFromOverview}
-								onOpenTabs={() => selectHomeSection('tabs')}
-							/>
-						) : homeSection === 'tabs' ? (
-							<WorkspaceDashboard
-								onActivate={activateDashboardRow}
-								onActivateAgent={activateDashboardAgent}
-								sources={dashboardSources}
-							/>
-						) : (
-							<AutomationsSection
-								automations={serverAutomations}
-								now={automationClock}
-								servers={automationSectionServers}
-								workingServerId={currentServerId}
-								{...(automationsFocus === undefined
-									? {}
-									: { focus: automationsFocus })}
-							/>
-						)}
-					</HomeView>
-				) : null}
-				<MissedRunsNotice automations={serverAutomations} />
-				{projects.map((project) => (
-					<ProjectWorkspace
-						key={project.id}
-						ref={(instance) => {
-							workspaceRefs.current.set(project.id, instance);
-						}}
-						agentStatusSnapshot={agentStatusSnapshot}
-						auxiliaryRoutes={auxiliaryRouteController}
-						isActive={
-							!isHomeSelected &&
-							!isPendingProjectFailure &&
-							project.id === activeProjectId
-						}
-						isCompactChrome={isCompactChrome}
-						sharedTerminalContextReaders={sharedTerminalContextReadersRef}
-						isMac={isMac}
-						macros={macros}
-						onAddProject={createServerProject}
-						onShowDashboard={selectHome}
-						onCloseProject={closeProject}
-						onEditProject={openEditProjectWindow}
-						onMoveTerminalToProject={moveTerminalToProject}
-						onPopoutProject={popoutProject}
-						onWorkspaceInventoryChange={updateWorkspaceInventory}
-						onCommitProjectSidebar={commitProjectSidebar}
-						onUpdateProject={updateProject}
-						popoutUrl={popoutUrl}
-						project={project}
-						projects={projects}
-						terminalClientContext={terminalClientContext}
-						adoptedTerminals={adoptedTerminalsByProject[project.id]}
-					/>
-				))}
+				<McpApprovalsContext.Provider value={serverMcpApprovals}>
+					{isHomeSelected ? (
+						<HomeView
+							band={
+								<HomeSearch
+									sources={dashboardSources}
+									automations={homeSearchAutomations}
+									onChoose={chooseHomeSearchResult}
+								/>
+							}
+							isSidebarVisible={isHomeSidebarVisible}
+							onDismissSidebar={() => setHomeSidebarVisibility(false)}
+							onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
+							onSelectSection={selectHomeSection}
+							onSidebarWidthCommit={setHomeSidebarWidth}
+							section={homeSection}
+							sidebarWidth={homeSidebarWidth}
+						>
+							{homeSection === 'home' ? (
+								<HomeOverview
+									now={automationClock}
+									overview={homeOverview}
+									onOpenAutomations={openAutomationsFromOverview}
+									onOpenTabs={() => selectHomeSection('tabs')}
+								/>
+							) : homeSection === 'tabs' ? (
+								<WorkspaceDashboard
+									onActivate={activateDashboardRow}
+									onActivateAgent={activateDashboardAgent}
+									sources={dashboardSources}
+								/>
+							) : (
+								<AutomationsSection
+									automations={serverAutomations}
+									now={automationClock}
+									servers={automationSectionServers}
+									workingServerId={currentServerId}
+									{...(automationsFocus === undefined
+										? {}
+										: { focus: automationsFocus })}
+								/>
+							)}
+						</HomeView>
+					) : null}
+					<MissedRunsNotice automations={serverAutomations} />
+					{projects.map((project) => (
+						<ProjectWorkspace
+							key={project.id}
+							ref={(instance) => {
+								workspaceRefs.current.set(project.id, instance);
+							}}
+							agentStatusSnapshot={agentStatusSnapshot}
+							auxiliaryRoutes={auxiliaryRouteController}
+							isActive={
+								!isHomeSelected &&
+								!isPendingProjectFailure &&
+								project.id === activeProjectId
+							}
+							isCompactChrome={isCompactChrome}
+							sharedTerminalContextReaders={sharedTerminalContextReadersRef}
+							isMac={isMac}
+							macros={macros}
+							onAddProject={createServerProject}
+							onShowDashboard={selectHome}
+							onCloseProject={closeProject}
+							onEditProject={openEditProjectWindow}
+							onMoveTerminalToProject={moveTerminalToProject}
+							onPopoutProject={popoutProject}
+							onWorkspaceInventoryChange={updateWorkspaceInventory}
+							onCommitProjectSidebar={commitProjectSidebar}
+							onUpdateProject={updateProject}
+							popoutUrl={popoutUrl}
+							project={project}
+							projects={projects}
+							terminalClientContext={terminalClientContext}
+							adoptedTerminals={adoptedTerminalsByProject[project.id]}
+						/>
+					))}
+				</McpApprovalsContext.Provider>
 			</div>
 
 			{isPairingModalOpen ? (
