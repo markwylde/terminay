@@ -68,6 +68,8 @@ import type { TerminalSettings } from '../types/settings';
 import { ContextMenu } from './ContextMenu';
 import type { DictationOverlayProps } from './DictationOverlay';
 import { DictationOverlay } from './DictationOverlay';
+import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
+import { McpApprovalStrip } from './McpApprovalStrip';
 import type { TerminalPanelParams } from './TerminalTab';
 import {
 	clearTerminalViewport,
@@ -522,6 +524,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const { settings, settingsClient } = useTerminalSettings();
 	const terminalClientContext = useContext(TerminalPanelClientContext);
+	const mcpApprovals = useTerminalMcpApprovals(
+		terminalClientContext?.serverId,
+		props.params.sessionId,
+	);
 	// An attach or renewal that failed on the dying transport is the reconnect's
 	// story, and the workspace overlay is already telling it. The rebind onto
 	// the replacement connection clears the error either way.
@@ -3148,6 +3154,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</button>
 				</div>
 			) : null}
+			{mcpApprovals === undefined ? null : (
+				<McpApprovalStrip pending={mcpApprovals} />
+			)}
 			{/* A sibling, not a child: the terminal effect clears the xterm root's
 			    own markup, so nothing React renders may live inside it. */}
 			<div className="terminal-panel-root" ref={xtermRootRef} />

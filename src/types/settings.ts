@@ -123,9 +123,20 @@ export type GitPushAgentSettings = {
 	prompt: string;
 };
 
-/** Server-owned enablement for the local, project-scoped Terminay MCP bridge. */
+/** How the server treats an MCP operation in one permission group. */
+export type TerminayMcpPermissionPolicy = 'ask' | 'allow' | 'deny';
+
+export type TerminayMcpPermissions = {
+	terminalsRead: TerminayMcpPermissionPolicy;
+	terminalsManage: TerminayMcpPermissionPolicy;
+	automationsRead: TerminayMcpPermissionPolicy;
+	automationsManage: TerminayMcpPermissionPolicy;
+};
+
+/** Server-owned enablement and permission policy for the local Terminay MCP bridge. */
 export type TerminayMcpSettings = {
 	enabled: boolean;
+	permissions: TerminayMcpPermissions;
 };
 
 export type DictationTranscriptionModel =

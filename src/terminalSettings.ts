@@ -10,6 +10,8 @@ import {
 	type SidebarGroupId,
 	type SidebarPanelId,
 	type TerminalSettings,
+	type TerminayMcpPermissionPolicy,
+	type TerminayMcpPermissions,
 } from './types/settings.ts';
 
 type SettingsInputKind =
@@ -361,6 +363,12 @@ export const DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES = [
 	'__pycache__',
 ].join('\n');
 
+const TERMINAY_MCP_PERMISSION_OPTIONS = [
+	{ label: 'Ask Permission', value: 'ask' },
+	{ label: 'Always Allow', value: 'allow' },
+	{ label: 'Never Allow', value: 'deny' },
+];
+
 export const defaultTerminalSettings: TerminalSettings = {
 	agentIntegration: {
 		enabled: true,
@@ -394,7 +402,15 @@ export const defaultTerminalSettings: TerminalSettings = {
 		codexModel: '',
 		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 	},
-	terminayMcp: { enabled: true },
+	terminayMcp: {
+		enabled: true,
+		permissions: {
+			terminalsRead: 'allow',
+			terminalsManage: 'allow',
+			automationsRead: 'allow',
+			automationsManage: 'ask',
+		},
+	},
 	allowTransparency: false,
 	altClickMovesCursor: true,
 	activityIndicators: {
@@ -737,6 +753,50 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'terminal',
 					'control',
 				],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.terminalsRead',
+				label: 'Read Terminals',
+				description:
+					'List, read, search, and wait on terminals in reach.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.terminalsManage',
+				label: 'Full Terminal Management',
+				description:
+					'Open, close, split, focus, rename, and type into terminals in reach.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.automationsRead',
+				label: 'Read Automations',
+				description:
+					'List automations and read their definitions and run history.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.automationsManage',
+				label: 'Full Automation Management',
+				description:
+					'Create, edit, enable, delete, run, and stop automations. An automation runs unattended with reach over every project on this server.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent'],
 			}),
 		],
 	},
@@ -2171,6 +2231,24 @@ export function normalizeSidebarPanelOrder(value: unknown): SidebarPanelId[] {
 	];
 }
 
+function normalizeTerminayMcpPermissions(value: unknown): TerminayMcpPermissions {
+	const defaults = defaultTerminalSettings.terminayMcp.permissions;
+	const input =
+		typeof value === 'object' && value !== null && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: {};
+	const policy = (key: keyof TerminayMcpPermissions): TerminayMcpPermissionPolicy =>
+		input[key] === 'ask' || input[key] === 'allow' || input[key] === 'deny'
+			? input[key]
+			: defaults[key];
+	return {
+		terminalsRead: policy('terminalsRead'),
+		terminalsManage: policy('terminalsManage'),
+		automationsRead: policy('automationsRead'),
+		automationsManage: policy('automationsManage'),
+	};
+}
+
 function normalizeProjectSidebarVisibility(value: unknown): Record<string, boolean> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		return {};
@@ -2352,6 +2430,9 @@ export function normalizeTerminalSettings(
 				typeof terminayMcpInput.enabled === 'boolean'
 					? terminayMcpInput.enabled
 					: defaultTerminalSettings.terminayMcp.enabled,
+			permissions: normalizeTerminayMcpPermissions(
+				(terminayMcpInput as { permissions?: unknown }).permissions,
+			),
 		},
 		dictation: {
 			enabled:

@@ -115,6 +115,25 @@ export class AutomationRepository {
 		});
 	}
 
+	/** Validate a definition exactly as `upsert` would, without committing it.
+	 * Used to refuse an invalid MCP request before asking a user to approve it. */
+	async preview(automation: unknown): Promise<AutomationDefinition> {
+		const current = this.current ?? (await this.load());
+		const candidateId = idOf(automation);
+		const existing =
+			candidateId === undefined
+				? undefined
+				: current.automations.find((item) => item.id === candidateId);
+		const normalized = normalizeAutomation(automation, {
+			...(existing === undefined ? {} : { existing }),
+			now: this.now(),
+			generateId: () => 'preview',
+			validateCron: this.validateCron,
+		});
+		await this.assertMacroFields(normalized);
+		return clone(normalized);
+	}
+
 	/** Server-maintained schedule progress. Persisted, but it neither advances
 	 * the revision nor notifies subscribers, so a ticking schedule never makes
 	 * a client's edit conflict. It only moves forward. */

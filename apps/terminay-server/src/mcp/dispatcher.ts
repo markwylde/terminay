@@ -6,6 +6,19 @@ import type {
 	ControlRequestContext,
 	ControlScope,
 } from './controlEndpoint.js';
+import type { McpPermissionGroup } from '@terminay/server-core';
+import {
+	type AutomationControlAdapter,
+	isAutomationParamFailure,
+	parseAutomationId,
+	parseCreateAutomation,
+	parseDeleteAutomation,
+	parseListAutomationRuns,
+	parseRunAutomation,
+	parseSetAutomationEnabled,
+	parseStopAutomationRun,
+	parseUpdateAutomation,
+} from './automationTools.js';
 import { ControlEndpointError } from './controlEndpoint.js';
 
 export interface ServerControlHandlers {
@@ -82,13 +95,108 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly listAutomations?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly getAutomation?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly listAutomationRuns?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly createAutomation?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly updateAutomation?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly deleteAutomation?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly setAutomationEnabled?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly runAutomation?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly stopAutomationRun?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+}
+
+/**
+ * The MCP permission gate (ADR-0031). It sees only the operation, its fixed
+ * permission group, the retained request, and the resolved capability; it
+ * resolves once the operation may run, or returns the failure that refuses
+ * it. Under an `ask` policy it waits on a user's decision.
+ */
+export interface ControlPermissionGate {
+	authorize(request: {
+		readonly op: ControlOperation;
+		readonly group: McpPermissionGroup;
+		readonly params: Readonly<Record<string, unknown>>;
+		readonly context: ControlRequestContext;
+	}): Promise<ControlFailure | undefined> | ControlFailure | undefined;
 }
 
 export interface ServerControlDispatcherOptions {
 	readonly handlers: ServerControlHandlers;
 	readonly operationScopes?: Partial<Record<ControlOperation, ControlScope>>;
 	readonly maxParamsBytes?: number;
+	/** Absent only in hosts and tests that predate the permission policy. */
+	readonly permissions?: ControlPermissionGate;
 }
+
+/**
+ * Each operation's permission group, fixed here and never derived from its
+ * parameters, caller, or scope. Capability discovery belongs to none.
+ */
+export const CONTROL_PERMISSION_GROUPS: Readonly<
+	Record<ControlOperation, McpPermissionGroup | undefined>
+> = Object.freeze({
+	get_mcp_capabilities: undefined,
+	list_terminals: 'terminalsRead',
+	read_terminal: 'terminalsRead',
+	search_terminal: 'terminalsRead',
+	get_terminal_status: 'terminalsRead',
+	wait_for_idle: 'terminalsRead',
+	wait_for_command: 'terminalsRead',
+	wait_for_attention: 'terminalsRead',
+	open_terminal: 'terminalsManage',
+	write_terminal: 'terminalsManage',
+	run_command: 'terminalsManage',
+	close_terminal: 'terminalsManage',
+	focus_terminal: 'terminalsManage',
+	rename_terminal: 'terminalsManage',
+	split_terminal: 'terminalsManage',
+	list_automations: 'automationsRead',
+	get_automation: 'automationsRead',
+	list_automation_runs: 'automationsRead',
+	create_automation: 'automationsManage',
+	update_automation: 'automationsManage',
+	delete_automation: 'automationsManage',
+	set_automation_enabled: 'automationsManage',
+	run_automation: 'automationsManage',
+	stop_automation_run: 'automationsManage',
+});
 
 /** Typed parameter contracts for the server-owned MCP operation boundary. */
 export type TerminalRef = string;
@@ -243,6 +351,9 @@ export interface TerminalControlAdapter {
 
 export interface TerminalControlAdapterOptions {
 	readonly adapter: TerminalControlAdapter;
+	/** Host binding for the automation tools; absent hosts report them unsupported. */
+	readonly automations?: AutomationControlAdapter;
+	readonly permissions?: ControlPermissionGate;
 	readonly operationScopes?: Partial<Record<ControlOperation, ControlScope>>;
 	readonly maxParamsBytes?: number;
 	readonly maxTextBytes?: number;
@@ -267,6 +378,15 @@ const DEFAULT_SCOPES: Readonly<
 	focus_terminal: 'write',
 	rename_terminal: 'write',
 	split_terminal: 'write',
+	list_automations: 'read',
+	get_automation: 'read',
+	list_automation_runs: 'read',
+	create_automation: 'write',
+	update_automation: 'write',
+	delete_automation: 'write',
+	set_automation_enabled: 'write',
+	run_automation: 'write',
+	stop_automation_run: 'write',
 });
 
 const HANDLER_BY_OPERATION: Readonly<
@@ -287,6 +407,15 @@ const HANDLER_BY_OPERATION: Readonly<
 	wait_for_idle: 'waitForIdle',
 	wait_for_command: 'waitForCommand',
 	wait_for_attention: 'waitForAttention',
+	list_automations: 'listAutomations',
+	get_automation: 'getAutomation',
+	list_automation_runs: 'listAutomationRuns',
+	create_automation: 'createAutomation',
+	update_automation: 'updateAutomation',
+	delete_automation: 'deleteAutomation',
+	set_automation_enabled: 'setAutomationEnabled',
+	run_automation: 'runAutomation',
+	stop_automation_run: 'stopAutomationRun',
 });
 
 /** Build the server-owned dispatcher consumed by the local socket. It never
@@ -351,10 +480,37 @@ export function createServerControlDispatcher(
 				},
 			};
 		}
+		// Approve exactly what runs: the gate and the handler share one frozen
+		// copy of the request, so nothing the caller holds can change it later.
+		const retained = deepFreeze(structuredClone(params));
+		const group = CONTROL_PERMISSION_GROUPS[request.op];
+		if (group !== undefined && options.permissions !== undefined) {
+			const refusal = await options.permissions.authorize({
+				op: request.op,
+				group,
+				params: retained,
+				context,
+			});
+			if (refusal !== undefined) return refusal;
+			if (context.signal.aborted) return cancelledResult();
+		}
 		if (
 			request.op === 'get_mcp_capabilities' ||
-			request.op === 'list_terminals'
+			request.op === 'list_terminals' ||
+			request.op === 'list_automations'
 		) {
+			if (request.op === 'list_automations') {
+				const listAutomations = options.handlers.listAutomations;
+				if (listAutomations === undefined)
+					return {
+						ok: false,
+						error: {
+							code: 'unsupported_op',
+							message: 'control operation list_automations is unavailable',
+						},
+					};
+				return listAutomations(retained, context, context.signal);
+			}
 			if (request.op === 'get_mcp_capabilities') {
 				const capabilitiesHandler = options.handlers.getMcpCapabilities;
 				if (capabilitiesHandler === undefined)
@@ -383,8 +539,16 @@ export function createServerControlDispatcher(
 			context: ControlRequestContext,
 			signal: AbortSignal,
 		) => unknown | Promise<unknown>;
-		return operationHandler(params, context, context.signal);
+		return operationHandler(retained, context, context.signal);
 	};
+}
+
+function deepFreeze<T>(value: T): T {
+	if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+		Object.freeze(value);
+		for (const child of Object.values(value)) deepFreeze(child);
+	}
+	return value;
 }
 
 const DEFAULT_MAX_TEXT_BYTES = 64 * 1024;
@@ -537,8 +701,75 @@ export function createTerminalControlAdapter(
 					: options.adapter.waitForAttention(parsed, context, signal);
 			}),
 	};
+	const automations = options.automations;
+	const automationHandlers: Partial<ServerControlHandlers> =
+		automations === undefined
+			? {}
+			: {
+					listAutomations: (_params, context, signal) =>
+						invoke(signal, () => automations.listAutomations(context, signal)),
+					getAutomation: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseAutomationId(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.getAutomation(parsed, context, signal);
+						}),
+					listAutomationRuns: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseListAutomationRuns(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.listAutomationRuns(parsed, context, signal);
+						}),
+					createAutomation: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseCreateAutomation(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.createAutomation(parsed, context, signal);
+						}),
+					updateAutomation: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseUpdateAutomation(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.updateAutomation(parsed, context, signal);
+						}),
+					deleteAutomation: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseDeleteAutomation(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.deleteAutomation(parsed, context, signal);
+						}),
+					setAutomationEnabled: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseSetAutomationEnabled(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.setAutomationEnabled(parsed, context, signal);
+						}),
+					runAutomation: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseRunAutomation(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.runAutomation(parsed, context, signal);
+						}),
+					stopAutomationRun: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseStopAutomationRun(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.stopAutomationRun(parsed, context, signal);
+						}),
+				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
-		handlers,
+		handlers: { ...handlers, ...automationHandlers },
+		...(options.permissions === undefined
+			? {}
+			: { permissions: options.permissions }),
 		...(options.operationScopes === undefined
 			? {}
 			: { operationScopes: options.operationScopes }),
@@ -651,6 +882,11 @@ function publicControlError(error: unknown): ControlError {
 		bad_request: 'The control operation parameters are invalid.',
 		forbidden: 'The control capability is not permitted for this operation.',
 		not_found: 'The requested control resource was not found.',
+		conflict: 'The resource changed since it was read.',
+		permission_denied: 'This operation is set to Never Allow for Terminay MCP.',
+		permission_declined: 'The user declined this request.',
+		approval_queue_full:
+			'This terminal already has the maximum number of requests waiting for approval.',
 		internal: 'The control operation failed.',
 	};
 	return { code: publicCode, message: messageByCode[publicCode] };
@@ -670,6 +906,10 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'bad_request' ||
 		value === 'forbidden' ||
 		value === 'not_found' ||
+		value === 'conflict' ||
+		value === 'permission_denied' ||
+		value === 'permission_declined' ||
+		value === 'approval_queue_full' ||
 		value === 'internal'
 	);
 }
