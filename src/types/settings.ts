@@ -38,6 +38,7 @@ export type ShellSettings = {
 };
 
 export type RemoteAccessSettings = {
+	exposeOnStartup: boolean;
 	webRtcHostedDomain: string;
 	webRtcIceServers: string;
 };
