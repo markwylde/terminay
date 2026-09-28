@@ -68,7 +68,6 @@ function TerminayMark({
 			strokeLinecap="round"
 			strokeLinejoin="round"
 		>
-			<rect width="24" height="24" fill="#000000" stroke="none" />
 			<polygon points="12 4 4.5 7.75 12 11.5 19.5 7.75 12 4" />
 			<polyline points="4.5 15.25 12 19 19.5 15.25" />
 			<polyline points="4.5 11.5 12 15.25 19.5 11.5" />

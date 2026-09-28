@@ -61,7 +61,7 @@ export function WorkspaceStatusBar({
 						})}
 					</span>
 				) : null}
-				<span className="workspace-status-bar__remote-label">{remote.label}</span>
+				{remote.label ? <span className="workspace-status-bar__remote-label">{remote.label}</span> : null}
 				<span className="workspace-status-bar__dot" aria-hidden="true" />
 			</button>
 		</footer>

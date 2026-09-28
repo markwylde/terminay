@@ -122,12 +122,14 @@ test('Desktop Local not exposed is red with no devices', () => {
 	const state = remoteIndicatorState({ isDesktopLocal: true, isExposed: false, connections: [] });
 	assert.equal(state.tone, 'offline');
 	assert.deepEqual(state.devices, []);
+	assert.equal(state.label, '');
 	assert.match(state.accessibleLabel, /not exposed/u);
 });
 
 test('exposed with no connections is grey', () => {
 	const state = remoteIndicatorState({ isDesktopLocal: true, isExposed: true, connections: [] });
 	assert.equal(state.tone, 'idle');
+	assert.equal(state.label, '');
 	assert.deepEqual(state.devices, []);
 });
 
