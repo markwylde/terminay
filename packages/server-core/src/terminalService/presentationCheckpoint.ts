@@ -596,6 +596,21 @@ export class TerminalPresentationCheckpointAuthority {
 	}
 
 	/**
+	 * Whether the foreground program has enabled bracketed paste (DECSET 2004)
+	 * in the output admitted so far.
+	 */
+	async bracketedPasteMode(identity: TerminalIdentity): Promise<boolean> {
+		const session = this.requireSession(identity);
+		await session.queue;
+		if (session.unavailable)
+			throw error(
+				'checkpoint_unavailable',
+				'terminal checkpoint state is unavailable',
+			);
+		return session.terminal.modes.bracketedPasteMode;
+	}
+
+	/**
 	 * Return the current parser-safe emulator state without minting a display
 	 * checkpoint or granting an input path. This is intentionally a snapshot of
 	 * the canonical emulator, not a replay of a caller-selected raw cursor.

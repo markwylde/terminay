@@ -1,6 +1,7 @@
 import {
 	type ActivityEvent,
 	type ActivitySnapshot,
+	commandSubmissionInput,
 	TerminalActivityService,
 	type TerminalAuthorization,
 	type TerminalEvent,
@@ -636,19 +637,20 @@ async function runCommand(
 	context: ControlRequestContext,
 ): Promise<unknown> {
 	const session = targetSession(options.terminal, context, params.terminal);
-	const from = session.outputPosition;
-	const text = `\u001b[200~${params.command}\u001b[201~\r`;
-	await options.terminal.write(
-		session,
-		text,
-		authorization(session, options.terminal.serverId, 'write'),
-	);
+	const auth = authorization(session, options.terminal.serverId, 'write');
+	const bracketed = await options.terminal.bracketedPasteMode(session, auth);
+	const from =
+		options.terminal.getSession(session)?.outputPosition ??
+		session.outputPosition;
+	const text = commandSubmissionInput(params.command, bracketed);
+	await options.terminal.write(session, text, auth);
 	return {
 		terminal: session.sessionId,
 		command_id: context.requestId,
 		from,
 		submitted_bytes: new TextEncoder().encode(text).byteLength,
 		submitted: true,
+		bracketed,
 	};
 }
 
