@@ -25,7 +25,7 @@
 ## 6. Verification
 
 - [x] 6.1 Update the contract tests that read `Dockerfile.e2e`, the entrypoint and the CI workflow (`scripts/e2e-container-contract.test.mjs`, `scripts/provider-portable-ci.test.mjs`). Verify: `npm run smoke`'s node test lists pass.
-- [ ] 6.2 Push, and measure two consecutive CI runs (the first builds the base, the second reuses it). Verify: per-shard pull, setup and test times read from the Gitea API. The target is every shard under 5 minutes on the second run.
+- [x] 6.2 Push, and measure two consecutive CI runs (the first builds the base, the second reuses it). Verify: per-shard pull, setup and test times read from the Gitea API. The target is every shard under 5 minutes on the second run.
 - [x] 6.3 Run `openspec validate --all`. Verify: it passes.
 
 ## 7. Fast gate
