@@ -97,6 +97,7 @@ import {
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
+import { commandSubmissionInput } from '../packages/server-core/src/terminalService/commandSubmission';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
 import { isAutomationSpace } from '../packages/server-core/src/workspace';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
@@ -2801,10 +2802,13 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 		},
 		runCommand: async (params, context) => {
 			const target = terminal(context, params.terminal);
-			const from =
-				requireMcpAuthority().service.getSession(target.id)?.outputPosition ??
-				0;
-			const data = `\u001b[200~${params.command}\u001b[201~\r`;
+			const service = requireMcpAuthority().service;
+			const bracketed = await service.bracketedPasteMode(
+				target.id,
+				mcpAuthorization(target.projectId),
+			);
+			const from = service.getSession(target.id)?.outputPosition ?? 0;
+			const data = commandSubmissionInput(params.command, bracketed);
 			await requireMcpAuthority().write(
 				target.id,
 				data,
@@ -2816,6 +2820,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				from,
 				submitted_bytes: new TextEncoder().encode(data).byteLength,
 				submitted: true,
+				bracketed,
 			};
 		},
 		closeTerminal: async (params, context) => {
