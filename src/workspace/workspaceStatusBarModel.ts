@@ -186,6 +186,7 @@ export type RemoteDeviceKind = 'phone' | 'tablet' | 'computer';
 
 export type RemoteIndicatorState = {
 	tone: RemoteIndicatorTone;
+	/** Empty when the dot alone says it; the tooltip carries the detail. */
 	label: string;
 	accessibleLabel: string;
 	devices: RemoteDeviceKind[];
@@ -219,7 +220,7 @@ export function remoteIndicatorState(input: {
 	if (!exposed) {
 		return {
 			tone: 'offline',
-			label: 'Not exposed',
+			label: '',
 			accessibleLabel: 'Remote access, not exposed',
 			devices: [],
 		};
@@ -227,7 +228,7 @@ export function remoteIndicatorState(input: {
 	if (count === 0) {
 		return {
 			tone: 'idle',
-			label: input.isDesktopLocal ? 'Exposed' : 'No devices',
+			label: input.isDesktopLocal ? '' : 'No devices',
 			accessibleLabel: 'Remote access, exposed, no devices connected',
 			devices: [],
 		};
