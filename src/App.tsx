@@ -28,6 +28,7 @@ import {
 	Play,
 	Plug,
 	MoreHorizontal,
+	PanelBottom,
 	RefreshCw,
 	Trash2,
 	Search,
@@ -51,6 +52,14 @@ import {
 	useRef,
 	useState,
 } from 'react';
+import { createPortal } from 'react-dom';
+import {
+	FocusedTerminalSummary,
+	useFocusedTerminalStatus,
+	WorkspaceStatusBar,
+} from './workspace/WorkspaceStatusBar';
+import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
+import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
 	selectLiveAgentStatusEntries,
@@ -554,6 +563,11 @@ type ProjectWorkspaceProps = {
 	macros: MacroDefinition[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
+	/** Toggles the device-local status bar; a window-wide preference. */
+	onToggleStatusBar: () => void;
+	isStatusBarVisible: boolean;
+	/** Where the active project renders its focused-terminal summary. */
+	statusBarSlot: HTMLElement | null;
 	onCloseProject: (
 		projectId: string,
 		options?: { skipConfirmation?: boolean },
@@ -1298,6 +1312,9 @@ const ProjectWorkspace = forwardRef<
 			onMoveTerminalToProject,
 			onPopoutProject,
 			onShowDashboard,
+			onToggleStatusBar,
+			isStatusBarVisible,
+			statusBarSlot,
 			onWorkspaceInventoryChange,
 			onCommitProjectSidebar,
 			onUpdateProject,
@@ -2495,6 +2512,16 @@ const ProjectWorkspace = forwardRef<
 			onUpdateProject,
 			project: explorerProject,
 		});
+		const isRenderingStatusBar =
+			isActive && isStatusBarVisible && statusBarSlot !== null;
+		const focusedTerminalStatus = useFocusedTerminalStatus({
+			apiRef: dockviewApiRef,
+			focusedSessionId,
+			getCwd: getServerTerminalCwd,
+			isActive: isRenderingStatusBar,
+			isDockviewReady,
+			titleRevision: terminalTitleRevision,
+		});
 		const [gitPaneMenuPosition, setGitPaneMenuPosition] = useState<{
 			x: number;
 			y: number;
@@ -3591,6 +3618,24 @@ const ProjectWorkspace = forwardRef<
 				},
 				{
 					group: 'Workspace',
+					icon: <PanelBottom size={18} strokeWidth={2.1} />,
+					id: 'toggle-status-bar',
+					title: isStatusBarVisible ? 'Hide status bar' : 'Show status bar',
+					description: isStatusBarVisible
+						? 'Hide the status bar along the bottom of the window.'
+						: 'Show the status bar along the bottom of the window.',
+					searchText: `toggle show hide status bar footer working directory branch devices ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-status-bar')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'toggle-status-bar',
+						isMac,
+					),
+					onSelect: () => {
+						onToggleStatusBar();
+					},
+				},
+				{
+					group: 'Workspace',
 					icon: <Sidebar size={18} strokeWidth={2.1} />,
 					id: 'toggle-file-explorer-sidebar',
 					title: project.isFileExplorerOpen
@@ -3692,6 +3737,8 @@ const ProjectWorkspace = forwardRef<
 			settings.keyboardShortcuts,
 			setProjectRootFolderToWorkingDirectory,
 			onShowDashboard,
+			onToggleStatusBar,
+			isStatusBarVisible,
 			openProfileChooser,
 			startDictation,
 			toggleFileExplorerSidebar,
@@ -3912,6 +3959,10 @@ const ProjectWorkspace = forwardRef<
 					case 'show-dashboard':
 						onShowDashboard();
 						break;
+					// The status bar belongs to the window, so it is handed back up too.
+					case 'toggle-status-bar':
+						onToggleStatusBar();
+						break;
 					default:
 						break;
 				}
@@ -3923,6 +3974,7 @@ const ProjectWorkspace = forwardRef<
 				closeActivePanel,
 				onAddProject,
 				onShowDashboard,
+				onToggleStatusBar,
 				openActiveTerminalSettings,
 				openProjectSettings,
 				popoutActivePanel,
@@ -4863,6 +4915,15 @@ const ProjectWorkspace = forwardRef<
 				{errorText ? (
 					<div className="error-banner">Operation failed: {errorText}</div>
 				) : null}
+				{isRenderingStatusBar && focusedTerminalStatus !== null
+					? createPortal(
+							<FocusedTerminalSummary
+								status={focusedTerminalStatus}
+								worktrees={worktreePanelStatus?.worktrees ?? []}
+							/>,
+							statusBarSlot,
+						)
+					: null}
 
 				<WorkspaceSplitLayout
 					className="project-workspace-body"
@@ -5505,6 +5566,7 @@ function App({
 		connections,
 		byServerId,
 		primary,
+		profiles: connectionProfiles,
 		tabOrder: rememberedTabOrder,
 		setTabOrder,
 		setActiveServerId,
@@ -5628,6 +5690,37 @@ function App({
 				});
 		},
 		[currentServerId, settingsClient],
+	);
+	// Optimistic, so the bar hides the moment the command runs rather than after
+	// the device-settings round trip; settings changes reconcile it.
+	const [isStatusBarPreferred, setIsStatusBarPreferred] = useState(
+		settings.showStatusBar,
+	);
+	useEffect(() => {
+		setIsStatusBarPreferred(settings.showStatusBar);
+	}, [settings.showStatusBar]);
+	useEffect(() => {
+		publishStatusBarVisibility(isStatusBarPreferred);
+	}, [isStatusBarPreferred]);
+	const toggleStatusBar = useCallback(() => {
+		const nextSettings = {
+			...settingsRef.current,
+			showStatusBar: !settingsRef.current.showStatusBar,
+		};
+		settingsRef.current = nextSettings;
+		setIsStatusBarPreferred(nextSettings.showStatusBar);
+		void settingsClient
+			.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
+			.then((updated) => {
+				settingsRef.current = updated;
+			})
+			.catch(() => {
+				// The local presentation already reflects the interaction. A later
+				// device-settings update or reload reconciles a failed persistence.
+			});
+	}, [settingsClient]);
+	const [statusBarSlot, setStatusBarSlot] = useState<HTMLDivElement | null>(
+		null,
 	);
 	const persistProjectSidebarActiveGroup = useCallback(
 		(projectId: string, groupId: SidebarGroupId) => {
@@ -5942,6 +6035,25 @@ function App({
 	// One observation of the bar decides compact chrome for every surface that
 	// changes at phone width, so a row and the strip under it cannot disagree.
 	const isCompactChrome = useCompactChrome(projectTabBarRef);
+	const isStatusBarVisible = isStatusBarPreferred && !isCompactChrome;
+	const remoteIndicator = useMemo(
+		() =>
+			remoteIndicatorState({
+				// Only this machine's own server can be "not exposed"; any other
+				// server is one this window already reached remotely.
+				isDesktopLocal:
+					hasNativeWindowControls &&
+					(currentServerId === 'desktop-local' ||
+						connectionProfiles.some(
+							(profile) =>
+								profile.isLocal === true &&
+								profile.serverId === currentServerId,
+						)),
+				isExposed: Boolean(remoteStatus?.isRunning),
+				connections: remoteStatus?.connections ?? [],
+			}),
+		[connectionProfiles, currentServerId, hasNativeWindowControls, remoteStatus],
+	);
 	// Every mounted terminal panel in this window registers its buffer reader
 	// here. The switcher reads it; nothing leaves the window.
 	const sharedTerminalContextReadersRef = useRef<
@@ -6392,6 +6504,11 @@ function App({
 				selectHome();
 				return Promise.resolve();
 			}
+			// The status bar belongs to the window, not to a project.
+			if (command === 'toggle-status-bar') {
+				toggleStatusBar();
+				return Promise.resolve();
+			}
 			// The sidebar command, like the toggle, answers for Home's sidebar
 			// while Home is shown rather than for the project behind it.
 			if (command === 'toggle-file-explorer-sidebar' && isHomeSelected) {
@@ -6424,6 +6541,7 @@ function App({
 			isHomeSelected,
 			selectHome,
 			toggleHomeSidebar,
+			toggleStatusBar,
 		],
 	);
 
@@ -7131,6 +7249,7 @@ function App({
 			);
 			if (
 				command !== 'show-dashboard' &&
+				command !== 'toggle-status-bar' &&
 				!(isHomeSelected && command === 'toggle-file-explorer-sidebar')
 			)
 				return;
@@ -7729,6 +7848,9 @@ function App({
 							macros={macros}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
+							onToggleStatusBar={toggleStatusBar}
+							isStatusBarVisible={isStatusBarVisible}
+							statusBarSlot={statusBarSlot}
 							onCloseProject={closeProject}
 							onEditProject={openEditProjectWindow}
 							onMoveTerminalToProject={moveTerminalToProject}
@@ -7745,6 +7867,18 @@ function App({
 					))}
 				</McpApprovalsContext.Provider>
 			</div>
+			{isStatusBarVisible ? (
+				<WorkspaceStatusBar
+					onToggleConnectionMenu={() => {
+						setIsActivityMenuOpen(false);
+						setConnectionSwitcherError(null);
+						refreshConnectionSwitcherEntries();
+						setIsRemoteMenuOpen((current) => !current);
+					}}
+					remote={remoteIndicator}
+					slotRef={setStatusBarSlot}
+				/>
+			) : null}
 
 			{isPairingModalOpen ? (
 				<RemotePairingModal
