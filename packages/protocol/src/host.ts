@@ -183,6 +183,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'split-vertical',
 	'start-dictation',
 	'toggle-file-explorer-sidebar',
+	'toggle-status-bar',
 ] as const;
 
 export type TerminayHostMenuCommand =

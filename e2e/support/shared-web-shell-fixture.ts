@@ -91,3 +91,40 @@ export async function startSharedWebShellFixture(): Promise<SharedWebShellFixtur
 		url: `${origin}/e2e/fixtures/shared-web-shell.html`,
 	};
 }
+
+const OPTIMIZED_DEPENDENCY_URL = /["'](\/node_modules\/\.vite\/deps\/[^"']+)["']/gu;
+
+/**
+ * Bundle the fixture's dependencies once, before any test starts a fixture.
+ *
+ * Every fixture server shares Vite's dependency cache, but a cold bundle of
+ * the web shell's dependencies (Monaco, pdf.js, xterm, …) can take longer on
+ * a busy CI runner than a test's 30 s hook or 5 s navigation budget. A server
+ * killed mid-bundle never writes the cache, so every retry and every later
+ * spec started cold again and the whole shard failed. Warming the cache here,
+ * with no per-test deadline, means each fixture starts from a finished bundle.
+ */
+export async function prebundleSharedWebShellDependencies(): Promise<void> {
+	const fixture = await startSharedWebShellFixture();
+	try {
+		// A fixture entry that imports `react-dom/client` directly, so its
+		// transformed source names an optimized dependency to wait on.
+		for (const entry of ['/e2e/fixtures/shared-web-shell-main.tsx']) {
+			const response = await fetch(`${fixture.origin}${entry}`, {
+				signal: AbortSignal.timeout(300_000),
+			});
+			const source = await response.text();
+			// Requesting any optimized dependency waits for the whole bundle.
+			const dependency = OPTIMIZED_DEPENDENCY_URL.exec(source)?.[1];
+			OPTIMIZED_DEPENDENCY_URL.lastIndex = 0;
+			if (dependency === undefined) continue;
+			await (
+				await fetch(`${fixture.origin}${dependency}`, {
+					signal: AbortSignal.timeout(300_000),
+				})
+			).arrayBuffer();
+		}
+	} finally {
+		await fixture.close();
+	}
+}
