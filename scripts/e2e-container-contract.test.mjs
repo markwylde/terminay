@@ -15,8 +15,9 @@ function job(workflow, name) {
 }
 
 test("local Electron E2E defaults to an isolated Linux container", async () => {
-  const [agents, dockerfile, dockerignore, packageJson, runner] = await Promise.all([
+  const [agents, dockerfile, e2eDockerfile, dockerignore, packageJson, runner] = await Promise.all([
     text("AGENTS.md"),
+    text("Dockerfile.e2e-base"),
     text("Dockerfile.e2e"),
     text(".dockerignore"),
     text("package.json"),
@@ -37,6 +38,13 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.match(dockerignore, /^\*\*\/\*\.tsbuildinfo$/mu);
   assert.doesNotMatch(dockerfile, /chown -R node:node \/workspace/u);
   assert.match(dockerfile, /USER node/u);
+  // The per-commit image adds only source and build output to the base.
+  assert.match(e2eDockerfile, /^ARG E2E_BASE_IMAGE\nFROM \$\{E2E_BASE_IMAGE\}$/mu);
+  assert.doesNotMatch(e2eDockerfile, /npm ci|apt-get|playwright install/u);
+  assert.doesNotMatch(e2eDockerfile, /chown -R node:node \/workspace/u);
+  assert.match(runner, /base_key=\$\(cd "\$repo_dir" && node scripts\/e2e-base-image-key\.mjs\)/u);
+  assert.match(runner, /--file "\$repo_dir\/Dockerfile\.e2e-base"/u);
+  assert.match(runner, /--build-arg "E2E_BASE_IMAGE=\$base_image"/u);
   assert.match(runner, /TERMINAY_E2E_PLATFORM:-\}/u);
   assert.match(runner, /arm64\|aarch64\) platform=linux\/arm64/u);
   assert.match(runner, /x86_64\|amd64\) platform=linux\/amd64/u);
@@ -52,7 +60,7 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
 
 test("busy torn-off window E2E waits for a non-shell process the container can run", async () => {
   const [dockerfile, spec, main] = await Promise.all([
-    text("Dockerfile.e2e"),
+    text("Dockerfile.e2e-base"),
     text("e2e/project-tabs.spec.ts"),
     text("electron/main.ts"),
   ]);
@@ -95,6 +103,19 @@ test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint",
   assert.match(giteaImage, /git\.i\.wylde\.net\/markwylde\/terminay-e2e:\$IMAGE_KEY/u);
   assert.match(giteaImage, /docker manifest inspect "\$IMAGE_TAG"/u);
   assert.match(giteaImage, /docker push "\$IMAGE_TAG"/u);
+  // The dependency base is keyed by its inputs, restored when published, and
+  // otherwise built and pushed before the per-commit image is built on it.
+  assert.match(giteaImage, /node scripts\/e2e-base-image-key\.mjs/u);
+  assert.match(giteaImage, /\/markwylde\/terminay-e2e-base:\$BASE_KEY/u);
+  assert.match(giteaImage, /docker manifest inspect "\$BASE_TAG"/u);
+  assert.match(giteaImage, /--file Dockerfile\.e2e-base/u);
+  assert.match(giteaImage, /docker push "\$BASE_TAG"/u);
+  assert.match(giteaImage, /--build-arg E2E_BASE_IMAGE="\$BASE_TAG"/u);
+  assert.ok(
+    giteaImage.indexOf("Build or restore the dependency base image") <
+      giteaImage.indexOf("Build or restore the content-addressed E2E image"),
+    "the base must be ready before the per-commit image is built",
+  );
   assert.doesNotMatch(giteaImage, /docker save|Upload shared E2E image|upload-artifact/u);
   assert.match(e2eJob, /docker login git\.i\.wylde\.net/u);
   assert.match(e2eJob, /docker pull "\$IMAGE_TAG"/u);
@@ -145,7 +166,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
  */
 test("the E2E image copies a manifest for every workspace", async () => {
   const { readdir } = await import("node:fs/promises");
-  const dockerfile = await text("Dockerfile.e2e");
+  const dockerfile = await text("Dockerfile.e2e-base");
   const packageJson = JSON.parse(await text("package.json"));
   const directories = [];
   for (const pattern of packageJson.workspaces) {
@@ -165,7 +186,7 @@ test("the E2E image copies a manifest for every workspace", async () => {
   const missing = directories.filter(
     (directory) => !dockerfile.includes(`COPY --chown=node:node ${directory}/package.json ${directory}/package.json`),
   );
-  assert.deepEqual(missing, [], `Dockerfile.e2e must copy each workspace manifest; missing: ${missing.join(", ")}`);
+  assert.deepEqual(missing, [], `Dockerfile.e2e-base must copy each workspace manifest; missing: ${missing.join(", ")}`);
 });
 
 /**
@@ -182,13 +203,15 @@ test("every CI job that builds or pulls images frees them when it ends", async (
   const lastStep = (block) => block.slice(block.lastIndexOf("\n      - name: "));
 
   assert.match(lastStep(job(ci, "mcp-cli-compatibility")), cleanup(""));
-  assert.match(lastStep(job(ci, "e2e-image")), cleanup(' "\\$IMAGE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-image")), cleanup(' "\\$IMAGE_TAG" "\\$BASE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-image")), /BASE_TAG: \$\{\{ steps\.image\.outputs\.base-tag \}\}/u);
   assert.match(lastStep(job(ci, "e2e-image")), /IMAGE_TAG: \$\{\{ steps\.image\.outputs\.tag \}\}/u);
-  assert.match(lastStep(job(ci, "e2e-test")), cleanup(' "\\$IMAGE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-test")), cleanup(' "\\$IMAGE_TAG" "\\$BASE_TAG"'));
+  assert.match(lastStep(job(ci, "e2e-test")), /BASE_TAG: \$\{\{ needs\.e2e-image\.outputs\.base-image \}\}/u);
   assert.match(lastStep(job(ci, "e2e-test")), /IMAGE_TAG: \$\{\{ needs\.e2e-image\.outputs\.image \}\}/u);
 });
 
-test("CI image cleanup keeps the newest and the named E2E image and never fails the job", async () => {
+test("CI image cleanup keeps the newest and the named E2E image and base, and never fails the job", async () => {
   const { mkdtemp, writeFile, chmod, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -198,10 +221,12 @@ test("CI image cleanup keeps the newest and the named E2E image and never fails 
   const bin = await mkdtemp(join(tmpdir(), "prune-ci-docker-"));
   const log = join(bin, "calls");
   const repository = "git.i.wylde.net/markwylde/terminay-e2e";
+  const baseRepository = `${repository}-base`;
   await writeFile(join(bin, "docker"), [
     "#!/bin/sh",
     `echo "$*" >> "${log}"`,
-    `if [ "$1 $2" = "image ls" ]; then printf '%s\\n' ${repository}:newest ${repository}:current ${repository}:old1 ${repository}:old2; fi`,
+    // The last argument names the repository being listed.
+    `if [ "$1 $2" = "image ls" ]; then for last; do :; done; printf '%s\\n' "$last:newest" "$last:current" "$last:old1" "$last:old2"; fi`,
     // Every mutating call fails, so the script must shrug off daemon errors.
     `case "$1 $2" in "image ls") ;; *) exit 1 ;; esac`,
   ].join("\n"));
@@ -209,7 +234,7 @@ test("CI image cleanup keeps the newest and the named E2E image and never fails 
 
   try {
     const script = fileURLToPath(new URL("scripts/prune-ci-docker-images.sh", root));
-    const result = spawnSync("sh", [script, `${repository}:current`], {
+    const result = spawnSync("sh", [script, `${repository}:current`, `${baseRepository}:current`], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
       encoding: "utf8",
     });
@@ -219,10 +244,51 @@ test("CI image cleanup keeps the newest and the named E2E image and never fails 
     assert.equal(calls[0], "container prune --force", "stopped containers must go first; they pin images");
     assert.deepEqual(
       calls.filter((call) => call.startsWith("image rm")),
-      [`image rm ${repository}:old1`, `image rm ${repository}:old2`],
+      [
+        `image rm ${repository}:old1`,
+        `image rm ${repository}:old2`,
+        `image rm ${baseRepository}:old1`,
+        `image rm ${baseRepository}:old2`,
+      ],
     );
     assert.equal(calls.at(-1), "image prune --force");
   } finally {
     await rm(bin, { recursive: true, force: true });
   }
+});
+
+test("the base image key covers every file the base Dockerfile copies", async () => {
+  const { e2eBaseImageInputs } = await import("./e2e-base-image-key.mjs");
+  const dockerfile = await text("Dockerfile.e2e-base");
+  const inputs = await e2eBaseImageInputs(new URL("Dockerfile.e2e-base", root).pathname);
+  const copied = [...dockerfile.matchAll(/^COPY\s+(?:--\S+\s+)*(.+)$/gmu)]
+    .flatMap((match) => match[1].trim().split(/\s+/u).slice(0, -1))
+    .map((source) => source.replace(/^\.\//u, ""));
+  assert.ok(copied.includes("package-lock.json"));
+  for (const source of copied) assert.ok(inputs.includes(source), `${source} is not in the base image key`);
+  assert.ok(inputs.some((input) => input.endsWith("Dockerfile.e2e-base")));
+  assert.match(dockerfile, /^LABEL net\.wylde\.ci\.retain=true$/mu);
+});
+
+test("the per-commit image ships a committed browser-fixture dependency cache", async () => {
+  const dockerfile = await text("Dockerfile.e2e");
+  const buildAt = dockerfile.indexOf("npm run build:app");
+  const prebundleAt = dockerfile.indexOf("RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs");
+  assert.ok(buildAt !== -1 && prebundleAt > buildAt, "the Vite dependency cache is built after the application");
+  const script = await text("scripts/prebundle-e2e-vite-deps.mjs");
+  assert.match(script, /prebundleSharedWebShellDependencies/u);
+});
+
+test("E2E shards split by test and report per-test timings without changing the result", async () => {
+  const [config, entrypoint, sandbox] = await Promise.all([
+    text("playwright.config.ts"),
+    text("scripts/support/e2e-container-entrypoint.sh"),
+    text("e2e/server-ui-sandbox.spec.ts"),
+  ]);
+  assert.match(config, /fullyParallel: true/u);
+  assert.match(config, /\['json', \{ outputFile: 'test-results\/e2e-timings\.json' \}\]/u);
+  assert.match(sandbox, /test\.describe\.configure\(\{ mode: 'default' \}\)/u);
+  assert.match(entrypoint, /xvfb-run --auto-servernum npx playwright test "\$@"\nstatus=\$\?/u);
+  assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);
+  assert.match(entrypoint, /exit "\$status"$/mu);
 });

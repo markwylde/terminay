@@ -12,6 +12,7 @@ export default defineConfig({
 			: [],
 	},
 	build: {
+		reportCompressedSize: false,
 		lib: {
 			entry: path.resolve(__dirname, 'electron/serverUiPreload.ts'),
 			formats: ['cjs'],

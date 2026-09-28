@@ -1,50 +1,12 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24.15.0-bookworm-slim
-
-ENV CI=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PLAYWRIGHT_WORKERS=1
-
-WORKDIR /workspace
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends build-essential ca-certificates git python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install --global npm@12.0.2
-
-COPY --chown=node:node package.json package-lock.json ./
-COPY --chown=node:node apps/terminay-cli/package.json apps/terminay-cli/package.json
-COPY --chown=node:node apps/terminay-desktop/package.json apps/terminay-desktop/package.json
-COPY --chown=node:node apps/terminay-server/package.json apps/terminay-server/package.json
-COPY --chown=node:node apps/terminay-web/package.json apps/terminay-web/package.json
-COPY --chown=node:node extensions/builtin-agents/package.json extensions/builtin-agents/package.json
-COPY --chown=node:node extensions/language-typescript/package.json extensions/language-typescript/package.json
-COPY --chown=node:node extensions/gitea/package.json extensions/gitea/package.json
-COPY --chown=node:node packages/client-core/package.json packages/client-core/package.json
-COPY --chown=node:node packages/cron/package.json packages/cron/package.json
-COPY --chown=node:node packages/extension-api/package.json packages/extension-api/package.json
-COPY --chown=node:node packages/protocol-conformance/package.json packages/protocol-conformance/package.json
-COPY --chown=node:node packages/protocol/package.json packages/protocol/package.json
-COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-ui/package.json
-COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json
-COPY --chown=node:node packages/ui-bundle/package.json packages/ui-bundle/package.json
-COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
-
-RUN mkdir -p /ms-playwright \
-    && chown node:node /workspace /ms-playwright
-
-USER node
-RUN npm ci \
-    && node node_modules/electron/install.js \
-    && npx playwright install chromium
+# Per-commit Electron E2E image. Dependencies come from the lockfile-keyed base
+# (Dockerfile.e2e-base); this image adds only the source, its build and the
+# browser-shell fixture's Vite dependency cache, so runners that already hold
+# the base download only these layers.
+ARG E2E_BASE_IMAGE
+FROM ${E2E_BASE_IMAGE}
 
 USER root
-RUN npx playwright install-deps chromium
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --chown=node:node . .
 
 USER node
@@ -57,5 +19,9 @@ RUN --mount=type=secret,id=turbo_token,required=false,uid=1000,gid=1000,mode=040
       export TURBO_TEAM; \
     fi; \
     npm run build:app
+
+# Commit the browser-shell fixture's Vite dependency bundle into the image so
+# no shard starts a fixture against a cold cache.
+RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs
 
 ENTRYPOINT ["sh", "scripts/support/e2e-container-entrypoint.sh"]
