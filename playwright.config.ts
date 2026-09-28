@@ -9,9 +9,20 @@ export default defineConfig({
   expect: {
     timeout: 5_000,
   },
-  fullyParallel: false,
+  // Shard by test, not by file, so the ten CI shards carry near-equal work. A
+  // spec whose tests share one app from beforeAll declares itself one group
+  // with test.describe.configure({ mode: 'default' }).
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
+  // The JSON report keeps every test's duration with the shard's artifacts;
+  // the container entrypoint prints the slowest ones into the job log.
+  reporter: process.env.CI
+    ? [
+        ['github'],
+        ['html', { open: 'never' }],
+        ['json', { outputFile: 'test-results/e2e-timings.json' }],
+      ]
+    : 'list',
   // CI Electron/Xvfb shards occasionally lose a single timing-sensitive
   // assertion. Retry only that test (not the shard) so a flake can recover
   // without hiding a local failure.
