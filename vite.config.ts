@@ -54,6 +54,8 @@ export default defineConfig({
 		strictPort: true,
 	},
   build: {
+    // Nothing reads the gzip size report; computing it costs seconds per build.
+    reportCompressedSize: false,
     // The desktop bootstrap must execute before any dependency graph work.
     // Vite's preload helper otherwise gates the dynamic renderer import on
     // stylesheet/module preload events in Electron.

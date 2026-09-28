@@ -39,11 +39,23 @@ if [ "$preloaded_image" = 1 ]; then
     exit 69
   fi
 else
-  build_image() {
-    docker build \
+  # The dependency base is keyed by its inputs, so it rebuilds only when
+  # dependencies change; the per-commit image is built on top of it.
+  base_key=$(cd "$repo_dir" && node scripts/e2e-base-image-key.mjs)
+  base_image=terminay-e2e-base:${base_key}-${platform#linux/}
+  if ! docker image inspect "$base_image" >/dev/null 2>&1; then
+    DOCKER_BUILDKIT=1 docker build \
       --pull \
       --platform "$platform" \
+      --file "$repo_dir/Dockerfile.e2e-base" \
+      --tag "$base_image" \
+      "$repo_dir"
+  fi
+  build_image() {
+    docker build \
+      --platform "$platform" \
       --file "$repo_dir/Dockerfile.e2e" \
+      --build-arg "E2E_BASE_IMAGE=$base_image" \
       --tag "$image" \
       "$@" \
       "$repo_dir"
