@@ -29,4 +29,4 @@
 - [x] 6.1 Run `npm run typecheck`, `npm run lint` and the smoke/unit scripts. Verify: all pass.
 - [x] 6.2 Run the affected e2e suites through `npm run test:e2e` (project-tabs, project-sidebar-layout, workspace-sidebar-resize, electron-connection-manager, keyboard-shortcuts). Verify: all pass, with any geometry assertions updated for the status bar height.
 - [x] 6.3 Launch the Desktop app and check the bar visually against the chosen concept (06 Tinted + focus). Verify: screenshots of exposed/not exposed/connected states and of a split layout.
-- [ ] 6.4 Run `openspec validate --all`. Verify: it passes.
+- [x] 6.4 Run `openspec validate --all`. Verify: it passes.

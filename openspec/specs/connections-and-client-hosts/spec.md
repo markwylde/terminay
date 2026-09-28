@@ -28,17 +28,22 @@ A **server connection** SHALL be an authenticated relationship with one stable T
 
 ### Requirement: Header server control presentation
 
-The header SHALL display a connections control naming the active tab's server label rather than the transport. Left of the label, an exposure control icon SHALL use the same colour as the label, showing a stop icon while that server is exposed and a play icon while it is not. Right of the label, a blue pill SHALL show the number of active remote connections on that server, and SHALL show nothing when that count is zero. The header SHALL report that server's profile label and status, including Local failure or offline state, and SHALL never show a transport name or the opaque session-id hostname. Browser sessions SHALL use the saved connection title, falling back to the pairing `hostName`.
+The header SHALL display a connections control naming the active tab's server label rather than the transport, followed by a chevron that opens the connection menu. The control SHALL NOT carry an exposure icon or a connection-count pill; exposure state and active connections are shown by the workspace status bar and started or stopped from the connection menu. The control's accessible name SHALL still state whether that server is exposed and how many remote connections are active. The header SHALL report that server's profile label and status, including Local failure or offline state, and SHALL never show a transport name or the opaque session-id hostname. Browser sessions SHALL use the saved connection title, falling back to the pairing `hostName`.
 
 #### Scenario: Exposure icon reflects state
 
 - **WHEN** the active tab's server is exposed
-- **THEN** the control left of the label is a stop icon in the label colour
+- **THEN** the header control shows the server label and chevron with no exposure icon, and the workspace status bar dot reflects the exposure state
 
 #### Scenario: Connection pill hidden at zero
 
-- **WHEN** there are no active remote connections on the active tab's server
-- **THEN** no count pill is shown
+- **WHEN** the active tab's server has any number of active remote connections, including zero
+- **THEN** the header control shows no count pill, and the workspace status bar carries the connection count
+
+#### Scenario: Accessible name carries the state
+
+- **WHEN** the active tab's server is not exposed
+- **THEN** the header control's accessible name states that it is offline
 
 #### Scenario: Label never shows the session hostname
 
