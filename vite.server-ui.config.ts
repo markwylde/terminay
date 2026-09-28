@@ -64,7 +64,8 @@ export default defineConfig({
 	],
 	build: {
 		outDir: 'dist-web',
-		reportCompressedSize: !watching,
+		// Nothing reads the gzip size report; computing it costs seconds per build.
+		reportCompressedSize: false,
 		// Production empties leftover hashed chunks. Watch keeps the last complete
 		// inventory on disk so Electron can finish verifying while a rebuild writes
 		// new hashes; the manifest still lists only this emission.

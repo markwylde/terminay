@@ -163,6 +163,7 @@ jobs:
     outputs:
       image: ${{ steps.image.outputs.tag }}
       image-key: ${{ steps.image.outputs.key }}
+      base-image: ${{ steps.image.outputs.base-tag }}
 
     steps:
       - name: Check out code
@@ -188,16 +189,44 @@ jobs:
           IMAGE_KEY="$(node scripts/e2e-image-cache-key.mjs)"
           echo "key=$IMAGE_KEY" >> "$GITHUB_OUTPUT"
           echo "tag=git.i.wylde.net/markwylde/terminay-e2e:$IMAGE_KEY" >> "$GITHUB_OUTPUT"
+          BASE_KEY="$(node scripts/e2e-base-image-key.mjs)"
+          echo "base-tag=git.i.wylde.net/markwylde/terminay-e2e-base:$BASE_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate internal container registry
         env:
           REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
         run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
 
+      # The dependency base is keyed by exactly its inputs, so it is rebuilt
+      # only when dependencies change and its layers stay identical, and
+      # cached on runners, across commits.
+      - name: Build or restore the dependency base image
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
+        run: |
+          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
+            echo "The E2E image already exists; its base is not needed."
+            exit 0
+          fi
+          if docker manifest inspect "$BASE_TAG" >/dev/null; then
+            docker pull "$BASE_TAG"
+            echo "Restored $BASE_TAG from the internal registry."
+            exit 0
+          fi
+          DOCKER_BUILDKIT=1 docker build \
+            --pull \
+            --platform linux/amd64 \
+            --file Dockerfile.e2e-base \
+            --tag "$BASE_TAG" \
+            .
+          docker push "$BASE_TAG"
+
       - name: Build or restore the content-addressed E2E image
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
           IMAGE_KEY: ${{ steps.image.outputs.key }}
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
@@ -207,9 +236,9 @@ jobs:
             exit 0
           fi
           DOCKER_BUILDKIT=1 docker build \
-            --pull \
             --platform linux/amd64 \
             --file Dockerfile.e2e \
+            --build-arg E2E_BASE_IMAGE="$BASE_TAG" \
             --build-arg TURBO_TEAM="$TURBO_TEAM" \
             --secret id=turbo_token,env=TURBO_TOKEN \
             --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
@@ -222,7 +251,8 @@ jobs:
         if: ${{ always() }}
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
-        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG"
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
+        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG" "$BASE_TAG"
 
   e2e-test:
     name: E2E (${{ matrix.shard }}/10)
@@ -288,4 +318,5 @@ jobs:
         if: ${{ always() }}
         env:
           IMAGE_TAG: ${{ needs.e2e-image.outputs.image }}
-        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG"
+          BASE_TAG: ${{ needs.e2e-image.outputs.base-image }}
+        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG" "$BASE_TAG"

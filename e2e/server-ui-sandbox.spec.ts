@@ -33,6 +33,10 @@ function hostContext(sourceId: string, windowId: string, profileId: string, serv
 	return { schemaVersion: 1, bootstrapVersion: 1, sourceId, windowId, serverId, profileId, bundleId, applicationProtocolVersion: '1', hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1, capabilities };
 }
 
+// These tests share one Electron app and hostile servers from beforeAll, so
+// they stay in one shard and run in order.
+test.describe.configure({ mode: 'default' });
+
 let app: ElectronApplication;
 let hostileServer: Server;
 let hostileOrigin = '';
