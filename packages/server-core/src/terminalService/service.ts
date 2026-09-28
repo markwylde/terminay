@@ -1023,6 +1023,28 @@ export class TerminalService {
 		);
 	}
 
+	/**
+	 * Whether the foreground program has enabled bracketed paste. Unknown state
+	 * reads as off: plain input works everywhere, while markers a program never
+	 * asked for arrive as literal text.
+	 */
+	async bracketedPasteMode(
+		session: string | TerminalIdentity,
+		authorization?: TerminalAuthorization,
+	): Promise<boolean> {
+		const mutable = this.requireSession(session);
+		this.authorize(mutable, authorization, 'read');
+		if (this.presentationCheckpoints === undefined) return false;
+		await this.settlePresentation(mutable.identity);
+		try {
+			return await this.presentationCheckpoints.bracketedPasteMode(
+				mutable.identity,
+			);
+		} catch {
+			return false;
+		}
+	}
+
 	async input(
 		session: string | TerminalIdentity,
 		data: Uint8Array | string,
