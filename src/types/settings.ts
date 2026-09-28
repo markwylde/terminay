@@ -193,6 +193,8 @@ export type TerminalSettings = {
 	rightClickSelectsWord: boolean;
 	screenReaderMode: boolean;
 	scrollback: number;
+	/** Device setting: whether the workspace status bar is shown. */
+	showStatusBar: boolean;
 	scrollOnEraseInDisplay: boolean;
 	scrollOnUserInput: boolean;
 	scrollSensitivity: number;

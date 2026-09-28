@@ -62,6 +62,10 @@ import {
 	setTouchTextSelectionEnabled,
 	subscribeTouchTextSelectionEnabled,
 } from '../shared/touchTextSelectionPreference';
+import {
+	currentStatusBarVisibility,
+	subscribeStatusBarVisibility,
+} from '../shared/statusBarVisibility';
 import { isProjectEditCommitted } from './projectEditSettlement';
 import { canLeaveManagerSession } from './sessionTransportHost';
 
@@ -595,6 +599,10 @@ function ConnectedBrowserMenuBar({
 		() => subscribeTouchTextSelectionEnabled(setTouchTextSelection),
 		[],
 	);
+	const [statusBarVisible, setStatusBarVisible] = useState(
+		currentStatusBarVisibility,
+	);
+	useEffect(() => subscribeStatusBarVisibility(setStatusBarVisible), []);
 
 	const dispatchShortcut = useCallback(
 		(key: string, options: KeyboardEventInit = {}) => {
@@ -724,6 +732,12 @@ function ConnectedBrowserMenuBar({
 					onSelect: () => dispatchShortcut('0'),
 				},
 				{
+					id: 'toggle-status-bar',
+					label: 'Show Status Bar',
+					checked: statusBarVisible,
+					onSelect: () => dispatchCommand('toggle-status-bar'),
+				},
+				{
 					id: 'open-command-bar',
 					label: 'Open Command Bar',
 					startsGroup: true,
@@ -757,6 +771,7 @@ function ConnectedBrowserMenuBar({
 			dispatchShortcut,
 			onBack,
 			onOpenAuxiliaryRoute,
+			statusBarVisible,
 			touchTextSelection,
 		],
 	);

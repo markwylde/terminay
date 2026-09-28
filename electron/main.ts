@@ -3620,6 +3620,15 @@ function createAppMenu(
 					accelerator: getMenuShortcut(settings, 'show-dashboard'),
 					click: () => sendCommandToFocusedWindow('show-dashboard'),
 				},
+				{
+					// The renderer owns the setting; toggling it writes the device
+					// settings, which rebuilds this menu with the new checked state.
+					label: 'Show Status Bar',
+					type: 'checkbox',
+					checked: settings.showStatusBar,
+					accelerator: getMenuShortcut(settings, 'toggle-status-bar'),
+					click: () => sendCommandToFocusedWindow('toggle-status-bar'),
+				},
 				{ type: 'separator' },
 				{
 					label: 'Edit Active Project…',

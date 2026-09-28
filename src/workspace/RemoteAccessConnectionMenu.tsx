@@ -1,4 +1,4 @@
-import { ChevronDown, Play, Settings2, Square } from 'lucide-react';
+import { ChevronDown, Settings2 } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
@@ -65,24 +65,11 @@ export function RemoteAccessConnectionMenu(props: {
 				aria-haspopup="menu"
 				aria-expanded={props.isOpen}
 			>
-				<span className="remote-access-button__exposure" aria-hidden="true">
-					{isExposed ? (
-						<Square size={10} fill="currentColor" strokeWidth={2} />
-					) : (
-						<Play size={11} fill="currentColor" strokeWidth={2} />
-					)}
-				</span>
+				{/* Exposure state and the connection count live in the workspace
+				    status bar; the header only names the server. */}
 				<span className="remote-access-button__label">
 					{props.currentServerLabel}
 				</span>
-				{connectionCount > 0 ? (
-					<span
-						className="remote-access-button__connections"
-						aria-hidden="true"
-					>
-						{connectionCount}
-					</span>
-				) : null}
 				{status?.configurationIssue || status?.errorMessage ? (
 					<span
 						className="remote-access-button__badge remote-access-button__badge--warning"

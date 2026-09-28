@@ -413,6 +413,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	allowTransparency: false,
 	altClickMovesCursor: true,
+	showStatusBar: true,
 	activityIndicators: {
 		amberDelaySeconds: 0,
 		greenDelaySeconds: 1,
@@ -2499,6 +2500,10 @@ export function normalizeTerminalSettings(
 			typeof input.altClickMovesCursor === 'boolean'
 				? input.altClickMovesCursor
 				: defaultTerminalSettings.altClickMovesCursor,
+		showStatusBar:
+			typeof input.showStatusBar === 'boolean'
+				? input.showStatusBar
+				: defaultTerminalSettings.showStatusBar,
 		activityIndicators: {
 			amberDelaySeconds: clampNumber(
 				Number(activityIndicatorsInput.amberDelaySeconds),
