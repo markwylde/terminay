@@ -169,10 +169,11 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
     terminal: "sibling",
     command_id: "run",
     from: 18,
-    submitted_bytes: Buffer.byteLength("\u001b[200~printf ok\u001b[201~\r", "utf8"),
+    submitted_bytes: Buffer.byteLength("printf ok\r", "utf8"),
     submitted: true,
+    bracketed: false,
   });
-  assert.match(new TextDecoder().decode(pty.processes[1].writes[1]), /printf ok/);
+  assert.equal(new TextDecoder().decode(pty.processes[1].writes[1]), "printf ok\r");
   const status = await request("status", "get_terminal_status", { terminal: "sibling" });
   assert.equal(status.status, "running");
   assert.equal(status.output_position, 18);
@@ -752,4 +753,37 @@ test("server terminal adapter waits on canonical activity transitions with bound
     }),
     { terminal: "caller", attention: false, timedOut: true },
   );
+});
+
+test("run_command frames with bracketed paste only when the program enabled it", async () => {
+  const pty = createPtyFactory();
+  const ids = ["caller", "shell"];
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    generateSessionId: () => ids.shift(),
+    presentationCheckpoints: new TerminalPresentationCheckpointAuthority(),
+  });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  const adapter = createServerTerminalControlAdapter({
+    terminal,
+    launchResolver: createLaunchResolver(),
+  });
+  const dispatch = createTerminalControlAdapter({ adapter });
+  const run = (id, command) =>
+    dispatch({ id, version: 1, op: "run_command", params: { terminal: "shell", command } }, { ...context(), requestId: id });
+  const shell = pty.processes[1];
+
+  const plain = await run("plain", "X=1 sh -c 'echo $X'\necho two");
+  assert.equal(plain.bracketed, false);
+  assert.equal(new TextDecoder().decode(shell.writes[0]), "X=1 sh -c 'echo $X'\recho two\r");
+
+  shell.emitData("\u001b[?2004h$ ");
+  const framed = await run("framed", "echo one\necho two");
+  assert.equal(framed.bracketed, true);
+  assert.equal(framed.from, 10);
+  assert.equal(new TextDecoder().decode(shell.writes[1]), "\u001b[200~echo one\necho two\u001b[201~\r");
+  assert.equal(framed.submitted_bytes, Buffer.byteLength("\u001b[200~echo one\necho two\u001b[201~\r", "utf8"));
+  await terminal.stop?.();
 });

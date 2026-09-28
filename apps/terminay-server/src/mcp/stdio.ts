@@ -349,7 +349,7 @@ function registerTools(
 		'run_command',
 		{
 			description:
-				'Submit one bounded command. The result reports terminal, command_id, from, and submitted_bytes; from is the raw output cursor captured immediately before submission and submitted_bytes measures all UTF-8 bytes written to the PTY, including bracketed-paste framing and the submission carriage return, never output bytes. Typical workflow: run_command, optionally wait_for_command when get_mcp_capabilities says it is available, then read_terminal with format=raw and after=from. command_id identifies this MCP submission only; wait_for_command reports the next observed completion and does not attribute it to command_id.',
+				'Submit one bounded command as if pasted and followed by Enter. The command is wrapped in bracketed-paste markers only when the foreground program has enabled bracketed paste (DECSET 2004); otherwise it is sent as a plain paste, so each line break submits a line. The result reports terminal, command_id, from, submitted_bytes, and bracketed; from is the raw output cursor captured immediately before submission, submitted_bytes measures all UTF-8 bytes written to the PTY, including any bracketed-paste framing and the submission carriage return, never output bytes, and bracketed reports whether the markers were used. Typical workflow: run_command, optionally wait_for_command when get_mcp_capabilities says it is available, then read_terminal with format=raw and after=from. command_id identifies this MCP submission only; wait_for_command reports the next observed completion and does not attribute it to command_id.',
 			inputSchema: { terminal, command: text },
 		},
 		async (params, extra) => call('run_command', params, extra.signal),
