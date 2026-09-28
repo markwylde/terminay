@@ -272,8 +272,13 @@ export function useFocusedTerminalStatus({
 			setLayoutState(null);
 			return;
 		}
-		const next = readLayout(api, sessionId);
-		setLayoutState(next === null ? null : { sessionId, ...next });
+		const read = readLayout(api, sessionId);
+		const next = read === null ? null : { sessionId, ...read };
+		// Dockview reports layout changes for every sash drag and resize; only
+		// re-render the workspace when what the bar shows actually changed.
+		setLayoutState((current) =>
+			JSON.stringify(current) === JSON.stringify(next) ? current : next,
+		);
 	}, [apiRef]);
 
 	const refreshCwd = useCallback(() => {
