@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -20,22 +20,6 @@ function run(command, args, { cwd = new URL('.', repositoryRoot).pathname } = {}
     child.once('error', reject)
     child.once('close', (code) => {
       if (code === 0) resolve({ stdout, stderr })
-      else reject(new Error(`${command} ${args.join(' ')} exited ${code}: ${stderr}`))
-    })
-  })
-}
-
-function runBytes(command, args, { cwd = new URL('.', repositoryRoot).pathname } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
-    const stdout = []
-    let stderr = ''
-    child.stdout.on('data', (chunk) => { stdout.push(chunk) })
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk) => { stderr += chunk })
-    child.once('error', reject)
-    child.once('close', (code) => {
-      if (code === 0) resolve(Buffer.concat(stdout))
       else reject(new Error(`${command} ${args.join(' ')} exited ${code}: ${stderr}`))
     })
   })
@@ -83,6 +67,14 @@ test('standalone release archive contains only safe regular package entries and 
     assert.equal(integrity.version, packageJson.version, 'integrity descriptor version must match the packed package')
     assert.ok(Array.isArray(integrity.files) && integrity.files.length > 0, 'integrity descriptor must declare payload files')
 
+    // Extract once and read each payload from disk. Extracting one member per
+    // descriptor re-decompressed the whole archive every time, which took three
+    // minutes for a few hundred payloads. The listing above has already rejected
+    // links, devices and unsafe paths, so the extracted tree holds only the
+    // regular files it names.
+    const extracted = join(root, 'extracted')
+    await mkdir(extracted)
+    await run('tar', ['-xzf', archive, '-C', extracted])
     for (const descriptor of integrity.files) {
       assert.equal(typeof descriptor.path, 'string')
       assert.match(descriptor.path, /^(?!.*(?:^|\/)\.\.(?:\/|$))[@A-Za-z0-9._/-]+$/u)
@@ -90,7 +82,7 @@ test('standalone release archive contains only safe regular package entries and 
       assert.match(descriptor.sha256, /^[a-f0-9]{64}$/u)
       const packedPath = `package/dist/${descriptor.path}`
       assert.ok(paths.includes(packedPath), `integrity descriptor must reference a packed payload: ${packedPath}`)
-      const bytes = await runBytes('tar', ['-xOzf', archive, packedPath])
+      const bytes = await readFile(join(extracted, packedPath))
       assert.equal(bytes.byteLength, descriptor.size, `integrity size must bind ${packedPath}`)
       assert.equal(sha256(bytes), descriptor.sha256, `integrity hash must bind ${packedPath}`)
     }

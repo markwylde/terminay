@@ -27,3 +27,7 @@
 - [x] 6.1 Update the contract tests that read `Dockerfile.e2e`, the entrypoint and the CI workflow (`scripts/e2e-container-contract.test.mjs`, `scripts/provider-portable-ci.test.mjs`). Verify: `npm run smoke`'s node test lists pass.
 - [ ] 6.2 Push, and measure two consecutive CI runs (the first builds the base, the second reuses it). Verify: per-shard pull, setup and test times read from the Gitea API. The target is every shard under 5 minutes on the second run.
 - [x] 6.3 Run `openspec validate --all`. Verify: it passes.
+
+## 7. Fast gate
+
+- [x] 7.1 `scripts/task20-standalone-release-archive.test.mjs` extracted the packed archive once per integrity descriptor, taking 183s of the 474s "Build, lint, and unit tests" step on run 16031. Extract once and read the payloads from disk. Verify: the test takes under 5s locally (measured 3.8s), and the CI step shortens by about three minutes.
