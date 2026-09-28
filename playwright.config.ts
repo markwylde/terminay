@@ -2,6 +2,9 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  // Warms Vite's dependency cache for the browser-shell fixtures; see
+  // prebundleSharedWebShellDependencies.
+  globalSetup: './e2e/support/global-setup.ts',
   timeout: 30_000,
   expect: {
     timeout: 5_000,
