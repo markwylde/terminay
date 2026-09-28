@@ -397,45 +397,16 @@
   cursor: progress;
 }
 
-.remote-access-button--active,
-.remote-access-status--active .remote-access-button {
-  color: #bfe7ff;
-  background: rgba(77, 181, 255, 0.15);
-}
-
+/* Exposure is shown by the workspace status bar, so the header control stays
+   neutral while exposed and only a warning tints it. */
 .remote-access-button--warning {
   color: #ffe7a6;
   background: rgba(255, 231, 166, 0.12);
 }
 
-.remote-access-button__exposure {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
 .remote-access-button__label {
   line-height: 1;
   margin-right: auto;
-}
-
-.remote-access-button__connections {
-  min-width: 16px;
-  height: 15px;
-  padding: 0 5px;
-  border-radius: 999px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  background: #72d5ff;
-  box-shadow: 0 0 0 3px rgba(87, 183, 255, 0.14);
-  color: #101318;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
 }
 
 .remote-access-button__badge {
@@ -2846,6 +2817,261 @@ body.project-tabbar-reordering .project-tabbar {
   min-width: 0;
   flex: 1;
   position: relative;
+}
+
+/* Workspace status bar: the focused terminal on the left, remote access on
+   the right, tinted with the active project's colour. */
+.workspace-status-bar {
+  --status-bar-height: 26px;
+  --status-bar-segment: color-mix(in srgb, var(--project-color, #4db5ff) 62%, var(--tab-bg-active));
+  flex: 0 0 var(--status-bar-height);
+  height: var(--status-bar-height);
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--project-chrome) 72%, #000);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 11.5px;
+  line-height: 1;
+  user-select: none;
+  position: relative;
+  z-index: 2;
+}
+
+.workspace-status-bar__focused {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.workspace-status-bar__tab {
+  flex: none;
+  position: relative;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 0 10px;
+  margin-right: 8px;
+  background: var(--status-bar-segment);
+  font-weight: 600;
+  color: #fff;
+  max-width: 260px;
+}
+
+.workspace-status-bar__tab::after {
+  content: '';
+  position: absolute;
+  right: -9px;
+  top: 0;
+  border-left: 9px solid var(--status-bar-segment);
+  border-top: calc(var(--status-bar-height) / 2) solid transparent;
+  border-bottom: calc(var(--status-bar-height) / 2) solid transparent;
+}
+
+.workspace-status-bar__tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__layout {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+.workspace-status-bar__layout i {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  background-color: rgba(0, 0, 0, 0.28);
+  transition: background-color 160ms ease;
+}
+
+.workspace-status-bar__layout i.is-focused {
+  background-color: #fff;
+}
+
+.workspace-status-bar__path {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.95;
+}
+
+.workspace-status-bar__path > svg {
+  flex: none;
+  opacity: 0.75;
+}
+
+.workspace-status-bar__crumbs {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-status-bar__crumb {
+  padding: 2px 3px;
+  opacity: 0.72;
+}
+
+.workspace-status-bar__crumb.is-last {
+  opacity: 1;
+  color: #fff;
+  font-weight: 600;
+}
+
+.workspace-status-bar__crumb.is-new,
+.workspace-status-bar__branch {
+  animation: workspace-status-bar-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.workspace-status-bar__sep {
+  opacity: 0.4;
+}
+
+@keyframes workspace-status-bar-in {
+  from {
+    transform: translateY(70%);
+    opacity: 0;
+  }
+}
+
+.workspace-status-bar__branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25);
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__branch > svg {
+  flex: none;
+}
+
+.workspace-status-bar__branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-status-bar__git-count {
+  flex: none;
+}
+
+.workspace-status-bar__git-count--dirty {
+  color: #f3cf5f;
+}
+
+.workspace-status-bar__git-count--ahead {
+  color: #a8ccff;
+}
+
+.workspace-status-bar__remote {
+  all: unset;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__remote:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.workspace-status-bar__remote:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: -2px;
+}
+
+.workspace-status-bar__remote-label {
+  opacity: 0.8;
+}
+
+.workspace-status-bar__devices {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #9fcbff;
+}
+
+.workspace-status-bar__dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.workspace-status-bar__remote--offline .workspace-status-bar__dot {
+  background: #ef5b5b;
+}
+
+.workspace-status-bar__remote--connected .workspace-status-bar__dot {
+  background: #4a9dff;
+  box-shadow: 0 0 0 3px rgba(74, 157, 255, 0.22);
+}
+
+.workspace-status-bar__remote--connected .workspace-status-bar__dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid #4a9dff;
+  animation: workspace-status-bar-ring 2.2s ease-out infinite;
+}
+
+@keyframes workspace-status-bar-ring {
+  from {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-status-bar__crumb.is-new,
+  .workspace-status-bar__branch,
+  .workspace-status-bar__remote--connected .workspace-status-bar__dot::after {
+    animation: none;
+  }
 }
 
 .workspace-empty-state {

@@ -136,6 +136,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'toggle file explorer sidebar show hide project',
   },
   {
+    command: 'toggle-status-bar',
+    title: 'Show status bar',
+    description: 'Show or hide the status bar along the bottom of the window.',
+    keywords: 'toggle show hide status bar footer working directory branch devices connections view',
+  },
+  {
     command: 'set-project-root-folder-to-working-directory',
     title: 'Set project root folder to working directory',
     description: 'Use the active terminal working directory as this project root folder.',
@@ -164,6 +170,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'edit-active-project': '',
   'start-dictation': 'CmdOrCtrl+Shift+D',
   'toggle-file-explorer-sidebar': 'CmdOrCtrl+O',
+  'toggle-status-bar': '',
   'set-project-root-folder-to-working-directory': 'CmdOrCtrl+R',
 }
 
