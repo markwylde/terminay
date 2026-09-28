@@ -140,7 +140,7 @@ The pinned host key SHALL be part of the device credential, not a profile label 
 
 ### Requirement: Exposure is explicit and administrator-controlled
 
-Servers SHALL NOT be remotely reachable until an administrator enables exposure, either through **Expose this server…** on a client host or through the standalone server's explicit `--expose` configuration, which counts as the administrator's standing decision for that data root. Exposure SHALL connect the server to an authenticated WebRTC signaling endpoint before advertising a pairing URL, apply the explicit approval policy, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, and live connections, and allow the administrator to generate another pairing URL, revoke a device, or stop exposure. Hosted pairing links SHALL take the form `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`, where the session subdomain remains the WebRTC peer and `hostName` is a non-secret default label from the exposing machine. Direct pairing links SHALL take the form `https://<direct-origin>/v1/?hostName=<optional>#<secret>`, where the direct origin is the server's own signaling listener.
+Servers SHALL NOT be remotely reachable until an administrator enables exposure, either through **Expose this server…** on a client host, through the embedded server's **Automatically expose server on startup** setting, or through the standalone server's explicit `--expose` configuration. The setting and `--expose` each count as the administrator's standing decision for that data root. The setting SHALL default to off. Exposure SHALL connect the server to an authenticated WebRTC signaling endpoint before advertising a pairing URL, apply the explicit approval policy, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, and live connections, and allow the administrator to generate another pairing URL, revoke a device, or stop exposure. Hosted pairing links SHALL take the form `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`, where the session subdomain remains the WebRTC peer and `hostName` is a non-secret default label from the exposing machine. Direct pairing links SHALL take the form `https://<direct-origin>/v1/?hostName=<optional>#<secret>`, where the direct origin is the server's own signaling listener.
 
 #### Scenario: Server is unreachable before exposure
 
@@ -151,6 +151,18 @@ Servers SHALL NOT be remotely reachable until an administrator enables exposure,
 
 - **WHEN** a standalone server starts with `--expose` naming one or more modes
 - **THEN** it registers each mode's pairing room and reconnect host before readiness reports a pairing URL
+
+#### Scenario: Desktop exposure at startup
+
+- **WHEN** Terminay Desktop starts with **Automatically expose server on startup** enabled
+- **THEN** after the workspace window is shown, the embedded server is exposed exactly as if the administrator had selected **Expose this server…**
+- **AND** a failure to expose is reported through remote-access status and does not block startup
+- **AND** the administrator can stop exposure from the connections menu for that session without changing the setting
+
+#### Scenario: Desktop startup with the setting off
+
+- **WHEN** Terminay Desktop starts with **Automatically expose server on startup** off, which is the default
+- **THEN** the embedded server is not exposed until the administrator selects **Expose this server…**
 
 #### Scenario: Host registers before pairing is advertised
 

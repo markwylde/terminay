@@ -469,6 +469,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		sensitiveInputPolicy: 'drop',
 	},
 	remoteAccess: {
+		exposeOnStartup: false,
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
@@ -1059,6 +1060,23 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		description:
 			'Configure WebRTC signaling for this server. Pairing is approved on this computer with a match code.',
 		fields: [
+			makeField({
+				key: 'remoteAccess.exposeOnStartup',
+				label: 'Automatically expose server on startup',
+				description:
+					'Expose this server for remote access when Terminay starts, without selecting Expose this server. You can still stop exposure from the connections menu.',
+				sectionId: 'remote-access-host',
+				categoryId: 'remote',
+				input: 'boolean',
+				keywords: [
+					'remote',
+					'expose',
+					'startup',
+					'launch',
+					'automatic',
+					'webrtc',
+				],
+			}),
 			makeField({
 				key: 'remoteAccess.webRtcHostedDomain',
 				label: 'WebRTC hosted domain',
@@ -2750,6 +2768,10 @@ export function normalizeTerminalSettings(
 					: defaultTerminalSettings.recording.sensitiveInputPolicy,
 		},
 		remoteAccess: {
+			exposeOnStartup:
+				typeof remoteAccessInput.exposeOnStartup === 'boolean'
+					? remoteAccessInput.exposeOnStartup
+					: defaultTerminalSettings.remoteAccess.exposeOnStartup,
 			webRtcHostedDomain:
 				typeof remoteAccessInput.webRtcHostedDomain === 'string' &&
 				remoteAccessInput.webRtcHostedDomain.trim().length > 0
