@@ -191,6 +191,7 @@ import {
 	createEphemeralTestProtectedValueCodec,
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
+import { exposeOnStartup } from './remote/exposeOnStartup';
 import { hostedPairingDiagnosticEvent } from './remote/hostedPairingDiagnostics';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
 import { buildServerUiArchive } from './remote/serverUiArchive';
@@ -5702,6 +5703,13 @@ async function completeDesktopStartup(): Promise<void> {
 	stopStartupPhasePainting();
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
 	desktopStartupTimeline.end('ui-handoff');
+	// Hosted signaling is a network round-trip, so it never delays the window.
+	void exposeOnStartup(
+		readEmbeddedRemoteAccessSettings().exposeOnStartup,
+		desktopRemoteExposure,
+	).catch((error: unknown) => {
+		console.error('[main] Automatic remote exposure failed', error);
+	});
 }
 
 async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
