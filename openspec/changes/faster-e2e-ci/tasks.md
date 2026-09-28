@@ -3,7 +3,7 @@
 - [x] 1.1 Create `Dockerfile.e2e-base` from the dependency half of `Dockerfile.e2e`, and make `Dockerfile.e2e` build `FROM ${E2E_BASE_IMAGE}`. Verify: a local `npm run test:e2e` of one spec builds both and passes.
 - [x] 1.2 Add `scripts/e2e-base-image-key.mjs`, hashing every input the base copies. Verify: a contract test checks that every `COPY` source in `Dockerfile.e2e-base` is covered by the key.
 - [x] 1.3 Update `scripts/run-e2e-container.sh` to build the base, then the E2E image, with the base passed as a build argument. Verify: the same local run as 1.1.
-- [ ] 1.4 Update `.gitea/workflows/ci.yml` to restore or build-and-push the base, then build the E2E image on it. Verify: on CI, the second commit's image job reports the base restored, and shard pulls download only per-commit layers.
+- [x] 1.4 Update `.gitea/workflows/ci.yml` to restore or build-and-push the base, then build the E2E image on it. Verify: on CI, the second commit's image job reports the base restored, and shard pulls download only per-commit layers.
 - [x] 1.5 Teach `scripts/prune-ci-docker-images.sh` to keep the newest and named base, and remove superseded ones. Verify: its contract test covers the base repository.
 
 ## 2. Warm Vite cache
