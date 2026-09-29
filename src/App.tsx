@@ -5691,34 +5691,6 @@ function App({
 		},
 		[currentServerId, settingsClient],
 	);
-	// Optimistic, so the bar hides the moment the command runs rather than after
-	// the device-settings round trip; settings changes reconcile it.
-	const [isStatusBarPreferred, setIsStatusBarPreferred] = useState(
-		settings.showStatusBar,
-	);
-	useEffect(() => {
-		setIsStatusBarPreferred(settings.showStatusBar);
-	}, [settings.showStatusBar]);
-	useEffect(() => {
-		publishStatusBarVisibility(isStatusBarPreferred);
-	}, [isStatusBarPreferred]);
-	const toggleStatusBar = useCallback(() => {
-		const nextSettings = {
-			...settingsRef.current,
-			showStatusBar: !settingsRef.current.showStatusBar,
-		};
-		settingsRef.current = nextSettings;
-		setIsStatusBarPreferred(nextSettings.showStatusBar);
-		void settingsClient
-			.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
-			.then((updated) => {
-				settingsRef.current = updated;
-			})
-			.catch(() => {
-				// The local presentation already reflects the interaction. A later
-				// device-settings update or reload reconciles a failed persistence.
-			});
-	}, [settingsClient]);
 	const [statusBarSlot, setStatusBarSlot] = useState<HTMLDivElement | null>(
 		null,
 	);
@@ -6035,7 +6007,47 @@ function App({
 	// One observation of the bar decides compact chrome for every surface that
 	// changes at phone width, so a row and the strip under it cannot disagree.
 	const isCompactChrome = useCompactChrome(projectTabBarRef);
-	const isStatusBarVisible = isStatusBarPreferred && !isCompactChrome;
+	// Each layout keeps its own preference: phones default to hidden, and
+	// toggling one layout never changes what the other shows. Optimistic, so
+	// the bar changes the moment the command runs rather than after the
+	// device-settings round trip; settings changes reconcile it.
+	const statusBarPreferenceKey = isCompactChrome
+		? 'showStatusBarCompact'
+		: 'showStatusBar';
+	const [statusBarPreference, setStatusBarPreference] = useState({
+		showStatusBar: settings.showStatusBar,
+		showStatusBarCompact: settings.showStatusBarCompact,
+	});
+	useEffect(() => {
+		setStatusBarPreference({
+			showStatusBar: settings.showStatusBar,
+			showStatusBarCompact: settings.showStatusBarCompact,
+		});
+	}, [settings.showStatusBar, settings.showStatusBarCompact]);
+	const isStatusBarVisible = statusBarPreference[statusBarPreferenceKey];
+	useEffect(() => {
+		publishStatusBarVisibility(isStatusBarVisible);
+	}, [isStatusBarVisible]);
+	const toggleStatusBar = useCallback(() => {
+		const nextSettings = {
+			...settingsRef.current,
+			[statusBarPreferenceKey]: !settingsRef.current[statusBarPreferenceKey],
+		};
+		settingsRef.current = nextSettings;
+		setStatusBarPreference({
+			showStatusBar: nextSettings.showStatusBar,
+			showStatusBarCompact: nextSettings.showStatusBarCompact,
+		});
+		void settingsClient
+			.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
+			.then((updated) => {
+				settingsRef.current = updated;
+			})
+			.catch(() => {
+				// The local presentation already reflects the interaction. A later
+				// device-settings update or reload reconciles a failed persistence.
+			});
+	}, [settingsClient, statusBarPreferenceKey]);
 	const remoteIndicator = useMemo(
 		() =>
 			remoteIndicatorState({
