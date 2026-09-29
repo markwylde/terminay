@@ -195,6 +195,8 @@ export type TerminalSettings = {
 	scrollback: number;
 	/** Device setting: whether the workspace status bar is shown. */
 	showStatusBar: boolean;
+	/** Device setting: whether the status bar is shown in compact chrome. */
+	showStatusBarCompact: boolean;
 	scrollOnEraseInDisplay: boolean;
 	scrollOnUserInput: boolean;
 	scrollSensitivity: number;

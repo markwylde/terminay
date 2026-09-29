@@ -21,12 +21,29 @@ test('a hidden status bar survives normalisation', () => {
 	assert.equal(normalizeTerminalSettings({ showStatusBar: false }).showStatusBar, false);
 });
 
+test('the status bar is hidden by default in compact chrome', () => {
+	assert.equal(defaultTerminalSettings.showStatusBarCompact, false);
+	assert.equal(normalizeTerminalSettings({}).showStatusBarCompact, false);
+	assert.equal(
+		normalizeTerminalSettings({ showStatusBarCompact: 'yes' })
+			.showStatusBarCompact,
+		false,
+	);
+	assert.equal(
+		normalizeTerminalSettings({ showStatusBarCompact: true })
+			.showStatusBarCompact,
+		true,
+	);
+});
+
 test('status bar visibility is a device-local setting', () => {
 	const device = selectDeviceTerminalSettings({
 		...defaultTerminalSettings,
 		showStatusBar: false,
+		showStatusBarCompact: true,
 	});
 	assert.equal(device.showStatusBar, false);
+	assert.equal(device.showStatusBarCompact, true);
 });
 
 test('Show Status Bar is a rebindable command with no default accelerator', () => {
