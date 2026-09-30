@@ -18,3 +18,12 @@ export function resolveTerminalZoomedFontSize(
 
   return Math.max(6, base + zoom)
 }
+
+/**
+ * The same zoom step expressed as a scale, for surfaces (documentation) whose
+ * base size differs from the terminal's. One step grows text by the same
+ * proportion it grows a default-sized terminal.
+ */
+export function resolveTerminalZoomScale(zoomLevel: number | undefined): number {
+  return resolveTerminalZoomedFontSize(13, zoomLevel) / 13
+}
