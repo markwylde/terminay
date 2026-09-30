@@ -2,6 +2,7 @@ import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor';
 import type { MdxRuntimeClient } from '@terminay/client-core';
 import {
 	Component,
+	type CSSProperties,
 	type ErrorInfo,
 	type ReactNode,
 	useCallback,
@@ -11,7 +12,9 @@ import {
 	useState,
 } from 'react';
 import { openExternalUrl, savePreviewDownload } from '../../host/nativeActions';
+import { subscribeTerminalZoom } from '../../host/nativeEvents';
 import { MdxPreview } from '../mdx-preview/MdxPreview';
+import { resolveTerminalZoomScale } from '../terminalZoomInteraction';
 import {
 	DocumentationAutosaveController,
 	type DocumentationAutosaveSession,
@@ -104,6 +107,8 @@ function DocumentationEditorSurface({
 	);
 	const [previewGeneration, setPreviewGeneration] = useState(0);
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
+	const [zoomLevel, setZoomLevel] = useState(0);
+	useEffect(() => subscribeTerminalZoom(setZoomLevel), []);
 	const valueRef = useRef(markdown);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<MDXEditorMethods>(null);
@@ -372,6 +377,11 @@ function DocumentationEditorSurface({
 		<div
 			ref={rootRef}
 			className={`documentation-editor${preview ? ' documentation-editor--with-preview' : ''}${hasStatus ? ' documentation-editor--with-status' : ''}`}
+			style={
+				{
+					'--documentation-zoom': resolveTerminalZoomScale(zoomLevel),
+				} as CSSProperties
+			}
 			onBlur={flush}
 			onPointerDownCapture={(event) => {
 				const label = (event.target as Element)
