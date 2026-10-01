@@ -128,7 +128,10 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	assert.match(host, /const replaced = await context\.livePeers\.close\(authenticated\.deviceId\)/u);
 	// That takeover is ordered per device. Sharing the handshake join queue put
 	// the application-auth reply behind unrelated addIceCandidate work.
-	assert.match(host, /context\.replaceDevicePeer\(authenticated\.deviceId/u);
+	assert.match(
+		host,
+		/context\s*\.replaceDevicePeer\(\s*authenticated\.deviceId/u,
+	);
 	assert.doesNotMatch(host, /serialize: joinQueue\.enqueue/u);
 	assert.match(host, /verifyDeviceJoinProof\(deviceId, clientNonce, message\.deviceProof\)/u);
 	assert.match(host, /MAX_CONCURRENT_HANDSHAKES/u);

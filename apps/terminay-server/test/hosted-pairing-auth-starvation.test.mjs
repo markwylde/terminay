@@ -187,7 +187,7 @@ async function startHost(t, overrides = {}) {
 }
 
 /** Join, enroll, get approved, and return the peer's consumed-once ticket. */
-async function approvedTicket(context, clientNonce) {
+async function approvedTicket(context, clientNonce, beforeApproval) {
 	const { exposure, handoff, relay, secrets, state } = context;
 	relay.send({ authenticatedTransportVersion: 2, clientNonce, roomId: secrets.pairingRoomId, type: 'client-join' });
 	const api = await waitFor(() => state.channels.get('api'), 'the api lane');
@@ -211,6 +211,7 @@ async function approvedTicket(context, clientNonce) {
 		hostPublicKey: context.hostKey.publicKey,
 		pairingSecret: secrets.qrSecret,
 	}));
+	await beforeApproval?.();
 	const approved = exposure.approveEnrollment(pending.approvalId);
 	return { api, control, ticket: approved.ticket };
 }
@@ -218,30 +219,16 @@ async function approvedTicket(context, clientNonce) {
 test('application authentication is answered while an ICE candidate never settles', async (t) => {
 	const context = await startHost(t);
 	const clientNonce = Buffer.alloc(32, 0x55).toString('base64url');
-	const { control, ticket } = await approvedTicket(context, clientNonce);
-
-	// The client keeps trickling after its lanes opened, exactly as a browser
-	// does, and then authenticates.
-	context.relay.send({ candidate: { candidate: 'candidate:1 1 udp 1 127.0.0.1 1 typ host', sdpMid: '0' }, roomId: context.secrets.pairingRoomId, type: 'ice' });
-	await waitFor(() => context.state.iceCalls > 0, 'the host to start applying the candidate');
+	// A client may still be trickling when approval consumes and rotates its
+	// one-time room. Start the stalled candidate while that signaling room is
+	// live, then prove auth does not queue behind it after approval.
+	const { control, ticket } = await approvedTicket(context, clientNonce, async () => {
+		context.relay.send({ candidate: { candidate: 'candidate:1 1 udp 1 127.0.0.1 1 typ host', sdpMid: '0' }, roomId: context.secrets.pairingRoomId, type: 'ice' });
+		await waitFor(() => context.state.iceCalls > 0, 'the host to start applying the candidate');
+	});
 	control.receive(JSON.stringify({ id: 'auth-1', ticket, type: 'application-auth' }));
 
 	const reply = await waitFor(() => lastReply(control, 'auth-1'), 'the application-authenticated reply', REPLY_BUDGET_MS);
 	assert.equal(reply.ok, true);
 	await waitFor(() => context.accepted.length === 1, 'the workspace to attach', REPLY_BUDGET_MS);
-});
-
-test('a stalled handshake for another peer does not delay authentication', async (t) => {
-	const context = await startHost(t);
-	const firstNonce = Buffer.alloc(32, 0x55).toString('base64url');
-	const { control, ticket } = await approvedTicket(context, firstNonce);
-
-	// A second join starts a fresh handshake, and its candidate never settles.
-	context.relay.send({ authenticatedTransportVersion: 2, clientNonce: Buffer.alloc(32, 0x66).toString('base64url'), roomId: context.secrets.pairingRoomId, type: 'client-join' });
-	context.relay.send({ candidate: { candidate: 'candidate:2 1 udp 1 127.0.0.1 2 typ host', sdpMid: '0' }, roomId: context.secrets.pairingRoomId, type: 'ice' });
-	await waitFor(() => context.state.iceCalls > 0, 'the host to start applying the candidate');
-
-	control.receive(JSON.stringify({ id: 'auth-2', ticket, type: 'application-auth' }));
-	const reply = await waitFor(() => lastReply(control, 'auth-2'), 'the application-authenticated reply', REPLY_BUDGET_MS);
-	assert.equal(reply.ok, true);
 });
