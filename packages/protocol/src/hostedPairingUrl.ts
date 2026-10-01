@@ -34,7 +34,8 @@ export function formatHostedPairingUrl(input: {
 	const hostName = sanitizePairingHostName(input.hostName ?? '');
 	if (hostName) manager.searchParams.set('hostName', hostName);
 	const pairingExpiresAt = String(input.pairingExpiresAt ?? '').trim();
-	if (pairingExpiresAt) manager.searchParams.set('pairingExpiresAt', pairingExpiresAt);
+	if (pairingExpiresAt)
+		manager.searchParams.set('pairingExpiresAt', pairingExpiresAt);
 	manager.hash = fragment;
 	return manager.toString();
 }
@@ -57,12 +58,27 @@ export function parseHostedPairingUrl(value: string): HostedPairingEnvelope {
 	}
 	const isLoopbackHttp =
 		url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
-	if (url.protocol !== 'https:' && !isLoopbackHttp && !isLoopbackSessionHttp(url)) {
+	if (
+		url.protocol !== 'https:' &&
+		!isLoopbackHttp &&
+		!isLoopbackSessionHttp(url)
+	) {
 		throw new TypeError('Pairing URLs must use HTTPS or loopback HTTP.');
 	}
 
+	// A server's direct link uses the literal listener origin, including when
+	// that listener is published on host loopback. Check its explicit pairing
+	// path before the historic loopback-manager interpretation.
+	if (
+		url.protocol === 'https:' &&
+		LOOPBACK_HOSTS.has(url.hostname.toLowerCase()) &&
+		/^\/v1\/?$/u.test(url.pathname)
+	) {
+		return parseDirectPairingUrl(url);
+	}
 	if (isManagerHostname(url.hostname)) return parseManagerPairingUrl(url);
-	if (isKnownHostedSessionHostname(url)) return parseLegacySessionPairingUrl(url);
+	if (isKnownHostedSessionHostname(url))
+		return parseLegacySessionPairingUrl(url);
 	return parseDirectPairingUrl(url);
 }
 
@@ -80,7 +96,9 @@ function parseDirectPairingUrl(url: URL): HostedPairingEnvelope {
 	}
 	rejectUnknownQuery(url, SESSION_QUERY);
 	const fragment = normalizeFragment(url.hash);
-	const hostName = sanitizePairingHostName(url.searchParams.get('hostName') ?? '');
+	const hostName = sanitizePairingHostName(
+		url.searchParams.get('hostName') ?? '',
+	);
 	const origin = url.origin;
 	const href = sessionPairingHref(origin, fragment, hostName);
 	return Object.freeze({
@@ -93,7 +111,9 @@ function parseDirectPairingUrl(url: URL): HostedPairingEnvelope {
 		// connection-manager origin to fall back to.
 		managerHref: href,
 		origin,
-		pairingExpiresAt: String(url.searchParams.get('pairingExpiresAt') ?? '').trim(),
+		pairingExpiresAt: String(
+			url.searchParams.get('pairingExpiresAt') ?? '',
+		).trim(),
 		sessionId: '',
 	});
 }
@@ -113,6 +133,11 @@ export function classifyPairingOrigin(origin: string): 'hosted' | 'direct' {
 	} catch {
 		return 'hosted';
 	}
+	if (
+		url.protocol === 'https:' &&
+		LOOPBACK_HOSTS.has(url.hostname.toLowerCase())
+	)
+		return 'direct';
 	if (isManagerHostname(url.hostname)) return 'hosted';
 	return isKnownHostedSessionHostname(url) ? 'hosted' : 'direct';
 }
@@ -120,7 +145,8 @@ export function classifyPairingOrigin(origin: string): 'hosted' | 'direct' {
 /** Hostnames the hosted relay serves sessions on. */
 function isKnownHostedSessionHostname(url: URL): boolean {
 	const host = url.hostname.toLowerCase();
-	if (host.endsWith(`.${TERMINAY_MANAGER_HOST.slice('app.'.length)}`)) return true;
+	if (host.endsWith(`.${TERMINAY_MANAGER_HOST.slice('app.'.length)}`))
+		return true;
 	return isLoopbackSessionHttp(url) || LOOPBACK_HOSTS.has(host);
 }
 
@@ -131,11 +157,18 @@ function parseManagerPairingUrl(url: URL): HostedPairingEnvelope {
 	rejectUnknownQuery(url, MANAGER_QUERY);
 	const sessionId = normalizeSessionId(url.searchParams.get('s') ?? '');
 	const fragment = normalizeFragment(url.hash);
-	const hostName = sanitizePairingHostName(url.searchParams.get('hostName') ?? '');
+	const hostName = sanitizePairingHostName(
+		url.searchParams.get('hostName') ?? '',
+	);
 	const session = new URL(url.origin);
-	session.hostname = sessionHostnameFromManagerHostname(url.hostname, sessionId);
+	session.hostname = sessionHostnameFromManagerHostname(
+		url.hostname,
+		sessionId,
+	);
 	const origin = session.origin;
-	const pairingExpiresAt = String(url.searchParams.get('pairingExpiresAt') ?? '').trim();
+	const pairingExpiresAt = String(
+		url.searchParams.get('pairingExpiresAt') ?? '',
+	).trim();
 	return Object.freeze({
 		class: 'hosted',
 		fragment,
@@ -162,9 +195,13 @@ function parseLegacySessionPairingUrl(url: URL): HostedPairingEnvelope {
 	rejectUnknownQuery(url, SESSION_QUERY);
 	const sessionId = sessionIdFromHostname(url.hostname);
 	const fragment = normalizeFragment(url.hash);
-	const hostName = sanitizePairingHostName(url.searchParams.get('hostName') ?? '');
+	const hostName = sanitizePairingHostName(
+		url.searchParams.get('hostName') ?? '',
+	);
 	const origin = url.origin;
-	const pairingExpiresAt = String(url.searchParams.get('pairingExpiresAt') ?? '').trim();
+	const pairingExpiresAt = String(
+		url.searchParams.get('pairingExpiresAt') ?? '',
+	).trim();
 	return Object.freeze({
 		class: 'hosted',
 		fragment,
@@ -184,7 +221,11 @@ function parseLegacySessionPairingUrl(url: URL): HostedPairingEnvelope {
 	});
 }
 
-function sessionPairingHref(origin: string, fragment: string, hostName: string): string {
+function sessionPairingHref(
+	origin: string,
+	fragment: string,
+	hostName: string,
+): string {
 	const url = new URL('/v1/', origin);
 	if (hostName) url.searchParams.set('hostName', hostName);
 	url.hash = fragment;
@@ -198,7 +239,13 @@ function originUrl(value: string): URL {
 	} catch {
 		throw new TypeError('Hosted pairing origin is invalid.');
 	}
-	if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+	if (
+		url.username ||
+		url.password ||
+		url.pathname !== '/' ||
+		url.search ||
+		url.hash
+	) {
 		url.username = '';
 		url.password = '';
 		url.pathname = '/';
@@ -226,27 +273,37 @@ function managerHostnameFromSessionHostname(hostname: string): string {
 	if (LOOPBACK_HOSTS.has(host)) return host === '::1' ? '[::1]' : host;
 	if (host.endsWith('.localhost')) return 'localhost';
 	const labels = host.split('.');
-	if (labels.length >= 5 && labels.slice(1).join('.') === '127.0.0.1') return '127.0.0.1';
-	if (labels.length < 2) throw new TypeError('Hosted session origin is invalid.');
+	if (labels.length >= 5 && labels.slice(1).join('.') === '127.0.0.1')
+		return '127.0.0.1';
+	if (labels.length < 2)
+		throw new TypeError('Hosted session origin is invalid.');
 	return `app.${labels.slice(1).join('.')}`;
 }
 
-function sessionHostnameFromManagerHostname(hostname: string, sessionId: string): string {
+function sessionHostnameFromManagerHostname(
+	hostname: string,
+	sessionId: string,
+): string {
 	const host = hostname.toLowerCase();
-	if (LOOPBACK_HOSTS.has(host)) return `${sessionId}.${host === '[::1]' ? 'localhost' : host}`;
-	if (host.startsWith('app.')) return `${sessionId}.${host.slice('app.'.length)}`;
+	if (LOOPBACK_HOSTS.has(host))
+		return `${sessionId}.${host === '[::1]' ? 'localhost' : host}`;
+	if (host.startsWith('app.'))
+		return `${sessionId}.${host.slice('app.'.length)}`;
 	throw new TypeError('That link is not a Terminay pairing link.');
 }
 
 function sessionIdFromHostname(hostname: string): string {
 	const host = hostname.toLowerCase();
-	if (host.endsWith('.localhost')) return normalizeSessionId(host.slice(0, -'.localhost'.length));
-	if (host.endsWith('.127.0.0.1')) return normalizeSessionId(host.slice(0, -'.127.0.0.1'.length));
+	if (host.endsWith('.localhost'))
+		return normalizeSessionId(host.slice(0, -'.localhost'.length));
+	if (host.endsWith('.127.0.0.1'))
+		return normalizeSessionId(host.slice(0, -'.127.0.0.1'.length));
 	if (host.endsWith('.terminay.com') && host !== TERMINAY_MANAGER_HOST) {
 		return normalizeSessionId(host.slice(0, -'.terminay.com'.length));
 	}
 	const labels = host.split('.');
-	if (labels.length >= 3 && labels[0] !== 'app') return normalizeSessionId(labels[0] ?? '');
+	if (labels.length >= 3 && labels[0] !== 'app')
+		return normalizeSessionId(labels[0] ?? '');
 	throw new TypeError('That link is not a Terminay pairing link.');
 }
 
@@ -263,10 +320,12 @@ function normalizeFragment(value: string): string {
 	if (!fragment || fragment.includes('=') || fragment.includes('&')) {
 		throw new TypeError('Paste a complete Terminay pairing link.');
 	}
-	if ([...fragment].some((character) => {
-		const code = character.codePointAt(0) ?? 0;
-		return code < 0x20 || code === 0x7f;
-	})) {
+	if (
+		[...fragment].some((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code < 0x20 || code === 0x7f;
+		})
+	) {
 		throw new TypeError('The pairing URL fragment is invalid.');
 	}
 	return fragment;
@@ -274,13 +333,16 @@ function normalizeFragment(value: string): string {
 
 function rejectUnknownQuery(url: URL, allowed: ReadonlySet<string>): void {
 	if ([...url.searchParams.keys()].some((name) => !allowed.has(name))) {
-		throw new TypeError('The pairing code must keep its credential in the URL fragment.');
+		throw new TypeError(
+			'The pairing code must keep its credential in the URL fragment.',
+		);
 	}
 }
 
 function sanitizePairingHostName(value: string): string {
 	let name = value.trim();
-	if (name.toLowerCase().endsWith('.local')) name = name.slice(0, -'.local'.length);
+	if (name.toLowerCase().endsWith('.local'))
+		name = name.slice(0, -'.local'.length);
 	name = name.replaceAll('_', '-').slice(0, 80);
 	if (
 		name.length === 0 ||

@@ -56,9 +56,9 @@ function selectHandoff(
 ): PairingHandoff | undefined {
 	if (mode !== undefined)
 		return handoffs.find((handoff) => handoff.mode === mode);
-	// Direct is preferred when it is on: it reaches the server without a relay,
-	// which is the point of enabling it.
-	return handoffs.find((handoff) => handoff.mode === 'direct') ?? handoffs[0];
+	// Hosted links open in a browser as well as Desktop. Direct links are for
+	// Desktop, so prefer the wider-compatible handoff for an unlabeled QR.
+	return handoffs.find((handoff) => handoff.mode === 'hosted') ?? handoffs[0];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

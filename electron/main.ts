@@ -464,6 +464,24 @@ function recordCanonicalRecoveryDiagnostic(message: unknown): Promise<void> {
 		)
 		.catch(() => undefined);
 }
+
+function recordDesktopHostedPeerDiagnostic(
+	type: 'candidate-pair' | 'connection-failed' | 'connection-status',
+	fields: Readonly<Record<string, string | number>>,
+): void {
+	void desktopDiagnostics
+		.record(
+			{
+				component: 'renderer',
+				event: `remote.hosted-peer.${type}`,
+				fields,
+				severity: type === 'connection-failed' ? 'warning' : 'info',
+				source: 'desktop-hosted-peer',
+			},
+			{ channel: 'lifecycle' },
+		)
+		.catch(() => undefined);
+}
 const localServerUiPartitionKey = desktopLocalServerUiPartitionKey(
 	embeddedServerId,
 	embeddedLocalProfileId,
@@ -2999,8 +3017,10 @@ function createDesktopMcpAutomationAdapter(): AutomationControlAdapter {
 			automationMcpCall(() => requireAutomationMcp().get(params.automationId)),
 		listAutomationRuns: (params, context) =>
 			automationMcpCall(() =>
-				requireAutomationMcp().runs(params.automationId, params.limit, (subject) =>
-					mcpSeesSubject(context, subject),
+				requireAutomationMcp().runs(
+					params.automationId,
+					params.limit,
+					(subject) => mcpSeesSubject(context, subject),
 				),
 			),
 		createAutomation: (params, context) =>
@@ -3054,7 +3074,8 @@ function createDesktopMcpAutomationAdapter(): AutomationControlAdapter {
 function mcpAgentLabel(terminalSessionId: string): string {
 	const entries =
 		serverTerminalAuthority?.agents.entriesForTerminal(terminalSessionId) ?? [];
-	const entry = entries.find((candidate) => candidate.kind === 'root') ?? entries[0];
+	const entry =
+		entries.find((candidate) => candidate.kind === 'root') ?? entries[0];
 	const label =
 		entry?.harnessDisplayName?.trim() || entry?.providerDisplayName?.trim();
 	return label === undefined || label === '' ? 'An agent' : label;
@@ -3078,7 +3099,10 @@ async function describeMcpRequest(request: {
 	readonly context: ControlRequestContext;
 }): Promise<
 	| McpApprovalDescription
-	| { readonly ok: false; readonly error: { code: ControlEndpointError['code']; message: string } }
+	| {
+			readonly ok: false;
+			readonly error: { code: ControlEndpointError['code']; message: string };
+	  }
 > {
 	const { op, params, context } = request;
 	const terminalTitle =
@@ -3119,7 +3143,10 @@ async function describeMcpOperation(
 	};
 	switch (op) {
 		case 'create_automation':
-			return requireAutomationMcp().describe({ kind: 'create', input: definition() });
+			return requireAutomationMcp().describe({
+				kind: 'create',
+				input: definition(),
+			});
 		case 'update_automation':
 			return requireAutomationMcp().describe({
 				kind: 'update',
@@ -3164,7 +3191,9 @@ async function describeMcpOperation(
 		case 'run_command':
 			return {
 				summary: `run a command in ${targetTitle()}`,
-				details: [{ label: 'Command', value: text(params.command), code: true }],
+				details: [
+					{ label: 'Command', value: text(params.command), code: true },
+				],
 			};
 		case 'write_terminal':
 			return {
@@ -3200,7 +3229,10 @@ async function describeMcpOperation(
 		case 'list_terminals':
 			return { summary: 'list your terminals', details: [] };
 		default:
-			return { summary: `${op.replaceAll('_', ' ')} ${targetTitle()}`, details: [] };
+			return {
+				summary: `${op.replaceAll('_', ' ')} ${targetTitle()}`,
+				details: [],
+			};
 	}
 }
 
@@ -4530,6 +4562,19 @@ function createWindow(options?: {
 			window.show();
 	};
 	switchToPairedDesktopServer = async (pairingUrl) => {
+		const pairingProgress = (
+			state:
+				| 'connecting'
+				| 'connected'
+				| 'connection-degraded'
+				| 'connection-lost',
+		) => {
+			if (window.isDestroyed()) return;
+			window.webContents.send('server-ui-host:event', {
+				type: 'connection.pairing-progress',
+				state,
+			});
+		};
 		const profile = await enrollPairedDesktopRemoteProfile(
 			pairingUrl,
 			(approval) => {
@@ -4543,23 +4588,38 @@ function createWindow(options?: {
 					expiresAt: new Date(approval.expiresAt).toISOString(),
 				});
 			},
+			() => pairingProgress('connection-lost'),
+			(status) => {
+				recordDesktopHostedPeerDiagnostic('connection-status', { status });
+				pairingProgress(
+					status === 'degraded' ? 'connection-degraded' : 'connected',
+				);
+			},
 		);
-		// Keep the profile available for transport recovery during the first load,
-		// but do not serialize metadata until the verified bundle is mounted.
-		const replacedProfile = rememberedRemoteConnections.get(profile.id);
-		rememberedRemoteConnections.set(profile.id, profile);
+		// Enrollment has stored the device key and pinned host identity. Persist
+		// its sanitized profile now so a later reconnect or bundle failure cannot
+		// strand that credential without a visible, retryable connection.
+		rememberRemoteConnection(profile);
+		pairingProgress('connecting');
 		try {
-			const remote = await prepareCanonicalDesktopRemoteConnection(profile);
+			const remote = await prepareCanonicalDesktopRemoteConnection(
+				profile,
+				() => pairingProgress('connection-lost'),
+				(status) => {
+					recordDesktopHostedPeerDiagnostic('connection-status', { status });
+					pairingProgress(
+						status === 'degraded' ? 'connection-degraded' : 'connected',
+					);
+				},
+			);
 			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
 			releaseLocalServerUiSessionSafely(windowWebContentsId);
 			remoteProfileBindingsByWebContents.set(windowWebContentsId, profile.id);
 			await mountCanonicalLaunch(remote.launch, remote.transport);
-			rememberRemoteConnection(profile);
+			pairingProgress('connected');
 		} catch (error) {
-			if (replacedProfile === undefined)
-				rememberedRemoteConnections.delete(profile.id);
-			else rememberedRemoteConnections.set(profile.id, replacedProfile);
 			remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+			pairingProgress('connection-lost');
 			throw error;
 		}
 	};
@@ -4664,6 +4724,8 @@ async function enrollPairedDesktopRemoteProfile(
 			expiresAt: number;
 		}>,
 	) => void,
+	onConnectionFailure: () => void,
+	onConnectionStatus: (status: 'degraded' | 'recovered') => void,
 ): Promise<RememberedRemoteConnection> {
 	const deviceName = 'Terminay Desktop';
 	const enrolled = await establishDesktopDevicePairing({
@@ -4681,6 +4743,16 @@ async function enrollPairedDesktopRemoteProfile(
 			),
 			signal: desktopHostedSignalOptions(),
 			onMatchCode: (code) => onMatchCode({ deviceName, ...code }),
+			onConnectionFailure: (reason) => {
+				recordDesktopHostedPeerDiagnostic('connection-failed', { reason });
+				onConnectionFailure();
+			},
+			onCandidatePair: (pair) =>
+				recordDesktopHostedPeerDiagnostic('candidate-pair', pair),
+			onConnectionStatus: (status) => {
+				recordDesktopHostedPeerDiagnostic('connection-status', { status });
+				onConnectionStatus(status);
+			},
 		},
 	});
 	const origin = enrolled.origin;
@@ -4723,6 +4795,8 @@ function desktopHostedSignalOptions(): DesktopHostedSignalOptions | undefined {
  */
 async function openDesktopRemoteLanes(
 	profile: RememberedRemoteConnection,
+	onConnectionFailure?: () => void,
+	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
 ): Promise<DesktopRemoteLanes> {
 	if (isHostedDesktopOrigin(profile.origin)) {
 		const webrtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
@@ -4747,6 +4821,16 @@ async function openDesktopRemoteLanes(
 				? {}
 				: { expectedServerId: profile.serverId }),
 			...(signal === undefined ? {} : { signal }),
+			onConnectionFailure: (reason) => {
+				recordDesktopHostedPeerDiagnostic('connection-failed', { reason });
+				onConnectionFailure?.();
+			},
+			onConnectionStatus: (status) => {
+				recordDesktopHostedPeerDiagnostic('connection-status', { status });
+				onConnectionStatus?.(status);
+			},
+			onCandidatePair: (pair) =>
+				recordDesktopHostedPeerDiagnostic('candidate-pair', pair),
 		});
 		return Object.freeze({
 			kind: 'webrtc' as const,
@@ -4809,10 +4893,16 @@ function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
  * the renderer never sees enrollment or reconnect material. */
 async function prepareCanonicalDesktopRemoteConnection(
 	profile: RememberedRemoteConnection,
+	onConnectionFailure?: () => void,
+	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
 ): Promise<
 	Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>
 > {
-	const lanes = await openDesktopRemoteLanes(profile);
+	const lanes = await openDesktopRemoteLanes(
+		profile,
+		onConnectionFailure,
+		onConnectionStatus,
+	);
 	try {
 		return Object.freeze({
 			launch: await prepareCanonicalRemoteLaunch(profile, lanes),

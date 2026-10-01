@@ -238,6 +238,16 @@ export class ServerRemoteExposure {
 		return this.hostName;
 	}
 
+	/** Reject a signaling join once its one-time room has expired or been consumed. */
+	assertPairingAvailable(pairingSessionId: string, pairingToken: string): void {
+		this.pairing.assertAvailable({
+			roomId: pairingSessionId,
+			serverId: this.devices.serverId,
+			sessionOrigin: this.devices.sessionOrigin,
+			secret: pairingToken,
+		});
+	}
+
 	start(expiresAt?: number): ServerPairingHandoff {
 		if (this.pairingUrlFormat !== 'hosted-compact') {
 			return this.rememberHandoff(this.controller.start(expiresAt));

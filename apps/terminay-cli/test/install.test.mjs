@@ -33,6 +33,25 @@ import {
 } from '../dist/layout.js';
 import { ManifestError, validateUnpackedArchive } from '../dist/manifest.js';
 import { buildArchiveFixture } from './archive-fixture.mjs';
+import { shouldWarnMissingAdvertisedUdp } from '../dist/commands/install.js';
+
+test('loopback direct origins warn that signaling does not configure the UDP media route', () => {
+	for (const origin of [
+		'https://localhost:9443',
+		'https://127.0.0.1:9443',
+		'https://[::1]:9443',
+	]) {
+		assert.equal(shouldWarnMissingAdvertisedUdp(origin, undefined), true);
+		assert.equal(
+			shouldWarnMissingAdvertisedUdp(origin, '192.168.1.20:51000'),
+			false,
+		);
+	}
+	assert.equal(
+		shouldWarnMissingAdvertisedUdp('https://server.example:9443', undefined),
+		false,
+	);
+});
 
 async function withPrefix(run) {
 	const home = await mkdtemp(join(tmpdir(), 'terminay-install-'));
@@ -292,7 +311,7 @@ test('activating a version that is not installed fails without moving current', 
 });
 
 test('retention keeps the active version and one previous', async () => {
-	await withPrefix(async (layout, home) => {
+	await withPrefix(async (layout, _home) => {
 		for (const version of ['4.0.0', '4.1.0', '4.1.1']) {
 			const directory = await mkdtemp(join(tmpdir(), 'terminay-retain-'));
 			const fixture = await buildArchiveFixture({ directory, version });

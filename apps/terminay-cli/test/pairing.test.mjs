@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
@@ -12,6 +9,19 @@ import {
 	runResolveApproval,
 } from '../dist/commands/pairing.js';
 import { installLayout } from '../dist/layout.js';
+import { explainPrivilegeLaunchError } from '../dist/socket.js';
+
+test('container privilege-launch errors explain missing sudo and inaccessible npx helpers', () => {
+	assert.match(
+		explainPrivilegeLaunchError({ code: 'ENOENT' }),
+		/sudo is required/u,
+	);
+	assert.match(
+		explainPrivilegeLaunchError({ code: 'EACCES' }),
+		/Install Terminay globally/u,
+	);
+	assert.equal(explainPrivilegeLaunchError({ code: 'ETIMEDOUT' }), undefined);
+});
 
 const HOSTED_URL = 'https://box.terminay.com/pair#tok_hosted';
 const DIRECT_URL = 'https://198.51.100.7:8443/pair#tok_direct';
@@ -98,8 +108,8 @@ test('--no-wait prints every URL with its expiry and exits', async () => {
 	const output = lines.join('\n');
 	assert.match(
 		output,
-		/\[QR for https:\/\/198\.51\.100\.7:8443/u,
-		'direct is preferred when it is enabled',
+		/\[QR for https:\/\/box\.terminay\.com/u,
+		'hosted is preferred when both exposure modes are enabled',
 	);
 	assert.match(output, /expires 20/u);
 	assert.deepEqual(

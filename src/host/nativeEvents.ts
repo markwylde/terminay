@@ -100,7 +100,11 @@ export function subscribeDesktopPerformanceSnapshot(
  * renders the code itself. */
 export function subscribePairingApproval(
 	listener: (
-		approval: Readonly<{ deviceName: string; matchCode: string; expiresAt: string }>,
+		approval: Readonly<{
+			deviceName: string;
+			matchCode: string;
+			expiresAt: string;
+		}>,
 	) => void,
 ): () => void {
 	if (typeof window === 'undefined') return () => undefined;
@@ -114,5 +118,23 @@ export function subscribePairingApproval(
 				expiresAt: message.event.expiresAt,
 			});
 		}
+	});
+}
+
+export function subscribePairingProgress(
+	listener: (
+		state:
+			| 'connecting'
+			| 'connected'
+			| 'connection-degraded'
+			| 'connection-lost',
+	) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'connection.pairing-progress')
+			listener(message.event.state);
 	});
 }

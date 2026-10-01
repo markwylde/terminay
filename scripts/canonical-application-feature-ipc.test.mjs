@@ -60,6 +60,27 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 	}
 });
 
+test('a successfully enrolled Desktop profile is durable before its first remote load', () => {
+	const pairingFlow = main.slice(
+		main.indexOf('switchToPairedDesktopServer = async (pairingUrl) =>'),
+		main.indexOf(
+			'const launchCanonical = async (): Promise<void> =>',
+			main.indexOf('switchToPairedDesktopServer = async (pairingUrl) =>'),
+		),
+	);
+	assert.ok(pairingFlow.indexOf('enrollPairedDesktopRemoteProfile(') >= 0);
+	assert.ok(
+		pairingFlow.indexOf('rememberRemoteConnection(profile)') <
+			pairingFlow.indexOf('prepareCanonicalDesktopRemoteConnection('),
+		'profile persistence must precede reconnect and bundle loading',
+	);
+	assert.doesNotMatch(
+		pairingFlow,
+		/rememberedRemoteConnections\.delete\(profile\.id\)/u,
+	);
+	assert.match(pairingFlow, /rememberRemoteConnection\(profile\)/u);
+});
+
 test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /applicationFeatures:\s*\{/u);
 	assert.match(main, /mcpInstall:\s*\{\s*serverCommand:/u);
@@ -78,9 +99,23 @@ test('canonical host routes retain server-owned application operations', () => {
 });
 
 test('MCP install commands name an extension install target, not a hardcoded client', () => {
-	assert.match(terminalAuthority, /const mcpTarget = \(request: CommandRequest\): string =>/u);
-	for (const agent of ['claudeCode', 'codex', 'cursor', 'gemini', 'grok', 'openCode'])
-		assert.doesNotMatch(terminalAuthority, new RegExp(`agent !== '${agent}'`, 'u'), agent);
+	assert.match(
+		terminalAuthority,
+		/const mcpTarget = \(request: CommandRequest\): string =>/u,
+	);
+	for (const agent of [
+		'claudeCode',
+		'codex',
+		'cursor',
+		'gemini',
+		'grok',
+		'openCode',
+	])
+		assert.doesNotMatch(
+			terminalAuthority,
+			new RegExp(`agent !== '${agent}'`, 'u'),
+			agent,
+		);
 });
 
 test('Desktop MCP terminal listing tolerates restored sessions without live activity records', () => {
