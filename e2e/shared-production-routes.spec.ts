@@ -491,7 +491,7 @@ for (const viewport of [
 			.fill('https://terminay.example/pair#one-time-secret');
 		await pairing.getByRole('button', { name: 'Continue pairing' }).click();
 		await expect(connections.getByRole('status')).toContainText(
-			'Waiting for approval on the exposing computer…',
+			'Pairing request sent.',
 		);
 		await expect
 			.poll(() =>
