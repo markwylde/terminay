@@ -252,6 +252,14 @@ export type TerminayHostEvent = Readonly<{
 				/** The host's remembered profiles or their status changed. */
 				type: 'connections.changed';
 				profiles: readonly TerminayHostConnectionProfile[];
+		  }>
+		| Readonly<{
+				type: 'connection.pairing-progress';
+				state:
+					| 'connecting'
+					| 'connected'
+					| 'connection-degraded'
+					| 'connection-lost';
 		  }>;
 }>;
 
@@ -475,6 +483,25 @@ export function parseTerminayHostEvent(
 			matchCode: event.matchCode,
 			expiresAt: event.expiresAt,
 		});
+	} else if (event.type === 'connection.pairing-progress') {
+		exactKeys(event, ['type', 'state'], 'host pairing progress event');
+		if (
+			![
+				'connecting',
+				'connected',
+				'connection-degraded',
+				'connection-lost',
+			].includes(String(event.state))
+		)
+			throw new TypeError('host pairing progress event is invalid');
+		parsedEvent = Object.freeze({
+			type: 'connection.pairing-progress',
+			state: event.state as
+				| 'connecting'
+				| 'connected'
+				| 'connection-degraded'
+				| 'connection-lost',
+		});
 	} else if (event.type === 'connections.changed') {
 		exactKeys(event, ['type', 'profiles'], 'host connections event');
 		parsedEvent = Object.freeze({
@@ -643,23 +670,45 @@ export function parseTerminayWorkspaceComposition(
 	value: unknown,
 ): TerminayWorkspaceComposition {
 	const input = record(value, 'workspace composition');
-	exactKeys(input, ['version', 'primaryProfileId', 'attached', 'tabOrder'], 'workspace composition');
+	exactKeys(
+		input,
+		['version', 'primaryProfileId', 'attached', 'tabOrder'],
+		'workspace composition',
+	);
 	if (input.version !== 1)
 		throw new TypeError('workspace composition version is unsupported');
-	const primaryProfileId = identifier(input.primaryProfileId, 'primary profile id', ID);
+	const primaryProfileId = identifier(
+		input.primaryProfileId,
+		'primary profile id',
+		ID,
+	);
 	if (!Array.isArray(input.attached) || input.attached.length > 64)
 		throw new TypeError('workspace composition attachments are invalid');
 	const attached = input.attached.map((entry) => {
 		const attachment = record(entry, 'workspace composition attachment');
-		exactOptionalKeys(attachment, ['profileId'], ['viewId'], 'workspace composition attachment');
-		const profileId = identifier(attachment.profileId, 'attached profile id', ID);
+		exactOptionalKeys(
+			attachment,
+			['profileId'],
+			['viewId'],
+			'workspace composition attachment',
+		);
+		const profileId = identifier(
+			attachment.profileId,
+			'attached profile id',
+			ID,
+		);
 		const viewId =
 			attachment.viewId === undefined
 				? undefined
 				: identifier(attachment.viewId, 'attached view id', ID);
-		return Object.freeze({ profileId, ...(viewId === undefined ? {} : { viewId }) });
+		return Object.freeze({
+			profileId,
+			...(viewId === undefined ? {} : { viewId }),
+		});
 	});
-	if (new Set(attached.map((entry) => entry.profileId)).size !== attached.length)
+	if (
+		new Set(attached.map((entry) => entry.profileId)).size !== attached.length
+	)
 		throw new TypeError('workspace composition attaches a profile twice');
 	if (!Array.isArray(input.tabOrder) || input.tabOrder.length > 4_096)
 		throw new TypeError('workspace composition tab order is invalid');
@@ -1151,7 +1200,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				profileId: identifier(action.profileId, 'connection profile id', ID),
 			});
 		case 'connections.composition.write':
-			exactKeys(action, ['type', 'composition'], 'workspace composition action');
+			exactKeys(
+				action,
+				['type', 'composition'],
+				'workspace composition action',
+			);
 			return Object.freeze({
 				type: 'connections.composition.write',
 				composition: parseTerminayWorkspaceComposition(action.composition),

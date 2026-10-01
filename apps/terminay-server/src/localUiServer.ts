@@ -127,6 +127,8 @@ export interface LocalUiServerAddress {
 
 const DEFAULT_MAX_ASSET_BYTES = 16 * 1024 * 1024;
 const MAX_HANDSHAKE_BYTES = 64 * 1024;
+const DIRECT_PAIRING_PAGE =
+	'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open in Terminay Desktop</title><h1>Open this link in Terminay Desktop</h1><p>Direct pairing links connect Terminay Desktop to this server. Copy the complete link and choose <strong>Remote Control → Add connection</strong> in Terminay Desktop. This page cannot complete pairing in a browser.</p></html>';
 const REMOTE_STREAM_PATH = '/protocol/stream';
 const REMOTE_STREAM_PROTOCOL = 'terminay.v1';
 const REMOTE_STREAM_AUTH_PREFIX = 'terminay.auth.';
@@ -441,6 +443,23 @@ export class LocalUiServer {
 				!(method === 'POST' && request.url?.startsWith('/api/devices/'))
 			) {
 				sendText(response, 405, 'method not allowed');
+				return;
+			}
+			if (
+				this.options.signalingUpgrade !== undefined &&
+				url.pathname === '/v1/'
+			) {
+				const body = Buffer.from(DIRECT_PAIRING_PAGE, 'utf8');
+				response.writeHead(200, {
+					...UI_SECURITY_HEADERS,
+					'Content-Security-Policy':
+						"default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+					'Content-Type': 'text/html; charset=utf-8',
+					'Content-Length': String(body.byteLength),
+					'Cache-Control': 'no-store',
+				});
+				if (method === 'GET') response.end(body);
+				else response.end();
 				return;
 			}
 			for (const key of url.searchParams.keys())

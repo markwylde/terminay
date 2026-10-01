@@ -62,6 +62,20 @@ export function approvalSocketPath(dataRoot: string): string {
 
 export class SocketError extends Error {}
 
+export function explainPrivilegeLaunchError(
+	error: unknown,
+): string | undefined {
+	const code =
+		typeof error === 'object' && error !== null && 'code' in error
+			? String((error as { code?: unknown }).code)
+			: '';
+	if (code === 'ENOENT')
+		return 'sudo is required to contact the system server approval socket but is not installed. Install sudo, or run the pairing command as the server service account.';
+	if (code === 'EACCES' || code === 'EPERM')
+		return 'the server CLI helper is not readable by the service account. Install Terminay globally in a path readable by that account, then retry.';
+	return undefined;
+}
+
 export function sendApprovalRequest(
 	socketPath: string,
 	request: ApprovalRequest,
@@ -139,8 +153,10 @@ export async function sendAsUser(
 		);
 		return JSON.parse(stdout.trim()) as ApprovalResponse;
 	} catch (error) {
+		const hint = explainPrivilegeLaunchError(error);
 		throw new SocketError(
-			`could not reach the server's socket as ${runAs}: ${error instanceof Error ? error.message : String(error)}`,
+			hint ??
+				`could not reach the server's socket as ${runAs}: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 }

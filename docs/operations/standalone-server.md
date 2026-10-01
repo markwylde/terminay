@@ -191,7 +191,9 @@ and wrong for one behind NAT — so the derived value is printed at install and
 A server in a container on your own machine is not reachable from a client on
 that machine by default, and the failure is silent: signalling succeeds, the
 client finds the server, and the connection then sits in `checking` until it
-gives up.
+gives up. A connection can also briefly reach `connected` and then lose its
+ICE path; do not treat the first successful handshake as proof that the
+container's UDP route is stable.
 
 The reason is that every address the server can see about itself is one the
 client cannot route to. On macOS and Windows the container runs inside a Linux
@@ -217,10 +219,45 @@ docker run -d --name terminay \
   /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
 
 docker exec -it terminay bash
-npx terminay daemon install --system --run-as root \
+terminay daemon install --system --run-as root \
   --advertise-address 192.168.1.20:51000
-npx terminay daemon qr-code
+terminay daemon qr-code --mode hosted
 ```
+
+The advertised address must be reachable from the pairing Desktop, and the
+same four UDP ports must be published/forwarded to the container. Publishing
+only the HTTPS listener (for example `-p 9443:9443`) carries signaling, not the
+WebRTC media path. `--direct-origin https://localhost:9443` only tells Desktop
+where signaling lives; it does not make the container's ICE candidates
+reachable. If a peer connects and drops a few seconds later, check that the
+configured UDP range is published through Podman/gvproxy and that
+`--advertise-address` names the host-side address and first forwarded port.
+
+The `daemon` installer is a systemd installer. A stock `node:*` image does not
+run systemd and `daemon install` is expected to refuse it; `--privileged` and
+mounting cgroups are only appropriate when deliberately running systemd as
+container PID 1. For a normal container, run the `terminay-server` executable
+from the verified standalone distribution in the foreground under a container
+supervisor and persist its data root. For example:
+
+```sh
+terminay-server \
+  --data-root /var/lib/terminay \
+  --expose hosted,direct \
+  --http-host 0.0.0.0 --http-port 9443 \
+  --direct-origin https://mac-host.example:9443 \
+  --advertise-address 192.168.1.20:51000
+```
+
+The foreground server emits approval requests to stderr; use
+`terminay-server approve <approval-id>` under the same service account. The
+installer CLI is not needed to run this process. `daemon qr-code` is for an
+installed systemd service and uses `sudo` to reach its owner-only socket; an
+ephemeral `npx` cache under `/root` is not readable by the service account.
+If you use the installer in a systemd container, install Terminay globally in
+the image so the service account can execute the helper. QR output defaults to
+a hosted, browser-compatible link; use `--mode direct` only when copying a
+link into Terminay Desktop.
 
 Pair from the printed URL as you would with any server; signalling goes through
 the hosted service exactly as it does for a remote one.

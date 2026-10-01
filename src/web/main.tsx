@@ -1,8 +1,5 @@
 import { ConnectionProfileStore } from '@terminay/client-core';
-import type {
-	ByteTransport,
-	TerminayHostContext,
-} from '@terminay/protocol';
+import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
 import {
 	Component,
 	type ErrorInfo,
@@ -15,7 +12,10 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { subscribePairingApproval } from '../host/nativeEvents';
+import {
+	subscribePairingApproval,
+	subscribePairingProgress,
+} from '../host/nativeEvents';
 import { pairDesktopConnection } from '../host/nativeActions';
 import {
 	type CompositionPersistence,
@@ -40,7 +40,10 @@ import {
 	type DesktopByteBridge,
 	type DesktopHostBridge,
 } from './desktopByteTransport';
-import { getSessionTransportHost, leaveManagerSession } from './sessionTransportHost';
+import {
+	getSessionTransportHost,
+	leaveManagerSession,
+} from './sessionTransportHost';
 import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
@@ -146,7 +149,12 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				isDocumentHidden: () =>
 					typeof document !== 'undefined' &&
 					document.visibilityState === 'hidden',
-				open: async ({ profileId, role, replaceEndpoint, onTransportClosed }) => {
+				open: async ({
+					profileId,
+					role,
+					replaceEndpoint,
+					onTransportClosed,
+				}) => {
 					if (role === 'attached') {
 						const attached = await connectionHostRef.current.attach(profileId);
 						return Object.freeze({
@@ -168,10 +176,29 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	);
 	const snapshot = useConnectionsSnapshot(registry);
 	const primary = snapshot.primary;
-	const [desktopPairingApproval, setDesktopPairingApproval] = useState<
-		Readonly<{ deviceName: string; matchCode: string; expiresAt: string }> | null
+	const [desktopPairingApproval, setDesktopPairingApproval] =
+		useState<Readonly<{
+			deviceName: string;
+			matchCode: string;
+			expiresAt: string;
+		}> | null>(null);
+	const [desktopPairingProgress, setDesktopPairingProgress] = useState<
+		| 'connecting'
+		| 'connected'
+		| 'connection-degraded'
+		| 'connection-lost'
+		| null
 	>(null);
 	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
+	useEffect(
+		() =>
+			subscribePairingProgress((state) => {
+				setDesktopPairingProgress(state);
+				if (state === 'connecting' || state === 'connection-lost')
+					setDesktopPairingApproval(null);
+			}),
+		[],
+	);
 
 	useEffect(() => {
 		registry.startPrimary(PRIMARY_PROFILE_ID);
@@ -259,8 +286,10 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				: {
 						canPair: true,
 						pairingApproval: desktopPairingApproval,
+						pairingProgress: desktopPairingProgress,
 						onPairingHandoff: async ({ pairingUrl }) => {
 							setDesktopPairingApproval(null);
+							setDesktopPairingProgress(null);
 							try {
 								if (!(await pairDesktopConnection(pairingUrl)))
 									throw new Error(
@@ -306,7 +335,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 								void registry.dispose();
 							}}
 							subscribeAppCommands={
-								desktopContext === undefined || window.terminayHost === undefined
+								desktopContext === undefined ||
+								window.terminayHost === undefined
 									? undefined
 									: (listener: (command: AppCommand) => Promise<void> | void) =>
 											(

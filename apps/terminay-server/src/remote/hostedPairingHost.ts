@@ -1,6 +1,12 @@
 import { networkInterfaces } from 'node:os';
 import { gzipSync } from 'node:zlib';
-import { constants, createPrivateKey, randomBytes, sign, verify } from 'node:crypto';
+import {
+	constants,
+	createPrivateKey,
+	randomBytes,
+	sign,
+	verify,
+} from 'node:crypto';
 import { WebSocket } from 'ws';
 import {
 	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
@@ -20,7 +26,10 @@ import type {
 	AuthenticatedClient,
 	ServerConnectionLike,
 } from '@terminay/server-core';
-import { HeadlessChannelTransport, type HeadlessDataChannel } from '@terminay/server-core/remote';
+import {
+	HeadlessChannelTransport,
+	type HeadlessDataChannel,
+} from '@terminay/server-core/remote';
 import {
 	loadSelectedSecureWeriftRuntime,
 	type SecureWeriftRuntimeModule,
@@ -34,7 +43,10 @@ import {
 	hostedSessionId,
 	hostedSignalingUrl,
 } from './hostedPairingSecrets.js';
-import type { ServerPairingHandoff, ServerRemoteExposure } from './serverExposure.js';
+import type {
+	ServerPairingHandoff,
+	ServerRemoteExposure,
+} from './serverExposure.js';
 import {
 	bindUiArchiveChannels,
 	readSctpMaxMessageBytes,
@@ -54,9 +66,14 @@ import {
 	hostedPeerConfiguration,
 	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
+	selectedIceCandidatePair,
 	type AdvertisedIceAddress,
 } from './hostedPeerLifecycle.js';
-import { createHostedStreamDiagnostics, frameByteLength } from './hostedStreamDiagnostics.js';
+import {
+	createHostedStreamDiagnostics,
+	frameByteLength,
+} from './hostedStreamDiagnostics.js';
+import { advertisedPairingUrlClass } from './publicPairingUrl.js';
 
 export {
 	collectHostIceAddresses,
@@ -75,9 +92,19 @@ export {
 	resolveHostedIceServers,
 	resolveIceRecoveryGraceMs,
 } from './hostedPeerLifecycle.js';
-export type { AdvertisedIceAddress, HostedIceServer } from './hostedPeerLifecycle.js';
+export type {
+	AdvertisedIceAddress,
+	HostedIceServer,
+} from './hostedPeerLifecycle.js';
 
-const CHANNELS = ['api', 'asset', 'control', 'application', 'terminal', 'assets'] as const;
+const CHANNELS = [
+	'api',
+	'asset',
+	'control',
+	'application',
+	'terminal',
+	'assets',
+] as const;
 
 type WeriftIceCandidate = Readonly<{
 	candidate?: string;
@@ -88,25 +115,46 @@ type WeriftIceCandidate = Readonly<{
 type WeriftPeer = {
 	readonly connectionState?: string;
 	readonly iceConnectionState?: string;
-	readonly localDescription: Readonly<{ sdp?: string; type?: string }> | null | undefined;
-	addEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
-	addIceCandidate(candidate: Readonly<{ candidate: string; sdpMid: string }>): Promise<void>;
+	getStats?: () => Promise<
+		ReadonlyMap<string, Readonly<Record<string, unknown>>>
+	>;
+	readonly localDescription:
+		| Readonly<{ sdp?: string; type?: string }>
+		| null
+		| undefined;
+	addEventListener(
+		type: string,
+		listener: (event: Record<string, unknown>) => void,
+	): void;
+	addIceCandidate(
+		candidate: Readonly<{ candidate: string; sdpMid: string }>,
+	): Promise<void>;
 	close(): void;
 	createDataChannel(
 		label: string,
 		options?: { readonly ordered?: boolean },
 	): WeriftDataChannel;
 	createOffer(): Promise<Readonly<{ sdp?: string; type?: string }>>;
-	setLocalDescription(description: Readonly<{ sdp?: string; type?: string }>): Promise<void>;
-	setRemoteDescription(description: Readonly<{ sdp: string; type: string }>): Promise<void>;
+	setLocalDescription(
+		description: Readonly<{ sdp?: string; type?: string }>,
+	): Promise<void>;
+	setRemoteDescription(
+		description: Readonly<{ sdp: string; type: string }>,
+	): Promise<void>;
 };
 type WeriftDataChannel = {
 	readonly bufferedAmount?: number;
 	readonly label?: string;
 	readonly readyState: string;
-	addEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
+	addEventListener(
+		type: string,
+		listener: (event: Record<string, unknown>) => void,
+	): void;
 	close?(): void;
-	removeEventListener(type: string, listener: (event: Record<string, unknown>) => void): void;
+	removeEventListener(
+		type: string,
+		listener: (event: Record<string, unknown>) => void,
+	): void;
 	send(data: string | Uint8Array): void;
 };
 
@@ -126,7 +174,9 @@ export interface HostedPairingHostOptions {
 	readonly getUiArchive?: () => Promise<MinimalArchive> | MinimalArchive;
 	readonly handoff: ServerPairingHandoff;
 	readonly hostKey: HostedHostKey;
-	readonly persistDevices: (devices: ReturnType<ServerRemoteExposure['devices']['list']>) => void;
+	readonly persistDevices: (
+		devices: ReturnType<ServerRemoteExposure['devices']['list']>,
+	) => void;
 	readonly remote: ServerRemoteExposure;
 	readonly serverId: string;
 	/** Relay session id for saved-device reconnect. Defaults to the id carried
@@ -150,7 +200,9 @@ export interface HostedPairingHostOptions {
 	readonly webrtcRuntimeRoot: string;
 	/** Test seam only. Production leaves this unset so the selected,
 	 * integrity-verified artifact is the only runtime that can be loaded. */
-	readonly loadRuntime?: (runtimeRoot: string) => Promise<SecureWeriftRuntimeModule>;
+	readonly loadRuntime?: (
+		runtimeRoot: string,
+	) => Promise<SecureWeriftRuntimeModule>;
 	readonly iceServers?: readonly HostedIceServer[];
 	readonly resolveIceServers?: () => readonly HostedIceServer[];
 	/** An address and UDP port an administrator forwarded to this server, added
@@ -178,14 +230,15 @@ export type HostedPairingDiagnostic = Readonly<{
 		| 'channel-state'
 		| 'application-lane'
 		| 'peer-closed'
-		| 'approval-pending';
+		| 'approval-pending'
+		| 'candidate-pair';
 	readonly scope?: 'pairing' | 'device';
 	/** Pending approval metadata: the code is shown on both devices, never secret. */
 	readonly approvalId?: string;
 	readonly deviceName?: string;
 	readonly matchCode?: string;
 	readonly expiresAt?: string;
-	readonly advertisedUrlClass?: 'manager' | 'session' | 'loopback' | 'other';
+	readonly advertisedUrlClass?: 'manager' | 'session' | 'direct' | 'other';
 	readonly signalingHostClass?: 'terminay-session' | 'loopback' | 'other';
 	readonly closeCode?: number;
 	readonly closeReasonClass?: string;
@@ -194,7 +247,13 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly peerState?: string | undefined;
 	readonly iceState?: string | undefined;
 	readonly iceGracePhase?: 'started' | 'cleared' | 'expired';
-	readonly channel?: 'api' | 'asset' | 'assets' | 'application' | 'control' | 'terminal';
+	readonly channel?:
+		| 'api'
+		| 'asset'
+		| 'assets'
+		| 'application'
+		| 'control'
+		| 'terminal';
 	readonly channelState?: string | undefined;
 	readonly inboundFrames?: number;
 	readonly outboundFrames?: number;
@@ -206,7 +265,13 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly firstOutboundAgeMs?: number | null;
 	readonly liveGenerationCount?: number;
 	readonly hangup?: boolean;
-	readonly inboundKind?: 'bytes' | 'blob' | 'string' | 'empty' | 'other' | undefined;
+	readonly inboundKind?:
+		| 'bytes'
+		| 'blob'
+		| 'string'
+		| 'empty'
+		| 'other'
+		| undefined;
 	readonly droppedFrames?: number;
 	readonly droppedClass?: 'bytes' | 'blob' | 'string' | 'empty' | 'other';
 	readonly sendFailures?: number;
@@ -215,6 +280,14 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly summary?: boolean;
 	readonly reasonClass?: string;
 	readonly bufferedAmount?: number;
+	readonly localAddress?: string;
+	readonly localPort?: number;
+	readonly localType?: string;
+	readonly protocol?: string;
+	readonly remoteAddress?: string;
+	readonly remotePort?: number;
+	readonly remoteType?: string;
+	readonly pairState?: string;
 }>;
 
 export interface HostedPairingHost {
@@ -224,7 +297,6 @@ export interface HostedPairingHost {
 }
 
 const PAIRING_REFRESH_LEAD_MS = 15_000;
-const PAIRING_CONSUMED_ROTATE_MS = 3_000;
 const REFRESH_RETRY_MS = 2_000;
 const INITIAL_REGISTER_TIMEOUT_MS = 10_000;
 /** In-progress handshakes across every room and device session. */
@@ -245,12 +317,15 @@ type HandshakeEntry = {
 export async function startHostedPairingHost(
 	options: HostedPairingHostOptions,
 ): Promise<HostedPairingHost> {
-	const sessionId = options.sessionId ?? hostedSessionId(options.handoff.sessionOrigin);
+	const sessionId =
+		options.sessionId ?? hostedSessionId(options.handoff.sessionOrigin);
 	const signalingUrl = hostedSignalingUrl(options.handoff.sessionOrigin);
-	const signalingHostClass = classifySignalingHost(options.handoff.sessionOrigin);
-	const runtime = await (options.loadRuntime ?? loadSelectedSecureWeriftRuntime)(
-		options.webrtcRuntimeRoot,
+	const signalingHostClass = classifySignalingHost(
+		options.handoff.sessionOrigin,
 	);
+	const runtime = await (
+		options.loadRuntime ?? loadSelectedSecureWeriftRuntime
+	)(options.webrtcRuntimeRoot);
 	const Peer = runtime.RTCPeerConnection as unknown as new (
 		configuration?: Record<string, unknown>,
 	) => WeriftPeer;
@@ -294,6 +369,10 @@ export async function startHostedPairingHost(
 		const channel = apiChannelsByPeer.get(resolution.approval.peerId);
 		if (resolution.outcome === 'approved') {
 			options.persistDevices(options.remote.devices.list());
+			// The room is consumed by the approval itself, not by a later peer
+			// authentication callback. Rotate now even if this Desktop closes its
+			// pairing peer before completing the reconnect flow.
+			void refreshPairing('consumed');
 		}
 		if (channel === undefined) return;
 		const message: EnrollmentPushMessage =
@@ -305,7 +384,11 @@ export async function startHostedPairingHost(
 						deviceName: resolution.deviceName,
 						ticket: resolution.ticket,
 					}
-				: { type: 'enrollment-denied', approvalId: resolution.approval.approvalId, reason: resolution.outcome };
+				: {
+						type: 'enrollment-denied',
+						approvalId: resolution.approval.approvalId,
+						reason: resolution.outcome,
+					};
 		try {
 			safeChannelSend(channel, JSON.stringify(message));
 		} catch (error) {
@@ -334,7 +417,8 @@ export async function startHostedPairingHost(
 		stopApprovalPush();
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
-		for (const entry of [...handshakes.values()]) retireHandshake(entry, 'host-stopped');
+		for (const entry of [...handshakes.values()])
+			retireHandshake(entry, 'host-stopped');
 		await livePeers.closeAll();
 		pairingGeneration += 1;
 		deviceGeneration += 1;
@@ -342,7 +426,10 @@ export async function startHostedPairingHost(
 		closeSocket(deviceSocket);
 	};
 
-	async function addHandshakePeer(socket: WebSocket, scope: SignalScope): Promise<void> {
+	async function addHandshakePeer(
+		socket: WebSocket,
+		scope: SignalScope,
+	): Promise<void> {
 		// A join holds only a handshake slot for its own room or device session.
 		// The device's live peer, if any, stays untouched until this joiner has
 		// consumed a valid ticket: an unauthenticated `device-join` must never
@@ -364,7 +451,10 @@ export async function startHostedPairingHost(
 			retired: false,
 		};
 		handshakes.set(key, entry);
-		entry.timer = setTimeout(() => retireHandshake(entry, 'handshake-timeout'), HANDSHAKE_TIMEOUT_MS);
+		entry.timer = setTimeout(
+			() => retireHandshake(entry, 'handshake-timeout'),
+			HANDSHAKE_TIMEOUT_MS,
+		);
 		entry.timer.unref?.();
 		let next: WeriftPeer;
 		try {
@@ -381,33 +471,39 @@ export async function startHostedPairingHost(
 					if (entry.retired || closed) {
 						void connection.close();
 						next.close();
-						diagnose({ type: 'peer-closed', reasonClass: closed ? 'host-stopped' : 'retired-during-authentication' });
+						diagnose({
+							type: 'peer-closed',
+							reasonClass: closed
+								? 'host-stopped'
+								: 'retired-during-authentication',
+						});
 						return;
 					}
 					clearTimeout(entry.timer);
 					entry.timer = undefined;
 					handshakes.delete(key);
 					if (replaced !== undefined) {
-						diagnose({ type: 'peer-closed', reasonClass: 'replaced-by-rejoin' });
+						diagnose({
+							type: 'peer-closed',
+							reasonClass: 'replaced-by-rejoin',
+						});
 						// Report the retirement here rather than relying on the native
 						// datachannel emitting `close` before its peer is torn down.
 						if (replaced.connectionId !== undefined) {
 							options.onPeerDisconnected?.(replaced.connectionId);
 						}
 					}
-					livePeers.set(peer.deviceId, { peer: next, connection, connectionId: peer.connectionId });
+					livePeers.set(peer.deviceId, {
+						peer: next,
+						connection,
+						connectionId: peer.connectionId,
+					});
 					options.onPeerConnected?.(peer);
-					if (scope.kind === 'pairing') {
-						clearTimeout(pairingRefreshTimer);
-						pairingRefreshTimer = setTimeout(() => {
-							void refreshPairing('consumed');
-						}, PAIRING_CONSUMED_ROTATE_MS);
-						pairingRefreshTimer.unref?.();
-					}
 				},
 				(deviceId, retired) => {
 					if (deviceId !== undefined) livePeers.drop(deviceId, retired);
-					if (!entry.retired && handshakes.get(key) === entry) retireHandshake(entry, 'peer-failed');
+					if (!entry.retired && handshakes.get(key) === entry)
+						retireHandshake(entry, 'peer-failed');
 					apiChannelsByPeer.delete(entry.peerId);
 					options.remote.cancelPendingApprovalsForPeer(entry.peerId);
 				},
@@ -423,24 +519,37 @@ export async function startHostedPairingHost(
 		}
 	}
 
-	function verifyDeviceJoinProof(deviceId: string, clientNonce: string, proof: unknown): void {
-		if (!isDeviceJoinProof(proof)) throw new Error('Hosted signaling device join proof is invalid.');
+	function verifyDeviceJoinProof(
+		deviceId: string,
+		clientNonce: string,
+		proof: unknown,
+	): void {
+		if (!isDeviceJoinProof(proof))
+			throw new Error('Hosted signaling device join proof is invalid.');
 		const device = options.remote.devices.get(deviceId);
 		if (device === undefined || device.revokedAt !== null) {
-			throw new Error('Hosted signaling device join names an unknown or revoked device.');
+			throw new Error(
+				'Hosted signaling device join names an unknown or revoked device.',
+			);
 		}
 		const now = Date.now();
 		for (const [nonce, expiresAt] of seenDeviceJoinNonces) {
 			if (expiresAt <= now) seenDeviceJoinNonces.delete(nonce);
 		}
-		if (seenDeviceJoinNonces.has(clientNonce)) throw new Error('Hosted signaling device join was replayed.');
+		if (seenDeviceJoinNonces.has(clientNonce))
+			throw new Error('Hosted signaling device join was replayed.');
 		const valid = verify(
 			'sha256',
 			Buffer.from(deviceJoinProofPayload({ sessionId, clientNonce })),
-			{ key: device.publicKeyPem, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
+			{
+				key: device.publicKeyPem,
+				padding: constants.RSA_PKCS1_PSS_PADDING,
+				saltLength: 32,
+			},
 			Buffer.from(proof, 'base64url'),
 		);
-		if (!valid) throw new Error('Hosted signaling device join proof does not verify.');
+		if (!valid)
+			throw new Error('Hosted signaling device join proof does not verify.');
 		if (seenDeviceJoinNonces.size >= 1_024) seenDeviceJoinNonces.clear();
 		seenDeviceJoinNonces.set(clientNonce, now + DEVICE_JOIN_NONCE_LIFETIME_MS);
 	}
@@ -453,7 +562,33 @@ export async function startHostedPairingHost(
 	): Promise<void> {
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'client-join') {
-			assertAuthenticatedTransportVersion(message.authenticatedTransportVersion);
+			assertAuthenticatedTransportVersion(
+				message.authenticatedTransportVersion,
+			);
+			if (message.roomId !== derived.pairingRoomId) {
+				diagnose({
+					type: 'failed',
+					scope: 'pairing',
+					cause: 'pairing-room-mismatch',
+				});
+				return;
+			}
+			try {
+				options.remote.assertPairingAvailable(
+					derived.pairingRoomId,
+					derived.pairingToken,
+				);
+			} catch {
+				// The relay owns the client websocket and is responsible for returning
+				// its join rejection to that client. Never emit an invented signaling
+				// message or close this room socket: that would disrupt valid peers.
+				diagnose({
+					type: 'failed',
+					scope: 'pairing',
+					cause: 'pairing-room-unavailable',
+				});
+				return;
+			}
 			diagnose({ type: 'client-join', scope: 'pairing' });
 			const clientNonce = parseClientNonce(message.clientNonce);
 			await joinQueue.enqueue(() =>
@@ -467,7 +602,9 @@ export async function startHostedPairingHost(
 			return;
 		}
 		if (message.type === 'answer' || message.type === 'ice') {
-			await joinQueue.enqueue(() => applyHandshakeSignal(message, `pairing:${derived.pairingRoomId}`));
+			await joinQueue.enqueue(() =>
+				applyHandshakeSignal(message, `pairing:${derived.pairingRoomId}`),
+			);
 		}
 	}
 
@@ -478,7 +615,9 @@ export async function startHostedPairingHost(
 	): Promise<void> {
 		if (!message || registered.handle(message)) return;
 		if (message.type === 'device-join') {
-			assertAuthenticatedTransportVersion(message.authenticatedTransportVersion);
+			assertAuthenticatedTransportVersion(
+				message.authenticatedTransportVersion,
+			);
 			diagnose({ type: 'client-join', scope: 'device' });
 			const clientNonce = parseClientNonce(message.clientNonce);
 			const deviceId = parseDeviceId(message.deviceId);
@@ -486,26 +625,45 @@ export async function startHostedPairingHost(
 			// device-join actually comes from the device key it names.
 			verifyDeviceJoinProof(deviceId, clientNonce, message.deviceProof);
 			await joinQueue.enqueue(() =>
-				addHandshakePeer(socket, { kind: 'device', sessionId, deviceId, clientNonce }),
+				addHandshakePeer(socket, {
+					kind: 'device',
+					sessionId,
+					deviceId,
+					clientNonce,
+				}),
 			);
 			return;
 		}
 		if (message.type === 'device-answer' || message.type === 'device-ice') {
-			const deviceId = typeof message.deviceId === 'string' ? message.deviceId : '';
-			await joinQueue.enqueue(() => applyHandshakeSignal(message, `device:${deviceId}`));
+			const deviceId =
+				typeof message.deviceId === 'string' ? message.deviceId : '';
+			await joinQueue.enqueue(() =>
+				applyHandshakeSignal(message, `device:${deviceId}`),
+			);
 		}
 	}
 
 	async function registerPairing(handoff: ServerPairingHandoff): Promise<void> {
 		const generation = ++pairingGeneration;
 		pairingReady = false;
-		const derived = deriveHostedPairingSecrets(new URL(handoff.pairingUrl).hash.slice(1));
-		const socket = openSignalSocket(signalingUrl, handoff.sessionOrigin, options.signal);
+		const derived = deriveHostedPairingSecrets(
+			new URL(handoff.pairingUrl).hash.slice(1),
+		);
+		const socket = openSignalSocket(
+			signalingUrl,
+			handoff.sessionOrigin,
+			options.signal,
+		);
 		pairingSocket = socket;
 		const registered = waitForSignalType(socket, 'host-registered');
 		socket.on('message', (raw) => {
 			if (generation !== pairingGeneration) return;
-			void handlePairingSignal(parseSignal(raw), derived, socket, registered).catch(logHostError);
+			void handlePairingSignal(
+				parseSignal(raw),
+				derived,
+				socket,
+				registered,
+			).catch(logHostError);
 		});
 		socket.once('close', (code, reason) => {
 			if (closed || generation !== pairingGeneration || !pairingReady) return;
@@ -543,7 +701,7 @@ export async function startHostedPairingHost(
 		diagnose({
 			type: 'registered',
 			scope: 'pairing',
-			advertisedUrlClass: advertisedUrlClass(handoff.pairingUrl),
+			advertisedUrlClass: advertisedPairingUrlClass(handoff.pairingUrl),
 			signalingHostClass,
 		});
 		schedulePairingRefresh(handoff);
@@ -561,7 +719,9 @@ export async function startHostedPairingHost(
 		const registered = waitForSignalType(socket, 'device-host-registered');
 		socket.on('message', (raw) => {
 			if (generation !== deviceGeneration) return;
-			void handleDeviceSignal(parseSignal(raw), socket, registered).catch(logHostError);
+			void handleDeviceSignal(parseSignal(raw), socket, registered).catch(
+				logHostError,
+			);
 		});
 		socket.once('close', (code, reason) => {
 			if (closed || generation !== deviceGeneration || !deviceReady) return;
@@ -623,11 +783,18 @@ export async function startHostedPairingHost(
 				diagnose({
 					type: 'rotated',
 					cause,
-					advertisedUrlClass: advertisedUrlClass(currentHandoff.pairingUrl),
+					advertisedUrlClass: advertisedPairingUrlClass(
+						currentHandoff.pairingUrl,
+					),
 					remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
 				});
 			} else {
-				diagnose({ type: 'reregistered', scope: 'pairing', cause, remainingMs: remaining });
+				diagnose({
+					type: 'reregistered',
+					scope: 'pairing',
+					cause,
+					remainingMs: remaining,
+				});
 			}
 			const previous = pairingSocket;
 			pairingGeneration += 1;
@@ -673,7 +840,9 @@ export async function startHostedPairingHost(
 		clearTimeout(pairingRefreshTimer);
 		const delay = Math.max(
 			1_000,
-			Date.parse(handoff.pairingExpiresAt) - Date.now() - PAIRING_REFRESH_LEAD_MS,
+			Date.parse(handoff.pairingExpiresAt) -
+				Date.now() -
+				PAIRING_REFRESH_LEAD_MS,
 		);
 		pairingRefreshTimer = setTimeout(() => {
 			void refreshPairing('expiry');
@@ -692,7 +861,7 @@ export async function startHostedPairingHost(
 
 	diagnose({
 		type: 'advertised',
-		advertisedUrlClass: advertisedUrlClass(currentHandoff.pairingUrl),
+		advertisedUrlClass: advertisedPairingUrlClass(currentHandoff.pairingUrl),
 		signalingHostClass,
 		remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
 	});
@@ -700,9 +869,11 @@ export async function startHostedPairingHost(
 	let registrationTimeout: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([
-			Promise.all([registerPairing(currentHandoff), registerDevice()]).finally(() => {
-				clearTimeout(registrationTimeout);
-			}),
+			Promise.all([registerPairing(currentHandoff), registerDevice()]).finally(
+				() => {
+					clearTimeout(registrationTimeout);
+				},
+			),
 			new Promise<never>((_, reject) => {
 				registrationTimeout = setTimeout(() => {
 					reject(new Error('Hosted signaling room registration timed out.'));
@@ -724,7 +895,10 @@ export async function startHostedPairingHost(
 		mintPairing: () => refreshPairing('mint'),
 	};
 
-	async function applyHandshakeSignal(message: Record<string, unknown>, key: string): Promise<void> {
+	async function applyHandshakeSignal(
+		message: Record<string, unknown>,
+		key: string,
+	): Promise<void> {
 		// Answers and ICE are applied only to the handshake for their own room or
 		// session, so two offers can never have candidates mixed across them.
 		const current = handshakes.get(key);
@@ -770,7 +944,10 @@ function openSignalSocket(
 
 function closeSocket(socket: WebSocket | undefined): void {
 	if (!socket) return;
-	if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+	if (
+		socket.readyState === WebSocket.OPEN ||
+		socket.readyState === WebSocket.CONNECTING
+	) {
 		socket.close(1000, 'Terminay pairing host stopped');
 	}
 }
@@ -802,7 +979,9 @@ function waitForSignalType(
 		settled = true;
 		reject?.(error);
 	};
-	socket.once('error', () => fail(new Error('Hosted signaling room registration failed.')));
+	socket.once('error', () =>
+		fail(new Error('Hosted signaling room registration failed.')),
+	);
 	socket.once('close', () =>
 		fail(new Error('Hosted signaling closed before the room registered.')),
 	);
@@ -844,7 +1023,9 @@ type SignalScope =
 	  };
 
 function handshakeKey(scope: SignalScope): string {
-	return scope.kind === 'pairing' ? `pairing:${scope.roomId}` : `device:${scope.deviceId}`;
+	return scope.kind === 'pairing'
+		? `pairing:${scope.roomId}`
+		: `device:${scope.deviceId}`;
 }
 
 type HostContext = Readonly<{
@@ -853,7 +1034,10 @@ type HostContext = Readonly<{
 	options: HostedPairingHostOptions;
 	apiChannelsByPeer: Map<string, WeriftDataChannel>;
 	/** Orders one device's takeover; never shared with handshake signaling. */
-	replaceDevicePeer: (deviceId: string, task: () => Promise<void>) => Promise<void>;
+	replaceDevicePeer: (
+		deviceId: string,
+		task: () => Promise<void>,
+	) => Promise<void>;
 }>;
 
 /** Per-peer authentication state shared by the api and control lanes. */
@@ -869,7 +1053,10 @@ function formatConnectHost(host: string, port: string): string {
 
 function waitForOpen(socket: WebSocket): Promise<void> {
 	if (socket.readyState === WebSocket.OPEN) return Promise.resolve();
-	if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+	if (
+		socket.readyState === WebSocket.CLOSING ||
+		socket.readyState === WebSocket.CLOSED
+	) {
 		return Promise.reject(new Error('Hosted signaling could not connect.'));
 	}
 	return new Promise((resolve, reject) => {
@@ -884,32 +1071,28 @@ function waitForOpen(socket: WebSocket): Promise<void> {
 			else resolve();
 		};
 		const onOpen = () => finish();
-		const onFail = () => finish(new Error('Hosted signaling could not connect.'));
+		const onFail = () =>
+			finish(new Error('Hosted signaling could not connect.'));
 		socket.once('open', onOpen);
 		socket.once('error', onFail);
 		socket.once('close', onFail);
 	});
 }
 
-function advertisedUrlClass(pairingUrl: string): 'manager' | 'session' | 'loopback' | 'other' {
-	try {
-		const host = new URL(pairingUrl).hostname.toLowerCase();
-		if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return 'loopback';
-		if (host === 'app.terminay.com') return 'manager';
-		if (host.endsWith('.terminay.com')) return 'session';
-		return 'other';
-	} catch {
-		return 'other';
-	}
-}
-
-function classifySignalingHost(sessionOrigin: string): 'terminay-session' | 'loopback' | 'other' {
+function classifySignalingHost(
+	sessionOrigin: string,
+): 'terminay-session' | 'loopback' | 'other' {
 	try {
 		const host = new URL(sessionOrigin).hostname.toLowerCase();
-		if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost')) {
+		if (
+			host === 'localhost' ||
+			host === '127.0.0.1' ||
+			host.endsWith('.localhost')
+		) {
 			return 'loopback';
 		}
-		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com') return 'terminay-session';
+		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com')
+			return 'terminay-session';
 		return 'other';
 	} catch {
 		return 'other';
@@ -954,7 +1137,10 @@ async function startPeer(
 			context.options.advertiseAddress,
 		),
 	);
-	const session: { connection?: ServerConnectionLike; peer?: HostedConnectedPeer } = {};
+	const session: {
+		connection?: ServerConnectionLike;
+		peer?: HostedConnectedPeer;
+	} = {};
 	let lifecycle: HostedPeerLifecycle;
 	let wrapped: WeriftPeer;
 	const stream = createHostedStreamDiagnostics({
@@ -989,16 +1175,34 @@ async function startPeer(
 	wrapped = wrapPeer(native, lifecycle);
 	const peer = wrapped;
 	const channels = Object.fromEntries(
-		CHANNELS.map((label) => [label, peer.createDataChannel(label, { ordered: true })]),
+		CHANNELS.map((label) => [
+			label,
+			peer.createDataChannel(label, { ordered: true }),
+		]),
 	) as Record<(typeof CHANNELS)[number], WeriftDataChannel>;
 	native.addEventListener('connectionstatechange', () => {
 		lifecycle.observe('peer');
 		stream.peerState(native.connectionState, native.iceConnectionState);
+		void reportCandidatePair();
 	});
 	native.addEventListener('iceconnectionstatechange', () => {
 		lifecycle.observe('ice');
 		stream.peerState(native.connectionState, native.iceConnectionState);
+		void reportCandidatePair();
 	});
+	let lastCandidatePair: string | undefined;
+	const reportCandidatePair = async () => {
+		const selected = await selectedIceCandidatePair(native);
+		if (selected === undefined) return;
+		const signature = JSON.stringify(selected);
+		if (signature === lastCandidatePair) return;
+		lastCandidatePair = signature;
+		context.options.onDiagnostic?.({
+			type: 'candidate-pair',
+			scope: scope.kind,
+			...selected,
+		});
+	};
 	for (const label of CHANNELS) {
 		const channel = channels[label]!;
 		// A lane that never opened is still negotiating; only a lane that has
@@ -1022,14 +1226,24 @@ async function startPeer(
 	});
 	const auth: PeerAuthState = { peerId, scope, authenticated: false };
 	bindApi(channels.api!, auth, context);
-	bindControl(channels.control!, channels.application!, auth, context, stream, (connection, connected, replaced) => {
-		session.connection = connection;
-		session.peer = connected;
-		// Host context and the UI archive are served only to a peer that has
-		// consumed a ticket. Bind the archive lanes now, not at peer creation.
-		bindUiArchiveChannels([channels.asset!, channels.assets!], context.archive);
-		return onApplication(connection, connected, replaced);
-	});
+	bindControl(
+		channels.control!,
+		channels.application!,
+		auth,
+		context,
+		stream,
+		(connection, connected, replaced) => {
+			session.connection = connection;
+			session.peer = connected;
+			// Host context and the UI archive are served only to a peer that has
+			// consumed a ticket. Bind the archive lanes now, not at peer creation.
+			bindUiArchiveChannels(
+				[channels.asset!, channels.assets!],
+				context.archive,
+			);
+			return onApplication(connection, connected, replaced);
+		},
+	);
 
 	const offer = await peer.createOffer();
 	if (typeof offer.sdp !== 'string' || typeof offer.type !== 'string') {
@@ -1047,14 +1261,24 @@ async function startPeer(
 	return peer;
 }
 
-export async function createAuthenticatedTransportSignal(input: Readonly<{
-	hostKey: HostedHostKey;
-	offer: Readonly<{ sdp?: string; type?: string }>;
-	scope: SignalScope;
-	serverId: string;
-	sessionOrigin: string;
-}>): Promise<Readonly<{ authenticatedTransport: Record<string, unknown>; sdp: Readonly<{ sdp: string; type: string }> }>> {
-	if (typeof input.offer.sdp !== 'string' || typeof input.offer.type !== 'string') {
+export async function createAuthenticatedTransportSignal(
+	input: Readonly<{
+		hostKey: HostedHostKey;
+		offer: Readonly<{ sdp?: string; type?: string }>;
+		scope: SignalScope;
+		serverId: string;
+		sessionOrigin: string;
+	}>,
+): Promise<
+	Readonly<{
+		authenticatedTransport: Record<string, unknown>;
+		sdp: Readonly<{ sdp: string; type: string }>;
+	}>
+> {
+	if (
+		typeof input.offer.sdp !== 'string' ||
+		typeof input.offer.type !== 'string'
+	) {
 		throw new Error('Hosted pairing host could not snapshot its WebRTC offer.');
 	}
 	const sdp = input.offer.sdp;
@@ -1066,21 +1290,30 @@ export async function createAuthenticatedTransportSignal(input: Readonly<{
 		serverId: input.serverId,
 		sessionOrigin: input.sessionOrigin,
 	});
-	return Object.freeze({ authenticatedTransport, sdp: Object.freeze({ sdp, type }) });
+	return Object.freeze({
+		authenticatedTransport,
+		sdp: Object.freeze({ sdp, type }),
+	});
 }
 
-export async function createAuthenticatedTransportOffer(input: Readonly<{
-	hostKey: HostedHostKey;
-	scope: SignalScope;
-	sdp: string;
-	serverId: string;
-	sessionOrigin: string;
-}>): Promise<Record<string, unknown>> {
+export async function createAuthenticatedTransportOffer(
+	input: Readonly<{
+		hostKey: HostedHostKey;
+		scope: SignalScope;
+		sdp: string;
+		serverId: string;
+		sessionOrigin: string;
+	}>,
+): Promise<Record<string, unknown>> {
 	const issuedAt = Date.now();
-	const scope: AuthenticatedWebRtcTransportScope = input.scope.kind === 'pairing' ? 'pairing' : 'reconnect';
+	const scope: AuthenticatedWebRtcTransportScope =
+		input.scope.kind === 'pairing' ? 'pairing' : 'reconnect';
 	const transcript = createAuthenticatedWebRtcTransportTranscript({
 		scope,
-		scopeId: input.scope.kind === 'pairing' ? input.scope.roomId : input.scope.deviceId,
+		scopeId:
+			input.scope.kind === 'pairing'
+				? input.scope.roomId
+				: input.scope.deviceId,
 		sessionOrigin: input.sessionOrigin,
 		serverId: input.serverId,
 		hostKeyAlgorithm: 'ed25519',
@@ -1102,11 +1335,12 @@ export async function createAuthenticatedTransportOffer(input: Readonly<{
 		hostSignature,
 		...(input.scope.kind === 'pairing'
 			? {
-					pairingAuthenticator: await createAuthenticatedWebRtcPairingAuthenticator(
-						input.scope.pairingSecret,
-						transcript,
-					),
-			  }
+					pairingAuthenticator:
+						await createAuthenticatedWebRtcPairingAuthenticator(
+							input.scope.pairingSecret,
+							transcript,
+						),
+				}
 			: {}),
 	});
 }
@@ -1127,7 +1361,9 @@ function parseDeviceId(value: unknown): string {
 
 function assertAuthenticatedTransportVersion(value: unknown): void {
 	if (value !== AUTHENTICATED_WEBRTC_TRANSPORT_VERSION) {
-		throw new Error('Hosted signaling authenticated transport version is incompatible.');
+		throw new Error(
+			'Hosted signaling authenticated transport version is incompatible.',
+		);
 	}
 }
 
@@ -1151,7 +1387,10 @@ function signalMessage(
 	};
 }
 
-function wrapPeer(peer: WeriftPeer, lifecycle: HostedPeerLifecycle): WeriftPeer {
+function wrapPeer(
+	peer: WeriftPeer,
+	lifecycle: HostedPeerLifecycle,
+): WeriftPeer {
 	const queued: Array<() => void> = [];
 	let remoteSet = false;
 	return {
@@ -1174,7 +1413,8 @@ function wrapPeer(peer: WeriftPeer, lifecycle: HostedPeerLifecycle): WeriftPeer 
 			lifecycle.stop();
 			peer.close();
 		},
-		createDataChannel: (label, options) => peer.createDataChannel(label, options),
+		createDataChannel: (label, options) =>
+			peer.createDataChannel(label, options),
 		createOffer: () => peer.createOffer(),
 		setLocalDescription: (description) => peer.setLocalDescription(description),
 		async setRemoteDescription(description) {
@@ -1190,7 +1430,8 @@ function asSessionDescription(
 ): { sdp: string; type: string } | undefined {
 	if (!value || typeof value !== 'object') return undefined;
 	const record = value as Record<string, unknown>;
-	if (typeof record.sdp !== 'string' || typeof record.type !== 'string') return undefined;
+	if (typeof record.sdp !== 'string' || typeof record.type !== 'string')
+		return undefined;
 	return { sdp: record.sdp, type: record.type };
 }
 
@@ -1203,14 +1444,17 @@ function asIceCandidate(
 			? (value as WeriftIceCandidate).toJSON!()
 			: value
 	) as Record<string, unknown>;
-	if (typeof record.candidate !== 'string' || record.candidate.length === 0) return undefined;
+	if (typeof record.candidate !== 'string' || record.candidate.length === 0)
+		return undefined;
 	const sdpMid =
 		typeof record.sdpMid === 'string' && record.sdpMid.length > 0
 			? record.sdpMid
 			: typeof record.sdpMLineIndex === 'number'
 				? String(record.sdpMLineIndex)
 				: undefined;
-	return sdpMid === undefined ? undefined : { candidate: record.candidate, sdpMid };
+	return sdpMid === undefined
+		? undefined
+		: { candidate: record.candidate, sdpMid };
 }
 
 function bindApi(
@@ -1220,25 +1464,46 @@ function bindApi(
 ): void {
 	context.apiChannelsByPeer.set(auth.peerId, channel);
 	channel.addEventListener('close', () => {
-		if (context.apiChannelsByPeer.get(auth.peerId) === channel) context.apiChannelsByPeer.delete(auth.peerId);
+		if (context.apiChannelsByPeer.get(auth.peerId) === channel)
+			context.apiChannelsByPeer.delete(auth.peerId);
 	});
 	channel.addEventListener('message', (event) => {
 		void (async () => {
 			let request: Record<string, unknown>;
 			try {
-				request = JSON.parse(String(event.data ?? '')) as Record<string, unknown>;
+				request = JSON.parse(String(event.data ?? '')) as Record<
+					string,
+					unknown
+				>;
 			} catch {
 				return;
 			}
-			if (request.type !== 'api-request' || typeof request.id !== 'string') return;
+			if (request.type !== 'api-request' || typeof request.id !== 'string')
+				return;
 			try {
-				const body = await handleApi(request.pathname, request.body, auth, context);
-				safeChannelSend(channel, JSON.stringify({ body, id: request.id, ok: true, type: 'api-response' }));
+				const body = await handleApi(
+					request.pathname,
+					request.body,
+					auth,
+					context,
+				);
+				safeChannelSend(
+					channel,
+					JSON.stringify({
+						body,
+						id: request.id,
+						ok: true,
+						type: 'api-response',
+					}),
+				);
 			} catch (error) {
 				safeChannelSend(
 					channel,
 					JSON.stringify({
-						error: error instanceof Error ? error.message : 'Terminay rejected the bootstrap request.',
+						error:
+							error instanceof Error
+								? error.message
+								: 'Terminay rejected the bootstrap request.',
 						id: request.id,
 						ok: false,
 						type: 'api-response',
@@ -1257,9 +1522,13 @@ async function handleApi(
 	auth: PeerAuthState,
 	context: HostContext,
 ): Promise<unknown> {
-	const request = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+	const request =
+		body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
 	if (pathname === '/api/host-context') {
-		if (!auth.authenticated) throw new Error('Terminay requires an authenticated device before host context.');
+		if (!auth.authenticated)
+			throw new Error(
+				'Terminay requires an authenticated device before host context.',
+			);
 		const sessionId =
 			context.options.sessionId ??
 			new URL(context.options.handoff.sessionOrigin).hostname.split('.')[0] ??
@@ -1283,7 +1552,8 @@ async function handleApi(
 		// Enrollment only ever parks a request. The device is registered when
 		// the administrator approves the match code on the exposing host, and
 		// the outcome is pushed back on this same lane.
-		if (auth.scope.kind !== 'pairing') throw new Error('pairing authority is invalid');
+		if (auth.scope.kind !== 'pairing')
+			throw new Error('pairing authority is invalid');
 		const publicKeyPem = String(request.publicKeyPem ?? '');
 		const matchCode = await deriveMatchCode({
 			pairingSecret: auth.scope.pairingSecret,
@@ -1299,7 +1569,11 @@ async function handleApi(
 			matchCode,
 			peerId: auth.peerId,
 		});
-		return { status: 'pending', approvalId: pending.approvalId, expiresAt: pending.expiresAt };
+		return {
+			status: 'pending',
+			approvalId: pending.approvalId,
+			expiresAt: pending.expiresAt,
+		};
 	}
 	if (pathname === '/api/devices/challenge') {
 		// The client checks the challenge against the origin it dialled, so this
@@ -1357,13 +1631,19 @@ function bindControl(
 		} catch {
 			return;
 		}
-		if (request.type !== 'application-auth' || typeof request.id !== 'string') return;
+		if (request.type !== 'application-auth' || typeof request.id !== 'string')
+			return;
 		// Consume and answer inline. Nothing a waiting client depends on may sit
 		// behind handshake signaling: an `addIceCandidate` for any peer can take
 		// seconds or never settle, and this reply has a client-side deadline.
-		let ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']> | undefined;
+		let ticket:
+			| ReturnType<ServerRemoteExposure['consumeConnectionTicket']>
+			| undefined;
 		try {
-			ticket = context.options.remote.consumeConnectionTicket(String(request.ticket ?? ''), auth.peerId);
+			ticket = context.options.remote.consumeConnectionTicket(
+				String(request.ticket ?? ''),
+				auth.peerId,
+			);
 		} catch {
 			ticket = undefined;
 		}
@@ -1385,18 +1665,21 @@ function bindControl(
 			console.error(error instanceof Error ? error.message : error);
 			return;
 		}
-		if (!ok || !ticket || context.options.acceptApplication === undefined) return;
+		if (!ok || !ticket || context.options.acceptApplication === undefined)
+			return;
 		const authenticated = ticket;
 		// Only now, with a consumed ticket for this device, does the previous
 		// live peer for the device get retired, and its server-side cleanup
 		// completes before the replacement attaches to the workspace. Ordering
 		// is per device, so another device's takeover never waits on this one.
-		void context.replaceDevicePeer(authenticated.deviceId, async () => {
-			const replaced = await context.livePeers.close(authenticated.deviceId);
-			await acceptAuthenticatedApplication(authenticated, replaced);
-		}).catch((error) => {
-			console.error(error instanceof Error ? error.message : error);
-		});
+		void context
+			.replaceDevicePeer(authenticated.deviceId, async () => {
+				const replaced = await context.livePeers.close(authenticated.deviceId);
+				await acceptAuthenticatedApplication(authenticated, replaced);
+			})
+			.catch((error) => {
+				console.error(error instanceof Error ? error.message : error);
+			});
 	});
 
 	async function acceptAuthenticatedApplication(
@@ -1448,7 +1731,9 @@ function asHeadlessChannel(
 	channel: WeriftDataChannel,
 	stream?: ReturnType<typeof createHostedStreamDiagnostics>,
 ): HeadlessDataChannel {
-	const listeners = new Set<(state: HeadlessDataChannel['readyState']) => void>();
+	const listeners = new Set<
+		(state: HeadlessDataChannel['readyState']) => void
+	>();
 	const emit = () => {
 		const state = mapChannelState(channel.readyState);
 		for (const listener of listeners) listener(state);
@@ -1464,12 +1749,16 @@ function asHeadlessChannel(
 			return mapChannelState(channel.readyState);
 		},
 		get bufferedAmount() {
-			return typeof channel.bufferedAmount === 'number' ? channel.bufferedAmount : 0;
+			return typeof channel.bufferedAmount === 'number'
+				? channel.bufferedAmount
+				: 0;
 		},
 		// The transport fragments to exactly what this lane accepts, so a large
 		// query result never reaches `safeChannelSend` as one oversized message.
 		get maxMessageBytes() {
-			return readSctpMaxMessageBytes(channel as unknown as UiArchiveDataChannel);
+			return readSctpMaxMessageBytes(
+				channel as unknown as UiArchiveDataChannel,
+			);
 		},
 		send(frame) {
 			try {
@@ -1523,14 +1812,18 @@ function createMinimalUiArchive(): MinimalArchive {
 	});
 	return Object.freeze({
 		bundleId: 'standalonehostedui',
-		bytes: gzipSync(makeTar([
-			['terminay-bundle.json', metadata],
-			['workspace.html', html],
-		])),
+		bytes: gzipSync(
+			makeTar([
+				['terminay-bundle.json', metadata],
+				['workspace.html', html],
+			]),
+		),
 	});
 }
 
-function makeTar(entries: ReadonlyArray<readonly [string, string]>): Uint8Array {
+function makeTar(
+	entries: ReadonlyArray<readonly [string, string]>,
+): Uint8Array {
 	const encoder = new TextEncoder();
 	const blocks: Uint8Array[] = [];
 	for (const [name, bodyText] of entries) {
@@ -1538,15 +1831,26 @@ function makeTar(entries: ReadonlyArray<readonly [string, string]>): Uint8Array 
 		const header = new Uint8Array(512);
 		writeTarString(header, 0, 100, name);
 		writeTarString(header, 100, 8, '0000644');
-		writeTarString(header, 124, 12, `${body.byteLength.toString(8).padStart(11, '0')} `);
+		writeTarString(
+			header,
+			124,
+			12,
+			`${body.byteLength.toString(8).padStart(11, '0')} `,
+		);
 		writeTarString(header, 257, 6, 'ustar');
 		header[156] = 48;
 		header.fill(32, 148, 156);
 		let checksum = 0;
 		for (const value of header) checksum += value;
-		writeTarString(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
+		writeTarString(
+			header,
+			148,
+			8,
+			`${checksum.toString(8).padStart(6, '0')}\0 `,
+		);
 		blocks.push(header, body);
-		if (body.byteLength % 512) blocks.push(new Uint8Array(512 - (body.byteLength % 512)));
+		if (body.byteLength % 512)
+			blocks.push(new Uint8Array(512 - (body.byteLength % 512)));
 	}
 	blocks.push(new Uint8Array(1024));
 	const total = blocks.reduce((sum, block) => sum + block.byteLength, 0);
@@ -1559,6 +1863,11 @@ function makeTar(entries: ReadonlyArray<readonly [string, string]>): Uint8Array 
 	return tar;
 }
 
-function writeTarString(target: Uint8Array, offset: number, length: number, value: string): void {
+function writeTarString(
+	target: Uint8Array,
+	offset: number,
+	length: number,
+	value: string,
+): void {
 	target.set(new TextEncoder().encode(String(value)).slice(0, length), offset);
 }
