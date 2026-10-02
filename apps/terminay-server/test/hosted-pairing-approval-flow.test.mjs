@@ -552,6 +552,45 @@ test('a device pairs only after the host approves its match code, and the ticket
 		'the relay never sees the match code',
 	);
 
+	// Denial also retires the one-time link so it cannot be reused to generate
+	// an unbounded stream of approval requests.
+	const deniedHandoff = currentHandoff;
+	const deniedSecrets = deriveHostedPairingSecrets(
+		new URL(deniedHandoff.pairingUrl).hash.slice(1),
+	);
+	const deniedClient = await connectClient(relay, {
+		mode: 'pairing',
+		roomId: deniedSecrets.pairingRoomId,
+		pairingSecret: deniedSecrets.qrSecret,
+		sessionOrigin,
+		serverId: 'server-a',
+	});
+	t.after(() => deniedClient.close());
+	await deniedClient.open();
+	const deniedRequest = parsePendingEnrollmentResponse(
+		await deniedClient.request('/api/devices/enroll', {
+			deviceName: 'Declined Phone',
+			pairingSessionId: deniedHandoff.pairingSessionId,
+			pairingToken: deniedSecrets.pairingToken,
+			publicKeyPem: deviceKey().publicKey,
+		}),
+	);
+	const deniedPush = deniedClient.nextPush();
+	exposure.denyEnrollment(deniedRequest.approvalId);
+	assert.equal((await deniedPush).type, 'enrollment-denied');
+	await waitFor(
+		() => currentHandoff.pairingSessionId !== deniedHandoff.pairingSessionId,
+		'denial-triggered room rotation',
+	);
+	assert.throws(
+		() =>
+			exposure.assertPairingAvailable(
+				deniedSecrets.pairingRoomId,
+				deniedSecrets.pairingToken,
+			),
+		/used|unavailable|expired/iu,
+	);
+
 	// Reconnect: device-join needs the device key proof; a bogus proof never produces an offer.
 	const deviceId = approved.deviceId;
 	const offersBefore = relay.state.log.filter(

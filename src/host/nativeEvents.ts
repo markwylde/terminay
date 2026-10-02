@@ -101,6 +101,7 @@ export function subscribeDesktopPerformanceSnapshot(
 export function subscribePairingApproval(
 	listener: (
 		approval: Readonly<{
+			attemptId: string;
 			deviceName: string;
 			matchCode: string;
 			expiresAt: string;
@@ -113,6 +114,7 @@ export function subscribePairingApproval(
 	return host.subscribeEvent((message) => {
 		if (message.event.type === 'connection.pairing-approval') {
 			listener({
+				attemptId: message.event.attemptId,
 				deviceName: message.event.deviceName,
 				matchCode: message.event.matchCode,
 				expiresAt: message.event.expiresAt,
@@ -123,11 +125,14 @@ export function subscribePairingApproval(
 
 export function subscribePairingProgress(
 	listener: (
-		state:
-			| 'connecting'
-			| 'connected'
-			| 'connection-degraded'
-			| 'connection-lost',
+		progress: Readonly<{
+			attemptId: string;
+			state:
+				| 'connecting'
+				| 'connected'
+				| 'connection-degraded'
+				| 'connection-lost';
+		}>,
 	) => void,
 ): () => void {
 	if (typeof window === 'undefined') return () => undefined;
@@ -135,6 +140,9 @@ export function subscribePairingProgress(
 	if (host === undefined) return () => undefined;
 	return host.subscribeEvent((message) => {
 		if (message.event.type === 'connection.pairing-progress')
-			listener(message.event.state);
+			listener({
+				attemptId: message.event.attemptId,
+				state: message.event.state,
+			});
 	});
 }

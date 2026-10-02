@@ -2,7 +2,7 @@
 
 ### Requirement: Documented local-container flow
 
-The operations runbook SHALL document connecting Terminay Desktop to a server running in a container on the same machine. It SHALL explain that WebRTC media uses UDP in addition to HTTPS signaling, that the required UDP port must be published and reachable, and that containers on macOS and Windows run inside a VM whose private address the Desktop host cannot route to; `--network host` does not change that. It SHALL show how to configure `--advertise-address` with the host's routable address and pair through hosted signaling. It SHALL also document the distinct same-host loopback direct-signaling option and state that a loopback direct origin does not make the container's UDP media path reachable. The guide SHALL cover connect-then-disconnect symptoms as well as ICE remaining in `checking` and explain how to collect candidate diagnostics.
+The operations runbook SHALL document connecting Terminay Desktop to a server running in a container on the same machine. It SHALL explain that WebRTC media uses UDP in addition to HTTPS signaling, that the required UDP port must be published and reachable, and that containers on macOS and Windows run inside a VM whose private address the Desktop host cannot route to; `--network host` does not change that. It SHALL show how to configure `--advertise-address` with the host's routable address and pair through hosted signaling. It SHALL also document the distinct same-host loopback direct-signaling option and state that a loopback direct origin does not make the container's UDP media path reachable. The guide SHALL cover connect-then-disconnect symptoms as well as ICE remaining in `checking` and explain how to collect candidate diagnostics. Every documented example SHALL use a routable address for container media reachability; loopback examples SHALL be clearly identified as signaling-only.
 
 #### Scenario: An operator follows the container flow
 
@@ -36,7 +36,7 @@ The operations runbook SHALL document connecting Terminay Desktop to a server ru
 #### Scenario: Direct QR is explicitly selected
 
 - **WHEN** `daemon qr-code --mode direct` runs
-- **THEN** the QR encodes the direct URL and the output labels it as a Terminay Desktop link
+- **THEN** the QR encodes the direct URL and the output says to open the direct URL in Terminay Desktop
 
 #### Scenario: Room refresh
 

@@ -10,6 +10,16 @@ const STREAM_TYPES = new Set([
 	'peer-closed',
 ]);
 
+const OMITTED_NETWORK_IDENTIFIER_FIELDS = new Set([
+	'address',
+	'ip',
+	'localAddress',
+	'localPort',
+	'port',
+	'remoteAddress',
+	'remotePort',
+]);
+
 export function createHostedDiagnosticLogger(
 	logSink?: string,
 ): (event: HostedPairingDiagnostic) => void {
@@ -46,7 +56,12 @@ function omitUndefined(
 ): Record<string, unknown> {
 	const fields: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(event)) {
-		if (key === 'type' || value === undefined) continue;
+		if (
+			key === 'type' ||
+			value === undefined ||
+			OMITTED_NETWORK_IDENTIFIER_FIELDS.has(key)
+		)
+			continue;
 		fields[key] = value;
 	}
 	return fields;

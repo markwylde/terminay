@@ -2,12 +2,12 @@
 
 ### Requirement: Consumed pairing links stop admitting new peers
 
-When a pairing approval consumes a one-time pairing room, the server SHALL rotate or invalidate that room before completing the approval response, independent of client platform or whether the peer later closes normally. A later attempt to use the same link SHALL fail with an error that identifies it as already used or expired and directs the user to generate a fresh link. Rotation SHALL NOT disconnect the peer that completed enrollment or existing paired-device connections.
+When an enrollment request is approved or denied, the server SHALL rotate or invalidate its one-time pairing room before completing the decision response, independent of client platform or whether the peer later closes normally. A later attempt to use the same link SHALL fail with an error that identifies it as already used or expired and directs the user to generate a fresh link. Rotation SHALL NOT disconnect an authenticated peer that completed enrollment or existing paired-device connections.
 
-#### Scenario: Approved link is retired immediately
+#### Scenario: Decided link is retired immediately
 
-- **WHEN** the host approves an enrollment request for a pairing room
-- **THEN** the room is no longer available to a new `client-join` before the approval completes
+- **WHEN** the host approves or denies an enrollment request for a pairing room
+- **THEN** the room is no longer available to a new `client-join` before the decision completes
 
 #### Scenario: Reusing an approved link gives recovery guidance
 
@@ -16,17 +16,22 @@ When a pairing approval consumes a one-time pairing room, the server SHALL rotat
 
 ### Requirement: Desktop and server expose transport-path diagnostics
 
-The Desktop pairing and reconnect host and the standalone signaling host SHALL record the selected WebRTC candidate-pair state and candidate types, protocol, and addresses when the pair is selected or changes. Diagnostics SHALL exclude pairing fragments, pairing secrets, device keys, tickets, SDP, and application data.
+The Desktop pairing and reconnect host and the standalone signaling host SHALL record the selected WebRTC candidate-pair state, candidate types, and protocol when the pair is selected or changes. Diagnostics SHALL exclude candidate addresses and ports, pairing fragments, pairing secrets, device keys, tickets, SDP, and application data.
 
 #### Scenario: Candidate pair is selected
 
 - **WHEN** ICE selects or changes its candidate pair
-- **THEN** both peers emit a structured diagnostic identifying local and remote candidate types, protocol, address, port, and pair state without credentials or SDP
+- **THEN** both peers emit a structured diagnostic identifying local and remote candidate types, protocol, and pair state without candidate addresses, ports, credentials, or SDP
 
 #### Scenario: Candidate-pair diagnostics are recorded
 
 - **WHEN** pairing later fails or the peer disconnects
 - **THEN** the preceding candidate-pair details are available in the local diagnostics for both sides
+
+#### Scenario: Candidate diagnostics omit network identifiers
+
+- **WHEN** the selected candidate pair changes
+- **THEN** local diagnostics include its types, protocol, and state but omit candidate addresses and ports
 
 ### Requirement: Desktop observes transport loss after connection establishment
 
@@ -46,3 +51,8 @@ Desktop SHALL continue observing WebRTC peer and required data-channel state aft
 
 - **WHEN** ICE reports `disconnected` while the peer remains `connected`
 - **THEN** Desktop retains the connection and leaves the application heartbeat and required lanes to detect a half-open transport
+
+#### Scenario: Bootstrap lanes close after transfer
+
+- **WHEN** the `api` or `asset` bootstrap lane closes after it has opened and completed its transfer
+- **THEN** Desktop keeps the connection alive because those lanes are not required for the established session

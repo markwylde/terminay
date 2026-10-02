@@ -2,7 +2,8 @@ import type {
 	ConnectionProfile,
 	ConnectionProfileStore,
 } from '@terminay/client-core';
-import { useState, type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
+import { friendlyPairingActionError } from './pairingActionError';
 import './SharedProductionRoutes.css';
 
 interface ConnectionSummary {
@@ -11,16 +12,11 @@ interface ConnectionSummary {
 	readonly status: 'connected' | 'disconnected' | 'reconnecting';
 }
 
-function friendlyActionError(cause: unknown): string {
-	const raw = cause instanceof Error ? cause.message : String(cause);
-	const message = raw.replace(/^Error invoking remote method '[^']+':\s*/u, '');
-	if (
-		/pairing room is unavailable|pairing link.*(?:used|expired)/iu.test(message)
-	)
-		return 'This pairing link has already been used or has expired. Generate a new link on the server.';
-	if (/timed out|timeout|ICE|connectivity/iu.test(message))
-		return 'Could not connect to the server. Check that its signaling address and UDP media route are reachable, then try again.';
-	return message || 'The connection action failed.';
+let pairingAttemptSequence = 0;
+
+function nextPairingAttemptId(): string {
+	pairingAttemptSequence += 1;
+	return `pair-${Date.now().toString(36)}-${pairingAttemptSequence.toString(36)}`;
 }
 
 export interface SharedConnectionsRouteBodyProps {
@@ -38,9 +34,11 @@ export interface SharedConnectionsRouteBodyProps {
 	readonly onExpose?: (profile: ConnectionProfile) => Promise<void> | void;
 	readonly onPairingHandoff?: (
 		input: Readonly<{
+			attemptId: string;
 			pairingUrl: string;
 		}>,
 	) => Promise<void> | void;
+	readonly onPairingProgressDismiss?: () => void;
 	/** Desktop is waiting for the exposing computer to approve this code. */
 	readonly pairingApproval?: Readonly<{
 		deviceName: string;
@@ -78,6 +76,7 @@ export function SharedConnectionsRouteBody({
 	onRevoke,
 	onExpose,
 	onPairingHandoff,
+	onPairingProgressDismiss,
 	pairingApproval = null,
 	pairingProgress = null,
 	onRename,
@@ -143,7 +142,7 @@ export function SharedConnectionsRouteBody({
 			setMessage(success);
 			setRevision((value) => value + 1);
 		} catch (cause) {
-			setActionError(friendlyActionError(cause));
+			setActionError(friendlyPairingActionError(cause));
 		} finally {
 			setBusy(undefined);
 		}
@@ -351,6 +350,17 @@ export function SharedConnectionsRouteBody({
 			)}
 			{message !== undefined && <p role="status">{message}</p>}
 			{actionError !== undefined && <p role="alert">{actionError}</p>}
+			{pairingProgress === 'connection-lost' && !showPair ? (
+				<div role="alert" className="shared-connections__pairing-recovery">
+					<p>
+						The connection was lost. Your server is saved; retry it from the
+						connections list.
+					</p>
+					<button type="button" onClick={onPairingProgressDismiss}>
+						Dismiss
+					</button>
+				</div>
+			) : null}
 		</>
 	);
 
@@ -423,10 +433,14 @@ export function SharedConnectionsRouteBody({
 					onSubmit={(event) => {
 						event.preventDefault();
 						const value = pairingUrl;
+						const attemptId = nextPairingAttemptId();
 						void mutate(
 							'pair',
 							async () => {
-								await onPairingHandoff?.({ pairingUrl: value });
+								await onPairingHandoff?.({
+									attemptId,
+									pairingUrl: value,
+								});
 								setPairingUrl('');
 								setShowPair(false);
 							},

@@ -12,13 +12,14 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { pairDesktopConnection } from '../host/nativeActions';
 import {
 	subscribePairingApproval,
 	subscribePairingProgress,
 } from '../host/nativeEvents';
-import { pairDesktopConnection } from '../host/nativeActions';
 import {
 	type CompositionPersistence,
+	type ConnectionOpenResult,
 	ConnectionRegistry,
 	ConnectionsProvider,
 	createBrowserConnectionHost,
@@ -28,7 +29,6 @@ import {
 	NO_ATTACHED_CONNECTIONS,
 	NO_COMPOSITION_PERSISTENCE,
 	useConnectionsSnapshot,
-	type ConnectionOpenResult,
 	type WorkspaceConnection,
 	type WorkspaceConnectionHost,
 } from '../shared/connections';
@@ -189,12 +189,30 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		| 'connection-lost'
 		| null
 	>(null);
-	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
+	const activeDesktopPairingAttemptId = useRef<string | null>(null);
 	useEffect(
 		() =>
-			subscribePairingProgress((state) => {
-				setDesktopPairingProgress(state);
-				if (state === 'connecting' || state === 'connection-lost')
+			subscribePairingApproval((approval) => {
+				if (activeDesktopPairingAttemptId.current !== approval.attemptId)
+					return;
+				setDesktopPairingApproval({
+					deviceName: approval.deviceName,
+					matchCode: approval.matchCode,
+					expiresAt: approval.expiresAt,
+				});
+			}),
+		[],
+	);
+	useEffect(
+		() =>
+			subscribePairingProgress((progress) => {
+				if (activeDesktopPairingAttemptId.current !== progress.attemptId)
+					return;
+				setDesktopPairingProgress(progress.state);
+				if (
+					progress.state === 'connecting' ||
+					progress.state === 'connection-lost'
+				)
 					setDesktopPairingApproval(null);
 			}),
 		[],
@@ -287,17 +305,23 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 						canPair: true,
 						pairingApproval: desktopPairingApproval,
 						pairingProgress: desktopPairingProgress,
-						onPairingHandoff: async ({ pairingUrl }) => {
+						onPairingHandoff: async ({ pairingUrl, attemptId }) => {
+							activeDesktopPairingAttemptId.current = attemptId;
 							setDesktopPairingApproval(null);
 							setDesktopPairingProgress(null);
 							try {
-								if (!(await pairDesktopConnection(pairingUrl)))
+								if (!(await pairDesktopConnection(pairingUrl, attemptId)))
 									throw new Error(
 										'Desktop pairing is unavailable in this session.',
 									);
 							} finally {
 								setDesktopPairingApproval(null);
 							}
+						},
+						onPairingProgressDismiss: () => {
+							activeDesktopPairingAttemptId.current = null;
+							setDesktopPairingApproval(null);
+							setDesktopPairingProgress(null);
 						},
 					}),
 			profileStore: profiles,

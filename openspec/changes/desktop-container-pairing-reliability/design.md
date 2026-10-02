@@ -29,11 +29,11 @@ The related accepted decisions are ADR 0013 (device-bound host approval and chan
 
 3. **Keep a connection monitor alive after the setup promise resolves.** The monitor owns peer and required-lane state through the lifetime of the returned peer/transport. It applies the existing ICE grace rule, fails once on terminal failure/closure or grace expiry, closes the affected generation, and emits a host event that the UI can associate with the active connection. It does not treat a transient ICE disconnect with a connected peer as immediate failure.
 
-4. **Log candidate-pair changes as local structured diagnostics.** Use WebRTC stats on both the Desktop peer and server peer. Include state, candidate types, protocol, address, and port so operators can compare the route. Exclude SDP, secrets, device credentials, and application data. These network addresses are operational diagnostic data and remain in local host/server logs.
+4. **Log candidate-pair changes as local structured diagnostics.** Use WebRTC stats on both the Desktop peer and server peer. Include state, candidate types, and protocol so operators can compare route classes. Exclude candidate addresses and ports as well as SDP, secrets, device credentials, and application data, consistent with the existing metadata-only diagnostics contract.
 
 5. **Invalidate room admission synchronously with enrollment approval.** Connect the server-core successful consume/approval path to the hosted pairing host's room refresh so it retires the consumed signaling registration before approval is returned. Preserve the currently authenticated peer and existing device peers. Map an unavailable pairing room to a typed expired-or-used outcome at the Desktop boundary.
 
-6. **Make pairing UI state reflect the actual sequence.** An attempt starts in submitting, changes to waiting only when the host reports a match code, changes to connecting when the approval push arrives, and ends in connected or failed. A single in-flight guard disables repeated submission. Normalize Electron invocation errors at the connection-host boundary and map known pairing/network failures to short user-facing copy.
+6. **Make pairing UI state reflect the actual sequence.** An attempt starts in submitting, changes to waiting only when the host reports a match code, changes to connecting when the approval push arrives, and ends in connected or failed. Carry an opaque attempt ID through the privileged action and its approval/progress events so delayed events from an older attempt cannot overwrite the current attempt. A single in-flight guard disables repeated submission. Keep connection-loss recovery visible if the pairing panel is closed. Normalize Electron invocation errors at the connection-host boundary and map known pairing/network failures to short user-facing copy.
 
 7. **Separate browser QR links from direct signaling links.** When both modes exist, render hosted by default; explicit direct mode remains available and is labeled for Desktop. The direct listener returns a static no-secrets HTML explanation at `/v1/` while retaining `/signal` and protocol routes.
 
@@ -44,7 +44,7 @@ The related accepted decisions are ADR 0013 (device-bound host approval and chan
 - [WebRTC stats vary by runtime] → Treat absent stats as unavailable and keep connection setup functional; test the pinned runtime shape used in production.
 - [Room refresh races with an approved live peer] → Retire only the consumed room registration; assert that enrollment's authenticated peer and paired-device sessions remain open.
 - [Early persistence can expose a failed profile in the list] → Show it as unavailable with Retry; do not delete the credential when bundle loading fails.
-- [Candidate IPs are sensitive local-network metadata] → Keep diagnostics local and structured, and exclude all pairing and application secrets.
+- [Candidate IPs are sensitive local-network metadata] → Exclude addresses and ports entirely; retain only candidate types, protocol, and pair state.
 - [Foreground operation requires an operator-managed container lifecycle] → Document signals, persistent volume, port mapping, and restart policy explicitly; retain systemd guidance for supported hosts.
 
 ## Migration Plan

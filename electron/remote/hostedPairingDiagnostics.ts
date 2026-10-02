@@ -1,5 +1,5 @@
-import type { DiagnosticEventInput } from '../diagnostics/core';
 import type { HostedPairingDiagnostic } from '../../apps/terminay-server/src/remote/hostedPairingHost';
+import type { DiagnosticEventInput } from '../diagnostics/core';
 
 const EVENT_NAMES = {
 	advertised: 'local-server.remote-pairing.advertised',
@@ -63,11 +63,15 @@ export function hostedPairingDiagnosticEvent(
 			lastInboundAgeMs: event.lastInboundAgeMs,
 			lastOutboundAgeMs: event.lastOutboundAgeMs,
 			liveGenerationCount: event.liveGenerationCount,
+			localType: event.localType,
 			outboundBytes: event.outboundBytes,
 			outboundFrames: event.outboundFrames,
 			peerState: event.peerState,
+			pairState: event.pairState,
+			protocol: event.protocol,
 			reasonClass: event.reasonClass,
 			remainingMs: event.remainingMs,
+			remoteType: event.remoteType,
 			scope: event.scope,
 			sendFailure: event.sendFailure,
 			sendFailures: event.sendFailures,

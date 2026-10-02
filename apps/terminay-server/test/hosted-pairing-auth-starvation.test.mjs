@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { WebSocketServer } from 'ws';
 import { deriveMatchCode } from '@terminay/protocol';
+import { WebSocketServer } from 'ws';
 import { createHostedHostKey } from '../dist/remote/hostedHostKey.js';
-import { deriveHostedPairingSecrets } from '../dist/remote/hostedPairingSecrets.js';
 import { startHostedPairingHost } from '../dist/remote/hostedPairingHost.js';
+import { deriveHostedPairingSecrets } from '../dist/remote/hostedPairingSecrets.js';
 import { createServerRemoteExposure } from '../dist/remote/serverExposure.js';
 
 /**
@@ -55,7 +55,8 @@ function fakeChannel(label) {
 		},
 		/** Deliver a client frame to the host's listeners for this lane. */
 		receive(value) {
-			for (const listener of listeners.get('message') ?? []) listener({ data: value });
+			for (const listener of listeners.get('message') ?? [])
+				listener({ data: value });
 		},
 	};
 }
@@ -85,7 +86,10 @@ function fakeRuntime(state) {
 				return channel;
 			}
 			async createOffer() {
-				return { sdp: `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}AA\r\n`, type: 'offer' };
+				return {
+					sdp: `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}AA\r\n`,
+					type: 'offer',
+				};
 			}
 			async setLocalDescription() {}
 			async setRemoteDescription() {}
@@ -102,11 +106,18 @@ async function startRelay(state) {
 			const message = JSON.parse(String(raw));
 			if (message.type === 'host-ready') {
 				state.pairingHost = socket;
-				socket.send(JSON.stringify({ roomId: message.roomId, type: 'host-registered' }));
+				socket.send(
+					JSON.stringify({ roomId: message.roomId, type: 'host-registered' }),
+				);
 				return;
 			}
 			if (message.type === 'device-host-ready') {
-				socket.send(JSON.stringify({ sessionId: message.sessionId, type: 'device-host-registered' }));
+				socket.send(
+					JSON.stringify({
+						sessionId: message.sessionId,
+						type: 'device-host-registered',
+					}),
+				);
 				return;
 			}
 			state.hostSignals.push(message);
@@ -129,7 +140,8 @@ function waitFor(predicate, label, timeoutMs = 10_000) {
 		const tick = () => {
 			const value = predicate();
 			if (value) return resolveWait(value);
-			if (Date.now() - startedAt > timeoutMs) return reject(new Error(`timed out waiting for ${label}`));
+			if (Date.now() - startedAt > timeoutMs)
+				return reject(new Error(`timed out waiting for ${label}`));
 			setTimeout(tick, 10);
 		};
 		tick();
@@ -139,11 +151,20 @@ function waitFor(predicate, label, timeoutMs = 10_000) {
 function lastReply(channel, id) {
 	return channel.sent
 		.map((frame) => JSON.parse(frame))
-		.find((message) => message.type === 'application-authenticated' && message.id === id);
+		.find(
+			(message) =>
+				message.type === 'application-authenticated' && message.id === id,
+		);
 }
 
 async function startHost(t, overrides = {}) {
-	const state = { channels: new Map(), hostSignals: [], iceCalls: 0, peers: [], pairingHost: undefined };
+	const state = {
+		channels: new Map(),
+		hostSignals: [],
+		iceCalls: 0,
+		peers: [],
+		pairingHost: undefined,
+	};
 	const relay = await startRelay(state);
 	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
 	const exposure = createServerRemoteExposure({
@@ -161,7 +182,9 @@ async function startHost(t, overrides = {}) {
 				connectionId: `connection-${accepted.length + 1}`,
 				closed: false,
 				start: async () => undefined,
-				close: async () => { connection.closed = true; },
+				close: async () => {
+					connection.closed = true;
+				},
 			};
 			accepted.push(connection);
 			return connection;
@@ -182,35 +205,53 @@ async function startHost(t, overrides = {}) {
 		await exposure.shutdown();
 		await relay.close();
 	});
-	const secrets = deriveHostedPairingSecrets(new URL(handoff.pairingUrl).hash.slice(1));
+	const secrets = deriveHostedPairingSecrets(
+		new URL(handoff.pairingUrl).hash.slice(1),
+	);
 	return { accepted, exposure, handoff, host, hostKey, relay, secrets, state };
 }
 
 /** Join, enroll, get approved, and return the peer's consumed-once ticket. */
 async function approvedTicket(context, clientNonce, beforeApproval) {
 	const { exposure, handoff, relay, secrets, state } = context;
-	relay.send({ authenticatedTransportVersion: 2, clientNonce, roomId: secrets.pairingRoomId, type: 'client-join' });
-	const api = await waitFor(() => state.channels.get('api'), 'the api lane');
-	const control = await waitFor(() => state.channels.get('control'), 'the control lane');
-	const key = deviceKey();
-	api.receive(JSON.stringify({
-		body: {
-			deviceName: 'Phone',
-			pairingSessionId: handoff.pairingSessionId,
-			pairingToken: secrets.pairingToken,
-			publicKeyPem: key.publicKey,
-		},
-		id: 'enroll-1',
-		pathname: '/api/devices/enroll',
-		type: 'api-request',
-	}));
-	const pending = await waitFor(() => exposure.listPendingApprovals()[0], 'the pending approval');
-	assert.equal(pending.matchCode, await deriveMatchCode({
+	relay.send({
+		authenticatedTransportVersion: 2,
 		clientNonce,
-		devicePublicKeyPem: key.publicKey,
-		hostPublicKey: context.hostKey.publicKey,
-		pairingSecret: secrets.qrSecret,
-	}));
+		roomId: secrets.pairingRoomId,
+		type: 'client-join',
+	});
+	const api = await waitFor(() => state.channels.get('api'), 'the api lane');
+	const control = await waitFor(
+		() => state.channels.get('control'),
+		'the control lane',
+	);
+	const key = deviceKey();
+	api.receive(
+		JSON.stringify({
+			body: {
+				deviceName: 'Phone',
+				pairingSessionId: handoff.pairingSessionId,
+				pairingToken: secrets.pairingToken,
+				publicKeyPem: key.publicKey,
+			},
+			id: 'enroll-1',
+			pathname: '/api/devices/enroll',
+			type: 'api-request',
+		}),
+	);
+	const pending = await waitFor(
+		() => exposure.listPendingApprovals()[0],
+		'the pending approval',
+	);
+	assert.equal(
+		pending.matchCode,
+		await deriveMatchCode({
+			clientNonce,
+			devicePublicKeyPem: key.publicKey,
+			hostPublicKey: context.hostKey.publicKey,
+			pairingSecret: secrets.qrSecret,
+		}),
+	);
 	await beforeApproval?.();
 	const approved = exposure.approveEnrollment(pending.approvalId);
 	return { api, control, ticket: approved.ticket };
@@ -222,13 +263,85 @@ test('application authentication is answered while an ICE candidate never settle
 	// A client may still be trickling when approval consumes and rotates its
 	// one-time room. Start the stalled candidate while that signaling room is
 	// live, then prove auth does not queue behind it after approval.
-	const { control, ticket } = await approvedTicket(context, clientNonce, async () => {
-		context.relay.send({ candidate: { candidate: 'candidate:1 1 udp 1 127.0.0.1 1 typ host', sdpMid: '0' }, roomId: context.secrets.pairingRoomId, type: 'ice' });
-		await waitFor(() => context.state.iceCalls > 0, 'the host to start applying the candidate');
-	});
-	control.receive(JSON.stringify({ id: 'auth-1', ticket, type: 'application-auth' }));
+	const { control, ticket } = await approvedTicket(
+		context,
+		clientNonce,
+		async () => {
+			context.relay.send({
+				candidate: {
+					candidate: 'candidate:1 1 udp 1 127.0.0.1 1 typ host',
+					sdpMid: '0',
+				},
+				roomId: context.secrets.pairingRoomId,
+				type: 'ice',
+			});
+			await waitFor(
+				() => context.state.iceCalls > 0,
+				'the host to start applying the candidate',
+			);
+		},
+	);
+	control.receive(
+		JSON.stringify({ id: 'auth-1', ticket, type: 'application-auth' }),
+	);
 
-	const reply = await waitFor(() => lastReply(control, 'auth-1'), 'the application-authenticated reply', REPLY_BUDGET_MS);
+	const reply = await waitFor(
+		() => lastReply(control, 'auth-1'),
+		'the application-authenticated reply',
+		REPLY_BUDGET_MS,
+	);
 	assert.equal(reply.ok, true);
-	await waitFor(() => context.accepted.length === 1, 'the workspace to attach', REPLY_BUDGET_MS);
+	await waitFor(
+		() => context.accepted.length === 1,
+		'the workspace to attach',
+		REPLY_BUDGET_MS,
+	);
+});
+
+test('a stalled handshake in a fresh pairing room does not delay another peer authentication', async (t) => {
+	const context = await startHost(t);
+	const clientNonce = Buffer.alloc(32, 0x55).toString('base64url');
+	const { control, ticket } = await approvedTicket(context, clientNonce);
+
+	// Pairing consumes the previous room. Use the newly advertised room for a
+	// second peer so this continues to exercise cross-peer ICE starvation rather
+	// than attempting to rejoin a used link.
+	await context.host.mintPairing();
+	const handoff = context.exposure.pairingHandoff;
+	assert.ok(handoff);
+	const secrets = deriveHostedPairingSecrets(
+		new URL(handoff.pairingUrl).hash.slice(1),
+	);
+	context.relay.send({
+		authenticatedTransportVersion: 2,
+		clientNonce: Buffer.alloc(32, 0x66).toString('base64url'),
+		roomId: secrets.pairingRoomId,
+		type: 'client-join',
+	});
+	context.relay.send({
+		candidate: {
+			candidate: 'candidate:2 1 udp 1 127.0.0.1 2 typ host',
+			sdpMid: '0',
+		},
+		roomId: secrets.pairingRoomId,
+		type: 'ice',
+	});
+	await waitFor(
+		() => context.state.iceCalls > 0,
+		'the second peer candidate to remain in flight',
+	);
+
+	control.receive(
+		JSON.stringify({
+			id: 'auth-other-peer-stalled',
+			ticket,
+			type: 'application-auth',
+		}),
+	);
+	const reply = await waitFor(
+		() => lastReply(control, 'auth-other-peer-stalled'),
+		'the first peer authentication reply',
+		REPLY_BUDGET_MS,
+	);
+	assert.equal(reply.ok, true);
 });

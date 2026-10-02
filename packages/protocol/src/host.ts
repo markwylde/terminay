@@ -244,6 +244,7 @@ export type TerminayHostEvent = Readonly<{
 				/** Desktop pairing is waiting for the exposing host to approve the
 				 * match code shown here. The code is displayed on both devices. */
 				type: 'connection.pairing-approval';
+				attemptId: string;
 				deviceName: string;
 				matchCode: string;
 				expiresAt: string;
@@ -255,6 +256,7 @@ export type TerminayHostEvent = Readonly<{
 		  }>
 		| Readonly<{
 				type: 'connection.pairing-progress';
+				attemptId: string;
 				state:
 					| 'connecting'
 					| 'connected'
@@ -464,7 +466,7 @@ export function parseTerminayHostEvent(
 	} else if (event.type === 'connection.pairing-approval') {
 		exactKeys(
 			event,
-			['type', 'deviceName', 'matchCode', 'expiresAt'],
+			['type', 'attemptId', 'deviceName', 'matchCode', 'expiresAt'],
 			'host pairing approval event',
 		);
 		if (
@@ -479,23 +481,30 @@ export function parseTerminayHostEvent(
 			throw new TypeError('host pairing approval event is invalid');
 		parsedEvent = Object.freeze({
 			type: 'connection.pairing-approval',
+			attemptId: identifier(event.attemptId, 'pairing attempt id', ID),
 			deviceName: event.deviceName,
 			matchCode: event.matchCode,
 			expiresAt: event.expiresAt,
 		});
 	} else if (event.type === 'connection.pairing-progress') {
-		exactKeys(event, ['type', 'state'], 'host pairing progress event');
+		exactKeys(
+			event,
+			['type', 'attemptId', 'state'],
+			'host pairing progress event',
+		);
 		if (
+			typeof event.state !== 'string' ||
 			![
 				'connecting',
 				'connected',
 				'connection-degraded',
 				'connection-lost',
-			].includes(String(event.state))
+			].includes(event.state)
 		)
 			throw new TypeError('host pairing progress event is invalid');
 		parsedEvent = Object.freeze({
 			type: 'connection.pairing-progress',
+			attemptId: identifier(event.attemptId, 'pairing attempt id', ID),
 			state: event.state as
 				| 'connecting'
 				| 'connected'
@@ -945,7 +954,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 	const action = record(value, 'host action');
 	switch (action.type) {
 		case 'connection.pair':
-			exactKeys(action, ['type', 'pairingUrl'], 'connection pairing action');
+			exactKeys(
+				action,
+				['type', 'pairingUrl', 'attemptId'],
+				'connection pairing action',
+			);
 			if (
 				typeof action.pairingUrl !== 'string' ||
 				action.pairingUrl.length === 0 ||
@@ -954,6 +967,7 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				throw new TypeError('connection pairing URL is invalid');
 			return Object.freeze({
 				type: 'connection.pair',
+				attemptId: identifier(action.attemptId, 'pairing attempt id', ID),
 				pairingUrl: action.pairingUrl,
 			});
 		case 'route.present': {

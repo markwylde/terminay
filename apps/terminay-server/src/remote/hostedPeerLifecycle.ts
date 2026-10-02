@@ -29,12 +29,8 @@ type PeerLike = Readonly<{
 }>;
 
 export type SelectedIceCandidatePair = Readonly<{
-	localAddress: string;
-	localPort: number;
 	localType: string;
 	protocol: string;
-	remoteAddress: string;
-	remotePort: number;
 	remoteType: string;
 	state: string;
 }>;
@@ -44,64 +40,42 @@ export async function selectedIceCandidatePair(
 	peer: PeerLike,
 ): Promise<SelectedIceCandidatePair | undefined> {
 	if (typeof peer.getStats !== 'function') return undefined;
-	let stats: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
 	try {
-		stats = await peer.getStats();
+		const stats = await peer.getStats();
+		const entries = [...stats.values()];
+		const transport = entries.find(
+			(entry) =>
+				entry.type === 'transport' &&
+				typeof entry.selectedCandidatePairId === 'string',
+		);
+		const pair =
+			(transport
+				? stats.get(String(transport.selectedCandidatePairId))
+				: undefined) ??
+			entries.find(
+				(entry) =>
+					entry.type === 'candidate-pair' &&
+					(entry.selected === true || entry.nominated === true) &&
+					entry.state === 'succeeded',
+			);
+		if (
+			!pair ||
+			typeof pair.localCandidateId !== 'string' ||
+			typeof pair.remoteCandidateId !== 'string'
+		)
+			return undefined;
+		const local = stats.get(pair.localCandidateId);
+		const remote = stats.get(pair.remoteCandidateId);
+		if (!local || !remote) return undefined;
+		return Object.freeze({
+			localType: String(local.candidateType ?? 'unknown'),
+			protocol: String(local.protocol ?? remote.protocol ?? 'unknown'),
+			remoteType: String(remote.candidateType ?? 'unknown'),
+			state: String(pair.state ?? 'unknown'),
+		});
 	} catch {
 		return undefined;
 	}
-	const entries = [...stats.values()];
-	const transport = entries.find(
-		(entry) =>
-			entry.type === 'transport' &&
-			typeof entry.selectedCandidatePairId === 'string',
-	);
-	const pair =
-		(transport
-			? stats.get(String(transport.selectedCandidatePairId))
-			: undefined) ??
-		entries.find(
-			(entry) =>
-				entry.type === 'candidate-pair' &&
-				(entry.selected === true || entry.nominated === true) &&
-				entry.state === 'succeeded',
-		);
-	if (
-		!pair ||
-		typeof pair.localCandidateId !== 'string' ||
-		typeof pair.remoteCandidateId !== 'string'
-	)
-		return undefined;
-	const local = stats.get(pair.localCandidateId);
-	const remote = stats.get(pair.remoteCandidateId);
-	if (!local || !remote) return undefined;
-	const addressOf = (candidate: Readonly<Record<string, unknown>>) =>
-		typeof candidate.address === 'string'
-			? candidate.address
-			: typeof candidate.ip === 'string'
-				? candidate.ip
-				: undefined;
-	const localAddress = addressOf(local);
-	const remoteAddress = addressOf(remote);
-	const localPort = local.port;
-	const remotePort = remote.port;
-	if (
-		localAddress === undefined ||
-		remoteAddress === undefined ||
-		typeof localPort !== 'number' ||
-		typeof remotePort !== 'number'
-	)
-		return undefined;
-	return Object.freeze({
-		localAddress,
-		localPort,
-		localType: String(local.candidateType ?? 'unknown'),
-		protocol: String(local.protocol ?? remote.protocol ?? 'unknown'),
-		remoteAddress,
-		remotePort,
-		remoteType: String(remote.candidateType ?? 'unknown'),
-		state: String(pair.state ?? 'unknown'),
-	});
 }
 
 export function resolveHostedIceServers(
