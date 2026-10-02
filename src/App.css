@@ -157,9 +157,10 @@
 
 .terminal-activity-button {
   all: unset;
-  min-width: 52px;
+  min-width: 34px;
   padding: 0 7px;
   box-sizing: border-box;
+  position: relative;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   color: var(--tab-text-active);
@@ -177,14 +178,16 @@
   color: var(--tab-text-selected);
 }
 
-/* Activity count badges are true circles of one fixed size. The number is
-   centred and the font steps down by digit count so the circle never widens.
-   The header pill and the project tab badge share this geometry but keep
-   separate class names so each surface can be located independently. */
-.terminal-activity-pill,
-.project-tab-activity-badge {
-  width: 18px;
-  height: 18px;
+/* The notification count is a true circle of one fixed size, perched on the
+   bell's top-right shoulder. The number is centred and the font steps down by
+   digit count so the circle never widens. */
+.notifications-count {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(0, -13px);
+  width: 14px;
+  height: 14px;
   padding: 0;
   border-radius: 50%;
   box-sizing: border-box;
@@ -192,8 +195,9 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: #ff6b5e;
   color: #101318;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0;
@@ -204,61 +208,88 @@
 }
 
 /* Digits have no descenders, so the line box's descent space sits the ink a
-   little low. A bottom inset scaled to the font size re-centres the glyphs
-   (measured against the system font's actual ink bounds). */
-.terminal-activity-pill[data-digits="1"],
-.project-tab-activity-badge[data-digits="1"] {
-  padding-bottom: 1px;
-}
-
-.terminal-activity-pill[data-digits="2"],
-.project-tab-activity-badge[data-digits="2"] {
-  font-size: 9px;
+   little low. A bottom inset scaled to the font size re-centres the glyphs. */
+.notifications-count[data-digits="1"] {
   padding-bottom: 0.5px;
 }
 
-.terminal-activity-pill[data-digits="3"],
-.project-tab-activity-badge[data-digits="3"] {
-  font-size: 7px;
+.notifications-count[data-digits="2"] {
+  font-size: 8px;
 }
 
-.terminal-activity-pill--unviewed,
-.project-tab-activity-badge--unviewed {
-  background: #4fd17a;
-  box-shadow: 0 0 0 3px rgba(79, 209, 122, 0.12);
+.notifications-count[data-digits="3"] {
+  font-size: 6px;
 }
 
-.terminal-activity-pill--recent,
-.project-tab-activity-badge--recent {
-  background: #f6c343;
-  box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
+/* Header popovers hang from the button that opened them: the panel's right
+   edge lines up with the button's, it sits just under the header band, and a
+   caret on the anchor points back at the button. */
+.terminal-activity-menu,
+.remote-access-menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  right: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--header-popover-border);
+  background: var(--header-popover-surface);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  z-index: 80;
+  transform-origin: top right;
+  animation: header-popover-in 110ms ease-out;
 }
 
-.terminal-activity-pill--attention,
-.project-tab-activity-badge--attention {
-  background: #ff6b5e;
-  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
+.terminal-activity-status,
+.remote-access-status {
+  --header-popover-surface: #10141a;
+  --header-popover-border: rgba(255, 255, 255, 0.12);
 }
 
-.terminal-activity-button__chevron {
-  opacity: 0.6;
-  flex-shrink: 0;
+.terminal-activity-status--open::after,
+.remote-access-status--open::after {
+  content: "";
+  position: absolute;
+  top: calc(100% - 2px);
+  left: calc(50% - 2px);
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-top: 1px solid var(--header-popover-border);
+  border-left: 1px solid var(--header-popover-border);
+  border-top-left-radius: 2px;
+  background: var(--header-popover-surface);
+  transform: translateX(-50%) rotate(45deg);
+  z-index: 81;
+  pointer-events: none;
+  animation: header-popover-caret-in 110ms ease-out;
+}
+
+@keyframes header-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@keyframes header-popover-caret-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-activity-menu,
+  .remote-access-menu,
+  .terminal-activity-status--open::after,
+  .remote-access-status--open::after {
+    animation: none;
+  }
 }
 
 .terminal-activity-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 280px;
+  width: 300px;
   max-height: min(420px, calc(100vh - 70px));
   overflow: auto;
   padding: 8px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(15, 19, 24, 0.98);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(16px);
-  z-index: 80;
 }
 
 .terminal-activity-menu__section-label {
@@ -270,80 +301,94 @@
   letter-spacing: 0.1em;
 }
 
+.terminal-activity-menu__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.terminal-activity-menu__clear-all {
+  all: unset;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.72);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.terminal-activity-menu__clear-all:hover,
+.terminal-activity-menu__clear-all:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dce2f0;
+}
+
+.terminal-activity-menu__empty {
+  padding: 6px 8px 10px;
+  color: rgba(220, 226, 240, 0.52);
+  font-size: 12px;
+}
+
+.terminal-activity-menu__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  border-radius: 10px;
+}
+
+.terminal-activity-menu__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.terminal-activity-menu__dismiss {
+  all: unset;
+  width: 24px;
+  height: 24px;
+  margin: 6px 5px 0 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(220, 226, 240, 0.52);
+  cursor: pointer;
+}
+
+.terminal-activity-menu__dismiss:hover,
+.terminal-activity-menu__dismiss:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #dce2f0;
+}
+
 .terminal-activity-menu__item {
   all: unset;
   box-sizing: border-box;
-  width: 100%;
-  min-height: 44px;
-  padding: 7px 9px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 9px;
   border-radius: 10px;
   display: flex;
-  align-items: center;
-  gap: 9px;
+  align-items: flex-start;
+  gap: 8px;
   color: #dce2f0;
   cursor: pointer;
 }
 
-.terminal-activity-menu__item:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.terminal-activity-menu__state {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-
-.terminal-activity-menu__state--unviewed {
-  background: #4fd17a;
-  box-shadow: 0 0 0 3px rgba(79, 209, 122, 0.12);
-}
-
-.terminal-activity-menu__state--recent {
-  background: #f6c343;
-  box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
-}
-
-.terminal-activity-menu__state--attention {
-  background: #ff6b5e;
-  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
-}
-
-.terminal-activity-menu__preview {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--tab-color) 28%, #111820);
-  color: #f7fbff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.terminal-activity-menu__dot {
-  position: absolute;
-  inset: auto 0 0;
-  height: 3px;
-  background: var(--tab-color);
-}
-
-.terminal-activity-menu__emoji {
-  font-size: 12px;
-  line-height: 1;
+/* The status dot sits on the headline's line, not the row's middle. */
+.terminal-activity-menu__item > .agent-status-indicator {
+  margin-top: 1px;
 }
 
 .terminal-activity-menu__text {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .terminal-activity-menu__title,
+.terminal-activity-menu__terminal,
 .terminal-activity-menu__project {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -351,13 +396,37 @@
 }
 
 .terminal-activity-menu__title {
-  color: #dce2f0;
-  font-size: 12px;
+  color: #eef2fa;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 16px;
+}
+
+.terminal-activity-menu__source {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.terminal-activity-menu__terminal {
+  flex: 0 1 auto;
+  color: rgba(220, 226, 240, 0.82);
 }
 
 .terminal-activity-menu__project {
+  flex: 0 1 auto;
   color: rgba(220, 226, 240, 0.52);
+}
+
+.terminal-activity-menu__project::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.terminal-activity-menu__age {
+  color: rgba(220, 226, 240, 0.42);
   font-size: 11px;
 }
 
@@ -432,22 +501,13 @@
 }
 
 .remote-access-status--open .remote-access-button {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--tab-text-selected);
 }
 
 .remote-access-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   width: 300px;
   padding: 8px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(15, 19, 24, 0.98);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(16px);
-  z-index: 80;
 }
 
 .remote-access-menu__item {
@@ -945,14 +1005,10 @@
   flex-shrink: 0;
 }
 
-.project-tab-activity-badge {
-  position: relative;
-  z-index: 1;
-  margin: 0 0 0 -2px;
-}
-
-.project-switcher-menu__item .project-tab-activity-badge {
-  margin: 0;
+/* The dot sits in the title's gap; pull it in so it reads as part of the
+   name, the way it does on a terminal tab. */
+.project-tab-main > .project-tab-activity-dot {
+  margin: 0 -3px;
 }
 
 .project-tab-close {
