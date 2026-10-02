@@ -24,6 +24,8 @@ export type TerminalActivityOverviewItem = {
 	projectId: string;
 	projectTitle: string;
 	sessionId: string;
+	/** When the terminal entered `state`, in epoch milliseconds, when known. */
+	since?: number;
 	state: TerminalActivityOverviewState;
 	isAgentStatus: boolean;
 	title: string;

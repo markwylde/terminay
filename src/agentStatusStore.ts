@@ -494,6 +494,8 @@ export function selectLiveAgentStatusesForTerminal(
 
 export type TerminalAgentStatusAggregate = {
 	state: AgentState;
+	/** When the roots presenting `state` most recently entered it. */
+	stateSince?: number;
 	unread: boolean;
 };
 
@@ -525,8 +527,18 @@ export function aggregateAgentStatusForTerminal(
 		state = 'done';
 	}
 
+	const stateSince = roots
+		.filter((entry) => entry.state === state)
+		.reduce<number | undefined>(
+			(latest, entry) =>
+				latest === undefined || entry.stateStartedAt > latest
+					? entry.stateStartedAt
+					: latest,
+			undefined,
+		);
 	return {
 		state,
+		...(stateSince === undefined ? {} : { stateSince }),
 		unread: roots.some((entry) => entry.unread),
 	};
 }

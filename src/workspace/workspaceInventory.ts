@@ -25,6 +25,8 @@ export type PanelTabAppearance = {
 	activityIndicatorsEnabled?: boolean;
 	agentNeedsAttention?: boolean;
 	agentState?: AgentState;
+	/** When the agent entered `agentState`, in epoch milliseconds. */
+	agentStateSince?: number;
 	agentUnread?: boolean;
 	color?: string;
 	emoji?: string;
@@ -101,6 +103,8 @@ export type WorkspaceInventoryEntry = {
 	isActivePanel?: boolean;
 	/** Present for terminal panels; file and folder panels have no session. */
 	sessionId?: string;
+	/** When the panel entered `status`, in epoch milliseconds, when known. */
+	since?: number;
 	status: WorkspaceInventoryStatus;
 	title: string;
 };
@@ -110,6 +114,8 @@ export type InventoryPanelParams = PanelTabAppearance & {
 	folderPath?: string;
 	isFocused?: boolean;
 	sessionId?: string;
+	/** When `terminalActivityState` last changed, in epoch milliseconds. */
+	terminalActivitySince?: number;
 	terminalActivityState?: TerminalActivityState;
 };
 
@@ -183,6 +189,9 @@ export function buildProjectInventoryEntries(options: {
 				...base,
 				agentUnread: params?.agentUnread === true,
 				isAgentStatus: true,
+				...(params?.agentStateSince === undefined
+					? {}
+					: { since: params.agentStateSince }),
 				status: agentState,
 			});
 			continue;
@@ -202,6 +211,9 @@ export function buildProjectInventoryEntries(options: {
 				params,
 			),
 			isAgentStatus: false,
+			...(status === 'idle' || params?.terminalActivitySince === undefined
+				? {}
+				: { since: params.terminalActivitySince }),
 			status,
 		});
 	}
@@ -250,6 +262,7 @@ export function selectNotableEntries(
 			projectId: entry.projectId,
 			projectTitle: entry.projectTitle,
 			sessionId: entry.sessionId ?? '',
+			...(entry.since === undefined ? {} : { since: entry.since }),
 			state: entry.status,
 			title: entry.title,
 		});

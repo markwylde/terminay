@@ -286,7 +286,7 @@
 }
 
 .terminal-activity-menu {
-  width: 280px;
+  width: 300px;
   max-height: min(420px, calc(100vh - 70px));
   overflow: auto;
   padding: 8px;
@@ -330,15 +330,9 @@
   font-size: 12px;
 }
 
-.terminal-activity-menu__working {
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-}
-
 .terminal-activity-menu__row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 2px;
   border-radius: 10px;
 }
@@ -351,7 +345,7 @@
   all: unset;
   width: 24px;
   height: 24px;
-  margin-right: 5px;
+  margin: 6px 5px 0 0;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
@@ -372,72 +366,29 @@
   box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 44px;
-  padding: 7px 9px;
+  padding: 9px 9px;
   border-radius: 10px;
   display: flex;
-  align-items: center;
-  gap: 9px;
+  align-items: flex-start;
+  gap: 8px;
   color: #dce2f0;
   cursor: pointer;
 }
 
-.terminal-activity-menu__state {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-
-.terminal-activity-menu__state--unviewed {
-  background: #4fd17a;
-  box-shadow: 0 0 0 3px rgba(79, 209, 122, 0.12);
-}
-
-.terminal-activity-menu__state--recent {
-  background: #f6c343;
-  box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
-}
-
-.terminal-activity-menu__state--attention {
-  background: #ff6b5e;
-  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
-}
-
-.terminal-activity-menu__preview {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--tab-color) 28%, #111820);
-  color: #f7fbff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.terminal-activity-menu__dot {
-  position: absolute;
-  inset: auto 0 0;
-  height: 3px;
-  background: var(--tab-color);
-}
-
-.terminal-activity-menu__emoji {
-  font-size: 12px;
-  line-height: 1;
+/* The status dot sits on the headline's line, not the row's middle. */
+.terminal-activity-menu__item > .agent-status-indicator {
+  margin-top: 1px;
 }
 
 .terminal-activity-menu__text {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .terminal-activity-menu__title,
+.terminal-activity-menu__terminal,
 .terminal-activity-menu__project {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -445,13 +396,37 @@
 }
 
 .terminal-activity-menu__title {
-  color: #dce2f0;
-  font-size: 12px;
+  color: #eef2fa;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 16px;
+}
+
+.terminal-activity-menu__source {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.terminal-activity-menu__terminal {
+  flex: 0 1 auto;
+  color: rgba(220, 226, 240, 0.82);
 }
 
 .terminal-activity-menu__project {
+  flex: 0 1 auto;
   color: rgba(220, 226, 240, 0.52);
+}
+
+.terminal-activity-menu__project::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.terminal-activity-menu__age {
+  color: rgba(220, 226, 240, 0.42);
   font-size: 11px;
 }
 
