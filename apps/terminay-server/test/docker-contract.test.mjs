@@ -35,7 +35,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 		dockerfile,
 		/--mount=type=cache,id=terminay-npm-cache-node24,target=\/root\/\.npm,sharing=locked/u,
 	);
-	assert.match(dockerfile, /npm install --global npm@12\.0\.2/u);
+	assert.match(dockerfile, /npm install --global npm@12\.2\.0/u);
 	assert.match(dockerfile, /npm ci/u);
 	assert.ok(
 		dockerfile.indexOf('npm ci') < dockerfile.indexOf('COPY apps ./apps'),
