@@ -6,6 +6,7 @@ import test from 'node:test';
 import { build } from 'esbuild';
 
 const {
+	aggregateAgentStatusForTerminal,
 	AgentStatusStore,
 	createEmptyAgentStatusSnapshot,
 	makeAgentStatusEntryId,
@@ -245,6 +246,33 @@ test('live selection hides completed child history and hides all children after 
 
 	store.dispatch(event('session.stopped', 4, 400, { reason: 'exit' }));
 	assert.equal(selectLiveAgentStatusesForTerminal(store.getSnapshot(), 'terminal-1').length, 0);
+});
+
+test('a working child does not hold a finished root terminal at working', () => {
+	const store = new AgentStatusStore();
+	store.dispatch(event('turn.started', 1, 100));
+	store.dispatch(event('subagent.started', 2, 200, { subagentId: 'child' }));
+	store.dispatch(
+		event('tool.started', 3, 300, {
+			agentId: 'child',
+			tool: { id: 'search', name: 'web-search' },
+		}),
+	);
+	assert.equal(
+		aggregateAgentStatusForTerminal(store.getSnapshot(), 'terminal-1').state,
+		'working',
+	);
+
+	store.dispatch(event('agent.done', 4, 400, { outcome: 'success' }));
+	assert.equal(selectSubagentStatuses(store.getSnapshot())[0].state, 'working');
+	assert.equal(
+		aggregateAgentStatusForTerminal(store.getSnapshot(), 'terminal-1').state,
+		'done',
+	);
+	assert.equal(
+		aggregateAgentStatusForTerminal(store.getSnapshot(), 'terminal-2'),
+		null,
+	);
 });
 
 test('resuming the same root session reactivates only the root in the live roster', () => {
