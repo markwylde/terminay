@@ -157,9 +157,10 @@
 
 .terminal-activity-button {
   all: unset;
-  min-width: 30px;
+  min-width: 34px;
   padding: 0 7px;
   box-sizing: border-box;
+  position: relative;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   color: var(--tab-text-active);
@@ -177,11 +178,16 @@
   color: var(--tab-text-selected);
 }
 
-/* The notification count is a true circle of one fixed size. The number is
-   centred and the font steps down by digit count so the circle never widens. */
+/* The notification count is a true circle of one fixed size, perched on the
+   bell's top-right shoulder. The number is centred and the font steps down by
+   digit count so the circle never widens. */
 .notifications-count {
-  width: 18px;
-  height: 18px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(0, -13px);
+  width: 14px;
+  height: 14px;
   padding: 0;
   border-radius: 50%;
   box-sizing: border-box;
@@ -191,7 +197,7 @@
   flex-shrink: 0;
   background: #ff6b5e;
   color: #101318;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0;
@@ -202,19 +208,17 @@
 }
 
 /* Digits have no descenders, so the line box's descent space sits the ink a
-   little low. A bottom inset scaled to the font size re-centres the glyphs
-   (measured against the system font's actual ink bounds). */
+   little low. A bottom inset scaled to the font size re-centres the glyphs. */
 .notifications-count[data-digits="1"] {
-  padding-bottom: 1px;
-}
-
-.notifications-count[data-digits="2"] {
-  font-size: 9px;
   padding-bottom: 0.5px;
 }
 
+.notifications-count[data-digits="2"] {
+  font-size: 8px;
+}
+
 .notifications-count[data-digits="3"] {
-  font-size: 7px;
+  font-size: 6px;
 }
 
 .terminal-activity-menu {
