@@ -77,7 +77,9 @@ export interface LocalUiServerOptions {
 	 * credential.  The ticket authority stays at the server boundary. */
 	readonly acceptCredential?: (token: string) => boolean | Promise<boolean>;
 	/** Device enrollment and reconnect authority. Pairing material is accepted
-	 * only for enrollment; later requests prove possession of the device key. */
+	 * only for enrollment; later requests prove possession of the device key.
+	 * Responses use the same wire contract as the transport-authenticated
+	 * device endpoints, so one client implementation serves both. */
 	readonly deviceAuthentication?: {
 		readonly enroll: (input: {
 			readonly pairingSessionId: string;
@@ -85,10 +87,13 @@ export interface LocalUiServerOptions {
 			readonly pairingExpiresAt: string;
 			readonly deviceName: string;
 			readonly publicKeyPem: string;
+		}) => LocalDeviceEnrollment | Promise<LocalDeviceEnrollment>;
+		/** `sessionOrigin` is this listener's own origin: the origin a client
+		 * dialled, supplied by the server and never taken from the request. */
+		readonly challenge: (input: {
+			readonly deviceId: string;
+			readonly sessionOrigin: string;
 		}) =>
-			| { readonly deviceId: string }
-			| Promise<{ readonly deviceId: string }>;
-		readonly challenge: (input: { readonly deviceId: string }) =>
 			| {
 					readonly challengeId: string;
 					readonly deviceId: string;
@@ -113,10 +118,18 @@ export interface LocalUiServerOptions {
 			readonly deviceId: string;
 			readonly challengeId: string;
 			readonly deviceSignature: string;
+			readonly sessionOrigin: string;
 		}) =>
 			| { readonly ticket: string; readonly expiresAt: number }
 			| Promise<{ readonly ticket: string; readonly expiresAt: number }>;
 	};
+}
+
+/** An enrolled device and the one-use ticket for its first connection. */
+export interface LocalDeviceEnrollment {
+	readonly deviceId: string;
+	readonly deviceName: string;
+	readonly ticket: string;
 }
 
 export interface LocalUiServerAddress {
@@ -572,6 +585,9 @@ export class LocalUiServer {
 		const value = await readDeviceAuthenticationBody(request, response);
 		if (value === undefined) return;
 		try {
+			const sessionOrigin = this.address?.origin;
+			if (sessionOrigin === undefined)
+				throw new TypeError('device authentication origin is unavailable');
 			if (kind === 'enroll') {
 				const allowed = new Set([
 					'pairingSessionId',
@@ -595,9 +611,17 @@ export class LocalUiServer {
 						publicKeyPem: string;
 					},
 				);
-				if (!isSafeId(result.deviceId))
+				if (
+					!isSafeId(result.deviceId) ||
+					!isDeviceName(result.deviceName) ||
+					!isDeviceTicket(result.ticket)
+				)
 					throw new TypeError('device enrollment is invalid');
-				sendJson(response, 200, result);
+				sendJson(response, 200, {
+					deviceId: result.deviceId,
+					deviceName: result.deviceName,
+					ticket: result.ticket,
+				});
 				return;
 			}
 			const deviceId = stringRecordField(value, 'deviceId');
@@ -606,12 +630,15 @@ export class LocalUiServer {
 			if (kind === 'challenge') {
 				if (Object.keys(value).length !== 1)
 					throw new TypeError('device challenge is invalid');
-				const challenge = await deviceAuthentication.challenge({ deviceId });
+				const challenge = await deviceAuthentication.challenge({
+					deviceId,
+					sessionOrigin,
+				});
 				if (
 					!isSafeId(challenge.challengeId) ||
 					challenge.deviceId !== deviceId ||
 					!isSafeId(challenge.serverId) ||
-					!isSessionOrigin(challenge.sessionOrigin) ||
+					challenge.sessionOrigin !== sessionOrigin ||
 					!isDeviceNonce(challenge.nonce) ||
 					!Number.isSafeInteger(challenge.issuedAt) ||
 					!Number.isSafeInteger(challenge.expiresAt) ||
@@ -619,7 +646,19 @@ export class LocalUiServer {
 					!isSigningInput(challenge.signingInput)
 				)
 					throw new TypeError('device challenge is invalid');
-				sendJson(response, 200, challenge);
+				sendJson(response, 200, {
+					challenge: {
+						action: 'connect',
+						challengeId: challenge.challengeId,
+						deviceId: challenge.deviceId,
+						expiresAt: new Date(challenge.expiresAt).toISOString(),
+						issuedAt: new Date(challenge.issuedAt).toISOString(),
+						nonce: challenge.nonce,
+						origin: challenge.sessionOrigin,
+						serverId: challenge.serverId,
+					},
+					signingInput: challenge.signingInput,
+				});
 				return;
 			}
 			const challengeId = stringRecordField(value, 'challengeId');
@@ -636,6 +675,7 @@ export class LocalUiServer {
 				deviceId,
 				challengeId,
 				deviceSignature: deviceSignature!,
+				sessionOrigin,
 			});
 			if (
 				!isDeviceTicket(complete.ticket) ||
@@ -643,7 +683,10 @@ export class LocalUiServer {
 				complete.expiresAt <= Date.now()
 			)
 				throw new TypeError('device ticket is invalid');
-			sendJson(response, 200, complete);
+			sendJson(response, 200, {
+				ticket: complete.ticket,
+				expiresAt: complete.expiresAt,
+			});
 		} catch {
 			sendText(response, 403, 'device authentication denied');
 		}
@@ -857,6 +900,15 @@ function isDeviceTicket(value: string | undefined): value is string {
 	);
 }
 
+function isDeviceName(value: string | undefined): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length > 0 &&
+		value.length <= 256 &&
+		!/[\0\r\n]/u.test(value)
+	);
+}
+
 function isDeviceNonce(value: string | undefined): value is string {
 	return (
 		value !== undefined &&
@@ -873,24 +925,6 @@ function isDeviceSignature(value: string | undefined): value is string {
 		value.length <= 512 &&
 		/^[A-Za-z0-9_-]+$/u.test(value)
 	);
-}
-
-function isSessionOrigin(value: string | undefined): value is string {
-	if (value === undefined || value.length > 4096 || /[\0\r\n]/u.test(value))
-		return false;
-	try {
-		const parsed = new URL(value);
-		return (
-			(parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
-			parsed.username === '' &&
-			parsed.password === '' &&
-			parsed.pathname === '/' &&
-			parsed.search === '' &&
-			parsed.hash === ''
-		);
-	} catch {
-		return false;
-	}
 }
 
 function isSigningInput(value: string): boolean {

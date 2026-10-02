@@ -1,5 +1,5 @@
 import { ChevronDown, Settings2 } from 'lucide-react';
-import type { RefObject } from 'react';
+import { type RefObject, useEffect } from 'react';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { ConnectionsControl } from './ConnectionsControl';
@@ -38,9 +38,17 @@ export function RemoteAccessConnectionMenu(props: {
 		connections,
 		detach,
 		profiles,
+		refreshProfiles,
 		setActiveServerId,
 		supportsAttach,
 	} = useConnections();
+	// Remembered connections change outside this window: pairing runs in the
+	// Remote Control window. Ask the host again whenever the menu opens so a
+	// server saved since the last look is listed.
+	const { isOpen } = props;
+	useEffect(() => {
+		if (isOpen) refreshProfiles();
+	}, [isOpen, refreshProfiles]);
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
 	const isExposed = Boolean(status?.isRunning);
 	const connectionCount = status?.connections.length ?? 0;
