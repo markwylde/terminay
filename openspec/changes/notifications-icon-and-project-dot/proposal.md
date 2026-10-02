@@ -7,7 +7,7 @@ A project tab announces activity with a numbered circle after its title. It is l
 - **BREAKING** The project tab's activity count badge is removed. The project tab shows the same status dot a terminal tab shows — same size, colours, and breathing effect — placed before the title and coloured by the most urgent state in the project.
 - The project switcher menu and compact switcher rows show that same dot instead of the count badge.
 - **BREAKING** The header's three coloured count badges are replaced by one always-visible Notifications icon carrying a single red number: terminals that need attention plus terminals that finished unviewed, across every attached server. Working terminals are not counted. At zero the icon stays and the number hides.
-- The Notifications list groups notifications first and working terminals in a separate, uncounted **Working** section. Each notification row has a dismiss control and the list has **Clear all**. Working rows cannot be dismissed.
+- The Notifications list holds only notifications. Each row reads as one — what happened, which terminal and project, how long ago — and has a dismiss control; the list has **Clear all**. Working terminals are not listed: their tab and project dots already say so.
 - Dismissing a notification is the same acknowledgement as viewing the terminal: its tab dot, its project dot, and the header number clear together, on every attached client.
 
 ## Capabilities

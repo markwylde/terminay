@@ -1,5 +1,5 @@
 import { Bell, X } from 'lucide-react';
-import type { CSSProperties, RefObject } from 'react';
+import type { RefObject } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
 import {
@@ -7,6 +7,10 @@ import {
 	type TerminalActivityOverviewState,
 	terminalOverviewStateToAgentState,
 } from './activityStates';
+import {
+	formatNotificationAge,
+	notificationHeadline,
+} from './notificationText';
 
 export type {
 	TerminalActivityOverviewItem,
@@ -18,7 +22,8 @@ export { terminalOverviewStateToAgentState } from './activityStates';
 /**
  * Splits the notable terminals into what the user can act on and clear —
  * attention and finished — and what is merely in progress. Only the first is
- * a notification; a working terminal cannot be dismissed, so it is not counted.
+ * a notification; a working terminal is not news and cannot be dismissed, so
+ * it is neither listed nor counted.
  */
 export function buildTerminalActivityOverview(
 	items: TerminalActivityOverviewItem[],
@@ -32,6 +37,8 @@ export function buildTerminalActivityOverview(
 	const sortedItems = [...items].sort(
 		(a, b) =>
 			priority(a.state) - priority(b.state) ||
+			// Newest first, so the list reads like a feed.
+			(b.since ?? 0) - (a.since ?? 0) ||
 			a.projectTitle.localeCompare(b.projectTitle) ||
 			a.title.localeCompare(b.title),
 	);
@@ -41,7 +48,6 @@ export function buildTerminalActivityOverview(
 	return {
 		items: sortedItems,
 		notifications,
-		working: sortedItems.filter(isWorking),
 		notificationCount: notifications.length,
 	};
 }
@@ -53,17 +59,21 @@ export function notificationsButtonLabel(count: number): string {
 
 function ActivityRows({
 	items,
+	now,
 	onActivate,
 	onDismiss,
 }: {
 	items: TerminalActivityOverviewItem[];
+	now: number;
 	onActivate: (item: TerminalActivityOverviewItem) => void;
-	onDismiss?: (item: TerminalActivityOverviewItem) => void;
+	onDismiss: (item: TerminalActivityOverviewItem) => void;
 }) {
 	return (
 		<>
 			{items.map((item) => {
 				const state = terminalOverviewStateToAgentState(item.state);
+				if (state === 'working') return null;
+				const age = formatNotificationAge(item.since, now);
 				return (
 					<div
 						key={`${item.projectId}:${item.panelId}:${item.sessionId}`}
@@ -78,39 +88,34 @@ function ActivityRows({
 								state={state}
 								label={item.isAgentStatus ? undefined : `Terminal ${state}`}
 							/>
-							<span
-								className="terminal-activity-menu__preview"
-								style={{ '--tab-color': item.color } as CSSProperties}
-							>
-								<span className="terminal-activity-menu__dot" />
-								<span
-									className="terminal-activity-menu__emoji"
-									aria-hidden="true"
-								>
-									{item.emoji || item.projectEmoji || '>'}
-								</span>
-							</span>
 							<span className="terminal-activity-menu__text">
 								<span className="terminal-activity-menu__title">
-									{item.title}
+									{notificationHeadline(state, item.isAgentStatus)}
 								</span>
-								<span className="terminal-activity-menu__project">
-									{item.projectEmoji ? `${item.projectEmoji} ` : ''}
-									{item.projectTitle}
+								<span className="terminal-activity-menu__source">
+									<span className="terminal-activity-menu__terminal">
+										{item.emoji ? `${item.emoji} ` : ''}
+										{item.title}
+									</span>
+									<span className="terminal-activity-menu__project">
+										{item.projectEmoji ? `${item.projectEmoji} ` : ''}
+										{item.projectTitle}
+									</span>
 								</span>
+								{age === null ? null : (
+									<span className="terminal-activity-menu__age">{age}</span>
+								)}
 							</span>
 						</button>
-						{onDismiss ? (
-							<button
-								type="button"
-								className="terminal-activity-menu__dismiss"
-								onClick={() => onDismiss(item)}
-								aria-label={`Dismiss ${item.title}`}
-								title="Dismiss"
-							>
-								<X size={12} aria-hidden="true" />
-							</button>
-						) : null}
+						<button
+							type="button"
+							className="terminal-activity-menu__dismiss"
+							onClick={() => onDismiss(item)}
+							aria-label={`Dismiss ${item.title}`}
+							title="Dismiss"
+						>
+							<X size={12} aria-hidden="true" />
+						</button>
 					</div>
 				);
 			})}
@@ -126,7 +131,6 @@ export function TerminalActivityOverview({
 	onDismiss,
 	onDismissAll,
 	onToggle,
-	working,
 }: {
 	activityMenuRef: RefObject<HTMLDivElement | null>;
 	isOpen: boolean;
@@ -135,9 +139,11 @@ export function TerminalActivityOverview({
 	onDismiss: (item: TerminalActivityOverviewItem) => void;
 	onDismissAll: () => void;
 	onToggle: () => void;
-	working: TerminalActivityOverviewItem[];
 }) {
 	const count = notifications.length;
+	// Ages are read when the list renders; it is open only briefly, so there
+	// is no timer keeping them fresh.
+	const now = Date.now();
 	const countLabel = formatActivityCount(count);
 	return (
 		<div
@@ -191,20 +197,11 @@ export function TerminalActivityOverview({
 					) : (
 						<ActivityRows
 							items={notifications}
+							now={now}
 							onActivate={onActivate}
 							onDismiss={onDismiss}
 						/>
 					)}
-					{working.length > 0 ? (
-						<div className="terminal-activity-menu__working">
-							<div className="terminal-activity-menu__header">
-								<span className="terminal-activity-menu__section-label">
-									Working
-								</span>
-							</div>
-							<ActivityRows items={working} onActivate={onActivate} />
-						</div>
-					) : null}
 				</div>
 			) : null}
 		</div>

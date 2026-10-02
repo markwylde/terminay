@@ -1909,6 +1909,7 @@ const ProjectWorkspace = forwardRef<
 				if (!panel || panel.params?.terminalActivityState === state)
 					return false;
 				panel.api.updateParameters({
+					terminalActivitySince: Date.now(),
 					terminalActivityState: state,
 					titleUpdateNonce: Date.now(),
 				});
@@ -1951,10 +1952,12 @@ const ProjectWorkspace = forwardRef<
 				const nextNeedsAttention =
 					nextState !== undefined && isAgentAttentionState(nextState);
 				const nextUnread = aggregate?.unread === true;
+				const nextStateSince = aggregate?.stateSince;
 				if (
 					panel.params?.agentState === nextState &&
 					panel.params?.agentNeedsAttention === nextNeedsAttention &&
-					panel.params?.agentUnread === nextUnread
+					panel.params?.agentUnread === nextUnread &&
+					panel.params?.agentStateSince === nextStateSince
 				) {
 					continue;
 				}
@@ -1962,6 +1965,7 @@ const ProjectWorkspace = forwardRef<
 				panel.api.updateParameters({
 					agentState: nextState,
 					agentNeedsAttention: nextNeedsAttention,
+					agentStateSince: nextStateSince,
 					agentUnread: nextUnread,
 				});
 				didChange = true;
@@ -2037,6 +2041,7 @@ const ProjectWorkspace = forwardRef<
 					if (
 						shouldAcknowledgeInteractedActivity({
 							acknowledged: snapshot.acknowledged,
+							focusedSessionId: focusedSessionIdRef.current,
 							interactedSessionId: interactedSessionIdRef.current,
 							sessionId: snapshot.sessionId,
 							status: snapshot.status,
@@ -4237,6 +4242,11 @@ const ProjectWorkspace = forwardRef<
 							previousSessionId,
 						),
 					);
+				}
+				// Focus moving to another terminal ends the interaction with the one
+				// the user was typing in; its later activity is news again.
+				if (interactedSessionIdRef.current !== sessionId) {
+					interactedSessionIdRef.current = null;
 				}
 				focusedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
@@ -7635,7 +7645,6 @@ function App({
 							setIsRemoteMenuOpen(false);
 							setIsActivityMenuOpen((current) => !current);
 						}}
-						working={terminalActivityItems.working}
 					/>
 					<RemoteAccessConnectionMenu
 						connectionSwitcherEntries={connectionSwitcherEntries}

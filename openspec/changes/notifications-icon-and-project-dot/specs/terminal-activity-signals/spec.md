@@ -2,7 +2,7 @@
 
 ### Requirement: Fallback acknowledgement
 
-For terminal fallback activity, clicking the terminal tab, clicking into the terminal, typing into it, or dismissing its notification from the header Notifications list SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity dot, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab and dismissing a terminal's notification SHALL each report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. Structured completion or attention that arrives while the user is already interacting with that terminal SHALL be acknowledged as viewed and SHALL NOT leave a finished or attention indicator on that tab, the project activity dot, or the header Notifications number.
+For terminal fallback activity, clicking the terminal tab, clicking into the terminal, typing into it, or dismissing its notification from the header Notifications list SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity dot, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab and dismissing a terminal's notification SHALL each report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. A terminal counts as the one the user is interacting with only while it is both the terminal they last clicked or typed in and the focused terminal; once focus moves to another terminal, including a newly created one, it no longer does. Structured completion or attention that arrives while the user is already interacting with that terminal SHALL be acknowledged as viewed and SHALL NOT leave a finished or attention indicator on that tab, the project activity dot, or the header Notifications number.
 
 #### Scenario: Viewing clears the indicator
 
@@ -43,6 +43,11 @@ For terminal fallback activity, clicking the terminal tab, clicking into the ter
 
 - **WHEN** a bell or notification arrives for the terminal the user is already clicking or typing in
 - **THEN** no attention indicator appears on that tab, the project activity dot, or the header Notifications number
+
+#### Scenario: Completion after moving to another terminal
+
+- **WHEN** a user types in one terminal, then opens or focuses another terminal, and structured or agent completion then arrives for the first
+- **THEN** the first terminal shows a finished indicator, and its project activity dot and the header Notifications number include it
 
 #### Scenario: Project switch handoff
 

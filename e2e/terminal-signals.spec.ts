@@ -195,6 +195,33 @@ test.describe('terminal activity signals', () => {
     await expect(mainWindow.locator('.project-tab--active .project-tab-activity-dot')).toHaveCount(0)
   })
 
+  test('work finishing in a terminal the user has moved away from is still announced', async ({
+    mainWindow,
+  }) => {
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    // Type in the first terminal, then open a second without clicking or typing
+    // anywhere else: the first is no longer the one being looked at.
+    await submitTerminalCommand(
+      mainWindow,
+      "sleep 3.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'\r",
+    )
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(
+      mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+    ).toHaveCount(2)
+
+    await expect(firstTab).toHaveAttribute('data-terminal-activity', 'unviewed', {
+      timeout: 15_000,
+    })
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+    ).toHaveCount(1)
+  })
+
   test('the Notifications control stays in the header with nothing to show', async ({
     mainWindow,
   }) => {

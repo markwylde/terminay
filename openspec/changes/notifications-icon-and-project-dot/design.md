@@ -37,7 +37,9 @@ The summary keeps its count (`summarizeActivityBadge`) because the accessible la
 
 ### One Notifications control, split by dismissability
 
-`buildTerminalActivityOverview` returns two lists instead of three counts: `notifications` (attention, then finished) and `working`. The header number is `notifications.length`. `TerminalActivityOverview` is reshaped into the Notifications control: a bell icon button, a single red count pill reusing the fixed-circle sizing in `activityCountBadge.ts`, and a two-section menu. The control renders unconditionally; the effect that closes the menu when the list empties is removed, since an empty list is now a valid open state.
+`buildTerminalActivityOverview` returns the notifications (attention, then finished, newest first) and their count; working terminals are filtered out. The header number is that count. `TerminalActivityOverview` is reshaped into the Notifications control: a bell icon button, a single red count reusing the fixed-circle sizing in `activityCountBadge.ts`, and a list of notification rows. Each row carries a headline, the terminal and project, and a relative age; the time comes from the agent entry's `stateStartedAt` or, for raw activity, from when the panel's activity state last changed, carried on the inventory entry. The age is read when the list renders, with no timer. The control renders unconditionally; the effect that closes the menu when the list empties is removed, since an empty list is now a valid open state.
+
+An earlier draft listed working terminals in a separate uncounted section. The owner dropped it on seeing it: in a list of notifications it read as out of place, and the tab and project dots already show what is working.
 
 Alternative considered: count everything, including working. Rejected by the owner — a working terminal is not something to act on and cannot be cleared, so it would make the number unclearable.
 

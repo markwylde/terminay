@@ -71,7 +71,6 @@ function control(items, isOpen = true) {
 			onDismiss: noop,
 			onDismissAll: noop,
 			onToggle: noop,
-			working: overview.working,
 		}),
 	);
 }
@@ -82,7 +81,7 @@ function dot(badge) {
 	);
 }
 
-test('notifications are attention then finished; working is separate and uncounted', () => {
+test('notifications are attention then finished; working is left out', () => {
 	const overview = buildTerminalActivityOverview([
 		item('busy', 'recent'),
 		item('finished', 'unviewed'),
@@ -95,10 +94,7 @@ test('notifications are attention then finished; working is separate and uncount
 		overview.notifications.map((entry) => entry.title),
 		['agent-waiting', 'bell', 'agent-done', 'finished'],
 	);
-	assert.deepEqual(
-		overview.working.map((entry) => entry.title),
-		['agent-working', 'busy'],
-	);
+	assert.equal('working' in overview, false);
 	assert.equal(overview.notificationCount, 4);
 });
 
@@ -114,11 +110,12 @@ test('the control is present with no badge when nothing is listed', () => {
 	assert.doesNotMatch(open, />Working</);
 });
 
-test('working terminals do not raise the number', () => {
+test('working terminals are neither counted nor listed', () => {
 	const markup = control([item('a', 'recent'), item('b', 'working')]);
 	assert.doesNotMatch(markup, /notifications-count/);
 	assert.match(markup, /No notifications/);
-	assert.match(markup, />Working</);
+	assert.doesNotMatch(markup, />Working</);
+	assert.doesNotMatch(markup, /terminal-activity-menu__row/);
 	assert.doesNotMatch(markup, /terminal-activity-menu__dismiss/);
 	assert.doesNotMatch(markup, /Clear all/);
 });
@@ -143,7 +140,7 @@ test('the count keeps one circle size and caps at 99+', () => {
 	assert.match(control(many(120), false), /data-digits="3"[^>]*>99\+</);
 });
 
-test('each notification can be dismissed and working rows cannot', () => {
+test('each notification can be dismissed and working terminals have no row', () => {
 	const markup = control([
 		item('needs-you', 'attention'),
 		item('finished', 'unviewed'),
@@ -154,10 +151,42 @@ test('each notification can be dismissed and working rows cannot', () => {
 	assert.match(markup, /aria-label="Dismiss finished"/);
 	assert.doesNotMatch(markup, /aria-label="Dismiss busy"/);
 	assert.match(markup, /Clear all/);
-	// Notifications come first, the Working section after them.
 	assert.ok(markup.indexOf('needs-you') < markup.indexOf('finished'));
-	assert.ok(markup.indexOf('finished') < markup.indexOf('>Working<'));
-	assert.ok(markup.indexOf('>Working<') < markup.indexOf('busy'));
+	assert.doesNotMatch(markup, /busy/);
+});
+
+test('a row reads as a notification: what happened, where, and how long ago', () => {
+	const now = Date.now();
+	const markup = control([
+		item('Terminal 1', 'done', {
+			isAgentStatus: true,
+			projectTitle: 'Project 2',
+			since: now - 23_000,
+		}),
+		item('Build', 'unviewed', { since: now - 2 * 60 * 60_000 }),
+		item('Advert', 'waiting', { isAgentStatus: true }),
+	]);
+	assert.match(
+		markup,
+		/Agent finished<\/span>[\s\S]*?Terminal 1<\/span>[\s\S]*?Project 2<\/span>[\s\S]*?23 seconds ago/,
+	);
+	assert.match(markup, /Command finished<\/span>[\s\S]*?2 hours ago/);
+	assert.match(markup, /Agent is waiting for you/);
+	// A row whose time is unknown simply has no age line.
+	assert.equal(markup.match(/terminal-activity-menu__age/g)?.length, 2);
+});
+
+test('newer notifications come first within the same urgency', () => {
+	const now = Date.now();
+	const overview = buildTerminalActivityOverview([
+		item('older', 'unviewed', { since: now - 60_000 }),
+		item('newer', 'unviewed', { since: now - 1_000 }),
+		item('urgent', 'attention', { since: now - 600_000 }),
+	]);
+	assert.deepEqual(
+		overview.notifications.map((entry) => entry.title),
+		['urgent', 'newer', 'older'],
+	);
 });
 
 test('dismiss controls report the row they belong to', async () => {

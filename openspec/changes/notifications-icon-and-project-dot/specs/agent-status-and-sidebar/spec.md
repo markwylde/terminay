@@ -38,17 +38,27 @@ The header SHALL present exactly one Notifications control: an icon button named
 
 ### Requirement: Notifications list
 
-Opening the Notifications control SHALL show a list in two sections. The first SHALL hold the notifications, attention before finished, each row keyed by its server and project and showing the terminal's status dot, its tab colour and emoji, its title, and its project. The second, labelled **Working**, SHALL hold the working terminals with the same row presentation; it SHALL be omitted when no terminal is working. When there are no notifications the first section SHALL show an empty state reading that there are no notifications. Activating a row SHALL select that terminal on its own server, as selecting its tab does, and close the list. The list's contents SHALL be governed by the **Show indicator for active tabs** and **Show indicator for finished tabs** settings.
+Opening the Notifications control SHALL show the list of notifications, attention before finished, newest first within each, each row keyed by its server and project. A row SHALL read as a notification: its status dot, a headline saying what happened in that terminal (an agent finishing, waiting, or blocked; a command finishing; a terminal needing attention), the terminal's title and its project, and how long ago it happened when that time is known. Working terminals SHALL NOT appear in the list. When there are no notifications the list SHALL show an empty state reading that there are no notifications. Activating a row SHALL select that terminal on its own server, as selecting its tab does, and close the list. The list's contents SHALL be governed by the **Show indicator for active tabs** and **Show indicator for finished tabs** settings.
 
-#### Scenario: Sections
+#### Scenario: Order and contents
 
 - **WHEN** one terminal needs attention, one has finished unviewed, and one is working
-- **THEN** the list shows the attention row, then the finished row, then a **Working** section holding the working row
+- **THEN** the list shows the attention row, then the finished row, and no row for the working terminal
+
+#### Scenario: A row says what happened
+
+- **WHEN** an agent in the terminal titled `Terminal 1` of the project `Project 2` finished 23 seconds ago and stays unacknowledged
+- **THEN** its row reads `Agent finished`, names `Terminal 1` and `Project 2`, and says `23 seconds ago`
+
+#### Scenario: Newest first
+
+- **WHEN** two terminals have finished unviewed activity at different times
+- **THEN** the more recent one is listed above the older one
 
 #### Scenario: Only working terminals
 
 - **WHEN** two terminals are working and there are no notifications
-- **THEN** the list shows the empty state followed by a **Working** section with two rows
+- **THEN** the list shows only the empty state
 
 #### Scenario: Activating a notification
 
@@ -62,7 +72,7 @@ Opening the Notifications control SHALL show a list in two sections. The first S
 
 ### Requirement: Dismissing notifications
 
-Each notification row SHALL carry a dismiss control, and the list SHALL carry a **Clear all** control whenever at least one notification is listed. Dismissing a notification SHALL acknowledge that terminal on its own server exactly as selecting its tab does, without selecting the terminal or activating its project, so that its terminal tab dot, its project dot, and the header number clear together on every attached client. **Clear all** SHALL do the same for every listed notification on every attached connection. Rows in the **Working** section SHALL carry no dismiss control and SHALL be unaffected by **Clear all**. The list SHALL stay open after a dismissal.
+Each notification row SHALL carry a dismiss control, and the list SHALL carry a **Clear all** control whenever at least one notification is listed. Dismissing a notification SHALL acknowledge that terminal on its own server exactly as selecting its tab does, without selecting the terminal or activating its project, so that its terminal tab dot, its project dot, and the header number clear together on every attached client. **Clear all** SHALL do the same for every listed notification on every attached connection. **Clear all** SHALL NOT affect working terminals, whose tab and project dots remain. The list SHALL stay open after a dismissal.
 
 #### Scenario: Dismissing one notification
 
@@ -77,12 +87,7 @@ Each notification row SHALL carry a dismiss control, and the list SHALL carry a 
 #### Scenario: Clear all
 
 - **WHEN** three notifications are listed across two attached servers and one terminal is working, and the user presses **Clear all**
-- **THEN** all three notifications are acknowledged on their own servers, the header badge hides, the empty state shows, and the working row remains in the **Working** section
-
-#### Scenario: Working rows cannot be dismissed
-
-- **WHEN** the list shows a working terminal
-- **THEN** its row has no dismiss control
+- **THEN** all three notifications are acknowledged on their own servers, the header badge hides, the empty state shows, and the working terminal's tab still shows its working dot
 
 #### Scenario: Dismissal reaches other clients
 
