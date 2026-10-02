@@ -24,6 +24,7 @@ import {
 	type TerminayHostActionRequest,
 	type TerminayHostConnectionProfile,
 	type TerminayHostContext,
+	type TerminayPairingProgressState,
 } from '@terminay/protocol';
 import {
 	app,
@@ -186,6 +187,10 @@ import {
 	isHostedDesktopOrigin,
 } from './remote/desktopHostedConnection';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
+import {
+	DesktopPairingAttempts,
+	runDesktopPairingAttempt,
+} from './remote/desktopPairingAttempt';
 import {
 	createDesktopReconnectTransport,
 	type DesktopReconnectTransport,
@@ -4281,6 +4286,7 @@ function createWindow(options?: {
 		pairingUrl: string,
 		attemptId: string,
 	) => Promise<void>;
+	let cancelDesktopPairing: (attemptId: string) => void;
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
@@ -4394,6 +4400,9 @@ function createWindow(options?: {
 							action.pairingUrl,
 							action.attemptId,
 						);
+						return;
+					case 'connection.pair-cancel':
+						cancelDesktopPairing(action.attemptId);
 						return;
 					case 'clipboard.write':
 						clipboard.writeText(action.text);
@@ -4567,72 +4576,75 @@ function createWindow(options?: {
 		if (options?.deferCanonicalLaunch === true && !window.isDestroyed())
 			window.show();
 	};
+	const desktopPairingAttempts = new DesktopPairingAttempts();
+	window.once('closed', () => desktopPairingAttempts.cancelAll());
+	cancelDesktopPairing = (attemptId) => {
+		desktopPairingAttempts.cancel(attemptId);
+	};
 	let desktopPairingGeneration = 0;
 	switchToPairedDesktopServer = async (pairingUrl, attemptId) => {
 		const generation = ++desktopPairingGeneration;
-		const pairingProgress = (
-			state:
-				| 'connecting'
-				| 'connected'
-				| 'connection-degraded'
-				| 'connection-lost',
+		const abort = desktopPairingAttempts.begin(attemptId);
+		// The renderer never sees the fragment or the device key: only the match
+		// code to compare with the exposing computer, and where the attempt is.
+		const sendPairingEvent = (
+			event:
+				| Readonly<{
+						type: 'connection.pairing-approval';
+						deviceName: string;
+						matchCode: string;
+						expiresAt: string;
+				  }>
+				| Readonly<{
+						type: 'connection.pairing-progress';
+						state: TerminayPairingProgressState;
+				  }>,
 		) => {
 			if (window.isDestroyed() || generation !== desktopPairingGeneration)
 				return;
-			window.webContents.send('server-ui-host:event', {
-				type: 'connection.pairing-progress',
-				attemptId,
-				state,
-			});
+			window.webContents.send('server-ui-host:event', { ...event, attemptId });
 		};
-		const profile = await enrollPairedDesktopRemoteProfile(
-			pairingUrl,
-			(approval) => {
-				// The renderer shows the code so the user can compare it with the
-				// exposing computer. It never sees the fragment or the device key.
-				if (window.isDestroyed() || generation !== desktopPairingGeneration)
-					return;
-				window.webContents.send('server-ui-host:event', {
-					type: 'connection.pairing-approval',
-					attemptId,
-					deviceName: approval.deviceName,
-					matchCode: approval.matchCode,
-					expiresAt: new Date(approval.expiresAt).toISOString(),
-				});
-			},
-			() => pairingProgress('connection-lost'),
-			(status) => {
-				recordDesktopHostedPeerDiagnostic('connection-status', { status });
-				pairingProgress(
-					status === 'degraded' ? 'connection-degraded' : 'connected',
-				);
-			},
-		);
-		// Enrollment has stored the device key and pinned host identity. Persist
-		// its sanitized profile now so a later reconnect or bundle failure cannot
-		// strand that credential without a visible, retryable connection.
-		rememberRemoteConnection(profile);
-		pairingProgress('connecting');
 		try {
-			const remote = await prepareCanonicalDesktopRemoteConnection(
-				profile,
-				() => pairingProgress('connection-lost'),
-				(status) => {
-					recordDesktopHostedPeerDiagnostic('connection-status', { status });
-					pairingProgress(
-						status === 'degraded' ? 'connection-degraded' : 'connected',
+			await runDesktopPairingAttempt({
+				abort,
+				enroll: (hooks) =>
+					enrollPairedDesktopRemoteProfile(
+						pairingUrl,
+						hooks.onMatchCode,
+						hooks.onConnectionStatus,
+						hooks.abort,
+					),
+				rememberProfile: rememberRemoteConnection,
+				connect: (profile, hooks) =>
+					prepareCanonicalDesktopRemoteConnection(
+						profile,
+						hooks.onConnectionFailure,
+						hooks.onConnectionStatus,
+					),
+				mount: async (profile, remote) => {
+					releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
+					releaseLocalServerUiSessionSafely(windowWebContentsId);
+					remoteProfileBindingsByWebContents.set(
+						windowWebContentsId,
+						profile.id,
 					);
+					await mountCanonicalLaunch(remote.launch, remote.transport);
 				},
-			);
-			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
-			releaseLocalServerUiSessionSafely(windowWebContentsId);
-			remoteProfileBindingsByWebContents.set(windowWebContentsId, profile.id);
-			await mountCanonicalLaunch(remote.launch, remote.transport);
-			pairingProgress('connected');
-		} catch (error) {
-			remoteProfileBindingsByWebContents.delete(windowWebContentsId);
-			pairingProgress('connection-lost');
-			throw error;
+				onLoadFailed: () => {
+					remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+				},
+				emitApproval: (approval) =>
+					sendPairingEvent({
+						type: 'connection.pairing-approval',
+						deviceName: approval.deviceName,
+						matchCode: approval.matchCode,
+						expiresAt: new Date(approval.expiresAt).toISOString(),
+					}),
+				emitProgress: (state) =>
+					sendPairingEvent({ type: 'connection.pairing-progress', state }),
+			});
+		} finally {
+			desktopPairingAttempts.end(attemptId, abort);
 		}
 	};
 	const launchCanonical = async (): Promise<void> => {
@@ -4736,8 +4748,8 @@ async function enrollPairedDesktopRemoteProfile(
 			expiresAt: number;
 		}>,
 	) => void,
-	onConnectionFailure: () => void,
 	onConnectionStatus: (status: 'degraded' | 'recovered') => void,
+	abort: AbortSignal,
 ): Promise<RememberedRemoteConnection> {
 	const deviceName = 'Terminay Desktop';
 	const enrolled = await establishDesktopDevicePairing({
@@ -4754,11 +4766,12 @@ async function enrollPairedDesktopRemoteProfile(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,
 			),
 			signal: desktopHostedSignalOptions(),
+			abort,
 			onMatchCode: (code) => onMatchCode({ deviceName, ...code }),
-			onConnectionFailure: (reason) => {
-				recordDesktopHostedPeerDiagnostic('connection-failed', { reason });
-				onConnectionFailure();
-			},
+			// Nothing is saved yet, so a lost pairing peer is recorded here and
+			// reaches the user as the rejected attempt, not as a saved server.
+			onConnectionFailure: (reason) =>
+				recordDesktopHostedPeerDiagnostic('connection-failed', { reason }),
 			onCandidatePair: (pair) =>
 				recordDesktopHostedPeerDiagnostic('candidate-pair', {
 					localType: pair.localType,

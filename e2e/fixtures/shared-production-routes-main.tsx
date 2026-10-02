@@ -63,6 +63,20 @@ const canonicalConnectionStateStores = canonicalConnectionStates.map(
 	},
 );
 const emptyConnectionStateStore = new ConnectionProfileStore({ local: false });
+// A pairing attempt that stays in flight until the test cancels or fails it,
+// as a Desktop attempt does while it waits for the exposing host.
+const pendingPairingStateStore = new ConnectionProfileStore({ local: false });
+const pendingPairingAttempts = new Map<string, (cause: Error) => void>();
+const rejectPendingPairing = (attemptId: string, message: string) => {
+	pendingPairingAttempts.get(attemptId)?.(new Error(message));
+	pendingPairingAttempts.delete(attemptId);
+};
+(
+	window as unknown as { __failPendingPairing: (message: string) => void }
+).__failPendingPairing = (message) => {
+	for (const attemptId of [...pendingPairingAttempts.keys()])
+		rejectPendingPairing(attemptId, message);
+};
 const mobileLifecycleActions: string[] = [];
 (
 	window as unknown as { __mobileLifecycleActions: string[] }
@@ -1005,6 +1019,26 @@ createRoot(document.getElementById('root')!).render(
 				canPair
 				onPairingHandoff={(pairingUrl) => {
 					connectionActions.push(`empty-pair:${pairingUrl}`);
+				}}
+			/>
+		</section>
+		<section aria-label="Pending pairing Connections state">
+			<SharedConnectionsRouteBody
+				state="ready"
+				profileStore={pendingPairingStateStore}
+				canPair
+				onPairingHandoff={({ attemptId }) =>
+					new Promise<void>((_resolve, reject) => {
+						connectionActions.push('pending-pair');
+						pendingPairingAttempts.set(attemptId, reject);
+					})
+				}
+				onPairingCancel={(attemptId) => {
+					connectionActions.push('pending-pair-cancel');
+					rejectPendingPairing(
+						attemptId,
+						"Error invoking remote method 'server-ui-host:request-action': Error: Desktop pairing was cancelled.",
+					);
 				}}
 			/>
 		</section>

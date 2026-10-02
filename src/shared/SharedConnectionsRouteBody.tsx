@@ -2,8 +2,13 @@ import type {
 	ConnectionProfile,
 	ConnectionProfileStore,
 } from '@terminay/client-core';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
+import {
+	PAIRING_CONNECTION_LOST_COPY,
+	PairingAttemptStatus,
+} from './PairingAttemptStatus';
 import { friendlyPairingActionError } from './pairingActionError';
+import type { PairingAttemptProgress } from './pairingAttemptState';
 import './SharedProductionRoutes.css';
 
 interface ConnectionSummary {
@@ -38,6 +43,8 @@ export interface SharedConnectionsRouteBodyProps {
 			pairingUrl: string;
 		}>,
 	) => Promise<void> | void;
+	/** Abandon an in-flight pairing attempt. Its handoff then rejects. */
+	readonly onPairingCancel?: (attemptId: string) => void;
 	readonly onPairingProgressDismiss?: () => void;
 	/** Desktop is waiting for the exposing computer to approve this code. */
 	readonly pairingApproval?: Readonly<{
@@ -45,12 +52,7 @@ export interface SharedConnectionsRouteBodyProps {
 		matchCode: string;
 		expiresAt: string;
 	}> | null;
-	readonly pairingProgress?:
-		| 'connecting'
-		| 'connected'
-		| 'connection-degraded'
-		| 'connection-lost'
-		| null;
+	readonly pairingProgress?: PairingAttemptProgress | null;
 	readonly onRename?: (
 		profile: ConnectionProfile,
 		label: string,
@@ -76,6 +78,7 @@ export function SharedConnectionsRouteBody({
 	onRevoke,
 	onExpose,
 	onPairingHandoff,
+	onPairingCancel,
 	onPairingProgressDismiss,
 	pairingApproval = null,
 	pairingProgress = null,
@@ -97,6 +100,8 @@ export function SharedConnectionsRouteBody({
 	const [renameLabel, setRenameLabel] = useState('');
 	const [showPair, setShowPair] = useState(false);
 	const [pairingUrl, setPairingUrl] = useState('');
+	const activePairingAttempt = useRef<string | null>(null);
+	const cancelledPairingAttempts = useRef(new Set<string>());
 	const [inspectId, setInspectId] = useState<string>();
 	const exposureId = '__exposure__';
 	const snapshot = profileStore?.snapshot();
@@ -131,15 +136,16 @@ export function SharedConnectionsRouteBody({
 
 	const mutate = async (
 		key: string,
-		operation: () => Promise<void> | void,
+		// Returning `false` means the user withdrew the action: nothing is
+		// announced, neither success nor failure.
+		operation: () => unknown,
 		success: string,
 	) => {
 		setBusy(key);
 		setActionError(undefined);
 		setMessage(undefined);
 		try {
-			await operation();
-			setMessage(success);
+			if ((await operation()) !== false) setMessage(success);
 			setRevision((value) => value + 1);
 		} catch (cause) {
 			setActionError(friendlyPairingActionError(cause));
@@ -352,10 +358,7 @@ export function SharedConnectionsRouteBody({
 			{actionError !== undefined && <p role="alert">{actionError}</p>}
 			{pairingProgress === 'connection-lost' && !showPair ? (
 				<div role="alert" className="shared-connections__pairing-recovery">
-					<p>
-						The connection was lost. Your server is saved; retry it from the
-						connections list.
-					</p>
+					<p>{PAIRING_CONNECTION_LOST_COPY}</p>
 					<button type="button" onClick={onPairingProgressDismiss}>
 						Dismiss
 					</button>
@@ -434,17 +437,31 @@ export function SharedConnectionsRouteBody({
 						event.preventDefault();
 						const value = pairingUrl;
 						const attemptId = nextPairingAttemptId();
+						activePairingAttempt.current = attemptId;
 						void mutate(
 							'pair',
 							async () => {
-								await onPairingHandoff?.({
-									attemptId,
-									pairingUrl: value,
-								});
+								try {
+									await onPairingHandoff?.({
+										attemptId,
+										pairingUrl: value,
+									});
+								} catch (cause) {
+									// A cancelled attempt rejects by design; that is the
+									// user's own decision, not an error to report.
+									if (cancelledPairingAttempts.current.delete(attemptId))
+										return false;
+									throw cause;
+								} finally {
+									if (activePairingAttempt.current === attemptId)
+										activePairingAttempt.current = null;
+								}
+								if (cancelledPairingAttempts.current.delete(attemptId))
+									return false;
 								setPairingUrl('');
 								setShowPair(false);
 							},
-							'Pairing request sent.',
+							'Server added.',
 						);
 					}}
 				>
@@ -460,41 +477,26 @@ export function SharedConnectionsRouteBody({
 							/>
 						</label>
 					</div>
-					{pairingApproval ? (
-						<div
-							className="shared-connections__match-code"
-							role="status"
-							aria-live="polite"
-						>
-							<p>
-								Confirm this code on the exposing computer to finish pairing{' '}
-								<strong>{pairingApproval.deviceName}</strong>.
-							</p>
-							<p className="shared-connections__match-code-value">
-								{pairingApproval.matchCode}
-							</p>
-						</div>
-					) : null}
-					{pairingProgress === 'connecting' && !pairingApproval ? (
-						<p role="status">Approved. Connecting to the server…</p>
-					) : null}
-					{pairingProgress === 'connection-degraded' ? (
-						<p role="status">
-							The WebRTC network path is disconnected; Terminay is trying to
-							recover. If it persists, check the server's UDP reachability.
-						</p>
-					) : null}
-					{pairingProgress === 'connection-lost' ? (
-						<p role="alert">
-							The connection was lost. Your server is saved; retry it from the
-							connections list.
-						</p>
-					) : null}
+					<PairingAttemptStatus
+						approval={pairingApproval}
+						busy={busy === 'pair'}
+						progress={pairingProgress}
+					/>
 					<div className="shared-connections__action-panel-actions">
 						<button type="submit" disabled={busy === 'pair'}>
 							{busy === 'pair' ? 'Pairing…' : 'Continue pairing'}
 						</button>
-						<button type="button" onClick={() => setShowPair(false)}>
+						<button
+							type="button"
+							onClick={() => {
+								const attemptId = activePairingAttempt.current;
+								if (attemptId !== null && onPairingCancel !== undefined) {
+									cancelledPairingAttempts.current.add(attemptId);
+									onPairingCancel(attemptId);
+								}
+								setShowPair(false);
+							}}
+						>
 							Cancel
 						</button>
 					</div>

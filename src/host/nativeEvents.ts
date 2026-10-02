@@ -1,4 +1,7 @@
-import type { TerminayHostEvent } from '@terminay/protocol';
+import type {
+	TerminayHostEvent,
+	TerminayPairingProgressState,
+} from '@terminay/protocol';
 
 type NativeEventBridge = Readonly<{
 	subscribeEvent(
@@ -127,11 +130,7 @@ export function subscribePairingProgress(
 	listener: (
 		progress: Readonly<{
 			attemptId: string;
-			state:
-				| 'connecting'
-				| 'connected'
-				| 'connection-degraded'
-				| 'connection-lost';
+			state: TerminayPairingProgressState;
 		}>,
 	) => void,
 ): () => void {

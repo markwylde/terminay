@@ -7,12 +7,16 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useReducer,
 	useRef,
 	useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { pairDesktopConnection } from '../host/nativeActions';
+import {
+	cancelDesktopPairing,
+	pairDesktopConnection,
+} from '../host/nativeActions';
 import {
 	subscribePairingApproval,
 	subscribePairingProgress,
@@ -32,6 +36,10 @@ import {
 	type WorkspaceConnection,
 	type WorkspaceConnectionHost,
 } from '../shared/connections';
+import {
+	IDLE_PAIRING_ATTEMPT,
+	pairingAttemptReducer,
+} from '../shared/pairingAttemptState';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
@@ -176,45 +184,22 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	);
 	const snapshot = useConnectionsSnapshot(registry);
 	const primary = snapshot.primary;
-	const [desktopPairingApproval, setDesktopPairingApproval] =
-		useState<Readonly<{
-			deviceName: string;
-			matchCode: string;
-			expiresAt: string;
-		}> | null>(null);
-	const [desktopPairingProgress, setDesktopPairingProgress] = useState<
-		| 'connecting'
-		| 'connected'
-		| 'connection-degraded'
-		| 'connection-lost'
-		| null
-	>(null);
-	const activeDesktopPairingAttemptId = useRef<string | null>(null);
+	const [desktopPairing, dispatchDesktopPairing] = useReducer(
+		pairingAttemptReducer,
+		IDLE_PAIRING_ATTEMPT,
+	);
 	useEffect(
 		() =>
-			subscribePairingApproval((approval) => {
-				if (activeDesktopPairingAttemptId.current !== approval.attemptId)
-					return;
-				setDesktopPairingApproval({
-					deviceName: approval.deviceName,
-					matchCode: approval.matchCode,
-					expiresAt: approval.expiresAt,
-				});
-			}),
+			subscribePairingApproval(({ attemptId, ...approval }) =>
+				dispatchDesktopPairing({ type: 'approval', attemptId, approval }),
+			),
 		[],
 	);
 	useEffect(
 		() =>
-			subscribePairingProgress((progress) => {
-				if (activeDesktopPairingAttemptId.current !== progress.attemptId)
-					return;
-				setDesktopPairingProgress(progress.state);
-				if (
-					progress.state === 'connecting' ||
-					progress.state === 'connection-lost'
-				)
-					setDesktopPairingApproval(null);
-			}),
+			subscribePairingProgress((progress) =>
+				dispatchDesktopPairing({ type: 'progress', ...progress }),
+			),
 		[],
 	);
 
@@ -303,26 +288,25 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				? {}
 				: {
 						canPair: true,
-						pairingApproval: desktopPairingApproval,
-						pairingProgress: desktopPairingProgress,
+						pairingApproval: desktopPairing.approval,
+						pairingProgress: desktopPairing.progress,
 						onPairingHandoff: async ({ pairingUrl, attemptId }) => {
-							activeDesktopPairingAttemptId.current = attemptId;
-							setDesktopPairingApproval(null);
-							setDesktopPairingProgress(null);
+							dispatchDesktopPairing({ type: 'started', attemptId });
 							try {
 								if (!(await pairDesktopConnection(pairingUrl, attemptId)))
 									throw new Error(
 										'Desktop pairing is unavailable in this session.',
 									);
 							} finally {
-								setDesktopPairingApproval(null);
+								dispatchDesktopPairing({ type: 'settled', attemptId });
 							}
 						},
-						onPairingProgressDismiss: () => {
-							activeDesktopPairingAttemptId.current = null;
-							setDesktopPairingApproval(null);
-							setDesktopPairingProgress(null);
+						onPairingCancel: (attemptId) => {
+							dispatchDesktopPairing({ type: 'dismissed' });
+							void cancelDesktopPairing(attemptId).catch(() => undefined);
 						},
+						onPairingProgressDismiss: () =>
+							dispatchDesktopPairing({ type: 'dismissed' }),
 					}),
 			profileStore: profiles,
 		};
