@@ -135,6 +135,38 @@ jobs:
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: npm run test:ci
 
+  real-webrtc:
+    name: Real WebRTC pairing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
+
+      # The fast job leaves the selected WebRTC runtime unstaged, so every
+      # test that opens a real peer skips there. This job stages it and runs
+      # them: Desktop and server pairing over loopback peers.
+      - name: Stage the WebRTC runtime and run the real-peer tests
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+        run: npm run test:real-webrtc
+
   mcp-cli-compatibility:
     name: Real MCP CLI compatibility
     runs-on: ubuntu-latest
