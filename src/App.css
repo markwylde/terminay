@@ -221,20 +221,75 @@
   font-size: 6px;
 }
 
-.terminal-activity-menu {
+/* Header popovers hang from the button that opened them: the panel's right
+   edge lines up with the button's, it sits just under the header band, and a
+   caret on the anchor points back at the button. */
+.terminal-activity-menu,
+.remote-access-menu {
   position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  top: calc(100% + 3px);
+  right: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--header-popover-border);
+  background: var(--header-popover-surface);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  z-index: 80;
+  transform-origin: top right;
+  animation: header-popover-in 110ms ease-out;
+}
+
+.terminal-activity-status,
+.remote-access-status {
+  --header-popover-surface: #10141a;
+  --header-popover-border: rgba(255, 255, 255, 0.12);
+}
+
+.terminal-activity-status--open::after,
+.remote-access-status--open::after {
+  content: "";
+  position: absolute;
+  top: calc(100% - 2px);
+  left: calc(50% - 2px);
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-top: 1px solid var(--header-popover-border);
+  border-left: 1px solid var(--header-popover-border);
+  border-top-left-radius: 2px;
+  background: var(--header-popover-surface);
+  transform: translateX(-50%) rotate(45deg);
+  z-index: 81;
+  pointer-events: none;
+  animation: header-popover-caret-in 110ms ease-out;
+}
+
+@keyframes header-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@keyframes header-popover-caret-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-activity-menu,
+  .remote-access-menu,
+  .terminal-activity-status--open::after,
+  .remote-access-status--open::after {
+    animation: none;
+  }
+}
+
+.terminal-activity-menu {
   width: 280px;
   max-height: min(420px, calc(100vh - 70px));
   overflow: auto;
   padding: 8px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(15, 19, 24, 0.98);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(16px);
-  z-index: 80;
 }
 
 .terminal-activity-menu__section-label {
@@ -471,22 +526,13 @@
 }
 
 .remote-access-status--open .remote-access-button {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--tab-text-selected);
 }
 
 .remote-access-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   width: 300px;
   padding: 8px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(15, 19, 24, 0.98);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(16px);
-  z-index: 80;
 }
 
 .remote-access-menu__item {
