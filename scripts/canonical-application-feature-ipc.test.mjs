@@ -62,10 +62,14 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 
 test('a successfully enrolled Desktop profile is durable before its first remote load', () => {
 	const pairingFlow = main.slice(
-		main.indexOf('switchToPairedDesktopServer = async (pairingUrl) =>'),
+		main.indexOf(
+			'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
+		),
 		main.indexOf(
 			'const launchCanonical = async (): Promise<void> =>',
-			main.indexOf('switchToPairedDesktopServer = async (pairingUrl) =>'),
+			main.indexOf(
+				'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
+			),
 		),
 	);
 	assert.ok(pairingFlow.indexOf('enrollPairedDesktopRemoteProfile(') >= 0);
