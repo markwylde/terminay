@@ -1,8 +1,5 @@
 import { ConnectionProfileStore } from '@terminay/client-core';
-import type {
-	ByteTransport,
-	TerminayHostContext,
-} from '@terminay/protocol';
+import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
 import {
 	Component,
 	type ErrorInfo,
@@ -10,15 +7,23 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useReducer,
 	useRef,
 	useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { subscribePairingApproval } from '../host/nativeEvents';
-import { pairDesktopConnection } from '../host/nativeActions';
+import {
+	cancelDesktopPairing,
+	pairDesktopConnection,
+} from '../host/nativeActions';
+import {
+	subscribePairingApproval,
+	subscribePairingProgress,
+} from '../host/nativeEvents';
 import {
 	type CompositionPersistence,
+	type ConnectionOpenResult,
 	ConnectionRegistry,
 	ConnectionsProvider,
 	createBrowserConnectionHost,
@@ -28,10 +33,13 @@ import {
 	NO_ATTACHED_CONNECTIONS,
 	NO_COMPOSITION_PERSISTENCE,
 	useConnectionsSnapshot,
-	type ConnectionOpenResult,
 	type WorkspaceConnection,
 	type WorkspaceConnectionHost,
 } from '../shared/connections';
+import {
+	IDLE_PAIRING_ATTEMPT,
+	pairingAttemptReducer,
+} from '../shared/pairingAttemptState';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
@@ -40,7 +48,10 @@ import {
 	type DesktopByteBridge,
 	type DesktopHostBridge,
 } from './desktopByteTransport';
-import { getSessionTransportHost, leaveManagerSession } from './sessionTransportHost';
+import {
+	getSessionTransportHost,
+	leaveManagerSession,
+} from './sessionTransportHost';
 import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
@@ -146,7 +157,12 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				isDocumentHidden: () =>
 					typeof document !== 'undefined' &&
 					document.visibilityState === 'hidden',
-				open: async ({ profileId, role, replaceEndpoint, onTransportClosed }) => {
+				open: async ({
+					profileId,
+					role,
+					replaceEndpoint,
+					onTransportClosed,
+				}) => {
 					if (role === 'attached') {
 						const attached = await connectionHostRef.current.attach(profileId);
 						return Object.freeze({
@@ -168,10 +184,24 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	);
 	const snapshot = useConnectionsSnapshot(registry);
 	const primary = snapshot.primary;
-	const [desktopPairingApproval, setDesktopPairingApproval] = useState<
-		Readonly<{ deviceName: string; matchCode: string; expiresAt: string }> | null
-	>(null);
-	useEffect(() => subscribePairingApproval(setDesktopPairingApproval), []);
+	const [desktopPairing, dispatchDesktopPairing] = useReducer(
+		pairingAttemptReducer,
+		IDLE_PAIRING_ATTEMPT,
+	);
+	useEffect(
+		() =>
+			subscribePairingApproval(({ attemptId, ...approval }) =>
+				dispatchDesktopPairing({ type: 'approval', attemptId, approval }),
+			),
+		[],
+	);
+	useEffect(
+		() =>
+			subscribePairingProgress((progress) =>
+				dispatchDesktopPairing({ type: 'progress', ...progress }),
+			),
+		[],
+	);
 
 	useEffect(() => {
 		registry.startPrimary(PRIMARY_PROFILE_ID);
@@ -258,18 +288,25 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				? {}
 				: {
 						canPair: true,
-						pairingApproval: desktopPairingApproval,
-						onPairingHandoff: async ({ pairingUrl }) => {
-							setDesktopPairingApproval(null);
+						pairingApproval: desktopPairing.approval,
+						pairingProgress: desktopPairing.progress,
+						onPairingHandoff: async ({ pairingUrl, attemptId }) => {
+							dispatchDesktopPairing({ type: 'started', attemptId });
 							try {
-								if (!(await pairDesktopConnection(pairingUrl)))
+								if (!(await pairDesktopConnection(pairingUrl, attemptId)))
 									throw new Error(
 										'Desktop pairing is unavailable in this session.',
 									);
 							} finally {
-								setDesktopPairingApproval(null);
+								dispatchDesktopPairing({ type: 'settled', attemptId });
 							}
 						},
+						onPairingCancel: (attemptId) => {
+							dispatchDesktopPairing({ type: 'dismissed' });
+							void cancelDesktopPairing(attemptId).catch(() => undefined);
+						},
+						onPairingProgressDismiss: () =>
+							dispatchDesktopPairing({ type: 'dismissed' }),
 					}),
 			profileStore: profiles,
 		};
@@ -306,7 +343,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 								void registry.dispose();
 							}}
 							subscribeAppCommands={
-								desktopContext === undefined || window.terminayHost === undefined
+								desktopContext === undefined ||
+								window.terminayHost === undefined
 									? undefined
 									: (listener: (command: AppCommand) => Promise<void> | void) =>
 											(

@@ -44,8 +44,16 @@ async function request(
  * exact-origin pairing flow. */
 export async function pairDesktopConnection(
 	pairingUrl: string,
+	attemptId: string,
 ): Promise<boolean> {
-	return (await request({ type: 'connection.pair', pairingUrl })).handled;
+	return (await request({ type: 'connection.pair', pairingUrl, attemptId }))
+		.handled;
+}
+
+/** Abandon an in-flight Desktop pairing attempt; its `pairDesktopConnection`
+ * call then rejects. */
+export async function cancelDesktopPairing(attemptId: string): Promise<void> {
+	await request({ type: 'connection.pair-cancel', attemptId });
 }
 
 /** Clipboard writes are semantic user actions. Desktop owns the privileged

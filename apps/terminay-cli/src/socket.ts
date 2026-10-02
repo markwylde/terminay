@@ -62,6 +62,40 @@ export function approvalSocketPath(dataRoot: string): string {
 
 export class SocketError extends Error {}
 
+const NO_SERVER_MESSAGE =
+	'no running server accepts commands at this data root. Start it with `terminay daemon start`.';
+
+/**
+ * Name the failures of the privilege drop that an operator can fix themselves:
+ * no `sudo` to drop with, or a Node.js binary the service account cannot
+ * execute (one installed under root's home). Anything else is left to the
+ * caller's generic message, so an unrelated permission error is not
+ * misattributed.
+ */
+export function explainPrivilegeLaunchError(
+	error: unknown,
+	nodePath: string = process.execPath,
+): string | undefined {
+	const message =
+		error instanceof Error
+			? error.message
+			: typeof error === 'object' && error !== null && 'message' in error
+				? String(error.message)
+				: String(error ?? '');
+	const code =
+		typeof error === 'object' && error !== null && 'code' in error
+			? String((error as { code?: unknown }).code)
+			: '';
+	if (code === 'ENOENT')
+		return 'sudo is required to contact the system server approval socket but is not installed. Install sudo, or run the pairing command as the server service account.';
+	if (
+		message.includes(nodePath) &&
+		/permission denied|command not found|EACCES|EPERM/iu.test(message)
+	)
+		return `the service account cannot run Node.js at ${nodePath}. Install Node.js system-wide (not under a home directory), then retry.`;
+	return undefined;
+}
+
 export function sendApprovalRequest(
 	socketPath: string,
 	request: ApprovalRequest,
@@ -88,9 +122,7 @@ export function sendApprovalRequest(
 			settled = true;
 			clearTimeout(timer);
 			reject(
-				new SocketError(
-					'no running server accepts commands at this data root. Start it with `terminay daemon start`.',
-				),
+				new SocketError(NO_SERVER_MESSAGE),
 			);
 		});
 		socket.on('close', () => {
@@ -109,6 +141,34 @@ export function sendApprovalRequest(
 }
 
 /**
+ * The request, as a program small enough to hand to `node -e`.
+ *
+ * It is passed as source rather than as a script path because the account it
+ * runs as may not be able to read this package at all: `sudo npx terminay`
+ * unpacks the CLI under root's home, which a dedicated service account cannot
+ * enter. It prints exactly the server's response and nothing else.
+ */
+export const SOCKET_CLIENT_SOURCE = [
+	"const net = require('node:net');",
+	'const [socketPath, request] = process.argv.slice(1);',
+	"const fail = (message) => { process.stderr.write(message + '\\n'); process.exit(1); };",
+	"let buffered = '';",
+	'const socket = net.createConnection(socketPath);',
+	`const timer = setTimeout(() => { socket.destroy(); fail('the running server did not answer'); }, ${REQUEST_TIMEOUT_MS});`,
+	"socket.setEncoding('utf8');",
+	"socket.on('connect', () => socket.write(request + '\\n'));",
+	`socket.on('data', (chunk) => { buffered += chunk; if (buffered.length > ${MAX_FRAME_BYTES}) socket.destroy(); });`,
+	`socket.on('error', () => fail(${JSON.stringify(NO_SERVER_MESSAGE)}));`,
+	"socket.on('close', () => { clearTimeout(timer); process.stdout.write(buffered.trim() + '\\n'); });",
+].join('\n');
+
+type ExecFile = (
+	file: string,
+	args: readonly string[],
+	options: { timeout: number; maxBuffer: number },
+) => Promise<{ stdout: string }>;
+
+/**
  * The socket is owner-only, so root cannot simply open a socket owned by the
  * run-as account without dropping to it first. Re-executing this one call
  * under `sudo -u` keeps the server's ownership check meaningful instead of
@@ -119,30 +179,48 @@ export async function sendAsUser(
 	request: ApprovalRequest,
 	runAs: string,
 	currentUid: number | undefined = process.getuid?.(),
+	exec: ExecFile = execFileAsync,
 ): Promise<ApprovalResponse> {
 	const needsDrop = currentUid === 0 && runAs !== 'root';
 	if (!needsDrop) return sendApprovalRequest(socketPath, request);
-	const script = new URL('./socketClient.js', import.meta.url).pathname;
+	let stdout: string;
 	try {
-		const { stdout } = await execFileAsync(
+		({ stdout } = await exec(
 			'sudo',
 			[
 				'-n',
 				'-u',
 				runAs,
 				process.execPath,
-				script,
+				'-e',
+				SOCKET_CLIENT_SOURCE,
 				socketPath,
 				JSON.stringify(request),
 			],
 			{ timeout: REQUEST_TIMEOUT_MS + 5_000, maxBuffer: MAX_FRAME_BYTES },
-		);
-		return JSON.parse(stdout.trim()) as ApprovalResponse;
+		));
 	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		if (detail.includes(NO_SERVER_MESSAGE))
+			throw new SocketError(NO_SERVER_MESSAGE);
+		const hint = explainPrivilegeLaunchError(error);
 		throw new SocketError(
-			`could not reach the server's socket as ${runAs}: ${error instanceof Error ? error.message : String(error)}`,
+			hint === undefined
+				? `could not reach the server's socket as ${runAs}: ${lastLine(detail)}`
+				: `${hint} (${lastLine(detail)})`,
 		);
 	}
+	try {
+		return JSON.parse(stdout.trim()) as ApprovalResponse;
+	} catch {
+		throw new SocketError('the running server returned an unreadable response');
+	}
+}
+
+/** `execFile` puts the command line first and the child's stderr after it;
+ * the last line is the part that says what went wrong. */
+function lastLine(text: string): string {
+	return text.trim().split('\n').at(-1)?.trim() ?? '';
 }
 
 export function requireOk(

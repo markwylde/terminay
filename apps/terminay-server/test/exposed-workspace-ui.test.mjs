@@ -15,7 +15,7 @@ test('an exposed server with no renderer directory refuses to start', async () =
 	const source = await readFile(CLI, 'utf8');
 	assert.match(
 		source,
-		/options\.exposeModes\.length > 0 && rendererDirectory === undefined/u,
+		/options\.exposeModes\.length > 0 &&\s*rendererDirectory === undefined/u,
 		'exposure without a workspace UI must be refused',
 	);
 	// The message has to name the variable, because the remedy is setting it and

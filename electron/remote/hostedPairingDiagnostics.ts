@@ -1,5 +1,5 @@
-import type { DiagnosticEventInput } from '../diagnostics/core';
 import type { HostedPairingDiagnostic } from '../../apps/terminay-server/src/remote/hostedPairingHost';
+import type { DiagnosticEventInput } from '../diagnostics/core';
 
 const EVENT_NAMES = {
 	advertised: 'local-server.remote-pairing.advertised',
@@ -14,6 +14,7 @@ const EVENT_NAMES = {
 	'channel-state': 'local-server.remote-webrtc.channel-state',
 	'application-lane': 'local-server.remote-webrtc.application-lane',
 	'peer-closed': 'local-server.remote-webrtc.peer-closed',
+	'candidate-pair': 'local-server.remote-webrtc.candidate-pair',
 	'approval-pending': 'local-server.remote-pairing.approval-pending',
 } as const;
 
@@ -23,6 +24,7 @@ const STREAM_TYPES = new Set([
 	'channel-state',
 	'application-lane',
 	'peer-closed',
+	'candidate-pair',
 ]);
 
 export function hostedPairingDiagnosticEvent(
@@ -61,11 +63,15 @@ export function hostedPairingDiagnosticEvent(
 			lastInboundAgeMs: event.lastInboundAgeMs,
 			lastOutboundAgeMs: event.lastOutboundAgeMs,
 			liveGenerationCount: event.liveGenerationCount,
+			localType: event.localType,
 			outboundBytes: event.outboundBytes,
 			outboundFrames: event.outboundFrames,
 			peerState: event.peerState,
+			pairState: event.pairState,
+			protocol: event.protocol,
 			reasonClass: event.reasonClass,
 			remainingMs: event.remainingMs,
+			remoteType: event.remoteType,
 			scope: event.scope,
 			sendFailure: event.sendFailure,
 			sendFailures: event.sendFailures,

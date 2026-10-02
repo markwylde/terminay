@@ -457,6 +457,68 @@ test('locally emulated touch-mobile Chromium creates, selects, moves, and closes
 	await context.close();
 });
 
+test('a Desktop pairing attempt in flight is exclusive, cancellable, and fails in plain words', async ({
+	page,
+}) => {
+	await page.goto(
+		`${fixture.origin}/e2e/fixtures/shared-production-routes.html`,
+	);
+	const region = page.getByRole('region', {
+		name: 'Pending pairing Connections state',
+	});
+	const form = region.getByRole('form', { name: 'Add connection' });
+	const actions = () =>
+		page.evaluate(() =>
+			(
+				window as unknown as { __connectionActions: string[] }
+			).__connectionActions.filter((action) =>
+				action.startsWith('pending-pair'),
+			),
+		);
+	const submit = async () => {
+		await region.getByRole('button', { name: 'Add connection…' }).click();
+		await form
+			.getByLabel('Pairing URL')
+			.fill('https://localhost:9443/v1/?hostName=box#one-time-secret');
+		await form.getByRole('button', { name: 'Continue pairing' }).click();
+	};
+
+	await submit();
+	// While the attempt is in flight the action cannot be started a second
+	// time, and the surface says what it is doing rather than claiming approval.
+	await expect(form.getByRole('button', { name: 'Pairing…' })).toBeDisabled();
+	await expect(form.getByRole('status')).toHaveText('Contacting the server…');
+
+	// Cancel ends the attempt in the host, not only on screen, and is not
+	// reported as an error or as a success.
+	await form.getByRole('button', { name: 'Cancel' }).click();
+	await expect(form).toBeHidden();
+	await expect.poll(actions).toEqual(['pending-pair', 'pending-pair-cancel']);
+	await expect(region.getByRole('alert')).toHaveCount(0);
+	await expect(region.getByText('Server added.')).toHaveCount(0);
+
+	// The action is available again, and a real failure reaches the user
+	// without the IPC wrapper or the error class.
+	await submit();
+	await expect(form.getByRole('button', { name: 'Pairing…' })).toBeDisabled();
+	await page.evaluate(() =>
+		(
+			window as unknown as { __failPendingPairing: (message: string) => void }
+		).__failPendingPairing(
+			"Error invoking remote method 'server-ui-host:request-action': Error: pairing room is unavailable",
+		),
+	);
+	await expect(region.getByRole('alert')).toHaveText(
+		'This pairing link has already been used or has expired. Generate a new link on the server.',
+	);
+	await expect(
+		form.getByRole('button', { name: 'Continue pairing' }),
+	).toBeEnabled();
+	await expect
+		.poll(actions)
+		.toEqual(['pending-pair', 'pending-pair-cancel', 'pending-pair']);
+});
+
 for (const viewport of [
 	{ name: 'wide', width: 1280, height: 900 },
 	{ name: 'medium', width: 900, height: 900 },
@@ -491,7 +553,7 @@ for (const viewport of [
 			.fill('https://terminay.example/pair#one-time-secret');
 		await pairing.getByRole('button', { name: 'Continue pairing' }).click();
 		await expect(connections.getByRole('status')).toContainText(
-			'Waiting for approval on the exposing computer…',
+			'Server added.',
 		);
 		await expect
 			.poll(() =>

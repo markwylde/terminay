@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { hostedPairingDiagnosticEvent } from '../../../electron/remote/hostedPairingDiagnostics.ts';
 import { createHostedDiagnosticLogger } from '../src/remote/hostedDiagnosticLog.ts';
+import { selectedIceCandidatePair } from '../src/remote/hostedPeerLifecycle.ts';
 import {
 	classifyPeerCloseReason,
 	createHostedStreamDiagnostics,
@@ -101,6 +102,33 @@ test('Desktop mapper keeps stream events payload-free and namespaced', () => {
 	assert.equal('stallIgnored' in mapped.fields, false);
 });
 
+test('Desktop candidate-pair diagnostics keep route classes and omit addresses and ports', () => {
+	const mapped = hostedPairingDiagnosticEvent({
+		type: 'candidate-pair',
+		localType: 'host',
+		protocol: 'udp',
+		remoteType: 'srflx',
+		pairState: 'succeeded',
+		localAddress: '192.168.1.20',
+		localPort: 51000,
+		remoteAddress: '203.0.113.8',
+		remotePort: 52000,
+	});
+	assert.equal(mapped.event, 'local-server.remote-webrtc.candidate-pair');
+	assert.deepEqual(
+		Object.fromEntries(
+			Object.entries(mapped.fields).filter(([, value]) => value !== undefined),
+		),
+		{
+		localType: 'host',
+		pairState: 'succeeded',
+		protocol: 'udp',
+		remoteType: 'srflx',
+		},
+	);
+	assert.doesNotMatch(JSON.stringify(mapped.fields), /192\.168\.1\.20|203\.0\.113\.8|51000|52000/u);
+});
+
 test('a required lane closing after it opened is reported as a hangup', () => {
 	const events = [];
 	const stream = createHostedStreamDiagnostics({
@@ -149,4 +177,47 @@ test('standalone logger writes JSON lines to stderr without pairing URLs', async
 	} finally {
 		process.stderr.write = original;
 	}
+});
+
+test('standalone candidate-pair logs preserve route classes and omit addresses and ports', async () => {
+	const stats = new Map([
+		['transport', { type: 'transport', selectedCandidatePairId: 'pair' }],
+		['pair', { type: 'candidate-pair', state: 'succeeded', localCandidateId: 'local', remoteCandidateId: 'remote' }],
+		['local', { candidateType: 'host', protocol: 'udp', address: '192.168.1.20', port: 51000 }],
+		['remote', { candidateType: 'srflx', protocol: 'udp', ip: '203.0.113.8', port: 52000 }],
+	]);
+	const selected = await selectedIceCandidatePair({
+		async getStats() {
+			return stats;
+		},
+	});
+	assert.ok(selected);
+	const { state: pairState, ...route } = selected;
+	const lines = [];
+	const original = process.stderr.write;
+	process.stderr.write = (chunk) => {
+		lines.push(String(chunk));
+		return true;
+	};
+	try {
+		createHostedDiagnosticLogger()({
+			type: 'candidate-pair',
+			scope: 'pairing',
+			...route,
+			pairState,
+			localAddress: '192.168.1.20',
+			localPort: 51000,
+			remoteAddress: '203.0.113.8',
+			remotePort: 52000,
+		});
+	} finally {
+		process.stderr.write = original;
+	}
+	const output = lines.join('');
+	const event = JSON.parse(output);
+	assert.equal(event.localType, 'host');
+	assert.equal(event.protocol, 'udp');
+	assert.equal(event.remoteType, 'srflx');
+	assert.equal(event.pairState, 'succeeded');
+	assert.doesNotMatch(output, /192\.168\.1\.20|203\.0\.113\.8|51000|52000/u);
 });
