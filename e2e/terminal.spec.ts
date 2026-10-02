@@ -1201,18 +1201,12 @@ test.describe('terminal behavior', () => {
 		).toHaveCount(1);
 
 		const activityButton = mainWindow.getByRole('button', {
-			name: 'Open terminal activity menu',
+			name: /^Notifications/,
 		});
 		await expect(activityButton).toBeVisible();
-		await expect(
-			mainWindow.locator('.terminal-activity-pill--unviewed'),
-		).toHaveText('1');
-		await expect(
-			mainWindow.locator('.terminal-activity-pill--recent'),
-		).toHaveCount(0);
-
-		// The header pill is a true circle with the count centred inside it.
-		const headerPill = mainWindow.locator('.terminal-activity-pill--unviewed');
+		// The header count is a true circle with the number centred inside it.
+		const headerPill = mainWindow.locator('.notifications-count');
+		await expect(headerPill).toHaveText('1');
 		await expect(headerPill).toHaveAttribute('data-digits', '1');
 		const headerPillBox = await headerPill.boundingBox();
 		if (!headerPillBox) throw new Error('Expected header pill geometry');
@@ -1220,42 +1214,41 @@ test.describe('terminal behavior', () => {
 			1,
 		);
 
-		// The background project tab carries a single per-project badge; the
+		// The background project tab carries a single per-project dot; the
 		// active project has nothing pending so it shows none.
 		const backgroundProjectTab = mainWindow.locator(
 			'.project-tab:not(.project-tab--active)',
 		);
 		const projectBadge = backgroundProjectTab.locator(
-			'.project-tab-activity-badge',
+			'.project-tab-activity-dot',
 		);
-		await expect(projectBadge).toHaveText('1');
+		await expect(projectBadge).toHaveCount(1);
 		await expect(projectBadge).toHaveClass(
-			/project-tab-activity-badge--unviewed/,
+			/project-tab-activity-dot--unviewed/,
 		);
 		await expect(projectBadge).toHaveAttribute(
 			'aria-label',
 			'1 terminal, finished',
 		);
 		await expect(
-			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+			mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
 		).toHaveCount(0);
-		const projectBadgeBox = await projectBadge.boundingBox();
-		if (!projectBadgeBox) throw new Error('Expected project badge geometry');
-		expect(
-			Math.abs(projectBadgeBox.width - projectBadgeBox.height),
-		).toBeLessThan(1);
-		expect(Math.abs(projectBadgeBox.width - headerPillBox.width)).toBeLessThan(
-			1,
-		);
-		const closeBox = await backgroundProjectTab
-			.locator('.project-tab-close')
+		// It is the terminal tab's own dot — same glyph, no number — and it
+		// leads the title.
+		await expect(projectBadge).toHaveText('');
+		const glyphBox = await projectBadge
+			.locator('.agent-status-indicator__glyph')
 			.boundingBox();
-		if (!closeBox) throw new Error('Expected project close geometry');
-		expect(projectBadgeBox.x + projectBadgeBox.width).toBeLessThanOrEqual(
-			closeBox.x + 1,
-		);
+		if (!glyphBox) throw new Error('Expected project dot geometry');
+		expect(Math.abs(glyphBox.width - 7)).toBeLessThan(1);
+		expect(Math.abs(glyphBox.width - glyphBox.height)).toBeLessThan(1);
+		const titleBox = await backgroundProjectTab
+			.locator('.project-tab-title')
+			.boundingBox();
+		if (!titleBox) throw new Error('Expected project title geometry');
+		expect(glyphBox.x + glyphBox.width).toBeLessThanOrEqual(titleBox.x);
 
-		// The badge is inert: pressing it activates the project like the tab.
+		// The dot is inert: pressing it activates the project like the tab.
 		await projectBadge.click();
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project',
@@ -1264,8 +1257,8 @@ test.describe('terminal behavior', () => {
 			'Project 2',
 		);
 		await expect(
-			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
-		).toHaveText('1');
+			mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+		).toHaveCount(1);
 		await mainWindow
 			.locator('.project-tab:not(.project-tab--active)')
 			.filter({ hasText: 'Project 2' })
@@ -1276,7 +1269,7 @@ test.describe('terminal behavior', () => {
 
 		await activityButton.click();
 		const activityMenu = mainWindow.getByRole('menu', {
-			name: 'Terminal activity menu',
+			name: 'Notifications',
 		});
 		await expect(activityMenu).toBeVisible();
 
@@ -1303,7 +1296,10 @@ test.describe('terminal behavior', () => {
 			),
 		).toHaveText('Terminal 2');
 		await expect(activityMenu).toHaveCount(0);
-		await expect(activityButton).toHaveCount(0);
+		// Activating the row is viewing the terminal, so its notification clears
+		// while the control itself stays in the header.
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		await expect(activityButton).toBeVisible();
 	});
 
 	test('terminal activity overview uses the same recent-input suppression as tab status dots', async ({
@@ -1333,15 +1329,11 @@ test.describe('terminal behavior', () => {
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
-		await expect(
-			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
-		).toHaveCount(0);
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 
 		await mainWindow.waitForTimeout(1_100);
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
-		await expect(
-			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
-		).toHaveCount(0);
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
 	test('terminal activity ignores output immediately after leaving a tab', async ({
@@ -1372,9 +1364,7 @@ test.describe('terminal behavior', () => {
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
-		await expect(
-			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
-		).toHaveCount(0);
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
 	test('terminal tab settings can disable activity indicators for one tab', async ({
@@ -1411,9 +1401,7 @@ test.describe('terminal behavior', () => {
 		await mainWindow.waitForTimeout(1_100);
 
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
-		await expect(
-			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
-		).toHaveCount(0);
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
 	test('active terminal tabs do not keep a finished indicator after structured completion', async ({
@@ -1433,7 +1421,7 @@ test.describe('terminal behavior', () => {
 		await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(finishedIndicator).toHaveCount(0);
 		await expect(
-			mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+			mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
 		).toHaveCount(0);
 	});
 

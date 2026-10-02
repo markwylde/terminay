@@ -1,12 +1,9 @@
 import { Reorder } from 'framer-motion';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
-import {
-	type ActivityCountBadge,
-	formatActivityCount,
-} from './activityCountBadge';
+import type { ActivityCountBadge } from './activityCountBadge';
 import { ProjectSwitcherMenu } from './ProjectSwitcherMenu';
-import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
+import { ProjectTabActivityDot } from './ProjectTabActivityDot';
 import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import {
 	fitProjectTabOverflow,
@@ -74,7 +71,7 @@ export function activityBadgeLayoutKey(
 	if (!badges) return '';
 	return Object.entries(badges)
 		.filter(([, badge]) => badge.count > 0)
-		.map(([id, badge]) => `${id}:${formatActivityCount(badge.count)}`)
+		.map(([id]) => id)
 		.sort()
 		.join('|');
 }
@@ -110,7 +107,10 @@ export function ProjectTabList({
 	const isInert = (project: ProjectTab & { readonly inert?: boolean }) =>
 		project.inert === true;
 	const inertReason = (
-		project: ProjectTab & { readonly inert?: boolean; readonly statusMessage?: string },
+		project: ProjectTab & {
+			readonly inert?: boolean;
+			readonly statusMessage?: string;
+		},
 	) => (project.inert === true ? project.statusMessage : undefined);
 	const namesServers =
 		new Set(projects.map((project) => project.serverId)).size > 1;
@@ -136,7 +136,7 @@ export function ProjectTabList({
 		visibleIds,
 	});
 	dropStateRef.current = { hiddenIds, onReorder, projects, visibleIds };
-	// A badge appearing, vanishing, or changing digit count changes a tab's
+	// A dot appearing or vanishing changes a tab's
 	// width without resizing the observed containers, so the overflow layout
 	// must re-measure whenever this key changes.
 	const badgeLayoutKey = activityBadgeLayoutKey(activityBadgesByProject);
@@ -273,12 +273,7 @@ export function ProjectTabList({
 		);
 		if (sameIdList(currentVisible, nextVisibleIds)) return;
 		reorder(
-			mergeVisibleProjectReorderByIds(
-				items,
-				nextVisibleIds,
-				hiddenNow,
-				keyOf,
-			),
+			mergeVisibleProjectReorderByIds(items, nextVisibleIds, hiddenNow, keyOf),
 		);
 	};
 
@@ -395,6 +390,9 @@ export function ProjectTabList({
 										{project.emoji}
 									</span>
 								) : null}
+								<ProjectTabActivityDot
+									badge={activityBadgesByProject?.[keyOf(project)]}
+								/>
 								<span className="project-tab-title">{project.title}</span>
 								{/* The server is named only when the window is showing
 								    more than one; with one server it is noise. */}
@@ -404,9 +402,6 @@ export function ProjectTabList({
 									</span>
 								)}
 							</span>
-							<ProjectTabActivityBadge
-								badge={activityBadgesByProject?.[keyOf(project)]}
-							/>
 							<button
 								type="button"
 								disabled={project.creationStatus === 'loading'}
@@ -473,6 +468,9 @@ export function ProjectTabList({
 										{project.emoji}
 									</span>
 								) : null}
+								<ProjectTabActivityDot
+									badge={activityBadgesByProject?.[keyOf(project)]}
+								/>
 								<span className="project-tab-title">{project.title}</span>
 								{/* The server is named only when the window is showing
 								    more than one; with one server it is noise. */}
@@ -482,9 +480,6 @@ export function ProjectTabList({
 									</span>
 								)}
 							</span>
-							<ProjectTabActivityBadge
-								badge={activityBadgesByProject?.[keyOf(project)]}
-							/>
 						</div>
 					))}
 			</div>

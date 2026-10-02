@@ -504,7 +504,7 @@ test.describe('project tabs', () => {
 		expect(hiddenBefore).toBeGreaterThan(0);
 
 		// Finish a command in a background terminal of the active project so its
-		// tab grows a badge while the strip is already full.
+		// tab grows a dot while the strip is already full.
 		const activeWorkspace = mainWindow.locator('.project-workspace--active');
 		const terminalTabs = activeWorkspace.locator('.terminal-tab-content');
 		await expect(terminalTabs).toHaveCount(1);
@@ -521,10 +521,10 @@ test.describe('project tabs', () => {
 		await terminalTabs.filter({ hasText: 'Terminal 1' }).click();
 
 		const badge = mainWindow.locator(
-			'.project-tab--active .project-tab-activity-badge',
+			'.project-tab--active .project-tab-activity-dot',
 		);
-		await expect(badge).toHaveText('1');
-		await expect(badge).toHaveClass(/project-tab-activity-badge--unviewed/);
+		await expect(badge).toHaveCount(1);
+		await expect(badge).toHaveClass(/project-tab-activity-dot--unviewed/);
 		const activeTitle = (
 			await mainWindow
 				.locator('.project-tab--active .project-tab-title')
@@ -551,26 +551,26 @@ test.describe('project tabs', () => {
 		expect(hiddenAfter).toBeGreaterThanOrEqual(hiddenBefore);
 		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
 
-		// The overflow switcher rows carry the same badge.
+		// The overflow switcher rows carry the same dot.
 		await mainWindow.locator('.project-switcher-button').click();
 		await expect(mainWindow.locator('.project-switcher-menu')).toBeVisible();
 		const activeRow = mainWindow
 			.locator('.project-switcher-menu__item')
 			.filter({ hasText: activeTitle });
-		const rowBadge = activeRow.locator('.project-tab-activity-badge');
+		const rowBadge = activeRow.locator('.project-tab-activity-dot');
 		try {
-			await expect(rowBadge).toHaveText('1');
+			await expect(rowBadge).toHaveCount(1);
 			await expect(rowBadge).toHaveClass(
-				/project-tab-activity-badge--unviewed/,
+				/project-tab-activity-dot--unviewed/,
 			);
 			await expect(
 				mainWindow.locator(
-					'.project-switcher-menu__item .project-tab-activity-badge',
+					'.project-switcher-menu__item .project-tab-activity-dot',
 				),
 			).toHaveCount(1);
 		} catch (error) {
 			// Gitea does not retain Playwright artifacts, so surface the DOM in
-			// the job log when the switcher rows disagree with the tab badge.
+			// the job log when the switcher rows disagree with the tab dot.
 			console.log(
 				'[badge-debug] active title:',
 				activeTitle,
