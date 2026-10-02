@@ -1523,7 +1523,9 @@ function createProtocolServer(
 				publicKeyPem,
 			}) => {
 				// Loopback HTTP enrollment is same-machine: the one-time fragment is
-				// the whole authority there, so no approval step applies.
+				// the whole authority there, so no approval step applies. As on the
+				// approved transport path, enrollment answers with the device and a
+				// one-use ticket for its first connection.
 				if (!validPairingExpiry(pairingExpiresAt))
 					throw new Error('pairing authority is invalid');
 				const device = remote.enrollDevice({
@@ -1533,17 +1535,24 @@ function createProtocolServer(
 					publicKeyPem,
 				});
 				persistDevices(remote.devices.list());
-				return { deviceId: device.deviceId };
+				return {
+					deviceId: device.deviceId,
+					deviceName: device.deviceName,
+					ticket: remote.issueConnectionTicket(device.deviceId).ticket,
+				};
 			},
-			challenge: ({ deviceId }) => {
-				const pending = remote.createDeviceChallenge(deviceId);
+			// The client checks the challenge against the origin it dialled, so a
+			// challenge names this listener's origin and is redeemable only there.
+			challenge: ({ deviceId, sessionOrigin }) => {
+				const pending = remote.createDeviceChallenge(deviceId, sessionOrigin);
 				return { ...pending.challenge, signingInput: pending.signingInput };
 			},
-			verify: ({ deviceId, challengeId, deviceSignature }) => {
+			verify: ({ deviceId, challengeId, deviceSignature, sessionOrigin }) => {
 				const ticket = remote.verifyDeviceSignature({
 					deviceId,
 					challengeId,
 					deviceSignature,
+					sessionOrigin,
 				});
 				return { ticket: ticket.ticket, expiresAt: ticket.expiresAt };
 			},
