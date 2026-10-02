@@ -41,7 +41,7 @@ Desktop **Add connection** SHALL accept the same pairing URL, including hosted `
 
 ### Requirement: Desktop pairing presents actionable progress and failures
 
-The Desktop pairing surface SHALL distinguish submitting, waiting for host approval, connecting, connected, and failed states. It SHALL disable repeated submission while one attempt is active, stop presenting approval as pending after approval, show a clear recovery message when the transport drops, and present concise actionable errors without Electron IPC wrapper text.
+The Desktop pairing surface SHALL distinguish submitting, waiting for host approval, connecting, connected, and failed states, and SHALL show each only while it is true. It SHALL disable repeated submission while one attempt is active and SHALL let the user cancel that attempt, which ends it in the privileged host rather than merely hiding it. It SHALL stop presenting approval as pending after approval, SHALL NOT report the connection as established before the remote workspace has mounted, and SHALL tell the user a server is saved only once its profile has been persisted. It SHALL present concise actionable errors without Electron IPC wrapper text or error class names.
 
 #### Scenario: Pairing is busy
 
@@ -53,15 +53,35 @@ The Desktop pairing surface SHALL distinguish submitting, waiting for host appro
 - **WHEN** the exposing host approves the displayed match code
 - **THEN** Desktop changes the status from waiting for approval to connecting
 
-#### Scenario: Connection drops during pairing or initial load
+#### Scenario: Connection drops during initial load
 
-- **WHEN** the WebRTC peer or required transport lane fails after signaling connected
-- **THEN** Desktop shows that the connection was lost and offers a retry using the saved profile
+- **WHEN** the WebRTC peer or a required transport lane fails after enrollment succeeded and the profile was saved
+- **THEN** Desktop shows that the connection was lost and that the saved server can be retried from the connections list
+
+#### Scenario: Connection drops before enrollment
+
+- **WHEN** the pairing peer is lost before the host has approved the request
+- **THEN** the attempt fails with a connection error and Desktop does not claim that a server was saved
+
+#### Scenario: User cancels a pending attempt
+
+- **WHEN** the user cancels while Desktop is waiting for approval
+- **THEN** the attempt ends at once, the pairing action becomes available again, and no error is shown for the cancellation
+
+#### Scenario: Network path degrades and recovers
+
+- **WHEN** the WebRTC path is reported degraded and then recovers during an attempt
+- **THEN** Desktop shows the degraded notice only while it lasts and then returns to the state the attempt was in
+
+#### Scenario: Connecting is shown until the workspace mounts
+
+- **WHEN** approval has been granted and the reconnect peer's ICE first connects
+- **THEN** Desktop keeps showing that it is connecting until the remote workspace has mounted
 
 #### Scenario: IPC action rejects
 
 - **WHEN** an IPC action returns an Electron-wrapped error
-- **THEN** the UI displays the underlying actionable message without the `Error invoking remote method` wrapper
+- **THEN** the UI displays the underlying actionable message without the `Error invoking remote method` wrapper or a leading error class name
 
 #### Scenario: Delayed event belongs to an older attempt
 

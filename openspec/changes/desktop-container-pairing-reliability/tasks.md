@@ -27,4 +27,13 @@
 ## 5. Operator documentation and integration
 
 - [x] 5.1 Update the standalone runbook and `terminay.com` remote-access guidance for foreground containers, hosted QR links, direct browser behavior, UDP reachability, and transient disconnects. Verify: documentation tests assert the platform distinction and recovery guidance.
-- [ ] 5.2 Run focused regression tests, OpenSpec validation, type checks, and the Docker-isolated Electron E2E suite. Focused suites and `openspec validate --all` pass; `npm run test:e2e` could not run because the Docker service is unavailable.
+- [x] 5.2 Run focused regression tests, OpenSpec validation, type checks, and the Docker-isolated Electron E2E suite. Verified by pull-request CI, including all ten E2E shards.
+
+## 6. Review follow-up
+
+- [x] 6.1 Run the pairing sequence through one tested module and reducer; report `connection-lost` only after the profile is saved, and `connected` only after the workspace mounts. Verified by `scripts/desktop-pairing-attempt.test.mjs`.
+- [x] 6.2 Add a cancel action that aborts the attempt in the privileged host, and release approval waits and pending requests when the peer is lost. Verified by API-lane tests and the real-WebRTC loss and cancel cases in `scripts/desktop-hosted-connection.test.mjs`.
+- [x] 6.3 End a Desktop peer whose ICE stays disconnected for 15 seconds, and close data lanes before the peer so the server withdraws a departed device's pending approval. Verified by the same real-WebRTC cases.
+- [x] 6.4 Strip error class names from displayed errors, map unanswered and lost connections to reachability guidance, and keep unrelated permission errors out of the CLI helper hint. Verified by error-copy and CLI tests.
+- [x] 6.5 Correct the runbook's QR default, complete the foreground container recipe, and document candidate-pair diagnostics and the misleading ICE line. Replace source-matching tests with behavioural ones and run the Desktop pairing suites in `test:ci`.
+- [x] 6.6 Hand the privilege-dropped socket client to the service account as source rather than as a path into the CLI install, so `sudo npx terminay daemon qr-code` works with a dedicated service account. Verified by a CLI test that runs the dropped command against a real Unix socket from a directory with no access to the package.
