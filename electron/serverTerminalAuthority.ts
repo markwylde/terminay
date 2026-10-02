@@ -76,6 +76,7 @@ import {
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
+import type { GitObservationReport } from '../packages/server-core/src/gitService/types';
 import {
 	fileWorktreePromptPreferences,
 	serverVaultWorktreeCredentials,
@@ -285,6 +286,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onFileOperationFailure?: (
 		failure: ServerFileOperationFailure,
 	) => void;
+	/** Metadata-only observer for Git watches, measurements, and cache
+	 *  mismatches. Reports carry process-local ids, never a path or a ref. */
+	readonly onGitObservation?: (report: GitObservationReport) => void;
 	/** Host-only observer for input that server-core has already accepted. */
 	readonly onAcceptedWrite?: ServerTerminalHostObserver<ServerTerminalAcceptedWrite>;
 	/** Host-only observer for resize that server-core has already accepted. */
@@ -469,6 +473,7 @@ export class ServerTerminalAuthority {
 				maxWorktrees: 128,
 				maxPathBytes: 4 * 1024,
 			},
+			onObservation: (report) => options.onGitObservation?.(report),
 		});
 		// Extensions publish worktree facts; the Git listing carries them to the
 		// project's clients, and a change re-lists.

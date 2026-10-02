@@ -28,11 +28,15 @@ export async function loadServerGitWorkspace(
 	 *  server carries the other worktrees forward rather than re-measuring them;
 	 *  omitting it measures every worktree. */
 	worktreeId?: string,
+	/** The user asked for this listing: the server measures every worktree
+	 *  rather than answering from its cached listing. */
+	fresh = false,
 ): Promise<ServerGitWorkspaceProjection> {
 	const result = record(
 		await client.list({
 			projectId,
-			...(worktreeId === undefined ? {} : { worktreeId }),
+			...(worktreeId === undefined || fresh ? {} : { worktreeId }),
+			...(fresh ? { fresh: true } : {}),
 		}),
 		'Git worktree list',
 	);

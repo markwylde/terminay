@@ -35,6 +35,13 @@ import type { ProjectTab } from './projectTabModel';
 import { getOrCreateDirectoryLoad } from './directoryLoadCoordinator';
 import { isDirectoryEntry } from './fileExplorerEntries';
 import {
+	createGitPaneSyncLog,
+	type GitPaneSyncLog,
+	type GitPaneSyncOutcome,
+	type GitPaneSyncTrigger,
+	isFreshGitPaneSync,
+} from './gitPaneSyncLog';
+import {
 	gitFilesystemActionWorktreeRoot,
 	rootFolderToRestoreAfter,
 	sameFilesystemPath,
@@ -231,6 +238,7 @@ export async function loadGitWorkspaceFromServer(
 	gitClient: TerminayGitClient | undefined,
 	project: Pick<ProjectTab, 'id' | 'rootFolder'>,
 	worktreeId?: string,
+	fresh = false,
 ): Promise<GitWorkspaceProjection> {
 	if (gitClient === undefined) {
 		return {
@@ -239,7 +247,12 @@ export async function loadGitWorkspaceFromServer(
 			worktrees: GIT_UNAVAILABLE_WORKTREE_PANEL_STATUS,
 		};
 	}
-	return await loadServerGitWorkspace(gitClient, project.id, worktreeId);
+	return await loadServerGitWorkspace(
+		gitClient,
+		project.id,
+		worktreeId,
+		fresh,
+	);
 }
 
 /**
@@ -257,12 +270,16 @@ export async function applyGitWorkspaceRefresh({
 	onOperationError,
 	onOperationSucceeded,
 	worktreeId,
+	sync,
 }: {
 	gitClient: TerminayGitClient | undefined;
 	project: Pick<ProjectTab, 'id' | 'rootFolder'>;
 	isCurrent: () => boolean;
 	worktreeId?: string;
-	publish: (projection: GitWorkspaceProjection) => void;
+	/** What raised this refresh, and where its outcome is recorded. */
+	sync?: { readonly trigger: GitPaneSyncTrigger; readonly log: GitPaneSyncLog };
+	/** Returns `false` when the projection changed nothing on screen. */
+	publish: (projection: GitWorkspaceProjection) => unknown;
 	preserveLastProjection: () => void;
 	onOperationError: (
 		feature: 'Explorer' | 'Git',
@@ -271,17 +288,40 @@ export async function applyGitWorkspaceRefresh({
 	) => string;
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 }): Promise<void> {
+	const startedAt = Date.now();
+	const fresh = sync !== undefined && isFreshGitPaneSync(sync.trigger);
+	const outcome = (
+		result: GitPaneSyncOutcome,
+		worktrees: number | null,
+	): void =>
+		sync?.log.record({
+			trigger: sync.trigger,
+			scoped: worktreeId !== undefined && !fresh,
+			outcome: result,
+			worktrees,
+			durationMs: Date.now() - startedAt,
+		});
 	try {
 		const projection = await loadGitWorkspaceFromServer(
 			gitClient,
 			project,
 			worktreeId,
+			fresh,
 		);
-		if (!isCurrent()) return;
-		publish(projection);
+		const worktrees = projection.worktrees.worktrees.length;
+		if (!isCurrent()) {
+			outcome('superseded', worktrees);
+			return;
+		}
+		const changed = publish(projection) !== false;
+		outcome(changed ? 'applied' : 'unchanged', worktrees);
 		onOperationSucceeded('Git');
 	} catch (error) {
-		if (!isCurrent()) return;
+		if (!isCurrent()) {
+			outcome('superseded', null);
+			return;
+		}
+		outcome('failed', null);
 		// Preserve the last good projection. If there has not been a successful
 		// projection yet, publish a stable empty state instead of leaving the Git
 		// sidebar in an indefinite loading state.
@@ -510,12 +550,15 @@ export function useFileExplorerController({
 		],
 	);
 
+	const gitPaneSyncLogRef = useRef<GitPaneSyncLog>(createGitPaneSyncLog());
+	const shownGitProjectionRef = useRef<string | null>(null);
 	const refreshGitStatusesForRoot = useCallback(async (
 		rootFolder: string,
 		markAsCurrent = false,
 		/** Set when exactly one worktree's change raised this refresh, so the
 		 *  server can carry the others forward instead of re-measuring them. */
 		worktreeId?: string,
+		trigger: GitPaneSyncTrigger = 'action',
 	) => {
 		if (markAsCurrent) latestGitRootRef.current = rootFolder;
 		const targetRootFolder = markAsCurrent
@@ -523,6 +566,7 @@ export function useFileExplorerController({
 			: latestGitRootRef.current;
 		if (!targetRootFolder) {
 			gitRefreshRequestIdRef.current += 1;
+			shownGitProjectionRef.current = null;
 			referencesRef.current = new Map();
 			setGitStatuses((current) =>
 				Object.keys(current).length === 0 ? current : {},
@@ -540,10 +584,17 @@ export function useFileExplorerController({
 			gitClient,
 			project: { id: project.id, rootFolder: targetRootFolder },
 			...(worktreeId === undefined ? {} : { worktreeId }),
+			sync: { trigger, log: gitPaneSyncLogRef.current },
 			isCurrent: () =>
 				gitRefreshRequestIdRef.current === requestId &&
 				latestGitRootRef.current === targetRootFolder,
 			publish: (projection) => {
+				const shown = JSON.stringify([
+					projection.statuses,
+					projection.worktrees,
+				]);
+				const changed = shownGitProjectionRef.current !== shown;
+				shownGitProjectionRef.current = shown;
 				referencesRef.current = projection.referencesByPath;
 				setGitStatuses((current) =>
 					sameGitStatuses(current, projection.statuses)
@@ -555,6 +606,7 @@ export function useFileExplorerController({
 						? current
 						: projection.worktrees,
 				);
+				return changed;
 			},
 			preserveLastProjection: () => {
 				setWorktreePanelStatus(
@@ -572,7 +624,12 @@ export function useFileExplorerController({
 			const timer = window.setTimeout(() => {
 				refreshTimersRef.current.delete(dirPath);
 				if (project.rootFolder) {
-					void refreshGitStatusesForRoot(project.rootFolder, true);
+					void refreshGitStatusesForRoot(
+						project.rootFolder,
+						true,
+						undefined,
+						'directory',
+					);
 				}
 				void loadDirectory(dirPath).then(() => {
 					const settleTimer = window.setTimeout(() => {
@@ -1053,7 +1110,7 @@ export function useFileExplorerController({
 		);
 		if (project.rootFolder && explorerReady) {
 			void loadDirectory(project.rootFolder);
-			void refreshGitStatusesForRoot(project.rootFolder, true);
+			void refreshGitStatusesForRoot(project.rootFolder, true, undefined, 'root');
 		}
 	}, [
 		loadDirectory,
@@ -1085,7 +1142,12 @@ export function useFileExplorerController({
 				pendingWorktreeIds.clear();
 				sawUnattributedChange = false;
 				if (!disposed)
-					void refreshGitStatusesForRoot(project.rootFolder, true, scoped);
+					void refreshGitStatusesForRoot(
+						project.rootFolder,
+						true,
+						scoped,
+						'event',
+					);
 			},
 		});
 		gitStatusRefreshScheduleRef.current = schedule;
@@ -1100,7 +1162,12 @@ export function useFileExplorerController({
 					},
 					() => {
 						if (!disposed)
-							void refreshGitStatusesForRoot(project.rootFolder, true);
+							void refreshGitStatusesForRoot(
+								project.rootFolder,
+								true,
+								undefined,
+								'resync',
+							);
 					},
 				)
 			.then((disposeSubscription) => {

@@ -71,3 +71,48 @@ test("a linked worktree's .git file names its registry entry", () => {
   assert.equal(linkedGitDirName("gitdir: /repo/.git\n"), null);
   assert.equal(linkedGitDirName("nonsense"), null);
 });
+
+test("every Git directory entry has a diagnostic class that names no path or ref", async () => {
+  const { classifyGitDirEntry, scopeName } = await import("../dist/gitService/observation.js");
+  const cases = {
+    HEAD: "head",
+    index: "index",
+    "refs/heads/main": "default-branch-ref",
+    "refs/heads/feature": "branch-ref",
+    "refs/heads/unrelated": "branch-ref",
+    "refs/remotes/origin/main": "remote-ref",
+    "packed-refs": "packed-refs",
+    config: "config",
+    worktrees: "worktree-registry",
+    "worktrees/feature": "worktree-registry",
+    "worktrees/feature/gitdir": "worktree-registry",
+    "worktrees/unknown/HEAD": "worktree-registry",
+    "worktrees/feature/HEAD": "linked-worktree-state",
+    "worktrees/feature/logs/HEAD": "inert",
+    "index.lock": "lock",
+    "refs/heads/main.lock": "lock",
+    "objects/ab/cd": "inert",
+    FETCH_HEAD: "inert",
+    "refs/tags/v1": "inert",
+    ORIG_HEAD: "other",
+    "rebase-merge/done": "other",
+    refs: "other",
+  };
+  for (const [path, expected] of Object.entries(cases)) assert.equal(classifyGitDirEntry(path, layout), expected, path);
+  assert.equal(classifyGitDirEntry(null, layout), "unnamed");
+  assert.equal(classifyGitDirEntry("", layout), "unnamed");
+
+  // The class agrees with the attribution: what is ignored is never a class
+  // that invalidates, and the default branch always invalidates everything.
+  for (const path of Object.keys(cases)) {
+    const scope = scopeName(attributeGitDirChange(path, layout));
+    const entryClass = classifyGitDirEntry(path, layout);
+    if (entryClass === "lock" || entryClass === "inert") assert.equal(scope, "ignore", path);
+    if (entryClass === "default-branch-ref" || entryClass === "remote-ref") assert.equal(scope, "all", path);
+    if (entryClass === "worktree-registry") assert.equal(scope, "registry", path);
+  }
+  assert.equal(scopeName(IGNORE), "ignore");
+  assert.equal(scopeName(ALL), "all");
+  assert.equal(scopeName(REGISTRY), "registry");
+  assert.equal(scopeName(only("worktree-main")), "worktrees");
+});
