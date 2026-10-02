@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           mkdir -p "$HOME/.local"
-          npm install --global --prefix "$HOME/.local" npm@12.0.2
+          npm install --global --prefix "$HOME/.local" npm@12.2.0
           export PATH="$HOME/.local/bin:$PATH"
           hash -r
           npm ci
@@ -100,7 +100,7 @@ jobs:
 
       - name: Install dependencies from the clean manifest
         run: |
-          npm install --global npm@12.0.2
+          npm install --global npm@12.2.0
           npm ci
 
       - name: Build, extract, and exercise packaged built-ins offline
@@ -125,7 +125,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.0.2
+          npm install --global npm@12.2.0
           npm ci
 
       - name: Build, lint, and run fast tests
@@ -154,7 +154,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.0.2
+          npm install --global npm@12.2.0
           npm ci
 
       # The fast job leaves the selected WebRTC runtime unstaged, so every
