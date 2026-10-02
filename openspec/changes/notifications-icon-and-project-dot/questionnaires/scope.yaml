@@ -1,0 +1,68 @@
+title: Notifications rework
+intro: |
+  Settled from your request: the project tab drops the count badge for the same
+  small dot the terminal tab uses (before the label, same size and glow), and
+  the three coloured pills top-right become one Notifications icon with a single
+  red number, opening a list with dismiss and clear all.
+
+  Four things are still open.
+
+status: submitted
+submitted_at: "2026-10-02T15:15:26+01:00"
+
+questions:
+  - id: count_scope
+    type: select
+    prompt: What does the red number count?
+    help: |
+      Today the pills count three things: needs attention (red), finished
+      unviewed (green), and working (amber). A working terminal is not really a
+      notification and cannot be dismissed - it stays until it stops. I'd count
+      only attention + finished, and show working terminals in the list as a
+      separate quiet "Working" section without dismiss buttons.
+    required: true
+    options:
+      - Attention + finished only; working listed separately, not counted
+      - Attention + finished only; working not shown in the list at all
+      - Everything, including working
+    answer: Attention + finished only; working listed separately, not counted
+
+  - id: zero_state
+    type: select
+    prompt: What does the icon do when the number is zero?
+    help: |
+      Today the whole control disappears when there is nothing to show. I'd keep
+      the icon always visible with no number, so the top-right does not jump
+      around and you can still open it to see what is working.
+    required: true
+    options:
+      - Always visible, no number at zero
+      - Visible only while something is working or needs you
+      - Hidden at zero
+    answer: Always visible, no number at zero
+
+  - id: dismiss_meaning
+    type: select
+    prompt: What does dismissing a notification do?
+    help: |
+      I'd make it the same acknowledgement as clicking the terminal's tab: the
+      tab dot, the project dot, and the number all clear together, on every
+      attached client. The alternative only hides the row and leaves the dots.
+    required: true
+    options:
+      - Same as viewing the terminal - clears its dots everywhere
+      - Only removes it from the list; the tab dots stay
+    answer: Same as viewing the terminal - clears its dots everywhere
+
+  - id: switcher_rows
+    type: select
+    prompt: Project switcher menu rows currently show the same count badge. Swap those for the dot too?
+    help: I'd say yes, so a project reads the same way wherever it appears.
+    options:
+      - Yes, dot everywhere
+      - No, keep the count in the switcher menu
+    answer: Yes, dot everywhere
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

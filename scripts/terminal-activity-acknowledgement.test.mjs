@@ -11,6 +11,7 @@ test('project activation without interaction does not acknowledge finished work'
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			focusedSessionId: 'terminal-1',
 			interactedSessionId: null,
 			sessionId: 'terminal-1',
 			status: 'idle',
@@ -23,6 +24,7 @@ test('clicking or typing in a finished terminal acknowledges it', () => {
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			focusedSessionId: 'terminal-1',
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'idle',
@@ -35,9 +37,23 @@ test('working stays live even while the user is in the terminal', () => {
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			focusedSessionId: 'terminal-1',
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'working',
+		}),
+		false,
+	);
+});
+
+test('a terminal typed in earlier is not acknowledged once focus has moved on', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			focusedSessionId: 'terminal-2',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
 		}),
 		false,
 	);

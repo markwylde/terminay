@@ -70,12 +70,12 @@ test.describe('terminal activity signals', () => {
     await mainWindow.waitForTimeout(1_600)
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
 
-    // The active project tab counts its own finished terminal.
-    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
-    await expect(projectBadge).toHaveText('1')
-    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--unviewed/)
+    // The active project tab shows a dot for its own finished terminal.
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-dot')
+    await expect(projectBadge).toHaveCount(1)
+    await expect(projectBadge).toHaveClass(/project-tab-activity-dot--unviewed/)
   })
 
   test('OSC 133 command lifecycle shows finished with no trailing flicker', async ({
@@ -102,12 +102,12 @@ test.describe('terminal activity signals', () => {
     await writeToBackgroundSession(mainWindow, tab, "sleep 1.1; printf 'ding\\007\\n'\r")
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
-    await expect(mainWindow.locator('.terminal-activity-pill--attention')).toHaveText('1')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
 
-    // Attention wins the project badge colour and the badge hides once viewed.
-    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
-    await expect(projectBadge).toHaveText('1')
-    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--attention/)
+    // Attention colours the project dot, and the dot hides once viewed.
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-dot')
+    await expect(projectBadge).toHaveCount(1)
+    await expect(projectBadge).toHaveClass(/project-tab-activity-dot--attention/)
     await expect(projectBadge).toHaveAttribute('aria-label', '1 terminal, needs attention')
 
     // Viewing the tab acknowledges the attention request.
@@ -128,17 +128,17 @@ test.describe('terminal activity signals', () => {
     )
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-badge')
-    await expect(projectBadge).toHaveText('1')
-    await expect(projectBadge).toHaveClass(/project-tab-activity-badge--unviewed/)
-    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
+    const projectBadge = mainWindow.locator('.project-tab--active .project-tab-activity-dot')
+    await expect(projectBadge).toHaveCount(1)
+    await expect(projectBadge).toHaveClass(/project-tab-activity-dot--unviewed/)
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
 
     await tab.click()
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
     await expect(tab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
     await expect(projectBadge).toHaveCount(0)
-    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveCount(0)
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
   test('a focused terminal that finishes does not keep the finished indicator', async ({
@@ -155,9 +155,9 @@ test.describe('terminal activity signals', () => {
     await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
     await expect(activeTab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
     await expect(
-      mainWindow.locator('.project-tab--active .project-tab-activity-badge'),
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
     ).toHaveCount(0)
-    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveCount(0)
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
   test('activating a project does not dismiss a finished terminal until that terminal is clicked', async ({
@@ -173,13 +173,13 @@ test.describe('terminal activity signals', () => {
     )
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveText('1')
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-dot')).toHaveCount(1)
 
     await mainWindow.getByLabel('Create project').click()
     await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
     await expect(
-      mainWindow.locator('.project-tab:not(.project-tab--active) .project-tab-activity-badge'),
-    ).toHaveText('1')
+      mainWindow.locator('.project-tab:not(.project-tab--active) .project-tab-activity-dot'),
+    ).toHaveCount(1)
 
     await mainWindow.locator('.project-tab:not(.project-tab--active)').click()
     await expect(mainWindow.locator('.project-tab--active')).not.toContainText('Project 2')
@@ -188,10 +188,100 @@ test.describe('terminal activity signals', () => {
       .locator('.project-workspace--active .terminal-tab-content')
       .filter({ hasText: 'Terminal 2' })
     await expect(finishedTab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveText('1')
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-dot')).toHaveCount(1)
 
     await finishedTab.click()
     await expect(finishedTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-badge')).toHaveCount(0)
+    await expect(mainWindow.locator('.project-tab--active .project-tab-activity-dot')).toHaveCount(0)
+  })
+
+  test('work finishing in a terminal the user has moved away from is still announced', async ({
+    mainWindow,
+  }) => {
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    // Type in the first terminal, then open a second without clicking or typing
+    // anywhere else: the first is no longer the one being looked at.
+    await submitTerminalCommand(
+      mainWindow,
+      "sleep 3.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'\r",
+    )
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(
+      mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+    ).toHaveCount(2)
+
+    await expect(firstTab).toHaveAttribute('data-terminal-activity', 'unviewed', {
+      timeout: 15_000,
+    })
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+    ).toHaveCount(1)
+  })
+
+  test('the Notifications control stays in the header with nothing to show', async ({
+    mainWindow,
+  }) => {
+    const button = mainWindow.getByRole('button', { name: 'Notifications', exact: true })
+    await expect(button).toBeVisible()
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+
+    await button.click()
+    const menu = mainWindow.getByRole('menu', { name: 'Notifications' })
+    await expect(menu).toContainText('No notifications')
+    await expect(menu.getByRole('button', { name: 'Clear all' })).toHaveCount(0)
+  })
+
+  test('dismissing a notification acknowledges the terminal without selecting it', async ({
+    mainWindow,
+  }) => {
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(
+      mainWindow,
+      tab,
+      "sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'\r",
+    )
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    const projectDot = mainWindow.locator('.project-tab--active .project-tab-activity-dot')
+    await expect(projectDot).toHaveCount(1)
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+
+    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
+    const menu = mainWindow.getByRole('menu', { name: 'Notifications' })
+    await menu.getByRole('button', { name: /^Dismiss / }).click()
+
+    // The same acknowledgement as viewing: every surface clears together.
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(projectDot).toHaveCount(0)
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+
+    // Nothing was selected, and the list stays open on its empty state.
+    await expect(tab).not.toHaveClass(/terminal-tab-content--active/)
+    await expect(menu).toContainText('No notifications')
+  })
+
+  test('Clear all dismisses every notification', async ({ mainWindow }) => {
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(mainWindow, tab, "sleep 1.1; printf 'ding\\007\\n'\r")
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+
+    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
+    const menu = mainWindow.getByRole('menu', { name: 'Notifications' })
+    await menu.getByRole('button', { name: 'Clear all' }).click()
+
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+    ).toHaveCount(0)
+    await expect(menu.getByRole('button', { name: 'Clear all' })).toHaveCount(0)
   })
 })
