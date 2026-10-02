@@ -1,19 +1,19 @@
 import { randomBytes } from 'node:crypto';
-import WebSocket from 'ws';
 import {
 	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 	classifyPairingOrigin,
 	deviceJoinProofPayload,
+	type EnrollmentPushMessage,
 	isEnrollmentPushMessage,
 	parseEnrollmentPushMessage,
 	parseHostedPairingUrl,
 	validateAuthenticatedWebRtcTransportTranscript,
-	type EnrollmentPushMessage,
 } from '@terminay/protocol';
 import {
 	HeadlessChannelTransport,
 	type HeadlessDataChannel,
 } from '@terminay/server-core/remote';
+import WebSocket from 'ws';
 import { relaySessionId } from '../../apps/terminay-server/src/remote/directSessionId';
 import {
 	deriveHostedPairingSecrets,
@@ -21,18 +21,17 @@ import {
 } from '../../apps/terminay-server/src/remote/hostedPairingSecrets';
 import {
 	DEFAULT_HOSTED_ICE_SERVERS,
+	DEFAULT_ICE_RECOVERY_GRACE_MS,
 	type HostedIceServer,
+	HostedPeerLifecycle,
+	requiredLaneClosed,
+	type SelectedIceCandidatePair,
+	selectedIceCandidatePair,
 } from '../../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { loadSelectedSecureWeriftRuntime } from '../../apps/terminay-server/src/remote/secureWeriftRuntime';
-import {
-	DEFAULT_ICE_RECOVERY_GRACE_MS,
-	HostedPeerLifecycle,
-	selectedIceCandidatePair,
-	type SelectedIceCandidatePair,
-} from '../../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { readSctpMaxMessageBytes } from '../../apps/terminay-server/src/remote/uiArchiveTransfer';
-import type { PinnedServerHostKey } from '../../src/remote/services/authenticatedWebRtcTransport';
 import { authenticateDevice } from '../../src/remote/services/auth';
+import type { PinnedServerHostKey } from '../../src/remote/services/authenticatedWebRtcTransport';
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow';
 import type { RemoteApiTransport } from '../../src/remote/services/transport';
 import {
@@ -61,6 +60,24 @@ const CHANNEL_LABELS = [
 type ChannelLabel = (typeof CHANNEL_LABELS)[number];
 const CONNECT_TIMEOUT_MS = 45_000;
 const API_TIMEOUT_MS = 15_000;
+
+export function desktopHostedSignalCloseError(
+	code: number,
+	reason: unknown,
+): Error {
+	const description = String(reason ?? '');
+	if (
+		/unknown-room|no-registered-host|pairing-room-unavailable/iu.test(
+			description,
+		)
+	)
+		return new Error(
+			'This pairing link has already been used or has expired. Generate a new link on the server.',
+		);
+	return new Error(
+		`Hosted signaling closed before the connection opened (code ${code}).`,
+	);
+}
 
 type WeriftChannel = {
 	readonly bufferedAmount?: number;
@@ -281,11 +298,10 @@ export async function connectDesktopHostedPeer(
 		socket.on('error', () =>
 			finish(new Error('Desktop could not reach hosted signaling.')),
 		);
-		socket.on('close', () => {
-			if (!settled)
-				finish(
-					new Error('Hosted signaling closed before the connection opened.'),
-				);
+		socket.on('close', (code, rawReason) => {
+			if (!settled) {
+				finish(desktopHostedSignalCloseError(code, rawReason));
+			}
 		});
 		peer.addEventListener('datachannel', (event) => {
 			const channel = event.channel as WeriftChannel;
@@ -299,7 +315,7 @@ export async function connectDesktopHostedPeer(
 			let everOpened = false;
 			const observeLane = () => {
 				if (channel.readyState === 'open') everOpened = true;
-				if (everOpened && channel.readyState !== 'open')
+				if (requiredLaneClosed(label, channel.readyState, everOpened))
 					lifecycle?.fail(`WebRTC ${label} lane ${channel.readyState}.`);
 			};
 			const ready = () => {
@@ -341,7 +357,7 @@ export async function connectDesktopHostedPeer(
 		});
 		peer.addEventListener('connectionstatechange', () => {
 			lifecycle?.observe('peer');
-			void reportCandidatePair();
+			void reportCandidatePair().catch(() => undefined);
 			if (
 				peer.connectionState === 'failed' ||
 				peer.connectionState === 'closed'
@@ -362,7 +378,7 @@ export async function connectDesktopHostedPeer(
 				lastConnectionStatus = status;
 				options.onConnectionStatus?.(status);
 			}
-			void reportCandidatePair();
+			void reportCandidatePair().catch(() => undefined);
 		});
 		socket.on('message', (raw) => {
 			void (async () => {

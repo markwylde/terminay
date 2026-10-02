@@ -65,6 +65,12 @@ export class SocketError extends Error {}
 export function explainPrivilegeLaunchError(
 	error: unknown,
 ): string | undefined {
+	const message =
+		error instanceof Error
+			? error.message
+			: typeof error === 'object' && error !== null && 'message' in error
+				? String(error.message)
+				: String(error ?? '');
 	const code =
 		typeof error === 'object' && error !== null && 'code' in error
 			? String((error as { code?: unknown }).code)
@@ -72,6 +78,8 @@ export function explainPrivilegeLaunchError(
 	if (code === 'ENOENT')
 		return 'sudo is required to contact the system server approval socket but is not installed. Install sudo, or run the pairing command as the server service account.';
 	if (code === 'EACCES' || code === 'EPERM')
+		return 'the server CLI helper is not readable by the service account. Install Terminay globally in a path readable by that account, then retry.';
+	if (/cannot find module|module not found|permission denied/iu.test(message))
 		return 'the server CLI helper is not readable by the service account. Install Terminay globally in a path readable by that account, then retry.';
 	return undefined;
 }

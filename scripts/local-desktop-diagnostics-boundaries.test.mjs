@@ -257,6 +257,7 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 		'local-server.remote-webrtc.channel-state',
 		'local-server.remote-webrtc.application-lane',
 		'local-server.remote-webrtc.peer-closed',
+		'local-server.remote-webrtc.candidate-pair',
 	]) {
 		assert.match(
 			diagnostics,
@@ -266,7 +267,14 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 	}
 	assert.match(host, /rotateHandoff/u);
 	assert.match(host, /refreshPairing\('socket-closed'\)/u);
-	assert.match(host, /refreshPairing\('consumed'\)/u);
+	assert.match(
+		host,
+		/resolution\.outcome === 'approved' \|\| resolution\.outcome === 'denied'/u,
+	);
+	assert.match(
+		host,
+		/resolution\.outcome === 'approved' \? 'consumed' : 'denied'/u,
+	);
 	assert.match(host, /mintPairing/u);
 	assert.doesNotMatch(
 		host,
@@ -278,6 +286,14 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 	// observation counters and close reasons but no stall classification.
 	assert.doesNotMatch(mapper, /stallClass|stallIgnored/u);
 	assert.match(mapper, /liveGenerationCount: event\.liveGenerationCount/u);
+	assert.match(mapper, /localType: event\.localType/u);
+	assert.match(mapper, /remoteType: event\.remoteType/u);
+	assert.match(mapper, /protocol: event\.protocol/u);
+	assert.match(mapper, /pairState: event\.pairState/u);
+	assert.doesNotMatch(
+		mapper,
+		/localAddress|localPort|remoteAddress|remotePort/u,
+	);
 	assert.match(mapper, /firstOutboundAgeMs: event\.firstOutboundAgeMs/u);
 	assert.match(mapper, /hangup: event\.hangup/u);
 	assert.match(mapper, /source: stream \? 'remote-webrtc' : 'remote-pairing'/u);

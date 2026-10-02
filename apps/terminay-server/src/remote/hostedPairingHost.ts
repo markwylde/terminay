@@ -1,5 +1,3 @@
-import { networkInterfaces } from 'node:os';
-import { gzipSync } from 'node:zlib';
 import {
 	constants,
 	createPrivateKey,
@@ -7,20 +5,21 @@ import {
 	sign,
 	verify,
 } from 'node:crypto';
-import { WebSocket } from 'ws';
+import { networkInterfaces } from 'node:os';
+import { gzipSync } from 'node:zlib';
 import {
 	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+	type AuthenticatedWebRtcTransportScope,
+	type ByteTransport,
 	createAuthenticatedWebRtcPairingAuthenticator,
 	createAuthenticatedWebRtcTransportTranscript,
 	deriveMatchCode,
 	deviceJoinProofPayload,
+	type EnrollmentPushMessage,
 	extractAuthenticatedWebRtcFingerprints,
 	isDeviceJoinProof,
 	serializeAuthenticatedWebRtcTransportTranscript,
 	sha256Base64Url,
-	type AuthenticatedWebRtcTransportScope,
-	type ByteTransport,
-	type EnrollmentPushMessage,
 } from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
@@ -30,10 +29,7 @@ import {
 	HeadlessChannelTransport,
 	type HeadlessDataChannel,
 } from '@terminay/server-core/remote';
-import {
-	loadSelectedSecureWeriftRuntime,
-	type SecureWeriftRuntimeModule,
-} from './secureWeriftRuntime.js';
+import { WebSocket } from 'ws';
 import {
 	createDeviceHostReadyMessage,
 	type HostedHostKey,
@@ -43,17 +39,8 @@ import {
 	hostedSessionId,
 	hostedSignalingUrl,
 } from './hostedPairingSecrets.js';
-import type {
-	ServerPairingHandoff,
-	ServerRemoteExposure,
-} from './serverExposure.js';
 import {
-	bindUiArchiveChannels,
-	readSctpMaxMessageBytes,
-	safeChannelSend,
-	type UiArchiveDataChannel,
-} from './uiArchiveTransfer.js';
-import {
+	type AdvertisedIceAddress,
 	collectHostIceAddresses,
 	createDeviceReplacementChain,
 	createHandshakeJoinQueue,
@@ -67,14 +54,31 @@ import {
 	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
 	selectedIceCandidatePair,
-	type AdvertisedIceAddress,
 } from './hostedPeerLifecycle.js';
 import {
 	createHostedStreamDiagnostics,
 	frameByteLength,
 } from './hostedStreamDiagnostics.js';
 import { advertisedPairingUrlClass } from './publicPairingUrl.js';
+import {
+	loadSelectedSecureWeriftRuntime,
+	type SecureWeriftRuntimeModule,
+} from './secureWeriftRuntime.js';
+import type {
+	ServerPairingHandoff,
+	ServerRemoteExposure,
+} from './serverExposure.js';
+import {
+	bindUiArchiveChannels,
+	readSctpMaxMessageBytes,
+	safeChannelSend,
+	type UiArchiveDataChannel,
+} from './uiArchiveTransfer.js';
 
+export type {
+	AdvertisedIceAddress,
+	HostedIceServer,
+} from './hostedPeerLifecycle.js';
 export {
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
@@ -91,10 +95,6 @@ export {
 	requiredLaneClosed,
 	resolveHostedIceServers,
 	resolveIceRecoveryGraceMs,
-} from './hostedPeerLifecycle.js';
-export type {
-	AdvertisedIceAddress,
-	HostedIceServer,
 } from './hostedPeerLifecycle.js';
 
 const CHANNELS = [
@@ -209,7 +209,13 @@ export interface HostedPairingHostOptions {
 	 * to the gathered candidates rather than replacing them. */
 	readonly advertiseAddress?: AdvertisedIceAddress;
 	readonly iceRecoveryGraceMs?: number;
-	readonly rotateHandoff?: () => ServerPairingHandoff;
+	readonly rotateHandoff?: () =>
+		| ServerPairingHandoff
+		| Promise<ServerPairingHandoff>;
+	/** Serialize refresh plus relay registration across hosted/direct modes. */
+	readonly serializePairingRefresh?: (
+		operation: () => Promise<void>,
+	) => Promise<void>;
 	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
 	readonly onPeerConnected?: (peer: HostedConnectedPeer) => void;
 	readonly onPeerDisconnected?: (connectionId: string) => void;
@@ -280,12 +286,8 @@ export type HostedPairingDiagnostic = Readonly<{
 	readonly summary?: boolean;
 	readonly reasonClass?: string;
 	readonly bufferedAmount?: number;
-	readonly localAddress?: string;
-	readonly localPort?: number;
 	readonly localType?: string;
 	readonly protocol?: string;
-	readonly remoteAddress?: string;
-	readonly remotePort?: number;
 	readonly remoteType?: string;
 	readonly pairState?: string;
 }>;
@@ -294,6 +296,8 @@ export interface HostedPairingHost {
 	readonly close: () => Promise<void>;
 	/** Mint and advertise a replacement one-time pairing room. Live peers stay up. */
 	readonly mintPairing: () => Promise<void>;
+	/** Wait for approval-triggered room rotation and relay re-registration. */
+	readonly waitForPairingRefresh: () => Promise<void>;
 }
 
 const PAIRING_REFRESH_LEAD_MS = 15_000;
@@ -369,11 +373,13 @@ export async function startHostedPairingHost(
 		const channel = apiChannelsByPeer.get(resolution.approval.peerId);
 		if (resolution.outcome === 'approved') {
 			options.persistDevices(options.remote.devices.list());
-			// The room is consumed by the approval itself, not by a later peer
-			// authentication callback. Rotate now even if this Desktop closes its
-			// pairing peer before completing the reconnect flow.
-			void refreshPairing('consumed');
 		}
+		// A decision retires this one-time handoff, not a later peer-auth callback.
+		// Rotate even if Desktop closes its pairing peer before completing setup.
+		if (resolution.outcome === 'approved' || resolution.outcome === 'denied')
+			void refreshPairing(
+				resolution.outcome === 'approved' ? 'consumed' : 'denied',
+			);
 		if (channel === undefined) return;
 		const message: EnrollmentPushMessage =
 			resolution.outcome === 'approved'
@@ -762,23 +768,25 @@ export async function startHostedPairingHost(
 	}
 
 	function refreshPairing(cause: string): Promise<void> {
-		pairingRefreshChain = pairingRefreshChain.then(
-			() => refreshPairingNow(cause),
-			() => refreshPairingNow(cause),
-		);
+		const refresh = () =>
+			options.serializePairingRefresh
+				? options.serializePairingRefresh(() => refreshPairingNow(cause))
+				: refreshPairingNow(cause);
+		pairingRefreshChain = pairingRefreshChain.then(refresh, refresh);
 		return pairingRefreshChain;
 	}
 
 	async function refreshPairingNow(cause: string): Promise<void> {
 		if (closed) return;
 		const remaining = Date.parse(currentHandoff.pairingExpiresAt) - Date.now();
-		const forceRotate = cause === 'consumed' || cause === 'mint';
+		const forceRotate =
+			cause === 'consumed' || cause === 'denied' || cause === 'mint';
 		const shouldRotate =
 			Boolean(options.rotateHandoff) &&
 			(forceRotate || !(remaining > PAIRING_REFRESH_LEAD_MS));
 		try {
 			if (shouldRotate && options.rotateHandoff) {
-				currentHandoff = options.rotateHandoff();
+				currentHandoff = await options.rotateHandoff();
 				options.onHandoff?.(currentHandoff);
 				diagnose({
 					type: 'rotated',
@@ -893,6 +901,7 @@ export async function startHostedPairingHost(
 	return {
 		close,
 		mintPairing: () => refreshPairing('mint'),
+		waitForPairingRefresh: () => pairingRefreshChain,
 	};
 
 	async function applyHandshakeSignal(
@@ -1183,12 +1192,12 @@ async function startPeer(
 	native.addEventListener('connectionstatechange', () => {
 		lifecycle.observe('peer');
 		stream.peerState(native.connectionState, native.iceConnectionState);
-		void reportCandidatePair();
+		void reportCandidatePair().catch(() => undefined);
 	});
 	native.addEventListener('iceconnectionstatechange', () => {
 		lifecycle.observe('ice');
 		stream.peerState(native.connectionState, native.iceConnectionState);
-		void reportCandidatePair();
+		void reportCandidatePair().catch(() => undefined);
 	});
 	let lastCandidatePair: string | undefined;
 	const reportCandidatePair = async () => {
@@ -1197,10 +1206,12 @@ async function startPeer(
 		const signature = JSON.stringify(selected);
 		if (signature === lastCandidatePair) return;
 		lastCandidatePair = signature;
+		const { state: pairState, ...route } = selected;
 		context.options.onDiagnostic?.({
 			type: 'candidate-pair',
 			scope: scope.kind,
-			...selected,
+			...route,
+			pairState,
 		});
 	};
 	for (const label of CHANNELS) {

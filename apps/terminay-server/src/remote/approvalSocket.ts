@@ -54,8 +54,16 @@ export type ApprovalSocketResponse =
 
 export interface ApprovalSocketAuthority {
 	listPendingApprovals(): readonly PendingEnrollmentApprovalSummary[];
-	approveEnrollment(approvalId: string): Readonly<{ deviceName: string }>;
-	denyEnrollment(approvalId: string): Readonly<{ deviceName: string }>;
+	approveEnrollment(
+		approvalId: string,
+	):
+		| Readonly<{ deviceName: string }>
+		| Promise<Readonly<{ deviceName: string }>>;
+	denyEnrollment(
+		approvalId: string,
+	):
+		| Readonly<{ deviceName: string }>
+		| Promise<Readonly<{ deviceName: string }>>;
 	/** Live pairing handoffs, optionally after minting a replacement room.
 	 * Absent when the process composing the socket has no exposure at all. */
 	pairingHandoffs?(
@@ -136,10 +144,9 @@ export async function handleApprovalSocketRequest(
 				handoffs: Object.freeze([...handoffs]),
 			});
 		}
-		const resolved =
-			request.op === 'approve'
-				? authority.approveEnrollment(request.approvalId)
-				: authority.denyEnrollment(request.approvalId);
+		const resolved = await (request.op === 'approve'
+			? authority.approveEnrollment(request.approvalId)
+			: authority.denyEnrollment(request.approvalId));
 		return Object.freeze({
 			ok: true,
 			approvalId: request.approvalId,

@@ -675,6 +675,7 @@ test('pairing progress events accept only the closed lifecycle states', () => {
 		serverId: 'server-a',
 		profileId: 'profile-a',
 	};
+	const attemptId = 'pair-abc-1';
 	for (const state of [
 		'connecting',
 		'connected',
@@ -683,26 +684,74 @@ test('pairing progress events accept only the closed lifecycle states', () => {
 	]) {
 		assert.deepEqual(
 			parseTerminayHostEvent(
-				{ ...envelope, event: { type: 'connection.pairing-progress', state } },
-				context,
-			).event,
-			{ type: 'connection.pairing-progress', state },
-		);
-	}
-	assert.throws(
-		() =>
-			parseTerminayHostEvent(
 				{
 					...envelope,
-					event: {
-						type: 'connection.pairing-progress',
-						state: 'waiting',
-						token: 'secret',
-					},
+					event: { type: 'connection.pairing-progress', attemptId, state },
 				},
 				context,
-			),
-		/host pairing progress event/u,
+			).event,
+			{ type: 'connection.pairing-progress', attemptId, state },
+		);
+	}
+	for (const state of [['connected'], 7, null]) {
+		assert.throws(
+			() =>
+				parseTerminayHostEvent(
+					{
+						...envelope,
+						event: {
+							type: 'connection.pairing-progress',
+							attemptId,
+							state,
+						},
+					},
+					context,
+				),
+			/host pairing progress event is invalid/u,
+		);
+	}
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'connection.pair',
+			pairingUrl: 'https://box.example/v1/#secret',
+			attemptId,
+		}),
+		{
+			type: 'connection.pair',
+			pairingUrl: 'https://box.example/v1/#secret',
+			attemptId,
+		},
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'connection.pair',
+				pairingUrl: 'https://box.example/v1/#secret',
+				attemptId: 'invalid id',
+			}),
+		/pairing attempt id/u,
+	);
+	assert.deepEqual(
+		parseTerminayHostEvent(
+			{
+				...envelope,
+				event: {
+					type: 'connection.pairing-approval',
+					attemptId,
+					deviceName: 'Terminay Desktop',
+					matchCode: 'K7Q2M',
+					expiresAt: '2026-10-02T07:30:00.000Z',
+				},
+			},
+			context,
+		).event,
+		{
+			type: 'connection.pairing-approval',
+			attemptId,
+			deviceName: 'Terminay Desktop',
+			matchCode: 'K7Q2M',
+			expiresAt: '2026-10-02T07:30:00.000Z',
+		},
 	);
 });
 

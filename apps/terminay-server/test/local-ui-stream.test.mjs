@@ -1,5 +1,5 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import { WebSocket } from 'ws';
 import { createLocalUiServer } from '../dist/index.js';
 
@@ -90,6 +90,22 @@ test('direct pairing browser navigation gets a Desktop instruction page', async 
 		const head = await fetch(`${address.origin}/v1/`, { method: 'HEAD' });
 		assert.equal(head.status, 200);
 		assert.equal(await head.text(), '');
+		const credentialQuery = await fetch(
+			`${address.origin}/v1/?token=should-not-be-reflected`,
+		);
+		assert.equal(credentialQuery.status, 400);
+		assert.match(
+			await credentialQuery.text(),
+			/credentials must not be placed in a URL/u,
+		);
+		const credentialHeader = await fetch(`${address.origin}/v1/`, {
+			headers: { authorization: 'Basic dXNlcjpwYXNzd29yZA==' },
+		});
+		assert.equal(credentialHeader.status, 400);
+		assert.match(
+			await credentialHeader.text(),
+			/credentials must not be placed in a URL/u,
+		);
 	} finally {
 		await server.stop();
 	}

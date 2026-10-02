@@ -112,7 +112,11 @@ export async function runPairing(
 			);
 		}
 		write(await renderQr(chosen.pairingUrl));
-		write(`Scan this to pair, or open the ${chosen.mode} URL below.`);
+		write(
+			chosen.mode === 'direct'
+				? 'Scan this QR code or open the direct URL in Terminay Desktop.'
+				: 'Scan this to pair, or open the hosted URL below.',
+		);
 		write('');
 		for (const handoff of pairing.handoffs) {
 			write(`  ${handoff.mode.padEnd(7)} ${handoff.pairingUrl}`);

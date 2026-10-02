@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
 	accessSync,
 	chmodSync,
-	constants as fsConstants,
 	existsSync,
 	type FSWatcher,
+	constants as fsConstants,
 	mkdirSync,
 	readFileSync,
 	renameSync,
@@ -33,8 +33,8 @@ import {
 	crashReporter,
 	dialog,
 	ipcMain,
-	MessageChannelMain,
 	Menu,
+	MessageChannelMain,
 	Notification,
 	nativeImage,
 	powerMonitor,
@@ -49,21 +49,21 @@ import {
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
 import {
+	type AutomationControlAdapter,
+	assertAutomationSpaceCapacity,
+	automationControlError,
+	CONTROL_OPERATIONS,
+	CONTROL_PERMISSION_GROUPS,
 	CONTROL_SOCKET_ENV,
 	CONTROL_TOKEN_ENV,
 	ControlCapabilityStore,
 	ControlEndpointError,
-	type ControlRequestContext,
-	createControlEndpoint,
-	createTerminalControlAdapter,
-	assertAutomationSpaceCapacity,
-	type AutomationControlAdapter,
-	automationControlError,
-	CONTROL_OPERATIONS,
-	CONTROL_PERMISSION_GROUPS,
 	type ControlOperation,
 	type ControlPermissionGate,
+	type ControlRequestContext,
+	createControlEndpoint,
 	createMcpPermissionGate,
+	createTerminalControlAdapter,
 	type LocalControlEndpoint,
 	type McpApprovalDescription,
 	ProjectHandleCodec,
@@ -76,16 +76,16 @@ import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { McpServerCommand } from '../packages/extension-api/src/index';
-import {
-	agentHarnessSwitchesFromSettings,
-	agentIntegrationEnabledFromSettings,
-} from '../packages/server-core/src/extensions/sessionSources';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
-import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
 import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
 import { AutomationRunLog } from '../packages/server-core/src/automationService/runLog';
 import type { AutomationSubject } from '../packages/server-core/src/automationService/types';
+import {
+	agentHarnessSwitchesFromSettings,
+	agentIntegrationEnabledFromSettings,
+} from '../packages/server-core/src/extensions/sessionSources';
+import { MacroRepository } from '../packages/server-core/src/macroService/repository';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -108,6 +108,10 @@ import {
 } from '../src/keyboardShortcuts';
 import { defaultMacros, normalizeMacros } from '../src/macroSettings';
 import { distanceToRect, pointInRect } from '../src/projectTabDrag';
+import {
+	aboutWindowDocument,
+	aboutWindowExternalUrl,
+} from '../src/shared/aboutWindowDocument';
 import { type ServerMessagePort } from '../src/shared/serverPortTransport';
 import {
 	defaultTerminalSettings,
@@ -125,6 +129,12 @@ import {
 	AiTabMetadataService,
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
+import {
+	type AppUpdater,
+	createAppUpdater,
+	describeManualCheck,
+	UPDATE_CHECK_INTERVAL_MS,
+} from './appUpdater';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import {
 	desktopEmbeddedStorePaths,
@@ -133,6 +143,15 @@ import {
 	migrateLegacyEmbeddedWorkspaceServerId,
 	resolveDesktopInstanceIdentity,
 } from './desktopInstanceIdentity';
+import {
+	DesktopWindowCompositionStore,
+	desktopWindowCompositionKey,
+} from './desktopWindowComposition';
+import {
+	type DesktopConnectionLane,
+	type DesktopConnectionProfileRecord,
+	DesktopWindowConnections,
+} from './desktopWindowConnections';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -150,26 +169,11 @@ import {
 	StartupTimeline,
 } from './diagnostics/startupTimeline';
 import { TerminalResourceSampler } from './diagnostics/terminalResources';
-import {
-	desktopWindowCompositionKey,
-	DesktopWindowCompositionStore,
-} from './desktopWindowComposition';
-import {
-	type DesktopConnectionLane,
-	type DesktopConnectionProfileRecord,
-	DesktopWindowConnections,
-} from './desktopWindowConnections';
 import { normalizeExternalUrl } from './externalUrl';
 import { FileBufferService } from './fileViewer/fileBufferService';
 import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc';
-import {
-	type AppUpdater,
-	createAppUpdater,
-	UPDATE_CHECK_INTERVAL_MS,
-	describeManualCheck,
-} from './appUpdater';
 import { createGracefulQuitHandler } from './gracefulQuit';
 import {
 	bindMainWindowCloseConfirmation,
@@ -205,10 +209,6 @@ import {
 	bindRemoteServerUiDocumentEndpoint,
 } from './serverUiDocumentEndpoint';
 import {
-	aboutWindowDocument,
-	aboutWindowExternalUrl,
-} from '../src/shared/aboutWindowDocument';
-import {
 	assertBoundServerUiEvent,
 	bindServerUiWindow,
 	getServerUiPartitionName,
@@ -219,6 +219,7 @@ import {
 	desktopStartupLoadingDocument,
 	startupPhaseVisibilityCss,
 } from './startupLoadingDocument';
+import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
@@ -236,7 +237,6 @@ import {
 	embeddedWorkspacePersistenceFault,
 	isEmbeddedWorkspacePersistenceError,
 } from './workspacePersistence';
-import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
@@ -4277,7 +4277,10 @@ function createWindow(options?: {
 	// before any workspace renderer executes. A successful Desktop pairing can
 	// replace this window's selected server, so the same mounting transaction is
 	// reusable without returning credentials to the renderer.
-	let switchToPairedDesktopServer: (pairingUrl: string) => Promise<void>;
+	let switchToPairedDesktopServer: (
+		pairingUrl: string,
+		attemptId: string,
+	) => Promise<void>;
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
@@ -4387,7 +4390,10 @@ function createWindow(options?: {
 				const action = request.action;
 				switch (action.type) {
 					case 'connection.pair':
-						await switchToPairedDesktopServer(action.pairingUrl);
+						await switchToPairedDesktopServer(
+							action.pairingUrl,
+							action.attemptId,
+						);
 						return;
 					case 'clipboard.write':
 						clipboard.writeText(action.text);
@@ -4561,7 +4567,9 @@ function createWindow(options?: {
 		if (options?.deferCanonicalLaunch === true && !window.isDestroyed())
 			window.show();
 	};
-	switchToPairedDesktopServer = async (pairingUrl) => {
+	let desktopPairingGeneration = 0;
+	switchToPairedDesktopServer = async (pairingUrl, attemptId) => {
+		const generation = ++desktopPairingGeneration;
 		const pairingProgress = (
 			state:
 				| 'connecting'
@@ -4569,9 +4577,11 @@ function createWindow(options?: {
 				| 'connection-degraded'
 				| 'connection-lost',
 		) => {
-			if (window.isDestroyed()) return;
+			if (window.isDestroyed() || generation !== desktopPairingGeneration)
+				return;
 			window.webContents.send('server-ui-host:event', {
 				type: 'connection.pairing-progress',
+				attemptId,
 				state,
 			});
 		};
@@ -4580,9 +4590,11 @@ function createWindow(options?: {
 			(approval) => {
 				// The renderer shows the code so the user can compare it with the
 				// exposing computer. It never sees the fragment or the device key.
-				if (window.isDestroyed()) return;
+				if (window.isDestroyed() || generation !== desktopPairingGeneration)
+					return;
 				window.webContents.send('server-ui-host:event', {
 					type: 'connection.pairing-approval',
+					attemptId,
 					deviceName: approval.deviceName,
 					matchCode: approval.matchCode,
 					expiresAt: new Date(approval.expiresAt).toISOString(),
@@ -4748,7 +4760,12 @@ async function enrollPairedDesktopRemoteProfile(
 				onConnectionFailure();
 			},
 			onCandidatePair: (pair) =>
-				recordDesktopHostedPeerDiagnostic('candidate-pair', pair),
+				recordDesktopHostedPeerDiagnostic('candidate-pair', {
+					localType: pair.localType,
+					protocol: pair.protocol,
+					remoteType: pair.remoteType,
+					pairState: pair.state,
+				}),
 			onConnectionStatus: (status) => {
 				recordDesktopHostedPeerDiagnostic('connection-status', { status });
 				onConnectionStatus(status);
@@ -4830,7 +4847,12 @@ async function openDesktopRemoteLanes(
 				onConnectionStatus?.(status);
 			},
 			onCandidatePair: (pair) =>
-				recordDesktopHostedPeerDiagnostic('candidate-pair', pair),
+				recordDesktopHostedPeerDiagnostic('candidate-pair', {
+					localType: pair.localType,
+					protocol: pair.protocol,
+					remoteType: pair.remoteType,
+					pairState: pair.state,
+				}),
 		});
 		return Object.freeze({
 			kind: 'webrtc' as const,

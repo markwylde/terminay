@@ -23,61 +23,60 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
 import { FEATURE_CAPABILITIES } from '@terminay/protocol';
-import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
 import {
 	AgentStatusService,
-	agentHarnessSwitchesFromSettings,
-	agentIntegrationEnabledFromSettings,
 	AiService,
 	AutomationRepository,
 	AutomationRunLog,
+	agentHarnessSwitchesFromSettings,
+	agentIntegrationEnabledFromSettings,
 	CanonicalProjectPathResolver,
 	createAutomationFileBackends,
-	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	FileCatalog,
 	DocumentationCatalog,
-	MdxRuntime,
+	FileCatalog,
 	FileContentStreamService,
 	type FileObservationHost,
+	FileWorkspaceStateBackend,
+	fileWorktreePromptPreferences,
 	GitService,
 	MacroRepository,
+	MdxRuntime,
 	type NodePtyModuleLike,
 	OpenAiDictationProvider,
 	OrderedEventJournal,
 	openCanonicalWorkspace,
-	ProjectAgentScope,
 	ParakeetRuntime,
+	ProjectAgentScope,
 	RecordingService,
 	type RemoteRegisteredDevice,
 	type ServerCoreComposition,
+	ServerDocumentationCatalogAdapter,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
-	ServerDocumentationCatalogAdapter,
-	ServerMdxRuntimeAdapter,
 	ServerFileContentAdapter,
 	ServerFileObservationAdapter,
 	ServerGitAdapter,
+	ServerMdxRuntimeAdapter,
 	ServerParakeetDictationProvider,
 	ServerRecordingAdapter,
 	type ServerRuntimeServices,
 	ServerSettingsRepository,
 	SessionSourceBridge,
 	SessionSourceSupervisor,
-	WorktreeInsightService,
-	fileWorktreePromptPreferences,
-	serverVaultWorktreeCredentials,
 	ShellProfileCatalogueService,
-	withdrawnAgentExtensionSwitches,
 	ShellProfileDiscoveryService,
+	serverVaultWorktreeCredentials,
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	VaultProviderCredentialResolver,
 	type WorkspaceStore,
+	WorktreeInsightService,
+	withdrawnAgentExtensionSwitches,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -93,38 +92,43 @@ import {
 	createServerRemoteExposure,
 	createStandaloneServer,
 	FileDataRootLease,
-	runServerMcpStdio,
-	resolveStandaloneServerIdentity,
 	type LocalUiServer,
+	resolveStandaloneServerIdentity,
+	runServerMcpStdio,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
-import {
-	parseHostedIceServers,
-	startHostedPairingHost,
-} from './remote/hostedPairingHost.js';
+import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 import { assertAdvertisedPortIsBindable } from './remote/advertisedIcePort.js';
-import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
-import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
-import {
-	loadOrCreateHostedHostKey,
-	rotateHostedHostKey,
-} from './remote/hostedHostKey.js';
-import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
-import {
-	createDirectSignalingRelay,
-	type DirectSignalingRelay,
-} from './remote/directSignalingRelay.js';
-import { loadOrCreateDirectTlsCertificate } from './remote/directTlsCertificate.js';
-import { relaySessionId } from './remote/directSessionId.js';
 import {
 	approvalSocketPath,
 	type PairingHandoffSummary,
 	sendApprovalSocketRequest,
 	startApprovalSocket,
 } from './remote/approvalSocket.js';
-import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
+import { relaySessionId } from './remote/directSessionId.js';
+import {
+	createDirectSignalingRelay,
+	type DirectSignalingRelay,
+} from './remote/directSignalingRelay.js';
+import { loadOrCreateDirectTlsCertificate } from './remote/directTlsCertificate.js';
+import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
+import {
+	loadOrCreateHostedHostKey,
+	rotateHostedHostKey,
+} from './remote/hostedHostKey.js';
+import {
+	parseHostedIceServers,
+	startHostedPairingHost,
+} from './remote/hostedPairingHost.js';
+import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
+import {
+	createPairingOperationQueue,
+	createSharedPairingHandoffRotator,
+} from './remote/pairingOperationQueue.js';
+import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
+import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -233,6 +237,7 @@ else if (options.command === 'mcp') {
 			const pairingHosts: {
 				close(): Promise<void>;
 				mintPairing(): Promise<void>;
+				waitForPairingRefresh(): Promise<void>;
 			}[] = [];
 			let approvalSocket: { close(): Promise<void> } | undefined;
 			// Every exposure mode advertises the same room, so exactly one of them
@@ -240,16 +245,16 @@ else if (options.command === 'mcp') {
 			// generation counter is what keeps a second mode from rotating again on
 			// its way to the room it was just told about.
 			let sharedHandoff = handoff;
-			let sharedGeneration = 0;
-			const seenGeneration = new Map<string, number>();
-			const rotateShared = (mode: string): ServerPairingHandoff => {
-				if (seenGeneration.get(mode) === sharedGeneration) {
-					sharedGeneration += 1;
+			const rotateShared = createSharedPairingHandoffRotator({
+				modes: options.exposeModes,
+				initialHandoff: handoff,
+				rotate: () => {
 					sharedHandoff = remote.rotate();
-				}
-				seenGeneration.set(mode, sharedGeneration);
-				return sharedHandoff;
-			};
+					return sharedHandoff;
+				},
+			});
+			const pairingOperations = createPairingOperationQueue();
+			const pairingRoomOperations = createPairingOperationQueue();
 			// The direct endpoint is served by this process on the origin it
 			// advertises, so it must have a listener to live on and that listener must
 			// answer on the advertised port. Fail before anything opens rather than
@@ -259,7 +264,6 @@ else if (options.command === 'mcp') {
 				: undefined;
 			// The first approval-triggered refresh must rotate exactly once, then
 			// each other exposure mode re-registers that same replacement room.
-			for (const mode of options.exposeModes) seenGeneration.set(mode, 0);
 			// Pending devices are announced as metadata-only lines so a headless
 			// operator can compare the match code and run `terminay-server approve`.
 			const announceApproval = createHostedDiagnosticLogger(options.logSink);
@@ -317,17 +321,31 @@ else if (options.command === 'mcp') {
 						authority: {
 							listPendingApprovals: () => remote.listPendingApprovals(),
 							approveEnrollment: (approvalId) =>
-								remote.approveEnrollment(approvalId),
-							denyEnrollment: (approvalId) => remote.denyEnrollment(approvalId),
+								pairingOperations.run(async () => {
+									const resolution = remote.approveEnrollment(approvalId);
+									await Promise.all(
+										pairingHosts.map((host) => host.waitForPairingRefresh()),
+									);
+									return resolution;
+								}),
+							denyEnrollment: (approvalId) =>
+								pairingOperations.run(async () => {
+									const resolution = remote.denyEnrollment(approvalId);
+									await Promise.all(
+										pairingHosts.map((host) => host.waitForPairingRefresh()),
+									);
+									return resolution;
+								}),
 							exposureModes: () => options.exposeModes,
-							pairingHandoffs: async (rotate) => {
-								// Minting a replacement room registers it on every mode.
-								// Live peers and reconnect registration are untouched.
-								if (rotate) {
-									for (const host of pairingHosts) await host.mintPairing();
-								}
-								return exposureHandoffs(options, sharedHandoff, direct);
-							},
+							pairingHandoffs: (rotate) =>
+								pairingOperations.run(async () => {
+									// Minting a replacement room registers it on every mode.
+									// Live peers and reconnect registration are untouched.
+									if (rotate) {
+										for (const host of pairingHosts) await host.mintPairing();
+									}
+									return exposureHandoffs(options, sharedHandoff, direct);
+								}),
 						},
 					});
 					const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
@@ -362,8 +380,10 @@ else if (options.command === 'mcp') {
 							...(relaySessionId === undefined
 								? {}
 								: { sessionId: relaySessionId }),
-							rotateHandoff: () =>
-								handoffForMode(mode, rotateShared(mode), direct),
+							rotateHandoff: async () =>
+								handoffForMode(mode, await rotateShared(mode), direct),
+							serializePairingRefresh: (operation) =>
+								pairingRoomOperations.run(operation),
 							acceptApplication: (transport, authenticatedClient) =>
 								composition.core.accept(transport, { authenticatedClient }),
 							// Remote device connected trigger (automations).

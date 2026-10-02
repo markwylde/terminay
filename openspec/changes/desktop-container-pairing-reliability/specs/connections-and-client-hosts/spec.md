@@ -62,3 +62,13 @@ The Desktop pairing surface SHALL distinguish submitting, waiting for host appro
 
 - **WHEN** an IPC action returns an Electron-wrapped error
 - **THEN** the UI displays the underlying actionable message without the `Error invoking remote method` wrapper
+
+#### Scenario: Delayed event belongs to an older attempt
+
+- **WHEN** Desktop receives an approval or connection-progress event for a pairing attempt other than the active attempt
+- **THEN** the event does not change the active attempt's displayed state
+
+#### Scenario: Connection loss arrives after the pairing panel closes
+
+- **WHEN** a pairing transport is lost while its panel is closed
+- **THEN** Desktop keeps the recovery message visible and lets the user retry the saved server connection

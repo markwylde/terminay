@@ -20,6 +20,13 @@ test('container privilege-launch errors explain missing sudo and inaccessible np
 		explainPrivilegeLaunchError({ code: 'EACCES' }),
 		/Install Terminay globally/u,
 	);
+	assert.match(
+		explainPrivilegeLaunchError({
+			code: 1,
+			message: "Cannot find module '/root/.npm/_npx/socketClient.js'",
+		}),
+		/Install Terminay globally/u,
+	);
 	assert.equal(explainPrivilegeLaunchError({ code: 'ETIMEDOUT' }), undefined);
 });
 
@@ -111,6 +118,7 @@ test('--no-wait prints every URL with its expiry and exits', async () => {
 		/\[QR for https:\/\/box\.terminay\.com/u,
 		'hosted is preferred when both exposure modes are enabled',
 	);
+	assert.match(output, /open the hosted URL below/u);
 	assert.match(output, /expires 20/u);
 	assert.deepEqual(
 		sent,
@@ -166,6 +174,29 @@ test('--mode naming a disabled mode fails and lists what is enabled', async () =
 			),
 		(error) => error instanceof PairingError && /hosted/u.test(error.message),
 	);
+});
+
+test('--mode direct labels the QR as a Terminay Desktop link', async () => {
+	const lines = [];
+	await runPairing(
+		{
+			wait: false,
+			mode: 'direct',
+			allowDowngrade: false,
+			purge: false,
+			yes: false,
+		},
+		contextWith(lines),
+		{
+			renderQr,
+			send: async () => ({
+				ok: true,
+				exposure: ['hosted', 'direct'],
+				handoffs: handoffs(),
+			}),
+		},
+	);
+	assert.match(lines.join('\n'), /direct URL in Terminay Desktop/u);
 });
 
 test('a device that scans is shown with its match code and approved on confirmation', async () => {

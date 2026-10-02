@@ -15,7 +15,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-
+import {
+	assertDirectOrigin,
+	shouldWarnMissingAdvertisedUdp,
+} from '../dist/commands/install.js';
 import {
 	activate,
 	activeVersion,
@@ -33,7 +36,6 @@ import {
 } from '../dist/layout.js';
 import { ManifestError, validateUnpackedArchive } from '../dist/manifest.js';
 import { buildArchiveFixture } from './archive-fixture.mjs';
-import { shouldWarnMissingAdvertisedUdp } from '../dist/commands/install.js';
 
 test('loopback direct origins warn that signaling does not configure the UDP media route', () => {
 	for (const origin of [
@@ -51,6 +53,29 @@ test('loopback direct origins warn that signaling does not configure the UDP med
 		shouldWarnMissingAdvertisedUdp('https://server.example:9443', undefined),
 		false,
 	);
+	assert.equal(
+		shouldWarnMissingAdvertisedUdp('https://localhost:9443', ''),
+		true,
+	);
+	assert.equal(
+		shouldWarnMissingAdvertisedUdp('https://localhost:9443', '   '),
+		true,
+	);
+	assert.equal(shouldWarnMissingAdvertisedUdp('not a url', undefined), false);
+});
+
+test('direct origins are validated before installation work starts', () => {
+	assert.doesNotThrow(() => assertDirectOrigin('https://localhost:9443'));
+	assert.doesNotThrow(() => assertDirectOrigin('https://localhost:9443/'));
+	for (const value of [
+		'not a url',
+		'http://localhost:9443',
+		'https://user:secret@localhost:9443',
+		'https://localhost:9443/v1/',
+		'https://localhost:9443/?token=secret',
+	]) {
+		assert.throws(() => assertDirectOrigin(value), /--direct-origin/u, value);
+	}
 });
 
 async function withPrefix(run) {

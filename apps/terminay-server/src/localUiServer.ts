@@ -445,6 +445,18 @@ export class LocalUiServer {
 				sendText(response, 405, 'method not allowed');
 				return;
 			}
+			for (const key of url.searchParams.keys())
+				if (forbiddenQueryKeys.has(key.toLowerCase())) {
+					sendText(response, 400, 'credentials must not be placed in a URL');
+					return;
+				}
+			if (
+				url.pathname === '/v1/' &&
+				request.headers.authorization !== undefined
+			) {
+				sendText(response, 400, 'credentials must not be placed in a URL');
+				return;
+			}
 			if (
 				this.options.signalingUpgrade !== undefined &&
 				url.pathname === '/v1/'
@@ -462,11 +474,6 @@ export class LocalUiServer {
 				else response.end();
 				return;
 			}
-			for (const key of url.searchParams.keys())
-				if (forbiddenQueryKeys.has(key.toLowerCase())) {
-					sendText(response, 400, 'credentials must not be placed in a URL');
-					return;
-				}
 			if (url.pathname === '/host-bootstrap.json') {
 				sendJson(
 					response,

@@ -2,18 +2,18 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { mock, test } from 'node:test';
 import {
+	ADVERTISED_PORT_SPAN,
 	collectHostIceAddresses,
 	createHandshakeJoinQueue,
 	DEFAULT_HOSTED_ICE_SERVERS,
-	ADVERTISED_PORT_SPAN,
-	hostedPeerConfiguration,
 	HostedPeerLifecycle,
+	hostedPeerConfiguration,
 	parseHostedIceServers,
 	resolveHostedIceServers,
 	selectedIceCandidatePair,
 } from '../src/remote/hostedPeerLifecycle.ts';
 
-test('selected ICE diagnostics contain route fields and exclude credentials', async () => {
+test('selected ICE diagnostics contain route classes and exclude addresses and credentials', async () => {
 	const stats = new Map([
 		['transport-1', { type: 'transport', selectedCandidatePairId: 'pair-1' }],
 		[
@@ -55,20 +55,38 @@ test('selected ICE diagnostics contain route fields and exclude credentials', as
 			},
 		}),
 		{
-			localAddress: '192.168.1.20',
-			localPort: 51000,
 			localType: 'host',
 			protocol: 'udp',
-			remoteAddress: '192.168.1.30',
-			remotePort: 52000,
 			remoteType: 'srflx',
 			state: 'succeeded',
 		},
+	);
+	assert.doesNotMatch(
+		JSON.stringify(
+			await selectedIceCandidatePair({
+				async getStats() {
+					return stats;
+				},
+			}),
+		),
+		/192\.168\.1\.(?:20|30)|51000|52000/u,
 	);
 	assert.equal(
 		await selectedIceCandidatePair({
 			async getStats() {
 				throw new Error('unavailable');
+			},
+		}),
+		undefined,
+	);
+	assert.equal(
+		await selectedIceCandidatePair({
+			async getStats() {
+				return {
+					values() {
+						throw new Error('broken stats map');
+					},
+				};
 			},
 		}),
 		undefined,

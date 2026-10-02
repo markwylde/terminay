@@ -55,14 +55,39 @@ export const DEFAULT_HEALTH_PORT = 8444;
 export const DEFAULT_HOSTED_DOMAIN = 'terminay.com';
 export const DEFAULT_EXPOSE = 'hosted,direct';
 
+export function assertDirectOrigin(value: string): void {
+	let origin: URL;
+	try {
+		origin = new URL(value);
+	} catch {
+		throw new Error('--direct-origin must be a valid HTTPS origin.');
+	}
+	if (
+		origin.protocol !== 'https:' ||
+		origin.username !== '' ||
+		origin.password !== '' ||
+		origin.pathname !== '/' ||
+		origin.search !== '' ||
+		origin.hash !== ''
+	)
+		throw new Error(
+			'--direct-origin must be a valid HTTPS origin without credentials, a path, query, or fragment.',
+		);
+}
+
 export function shouldWarnMissingAdvertisedUdp(
 	directOrigin: string,
 	advertisedAddress: string | undefined,
 ): boolean {
-	if (advertisedAddress !== undefined) return false;
-	const host = new URL(directOrigin).hostname
-		.replace(/^\[|\]$/gu, '')
-		.toLowerCase();
+	if (advertisedAddress?.trim()) return false;
+	let host: string;
+	try {
+		host = new URL(directOrigin).hostname
+			.replace(/^\[|\]$/gu, '')
+			.toLowerCase();
+	} catch {
+		return false;
+	}
 	return ['localhost', '127.0.0.1', '::1'].includes(host);
 }
 
@@ -150,6 +175,11 @@ export async function runInstall(
 	options: DaemonOptions,
 	dependencies: InstallDependencies = {},
 ): Promise<InstallResult> {
+	if (
+		options.directOrigin !== undefined &&
+		(options.expose ?? DEFAULT_EXPOSE).split(',').includes('direct')
+	)
+		assertDirectOrigin(options.directOrigin);
 	const home = dependencies.home ?? homedir();
 	const streams = dependencies.streams ?? defaultStreams();
 	const write =
