@@ -219,9 +219,9 @@ docker run -d --name terminay \
   /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
 
 docker exec -it terminay bash
-terminay daemon install --system --run-as root \
+npx terminay daemon install --system --run-as root \
   --advertise-address 192.168.1.20:51000
-terminay daemon qr-code --mode hosted
+npx terminay daemon qr-code
 ```
 
 The advertised address must be reachable from the pairing Desktop, and the
@@ -232,6 +232,25 @@ where signaling lives; it does not make the container's ICE candidates
 reachable. If a peer connects and drops a few seconds later, check that the
 configured UDP range is published through Podman/gvproxy and that
 `--advertise-address` names the host-side address and first forwarded port.
+
+To see which route a peer actually took, compare the selected candidate pair
+on both sides. The server writes a `candidate-pair` line to its structured log
+(`--log-sink`, or the journal) with `scope`, `localType`, `remoteType`,
+`protocol` and `pairState`; Desktop records the same fields as
+`remote.hosted-peer.candidate-pair` in its local diagnostics, beside
+`remote.hosted-peer.connection-status` and `remote.hosted-peer.connection-failed`.
+Neither side logs candidate addresses or ports. A `prflx` or `srflx` type where
+you expected `host` means the advertised address is not the one being used.
+
+One server line is easy to misread. `peerState=connected iceState=disconnected`
+about five seconds after an approval, a denial, or a second attempt with the
+same link is usually the pairing peer the client has finished with, not a
+failing route: pairing uses one short-lived peer and the session a second one,
+and a peer that is closed without a goodbye looks exactly like this until the
+server retires it. Judge the route by the `candidate-pair` line with
+`scope=device`. Desktop closes its pairing peer explicitly, which the server
+logs as `peer-closed` instead, and Desktop gives up a peer of its own, and says
+so, once ICE has stayed disconnected for 15 seconds.
 
 The `daemon` installer is a systemd installer. A stock `node:*` image does not
 run systemd and `daemon install` is expected to refuse it; `--privileged` and
@@ -249,15 +268,28 @@ terminay-server \
   --advertise-address 192.168.1.20:51000
 ```
 
-The foreground server emits approval requests to stderr; use
-`terminay-server approve <approval-id>` under the same service account. The
-installer CLI is not needed to run this process. `daemon qr-code` is for an
-installed systemd service and uses `sudo` to reach its owner-only socket; an
-ephemeral `npx` cache under `/root` is not readable by the service account.
-If you use the installer in a systemd container, install Terminay globally in
-the image so the service account can execute the helper. QR output defaults to
-a hosted, browser-compatible link; use `--mode direct` only when copying a
-link into Terminay Desktop.
+The launcher in the distribution supplies the matching UI bundle and WebRTC
+runtime, so nothing else needs configuring. Mount the data root as a volume and
+publish the HTTP port and the four UDP ports starting at the advertised one.
+From a second shell in the container, as the same user and with the same
+`--data-root`:
+
+```sh
+terminay-server --pairing --data-root /var/lib/terminay   # hosted and direct links
+terminay-server approvals --data-root /var/lib/terminay   # pending match codes
+terminay-server approve <approval-id> --data-root /var/lib/terminay
+```
+
+The foreground server also announces each pending approval, with its match
+code, on stderr. Neither the installer CLI nor `sudo` is needed for any of
+this. `daemon qr-code` is for an
+installed systemd service: run as root against a service owned by another
+account, it uses `sudo` to reach that account's owner-only socket, so `sudo`
+must be installed, and the Node.js binary must be one the service account can
+execute (a system-wide install, not one under root's home). The CLI itself may
+live anywhere, including an `npx` cache under `/root`. QR output defaults to a
+hosted, browser-compatible link; use `--mode direct` only when copying a link
+into Terminay Desktop.
 
 Pair from the printed URL as you would with any server; signalling goes through
 the hosted service exactly as it does for a remote one.
@@ -280,8 +312,10 @@ server discovered a way through.
 
 `daemon qr-code` (alias `daemon pairing-url`) asks the running server for its
 live pairing URLs over the data root's owner-only socket, renders a terminal
-QR for the direct URL when direct exposure is on and the hosted URL otherwise,
-prints every URL with its expiry, and then waits. When a device requests
+QR for the hosted URL when hosted exposure is on and the direct URL otherwise,
+prints every URL with its expiry and mode, and then waits. A hosted link opens
+in a browser or in Desktop; a direct link is for Desktop only, so a phone
+camera is never pointed at one by default. When a device requests
 enrollment it shows the device name and match code and asks for approval; a
 room seconds from expiring is replaced and the code redrawn. `--no-wait`
 prints and exits, and `--mode hosted|direct` selects which URL is rendered.

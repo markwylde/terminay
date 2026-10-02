@@ -35,7 +35,7 @@ The Desktop pairing and reconnect host and the standalone signaling host SHALL r
 
 ### Requirement: Desktop observes transport loss after connection establishment
 
-Desktop SHALL continue observing WebRTC peer and required data-channel state after initial connection setup resolves. A terminal peer failure or closure, or a required lane closing after the handshake, SHALL notify the owning pairing or connection flow once and allow its profile to remain available for retry.
+Desktop SHALL continue observing WebRTC peer, ICE, and required data-channel state after initial connection setup resolves. A terminal peer failure or closure, a required lane closing after the handshake, or ICE remaining `disconnected` for 15 seconds SHALL end that peer and notify the owning pairing or connection flow once, and SHALL release every request and approval wait pending on that peer without waiting for their own timeouts. A saved profile SHALL remain available for retry. When Desktop closes a peer itself it SHALL close the peer's data lanes first, so the server retires the peer and any approval it requested instead of holding them until a timeout.
 
 #### Scenario: Peer fails after channels open
 
@@ -49,8 +49,23 @@ Desktop SHALL continue observing WebRTC peer and required data-channel state aft
 
 #### Scenario: ICE blip while peer remains connected
 
-- **WHEN** ICE reports `disconnected` while the peer remains `connected`
-- **THEN** Desktop retains the connection and leaves the application heartbeat and required lanes to detect a half-open transport
+- **WHEN** ICE reports `disconnected` while the peer remains `connected` and ICE reconnects within 15 seconds
+- **THEN** Desktop retains the connection, reports the path as degraded and then recovered, and reports no failure
+
+#### Scenario: ICE stays disconnected
+
+- **WHEN** ICE reports `disconnected` and has not reconnected after 15 seconds, whatever the peer state reports
+- **THEN** Desktop ends the peer and notifies the owning flow once
+
+#### Scenario: Server goes away while Desktop awaits approval
+
+- **WHEN** the pairing peer is lost while Desktop is waiting for the host to approve its match code
+- **THEN** the pairing attempt rejects with a connection-loss error instead of waiting for the approval to expire, and no device identity or profile is saved
+
+#### Scenario: Desktop closes a peer with an approval pending
+
+- **WHEN** Desktop closes its pairing peer while the host still shows its request as pending
+- **THEN** the server retires the peer and withdraws the pending request, so it can no longer be approved
 
 #### Scenario: Bootstrap lanes close after transfer
 

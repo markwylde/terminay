@@ -57,7 +57,7 @@ The operations runbook SHALL document connecting Terminay Desktop to a server ru
 
 ### Requirement: Container foreground operation is documented
 
-The standalone operations runbook SHALL provide a supported non-systemd container path that runs the server in the foreground as PID 1 or under a container supervisor, documents durable data-root and network-port configuration, and gives the commands to create and approve pairing without relying on `sudo` or a systemd service user. Systemd installation SHALL clearly identify its platform requirement. Root-run CLI errors SHALL explain when `sudo` is missing or the CLI helper is unreadable by the service account and give a supported recovery path.
+The standalone operations runbook SHALL provide a supported non-systemd container path that runs the server in the foreground as PID 1 or under a container supervisor, documents durable data-root and network-port configuration, and gives the commands to create and approve pairing without relying on `sudo` or a systemd service user. Systemd installation SHALL clearly identify its platform requirement. A root-run CLI that drops to the service account SHALL NOT require that account to read the CLI's own installation, so a CLI run through `sudo npx` works against a dedicated service account. Root-run CLI errors SHALL explain when `sudo` is missing or the Node.js binary cannot be executed by the service account, give a supported recovery path, and keep the underlying detail; an unrelated permission error SHALL NOT be attributed to either.
 
 #### Scenario: Operator runs a foreground container
 
@@ -69,7 +69,12 @@ The standalone operations runbook SHALL provide a supported non-systemd containe
 - **WHEN** a root-run CLI needs to drop privileges but `sudo` is unavailable
 - **THEN** it reports that the pairing operation needs `sudo` and recommends invoking the installed CLI as the service account or using the documented foreground server commands
 
-#### Scenario: Service account cannot read CLI helper
+#### Scenario: CLI installed where the service account cannot read
 
-- **WHEN** the root-run CLI helper is not readable or executable by the service account
-- **THEN** the CLI reports that the helper path is inaccessible and recommends a global, service-account-readable installation
+- **WHEN** root runs a pairing or approval command from a CLI unpacked under root's home, against a service owned by a dedicated account
+- **THEN** the command reaches the server's socket as that account without that account reading any file of the CLI installation
+
+#### Scenario: Service account cannot run Node.js
+
+- **WHEN** the Node.js binary running the CLI is not executable by the service account
+- **THEN** the CLI reports that path and recommends a system-wide Node.js installation
