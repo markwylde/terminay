@@ -88,7 +88,7 @@ async function createFixture() {
 			version: '1.2.3',
 			files: ['dist'],
 			engines: { node: '24.15.0' },
-			dependencies: { npm: '12.0.2' },
+			dependencies: { npm: '12.2.0' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
@@ -107,7 +107,7 @@ async function createFixture() {
 		join(root, 'dist/mcpEntry.js'),
 		'#!/usr/bin/env node\nconsole.log("mcp ready")\n',
 	);
-	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.0.2', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
+	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.2.0', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
 }
 

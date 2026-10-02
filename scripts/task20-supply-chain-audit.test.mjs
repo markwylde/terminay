@@ -59,8 +59,8 @@ test('bundled npm dependencies inherit the verified carrier archive evidence', a
       packages: {
         '': { name: 'fixture', version: '1.0.0' },
         'node_modules/npm': {
-          version: '12.0.2',
-          resolved: 'https://registry.npmjs.org/npm/-/npm-12.0.2.tgz',
+          version: '12.2.0',
+          resolved: 'https://registry.npmjs.org/npm/-/npm-12.2.0.tgz',
           integrity: 'sha512-ZA==',
           license: 'Artistic-2.0',
           bundleDependencies: ['bundled-package'],

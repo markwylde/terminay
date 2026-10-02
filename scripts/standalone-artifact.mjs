@@ -5,7 +5,7 @@ import { dirname, join, sep } from 'node:path'
 const PACKAGE_NAME = '@terminay/server'
 const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js', 'dist/bundled-npm-evidence.json']
 const NODE_ENGINE = '24.15.0'
-const NPM_INSTALLER = '12.0.2'
+const NPM_INSTALLER = '12.2.0'
 const REQUIRED_BINS = {
   'terminay-server': 'dist/cli.js',
   'terminay-mcp': 'dist/mcpEntry.js',
