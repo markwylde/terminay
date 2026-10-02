@@ -34,8 +34,12 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "real-webrtc", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
+  // Real-peer tests skip wherever the selected runtime is not staged, which is
+  // everywhere but this job; it must keep staging it and running them.
+  assert.match(job(giteaCi, "real-webrtc"), /npm run test:real-webrtc/u);
+  assert.match(JSON.parse(packageJson).scripts["test:real-webrtc"], /^node scripts\/stage-selected-secure-werift-runtime\.mjs /u);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /^ {4}runs-on: xcode-16$/mu);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /codesign --verify/u);
