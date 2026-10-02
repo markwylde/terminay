@@ -20,7 +20,7 @@ import type {
 	CompactSwitcherProjectGroup,
 } from './compactSwitcherModel.ts';
 import { compactSwitcherIsEmpty } from './compactSwitcherModel.ts';
-import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
+import { ProjectTabActivityDot } from './ProjectTabActivityDot';
 
 export type CompactSwitcherProps = Readonly<{
 	/** The row for the panel in front, so the list says where you already are. */
@@ -145,8 +145,8 @@ function CompactSwitcherProjectHeading({
 				style={{ background: project.color }}
 				aria-hidden="true"
 			/>
+			<ProjectTabActivityDot badge={project.badge} />
 			<span className="compact-switcher__project-name">{project.title}</span>
-			<ProjectTabActivityBadge badge={project.badge} />
 		</button>
 	);
 }

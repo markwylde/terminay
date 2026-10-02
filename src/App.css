@@ -157,7 +157,7 @@
 
 .terminal-activity-button {
   all: unset;
-  min-width: 52px;
+  min-width: 30px;
   padding: 0 7px;
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.05);
@@ -177,12 +177,9 @@
   color: var(--tab-text-selected);
 }
 
-/* Activity count badges are true circles of one fixed size. The number is
-   centred and the font steps down by digit count so the circle never widens.
-   The header pill and the project tab badge share this geometry but keep
-   separate class names so each surface can be located independently. */
-.terminal-activity-pill,
-.project-tab-activity-badge {
+/* The notification count is a true circle of one fixed size. The number is
+   centred and the font steps down by digit count so the circle never widens. */
+.notifications-count {
   width: 18px;
   height: 18px;
   padding: 0;
@@ -192,6 +189,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: #ff6b5e;
   color: #101318;
   font-size: 11px;
   font-weight: 800;
@@ -206,43 +204,17 @@
 /* Digits have no descenders, so the line box's descent space sits the ink a
    little low. A bottom inset scaled to the font size re-centres the glyphs
    (measured against the system font's actual ink bounds). */
-.terminal-activity-pill[data-digits="1"],
-.project-tab-activity-badge[data-digits="1"] {
+.notifications-count[data-digits="1"] {
   padding-bottom: 1px;
 }
 
-.terminal-activity-pill[data-digits="2"],
-.project-tab-activity-badge[data-digits="2"] {
+.notifications-count[data-digits="2"] {
   font-size: 9px;
   padding-bottom: 0.5px;
 }
 
-.terminal-activity-pill[data-digits="3"],
-.project-tab-activity-badge[data-digits="3"] {
+.notifications-count[data-digits="3"] {
   font-size: 7px;
-}
-
-.terminal-activity-pill--unviewed,
-.project-tab-activity-badge--unviewed {
-  background: #4fd17a;
-  box-shadow: 0 0 0 3px rgba(79, 209, 122, 0.12);
-}
-
-.terminal-activity-pill--recent,
-.project-tab-activity-badge--recent {
-  background: #f6c343;
-  box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
-}
-
-.terminal-activity-pill--attention,
-.project-tab-activity-badge--attention {
-  background: #ff6b5e;
-  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
-}
-
-.terminal-activity-button__chevron {
-  opacity: 0.6;
-  flex-shrink: 0;
 }
 
 .terminal-activity-menu {
@@ -270,10 +242,77 @@
   letter-spacing: 0.1em;
 }
 
+.terminal-activity-menu__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.terminal-activity-menu__clear-all {
+  all: unset;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.72);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.terminal-activity-menu__clear-all:hover,
+.terminal-activity-menu__clear-all:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dce2f0;
+}
+
+.terminal-activity-menu__empty {
+  padding: 6px 8px 10px;
+  color: rgba(220, 226, 240, 0.52);
+  font-size: 12px;
+}
+
+.terminal-activity-menu__working {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.terminal-activity-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+}
+
+.terminal-activity-menu__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.terminal-activity-menu__dismiss {
+  all: unset;
+  width: 24px;
+  height: 24px;
+  margin-right: 5px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(220, 226, 240, 0.52);
+  cursor: pointer;
+}
+
+.terminal-activity-menu__dismiss:hover,
+.terminal-activity-menu__dismiss:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #dce2f0;
+}
+
 .terminal-activity-menu__item {
   all: unset;
   box-sizing: border-box;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 44px;
   padding: 7px 9px;
   border-radius: 10px;
@@ -282,10 +321,6 @@
   gap: 9px;
   color: #dce2f0;
   cursor: pointer;
-}
-
-.terminal-activity-menu__item:hover {
-  background: rgba(255, 255, 255, 0.05);
 }
 
 .terminal-activity-menu__state {
@@ -945,14 +980,10 @@
   flex-shrink: 0;
 }
 
-.project-tab-activity-badge {
-  position: relative;
-  z-index: 1;
-  margin: 0 0 0 -2px;
-}
-
-.project-switcher-menu__item .project-tab-activity-badge {
-  margin: 0;
+/* The dot sits in the title's gap; pull it in so it reads as part of the
+   name, the way it does on a terminal tab. */
+.project-tab-main > .project-tab-activity-dot {
+  margin: 0 -3px;
 }
 
 .project-tab-close {

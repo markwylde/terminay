@@ -536,6 +536,8 @@ type ProjectWorkspaceHandle = {
 	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
 	activatePanel: (panelId: string) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
+	/** Acknowledge a terminal exactly as selecting its tab does, without selecting it. */
+	acknowledgeTerminal: (sessionId: string) => void;
 	executeCommand: (command: AppCommand) => Promise<void>;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
 	/**
@@ -4025,6 +4027,7 @@ const ProjectWorkspace = forwardRef<
 				reconcileServerPanels,
 				activatePanel,
 				activateTerminal,
+				acknowledgeTerminal: markTerminalActivityViewed,
 				executeCommand(command: AppCommand) {
 					return executeAppCommand(command);
 				},
@@ -4040,6 +4043,7 @@ const ProjectWorkspace = forwardRef<
 				reconcileServerPanels,
 				activatePanel,
 				activateTerminal,
+				markTerminalActivityViewed,
 				executeAppCommand,
 				exportTerminalForMove,
 				exportProjectForMove,
@@ -6550,8 +6554,6 @@ function App({
 		return buildTerminalActivityOverview(items);
 	}, [inventoryByProject, projects]);
 
-	const hasTerminalActivityOverview = terminalActivityItems.items.length > 0;
-
 	// Which project a terminal belongs to, on any attached server. Session ids
 	// are per-server, so the server has to be part of the question.
 	const projectForSession = useCallback(
@@ -7103,6 +7105,21 @@ function App({
 		[activateProject],
 	);
 
+	// Dismissing is the acknowledgement selecting the tab would report, routed
+	// to the workspace that owns the terminal; nothing is selected or activated.
+	const dismissNotification = useCallback(
+		(item: TerminalActivityOverviewItem) => {
+			workspaceRefs.current
+				.get(item.projectId)
+				?.acknowledgeTerminal(item.sessionId);
+		},
+		[],
+	);
+	const dismissAllNotifications = useCallback(() => {
+		for (const item of terminalActivityItems.notifications)
+			dismissNotification(item);
+	}, [dismissNotification, terminalActivityItems.notifications]);
+
 	useEffect(() => {
 		const unsubscribeCommand = subscribeAppCommands?.(
 			executeCommandOnActiveProject,
@@ -7166,12 +7183,6 @@ function App({
 			window.clearTimeout(timeoutId);
 		};
 	}, []);
-
-	useEffect(() => {
-		if (!hasTerminalActivityOverview) {
-			setIsActivityMenuOpen(false);
-		}
-	}, [hasTerminalActivityOverview]);
 
 	useEffect(() => {
 		if (!isActivityMenuOpen) {
@@ -7615,16 +7626,16 @@ function App({
 					{appUpdateAction}
 					<TerminalActivityOverview
 						activityMenuRef={activityMenuRef}
-						attentionCount={terminalActivityItems.attentionCount}
 						isOpen={isActivityMenuOpen}
-						items={terminalActivityItems.items}
+						notifications={terminalActivityItems.notifications}
 						onActivate={activateTerminalFromOverview}
+						onDismiss={dismissNotification}
+						onDismissAll={dismissAllNotifications}
 						onToggle={() => {
 							setIsRemoteMenuOpen(false);
 							setIsActivityMenuOpen((current) => !current);
 						}}
-						recentCount={terminalActivityItems.recentCount}
-						unviewedCount={terminalActivityItems.unviewedCount}
+						working={terminalActivityItems.working}
 					/>
 					<RemoteAccessConnectionMenu
 						connectionSwitcherEntries={connectionSwitcherEntries}

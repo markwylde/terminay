@@ -13,7 +13,7 @@ import {
 } from 'react';
 import { useLongPress } from '../hooks/useLongPress';
 import type { ActivityCountBadge } from './activityCountBadge';
-import { ProjectTabActivityBadge } from './ProjectTabActivityBadge';
+import { ProjectTabActivityDot } from './ProjectTabActivityDot';
 import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import { moveItemByDrop } from './projectTabOverflow';
 
@@ -71,8 +71,8 @@ function ProjectSwitcherItemButton({
 					{project.emoji}
 				</span>
 			) : null}
+			<ProjectTabActivityDot badge={badge} />
 			<span className="project-switcher-menu__title">{project.title}</span>
-			<ProjectTabActivityBadge badge={badge} />
 			{isActive ? (
 				<span className="project-switcher-menu__check" aria-hidden="true">
 					✓

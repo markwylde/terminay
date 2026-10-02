@@ -247,9 +247,9 @@ test('row state uses the shared activity vocabulary', () => {
 	assert.match(markup, /agent-status-indicator--idle/);
 });
 
-test('the project heading carries its activity badge', () => {
+test('the project heading carries its activity dot', () => {
 	const markup = switcher({});
-	assert.match(markup, /project-tab-activity-badge--recent[^>]*>|>2</);
+	assert.match(markup, /project-tab-activity-dot--recent/);
 });
 
 test('every create action survives the collapse', () => {
