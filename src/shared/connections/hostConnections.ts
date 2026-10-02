@@ -113,15 +113,18 @@ export function createDesktopConnectionHost(
 			},
 			{ userGesture: true },
 		);
+	// The bootstrap context lists the profiles remembered when the document
+	// loaded. A server paired since then is known only from a later listing.
+	let listedProfiles = readProfiles(context.profiles) ?? Object.freeze([]);
 	const connectionHost: WorkspaceConnectionHost = {
 		supportsAttach,
 		listProfiles: async () => {
-			const known = readProfiles(context.profiles) ?? Object.freeze([]);
-			if (!supportsAttach) return known;
+			if (!supportsAttach) return listedProfiles;
 			const result = await requestAction({ type: 'connections.list' }).catch(
 				() => undefined,
 			);
-			return readProfiles(result) ?? known;
+			listedProfiles = readProfiles(result) ?? listedProfiles;
+			return listedProfiles;
 		},
 		attach: async (profileId) => {
 			const attachment = readAttachment(
@@ -133,9 +136,7 @@ export function createDesktopConnectionHost(
 				bytes,
 				attachment.connectionId,
 			);
-			const profile = (context.profiles ?? []).find(
-				(entry) => entry.id === profileId,
-			);
+			const profile = listedProfiles.find((entry) => entry.id === profileId);
 			return Object.freeze({
 				transport,
 				label: profile?.label ?? profileId,
