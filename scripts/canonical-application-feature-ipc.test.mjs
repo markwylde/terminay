@@ -60,29 +60,22 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 	}
 });
 
-test('a successfully enrolled Desktop profile is durable before its first remote load', () => {
+test('Desktop pairing runs through the tested attempt sequence with the durable profile store', () => {
+	// The ordering itself — profile saved before the first reconnect, kept when
+	// that reconnect fails — is exercised in desktop-pairing-attempt.test.mjs.
+	// This guards the wiring: main must hand that sequence its real persistence
+	// helper rather than keep a private copy of the flow.
+	const start = main.indexOf(
+		'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
+	);
 	const pairingFlow = main.slice(
-		main.indexOf(
-			'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
-		),
-		main.indexOf(
-			'const launchCanonical = async (): Promise<void> =>',
-			main.indexOf(
-				'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
-			),
-		),
+		start,
+		main.indexOf('const launchCanonical = async (): Promise<void> =>', start),
 	);
-	assert.ok(pairingFlow.indexOf('enrollPairedDesktopRemoteProfile(') >= 0);
-	assert.ok(
-		pairingFlow.indexOf('rememberRemoteConnection(profile)') <
-			pairingFlow.indexOf('prepareCanonicalDesktopRemoteConnection('),
-		'profile persistence must precede reconnect and bundle loading',
-	);
-	assert.doesNotMatch(
-		pairingFlow,
-		/rememberedRemoteConnections\.delete\(profile\.id\)/u,
-	);
-	assert.match(pairingFlow, /rememberRemoteConnection\(profile\)/u);
+	assert.match(pairingFlow, /await runDesktopPairingAttempt\(\{/u);
+	assert.match(pairingFlow, /rememberProfile: rememberRemoteConnection,/u);
+	assert.doesNotMatch(pairingFlow, /rememberedRemoteConnections\.(?:set|delete)\(/u);
+	assert.match(main, /case 'connection\.pair-cancel':/u);
 });
 
 test('canonical host routes retain server-owned application operations', () => {

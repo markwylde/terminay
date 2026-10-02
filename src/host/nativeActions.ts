@@ -50,6 +50,12 @@ export async function pairDesktopConnection(
 		.handled;
 }
 
+/** Abandon an in-flight Desktop pairing attempt; its `pairDesktopConnection`
+ * call then rejects. */
+export async function cancelDesktopPairing(attemptId: string): Promise<void> {
+	await request({ type: 'connection.pair-cancel', attemptId });
+}
+
 /** Clipboard writes are semantic user actions. Desktop owns the privileged
  * write; browser sessions use their exact-origin Clipboard API. */
 export async function writeClipboardText(text: string): Promise<void> {

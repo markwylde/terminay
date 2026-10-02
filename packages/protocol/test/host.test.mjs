@@ -680,6 +680,7 @@ test('pairing progress events accept only the closed lifecycle states', () => {
 		'connecting',
 		'connected',
 		'connection-degraded',
+		'connection-recovered',
 		'connection-lost',
 	]) {
 		assert.deepEqual(
@@ -727,6 +728,27 @@ test('pairing progress events accept only the closed lifecycle states', () => {
 			parseTerminayHostAction({
 				type: 'connection.pair',
 				pairingUrl: 'https://box.example/v1/#secret',
+				attemptId: 'invalid id',
+			}),
+		/pairing attempt id/u,
+	);
+	assert.deepEqual(
+		parseTerminayHostAction({ type: 'connection.pair-cancel', attemptId }),
+		{ type: 'connection.pair-cancel', attemptId },
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'connection.pair-cancel',
+				attemptId,
+				pairingUrl: 'https://box.example/v1/#secret',
+			}),
+		/connection pairing cancellation/u,
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'connection.pair-cancel',
 				attemptId: 'invalid id',
 			}),
 		/pairing attempt id/u,

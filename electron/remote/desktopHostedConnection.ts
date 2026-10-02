@@ -60,6 +60,15 @@ const CHANNEL_LABELS = [
 type ChannelLabel = (typeof CHANNEL_LABELS)[number];
 const CONNECT_TIMEOUT_MS = 45_000;
 const API_TIMEOUT_MS = 15_000;
+/**
+ * How long ICE may stay `disconnected` before Desktop gives the peer up. Long
+ * enough to ride out a network change, short enough that a pairing or first
+ * load against a server that went away ends while the user is still watching.
+ */
+export const DEFAULT_ICE_DISCONNECT_LIMIT_MS = 15_000;
+/** How long a closing peer stays up so its lane closes reach the server. */
+const LANE_CLOSE_FLUSH_MS = 250;
+export const DESKTOP_PAIRING_CANCELLED_MESSAGE = 'Desktop pairing was cancelled.';
 
 export function desktopHostedSignalCloseError(
 	code: number,
@@ -175,6 +184,8 @@ export async function connectDesktopHostedPeer(
 		onConnectionFailure?: (reason: string) => void;
 		onConnectionStatus?: (status: 'degraded' | 'recovered') => void;
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
+		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
+		iceDisconnectLimitMs?: number;
 	}>,
 ): Promise<DesktopHostedPeer> {
 	const sessionOrigin = normalizeHostedOrigin(options.sessionOrigin);
@@ -216,27 +227,59 @@ export async function connectDesktopHostedPeer(
 	const rawChannels = new Map<ChannelLabel, WeriftChannel>();
 	let closed = false;
 	let lifecycle: HostedPeerLifecycle | undefined;
-	let lastConnectionStatus: 'degraded' | 'recovered' | undefined;
+	let apiLane: ReturnType<typeof createDesktopApiLane> | undefined;
+	const iceDisconnectLimitMs =
+		options.iceDisconnectLimitMs ?? DEFAULT_ICE_DISCONNECT_LIMIT_MS;
+	const iceStatus = createDesktopConnectionStatusReporter(
+		(status) => options.onConnectionStatus?.(status),
+		{
+			limitMs: iceDisconnectLimitMs,
+			onStalled: () =>
+				lifecycle?.fail(
+					`WebRTC ICE stayed disconnected for ${iceDisconnectLimitMs}ms.`,
+				),
+		},
+	);
 	const close = () => {
 		if (closed) return;
 		closed = true;
 		lifecycle?.stop();
+		iceStatus.stop();
+		// Nothing can answer once the peer is gone, so a caller waiting on this
+		// lane — including one waiting for the host's approval — is released now
+		// rather than at its own timeout.
+		apiLane?.fail(new Error(DESKTOP_HOSTED_CONNECTION_CLOSED_MESSAGE));
 		try {
 			socket.close(1000, 'Desktop hosted connection closed');
 		} catch {
 			/* best effort */
 		}
-		try {
-			peer.close();
-		} catch {
-			/* best effort */
+		// Closing the lanes first tells the server this peer is leaving. A bare
+		// peer close is silent: the server would only see ICE go quiet, keep the
+		// peer, and leave its pending approval open for a device that has gone.
+		for (const channel of rawChannels.values()) {
+			try {
+				channel.close?.();
+			} catch {
+				/* best effort */
+			}
 		}
+		const closePeer = () => {
+			try {
+				peer.close();
+			} catch {
+				/* best effort */
+			}
+		};
+		if (rawChannels.size === 0) closePeer();
+		else setTimeout(closePeer, LANE_CLOSE_FLUSH_MS).unref?.();
 	};
 	lifecycle = new HostedPeerLifecycle(
 		peer,
 		DEFAULT_ICE_RECOVERY_GRACE_MS,
 		(reason) => {
 			options.onConnectionFailure?.(reason);
+			apiLane?.fail(new Error(DESKTOP_HOSTED_CONNECTION_LOST_MESSAGE));
 			close();
 		},
 	);
@@ -290,11 +333,16 @@ export async function connectDesktopHostedPeer(
 				reject(error);
 			} else resolve();
 		};
-		options.abort?.addEventListener(
-			'abort',
-			() => finish(new Error('Desktop hosted pairing was cancelled.')),
-			{ once: true },
-		);
+		// Cancelling releases whatever the caller is waiting on: the handshake
+		// before the peer opens, or a request on its API lane afterwards.
+		const cancel = () => {
+			const error = new Error(DESKTOP_PAIRING_CANCELLED_MESSAGE);
+			finish(error);
+			apiLane?.fail(error);
+			close();
+		};
+		if (options.abort?.aborted) cancel();
+		else options.abort?.addEventListener('abort', cancel, { once: true });
 		socket.on('error', () =>
 			finish(new Error('Desktop could not reach hosted signaling.')),
 		);
@@ -367,17 +415,7 @@ export async function connectDesktopHostedPeer(
 		});
 		peer.addEventListener('iceconnectionstatechange', () => {
 			lifecycle?.observe('ice');
-			const state = peer.iceConnectionState;
-			const status =
-				state === 'disconnected'
-					? 'degraded'
-					: state === 'connected' || state === 'completed'
-						? 'recovered'
-						: undefined;
-			if (status !== undefined && status !== lastConnectionStatus) {
-				lastConnectionStatus = status;
-				options.onConnectionStatus?.(status);
-			}
+			iceStatus.observe(peer.iceConnectionState);
 			void reportCandidatePair().catch(() => undefined);
 		});
 		socket.on('message', (raw) => {
@@ -506,7 +544,8 @@ export async function connectDesktopHostedPeer(
 			'Desktop hosted connection opened without a verified server identity.',
 		);
 	}
-	const api = createApiLane(rawChannels.get('api')!);
+	apiLane = createDesktopApiLane(rawChannels.get('api')!);
+	const api = apiLane.transport;
 	return Object.freeze({
 		api,
 		channels,
@@ -534,6 +573,8 @@ export async function pairDesktopHostedDevice(
 		onConnectionFailure?: (reason: string) => void;
 		onConnectionStatus?: (status: 'degraded' | 'recovered') => void;
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
+		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
+		iceDisconnectLimitMs?: number;
 		onMatchCode?: (
 			code: Readonly<{ matchCode: string; expiresAt: number }>,
 		) => void;
@@ -580,6 +621,9 @@ export async function pairDesktopHostedDevice(
 		...(options.onCandidatePair === undefined
 			? {}
 			: { onCandidatePair: options.onCandidatePair }),
+		...(options.iceDisconnectLimitMs === undefined
+			? {}
+			: { iceDisconnectLimitMs: options.iceDisconnectLimitMs }),
 	});
 	try {
 		const paired = await establishDevicePairing({
@@ -641,6 +685,8 @@ export async function connectDesktopHostedRemote(
 		onConnectionFailure?: (reason: string) => void;
 		onConnectionStatus?: (status: 'degraded' | 'recovered') => void;
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
+		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
+		iceDisconnectLimitMs?: number;
 	}>,
 ): Promise<DesktopHostedConnection> {
 	const origin = normalizeHostedOrigin(options.origin);
@@ -687,6 +733,9 @@ export async function connectDesktopHostedRemote(
 		...(options.onCandidatePair === undefined
 			? {}
 			: { onCandidatePair: options.onCandidatePair }),
+		...(options.iceDisconnectLimitMs === undefined
+			? {}
+			: { iceDisconnectLimitMs: options.iceDisconnectLimitMs }),
 	});
 	try {
 		const { ticket } = await authenticateDevice({
@@ -719,7 +768,68 @@ export async function connectDesktopHostedRemote(
 	}
 }
 
-function createApiLane(channel: WeriftChannel): RemoteApiTransport {
+export const DESKTOP_HOSTED_CONNECTION_LOST_MESSAGE =
+	'The connection to the server was lost before it answered.';
+const DESKTOP_HOSTED_CONNECTION_CLOSED_MESSAGE = 'The hosted connection closed.';
+
+/**
+ * Turn raw ICE states into the transitions a user can act on. The first
+ * `connected` is ordinary setup, not a recovery, so `recovered` is reported
+ * only after a `degraded` it ends.
+ *
+ * The runtime keeps the peer `connected` while ICE is `disconnected`, however
+ * long that lasts, so a server that has gone away would otherwise look alive
+ * until some unrelated timeout. A path that stays disconnected past
+ * `stallLimitMs` is reported once as stalled.
+ */
+export function createDesktopConnectionStatusReporter(
+	report: (status: 'degraded' | 'recovered') => void,
+	stall?: Readonly<{ limitMs: number; onStalled: () => void }>,
+): Readonly<{
+	observe: (iceState: string | undefined) => void;
+	stop: () => void;
+}> {
+	let degraded = false;
+	let stallTimer: ReturnType<typeof setTimeout> | undefined;
+	const stop = () => {
+		clearTimeout(stallTimer);
+		stallTimer = undefined;
+	};
+	return Object.freeze({
+		observe(iceState: string | undefined) {
+			if (iceState === 'disconnected') {
+				if (degraded) return;
+				degraded = true;
+				if (stall !== undefined) {
+					stallTimer = setTimeout(() => {
+						stallTimer = undefined;
+						stall.onStalled();
+					}, stall.limitMs);
+					stallTimer.unref?.();
+				}
+				report('degraded');
+				return;
+			}
+			if ((iceState === 'connected' || iceState === 'completed') && degraded) {
+				degraded = false;
+				stop();
+				report('recovered');
+			}
+		},
+		stop,
+	});
+}
+
+type ApiLaneChannel = Pick<WeriftChannel, 'addEventListener' | 'send'>;
+
+/** The request/response and enrollment-push lane, plus the one way to fail
+ * everything waiting on it when its peer is gone. */
+export function createDesktopApiLane(channel: ApiLaneChannel): Readonly<{
+	transport: RemoteApiTransport;
+	fail: (error: Error) => void;
+}> {
+	let failure: Error | undefined;
+	const pushWaiters = new Set<(error: Error) => void>();
 	let sequence = 0;
 	const pending = new Map<
 		string,
@@ -763,15 +873,22 @@ function createApiLane(channel: WeriftChannel): RemoteApiTransport {
 				),
 			);
 	});
-	channel.addEventListener('close', () => {
+	const fail = (error: Error) => {
+		if (failure !== undefined) return;
+		failure = error;
 		for (const [id, entry] of pending) {
 			pending.delete(id);
 			clearTimeout(entry.timer);
-			entry.reject(new Error('The hosted connection closed.'));
+			entry.reject(error);
 		}
-	});
-	return {
+		for (const reject of [...pushWaiters]) reject(error);
+	};
+	channel.addEventListener('close', () =>
+		fail(new Error(DESKTOP_HOSTED_CONNECTION_CLOSED_MESSAGE)),
+	);
+	const transport: RemoteApiTransport = {
 		postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse> {
+			if (failure !== undefined) return Promise.reject(failure);
 			if (
 				typeof pathname !== 'string' ||
 				!pathname.startsWith('/api/') ||
@@ -806,9 +923,26 @@ function createApiLane(channel: WeriftChannel): RemoteApiTransport {
 		},
 		waitForEnrollmentDecision(approvalId, options) {
 			return new Promise<EnrollmentPushMessage>((resolve, reject) => {
+				if (failure !== undefined) {
+					reject(failure);
+					return;
+				}
+				if (options.signal?.aborted) {
+					reject(new Error(DESKTOP_PAIRING_CANCELLED_MESSAGE));
+					return;
+				}
+				const settle = () => {
+					pushListeners.delete(listener);
+					pushWaiters.delete(onLaneFailure);
+					clearTimeout(timer);
+				};
+				const onLaneFailure = (error: Error) => {
+					settle();
+					reject(error);
+				};
 				const timer = setTimeout(
 					() => {
-						pushListeners.delete(listener);
+						settle();
 						reject(
 							new Error(
 								'The pairing request expired before it was approved. Scan a fresh QR code.',
@@ -820,23 +954,23 @@ function createApiLane(channel: WeriftChannel): RemoteApiTransport {
 				timer.unref?.();
 				const listener = (message: EnrollmentPushMessage) => {
 					if (message.approvalId !== approvalId) return;
-					pushListeners.delete(listener);
-					clearTimeout(timer);
+					settle();
 					resolve(message);
 				};
 				pushListeners.add(listener);
+				pushWaiters.add(onLaneFailure);
 				options.signal?.addEventListener(
 					'abort',
 					() => {
-						pushListeners.delete(listener);
-						clearTimeout(timer);
-						reject(new Error('Desktop pairing was cancelled.'));
+						settle();
+						reject(new Error(DESKTOP_PAIRING_CANCELLED_MESSAGE));
 					},
 					{ once: true },
 				);
 			});
 		},
 	};
+	return Object.freeze({ transport, fail });
 }
 
 function authenticateApplication(

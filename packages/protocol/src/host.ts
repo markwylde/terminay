@@ -257,13 +257,24 @@ export type TerminayHostEvent = Readonly<{
 		| Readonly<{
 				type: 'connection.pairing-progress';
 				attemptId: string;
-				state:
-					| 'connecting'
-					| 'connected'
-					| 'connection-degraded'
-					| 'connection-lost';
+				state: TerminayPairingProgressState;
 		  }>;
 }>;
+
+/**
+ * What a Desktop pairing attempt reports after its match code is shown.
+ * `connection-recovered` only ends a `connection-degraded` notice raised
+ * before enrollment finished; later phases report their own state instead.
+ */
+export const TERMINAY_PAIRING_PROGRESS_STATES = Object.freeze([
+	'connecting',
+	'connected',
+	'connection-degraded',
+	'connection-recovered',
+	'connection-lost',
+] as const);
+export type TerminayPairingProgressState =
+	(typeof TERMINAY_PAIRING_PROGRESS_STATES)[number];
 
 export type TerminayHostAction =
 	| Readonly<{
@@ -273,6 +284,12 @@ export type TerminayHostAction =
 			type: 'connection.pair';
 			attemptId: string;
 			pairingUrl: string;
+	  }>
+	| Readonly<{
+			/** Abandon the named pairing attempt. An attempt that already finished,
+			 * or was never started by this window, is left alone. */
+			type: 'connection.pair-cancel';
+			attemptId: string;
 	  }>
 	| Readonly<{
 			type: 'route.present';
@@ -495,22 +512,15 @@ export function parseTerminayHostEvent(
 		);
 		if (
 			typeof event.state !== 'string' ||
-			![
-				'connecting',
-				'connected',
-				'connection-degraded',
-				'connection-lost',
-			].includes(event.state)
+			!(TERMINAY_PAIRING_PROGRESS_STATES as readonly string[]).includes(
+				event.state,
+			)
 		)
 			throw new TypeError('host pairing progress event is invalid');
 		parsedEvent = Object.freeze({
 			type: 'connection.pairing-progress',
 			attemptId: identifier(event.attemptId, 'pairing attempt id', ID),
-			state: event.state as
-				| 'connecting'
-				| 'connected'
-				| 'connection-degraded'
-				| 'connection-lost',
+			state: event.state as TerminayPairingProgressState,
 		});
 	} else if (event.type === 'connections.changed') {
 		exactKeys(event, ['type', 'profiles'], 'host connections event');
@@ -971,6 +981,16 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				attemptId: identifier(action.attemptId, 'pairing attempt id', ID),
 				pairingUrl: action.pairingUrl,
 			});
+		case 'connection.pair-cancel':
+			exactKeys(
+				action,
+				['type', 'attemptId'],
+				'connection pairing cancellation',
+			);
+			return Object.freeze({
+				type: 'connection.pair-cancel',
+				attemptId: identifier(action.attemptId, 'pairing attempt id', ID),
+			});
 		case 'route.present': {
 			exactOptionalKeys(
 				action,
@@ -1284,6 +1304,7 @@ export function requiredTerminayHostCapability(
 ): TerminayHostCapability | undefined {
 	switch (action.type) {
 		case 'connection.pair':
+		case 'connection.pair-cancel':
 			return 'nativeWindows';
 		case 'route.present':
 			return action.disposition === 'native-window'
