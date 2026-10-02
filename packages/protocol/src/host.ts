@@ -271,6 +271,7 @@ export type TerminayHostAction =
 			 * host. No pairing secret or durable credential returns to the
 			 * renderer. */
 			type: 'connection.pair';
+			attemptId: string;
 			pairingUrl: string;
 	  }>
 	| Readonly<{
