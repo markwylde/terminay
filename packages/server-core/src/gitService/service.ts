@@ -8,10 +8,12 @@ import {
 import {
 	attributeGitDirChange,
 	attributeWorkingTreeChange,
+	classifyGitDirEntry,
 	type GitChangeScope,
 	linkedGitDirName,
 	type ObservedRepositoryLayout,
 	type ObservedWorktree,
+	scopeName,
 	workingTreeWatchRoots,
 } from './observation.js';
 import {
@@ -39,6 +41,14 @@ import {
 	type GitDiffResult,
 	type GitDiscoveryState,
 	type GitErrorInfo,
+	type GitObservationChangeSummary,
+	type GitObservationEntryClass,
+	type GitObservationMeasuredWorktree,
+	type GitObservationRaisedBy,
+	type GitObservationReport,
+	type GitObservationScope,
+	type GitObservationWatchKind,
+	type GitObservationWorktreeRef,
 	type GitPathAdapter,
 	type GitProgressPhase,
 	type GitProjectBinding,
@@ -92,6 +102,14 @@ interface RepositoryObservation {
 	readonly projects: Set<string>;
 	/** Keyed by the watched path. */
 	readonly watches: Map<string, GitWatchHandle>;
+	/** What each watch observes, for reports. Keyed like `watches`. */
+	readonly watchKinds: Map<
+		string,
+		{ readonly kind: GitObservationWatchKind; readonly recursive: boolean }
+	>;
+	/** Changes counted since the last report. */
+	changes: ChangeCounters;
+	flushTimer: ReturnType<typeof setTimeout> | undefined;
 	readonly schedule: RefreshSchedule;
 	/** Aborts this observation's own refreshes when it is disposed. */
 	readonly abort: AbortController;
@@ -109,6 +127,43 @@ interface RepositoryObservation {
 	 *  time, so none can claim an empty dirty set while another still holds the
 	 *  changes and then cache summaries that predate them. */
 	measuring: Promise<unknown> | undefined;
+}
+
+interface ChangeCounters {
+	byClass: Partial<Record<GitObservationEntryClass, number>>;
+	byScope: Partial<Record<GitObservationScope, number>>;
+	cachedListingsServed: number;
+}
+
+function emptyChanges(): ChangeCounters {
+	return { byClass: {}, byScope: {}, cachedListingsServed: 0 };
+}
+
+function hasChanges(changes: ChangeCounters): boolean {
+	return (
+		changes.cachedListingsServed > 0 || Object.keys(changes.byClass).length > 0
+	);
+}
+
+/** Why a measurement runs, and whether it must bypass the cache. */
+interface MeasurementOrigin {
+	readonly raisedBy: GitObservationRaisedBy;
+	readonly fresh: boolean;
+}
+
+/** Re-measured worktrees named in one measurement report. */
+const MAX_REPORTED_WORKTREES = 32;
+
+function reportedError(error: unknown): {
+	code: string | null;
+	message: string;
+} {
+	const code = (error as { code?: unknown } | null)?.code;
+	const message = error instanceof Error ? error.message : String(error);
+	return {
+		code: typeof code === 'string' ? code : null,
+		message: message.slice(0, 1024),
+	};
 }
 
 /** The invalidations a measurement took responsibility for. */
@@ -145,6 +200,17 @@ export class GitService {
 	private readonly limits: Required<GitServiceLimits>;
 	private readonly watcher: GitStateWatcher;
 	private readonly refreshRampMs: readonly number[];
+	private readonly onObservation:
+		| ((report: GitObservationReport) => void)
+		| undefined;
+	private readonly observationFlushMs: number;
+	/** Process-local names for repositories and worktrees in reports. The
+	 *  canonical ids authorize requests, so reports never carry them. */
+	private readonly diagnosticRepositoryIds = new Map<string, string>();
+	private readonly diagnosticWorktrees = new Map<
+		string,
+		{ id: string; role: 'main' | 'linked'; listIndex: number }
+	>();
 	private readonly bindings = new Map<string, GitProjectBinding>();
 	private readonly listeners = new Set<GitServiceListener>();
 	private readonly mutatingWorktreeIds = new Set<string>();
@@ -182,6 +248,10 @@ export class GitService {
 			throw new RangeError('maxEvents must be positive');
 		this.watcher = options.watcher ?? new NodeGitStateWatcher();
 		this.refreshRampMs = options.refreshRampMs ?? REFRESH_RAMP_MS;
+		this.onObservation = options.onObservation;
+		this.observationFlushMs = options.observationFlushMs ?? 5_000;
+		if (!Number.isFinite(this.observationFlushMs) || this.observationFlushMs < 0)
+			throw new RangeError('observationFlushMs must be non-negative');
 	}
 
 	get revision(): number {
@@ -263,8 +333,8 @@ export class GitService {
 		this.closed = true;
 		for (const observation of [...this.observations.values()])
 			this.disposeObservation(observation);
-		for (const handle of this.discoveryWatches.values()) handle.close();
-		this.discoveryWatches.clear();
+		for (const projectId of [...this.discoveryWatches.keys()])
+			this.closeDiscoveryWatch(projectId);
 		this.listeners.clear();
 	}
 
@@ -456,14 +526,38 @@ export class GitService {
 		return this.diff(request, signal);
 	}
 
+	/**
+	 * `fresh` measures every worktree whatever the watches report, for a
+	 * listing the user asked for explicitly, and reports any difference from
+	 * the cached listing the watches had vouched for.
+	 */
 	async worktrees(
-		request: GitTargetRequest | string,
+		request: (GitTargetRequest & { readonly fresh?: boolean }) | string,
 		signal?: AbortSignal,
 	): Promise<GitWorktreeListResult> {
-		const target = normalizeTarget(request, signal);
+		const fresh = typeof request !== 'string' && request.fresh === true;
+		return this.listWorktreesFrom(normalizeTarget(request, signal), {
+			raisedBy: fresh ? 'refresh' : 'request',
+			fresh,
+		});
+	}
+
+	private async listWorktreesFrom(
+		target: GitTargetRequest,
+		origin: MeasurementOrigin,
+	): Promise<GitWorktreeListResult> {
 		for (;;) {
-			const cached = this.cachedListing(target);
-			if (cached !== undefined) return cached;
+			if (!origin.fresh) {
+				const cached = this.cachedListing(target);
+				if (cached !== undefined) {
+					const serving = this.observationFor(target.projectId);
+					if (serving !== undefined) {
+						serving.changes.cachedListingsServed += 1;
+						this.armChangeFlush(serving);
+					}
+					return cached;
+				}
+			}
 			const pending = this.observationFor(target.projectId)?.measuring;
 			if (pending === undefined) break;
 			await pending.catch(() => undefined);
@@ -471,22 +565,65 @@ export class GitService {
 		}
 		const generation = this.projectGenerations.get(target.projectId);
 		const observation = this.observationFor(target.projectId);
+		// The listing the watches vouch for right now, to compare against what a
+		// forced measurement finds.
+		const vouched =
+			origin.fresh &&
+			observation !== undefined &&
+			this.observationTrusted(observation) &&
+			!observation.dirtyAll &&
+			observation.dirty.size === 0
+				? observation.listing
+				: undefined;
+		if (origin.fresh && observation !== undefined) observation.dirtyAll = true;
 		const claim =
 			observation === undefined ? undefined : this.claimDirty(observation);
+		// The changes counted so far are the ones this claim answers for. Any
+		// that arrive while it runs belong to the measurement after it.
+		const claimedChanges =
+			observation === undefined
+				? emptyChanges()
+				: this.takeChanges(observation);
+		const startedAt = Date.now();
 		const measurement = this.measureWorktrees(
 			target,
 			generation,
 			observation,
 			claim,
+			origin,
+			startedAt,
+			claimedChanges,
 		).catch((error: unknown) => {
-			if (observation !== undefined && claim !== undefined)
+			if (observation !== undefined && claim !== undefined) {
 				this.restoreDirty(observation, claim);
+				this.returnChanges(observation, claimedChanges);
+				this.report({
+					// Released or re-bound mid-measurement, which also aborts the
+					// observation's own Git commands, is not a failure to measure.
+					kind:
+						observation.closed ||
+						(error instanceof GitServiceError &&
+							error.code === 'invalid-project')
+							? 'measurement.abandoned'
+							: 'measurement.failed',
+					repository: this.diagnosticRepositoryId(observation.repositoryId),
+					raisedBy: origin.raisedBy,
+					claim: claim.all ? 'all' : 'scoped',
+					trusted: claim.trusted,
+					durationMs: Date.now() - startedAt,
+					restored: true,
+					error: reportedError(error),
+				});
+			}
 			throw error;
 		});
 		if (observation === undefined) return measurement;
 		observation.measuring = measurement;
 		try {
-			return await measurement;
+			const listing = await measurement;
+			if (vouched !== undefined)
+				this.reportCacheMismatch(observation, vouched, listing);
+			return listing;
 		} finally {
 			if (observation.measuring === measurement)
 				observation.measuring = undefined;
@@ -498,11 +635,25 @@ export class GitService {
 		generation: number | undefined,
 		observation: RepositoryObservation | undefined,
 		claim: DirtyClaim | undefined,
+		origin: MeasurementOrigin,
+		startedAt: number,
+		claimedChanges: ChangeCounters,
 	): Promise<GitWorktreeListResult> {
 		const discovery = await this.resolveDiscovery(target);
-		const unmeasured = (): void => {
-			if (observation !== undefined && claim !== undefined)
-				this.restoreDirty(observation, claim);
+		const unmeasured = (code: string, message: string): void => {
+			if (observation === undefined || claim === undefined) return;
+			this.restoreDirty(observation, claim);
+			this.returnChanges(observation, claimedChanges);
+			this.report({
+				kind: 'measurement.failed',
+				repository: this.diagnosticRepositoryId(observation.repositoryId),
+				raisedBy: origin.raisedBy,
+				claim: claim.all ? 'all' : 'scoped',
+				trusted: claim.trusted,
+				durationMs: Date.now() - startedAt,
+				restored: true,
+				error: { code, message },
+			});
 		};
 		const empty: GitWorktreeListResult = {
 			projectId: target.projectId,
@@ -515,7 +666,7 @@ export class GitService {
 			...(discovery.error === undefined ? {} : { error: discovery.error }),
 		};
 		if (discovery.state !== 'ready' || discovery.repositoryRoot === null) {
-			unmeasured();
+			unmeasured(discovery.state, 'repository discovery is not ready');
 			return empty;
 		}
 		// Listing is repository-scoped. The requested worktree may itself be a
@@ -527,7 +678,12 @@ export class GitService {
 			target.signal,
 		);
 		if (result.exitCode !== 0 || result.truncated) {
-			unmeasured();
+			unmeasured(
+				'command-error',
+				result.truncated
+					? 'Git worktree output exceeded the configured limit.'
+					: 'Git worktree list failed.',
+			);
 			return {
 				...empty,
 				state: 'command-error',
@@ -562,8 +718,10 @@ export class GitService {
 			observation !== undefined &&
 			claim !== undefined &&
 			observed === undefined
-		)
+		) {
 			this.restoreDirty(observation, claim);
+			this.returnChanges(observation, claimedChanges);
+		}
 		let newlyWatched = false;
 		if (observed !== undefined) {
 			// Watch every worktree before measuring it, so a change made while it
@@ -595,6 +753,7 @@ export class GitService {
 				: undefined;
 		const scopeTo =
 			watchedScope === undefined &&
+			!origin.fresh &&
 			!newlyWatched &&
 			target.worktreeId !== undefined &&
 			previous !== undefined
@@ -610,7 +769,12 @@ export class GitService {
 			observed === undefined ? [target.projectId] : [...observed.projects];
 		const remeasure = new Set<GitWorktreeId>();
 		const measured = new Map<GitWorktreeId, GitWorktreeSummary>();
-		for (const record of selected) {
+		const reported: GitObservationMeasuredWorktree[] = [];
+		let remeasuredCount = 0;
+		let carriedCount = 0;
+		let published = 0;
+		let suppressed = 0;
+		for (const [listIndex, record] of selected.entries()) {
 			// Released or re-bound: stop spawning Git for a binding that is gone.
 			if (!current())
 				throw new GitServiceError(
@@ -623,11 +787,17 @@ export class GitService {
 				discovery.repositoryId as GitRepositoryId,
 				canonicalPath,
 			);
+			const diagnostic = this.diagnosticWorktree(
+				id,
+				mainPath !== undefined && samePath(mainPath, record.path),
+				listIndex,
+			);
 			if (carry(id)) {
 				const carried = previous?.get(id);
 				if (carried !== undefined) {
 					summaries.push(carried);
 					measured.set(id, carried);
+					carriedCount += 1;
 					continue;
 				}
 				// No prior summary: this worktree is new since the last listing, so
@@ -732,9 +902,20 @@ export class GitService {
 			} satisfies GitWorktreeSummary;
 			summaries.push(summary);
 			measured.set(id, summary);
+			remeasuredCount += 1;
+			if (reported.length < MAX_REPORTED_WORKTREES)
+				reported.push({
+					...diagnostic,
+					ahead: aheadOfDefaultBranchCount,
+					additions: lineAdditions,
+					deletions: lineDeletions,
+					changedFiles: entries.length,
+				});
 			if (!mutating && current()) {
+				let publishedAny = false;
 				for (const projectId of publishTo)
-					this.publishStatusChange({
+					publishedAny =
+						this.publishStatusChange({
 						projectId,
 						repositoryId: discovery.repositoryId,
 						repositoryRoot: discovery.repositoryRoot,
@@ -746,7 +927,9 @@ export class GitService {
 						head: record.head,
 						bounded: statusBounded,
 						...(error === undefined ? {} : { error }),
-					});
+					}) || publishedAny;
+				if (publishedAny) published += 1;
+				else suppressed += 1;
 			}
 		}
 		const listing: GitWorktreeListResult = {
@@ -758,8 +941,23 @@ export class GitService {
 		};
 		if (!current()) {
 			// Released or re-bound while measuring: nothing here may be kept.
-			if (observed !== undefined && claim !== undefined)
+			if (observed !== undefined && claim !== undefined) {
 				this.restoreDirty(observed, claim);
+				this.returnChanges(observed, claimedChanges);
+				this.report({
+					kind: 'measurement.abandoned',
+					repository: this.diagnosticRepositoryId(observed.repositoryId),
+					raisedBy: origin.raisedBy,
+					claim: claim.all ? 'all' : 'scoped',
+					trusted: claim.trusted,
+					durationMs: Date.now() - startedAt,
+					restored: true,
+					error: {
+						code: 'invalid-project',
+						message: 'project was released or re-bound while measuring',
+					},
+				});
+			}
 			return listing;
 		}
 		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
@@ -771,6 +969,25 @@ export class GitService {
 				claim?.trusted === true && this.observationTrusted(observed)
 					? listing
 					: undefined;
+			if (claim !== undefined)
+				this.report({
+					kind: 'measurement.completed',
+					repository: this.diagnosticRepositoryId(observed.repositoryId),
+					raisedBy: origin.raisedBy,
+					claim: claim.all ? 'all' : 'scoped',
+					trusted: claim.trusted,
+					durationMs: Date.now() - startedAt,
+					remeasured: remeasuredCount,
+					carried: carriedCount,
+					worktrees: reported,
+					cached: observed.listing !== undefined,
+					published,
+					suppressed,
+					changes: claimedChanges,
+				});
+			// Changes that arrived meanwhile and invalidated nothing have no
+			// measurement coming to report them.
+			if (hasChanges(observed.changes)) this.armChangeFlush(observed);
 		}
 		return listing;
 	}
@@ -2252,7 +2469,9 @@ export class GitService {
 		);
 	}
 
-	private publishStatusChange(status: GitStatusResult): void {
+	/** Returns whether an event was published rather than suppressed as a
+	 *  repeat of the last one for this worktree. */
+	private publishStatusChange(status: GitStatusResult): boolean {
 		const key = `${status.projectId}\0${status.repositoryId ?? ''}\0${status.worktreeId ?? ''}`;
 		const fingerprint = JSON.stringify({
 			state: status.state,
@@ -2261,7 +2480,7 @@ export class GitService {
 			entries: status.entries,
 			bounded: status.bounded,
 		});
-		if (this.statusFingerprints.get(key) === fingerprint) return;
+		if (this.statusFingerprints.get(key) === fingerprint) return false;
 		this.statusFingerprints.set(key, fingerprint);
 		const event: GitStatusChangeEvent = Object.freeze({
 			revision: this.nextRevision(),
@@ -2277,6 +2496,7 @@ export class GitService {
 			bounded: status.bounded,
 		});
 		this.record(event);
+		return true;
 	}
 
 	private nextRevision(): number {
@@ -2338,6 +2558,9 @@ export class GitService {
 			repositoryRoot: binding.repositoryRoot,
 			projects: new Set([binding.projectId]),
 			watches: new Map(),
+			watchKinds: new Map(),
+			changes: emptyChanges(),
+			flushTimer: undefined,
 			schedule: createRefreshSchedule({
 				rampMs: this.refreshRampMs,
 				run: () => this.refreshObservation(observation),
@@ -2384,8 +2607,7 @@ export class GitService {
 	}
 
 	private stopObserving(projectId: string, binding: GitProjectBinding): void {
-		this.discoveryWatches.get(projectId)?.close();
-		this.discoveryWatches.delete(projectId);
+		this.closeDiscoveryWatch(projectId);
 		if (binding.repositoryId === null) return;
 		const observation = this.observations.get(binding.repositoryId);
 		if (observation === undefined) return;
@@ -2397,8 +2619,9 @@ export class GitService {
 		observation.closed = true;
 		observation.schedule.cancel();
 		observation.abort.abort();
-		for (const handle of observation.watches.values()) handle.close();
-		observation.watches.clear();
+		this.flushChanges(observation);
+		for (const path of [...observation.watches.keys()])
+			this.closeWatch(observation, path);
 		observation.listing = undefined;
 		if (this.observations.get(observation.repositoryId) === observation) {
 			this.observations.delete(observation.repositoryId);
@@ -2410,7 +2633,7 @@ export class GitService {
 	 *  appears in it; nothing else about it is observed. */
 	private watchForRepository(binding: GitProjectBinding): void {
 		const { projectId, projectRoot } = binding;
-		this.discoveryWatches.get(projectId)?.close();
+		this.closeDiscoveryWatch(projectId);
 		const handle = this.watcher.watch(projectRoot, {
 			recursive: false,
 			onChange: (entry) => {
@@ -2419,13 +2642,38 @@ export class GitService {
 				void this.rediscover(projectId, projectRoot);
 			},
 			// Without a watch the project is measured when a client asks.
-			onError: () => {
+			onError: (error) => {
 				if (this.discoveryWatches.get(projectId) !== handle) return;
-				handle.close();
-				this.discoveryWatches.delete(projectId);
+				this.report({
+					kind: 'watch.failed',
+					repository: null,
+					watch: 'discovery',
+					recursive: false,
+					error: reportedError(error),
+				});
+				this.closeDiscoveryWatch(projectId);
 			},
 		});
 		this.discoveryWatches.set(projectId, handle);
+		this.report({
+			kind: 'watch.opened',
+			repository: null,
+			watch: 'discovery',
+			recursive: false,
+		});
+	}
+
+	private closeDiscoveryWatch(projectId: string): void {
+		const handle = this.discoveryWatches.get(projectId);
+		if (handle === undefined) return;
+		handle.close();
+		this.discoveryWatches.delete(projectId);
+		this.report({
+			kind: 'watch.closed',
+			repository: null,
+			watch: 'discovery',
+			recursive: false,
+		});
 	}
 
 	private async rediscover(projectId: string, projectRoot: string) {
@@ -2461,13 +2709,14 @@ export class GitService {
 				resolve(observation.repositoryRoot, reported),
 			);
 		} catch (error) {
-			this.observationFailed(observation, error);
+			this.observationFailed(observation, error, 'git-directory', true);
 			return;
 		}
 		if (observation.closed || observation.unavailable) return;
-		this.addWatch(observation, commonDir, true, (entry) =>
-			attributeGitDirChange(entry, observation.layout),
-		);
+		this.addWatch(observation, commonDir, true, 'git-directory', (entry) => ({
+			scope: attributeGitDirChange(entry, observation.layout),
+			entryClass: classifyGitDirEntry(entry, observation.layout),
+		}));
 		observation.commonDir = commonDir;
 	}
 
@@ -2475,20 +2724,47 @@ export class GitService {
 		observation: RepositoryObservation,
 		path: string,
 		recursive: boolean,
-		attribute: (entry: string | null) => GitChangeScope,
+		kind: GitObservationWatchKind,
+		attribute: (entry: string | null) => {
+			scope: GitChangeScope;
+			entryClass: GitObservationEntryClass;
+		},
 	): void {
 		const handle = this.watcher.watch(path, {
 			recursive,
 			onChange: (entry) => {
 				if (observation.watches.get(path) !== handle) return;
-				this.observedChange(observation, attribute(entry));
+				const { scope, entryClass } = attribute(entry);
+				this.observedChange(observation, scope, entryClass);
 			},
 			onError: (error) => {
 				if (observation.watches.get(path) !== handle) return;
-				this.observationFailed(observation, error);
+				this.observationFailed(observation, error, kind, recursive);
 			},
 		});
 		observation.watches.set(path, handle);
+		observation.watchKinds.set(path, { kind, recursive });
+		this.report({
+			kind: 'watch.opened',
+			repository: this.diagnosticRepositoryId(observation.repositoryId),
+			watch: kind,
+			recursive,
+		});
+	}
+
+	private closeWatch(observation: RepositoryObservation, path: string): void {
+		const handle = observation.watches.get(path);
+		if (handle === undefined) return;
+		const described = observation.watchKinds.get(path);
+		handle.close();
+		observation.watches.delete(path);
+		observation.watchKinds.delete(path);
+		this.report({
+			kind: 'watch.closed',
+			repository: this.diagnosticRepositoryId(observation.repositoryId),
+			watch: described?.kind ?? 'working-tree',
+			recursive: described?.recursive ?? true,
+		});
 	}
 
 	/** Watch every working tree the layout names, and stop watching any that
@@ -2499,17 +2775,17 @@ export class GitService {
 		const added: string[] = [];
 		if (observation.closed || observation.unavailable) return added;
 		const wanted = new Set(workingTreeWatchRoots(observation.layout));
-		for (const [path, handle] of [...observation.watches]) {
+		for (const path of [...observation.watches.keys()]) {
 			if (path === observation.commonDir || wanted.has(path)) continue;
-			handle.close();
-			observation.watches.delete(path);
+			this.closeWatch(observation, path);
 		}
 		for (const root of wanted) {
 			if (observation.watches.has(root)) continue;
 			added.push(root);
-			this.addWatch(observation, root, true, (entry) =>
-				attributeWorkingTreeChange(root, entry, observation.layout),
-			);
+			this.addWatch(observation, root, true, 'working-tree', (entry) => ({
+				scope: attributeWorkingTreeChange(root, entry, observation.layout),
+				entryClass: 'working-tree',
+			}));
 		}
 		return added;
 	}
@@ -2517,8 +2793,14 @@ export class GitService {
 	private observedChange(
 		observation: RepositoryObservation,
 		scope: GitChangeScope,
+		entryClass: GitObservationEntryClass,
 	): void {
 		if (observation.closed || observation.unavailable) return;
+		const { byClass, byScope } = observation.changes;
+		const scoped = scopeName(scope);
+		byClass[entryClass] = (byClass[entryClass] ?? 0) + 1;
+		byScope[scoped] = (byScope[scoped] ?? 0) + 1;
+		this.armChangeFlush(observation);
 		if (scope.kind === 'ignore') return;
 		if (scope.kind === 'all') observation.dirtyAll = true;
 		else for (const id of scope.ids) observation.dirty.add(id);
@@ -2534,7 +2816,10 @@ export class GitService {
 		const [projectId] = observation.projects;
 		if (projectId === undefined) return;
 		observation.refreshing = true;
-		void this.worktrees({ projectId, signal: observation.abort.signal })
+		void this.listWorktreesFrom(
+			{ projectId, signal: observation.abort.signal },
+			{ raisedBy: 'watch', fresh: false },
+		)
 			.catch(() => undefined)
 			.finally(() => {
 				observation.refreshing = false;
@@ -2550,19 +2835,183 @@ export class GitService {
 	 */
 	private observationFailed(
 		observation: RepositoryObservation,
-		_error: unknown,
+		error: unknown,
+		kind: GitObservationWatchKind,
+		recursive: boolean,
 	): void {
 		if (observation.closed || observation.unavailable) return;
+		this.report({
+			kind: 'watch.failed',
+			repository: this.diagnosticRepositoryId(observation.repositoryId),
+			watch: kind,
+			recursive,
+			error: reportedError(error),
+		});
+		this.flushChanges(observation);
 		observation.unavailable = true;
 		observation.schedule.cancel();
-		for (const handle of observation.watches.values()) handle.close();
-		observation.watches.clear();
+		for (const path of [...observation.watches.keys()])
+			this.closeWatch(observation, path);
 		observation.listing = undefined;
 		observation.dirtyAll = true;
 		for (const projectId of observation.projects) {
 			const binding = this.bindings.get(projectId);
 			if (binding !== undefined) this.publishUnattributedChange(binding);
 		}
+	}
+
+	// ---- Observation reports ----------------------------------------------
+	// The host decides where these go; nothing here may change a Git result.
+
+	private report(report: GitObservationReport): void {
+		if (this.onObservation === undefined) return;
+		try {
+			this.onObservation(report);
+		} catch {
+			/* a failing observer cannot affect observation or measurement */
+		}
+	}
+
+	private diagnosticRepositoryId(repositoryId: string): string {
+		let id = this.diagnosticRepositoryIds.get(repositoryId);
+		if (id === undefined) {
+			id = `r${this.diagnosticRepositoryIds.size + 1}`;
+			this.diagnosticRepositoryIds.set(repositoryId, id);
+		}
+		return id;
+	}
+
+	private diagnosticWorktree(
+		worktreeId: string,
+		isMain: boolean,
+		listIndex: number,
+	): GitObservationWorktreeRef {
+		let known = this.diagnosticWorktrees.get(worktreeId);
+		if (known === undefined) {
+			known = {
+				id: `w${this.diagnosticWorktrees.size + 1}`,
+				role: 'linked',
+				listIndex,
+			};
+			this.diagnosticWorktrees.set(worktreeId, known);
+		}
+		known.role = isMain ? 'main' : 'linked';
+		known.listIndex = listIndex;
+		return { ...known };
+	}
+
+	private takeChanges(
+		observation: RepositoryObservation,
+	): GitObservationChangeSummary {
+		const taken = observation.changes;
+		observation.changes = emptyChanges();
+		if (observation.flushTimer !== undefined) {
+			clearTimeout(observation.flushTimer);
+			observation.flushTimer = undefined;
+		}
+		return taken;
+	}
+
+	/** Hand back the counts a measurement took but did not report. */
+	private returnChanges(
+		observation: RepositoryObservation,
+		returned: ChangeCounters,
+	): void {
+		const { byClass, byScope } = observation.changes;
+		for (const [entryClass, count] of Object.entries(returned.byClass)) {
+			const key = entryClass as GitObservationEntryClass;
+			byClass[key] = (byClass[key] ?? 0) + count;
+		}
+		for (const [scope, count] of Object.entries(returned.byScope)) {
+			const key = scope as GitObservationScope;
+			byScope[key] = (byScope[key] ?? 0) + count;
+		}
+		observation.changes.cachedListingsServed += returned.cachedListingsServed;
+		returned.byClass = {};
+		returned.byScope = {};
+		returned.cachedListingsServed = 0;
+	}
+
+	/** Report what was counted since the last report, when no measurement is
+	 *  coming to carry it. Armed only by a counted change or a cached listing,
+	 *  fires once, and runs no Git (ADR-0028). */
+	private armChangeFlush(observation: RepositoryObservation): void {
+		if (this.onObservation === undefined) return;
+		if (observation.flushTimer !== undefined || observation.closed) return;
+		observation.flushTimer = setTimeout(() => {
+			observation.flushTimer = undefined;
+			// A measurement that is running re-arms this when it completes, and
+			// one that is owed takes these counts with its claim.
+			if (
+				observation.measuring !== undefined ||
+				observation.dirtyAll ||
+				observation.dirty.size > 0
+			)
+				return;
+			this.flushChanges(observation);
+		}, this.observationFlushMs);
+		observation.flushTimer.unref?.();
+	}
+
+	private flushChanges(observation: RepositoryObservation): void {
+		if (!hasChanges(observation.changes)) {
+			this.takeChanges(observation);
+			return;
+		}
+		this.report({
+			kind: 'changes',
+			repository: this.diagnosticRepositoryId(observation.repositoryId),
+			changes: this.takeChanges(observation),
+		});
+	}
+
+	/** Name what a forced measurement found that the vouched-for cache did not
+	 *  have. Skipped when a change arrived meanwhile: that is an ordinary race,
+	 *  not a cache the watches wrongly called current. */
+	private reportCacheMismatch(
+		observation: RepositoryObservation,
+		vouched: GitWorktreeListResult,
+		measured: GitWorktreeListResult,
+	): void {
+		if (observation.dirtyAll || observation.dirty.size > 0) return;
+		// A listing that could not be measured says nothing about the cache.
+		if (measured.state !== 'ready') return;
+		const before = new Map(vouched.worktrees.map((entry) => [entry.id, entry]));
+		const differing: (GitObservationWorktreeRef & { fields: string[] })[] = [];
+		for (const [listIndex, after] of measured.worktrees.entries()) {
+			const was = before.get(after.id);
+			before.delete(after.id);
+			const fields: string[] = [];
+			if (was === undefined) fields.push('presence');
+			else {
+				if (was.head !== after.head) fields.push('head');
+				if (was.state !== after.state) fields.push('state');
+				if (was.aheadOfDefaultBranchCount !== after.aheadOfDefaultBranchCount)
+					fields.push('ahead');
+				if (was.lineAdditions !== after.lineAdditions)
+					fields.push('lineAdditions');
+				if (was.lineDeletions !== after.lineDeletions)
+					fields.push('lineDeletions');
+				if (was.entries.length !== after.entries.length)
+					fields.push('changedFiles');
+			}
+			if (fields.length > 0)
+				differing.push({
+					...this.diagnosticWorktree(after.id, after.isMain, listIndex),
+					fields,
+				});
+		}
+		for (const gone of before.values()) {
+			const known = this.diagnosticWorktrees.get(gone.id);
+			if (known !== undefined)
+				differing.push({ ...known, fields: ['presence'] });
+		}
+		if (differing.length === 0) return;
+		this.report({
+			kind: 'cache.mismatch',
+			repository: this.diagnosticRepositoryId(observation.repositoryId),
+			worktrees: differing.slice(0, MAX_REPORTED_WORKTREES),
+		});
 	}
 
 	private observationTrusted(observation: RepositoryObservation): boolean {

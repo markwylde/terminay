@@ -84,6 +84,9 @@ export interface GitWorktreeListRequest {
 	 *  re-measured. Omitted for a first load or an unattributed refresh, which
 	 *  measures every worktree. */
 	readonly worktreeId?: GitWorktreeId;
+	/** The user asked for this listing explicitly: measure every worktree
+	 *  whatever the watches report, never answer from the cached listing. */
+	readonly fresh?: boolean;
 }
 
 export interface GitOpenTerminalRequest extends GitWorktreeRef {
@@ -233,6 +236,7 @@ export class ServerGitAdapter {
 			...(request.worktreeId === undefined
 				? {}
 				: { worktreeId: request.worktreeId }),
+			...(request.fresh === true ? { fresh: true } : {}),
 		});
 		return boundGitQueryResult({
 			...(this.withInsights(result) as Record<string, JsonValue>),
@@ -763,6 +767,9 @@ export class ServerGitAdapter {
 			...(stringValue(payload.worktreeId) === undefined
 				? {}
 				: { worktreeId: stringValue(payload.worktreeId) }),
+			...(optionalBoolean(payload.fresh, 'fresh') === true
+				? { fresh: true }
+				: {}),
 		};
 	}
 
@@ -956,6 +963,12 @@ function payloadValue(
 }
 function stringValue(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
+}
+function optionalBoolean(value: unknown, name: string): boolean | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== 'boolean')
+		throw new GitServiceError('invalid-project', `${name} is invalid`);
+	return value;
 }
 function requiredId(value: unknown, name: string): string {
 	if (typeof value !== 'string' || !ID_PATTERN.test(value))
