@@ -73,8 +73,13 @@ export class TerminayGitClient {
     this.host = createHostCapabilityProvider(options.capabilities ?? {});
   }
 
-  list(request: { readonly projectId?: string; readonly repositoryId?: string; readonly worktreeId?: string } = {}, options: QueryOptions = {}): Promise<JsonValue> {
-    return this.transport.query(GIT_CLIENT_OPERATIONS.listWorktrees, boundedObject(request, "Git worktree list"), options);
+  /** `fresh` asks the server to measure every worktree rather than answer
+   *  from its cached listing; set it only for a listing the user asked for. */
+  list(request: { readonly projectId?: string; readonly repositoryId?: string; readonly worktreeId?: string; readonly fresh?: boolean } = {}, options: QueryOptions = {}): Promise<JsonValue> {
+    const { fresh, ...identities } = request;
+    if (fresh !== undefined && typeof fresh !== "boolean") throw new TypeError("fresh is invalid");
+    const payload = boundedObject(identities, "Git worktree list") as Record<string, JsonValue>;
+    return this.transport.query(GIT_CLIENT_OPERATIONS.listWorktrees, fresh === true ? { ...payload, fresh: true } : payload, options);
   }
 
   subscribeStatusChanges(listener: (event: GitStatusChangeEvent) => void, onResync?: () => void): Promise<() => void> {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
@@ -415,6 +415,85 @@ test('git sidebar switches project root before opening a file from another workt
   // An untracked Markdown file has no diff, so it opens as a document.
   await expect(mainWindow.locator('.documentation-editor')).toContainText('Opened safely.', { timeout: 6000 })
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
+})
+
+test('git sidebar drops a linked worktree delta when the default branch absorbs it, and diagnostics record why', async ({
+  createWorkspace,
+  mainWindow,
+  userDataDir,
+}) => {
+  // A branch is merged and the main checkout catches up. Nothing touches the
+  // linked worktree, so only the default-branch move can clear its delta.
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-default-branch-move',
+    seed: { files: { 'README.md': 'main worktree\n', '.gitignore': '.claude/\n' } },
+  })
+  const linkedRoot = join(mainRepo.rootDir, '.claude', 'worktrees', 'merged-feature')
+  const git = (args: string[], cwd = mainRepo.rootDir) => execFileAsync('git', args, { cwd })
+
+  await git(['init', '-b', 'main'])
+  await git(['config', 'user.name', 'Terminay E2E'])
+  await git(['config', 'user.email', 'terminay@example.com'])
+  await git(['add', '.'])
+  await git(['commit', '-m', 'initial'])
+  await git(['worktree', 'add', '-b', 'merged-feature', linkedRoot])
+  await writeFile(join(linkedRoot, 'feature.txt'), '1\n2\n3\n', 'utf8')
+  await git(['add', '.'], linkedRoot)
+  await git(['commit', '-m', 'feature'], linkedRoot)
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const linked = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'merged-feature' })
+  await expect(linked.locator('.worktrees-panel__delta--additions')).toHaveText('+3', { timeout: 10_000 })
+
+  await git(['merge', '--ff-only', 'merged-feature'])
+  await expect(linked.locator('.worktrees-panel__delta--additions')).toHaveCount(0, { timeout: 15_000 })
+
+  // The user's own reload is measured rather than answered from the cache.
+  await mainWindow.getByRole('button', { name: 'Reload explorer' }).click()
+
+  type Fields = Record<string, unknown>
+  const measurements = async () =>
+    (await readDiagnosticEvents(userDataDir))
+      .filter((event) => event.event === 'local-server.git.measurement.completed')
+      .map((event) => event.fields as Fields)
+  await expect
+    .poll(async () => (await measurements()).some((fields) => fields.raisedBy === 'refresh'), { timeout: 10_000 })
+    .toBe(true)
+
+  const events = await readDiagnosticEvents(userDataDir)
+  const completed = await measurements()
+  const moved = completed.find(
+    (fields) => ((fields.changes as { byClass: Record<string, number> }).byClass['default-branch-ref'] ?? 0) > 0,
+  )
+  expect(moved, 'the default-branch move was recorded').toBeDefined()
+  // Whichever asks first takes the claim: the watch's own refresh, or the
+  // pane's listing raised by the main worktree's status event.
+  expect(moved).toMatchObject({ claim: 'all', carried: 0 })
+  expect(['watch', 'request']).toContain(moved?.raisedBy)
+  expect(events.filter((event) => event.event === 'local-server.git.watch.opened').length).toBeGreaterThanOrEqual(2)
+  expect(events.filter((event) => event.event === 'local-server.git.watch.failed')).toHaveLength(0)
+  expect(events.filter((event) => event.event === 'local-server.git.cache.mismatch')).toHaveLength(0)
+
+  const sync = events.filter(
+    (event) => event.event === 'renderer.console' && event.message?.startsWith('[terminay] git.pane.sync '),
+  )
+  expect(sync.length).toBeGreaterThan(0)
+  // The reload changed nothing on screen, so the pane counts it rather than
+  // writing it; the applied synchronisations are what it records.
+  expect(sync.some((event) => event.message?.includes('"outcome":"applied"'))).toBe(true)
+
+  // Neither side names the project, the worktree, or the branch.
+  const recorded = JSON.stringify([
+    ...events.filter((event) => event.event.startsWith('local-server.git.')),
+    ...sync,
+  ])
+  for (const value of [mainRepo.rootDir, 'merged-feature', 'git-pane-default-branch-move', 'feature.txt'])
+    expect(recorded).not.toContain(value)
 })
 
 test('git sidebar switches project root before deleting a folder from another worktree', async ({

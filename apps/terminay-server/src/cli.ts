@@ -616,6 +616,13 @@ async function createServerComposition(
 			maxWorktrees: 128,
 			maxPathBytes: 4 * 1024,
 		},
+		// The service log is this server's own; reports name repositories and
+		// worktrees by process-local ids and carry no path or ref.
+		onObservation: (report) => {
+			process.stderr.write(
+				`[terminay-server] git observation ${JSON.stringify(report)}\n`,
+			);
+		},
 	});
 	const files = createDefaultProjectFileServices(
 		options.serverId,

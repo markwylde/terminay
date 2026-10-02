@@ -467,7 +467,128 @@ export interface GitServiceOptions {
 	/** The ramp that damps refreshes after watch events. Defaults to the shared
 	 *  `REFRESH_RAMP_MS`. */
 	readonly refreshRampMs?: readonly number[];
+	/**
+	 * Receives the observation lifecycle: watches, attributed changes,
+	 * measurements, and cache mismatches. The host decides where reports go;
+	 * the service writes no log. A throwing observer changes no Git result.
+	 */
+	readonly onObservation?: (report: GitObservationReport) => void;
+	/** How long counted changes that raised no measurement wait before they
+	 *  are reported on their own. Defaults to five seconds. */
+	readonly observationFlushMs?: number;
 }
+
+/** What changed, reduced to a fixed vocabulary. Never a path or a ref name. */
+export type GitObservationEntryClass =
+	| 'head'
+	| 'index'
+	| 'default-branch-ref'
+	| 'branch-ref'
+	| 'remote-ref'
+	| 'packed-refs'
+	| 'config'
+	| 'worktree-registry'
+	| 'linked-worktree-state'
+	| 'lock'
+	| 'inert'
+	| 'working-tree'
+	| 'unnamed'
+	| 'other';
+
+export type GitObservationScope = 'ignore' | 'worktrees' | 'all' | 'registry';
+
+export type GitObservationWatchKind =
+	| 'git-directory'
+	| 'working-tree'
+	| 'discovery';
+
+/** Changes observed since the previous report, by class and by what they
+ *  invalidated, plus the listings answered from cache in that time. */
+export interface GitObservationChangeSummary {
+	readonly byClass: Readonly<Partial<Record<GitObservationEntryClass, number>>>;
+	readonly byScope: Readonly<Partial<Record<GitObservationScope, number>>>;
+	readonly cachedListingsServed: number;
+}
+
+/** A worktree named by its process-local diagnostic id. `listIndex` is its
+ *  position in `git worktree list`. */
+export interface GitObservationWorktreeRef {
+	readonly id: string;
+	readonly role: 'main' | 'linked';
+	readonly listIndex: number;
+}
+
+export interface GitObservationMeasuredWorktree
+	extends GitObservationWorktreeRef {
+	readonly ahead: number | null;
+	readonly additions: number | null;
+	readonly deletions: number | null;
+	readonly changedFiles: number;
+}
+
+export type GitObservationRaisedBy = 'watch' | 'request' | 'refresh';
+
+interface GitObservationMeasurementBase {
+	/** Process-local diagnostic id of the repository. */
+	readonly repository: string;
+	readonly raisedBy: GitObservationRaisedBy;
+	readonly claim: 'all' | 'scoped';
+	/** Whether the cache could be trusted when the measurement began. */
+	readonly trusted: boolean;
+	readonly durationMs: number;
+}
+
+export type GitObservationReport =
+	| {
+			readonly kind: 'watch.opened' | 'watch.closed';
+			/** Null for a discovery watch on a root that is not a repository. */
+			readonly repository: string | null;
+			readonly watch: GitObservationWatchKind;
+			readonly recursive: boolean;
+	  }
+	| {
+			readonly kind: 'watch.failed';
+			readonly repository: string | null;
+			readonly watch: GitObservationWatchKind;
+			readonly recursive: boolean;
+			readonly error: {
+				readonly code: string | null;
+				readonly message: string;
+			};
+	  }
+	| {
+			readonly kind: 'changes';
+			readonly repository: string;
+			readonly changes: GitObservationChangeSummary;
+	  }
+	| (GitObservationMeasurementBase & {
+			readonly kind: 'measurement.completed';
+			readonly remeasured: number;
+			readonly carried: number;
+			/** The re-measured worktrees, bounded. */
+			readonly worktrees: readonly GitObservationMeasuredWorktree[];
+			/** Whether the result became the cached listing. */
+			readonly cached: boolean;
+			readonly published: number;
+			readonly suppressed: number;
+			readonly changes: GitObservationChangeSummary;
+	  })
+	| (GitObservationMeasurementBase & {
+			readonly kind: 'measurement.failed' | 'measurement.abandoned';
+			/** Whether the claimed invalidations were handed back. */
+			readonly restored: boolean;
+			readonly error: {
+				readonly code: string | null;
+				readonly message: string;
+			};
+	  })
+	| {
+			readonly kind: 'cache.mismatch';
+			readonly repository: string;
+			readonly worktrees: readonly (GitObservationWorktreeRef & {
+				readonly fields: readonly string[];
+			})[];
+	  };
 
 /** One live filesystem watch. `close` is idempotent. */
 export interface GitWatchHandle {

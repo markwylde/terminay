@@ -157,6 +157,7 @@ import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
+import { gitObservationDiagnosticEvent } from './diagnostics/gitObservation';
 import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
 import { DesktopPerformanceLogging } from './diagnostics/performance';
 import { DesktopRuntimeMetrics } from './diagnostics/runtimeMetrics';
@@ -1817,6 +1818,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				},
 				{ channel: 'lifecycle' },
 			);
+		},
+		onGitObservation: (report) => {
+			void desktopDiagnostics.record(gitObservationDiagnosticEvent(report), {
+				channel: 'lifecycle',
+			});
 		},
 		// These callbacks run only after the server has accepted the operation.
 		// Recording and remote bookkeeping must never be driven by renderer intent.
