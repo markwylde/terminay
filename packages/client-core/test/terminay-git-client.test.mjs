@@ -46,6 +46,20 @@ test("TerminayGitClient sends opaque references and reviewed Quick Push data", a
   assert.equal(fake.calls[6][2].targetBranch, "main");
 });
 
+test("TerminayGitClient asks for a measured listing only when fresh is true", async () => {
+  const fake = transport();
+  const client = new TerminayGitClient(fake, { capabilities: {} });
+  await client.list({ projectId: "project-a" });
+  await client.list({ projectId: "project-a", fresh: false });
+  await client.list({ projectId: "project-a", fresh: true });
+  assert.deepEqual(
+    fake.calls.map(([, , payload]) => payload),
+    [{ projectId: "project-a" }, { projectId: "project-a" }, { projectId: "project-a", fresh: true }],
+  );
+  assert.throws(() => client.list({ projectId: "project-a", fresh: "true" }), /fresh is invalid/u);
+  assert.equal(fake.calls.length, 3);
+});
+
 test("TerminayGitClient sends clean-only removal as its own operation and requires the reviewed HEAD", async () => {
   const fake = transport();
   const client = new TerminayGitClient(fake, { capabilities: {} });

@@ -2629,13 +2629,13 @@ const ProjectWorkspace = forwardRef<
 					terminalPanelClientContext?.workspaceSnapshotStore;
 				if (workspaceSnapshotStore === undefined) {
 					onUpdateProject(project.id, { rootFolder: nextRootFolder });
-					void refreshGitStatusesForRoot(nextRootFolder, true);
+					void refreshGitStatusesForRoot(nextRootFolder, true, undefined, 'root');
 				} else {
 					const committed = await workspaceSnapshotStore.setProjectRoot({
 						projectId: project.id,
 						root: nextRootFolder,
 					});
-					void refreshGitStatusesForRoot(committed.root, true);
+					void refreshGitStatusesForRoot(committed.root, true, undefined, 'root');
 				}
 				setErrorText(null);
 				setIsMacroLauncherOpen(false);
@@ -4631,7 +4631,18 @@ const ProjectWorkspace = forwardRef<
 						<button
 							type="button"
 							className="sidebar-pane__action-button"
-							onClick={refreshFileExplorerTree}
+							onClick={() => {
+								refreshFileExplorerTree();
+								// The user asked: measure Git rather than trust the
+								// server's cached listing.
+								if (project.rootFolder)
+									void refreshGitStatusesForRoot(
+										project.rootFolder,
+										true,
+										undefined,
+										'refresh',
+									);
+							}}
 							aria-label="Reload explorer"
 							title="Reload explorer"
 						>

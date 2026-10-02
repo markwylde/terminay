@@ -1,5 +1,9 @@
 import { isAbsolute, relative, resolve } from 'node:path';
-import type { GitWorktreeId } from './types.js';
+import type {
+	GitObservationEntryClass,
+	GitObservationScope,
+	GitWorktreeId,
+} from './types.js';
 
 /**
  * What a watch event invalidates. `all` re-measures every worktree; `registry`
@@ -105,6 +109,52 @@ export function attributeGitDirChange(
 	// Remaining top-level state (HEAD, index, ORIG_HEAD, MERGE_HEAD, rebase
 	// directories, …) belongs to the main worktree.
 	return layout.mainWorktreeId === null ? ALL : only([layout.mainWorktreeId]);
+}
+
+/**
+ * Name the kind of entry that changed inside the common Git directory, for
+ * diagnostics. Mirrors `attributeGitDirChange` branch for branch, and returns
+ * a class from a fixed vocabulary rather than the path or the ref name.
+ */
+export function classifyGitDirEntry(
+	relativePath: string | null,
+	layout: ObservedRepositoryLayout,
+): GitObservationEntryClass {
+	if (relativePath === null) return 'unnamed';
+	const parts = segments(relativePath);
+	if (parts.length === 0) return 'unnamed';
+	if (isLockFile(parts)) return 'lock';
+	const [head = '', ...rest] = parts;
+	if (INERT_GIT_DIR_ENTRIES.has(head)) return 'inert';
+	if (head === 'packed-refs') return 'packed-refs';
+	if (head === 'config') return 'config';
+	if (head === 'refs') {
+		if (rest[0] === 'tags' || rest[0] === 'stash') return 'inert';
+		if (rest[0] === 'remotes') return 'remote-ref';
+		if (rest[0] !== 'heads' || rest.length < 2) return 'other';
+		return rest.slice(1).join('/') === layout.defaultBranch
+			? 'default-branch-ref'
+			: 'branch-ref';
+	}
+	if (head === 'worktrees') {
+		if (rest.length <= 1) return 'worktree-registry';
+		const [name, entry = ''] = rest;
+		if (INERT_GIT_DIR_ENTRIES.has(entry)) return 'inert';
+		if (!layout.worktrees.some((worktree) => worktree.gitDirName === name))
+			return 'worktree-registry';
+		if (entry === 'gitdir' || entry === 'locked' || entry === 'prunable')
+			return 'worktree-registry';
+		return 'linked-worktree-state';
+	}
+	if (head === 'HEAD') return 'head';
+	if (head === 'index') return 'index';
+	return 'other';
+}
+
+/** The diagnostic name of a scope. */
+export function scopeName(scope: GitChangeScope): GitObservationScope {
+	if (scope.kind === 'all') return scope.registry ? 'registry' : 'all';
+	return scope.kind;
 }
 
 function isWithin(root: string, candidate: string): boolean {
