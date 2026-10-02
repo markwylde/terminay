@@ -12,7 +12,7 @@ function packageJson(version) {
 }
 
 class UpgradeNpm {
-  npmVersion = "12.0.2";
+  npmVersion = "12.2.0";
   async resolve(packageName, version) { return { packageName, version, integrity: INTEGRITY, tarballUrl: `https://registry.npmjs.org/${packageName}/-/${packageName}-${version}.tgz`, manifestMetadata: packageJson(version).terminay }; }
   async materialize(resolution, root) {
     const packageRoot = join(root, "node_modules", resolution.packageName);

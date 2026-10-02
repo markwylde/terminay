@@ -31,7 +31,7 @@ class BuiltIns {
 }
 
 class Npm {
-  npmVersion = "12.0.2";
+  npmVersion = "12.2.0";
   async resolve(packageName, selector) { assert.equal(packageName, PACKAGE); const version = selector === "latest" ? "2.0.0" : selector; return { packageName, version, integrity: INTEGRITY, tarballUrl: `https://registry.npmjs.org/${PACKAGE}/-/${PACKAGE}-${version}.tgz`, manifestMetadata: manifest() }; }
   async materialize(resolution, root) {
     const value = tree(resolution.version);
