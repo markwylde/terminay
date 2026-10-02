@@ -28,7 +28,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0001](./0001-pinned-node-runtime-baseline.md) | Pin the Node runtime, toolchain, and compile targets across every lane | accepted | 2026-07-27 |
+| [0001](./0001-pinned-node-runtime-baseline.md) | Pin the Node runtime, toolchain, and compile targets across every lane | accepted (superseded by 0033) | 2026-07-27 |
 | [0002](./0002-sqlite-state-repository.md) | Use SQLite through `node:sqlite` for the server state repository | accepted | 2026-07-27 |
 | [0003](./0003-vault-interface-and-key-protectors.md) | Hold server secrets in a vault with AES-256-GCM entries and platform key protectors | accepted | 2026-07-27 |
 | [0004](./0004-node-pty-and-supported-distribution-matrix.md) | Keep `node-pty` with one supervised child per PTY, and declare a bounded distribution matrix | accepted | 2026-07-27 |
@@ -59,3 +59,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0029](./0029-worktree-properties-are-host-owned-typed-facts.md) | Extensions publish typed worktree facts; Terminay renders them, and an approved poll keeps forge state fresh | accepted | 2026-09-24 |
 | [0030](./0030-automations-run-in-a-server-owned-space-with-workspace-scoped-mcp.md) | Automations run in a server-owned terminal space outside every project, and only that space holds workspace-scoped MCP | accepted (superseded by 0031) | 2026-09-24 |
 | [0031](./0031-mcp-authority-is-scope-times-user-permission-policy.md) | MCP authority is capability scope combined with a user permission policy, and MCP may manage automations behind it | accepted, supersedes 0030 | 2026-09-27 |
+| [0033](./0033-pinned-node-runtime-baseline-on-npm-12-2.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.0 | accepted, supersedes 0001 | 2026-10-02 |

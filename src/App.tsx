@@ -61,10 +61,10 @@ import {
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
+	aggregateAgentStatusForTerminal,
 	EMPTY_AGENT_STATUS_SNAPSHOT,
 	selectLiveAgentStatusEntries,
 	selectLiveAgentStatusesForProject,
-	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
 import {
 	AgentsSidebar,
@@ -652,42 +652,6 @@ function serverActivityEvaluation(
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
-}
-
-type AggregatedAgentStatus = {
-	entries: readonly AgentStatusEntry[];
-	state: AgentState;
-	unread: boolean;
-};
-
-function aggregateAgentStatusForTerminal(
-	snapshot: AgentStatusSnapshot,
-	terminalSessionId: string,
-): AggregatedAgentStatus | null {
-	const entries = selectLiveAgentStatusesForTerminal(
-		snapshot,
-		terminalSessionId,
-	);
-	if (entries.length === 0) {
-		return null;
-	}
-
-	let state: AgentState = 'idle';
-	if (entries.some((entry) => entry.state === 'blocked')) {
-		state = 'blocked';
-	} else if (entries.some((entry) => entry.state === 'waiting')) {
-		state = 'waiting';
-	} else if (entries.some((entry) => entry.state === 'working')) {
-		state = 'working';
-	} else if (entries.some((entry) => entry.state === 'done')) {
-		state = 'done';
-	}
-
-	return {
-		entries,
-		state,
-		unread: entries.some((entry) => entry.unread),
-	};
 }
 
 function isAgentAttentionState(state: AgentState): boolean {

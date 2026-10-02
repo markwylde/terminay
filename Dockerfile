@@ -4,7 +4,7 @@ FROM node:24.15.0-bookworm-slim AS build
 
 WORKDIR /workspace
 
-RUN npm install --global npm@12.0.2
+RUN npm install --global npm@12.2.0
 
 # Keep OS toolchain and npm dependency installation ahead of source copies so
 # ordinary code edits do not invalidate the slow apt/npm layers.

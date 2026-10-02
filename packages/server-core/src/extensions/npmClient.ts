@@ -80,7 +80,7 @@ export class NpmCliRegistryClient
 {
 	readonly npmVersion: string;
 	constructor(private readonly options: NpmCliOptions) {
-		this.npmVersion = options.npmVersion ?? '12.0.2';
+		this.npmVersion = options.npmVersion ?? '12.2.0';
 	}
 
 	async resolve(

@@ -492,6 +492,45 @@ export function selectLiveAgentStatusesForTerminal(
 	);
 }
 
+export type TerminalAgentStatusAggregate = {
+	state: AgentState;
+	unread: boolean;
+};
+
+/**
+ * The status a terminal's tab, project tab, and header badge present: the
+ * live roots bound to the terminal, by priority. Children never contribute,
+ * so a child left working cannot hold a finished root's terminal at working.
+ */
+export function aggregateAgentStatusForTerminal(
+	snapshot: AgentStatusSnapshot,
+	activationTerminalSessionId: string,
+): TerminalAgentStatusAggregate | null {
+	const roots = selectLiveAgentStatusesForTerminal(
+		snapshot,
+		activationTerminalSessionId,
+	).filter((entry) => entry.kind === 'root');
+	if (roots.length === 0) {
+		return null;
+	}
+
+	let state: AgentState = 'idle';
+	if (roots.some((entry) => entry.state === 'blocked')) {
+		state = 'blocked';
+	} else if (roots.some((entry) => entry.state === 'waiting')) {
+		state = 'waiting';
+	} else if (roots.some((entry) => entry.state === 'working')) {
+		state = 'working';
+	} else if (roots.some((entry) => entry.state === 'done')) {
+		state = 'done';
+	}
+
+	return {
+		state,
+		unread: roots.some((entry) => entry.unread),
+	};
+}
+
 /**
  * Live entries that belong to one project: every root the server scoped to
  * the project by directory or worktree, every root bound to one of the
