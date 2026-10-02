@@ -48,7 +48,8 @@ const isReplayableHostEvent = (
 	event.event.type === 'workspace.drag-state' ||
 	event.event.type === 'window.fullscreen-state' ||
 	event.event.type === 'device.settings.changed' ||
-	event.event.type === 'diagnostics.performance-logging.changed';
+	event.event.type === 'diagnostics.performance-logging.changed' ||
+	event.event.type === 'connection.pairing-progress';
 let hostEventsSubscribed = false;
 const deliverEvent = (
 	listener: (
@@ -199,7 +200,10 @@ type ConnectionEndpoint = {
 	readonly listeners: Set<(frame: Uint8Array | null) => void>;
 };
 const connectionEndpoints = new Map<string, ConnectionEndpoint>();
-const connectionWaiters = new Map<string, Set<(endpoint: ConnectionEndpoint) => void>>();
+const connectionWaiters = new Map<
+	string,
+	Set<(endpoint: ConnectionEndpoint) => void>
+>();
 const CONNECTION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 const closeConnectionEndpoint = (endpoint: ConnectionEndpoint) => {
@@ -214,47 +218,50 @@ const closeConnectionEndpoint = (endpoint: ConnectionEndpoint) => {
 	}
 };
 
-ipcRenderer.on('server-ui-host:connection-endpoint', (event, payload: unknown) => {
-	const port = event.ports[0];
-	if (!port) return;
-	const record = payload as { connectionId?: unknown; serverId?: unknown };
-	if (
-		typeof record?.connectionId !== 'string' ||
-		!CONNECTION_ID.test(record.connectionId) ||
-		typeof record.serverId !== 'string' ||
-		!CONNECTION_ID.test(record.serverId)
-	) {
-		port.close();
-		return;
-	}
-	const connectionId = record.connectionId;
-	const serverId = record.serverId;
-	const existing = connectionEndpoints.get(connectionId);
-	if (existing !== undefined) closeConnectionEndpoint(existing);
-	const endpoint: ConnectionEndpoint = {
-		connectionId,
-		serverId,
-		port,
-		listeners: new Set(),
-	};
-	connectionEndpoints.set(connectionId, endpoint);
-	port.onmessage = (message) => {
-		try {
-			const packet = parseTerminayHostBytePacket(message.data, serverId);
-			for (const listener of [...endpoint.listeners]) listener(packet.frame);
-		} catch {
-			for (const listener of [...endpoint.listeners]) listener(null);
+ipcRenderer.on(
+	'server-ui-host:connection-endpoint',
+	(event, payload: unknown) => {
+		const port = event.ports[0];
+		if (!port) return;
+		const record = payload as { connectionId?: unknown; serverId?: unknown };
+		if (
+			typeof record?.connectionId !== 'string' ||
+			!CONNECTION_ID.test(record.connectionId) ||
+			typeof record.serverId !== 'string' ||
+			!CONNECTION_ID.test(record.serverId)
+		) {
+			port.close();
+			return;
 		}
-	};
-	port.onmessageerror = () => {
-		for (const listener of [...endpoint.listeners]) listener(null);
-	};
-	port.start();
-	const waiters = connectionWaiters.get(connectionId);
-	if (waiters === undefined) return;
-	connectionWaiters.delete(connectionId);
-	for (const resolve of waiters) resolve(endpoint);
-});
+		const connectionId = record.connectionId;
+		const serverId = record.serverId;
+		const existing = connectionEndpoints.get(connectionId);
+		if (existing !== undefined) closeConnectionEndpoint(existing);
+		const endpoint: ConnectionEndpoint = {
+			connectionId,
+			serverId,
+			port,
+			listeners: new Set(),
+		};
+		connectionEndpoints.set(connectionId, endpoint);
+		port.onmessage = (message) => {
+			try {
+				const packet = parseTerminayHostBytePacket(message.data, serverId);
+				for (const listener of [...endpoint.listeners]) listener(packet.frame);
+			} catch {
+				for (const listener of [...endpoint.listeners]) listener(null);
+			}
+		};
+		port.onmessageerror = () => {
+			for (const listener of [...endpoint.listeners]) listener(null);
+		};
+		port.start();
+		const waiters = connectionWaiters.get(connectionId);
+		if (waiters === undefined) return;
+		connectionWaiters.delete(connectionId);
+		for (const resolve of waiters) resolve(endpoint);
+	},
+);
 
 const waitForConnectionEndpoint = (
 	connectionId: string,

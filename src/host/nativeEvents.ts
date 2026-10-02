@@ -1,4 +1,7 @@
-import type { TerminayHostEvent } from '@terminay/protocol';
+import type {
+	TerminayHostEvent,
+	TerminayPairingProgressState,
+} from '@terminay/protocol';
 
 type NativeEventBridge = Readonly<{
 	subscribeEvent(
@@ -100,7 +103,12 @@ export function subscribeDesktopPerformanceSnapshot(
  * renders the code itself. */
 export function subscribePairingApproval(
 	listener: (
-		approval: Readonly<{ deviceName: string; matchCode: string; expiresAt: string }>,
+		approval: Readonly<{
+			attemptId: string;
+			deviceName: string;
+			matchCode: string;
+			expiresAt: string;
+		}>,
 	) => void,
 ): () => void {
 	if (typeof window === 'undefined') return () => undefined;
@@ -109,10 +117,31 @@ export function subscribePairingApproval(
 	return host.subscribeEvent((message) => {
 		if (message.event.type === 'connection.pairing-approval') {
 			listener({
+				attemptId: message.event.attemptId,
 				deviceName: message.event.deviceName,
 				matchCode: message.event.matchCode,
 				expiresAt: message.event.expiresAt,
 			});
 		}
+	});
+}
+
+export function subscribePairingProgress(
+	listener: (
+		progress: Readonly<{
+			attemptId: string;
+			state: TerminayPairingProgressState;
+		}>,
+	) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'connection.pairing-progress')
+			listener({
+				attemptId: message.event.attemptId,
+				state: message.event.state,
+			});
 	});
 }

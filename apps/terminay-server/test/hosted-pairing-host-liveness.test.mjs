@@ -9,6 +9,42 @@ import {
 	REQUIRED_LANES,
 	requiredLaneClosed,
 } from '../src/remote/hostedPeerLifecycle.ts';
+import { createPairingOperationQueue } from '../src/remote/pairingOperationQueue.ts';
+
+test('shared pairing rotation operations run one at a time across exposure modes', async () => {
+	const queue = createPairingOperationQueue();
+	const order = [];
+	let releaseFirst;
+	const first = queue.run(async () => {
+		order.push('approval-start');
+		await new Promise((resolve) => {
+			releaseFirst = resolve;
+		});
+		order.push('approval-finish');
+	});
+	const second = queue.run(async () => {
+		order.push('qr-rotation');
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(order, ['approval-start']);
+	releaseFirst();
+	await Promise.all([first, second]);
+	assert.deepEqual(order, ['approval-start', 'approval-finish', 'qr-rotation']);
+});
+
+test('standalone exposure hosts serialize the full refresh through relay registration', async () => {
+	const cli = await readFile(
+		new URL('../src/cli.ts', import.meta.url),
+		'utf8',
+	);
+	const host = await readFile(
+		new URL('../src/remote/hostedPairingHost.ts', import.meta.url),
+		'utf8',
+	);
+	assert.match(cli, /serializePairingRefresh: \(operation\) =>\s*pairingRoomOperations\.run\(operation\)/u);
+	assert.match(host, /options\.serializePairingRefresh\(\(\) => refreshPairingNow\(cause\)\)/u);
+	assert.match(host, /await registerPairing\(currentHandoff\)/u);
+});
 
 test('one device holds one live peer, and a rejoin retires the peer it replaces', async () => {
 	const order = [];
@@ -72,10 +108,12 @@ test('closing the host releases every live peer exactly once', async () => {
 });
 
 test('a required lane hangs up only after it has actually opened', () => {
-	assert.deepEqual(
-		[...REQUIRED_LANES].sort(),
-		['application', 'assets', 'control', 'terminal'],
-	);
+	assert.deepEqual([...REQUIRED_LANES].sort(), [
+		'application',
+		'assets',
+		'control',
+		'terminal',
+	]);
 	// Handshake ordering is not a delivery failure: a lane still negotiating
 	// must never tear down the generation that is being established.
 	assert.equal(requiredLaneClosed('control', 'connecting', false), false);
@@ -104,10 +142,19 @@ test('device host signaling refreshes 20 minutes after register, not by closing 
 
 test('the production hosted pairing host owns ICE servers, grace, and one handshake', async () => {
 	const [host, lifecycle, exposure, main, cli] = await Promise.all([
-		readFile(new URL('../src/remote/hostedPairingHost.ts', import.meta.url), 'utf8'),
-		readFile(new URL('../src/remote/hostedPeerLifecycle.ts', import.meta.url), 'utf8'),
 		readFile(
-			new URL('../../../electron/remote/serverOwnedExposure.ts', import.meta.url),
+			new URL('../src/remote/hostedPairingHost.ts', import.meta.url),
+			'utf8',
+		),
+		readFile(
+			new URL('../src/remote/hostedPeerLifecycle.ts', import.meta.url),
+			'utf8',
+		),
+		readFile(
+			new URL(
+				'../../../electron/remote/serverOwnedExposure.ts',
+				import.meta.url,
+			),
 			'utf8',
 		),
 		readFile(new URL('../../../electron/main.ts', import.meta.url), 'utf8'),
@@ -125,20 +172,35 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	// A device's live peer is replaced only after the joiner consumed a ticket:
 	// an unauthenticated device-join never touches it.
 	assert.doesNotMatch(host, /await livePeers\.close\(scope\.deviceId\)/u);
-	assert.match(host, /const replaced = await context\.livePeers\.close\(authenticated\.deviceId\)/u);
+	assert.match(
+		host,
+		/const replaced = await context\.livePeers\.close\(authenticated\.deviceId\)/u,
+	);
 	// That takeover is ordered per device. Sharing the handshake join queue put
 	// the application-auth reply behind unrelated addIceCandidate work.
-	assert.match(host, /context\.replaceDevicePeer\(authenticated\.deviceId/u);
+	assert.match(
+		host,
+		/context\s*\.replaceDevicePeer\(\s*authenticated\.deviceId/u,
+	);
 	assert.doesNotMatch(host, /serialize: joinQueue\.enqueue/u);
-	assert.match(host, /verifyDeviceJoinProof\(deviceId, clientNonce, message\.deviceProof\)/u);
+	assert.match(
+		host,
+		/verifyDeviceJoinProof\(deviceId, clientNonce, message\.deviceProof\)/u,
+	);
 	assert.match(host, /MAX_CONCURRENT_HANDSHAKES/u);
 	assert.match(host, /deviceHostRefreshDelayMs/u);
 	assert.match(host, /iceconnectionstatechange/u);
 	assert.match(host, /handshakeGeneration/u);
 	assert.match(host, /applyHandshakeSignal/u);
 	// Liveness is explicit. No traffic-pattern inference survives in the host.
-	assert.doesNotMatch(host, /stallClass|shouldFailHostedStall|laneCloseHangsUp/u);
-	assert.doesNotMatch(lifecycle, /stallClass|shouldFailHostedStall|laneCloseHangsUp/u);
+	assert.doesNotMatch(
+		host,
+		/stallClass|shouldFailHostedStall|laneCloseHangsUp/u,
+	);
+	assert.doesNotMatch(
+		lifecycle,
+		/stallClass|shouldFailHostedStall|laneCloseHangsUp/u,
+	);
 	assert.match(exposure, /resolveIceServers/u);
 	assert.match(
 		main,
@@ -150,7 +212,7 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 
 test('a replaced peer is reported as disconnected without waiting for a native close event', async () => {
 	const registry = new HostedLivePeerRegistry();
-	const disconnected = []
+	const disconnected = [];
 	// A native datachannel is not guaranteed to emit `close` before its peer is
 	// torn down. The replacement path must not depend on that event, or a
 	// superseded connection stays listed as live for the rest of the session.
@@ -160,6 +222,7 @@ test('a replaced peer is reported as disconnected without waiting for a native c
 		connectionId: 'connection-superseded',
 	});
 	const replaced = await registry.close('device-a');
-	if (replaced?.connectionId !== undefined) disconnected.push(replaced.connectionId);
+	if (replaced?.connectionId !== undefined)
+		disconnected.push(replaced.connectionId);
 	assert.deepEqual(disconnected, ['connection-superseded']);
 });

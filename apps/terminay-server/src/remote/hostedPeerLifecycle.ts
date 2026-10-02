@@ -23,7 +23,60 @@ export function deviceHostRefreshDelayMs(
 type PeerLike = Readonly<{
 	connectionState?: string;
 	iceConnectionState?: string;
+	getStats?: () => Promise<
+		ReadonlyMap<string, Readonly<Record<string, unknown>>>
+	>;
 }>;
+
+export type SelectedIceCandidatePair = Readonly<{
+	localType: string;
+	protocol: string;
+	remoteType: string;
+	state: string;
+}>;
+
+/** Read only the selected pair's bounded routing fields from WebRTC stats. */
+export async function selectedIceCandidatePair(
+	peer: PeerLike,
+): Promise<SelectedIceCandidatePair | undefined> {
+	if (typeof peer.getStats !== 'function') return undefined;
+	try {
+		const stats = await peer.getStats();
+		const entries = [...stats.values()];
+		const transport = entries.find(
+			(entry) =>
+				entry.type === 'transport' &&
+				typeof entry.selectedCandidatePairId === 'string',
+		);
+		const pair =
+			(transport
+				? stats.get(String(transport.selectedCandidatePairId))
+				: undefined) ??
+			entries.find(
+				(entry) =>
+					entry.type === 'candidate-pair' &&
+					(entry.selected === true || entry.nominated === true) &&
+					entry.state === 'succeeded',
+			);
+		if (
+			!pair ||
+			typeof pair.localCandidateId !== 'string' ||
+			typeof pair.remoteCandidateId !== 'string'
+		)
+			return undefined;
+		const local = stats.get(pair.localCandidateId);
+		const remote = stats.get(pair.remoteCandidateId);
+		if (!local || !remote) return undefined;
+		return Object.freeze({
+			localType: String(local.candidateType ?? 'unknown'),
+			protocol: String(local.protocol ?? remote.protocol ?? 'unknown'),
+			remoteType: String(remote.candidateType ?? 'unknown'),
+			state: String(pair.state ?? 'unknown'),
+		});
+	} catch {
+		return undefined;
+	}
+}
 
 export function resolveHostedIceServers(
 	value?: readonly HostedIceServer[] | null,

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import {
 	PairingError,
@@ -12,6 +15,91 @@ import {
 	runResolveApproval,
 } from '../dist/commands/pairing.js';
 import { installLayout } from '../dist/layout.js';
+import { explainPrivilegeLaunchError, sendAsUser } from '../dist/socket.js';
+
+const execFileAsync = promisify(execFile);
+
+test('privilege-launch errors name missing sudo and an unreachable Node.js, and nothing else', () => {
+	assert.match(
+		explainPrivilegeLaunchError({ code: 'ENOENT' }),
+		/sudo is required/u,
+	);
+	assert.match(
+		explainPrivilegeLaunchError(
+			{ code: 1, message: 'sudo: /root/.nvm/bin/node: command not found' },
+			'/root/.nvm/bin/node',
+		),
+		/cannot run Node\.js at \/root\/\.nvm\/bin\/node/u,
+	);
+	// A permission error that is not about launching the helper is someone
+	// else's problem to describe: a wrong hint sends the operator the wrong way.
+	assert.equal(
+		explainPrivilegeLaunchError(
+			{ code: 1, message: 'connect EACCES /run/terminay/approval.sock' },
+			'/usr/bin/node',
+		),
+		undefined,
+	);
+	assert.equal(explainPrivilegeLaunchError({ code: 'ETIMEDOUT' }), undefined);
+});
+
+test('the privilege-dropped client is self-contained, so the service account needs no access to the CLI install', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'terminay-cli-socket-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const socketPath = join(directory, 'approval.sock');
+	const received = [];
+	const server = createServer((connection) => {
+		connection.setEncoding('utf8');
+		connection.on('data', (chunk) => {
+			received.push(chunk);
+			connection.end(`${JSON.stringify({ ok: true, approvals: [] })}\n`);
+		});
+	});
+	await new Promise((resolveListen) => server.listen(socketPath, resolveListen));
+	t.after(() => new Promise((resolveClose) => server.close(resolveClose)));
+
+	// Stand in for `sudo -n -u <run-as>`: run exactly what it would be handed,
+	// from a directory with no access to this package.
+	const calls = [];
+	const exec = async (file, args, options) => {
+		calls.push({ file, args });
+		const [, , runAs, node, ...rest] = args;
+		assert.equal(runAs, 'terminay');
+		return execFileAsync(node, rest, { ...options, cwd: directory });
+	};
+	const response = await sendAsUser(socketPath, { op: 'list' }, 'terminay', 0, exec);
+	assert.deepEqual(response, { ok: true, approvals: [] });
+	assert.deepEqual(received, [`${JSON.stringify({ op: 'list' })}\n`]);
+	const [{ file, args }] = calls;
+	assert.equal(file, 'sudo');
+	assert.deepEqual(args.slice(0, 5), ['-n', '-u', 'terminay', process.execPath, '-e']);
+	assert.equal(
+		args.some((arg) => /socketClient|node_modules|_npx/u.test(arg)),
+		false,
+		'no path into the CLI install is handed to the service account',
+	);
+
+	// A stopped server is reported as such, not as a privilege problem.
+	await new Promise((resolveClose) => server.close(resolveClose));
+	await assert.rejects(
+		sendAsUser(socketPath, { op: 'list' }, 'terminay', 0, exec),
+		/no running server accepts commands at this data root/u,
+	);
+	// Missing sudo is named, with the underlying detail kept.
+	await assert.rejects(
+		sendAsUser(socketPath, { op: 'list' }, 'terminay', 0, async () => {
+			throw Object.assign(new Error('spawn sudo ENOENT'), { code: 'ENOENT' });
+		}),
+		/sudo is required.*\(spawn sudo ENOENT\)/u,
+	);
+	// No drop is attempted when it is not needed.
+	await assert.rejects(
+		sendAsUser(socketPath, { op: 'list' }, 'root', 0, async () => {
+			assert.fail('sudo must not be used for the owning account');
+		}),
+		/no running server accepts commands/u,
+	);
+});
 
 const HOSTED_URL = 'https://box.terminay.com/pair#tok_hosted';
 const DIRECT_URL = 'https://198.51.100.7:8443/pair#tok_direct';
@@ -98,9 +186,10 @@ test('--no-wait prints every URL with its expiry and exits', async () => {
 	const output = lines.join('\n');
 	assert.match(
 		output,
-		/\[QR for https:\/\/198\.51\.100\.7:8443/u,
-		'direct is preferred when it is enabled',
+		/\[QR for https:\/\/box\.terminay\.com/u,
+		'hosted is preferred when both exposure modes are enabled',
 	);
+	assert.match(output, /open the hosted URL below/u);
 	assert.match(output, /expires 20/u);
 	assert.deepEqual(
 		sent,
@@ -156,6 +245,29 @@ test('--mode naming a disabled mode fails and lists what is enabled', async () =
 			),
 		(error) => error instanceof PairingError && /hosted/u.test(error.message),
 	);
+});
+
+test('--mode direct labels the QR as a Terminay Desktop link', async () => {
+	const lines = [];
+	await runPairing(
+		{
+			wait: false,
+			mode: 'direct',
+			allowDowngrade: false,
+			purge: false,
+			yes: false,
+		},
+		contextWith(lines),
+		{
+			renderQr,
+			send: async () => ({
+				ok: true,
+				exposure: ['hosted', 'direct'],
+				handoffs: handoffs(),
+			}),
+		},
+	);
+	assert.match(lines.join('\n'), /direct URL in Terminay Desktop/u);
 });
 
 test('a device that scans is shown with its match code and approved on confirmation', async () => {

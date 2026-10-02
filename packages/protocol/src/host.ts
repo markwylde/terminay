@@ -244,6 +244,7 @@ export type TerminayHostEvent = Readonly<{
 				/** Desktop pairing is waiting for the exposing host to approve the
 				 * match code shown here. The code is displayed on both devices. */
 				type: 'connection.pairing-approval';
+				attemptId: string;
 				deviceName: string;
 				matchCode: string;
 				expiresAt: string;
@@ -252,8 +253,28 @@ export type TerminayHostEvent = Readonly<{
 				/** The host's remembered profiles or their status changed. */
 				type: 'connections.changed';
 				profiles: readonly TerminayHostConnectionProfile[];
+		  }>
+		| Readonly<{
+				type: 'connection.pairing-progress';
+				attemptId: string;
+				state: TerminayPairingProgressState;
 		  }>;
 }>;
+
+/**
+ * What a Desktop pairing attempt reports after its match code is shown.
+ * `connection-recovered` only ends a `connection-degraded` notice raised
+ * before enrollment finished; later phases report their own state instead.
+ */
+export const TERMINAY_PAIRING_PROGRESS_STATES = Object.freeze([
+	'connecting',
+	'connected',
+	'connection-degraded',
+	'connection-recovered',
+	'connection-lost',
+] as const);
+export type TerminayPairingProgressState =
+	(typeof TERMINAY_PAIRING_PROGRESS_STATES)[number];
 
 export type TerminayHostAction =
 	| Readonly<{
@@ -261,7 +282,14 @@ export type TerminayHostAction =
 			 * host. No pairing secret or durable credential returns to the
 			 * renderer. */
 			type: 'connection.pair';
+			attemptId: string;
 			pairingUrl: string;
+	  }>
+	| Readonly<{
+			/** Abandon the named pairing attempt. An attempt that already finished,
+			 * or was never started by this window, is left alone. */
+			type: 'connection.pair-cancel';
+			attemptId: string;
 	  }>
 	| Readonly<{
 			type: 'route.present';
@@ -456,7 +484,7 @@ export function parseTerminayHostEvent(
 	} else if (event.type === 'connection.pairing-approval') {
 		exactKeys(
 			event,
-			['type', 'deviceName', 'matchCode', 'expiresAt'],
+			['type', 'attemptId', 'deviceName', 'matchCode', 'expiresAt'],
 			'host pairing approval event',
 		);
 		if (
@@ -471,9 +499,28 @@ export function parseTerminayHostEvent(
 			throw new TypeError('host pairing approval event is invalid');
 		parsedEvent = Object.freeze({
 			type: 'connection.pairing-approval',
+			attemptId: identifier(event.attemptId, 'pairing attempt id', ID),
 			deviceName: event.deviceName,
 			matchCode: event.matchCode,
 			expiresAt: event.expiresAt,
+		});
+	} else if (event.type === 'connection.pairing-progress') {
+		exactKeys(
+			event,
+			['type', 'attemptId', 'state'],
+			'host pairing progress event',
+		);
+		if (
+			typeof event.state !== 'string' ||
+			!(TERMINAY_PAIRING_PROGRESS_STATES as readonly string[]).includes(
+				event.state,
+			)
+		)
+			throw new TypeError('host pairing progress event is invalid');
+		parsedEvent = Object.freeze({
+			type: 'connection.pairing-progress',
+			attemptId: identifier(event.attemptId, 'pairing attempt id', ID),
+			state: event.state as TerminayPairingProgressState,
 		});
 	} else if (event.type === 'connections.changed') {
 		exactKeys(event, ['type', 'profiles'], 'host connections event');
@@ -643,23 +690,45 @@ export function parseTerminayWorkspaceComposition(
 	value: unknown,
 ): TerminayWorkspaceComposition {
 	const input = record(value, 'workspace composition');
-	exactKeys(input, ['version', 'primaryProfileId', 'attached', 'tabOrder'], 'workspace composition');
+	exactKeys(
+		input,
+		['version', 'primaryProfileId', 'attached', 'tabOrder'],
+		'workspace composition',
+	);
 	if (input.version !== 1)
 		throw new TypeError('workspace composition version is unsupported');
-	const primaryProfileId = identifier(input.primaryProfileId, 'primary profile id', ID);
+	const primaryProfileId = identifier(
+		input.primaryProfileId,
+		'primary profile id',
+		ID,
+	);
 	if (!Array.isArray(input.attached) || input.attached.length > 64)
 		throw new TypeError('workspace composition attachments are invalid');
 	const attached = input.attached.map((entry) => {
 		const attachment = record(entry, 'workspace composition attachment');
-		exactOptionalKeys(attachment, ['profileId'], ['viewId'], 'workspace composition attachment');
-		const profileId = identifier(attachment.profileId, 'attached profile id', ID);
+		exactOptionalKeys(
+			attachment,
+			['profileId'],
+			['viewId'],
+			'workspace composition attachment',
+		);
+		const profileId = identifier(
+			attachment.profileId,
+			'attached profile id',
+			ID,
+		);
 		const viewId =
 			attachment.viewId === undefined
 				? undefined
 				: identifier(attachment.viewId, 'attached view id', ID);
-		return Object.freeze({ profileId, ...(viewId === undefined ? {} : { viewId }) });
+		return Object.freeze({
+			profileId,
+			...(viewId === undefined ? {} : { viewId }),
+		});
 	});
-	if (new Set(attached.map((entry) => entry.profileId)).size !== attached.length)
+	if (
+		new Set(attached.map((entry) => entry.profileId)).size !== attached.length
+	)
 		throw new TypeError('workspace composition attaches a profile twice');
 	if (!Array.isArray(input.tabOrder) || input.tabOrder.length > 4_096)
 		throw new TypeError('workspace composition tab order is invalid');
@@ -896,7 +965,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 	const action = record(value, 'host action');
 	switch (action.type) {
 		case 'connection.pair':
-			exactKeys(action, ['type', 'pairingUrl'], 'connection pairing action');
+			exactKeys(
+				action,
+				['type', 'pairingUrl', 'attemptId'],
+				'connection pairing action',
+			);
 			if (
 				typeof action.pairingUrl !== 'string' ||
 				action.pairingUrl.length === 0 ||
@@ -905,7 +978,18 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				throw new TypeError('connection pairing URL is invalid');
 			return Object.freeze({
 				type: 'connection.pair',
+				attemptId: identifier(action.attemptId, 'pairing attempt id', ID),
 				pairingUrl: action.pairingUrl,
+			});
+		case 'connection.pair-cancel':
+			exactKeys(
+				action,
+				['type', 'attemptId'],
+				'connection pairing cancellation',
+			);
+			return Object.freeze({
+				type: 'connection.pair-cancel',
+				attemptId: identifier(action.attemptId, 'pairing attempt id', ID),
 			});
 		case 'route.present': {
 			exactOptionalKeys(
@@ -1151,7 +1235,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				profileId: identifier(action.profileId, 'connection profile id', ID),
 			});
 		case 'connections.composition.write':
-			exactKeys(action, ['type', 'composition'], 'workspace composition action');
+			exactKeys(
+				action,
+				['type', 'composition'],
+				'workspace composition action',
+			);
 			return Object.freeze({
 				type: 'connections.composition.write',
 				composition: parseTerminayWorkspaceComposition(action.composition),
@@ -1216,6 +1304,7 @@ export function requiredTerminayHostCapability(
 ): TerminayHostCapability | undefined {
 	switch (action.type) {
 		case 'connection.pair':
+		case 'connection.pair-cancel':
 			return 'nativeWindows';
 		case 'route.present':
 			return action.disposition === 'native-window'

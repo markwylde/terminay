@@ -60,6 +60,24 @@ test('obsolete renderer-owned profile and broadcast helpers stay deleted', () =>
 	}
 });
 
+test('Desktop pairing runs through the tested attempt sequence with the durable profile store', () => {
+	// The ordering itself — profile saved before the first reconnect, kept when
+	// that reconnect fails — is exercised in desktop-pairing-attempt.test.mjs.
+	// This guards the wiring: main must hand that sequence its real persistence
+	// helper rather than keep a private copy of the flow.
+	const start = main.indexOf(
+		'switchToPairedDesktopServer = async (pairingUrl, attemptId) =>',
+	);
+	const pairingFlow = main.slice(
+		start,
+		main.indexOf('const launchCanonical = async (): Promise<void> =>', start),
+	);
+	assert.match(pairingFlow, /await runDesktopPairingAttempt\(\{/u);
+	assert.match(pairingFlow, /rememberProfile: rememberRemoteConnection,/u);
+	assert.doesNotMatch(pairingFlow, /rememberedRemoteConnections\.(?:set|delete)\(/u);
+	assert.match(main, /case 'connection\.pair-cancel':/u);
+});
+
 test('canonical host routes retain server-owned application operations', () => {
 	assert.match(main, /applicationFeatures:\s*\{/u);
 	assert.match(main, /mcpInstall:\s*\{\s*serverCommand:/u);
@@ -78,9 +96,23 @@ test('canonical host routes retain server-owned application operations', () => {
 });
 
 test('MCP install commands name an extension install target, not a hardcoded client', () => {
-	assert.match(terminalAuthority, /const mcpTarget = \(request: CommandRequest\): string =>/u);
-	for (const agent of ['claudeCode', 'codex', 'cursor', 'gemini', 'grok', 'openCode'])
-		assert.doesNotMatch(terminalAuthority, new RegExp(`agent !== '${agent}'`, 'u'), agent);
+	assert.match(
+		terminalAuthority,
+		/const mcpTarget = \(request: CommandRequest\): string =>/u,
+	);
+	for (const agent of [
+		'claudeCode',
+		'codex',
+		'cursor',
+		'gemini',
+		'grok',
+		'openCode',
+	])
+		assert.doesNotMatch(
+			terminalAuthority,
+			new RegExp(`agent !== '${agent}'`, 'u'),
+			agent,
+		);
 });
 
 test('Desktop MCP terminal listing tolerates restored sessions without live activity records', () => {

@@ -104,10 +104,14 @@ test('the advertised candidate keeps its socket when the range is a budget', {
 		`the advertised candidate lost its socket:\n${with_.join('\n')}`,
 	);
 
-	// Every offered candidate sits inside the published range, so an operator
-	// forwarding that range has forwarded all of them.
+	// Every offered candidate is bound to a socket inside the published range,
+	// so an operator forwarding that range has forwarded all of them. A
+	// reflexive candidate advertises the port a NAT mapped it to, which the
+	// server does not choose; the socket it is bound to is its `rport`.
 	for (const line of with_) {
-		const port = Number(line.split(' ')[5]);
+		const fields = line.split(' ');
+		const base = fields.indexOf('rport');
+		const port = Number(base === -1 ? fields[5] : fields[base + 1]);
 		assert.ok(
 			port >= ADVERTISED.port && port < ADVERTISED.port + ADVERTISED_PORT_SPAN,
 			`candidate outside the published range: ${line}`,

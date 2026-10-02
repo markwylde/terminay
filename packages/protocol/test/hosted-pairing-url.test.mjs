@@ -27,7 +27,10 @@ test('opening a manager pairing URL reconstructs the session enrollment href', (
 	const parsed = parseHostedPairingUrl(
 		'https://app.terminay.com/?s=abc12345def67890abc12345def67890&hostName=Studio-Mac#secret-token-that-must-not-be-stored-12',
 	);
-	assert.equal(parsed.origin, 'https://abc12345def67890abc12345def67890.terminay.com');
+	assert.equal(
+		parsed.origin,
+		'https://abc12345def67890abc12345def67890.terminay.com',
+	);
 	assert.equal(parsed.sessionId, 'abc12345def67890abc12345def67890');
 	assert.equal(parsed.label, 'Studio-Mac');
 	assert.equal(
@@ -42,26 +45,33 @@ test('legacy session-origin pairing URLs still parse to the same session origin'
 	const parsed = parseHostedPairingUrl(
 		'https://abc12345def67890abc12345def67890.terminay.com/v1/?hostName=Studio-Mac#secret-token-that-must-not-be-stored-12',
 	);
-	assert.equal(parsed.origin, 'https://abc12345def67890abc12345def67890.terminay.com');
 	assert.equal(
-		new URL(parsed.managerHref).origin,
-		'https://app.terminay.com',
+		parsed.origin,
+		'https://abc12345def67890abc12345def67890.terminay.com',
 	);
+	assert.equal(new URL(parsed.managerHref).origin, 'https://app.terminay.com');
 });
 
 test('manager origin keeps the session port for local hosted stacks', () => {
 	assert.equal(
-		managerOriginFromSessionOrigin('https://abc12345def67890abc12345def67890.terminay.com:8443'),
+		managerOriginFromSessionOrigin(
+			'https://abc12345def67890abc12345def67890.terminay.com:8443',
+		),
 		'https://app.terminay.com:8443',
 	);
 	assert.equal(
-		managerOriginFromSessionOrigin('http://abc12345def67890abc12345def67890.localhost:18080'),
+		managerOriginFromSessionOrigin(
+			'http://abc12345def67890abc12345def67890.localhost:18080',
+		),
 		'http://localhost:18080',
 	);
 	const parsed = parseHostedPairingUrl(
 		'https://app.terminay.com:8443/?s=abc12345def67890abc12345def67890#secret-token-that-must-not-be-stored-12',
 	);
-	assert.equal(parsed.origin, 'https://abc12345def67890abc12345def67890.terminay.com:8443');
+	assert.equal(
+		parsed.origin,
+		'https://abc12345def67890abc12345def67890.terminay.com:8443',
+	);
 });
 
 const SECRET = 'secret-token-that-must-not-be-stored-12';
@@ -78,7 +88,9 @@ test('every hosted and manager link is classified as hosted', () => {
 });
 
 test('a standalone server link keeps its literal origin and carries no session id', () => {
-	const parsed = parseHostedPairingUrl(`https://box.example.test:8443/v1/?hostName=Studio-Mac#${SECRET}`);
+	const parsed = parseHostedPairingUrl(
+		`https://box.example.test:8443/v1/?hostName=Studio-Mac#${SECRET}`,
+	);
 	assert.equal(parsed.class, 'direct');
 	// The origin an operator pointed at their own box is used exactly as written.
 	assert.equal(parsed.origin, 'https://box.example.test:8443');
@@ -86,28 +98,80 @@ test('a standalone server link keeps its literal origin and carries no session i
 	assert.equal(parsed.hostName, 'Studio-Mac');
 	assert.equal(parsed.label, 'Studio-Mac');
 	assert.equal(parsed.fragment, SECRET);
-	assert.equal(parsed.href, `https://box.example.test:8443/v1/?hostName=Studio-Mac#${SECRET}`);
+	assert.equal(
+		parsed.href,
+		`https://box.example.test:8443/v1/?hostName=Studio-Mac#${SECRET}`,
+	);
 	// There is no separate connection manager beside a self-hosted endpoint.
 	assert.equal(parsed.managerHref, parsed.href);
 
 	// A hostname short enough to have no session-id shape still works, as does
 	// an IP literal, because nothing is derived from the hostname.
-	assert.equal(parseHostedPairingUrl(`https://box/v1/#${SECRET}`).origin, 'https://box');
-	const byAddress = parseHostedPairingUrl(`https://203.0.113.4:8443/v1/#${SECRET}`);
+	assert.equal(
+		parseHostedPairingUrl(`https://box/v1/#${SECRET}`).origin,
+		'https://box',
+	);
+	const byAddress = parseHostedPairingUrl(
+		`https://203.0.113.4:8443/v1/#${SECRET}`,
+	);
 	assert.equal(byAddress.class, 'direct');
 	assert.equal(byAddress.origin, 'https://203.0.113.4:8443');
 	assert.equal(byAddress.label, '203.0.113.4:8443');
 });
 
+test('direct loopback pairing links stay direct while embedded loopback links stay hosted', () => {
+	for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+		const parsed = parseHostedPairingUrl(
+			`https://${host}:9443/v1/?hostName=container#${SECRET}`,
+		);
+		assert.equal(parsed.class, 'direct', host);
+		assert.equal(parsed.origin, `https://${host}:9443`, host);
+		assert.equal(classifyPairingOrigin(parsed.origin), 'direct', host);
+	}
+	assert.equal(classifyPairingOrigin('http://localhost:9443'), 'hosted');
+	assert.equal(
+		parseHostedPairingUrl(
+			`http://abc12345def67890abc12345def67890.localhost:9443/v1/#${SECRET}`,
+		).class,
+		'hosted',
+	);
+});
+
 test('direct links are rejected without HTTPS, the /v1/ path, or a fragment', () => {
-	assert.throws(() => parseHostedPairingUrl(`http://box.example.test:8443/v1/#${SECRET}`), /HTTPS or loopback HTTP/u);
-	assert.throws(() => parseHostedPairingUrl(`https://box.example.test:8443/#${SECRET}`), /pairing link/u);
-	assert.throws(() => parseHostedPairingUrl(`https://box.example.test:8443/signal#${SECRET}`), /pairing link/u);
-	assert.throws(() => parseHostedPairingUrl('https://box.example.test:8443/v1/'), /fragment|pairing link|secret/iu);
+	assert.throws(
+		() => parseHostedPairingUrl(`http://box.example.test:8443/v1/#${SECRET}`),
+		/HTTPS or loopback HTTP/u,
+	);
+	assert.throws(
+		() => parseHostedPairingUrl(`https://box.example.test:8443/#${SECRET}`),
+		/pairing link/u,
+	);
+	assert.throws(
+		() =>
+			parseHostedPairingUrl(`https://box.example.test:8443/signal#${SECRET}`),
+		/pairing link/u,
+	);
+	assert.throws(
+		() => parseHostedPairingUrl('https://box.example.test:8443/v1/'),
+		/fragment|pairing link|secret/iu,
+	);
 	// A secret must never be reachable from the query string.
-	assert.throws(() => parseHostedPairingUrl(`https://box.example.test:8443/v1/?pairingToken=leaked#${SECRET}`), /fragment/u);
-	assert.throws(() => parseHostedPairingUrl(`https://user:pass@box.example.test/v1/#${SECRET}`), /credentials/u);
-	assert.throws(() => parseHostedPairingUrl('not a url'), /complete Terminay pairing link/u);
+	assert.throws(
+		() =>
+			parseHostedPairingUrl(
+				`https://box.example.test:8443/v1/?pairingToken=leaked#${SECRET}`,
+			),
+		/fragment/u,
+	);
+	assert.throws(
+		() =>
+			parseHostedPairingUrl(`https://user:pass@box.example.test/v1/#${SECRET}`),
+		/credentials/u,
+	);
+	assert.throws(
+		() => parseHostedPairingUrl('not a url'),
+		/complete Terminay pairing link/u,
+	);
 });
 
 test('an origin classifies the same way for pairing and for reconnect', () => {
@@ -119,6 +183,9 @@ test('an origin classifies the same way for pairing and for reconnect', () => {
 		['https://abc12345def67890abc12345def67890.terminay.com', 'hosted'],
 		['http://abc12345def67890abc12345def67890.localhost:18080', 'hosted'],
 		['http://127.0.0.1:4321', 'hosted'],
+		['https://localhost:9443', 'direct'],
+		['https://127.0.0.1:9443', 'direct'],
+		['https://[::1]:9443', 'direct'],
 		['https://box.example.test:8443', 'direct'],
 		['https://203.0.113.4:8443', 'direct'],
 		['https://box', 'direct'],
@@ -145,7 +212,10 @@ test('pairing secrets are rejected in the query', () => {
 		/fragment/,
 	);
 	assert.throws(
-		() => parseHostedPairingUrl('https://app.terminay.com/v1/#secret-token-that-must-not-be-stored-12'),
+		() =>
+			parseHostedPairingUrl(
+				'https://app.terminay.com/v1/#secret-token-that-must-not-be-stored-12',
+			),
 		/pairing link/,
 	);
 });
