@@ -1055,6 +1055,67 @@ export class WorkspaceStore {
 		return this.state;
 	}
 
+	/**
+	 * Privileged server restart recovery when a session holder keeps PTYs
+	 * running across restarts. A session the holder still has is running again
+	 * under its original identity; one the holder saw exit is exited with its
+	 * code; every other formerly live session stays interrupted. Panels are
+	 * never touched: a session that is gone keeps its place in the layout.
+	 */
+	reconcileHeldTerminalSessions(
+		live: ReadonlySet<ProtocolId>,
+		exited: ReadonlyMap<ProtocolId, number | undefined>,
+		at = Date.now(),
+	): WorkspaceState {
+		const next = clone(this.current) as MutableWorkspaceState;
+		const changedIds: ProtocolId[] = [];
+		for (const [id, session] of Object.entries(next.terminalSessions)) {
+			if (live.has(id)) {
+				if (session.status === 'exited') continue;
+				if (session.status === 'running') continue;
+				const { interruptedAt: _interruptedAt, ...rest } = session;
+				next.terminalSessions[id] = { ...rest, status: 'running' };
+				changedIds.push(id);
+				continue;
+			}
+			if (session.status === 'exited') continue;
+			if (exited.has(id)) {
+				const exitCode = exited.get(id);
+				const { interruptedAt: _interruptedAt, ...rest } = session;
+				next.terminalSessions[id] = {
+					...rest,
+					status: 'exited',
+					...(exitCode === undefined ? {} : { exitCode }),
+				};
+				changedIds.push(id);
+				continue;
+			}
+			if (session.status === 'running') {
+				next.terminalSessions[id] = {
+					...session,
+					status: 'interrupted',
+					interruptedAt: at,
+				};
+				changedIds.push(id);
+			}
+		}
+		if (changedIds.length === 0) return this.state;
+		next.revision += 1;
+		next.cursor = String(next.revision);
+		this.history.push({
+			revision: next.revision,
+			cursor: next.cursor,
+			commandId: 'system:terminal-reattach',
+			type: 'terminal.markInterrupted',
+			changedIds,
+		});
+		while (this.history.length > this.maxHistory) this.history.shift();
+		validateWorkspace(next);
+		this.commit?.(clone(next));
+		this.current = next;
+		return this.state;
+	}
+
 	/** Privileged server restart recovery. A persisted terminal describes a PTY
 	 * owned by the server process that created it, so once that process is gone
 	 * neither its panel nor an unpresented session record can be restored as live

@@ -168,6 +168,8 @@ export type TerminalSettings = {
 	altClickMovesCursor: boolean;
 	activityIndicators: TerminalActivityIndicatorSettings;
 	autoCloseTerminalOnExitZero: boolean;
+	/** Server setting: how long terminals keep running after Terminay quits. */
+	keepTerminalsAfterQuit: '1m' | '5m' | '30m' | '2h' | 'untilRestart';
 	/** Device setting: which Terminay Desktop release channel this machine follows. */
 	updateChannel: 'stable' | 'beta';
 	convertEol: boolean;

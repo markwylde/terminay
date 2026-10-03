@@ -9,6 +9,7 @@ import {
 	_electron as electron,
 	expect,
 	type Page,
+	type TestInfo,
 } from '@playwright/test';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
 import {
@@ -185,27 +186,21 @@ async function closeElectronAppGracefully(
 	}
 }
 
-export const test = base.extend<ElectronFixtures>({
-	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
-	userDataDir: async ({}, use) => {
-		const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'));
-
-		try {
-			await use(userDataDir);
-		} finally {
-			await rm(userDataDir, { recursive: true, force: true });
-		}
-	},
-
-	tempDir: async ({ userDataDir }, use) => {
-		const tempDir = path.join(userDataDir, 'temp');
-
-		await rm(tempDir, { recursive: true, force: true });
-		await mkdir(tempDir, { recursive: true });
-		await use(tempDir);
-	},
-
-	electronApp: async ({ tempDir, userDataDir }, use, testInfo) => {
+/**
+ * Launch the desktop app against a data directory. The `electronApp` fixture
+ * uses this once; a spec that restarts the app calls it again with the same
+ * directories, which is what a relaunch is.
+ */
+export async function launchDesktopApp(options: {
+	readonly tempDir: string;
+	readonly userDataDir: string;
+	readonly testInfo: TestInfo;
+}): Promise<{
+	readonly electronApp: ElectronApplication;
+	/** Quit gracefully and release everything the launch staged. */
+	readonly close: () => Promise<void>;
+}> {
+	const { tempDir, userDataDir, testInfo } = options;
 		// The built-in agents extension watches each harness's home. Point the
 		// ones the agent specs drive at isolated fixture homes so the library's
 		// fixture drivers, not the host account, decide what is live.
@@ -244,6 +239,11 @@ export const test = base.extend<ElectronFixtures>({
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),
+				// Terminals held outside the app, so they survive a relaunch
+				// (ADR-0035). Off everywhere else until the rollout turns it on.
+				...(path.basename(testInfo.file) === 'terminals-survive-restart.spec.ts'
+					? { TERMINAY_SESSION_HOLDER: '1' }
+					: {}),
 				// A 16 KiB replay window so a sustained flood outruns it during the
 				// sub-second gap a Local transport loss leaves. Inert in production.
 				...(path.basename(testInfo.file) ===
@@ -257,13 +257,46 @@ export const test = base.extend<ElectronFixtures>({
 			},
 		});
 
+		let closed = false;
+		return {
+			electronApp,
+			close: async () => {
+				if (closed) return;
+				closed = true;
+				await closeElectronAppGracefully(electronApp);
+				await staticServer.close();
+				await rendererArtifact.assertUnchanged();
+				await rm(rendererArtifactParent, { recursive: true, force: true });
+			},
+		};
+}
+
+export const test = base.extend<ElectronFixtures>({
+	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
+	userDataDir: async ({}, use) => {
+		const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'));
+
 		try {
-			await use(electronApp);
+			await use(userDataDir);
 		} finally {
-			await closeElectronAppGracefully(electronApp);
-			await staticServer.close();
-			await rendererArtifact.assertUnchanged();
-			await rm(rendererArtifactParent, { recursive: true, force: true });
+			await rm(userDataDir, { recursive: true, force: true });
+		}
+	},
+
+	tempDir: async ({ userDataDir }, use) => {
+		const tempDir = path.join(userDataDir, 'temp');
+
+		await rm(tempDir, { recursive: true, force: true });
+		await mkdir(tempDir, { recursive: true });
+		await use(tempDir);
+	},
+
+	electronApp: async ({ tempDir, userDataDir }, use, testInfo) => {
+		const launched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
+		try {
+			await use(launched.electronApp);
+		} finally {
+			await launched.close();
 		}
 	},
 

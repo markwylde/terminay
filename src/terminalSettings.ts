@@ -48,6 +48,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'gitPushAgent',
 	'terminayMcp',
 	'ignoreBracketedPasteMode',
+	'keepTerminalsAfterQuit',
 	'recording',
 	'remoteAccess',
 	'rightClickSelectsWord',
@@ -425,6 +426,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
+	keepTerminalsAfterQuit: '5m',
 	updateChannel: 'stable',
 	convertEol: true,
 	cursorBlink: true,
@@ -1138,6 +1140,31 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'process exited',
 					'successful exit',
 					'zero',
+				],
+			}),
+			makeField({
+				key: 'keepTerminalsAfterQuit',
+				label: 'Keep terminals running after quit',
+				description:
+					'How long terminals keep running in the background after Terminay quits or restarts. Reopening Terminay within this time brings them back as they were.',
+				sectionId: 'shell-lifecycle',
+				categoryId: 'shell',
+				input: 'select',
+				options: [
+					{ label: '1 minute', value: '1m' },
+					{ label: '5 minutes', value: '5m' },
+					{ label: '30 minutes', value: '30m' },
+					{ label: '2 hours', value: '2h' },
+					{ label: 'Until this computer restarts', value: 'untilRestart' },
+				],
+				keywords: [
+					'quit',
+					'restart',
+					'update',
+					'background',
+					'keep running',
+					'restore',
+					'session',
 				],
 			}),
 		],
@@ -2551,6 +2578,11 @@ export function normalizeTerminalSettings(
 			typeof input.autoCloseTerminalOnExitZero === 'boolean'
 				? input.autoCloseTerminalOnExitZero
 				: defaultTerminalSettings.autoCloseTerminalOnExitZero,
+		keepTerminalsAfterQuit: (
+			['1m', '5m', '30m', '2h', 'untilRestart'] as const
+		).includes(input.keepTerminalsAfterQuit as never)
+			? (input.keepTerminalsAfterQuit as TerminalSettings['keepTerminalsAfterQuit'])
+			: defaultTerminalSettings.keepTerminalsAfterQuit,
 		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
 		convertEol:
 			typeof input.convertEol === 'boolean'

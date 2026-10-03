@@ -22,6 +22,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
+	keepTerminalsAfterQuit: '5m',
 	convertEol: true,
 	dictation: {
 		enabled: true,

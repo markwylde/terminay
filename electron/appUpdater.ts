@@ -80,6 +80,8 @@ export interface AppUpdater {
 	/** Records that the next graceful quit should install and relaunch. */
 	requestRestartToUpdate(): boolean;
 	cancelRestartToUpdate(): void;
+	/** Whether the quit now in progress is a Restart to update. */
+	isRestartToUpdateRequested(): boolean;
 	/**
 	 * The final quit of a graceful shutdown: installs and relaunches when a
 	 * restart to update was requested, and otherwise (or on failure) calls `quit`.
@@ -648,6 +650,9 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		},
 		cancelRestartToUpdate() {
 			restartRequested = false;
+		},
+		isRestartToUpdateRequested() {
+			return restartRequested && downloadedVersion !== null;
 		},
 		finishQuit(quit) {
 			if (!restartRequested || downloadedVersion === null || !updaterPromise) {
