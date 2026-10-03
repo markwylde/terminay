@@ -20,11 +20,16 @@ const RUNTIME_ROOT = resolve(
 );
 const AVAILABLE = existsSync(resolve(RUNTIME_ROOT, 'artifact/lib/index.mjs'));
 
+// Host candidates only: they name the ports this server bound. A reflexive
+// candidate names the port a NAT mapped one of them to, which is outside the
+// range by design and says nothing about the budget.
 function candidatePorts(sdp) {
 	return sdp
 		.split(/\r?\n/u)
 		.filter((line) => line.startsWith('a=candidate:'))
-		.map((line) => Number(line.split(' ')[5]));
+		.map((line) => line.split(' '))
+		.filter((fields) => fields[7] === 'host')
+		.map((fields) => Number(fields[5]));
 }
 
 /**
