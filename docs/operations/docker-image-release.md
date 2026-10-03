@@ -9,6 +9,13 @@ to the same manifest digest:
 | `markwylde/terminay` | Docker Hub. The name in the documentation and the one to give a person trying Terminay. |
 | `ghcr.io/<owner>/terminay-server` | GitHub Container Registry. |
 
+The Trigger Release workflow publishes the image as its last job, by
+dispatching the image workflow at the tag it created. It has to: the release
+creates its tag with the workflow token, and GitHub starts no workflow for a
+push made with that token, so the tag trigger alone fires only for a tag pushed
+by hand. A release whose archives or desktop builds fail verification never
+reaches that job, so `latest` does not move.
+
 The image is the standalone, non-root Terminay Server: the same self-contained
 tree the release archives carry — pinned Node runtime, compiled server, native
 `node-pty`, workspace UI, built-in extensions, and the selected WebRTC runtime —
