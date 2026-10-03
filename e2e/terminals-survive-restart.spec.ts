@@ -77,6 +77,12 @@ async function quitChoosing(
 		throw new Error(`Terminay did not quit after choosing "${button}"`);
 }
 
+async function waitUntilGone(pid: number, label: string): Promise<void> {
+	await expect
+		.poll(() => isAlive(pid), { timeout: 15_000, message: label })
+		.toBe(false);
+}
+
 async function typeLine(page: Page, sessionId: string, line: string) {
 	const panel = page.locator(
 		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
@@ -181,6 +187,85 @@ test('quitting and relaunching brings back the same terminal, its output, and it
 	} finally {
 		await relaunched?.close().catch(() => undefined);
 		// Whatever a failed assertion left running must not outlive the test.
+		for (const record of holderRecords(userDataDir)) {
+			try {
+				process.kill(record.pid, 'SIGKILL');
+			} catch {
+				/* already gone */
+			}
+		}
+	}
+});
+
+test('a terminal that ended while Terminay was closed comes back with its last output and a notice', async ({
+	electronApp,
+	mainWindow,
+	tempDir,
+	userDataDir,
+}, testInfo) => {
+	test.setTimeout(180_000);
+	let relaunched: Awaited<ReturnType<typeof launchDesktopApp>> | undefined;
+	try {
+		const sessionId = await settledTerminalSessionId(
+			mainWindow.locator('.terminal-panel:visible'),
+		);
+		const rows = mainWindow
+			.locator(
+				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+			)
+			.locator('.xterm-rows');
+		await typeLine(mainWindow, sessionId, `printf 'last-%s\\n' words`);
+		await expect(rows).toContainText('last-words', { timeout: 10_000 });
+
+		await expect
+			.poll(() => holderRecords(userDataDir).length, { timeout: 10_000 })
+			.toBe(1);
+		const [holder] = holderRecords(userDataDir);
+
+		// Nothing is running, so quitting keeps the terminal without asking.
+		await quitChoosing(electronApp, 'keep');
+		expect(isAlive(holder.pid)).toBe(true);
+
+		// The session then ends while Terminay is closed: the holder is told to
+		// stop, as it is at logout or when its limit passes. It saves what the
+		// terminal last showed and exits.
+		process.kill(holder.pid, 'SIGTERM');
+		await waitUntilGone(holder.pid, 'the session holder to exit');
+
+		relaunched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
+		const window = await prepareWindow(await relaunched.electronApp.firstWindow());
+		await expect(window.locator('.project-tabbar')).toBeVisible({
+			timeout: READY_TIMEOUT_MS,
+		});
+
+		// The tab is still there, in place, and no replacement was started.
+		const panel = window.locator(
+			`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+		);
+		await expect(panel).toBeVisible({ timeout: READY_TIMEOUT_MS });
+		await expect(window.locator('.terminal-tab-content')).toHaveCount(1);
+		expect(holderRecords(userDataDir)).toEqual([]);
+
+		// It shows what the terminal last showed, under the notice.
+		await expect(panel.locator('.xterm-rows')).toContainText('last-words', {
+			timeout: READY_TIMEOUT_MS,
+		});
+		const notice = panel.locator('.terminal-panel-connection-error');
+		await expect(notice).toBeVisible();
+		await expect(notice).toContainText(
+			"This session has ended and can't be resumed.",
+		);
+		await expect(notice.locator('button')).toHaveCount(0);
+
+		// Typing into it goes nowhere.
+		await panel.locator('.xterm-helper-textarea').focus();
+		await window.keyboard.type('typed-after-end');
+		await window.waitForTimeout(500);
+		await expect(panel.locator('.xterm-rows')).not.toContainText(
+			'typed-after-end',
+		);
+	} finally {
+		await relaunched?.close().catch(() => undefined);
 		for (const record of holderRecords(userDataDir)) {
 			try {
 				process.kill(record.pid, 'SIGKILL');
