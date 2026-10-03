@@ -14,7 +14,7 @@ A pull request waits seven to twelve minutes for CI, and `main` waits as long af
 - Run the container image smoke cases together, each in its own process with its own host ports. Build the image while the host-side dependencies install.
 - Keep npm's download cache in the runner tool cache, which outlives jobs. Stop archiving it through `actions/setup-node`.
 - Cancel the session-holder test's deadline timer once the application has quit.
-- Shard the E2E suite eighteen ways instead of ten.
+- Shard the E2E suite eighteen ways instead of ten, and deal tests to the shards in turn. Contiguous slices put the slow spec files in a few shards, which then carried three times the test time of the others.
 - Build the server UI bundle, the Desktop bundle and the root type check at the same time in `npm run build:app`. Five jobs run that build, and the E2E image build that every shard waits for is one of them.
 - Draw the container smoke's published host ports at random. Runners share a container host, so fixed ports fail when two runs overlap.
 - State the five-minute budget as a requirement, with the one case that is allowed to exceed it: a run that changes dependencies and so has to build and distribute a new base image.
