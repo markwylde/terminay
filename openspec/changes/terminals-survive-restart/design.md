@@ -384,12 +384,14 @@ agree with this change's "Restart to update keeps terminals" requirement.
 - **ADR-0004 is revisited.** Its "one supervised child per PTY" does not hold
   for a shared holder. The adr step records a superseding ADR that restates the
   distribution matrix unchanged.
-- **Automation runs.** A run in progress when the server restarts keeps its
-  shell. Whether the run record resumes or is marked interrupted while the shell
-  continues is decided when the automations code is read during implementation;
-  the default is "marked interrupted, shell kept".
-- **Recordings.** A recording in progress cannot span a server restart without
-  a gap. The default is that the recording ends at detach and is not resumed.
+- **Automation runs (decided).** A run does not span a restart. A graceful
+  shutdown stops runs in progress and ends their terminals, as it always has:
+  the executor is disposed before terminals are let go. After a crash, the run
+  log records the run as stopped on the next start; its shell, if the holder
+  still has it, is reattached as an ordinary terminal in the automation space.
+  Nothing was changed to get this.
+- **Recordings (decided).** A recording ends as interrupted when the server
+  shuts down and is not resumed for a reattached terminal.
 - **Limit choices.** The setting's value list beyond "5 minutes" and "until the
   machine restarts" (proposed: 1 minute, 5 minutes, 30 minutes, 2 hours, until
   restart).
