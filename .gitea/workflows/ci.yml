@@ -70,6 +70,9 @@ jobs:
           TERMINAY_STANDALONE_BUILT_INS: apps/terminay-server/dist/built-in-extensions
         run: npm run test:packaged-built-in-extension-runtime
 
+      - name: Verify the packaged session holder starts a shell
+        run: node --test scripts/packaged-session-holder-macos.test.mjs
+
       - name: Boot packaged application from a read-only DMG copy
         env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
