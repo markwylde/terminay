@@ -36,12 +36,17 @@ export interface ServerTextWindow {
 	readonly windowComplete: boolean;
 }
 
+/**
+ * One point in a file's indexing. `lineStarts` is shared by every entry of the
+ * same file and only ever appended to, so an entry reads no further than its
+ * own `lineCount`.
+ */
 type IndexEntry = {
-	indexedByteLength: number;
-	lineCount: number;
-	lineStarts: number[];
-	size: number;
-	mtimeMs: number;
+	readonly indexedByteLength: number;
+	readonly lineCount: number;
+	readonly lineStarts: number[];
+	readonly size: number;
+	readonly mtimeMs: number;
 };
 
 /**
@@ -52,6 +57,8 @@ type IndexEntry = {
  */
 export class ServerTextIndex {
 	private readonly entries = new Map<string, IndexEntry>();
+	/** The advance in flight for each file identity; later ones queue behind it. */
+	private readonly advancing = new Map<string, Promise<IndexEntry>>();
 	private readonly chunkBytes: number;
 	private readonly maxBytesPerRequest: number;
 	private readonly maxWindowBytes: number;
@@ -96,7 +103,7 @@ export class ServerTextIndex {
 			throw new RangeError('lineCount must be between 1 and 512');
 		const { entry } = await this.advance(path, signal);
 		const indexComplete = entry.indexedByteLength >= entry.size;
-		const availableLineCount = entry.lineStarts.length;
+		const availableLineCount = entry.lineCount;
 		const requestedEnd = startLine + lineCount;
 		const availableEnd = Math.min(requestedEnd, availableLineCount);
 		const completeEnd = indexComplete
@@ -107,7 +114,8 @@ export class ServerTextIndex {
 
 		if (startLine < endLine) {
 			const boundary = (line: number): number =>
-				entry.lineStarts[line] ?? entry.size;
+				(line < availableLineCount ? entry.lineStarts[line] : undefined) ??
+				entry.size;
 			const start = boundary(startLine);
 			let boundedEndLine = endLine;
 			while (
@@ -197,7 +205,29 @@ export class ServerTextIndex {
 		for (const previous of this.entries.keys())
 			if (previous.startsWith(`${canonical}\0`) && previous !== key)
 				this.entries.delete(previous);
-		let entry = this.entries.get(key) ?? {
+		// Requests for one file advance it in turn. Advancing the same entry
+		// concurrently repeats the same reads, and the slower one then replaces
+		// the progress the faster one made.
+		const previous = this.advancing.get(key) ?? Promise.resolve(undefined);
+		const run = previous
+			.catch(() => undefined)
+			.then(() => this.advanceEntry(key, path, size, mtimeMs, signal));
+		this.advancing.set(key, run);
+		try {
+			return { canonical, entry: await run };
+		} finally {
+			if (this.advancing.get(key) === run) this.advancing.delete(key);
+		}
+	}
+
+	private async advanceEntry(
+		key: string,
+		path: string,
+		size: number,
+		mtimeMs: number,
+		signal?: AbortSignal,
+	): Promise<IndexEntry> {
+		let entry: IndexEntry = this.entries.get(key) ?? {
 			indexedByteLength: 0,
 			lineCount: size === 0 ? 0 : 1,
 			lineStarts: size === 0 ? [] : [0],
@@ -218,7 +248,9 @@ export class ServerTextIndex {
 				signal,
 			);
 			if (range.bytes.byteLength === 0) break;
-			const lineStarts = [...entry.lineStarts];
+			// Appended in place: copying the starts for every chunk makes indexing
+			// a large file quadratic in its line count.
+			const lineStarts = entry.lineStarts;
 			for (let index = 0; index < range.bytes.byteLength; index += 1) {
 				if (range.bytes[index] === 10)
 					lineStarts.push(entry.indexedByteLength + index + 1);
@@ -226,15 +258,16 @@ export class ServerTextIndex {
 			entry = {
 				...entry,
 				indexedByteLength: entry.indexedByteLength + range.bytes.byteLength,
-				lineCount:
-					entry.lineCount + lineStarts.length - entry.lineStarts.length,
-				lineStarts,
+				lineCount: lineStarts.length,
 			};
+			// Stored per chunk so a later failed read leaves the entry matching
+			// the starts already appended.
+			this.entries.set(key, entry);
 			budget -= range.bytes.byteLength;
 			if (range.bytes.byteLength < length) break;
 		}
 		this.entries.set(key, entry);
-		return { canonical, entry };
+		return entry;
 	}
 
 	private metadataResult(
