@@ -93,7 +93,6 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
-          cache: npm
 
       - name: Require the native supported Linux x64 architecture
         run: |
@@ -101,7 +100,11 @@ jobs:
           test "$(node -p 'process.arch')" = x64
           test "$(uname -m)" = x86_64
 
+      # The runner tool cache outlives its jobs, so npm keeps its download
+      # cache there. Nothing is archived or uploaded when a job ends.
       - name: Install dependencies from the clean manifest
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
           npm install --global npm@12.2.0
           npm ci
@@ -124,19 +127,53 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
-          cache: npm
 
       - name: Install dependencies
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
           npm install --global npm@12.2.0
           npm ci
 
-      - name: Build, lint, and run fast tests
+      - name: Build, lint, and run the fast gate
         env:
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
-        run: npm run test:ci
+        run: npm run smoke && npm run test:workspace-models && npm run test:release-evidence
+
+  # The rest of npm run test:ci: every workspace's own suite runs here, beside
+  # the gate rather than after it. A contract test keeps the two jobs equal to
+  # that script between them.
+  workspace-tests:
+    name: Workspace tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Install dependencies
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+        run: |
+          npm install --global npm@12.2.0
+          npm ci
+
+      - name: Build and test every workspace
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+        run: npm run test:workspaces
 
   real-webrtc:
     name: Real WebRTC pairing
@@ -153,9 +190,10 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
-          cache: npm
 
       - name: Install dependencies
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
           npm install --global npm@12.2.0
           npm ci
@@ -189,32 +227,37 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
-          cache: npm
 
-      - name: Install dependencies
+      # The image build and the host-side install share nothing, so they run
+      # together. The device half of the test is bundled from Desktop's
+      # sources, which import these workspace packages by their built output.
+      - name: Build the official image and the packages Desktop's pairing code imports
+        shell: bash
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: |
-          npm install --global npm@12.2.0
-          npm ci
-
-      - name: Validate image packaging contract
-        run: node --test scripts/ghcr-image.test.mjs
-
-      - name: Build the official image
-        run: |
+          set -euo pipefail
+          image_log="$RUNNER_TEMP/terminay-image-build.log"
           DOCKER_BUILDKIT=1 docker build \
             --file ./Dockerfile \
             --tag "terminay-image-smoke:${GITHUB_SHA}" \
             --build-arg OCI_REVISION="${GITHUB_SHA}" \
-            .
+            . >"$image_log" 2>&1 &
+          image_build=$!
+          npm install --global npm@12.2.0
+          npm ci
+          npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
+          if ! wait "$image_build"; then
+            cat "$image_log"
+            exit 1
+          fi
+          tail -n 40 "$image_log"
 
-      # The device half of the test is bundled from Desktop's sources, which
-      # import these workspace packages by their built output.
-      - name: Build the packages Desktop's pairing code imports
-        env:
-          TURBO_TEAM: wylde
-          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
-        run: npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
+      - name: Validate image packaging contract
+        run: node --test scripts/ghcr-image.test.mjs
 
       - name: Pair Desktop's pairing code with the image
         run: |
@@ -348,7 +391,7 @@ jobs:
         run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG" "$BASE_TAG"
 
   e2e-test:
-    name: E2E (${{ matrix.shard }}/10)
+    name: E2E (${{ matrix.shard }}/14)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: e2e-image
@@ -358,7 +401,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
     steps:
       - name: Check out code
@@ -395,15 +438,15 @@ jobs:
           TERMINAY_E2E_IMAGE: ${{ needs.e2e-image.outputs.image }}
           TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"
           TERMINAY_E2E_PLATFORM: linux/amd64
-          TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-10
-        run: npm run test:e2e -- --shard=${{ matrix.shard }}/10
+          TERMINAY_E2E_ARTIFACT_DIR: ${{ github.workspace }}/.docker-cache/e2e/shard-${{ matrix.shard }}-of-14
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/14
 
       - name: Upload Playwright artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         with:
-          name: playwright-report-${{ matrix.shard }}-of-10
-          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-10
+          name: playwright-report-${{ matrix.shard }}-of-14
+          path: .docker-cache/e2e/shard-${{ matrix.shard }}-of-14
           if-no-files-found: ignore
           retention-days: 7
 
