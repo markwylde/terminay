@@ -167,6 +167,9 @@ test.describe('AI tab metadata command bar actions', () => {
     await expect(mainWindow.locator('.error-banner')).toContainText('Enable an AI provider')
     await expect(title).toHaveText('Terminal 1')
 
+    await mainWindow.locator('.error-banner').getByRole('button', { name: 'Dismiss error' }).click()
+    await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
+
     await configureAiTabMetadata(appHarness, mainWindow)
     await setAiMock(mainWindow, { error: 'Codex test failure' })
     await appHarness.openMacroLauncher(mainWindow)
