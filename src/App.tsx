@@ -55,7 +55,9 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
+	FocusedFileSummary,
 	FocusedTerminalSummary,
+	useFocusedFileStatus,
 	useFocusedTerminalStatus,
 	WorkspaceStatusBar,
 } from './workspace/WorkspaceStatusBar';
@@ -2507,6 +2509,11 @@ const ProjectWorkspace = forwardRef<
 			isDockviewReady,
 			titleRevision: terminalTitleRevision,
 		});
+		const focusedFileStatus = useFocusedFileStatus({
+			apiRef: dockviewApiRef,
+			isActive: isRenderingStatusBar,
+			isDockviewReady,
+		});
 		const [gitPaneMenuPosition, setGitPaneMenuPosition] = useState<{
 			x: number;
 			y: number;
@@ -4936,15 +4943,23 @@ const ProjectWorkspace = forwardRef<
 						</button>
 					</div>
 				) : null}
-				{isRenderingStatusBar && focusedTerminalStatus !== null
+				{isRenderingStatusBar && focusedFileStatus !== null
 					? createPortal(
-							<FocusedTerminalSummary
-								status={focusedTerminalStatus}
+							<FocusedFileSummary
+								status={focusedFileStatus}
 								worktrees={worktreePanelStatus?.worktrees ?? []}
 							/>,
 							statusBarSlot,
 						)
-					: null}
+					: isRenderingStatusBar && focusedTerminalStatus !== null
+						? createPortal(
+								<FocusedTerminalSummary
+									status={focusedTerminalStatus}
+									worktrees={worktreePanelStatus?.worktrees ?? []}
+								/>,
+								statusBarSlot,
+							)
+						: null}
 
 				<WorkspaceSplitLayout
 					className="project-workspace-body"

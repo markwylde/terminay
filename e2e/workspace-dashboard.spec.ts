@@ -92,7 +92,7 @@ test.describe('workspace dashboard', () => {
 		// A file panel alongside the project's terminal: the dashboard lists both.
 		await openFileExplorer(mainWindow);
 		await fileExplorerItem(mainWindow, 'notes.txt').dblclick();
-		await expect(mainWindow.locator('.file-preview-text')).toBeVisible();
+		await expect(mainWindow.locator('.file-mode-switcher')).toBeVisible();
 		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
-import { fileExplorerItem, openFileExplorer, setProjectRoot, viewDocumentSource } from './support/ui'
+import { fileExplorerItem, openFileExplorer, selectFileView, setProjectRoot, viewDocumentSource } from './support/ui'
 
 const execFileAsync = promisify(execFile)
 
@@ -57,7 +57,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await expect(mainWindow.locator('.file-preview-pdf canvas')).toBeVisible()
 
   await fileExplorerItem(mainWindow, 'switch.txt').dblclick()
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await selectFileView(mainWindow, 'HEX')
   await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
   const hexBytes = mainWindow.locator('.file-hex-viewer__byte')
   await hexBytes.first().click()

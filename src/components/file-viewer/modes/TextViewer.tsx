@@ -450,6 +450,18 @@ export function TextViewer({
 				options={{
 					automaticLayout: true,
 					minimap: { enabled: false },
+					// Same metrics as the Preview code block, so the two views
+					// line up when switching between them.
+					fontFamily:
+						'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+					fontSize: 16,
+					lineHeight: 20,
+					lineNumbersMinChars: 4,
+					padding: { top: 12, bottom: 12 },
+					overviewRulerBorder: false,
+					renderLineHighlight: 'line',
+					scrollBeyondLastLine: false,
+					scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
 				}}
 			/>
 		</div>

@@ -98,6 +98,24 @@ export function firstChangedSegmentIndex(
 	return index;
 }
 
+const FILE_SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
+
+/** A file size short enough for the status bar: whole bytes below 1 KB, then
+ * binary units with one decimal until the number reaches three digits. */
+export function formatStatusBarFileSize(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return '';
+	if (bytes < 1024) return `${bytes} B`;
+	let value = bytes / 1024;
+	let unit = 0;
+	while (value >= 1024 && unit < FILE_SIZE_UNITS.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	// Round first so 99.96 reads as "100", not "100.0".
+	const rounded = Math.round(value * 10) / 10;
+	return `${rounded >= 100 ? Math.round(value) : rounded.toFixed(1)} ${FILE_SIZE_UNITS[unit]}`;
+}
+
 export type StatusBarWorktree = {
 	path: string;
 	branch: string | null;

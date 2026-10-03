@@ -146,7 +146,7 @@ test("catalog preview metadata is canonical, bounded, and content-free", async (
   const unknownText = await catalog.previewMetadata("notes.customunknown");
   assert.equal(unknownText.previewKind, "unsupported");
   assert.equal(unknownText.safePreview, false);
-  assert.equal(unknownText.preferredMode, "hex");
+  assert.equal(unknownText.preferredMode, "text");
   assert.equal(unknownText.canEditText, true);
 
   const huge = await catalog.previewMetadata("huge.txt");

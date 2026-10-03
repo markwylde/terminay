@@ -97,31 +97,64 @@ export function isTextLikeFile(file: FileInfo): boolean {
   )
 }
 
+/**
+ * The views a file offers, in the order they are worth reaching for. Views
+ * that cannot show the file are left out; views that can but rarely matter
+ * for its type wait in `secondaryModes`.
+ */
+function resolveViewModes(input: {
+  canDiff: boolean
+  canEditHex: boolean
+  canEditText: boolean
+  canPreview: boolean
+  canTasks: boolean
+}): Pick<FilePreviewCapabilities, 'primaryModes' | 'secondaryModes'> {
+  if (!input.canEditText) {
+    const primaryModes: FileViewerMode[] = []
+    if (input.canPreview) primaryModes.push('preview')
+    if (input.canEditHex) primaryModes.push('hex')
+    return { primaryModes, secondaryModes: [] }
+  }
+
+  const primaryModes: FileViewerMode[] = input.canTasks
+    ? [...(input.canPreview ? (['preview'] as const) : []), 'tasks', 'text']
+    : ['text', ...(input.canPreview ? (['preview'] as const) : [])]
+  if (input.canDiff) primaryModes.push('diff')
+  return { primaryModes, secondaryModes: input.canEditHex ? ['hex'] : [] }
+}
+
 export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities {
   const serverCapabilities = file.viewerCapabilities
   const previewKind = serverCapabilities?.previewKind ?? detectPreviewKind(file)
   const canPreview = serverCapabilities === undefined
-    ? previewKind !== 'unsupported'
-    : serverCapabilities.safePreview || previewKind === 'unsupported'
+    ? previewKind !== 'unsupported' && previewKind !== 'hex'
+    : serverCapabilities.safePreview
   const canTasks = previewKind === 'markdown'
-  const textLike = isTextLikeFile(file)
-  const canEditText = !file.isDirectory && (serverCapabilities?.canEditText ?? true)
+  const isBinary = serverCapabilities?.isBinary ?? (file.isBinary && !isTextLikeFile(file))
+  const canEditText = !file.isDirectory && (serverCapabilities?.canEditText ?? !isBinary)
   const canUseMonaco = canEditText && file.size <= MAX_MONACO_FILE_BYTES
   const canEditHex = !file.isDirectory && (serverCapabilities?.canEditHex ?? true)
-  const canDiff = !file.isDirectory
+  const canDiff = !file.isDirectory && canEditText
+  const { primaryModes, secondaryModes } = resolveViewModes({
+    canDiff,
+    canEditHex,
+    canEditText,
+    canPreview,
+    canTasks,
+  })
 
+  const offered = (mode: FileViewerMode) =>
+    mode !== 'diff' && (primaryModes.includes(mode) || secondaryModes.includes(mode))
   const preferredMode = serverCapabilities?.preferredMode
-  const defaultMode: FileViewerMode = preferredMode === 'preview' && canPreview
-    ? 'preview'
-    : preferredMode === 'text' && canEditText
-      ? 'text'
-      : preferredMode === 'hex' && canEditHex
-        ? 'hex'
+  const defaultMode: FileViewerMode = preferredMode !== undefined && offered(preferredMode)
+    ? preferredMode
+    : canTasks && canPreview
+      ? 'preview'
+      : canEditText
+        ? 'text'
         : canPreview
           ? 'preview'
-          : textLike && canEditText
-            ? 'text'
-            : 'hex'
+          : 'hex'
 
   return {
     canDiff,
@@ -131,8 +164,12 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
     canTasks,
     canUseMonaco,
     defaultMode,
-    fallbackMode: canEditHex ? 'hex' : defaultMode,
+    // A view that turns out to be unavailable gives way to the view the file
+    // would have opened in, never to a rawer one.
+    fallbackMode: defaultMode,
     previewKind,
+    primaryModes,
+    secondaryModes,
     shouldPromptForEngineChoice: file.size > LARGE_FILE_THRESHOLD_BYTES && canUseMonaco,
   }
 }
