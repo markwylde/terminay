@@ -1,5 +1,10 @@
 import { defineConfig } from '@playwright/test'
 
+// A session holder outlives the application that started it. Specs that start
+// their own application or server inherit this, so none leaves shells running;
+// the spec that tests held terminals asks for one explicitly.
+process.env.TERMINAY_SESSION_HOLDER ??= '0'
+
 export default defineConfig({
   testDir: './e2e',
   // Warms Vite's dependency cache for the browser-shell fixtures; see
