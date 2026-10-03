@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import os from 'node:os';
@@ -271,16 +271,53 @@ export async function launchDesktopApp(options: {
 		};
 }
 
+/** Session holders recorded under a data directory that are still running. */
+function liveSessionHolderPids(userDataDir: string): number[] {
+	const directory = path.join(userDataDir, 'session-holder');
+	if (!existsSync(directory)) return [];
+	const pids: number[] = [];
+	for (const name of readdirSync(directory)) {
+		if (!name.endsWith('.json')) continue;
+		try {
+			const { pid } = JSON.parse(
+				readFileSync(path.join(directory, name), 'utf8'),
+			) as { pid?: unknown };
+			if (typeof pid !== 'number') continue;
+			process.kill(pid, 0);
+			pids.push(pid);
+		} catch {
+			/* unreadable, or no such process */
+		}
+	}
+	return pids;
+}
+
 export const test = base.extend<ElectronFixtures>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
 	userDataDir: async ({}, use) => {
 		const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'));
 
+		let leaked: number[] = [];
 		try {
 			await use(userDataDir);
 		} finally {
+			// A session holder is built to outlive the application, so a test
+			// that starts one must end it. One left behind would keep shells
+			// running on the machine long after the suite had finished.
+			leaked = liveSessionHolderPids(userDataDir);
+			for (const pid of leaked) {
+				try {
+					process.kill(pid, 'SIGKILL');
+				} catch {
+					/* already gone */
+				}
+			}
 			await rm(userDataDir, { recursive: true, force: true });
 		}
+		if (leaked.length > 0)
+			throw new Error(
+				`a session holder outlived its test (pid ${leaked.join(', ')}); the test must end its terminals`,
+			);
 	},
 
 	tempDir: async ({ userDataDir }, use) => {
