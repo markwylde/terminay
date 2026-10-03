@@ -29,6 +29,7 @@ import {
 	type CleanWorktreeSweepSkip,
 	cleanWorktreeSweepConfirmation,
 	cleanWorktreeSweepOutcome,
+	cleanWorktreeSweepTargetName,
 	isBulkDeletableWorktree,
 } from './cleanWorktreeSweep';
 import type { ProjectTab } from './projectTabModel';
@@ -1260,7 +1261,9 @@ export function useFileExplorerController({
 		if (targets.length === 0) return;
 		if (
 			!window.confirm(
-				cleanWorktreeSweepConfirmation(targets.map(({ name }) => name)),
+				cleanWorktreeSweepConfirmation(
+					targets.map(cleanWorktreeSweepTargetName),
+				),
 			)
 		)
 			return;
