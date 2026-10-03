@@ -52,6 +52,14 @@ export async function runUninstall(
 	// Stopped before the unit is removed, or systemd keeps supervising a
 	// service whose definition no longer exists.
 	await systemd.stop().catch(() => undefined);
+	// Terminal sessions outlive the server by design, so stopping it is not
+	// enough: uninstalling must not leave shells running that nothing can reach.
+	// The server binary ends them, because it owns the holder's protocol.
+	await endTerminalSessions(context).catch((error: unknown) => {
+		write(
+			`Could not end running terminal sessions (${error instanceof Error ? error.message : String(error)}). Any that remain end on their own after the configured limit.`,
+		);
+	});
 	await systemd.disable();
 	await rm(layout.unitPath, { force: true });
 	await systemd.daemonReload();
@@ -71,6 +79,19 @@ export async function runUninstall(
 			: `Kept the data root at ${record.dataRoot}.`,
 	);
 	return Object.freeze({ removedVersions: true, removedDataRoot: purge });
+}
+
+async function endTerminalSessions(context: CommandContext): Promise<void> {
+	const { execFile } = await import('node:child_process');
+	const { promisify } = await import('node:util');
+	await promisify(execFile)(
+		`${context.layout.currentLink}/bin/terminay-server`,
+		['end-sessions'],
+		{
+			timeout: 60_000,
+			env: { ...process.env, TERMINAY_DATA_ROOT: context.record.dataRoot },
+		},
+	);
 }
 
 /**

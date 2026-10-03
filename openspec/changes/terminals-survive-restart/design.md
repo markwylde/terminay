@@ -282,14 +282,32 @@ server starts (extension hosts, language servers, Git) must then exit on its own
 when the server does; that is audited and tested, because `KillMode=process`
 removes the service manager's cleanup.
 
+The audit found one child that did not: the built-in agents extension host
+survived a killed server indefinitely, with or without a session holder. Its
+`disconnect` handler called `process.exit`, which joins worker threads first,
+and a worker blocked in a system call never returns from the join. Under the
+default kill mode systemd had been cleaning this up unnoticed. The child now
+ends itself with a signal when its channel closes, which nothing an extension
+does can hold up.
+
+Units written before this change have no kill mode, so the first stop of an
+upgrade would end every shell. `daemon upgrade` therefore adds the line and
+reloads systemd before that stop. A unit that already names a kill mode is left
+as its operator set it.
+
 `daemon upgrade` already stops, switches `current`, and starts. The old
 generation was started from `versions/<old>`; upgrade retains exactly one
 previous version, so a drain-only holder two upgrades old could lose its
 installation directory. The holder is therefore written to need nothing from
 disk after start-up (Decision 11), and retention is unchanged.
 
-`daemon uninstall` connects to the holder socket with the credential, sends
-`end-all`, and waits for the holders to exit before removing files.
+`daemon uninstall` stops the service and then runs the installed server's
+`end-sessions` command, which attaches to each holder with the data-root
+credential, ends every session, and waits for the holders to exit. The CLI does
+not speak the holder protocol itself: the server binary owns it, as it owns
+`reset-identity`. `end-sessions` refuses while a running server is attached. If
+the installed server cannot run it, uninstall says so and continues; the
+unattached limit ends what is left.
 
 ### 11. Packaging: a holder must survive its own installation being replaced
 

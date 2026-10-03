@@ -559,6 +559,7 @@ ExecStart=/opt/terminay-server/bin/terminay-server
 Restart=on-failure
 RestartSec=5s
 KillSignal=SIGTERM
+KillMode=process
 TimeoutStopSec=15s
 StandardOutput=journal
 StandardError=journal
@@ -577,6 +578,12 @@ sudo systemctl enable --now terminay-server.service
 sudo systemctl status terminay-server.service
 journalctl -u terminay-server.service -f
 ```
+
+`KillMode=process` is required when terminal sessions are kept across restarts
+(see [Terminal sessions across restarts](#terminal-sessions-across-restarts)).
+With the default kill mode, stopping the unit ends the session holder and every
+shell it holds. `terminay daemon install` writes it, and `terminay daemon
+upgrade` adds it to a unit that predates it before it stops the service.
 
 ### launchd (reference only)
 
@@ -605,6 +612,52 @@ journalctl -u terminay-server.service -f
 
 Do not add a shell wrapper that backgrounds the process. A launchd supervisor
 must send `SIGTERM` and retain the exit status for diagnostics.
+
+## Terminal sessions across restarts
+
+This applies when the server is started with `TERMINAY_SESSION_HOLDER=1`. It is
+off by default.
+
+Shells are not children of the server. They run in a **session holder**, a
+small detached process per data root that the server starts on demand. When the
+server stops, restarts, upgrades, or crashes, the holder keeps the shells
+running and buffers up to 1 MiB of each one's most recent output. The next
+server to start on the same data root reattaches to them, and every terminal
+tab comes back with its output and its running process.
+
+The holder ends its sessions and exits when no server has attached for longer
+than the **Keep terminals running after quit** setting (5 minutes by default,
+or until the machine restarts). A machine restart or logout ends them.
+
+What it keeps in the data root, all owner-only:
+
+| Path | Contents |
+| --- | --- |
+| `session-holder/<generation>.sock` | The holder's local socket. Never a network listener. |
+| `session-holder/<generation>.json` | The holder's pid, build, protocol versions, and the credential a server must present. Treat it like a key. |
+| `session-tails/<session-id>` | The last output of a session that ended while no server was attached. Deleted when its tab is closed. |
+
+`session-tails/` is the one place terminal output is written to disk outside
+recordings. It holds at most 1 MiB per ended session and nothing for a session
+that is running. Include or exclude it from backups accordingly, and leave it
+out of support bundles.
+
+A server from a newer build does not replace a holder that still has sessions.
+It asks the old one to accept no new sessions, starts a second holder for new
+ones, and the old one exits when its last session ends. Seeing two holders after
+an upgrade is expected.
+
+To end every held session by hand, stop the server and run:
+
+```sh
+terminay-server end-sessions --data-root /var/lib/terminay
+```
+
+It prints how many holders and sessions it found and how many remain, and exits
+non-zero if a running server still owns them. `terminay daemon uninstall` runs
+it for you. If the server binary is gone, `kill <pid>` (SIGTERM) on the pid in
+`session-holder/<generation>.json` does the same: the holder saves each
+session's last output, ends its shells, and exits.
 
 ## Backup, restore, upgrades, and incidents
 
