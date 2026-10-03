@@ -93,6 +93,11 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
   // Each job installs from npm's cache in the runner tool cache. Archiving
   // that cache through setup-node uploaded it again at the end of every job.
   assert.doesNotMatch(giteaCi, /^ {10}cache: npm$/mu);
+  // setup-node caches on its own when package.json names a package manager.
+  assert.equal(
+    (giteaCi.match(/uses: actions\/setup-node@/gu) ?? []).length,
+    (giteaCi.match(/^ {10}package-manager-cache: false$/gmu) ?? []).length,
+  );
   assert.equal((giteaCi.match(/npm_config_cache: \$\{\{ runner\.tool_cache \}\}\/npm-cache/gu) ?? []).length, 5);
   assert.match(job(giteaCi, "e2e-test"), /needs: e2e-image/u);
   assert.equal((giteaCi.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
