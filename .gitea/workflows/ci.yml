@@ -93,6 +93,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
 
       - name: Require the native supported Linux x64 architecture
         run: |
@@ -101,7 +102,8 @@ jobs:
           test "$(uname -m)" = x86_64
 
       # The runner tool cache outlives its jobs, so npm keeps its download
-      # cache there. Nothing is archived or uploaded when a job ends.
+      # cache there. Nothing is archived or uploaded when a job ends, which is
+      # why every setup-node step turns its own package-manager cache off.
       - name: Install dependencies from the clean manifest
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
@@ -127,6 +129,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
 
       - name: Install dependencies
         env:
@@ -160,6 +163,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
 
       - name: Install dependencies
         env:
@@ -190,6 +194,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
 
       - name: Install dependencies
         env:
@@ -227,6 +232,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
 
       # The image build and the host-side install share nothing, so they run
       # together. The device half of the test is bundled from Desktop's

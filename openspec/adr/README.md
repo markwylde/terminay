@@ -62,3 +62,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0033](./0033-pinned-node-runtime-baseline-on-npm-12-2.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.0 | accepted, supersedes 0001 | 2026-10-02 |
 | [0034](./0034-no-media-relay-reachability-from-candidates-and-routing-hints.md) | Terminay operates no media relay; reachability comes from candidates, routing hints, and the user's own network | accepted | 2026-10-03 |
 | [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 | 2026-10-03 |
+| [0036](./0036-five-minute-ci-budget-with-parallel-gates-and-fourteen-shards.md) | CI has a five-minute budget, met by running independent work in separate jobs and fourteen E2E shards | accepted, supersedes 0032 | 2026-10-03 |
