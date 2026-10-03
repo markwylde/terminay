@@ -15,6 +15,8 @@ A pull request waits seven to twelve minutes for CI, and `main` waits as long af
 - Keep npm's download cache in the runner tool cache, which outlives jobs. Stop archiving it through `actions/setup-node`.
 - Cancel the session-holder test's deadline timer once the application has quit.
 - Shard the E2E suite fourteen ways instead of ten.
+- Build the server UI bundle, the Desktop bundle and the root type check at the same time in `npm run build:app`. Five jobs run that build, and the E2E image build that every shard waits for is one of them.
+- Draw the container smoke's published host ports at random. Runners share a container host, so fixed ports fail when two runs overlap.
 - State the five-minute budget as a requirement, with the one case that is allowed to exceed it: a run that changes dependencies and so has to build and distribute a new base image.
 
 ## Capabilities
@@ -30,7 +32,8 @@ _None._
 ## Impact
 
 - `.gitea/workflows/ci.yml`: a new `workspace-tests` job, fourteen shards, the smoke job's combined build step, and the npm cache location.
-- `scripts/container-image-smoke.mjs`: per-case ports, and one process per case.
+- `scripts/container-image-smoke.mjs`: randomly drawn ports, and one process per case.
+- `package.json` `build:app` and a new `scripts/run-together.mjs`. The build produces the same outputs; local builds get faster too.
 - `scripts/packaged-session-holder-macos.test.mjs`: the cancelled deadline.
 - Contract tests that read the workflow: `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs`, `scripts/repository-ownership-release.test.mjs`.
 - `openspec/adr`: a new ADR supersedes ADR-0032, which fixes the shard count at ten and the unit gate at one job.
