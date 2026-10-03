@@ -96,6 +96,9 @@ networks were created with `isolate=true`; direct signaling only.
 The control case is what shows the isolated cases isolate: with neither an
 advertised nor a derived candidate, no route exists.
 
+The same four cases gave the same four results on Docker with Linux bridge
+networking, in the `container-image-smoke` job of pull request #315.
+
 ## What this does not show
 
 - The packaged Electron app was not used; only Desktop's pairing and reconnect
