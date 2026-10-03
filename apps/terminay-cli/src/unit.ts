@@ -122,6 +122,28 @@ export interface UnitConfiguration {
 	readonly workingDirectory: string;
 }
 
+/**
+ * Stopping the unit signals the server process only. Terminal sessions live in
+ * a detached session holder (ADR-0035) inside the unit's control group, and the
+ * default kill mode would end it, and every shell with it, on each stop,
+ * restart, and upgrade. The server ends its own other children as it shuts
+ * down, and each of them also exits when the server goes away.
+ */
+export const UNIT_KILL_MODE_LINE = 'KillMode=process';
+
+/**
+ * Add the kill mode to a unit written before it existed. Returns the unit
+ * unchanged when it already names one, so an operator's own choice stands.
+ */
+export function withUnitKillMode(unit: string): string {
+	if (/^KillMode=/mu.test(unit)) return unit;
+	if (!/^KillSignal=SIGTERM$/mu.test(unit)) return unit;
+	return unit.replace(
+		/^KillSignal=SIGTERM$/mu,
+		`KillSignal=SIGTERM\n${UNIT_KILL_MODE_LINE}`,
+	);
+}
+
 export function renderUnit(configuration: UnitConfiguration): string {
 	const { layout } = configuration;
 	// System scope names the account explicitly; a user unit already runs as
@@ -144,6 +166,7 @@ ExecStart=${layout.currentLink}/bin/terminay-server
 Restart=on-failure
 RestartSec=5s
 KillSignal=SIGTERM
+${UNIT_KILL_MODE_LINE}
 TimeoutStopSec=15s
 NoNewPrivileges=true
 PrivateTmp=true

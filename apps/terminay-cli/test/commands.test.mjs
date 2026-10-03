@@ -695,6 +695,230 @@ test('uninstall removes the service and versions but keeps the data root', async
 	);
 });
 
+test('uninstall ends terminal sessions after stopping the service and before removing the server', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
+		async ({ home, fake, layout, installDependencies, write }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			const record = await readInstallRecord(layout);
+			const serverLog = join(home, 'server-invocations.log');
+			const systemd = createSystemd({ scope: 'user', env: fake.env() });
+			// Record what the fixture server is asked to do, and when systemd was
+			// asked to stop, in one ordered list.
+			const order = [];
+			const context = {
+				layout,
+				record,
+				systemd: {
+					...systemd,
+					stop: async () => {
+						order.push('stop');
+						return systemd.stop();
+					},
+					disable: async () => {
+						order.push(
+							...(await readFile(serverLog, 'utf8').catch(() => ''))
+								.split('\n')
+								.filter(Boolean)
+								.map((line) => `server ${line}`),
+						);
+						order.push('disable');
+						return systemd.disable();
+					},
+				},
+				write,
+			};
+
+			const previous = process.env.TERMINAY_FIXTURE_SERVER_LOG;
+			process.env.TERMINAY_FIXTURE_SERVER_LOG = serverLog;
+			try {
+				await runUninstall(OPTIONS, context, pipe());
+			} finally {
+				if (previous === undefined)
+					delete process.env.TERMINAY_FIXTURE_SERVER_LOG;
+				else process.env.TERMINAY_FIXTURE_SERVER_LOG = previous;
+			}
+
+			// A stopped server no longer holds the sessions, so they can be ended;
+			// and it is ended while the server binary still exists to do it.
+			assert.deepEqual(order, ['stop', 'server end-sessions', 'disable']);
+			assert.deepEqual(await installedVersions(layout), []);
+		},
+	);
+});
+
+test('uninstall still completes when the installed server cannot end sessions', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
+		async ({ fake, layout, installDependencies, write, lines }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			const record = await readInstallRecord(layout);
+			// A server from before the command existed, or one that is broken.
+			await rm(layout.currentLink, { force: true });
+			const context = {
+				layout,
+				record,
+				systemd: createSystemd({ scope: 'user', env: fake.env() }),
+				write,
+			};
+			const result = await runUninstall(OPTIONS, context, pipe());
+			assert.equal(result.removedVersions, true);
+			assert.equal(await readInstallRecord(layout), undefined);
+			assert.ok(
+				lines.some((line) => /Could not end running terminal sessions/u.test(line)),
+				'the operator must be told sessions may still be running',
+			);
+		},
+	);
+});
+
+test('upgrade repairs a unit written before terminals outlived the server, before it stops it', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+
+			// The unit as an earlier release wrote it: stopping it ends the whole
+			// control group, and with it every held shell.
+			const installed = await readFile(layout.unitPath, 'utf8');
+			assert.match(installed, /^KillMode=process$/mu);
+			await writeFile(layout.unitPath, installed.replace('KillMode=process\n', ''));
+			const before = fake.invocations().length;
+
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+				},
+			);
+
+			assert.match(await readFile(layout.unitPath, 'utf8'), /^KillSignal=SIGTERM\nKillMode=process$/mu);
+			const calls = fake.invocations().slice(before);
+			const reload = calls.indexOf('systemctl --user daemon-reload');
+			const stop = calls.indexOf('systemctl --user stop terminay-server.service');
+			assert.ok(reload >= 0, 'systemd must be told the unit changed');
+			assert.ok(stop > reload, 'the stop must already honour the new kill mode');
+			assert.ok(lines.some((line) => /terminals keep running across restarts/u.test(line)));
+			assert.equal(await activeVersion(layout), '4.1.1');
+		},
+	);
+});
+
+test('upgrade leaves a unit that already names a kill mode alone', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'v4.1.0',
+					version: '4.1.0',
+					revision: 'a'.repeat(40),
+					publishedAt: '2026-09-01T00:00:00Z',
+				},
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'b'.repeat(40),
+					latest: true,
+					publishedAt: '2026-09-08T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			const unit = await readFile(layout.unitPath, 'utf8');
+			const before = fake.invocations().length;
+
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+				},
+			);
+
+			assert.equal(await readFile(layout.unitPath, 'utf8'), unit);
+			assert.equal(
+				fake.invocations().slice(before).includes('systemctl --user daemon-reload'),
+				false,
+				'an unchanged unit needs no reload',
+			);
+		},
+	);
+});
+
 test('--purge without a terminal needs --yes, and removes the data root with it', async () => {
 	await withMachine(
 		{
