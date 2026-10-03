@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
+import { activateDockTab, fileExplorerItem, openFileExplorer, selectFileView, setMonacoValue, setProjectRoot } from './support/ui'
 
 test('file viewer edits and saves text files without duplicating tabs', async ({
   appHarness,
@@ -19,12 +19,21 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'notes.txt').dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('hello from preview')
+
+  // The window status bar, not the panel, carries the file's name and size.
+  const fileSummary = mainWindow.locator('.workspace-status-bar')
+  await expect(fileSummary.getByTestId('workspace-status-bar-file')).toContainText('notes.txt')
+  await expect(fileSummary.locator('.workspace-status-bar__file-size')).toHaveText('19 B')
+  await expect(fileSummary.locator('.workspace-status-bar__file-unsaved')).toHaveCount(0)
+  await expect(mainWindow.locator('.file-status-bar')).toHaveCount(0)
 
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await setMonacoValue(mainWindow, 'saved through viewer\n')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(fileSummary.locator('.workspace-status-bar__file-unsaved')).toBeVisible()
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
 
   await activateDockTab(mainWindow, 'notes.txt')
   await appHarness.sendAppCommand('save-active')
@@ -74,12 +83,12 @@ test('HEX edits share dirty state and survive Text mode switches', async ({
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
   await fileExplorerItem(mainWindow, 'bytes.txt').dblclick()
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await selectFileView(mainWindow, 'HEX')
 
   const firstByte = mainWindow.getByLabel('Byte 00000000')
   const fourthByte = mainWindow.getByLabel('Byte 00000003')
   await firstByte.fill('48')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
 
   await firstByte.click()
   await fourthByte.click({ modifiers: ['Shift'] })
@@ -100,14 +109,14 @@ test('HEX edits share dirty state and survive Text mode switches', async ({
       }),
     )
     .toBe('Hello world\n')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
 
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await selectFileView(mainWindow, 'HEX')
   await expect(mainWindow.getByLabel('Byte 00000000')).toHaveValue('48')
   await activateDockTab(mainWindow, 'bytes.txt')
   await appHarness.sendAppCommand('save-active')
   await expect.poll(() => workspace.readText('bytes.txt')).toBe('Hello world\n')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false')
 })
 
 test('preview syntax highlights tsx files', async ({ createWorkspace, mainWindow }) => {
@@ -124,6 +133,7 @@ test('preview syntax highlights tsx files', async ({ createWorkspace, mainWindow
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'component.tsx').dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('export function Example()')
   await expect(mainWindow.locator('.file-code-block__line-number').first()).toHaveText('1')
   await expect(mainWindow.locator('.file-preview-text .file-token--keyword', { hasText: 'export' }).first()).toBeVisible()
@@ -146,6 +156,7 @@ test('yaml and yml files are highlighted in preview and text modes', async ({ cr
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'compose.yml').dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('services:')
   await expect(mainWindow.locator('.file-preview-text .file-token--property', { hasText: 'services' }).first()).toBeVisible()
   await expect(mainWindow.locator('.file-preview-text .file-token--keyword', { hasText: 'true' }).first()).toBeVisible()
@@ -178,7 +189,7 @@ test('binary files fall back to hex when preview is unavailable', async ({ creat
   await expect(mainWindow.locator('.file-hex-viewer__header')).toContainText('Offset')
 })
 
-test('unknown extensions keep the default mode but allow preview text and hex tabs', async ({
+test('unknown extensions with text content open in Text and keep HEX in the More views menu', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -195,21 +206,45 @@ test('unknown extensions keep the default mode but allow preview text and hex ta
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'notes.customunknown').dblclick()
-  await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
-
-  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toBeEnabled()
-  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toBeEnabled()
-  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toBeEnabled()
-
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('this extension is still text')
 
-  await mainWindow.getByRole('tab', { name: 'Preview' }).click()
-  await expect(mainWindow.locator('.file-preview-unsupported')).toContainText('Preview is not available')
+  // Views that cannot show the file are left out rather than greyed.
+  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toHaveCount(0)
+  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toHaveCount(0)
 
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await selectFileView(mainWindow, 'HEX')
   await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toHaveCount(0)
+})
+
+test('a file opened for a diff it does not have opens in its default view', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-diff-unavailable',
+    seed: {
+      files: {
+        'untracked.ts': 'export const answer = 42\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await mainWindow.evaluate((path) => {
+    window.dispatchEvent(
+      new CustomEvent('terminay-open-file', { detail: { initialMode: 'diff', path } }),
+    )
+  }, `${workspace.rootDir}/untracked.ts`)
+
+  await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
+  await expect(mainWindow.locator('.file-hex-viewer')).toHaveCount(0)
+  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('tab', { name: 'Diff' })).toBeDisabled()
+  await expect(mainWindow.getByRole('tab', { name: 'Diff' })).toHaveAttribute('title', /Git/)
 })
 
 test('custom extension defaults choose the first file viewer tab', async ({ appHarness, createWorkspace, mainWindow }) => {
@@ -236,8 +271,8 @@ test('custom extension defaults choose the first file viewer tab', async ({ appH
   await fileExplorerItem(mainWindow, 'notes.e2etext').dblclick()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('open me in text mode')
-  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toBeEnabled()
-  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toBeEnabled()
+  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('button', { name: 'More views' })).toBeVisible()
 })
 
 async function getActiveMonacoLanguage(page: Parameters<typeof setProjectRoot>[0]) {

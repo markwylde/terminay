@@ -3056,6 +3056,22 @@ body.project-tabbar-reordering .project-tabbar {
   flex: none;
 }
 
+.workspace-status-bar__file-size,
+.workspace-status-bar__file-unsaved {
+  flex: none;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__file-size {
+  opacity: 0.72;
+}
+
+.workspace-status-bar__file-unsaved {
+  color: #f3cf5f;
+}
+
 .workspace-status-bar__git-count--dirty {
   color: #f3cf5f;
 }

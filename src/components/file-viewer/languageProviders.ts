@@ -271,7 +271,8 @@ export function attachLanguageIntelligence(
     // `none` means no contributed language server selects this file, and
     // `unavailable` means its session cannot serve one. Both stay quiet.
     if (capabilities.state === 'none' || capabilities.state === 'unavailable') return
-    opened = await gateway.open(projectId, path, capabilities.languageId ?? languageId, model.getValue())
+    const openedText = model.getValue()
+    opened = await gateway.open(projectId, path, capabilities.languageId ?? languageId, openedText)
     if (stopped || !opened) {
       if (stopped && opened) void gateway.close(projectId, path)
       return
@@ -283,6 +284,11 @@ export function attachLanguageIntelligence(
         void gateway.change(projectId, path, model.getValue())
       }),
     )
+    // The editor can mount before the file's text has loaded. Text that arrived
+    // while the session was opening was seen by no listener, so send it now.
+    if (!model.isDisposed() && model.getValue() !== openedText) {
+      void gateway.change(projectId, path, model.getValue())
+    }
 
     if (capabilities.features.completion) {
       disposables.push(

@@ -15,7 +15,6 @@ import {
 	createFileSessionStore,
 	createServerFileGateway,
 	detectFileCapabilities,
-	isFileViewerModeAvailable,
 	LARGE_FILE_THRESHOLD_BYTES,
 	resolveFileViewerEngine,
 	resolveFileViewerMode,
@@ -68,7 +67,6 @@ import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { isDocumentPath } from './openFilePresentation';
-import { FileStatusBar } from './FileStatusBar';
 import {
 	isDocumentationAcknowledgedWatchEvent,
 	resolveFileWatchDisposition,
@@ -943,10 +941,13 @@ function CanonicalFilePanel(
 				}
 				const defaultMode = /\.mdx$/iu.test(info.name)
 					? 'preview'
-					: getCustomDefaultMode(
-							info,
-							currentSettings.fileViewer.customFileExtensions,
-						) ?? capabilities.defaultMode;
+					: resolveFileViewerMode(
+							capabilities,
+							getCustomDefaultMode(
+								info,
+								currentSettings.fileViewer.customFileExtensions,
+							) ?? capabilities.defaultMode,
+						);
 				hasAppliedDefaultModeRef.current = true;
 				setMode(defaultMode);
 			}
@@ -1274,9 +1275,11 @@ function CanonicalFilePanel(
 		gitRepoInfo?.canDiff === true ||
 		diff?.isTracked === true ||
 		diffStatus === 'loading';
-	const availableModes: FileViewerMode[] = capabilities.canTasks
-		? ['preview', 'tasks', 'text', 'hex', 'diff']
-		: ['preview', 'text', 'hex', 'diff'];
+	const diffUnavailableReason = canDiff
+		? undefined
+		: gitRepoInfo?.gitAvailable === false
+			? 'Diff needs Git, which is not available here.'
+			: 'Nothing to compare: this file is not tracked by Git.';
 	const effectiveMode =
 		mode === 'diff' && !canDiff
 			? capabilities.fallbackMode
@@ -1293,6 +1296,8 @@ function CanonicalFilePanel(
 	return (
 		<div
 			className="file-panel"
+			data-dirty={isDirty ? 'true' : 'false'}
+			data-engine={engine}
 			style={
 				{
 					'--tab-color':
@@ -1331,21 +1336,30 @@ function CanonicalFilePanel(
 				<div className="file-panel__toolbar-row">
 				<FileModeSwitcher
 					activeMode={effectiveMode}
-					modes={availableModes}
-					disabledModes={{
-						diff: !canDiff || !isFileViewerModeAvailable(capabilities, 'diff'),
-						hex: !isFileViewerModeAvailable(capabilities, 'hex'),
-						preview: !isFileViewerModeAvailable(capabilities, 'preview'),
-						tasks: !isFileViewerModeAvailable(capabilities, 'tasks'),
-						text: !isFileViewerModeAvailable(capabilities, 'text'),
-					}}
+					modes={capabilities.primaryModes}
+					moreModes={capabilities.secondaryModes}
+					disabledReasons={
+						diffUnavailableReason === undefined
+							? undefined
+							: { diff: diffUnavailableReason }
+					}
 					onChangeMode={(nextMode) => {
 						void handleModeChange(nextMode);
 					}}
 				/>
+				{mode === 'diff' && diffUnavailableReason !== undefined ? (
+					<span className="file-panel__notice" role="status">
+						{diffUnavailableReason}
+					</span>
+				) : null}
+				{effectiveMode === 'hex' && !isHexValid ? (
+					<span className="file-panel__notice file-panel__notice--danger" role="status">
+						Invalid HEX
+					</span>
+				) : null}
 				{isDocumentPath(fileInfo.name) ? (
 					<button
-						className="file-mode-switcher__button file-panel__open-as-document"
+						className="file-panel__action file-panel__open-as-document"
 						onClick={() => setPresentation('documentation')}
 						type="button"
 					>
@@ -1493,14 +1507,6 @@ function CanonicalFilePanel(
 					/>
 				) : null}
 			</div>
-
-			<FileStatusBar
-				file={fileInfo}
-				engine={engine}
-				isDirty={isDirty}
-				isValid={effectiveMode !== 'hex' || isHexValid}
-				showEngine={!isDocumentation}
-			/>
 		</div>
 	);
 }

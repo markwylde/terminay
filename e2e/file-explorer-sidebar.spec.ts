@@ -7,6 +7,7 @@ import {
   contextMenuItem,
   fileExplorerItem,
   openFileExplorer,
+  selectFileView,
   setProjectRoot,
   submitFileExplorerNameModal,
 } from './support/ui'
@@ -49,6 +50,7 @@ test('file explorer can browse folders and open files', async ({ createWorkspace
   await expect(fileExplorerItem(mainWindow, 'deep.txt')).toBeVisible()
 
   await fileExplorerItem(mainWindow, 'notes.txt').dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('sidebar preview text')
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
@@ -82,11 +84,12 @@ test('file explorer opens dragged files on the dock tab bar', async ({ createWor
       targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
     })
     fileViewerOpened = await mainWindow
-      .locator('.file-preview-text')
+      .locator('.file-mode-switcher')
       .waitFor({ state: 'visible', timeout: 3_000 })
       .then(() => true, () => false)
   }
 
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('opened from a tab bar drop')
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
