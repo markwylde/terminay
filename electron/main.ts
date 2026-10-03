@@ -2615,9 +2615,17 @@ function sessionHolderEnabled(): boolean {
 	return process.env.TERMINAY_SESSION_HOLDER === '1';
 }
 
+/**
+ * The holder entry, addressed through `app.asar` in a packaged app, never
+ * through `app.asar.unpacked`. The holder runs under Electron's own binary, so
+ * it reads the archive as the main process does, and it must: node-pty derives
+ * its spawn helper's location by replacing `app.asar` with `app.asar.unpacked`
+ * in its own path. Loaded from the unpacked directory, that path already
+ * contains the replacement and becomes `app.asar.unpacked.unpacked`, and every
+ * shell fails to start.
+ */
 function getSessionHolderEntryPath(): string {
-	const entry = path.join(MAIN_DIST, 'sessionHolderEntry.js');
-	return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+	return path.join(MAIN_DIST, 'sessionHolderEntry.js');
 }
 
 /** Changes whenever the holder this build would start changes. */
