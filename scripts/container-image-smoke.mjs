@@ -21,7 +21,10 @@
 //                if it connects, the two networks are not isolated and the two
 //                cases above prove nothing.
 //
-// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman]
+// The cases share nothing, so each runs in its own process and they all run at
+// once; `--only` runs the named cases in this process, one after another.
+//
+// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman] [--only <case,...>]
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -41,12 +44,20 @@ const only = args.only?.split(',');
 const run_id = randomBytes(4).toString('hex');
 const name = (suffix) => `terminay-smoke-${run_id}-${suffix}`;
 const HOLD_MS = 10_000;
-// Published on the container host for the two isolated cases. They are not the
-// image's defaults, so the test can run beside a real Terminay container.
-const SIGNALING_PORT = 28_443;
-const ICE_PORT = 52_100;
+// Published on the container host by the isolated cases, each with ports of
+// its own so they can run at once. They are not the image's defaults, so the
+// test can run beside a real Terminay container.
 const ICE_SPAN = 16;
+const PUBLISHED = {
+	advertised: { signaling: 28_443, ice: 52_100 },
+	derived: { signaling: 28_444, ice: 52_100 + ICE_SPAN },
+	control: { signaling: 28_445, ice: 52_100 + 2 * ICE_SPAN },
+};
+const CASES = ['bare', 'advertised', 'derived', 'control'];
 const created = { containers: new Set(), networks: new Set(), volumes: new Set() };
+
+if (!only) process.exit(await runCasesTogether());
+for (const label of only) if (!CASES.includes(label)) fail(`unknown case: ${label}`);
 
 const work = await mkdtemp(join(tmpdir(), 'terminay-image-smoke-'));
 let failed = false;
@@ -66,11 +77,9 @@ try {
 	});
 
 	const cases = { bare, advertised, derived, control };
-	for (const [label, body] of Object.entries(cases)) {
-		if (only && !only.includes(label)) continue;
+	for (const label of only) {
 		log(`--- ${label}`);
-		await body();
-		// The isolated cases publish the same host ports, one after another.
+		await cases[label]();
 		for (const container of created.containers)
 			run([engine, 'rm', '--force', '--volumes', container], { allowFailure: true });
 		created.containers.clear();
@@ -95,6 +104,39 @@ try {
 	await rm(work, { force: true, recursive: true });
 }
 process.exit(failed ? 1 : 0);
+
+/**
+ * Run every case at once, each in a process of its own, and print each one's
+ * output whole when it ends so the cases do not interleave in the log.
+ */
+async function runCasesTogether() {
+	const script = fileURLToPath(import.meta.url);
+	const statuses = await Promise.all(
+		CASES.map(
+			(label) =>
+				new Promise((resolve) => {
+					const child = spawn(
+						process.execPath,
+						[script, ...process.argv.slice(2), '--only', label],
+						{ stdio: ['ignore', 'pipe', 'pipe'] },
+					);
+					let output = '';
+					child.stdout.on('data', (chunk) => {
+						output += chunk;
+					});
+					child.stderr.on('data', (chunk) => {
+						output += chunk;
+					});
+					child.on('close', (status) => {
+						process.stdout.write(output);
+						if (status !== 0) log(`failed ${label} (exit ${status})`);
+						resolve(status);
+					});
+				}),
+		),
+	);
+	return statuses.every((status) => status === 0) ? 0 : 1;
+}
 
 async function bare() {
 	const network = createNetwork('bare');
@@ -175,23 +217,23 @@ async function advertised() {
 	const serverNetwork = createNetwork('adv-server');
 	const deviceNetwork = createNetwork('adv-device');
 	const host = hostAddressFrom(deviceNetwork);
+	const { signaling, ice } = PUBLISHED.advertised;
 	const server = startServer('advertised', [
 		'--network', serverNetwork,
-		'--publish', `${SIGNALING_PORT}:${SIGNALING_PORT}/tcp`,
-		'--publish', `${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}:${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}/udp`,
-		'--env', `TERMINAY_HTTP_PORT=${SIGNALING_PORT}`,
-		'--env', `TERMINAY_ICE_PORT=${ICE_PORT}`,
+		...publish(PUBLISHED.advertised),
+		'--env', `TERMINAY_HTTP_PORT=${signaling}`,
+		'--env', `TERMINAY_ICE_PORT=${ice}`,
 		'--env', `TERMINAY_PUBLIC_HOST=${host}`,
 	]);
 	await waitReady(server);
 	const status = daemonStatus(server);
 	assert(
-		status.includes(`${host}:${ICE_PORT}`),
-		`status does not report the advertised address ${host}:${ICE_PORT}:\n${status}`,
+		status.includes(`${host}:${ice}`),
+		`status does not report the advertised address ${host}:${ice}:\n${status}`,
 	);
 	const url = pairingUrl(server);
 	assert(
-		new URL(url).origin === `https://${host}:${SIGNALING_PORT}`,
+		new URL(url).origin === `https://${host}:${signaling}`,
 		`the direct link does not name the public host: ${new URL(url).origin}`,
 	);
 	await device({
@@ -206,13 +248,13 @@ async function advertised() {
 }
 
 function derived() {
-	return forwardedWithoutAdvertisedAddress('der', 'derive');
+	return forwardedWithoutAdvertisedAddress('der', 'derive', PUBLISHED.derived);
 }
 
 async function control() {
 	let connected = true;
 	try {
-		await forwardedWithoutAdvertisedAddress('ctl', 'no-derive');
+		await forwardedWithoutAdvertisedAddress('ctl', 'no-derive', PUBLISHED.control);
 	} catch (error) {
 		connected = false;
 		assert(
@@ -226,19 +268,18 @@ async function control() {
 	);
 }
 
-async function forwardedWithoutAdvertisedAddress(prefix, derive) {
+async function forwardedWithoutAdvertisedAddress(prefix, derive, ports) {
 	const serverNetwork = createNetwork(`${prefix}-server`);
 	const deviceNetwork = createNetwork(`${prefix}-device`);
 	const host = hostAddressFrom(deviceNetwork);
 	const server = startServer(prefix, [
 		'--network', serverNetwork,
-		'--publish', `${SIGNALING_PORT}:${SIGNALING_PORT}/tcp`,
-		'--publish', `${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}:${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}/udp`,
+		...publish(ports),
 		// The origin is on the host, the range is pinned and published, and no
 		// address is advertised: the device has to derive the candidate.
-		'--env', `TERMINAY_HTTP_PORT=${SIGNALING_PORT}`,
-		'--env', `TERMINAY_DIRECT_ORIGIN=https://${host}:${SIGNALING_PORT}`,
-		'--env', `TERMINAY_ICE_PORT=${ICE_PORT}`,
+		'--env', `TERMINAY_HTTP_PORT=${ports.signaling}`,
+		'--env', `TERMINAY_DIRECT_ORIGIN=https://${host}:${ports.signaling}`,
+		'--env', `TERMINAY_ICE_PORT=${ports.ice}`,
 	]);
 	await waitReady(server);
 	const status = daemonStatus(server);
@@ -251,6 +292,14 @@ async function forwardedWithoutAdvertisedAddress(prefix, derive) {
 		server,
 		derive,
 	});
+}
+
+/** Flags that publish a case's signaling port and pinned ICE range on the host. */
+function publish({ signaling, ice }) {
+	return [
+		'--publish', `${signaling}:${signaling}/tcp`,
+		'--publish', `${ice}-${ice + ICE_SPAN - 1}:${ice}-${ice + ICE_SPAN - 1}/udp`,
+	];
 }
 
 /** Run the device in a container and approve it when it shows a match code. */

@@ -82,7 +82,7 @@ test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint",
   assert.match(workflow, /npm install --global npm@12\.2\.0/u);
 
   const e2eJob = job(workflow, "e2e-test");
-  assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u, "Gitea E2E job must retain ten shards");
+  assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14\]/u, "Gitea E2E job must retain fourteen shards");
   assert.match(e2eJob, /needs: e2e-image/u);
   assert.match(e2eJob, new RegExp([
     "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image \\}\\}",
@@ -91,11 +91,11 @@ test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint",
   assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
   assert.match(e2eJob, /Require amd64 Docker host/u);
   assert.match(e2eJob, /x86_64\|amd64/u);
-  assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-10/u);
-  assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/10/u);
+  assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-14/u);
+  assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/14/u);
   assert.doesNotMatch(e2eJob, /run: xvfb-run -a npm run test:e2e:host/u);
   assert.match(e2eJob, /if: \$\{\{ always\(\) \}\}/u);
-  assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
+  assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-14/u);
   assert.match(e2eJob, /retention-days: 7/u);
 
   const giteaImage = job(workflow, "e2e-image");
@@ -147,6 +147,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
 
   assert.match(job(workflow, "packaged-macos-smoke"), cacheEnvironment);
   assert.match(job(workflow, "build-and-test"), cacheEnvironment);
+  assert.match(job(workflow, "workspace-tests"), cacheEnvironment);
   const e2eImage = job(workflow, "e2e-image");
   assert.match(e2eImage, cacheEnvironment);
   assert.match(e2eImage, /DOCKER_BUILDKIT=1 docker build/u);
