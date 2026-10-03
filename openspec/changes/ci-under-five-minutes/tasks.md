@@ -5,7 +5,7 @@
 
 ## 2. Container image smoke
 
-- [x] 2.1 Give each isolated case its own signaling port and ICE range, and run every case in its own process when `--only` is absent. Verify: the CI job log shows `ok bare`, `ok advertised`, `ok derived` and `ok control`, and the smoke step takes about as long as its slowest case.
+- [x] 2.1 Draw each isolated case's signaling port and ICE range at random, retrying when the host has them allocated, and run every case in its own process when `--only` is absent. Verify: the CI job log shows `ok bare`, `ok advertised`, `ok derived` and `ok control`, and the smoke step takes about as long as its slowest case.
 - [x] 2.2 Build the official image while dependencies install. Verify: the CI job passes, and a failing image build prints its log and fails the step.
 
 ## 3. npm cache on the runner
@@ -20,7 +20,11 @@
 
 - [x] 5.1 Change the shard matrix, job name, artifact names and `--shard` argument from ten to fourteen. Verify: every shard runs at least one test on CI, and the contract tests that read the workflow pass.
 
-## 6. Verification
+## 6. Application build
+
+- [x] 6.1 Add `scripts/run-together.mjs` and use it in `build:app` for the server UI bundle, the root type check and the Desktop bundle. Verify: `npm run build:app` on a clean checkout produces `dist-web`, `dist` and `dist-electron`, `node --test scripts/packaged-desktop-artifact.test.mjs` passes, and a failing part fails the build.
+
+## 7. Verification
 
 - [x] 6.1 Update `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs` and `scripts/repository-ownership-release.test.mjs`. Verify: they pass with the other workflow contract tests.
 - [ ] 6.2 Measure two consecutive source-only runs from the Gitea API. Verify: each run's wall clock, from creation to its last job's completion, is under 300 seconds with every status `success` or `skipped`.
