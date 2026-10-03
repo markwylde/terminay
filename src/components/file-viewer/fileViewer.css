@@ -35,22 +35,56 @@
 .file-panel__toolbar {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-	padding: 12px 16px;
-	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-	background: rgba(9, 11, 14, 0.55);
+	flex: 0 0 auto;
+	border-bottom: 1px solid var(--tab-border, rgba(255, 255, 255, 0.08));
+	font-family: "Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 .file-panel__toolbar-row {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px 12px;
+	align-items: stretch;
+	gap: 12px;
+	min-width: 0;
+	min-height: var(--panel-tab-strip-height, 34px);
+	padding: 0 10px 0 6px;
+}
+
+.file-panel__notice {
+	align-self: center;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--tab-text, rgba(214, 227, 240, 0.45));
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.file-panel__notice--danger {
+	color: #ffb4a8;
+}
+
+.file-panel__action {
+	align-self: center;
+	flex: 0 0 auto;
+	border: 0;
+	border-radius: var(--panel-tab-radius, 4px);
+	background: transparent;
+	color: color-mix(in srgb, var(--tab-text-selected, #fff) 62%, transparent);
+	padding: 5px 8px;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background-color 150ms ease, color 150ms ease;
+}
+
+.file-panel__action:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--tab-text-selected, #fff);
 }
 
 .file-panel__open-as-document {
 	margin-left: auto;
-	border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .file-panel__body {
@@ -772,7 +806,6 @@
 	justify-content: flex-end;
 }
 
-.file-mode-switcher,
 .file-toolbar__segmented {
 	display: inline-flex;
 	align-items: center;
@@ -783,7 +816,6 @@
 	border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.file-mode-switcher__button,
 .file-toolbar__chip {
 	border: 0;
 	border-radius: 8px;
@@ -795,17 +827,147 @@
 	letter-spacing: 0.01em;
 }
 
-.file-mode-switcher__button:hover:not(:disabled),
 .file-toolbar__chip:hover {
 	background: rgba(255, 255, 255, 0.06);
 }
 
-.file-mode-switcher__button:disabled {
-	opacity: 0.4;
-	cursor: not-allowed;
+/* View switcher: a quiet tab row on the panel surface. The selected view is
+   marked by an underline in the tab's own colour, the way the dock tab above
+   it is tinted, rather than by a filled pill. */
+.file-mode-switcher {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	min-width: 0;
 }
 
-.file-mode-switcher__button--active,
+.file-mode-switcher__tabs {
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+}
+
+.file-mode-switcher__button {
+	position: relative;
+	flex: 0 0 auto;
+	border: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--tab-text-selected, #fff) 62%, transparent);
+	padding: 0 10px;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	cursor: pointer;
+	transition: color 150ms ease;
+}
+
+.file-mode-switcher__button::after {
+	content: "";
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: -1px;
+	height: 2px;
+	border-radius: 2px 2px 0 0;
+	background: transparent;
+	transition: background-color 150ms ease;
+}
+
+.file-mode-switcher__button:hover:not(:disabled) {
+	color: var(--tab-text-selected, #fff);
+}
+
+.file-mode-switcher__button:hover:not(:disabled):not(.file-mode-switcher__button--active)::after {
+	background: rgba(255, 255, 255, 0.16);
+}
+
+.file-mode-switcher__button:focus-visible,
+.file-mode-switcher__more-button:focus-visible,
+.file-mode-switcher__menu-item:focus-visible,
+.file-panel__action:focus-visible {
+	outline: 1px solid color-mix(in srgb, var(--tab-color, #717b85) 70%, #fff);
+	outline-offset: -3px;
+}
+
+.file-mode-switcher__button:disabled {
+	color: color-mix(in srgb, var(--tab-text-selected, #fff) 26%, transparent);
+	cursor: default;
+}
+
+.file-mode-switcher__button--active {
+	color: var(--tab-text-selected, #fff);
+}
+
+.file-mode-switcher__button--active::after {
+	background: color-mix(in srgb, var(--tab-color, #717b85) 78%, #fff);
+}
+
+.file-mode-switcher__more {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.file-mode-switcher__more-button {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 24px;
+	border: 0;
+	border-radius: var(--panel-tab-radius, 4px);
+	background: transparent;
+	color: color-mix(in srgb, var(--tab-text-selected, #fff) 62%, transparent);
+	cursor: pointer;
+	transition: background-color 150ms ease, color 150ms ease;
+}
+
+.file-mode-switcher__more-button:hover,
+.file-mode-switcher__more-button[aria-expanded="true"] {
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--tab-text-selected, #fff);
+}
+
+.file-mode-switcher__menu {
+	position: absolute;
+	top: calc(100% - 2px);
+	left: 0;
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	min-width: 132px;
+	padding: 4px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 8px;
+	background: #15191f;
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.file-mode-switcher__menu-item {
+	border: 0;
+	border-radius: var(--panel-tab-radius, 4px);
+	background: transparent;
+	color: #dce2f0;
+	padding: 6px 10px;
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.file-mode-switcher__menu-item:hover {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.file-mode-switcher__button,
+	.file-mode-switcher__button::after,
+	.file-mode-switcher__more-button,
+	.file-panel__action {
+		transition: none;
+	}
+}
+
 .file-toolbar__chip--active {
 	background: rgba(87, 183, 255, 0.15);
 	color: #eef7ff;
@@ -2615,58 +2777,6 @@ button.file-kanban__card:hover {
 	background: transparent;
 }
 
-.file-status-bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	min-height: 34px;
-	padding: 0 14px;
-	border-top: 1px solid rgba(255, 255, 255, 0.08);
-	background: rgba(9, 11, 14, 0.55);
-	font-size: 13px;
-}
-
-.file-status-bar__primary,
-.file-status-bar__secondary {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	min-width: 0;
-}
-
-.file-status-bar__path {
-	max-width: 420px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.file-status-bar__meta {
-	color: rgba(220, 226, 240, 0.58);
-}
-
-.file-status-bar__pill {
-	padding: 4px 8px;
-	border-radius: 999px;
-	background: rgba(255, 255, 255, 0.05);
-}
-
-.file-status-bar__pill--warning {
-	color: #ffe1a8;
-	background: rgba(255, 193, 102, 0.13);
-}
-
-.file-status-bar__pill--danger {
-	color: #ffcbc2;
-	background: rgba(192, 91, 91, 0.14);
-}
-
-.file-status-bar__pill--success {
-	color: #c3f0d1;
-	background: rgba(69, 168, 111, 0.14);
-}
-
 .file-tab__dirty {
 	display: inline-flex;
 	align-items: center;
@@ -2679,14 +2789,12 @@ button.file-kanban__card:hover {
 
 @media (max-width: 900px) {
 	.file-toolbar,
-	.file-status-bar,
 	.file-conflict-banner {
 		flex-direction: column;
 		align-items: stretch;
 	}
 
 	.file-toolbar__section--right,
-	.file-status-bar__secondary,
 	.file-conflict-banner__actions {
 		justify-content: flex-start;
 		flex-wrap: wrap;

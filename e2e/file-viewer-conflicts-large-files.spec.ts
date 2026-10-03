@@ -1,7 +1,7 @@
 import { appendFile, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
-import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot, viewDocumentSource } from './support/ui'
+import { activateDockTab, fileExplorerItem, openFileExplorer, selectFileView, setMonacoValue, setProjectRoot, viewDocumentSource } from './support/ui'
 
 async function replaceFileAtomically(filePath: string, contents: string): Promise<void> {
   const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.swap`)
@@ -23,6 +23,7 @@ test('file viewer reloads clean files after external changes', async ({ createWo
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'watched.txt').dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('from disk v1')
 
   await workspace.writeText('watched.txt', 'from disk v2\n')
@@ -70,7 +71,7 @@ test('dirty file edits stay local until saved even after an external write', asy
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await setMonacoValue(mainWindow, 'local draft\n')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
 
   await workspace.writeText('conflict.txt', 'external revision\n')
   await expect
@@ -96,7 +97,7 @@ test('dirty file edits stay local until saved even after an external write', asy
 
   await activateDockTab(mainWindow, 'conflict.txt')
   await appHarness.sendAppCommand('save-active')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false')
   await expect.poll(() => workspace.readText('conflict.txt')).toBe('local draft\n')
 })
 
@@ -137,18 +138,18 @@ test('large text files use bounded ranged editing in performant mode', async ({
 
   const performant = mainWindow.locator('.file-performant-text-viewer')
   await expect(performant).toBeVisible()
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Performant')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-engine', 'performant')
   await expect(mainWindow.locator('.file-performant-text-viewer__viewport')).toHaveAttribute(
     'data-line-count',
     /[1-9]\d{5,}/,
   )
   await expect.poll(() => mainWindow.locator('.file-performant-text-page').count()).toBeLessThan(5)
 
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await selectFileView(mainWindow, 'HEX')
   const preexistingHexByte = mainWindow.getByLabel('Byte 00000027')
   await expect(preexistingHexByte).toHaveValue('35')
   await preexistingHexByte.fill('41')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   await expect.poll(readDiskPrefix).toMatch(/^0123456789abcdef\n/)
 
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
@@ -176,25 +177,25 @@ test('large text files use bounded ranged editing in performant mode', async ({
       })),
     )
     .toEqual({ end: crossLineSelectionEnd, start: 8 })
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   await expect.poll(readDiskPrefix).toMatch(/^0123456789abcdef\n/)
 
-  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await selectFileView(mainWindow, 'HEX')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   const firstByte = mainWindow.getByLabel('Byte 00000000')
   await expect(firstByte).toHaveValue('63')
   await firstByte.fill('58')
   const replacementNewline = mainWindow.getByLabel('Byte 00000012')
   await expect(replacementNewline).toHaveValue('0A')
   await replacementNewline.fill('20')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   await expect.poll(readDiskPrefix).toMatch(/^0123456789abcdef\n/)
 
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
   const joinedFirstPage = mainWindow.getByLabel('Lines 1–128')
   await expect(joinedFirstPage).toHaveValue(/^Xhanged first line inserted snow 雪\njoined second line\n/)
   expect(await joinedFirstPage.inputValue()).toContain('01234A6789abcdef')
-  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+  await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
 
   await mainWindow.locator('.file-performant-text-viewer__viewport').evaluate((element) => {
     element.scrollTop = 3_700

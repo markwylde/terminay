@@ -91,10 +91,7 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	await mainWindow.waitForTimeout(1_200);
 	await expect(richText).toBeFocused();
 	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
-	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
-	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
-		'Monaco',
-	);
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 
 	await editor.getByRole('combobox').first().click();
 	const blockTypeMenu = mainWindow.getByRole('listbox').last();
@@ -199,13 +196,11 @@ test('Documentation autosave does not report its own root-file write as an exter
 	await heading.click();
 	await mainWindow.keyboard.press('End');
 	await mainWindow.keyboard.type(' updated');
-	await expect(mainWindow.locator('.file-status-bar')).toContainText(
-		'Unsaved changes',
-	);
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true');
 	await expect
 		.poll(() => workspace.readText('AGENTS.md'))
 		.toContain('## Editing instructions updated');
-	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 
 	await expect(
 		mainWindow.getByText(
@@ -256,17 +251,13 @@ test('repeated AGENTS.md autosaves do not conflict with their own filesystem eve
 	for (let revision = 1; revision <= 12; revision += 1) {
 		const marker = ` ${revision}`;
 		await mainWindow.keyboard.type(marker);
-		await expect(mainWindow.locator('.file-status-bar')).toContainText(
-			'Unsaved changes',
-		);
+		await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true');
 		await expect
 			.poll(() => workspace.readText('AGENTS.md'))
 			.toContain(
 				`workspace.${Array.from({ length: revision }, (_, index) => ` ${index + 1}`).join('')}`,
 			);
-		await expect(mainWindow.locator('.file-status-bar')).toContainText(
-			'Synced',
-		);
+		await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 		await expect(
 			mainWindow.getByText(
 				'This file changed on disk while you had unsaved edits.',
@@ -301,15 +292,13 @@ test('a task checkbox autosave does not conflict with the next document edit', a
 	await expect
 		.poll(() => workspace.readText('AGENTS.md'))
 		.toContain('* [x] Item one');
-	await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced');
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 
 	const paragraph = editor.getByText('Write here.', { exact: true });
 	await paragraph.click();
 	await mainWindow.keyboard.press('End');
 	await mainWindow.keyboard.type(' Again.');
-	await expect(mainWindow.locator('.file-status-bar')).toContainText(
-		'Unsaved changes',
-	);
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true');
 	await expect(
 		mainWindow.getByText(
 			'This file changed on disk while you had unsaved edits.',
@@ -517,9 +506,7 @@ test('Documentation does not rewrite a document that was only read', async ({
 	// bytes on disk are still the author's.
 	await mainWindow.waitForTimeout(2_500);
 	expect(await workspace.readText('README.md')).toBe(handWrappedDocument);
-	await expect(mainWindow.locator('.file-status-bar')).not.toContainText(
-		'Unsaved changes',
-	);
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 });
 
 test('Documentation keeps typed whitespace and the wrapping of untouched prose', async ({

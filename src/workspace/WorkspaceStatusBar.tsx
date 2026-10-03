@@ -1,9 +1,10 @@
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview';
 import { Folder, GitBranch, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useRef, useState } from 'react';
 import {
 	firstChangedSegmentIndex,
 	findContainingWorktree,
+	formatStatusBarFileSize,
 	inferHomeDirectory,
 	type RemoteDeviceKind,
 	type RemoteIndicatorState,
@@ -125,14 +126,15 @@ function BranchChip({ branch }: Readonly<{ branch: StatusBarBranch }>) {
 	);
 }
 
-/** Rendered by the active project into the status bar slot. */
-export function FocusedTerminalSummary({
-	status,
-	worktrees,
-}: FocusedTerminalSummaryProps) {
-	const homePath = status.cwd === null ? '' : inferHomeDirectory(status.cwd);
-	const segments =
-		status.cwd === null ? null : splitStatusBarPath(status.cwd, homePath);
+type PathBreadcrumbProps = {
+	/** Remounts the crumbs, and so replays the entry animation, when it changes. */
+	identity: string;
+	path: string;
+};
+
+function PathBreadcrumb({ identity, path }: Readonly<PathBreadcrumbProps>) {
+	const homePath = inferHomeDirectory(path);
+	const segments = splitStatusBarPath(path, homePath);
 	// The previously shown path decides which segments are new. It is kept in a
 	// ref so re-renders for unrelated reasons do not replay the animation.
 	const shownRef = useRef<{ key: string; firstChanged: number; segments: string[] | null }>({
@@ -140,8 +142,8 @@ export function FocusedTerminalSummary({
 		firstChanged: Number.POSITIVE_INFINITY,
 		segments: null,
 	});
-	const key = segments?.join('\u0000') ?? '';
-	if (segments !== null && shownRef.current.key !== key) {
+	const key = segments.join('\u0000');
+	if (shownRef.current.key !== key) {
 		shownRef.current = {
 			key,
 			firstChanged: firstChangedSegmentIndex(shownRef.current.segments, segments),
@@ -149,12 +151,54 @@ export function FocusedTerminalSummary({
 		};
 	}
 	const firstChanged = shownRef.current.firstChanged;
-	const crumbs =
-		status.cwd === null ? [] : statusBarBreadcrumb(status.cwd, homePath);
+	const crumbs = statusBarBreadcrumb(path, homePath);
+	let delay = 0;
+
+	return (
+		<span className="workspace-status-bar__path" title={path}>
+			<Folder aria-hidden="true" size={12} strokeWidth={2} />
+			<span className="workspace-status-bar__crumbs" key={`${identity}:${key}`}>
+				{crumbs.map((crumb, position) => {
+					const isNew = crumb.index >= firstChanged;
+					const style = isNew
+						? { animationDelay: `${(delay++) * 45}ms` }
+						: undefined;
+					return (
+						<span className="workspace-status-bar__crumb-wrap" key={`${crumb.index}:${crumb.label}`}>
+							{position > 0 ? (
+								<span className="workspace-status-bar__sep" aria-hidden="true">
+									/
+								</span>
+							) : null}
+							<span
+								className={[
+									'workspace-status-bar__crumb',
+									position === crumbs.length - 1 ? 'is-last' : '',
+									isNew ? 'is-new' : '',
+								]
+									.filter(Boolean)
+									.join(' ')}
+								style={style}
+								title={crumb.path ?? undefined}
+							>
+								{crumb.label}
+							</span>
+						</span>
+					);
+				})}
+			</span>
+		</span>
+	);
+}
+
+/** Rendered by the active project into the status bar slot. */
+export function FocusedTerminalSummary({
+	status,
+	worktrees,
+}: FocusedTerminalSummaryProps) {
 	const worktree =
 		status.cwd === null ? null : findContainingWorktree(status.cwd, worktrees);
 	const branch = statusBarBranch(worktree);
-	let delay = 0;
 
 	return (
 		<>
@@ -163,44 +207,56 @@ export function FocusedTerminalSummary({
 				<span className="workspace-status-bar__tab-title">{status.title}</span>
 			</span>
 			{status.cwd === null ? null : (
-				<span className="workspace-status-bar__path" title={status.cwd}>
-					<Folder aria-hidden="true" size={12} strokeWidth={2} />
-					<span className="workspace-status-bar__crumbs" key={`${status.sessionId}:${key}`}>
-						{crumbs.map((crumb, position) => {
-							const isNew = crumb.index >= firstChanged;
-							const style = isNew
-								? { animationDelay: `${(delay++) * 45}ms` }
-								: undefined;
-							return (
-								<span className="workspace-status-bar__crumb-wrap" key={`${crumb.index}:${crumb.label}`}>
-									{position > 0 ? (
-										<span className="workspace-status-bar__sep" aria-hidden="true">
-											/
-										</span>
-									) : null}
-									<span
-										className={[
-											'workspace-status-bar__crumb',
-											position === crumbs.length - 1 ? 'is-last' : '',
-											isNew ? 'is-new' : '',
-										]
-											.filter(Boolean)
-											.join(' ')}
-										style={style}
-										title={crumb.path ?? undefined}
-									>
-										{crumb.label}
-									</span>
-								</span>
-							);
-						})}
-					</span>
-				</span>
+				<PathBreadcrumb identity={status.sessionId} path={status.cwd} />
 			)}
 			{/* Branches are known only for the project's own worktrees. Outside
 			    them the directory may still be a repository, so say nothing
 			    rather than claim it is not one. */}
 			{branch === null ? null : <BranchChip branch={branch} />}
+		</>
+	);
+}
+
+export type FocusedFileStatus = {
+	panelId: string;
+	title: string;
+	layout: StatusBarLayoutCell[];
+	path: string;
+	/** Null until the server has described the file. */
+	size: number | null;
+	isDirty: boolean;
+};
+
+type FocusedFileSummaryProps = {
+	status: FocusedFileStatus;
+	worktrees: readonly StatusBarWorktree[];
+};
+
+/** Rendered into the status bar slot while a file panel holds focus. */
+export function FocusedFileSummary({ status, worktrees }: FocusedFileSummaryProps) {
+	const separator = Math.max(status.path.lastIndexOf('/'), status.path.lastIndexOf('\\'));
+	const directory = separator > 0 ? status.path.slice(0, separator) : status.path;
+	const branch = statusBarBranch(findContainingWorktree(directory, worktrees));
+
+	return (
+		<>
+			<span className="workspace-status-bar__tab" data-testid="workspace-status-bar-file">
+				<LayoutMiniature cells={status.layout} />
+				<span className="workspace-status-bar__tab-title">{status.title}</span>
+			</span>
+			<PathBreadcrumb identity={status.panelId} path={directory} />
+			{branch === null ? null : <BranchChip branch={branch} />}
+			{status.size === null ? null : (
+				<span
+					className="workspace-status-bar__file-size"
+					title={`${status.size.toLocaleString()} bytes`}
+				>
+					{formatStatusBarFileSize(status.size)}
+				</span>
+			)}
+			{status.isDirty ? (
+				<span className="workspace-status-bar__file-unsaved">Unsaved</span>
+			) : null}
 		</>
 	);
 }
@@ -215,16 +271,14 @@ type UseFocusedTerminalStatusOptions = {
 	getCwd: (sessionId: string) => Promise<string | null>;
 };
 
-function readLayout(api: DockviewApi, focusedSessionId: string): {
+function readLayout(api: DockviewApi, isFocusedPanel: (panel: IDockviewPanel) => boolean): {
 	title: string;
 	layout: StatusBarLayoutCell[];
 } | null {
 	let title: string | null = null;
 	const rects = api.groups.map((group) => {
 		const holdsFocus = group.panels.some((panel) => {
-			const matches =
-				(panel.params as { sessionId?: unknown } | undefined)?.sessionId ===
-				focusedSessionId;
+			const matches = isFocusedPanel(panel);
 			if (matches) title = panel.title ?? panel.id;
 			return matches;
 		});
@@ -272,7 +326,12 @@ export function useFocusedTerminalStatus({
 			setLayoutState(null);
 			return;
 		}
-		const read = readLayout(api, sessionId);
+		const read = readLayout(
+			api,
+			(panel) =>
+				(panel.params as { sessionId?: unknown } | undefined)?.sessionId ===
+				sessionId,
+		);
 		const next = read === null ? null : { sessionId, ...read };
 		// Dockview reports layout changes for every sash drag and resize; only
 		// re-render the workspace when what the bar shows actually changed.
@@ -355,4 +414,91 @@ export function useFocusedTerminalStatus({
 		...layoutState,
 		cwd: cwdBySession[layoutState.sessionId] ?? null,
 	};
+}
+
+type FilePanelStatusParams = {
+	filePath?: unknown;
+	fileInfo?: { size?: unknown };
+	isDirty?: unknown;
+};
+
+type UseFocusedFileStatusOptions = {
+	apiRef: { readonly current: DockviewApi | null };
+	isDockviewReady: boolean;
+	isActive: boolean;
+};
+
+/** The focused file panel's title, split layout, path, size and draft state,
+ * or null while the active panel is not a file. Everything is read from the
+ * panel's own parameters, which the file panel already keeps current. */
+export function useFocusedFileStatus({
+	apiRef,
+	isActive,
+	isDockviewReady,
+}: UseFocusedFileStatusOptions): FocusedFileStatus | null {
+	const [status, setStatus] = useState<FocusedFileStatus | null>(null);
+
+	useEffect(() => {
+		if (!isActive || !isDockviewReady) return;
+		const api = apiRef.current;
+		if (api === null) return;
+		let frame = 0;
+		let parameters: { dispose: () => void } | null = null;
+		let watchedPanelId: string | null = null;
+
+		const recompute = () => {
+			const panel = api.activePanel ?? null;
+			const params = panel?.params as FilePanelStatusParams | undefined;
+			const path = typeof params?.filePath === 'string' ? params.filePath : null;
+			const read =
+				panel === null || path === null
+					? null
+					: readLayout(api, (candidate) => candidate.id === panel.id);
+			const next: FocusedFileStatus | null =
+				panel === null || path === null || read === null
+					? null
+					: {
+							panelId: panel.id,
+							...read,
+							path,
+							size:
+								typeof params?.fileInfo?.size === 'number'
+									? params.fileInfo.size
+									: null,
+							isDirty: params?.isDirty === true,
+						};
+			setStatus((current) =>
+				JSON.stringify(current) === JSON.stringify(next) ? current : next,
+			);
+			const nextWatchedId = next === null ? null : next.panelId;
+			if (nextWatchedId !== watchedPanelId) {
+				parameters?.dispose();
+				watchedPanelId = nextWatchedId;
+				parameters =
+					panel !== null && nextWatchedId !== null
+						? panel.api.onDidParametersChange(schedule)
+						: null;
+			}
+		};
+		const schedule = () => {
+			window.cancelAnimationFrame(frame);
+			frame = window.requestAnimationFrame(recompute);
+		};
+		const disposables = [
+			api.onDidLayoutChange(schedule),
+			api.onDidActiveGroupChange(schedule),
+			api.onDidActivePanelChange(schedule),
+			api.onDidAddPanel(schedule),
+			api.onDidRemovePanel(schedule),
+			api.onDidMovePanel(schedule),
+		];
+		schedule();
+		return () => {
+			window.cancelAnimationFrame(frame);
+			parameters?.dispose();
+			for (const disposable of disposables) disposable.dispose();
+		};
+	}, [apiRef, isActive, isDockviewReady]);
+
+	return isActive ? status : null;
 }

@@ -1,0 +1,50 @@
+title: File viewer — default views and tabs
+intro: |
+  Found the HEX bug: a file opened from the Git panel asks for Diff, and when
+  Diff is unavailable the fallback is hard-coded to HEX. That gets fixed
+  regardless. Three product calls before I write the proposal and restyle the
+  panel. The in-panel status bar goes; file size moves to the window status bar.
+
+status: submitted
+submitted_at: "2026-10-03T17:03:55+01:00"
+
+questions:
+  - id: text_default
+    type: select
+    prompt: Which view should a source/text file (.ts, .json, .yml, …) open in?
+    help: |
+      I'd lean Text: it is the editor, and once its colours match Preview the
+      two look alike, so read-only Preview adds little for code. Markdown,
+      images and PDFs keep opening in Preview either way.
+    required: true
+    options:
+      - Text (editable editor)
+      - Preview (read-only, as today)
+    answer: Text (editable editor)
+
+  - id: tab_set
+    type: select
+    prompt: Which tabs should a file show?
+    help: |
+      I'd lean "relevant + More": a text file shows Text, Preview, Diff and
+      keeps HEX under a "…" menu; an image shows Preview and HEX; an unknown
+      binary shows HEX only. Unavailable views are left out rather than greyed.
+    required: true
+    options:
+      - Relevant tabs, the rest under a "…" menu
+      - Relevant tabs only, no way to reach the others
+      - All tabs always, just reordered and with a smarter default
+    answer: Relevant tabs, the rest under a "…" menu
+
+  - id: diff_unavailable
+    type: select
+    prompt: A file opened from the Git panel has no diff to show. What then?
+    help: I'd lean on opening the file's normal default view and hiding the Diff tab.
+    options:
+      - Open the default view, hide the Diff tab
+      - Open the default view, keep Diff visible but disabled with a reason
+    answer: Open the default view, keep Diff visible but disabled with a reason
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

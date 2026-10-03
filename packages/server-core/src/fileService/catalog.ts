@@ -562,14 +562,16 @@ export class FileCatalog {
 		);
 		const isLargeFile = size > LARGE_FILE_BYTES;
 		const safePreview = classification.safePreview && !isLargeFile;
-		const preferredMode: FileCatalogPreviewMode =
-			classification.previewKind === 'unsupported'
-				? 'hex'
-				: safePreview
-					? 'preview'
-					: classification.isBinary
-						? 'hex'
-						: 'text';
+		// Text opens in the editor, including text recognised only by its
+		// content. Preview leads only where it is the natural reading of the
+		// file: rendered Markdown, an image, or a PDF.
+		const preferredMode: FileCatalogPreviewMode = classification.isBinary
+			? safePreview
+				? 'preview'
+				: 'hex'
+			: safePreview && classification.previewKind === 'markdown'
+				? 'preview'
+				: 'text';
 		return Object.freeze({
 			relativePath: relativePath || '.',
 			size,
@@ -1030,16 +1032,56 @@ function mimeTypeFor(
 		ts: 'text/typescript',
 		tsx: 'text/typescript',
 		mjs: 'text/javascript',
+		bash: 'text/plain',
+		bat: 'text/plain',
 		c: 'text/plain',
 		cc: 'text/plain',
+		cfg: 'text/plain',
+		cjs: 'text/plain',
+		conf: 'text/plain',
 		cpp: 'text/plain',
+		cs: 'text/plain',
+		csv: 'text/plain',
+		cts: 'text/plain',
+		dart: 'text/plain',
+		diff: 'text/plain',
+		env: 'text/plain',
+		fish: 'text/plain',
+		go: 'text/plain',
+		gradle: 'text/plain',
+		graphql: 'text/plain',
 		h: 'text/plain',
+		hpp: 'text/plain',
+		ini: 'text/plain',
+		java: 'text/plain',
+		jsonc: 'text/plain',
+		json5: 'text/plain',
+		kt: 'text/plain',
+		less: 'text/plain',
+		lock: 'text/plain',
+		log: 'text/plain',
+		lua: 'text/plain',
+		mts: 'text/plain',
+		patch: 'text/plain',
+		php: 'text/plain',
+		pl: 'text/plain',
+		proto: 'text/plain',
+		ps1: 'text/plain',
 		py: 'text/plain',
+		r: 'text/plain',
 		rb: 'text/plain',
 		rs: 'text/plain',
+		sass: 'text/plain',
+		scala: 'text/plain',
+		scss: 'text/plain',
 		sh: 'text/plain',
 		sql: 'text/plain',
-		log: 'text/plain',
+		svelte: 'text/plain',
+		swift: 'text/plain',
+		tf: 'text/plain',
+		tsv: 'text/plain',
+		vue: 'text/plain',
+		zsh: 'text/plain',
 		css: 'text/css',
 		html: 'text/html',
 		htm: 'text/html',
