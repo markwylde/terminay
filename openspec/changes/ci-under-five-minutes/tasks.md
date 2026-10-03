@@ -24,7 +24,17 @@
 
 - [x] 6.1 Add `scripts/run-together.mjs` and use it in `build:app` for the server UI bundle, the root type check and the Desktop bundle. Verify: `npm run build:app` on a clean checkout produces `dist-web`, `dist` and `dist-electron`, `node --test scripts/packaged-desktop-artifact.test.mjs` passes, and a failing part fails the build.
 
-## 7. Verification
+## 7. Base image key
+
+- [x] 7.1 Hash a manifest into the base image key without the scripts npm does not run during an install. Verify: the contract test shows a longer test list leaves the key alone, and a changed dependency, override or install script moves it; on CI, a commit that only edits `scripts` reports the base restored.
+
+## 8. Tests failing on main
+
+- [x] 8.1 Do not read a file above the large-file boundary whole before an engine is chosen. Verify: `e2e/file-viewer-conflicts-large-files.spec.ts` passes ten times in a row in the container with no retries, and renderer memory with the chooser open stays near 230 MiB instead of 2.5 GiB.
+- [x] 8.2 Let the Monaco editor own its text while it is typed in. Verify: `e2e/file-viewer-language.spec.ts` passes ten times in a row in the container with no retries, and `src/components/file-viewer/editorTextEcho.test.ts` passes.
+- [x] 8.3 Make the terminal focus tests blur until the terminal stays unfocused. Verify: `e2e/terminal.spec.ts` passes on CI.
+
+## 9. Verification
 
 - [x] 6.1 Update `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs` and `scripts/repository-ownership-release.test.mjs`. Verify: they pass with the other workflow contract tests.
 - [ ] 6.2 Measure two consecutive source-only runs from the Gitea API. Verify: each run's wall clock, from creation to its last job's completion, is under 300 seconds with every status `success` or `skipped`.

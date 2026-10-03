@@ -1,5 +1,29 @@
 ## MODIFIED Requirements
 
+### Requirement: Layered E2E test environment
+
+Pull-request CI SHALL build the Electron E2E test environment as two images. A dependency base image SHALL contain the operating-system packages, the installed npm dependencies, Electron, and Playwright's Chromium. It SHALL be tagged by a content hash of exactly the inputs that affect it: its Dockerfile, the lockfile, every workspace manifest it copies, and the scripts it runs. Of a manifest, only what an install reads SHALL count towards the hash: an npm script that npm does not run while installing SHALL NOT change it. A per-commit E2E image SHALL be built from that base and add only the repository source and its build outputs. CI SHALL build and publish a base image only when no image with its tag exists in the internal registry, and otherwise SHALL reuse the published one. Local E2E runs SHALL build both images with the same Dockerfiles.
+
+#### Scenario: Source-only change reuses the base
+
+- **WHEN** a commit changes application source but not the lockfile, workspace manifests, or base Dockerfile
+- **THEN** CI reuses the existing base image, and the new E2E image shares all of the base's layers
+
+#### Scenario: A test added to an npm script reuses the base
+
+- **WHEN** a commit changes only a manifest's test or build scripts
+- **THEN** the base image key is unchanged and CI reuses the existing base image
+
+#### Scenario: Dependency change rebuilds the base
+
+- **WHEN** a commit changes `package-lock.json`, a manifest's dependencies, or a script npm runs while installing
+- **THEN** the base image key changes and CI builds and publishes a new base before building the E2E image
+
+#### Scenario: Shards reuse base layers
+
+- **WHEN** a runner that has already pulled an E2E image built on the current base pulls the next commit's E2E image
+- **THEN** only the per-commit layers are downloaded
+
 ### Requirement: Balanced E2E shards
 
 The E2E suite SHALL be sharded by test rather than by file, so that each of the fourteen shards receives a near-equal number of tests and no shard receives none. A spec whose tests share one application instance created in a `beforeAll` hook SHALL declare itself one group, so its tests stay in one shard and run in declaration order.
