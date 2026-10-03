@@ -38,9 +38,13 @@ type ProjectTabListProps = {
 	onReorder: (projects: ProjectTab[]) => void;
 	onReorderCommit?: (movedId: string) => void;
 	onSwitcherOpen?: () => void;
+	/** A dragged terminal tab was released on this tab. */
+	onTerminalDrop?: (projectId: string) => void;
 	onCreateProject?: () => void;
 	canCreateProject?: boolean;
 	projects: ProjectTab[];
+	/** The tabs that take the terminal tab currently being dragged. */
+	terminalDropTargetIds?: readonly string[];
 };
 
 function ProjectTabPreview({
@@ -92,9 +96,11 @@ export function ProjectTabList({
 	onReorder,
 	onReorderCommit,
 	onSwitcherOpen,
+	onTerminalDrop,
 	onCreateProject,
 	canCreateProject = true,
 	projects,
+	terminalDropTargetIds,
 }: ProjectTabListProps) {
 	// A tab's identity is `(serverId, projectId)`, because project ids are
 	// per-server namespaces: two attached servers restored from one data root
@@ -121,6 +127,11 @@ export function ProjectTabList({
 	const listRef = useRef<HTMLDivElement>(null);
 	const widthsRef = useRef(new Map<string, number>());
 	const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+	const [terminalDropHoverId, setTerminalDropHoverId] = useState<string | null>(
+		null,
+	);
+	const acceptsTerminalDrop = (projectId: string) =>
+		terminalDropTargetIds?.includes(projectId) === true;
 	// The shell owns this decision; the strip must not re-derive it from its own
 	// measurement and end up disagreeing with the chrome around it.
 	const compact = isCompactChrome;
@@ -328,7 +339,7 @@ export function ProjectTabList({
 							data-pending-project-id={
 								project.creationStatus === undefined ? undefined : project.id
 							}
-							className={`project-tab${keyOf(project) === activeProjectId ? ' project-tab--active' : ''}${keyOf(project) === draggingProjectId ? ' project-tab--dragging' : ''}${keyOf(project) === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}${projectTabIsBusy(project) && project.creationStatus !== 'failed' ? ' project-tab--creation-loading' : ''}${isInert(project) ? ' project-tab--inert' : ''}`}
+							className={`project-tab${keyOf(project) === activeProjectId ? ' project-tab--active' : ''}${keyOf(project) === draggingProjectId ? ' project-tab--dragging' : ''}${keyOf(project) === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}${project.creationStatus ? ` project-tab--creation-${project.creationStatus}` : ''}${projectTabIsBusy(project) && project.creationStatus !== 'failed' ? ' project-tab--creation-loading' : ''}${isInert(project) ? ' project-tab--inert' : ''}${terminalDropHoverId === keyOf(project) && acceptsTerminalDrop(keyOf(project)) ? ' project-tab--terminal-drop-target' : ''}`}
 							role="tab"
 							aria-selected={keyOf(project) === activeProjectId}
 							aria-disabled={isInert(project) || undefined}
@@ -350,6 +361,40 @@ export function ProjectTabList({
 								commitVisibleDrop(keyOf(project), info.point.x);
 								document.body.classList.remove('project-tabbar-reordering');
 								void onDragEnd(keyOf(project));
+							}}
+							// A terminal tab dragged out of the workspace is an HTML5 drag,
+							// which the pointer-driven reorder above never sees. Only a tab
+							// that takes the drop cancels the event, so every other tab
+							// stays a refused target.
+							onDragEnter={(event) => {
+								if (!acceptsTerminalDrop(keyOf(project))) return;
+								event.preventDefault();
+								setTerminalDropHoverId(keyOf(project));
+							}}
+							onDragOver={(event) => {
+								if (!acceptsTerminalDrop(keyOf(project))) return;
+								event.preventDefault();
+								event.dataTransfer.dropEffect = 'move';
+								setTerminalDropHoverId(keyOf(project));
+							}}
+							onDragLeave={(event) => {
+								// Crossing onto the tab's own title or close button is
+								// not leaving the tab.
+								if (
+									event.relatedTarget instanceof Node &&
+									event.currentTarget.contains(event.relatedTarget)
+								)
+									return;
+								setTerminalDropHoverId((current) =>
+									current === keyOf(project) ? null : current,
+								);
+							}}
+							onDrop={(event) => {
+								if (!acceptsTerminalDrop(keyOf(project))) return;
+								event.preventDefault();
+								event.stopPropagation();
+								setTerminalDropHoverId(null);
+								onTerminalDrop?.(keyOf(project));
 							}}
 							onClick={() => {
 								if (project.creationStatus !== 'loading')

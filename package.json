@@ -136,6 +136,7 @@
 		"acceptance:app-screenshots": "node scripts/shared-app-screenshot-compare.mjs",
 		"test:agents": "npm run test:agent-status && npm run test:agent-runtime && npm run test:agent-extension-packages && npm run test:agent-ui",
 		"test:project-tab-drag": "node --test scripts/project-tab-drag.test.mjs",
+		"test:terminal-tab-project-drop": "node --test --experimental-strip-types scripts/project-tab-composition.test.mjs scripts/terminal-tab-project-drop.test.mjs",
 		"test:project-tab-overflow": "node --test --experimental-strip-types scripts/project-tab-overflow.test.mjs",
 		"test:activity-count-badge": "node --test --experimental-strip-types scripts/activity-count-badge.test.mjs",
 		"test:workspace-inventory": "node --test --experimental-strip-types scripts/workspace-inventory.test.mjs",
