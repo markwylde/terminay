@@ -1,0 +1,87 @@
+title: Terminals survive restart - scope
+intro: |
+  Shells would move into a small detached holder process that outlives the
+  app and the server, so a restart reattaches to them. These decide how far
+  that goes.
+
+status: submitted
+submitted_at: "2026-10-03T17:21:30+01:00"
+
+questions:
+  - id: when
+    type: select
+    prompt: Which restarts keep shells alive?
+    help: |
+      I'd lean towards "update and crash": an ordinary Quit keeps meaning
+      "end my terminals", and nothing is left running that you didn't ask for.
+    required: true
+    options:
+      - Update restart only
+      - Update restart and app/server crash
+      - Every quit and relaunch, like iTerm2
+    answer: Every quit and relaunch, like iTerm2
+    comment: Yes, I think it's any quit, and we should restart and have all the tabs, all the terminals, all the layouts, everything exactly the same. But of course, if a terminal has exited or crashed between, then we can still show that terminal and the output that we have, the last output we have, but with the red error saying the session has closed, it can no longer be resumed. Also, I do think that when we close Termini deliberately, there should be an option to exit all of the shells, because I think the user needs to know and make a decision on, do we keep those shells running in the background? Because it sounds like what you're saying is if we just close terminally, there will be a process that still stays open and keeps the terminals spawned. So let's say that any terminal has something running, and we close Termini, then that's still going to be running in the background, right? So I just think, basically, the user needs to make a decision whether they want to keep that running until they restart it, or if they just want to close them, and it will just close the tabs. I do think then if they use it deliberately closes and ends those sessions, then they can just not have those tabs when it restarts. Ask me more questions if you're confused about this.
+
+  - id: standalone
+    type: select
+    prompt: Does this cover the standalone terminay-server too?
+    help: |
+      Same holder, so `terminay upgrade` and a service restart would keep
+      shells. I'd include it: one server runtime, one behaviour.
+    required: true
+    options:
+      - Yes, Desktop and standalone
+      - Desktop only for now
+    answer: Yes, Desktop and standalone
+
+  - id: platforms
+    type: select
+    prompt: Which platforms in this change?
+    help: |
+      Windows ConPTY cannot hand a live console to another process the same
+      way; it needs its own design. I'd do macOS and Linux first and keep
+      today's behaviour on Windows.
+    required: true
+    options:
+      - macOS and Linux, Windows keeps today's behaviour
+      - All three now
+    answer: macOS and Linux, Windows keeps today's behaviour
+    comment: That's weird. We don't support Windows at all. The only official support for Termini is macOS and Linux. Windows is not supported in any way.
+
+  - id: orphan_lifetime
+    type: select
+    prompt: How long do shells wait with nothing attached?
+    help: |
+      If the app never comes back, something has to end them. I'd use a
+      fixed grace period so an update that fails to relaunch does not leave
+      shells running forever.
+    required: true
+    options:
+      - 5 minutes
+      - 1 hour
+      - Until reboot or the shell exits
+      - A setting, default 5 minutes
+    answer: A setting, default 5 minutes
+
+  - id: output_while_away
+    type: select
+    prompt: What happens to output produced while nothing is attached?
+    help: |
+      I'd buffer a bounded amount per shell in the holder so a build that
+      kept running shows its output after the restart. Scrollback from
+      before the restart is restored either way.
+    options:
+      - Buffer a bounded amount and replay it
+      - Drop it; show only what arrives after reattach
+    answer: Buffer a bounded amount and replay it
+
+  - id: update_confirm
+    type: boolean
+    prompt: Skip the "terminals are running" confirmation on Restart to update when every shell will survive?
+    help: I'd say yes - the prompt exists because quitting loses work, and here it does not.
+    answer: true
+    comment: 'Yeah, that''s fine. We are going to ask the user: if there are running terminals actively doing something, do they want to close those terminals? Do they want to save them for when they next put up?'
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?
