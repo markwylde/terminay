@@ -63,10 +63,6 @@ jobs:
           test "$(node -p 'process.platform')" = darwin
           test "$(node -p 'process.arch')" = arm64
           test "$(uname -m)" = arm64
-          # Where the job's files live decides how long packaging takes.
-          df -h . "$HOME" "${RUNNER_TEMP:-/tmp}" || true
-          sysctl -n hw.ncpu hw.memsize || true
-
       # The DMG boot works on a staged copy with its own data directory, so it
       # runs beside the two checks of the application in the release directory:
       # the built-in extension lifecycle, then the session holder starting a

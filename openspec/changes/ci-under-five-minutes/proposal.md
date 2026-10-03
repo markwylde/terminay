@@ -16,6 +16,7 @@ A pull request waits seven to twelve minutes for CI, and `main` waits as long af
 - Cancel the session-holder test's deadline timer once the application has quit.
 - Shard the E2E suite eighteen ways instead of ten, and deal tests to the shards in turn. Contiguous slices put the slow spec files in a few shards, which then carried three times the test time of the others.
 - Build the server UI bundle, the Desktop bundle and the root type check at the same time in `npm run build:app`. Five jobs run that build, and the E2E image build that every shard waits for is one of them.
+- Leave the icon component libraries out of the packaged application. Only the renderer imports them, and Vite bundles what it uses, yet their installed copies were 27,000 of the 48,000 files in `app.asar`. Packaging is the longest step of the macOS job, the last job over the budget.
 - Draw the container smoke's published host ports at random. Runners share a container host, so fixed ports fail when two runs overlap.
 - State the five-minute budget as a requirement, with the one case that is allowed to exceed it: a run that changes dependencies and so has to build and distribute a new base image.
 
@@ -37,4 +38,5 @@ _None._
 - `scripts/packaged-session-holder-macos.test.mjs`: the cancelled deadline.
 - Contract tests that read the workflow: `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs`, `scripts/repository-ownership-release.test.mjs`.
 - `openspec/adr`: a new ADR supersedes ADR-0032, which fixes the shard count at ten and the unit gate at one job.
-- No product, protocol or security-boundary changes. The GitHub mirror's workflows are unchanged. `npm run test:ci` still runs everything locally.
+- `electron-builder.json5`: two exclusions. The packaged Desktop application is about 100 MB smaller on disk and loads the same code: nothing outside the Vite-bundled renderer imports `@tabler/icons-react`, `@tabler/icons` or `lucide-react`.
+- Two product fixes for the tests failing on `main`, in `src/components/file-viewer/`. No protocol or security-boundary changes. The GitHub mirror's workflows are unchanged. `npm run test:ci` still runs everything locally.

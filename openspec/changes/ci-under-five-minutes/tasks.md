@@ -18,6 +18,9 @@
 
 - [x] 4.2 Run the DMG boot beside the built-in lifecycle and session-holder checks. Verify: the macOS job passes on CI with all three in its log, and takes under 300 seconds on an idle runner.
 
+- [x] 4.3 Write the pull-request smoke's disk image uncompressed. Verify: `node --test scripts/stage-macos-app-from-dmg.test.mjs` passes and the macOS job passes on CI.
+- [x] 4.4 Exclude `@tabler/**` and `lucide-react/**` from the packaged application. Verify: `app.asar` drops from 48,432 files under `node_modules` to 20,660, local `electron-builder --dir` from 51 to 24 seconds, and on CI the packaged macOS smoke, the packaged Linux lifecycle and the packaged-parity E2E test all pass.
+
 ## 5. Eighteen shards
 
 - [x] 5.1 Change the shard matrix, job name, artifact names and `--shard` argument from ten to eighteen. Verify: every shard runs at least one test on CI, and the contract tests that read the workflow pass.
