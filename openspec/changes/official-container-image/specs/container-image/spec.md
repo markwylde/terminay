@@ -91,7 +91,7 @@ The image SHALL declare a container health check that reports healthy only when 
 
 ### Requirement: Publication
 
-The image SHALL be published as `markwylde/terminay` on Docker Hub for Linux `amd64` and `arm64`, from the same build that publishes `ghcr.io/<owner>/terminay-server`, so both names resolve to one manifest digest. Images SHALL be published for tagged releases only, so `latest` SHALL name the newest tagged release. A pull request SHALL build the image and run its smoke test without publishing. Publication to Docker Hub SHALL be skipped, without failing the release, where its credential is not configured.
+The image SHALL be published as `markwylde/terminay` on Docker Hub for Linux `amd64` and `arm64`, from the same build that publishes `ghcr.io/<owner>/terminay-server`, so both names resolve to one manifest digest. `latest` SHALL name the newest tagged release. A pull request SHALL build the image and run its smoke test without publishing. Publication to Docker Hub SHALL be skipped, without failing the release, where its credential is not configured.
 
 #### Scenario: Both names are one image
 
@@ -101,7 +101,7 @@ The image SHALL be published as `markwylde/terminay` on Docker Hub for Linux `am
 #### Scenario: Latest is a release
 
 - **WHEN** a commit is merged to the default branch without a release tag
-- **THEN** no image is published and `markwylde/terminay:latest` does not move
+- **THEN** `markwylde/terminay:latest` does not move
 
 #### Scenario: No Docker Hub credential
 
