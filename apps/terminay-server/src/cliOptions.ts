@@ -44,7 +44,8 @@ export interface ServerCliOptions {
 		| 'approve'
 		| 'deny'
 		| 'approvals'
-		| 'reset-identity';
+		| 'reset-identity'
+		| 'end-sessions';
 	/** Pending approval id for the approve and deny commands. */
 	readonly approvalId?: string;
 	readonly serverId: string;
@@ -134,7 +135,8 @@ export function parseServerCliOptions(
 						: argv[0] === 'approve' ||
 								argv[0] === 'deny' ||
 								argv[0] === 'approvals' ||
-								argv[0] === 'reset-identity'
+								argv[0] === 'reset-identity' ||
+								argv[0] === 'end-sessions'
 							? argv[0]
 							: 'start';
 	const approvalId =
@@ -324,6 +326,7 @@ export function formatServerHelp(): string {
 		'  approve ID         approve a pending device by its approval id after comparing the match code',
 		'  deny ID            deny a pending device by its approval id',
 		'  reset-identity     rotate the server host key and revoke every paired device',
+		'  end-sessions       end every terminal session kept for a stopped server',
 		'  --status           print redacted runtime configuration',
 		'  --version          print the server version',
 		'  mcp                run the headless MCP stdio adapter (requires inherited control environment)',

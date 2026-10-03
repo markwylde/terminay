@@ -65,14 +65,14 @@
 ## 10. Standalone and CLI
 
 - [ ] 10.1 Wire the holder-backed factory in `apps/terminay-server/src/cli.ts` and add the holder payload to the standalone archive. Verified by: `scripts/probe-standalone-server-archive.mjs` extended to spawn through the holder from an extracted archive.
-- [ ] 10.2 Set `KillMode=process` in the unit and audit that every other server child exits when the server does. Verified by: unit-file test, and an integration test that no extension-host or language-server process remains after the server gets `SIGTERM`.
-- [ ] 10.3 Make `daemon upgrade` and rollback leave sessions attached. Verified by: integration test that a shell's pid is unchanged and interactive after upgrade and after a forced rollback.
-- [ ] 10.4 Make `daemon uninstall` send end-all and wait for holders to exit. Verified by: test that no holder or shell process remains after uninstall.
+- [x] 10.2 Set `KillMode=process` in the unit and audit that every other server child exits when the server does. Verified by: `apps/terminay-cli/test/unit.test.mjs` for the unit; `scripts/standalone-session-holder.test.mjs` killing a real server with `SIGKILL` and asserting every process it started is gone except the holder and its shell; `packages/server-core/test/extension-host-parent-loss.test.mjs` for the extension child that the audit found outliving its server.
+- [x] 10.3 Make `daemon upgrade` and rollback leave sessions attached. Verified by: `apps/terminay-cli/test/commands.test.mjs` (an upgrade adds the kill mode to an older unit and reloads systemd before it stops the service; a unit that already names one is left alone) and `scripts/standalone-session-holder.test.mjs` (a real server stopped with `SIGTERM` and started again keeps the same shell pid). Upgrade and rollback are both that stop and start around a symlink switch. Not exercised against a real systemd; that is spike 1.3.
+- [x] 10.4 Make `daemon uninstall` send end-all and wait for holders to exit. Verified by: `scripts/standalone-session-holder.test.mjs` running the real `terminay-server end-sessions` (holder and shell gone, refused while a server is running, a no-op when nothing is held) and `apps/terminay-cli/test/commands.test.mjs` (uninstall runs it after stopping the service and before removing the server, and still completes when it cannot).
 - [ ] 10.5 Extend the ADR-0004 release-gate probe with reattach after server exit on linux-x64, linux-arm64, and macOS arm64. Verified by: the probe passing in CI on each architecture.
 
 ## 11. Rollout and documentation
 
 - [ ] 11.1 Turn the option on for Desktop development builds, then standalone `main`, then stable, as separate commits. Verified by: each flip's CI statuses all `success` or `skipped` on Gitea.
 - [ ] 11.2 Reconcile `desktop-auto-update`'s "Restart to update" scenario with this change once that change is archived. Verified by: `openspec validate --all` passes and no spec says an update restart shows a confirmation.
-- [ ] 11.3 Document the holder, its files in the data root, tails at rest, and the unit's kill mode in `docs/operations/` and `docs/product-overview.md`. Verified by: the runbook names the socket, credential, and tail paths and how to end all sessions by hand.
+- [x] 11.3 Document the holder, its files in the data root, tails at rest, and the unit's kill mode in `docs/operations/` and `docs/product-overview.md`. Verified by: the runbook names the socket, credential, and tail paths and how to end all sessions by hand.
 - [ ] 11.4 Run `openspec validate --all`. Verified by: exit code 0.
