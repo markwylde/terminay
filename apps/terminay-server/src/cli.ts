@@ -3,6 +3,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	statSync,
 	watch as watchFileSystem,
 	writeFileSync,
 } from 'node:fs';
@@ -30,9 +31,12 @@ import {
 	AutomationRunLog,
 	agentHarnessSwitchesFromSettings,
 	agentIntegrationEnabledFromSettings,
+	backgroundTerminalLimitMs,
 	CanonicalProjectPathResolver,
 	createAutomationFileBackends,
 	createNodePtyFactory,
+	createSessionHolderPtyFactory,
+	launchDetachedSessionHolder,
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
@@ -132,6 +136,7 @@ import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
 
 declare const process: {
 	readonly argv: readonly string[];
+	readonly execPath: string;
 	readonly env: Readonly<Record<string, string | undefined>>;
 	readonly platform: NodeJS.Platform;
 	readonly stdout: { write(value: string): void };
@@ -888,9 +893,28 @@ async function createServerComposition(
 			authScope: 'admin',
 			permissions: ['workspace:write', 'extensions:read', 'extensions:manage'],
 		}),
-		ptyFactory: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
-			resolveCwd: resolveTerminalProcessCwd,
-		}),
+		...(sessionHolderEnabled()
+			? {
+					sessionHolder: createSessionHolderPtyFactory({
+						dataRoot: options.dataRoot,
+						buildId: sessionHolderBuildId(options),
+						launch: ({ env }) =>
+							launchDetachedSessionHolder(
+								process.execPath,
+								[sessionHolderEntryPath()],
+								{ ...process.env, ...env },
+							),
+						// The configured limit replaces this once settings have loaded.
+						limitMs: backgroundTerminalLimitMs(undefined),
+						resolveCwd: resolveTerminalProcessCwd,
+					}),
+				}
+			: {
+					ptyFactory: createNodePtyFactory(
+						nodePty as unknown as NodePtyModuleLike,
+						{ resolveCwd: resolveTerminalProcessCwd },
+					),
+				}),
 		activity,
 		agents,
 		agentSessions: {
@@ -2031,6 +2055,32 @@ function resolveWebRtcRuntimeRoot(
 	const configured = env.TERMINAY_WEBRTC_RUNTIME_ROOT?.trim();
 	if (configured) return resolve(configured);
 	return resolve(cwd, '../../build/webrtc-runtime');
+}
+
+/**
+ * Whether terminals are kept in a detached session holder (ADR-0035). Off
+ * unless asked for while the change rolls out; never on Windows, which is not
+ * a supported platform.
+ */
+function sessionHolderEnabled(): boolean {
+	if (process.platform === 'win32') return false;
+	return process.env.TERMINAY_SESSION_HOLDER === '1';
+}
+
+/** The holder entry ships beside this file in every artifact. */
+function sessionHolderEntryPath(): string {
+	return join(dirname(fileURLToPath(import.meta.url)), 'sessionHolderEntry.js');
+}
+
+/** Changes whenever the holder this build would start changes. */
+function sessionHolderBuildId(options: ServerCliOptions): string {
+	let stamp = 'unbuilt';
+	try {
+		stamp = String(statSync(sessionHolderEntryPath()).mtimeMs);
+	} catch {
+		/* a missing entry fails at launch, with a clearer error */
+	}
+	return `${options.serverVersion}:${options.serverRevision ?? ''}:${stamp}`;
 }
 
 /** The standalone npm package carries the same staged artifact bytes as the

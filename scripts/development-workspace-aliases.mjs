@@ -17,6 +17,10 @@ export function developmentWorkspaceAliases(repositoryRoot) {
 			replacement: source('packages', 'server-core', 'src', 'remote', 'index.ts'),
 		},
 		{
+			find: '@terminay/server-core/session-holder',
+			replacement: source('packages', 'server-core', 'src', 'sessionHolder', 'process.ts'),
+		},
+		{
 			find: '@terminay/server-core/ui-bundle',
 			replacement: source('packages', 'server-core', 'src', 'uiBundle', 'index.ts'),
 		},

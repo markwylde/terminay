@@ -232,6 +232,52 @@ test('repeat close attempts share one pending confirmation', async () => {
 	await settle();
 });
 
+test('closing the last busy window defers to the quit confirmation when terminals are kept', async () => {
+	const window = createWindow();
+	let quitCalls = 0;
+	bindMainWindowCloseConfirmation({
+		window,
+		isQuitting: () => false,
+		getRunningTerminalCount: () => 2,
+		isLastWindow: () => true,
+		quitConfirmsItself: () => true,
+		showConfirmation: async () =>
+			assert.fail('the window must not ask a question the quit will ask'),
+		requestQuit: () => {
+			quitCalls += 1;
+		},
+		requestClose: () => assert.fail('the last window must request quit'),
+	});
+
+	const event = window.emitClose();
+	await settle();
+
+	assert.equal(event.prevented(), 1);
+	assert.equal(quitCalls, 1);
+});
+
+test('a busy non-final window still asks even when terminals are kept', async () => {
+	const window = createWindow();
+	let dialogCalls = 0;
+	bindMainWindowCloseConfirmation({
+		window,
+		isQuitting: () => false,
+		getRunningTerminalCount: () => 1,
+		isLastWindow: () => false,
+		quitConfirmsItself: () => true,
+		showConfirmation: async () => {
+			dialogCalls += 1;
+			return { response: 1 };
+		},
+		requestQuit: () => assert.fail('closing one window is not a quit'),
+		requestClose: () => assert.fail('Keep Running leaves the window open'),
+	});
+
+	window.emitClose();
+	await settle();
+	assert.equal(dialogCalls, 1);
+});
+
 function createWindow() {
 	let listener;
 	return {

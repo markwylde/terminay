@@ -535,9 +535,14 @@ test('restart to update installs and relaunches only at the final quit', async (
 	h.appUpdater.finishQuit(h.quit);
 	assert.deepEqual(h.quits, ['quit']);
 
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), false);
 	await h.appUpdater.check();
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), false);
 	assert.equal(h.appUpdater.requestRestartToUpdate(), true);
+	// The quit path reads this to skip its confirmation for an update restart.
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), true);
 	h.appUpdater.cancelRestartToUpdate();
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), false);
 	h.appUpdater.finishQuit(h.quit);
 	assert.deepEqual(h.quits, ['quit', 'quit']);
 	assert.deepEqual(h.updater.installs, []);

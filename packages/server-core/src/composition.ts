@@ -123,6 +123,10 @@ import type {
 	ServerConnectionLike,
 	ServerCoreOptions,
 } from './types.js';
+import type { SessionHolderPtyFactory } from './sessionHolder/factory.js';
+import { isHolderSessionId } from './sessionHolder/paths.js';
+import { reattachHeldSessions } from './sessionHolder/reattach.js';
+import { backgroundTerminalLimitMs } from './settings/backgroundTerminals.js';
 import { WorkspaceStore } from './workspace.js';
 import {
 	restoreWorkspaceOnStartup,
@@ -186,6 +190,13 @@ export interface ServerCoreCompositionOptions
 	readonly terminalService?: TerminalService;
 	/** Used to create the server-owned service when `terminalService` is absent. */
 	readonly ptyFactory?: PtyFactory;
+	/**
+	 * A PTY factory whose processes live in a detached session holder
+	 * (ADR-0035). Supplying it instead of `ptyFactory` is what makes terminals
+	 * survive this server: start-up reattaches to held sessions and keeps their
+	 * panels, and shutdown lets go of sessions instead of ending them.
+	 */
+	readonly sessionHolder?: SessionHolderPtyFactory;
 	/** Additional TerminalService limits/hooks, excluding its identity/factory. */
 	readonly terminalOptions?: Omit<
 		TerminalServiceOptions,
@@ -385,6 +396,12 @@ export interface ServerCoreComposition {
 	 * created. The composition, not ServerRuntime, owns these instances. */
 	readonly start: () => Promise<void>;
 	readonly shutdown: () => Promise<void>;
+	/**
+	 * End every terminal session and remove their panels, leaving no session
+	 * holder running. This is the explicit "end my terminals" a host offers
+	 * before it shuts the composition down; shutdown alone keeps held sessions.
+	 */
+	readonly endAllTerminalSessions: () => Promise<void>;
 }
 
 /**
@@ -731,6 +748,14 @@ export function createServerCoreComposition(
 						terminal.listSessions(),
 					),
 				};
+	const automationRetainsExitedSession =
+		automationSpace === undefined
+			? undefined
+			: automationSpaceRetainsExitedSession(automationSpace.workspace);
+	const heldEndedSessionRetained =
+		options.sessionHolder === undefined || options.workspace === undefined
+			? undefined
+			: endedSessionWithOpenPanel(options.workspace);
 	const terminalOperations = createTerminalOperationRegistry({
 		service: terminal,
 		eventJournal,
@@ -752,9 +777,19 @@ export function createServerCoreComposition(
 			: {
 					beforeSessionCreate: automationSpaceSessionGuard(automationSpace.workspace),
 					isProjectHidden: automationSpace.visibility.isProjectHidden,
-					retainsExitedSession: automationSpaceRetainsExitedSession(
-						automationSpace.workspace,
-					),
+				}),
+		// Which ended sessions may still be read. A kept automation terminal
+		// always may. With a session holder, so may any ended session whose
+		// panel is still open: its panel shows the output it ended with.
+		...(automationSpace === undefined && heldEndedSessionRetained === undefined
+			? {}
+			: {
+					retainsExitedSession: (identity: {
+						readonly projectId: string;
+						readonly sessionId: string;
+					}) =>
+						automationRetainsExitedSession?.(identity) === true ||
+						heldEndedSessionRetained?.(identity) === true,
 				}),
 		...(options.workspace === undefined
 			? {}
@@ -1111,6 +1146,24 @@ export function createServerCoreComposition(
 					await options.extensions?.activateEnabled?.();
 				}
 				await options.settings?.load();
+				// The unattached limit is a server setting; the holder is told it
+				// now and again whenever it changes.
+				if (
+					options.sessionHolder !== undefined &&
+					options.settings !== undefined
+				) {
+					const holder = options.sessionHolder;
+					const applyLimit = (settings: {
+						readonly keepTerminalsAfterQuit?: unknown;
+					}): void =>
+						holder.setLimit(
+							backgroundTerminalLimitMs(settings.keepTerminalsAfterQuit),
+						);
+					applyLimit(options.settings.settings);
+					unsubscribeBackgroundLimit ??= options.settings.onChange((state) =>
+						applyLimit(state.settings),
+					);
+				}
 				mcpApprovals?.setPolicies(storedMcpPermissions());
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -1130,7 +1183,16 @@ export function createServerCoreComposition(
 				) {
 					const unavailableProjectIds =
 						(await options.workspaceStartup.prepare?.()) ?? new Set<string>();
+					if (options.sessionHolder !== undefined)
+						await reattachHeldSessions({
+							serverId: options.serverId,
+							workspace: options.workspace,
+							terminal,
+							holder: options.sessionHolder,
+							freshWorkspace: options.workspaceStartup.firstRun,
+						});
 					await restoreWorkspaceOnStartup({
+						preserveTerminalPanels: options.sessionHolder !== undefined,
 						workspace: options.workspace,
 						liveSessionCount: () => terminal.listSessions().length,
 						hasSession: (sessionId) =>
@@ -1154,6 +1216,20 @@ export function createServerCoreComposition(
 			}
 		})();
 		return startPromise;
+	};
+	// A session whose record leaves the workspace is one whose panel was
+	// closed. The holder must not keep its process, its ring, or its tail.
+	const unsubscribeHeldSessionRelease =
+		options.sessionHolder === undefined || options.workspace === undefined
+			? undefined
+			: releaseClosedHeldSessions(options.workspace, options.sessionHolder);
+	let unsubscribeBackgroundLimit: (() => void) | undefined;
+	const endAllTerminalSessions = async (): Promise<void> => {
+		await startPromise?.catch(() => undefined);
+		unsubscribeHeldSessionRelease?.();
+		await terminal.shutdown();
+		await options.sessionHolder?.endAll();
+		options.workspace?.discardStaleTerminalState();
 	};
 	const shutdown = (): Promise<void> => {
 		if (shutdownPromise !== undefined) return shutdownPromise;
@@ -1189,7 +1265,16 @@ export function createServerCoreComposition(
 			await attempt(() => options.agentSessions?.scope.dispose());
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
-			await attempt(() => terminal.shutdown());
+			// With a session holder, shutting down is letting go: the shells keep
+			// running for the next server. Ending them is `endAllTerminalSessions`.
+			await attempt(() =>
+				terminal.shutdown(
+					options.sessionHolder === undefined ? {} : { detach: true },
+				),
+			);
+			await attempt(() => options.sessionHolder?.detach());
+			await attempt(() => unsubscribeHeldSessionRelease?.());
+			await attempt(() => unsubscribeBackgroundLimit?.());
 			await attempt(() => presentationCheckpoints?.close());
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());
@@ -1246,6 +1331,7 @@ export function createServerCoreComposition(
 		...(shellProfileOperations === undefined ? {} : { shellProfileOperations }),
 		start,
 		shutdown,
+		endAllTerminalSessions,
 	};
 }
 
@@ -1258,6 +1344,38 @@ function cleanupFailure(message: string, failures: readonly unknown[]): Error {
 	return error;
 }
 
+/** An ended session is still readable while a terminal panel points at it. */
+function endedSessionWithOpenPanel(
+	workspace: WorkspaceStore,
+): (identity: {
+	readonly projectId: string;
+	readonly sessionId: string;
+}) => boolean {
+	return (identity) => {
+		const state = workspace.state;
+		if (state.terminalSessions[identity.sessionId] === undefined) return false;
+		return Object.values(state.panels).some(
+			(panel) =>
+				panel.type === 'terminal' &&
+				panel.projectId === identity.projectId &&
+				panel.sessionId === identity.sessionId,
+		);
+	};
+}
+
+function releaseClosedHeldSessions(
+	workspace: WorkspaceStore,
+	holder: SessionHolderPtyFactory,
+): () => void {
+	return workspace.subscribe((event) => {
+		for (const id of event.changedIds) {
+			if (!isHolderSessionId(id)) continue;
+			if (workspace.state.terminalSessions[id] !== undefined) continue;
+			void holder.end(id).catch(() => undefined);
+		}
+	});
+}
+
 function composeTerminal(
 	options: ServerCoreCompositionOptions,
 ): TerminalService {
@@ -1267,6 +1385,14 @@ function composeTerminal(
 	) {
 		throw new TypeError('provide terminalService or ptyFactory, not both');
 	}
+	if (
+		options.sessionHolder !== undefined &&
+		(options.terminalService !== undefined || options.ptyFactory !== undefined)
+	) {
+		throw new TypeError(
+			'provide sessionHolder alone, without terminalService or ptyFactory',
+		);
+	}
 	if (options.terminalService !== undefined) {
 		if (!(options.terminalService instanceof TerminalService)) {
 			throw new TypeError('terminalService must be a TerminalService');
@@ -1274,7 +1400,8 @@ function composeTerminal(
 		bindTerminalActivity(options.terminalService, options.activity);
 		return options.terminalService;
 	}
-	if (options.ptyFactory === undefined) {
+	const ptyFactory = options.sessionHolder ?? options.ptyFactory;
+	if (ptyFactory === undefined) {
 		throw new TypeError(
 			'ptyFactory is required when terminalService is absent',
 		);
@@ -1283,7 +1410,7 @@ function composeTerminal(
 	const terminal = new TerminalService({
 		...terminalOptions,
 		serverId: options.serverId,
-		ptyFactory: options.ptyFactory,
+		ptyFactory,
 		...(options.activity === undefined && options.agents === undefined
 			? {}
 			: {

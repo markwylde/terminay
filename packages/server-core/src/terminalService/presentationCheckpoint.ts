@@ -228,12 +228,17 @@ export class TerminalPresentationCheckpointAuthority {
 		return this.sessions.size;
 	}
 
+	/** `startPosition` is the output position of the first byte this emulator
+	 * will be fed. It is non-zero only for a session adopted from a session
+	 * holder, whose retained output no longer starts at the beginning. */
 	createSession(
 		identity: TerminalIdentity,
 		dimensions: TerminalDimensions,
+		startPosition = 0,
 	): void {
 		validateIdentity(identity);
 		validateDimensions(dimensions, this.limits);
+		validatePosition(startPosition);
 		const key = sessionKey(identity);
 		const existing = this.sessions.get(key);
 		if (existing !== undefined) {
@@ -273,9 +278,9 @@ export class TerminalPresentationCheckpointAuthority {
 			decoder: new TextDecoder(),
 			pins: new Map(),
 			dimensions: Object.freeze({ ...dimensions }),
-			outputPosition: 0,
-			processedPosition: 0,
-			checkpointPosition: 0,
+			outputPosition: startPosition,
+			processedPosition: startPosition,
+			checkpointPosition: startPosition,
 			checkpointDimensions: Object.freeze({ ...dimensions }),
 			checkpointState: initial,
 			tail: [],

@@ -141,6 +141,22 @@ export interface ControlCapabilityStoreOptions {
 	readonly enabled?: boolean;
 }
 
+/**
+ * A capability as it may be written to the server data root so a terminal that
+ * outlives the server process keeps the authority it was started with. It holds
+ * the token's SHA-256 digest and never the token: nothing here can be presented
+ * to the control endpoint.
+ */
+export interface PersistedControlCapability {
+	readonly digest: string;
+	readonly terminalSessionId: string;
+	readonly projectId: string;
+	readonly scope: ControlScope;
+	readonly reach: ControlReach;
+	readonly issuedAt: number;
+	readonly expiresAt: number;
+}
+
 /** Told the digest of each revoked capability and the terminal it was
  * minted for, so per-capability state (such as MCP approvals) ends with it. */
 export type CapabilityRevocationListener = (
@@ -392,6 +408,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	private enabled: boolean;
 	private readonly revocationListeners =
 		new Set<CapabilityRevocationListener>();
+	private readonly changeListeners = new Set<() => void>();
 
 	constructor(options: ControlCapabilityStoreOptions = {}) {
 		this.now = options.now ?? Date.now;
@@ -446,6 +463,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			issuedAt,
 			expiresAt,
 		});
+		this.changed();
 		return Object.freeze({
 			token,
 			terminalSessionId,
@@ -576,6 +594,81 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		return result;
 	}
 
+	/** Every unexpired capability, by digest. Raw tokens are never retained. */
+	snapshot(): readonly PersistedControlCapability[] {
+		const now = this.now();
+		const result: PersistedControlCapability[] = [];
+		for (const [digest, capability] of this.capabilities) {
+			if (capability.expiresAt <= now) continue;
+			result.push({
+				digest,
+				terminalSessionId: capability.terminalSessionId,
+				projectId: capability.projectId,
+				scope: capability.scope,
+				reach: capability.reach,
+				issuedAt: capability.issuedAt,
+				expiresAt: capability.expiresAt,
+			});
+		}
+		return result;
+	}
+
+	/**
+	 * Reinstate capabilities saved by an earlier server process, for terminals
+	 * that are still running. An entry is ignored unless it is well formed,
+	 * unexpired, names a session in `runningSessions`, and that session holds
+	 * no capability already. Expiry is not extended. Returns how many were
+	 * reinstated.
+	 */
+	restore(
+		entries: readonly unknown[],
+		runningSessions: ReadonlySet<string>,
+	): number {
+		if (!this.enabled) return 0;
+		const now = this.now();
+		let restored = 0;
+		for (const entry of entries) {
+			const capability = parsePersistedCapability(entry);
+			if (capability === undefined) continue;
+			if (capability.expiresAt <= now) continue;
+			if (!runningSessions.has(capability.terminalSessionId)) continue;
+			if (this.capabilities.has(capability.digest)) continue;
+			let held = false;
+			for (const existing of this.capabilities.values())
+				if (existing.terminalSessionId === capability.terminalSessionId)
+					held = true;
+			if (held) continue;
+			this.capabilities.set(capability.digest, {
+				digest: Buffer.from(capability.digest, 'hex'),
+				terminalSessionId: capability.terminalSessionId,
+				projectId: capability.projectId,
+				scope: capability.scope,
+				reach: capability.reach,
+				issuedAt: capability.issuedAt,
+				expiresAt: capability.expiresAt,
+			});
+			restored += 1;
+		}
+		if (restored > 0) this.changed();
+		return restored;
+	}
+
+	/** Called after the set of capabilities changes, by mint or revocation. */
+	onChanged(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
+	private changed(): void {
+		for (const listener of [...this.changeListeners]) {
+			try {
+				listener();
+			} catch {
+				/* an observer cannot affect capability authority */
+			}
+		}
+	}
+
 	onRevoked(listener: CapabilityRevocationListener): () => void {
 		this.revocationListeners.add(listener);
 		return () => this.revocationListeners.delete(listener);
@@ -599,12 +692,54 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		this.capabilities.delete(key);
 		for (const listener of this.revocationListeners)
 			listener(key, capability.terminalSessionId);
+		this.changed();
 		return true;
 	}
 
 	private assertScope(scope: string): asserts scope is ControlScope {
 		if (!(scope in scopeRank)) throw new TypeError('invalid control scope');
 	}
+}
+
+function parsePersistedCapability(
+	value: unknown,
+): PersistedControlCapability | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const entry = value as Record<string, unknown>;
+	const { digest, terminalSessionId, projectId, scope, reach } = entry;
+	const { issuedAt, expiresAt } = entry;
+	if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest))
+		return undefined;
+	if (typeof terminalSessionId !== 'string' || typeof projectId !== 'string')
+		return undefined;
+	if (typeof scope !== 'string' || !(scope in scopeRank)) return undefined;
+	if (reach !== 'project' && reach !== 'workspace') return undefined;
+	if (
+		typeof issuedAt !== 'number' ||
+		typeof expiresAt !== 'number' ||
+		!Number.isSafeInteger(issuedAt) ||
+		!Number.isSafeInteger(expiresAt)
+	)
+		return undefined;
+	try {
+		assertScopeId(terminalSessionId, 'terminal session id');
+		assertScopeId(projectId, 'project id');
+		// Workspace reach is valid only for the automation space; a saved entry
+		// claiming it for anything else is discarded, never honoured.
+		if (reach === 'workspace' && projectId !== AUTOMATION_SPACE_ID)
+			return undefined;
+	} catch {
+		return undefined;
+	}
+	return {
+		digest,
+		terminalSessionId,
+		projectId,
+		scope: scope as ControlScope,
+		reach,
+		issuedAt,
+		expiresAt,
+	};
 }
 
 export interface ControlSettingsBinding {
