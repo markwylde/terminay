@@ -639,7 +639,11 @@ export class GitService {
 		startedAt: number,
 		claimedChanges: ChangeCounters,
 	): Promise<GitWorktreeListResult> {
-		const discovery = await this.resolveDiscovery(target);
+		// The worktree a listing names only narrows what is re-measured. It may
+		// have left the repository since the change that named it — removing a
+		// worktree raises changes in it — so it is never resolved as a target.
+		const { worktreeId: _scope, ...repository } = target;
+		const discovery = await this.resolveDiscovery(repository);
 		const unmeasured = (code: string, message: string): void => {
 			if (observation === undefined || claim === undefined) return;
 			this.restoreDirty(observation, claim);
