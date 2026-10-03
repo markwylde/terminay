@@ -36,6 +36,7 @@ import {
 	Sidebar,
 	Sparkles,
 	Terminal,
+	X,
 } from 'lucide-react';
 import {
 	CSSProperties,
@@ -1551,6 +1552,10 @@ const ProjectWorkspace = forwardRef<
 				featureFailureRef.current = next;
 				return next === null ? null : current;
 			});
+		}, []);
+		const dismissError = useCallback(() => {
+			featureFailureRef.current = null;
+			setErrorText(null);
 		}, []);
 		useEffect(() => {
 			if (settingsError !== null)
@@ -4902,7 +4907,20 @@ const ProjectWorkspace = forwardRef<
 				style={{ '--project-color': project.color } as CSSProperties}
 			>
 				{errorText ? (
-					<div className="error-banner">Operation failed: {errorText}</div>
+					<div className="error-banner">
+						<span className="error-banner__message">
+							Operation failed: {errorText}
+						</span>
+						<button
+							type="button"
+							className="error-banner__dismiss"
+							aria-label="Dismiss error"
+							title="Dismiss"
+							onClick={dismissError}
+						>
+							<X size={14} aria-hidden="true" />
+						</button>
+					</div>
 				) : null}
 				{isRenderingStatusBar && focusedTerminalStatus !== null
 					? createPortal(
