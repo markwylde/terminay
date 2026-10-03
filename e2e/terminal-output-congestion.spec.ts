@@ -78,7 +78,7 @@ test('a high-volume terminal burst cannot kill the shared local application conn
 	await expect(mainWindow.getByText('Server did not publish a terminal panel')).toHaveCount(0);
 });
 
-test('sustained terminal output keeps checkpoint recovery moving without waiting for silence', async ({ mainWindow }) => {
+test('sustained terminal output keeps checkpoint recovery moving without waiting for silence', { tag: '@heavy' }, async ({ mainWindow }) => {
 	// The workload deliberately includes twenty seconds of sleeps plus 1,000
 	// short-lived producer processes. Keep its completion observation separate
 	// from that nominal floor so a busy Docker host does not turn scheduling

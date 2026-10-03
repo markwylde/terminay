@@ -7,6 +7,7 @@ import type {
 } from '../../../types/fileViewer';
 import type { LanguageGateway } from '../../../services/fileViewer/languageGateway';
 import { languageFromFilePath } from '../codeHighlight';
+import { createEditorTextEchoes } from '../editorTextEcho';
 import {
 	attachLanguageIntelligence,
 	type LanguageAttachment,
@@ -361,6 +362,36 @@ export function TextViewer({
 	useEffect(() => {
 		attachLanguage();
 	}, [attachLanguage]);
+	// The editor owns its text while someone is typing in it. `text` is the
+	// panel's copy, which trails the editor by a render, so it is written into
+	// the editor only when it did not come from the editor in the first place.
+	const textEchoesRef = useRef(createEditorTextEchoes());
+	const applyingOutsideTextRef = useRef(false);
+	const textRef = useRef(text);
+	textRef.current = text;
+	const applyOutsideText = useCallback((nextText: string) => {
+		const editor = mountedEditorRef.current?.editor;
+		const model = editor?.getModel();
+		if (!editor || !model || model.getValue() === nextText) return;
+		textEchoesRef.current.reset();
+		applyingOutsideTextRef.current = true;
+		try {
+			editor.executeEdits('', [
+				{
+					forceMoveMarkers: true,
+					range: model.getFullModelRange(),
+					text: nextText,
+				},
+			]);
+			editor.pushUndoStop();
+		} finally {
+			applyingOutsideTextRef.current = false;
+		}
+	}, []);
+	useEffect(() => {
+		if (textEchoesRef.current.acknowledge(text)) return;
+		applyOutsideText(text);
+	}, [applyOutsideText, text]);
 	useEffect(() => {
 		return () => {
 			languageAttachmentRef.current?.dispose();
@@ -414,7 +445,7 @@ export function TextViewer({
 				key={filePath ?? 'file-viewer-text'}
 				height="100%"
 				language={monacoLanguage}
-				value={text}
+				defaultValue={text}
 				theme={FILE_VIEWER_THEME}
 				beforeMount={configureFileViewerMonaco}
 				onMount={(editor, monaco) => {
@@ -426,6 +457,9 @@ export function TextViewer({
 					monaco.editor.setTheme(FILE_VIEWER_THEME);
 					onCurrentTextGetterChange?.(() => editor.getValue());
 					mountedEditorRef.current = Object.freeze({ editor, monaco });
+					// The file's text can load while Monaco itself is still loading.
+					textEchoesRef.current.reset();
+					applyOutsideText(textRef.current);
 					attachLanguage();
 					const node = editor.getDomNode();
 					if (node) {
@@ -446,7 +480,13 @@ export function TextViewer({
 						editor.onDidDispose(() => observer.disconnect());
 					}
 				}}
-				onChange={(value) => onChangeText(value ?? '')}
+				onChange={(value) => {
+					// Text written in from outside is already the panel's copy.
+					if (applyingOutsideTextRef.current) return;
+					const nextText = value ?? '';
+					textEchoesRef.current.emitted(nextText);
+					onChangeText(nextText);
+				}}
 				options={{
 					automaticLayout: true,
 					minimap: { enabled: false },

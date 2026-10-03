@@ -321,16 +321,21 @@ test.describe('workspace dashboard', () => {
 			)
 			.toBeLessThan(600);
 
-		await expect(homeControl(mainWindow)).toBeVisible();
-		const squeezed = await homeControl(mainWindow).boundingBox();
-		const barBox = await mainWindow.locator('.project-tabbar').boundingBox();
-		if (!squeezed || !barBox)
-			throw new Error('Expected the Home control and tab bar to have layout');
-		expect(squeezed.width).toBeGreaterThan(0);
-		expect(squeezed.x).toBeGreaterThanOrEqual(barBox.x - 1);
-		expect(squeezed.x + squeezed.width).toBeLessThanOrEqual(
-			barBox.x + barBox.width + 1,
-		);
+		// The bar is laid out again as the window narrows, and on a busy runner
+		// that can still be under way once the width has settled: a box read
+		// then is missing. Hold the assertion until the layout is.
+		await expect(async () => {
+			await expect(homeControl(mainWindow)).toBeVisible();
+			const squeezed = await homeControl(mainWindow).boundingBox();
+			const barBox = await mainWindow.locator('.project-tabbar').boundingBox();
+			if (!squeezed || !barBox)
+				throw new Error('Expected the Home control and tab bar to have layout');
+			expect(squeezed.width).toBeGreaterThan(0);
+			expect(squeezed.x).toBeGreaterThanOrEqual(barBox.x - 1);
+			expect(squeezed.x + squeezed.width).toBeLessThanOrEqual(
+				barBox.x + barBox.width + 1,
+			);
+		}).toPass({ timeout: 10_000 });
 	});
 
 	test('the dashboard switches between its three views and remembers the choice', async ({

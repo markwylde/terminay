@@ -114,19 +114,24 @@ function visibleTerminalRoot(page: Page) {
 }
 
 async function blurTerminalInput(page: Page): Promise<void> {
-	await page.evaluate(() => {
-		const active = document.activeElement;
-		if (active instanceof HTMLElement) active.blur();
-	});
-	await expect
-		.poll(async () =>
-			page.evaluate(
-				() =>
-					document.activeElement?.classList.contains('xterm-helper-textarea') ??
-					false,
-			),
-		)
-		.toBe(false);
+	// A new terminal takes focus once it has attached, which on a busy runner
+	// can be after its panel is visible. Blur until the terminal stays
+	// unfocused, so a focus that lands late is not mistaken for one the test's
+	// own gesture caused.
+	const terminalInputFocused = () =>
+		page.evaluate(
+			() =>
+				document.activeElement?.classList.contains('xterm-helper-textarea') ??
+				false,
+		);
+	await expect(async () => {
+		await page.evaluate(() => {
+			const active = document.activeElement;
+			if (active instanceof HTMLElement) active.blur();
+		});
+		await page.waitForTimeout(300);
+		expect(await terminalInputFocused()).toBe(false);
+	}).toPass({ timeout: 10_000 });
 }
 
 async function dispatchTerminalTouchPointer(
