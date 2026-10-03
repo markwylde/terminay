@@ -97,6 +97,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.remote-webrtc.application-lane',
 	'local-server.remote-webrtc.peer-closed',
 	'local-server.remote-webrtc.candidate-pair',
+	'local-server.remote-webrtc.ice-range-exhausted',
 	'remote.hosted-peer.connection-status',
 	'remote.hosted-peer.candidate-pair',
 	'remote.hosted-peer.connection-failed',

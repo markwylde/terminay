@@ -7,3 +7,6 @@
  * couple of the server's own. It must match the span the server uses.
  */
 export const ADVERTISED_PORT_SPAN = 4;
+
+/** The first UDP port of the range a public host is advertised on. */
+export const DEFAULT_ICE_PORT = 51_000;

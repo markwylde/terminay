@@ -22,6 +22,7 @@ export interface ServiceConfiguration {
 	readonly healthPort: number;
 	readonly expose: string;
 	readonly hostedDomain: string;
+	readonly publicHost?: string;
 	readonly directOrigin?: string;
 	readonly advertiseAddress?: string;
 	readonly uiBundle: string;
@@ -44,6 +45,9 @@ export function renderEnvironmentFile(
 		`TERMINAY_HEALTH_PORT=${configuration.healthPort}`,
 		`TERMINAY_EXPOSE=${configuration.expose}`,
 		`TERMINAY_HOSTED_DOMAIN=${configuration.hostedDomain}`,
+		...(configuration.publicHost === undefined
+			? []
+			: [`TERMINAY_PUBLIC_HOST=${configuration.publicHost}`]),
 		...(configuration.directOrigin === undefined
 			? []
 			: [`TERMINAY_DIRECT_ORIGIN=${configuration.directOrigin}`]),

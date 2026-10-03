@@ -1,5 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
+import { derivePublicHost, PUBLIC_HOST_NEEDS_LITERAL } from '../address.js';
+import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
 import {
@@ -252,39 +254,72 @@ export async function runUpgrade(
 		}
 	}
 
-	// An advertised address given here changes how the server is reached, which
-	// lives in the environment file rather than in the version that was staged.
-	// Absent, the recorded value carries forward with the rest of the record.
-	if (options.advertiseAddress !== undefined) {
-		const existing = await readFile(layout.environmentFile, 'utf8').catch(
+	// A public host given here stands for both routes, exactly as at install.
+	// An advertised address given beside it still wins for that one setting,
+	// and a host that is a name or loopback leaves the advertised address as it
+	// was. Absent, the recorded host and what it derived carry forward untouched.
+	const derived =
+		options.publicHost === undefined
+			? undefined
+			: derivePublicHost(options.publicHost, record.port);
+	const advertiseAddress =
+		options.advertiseAddress ?? derived?.advertiseAddress;
+
+	// How the server is reached lives in the environment file rather than in the
+	// version that was staged. Absent, the recorded values carry forward with
+	// the rest of the record.
+	if (derived !== undefined || advertiseAddress !== undefined) {
+		let environment = await readFile(layout.environmentFile, 'utf8').catch(
 			() => '',
 		);
-		await writeFile(
-			layout.environmentFile,
-			withEnvironmentValue(
-				existing,
+		if (derived !== undefined) {
+			environment = withEnvironmentValue(
+				withEnvironmentValue(
+					environment,
+					'TERMINAY_PUBLIC_HOST',
+					options.publicHost,
+				),
+				'TERMINAY_DIRECT_ORIGIN',
+				derived.directOrigin,
+			);
+		}
+		if (advertiseAddress !== undefined) {
+			environment = withEnvironmentValue(
+				environment,
 				'TERMINAY_WEBRTC_ADVERTISE_ADDRESS',
-				options.advertiseAddress === '' ? undefined : options.advertiseAddress,
-			),
-			{ mode: 0o640 },
-		);
+				advertiseAddress === '' ? undefined : advertiseAddress,
+			);
+		}
+		await writeFile(layout.environmentFile, environment, { mode: 0o640 });
+		// The upgraded service was started against the previous environment, and
+		// a public host is only worth recording if the server is serving it.
+		if (derived !== undefined) {
+			await systemd.restart();
+			await waitForReady(record.healthPort, dependencies.readinessTimeoutMs);
+		}
 	}
 
 	// Cleared means the key is absent, not present and undefined, so the record
 	// is rebuilt without it rather than assigned over.
 	const { advertiseAddress: recorded, ...withoutAdvertised } = record;
 	const advertisedFields =
-		options.advertiseAddress === undefined
+		advertiseAddress === undefined
 			? recorded === undefined
 				? {}
 				: { advertiseAddress: recorded }
-			: options.advertiseAddress === ''
+			: advertiseAddress === ''
 				? {}
-				: { advertiseAddress: options.advertiseAddress };
+				: { advertiseAddress };
 
 	await writeInstallRecord(layout, {
 		...withoutAdvertised,
 		...advertisedFields,
+		...(derived === undefined
+			? {}
+			: {
+					publicHost: options.publicHost as string,
+					directOrigin: derived.directOrigin,
+				}),
 		channel: resolved.channel,
 		version: installed.manifest.version,
 		revision: installed.manifest.revision,
@@ -299,6 +334,21 @@ export async function runUpgrade(
 	);
 	if (removed.length > 0)
 		write(`Removed older versions: ${removed.join(', ')}.`);
+	if (derived !== undefined) {
+		const advertised = advertisedFields.advertiseAddress;
+		write(`  public host  ${options.publicHost}`);
+		write(`  direct URL   ${derived.directOrigin}`);
+		if (advertised !== undefined) {
+			const first = Number(advertised.slice(advertised.lastIndexOf(':') + 1));
+			const last = first + ADVERTISED_PORT_SPAN - 1;
+			write(`  advertised   ${advertised}`);
+			write(
+				`UDP ports ${first}-${last} must reach this machine for that address to work.`,
+			);
+		}
+		if (derived.advertiseAddress === undefined)
+			write(PUBLIC_HOST_NEEDS_LITERAL);
+	}
 
 	return Object.freeze({
 		from: record.version,

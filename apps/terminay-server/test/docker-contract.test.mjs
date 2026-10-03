@@ -69,7 +69,10 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 	assert.match(compose, /terminay-data:/u);
 	assert.match(compose, /TERMINAY_HEALTH_HOST: 0\.0\.0\.0/u);
 	assert.match(dockerignore, /\*\*\/node_modules/u);
-	assert.match(dockerignore, /^build$/mu);
+	// Build output stays out of the context, except the committed WebRTC
+	// runtime selection the official image stages its runtime from.
+	assert.match(dockerignore, /^build\/\*$/mu);
+	assert.match(dockerignore, /^!build\/webrtc-runtime\/selection\.json$/mu);
 	assert.match(dockerignore, /\*\*\/dist/u);
 	assert.match(dockerignore, /^\.task\*$/mu);
 });

@@ -32,7 +32,12 @@ option uses the documented default:
 | Reported server version | *(none)* | `TERMINAY_SERVER_VERSION` | `0.0.0` |
 | Hosted signaling domain | `--hosted-domain DOMAIN` | `TERMINAY_HOSTED_DOMAIN` | `terminay.com` |
 | Exposure enabled at startup | `--expose MODES` | `TERMINAY_EXPOSE` | `off` |
-| Advertised direct signaling origin | `--direct-origin URL` | `TERMINAY_DIRECT_ORIGIN` | *(unset)* |
+| Address or name devices reach the server at | `--public-host HOST` | `TERMINAY_PUBLIC_HOST` | *(unset)* |
+| Advertised direct signaling origin | `--direct-origin URL` | `TERMINAY_DIRECT_ORIGIN` | derived from the public host |
+| Advertised ICE address | `--advertise-address HOST:PORT` | `TERMINAY_WEBRTC_ADVERTISE_ADDRESS` | derived from a literal public host |
+| First port of a pinned ICE range | `--ice-port PORT` | `TERMINAY_ICE_PORT` | *(unpinned)* |
+| Length of the pinned ICE range | `--ice-port-span N` | `TERMINAY_ICE_PORT_SPAN` | `4` |
+| Source revision reported by the build | *(none)* | `TERMINAY_SERVER_REVISION` | *(unset)* |
 
 The data root is the server's authority boundary. Keep it on a local disk
 with owner-only permissions, back it up as one unit, and do not put it below a
@@ -182,65 +187,152 @@ rewritten, because it is the identity paired devices know the machine by.
 
 Exposure defaults to `hosted,direct`. The direct origin is derived from the
 machine's primary address, which is right for a host with a routable address
-and wrong for one behind NAT — so the derived value is printed at install and
-`--direct-origin https://<host>:<port>` overrides it. `--expose`, `--port`,
+and wrong for one behind NAT — so the derived value is printed at install.
+`--public-host <host>` names the address or name devices reach the machine at
+and derives both the direct origin and, for a routable literal address, the
+advertised ICE address; `--direct-origin https://<host>:<port>` and
+`--advertise-address <host>:<port>` override either one. `--expose`, `--port`,
 `--hosted-domain`, and `--project-root` set the rest.
 
-#### Reaching a server in a local container
+#### Running in a container
 
-A server in a container on your own machine is not reachable from a client on
-that machine by default, and the failure is silent: signalling succeeds, the
-client finds the server, and the connection then sits in `checking` until it
-gives up. A connection can also briefly reach `connected` and then lose its
-ICE path; do not treat the first successful handshake as proof that the
-container's UDP route is stable.
-
-The reason is that every address the server can see about itself is one the
-client cannot route to. On macOS and Windows the container runs inside a Linux
-virtual machine, so its address exists only in that VM — `--network host` does
-not change this, because the host is the VM. If both ends are also behind one
-NAT, their reflexive addresses share a public address and would need router
-hairpinning, which consumer routers usually lack.
-
-`--advertise-address` answers this by naming an address the client *can* reach —
-this machine's routable address, on which the published port answers — and
-offering it as an additional candidate. It must be a routable address, not a
-loopback one: a browser decides for itself which candidates are worth probing,
-and Firefox prunes a remote loopback candidate without sending a single
-connectivity check. A loopback address therefore produces a server that pairs
-from Chromium and hangs elsewhere, so the CLI refuses one.
+The official image, `markwylde/terminay`, runs the server in the foreground as
+the container's main process, with hosted and direct exposure on. It needs no
+init system, no privilege, and no added capability, and it carries the
+`terminay` command, so pairing is one more line:
 
 ```bash
-docker run -d --name terminay \
-  --privileged --tmpfs /run --tmpfs /run/lock \
-  --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-  -p 51000-51003:51000-51003/udp \
-  node:24-bookworm \
-  /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
-
-docker exec -it terminay bash
-npx terminay daemon install --system --run-as root \
-  --advertise-address 192.168.1.20:51000
-npx terminay daemon qr-code
+docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay
+docker exec -it terminay terminay daemon qr-code
 ```
 
-The advertised address must be reachable from the pairing Desktop, and the
-same four UDP ports must be published/forwarded to the container. Publishing
-only the HTTPS listener (for example `-p 9443:9443`) carries signaling, not the
-WebRTC media path. `--direct-origin https://localhost:9443` only tells Desktop
-where signaling lives; it does not make the container's ICE candidates
-reachable. If a peer connects and drops a few seconds later, check that the
-configured UDP range is published through Podman/gvproxy and that
-`--advertise-address` names the host-side address and first forwarded port.
+`daemon qr-code` shows the pairing links and waits; when a device opens one it
+shows the device name and match code and asks for approval. `daemon approvals`,
+`daemon approve <id>`, `daemon deny <id>`, and `daemon status` work the same way
+through `docker exec`. `daemon install`, `upgrade`, `start`, `stop`, and
+`uninstall` refuse inside the image: the container runtime manages the server,
+so an upgrade is a newer image and a recreated container.
+
+Which ports and settings a container needs depends on what connects to it.
+
+**Terminay Desktop, on the same machine or the same network.** Nothing more.
+The two lines above are the whole setup: open the hosted link in Desktop. To
+use the direct link as well, publish the signaling port with `-p 8443:8443`.
+No address is named and no UDP port is published.
+
+**Browsers and phones.** Name the address they reach this machine at, once,
+and publish the signaling port and the pinned UDP range:
+
+```bash
+docker run -d --name terminay -v terminay-data:/var/lib/terminay \
+  -p 8443:8443 -p 51000-51015:51000-51015/udp \
+  -e TERMINAY_PUBLIC_HOST=192.168.1.20 \
+  markwylde/terminay
+```
+
+On macOS `$(ipconfig getifaddr en0)` prints that address; on Linux
+`hostname -I` lists the machine's addresses.
+
+**A Linux host.** Host networking gives the server the machine's real
+interfaces, so it needs no address and no published port:
+
+```bash
+docker run -d --name terminay --network host \
+  -v terminay-data:/var/lib/terminay markwylde/terminay
+```
+
+This applies to Linux only. On macOS and Windows the container runs inside a
+Linux virtual machine, and `--network host` joins that machine's network, not
+yours.
+
+##### Why the cases differ
+
+WebRTC carries the session over UDP, separately from HTTPS signaling, and a
+connection needs one side to send a packet the other receives.
+
+A server in a container cannot observe the address a client reaches it on. Its
+own interface belongs to the container network; the name the runtime gives for
+the host resolves to a gateway inside the runtime; and STUN reports the
+router's public address. On macOS and Windows that container network exists
+only inside a virtual machine. So every address the server can offer about
+itself is one a client outside cannot route to.
+
+Terminay Desktop does not need the server to be reachable. It offers its own
+real addresses, and a container can send UDP out to them, so the server opens
+the path from its side. That is why Desktop connects with nothing configured.
+
+A browser conceals its local addresses behind names only its own machine can
+resolve, so the server has nothing to send to, and the browser has to reach the
+server instead. `TERMINAY_PUBLIC_HOST` names an address it can reach, and the
+published UDP range is where that address answers. The public host must be a
+routable literal address for this: a host name, `localhost`, or a loopback
+address names the direct origin and nothing else, because a candidate is a
+literal address and a browser need not probe a remote loopback one — Firefox
+does not. The server says so at startup when no candidate was derived.
+
+`TERMINAY_PUBLIC_HOST` sets two things an operator would otherwise set
+separately: the direct origin, `https://<host>:8443`, and the advertised ICE
+address, `<host>:51000`. `TERMINAY_DIRECT_ORIGIN` and
+`TERMINAY_WEBRTC_ADVERTISE_ADDRESS` still override either one.
+
+A direct link gives Desktop one more route. Desktop signalled through the
+direct origin's host, so it also tries that host on each UDP port the server
+offers. With the UDP range pinned and published — `-e TERMINAY_ICE_PORT=51000`
+with `-p 51000-51015:51000-51015/udp`, or a public host — a server reachable
+only at a forwarded address or a DNS name connects to Desktop with no
+advertised address at all. A loopback direct origin, such as the image's
+default `https://localhost:8443`, carries signaling only: it derives no
+candidate and does not configure the UDP route.
+
+##### The pinned UDP range is a budget
+
+Publishing a port means knowing it in advance, so a public host or
+`TERMINAY_ICE_PORT` pins the server's ICE ports to a run of consecutive ports.
+Every candidate of every connected device takes its own port from that run; a
+device that finds it spent gathers no candidate and cannot connect, and the
+server logs `ice-range-exhausted`. A container with one network interface and
+an advertised address uses two ports per device.
+
+The image pins sixteen ports, 51000–51015. `TERMINAY_ICE_PORT_SPAN` changes
+that; publish the same range. With no public host and no `TERMINAY_ICE_PORT`
+the image pins nothing, the server uses ephemeral ports, and there is no such
+limit — which is the setup Desktop uses.
+
+##### When it does not connect
+
+- **ICE stays in `checking`, or a peer connects and drops a few seconds
+  later.** The client is trying addresses it cannot reach. For a browser or
+  phone, check that `TERMINAY_PUBLIC_HOST` is the address that device reaches
+  this machine at and that the UDP range is published through Podman/gvproxy
+  or Docker. Publishing only the HTTPS listener carries signaling, not the
+  session.
+- **Desktop does not connect with nothing published.** The server's first
+  packet to Desktop is unsolicited inbound UDP. A host firewall that blocks
+  inbound connections to Desktop drops it. Allow Terminay in the firewall, or
+  use the browser-and-phone command above, which lets Desktop reach the server
+  instead.
+- **It worked and then stopped after changing network.** A public host given
+  as a literal address is the address of the network the machine was on.
+  Recreate the container with the new address. Desktop on the same machine
+  with nothing published does not depend on it.
+- **Several devices, and the newest cannot connect.** The pinned range is
+  spent; see above.
+
+Terminay operates no relay for session traffic. When a network defeats every
+direct route — client isolation on a guest network, a strict firewall, or
+symmetric NAT on both sides — join the server's machine and the device to an
+overlay network such as Tailscale. The server gathers the overlay address like
+any other and the devices connect over it.
 
 To see which route a peer actually took, compare the selected candidate pair
 on both sides. The server writes a `candidate-pair` line to its structured log
-(`--log-sink`, or the journal) with `scope`, `localType`, `remoteType`,
-`protocol` and `pairState`; Desktop records the same fields as
+(`docker logs`, `--log-sink`, or the journal) with `scope`, `localType`,
+`remoteType`, `protocol` and `pairState`; Desktop records the same fields as
 `remote.hosted-peer.candidate-pair` in its local diagnostics, beside
 `remote.hosted-peer.connection-status` and `remote.hosted-peer.connection-failed`.
-Neither side logs candidate addresses or ports. A `prflx` or `srflx` type where
-you expected `host` means the advertised address is not the one being used.
+Neither side logs candidate addresses or ports. On the server, `host`/`host`
+means it reached Desktop's own address; `host`/`prflx` means the client reached
+a published port.
 
 One server line is easy to misread. `peerState=connected iceState=disconnected`
 about five seconds after an approval, a denial, or a second attempt with the
@@ -252,61 +344,76 @@ server retires it. Judge the route by the `candidate-pair` line with
 logs as `peer-closed` instead, and Desktop gives up a peer of its own, and says
 so, once ICE has stayed disconnected for 15 seconds.
 
-The `daemon` installer is a systemd installer. A stock `node:*` image does not
-run systemd and `daemon install` is expected to refuse it; `--privileged` and
-mounting cgroups are only appropriate when deliberately running systemd as
-container PID 1. For a normal container, run the `terminay-server` executable
-from the verified standalone distribution in the foreground under a container
-supervisor and persist its data root. For example:
+##### Identity, data, and health
+
+Mount `/var/lib/terminay` as a volume. It holds the server identity, the host
+key, the paired devices, and the hosted session origin, so a new container on
+the same volume is the same server and paired devices reconnect without
+pairing again. The identity is chosen once, on the first start against an
+empty volume, and does not follow the container's hostname. The hostname is
+only the name shown in pairing links; set it with `--hostname`, since a
+container's default hostname is its id.
+
+The server, its terminals, and the `terminay` command all run as the
+unprivileged `terminay` account, with `/home/terminay` as the first project
+root. That account cannot install system packages; build an image `FROM
+markwylde/terminay` to add tools. The image runs with `--cap-drop=ALL`,
+`--security-opt no-new-privileges`, and `--read-only` given a writable
+`/var/lib/terminay` and `/tmp`.
+
+The image declares a health check against the server's readiness endpoint,
+which listens on loopback inside the container and returns lifecycle status
+only. `terminay daemon status` reports readiness, the version, and the source
+revision the image was built from.
+
+##### The systemd installer in a container
+
+`daemon install` is a systemd installer, and a stock `node:*` image does not
+run systemd; `daemon install` refuses it. Running systemd as a container's
+PID 1 is possible and is not the supported container path — use the image.
+Where it is done deliberately, the installer's pinned range is four ports, and
+the advertised address must be a routable one, never loopback:
+
+```bash
+docker run -d --name terminay-systemd \
+  --privileged --tmpfs /run --tmpfs /run/lock \
+  --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -p 8443:8443 -p 51000-51003:51000-51003/udp \
+  node:24-bookworm \
+  /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
+
+docker exec -it terminay-systemd bash
+npx terminay daemon install --system --run-as root --public-host 192.168.1.20
+npx terminay daemon qr-code
+```
+
+`--public-host 192.168.1.20` is shorthand for `--direct-origin
+https://192.168.1.20:8443 --advertise-address 192.168.1.20:51000`.
+`daemon qr-code` for an installed systemd service, run as root against a
+service owned by another account, uses `sudo` to reach that account's
+owner-only socket, so `sudo` must be installed and the Node.js binary must be
+one the service account can execute. QR output defaults to a hosted,
+browser-compatible link; use `--mode direct` only when copying a link into
+Terminay Desktop.
+
+The foreground server can also be run by hand from an unpacked archive, under
+any supervisor, with the same options the image sets:
 
 ```sh
 terminay-server \
   --data-root /var/lib/terminay \
   --expose hosted,direct \
-  --http-host 0.0.0.0 --http-port 9443 \
-  --direct-origin https://mac-host.example:9443 \
-  --advertise-address 192.168.1.20:51000
+  --http-host 0.0.0.0 --http-port 8443 \
+  --public-host 192.168.1.20
 ```
 
-The launcher in the distribution supplies the matching UI bundle and WebRTC
-runtime, so nothing else needs configuring. Mount the data root as a volume and
-publish the HTTP port and the four UDP ports starting at the advertised one.
-From a second shell in the container, as the same user and with the same
-`--data-root`:
+From a second shell, as the same user and with the same `--data-root`:
 
 ```sh
 terminay-server --pairing --data-root /var/lib/terminay   # hosted and direct links
 terminay-server approvals --data-root /var/lib/terminay   # pending match codes
 terminay-server approve <approval-id> --data-root /var/lib/terminay
 ```
-
-The foreground server also announces each pending approval, with its match
-code, on stderr. Neither the installer CLI nor `sudo` is needed for any of
-this. `daemon qr-code` is for an
-installed systemd service: run as root against a service owned by another
-account, it uses `sudo` to reach that account's owner-only socket, so `sudo`
-must be installed, and the Node.js binary must be one the service account can
-execute (a system-wide install, not one under root's home). The CLI itself may
-live anywhere, including an `npx` cache under `/root`. QR output defaults to a
-hosted, browser-compatible link; use `--mode direct` only when copying a link
-into Terminay Desktop.
-
-Pair from the printed URL as you would with any server; signalling goes through
-the hosted service exactly as it does for a remote one.
-
-Four consecutive UDP ports are published rather than one. The WebRTC runtime
-gives each candidate its own socket from the range it is pinned to, and rejects
-a range of a single port. Publishing the range means whichever socket the
-advertised address takes is reachable.
-
-That range is a budget: a host with more local addresses than the range has
-ports offers fewer of its own than it would unpinned. The advertised address
-always keeps its port. The addresses given up are the ones the client was not
-reaching anyway, which is the situation that made the option necessary.
-
-This is for a server reachable only at a forwarded address. It is not a general
-answer to NAT: it works because someone forwarded a port, not because the
-server discovered a way through.
 
 #### Pairing from the terminal
 
@@ -534,6 +641,11 @@ filenames before sharing a support bundle. Terminay diagnostics are local and
 telemetry-free by default.
 
 ## Local Docker server
+
+This section describes a development image built from
+`apps/terminay-server/Dockerfile`, not the official image. To run Terminay in
+a container, use `markwylde/terminay` as described under
+[Running in a container](#running-in-a-container).
 
 The repository includes a local standalone-server image and Compose example. The
 image runs the foreground CLI as an unprivileged `terminay` user, keeps the root

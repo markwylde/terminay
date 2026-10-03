@@ -32,6 +32,21 @@ The operator must explicitly rotate the keypair and update the private secret
 and public variable together before publishing another release. Rotation is a
 trust-boundary operation and must not happen implicitly.
 
+## Docker Hub publication credential
+
+The image workflow publishes `markwylde/terminay` to Docker Hub beside GHCR.
+It needs two repository secrets on the GitHub mirror, and nowhere else:
+
+- `DOCKERHUB_USERNAME` — the Docker Hub account that owns the `markwylde`
+  namespace.
+- `DOCKERHUB_TOKEN` — a Docker Hub access token for that account, scoped to
+  read and write the `markwylde/terminay` repository. Use an access token, not
+  the account password, so it can be revoked on its own.
+
+Without them the workflow publishes to GHCR alone and does not fail, so the
+secrets can be added after the workflow has merged. A pull request never
+receives them and never publishes.
+
 ## Local preparation helper
 
 Run the helper from a trusted macOS account:

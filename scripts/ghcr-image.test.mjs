@@ -38,7 +38,7 @@ workflows.set(
 	await readFile(new URL('../.gitea/workflows/ci.yml', import.meta.url), 'utf8'),
 );
 
-test('server Dockerfile builds the standalone server and runs as a non-root user', () => {
+test('server Dockerfile assembles the self-contained server and runs as a non-root user', () => {
 	assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim AS build/m);
 	assert.match(dockerfile, /npm install --global npm@12\.2\.0/u);
 	assert.match(
@@ -46,22 +46,53 @@ test('server Dockerfile builds the standalone server and runs as a non-root user
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,
 	);
 	assert.match(dockerfile, /npm ci/u);
-	assert.match(dockerfile, /npx turbo run build --filter=@terminay\/server/u);
-	assert.match(dockerfile, /npm run build:postcompile --workspace @terminay\/server/u);
-	assert.match(dockerfile, /npm prune --omit=dev/u);
+	// The image carries what the release archive carries: without the workspace
+	// UI and the WebRTC runtime it starts, reports ready, and cannot be paired.
+	assert.match(dockerfile, /npm run build:application-graph/u);
+	assert.match(dockerfile, /npm run build:server-postcompile/u);
+	assert.match(dockerfile, /npm run build:server-ui:bundle/u);
+	assert.match(dockerfile, /stage-selected-secure-werift-runtime\.mjs/u);
+	assert.match(dockerfile, /build-standalone-server-artifact\.mjs/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.source/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.revision/u);
-	assert.match(dockerfile, /USER terminay/u);
+	assert.match(dockerfile, /^FROM debian:bookworm-slim AS runtime/m);
+	assert.match(dockerfile, /^USER terminay$/m);
+	assert.match(dockerfile, /^VOLUME \["\/var\/lib\/terminay"\]$/m);
+	assert.match(dockerfile, /^STOPSIGNAL SIGTERM$/m);
+	assert.match(dockerfile, /^HEALTHCHECK /m);
 	assert.match(
 		dockerfile,
-		/ENTRYPOINT \["node", "apps\/terminay-server\/dist\/cli\.js"\]/u,
-	);
-	assert.match(
-		dockerfile,
-		/CMD \["--data-root", "\/var\/lib\/terminay", "--endpoint", "loopback"\]/u,
+		/^ENTRYPOINT \["\/usr\/local\/bin\/terminay-server-entrypoint"\]$/m,
 	);
 	assert.match(ignore, /^node_modules$/mu);
 	assert.match(ignore, /^\.git$/mu);
+});
+
+test('a bare run of the image is an exposed, pairable server', () => {
+	// The defaults are the contract of `docker run <image>` with no arguments.
+	for (const setting of [
+		'TERMINAY_DATA_ROOT=/var/lib/terminay',
+		'TERMINAY_EXPOSE=hosted,direct',
+		'TERMINAY_HTTP_HOST=0.0.0.0',
+		'TERMINAY_HTTP_PORT=8443',
+		'TERMINAY_PUBLIC_HOST=localhost',
+		'TERMINAY_ICE_PORT_SPAN=16',
+		'TERMINAY_HEALTH_HOST=127.0.0.1',
+		'TERMINAY_UI_RENDERER_DIRECTORY=/opt/terminay/ui',
+		'TERMINAY_MANAGED_BY=container',
+	]) {
+		assert.ok(dockerfile.includes(setting), `image default missing: ${setting}`);
+	}
+	assert.match(dockerfile, /TERMINAY_SERVER_REVISION=\$\{OCI_REVISION\}/u);
+	// Pinning the ICE range caps how many devices can connect, so the image
+	// does not pin one until the operator asks for it.
+	assert.doesNotMatch(dockerfile, /TERMINAY_ICE_PORT=/u);
+	assert.doesNotMatch(dockerfile, /TERMINAY_WEBRTC_ADVERTISE_ADDRESS=/u);
+	assert.match(dockerfile, /^EXPOSE 8443\/tcp 51000-51015\/udp$/m);
+	// The CLI is on the default PATH, and nothing in the image is an init system.
+	assert.match(dockerfile, /COPY docker\/terminay \/usr\/local\/bin\/terminay/u);
+	assert.doesNotMatch(dockerfile, /systemd|tini|dumb-init/u);
+	assert.doesNotMatch(dockerfile, /^USER (?:root|0)\b/m);
 });
 
 test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
@@ -73,16 +104,9 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 		workflow,
 		/docker\/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0/u,
 	);
-	assert.match(
-		workflow,
-		/images: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-server/u,
-	);
+	assert.match(workflow, /ghcr\.io\/\$\{GITHUB_REPOSITORY_OWNER\}\/terminay-server/u);
 	assert.match(workflow, /type=sha,format=long,prefix=sha-/u);
 	assert.match(workflow, /type=semver,pattern=\{\{version\}\}/u);
-	assert.match(
-		workflow,
-		/type=raw,value=latest,enable=\{\{is_default_branch\}\}/u,
-	);
 	assert.match(
 		workflow,
 		/docker\/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0/u,
@@ -102,23 +126,41 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 });
 
 test('server GHCR release retains its metadata contract', () => {
-	assert.match(
-		workflow,
-		/images: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-server/u,
-	);
+	assert.match(workflow, /ghcr\.io\/\$\{GITHUB_REPOSITORY_OWNER\}\/terminay-server/u);
 	assert.match(workflow, /type=semver,pattern=\{\{version\}\}/u);
 	assert.match(workflow, /type=semver,pattern=\{\{major\}\}\.\{\{minor\}\}/u);
 	assert.match(workflow, /type=sha,format=long,prefix=sha-/u);
-	assert.match(
-		workflow,
-		/type=raw,value=latest,enable=\{\{is_default_branch\}\}/u,
-	);
 	assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/u);
 	assert.match(workflow, /provenance: mode=max/u);
 	assert.match(workflow, /sbom: true/u);
 	assert.match(workflow, /github\.event_name == 'push'/u);
 
 	assert.doesNotMatch(releaseWorkflow, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
+});
+
+test('one build is published under both image names, and latest is a release', () => {
+	// Both names come from one metadata step and one build-push step, so they
+	// resolve to one manifest digest.
+	assert.match(workflow, /docker\.io\/markwylde\/terminay/u);
+	assert.match(workflow, /images: \$\{\{ steps\.registries\.outputs\.images \}\}/u);
+	assert.equal(workflow.match(/docker\/build-push-action@/gu)?.length, 1);
+	// Docker Hub is published only where its credential exists, and never from
+	// a workflow that would fail for the lack of one.
+	assert.match(workflow, /DOCKERHUB_TOKEN: \$\{\{ secrets\.DOCKERHUB_TOKEN \}\}/u);
+	assert.match(
+		workflow,
+		/if: \$\{\{ steps\.registries\.outputs\.dockerhub == 'true' \}\}/u,
+	);
+	// Images are published for tagged releases only, so the bare image name is
+	// always a release.
+	assert.match(
+		workflow,
+		/type=raw,value=latest,enable=\$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/u,
+	);
+	assert.doesNotMatch(workflow, /value=latest,enable=\{\{is_default_branch\}\}/u);
+	assert.doesNotMatch(workflow, /^ {4}branches:/mu);
+	assert.match(workflow, /TERMINAY_CHANNEL=tag/u);
+	assert.match(operatorGuide, /markwylde\/terminay/u);
 });
 
 test('Docker image operator guide requires digest-pinned controlled deployments', () => {
@@ -150,7 +192,7 @@ test('GHCR publication actions are pinned to immutable reviewed revisions', () =
 
 	assert.equal(
 		references.length,
-		8,
+		9,
 		'every external action in the server-image workflow must be reviewed',
 	);
 	for (const [, action, revision] of references) {
