@@ -225,3 +225,17 @@ export function resolveFileViewerEngine(
 
   return file.size > LARGE_FILE_THRESHOLD_BYTES && !capabilities.canUseMonaco ? 'performant' : 'monaco'
 }
+
+/**
+ * Whether a panel may hold this file's complete content in memory.
+ *
+ * A large file is read whole only for the Monaco engine, which the user has to
+ * choose. While the engine is still `auto` the choice is pending, and the
+ * Performant engine reads ranges; neither may start a whole-file read.
+ */
+export function canLoadWholeFileContent(
+  file: Pick<FileInfo, 'size'>,
+  engine: FileViewerEngine,
+): boolean {
+  return file.size <= LARGE_FILE_THRESHOLD_BYTES || engine === 'monaco'
+}
