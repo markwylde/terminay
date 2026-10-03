@@ -120,6 +120,23 @@ export async function viewDocumentSource(page: Page): Promise<void> {
   await expect(page.locator('.file-mode-switcher')).toBeVisible()
 }
 
+/**
+ * Selects a File Viewer view by its label, whether it is drawn as a tab or
+ * kept in the switcher's "More views" menu for this file type.
+ */
+export async function selectFileView(page: Page, label: string): Promise<void> {
+  const switcher = page.locator('.file-mode-switcher:visible')
+  await expect(switcher).toBeVisible()
+  const tab = switcher.getByRole('tab', { name: label, exact: true })
+  if ((await tab.count()) === 0) {
+    await switcher.getByRole('button', { name: 'More views' }).click()
+    await switcher.getByRole('menuitem', { name: label, exact: true }).click()
+  } else {
+    await tab.click()
+  }
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+}
+
 export async function activateDockTab(page: Page, title: string): Promise<void> {
   const tab = page
     .locator('.terminal-tab-content')

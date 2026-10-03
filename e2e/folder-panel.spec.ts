@@ -4,6 +4,7 @@ import {
   contextMenuItem,
   fileExplorerItem,
   openFileExplorer,
+  selectFileView,
   setProjectRoot,
   submitFileExplorerNameModal,
 } from './support/ui'
@@ -100,6 +101,7 @@ test('folder panel supports view modes navigation and refresh', async ({ createW
   await expect(rowNames.nth(1)).toContainText('fresh.txt')
 
   await mainWindow.locator('.folder-viewer__list-row').filter({ hasText: 'fresh.txt' }).dblclick()
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('after refresh')
 })
 

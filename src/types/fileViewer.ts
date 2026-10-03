@@ -89,6 +89,10 @@ export type FilePreviewCapabilities = {
   defaultMode: FileViewerMode
   fallbackMode: FileViewerMode
   previewKind: FilePreviewKind
+  /** Views shown as tabs, most relevant first. */
+  primaryModes: FileViewerMode[]
+  /** Available views kept behind the switcher's overflow menu. */
+  secondaryModes: FileViewerMode[]
   shouldPromptForEngineChoice: boolean
 }
 

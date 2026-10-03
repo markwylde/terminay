@@ -1,6 +1,6 @@
 import type { CDPSession, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
-import { contextMenuItem, fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+import { contextMenuItem, fileExplorerItem, openFileExplorer, selectFileView, setProjectRoot } from './support/ui'
 
 const HOLD_MS = 1_200
 
@@ -99,6 +99,7 @@ test('a touch held still for a second drags the entry to the tab bar', async ({ 
   await expect(mainWindow.locator('.file-explorer-tree-drag-preview')).toBeVisible()
   await touch(session, 'touchEnd')
 
+  await selectFileView(mainWindow, 'Preview')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('opened by a touch drag')
 })
 
