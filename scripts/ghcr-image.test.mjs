@@ -120,7 +120,7 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 	assert.match(workflow, /sbom: true/u);
 	assert.match(workflow, /packages: write/u);
 	assert.match(workflow, /id-token: write/u);
-	assert.match(workflow, /if: \$\{\{ github\.event_name == 'push'/u);
+	assert.match(workflow, /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/u);
 	assert.doesNotMatch(workflow, /terminay\.com/u);
 	assert.doesNotMatch(workflow, /docker push /u);
 });
@@ -133,7 +133,7 @@ test('server GHCR release retains its metadata contract', () => {
 	assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/u);
 	assert.match(workflow, /provenance: mode=max/u);
 	assert.match(workflow, /sbom: true/u);
-	assert.match(workflow, /github\.event_name == 'push'/u);
+	assert.match(workflow, /if: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/u);
 
 	assert.doesNotMatch(releaseWorkflow, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
 });
@@ -161,6 +161,24 @@ test('one build is published under both image names, and latest is a release', (
 	assert.doesNotMatch(workflow, /^ {4}branches:/mu);
 	assert.match(workflow, /TERMINAY_CHANNEL=tag/u);
 	assert.match(operatorGuide, /markwylde\/terminay/u);
+});
+
+test('a release publishes the image by dispatching the image workflow at its tag', () => {
+	// The release creates its tag with the workflow token. GitHub starts no
+	// workflow for that push, so a tag trigger alone never publishes an image
+	// for a release made by the release workflow.
+	assert.match(workflow, /^ {2}workflow_dispatch:$/mu);
+	assert.match(
+		releaseWorkflow,
+		/gh workflow run server-image\.yml --repo "\$GH_REPO" --ref "\$TAG"/u,
+	);
+	const job = releaseWorkflow.slice(
+		releaseWorkflow.indexOf('\n  publish-server-image:\n'),
+	);
+	assert.match(job, /needs: \[release, publish-release-notes\]/u);
+	assert.match(job, /if: needs\.release\.outputs\.no_release != 'true'/u);
+	assert.match(job, /^ {6}actions: write$/mu);
+	assert.match(job, /^ {6}contents: read$/mu);
 });
 
 test('Docker image operator guide requires digest-pinned controlled deployments', () => {

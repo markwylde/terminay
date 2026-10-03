@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # The release workflow creates its tag with the workflow token, and GitHub
+  # starts no workflow for a push made with that token. It dispatches this one
+  # at the tag instead, which is the only event that token may raise.
+  workflow_dispatch:
 
 concurrency:
   group: terminay-server-image-${{ github.ref }}
@@ -48,7 +52,9 @@ jobs:
   publish:
     name: Publish server image to GHCR and Docker Hub
     needs: smoke
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    # Only at a release tag, whether it was pushed or dispatched. A dispatch at
+    # a branch builds and smokes the image and publishes nothing.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

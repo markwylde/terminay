@@ -983,3 +983,28 @@ jobs:
             gh release download "$TAG" --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$metadata"
             cmp "$PUBLISHED/$metadata" "$METADATA_DIR/$metadata"
           done
+
+  publish-server-image:
+    name: Publish Server Image
+    runs-on: ubuntu-latest
+    # One dispatch call.
+    timeout-minutes: 5
+    # Last, so `latest` never names a release whose archives or desktop builds
+    # failed verification.
+    needs: [release, publish-release-notes]
+    if: needs.release.outputs.no_release != 'true'
+    permissions:
+      contents: read
+      # The tag this workflow created was pushed with the workflow token, which
+      # starts no other workflow. Dispatching is the one event it may raise.
+      actions: write
+
+    steps:
+      - name: Dispatch the image workflow at the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          test -n "$TAG"
+          gh workflow run server-image.yml --repo "$GH_REPO" --ref "$TAG"
