@@ -851,6 +851,7 @@
 	position: relative;
 	flex: 0 0 auto;
 	border: 0;
+	border-radius: 0;
 	background: transparent;
 	color: color-mix(in srgb, var(--tab-text-selected, #fff) 62%, transparent);
 	padding: 0 10px;
@@ -872,6 +873,12 @@
 	border-radius: 2px 2px 0 0;
 	background: transparent;
 	transition: background-color 150ms ease;
+}
+
+/* The global `button:hover` fill is restated away: a tab answers the pointer
+   by brightening its label and hinting at the underline, nothing more. */
+.file-mode-switcher__button:hover {
+	background: transparent;
 }
 
 .file-mode-switcher__button:hover:not(:disabled) {
