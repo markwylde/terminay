@@ -2,8 +2,8 @@
 
 Evidence for ADR-0035's open item and for task group 1 of
 `openspec/changes/terminals-survive-restart`. This file records what was run
-and what happened. It is incomplete: the in-place update itself has not been
-observed, and nothing here ran on Linux.
+and what happened. The macOS in-place update has been observed; nothing here
+ran on Linux.
 
 ## Environment
 
@@ -56,17 +56,47 @@ observed, and nothing here ran on Linux.
    the holder and its shell were still running after the application received
    `SIGTERM` and exited.
 
+6. **The fix in a signed build.** `scripts/packaged-session-holder-macos.test.mjs`
+   passes against the signed `5.13.0-beta.36`, the first beta with the fix: a
+   shell exists under the holder, and both are still running after the
+   application quits.
+
+## An in-place update with a holder running
+
+Run on the same machine against the signed betas. A scratch copy of
+`5.13.0-beta.36` was started with `TERMINAY_SESSION_HOLDER=1`, its own data
+directory, and `updateChannel: beta`, holding one login shell. The installed
+`/Applications/Terminay.app` (`5.13.0-beta.32`) stayed running and untouched;
+its updater cache was snapshotted first and restored afterwards, because the
+two copies share `~/Library/Caches/com.terminay.app.ShipIt`.
+
+| Step | Observed |
+| --- | --- |
+| Holder and shell before | holder pid 17747, started from `…/app.asar/dist-electron/sessionHolderEntry.js`; shell pid 17866 (`/bin/zsh -l`), a child of the holder |
+| Update | the copy downloaded `5.13.0-beta.37` and staged it for the installer 18 s after launch |
+| Quit | the application quit cleanly on `SIGTERM` |
+| Install | `ShipIt` moved the new bundle into place and logged `Installation completed successfully` within a second of the quit; the bundle then read `5.13.0-beta.37` |
+| Holder after install | alive, same pid |
+| Shell after install | alive, same pid |
+| Shell while nothing attached | answered `echo after-install-$((40+2))` through the holder, which was by then running from a bundle that had been replaced on disk |
+| Relaunch as `5.13.0-beta.37` | one terminal panel, session `default` `running`, the same shell pid, and the `beta.36` holder serving the new version (a second connection was refused as busy) |
+
+So in this run Squirrel.Mac's installer neither waited on nor killed the
+session holder: it replaced the bundle under it within a second of the
+application quitting, and the holder kept running from files it had already
+loaded. A server of a newer build then drove the older holder over protocol
+version 1. This is one run on one machine.
+
+Nothing was left running, the scratch data directory was removed, and the
+installed application's updater cache was put back as it was found.
+
 ## Not observed
 
-- **An in-place update.** Whether Squirrel.Mac's installer waits on or kills a
-  holder, and whether a shell held from the replaced bundle stays interactive,
-  is still unknown. It was not attempted here because a second copy of the
-  application shares its bundle identifier, and therefore
-  `~/Library/Caches/com.terminay.app.ShipIt`, with the installed one, which had
-  a downloaded update pending. The scratch copy ran only on the stable channel
-  of a fresh profile, where `5.12.0 < 5.13.0-beta.34` and downgrades are
-  disabled, so it downloaded nothing.
-- **A signed build with the fix.** The passing run was an unsigned local build.
+- **Restart to update.** The update was installed by quitting, not through the
+  title-bar action, which ends in `quitAndInstall` and relaunches the
+  application itself.
+- **A terminal with something running in the foreground** across the update;
+  the held shell was idle at its prompt.
 - **macOS privacy permissions** for a shell whose launching application has
   exited.
 - **Linux:** an AppImage whose mount is released when the main process exits,

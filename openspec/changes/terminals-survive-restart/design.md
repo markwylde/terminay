@@ -326,8 +326,13 @@ needs `spawn-helper` or any lazy `require` again.
   files.
 - Standalone runs it with the archive's bundled Node.
 
-Three host behaviours are unproven and are settled by a spike before any other
-task: whether Squirrel.Mac's installer waits on, or kills, a second process of
+**macOS is settled.** On signed betas, the installer replaced the bundle
+(`5.13.0-beta.36` to `beta.37`) while a holder was running. It neither waited on
+nor killed the holder; the held shell kept its pid, answered while nothing was
+attached, and was picked up by the new version through the older holder. See
+`openspec/adr/evidence/session-holder-survives-update.md`.
+
+The spike was planned for three host behaviours: whether Squirrel.Mac's installer waits on, or kills, a second process of
 the same bundle; whether a holder survives an AppImage's FUSE mount being
 unmounted when the main process exits; and whether macOS attributes the shells'
 privacy permissions correctly once the app that spawned the holder has exited.

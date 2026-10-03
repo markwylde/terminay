@@ -1,10 +1,10 @@
 ## 1. Spike: can a holder outlive its installation
 
-- [ ] 1.1 Build a throwaway detached Node script that holds one `node-pty` shell and a socket, launch it from a packaged macOS build with `ELECTRON_RUN_AS_NODE`, run a real in-place update, and record whether Squirrel.Mac waits on or kills it and whether the shell is still interactive afterwards. Verified by: findings written to `openspec/adr/evidence/session-holder-survives-update.md` with the commands run and their output.
+- [x] 1.1 Build a throwaway detached Node script that holds one `node-pty` shell and a socket, launch it from a packaged macOS build with `ELECTRON_RUN_AS_NODE`, run a real in-place update, and record whether Squirrel.Mac waits on or kills it and whether the shell is still interactive afterwards. Verified by: findings written to `openspec/adr/evidence/session-holder-survives-update.md` with the commands run and their output.
 - [ ] 1.2 Repeat for a Linux AppImage: quit the app, confirm whether the holder and shell survive the FUSE unmount, then update and relaunch. Verified by: results in the same evidence file, including the fallback decision (run from the mount, or copy the payload into the data root).
 - [ ] 1.3 Repeat for the standalone archive under systemd with `KillMode=process`: stop the unit, remove the holder's `versions/<v>` directory, start the unit, and reconnect. Verified by: results in the same evidence file.
 - [ ] 1.4 On macOS, check that a shell held after its launching app exited can still use a privacy-protected folder it was granted. Verified by: result in the same evidence file.
-- [ ] 1.5 Update `design.md` Decision 11 with the outcomes. Verified by: `openspec validate terminals-survive-restart` passes and the design names the chosen launch method per host.
+- [ ] 1.5 Update `design.md` Decision 11 with the outcomes. Verified by: `openspec validate terminals-survive-restart` passes and the design names the chosen launch method per host. **The macOS outcome is recorded; the AppImage and systemd outcomes wait on 1.2 and 1.3.**
 
 ## 2. Holder protocol
 
