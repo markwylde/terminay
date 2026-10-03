@@ -43,7 +43,7 @@ The E2E suite SHALL be sharded by test rather than by file, so that each of the 
 - **WHEN** a spec that shares no setup has several tests
 - **THEN** its tests run in several shards rather than in one
 
-#### Scenario: Shared-setup spec stays together
+#### Scenario: Shared-instance spec stays together
 
 - **WHEN** the suite is sharded
 - **THEN** all tests of a spec that uses `beforeAll` or declares itself one group are listed in the same shard

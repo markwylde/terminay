@@ -72,7 +72,7 @@ Per-job seconds on this change's own runs, from the Gitea API. Run 17111 had the
 | Real WebRTC pairing | 205–248 | 204 |
 | E2E shard, base image on the runner | 64–229, after the image build | 61–121, after the image build |
 
-Seven shards of run 17111 took 211–234 seconds because their runners had to pull the dependency base again, which put the run at 326 seconds. A run of another pull request, on the previous workflow and so on a different base key, had pruned it: the cleanup keeps the newest base and the running job's, so two live bases evict each other. That ends when one base key is in use again.
+Seven shards of run 17111 took 211–234 seconds because their runners had to pull the dependency base again, which put the run at 326 seconds. A run of another pull request, on the previous workflow and so on a different base key, had pruned it: the cleanup keeps the newest base and the running job's, so two live bases evict each other. That ends when one base key is in use again. The next run, 17113, found the base on every runner and finished in 276 seconds, with the macOS job at 150 and the last shard at 276; three of the eighteen shards waited for a runner because the image was ready after 55 seconds, while five other Linux jobs were still running.
 
 ## Risks / Trade-offs
 

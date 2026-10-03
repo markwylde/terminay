@@ -42,9 +42,10 @@
 - [x] 8.1 Do not read a file above the large-file boundary whole before an engine is chosen. Verify: `e2e/file-viewer-conflicts-large-files.spec.ts` passes ten times in a row in the container with no retries, and renderer memory with the chooser open stays near 230 MiB instead of 2.5 GiB.
 - [x] 8.2 Let the Monaco editor own its text while it is typed in. Verify: `e2e/file-viewer-language.spec.ts` passes ten times in a row in the container with no retries, and `src/components/file-viewer/editorTextEcho.test.ts` passes.
 - [x] 8.3 Make the terminal focus tests blur until the terminal stays unfocused. Verify: `e2e/terminal.spec.ts` passes on CI.
+- [x] 8.4 Hold the dashboard's squeezed-bar assertion until the bar has a layout. Verify: `e2e/workspace-dashboard.spec.ts` passes on CI.
 
 ## 9. Verification
 
-- [x] 6.1 Update `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs` and `scripts/repository-ownership-release.test.mjs`. Verify: they pass with the other workflow contract tests.
-- [ ] 6.2 Measure two consecutive source-only runs from the Gitea API. Verify: each run's wall clock, from creation to its last job's completion, is under 300 seconds with every status `success` or `skipped`.
-- [ ] 6.3 Run `openspec validate --all`. Verify: it passes.
+- [x] 9.1 Update `scripts/provider-portable-ci.test.mjs`, `scripts/e2e-container-contract.test.mjs` and `scripts/repository-ownership-release.test.mjs`. Verify: they pass with the other workflow contract tests.
+- [x] 9.2 Measure source-only runs on a fleet with no other run, from the Gitea API. Verify: the wall clock from the run's creation to its last job's completion is under 300 seconds with every status `success`. Runs 17101 and 17113 finished in 295 and 276 seconds; all 376 tests ran, once each, across the eighteen shards.
+- [x] 9.3 Run `openspec validate --all`. Verify: it passes.
