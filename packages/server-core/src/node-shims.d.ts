@@ -74,6 +74,7 @@ declare module 'node:child_process' {
 			listener: (exitCode: number | null, signal: string | null) => void,
 		): this;
 		removeAllListeners(event?: string): this;
+		unref(): void;
 	}
 	export function spawn(
 		command: string,
@@ -82,6 +83,7 @@ declare module 'node:child_process' {
 			readonly cwd?: string;
 			readonly env?: Readonly<Record<string, string | undefined>>;
 			readonly stdio?: readonly ('ignore' | 'pipe')[];
+			readonly detached?: boolean;
 			readonly windowsHide?: boolean;
 			readonly signal?: AbortSignal;
 		},
@@ -153,6 +155,7 @@ declare module 'node:fs' {
 		length: number,
 		position: number,
 	): number;
+	export function readdirSync(path: string): string[];
 	export function readdirSync<T extends string = string>(
 		path: string,
 		options: { readonly withFileTypes: true; readonly encoding?: T },

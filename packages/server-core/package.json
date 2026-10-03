@@ -23,6 +23,11 @@
       "types": "./dist/extensions/child.d.ts",
       "import": "./dist/extensions/child.js",
       "default": "./dist/extensions/child.js"
+    },
+    "./session-holder": {
+      "types": "./dist/sessionHolder/process.d.ts",
+      "import": "./dist/sessionHolder/process.js",
+      "default": "./dist/sessionHolder/process.js"
     }
   },
   "files": [

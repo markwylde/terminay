@@ -227,7 +227,8 @@ export function createNodePtyFactory(
 /** Alias that makes host composition read naturally at the server boundary. */
 export const createServerPtyFactory = createNodePtyFactory;
 
-function cleanEnvironment(
+/** @internal */
+export function cleanEnvironment(
 	value: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string>> {
 	const result: Record<string, string> = {};
@@ -236,13 +237,14 @@ function cleanEnvironment(
 	return result;
 }
 
-interface ForegroundPolling {
+export interface ForegroundPolling {
 	readonly intervalMs: number;
 	readonly setInterval: (callback: () => void, delayMs: number) => unknown;
 	readonly clearInterval: (timer: unknown) => void;
 }
 
-function createForegroundPolling(
+/** @internal Shared with the session-holder PTY adapter. */
+export function createForegroundPolling(
 	options: NodePtyForegroundPollingOptions | undefined,
 ): ForegroundPolling {
 	const intervalMs = options?.intervalMs ?? 1_500;
@@ -269,8 +271,10 @@ interface FreshObservationWaiter {
 	readonly signal?: AbortSignal;
 }
 
-function createForegroundObserver(
-	child: NodePtyProcessLike,
+/** @internal Shared with the session-holder PTY adapter, which observes a
+ * shell by pid without holding its node-pty handle. */
+export function createForegroundObserver(
+	child: Pick<NodePtyProcessLike, 'pid' | 'process'>,
 	shellProcess: string,
 	polling: ForegroundPolling,
 	resolveProcess: NodePtyFactoryOptions['resolveForegroundProcess'],
@@ -481,7 +485,9 @@ function createForegroundObserver(
 	};
 }
 
-function foregroundProcessName(child: NodePtyProcessLike): string | undefined {
+function foregroundProcessName(
+	child: Pick<NodePtyProcessLike, 'process'>,
+): string | undefined {
 	try {
 		const value = child.process;
 		const processName = typeof value === 'string' ? value.trim() : '';
@@ -491,7 +497,8 @@ function foregroundProcessName(child: NodePtyProcessLike): string | undefined {
 	}
 }
 
-function shellName(path: string): string {
+/** @internal */
+export function shellName(path: string): string {
 	const normalized = path.replace(/\\/g, '/');
 	return normalized.slice(normalized.lastIndexOf('/') + 1);
 }

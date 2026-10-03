@@ -18,6 +18,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	gitPushAgent: 'server',
 	terminayMcp: 'server',
 	ignoreBracketedPasteMode: 'server',
+	keepTerminalsAfterQuit: 'server',
 	macros: 'server',
 	recording: 'server',
 	remoteAccess: 'server',

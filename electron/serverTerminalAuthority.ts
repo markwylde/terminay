@@ -74,6 +74,11 @@ import {
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
+import {
+	createSessionHolderPtyFactory,
+	type SessionHolderLaunchRequest,
+	type SessionHolderPtyFactory,
+} from '../packages/server-core/src/sessionHolder/factory';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import type { GitObservationReport } from '../packages/server-core/src/gitService/types';
@@ -257,6 +262,19 @@ export interface ServerTerminalAuthorityOptions {
 	readonly builtInExtensionArtifactRoot?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
+	/**
+	 * Keep PTYs in a detached session holder so terminals outlive this process
+	 * (ADR-0035). Requires `dataRoot`. Absent, PTYs are children of this process
+	 * and end with it.
+	 */
+	readonly sessionHolder?: {
+		/** Identifies this build; a holder from another build is drained. */
+		readonly buildId: string;
+		/** Start a detached holder process with the given extra environment. */
+		readonly launch: (request: SessionHolderLaunchRequest) => void;
+		/** How long sessions keep running with nothing attached; `null` is no limit. */
+		readonly limitMs: number | null;
+	};
 	/** Desktop-owned current shell settings for protocol-created sessions. */
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
@@ -361,6 +379,7 @@ interface AuthoritySession {
 export class ServerTerminalAuthority {
 	readonly service: TerminalService;
 	readonly composition: ServerCoreComposition;
+	private readonly sessionHolder: SessionHolderPtyFactory | undefined;
 	/** Canonical Local activity authority exposed through the same protocol as
 	 * terminal streams; legacy renderer IPC is not its source of truth. */
 	readonly activity: TerminalActivityService;
@@ -829,6 +848,22 @@ export class ServerTerminalAuthority {
 			dictationAi === undefined
 				? undefined
 				: dictationOnlyOperations(createAiOperationHandlers(dictationAi));
+		// An injected service owns its own processes; a holder is for the
+		// production path only, and needs somewhere to keep its socket.
+		const sessionHolder =
+			options.sessionHolder === undefined ||
+			options.terminalService !== undefined ||
+			options.dataRoot === undefined
+				? undefined
+				: createSessionHolderPtyFactory({
+						dataRoot: options.dataRoot,
+						buildId: options.sessionHolder.buildId,
+						launch: options.sessionHolder.launch,
+						limitMs: options.sessionHolder.limitMs,
+						resolveCwd: resolveTerminalProcessCwd,
+						resolveForegroundProcess: resolveTerminalForegroundProcess,
+					});
+		this.sessionHolder = sessionHolder;
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop',
@@ -1046,13 +1081,18 @@ export class ServerTerminalAuthority {
 						// Do not load the native module for an injected service. Apart
 						// from making the boundary testable, this prevents an unused
 						// native dependency from becoming part of host-only compositions.
-						ptyFactory: createNodePtyFactory(
-							require('node-pty') as NodePtyModule,
-							{
-								resolveCwd: resolveTerminalProcessCwd,
-								resolveForegroundProcess: resolveTerminalForegroundProcess,
-							},
-						),
+						...(sessionHolder === undefined
+							? {
+									ptyFactory: createNodePtyFactory(
+										require('node-pty') as NodePtyModule,
+										{
+											resolveCwd: resolveTerminalProcessCwd,
+											resolveForegroundProcess:
+												resolveTerminalForegroundProcess,
+										},
+									),
+								}
+							: { sessionHolder }),
 						terminalOptions: {
 							maxReplayBytes: this.maxReplayBytes,
 							...(options.resolveDefaultShell === undefined
@@ -1895,6 +1935,24 @@ export class ServerTerminalAuthority {
 
 	detachRendererAll(rendererId: number): void {
 		this.detachConsumers(legacyConsumerId(rendererId));
+	}
+
+	/** Whether terminals are held outside this process and survive its exit. */
+	get keepsTerminalsAcrossRestart(): boolean {
+		return this.sessionHolder !== undefined;
+	}
+
+	/** Change how long held terminals keep running with nothing attached. */
+	setBackgroundTerminalLimit(limitMs: number | null): void {
+		this.sessionHolder?.setLimit(limitMs);
+	}
+
+	/**
+	 * End every terminal and remove their panels. Call this before `shutdown`
+	 * when the user chose to end their terminals; `shutdown` alone keeps them.
+	 */
+	async endAllTerminalSessions(): Promise<void> {
+		await this.composition.endAllTerminalSessions();
 	}
 
 	async shutdown(): Promise<void> {
