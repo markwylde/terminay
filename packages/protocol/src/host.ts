@@ -312,6 +312,9 @@ export type TerminayHostAction =
 	  }>
 	| Readonly<{ type: 'clipboard.write'; text: string }>
 	| Readonly<{ type: 'notification.show'; title: string; body?: string }>
+	/** This window's notification count for the application icon badge. The
+	 * host sums its windows; the count names no terminal, project, or server. */
+	| Readonly<{ type: 'badge.count.set'; count: number }>
 	| Readonly<{ type: 'updater.check' }>
 	/** Restart into an update the host has already downloaded and verified. */
 	| Readonly<{ type: 'updater.install' }>
@@ -375,6 +378,8 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const BUNDLE_ID = /^[A-Za-z0-9_-]{8,128}$/u;
 const MAX_VERSION = 65_535;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/** Largest per-window count `badge.count.set` accepts. */
+export const TERMINAY_HOST_MAX_BADGE_COUNT = 9_999;
 const CAPABILITY_NAMES = new Set<string>(TERMINAY_HOST_CAPABILITY_NAMES);
 const MENU_COMMANDS = new Set<string>(TERMINAY_HOST_MENU_COMMANDS);
 
@@ -1130,6 +1135,16 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				...(body === undefined ? {} : { body }),
 			});
 		}
+		case 'badge.count.set':
+			exactKeys(action, ['type', 'count'], 'badge count action');
+			if (
+				typeof action.count !== 'number' ||
+				!Number.isInteger(action.count) ||
+				action.count < 0 ||
+				action.count > TERMINAY_HOST_MAX_BADGE_COUNT
+			)
+				throw new TypeError('badge count is invalid');
+			return Object.freeze({ type: 'badge.count.set', count: action.count });
 		case 'updater.check':
 			exactKeys(action, ['type'], 'updater action');
 			return Object.freeze({ type: 'updater.check' });
@@ -1322,6 +1337,7 @@ export function requiredTerminayHostCapability(
 		case 'clipboard.write':
 			return 'clipboardWrite';
 		case 'notification.show':
+		case 'badge.count.set':
 			return 'notifications';
 		case 'updater.check':
 		case 'updater.install':

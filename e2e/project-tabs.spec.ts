@@ -200,6 +200,60 @@ test.describe('project tabs', () => {
 		).toBeVisible();
 	});
 
+	test('closing a torn-off window takes its notifications off the application icon', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const badgeTotal = () =>
+			electronApp.evaluate(
+				() =>
+					(
+						globalThis as typeof globalThis & {
+							__terminayTestAppBadgeTotal?: () => number;
+						}
+					).__terminayTestAppBadgeTotal?.() ?? -1,
+			);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		const draggedProject = mainWindow.locator('.project-tab').last();
+		const projectBox = await draggedProject.boundingBox();
+		if (!projectBox)
+			throw new Error('Expected the project tab to have a layout box');
+		const centerX = projectBox.x + projectBox.width / 2;
+		const centerY = projectBox.y + projectBox.height / 2;
+		await mainWindow.mouse.move(centerX, centerY);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
+		await mainWindow.mouse.up();
+		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
+		await settledTerminalSessionId(
+			popoutWindow.locator('.project-workspace--active .terminal-panel'),
+		);
+		await expect.poll(badgeTotal).toBe(0);
+
+		// Ring the bell in a terminal the popout is not looking at.
+		const tabs = popoutWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await sendAppCommand(popoutWindow, 'new-terminal');
+		await expect(tabs).toHaveCount(2);
+		await submitTerminalCommand(
+			popoutWindow,
+			"sleep 1.1; printf 'ding\\007\\n'\r",
+		);
+		await tabs.filter({ hasText: 'Terminal 1' }).click();
+		await expect(popoutWindow.locator('.notifications-count')).toHaveText('1');
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		await expect.poll(badgeTotal).toBe(1);
+
+		await closeNativePageWindow(electronApp, popoutWindow);
+		await expect.poll(badgeTotal).toBe(0);
+		await expect(mainWindow.locator('[data-terminay-app-component]')).toBeVisible();
+	});
+
 	test('closing a busy torn-off project window leaves its sibling window alive', async ({
 		electronApp,
 		mainWindow,
