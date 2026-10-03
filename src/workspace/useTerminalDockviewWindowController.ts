@@ -9,11 +9,20 @@ type DraggingDockviewTransfer = {
 	groupId: string;
 };
 
+/** A single terminal tab being dragged out of the workspace's main window. */
+export type TerminalTabDrag = { panelId: string };
+
 type UseTerminalDockviewWindowControllerOptions = {
 	addTerminal: (options?: AddTerminalOptions) => Promise<unknown>;
 	apiRef: MutableRefObject<DockviewApi | null>;
 	draggingTransferRef: MutableRefObject<DraggingDockviewTransfer | null>;
 	isActive: boolean;
+	/**
+	 * Told when a terminal tab starts being dragged, and `null` when any drag
+	 * ends. File tabs, folder tabs, whole groups, and drags that start in a
+	 * popout window are never reported. Must be stable across renders.
+	 */
+	onTerminalTabDrag?: (drag: TerminalTabDrag | null) => void;
 	openTerminalEditWindow: (panelId: string) => Promise<unknown>;
 	openProfileChooser: () => Promise<void>;
 	popoutUrl: string;
@@ -27,6 +36,7 @@ export function useTerminalDockviewWindowController({
 	apiRef,
 	draggingTransferRef,
 	isActive,
+	onTerminalTabDrag,
 	openTerminalEditWindow,
 	openProfileChooser,
 	popoutUrl,
@@ -312,7 +322,12 @@ export function useTerminalDockviewWindowController({
 			};
 			const onNewTerminalWithProfile = () => { void openProfileChooser(); };
 
+			// Dockview publishes its payload after `dragstart`, so it is read a
+			// frame later; a drag that has already ended by then reports nothing.
+			let isDragging = false;
+
 			const onDragStart = () => {
+				isDragging = true;
 				targetWindow.requestAnimationFrame(() => {
 					const data = getPanelData();
 					if (!data) {
@@ -323,10 +338,22 @@ export function useTerminalDockviewWindowController({
 						panelId: data.panelId ?? undefined,
 						groupId: data.groupId,
 					};
+
+					if (!isDragging || targetWindow !== window || !data.panelId) {
+						return;
+					}
+					const panel = apiRef.current?.getPanel(data.panelId);
+					if (panel?.view.tabComponent === 'terminalTab') {
+						onTerminalTabDrag?.({ panelId: data.panelId });
+					}
 				});
 			};
 
 			const onDragEnd = (event: DragEvent) => {
+				isDragging = false;
+				if (targetWindow === window) {
+					onTerminalTabDrag?.(null);
+				}
 				const transfer = draggingTransferRef.current;
 				draggingTransferRef.current = null;
 
@@ -460,6 +487,7 @@ export function useTerminalDockviewWindowController({
 		apiRef,
 		draggingTransferRef,
 		isActive,
+		onTerminalTabDrag,
 		openTerminalEditWindow,
 		openProfileChooser,
 		popoutUrl,
