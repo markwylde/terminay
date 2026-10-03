@@ -1,6 +1,11 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
+// A session holder outlives the server that started it. This suite is not
+// about held terminals, so the servers it starts keep theirs in-process and
+// nothing is left running when it finishes.
+process.env.TERMINAY_SESSION_HOLDER ??= '0';
+
 /**
  * The three artifact shapes currently produced or consumed by the project.
  * This is deliberately a packaging contract, not a claim that every native

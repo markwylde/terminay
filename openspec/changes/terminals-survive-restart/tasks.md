@@ -72,7 +72,7 @@
 
 ## 11. Rollout and documentation
 
-- [ ] 11.1 Turn the option on for Desktop development builds, then standalone `main`, then stable, as separate commits. Verified by: each flip's CI statuses all `success` or `skipped` on Gitea.
+- [x] 11.1 Turn the holder on by default. The owner chose one step instead of three: on by default in `main`, so it reaches beta users first and stable with the next tagged release. `TERMINAY_SESSION_HOLDER=0` turns it off; it is off on its own under the test marker, on Windows, and for a data root too deep for the holder's socket. Verified by: `packages/server-core/test/session-holder-enabled.test.mjs`, and the pull request's CI statuses on Gitea.
 - [ ] 11.2 Reconcile `desktop-auto-update`'s "Restart to update" scenario with this change once that change is archived. Verified by: `openspec validate --all` passes and no spec says an update restart shows a confirmation.
 - [x] 11.3 Document the holder, its files in the data root, tails at rest, and the unit's kill mode in `docs/operations/` and `docs/product-overview.md`. Verified by: the runbook names the socket, credential, and tail paths and how to end all sessions by hand.
 - [ ] 11.4 Run `openspec validate --all`. Verified by: exit code 0.

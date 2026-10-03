@@ -9,6 +9,11 @@ import { getPtyRuntimePlatform, PTY_RUNTIME_NODE_VERSION } from './pty-runtime-p
 import { assertHostedUiEntry, HOSTED_UI_ENTRY } from './hosted-ui-entry.mjs'
 import { normalizeArtifactRelease } from './standalone-artifact.mjs'
 
+// A session holder outlives the server that started it. This suite is not
+// about held terminals, so the servers it starts keep theirs in-process and
+// nothing is left running when it finishes.
+process.env.TERMINAY_SESSION_HOLDER ??= '0';
+
 const execFileAsync = promisify(execFile)
 
 /**

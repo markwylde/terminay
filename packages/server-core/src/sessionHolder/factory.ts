@@ -28,6 +28,7 @@ import {
 	sessionHolderDirectory,
 	sessionHolderRecordPath,
 	sessionHolderSocketPath,
+	sessionTailsDirectory,
 	socketPathFits,
 } from './paths.js';
 import { SESSION_HOLDER_ENV } from './process.js';
@@ -93,6 +94,13 @@ export interface SessionHolderPtyFactory {
 	readonly pruneTails: (keep: ReadonlySet<string>) => void;
 	/** Holders this server could not speak to; their sessions are ended. */
 	readonly incompatibleGenerations: () => readonly string[];
+	/**
+	 * Whether this data root had ever kept sessions in a holder before this
+	 * server started. When it had not, the terminals a workspace remembers were
+	 * children of an earlier server process and ended with it: there is nothing
+	 * to reattach and nothing saved to show.
+	 */
+	readonly hadPriorState: () => boolean;
 }
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 10_000;
@@ -112,6 +120,10 @@ export function createSessionHolderPtyFactory(
 	/** Sessions whose saved tail this server has read and may need to delete. */
 	const tails = new Set<string>();
 	let started: Promise<readonly HeldSessionSummary[]> | undefined;
+	// Read once, before this server creates either directory itself.
+	const priorState =
+		existsSync(sessionHolderDirectory(dataRoot)) ||
+		existsSync(sessionTailsDirectory(dataRoot));
 
 	const track = (client: SessionHolderClient): void => {
 		clients.set(client.generation, client);
@@ -346,6 +358,7 @@ export function createSessionHolderPtyFactory(
 		},
 		pruneTails: (keep) => pruneSessionTails(dataRoot, keep),
 		incompatibleGenerations: () => [...incompatible],
+		hadPriorState: () => priorState,
 	};
 }
 
