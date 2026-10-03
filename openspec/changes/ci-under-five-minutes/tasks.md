@@ -16,9 +16,11 @@
 
 - [x] 4.1 Cancel the session-holder test's deadline timer once the application has quit. Verify: on CI the gap between the test's pass line and its summary is under two seconds.
 
-## 5. Fourteen shards
+- [x] 4.2 Run the DMG boot beside the built-in lifecycle and session-holder checks. Verify: the macOS job passes on CI with all three in its log, and takes under 300 seconds on an idle runner.
 
-- [x] 5.1 Change the shard matrix, job name, artifact names and `--shard` argument from ten to fourteen. Verify: every shard runs at least one test on CI, and the contract tests that read the workflow pass.
+## 5. Eighteen shards
+
+- [x] 5.1 Change the shard matrix, job name, artifact names and `--shard` argument from ten to eighteen. Verify: every shard runs at least one test on CI, and the contract tests that read the workflow pass.
 
 ## 6. Application build
 

@@ -102,8 +102,8 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
   assert.match(job(giteaCi, "e2e-test"), /needs: e2e-image/u);
   assert.equal((giteaCi.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
   assert.equal((giteaCi.match(/x86_64\|amd64/g) ?? []).length, 2);
-  assert.match(job(giteaCi, "e2e-test"), /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14\]/u);
-  assert.match(job(giteaCi, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/14\)/u);
+  assert.match(job(giteaCi, "e2e-test"), /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u);
+  assert.match(job(giteaCi, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/18\)/u);
   assert.match(giteaCi, /group: terminay-ci-\$\{\{ github\.ref \}\}/u);
   assert.match(giteaCi, /cancel-in-progress: true/u);
 
@@ -123,7 +123,7 @@ test("Gitea CI uses its compatible shared-image transport", () => {
   assert.match(giteaE2e, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
   assert.match(giteaE2e, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
   assert.match(giteaE2e, /if: \$\{\{ always\(\) \}\}/u);
-  assert.match(giteaE2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-14/u);
+  assert.match(giteaE2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-18/u);
   assert.match(giteaE2e, /retention-days: 7/u);
 });
 

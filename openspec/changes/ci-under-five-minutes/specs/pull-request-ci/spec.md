@@ -26,11 +26,11 @@ Pull-request CI SHALL build the Electron E2E test environment as two images. A d
 
 ### Requirement: Balanced E2E shards
 
-The E2E suite SHALL be sharded by test rather than by file, so that each of the fourteen shards receives a near-equal number of tests and no shard receives none. A spec whose tests share one application instance created in a `beforeAll` hook SHALL declare itself one group, so its tests stay in one shard and run in declaration order.
+The E2E suite SHALL be sharded by test rather than by file, so that each of the eighteen shards receives a near-equal number of tests and no shard receives none. A spec whose tests share one application instance created in a `beforeAll` hook SHALL declare itself one group, so its tests stay in one shard and run in declaration order.
 
 #### Scenario: No empty shard
 
-- **WHEN** the suite is listed for each of the fourteen shards
+- **WHEN** the suite is listed for each of the eighteen shards
 - **THEN** every shard lists at least one test, and the largest shard has no more than the smallest shard plus the size of the largest single group
 
 #### Scenario: Shared-instance spec stays together

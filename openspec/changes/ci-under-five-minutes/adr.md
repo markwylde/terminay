@@ -17,7 +17,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0036-five-minute-ci-budget-with-parallel-gates-and-fourteen-shards.md - CI has a five-minute budget, met by running independent work in separate jobs, fourteen E2E shards, and a runner-held npm cache. It supersedes ADR-0032 and restates the parts of ADR-0032 that remain in force.
+- openspec/adr/0036-five-minute-ci-budget-with-parallel-gates-and-eighteen-shards.md - CI has a five-minute budget, met by running independent work in separate jobs, eighteen E2E shards, and a runner-held npm cache. It supersedes ADR-0032 and restates the parts of ADR-0032 that remain in force.
 
 ## Notes
 
