@@ -31,7 +31,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0001](./0001-pinned-node-runtime-baseline.md) | Pin the Node runtime, toolchain, and compile targets across every lane | accepted (superseded by 0033) | 2026-07-27 |
 | [0002](./0002-sqlite-state-repository.md) | Use SQLite through `node:sqlite` for the server state repository | accepted | 2026-07-27 |
 | [0003](./0003-vault-interface-and-key-protectors.md) | Hold server secrets in a vault with AES-256-GCM entries and platform key protectors | accepted | 2026-07-27 |
-| [0004](./0004-node-pty-and-supported-distribution-matrix.md) | Keep `node-pty` with one supervised child per PTY, and declare a bounded distribution matrix | accepted | 2026-07-27 |
+| [0004](./0004-node-pty-and-supported-distribution-matrix.md) | Keep `node-pty` with one supervised child per PTY, and declare a bounded distribution matrix | accepted (superseded by 0035) | 2026-07-27 |
 | [0005](./0005-sandboxed-origin-bound-client-hosts.md) | Load server UI in a sandboxed, origin-bound partition in both Desktop and browser hosts | accepted | 2026-07-27 |
 | [0006](./0006-terminay-owned-werift-webrtc-runtime.md) | Use a Terminay-owned deterministic Werift ESM artifact as the headless WebRTC runtime | accepted | 2026-07-27 |
 | [0007](./0007-deterministic-pty-runtime-archives.md) | Build PTY runtime archives deterministically on a trusted producer runner | accepted (superseded by 0008) | 2026-07-27 |
@@ -61,3 +61,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0031](./0031-mcp-authority-is-scope-times-user-permission-policy.md) | MCP authority is capability scope combined with a user permission policy, and MCP may manage automations behind it | accepted, supersedes 0030 | 2026-09-27 |
 | [0033](./0033-pinned-node-runtime-baseline-on-npm-12-2.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.0 | accepted, supersedes 0001 | 2026-10-02 |
 | [0034](./0034-no-media-relay-reachability-from-candidates-and-routing-hints.md) | Terminay operates no media relay; reachability comes from candidates, routing hints, and the user's own network | accepted | 2026-10-03 |
+| [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 | 2026-10-03 |
