@@ -22,7 +22,7 @@ The Git pane header SHALL present a pane menu button at its trailing edge. Activ
 
 ### Requirement: Bulk deletion of clean worktrees
 
-"Delete all clean worktrees" SHALL target every worktree that is shown as clean under the effective-cleanliness contract, excluding the main worktree, bare worktrees, the project's current worktree, locked worktrees, prunable worktrees, and worktrees with a deletion or pull in progress. Before removing anything, Terminay SHALL ask for one confirmation that states how many worktrees will be deleted and names each of them. Declining SHALL remove nothing. Branches SHALL NOT be deleted.
+"Delete all clean worktrees" SHALL target every worktree that is shown as clean under the effective-cleanliness contract, excluding the main worktree, bare worktrees, the project's current worktree, prunable worktrees, and worktrees with a deletion or pull in progress. Before removing anything, Terminay SHALL ask for one confirmation that states how many worktrees will be deleted and names each of them. Declining SHALL remove nothing. Branches SHALL NOT be deleted.
 
 #### Scenario: Confirmation names the targets
 
@@ -42,7 +42,7 @@ The Git pane header SHALL present a pane menu button at its trailing edge. Activ
 
 #### Scenario: Protected worktrees are left alone
 
-- **WHEN** the main worktree, the project's current worktree, or a locked worktree is shown as clean
+- **WHEN** the main worktree or the project's current worktree is shown as clean
 - **THEN** it is not named in the confirmation and is not removed
 
 #### Scenario: Branches survive
@@ -72,7 +72,7 @@ Confirmed bulk deletions SHALL run one at a time through the same per-repository
 
 ### Requirement: Server-owned clean-only worktree removal
 
-The server SHALL offer a clean-only worktree removal that is identity-bound in the same way as forced removal and SHALL require the full HEAD the client reviewed. The server SHALL obtain the canonical path from a fresh bounded worktree listing and, immediately before invoking Git, SHALL recompute effective cleanliness: no working-tree entries, including untracked files, and no effective committed changes relative to the repository default branch. A worktree that is not clean SHALL be refused with a structured not-clean result and SHALL be left untouched. A changed HEAD SHALL be reported as stale. Main, bare, locked, and prunable worktrees SHALL be rejected. The server SHALL invoke Git's unforced worktree removal, so Git's own refusal of a modified or locked worktree remains in effect, and SHALL verify that the exact identity disappeared.
+The server SHALL offer a clean-only worktree removal that is identity-bound in the same way as forced removal and SHALL require the full HEAD the client reviewed. The server SHALL obtain the canonical path from a fresh bounded worktree listing and, immediately before invoking Git, SHALL recompute effective cleanliness: no working-tree entries, including untracked files, and no effective committed changes relative to the repository default branch. A worktree that is not clean SHALL be refused with a structured not-clean result and SHALL be left untouched. A changed HEAD SHALL be reported as stale. Main, bare, and prunable worktrees SHALL be rejected. The server SHALL invoke Git's unforced worktree removal, so Git's own refusal of a modified worktree remains in effect, and SHALL verify that the exact identity disappeared.
 
 #### Scenario: Clean worktree removed
 
@@ -97,8 +97,8 @@ The server SHALL offer a clean-only worktree removal that is identity-bound in t
 
 #### Scenario: Locked worktree
 
-- **WHEN** clean-only removal targets a worktree that Git reports as locked
-- **THEN** the request is rejected and the worktree remains
+- **WHEN** clean-only removal targets a clean worktree that Git reports as locked
+- **THEN** the server lifts the lock and removes it without forcing
 
 #### Scenario: Read-only authorization
 

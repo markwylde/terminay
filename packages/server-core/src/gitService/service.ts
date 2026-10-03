@@ -1206,7 +1206,7 @@ export class GitService {
 	 * removal a bulk sweep uses: the caller reviewed a listing rather than this
 	 * one worktree, so the reviewed HEAD is mandatory, cleanliness is recomputed
 	 * here, and Git is never forced — a change that lands after the recheck
-	 * makes Git itself refuse.
+	 * makes Git itself refuse. A lock is lifted rather than forced through.
 	 */
 	async removeCleanWorktree(
 		request: GitWorktreeRemoveCleanRequest,
@@ -1358,11 +1358,38 @@ export class GitService {
 				};
 			return this.confirmWorktreeRemoved(request, base, selected.head);
 		}
+		// A lock does not make a clean worktree worth keeping: agent sessions lock
+		// the worktrees they create and leave the lock behind when they end. Git
+		// removes a locked worktree only when forced twice, which would discard
+		// changes too, so a clean-only removal lifts the lock and stays unforced.
+		const relock =
+			cleanOnly && selected.locked
+				? await this.worktreeLockReason(selected.path, cwd, request.signal)
+				: undefined;
+		if (relock !== undefined) {
+			const unlocked = await this.runGit(
+				['worktree', 'unlock', '--', selected.path],
+				cwd,
+				request.signal,
+			);
+			if (unlocked.exitCode !== 0 || unlocked.truncated)
+				return {
+					...base,
+					applied: false,
+					state: 'command-error',
+					headBefore: selected.head,
+					error: commandError(
+						'worktree.remove',
+						unlocked,
+						'Git worktree unlock failed.',
+					),
+				};
+		}
 		// The client confirmation explicitly authorizes deleting uncommitted,
 		// untracked, and unmerged contents, including a leftover Git lock.
 		// Git requires `--force` twice to remove a locked worktree.
 		// A clean-only removal is never forced, so Git's own refusal of a modified
-		// or locked worktree stays in effect after the recheck above.
+		// worktree stays in effect after the recheck above.
 		const result = await this.runGit(
 			cleanOnly
 				? ['worktree', 'remove', '--', selected.path]
@@ -1371,6 +1398,18 @@ export class GitService {
 			request.signal,
 		);
 		if (result.exitCode !== 0 || result.truncated) {
+			// Git refused, so the worktree stays and so does its owner's lock.
+			if (relock !== undefined)
+				await this.runGit(
+					[
+						'worktree',
+						'lock',
+						...(relock === null ? [] : ['--reason', relock]),
+						'--',
+						selected.path,
+					],
+					cwd,
+				);
 			return {
 				...base,
 				applied: false,
@@ -1387,6 +1426,26 @@ export class GitService {
 		}
 
 		return this.confirmWorktreeRemoved(request, base, selected.head);
+	}
+
+	/** The reason a locked worktree's lock carries, or null when it has none. */
+	private async worktreeLockReason(
+		worktreePath: string,
+		cwd: string,
+		signal: AbortSignal | undefined,
+	): Promise<string | null> {
+		const listed = await this.runGit(
+			['worktree', 'list', '--porcelain'],
+			cwd,
+			signal,
+		);
+		if (listed.exitCode !== 0 || listed.truncated) return null;
+		for (const record of parseWorktreeList(listed.stdout)) {
+			if (record.lockReason === null) continue;
+			if ((await this.canonicalWorktreePath(record.path)) === worktreePath)
+				return record.lockReason;
+		}
+		return null;
 	}
 
 	/**
@@ -3260,12 +3319,6 @@ type GitWorktreeIdentity = Pick<
 >;
 
 function assertSweepableWorktree(worktree: GitWorktreeIdentity): void {
-	if (worktree.locked)
-		throw new GitServiceError(
-			'worktree-locked',
-			'refusing clean-only removal of a locked worktree',
-			{ worktreeId: worktree.id },
-		);
 	if (worktree.isPrunable)
 		throw new GitServiceError(
 			'invalid-operation',

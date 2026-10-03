@@ -39,6 +39,8 @@ export interface ParsedWorktree {
 	readonly isBare: boolean;
 	readonly isPrunable: boolean;
 	readonly locked: boolean;
+	/** The reason recorded with the lock, when Git reports one verbatim. */
+	readonly lockReason: string | null;
 }
 
 export function parseStatus(output: string, maxEntries: number): ParsedStatus {
@@ -198,6 +200,7 @@ export function parseWorktreeList(output: string): ParsedWorktree[] {
 		bare?: boolean;
 		prunable?: boolean;
 		locked?: boolean;
+		lockReason?: string;
 	} = {};
 
 	const flush = () => {
@@ -213,6 +216,7 @@ export function parseWorktreeList(output: string): ParsedWorktree[] {
 			isBare: current.bare ?? false,
 			isPrunable: current.prunable ?? false,
 			locked: current.locked ?? false,
+			lockReason: current.lockReason ?? null,
 		});
 		current = {};
 	};
@@ -233,7 +237,14 @@ export function parseWorktreeList(output: string): ParsedWorktree[] {
 		else if (line === 'detached') current.detached = true;
 		else if (line === 'bare') current.bare = true;
 		else if (line.startsWith('prunable')) current.prunable = true;
-		else if (line.startsWith('locked')) current.locked = true;
+		else if (line.startsWith('locked')) {
+			current.locked = true;
+			// Git C-quotes a reason it cannot print verbatim; that one is dropped
+			// rather than replayed with its quoting.
+			const reason = line.slice('locked'.length).trim();
+			if (reason.length > 0 && !reason.startsWith('"'))
+				current.lockReason = reason;
+		}
 	}
 	flush();
 	return records;
