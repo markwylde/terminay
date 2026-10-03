@@ -53,4 +53,4 @@
 ## 9. Close out
 
 - [x] 9.1 `openspec validate --all` passes. Verified by its output.
-- [ ] 9.2 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.
+- [x] 9.2 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`: pull request #315, all 17 statuses `success`.
