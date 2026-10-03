@@ -3914,11 +3914,43 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 12px;
   color: #ff9999;
   background: #331111;
   border-bottom: 1px solid #552222;
   font-size: 12px;
+}
+
+.error-banner__message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.error-banner__dismiss {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: -1px 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.error-banner__dismiss:hover,
+.error-banner__dismiss:focus-visible {
+  background: #552222;
+  opacity: 1;
 }
 
 .sidebar-feature-unavailable {
