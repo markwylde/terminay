@@ -167,3 +167,28 @@ export function panelMoveTargets<T extends Pick<ProjectTab, 'id' | 'serverId'>>(
 		candidates.filter((candidate) => canMovePanelToProject(from, candidate)),
 	);
 }
+
+/**
+ * Whether a project tab takes a terminal tab dropped on it.
+ *
+ * It answers from `panelMoveTargets`, so a tab is a drop target exactly when
+ * the move menu would list its project, and then only while the tab is a
+ * ready project on a usable server: a pending, failed, or inert tab has no
+ * workspace to adopt the terminal.
+ */
+export function projectTabAcceptsTerminalDrop<
+	T extends Pick<ProjectTab, 'id' | 'serverId' | 'creationStatus'> & {
+		readonly inert?: boolean;
+	},
+>(
+	from: Pick<ProjectTab, 'id' | 'serverId'>,
+	candidates: readonly T[],
+	candidate: T,
+): boolean {
+	if (candidate.creationStatus !== undefined || candidate.inert === true)
+		return false;
+	return panelMoveTargets(from, candidates).some(
+		(target) =>
+			target.id === candidate.id && target.serverId === candidate.serverId,
+	);
+}

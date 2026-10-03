@@ -875,6 +875,17 @@
   background-color: color-mix(in srgb, var(--project-color) 16%, transparent);
 }
 
+/* A terminal tab is being dragged over this project and would move into it. */
+.project-tab--terminal-drop-target {
+  color: var(--tab-text-selected);
+}
+
+.project-tab--terminal-drop-target::before,
+.project-tab--terminal-drop-target:hover:not(.project-tab--active)::before {
+  background-color: color-mix(in srgb, var(--project-color) 32%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--project-color) 80%, transparent);
+}
+
 .project-tab--active {
   color: var(--tab-text-selected);
   z-index: 2;
