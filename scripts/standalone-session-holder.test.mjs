@@ -23,10 +23,17 @@ const skip =
 		? 'the session holder is not supported on Windows'
 		: false;
 
+/**
+ * Whether a process is still running. A process that has exited but has not
+ * been reaped still answers a signal, and in a container whose first process
+ * does not reap orphans it stays that way, so its state is read instead.
+ */
 function isAlive(pid) {
 	try {
-		process.kill(pid, 0);
-		return true;
+		const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+			encoding: 'utf8',
+		}).trim();
+		return state.length > 0 && !state.startsWith('Z');
 	} catch {
 		return false;
 	}
