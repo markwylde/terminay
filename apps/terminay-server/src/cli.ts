@@ -37,6 +37,7 @@ import {
 	createNodePtyFactory,
 	createSessionHolderPtyFactory,
 	launchDetachedSessionHolder,
+	readHolderRecords,
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
@@ -143,6 +144,7 @@ declare const process: {
 	readonly stderr: { write(value: string): void };
 	cwd(): string;
 	on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+	kill(pid: number, signal: number | string): void;
 	exit(code?: number): never;
 	exitCode?: number;
 };
@@ -240,6 +242,8 @@ else if (options.command === 'mcp') {
 		await runApprovalCommand(options);
 	} else if (options.command === 'reset-identity') {
 		await runResetIdentityCommand(options, remote, devicePersistence);
+	} else if (options.command === 'end-sessions') {
+		await runEndSessionsCommand(options);
 	} else if (options.command === 'status') {
 		const runtime = createRuntime(options, remote);
 		// Presence only, as for paths: the public host is an address.
@@ -1802,6 +1806,54 @@ async function runPairingCommand(options: ServerCliOptions): Promise<void> {
 		process.stdout.write(
 			`${JSON.stringify({ ...handoff, requiresApproval: true })}\n`,
 		);
+	}
+}
+
+/**
+ * End every terminal session a session holder is keeping for this data root,
+ * and leave no holder running. Requires a stopped server: a holder serves one
+ * server at a time, so a running server's sessions are that server's to end.
+ */
+async function runEndSessionsCommand(options: ServerCliOptions): Promise<void> {
+	const before = readHolderRecords(options.dataRoot).filter((record) =>
+		holderProcessIsAlive(record.pid),
+	);
+	const holders = createSessionHolderPtyFactory({
+		dataRoot: options.dataRoot,
+		// Never the build of a real server: every holder found is drained, and
+		// nothing is ever launched from here.
+		buildId: 'end-sessions',
+		launch: () => {
+			throw new Error('end-sessions never starts a session holder');
+		},
+		limitMs: null,
+	});
+	const held = await holders.start();
+	await holders.endAll();
+	const remaining = readHolderRecords(options.dataRoot).filter((record) =>
+		holderProcessIsAlive(record.pid),
+	);
+	process.stdout.write(
+		`${JSON.stringify({
+			holders: before.length,
+			sessions: held.length,
+			remaining: remaining.length,
+		})}\n`,
+	);
+	if (remaining.length > 0) {
+		process.stderr.write(
+			'a session holder is still attached to a running server; stop the server first\n',
+		);
+		process.exitCode = 1;
+	}
+}
+
+function holderProcessIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as { code?: string }).code === 'EPERM';
 	}
 }
 

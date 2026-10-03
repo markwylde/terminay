@@ -70,6 +70,13 @@ remote exposure. Privileged project work executes against the server's own host
 through the canonical project resolver; nothing at the dispatch boundary
 chooses a machine.
 
+Terminal sessions can outlive the server process. When that is enabled, shells
+run in a detached session holder per data root, and a restarting server
+reattaches to them and restores their tabs, layout, and output (ADR-0035). The
+holder is part of the server's trust boundary: only the server reaches it, over
+an owner-only socket in the data root, and clients still address terminals only
+through the server.
+
 Language intelligence is one of those server-hosted extension capabilities. A
 language-server extension declares the languages and file selectors it serves;
 the server runs one language session per project and language, shared by every

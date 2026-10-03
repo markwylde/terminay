@@ -27,7 +27,8 @@ export async function buildArchiveFixture(options) {
 	await mkdir(join(root, 'server/dist'), { recursive: true });
 	await writeFile(
 		join(root, 'bin/terminay-server'),
-		`#!/bin/sh\n: "\${TERMINAY_SERVER_VERSION:=${version}}"\nexec true\n`,
+		// A test can ask the fixture server to record how it was invoked.
+		`#!/bin/sh\n: "\${TERMINAY_SERVER_VERSION:=${version}}"\nif [ -n "\${TERMINAY_FIXTURE_SERVER_LOG:-}" ]; then printf '%s\\n' "$*" >> "$TERMINAY_FIXTURE_SERVER_LOG"; fi\nexec true\n`,
 	);
 	await chmod(join(root, 'bin/terminay-server'), 0o755);
 	await writeFile(

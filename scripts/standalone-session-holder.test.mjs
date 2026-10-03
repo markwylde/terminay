@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,10 +23,17 @@ const skip =
 		? 'the session holder is not supported on Windows'
 		: false;
 
+/**
+ * Whether a process is still running. A process that has exited but has not
+ * been reaped still answers a signal, and in a container whose first process
+ * does not reap orphans it stays that way, so its state is read instead.
+ */
 function isAlive(pid) {
 	try {
-		process.kill(pid, 0);
-		return true;
+		const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+			encoding: 'utf8',
+		}).trim();
+		return state.length > 0 && !state.startsWith('Z');
 	} catch {
 		return false;
 	}
@@ -53,6 +60,21 @@ function childrenOf(pid) {
 	} catch {
 		return [];
 	}
+}
+
+/** Every process below one, however deep. */
+function descendantsOf(pid) {
+	const found = [];
+	for (const child of childrenOf(pid)) found.push(child, ...descendantsOf(child));
+	return found;
+}
+
+/** `terminay-server end-sessions`, as `daemon uninstall` runs it. */
+function endSessions(dataRoot) {
+	return spawnSync(process.execPath, [cli, 'end-sessions', '--data-root', dataRoot], {
+		encoding: 'utf8',
+		env: { ...process.env, TERMINAY_SESSION_HOLDER: '1' },
+	});
 }
 
 async function startServer(dataRoot) {
@@ -145,6 +167,100 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 	const client = await SessionHolderClient.connect(readHolderRecords(dataRoot)[0]);
 	const held = await client.list();
 	assert.deepEqual(held.map((session) => [session.sessionId, session.pid]), [[before[0].id, shellPid]]);
-	await client.endAll().catch(() => undefined);
+	await client.close();
+
+	// What `daemon uninstall` runs once the service is stopped.
+	const ended = endSessions(dataRoot);
+	assert.equal(ended.status, 0, ended.stderr);
+	assert.deepEqual(JSON.parse(ended.stdout), { holders: 1, sessions: 1, remaining: 0 });
+	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
+	assert.deepEqual(readHolderRecords(dataRoot), []);
+
+	// With nothing held, it is a no-op rather than an error.
+	const again = endSessions(dataRoot);
+	assert.equal(again.status, 0, again.stderr);
+	assert.deepEqual(JSON.parse(again.stdout), { holders: 0, sessions: 0, remaining: 0 });
+});
+
+test('end-sessions refuses to take terminals away from a running server', { skip }, async (t) => {
+	const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), 'th-')));
+	let server;
+	t.after(async () => {
+		server?.child.kill('SIGKILL');
+		for (const record of readHolderRecords(dataRoot)) {
+			try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
+		}
+		await delay(50);
+		rmSync(dataRoot, { recursive: true, force: true });
+	});
+	server = await startServer(dataRoot);
+	const [holder] = await until(() => {
+		const records = readHolderRecords(dataRoot);
+		return records.length === 1 ? records : undefined;
+	}, 'the session holder');
+	const [shellPid] = await until(() => {
+		const children = childrenOf(holder.pid);
+		return children.length === 1 ? children : undefined;
+	}, 'the seeded shell');
+
+	const refused = endSessions(dataRoot);
+	assert.equal(refused.status, 1);
+	assert.equal(JSON.parse(refused.stdout).remaining, 1);
+	assert.match(refused.stderr, /stop the server first/);
+	assert.equal(isAlive(shellPid), true, 'a running server lost its terminal');
+	assert.equal(terminalSessions(dataRoot)[0].status, 'running');
+
+	await server.stop();
+	server = undefined;
+	assert.equal(endSessions(dataRoot).status, 0);
+	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
+});
+
+/**
+ * The systemd unit stops the server process only (`KillMode=process`), so
+ * nothing but the server itself cleans up after it. This is the worst case of
+ * that: the server is killed outright, with no chance to shut anything down.
+ * Everything it started must go away on its own, except the session holder and
+ * the shells it holds, which are meant to stay.
+ */
+test('a killed server leaves nothing behind but the session holder and its shells', { skip }, async (t) => {
+	const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), 'th-')));
+	let server;
+	t.after(async () => {
+		server?.child.kill('SIGKILL');
+		for (const record of readHolderRecords(dataRoot)) {
+			try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
+		}
+		await delay(50);
+		rmSync(dataRoot, { recursive: true, force: true });
+	});
+	server = await startServer(dataRoot);
+	const [holder] = await until(() => {
+		const records = readHolderRecords(dataRoot);
+		return records.length === 1 ? records : undefined;
+	}, 'the session holder');
+	const [shellPid] = await until(() => {
+		const children = childrenOf(holder.pid);
+		return children.length === 1 ? children : undefined;
+	}, 'the seeded shell');
+	// Give extension hosts and watchers time to start, so they are in the list.
+	await delay(1_500);
+
+	const kept = new Set([holder.pid, ...descendantsOf(holder.pid)]);
+	const others = descendantsOf(server.child.pid).filter((pid) => !kept.has(pid));
+
+	server.child.kill('SIGKILL');
+	await new Promise((resolve) => server.child.once('close', resolve));
+	server = undefined;
+
+	await until(
+		() => others.every((pid) => !isAlive(pid)),
+		`the server's other children to exit (${others.filter((pid) => isAlive(pid)).join(', ')})`,
+		10_000,
+	);
+	assert.equal(isAlive(holder.pid), true, 'the holder died with the server');
+	assert.equal(isAlive(shellPid), true, 'the shell died with the server');
+
+	assert.equal(endSessions(dataRoot).status, 0);
 	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
 });

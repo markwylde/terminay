@@ -8,6 +8,7 @@ import {
 	parseEnvironmentFile,
 	renderEnvironmentFile,
 	renderUnit,
+	withUnitKillMode,
 } from '../dist/unit.js';
 
 const configuration = {
@@ -46,6 +47,7 @@ ExecStart=/opt/terminay/current/bin/terminay-server
 Restart=on-failure
 RestartSec=5s
 KillSignal=SIGTERM
+KillMode=process
 TimeoutStopSec=15s
 NoNewPrivileges=true
 PrivateTmp=true
@@ -56,6 +58,39 @@ StandardError=journal
 WantedBy=multi-user.target
 `,
 	);
+});
+
+test('stopping the unit signals the server only, so held terminals keep running', () => {
+	for (const scope of ['system', 'user']) {
+		const unit = renderUnit({
+			layout: installLayout(scope, '/home/ada'),
+			runAs: 'ada',
+			workingDirectory: '/home/ada',
+		});
+		// The default, control-group, would end the session holder and every
+		// shell in it on each stop, restart, and upgrade.
+		assert.match(unit, /^KillMode=process$/mu);
+		assert.equal(unit.match(/^KillMode=/gmu).length, 1);
+	}
+});
+
+test('an older unit gains the kill mode once, and a kill mode already chosen stands', () => {
+	const older = renderUnit({
+		layout: installLayout('system'),
+		runAs: 'terminay',
+		workingDirectory: '/var/lib/terminay',
+	}).replace('KillMode=process\n', '');
+	assert.doesNotMatch(older, /^KillMode=/mu);
+
+	const repaired = withUnitKillMode(older);
+	assert.match(repaired, /^KillSignal=SIGTERM\nKillMode=process\nTimeoutStopSec=15s$/mu);
+	assert.equal(withUnitKillMode(repaired), repaired, 'repairing twice changes nothing');
+
+	const chosen = older.replace('KillSignal=SIGTERM', 'KillSignal=SIGTERM\nKillMode=mixed');
+	assert.equal(withUnitKillMode(chosen), chosen);
+
+	// A unit this tool did not write is left alone rather than guessed at.
+	assert.equal(withUnitKillMode('[Service]\nExecStart=/bin/true\n'), '[Service]\nExecStart=/bin/true\n');
 });
 
 test('the user unit runs as its owner and never sets User=', () => {

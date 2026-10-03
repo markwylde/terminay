@@ -69,7 +69,20 @@ const worktreeInsights = new WorktreeInsightChild({
 process.on('message', (message: unknown) => {
 	void receive(message);
 });
-process.on('disconnect', () => process.exit(0));
+// The host is gone and nothing will ever stop this process on its behalf, so
+// it must end unconditionally. `process.exit` is not that: it joins every
+// worker thread first, and an extension whose worker is blocked in a native or
+// synchronous call never returns from the join, leaving the child running
+// forever with no parent. A signal to itself cannot be held up by anything the
+// extension did; the exit below is only for the platform that lacks it.
+process.on('disconnect', () => {
+	try {
+		process.kill(process.pid, 'SIGKILL');
+	} catch {
+		/* fall through */
+	}
+	process.exit(0);
+});
 process.on('uncaughtException', (error) => reportFatal(error, 70));
 process.on('unhandledRejection', (reason) => reportFatal(reason, 71));
 

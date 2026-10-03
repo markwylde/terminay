@@ -16,7 +16,7 @@ import { stagedName, writeInstallRecord } from '../layout.js';
 import { hostArchitecture } from '../platform.js';
 import { resolveRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
-import { withEnvironmentValue } from '../unit.js';
+import { withEnvironmentValue, withUnitKillMode } from '../unit.js';
 import { verifyArchive } from '../verify.js';
 
 /**
@@ -205,6 +205,16 @@ export async function runUpgrade(
 	}
 
 	write(`Upgrading ${record.version} → ${installed.manifest.version} …`);
+	// A unit written before terminal sessions outlived the server stops its
+	// whole control group, which would end every shell on this very upgrade.
+	// It is repaired before the stop, so the stop already honours it.
+	const unitBefore = await readFile(layout.unitPath, 'utf8').catch(() => '');
+	const unitAfter = withUnitKillMode(unitBefore);
+	if (unitAfter !== unitBefore) {
+		await writeFile(layout.unitPath, unitAfter, { mode: 0o644 });
+		await systemd.daemonReload();
+		write('Updated the service unit so terminals keep running across restarts.');
+	}
 	await systemd.stop();
 	await activate(layout, installed.name);
 	await systemd.start();
