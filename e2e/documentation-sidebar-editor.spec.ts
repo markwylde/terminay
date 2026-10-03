@@ -211,7 +211,7 @@ test('Documentation autosave does not report its own root-file write as an exter
 	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
 });
 
-test('repeated AGENTS.md autosaves do not conflict with their own filesystem events', async ({
+test('repeated AGENTS.md autosaves do not conflict with their own filesystem events', { tag: '@heavy' }, async ({
 	createWorkspace,
 	mainWindow,
 }) => {

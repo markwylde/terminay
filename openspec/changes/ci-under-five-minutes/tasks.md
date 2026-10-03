@@ -24,6 +24,8 @@
 
 - [x] 5.2 Deal tests to shards in turn instead of in contiguous slices, keeping a spec that shares setup whole, through `scripts/support/run-e2e-playwright.mjs` and Playwright's `--test-list`. Verify: `node --test scripts/e2e-shard-test-list.test.mjs` passes; `playwright test --list --test-list=<shard list>` selects exactly the tests dealt to that shard; on CI the shards' test counts sum to the suite and their test times are within a minute of each other.
 
+- [x] 5.3 Count a test tagged `@heavy` as six when shards are filled, and tag the five tests that take 20 seconds or more. Verify: the unit test for a heavy test passes, and on CI the shard that runs the packaged-parity test carries no more test time than the others.
+
 ## 6. Application build
 
 - [x] 6.1 Add `scripts/run-together.mjs` and use it in `build:app` for the server UI bundle, the root type check and the Desktop bundle. Verify: `npm run build:app` on a clean checkout produces `dist-web`, `dist` and `dist-electron`, `node --test scripts/packaged-desktop-artifact.test.mjs` passes, and a failing part fails the build.

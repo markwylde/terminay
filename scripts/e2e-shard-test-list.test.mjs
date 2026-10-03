@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+	HEAVY_TEST_WEIGHT,
 	dealToShards,
 	listedTests,
 	shardTestLists,
@@ -44,8 +45,8 @@ test('tests of one file are dealt to different shards', () => {
 test('a described test is listed by its whole title path', () => {
 	const listing = report({ 'a.spec.ts': [['suite', ['one', 'two']]] });
 	assert.deepEqual(listedTests(listing), [
-		{ file: 'a.spec.ts', titles: ['suite', 'one'] },
-		{ file: 'a.spec.ts', titles: ['suite', 'two'] },
+		{ file: 'a.spec.ts', titles: ['suite', 'one'], weight: 1 },
+		{ file: 'a.spec.ts', titles: ['suite', 'two'], weight: 1 },
 	]);
 	assert.deepEqual(shardTestLists(listing, () => false, 2), [
 		['a.spec.ts › suite › one'],
@@ -73,6 +74,18 @@ test('a spec that shares setup stays whole and counts for all its tests', () => 
 		dealToShards(units, 2).map((dealt) => dealt.map((unit) => unit.line)),
 		[['shared.spec.ts'], ['other.spec.ts › d', 'other.spec.ts › e', 'other.spec.ts › f']],
 	);
+});
+
+test('a heavy test fills its shard as several tests would', () => {
+	const listing = report({ 'a.spec.ts': ['packages the app', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] });
+	listing.suites[0].specs[0].tags = ['heavy'];
+	assert.equal(listedTests(listing)[0].weight, HEAVY_TEST_WEIGHT);
+	assert.equal(listedTests(listing)[1].weight, 1);
+	// The first shard holds the heavy test alone until the second has caught up.
+	assert.deepEqual(shardTestLists(listing, () => false, 2), [
+		['a.spec.ts › packages the app', 'a.spec.ts › h'],
+		['b', 'c', 'd', 'e', 'f', 'g'].map((title) => `a.spec.ts › ${title}`),
+	]);
 });
 
 test('a title the list format cannot tell apart fails the split', () => {
