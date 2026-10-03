@@ -56,7 +56,27 @@ Per-job timings, read from the Gitea API and the job logs of runs 17051, 17060, 
 
 **Keep the layered registry images of ADR-0032.** Building the application inside every shard instead of once was considered: it removes the image job from the chain, but puts eighteen TypeScript and Vite builds on hosts that each carry several runners. One build, one push and a ten-second pull is cheaper.
 
+## Measured
+
+Per-job seconds on this change's own runs, from the Gitea API. Run 17111 had the fleet to itself.
+
+| Job | Before | Run 17111 |
+| --- | --- | --- |
+| Real MCP CLI compatibility | 22–41 | 23 |
+| Build E2E image | 105 for a source change | 87 |
+| Packaged Linux built-in lifecycle | 123–159 | 100 |
+| Workspace tests | part of the unit job | 99 |
+| Build, lint, and unit tests | 212–276 | 120 |
+| Packaged macOS startup smoke | 239–365 | 151 |
+| Container image smoke | 291–367 | 175 |
+| Real WebRTC pairing | 205–248 | 204 |
+| E2E shard, base image on the runner | 64–229, after the image build | 61–121, after the image build |
+
+Seven shards of run 17111 took 211–234 seconds because their runners had to pull the dependency base again, which put the run at 326 seconds. A run of another pull request, on the previous workflow and so on a different base key, had pruned it: the cleanup keeps the newest base and the running job's, so two live bases evict each other. That ends when one base key is in use again.
+
 ## Risks / Trade-offs
+
+- [Two pull requests with different dependency bases evict each other's base from runners] → Each then pays the pull again and exceeds the budget. It is the dependency-change case of the spec, repeated; it stops when either merges.
 
 - [The tool cache is not persistent on some runner] → `npm ci` falls back to the registry and the job is slower, not wrong. The first run on each runner is cold in any case.
 - [The npm cache grows without a prune] → It grows by one tarball per new package version. It is a few hundred megabytes today, against images of several gigabytes that the existing cleanup already manages.
