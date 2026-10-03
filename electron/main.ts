@@ -186,6 +186,7 @@ import {
 	createAppQuitConfirmationDialog,
 	planAppQuit,
 } from './appQuitPlan';
+import { createAppBadgeTracker } from './appBadge';
 import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
@@ -1266,6 +1267,20 @@ if (process.env.TERMINAY_TEST === '1') {
 			value: getRunningTerminalCountForWindow,
 		},
 	);
+}
+
+// macOS Dock tile, and on Linux the launcher count of desktops that read one.
+// Elsewhere Electron reports failure, which is the specified outcome.
+const appBadge = createAppBadgeTracker((count) => {
+	app.setBadgeCount(count);
+});
+app.on('will-quit', () => appBadge.reset());
+
+if (process.env.TERMINAY_TEST === '1') {
+	Object.defineProperty(globalThis, '__terminayTestAppBadgeTotal', {
+		configurable: true,
+		value: () => appBadge.total(),
+	});
 }
 
 function getOpenProjectWindowCount(): number {
@@ -4327,7 +4342,20 @@ function createWindow(options?: {
 		sendWindowFullScreenState(window.webContents),
 	);
 
+	// A document that is replaced or lost reports again once it is back; until
+	// then its last count must not linger in the application icon badge.
+	window.webContents.on(
+		'did-start-navigation',
+		(_event, _url, isInPlace, isMainFrame) => {
+			if (isMainFrame && !isInPlace) appBadge.clear(windowWebContentsId);
+		},
+	);
+	window.webContents.on('render-process-gone', () => {
+		appBadge.clear(windowWebContentsId);
+	});
+
 	window.on('closed', () => {
+		appBadge.clear(windowWebContentsId);
 		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
 		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 		void windowConnectionsByWebContents
@@ -4542,6 +4570,9 @@ function createWindow(options?: {
 							title: action.title,
 							...(action.body === undefined ? {} : { body: action.body }),
 						}).show();
+						return;
+					case 'badge.count.set':
+						appBadge.set(windowWebContentsId, action.count);
 						return;
 					case 'updater.check':
 						// Renderers poll for status; the host's own timer paces the network.

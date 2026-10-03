@@ -437,6 +437,31 @@ test('native menu accelerator updates are bounded and immutable', () => {
 	);
 });
 
+test('application badge counts are bounded non-negative integers', () => {
+	for (const count of [0, 3, 9_999])
+		assert.deepEqual(
+			parseTerminayHostAction({ type: 'badge.count.set', count }),
+			{ type: 'badge.count.set', count },
+		);
+	for (const count of [-1, 1.5, 10_000, '3', null, Number.NaN, Infinity])
+		assert.throws(
+			() => parseTerminayHostAction({ type: 'badge.count.set', count }),
+			/badge count is invalid/u,
+		);
+	assert.throws(() => parseTerminayHostAction({ type: 'badge.count.set' }));
+	assert.throws(() =>
+		parseTerminayHostAction({
+			type: 'badge.count.set',
+			count: 1,
+			title: 'build finished',
+		}),
+	);
+	assert.equal(
+		requiredTerminayHostCapability({ type: 'badge.count.set', count: 1 }),
+		'notifications',
+	);
+});
+
 test('performance logging is a closed Desktop host action and bound event', () => {
 	assert.deepEqual(
 		parseTerminayHostAction({

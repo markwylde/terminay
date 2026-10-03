@@ -126,6 +126,7 @@ import {
 	checkForAppUpdate,
 	installAppUpdate,
 	openExternalUrl,
+	setApplicationBadgeCount,
 } from './host/nativeActions';
 import {
 	subscribeAppUpdateStatusChanged,
@@ -6659,6 +6660,12 @@ function App({
 		);
 		return buildTerminalActivityOverview(items);
 	}, [inventoryByProject, projects]);
+
+	// The application icon carries the same number as the Notifications control.
+	const notificationCount = terminalActivityItems.notificationCount;
+	useEffect(() => {
+		void setApplicationBadgeCount(notificationCount);
+	}, [notificationCount]);
 
 	// Which project a terminal belongs to, on any attached server. Session ids
 	// are per-server, so the server has to be part of the question.
