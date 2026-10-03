@@ -82,6 +82,7 @@ import {
 	shouldInterceptTerminalDrop,
 	uploadBrowserTerminalDrop,
 } from './terminalDropInteraction';
+import { endedTerminalNotice, replayEndedTerminal } from './endedTerminalReplay';
 import {
 	formatTerminalExitNotice,
 	isTerminalSessionEndedError,
@@ -1102,11 +1103,31 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		// for a fresh presentation instead of the same refused resume.
 		let lastAttachRefused = false;
 		if (terminalSessionUnavailable) {
-			setServerTerminalError(
+			const endedStatus =
 				props.params.terminalSessionStatus === 'interrupted'
-					? 'This terminal was interrupted when the server stopped. Open a new terminal to continue.'
-					: 'This terminal has exited. Open a new terminal to continue.',
-			);
+					? 'interrupted'
+					: 'exited';
+			setServerTerminalError(endedTerminalNotice(endedStatus));
+			// The session is over, so nothing typed here can go anywhere.
+			terminal.options.disableStdin = true;
+			// Its last output is still held by the server. Show it under the
+			// notice, read-only, exactly as it was left.
+			if (useServerTerminal) {
+				void replayEndedTerminal({
+					attach: () =>
+						panelClient.attach({
+							...panelIdentity,
+							sessionId: props.params.sessionId,
+							clientId: panelClientId,
+							readOnly: true,
+						}),
+					write: (bytes) => terminal.write(bytes),
+					isCurrent: () => terminalRef.current === terminal,
+				}).then((result) => {
+					if (terminalRef.current !== terminal) return;
+					setServerTerminalError(endedTerminalNotice(endedStatus, result));
+				});
+			}
 			setPresentationUnavailable(true);
 			setTerminalSessionEnded(true);
 			setTerminalPresentation(null);

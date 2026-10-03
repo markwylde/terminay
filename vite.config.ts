@@ -44,6 +44,9 @@ const electronInput = {
   // The Desktop MCP adapter is a renderer-free Node entry launched from the
   // packaged application's unpacked resources.
   serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/desktopMcpEntry.ts'),
+  // The detached session holder (ADR-0035). It runs under Electron's Node mode
+  // from unpacked resources and outlives the application process.
+  sessionHolderEntry: path.join(__dirname, 'apps/terminay-server/src/sessionHolderEntry.ts'),
 }
 
 export default defineConfig({

@@ -1,3 +1,4 @@
+export * from './backgroundTerminals.js';
 export * from './classification.js';
 export * from './defaults.js';
 export * from './extensionSecretBroker.js';

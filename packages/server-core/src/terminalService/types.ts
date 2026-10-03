@@ -20,6 +20,8 @@ export interface TerminalDimensions {
 
 export interface PtySpawnOptions extends TerminalDimensions {
 	readonly projectId?: string;
+	/** Server-issued session id, for a factory that holds PTYs by identity. */
+	readonly sessionId?: string;
 	/** Canonical shell executable. */
 	readonly shellPath: string;
 	/** Alias retained for adapters which call this field `shell`. */
@@ -408,4 +410,39 @@ export interface TerminalShutdownOptions {
 	readonly reason?: 'shutdown' | 'interrupted';
 	readonly at?: number;
 	readonly signal?: number | string;
+	/**
+	 * Stop supervising sessions without signalling their processes or recording
+	 * an exit. Only meaningful when the PTY factory holds processes outside this
+	 * server process, so the next server can adopt them.
+	 */
+	readonly detach?: boolean;
+}
+
+/**
+ * A session that ended while no server was watching. It has no process; it
+ * exists so its panel can still show the output it ended with.
+ */
+export interface TerminalRestoreEndedOptions extends TerminalDimensions {
+	readonly identity: TerminalIdentity;
+	readonly cwd: string;
+	readonly createdAt: number;
+	readonly launch?: TerminalSessionSnapshot['launch'];
+	readonly status: 'exited' | 'interrupted';
+	readonly exitCode?: number;
+	readonly signal?: number | null;
+	readonly endedAt: number;
+	/** Output position of the first byte of `bytes`. */
+	readonly outputPosition: number;
+	readonly bytes: Uint8Array;
+}
+
+/** A process another server process started and this one is taking over. */
+export interface TerminalAdoptOptions extends TerminalDimensions {
+	readonly identity: TerminalIdentity;
+	readonly cwd: string;
+	readonly createdAt: number;
+	readonly launch?: TerminalSessionSnapshot['launch'];
+	readonly process: PtyProcess;
+	/** Output position of the first byte `process` will deliver. */
+	readonly outputPosition: number;
 }

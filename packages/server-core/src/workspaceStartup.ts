@@ -57,6 +57,12 @@ export interface WorkspaceStartupRestoreOptions {
 	 * exist before the workspace is shown; a restart is the reverse.
 	 */
 	readonly firstRun: boolean;
+	/**
+	 * Set when a session holder keeps PTYs running across restarts. Restored
+	 * terminal panels then describe sessions that were reattached or that ended
+	 * and still have output to show, so none is discarded.
+	 */
+	readonly preserveTerminalPanels?: boolean;
 }
 
 const DEFAULT_COLS = 100;
@@ -120,7 +126,8 @@ export async function restoreWorkspaceOnStartup(
 
 	// A server that already holds sessions is not restarting into this state; it
 	// is being asked to start twice.
-	if (options.liveSessionCount() === 0) workspace.discardStaleTerminalState();
+	if (options.preserveTerminalPanels !== true && options.liveSessionCount() === 0)
+		workspace.discardStaleTerminalState();
 
 	const unavailable = options.unavailableProjectIds ?? new Set<string>();
 	for (const project of restoredProjectsInPresentationOrder(workspace.state)) {

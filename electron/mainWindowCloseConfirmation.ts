@@ -57,6 +57,13 @@ export function bindMainWindowCloseConfirmation(options: {
 	isQuitting: () => boolean;
 	getRunningTerminalCount: () => number | Promise<number>;
 	isLastWindow: () => boolean;
+	/**
+	 * Whether quitting asks its own question. When terminals outlive the
+	 * application, closing the last window is a quit whose confirmation offers
+	 * keeping them, so this window-level prompt would be both redundant and
+	 * wrong about what closing does.
+	 */
+	quitConfirmsItself?: () => boolean;
 	consumeConfirmedClose?: () => boolean;
 	showConfirmation: (
 		window: ConfirmableMainWindow,
@@ -88,6 +95,10 @@ export function bindMainWindowCloseConfirmation(options: {
 				if (runningTerminalCount === 0) {
 					confirmationAccepted = true;
 					options.requestClose();
+					return;
+				}
+				if (options.isLastWindow() && options.quitConfirmsItself?.() === true) {
+					options.requestQuit();
 					return;
 				}
 				return options

@@ -10,6 +10,7 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	statSync,
 	watch as watchFileSystemPath,
 	writeFileSync,
 } from 'node:fs';
@@ -78,6 +79,8 @@ import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hosted
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { McpServerCommand } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
+import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
+import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
 import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
 import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
 import { AutomationRunLog } from '../packages/server-core/src/automationService/runLog';
@@ -177,6 +180,11 @@ import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc';
 import { createGracefulQuitHandler } from './gracefulQuit';
+import {
+	appQuitChoice,
+	createAppQuitConfirmationDialog,
+	planAppQuit,
+} from './appQuitPlan';
 import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
@@ -772,6 +780,7 @@ const mcpCapabilities = new ControlCapabilityStore({
 let mcpControlEndpoint: LocalControlEndpoint | null = null;
 let removeMcpSettingsObserver: (() => void) | undefined;
 let removeMcpApprovalRevocation: (() => void) | undefined;
+let removeMcpCapabilityPersistence: (() => void) | undefined;
 let desktopRemoteExposure: DesktopServerOwnedExposure;
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -1566,6 +1575,24 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
+		...(sessionHolderEnabled()
+			? {
+					sessionHolder: {
+						buildId: sessionHolderBuildId(),
+						launch: ({ env }) =>
+							launchDetachedSessionHolder(
+								process.execPath,
+								[getSessionHolderEntryPath()],
+								// Electron's binary runs the holder as plain Node. The holder
+								// is not an application instance and opens no window.
+								{ ...process.env, ELECTRON_RUN_AS_NODE: '1', ...env },
+							),
+						limitMs: backgroundTerminalLimitMs(
+							embeddedServerSettings.settings.keepTerminalsAfterQuit,
+						),
+					},
+				}
+			: {}),
 		...(replayBytesOverride === undefined
 			? {}
 			: { maxReplayBytes: replayBytesOverride }),
@@ -1861,6 +1888,17 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	endStartupPhase('workspace-init');
 	beginStartupPhase('mcp-endpoint');
 	applyMcpSetting(embeddedServerSettings.settings);
+	// Terminals that outlived the previous process still carry the control
+	// token they were started with; reinstate its authority for the ones that
+	// are running, then keep the saved copy current.
+	if (authority.keepsTerminalsAcrossRestart) {
+		restoreSavedMcpCapabilities(authority);
+		removeMcpCapabilityPersistence?.();
+		removeMcpCapabilityPersistence = mcpCapabilities.onChanged(
+			saveMcpCapabilities,
+		);
+		saveMcpCapabilities();
+	}
 	removeMcpSettingsObserver?.();
 	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) => {
 		applyMcpSetting(state.settings);
@@ -2565,6 +2603,68 @@ function getTerminalControlEnv(capability?: {
 function getMcpControlSocketPath(): string {
 	if (process.platform === 'win32') return '\\\\.\\pipe\\terminay-control';
 	return path.join(app.getPath('userData'), 'terminay-mcp-control.sock');
+}
+
+/**
+ * Whether terminals are kept in a detached session holder (ADR-0035). Off
+ * unless asked for while the change rolls out; never on Windows, which is not
+ * a supported platform.
+ */
+function sessionHolderEnabled(): boolean {
+	if (process.platform === 'win32') return false;
+	return process.env.TERMINAY_SESSION_HOLDER === '1';
+}
+
+function getSessionHolderEntryPath(): string {
+	const entry = path.join(MAIN_DIST, 'sessionHolderEntry.js');
+	return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+}
+
+/** Changes whenever the holder this build would start changes. */
+function sessionHolderBuildId(): string {
+	let stamp = 'unbuilt';
+	try {
+		stamp = String(statSync(getSessionHolderEntryPath()).mtimeMs);
+	} catch {
+		/* a missing entry fails at launch, with a clearer error */
+	}
+	return `${app.getVersion()}:${stamp}`;
+}
+
+function getMcpCapabilityFilePath(): string {
+	return path.join(app.getPath('userData'), 'mcp-capabilities.v1.json');
+}
+
+/** Digests only: nothing in this file can be presented to the endpoint. */
+function saveMcpCapabilities(): void {
+	const target = getMcpCapabilityFilePath();
+	const temporary = `${target}.tmp`;
+	try {
+		writeFileSync(temporary, JSON.stringify(mcpCapabilities.snapshot()), {
+			mode: 0o600,
+		});
+		chmodSync(temporary, 0o600);
+		renameSync(temporary, target);
+	} catch (error) {
+		console.error('[mcp] saving terminal capabilities failed', error);
+	}
+}
+
+function restoreSavedMcpCapabilities(authority: ServerTerminalAuthority): void {
+	let saved: unknown;
+	try {
+		saved = JSON.parse(readFileSync(getMcpCapabilityFilePath(), 'utf8'));
+	} catch {
+		return;
+	}
+	if (!Array.isArray(saved)) return;
+	const running = new Set(
+		authority.service
+			.listSessions()
+			.filter((session) => session.status === 'running')
+			.map((session) => session.sessionId),
+	);
+	mcpCapabilities.restore(saved, running);
 }
 
 function getMcpEntryPath(): string {
@@ -3399,6 +3499,8 @@ function detachSessionsForWebContents(webContentsId: number): void {
 let isQuitting = false;
 let isQuitConfirmed = false;
 let quitConfirmationPending = false;
+/** The user chose to end their terminals rather than keep them running. */
+let endTerminalsOnQuit = false;
 
 function getFirstAppWindow(): BrowserWindow | null {
 	for (const window of appWindows) {
@@ -4169,11 +4271,17 @@ function createWindow(options?: {
 			getRunningTerminalCount: () =>
 				getRunningTerminalCountForWindow(windowWebContentsId),
 			isLastWindow: () => getOpenProjectWindowCount() <= 1,
+			quitConfirmsItself: () =>
+				serverTerminalAuthority?.keepsTerminalsAcrossRestart === true,
 			showConfirmation: (target, dialogOptions) =>
 				dialog.showMessageBox(target as BrowserWindow, dialogOptions),
 			requestQuit: () => {
-				isQuitConfirmed = true;
-				isQuitting = true;
+				// With held terminals the quit itself asks whether to keep or end
+				// them, so it must not arrive already confirmed.
+				if (serverTerminalAuthority?.keepsTerminalsAcrossRestart !== true) {
+					isQuitConfirmed = true;
+					isQuitting = true;
+				}
 				app.quit();
 			},
 			requestClose: () => window.close(),
@@ -5685,6 +5793,15 @@ const handleBeforeQuit = createGracefulQuitHandler({
 				},
 				{ channel: 'lifecycle' },
 			);
+			// Stopping the endpoint revokes every capability. Terminals that are
+			// being kept must still hold theirs when the next process starts, so
+			// the saved copy stops following before that happens.
+			removeMcpCapabilityPersistence?.();
+			removeMcpCapabilityPersistence = undefined;
+			if (endTerminalsOnQuit) {
+				await serverTerminalAuthority?.endAllTerminalSessions();
+				rmSync(getMcpCapabilityFilePath(), { force: true });
+			}
 			await Promise.all([
 				stopMcpControlEndpoint(),
 				desktopRemoteExposure?.shutdown(),
@@ -5726,22 +5843,42 @@ const handleBeforeQuit = createGracefulQuitHandler({
 
 app.on('before-quit', (event) => {
 	const runningTerminalCount = getRunningTerminalCount();
-	if (!isQuitConfirmed && runningTerminalCount > 0) {
+	const keepsTerminals =
+		serverTerminalAuthority?.keepsTerminalsAcrossRestart === true;
+	const plan = isQuitConfirmed
+		? 'quit'
+		: planAppQuit({
+				keepsTerminals,
+				restartToUpdate: appUpdater?.isRestartToUpdateRequested() === true,
+				runningTerminalCount,
+			});
+	if (plan === 'ask-keep-or-end' || plan === 'ask-before-ending') {
 		event.preventDefault();
 		if (quitConfirmationPending) return;
 		quitConfirmationPending = true;
 		const target = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
+		const dialogOptions =
+			plan === 'ask-keep-or-end'
+				? createAppQuitConfirmationDialog(
+						runningTerminalCount,
+						backgroundTerminalLimitMs(
+							embeddedServerSettings.settings.keepTerminalsAfterQuit,
+						),
+					)
+				: createCloseConfirmationDialog('app', runningTerminalCount);
 		const confirmation = target
-			? dialog.showMessageBox(
-					target,
-					createCloseConfirmationDialog('app', runningTerminalCount),
-				)
-			: dialog.showMessageBox(
-					createCloseConfirmationDialog('app', runningTerminalCount),
-				);
+			? dialog.showMessageBox(target, dialogOptions)
+			: dialog.showMessageBox(dialogOptions);
 		void confirmation
 			.then(({ response }) => {
-				if (response !== 0) {
+				if (plan === 'ask-keep-or-end') {
+					const choice = appQuitChoice(response);
+					if (choice === 'cancel') {
+						appUpdater?.cancelRestartToUpdate();
+						return;
+					}
+					endTerminalsOnQuit = choice === 'end';
+				} else if (response !== 0) {
 					appUpdater?.cancelRestartToUpdate();
 					return;
 				}

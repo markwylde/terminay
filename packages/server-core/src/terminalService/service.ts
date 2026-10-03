@@ -9,7 +9,9 @@ import type {
 	PtyForegroundProcess,
 	PtyProcess,
 	PtySpawnOptions,
+	TerminalAdoptOptions,
 	TerminalAuthorization,
+	TerminalRestoreEndedOptions,
 	TerminalCloseReason,
 	TerminalCreateOptions,
 	TerminalDimensions,
@@ -646,6 +648,8 @@ export class TerminalService {
 		this.sessionsById.set(sessionId, mutable);
 		this.startPresentationCheckpoint(mutable);
 		const spawnOptions: PtySpawnOptions = {
+			projectId: identity.projectId,
+			sessionId,
 			shellPath,
 			shell: shellPath,
 			args: [...(options.args ?? defaultShellOptions?.args ?? [])],
@@ -775,6 +779,7 @@ export class TerminalService {
 		};
 		const spawnOptions: PtySpawnOptions = {
 			projectId: launch.identity.projectId,
+			sessionId: launch.identity.sessionId,
 			shellPath: launch.shellPath,
 			shell: launch.shellPath,
 			args: [...launch.args],
@@ -848,6 +853,165 @@ export class TerminalService {
 				},
 			);
 		}
+	}
+
+	/**
+	 * Take over a process that a session holder kept running across a server
+	 * restart. Nothing is spawned and nothing is written to the shell. The
+	 * process delivers its retained output first, which rebuilds this server's
+	 * replay ring and presentation checkpoint from `outputPosition` onwards.
+	 */
+	adoptSession(options: TerminalAdoptOptions): TerminalSessionHandle {
+		if (this.stopping)
+			throw new TerminalServiceError(
+				'service_shutdown',
+				'terminal service is shutting down',
+			);
+		const identity = Object.freeze({ ...options.identity });
+		if (identity.serverId !== this.serverId)
+			throw new TerminalServiceError(
+				'forbidden',
+				'terminal belongs to another server',
+			);
+		assertId(identity.projectId, 'projectId');
+		assertId(identity.sessionId, 'sessionId');
+		if (this.sessionsById.has(identity.sessionId))
+			throw new TerminalServiceError(
+				'session_exists',
+				'terminal session already exists',
+				{ sessionId: identity.sessionId },
+			);
+		if (this.sessionsById.size >= this.limits.maxSessions)
+			throw new TerminalServiceError(
+				'session_limit',
+				'terminal session limit reached',
+				{ max: this.limits.maxSessions },
+			);
+		const dimensions = validateDimensions(options, this.limits);
+		validatePosition(options.outputPosition);
+		if (!Number.isSafeInteger(options.createdAt) || options.createdAt < 0)
+			throw new TypeError('createdAt must be a non-negative safe integer');
+		// Re-register the session with its lifecycle observers. The environment
+		// this returns was given to the shell when it was spawned and is not
+		// applied again.
+		try {
+			this.sessionLifecycle?.prepareTerminalSession(identity);
+		} catch {
+			/* observers cannot fail an adoption */
+		}
+		const mutable: MutableSession = {
+			identity,
+			cwd: options.cwd,
+			createdAt: options.createdAt,
+			dimensions: { ...dimensions },
+			...(options.launch === undefined ? {} : { launch: options.launch }),
+			replay: [],
+			subscribers: new Set(),
+			inactivityWaiters: new Set(),
+			checkpointPendingBytes: 0,
+			checkpointPaused: false,
+			checkpointDraining: false,
+			checkpointQueue: [],
+			checkpointDrainWaiters: new Set(),
+			status: 'running',
+			outputPosition: options.outputPosition,
+			replayFrom: options.outputPosition,
+			process: options.process,
+		};
+		const pid = options.process.pid;
+		if (typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0) {
+			mutable.pid = pid;
+			recordStreamDiagnostic('pty', 'shell_adopted', {
+				projectId: identity.projectId,
+				sessionId: identity.sessionId,
+				pid,
+			});
+			try {
+				this.sessionLifecycle?.terminalStarted?.(identity, pid);
+			} catch {
+				/* observers cannot fail an adoption */
+			}
+		}
+		this.sessionsById.set(identity.sessionId, mutable);
+		this.startPresentationCheckpoint(mutable);
+		this.attachProcess(mutable, options.process);
+		return new TerminalSessionHandle(this, mutable);
+	}
+
+	/**
+	 * Register a session that ended while no server was attached, seeded with
+	 * the output it ended with. It is presented exactly like a terminal that
+	 * exited under this server: subscribers get its retained output and then its
+	 * exit. Nothing is published to observers, because nothing happened now.
+	 */
+	restoreEndedSession(
+		options: TerminalRestoreEndedOptions,
+	): TerminalSessionHandle {
+		const identity = Object.freeze({ ...options.identity });
+		if (identity.serverId !== this.serverId)
+			throw new TerminalServiceError(
+				'forbidden',
+				'terminal belongs to another server',
+			);
+		assertId(identity.projectId, 'projectId');
+		assertId(identity.sessionId, 'sessionId');
+		if (this.sessionsById.has(identity.sessionId))
+			throw new TerminalServiceError(
+				'session_exists',
+				'terminal session already exists',
+				{ sessionId: identity.sessionId },
+			);
+		const dimensions = validateDimensions(options, this.limits);
+		validatePosition(options.outputPosition);
+		const replay: ReplayChunk[] = [];
+		let position = options.outputPosition;
+		// Keep only what this server would have retained had it been watching.
+		const retained = options.bytes.subarray(
+			Math.max(0, options.bytes.byteLength - this.limits.maxReplayBytes),
+		);
+		position += options.bytes.byteLength - retained.byteLength;
+		const replayFrom = position;
+		for (
+			let offset = 0;
+			offset < retained.byteLength;
+			offset += this.limits.maxOutputChunkBytes
+		) {
+			const bytes = copyBytes(
+				retained.subarray(offset, offset + this.limits.maxOutputChunkBytes),
+			);
+			const nextPosition = checkedPositionAdd(position, bytes.byteLength);
+			replay.push({ position, nextPosition, bytes });
+			position = nextPosition;
+		}
+		const interrupted = options.status === 'interrupted';
+		const mutable: MutableSession = {
+			identity,
+			cwd: options.cwd,
+			createdAt: options.createdAt,
+			dimensions: { ...dimensions },
+			...(options.launch === undefined ? {} : { launch: options.launch }),
+			replay,
+			subscribers: new Set(),
+			inactivityWaiters: new Set(),
+			checkpointPendingBytes: 0,
+			checkpointPaused: false,
+			checkpointDraining: false,
+			checkpointQueue: [],
+			checkpointDrainWaiters: new Set(),
+			status: options.status,
+			outputPosition: position,
+			replayFrom,
+			exit: Object.freeze({
+				...normalizeExit({
+					exitCode: options.exitCode ?? (interrupted ? 130 : 1),
+					signal: options.signal ?? null,
+				}),
+				reason: interrupted ? 'interrupted' : 'exit',
+				at: options.endedAt,
+			}),
+		};
+		this.sessionsById.set(identity.sessionId, mutable);
+		return new TerminalSessionHandle(this, mutable);
 	}
 
 	/** @internal Alias for the unresolved test-only creation seam. */
@@ -1216,6 +1380,10 @@ export class TerminalService {
 	): Promise<readonly TerminalExitEvent[]> {
 		if (this.stopping && this.sessionsById.size === 0) return [];
 		this.stopping = true;
+		if (options.detach === true) {
+			this.detachAll();
+			return [];
+		}
 		const reason = options.reason ?? 'shutdown';
 		const at = options.at ?? this.now();
 		const before = new Set(
@@ -1242,6 +1410,38 @@ export class TerminalService {
 		return [...before].flatMap((session) =>
 			session.exit === undefined ? [] : [exitEvent(session)],
 		);
+	}
+
+	/**
+	 * Let go of every session without ending it. No signal is sent, no exit is
+	 * recorded or published, and lifecycle observers are not told a terminal
+	 * exited, because none did: a session holder still has the process and the
+	 * next server will adopt it.
+	 */
+	private detachAll(): void {
+		for (const mutable of this.sessionsById.values()) {
+			for (const waiter of [...mutable.inactivityWaiters])
+				this.resolveInactivityWaiter(mutable, waiter);
+			mutable.dataUnsubscribe?.();
+			mutable.exitUnsubscribe?.();
+			mutable.foregroundProcessUnsubscribe?.();
+			mutable.checkpointQueue.length = 0;
+			mutable.checkpointPendingBytes = 0;
+			for (const resolve of mutable.checkpointDrainWaiters) resolve();
+			mutable.checkpointDrainWaiters.clear();
+			this.presentationCheckpoints?.closeSession(mutable.identity);
+			for (const subscription of [...mutable.subscribers])
+				subscription.close('service_shutdown');
+			try {
+				const disposeResult = mutable.process?.dispose?.();
+				if (disposeResult !== undefined)
+					void Promise.resolve(disposeResult).catch(() => undefined);
+			} catch {
+				/* disposal only stops this server observing the process */
+			}
+			mutable.process = undefined;
+		}
+		this.sessionsById.clear();
 	}
 
 	/** Mark live sessions interrupted when a server process is being replaced. */
@@ -1370,6 +1570,7 @@ export class TerminalService {
 			this.presentationCheckpoints?.createSession(
 				mutable.identity,
 				mutable.dimensions,
+				mutable.outputPosition,
 			);
 		} catch {
 			// The checkpoint authority exposes its own precise fresh-display error.

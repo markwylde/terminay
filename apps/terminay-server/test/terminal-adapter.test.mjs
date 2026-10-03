@@ -467,6 +467,9 @@ test("open_terminal resolves a canonical launch before spawn and reconciles its 
   assert.equal(launchResolver.intents[0].activePanelId, "panel-caller");
   assert.deepEqual(pty.processes[1].options, {
     projectId: "project-a",
+    // The factory is told which session it is spawning, so one that holds
+    // PTYs outside the server process can name them by server identity.
+    sessionId: "opened",
     shellPath: "/bin/test-shell",
     shell: "/bin/test-shell",
     args: ["--login"],
