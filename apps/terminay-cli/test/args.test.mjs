@@ -264,3 +264,66 @@ test('the help text documents the flag and that the port must be forwarded', () 
 	assert.doesNotMatch(HELP_TEXT, /127\.0\.0\.1|\[::1\]/u);
 	assert.match(HELP_TEXT, /loopback address is refused/u);
 });
+
+test('--public-host is one address or name, on install and upgrade', () => {
+	assert.equal(
+		parse('daemon', 'install', '--public-host', '192.168.2.218').options
+			.publicHost,
+		'192.168.2.218',
+	);
+	assert.equal(
+		parse('daemon', 'upgrade', '--public-host=box.example.com').options
+			.publicHost,
+		'box.example.com',
+	);
+	// An IPv6 literal is taken with or without brackets and kept without.
+	assert.equal(
+		parse('daemon', 'install', '--public-host', '[2001:DB8::20]').options
+			.publicHost,
+		'2001:db8::20',
+	);
+	assert.equal(
+		parse('daemon', 'install', '--public-host', '2001:db8::20').options
+			.publicHost,
+		'2001:db8::20',
+	);
+	// Loopback and `localhost` are accepted: they derive the direct origin only.
+	assert.equal(
+		parse('daemon', 'install', '--public-host', '127.0.0.1').options.publicHost,
+		'127.0.0.1',
+	);
+	assert.equal(
+		parse('daemon', 'install', '--public-host', 'localhost').options.publicHost,
+		'localhost',
+	);
+	assert.equal(parse('daemon', 'install').options.publicHost, undefined);
+});
+
+test('a public host that is not a bare host is refused before anything runs', () => {
+	for (const value of [
+		'https://box.example.com',
+		'box.example.com:8443',
+		'192.168.2.218:51000',
+		'box.example.com/path',
+		'300.1.1.1',
+		'192.168.2',
+		'0.0.0.0',
+		'::',
+		'box example',
+		'-box.example.com',
+		'fe80::1%eth0',
+	]) {
+		usage('daemon', 'install', `--public-host=${value}`);
+	}
+	usage('daemon', 'install', '--public-host=');
+	usage('daemon', 'status', '--public-host', '192.168.2.218');
+	usage('daemon', 'qr-code', '--public-host', '192.168.2.218');
+});
+
+test('the help text documents the public host and the foreground and container behaviour', () => {
+	assert.match(HELP_TEXT, /--public-host <host>/u);
+	assert.match(HELP_TEXT, /51000-51003/u);
+	assert.match(HELP_TEXT, /routable literal address/u);
+	assert.match(HELP_TEXT, /TERMINAY_DATA_ROOT/u);
+	assert.match(HELP_TEXT, /container runtime manages the server/u);
+});

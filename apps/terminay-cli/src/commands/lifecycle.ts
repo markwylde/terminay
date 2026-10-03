@@ -1,7 +1,17 @@
-import type { CommandContext } from '../context.js';
+import {
+	type CommandContext,
+	type ForegroundContext,
+	socketSender,
+} from '../context.js';
 import { probeHealth, waitForReady } from '../health.js';
 import { activeVersion } from '../install.js';
-import { approvalSocketPath, requireOk, sendAsUser } from '../socket.js';
+import {
+	approvalSocketPath,
+	requireOk,
+	type ServerStatus,
+	SocketError,
+	sendAsUser,
+} from '../socket.js';
 
 /**
  * `daemon start`, `daemon stop`, and `daemon status`.
@@ -104,4 +114,31 @@ export async function runStatus(
 		context.write(`advertised   ${report.advertiseAddress}`);
 	}
 	return report;
+}
+
+/**
+ * `daemon status` for a server no service unit manages.
+ *
+ * There is no record to read and no unit to ask, so every line comes from the
+ * running server over its owner-only socket. It is the same thin report: the
+ * build, readiness, and how the server expects to be reached, and no path,
+ * account, workspace, or device.
+ */
+export async function runForegroundStatus(
+	context: ForegroundContext,
+	send: ReturnType<typeof socketSender> = socketSender(context),
+): Promise<ServerStatus> {
+	const response = requireOk(await send({ op: 'status' }));
+	if (!('status' in response))
+		throw new SocketError('the running server did not report its status');
+	const { status } = response;
+
+	context.write('unit         none (no service unit manages this server)');
+	context.write(`version      ${status.version}`);
+	context.write(`revision     ${status.revision?.slice(0, 12) ?? 'unknown'}`);
+	context.write(`ready        ${status.ready ? 'yes' : 'no'}`);
+	context.write(`exposure     ${status.exposeModes.join(', ') || 'off'}`);
+	context.write(`public host  ${status.publicHost ?? 'not set'}`);
+	context.write(`advertised   ${status.advertiseAddress ?? 'not set'}`);
+	return status;
 }

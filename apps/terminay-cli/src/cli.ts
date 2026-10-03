@@ -2,7 +2,12 @@
 import { ScopeError } from './account.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runInstall } from './commands/install.js';
-import { runStart, runStatus, runStop } from './commands/lifecycle.js';
+import {
+	runForegroundStatus,
+	runStart,
+	runStatus,
+	runStop,
+} from './commands/lifecycle.js';
 import {
 	runApprovals,
 	runPairing,
@@ -10,7 +15,13 @@ import {
 } from './commands/pairing.js';
 import { runResetIdentity, runUninstall } from './commands/uninstall.js';
 import { runUpgrade } from './commands/upgrade.js';
-import { NotInstalledError, resolveContext } from './context.js';
+import {
+	assertNotContainerManaged,
+	ContainerManagedError,
+	NotInstalledError,
+	resolveContext,
+	resolveForeground,
+} from './context.js';
 import { ManifestError } from './manifest.js';
 import { assertSupportedHost, UnsupportedHostError } from './platform.js';
 import { SocketError } from './socket.js';
@@ -32,6 +43,39 @@ async function main(argv: readonly string[]): Promise<number> {
 	if (parsed.command === 'help') {
 		process.stdout.write(HELP_TEXT);
 		return 0;
+	}
+
+	// Before the platform gate: where a container runtime owns the lifecycle,
+	// that is the answer, whatever else the host is missing.
+	assertNotContainerManaged(parsed.command);
+
+	// A foreground server needs neither systemd nor an install, so the commands
+	// that only talk to one are resolved before the gate rather than behind it.
+	const target = await resolveForeground({
+		command: parsed.command,
+		options: parsed.options,
+		write,
+	});
+	if (target !== undefined) {
+		switch (parsed.command) {
+			case 'status':
+				await runForegroundStatus(target);
+				return 0;
+			case 'qr-code':
+				await runPairing(parsed.options, target);
+				return 0;
+			case 'approvals':
+				await runApprovals(target);
+				return 0;
+			case 'approve':
+			case 'deny':
+				await runResolveApproval(
+					parsed.command,
+					parsed.approvalId as string,
+					target,
+				);
+				return 0;
+		}
 	}
 
 	assertSupportedHost();
@@ -84,6 +128,7 @@ const EXPECTED_ERRORS = [
 	UnsupportedHostError,
 	ScopeError,
 	NotInstalledError,
+	ContainerManagedError,
 	VerificationError,
 	ManifestError,
 	SocketError,

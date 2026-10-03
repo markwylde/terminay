@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 /**
  * Argument parsing for the `terminay` binary.
  *
@@ -27,6 +29,8 @@ export interface DaemonOptions {
 	readonly scope?: InstallScope;
 	readonly runAs?: string;
 	readonly port?: number;
+	/** The one address or name at which devices reach this machine. */
+	readonly publicHost?: string;
 	readonly directOrigin?: string;
 	/** An address and UDP port to offer as an additional ICE candidate. Empty
 	 * string clears a previously configured one. */
@@ -72,6 +76,7 @@ const ALIASES: Readonly<Record<string, DaemonCommand>> = Object.freeze({
 const VALUE_FLAGS = Object.freeze([
 	'--run-as',
 	'--port',
+	'--public-host',
 	'--direct-origin',
 	'--advertise-address',
 	'--hosted-domain',
@@ -104,6 +109,7 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 			'--user',
 			'--run-as',
 			'--port',
+			'--public-host',
 			'--direct-origin',
 			'--advertise-address',
 			'--hosted-domain',
@@ -116,6 +122,7 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 			'--allow-downgrade',
 			// How a server is reached can change without changing its version,
 			// and an upgrade is the moment an operator is already editing it.
+			'--public-host',
 			'--advertise-address',
 		],
 		uninstall: ['--system', '--user', '--purge', '--yes'],
@@ -155,7 +162,7 @@ function parsePort(raw: string): number {
  * a candidate is worth probing, and a loopback address names the peer's own
  * machine rather than this one, so it is within its rights to skip it.
  */
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
 	const value = host.toLowerCase();
 	// `::ffff:127.0.0.1` is loopback wearing an IPv6 spelling.
 	const ipv4 = value.startsWith('::ffff:') ? value.slice(7) : value;
@@ -218,6 +225,43 @@ function parseAdvertiseAddress(raw: string): string {
 		);
 	}
 	return raw.trim();
+}
+
+const HOST_NAME =
+	/^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/u;
+
+/**
+ * Validate `--public-host` before anything is written.
+ *
+ * It is a host and nothing more: a literal address or a name, with no scheme,
+ * port, or path, because the port and the scheme are what the CLI derives from
+ * it. An IPv6 literal is accepted with or without brackets and kept without.
+ */
+function parsePublicHost(raw: string): string {
+	const trimmed = raw.trim();
+	const host =
+		trimmed.startsWith('[') && trimmed.endsWith(']')
+			? trimmed.slice(1, -1)
+			: trimmed;
+	const family = isIP(host);
+	if (family !== 0 && /^(?:0\.0\.0\.0|[0:]+)$/u.test(host))
+		fail(
+			`--public-host must be an address devices can reach, and ${host} is the unspecified address.`,
+		);
+	if (family === 6 && !host.includes('%')) return host.toLowerCase();
+	if (family === 4) return host;
+	// Four dotted numbers that did not parse as an address are a mistyped
+	// address, not a name worth looking up.
+	if (
+		family === 0 &&
+		host === trimmed &&
+		HOST_NAME.test(host) &&
+		!/^[0-9.]+$/u.test(host)
+	)
+		return host.toLowerCase();
+	fail(
+		`--public-host must be one address or name with no scheme, port, or path, such as 192.168.1.20 or box.example.com (got ${raw}).`,
+	);
 }
 
 function parseMode(raw: string): PairingMode {
@@ -335,6 +379,9 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 			? { runAs: values.get('--run-as') as string }
 			: {}),
 		...(port === undefined ? {} : { port: parsePort(port) }),
+		...(values.has('--public-host')
+			? { publicHost: parsePublicHost(values.get('--public-host') as string) }
+			: {}),
 		...(values.has('--advertise-address')
 			? {
 					advertiseAddress: parseAdvertiseAddress(
@@ -389,12 +436,27 @@ Commands:
   deny <id>            Deny a pending device.
   reset-identity       Rotate the host key and revoke every paired device.
 
+With no server installed and TERMINAY_DATA_ROOT set, status, qr-code,
+approvals, approve, and deny reach the server running against that data root
+directly — a server run in the foreground, such as a container's. Where a
+container runtime manages the server, install, upgrade, start, stop, and
+uninstall refuse and name the container action to take instead.
+
 Flags:
   --system, --user     Install scope. Prompted when a terminal is attached.
   --run-as <user>      Account the server and its terminals run as.
   --port <port>        Port the server listens on.
+  --public-host <host> The one address or name at which devices reach this
+                       machine, such as 192.168.1.20. Sets the direct origin
+                       to https://<host>:<port> and, for a routable literal
+                       address, the advertised address to <host>:51000 — UDP
+                       ports 51000-51003 must then reach this machine. A name
+                       or a loopback address sets the direct origin only;
+                       browsers and phones need a routable literal address.
+                       Kept across upgrades.
   --direct-origin <o>  Origin devices reach directly, such as
-                       https://box.example.com:8443.
+                       https://box.example.com:8443. Wins over the origin
+                       --public-host derives.
   --advertise-address <addr:port>
                        An address and UDP port to offer as an extra connection
                        candidate, for a server reachable only at a forwarded
@@ -402,8 +464,9 @@ Flags:
                        machine's routable address, such as 192.168.1.20:51000;
                        a loopback address is refused because a browser need not
                        send connectivity checks to one. That port and the three
-                       above it must be forwarded to this machine. Pass an
-                       empty value to remove one set earlier.
+                       above it must be forwarded to this machine. Wins over
+                       the address --public-host derives. Pass an empty value
+                       to remove one set earlier.
   --hosted-domain <d>  Hosted signalling domain.
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.

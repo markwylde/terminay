@@ -25,7 +25,8 @@ export type ApprovalRequest =
 	| Readonly<{ op: 'list' }>
 	| Readonly<{ op: 'approve'; approvalId: string }>
 	| Readonly<{ op: 'deny'; approvalId: string }>
-	| Readonly<{ op: 'pairing'; rotate?: boolean }>;
+	| Readonly<{ op: 'pairing'; rotate?: boolean }>
+	| Readonly<{ op: 'status' }>;
 
 export interface PendingApproval {
 	readonly approvalId: string;
@@ -41,6 +42,16 @@ export interface PairingHandoff {
 	readonly serverId: string;
 }
 
+/** What a running server reports about itself: service metadata only. */
+export interface ServerStatus {
+	readonly ready: boolean;
+	readonly version: string;
+	readonly revision?: string;
+	readonly exposeModes: readonly string[];
+	readonly publicHost?: string;
+	readonly advertiseAddress?: string;
+}
+
 export type ApprovalResponse =
 	| Readonly<{ ok: true; pending: readonly PendingApproval[] }>
 	| Readonly<{
@@ -54,6 +65,7 @@ export type ApprovalResponse =
 			exposure: readonly string[] | 'off';
 			handoffs: readonly PairingHandoff[];
 	  }>
+	| Readonly<{ ok: true; status: ServerStatus }>
 	| Readonly<{ ok: false; error: string }>;
 
 export function approvalSocketPath(dataRoot: string): string {
@@ -96,9 +108,18 @@ export function explainPrivilegeLaunchError(
 	return undefined;
 }
 
+/**
+ * A server run in the foreground — a container's main process — has no unit
+ * to start, so the remedy an installed server is given would be wrong here.
+ */
+export function noForegroundServerMessage(dataRoot: string): string {
+	return `no Terminay Server is running against the data root ${dataRoot}. Start the server that owns it, then run this again.`;
+}
+
 export function sendApprovalRequest(
 	socketPath: string,
 	request: ApprovalRequest,
+	noServerMessage: string = NO_SERVER_MESSAGE,
 ): Promise<ApprovalResponse> {
 	return new Promise((resolve, reject) => {
 		let buffered = '';
@@ -121,9 +142,7 @@ export function sendApprovalRequest(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			reject(
-				new SocketError(NO_SERVER_MESSAGE),
-			);
+			reject(new SocketError(noServerMessage));
 		});
 		socket.on('close', () => {
 			if (settled) return;

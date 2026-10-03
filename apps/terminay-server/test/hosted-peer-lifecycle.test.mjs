@@ -415,6 +415,38 @@ test('no advertised address leaves the socket and candidates untouched', () => {
 	assert.deepEqual(config.iceAdditionalHostAddresses, ['192.168.1.20']);
 });
 
+test('the option parser and the peer configuration agree on the default span', async () => {
+	const { DEFAULT_ICE_PORT_SPAN } = await import('../dist/cliOptions.js');
+	assert.equal(DEFAULT_ICE_PORT_SPAN, ADVERTISED_PORT_SPAN);
+});
+
+test('a range can be pinned with no advertised address', () => {
+	// Publishing a known run of UDP ports is useful on its own: a client that
+	// signalled through a forwarded origin already knows the address.
+	const config = hostedPeerConfiguration(
+		'example.terminay.com',
+		undefined,
+		['192.168.1.20'],
+		undefined,
+		{ firstPort: 52000, span: 16 },
+	);
+	assert.deepEqual([...config.icePortRange], [52000, 52015]);
+	// Nothing is added to the candidates: only where they bind changes.
+	assert.deepEqual(config.iceAdditionalHostAddresses, ['192.168.1.20']);
+});
+
+test('an advertised address begins the pinned range at its own port', () => {
+	const config = hostedPeerConfiguration(
+		'example.terminay.com',
+		undefined,
+		[],
+		{ host: '203.0.113.7', port: 51000 },
+		{ firstPort: 51000, span: 16 },
+	);
+	assert.deepEqual([...config.icePortRange], [51000, 51015]);
+	assert.equal(config.iceAdditionalHostAddresses[0], '203.0.113.7');
+});
+
 test('an advertised address survives the loopback-signaling branch', () => {
 	// A server that signals over loopback still has to offer a media path a
 	// remote client can use; the advertised address is exactly that path.

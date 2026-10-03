@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
 	defaultDirectOrigin,
+	derivePublicHost,
+	isRoutableLiteral,
 	originFor,
 	primaryAddress,
 } from '../dist/address.js';
@@ -86,6 +88,31 @@ test('an IPv6 address is bracketed so the origin parses', () => {
 	assert.equal(originFor('2001:db8::1', 8443), 'https://[2001:db8::1]:8443');
 	assert.equal(new URL(originFor('2001:db8::1', 8443)).port, '8443');
 	assert.equal(originFor('198.51.100.7', 8443), 'https://198.51.100.7:8443');
+});
+
+test('a routable literal public host derives the direct origin and the advertised address', () => {
+	assert.deepEqual(derivePublicHost('192.168.2.218', 8443), {
+		directOrigin: 'https://192.168.2.218:8443',
+		advertiseAddress: '192.168.2.218:51000',
+	});
+	// An IPv6 literal is bracketed in both, or neither would parse.
+	assert.deepEqual(derivePublicHost('2001:db8::20', 9443), {
+		directOrigin: 'https://[2001:db8::20]:9443',
+		advertiseAddress: '[2001:db8::20]:51000',
+	});
+});
+
+test('a name or a loopback public host derives the direct origin only', () => {
+	for (const [host, origin] of [
+		['box.example.com', 'https://box.example.com:8443'],
+		['localhost', 'https://localhost:8443'],
+		['127.0.0.1', 'https://127.0.0.1:8443'],
+		['::1', 'https://[::1]:8443'],
+	]) {
+		assert.deepEqual(derivePublicHost(host, 8443), { directOrigin: origin });
+		assert.equal(isRoutableLiteral(host), false, host);
+	}
+	assert.equal(isRoutableLiteral('192.168.2.218'), true);
 });
 
 test('the real probe answers on a machine with a route, and never throws without one', async () => {

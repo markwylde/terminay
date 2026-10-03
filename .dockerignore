@@ -4,7 +4,10 @@
 .vscode
 node_modules
 **/node_modules
-build
+build/*
+!build/webrtc-runtime
+build/webrtc-runtime/*
+!build/webrtc-runtime/selection.json
 **/dist
 *.tsbuildinfo
 **/*.tsbuildinfo

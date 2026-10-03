@@ -34,8 +34,14 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "real-webrtc", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
+  // The official image is built and paired with on every pull request, by the
+  // same client code Desktop ships, before a release can publish it.
+  assert.match(job(giteaCi, "container-image-smoke"), /docker build[\s\S]*--file \.\/Dockerfile/u);
+  assert.match(job(giteaCi, "container-image-smoke"), /node scripts\/container-image-smoke\.mjs/u);
+  assert.match(job(giteaCi, "container-image-smoke"), /prune-ci-docker-images\.sh/u);
+  assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /docker push|docker login/u);
   // Real-peer tests skip wherever the selected runtime is not staged, which is
   // everywhere but this job; it must keep staging it and running them.
   assert.match(job(giteaCi, "real-webrtc"), /npm run test:real-webrtc/u);

@@ -258,6 +258,7 @@ test('hosted remote pairing diagnostics are named events without pairing URLs', 
 		'local-server.remote-webrtc.application-lane',
 		'local-server.remote-webrtc.peer-closed',
 		'local-server.remote-webrtc.candidate-pair',
+		'local-server.remote-webrtc.ice-range-exhausted',
 	]) {
 		assert.match(
 			diagnostics,

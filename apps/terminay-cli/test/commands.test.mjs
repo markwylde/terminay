@@ -1306,3 +1306,275 @@ test('a first install on a machine with no service starts it the usual way', asy
 		},
 	);
 });
+
+const PUBLIC_HOST_RELEASES = [
+	{
+		tag: 'v4.1.0',
+		version: '4.1.0',
+		revision: 'a'.repeat(40),
+		publishedAt: '2026-09-01T00:00:00Z',
+	},
+	{
+		tag: 'v4.1.1',
+		version: '4.1.1',
+		revision: 'b'.repeat(40),
+		latest: true,
+		publishedAt: '2026-09-08T00:00:00Z',
+	},
+];
+
+/** How the server is reached, as the service reads it and as the CLI recalls it. */
+async function reachability(layout) {
+	const environment = parseEnvironmentFile(
+		await readFile(layout.environmentFile, 'utf8'),
+	);
+	const record = await readInstallRecord(layout);
+	return {
+		environment: {
+			publicHost: environment.TERMINAY_PUBLIC_HOST,
+			directOrigin: environment.TERMINAY_DIRECT_ORIGIN,
+			advertiseAddress: environment.TERMINAY_WEBRTC_ADVERTISE_ADDRESS,
+		},
+		record: {
+			publicHost: record.publicHost,
+			directOrigin: record.directOrigin,
+			advertiseAddress: record.advertiseAddress,
+		},
+	};
+}
+
+test('one public host configures the direct origin and the advertised address', async () => {
+	await withMachine(
+		{ releases: PUBLIC_HOST_RELEASES },
+		async ({ layout, installDependencies, lines }) => {
+			const result = await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', publicHost: '192.168.2.218' },
+				installDependencies,
+			);
+			const expected = {
+				publicHost: '192.168.2.218',
+				directOrigin: 'https://192.168.2.218:8443',
+				advertiseAddress: '192.168.2.218:51000',
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: expected,
+				record: expected,
+			});
+			assert.equal(result.publicHost, '192.168.2.218');
+
+			// Both derived values are named, and so are the ports to open.
+			const output = lines.join('\n');
+			assert.match(output, /public host {2}192\.168\.2\.218/u);
+			assert.match(output, /direct URL {3}https:\/\/192\.168\.2\.218:8443/u);
+			assert.match(output, /advertised {3}192\.168\.2\.218:51000/u);
+			assert.match(output, /UDP ports 51000-51003 must reach this machine/u);
+			assert.doesNotMatch(output, /routable literal address/u);
+		},
+	);
+});
+
+test('a public host that is a name derives the direct origin only and says what is missing', async () => {
+	await withMachine(
+		{ releases: PUBLIC_HOST_RELEASES },
+		async ({ layout, installDependencies, lines }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', publicHost: 'box.example.com' },
+				installDependencies,
+			);
+			const expected = {
+				publicHost: 'box.example.com',
+				directOrigin: 'https://box.example.com:8443',
+				advertiseAddress: undefined,
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: expected,
+				record: expected,
+			});
+			const output = lines.join('\n');
+			assert.match(output, /direct URL {3}https:\/\/box\.example\.com:8443/u);
+			assert.match(
+				output,
+				/Browsers and phones need a routable literal address/u,
+			);
+			assert.doesNotMatch(output, /advertised {3}|UDP ports/u);
+		},
+	);
+});
+
+test('a loopback public host derives the direct origin only', async () => {
+	await withMachine(
+		{ releases: PUBLIC_HOST_RELEASES },
+		async ({ layout, installDependencies, lines }) => {
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', publicHost: '127.0.0.1' },
+				installDependencies,
+			);
+			const { environment } = await reachability(layout);
+			assert.equal(environment.directOrigin, 'https://127.0.0.1:8443');
+			assert.equal(environment.advertiseAddress, undefined);
+			assert.match(
+				lines.join('\n'),
+				/Browsers and phones need a routable literal address/u,
+			);
+		},
+	);
+});
+
+test('an explicit direct origin or advertised address wins over the one a public host derives', async () => {
+	await withMachine(
+		{ releases: PUBLIC_HOST_RELEASES },
+		async ({ layout, installDependencies }) => {
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					publicHost: '192.168.2.218',
+					directOrigin: 'https://box.example.com:8443',
+				},
+				installDependencies,
+			);
+			const origin = {
+				publicHost: '192.168.2.218',
+				directOrigin: 'https://box.example.com:8443',
+				advertiseAddress: '192.168.2.218:51000',
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: origin,
+				record: origin,
+			});
+
+			await runInstall(
+				undefined,
+				{
+					...OPTIONS,
+					scope: 'user',
+					publicHost: '192.168.2.218',
+					advertiseAddress: '203.0.113.7:52000',
+				},
+				installDependencies,
+			);
+			const advertised = {
+				publicHost: '192.168.2.218',
+				directOrigin: 'https://192.168.2.218:8443',
+				advertiseAddress: '203.0.113.7:52000',
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: advertised,
+				record: advertised,
+			});
+		},
+	);
+});
+
+test('upgrade keeps the recorded public host, and can be given a new one', async () => {
+	await withMachine(
+		{ releases: PUBLIC_HOST_RELEASES },
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', publicHost: '192.168.2.218' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			const dependencies = {
+				apiBase: installDependencies.apiBase,
+				webBase: installDependencies.webBase,
+				architecture: 'x64',
+				releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+				readinessTimeoutMs: 5_000,
+			};
+			const context = () =>
+				readInstallRecord(layout).then((record) => ({
+					layout,
+					record,
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				}));
+			const restarts = () =>
+				fake.invocations().filter((line) => line.includes(' restart ')).length;
+
+			// Absent flag: the host and everything it derived carry forward.
+			const before = restarts();
+			await runUpgrade(undefined, OPTIONS, await context(), dependencies);
+			const kept = {
+				publicHost: '192.168.2.218',
+				directOrigin: 'https://192.168.2.218:8443',
+				advertiseAddress: '192.168.2.218:51000',
+			};
+			assert.equal((await readInstallRecord(layout)).version, '4.1.1');
+			assert.deepEqual(await reachability(layout), {
+				environment: kept,
+				record: kept,
+			});
+			assert.equal(restarts(), before, 'nothing changed, so no extra restart');
+
+			// A new host re-derives both, and the service is restarted onto them.
+			lines.length = 0;
+			await runUpgrade(
+				'v4.1.0',
+				{ ...OPTIONS, allowDowngrade: true, publicHost: '10.0.0.5' },
+				await context(),
+				dependencies,
+			);
+			const moved = {
+				publicHost: '10.0.0.5',
+				directOrigin: 'https://10.0.0.5:8443',
+				advertiseAddress: '10.0.0.5:51000',
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: moved,
+				record: moved,
+			});
+			assert.equal(restarts(), before + 1);
+			const output = lines.join('\n');
+			assert.match(output, /public host {2}10\.0\.0\.5/u);
+			assert.match(output, /direct URL {3}https:\/\/10\.0\.0\.5:8443/u);
+			assert.match(output, /advertised {3}10\.0\.0\.5:51000/u);
+			assert.match(output, /UDP ports 51000-51003 must reach this machine/u);
+
+			// An advertised address given beside it wins for that one setting.
+			await runUpgrade(
+				'v4.1.1',
+				{
+					...OPTIONS,
+					publicHost: '10.0.0.6',
+					advertiseAddress: '203.0.113.7:52000',
+				},
+				await context(),
+				dependencies,
+			);
+			const explicit = {
+				publicHost: '10.0.0.6',
+				directOrigin: 'https://10.0.0.6:8443',
+				advertiseAddress: '203.0.113.7:52000',
+			};
+			assert.deepEqual(await reachability(layout), {
+				environment: explicit,
+				record: explicit,
+			});
+
+			// A name derives the direct origin only and says what is missing.
+			lines.length = 0;
+			await runUpgrade(
+				'v4.1.0',
+				{ ...OPTIONS, allowDowngrade: true, publicHost: 'box.example.com' },
+				await context(),
+				dependencies,
+			);
+			const named = await reachability(layout);
+			assert.equal(named.record.publicHost, 'box.example.com');
+			assert.equal(
+				named.environment.directOrigin,
+				'https://box.example.com:8443',
+			);
+			assert.match(
+				lines.join('\n'),
+				/Browsers and phones need a routable literal address/u,
+			);
+		},
+	);
+});

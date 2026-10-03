@@ -1,0 +1,6 @@
+#!/bin/sh
+# The `terminay` command inside the official image. It runs the same CLI the
+# npm package ships, on the Node runtime the server archive carries, so
+# `docker exec -it <container> terminay daemon qr-code` needs nothing installed.
+set -eu
+exec /opt/terminay/bin/node /opt/terminay-cli/terminay.mjs "$@"

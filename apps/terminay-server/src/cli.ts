@@ -190,6 +190,25 @@ else if (options.command === 'mcp') {
 	// while the operator is still watching.
 	if (options.advertiseAddress !== undefined && options.command === 'start') {
 		await assertAdvertisedPortIsBindable(options.advertiseAddress);
+	} else if (options.icePort !== undefined && options.command === 'start') {
+		// A range pinned with no advertised address is published for the same
+		// reason and fails the same silent way when its first port is taken.
+		await assertAdvertisedPortIsBindable({
+			host: '0.0.0.0',
+			port: options.icePort,
+		});
+	}
+	if (
+		options.command === 'start' &&
+		options.publicHost !== undefined &&
+		options.advertiseAddress === undefined
+	) {
+		// A name or a loopback address can name the direct origin but cannot be an
+		// ICE candidate. Say so once, where the operator is looking, rather than
+		// leaving a browser to hang in `checking` with nothing to explain it.
+		process.stderr.write(
+			'[terminay-server] the public host names the direct origin only: no advertised ICE candidate was derived from it. Browsers and phones need a routable literal address.\n',
+		);
 	}
 	const sessionOrigin =
 		exposeHosted && !options.remoteOriginExplicit && options.command === 'start'
@@ -218,7 +237,16 @@ else if (options.command === 'mcp') {
 		await runResetIdentityCommand(options, remote, devicePersistence);
 	} else if (options.command === 'status') {
 		const runtime = createRuntime(options, remote);
-		process.stdout.write(`${JSON.stringify(runtime.diagnostics())}\n`);
+		// Presence only, as for paths: the public host is an address.
+		process.stdout.write(
+			`${JSON.stringify({
+				...runtime.diagnostics(),
+				publicHostConfigured: options.publicHost !== undefined,
+				...(options.serverRevision === undefined
+					? {}
+					: { revision: options.serverRevision }),
+			})}\n`,
+		);
 	} else if (options.command === 'pairing') {
 		await runPairingCommand(options);
 	} else {
@@ -337,6 +365,33 @@ else if (options.command === 'mcp') {
 									return resolution;
 								}),
 							exposureModes: () => options.exposeModes,
+							// Service metadata for an operator with no service unit to
+							// ask: readiness, build, and reachability, and nothing else.
+							serverStatus: () => {
+								const current = runtime!.health();
+								const advertised = options.advertiseAddress;
+								return {
+									ready: current.ready && protocolReady,
+									version: current.version,
+									...(options.serverRevision === undefined
+										? {}
+										: { revision: options.serverRevision }),
+									exposeModes: options.exposeModes,
+									...(options.publicHost === undefined
+										? {}
+										: { publicHost: options.publicHost.host }),
+									...(advertised === undefined
+										? {}
+										: {
+												advertiseAddress: `${
+													advertised.host.includes(':') &&
+													!advertised.host.startsWith('[')
+														? `[${advertised.host}]`
+														: advertised.host
+												}:${advertised.port}`,
+											}),
+								};
+							},
 							pairingHandoffs: (rotate) =>
 								pairingOperations.run(async () => {
 									// Minting a replacement room registers it on every mode.
@@ -408,6 +463,17 @@ else if (options.command === 'mcp') {
 							...(options.advertiseAddress === undefined
 								? {}
 								: { advertiseAddress: options.advertiseAddress }),
+							...(options.icePort === undefined &&
+							options.advertiseAddress === undefined
+								? {}
+								: {
+										icePortRange: {
+											firstPort:
+												options.advertiseAddress?.port ??
+												(options.icePort as number),
+											span: options.icePortSpan,
+										},
+									}),
 							webrtcRuntimeRoot: resolveWebRtcRuntimeRoot(
 								process.cwd(),
 								process.env,
@@ -453,6 +519,9 @@ else if (options.command === 'mcp') {
 							ready: health.ready && protocolReady,
 							serverId: health.serverId,
 							version: health.version,
+							...(options.serverRevision === undefined
+								? {}
+								: { revision: options.serverRevision }),
 							endpoint: runtime!.config.localEndpoint ?? null,
 							protocolEndpoint: uiServer?.address?.origin ?? null,
 							dataRoot: runtime!.config.dataRoot,

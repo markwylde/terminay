@@ -25,7 +25,24 @@ export type ApprovalSocketRequest =
 	| Readonly<{ op: 'list' }>
 	| Readonly<{ op: 'approve'; approvalId: string }>
 	| Readonly<{ op: 'deny'; approvalId: string }>
-	| Readonly<{ op: 'pairing'; rotate?: boolean }>;
+	| Readonly<{ op: 'pairing'; rotate?: boolean }>
+	| Readonly<{ op: 'status' }>;
+
+/**
+ * What a running server says about itself to its operator: whether it is
+ * ready, which build it is, and how it expects to be reached. It is service
+ * metadata only — no path, key, device record, or pairing material — because
+ * a status report is exactly the sort of thing that ends up pasted into an
+ * issue.
+ */
+export interface ServerStatusSummary {
+	readonly ready: boolean;
+	readonly version: string;
+	readonly revision?: string;
+	readonly exposeModes: readonly string[];
+	readonly publicHost?: string;
+	readonly advertiseAddress?: string;
+}
 
 /** One live pairing handoff, as the running server currently advertises it.
  * The secret lives in the URL fragment and nowhere else; no host key, device
@@ -50,6 +67,7 @@ export type ApprovalSocketResponse =
 			exposure: readonly string[] | 'off';
 			handoffs: readonly PairingHandoffSummary[];
 	  }>
+	| Readonly<{ ok: true; status: ServerStatusSummary }>
 	| Readonly<{ ok: false; error: string }>;
 
 export interface ApprovalSocketAuthority {
@@ -73,6 +91,8 @@ export interface ApprovalSocketAuthority {
 		| readonly PairingHandoffSummary[];
 	/** Exposure modes the administrator enabled for this data root. */
 	exposureModes?(): readonly string[];
+	/** Readiness, build, and reachability of the server composing the socket. */
+	serverStatus?(): ServerStatusSummary;
 }
 
 export function approvalSocketPath(dataRoot: string): string {
@@ -90,6 +110,11 @@ export function parseApprovalSocketRequest(
 		if (Object.keys(input).length !== 1)
 			throw new Error('approval request is invalid');
 		return Object.freeze({ op: 'list' });
+	}
+	if (input.op === 'status') {
+		if (Object.keys(input).length !== 1)
+			throw new Error('approval request is invalid');
+		return Object.freeze({ op: 'status' });
 	}
 	if (input.op === 'pairing') {
 		if (Object.keys(input).some((key) => key !== 'op' && key !== 'rotate')) {
@@ -126,6 +151,30 @@ export async function handleApprovalSocketRequest(
 				ok: true,
 				pending: authority.listPendingApprovals(),
 			});
+		if (request.op === 'status') {
+			if (authority.serverStatus === undefined)
+				throw new Error('this server does not report its status');
+			// Rebuilt field by field, so nothing an authority happens to carry
+			// beside these six can ride out with them.
+			const status = authority.serverStatus();
+			return Object.freeze({
+				ok: true,
+				status: Object.freeze({
+					ready: status.ready === true,
+					version: status.version,
+					...(status.revision === undefined
+						? {}
+						: { revision: status.revision }),
+					exposeModes: Object.freeze([...status.exposeModes]),
+					...(status.publicHost === undefined
+						? {}
+						: { publicHost: status.publicHost }),
+					...(status.advertiseAddress === undefined
+						? {}
+						: { advertiseAddress: status.advertiseAddress }),
+				}),
+			});
+		}
 		if (request.op === 'pairing') {
 			const modes = authority.exposureModes?.() ?? [];
 			// A server nobody exposed says so rather than handing back a URL that

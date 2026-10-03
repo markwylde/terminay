@@ -74,6 +74,8 @@ export interface InstallRecord {
 	readonly healthPort: number;
 	readonly expose: string;
 	readonly hostedDomain: string;
+	/** The one address or name devices reach this machine at, as given. */
+	readonly publicHost?: string;
 	readonly directOrigin?: string;
 	/** An address and UDP port offered as an additional ICE candidate. */
 	readonly advertiseAddress?: string;
