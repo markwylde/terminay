@@ -4,7 +4,7 @@ set -eu
 # Run the suite, then print the slowest tests into the log. The summary never
 # changes the result: the container exits with Playwright's status.
 set +e
-xvfb-run --auto-servernum npx playwright test "$@"
+node scripts/support/run-e2e-playwright.mjs "$@"
 status=$?
 set -e
 

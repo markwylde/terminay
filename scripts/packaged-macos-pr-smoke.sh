@@ -23,11 +23,13 @@ staged_dir="$work_root/terminay-pr-staged"
 rm -rf "$dmg_root"
 mkdir -p "$dmg_root"
 ditto "$source_app" "$dmg_root/Terminay.app"
+# Read-only and uncompressed: this image exists to be mounted once, here, so
+# compressing three quarters of a gigabyte into it would only cost time.
 hdiutil create \
 	-volname Terminay \
 	-srcfolder "$dmg_root" \
 	-ov \
-	-format UDZO \
+	-format UDRO \
 	"$unsigned_dmg"
 
 staged_app="$(bash "$(dirname "$0")/stage-macos-app-from-dmg.sh" "$unsigned_dmg" "$staged_dir")"

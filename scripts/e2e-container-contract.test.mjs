@@ -82,7 +82,7 @@ test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint",
   assert.match(workflow, /npm install --global npm@12\.2\.0/u);
 
   const e2eJob = job(workflow, "e2e-test");
-  assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u, "Gitea E2E job must retain ten shards");
+  assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u, "Gitea E2E job must retain eighteen shards");
   assert.match(e2eJob, /needs: e2e-image/u);
   assert.match(e2eJob, new RegExp([
     "TERMINAY_E2E_IMAGE: \\$\\{\\{ needs\\.e2e-image\\.outputs\\.image \\}\\}",
@@ -91,11 +91,11 @@ test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint",
   assert.match(e2eJob, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
   assert.match(e2eJob, /Require amd64 Docker host/u);
   assert.match(e2eJob, /x86_64\|amd64/u);
-  assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-10/u);
-  assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/10/u);
+  assert.match(e2eJob, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-18/u);
+  assert.match(e2eJob, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/18/u);
   assert.doesNotMatch(e2eJob, /run: xvfb-run -a npm run test:e2e:host/u);
   assert.match(e2eJob, /if: \$\{\{ always\(\) \}\}/u);
-  assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
+  assert.match(e2eJob, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-18/u);
   assert.match(e2eJob, /retention-days: 7/u);
 
   const giteaImage = job(workflow, "e2e-image");
@@ -147,6 +147,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
 
   assert.match(job(workflow, "packaged-macos-smoke"), cacheEnvironment);
   assert.match(job(workflow, "build-and-test"), cacheEnvironment);
+  assert.match(job(workflow, "workspace-tests"), cacheEnvironment);
   const e2eImage = job(workflow, "e2e-image");
   assert.match(e2eImage, cacheEnvironment);
   assert.match(e2eImage, /DOCKER_BUILDKIT=1 docker build/u);
@@ -270,6 +271,24 @@ test("the base image key covers every file the base Dockerfile copies", async ()
   assert.match(dockerfile, /^LABEL net\.wylde\.ci\.retain=true$/mu);
 });
 
+test("the base image key ignores npm scripts an install never runs", async () => {
+  const { e2eBaseImageInputContent } = await import("./e2e-base-image-key.mjs");
+  const manifest = (fields) => Buffer.from(JSON.stringify({ name: "x", dependencies: { a: "1.0.0" }, ...fields }));
+  const content = (fields) => e2eBaseImageInputContent("apps/x/package.json", manifest(fields)).toString("utf8");
+  const base = content({ scripts: { postinstall: "node a.mjs", smoke: "node --test one.mjs" } });
+
+  // A longer test list is the commonest manifest edit; it must not move the key.
+  assert.equal(content({ scripts: { postinstall: "node a.mjs", smoke: "node --test one.mjs two.mjs" } }), base);
+  assert.equal(content({ scripts: { postinstall: "node a.mjs" } }), base);
+  // Whatever npm runs or resolves during an install does move it.
+  assert.notEqual(content({ scripts: { postinstall: "node b.mjs", smoke: "node --test one.mjs" } }), base);
+  assert.notEqual(content({ dependencies: { a: "1.0.1" }, scripts: { postinstall: "node a.mjs" } }), base);
+  assert.notEqual(content({ overrides: { b: "2.0.0" }, scripts: { postinstall: "node a.mjs" } }), base);
+  // Only manifests are read this way; every other input counts byte for byte.
+  const lockfile = Buffer.from('{"scripts":{"smoke":"x"}}');
+  assert.equal(e2eBaseImageInputContent("package-lock.json", lockfile), lockfile);
+});
+
 test("the per-commit image ships a committed browser-fixture dependency cache", async () => {
   const dockerfile = await text("Dockerfile.e2e");
   const buildAt = dockerfile.indexOf("npm run build:app");
@@ -288,7 +307,13 @@ test("E2E shards split by test and report per-test timings without changing the 
   assert.match(config, /fullyParallel: true/u);
   assert.match(config, /\['json', \{ outputFile: 'test-results\/e2e-timings\.json' \}\]/u);
   assert.match(sandbox, /test\.describe\.configure\(\{ mode: 'default' \}\)/u);
-  assert.match(entrypoint, /xvfb-run --auto-servernum npx playwright test "\$@"\nstatus=\$\?/u);
+  // The entrypoint's runner deals a shard its tests, then runs them under Xvfb.
+  const runner = await text("scripts/support/run-e2e-playwright.mjs");
+  assert.match(entrypoint, /node scripts\/support\/run-e2e-playwright\.mjs "\$@"\nstatus=\$\?/u);
+  assert.match(runner, /spawn\('xvfb-run', \['--auto-servernum', 'npx', 'playwright', 'test', \.\.\.args\]/u);
+  assert.match(runner, /--test-list=/u);
+  // A deal that cannot be computed falls back to Playwright's own sharding.
+  assert.match(runner, /Playwright will shard it instead/u);
   assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);
   assert.match(entrypoint, /exit "\$status"$/mu);
 });
