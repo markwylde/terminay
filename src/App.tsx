@@ -217,6 +217,7 @@ import {
 	composeProjectTabs,
 	type ComposedProjectTab,
 	panelMoveTargets,
+	projectTabAcceptsTerminalDrop,
 	projectTabSourceFor,
 	shouldNameServers,
 } from './workspace/projectTabComposition';
@@ -347,7 +348,10 @@ import {
 	scheduleCreatedTerminalFocus,
 	useTerminalCreationController,
 } from './workspace/useTerminalCreationController';
-import { useTerminalDockviewWindowController } from './workspace/useTerminalDockviewWindowController';
+import {
+	type TerminalTabDrag,
+	useTerminalDockviewWindowController,
+} from './workspace/useTerminalDockviewWindowController';
 import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
 import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
 import './App.css';
@@ -581,6 +585,8 @@ type ProjectWorkspaceProps = {
 		targetProjectId: string,
 	) => void;
 	onPopoutProject: (projectId: string) => Promise<void>;
+	/** A terminal tab of this project started being dragged, or a drag ended. */
+	onTerminalTabDrag?: (projectId: string, drag: TerminalTabDrag | null) => void;
 	onWorkspaceInventoryChange: (
 		projectId: string,
 		entries: WorkspaceInventoryEntry[],
@@ -997,6 +1003,8 @@ const MacroFileFieldInput = forwardRef<
 
 MacroFileFieldInput.displayName = 'MacroFileFieldInput';
 
+const NO_TERMINAL_DROP_TARGETS: readonly string[] = Object.freeze([]);
+
 function useDraggableModal(isOpen: boolean) {
 	const modalRef = useRef<HTMLElement | null>(null);
 	const positionRef = useRef({ x: 0, y: 0 });
@@ -1277,6 +1285,7 @@ const ProjectWorkspace = forwardRef<
 			onEditProject,
 			onMoveTerminalToProject,
 			onPopoutProject,
+			onTerminalTabDrag,
 			onShowDashboard,
 			onToggleStatusBar,
 			isStatusBarVisible,
@@ -4417,11 +4426,16 @@ const ProjectWorkspace = forwardRef<
 			terminalClientContext?.workspaceSnapshotStore,
 		]);
 
+		const reportTerminalTabDrag = useCallback(
+			(drag: TerminalTabDrag | null) => onTerminalTabDrag?.(project.id, drag),
+			[onTerminalTabDrag, project.id],
+		);
 		useTerminalDockviewWindowController({
 			addTerminal,
 			apiRef: dockviewApiRef,
 			draggingTransferRef,
 			isActive,
+			onTerminalTabDrag: reportTerminalTabDrag,
 			openTerminalEditWindow,
 			openProfileChooser,
 			popoutUrl,
@@ -6474,6 +6488,44 @@ function App({
 		},
 		[activateProject],
 	);
+	/**
+	 * The terminal tab being dragged toward the project bar, if any.
+	 *
+	 * A drop on a project tab only names the target. The move itself waits for
+	 * the drag to end: moving the terminal removes the very tab being dragged,
+	 * and a drag whose source has left the document never reports its end to
+	 * the window, which would strand Dockview's drag bookkeeping.
+	 */
+	const [terminalTabDrag, setTerminalTabDrag] = useState<{
+		panelId: string;
+		sourceProjectId: string;
+	} | null>(null);
+	const terminalTabDragRef = useRef<typeof terminalTabDrag>(null);
+	const terminalDropTargetProjectIdRef = useRef<string | null>(null);
+	const reportTerminalTabDrag = useCallback(
+		(sourceProjectId: string, drag: TerminalTabDrag | null) => {
+			if (drag !== null) {
+				const started = { panelId: drag.panelId, sourceProjectId };
+				terminalDropTargetProjectIdRef.current = null;
+				terminalTabDragRef.current = started;
+				setTerminalTabDrag(started);
+				return;
+			}
+			const ended = terminalTabDragRef.current;
+			const targetProjectId = terminalDropTargetProjectIdRef.current;
+			terminalTabDragRef.current = null;
+			terminalDropTargetProjectIdRef.current = null;
+			setTerminalTabDrag(null);
+			if (ended !== null && targetProjectId !== null) {
+				moveTerminalToProject(
+					ended.sourceProjectId,
+					ended.panelId,
+					targetProjectId,
+				);
+			}
+		},
+		[moveTerminalToProject],
+	);
 
 	const toggleActiveProjectExplorer = useCallback(() => {
 		// On Home the toggle is Home's own; the project kept as command target
@@ -7294,6 +7346,20 @@ function App({
 		currentServerId,
 		displayedActiveProjectId,
 	);
+	/** The tabs that take the terminal tab being dragged: the projects its
+	 * move menu offers, and nothing while no terminal tab is in flight. */
+	const terminalDropTargetIds = useMemo(() => {
+		if (terminalTabDrag === null) return NO_TERMINAL_DROP_TARGETS;
+		const from = {
+			id: terminalTabDrag.sourceProjectId,
+			serverId: currentServerId,
+		};
+		return displayedProjects
+			.filter((candidate) =>
+				projectTabAcceptsTerminalDrop(from, displayedProjects, candidate),
+			)
+			.map((candidate) => candidate.handle);
+	}, [currentServerId, displayedProjects, terminalTabDrag]);
 	const displayedActiveProject =
 		displayedProjects.find(
 			(project) => project.handle === displayedActiveHandle,
@@ -7316,6 +7382,13 @@ function App({
 		// An unreachable or incompatible server takes no operations.
 		if (connection?.context === undefined) return;
 		setRequestedServerId(serverId);
+	};
+	const dropTerminalOnComposedTab = (handle: string) => {
+		const target = resolveTabHandle(handle);
+		if (target.serverId !== currentServerId) return;
+		if (terminalTabDragRef.current === null) return;
+		terminalDropTargetProjectIdRef.current = target.projectId;
+		setTerminalTabDrag(null);
 	};
 	const activateComposedTab = (handle: string) => {
 		const target = resolveTabHandle(handle);
@@ -7590,6 +7663,8 @@ function App({
 						setIsRemoteMenuOpen(false);
 						setIsActivityMenuOpen(false);
 					}}
+					onTerminalDrop={dropTerminalOnComposedTab}
+					terminalDropTargetIds={terminalDropTargetIds}
 					canCreateProject={
 						canAddProject && pendingProjectCreation === null
 					}
@@ -7862,6 +7937,7 @@ function App({
 							onEditProject={openEditProjectWindow}
 							onMoveTerminalToProject={moveTerminalToProject}
 							onPopoutProject={popoutProject}
+							onTerminalTabDrag={reportTerminalTabDrag}
 							onWorkspaceInventoryChange={updateWorkspaceInventory}
 							onCommitProjectSidebar={commitProjectSidebar}
 							onUpdateProject={updateProject}

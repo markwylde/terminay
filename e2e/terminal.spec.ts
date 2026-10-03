@@ -19,6 +19,35 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return await activeTerminalSessionId(page);
 }
 
+/** Picks a terminal tab up and holds it over `target`, without releasing. */
+async function dragTerminalTabOver(
+	page: Page,
+	terminalTab: Locator,
+	target: Locator,
+) {
+	const tabBox = await terminalTab.boundingBox();
+	const targetBox = await target.boundingBox();
+	if (!tabBox || !targetBox)
+		throw new Error('Terminal tab drop geometry is unavailable');
+	await page.mouse.move(
+		tabBox.x + tabBox.width / 2,
+		tabBox.y + tabBox.height / 2,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		targetBox.x + targetBox.width / 2,
+		targetBox.y + targetBox.height / 2,
+		{ steps: 12 },
+	);
+	// Dockview publishes what is being dragged a frame after the drag starts;
+	// one more move delivers a drag-over that can see it.
+	await page.mouse.move(
+		targetBox.x + targetBox.width / 2 + 2,
+		targetBox.y + targetBox.height / 2,
+		{ steps: 4 },
+	);
+}
+
 async function requireBoundingBox(locator: Locator, label: string) {
 	let box = await locator.boundingBox();
 	await expect
@@ -460,6 +489,153 @@ test.describe('terminal behavior', () => {
 		).toContainText(marker, {
 			timeout: 15000,
 		});
+	});
+
+	test('dropping a terminal tab on a project tab moves it into that project', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const movedSessionId = await getActiveSessionId(mainWindow);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project$/ })
+			.click();
+		const windowCount = await electronApp.evaluate(
+			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+		);
+
+		const targetTab = mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project 2$/ });
+		await dragTerminalTabOver(
+			mainWindow,
+			mainWindow
+				.locator('.project-workspace--active .terminal-tab-content')
+				.first(),
+			targetTab,
+		);
+		await expect(targetTab).toHaveClass(/project-tab--terminal-drop-target/);
+		await mainWindow.mouse.up();
+
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${movedSessionId}"]`,
+			),
+		).toHaveCount(1);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+		await expect(
+			mainWindow.locator('.project-tab--terminal-drop-target'),
+		).toHaveCount(0);
+		expect(
+			await electronApp.evaluate(
+				({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+			),
+		).toBe(windowCount);
+	});
+
+	test('preserves terminal scrollback when a tab is dropped on another project', async ({
+		mainWindow,
+	}) => {
+		const marker = 'DROP_SCROLLBACK_MARKER_4242';
+		const movedSessionId = await getActiveSessionId(mainWindow);
+
+		await writeToTerminal(mainWindow, `echo ${marker}\r`);
+		await expect(
+			mainWindow.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${movedSessionId}"] .xterm-rows`,
+			),
+		).toContainText(marker, {
+			timeout: 15000,
+		});
+
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project$/ })
+			.click();
+
+		const targetTab = mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project 2$/ });
+		await dragTerminalTabOver(
+			mainWindow,
+			mainWindow
+				.locator('.project-workspace--active .terminal-tab-content')
+				.first(),
+			targetTab,
+		);
+		await expect(targetTab).toHaveClass(/project-tab--terminal-drop-target/);
+		await mainWindow.mouse.up();
+
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		// The same session, not a new one, and its scrollback came with it.
+		await expect(
+			mainWindow.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${movedSessionId}"] .xterm-rows`,
+			),
+		).toContainText(marker, {
+			timeout: 15000,
+		});
+	});
+
+	test('a terminal tab released on its own project or on Home stays where it was', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		const ownTab = mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project$/ });
+		await ownTab.click();
+		const terminalTabs = mainWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await expect(terminalTabs).toHaveCount(2);
+		const projectOrder = await mainWindow
+			.locator('.project-tab-title')
+			.allTextContents();
+
+		for (const refusedTarget of [
+			ownTab,
+			mainWindow.locator('[data-terminay-home-control="true"]'),
+		]) {
+			await dragTerminalTabOver(mainWindow, terminalTabs.first(), refusedTarget);
+			await expect(
+				mainWindow.locator('.project-tab--terminal-drop-target'),
+			).toHaveCount(0);
+			await mainWindow.mouse.up();
+
+			await expect(mainWindow.locator('.project-tab--active')).toHaveText(
+				/^Project$/,
+			);
+			await expect(terminalTabs).toHaveCount(2);
+			await expect(mainWindow.locator('.project-tab-title')).toHaveText(
+				projectOrder,
+			);
+		}
+
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project 2$/ })
+			.click();
+		await expect(terminalTabs).toHaveCount(1);
 	});
 
 	test('new terminals inherit the active project tab color by default', async ({

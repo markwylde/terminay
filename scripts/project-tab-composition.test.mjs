@@ -14,6 +14,7 @@ import {
 	canMovePanelToProject,
 	composeProjectTabs,
 	panelMoveTargets,
+	projectTabAcceptsTerminalDrop,
 	projectTabSourceFor,
 	shouldNameServers,
 } from '../src/workspace/projectTabComposition.ts'
@@ -117,6 +118,47 @@ test('a panel is never offered a project on another server', () => {
 	assert.deepEqual(
 		panelMoveTargets(from, candidates).map((tab) => `${tab.serverId}:${tab.id}`),
 		['a:two'],
+	)
+})
+
+test('a terminal tab drops only on a ready project of its own server', () => {
+	const from = project('a', 'one')
+	const sibling = project('a', 'two')
+	// Another server restored from the same data root reuses the project id.
+	const otherServer = project('b', 'two')
+	const pending = { ...project('a', 'three'), creationStatus: 'loading' }
+	const failed = { ...project('a', 'four'), creationStatus: 'failed' }
+	const inert = { ...project('a', 'five'), inert: true }
+	const candidates = [from, sibling, otherServer, pending, failed, inert]
+	const accepts = (candidate) =>
+		projectTabAcceptsTerminalDrop(from, candidates, candidate)
+
+	assert.equal(accepts(sibling), true)
+	assert.equal(accepts(from), false)
+	assert.equal(accepts(otherServer), false)
+	assert.equal(accepts(pending), false)
+	assert.equal(accepts(failed), false)
+	assert.equal(accepts(inert), false)
+})
+
+test('the drop targets are the projects the move menu offers', () => {
+	const from = project('a', 'one')
+	const candidates = [
+		from,
+		project('a', 'two'),
+		project('a', 'three'),
+		project('b', 'one'),
+		project('b', 'two'),
+	]
+	const key = (tab) => `${tab.serverId}:${tab.id}`
+	assert.deepEqual(
+		candidates
+			.filter((candidate) =>
+				projectTabAcceptsTerminalDrop(from, candidates, candidate),
+			)
+			.map(key),
+		// What `getProjectsForTerminalMove` builds the menu from.
+		panelMoveTargets(from, candidates).map(key),
 	)
 })
 
