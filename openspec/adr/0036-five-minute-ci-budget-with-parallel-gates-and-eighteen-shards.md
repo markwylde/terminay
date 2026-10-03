@@ -1,4 +1,4 @@
-# ADR-0036: CI has a five-minute budget, met by running independent work in separate jobs and fourteen E2E shards
+# ADR-0036: CI has a five-minute budget, met by running independent work in separate jobs and eighteen E2E shards
 
 Status: accepted, supersedes ADR-0032
 Date: 2026-10-03
@@ -42,7 +42,7 @@ needs a new record.
    `npm run test:ci`; a contract test compares them to that script. The
    container image smoke runs every case at once, each in its own process on
    its own host ports, and builds the image while dependencies install.
-3. **The E2E suite runs in fourteen shards**, sized to the runners left free
+3. **The E2E suite runs in eighteen shards**, sized to the runners left free
    while the other Linux jobs are still running. The count changes with the
    fleet, not with the suite.
 4. **A cache that a runner can keep is kept on the runner.** npm's download
@@ -61,7 +61,7 @@ needs a new record.
 
 - A job that grows past about four minutes breaks the budget on its own. The
   remedy is to split it, not to raise the budget.
-- A pull request now occupies up to twenty-one runners for part of its run.
+- A pull request now wants every Linux runner for part of its run.
   Two overlapping runs queue; the single macOS runner queues first.
 - The unit jobs install dependencies twice. That costs about twenty seconds of
   runner time and saves about a hundred of wall clock.

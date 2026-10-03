@@ -46,18 +46,18 @@ Per-job timings, read from the Gitea API and the job logs of runs 17051, 17060, 
 
 **Keep npm's cache in the runner tool cache.** The runner mounts a persistent volume at `runner.tool_cache`. Pointing `npm_config_cache` there makes the cache a property of the runner: nothing to restore, nothing to save. `actions/setup-node`'s `cache: npm` was the previous mechanism and stays correct on a provider whose cache server returns keys verbatim; on this one it uploaded the archive after every job. npm checks each cached tarball against the lockfile's integrity hash, so a shared cache cannot change what is installed. The cache boundary crossed is the runner's own disk, already shared by every job on that runner through the Docker store.
 
-**Fourteen shards.** Five other Linux jobs are still running when the E2E image is ready, leaving fifteen runners. Fourteen shards start at once with one runner spare. More shards than free runners only queue.
+**Eighteen shards.** A shard's length is its slowest part of the run: at fourteen shards run 17094 had 27 tests and up to 139 seconds of them in a shard, behind a 111 second image build. When the image is ready, five other Linux jobs are still running and fifteen runners are free; three of those jobs end within twenty seconds, which frees the rest. Eighteen shards therefore start within about twenty seconds of each other and carry a quarter fewer tests each. More shards than that would wait for the two long jobs.
 
 **Key the base image on what an install reads.** The base key hashed every byte of `package.json`, so adding a test file to the `smoke` script published a new base and sent every runner a gigabyte to pull: run 17087 spent 228 seconds in the image job and over two minutes of each shard that way, for a one-line script edit. The key now reads a manifest without the scripts npm does not run during an install. The base's installed dependencies are the same either way, and the per-commit image copies the real manifest over the base's.
 
-**Keep the layered registry images of ADR-0032.** Building the application inside every shard instead of once was considered: it removes the image job from the chain, but puts fourteen TypeScript and Vite builds on hosts that each carry several runners. One build, one push and a ten-second pull is cheaper.
+**Keep the layered registry images of ADR-0032.** Building the application inside every shard instead of once was considered: it removes the image job from the chain, but puts eighteen TypeScript and Vite builds on hosts that each carry several runners. One build, one push and a ten-second pull is cheaper.
 
 ## Risks / Trade-offs
 
 - [The tool cache is not persistent on some runner] → `npm ci` falls back to the registry and the job is slower, not wrong. The first run on each runner is cold in any case.
 - [The npm cache grows without a prune] → It grows by one tarball per new package version. It is a few hundred megabytes today, against images of several gigabytes that the existing cleanup already manages.
 - [Four smoke cases at once contend for CPU] → Each case keeps its own 90s readiness and 120s device deadlines, which are several times what a case takes alone.
-- [Fourteen shards plus six other jobs fill the fleet] → A second run that overlaps the first queues. That was already true with seventeen jobs.
+- [Eighteen shards plus six other jobs fill the fleet] → A second run that overlaps the first queues. That was already true with seventeen jobs.
 - [A dependency change exceeds the budget] → Stated in the spec as the exempt case.
 
 ## Migration Plan
