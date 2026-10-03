@@ -26,17 +26,27 @@ Pull-request CI SHALL build the Electron E2E test environment as two images. A d
 
 ### Requirement: Balanced E2E shards
 
-The E2E suite SHALL be sharded by test rather than by file, so that each of the eighteen shards receives a near-equal number of tests and no shard receives none. A spec whose tests share one application instance created in a `beforeAll` hook SHALL declare itself one group, so its tests stay in one shard and run in declaration order.
+The E2E suite SHALL be sharded by test rather than by file, so that each of the eighteen shards receives a near-equal number of tests and no shard receives none. Tests SHALL be dealt to the shards in turn, in suite order, so that a file of slow tests is spread across shards rather than filling one. A spec whose tests share setup from a `beforeAll` hook, or that declares itself one group, SHALL stay whole: its tests run in one shard, in declaration order. Every test SHALL run in exactly one shard; when the deal cannot be computed, the shard SHALL fall back to the test runner's own sharding rather than run a partial suite.
 
 #### Scenario: No empty shard
 
 - **WHEN** the suite is listed for each of the eighteen shards
-- **THEN** every shard lists at least one test, and the largest shard has no more than the smallest shard plus the size of the largest single group
+- **THEN** every shard lists at least one test, and the largest shard has no more than the smallest shard plus the size of the largest whole spec
 
-#### Scenario: Shared-instance spec stays together
+#### Scenario: A file of slow tests is spread
+
+- **WHEN** a spec that shares no setup has several tests
+- **THEN** its tests run in several shards rather than in one
+
+#### Scenario: Shared-setup spec stays together
 
 - **WHEN** the suite is sharded
-- **THEN** all tests of a spec that declares itself one group are listed in the same shard
+- **THEN** all tests of a spec that uses `beforeAll` or declares itself one group are listed in the same shard
+
+#### Scenario: A title the list cannot express
+
+- **WHEN** two tests cannot be told apart in a shard's test list
+- **THEN** the shard runs the slice the test runner's own sharding gives it, and no test is skipped
 
 ## ADDED Requirements
 

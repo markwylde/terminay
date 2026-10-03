@@ -307,7 +307,13 @@ test("E2E shards split by test and report per-test timings without changing the 
   assert.match(config, /fullyParallel: true/u);
   assert.match(config, /\['json', \{ outputFile: 'test-results\/e2e-timings\.json' \}\]/u);
   assert.match(sandbox, /test\.describe\.configure\(\{ mode: 'default' \}\)/u);
-  assert.match(entrypoint, /xvfb-run --auto-servernum npx playwright test "\$@"\nstatus=\$\?/u);
+  // The entrypoint's runner deals a shard its tests, then runs them under Xvfb.
+  const runner = await text("scripts/support/run-e2e-playwright.mjs");
+  assert.match(entrypoint, /node scripts\/support\/run-e2e-playwright\.mjs "\$@"\nstatus=\$\?/u);
+  assert.match(runner, /spawn\('xvfb-run', \['--auto-servernum', 'npx', 'playwright', 'test', \.\.\.args\]/u);
+  assert.match(runner, /--test-list=/u);
+  // A deal that cannot be computed falls back to Playwright's own sharding.
+  assert.match(runner, /Playwright will shard it instead/u);
   assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);
   assert.match(entrypoint, /exit "\$status"$/mu);
 });
