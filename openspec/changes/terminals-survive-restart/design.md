@@ -315,9 +315,15 @@ The holder is one bundled JavaScript file plus `pty.node` (and `spawn-helper` on
 macOS), loaded eagerly at start. A drain-only holder never spawns, so it never
 needs `spawn-helper` or any lazy `require` again.
 
-- Desktop runs it with the Electron binary in `ELECTRON_RUN_AS_NODE` mode from
-  `app.asar.unpacked`. Squirrel.Mac replaces the bundle by moving it aside, so a
-  running holder keeps its mapped files.
+- Desktop runs it with the Electron binary in `ELECTRON_RUN_AS_NODE` mode,
+  addressed through `app.asar`. It must not be addressed in
+  `app.asar.unpacked`: `node-pty` finds its spawn helper by replacing
+  `app.asar` with `app.asar.unpacked` in its own path, and a path that already
+  contains the replacement becomes `app.asar.unpacked.unpacked`, so every spawn
+  fails. A signed beta showed exactly that
+  (`openspec/adr/evidence/session-holder-survives-update.md`). Squirrel.Mac
+  replaces the bundle by moving it aside, so a running holder keeps its mapped
+  files.
 - Standalone runs it with the archive's bundled Node.
 
 Three host behaviours are unproven and are settled by a spike before any other
