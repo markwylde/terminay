@@ -38,6 +38,7 @@ import {
 	createSessionHolderPtyFactory,
 	launchDetachedSessionHolder,
 	readHolderRecords,
+	sessionHolderEnabled as isSessionHolderEnabled,
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
@@ -897,7 +898,7 @@ async function createServerComposition(
 			authScope: 'admin',
 			permissions: ['workspace:write', 'extensions:read', 'extensions:manage'],
 		}),
-		...(sessionHolderEnabled()
+		...(sessionHolderEnabled(options)
 			? {
 					sessionHolder: createSessionHolderPtyFactory({
 						dataRoot: options.dataRoot,
@@ -2109,14 +2110,13 @@ function resolveWebRtcRuntimeRoot(
 	return resolve(cwd, '../../build/webrtc-runtime');
 }
 
-/**
- * Whether terminals are kept in a detached session holder (ADR-0035). Off
- * unless asked for while the change rolls out; never on Windows, which is not
- * a supported platform.
- */
-function sessionHolderEnabled(): boolean {
-	if (process.platform === 'win32') return false;
-	return process.env.TERMINAY_SESSION_HOLDER === '1';
+/** Whether this server keeps its terminals in a session holder (ADR-0035). */
+function sessionHolderEnabled(options: ServerCliOptions): boolean {
+	return isSessionHolderEnabled({
+		dataRoot: options.dataRoot,
+		env: process.env,
+		platform: process.platform,
+	});
 }
 
 /** The holder entry ships beside this file in every artifact. */

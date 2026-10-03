@@ -62,6 +62,11 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
+// A session holder outlives the server that started it. This suite is not
+// about held terminals, so the servers it starts keep theirs in-process and
+// nothing is left running when it finishes.
+process.env.TERMINAY_SESSION_HOLDER ??= '0';
+
 export async function buildArchive({ directory, version, revision }) {
   const rootName = 'terminay-server-' + version + '-linux-' + process.arch
   const root = join(directory, rootName)

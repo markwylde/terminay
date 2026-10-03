@@ -80,6 +80,7 @@ import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/se
 import type { McpServerCommand } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
+import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
 import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
 import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
@@ -2605,14 +2606,13 @@ function getMcpControlSocketPath(): string {
 	return path.join(app.getPath('userData'), 'terminay-mcp-control.sock');
 }
 
-/**
- * Whether terminals are kept in a detached session holder (ADR-0035). Off
- * unless asked for while the change rolls out; never on Windows, which is not
- * a supported platform.
- */
+/** Whether this Desktop keeps its terminals in a session holder (ADR-0035). */
 function sessionHolderEnabled(): boolean {
-	if (process.platform === 'win32') return false;
-	return process.env.TERMINAY_SESSION_HOLDER === '1';
+	return isSessionHolderEnabled({
+		dataRoot: app.getPath('userData'),
+		env: process.env,
+		platform: process.platform,
+	});
 }
 
 /**

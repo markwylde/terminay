@@ -363,17 +363,25 @@ payload into the data root and run it from there.
 
 ## Migration Plan
 
-1. Land the holder, the holder-backed factory, and adopt/detach behind a
-   server-core option that defaults off. Both hosts keep spawning in-process.
-2. Turn it on for Desktop development builds, then standalone `main`, then
-   stable. Each step is a default flip.
+1. Land the holder, the holder-backed factory, and adopt/detach behind a switch
+   that defaults off. Both hosts keep spawning in-process. Done.
+2. Turn it on by default. The owner chose a single step after the macOS update
+   and systemd checks passed: on in `main`, so beta users get it first and
+   stable users with the next tagged release. One shared rule decides it for
+   both hosts (`sessionHolderEnabled`): on unless `TERMINAY_SESSION_HOLDER=0`;
+   off under the test marker unless asked for, so a harness never leaves a
+   holder behind; and off where it cannot work, on Windows and for a data root
+   too deep for the holder's socket path, where terminals end with the server
+   as before rather than failing to start.
 3. The first restart onto a build with the holder still loses sessions, because
-   they were spawned in-process by the old build. From the second restart on
-   they survive. The old reaper path stays for exactly that case: a persisted
-   `running` session that no holder knows becomes `interrupted` and keeps its
-   panel, with no tail.
-4. Rollback is the default flip. Sessions held by a holder are ended with
-   `end-all` when a build without the option attaches.
+   they were spawned in-process by the old build. That one start restores as it
+   always did: on a data root that has never had a holder or a saved tail, stale
+   terminal panels are discarded and each project gets a fresh terminal, instead
+   of being greeted by dead, empty tabs. From the next restart on, terminals
+   survive and ended ones keep their panels.
+4. Rollback is `TERMINAY_SESSION_HOLDER=0`, or reverting the default. A build
+   without a holder does not attach to one, so sessions held at that point end
+   when their unattached limit passes.
 
 `desktop-auto-update` should be archived first. Its "Restart to update" scenario
 then needs its "including any confirmation that path requires" clause removed to

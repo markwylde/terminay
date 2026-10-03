@@ -615,8 +615,10 @@ must send `SIGTERM` and retain the exit status for diagnostics.
 
 ## Terminal sessions across restarts
 
-This applies when the server is started with `TERMINAY_SESSION_HOLDER=1`. It is
-off by default.
+Terminal sessions are kept across restarts by default. Set
+`TERMINAY_SESSION_HOLDER=0` in the service environment to turn that off;
+terminals then end with the server, as they did before. It is also off on its
+own for a data root whose path is too long for the holder's local socket.
 
 Shells are not children of the server. They run in a **session holder**, a
 small detached process per data root that the server starts on demand. When the

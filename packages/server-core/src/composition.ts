@@ -1183,7 +1183,16 @@ export function createServerCoreComposition(
 				) {
 					const unavailableProjectIds =
 						(await options.workspaceStartup.prepare?.()) ?? new Set<string>();
-					if (options.sessionHolder !== undefined)
+					// The first start with a holder on a data root that never had one
+					// (an upgrade from a release whose terminals ended with the
+					// server) has nothing to reattach and nothing saved to show.
+					// Keeping those panels would greet every project with dead,
+					// empty tabs, so that one start restores as it always did:
+					// stale terminals are discarded and each project gets a fresh one.
+					const keepsTerminalPanels =
+						options.sessionHolder !== undefined &&
+						(options.sessionHolder.hadPriorState?.() ?? true);
+					if (options.sessionHolder !== undefined && keepsTerminalPanels)
 						await reattachHeldSessions({
 							serverId: options.serverId,
 							workspace: options.workspace,
@@ -1192,7 +1201,7 @@ export function createServerCoreComposition(
 							freshWorkspace: options.workspaceStartup.firstRun,
 						});
 					await restoreWorkspaceOnStartup({
-						preserveTerminalPanels: options.sessionHolder !== undefined,
+						preserveTerminalPanels: keepsTerminalPanels,
 						workspace: options.workspace,
 						liveSessionCount: () => terminal.listSessions().length,
 						hasSession: (sessionId) =>
