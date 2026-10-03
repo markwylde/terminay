@@ -100,40 +100,78 @@ install and can be overridden:
 sudo npx terminay daemon install --direct-origin https://box.example.com:8443
 ```
 
+`--public-host <host>` is the shorter form when one address or name is how
+devices reach the machine: it derives the direct origin and, for a routable
+literal address, the advertised connection candidate, and `--direct-origin` or
+`--advertise-address` still override either one.
+
+```bash
+sudo npx terminay daemon install --public-host 192.168.1.20
+```
+
 `--expose off|hosted|direct|hosted,direct` and `--port` control the rest. For a
 server reachable only at a forwarded address — a container, or a box behind a
 port forward — see [Trying it in a local container](#trying-it-in-a-local-container).
 
 ## Trying it in a local container
 
-A server in a container on your own machine is not reachable from a client on
-that machine by default. Every address the server can see about itself is one
-the client cannot route to — on macOS and Windows the container runs inside a
-virtual machine, and `--network host` does not change that, because the host is
-the VM. Signalling succeeds and the connection then never forms.
-
-`--advertise-address` names an address the client can reach, and offers it as an
-additional connection candidate. Use this machine's routable address — the one
-`ipconfig getifaddr en0` or `hostname -I` prints — not a loopback address: a
-browser need not send connectivity checks to a loopback candidate and Firefox
-does not, so the CLI refuses one.
+Use the official image. It runs the server in the foreground, carries this
+CLI, and needs neither systemd nor `sudo`:
 
 ```bash
-docker run -d --name terminay \
+docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay
+docker exec -it terminay terminay daemon qr-code
+```
+
+That is the whole setup for Terminay Desktop on the same machine or network:
+Desktop offers its real addresses, so the server opens the connection from its
+side and no address or UDP port is needed.
+
+Browsers and phones conceal their local addresses, so they have to reach the
+server instead, and a server in a container cannot see the address they reach
+it at — on macOS and Windows the container runs inside a virtual machine, and
+`--network host` does not change that, because the host is the VM. Name that
+address once and publish the ports:
+
+```bash
+docker run -d --name terminay -v terminay-data:/var/lib/terminay \
+  -p 8443:8443 -p 51000-51015:51000-51015/udp \
+  -e TERMINAY_PUBLIC_HOST=192.168.1.20 \
+  markwylde/terminay
+```
+
+Use this machine's routable address — the one `ipconfig getifaddr en0` or
+`hostname -I` prints — not a loopback address: a browser need not send
+connectivity checks to a loopback candidate and Firefox does not. A public
+host that is a name or loopback sets the direct origin only.
+
+Inside the image `daemon qr-code`, `approvals`, `approve`, `deny`, and `status`
+talk to the running server directly. `daemon install`, `upgrade`, `start`,
+`stop`, and `uninstall` refuse there: the container runtime manages the server.
+
+### With the systemd installer
+
+`daemon install` needs systemd, which a stock container does not run. Where
+systemd is deliberately run as a container's PID 1, the same idea applies with
+`--advertise-address` (or `--public-host`), and the installer pins four ports:
+
+```bash
+docker run -d --name terminay-systemd \
   --privileged --tmpfs /run --tmpfs /run/lock \
   --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -p 51000-51003:51000-51003/udp \
   node:24-bookworm \
   /bin/sh -c 'apt-get update -qq && apt-get install -y -qq systemd dbus && exec /lib/systemd/systemd'
 
-docker exec -it terminay bash
+docker exec -it terminay-systemd bash
 npx terminay daemon install --system --run-as root \
   --advertise-address 192.168.1.20:51000
 npx terminay daemon qr-code
 ```
 
-Four consecutive UDP ports are published rather than one, because the WebRTC
-runtime gives each candidate its own socket from the range it is pinned to.
+The pinned UDP range is a budget: the WebRTC runtime gives each candidate of
+each connected device its own socket from it, so a range that is too short
+limits how many devices can connect at once.
 
 This is for a server reachable only at a forwarded address. It is not a general
 answer to NAT — it works because someone forwarded a port.

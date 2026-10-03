@@ -1,4 +1,8 @@
 import { createSocket } from 'node:dgram';
+import { isIP } from 'node:net';
+
+import { DEFAULT_ICE_PORT } from './advertise.js';
+import { isLoopbackHost } from './args.js';
 
 /**
  * Guessing the address devices will actually reach this machine on.
@@ -73,3 +77,42 @@ export async function defaultDirectOrigin(
 	const address = await primaryAddress(createProbeSocket);
 	return address === undefined ? undefined : originFor(address, port);
 }
+
+/** What one public host stands for once it is spelled out as two settings. */
+export interface PublicHostDerivation {
+	readonly directOrigin: string;
+	/** Present only for a routable literal address. */
+	readonly advertiseAddress?: string;
+}
+
+/**
+ * Can this host be offered to a peer as an ICE candidate?
+ *
+ * A candidate is a literal address the other side sends connectivity checks
+ * to: a name resolves on the peer's machine, and a loopback address names the
+ * peer itself, so neither can stand in for one.
+ */
+export function isRoutableLiteral(host: string): boolean {
+	return isIP(host) !== 0 && !isLoopbackHost(host);
+}
+
+/**
+ * Spell one public host out as the direct origin and, when it is a routable
+ * literal address, the advertised ICE address.
+ */
+export function derivePublicHost(
+	host: string,
+	port: number,
+): PublicHostDerivation {
+	const directOrigin = originFor(host, port);
+	if (!isRoutableLiteral(host)) return Object.freeze({ directOrigin });
+	const literal = host.includes(':') ? `[${host}]` : host;
+	return Object.freeze({
+		directOrigin,
+		advertiseAddress: `${literal}:${DEFAULT_ICE_PORT}`,
+	});
+}
+
+/** Said whenever a public host could only derive the direct origin. */
+export const PUBLIC_HOST_NEEDS_LITERAL =
+	'Browsers and phones need a routable literal address: a name or a loopback address reaches this server for signaling only, so pass --public-host with the address devices reach this machine on, such as 192.168.1.20.';

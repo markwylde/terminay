@@ -7,7 +7,11 @@ import {
 	selectRunAs,
 	selectScope,
 } from '../account.js';
-import { defaultDirectOrigin } from '../address.js';
+import {
+	defaultDirectOrigin,
+	derivePublicHost,
+	PUBLIC_HOST_NEEDS_LITERAL,
+} from '../address.js';
 import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions, InstallScope } from '../args.js';
 import {
@@ -122,6 +126,7 @@ export interface InstallResult {
 	readonly version: string;
 	readonly channel: string;
 	readonly revision: string;
+	readonly publicHost?: string;
 	readonly directOrigin?: string;
 	readonly advertiseAddress?: string;
 	readonly ready: boolean;
@@ -257,13 +262,20 @@ export async function runInstall(
 
 	const expose = options.expose ?? DEFAULT_EXPOSE;
 	const wantsDirect = expose.split(',').includes('direct');
+	// One public host stands for both routes; either setting given by name
+	// still wins over what the host derives for it.
+	const derived =
+		options.publicHost === undefined
+			? undefined
+			: derivePublicHost(options.publicHost, port);
+	const statedOrigin = options.directOrigin ?? derived?.directOrigin;
 	const directOrigin = wantsDirect
-		? (options.directOrigin ?? (await defaultDirectOrigin(port)))
-		: options.directOrigin;
+		? (statedOrigin ?? (await defaultDirectOrigin(port)))
+		: statedOrigin;
 	// An empty value clears; undefined means the operator said nothing.
 	const advertised =
 		options.advertiseAddress === undefined
-			? undefined
+			? derived?.advertiseAddress
 			: options.advertiseAddress;
 	if (wantsDirect && directOrigin === undefined) {
 		throw new Error(
@@ -285,6 +297,9 @@ export async function runInstall(
 			healthPort: DEFAULT_HEALTH_PORT,
 			expose,
 			hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
+			...(options.publicHost === undefined
+				? {}
+				: { publicHost: options.publicHost }),
 			...(directOrigin === undefined ? {} : { directOrigin }),
 			...(advertised === undefined ? {} : { advertiseAddress: advertised }),
 			uiBundle: `${layout.currentLink}/ui`,
@@ -346,6 +361,9 @@ export async function runInstall(
 		healthPort: DEFAULT_HEALTH_PORT,
 		expose,
 		hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
+		...(options.publicHost === undefined
+			? {}
+			: { publicHost: options.publicHost }),
 		...(directOrigin === undefined ? {} : { directOrigin }),
 		...(advertised === undefined || advertised === ''
 			? {}
@@ -369,6 +387,8 @@ export async function runInstall(
 	write(`  channel      ${resolved.channel}`);
 	write(`  data root    ${dataRoot}`);
 	write(`  exposure     ${expose}`);
+	if (options.publicHost !== undefined)
+		write(`  public host  ${options.publicHost}`);
 	if (advertised !== undefined && advertised !== '') {
 		const first = Number(advertised.slice(advertised.lastIndexOf(':') + 1));
 		const last = first + ADVERTISED_PORT_SPAN - 1;
@@ -397,6 +417,13 @@ export async function runInstall(
 			);
 		}
 	}
+	if (
+		derived !== undefined &&
+		(advertised === undefined || advertised === '')
+	) {
+		write('');
+		write(PUBLIC_HOST_NEEDS_LITERAL);
+	}
 	if (!ready) {
 		write('');
 		write('The server has not reported ready yet. Recent log lines:');
@@ -409,6 +436,9 @@ export async function runInstall(
 		version: installed.manifest.version,
 		channel: resolved.channel,
 		revision: installed.manifest.revision,
+		...(options.publicHost === undefined
+			? {}
+			: { publicHost: options.publicHost }),
 		...(directOrigin === undefined ? {} : { directOrigin }),
 		...(advertised === undefined || advertised === ''
 			? {}

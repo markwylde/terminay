@@ -1,7 +1,11 @@
 import QRCode from 'qrcode';
 
 import type { DaemonOptions, PairingMode } from '../args.js';
-import type { CommandContext } from '../context.js';
+import {
+	type CommandContext,
+	type ForegroundContext,
+	socketSender,
+} from '../context.js';
 import {
 	confirm,
 	defaultStreams,
@@ -9,12 +13,11 @@ import {
 	type PromptStreams,
 } from '../prompt.js';
 import {
+	type ApprovalRequest,
 	type ApprovalResponse,
-	approvalSocketPath,
 	type PairingHandoff,
 	type PendingApproval,
 	requireOk,
-	sendAsUser,
 } from '../socket.js';
 
 /**
@@ -41,9 +44,7 @@ export interface PairingDependencies {
 	readonly pollIntervalMs?: number;
 	readonly now?: () => number;
 	readonly renderQr?: (url: string) => Promise<string>;
-	readonly send?: (
-		request: Parameters<typeof sendAsUser>[1],
-	) => Promise<ApprovalResponse>;
+	readonly send?: (request: ApprovalRequest) => Promise<ApprovalResponse>;
 }
 
 async function renderTerminalQr(url: string): Promise<string> {
@@ -72,18 +73,14 @@ export interface PairingResult {
 
 export async function runPairing(
 	options: DaemonOptions,
-	context: CommandContext,
+	context: CommandContext | ForegroundContext,
 	dependencies: PairingDependencies = {},
 ): Promise<PairingResult> {
-	const { record, write } = context;
+	const { write } = context;
 	const streams = dependencies.streams ?? defaultStreams();
 	const now = dependencies.now ?? Date.now;
 	const renderQr = dependencies.renderQr ?? renderTerminalQr;
-	const socketPath = approvalSocketPath(record.dataRoot);
-	const send =
-		dependencies.send ??
-		((request: Parameters<typeof sendAsUser>[1]) =>
-			sendAsUser(socketPath, request, record.runAs));
+	const send = dependencies.send ?? socketSender(context);
 
 	const fetchPairing = async (rotate: boolean) => {
 		const response = requireOk(
@@ -197,14 +194,10 @@ export async function runPairing(
 
 /** `daemon approvals`, `approve <id>`, and `deny <id>` for scripted use. */
 export async function runApprovals(
-	context: CommandContext,
+	context: CommandContext | ForegroundContext,
 	dependencies: PairingDependencies = {},
 ): Promise<readonly PendingApproval[]> {
-	const socketPath = approvalSocketPath(context.record.dataRoot);
-	const send =
-		dependencies.send ??
-		((request: Parameters<typeof sendAsUser>[1]) =>
-			sendAsUser(socketPath, request, context.record.runAs));
+	const send = dependencies.send ?? socketSender(context);
 	const response = requireOk(await send({ op: 'list' }));
 	const pending: readonly PendingApproval[] =
 		'pending' in response ? response.pending : [];
@@ -223,14 +216,10 @@ export async function runApprovals(
 export async function runResolveApproval(
 	action: 'approve' | 'deny',
 	approvalId: string,
-	context: CommandContext,
+	context: CommandContext | ForegroundContext,
 	dependencies: PairingDependencies = {},
 ): Promise<void> {
-	const socketPath = approvalSocketPath(context.record.dataRoot);
-	const send =
-		dependencies.send ??
-		((request: Parameters<typeof sendAsUser>[1]) =>
-			sendAsUser(socketPath, request, context.record.runAs));
+	const send = dependencies.send ?? socketSender(context);
 	const response = requireOk(await send({ op: action, approvalId }));
 	const name = 'deviceName' in response ? response.deviceName : approvalId;
 	context.write(

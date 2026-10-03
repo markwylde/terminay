@@ -51,6 +51,7 @@ import {
 	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
+	type PinnedIcePortRange,
 	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
 	selectedIceCandidatePair,
@@ -78,6 +79,7 @@ import {
 export type {
 	AdvertisedIceAddress,
 	HostedIceServer,
+	PinnedIcePortRange,
 } from './hostedPeerLifecycle.js';
 export {
 	collectHostIceAddresses,
@@ -115,6 +117,7 @@ type WeriftIceCandidate = Readonly<{
 type WeriftPeer = {
 	readonly connectionState?: string;
 	readonly iceConnectionState?: string;
+	readonly iceGatheringState?: string;
 	getStats?: () => Promise<
 		ReadonlyMap<string, Readonly<Record<string, unknown>>>
 	>;
@@ -208,6 +211,9 @@ export interface HostedPairingHostOptions {
 	/** An address and UDP port an administrator forwarded to this server, added
 	 * to the gathered candidates rather than replacing them. */
 	readonly advertiseAddress?: AdvertisedIceAddress;
+	/** Confines every candidate to a published run of UDP ports, with or
+	 * without an advertised address. */
+	readonly icePortRange?: PinnedIcePortRange;
 	readonly iceRecoveryGraceMs?: number;
 	readonly rotateHandoff?: () =>
 		| ServerPairingHandoff
@@ -237,7 +243,8 @@ export type HostedPairingDiagnostic = Readonly<{
 		| 'application-lane'
 		| 'peer-closed'
 		| 'approval-pending'
-		| 'candidate-pair';
+		| 'candidate-pair'
+		| 'ice-range-exhausted';
 	readonly scope?: 'pairing' | 'device';
 	/** Pending approval metadata: the code is shown on both devices, never secret. */
 	readonly approvalId?: string;
@@ -1144,6 +1151,7 @@ async function startPeer(
 			context.options.resolveIceServers?.() ?? context.options.iceServers,
 			collectHostIceAddresses(networkInterfaces()),
 			context.options.advertiseAddress,
+			context.options.icePortRange,
 		),
 	);
 	const session: {
@@ -1230,8 +1238,10 @@ async function startPeer(
 		channel.addEventListener('error', emitState);
 	}
 
+	let gatheredCandidates = 0;
 	peer.addEventListener('icecandidate', (event) => {
 		const candidate = asIceCandidate(event.candidate);
+		if (candidate) gatheredCandidates += 1;
 		if (!candidate || socket.readyState !== WebSocket.OPEN) return;
 		socket.send(JSON.stringify(signalMessage(scope, 'ice', { candidate })));
 	});
@@ -1269,6 +1279,29 @@ async function startPeer(
 	});
 	await peer.setLocalDescription(offer);
 	socket.send(JSON.stringify(signalMessage(scope, 'offer', signalingOffer)));
+	if (
+		context.options.advertiseAddress !== undefined ||
+		context.options.icePortRange !== undefined
+	) {
+		// A pinned range is a budget every live peer draws from. A peer that finds
+		// it spent gathers nothing and would otherwise sit in `checking` with no
+		// explanation, so the one cause an operator can act on is named. Gathering
+		// is only over once the runtime says so: reflexive candidates can take
+		// seconds, and a peer still gathering has not come up empty.
+		let reported = false;
+		peer.addEventListener('icegatheringstatechange', () => {
+			if (reported || peer.iceGatheringState !== 'complete') return;
+			const described = (peer.localDescription?.sdp ?? '')
+				.split(/\r?\n/u)
+				.some((line) => line.startsWith('a=candidate:'));
+			if (gatheredCandidates > 0 || described) return;
+			reported = true;
+			context.options.onDiagnostic?.({
+				type: 'ice-range-exhausted',
+				scope: scope.kind,
+			});
+		});
+	}
 	return peer;
 }
 

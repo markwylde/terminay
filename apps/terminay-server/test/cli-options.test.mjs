@@ -159,3 +159,113 @@ test("an out-of-range port or octet is refused", () => {
   assert.throws(() => parse(["--advertise-address", "127.0.0.1:65536"]), /--advertise-address/u);
   assert.throws(() => parse(["--advertise-address", "999.0.0.1:51000"]), /valid IPv4 address/u);
 });
+
+test("a literal public host derives the direct origin and the advertised ICE address", () => {
+  const options = parse([
+    "--expose", "hosted,direct", "--http-port", "8443", "--public-host", "192.168.2.218",
+  ]);
+  assert.equal(options.directOrigin, "https://192.168.2.218:8443");
+  assert.deepEqual({ ...options.advertiseAddress }, { host: "192.168.2.218", port: 51000 });
+  assert.deepEqual({ ...options.publicHost }, { host: "192.168.2.218", kind: "address" });
+  // The advertised address pins the range itself; no ICE port was configured.
+  assert.equal(options.icePort, undefined);
+
+  const environment = parse([], {
+    TERMINAY_EXPOSE: "direct",
+    TERMINAY_HTTP_PORT: "9443",
+    TERMINAY_PUBLIC_HOST: "[2001:db8::10]",
+  });
+  assert.equal(environment.directOrigin, "https://[2001:db8::10]:9443");
+  assert.deepEqual({ ...environment.advertiseAddress }, { host: "2001:db8::10", port: 51000 });
+});
+
+test("a public host that is a name or loopback derives the direct origin only", () => {
+  for (const [host, kind] of [
+    ["box.example.com", "name"],
+    ["localhost", "loopback"],
+    ["127.0.0.1", "loopback"],
+    ["::1", "loopback"],
+  ]) {
+    const options = parse(["--expose", "direct", "--http-port", "8443", "--public-host", host]);
+    assert.equal(options.publicHost.kind, kind);
+    assert.equal(options.advertiseAddress, undefined);
+    assert.equal(options.icePort, undefined);
+    assert.equal(
+      options.directOrigin,
+      `https://${host.includes(":") ? `[${host}]` : host}:8443`,
+    );
+  }
+});
+
+test("an explicit direct origin or advertised address wins over the public host", () => {
+  const origin = parse([
+    "--expose", "direct", "--http-port", "8443", "--public-host", "192.168.2.218",
+    "--direct-origin", "https://box.example.com:8443",
+  ]);
+  assert.equal(origin.directOrigin, "https://box.example.com:8443");
+  assert.deepEqual({ ...origin.advertiseAddress }, { host: "192.168.2.218", port: 51000 });
+
+  const advertised = parse([
+    "--expose", "direct", "--http-port", "8443", "--public-host", "192.168.2.218",
+    "--advertise-address", "203.0.113.7:52000",
+  ]);
+  assert.equal(advertised.directOrigin, "https://192.168.2.218:8443");
+  assert.deepEqual({ ...advertised.advertiseAddress }, { host: "203.0.113.7", port: 52000 });
+
+  // An explicitly empty advertised address declines the derived one too.
+  const cleared = parse(
+    ["--expose", "direct", "--http-port", "8443", "--public-host", "192.168.2.218"],
+    { TERMINAY_WEBRTC_ADVERTISE_ADDRESS: "" },
+  );
+  assert.equal(cleared.advertiseAddress, undefined);
+});
+
+test("a public host is validated and needs a port to name an origin", () => {
+  for (const bad of ["https://box.example.com", "box.example.com:8443", "box/path", "0.0.0.0", "::", "1.2.3", "bad host"]) {
+    assert.throws(() => parse(["--public-host", bad]), /--public-host/u, bad);
+  }
+  assert.throws(
+    () => parse(["--expose", "direct", "--public-host", "192.168.2.218"]),
+    /needs --http-port/u,
+  );
+  // Without direct exposure there is no origin to derive, only the candidate.
+  const hostedOnly = parse(["--expose", "hosted", "--public-host", "192.168.2.218"]);
+  assert.equal(hostedOnly.directOrigin, undefined);
+  assert.deepEqual({ ...hostedOnly.advertiseAddress }, { host: "192.168.2.218", port: 51000 });
+});
+
+test("direct exposure still needs an origin from somewhere", () => {
+  assert.throws(() => parse(["--expose", "direct"]), /--direct-origin .* or --public-host/u);
+});
+
+test("an ICE range can be pinned without an advertised address", () => {
+  const pinned = parse(["--ice-port", "52000", "--ice-port-span", "16"]);
+  assert.equal(pinned.icePort, 52000);
+  assert.equal(pinned.icePortSpan, 16);
+  assert.equal(pinned.advertiseAddress, undefined);
+
+  const unpinned = parse();
+  assert.equal(unpinned.icePort, undefined);
+  assert.equal(unpinned.icePortSpan, 4);
+
+  const fromPublicHost = parse(["--public-host", "192.168.2.218", "--ice-port", "52000"]);
+  assert.deepEqual({ ...fromPublicHost.advertiseAddress }, { host: "192.168.2.218", port: 52000 });
+
+  assert.throws(
+    () => parse(["--ice-port", "52000", "--advertise-address", "192.168.2.218:51000"]),
+    /must equal the --advertise-address port/u,
+  );
+  assert.throws(() => parse(["--ice-port", "0"]), /--ice-port/u);
+  assert.throws(() => parse(["--ice-port-span", "1"]), /--ice-port-span/u);
+  assert.throws(() => parse(["--ice-port", "65535"]), /past port 65535/u);
+  assert.throws(
+    () => parse(["--advertise-address", "192.168.2.218:65534", "--ice-port-span", "16"]),
+    /past port 65535/u,
+  );
+});
+
+test("the build revision is read from the environment and validated", () => {
+  assert.equal(parse().serverRevision, undefined);
+  assert.equal(parse([], { TERMINAY_SERVER_REVISION: "9497f228b72d" }).serverRevision, "9497f228b72d");
+  assert.throws(() => parse([], { TERMINAY_SERVER_REVISION: "not a revision" }), /TERMINAY_SERVER_REVISION/u);
+});
