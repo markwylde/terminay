@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+// A session holder outlives the server that started it. This suite is not
+// about held terminals, so the servers it starts keep theirs in-process and
+// nothing is left running when it finishes.
+process.env.TERMINAY_SESSION_HOLDER ??= '0';
+
 const cli = 'apps/terminay-server/dist/cli.js';
 const run = (...args) =>
 	execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8' }).trim();

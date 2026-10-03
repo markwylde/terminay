@@ -382,6 +382,43 @@ test("a composed server restarts onto its running terminals, and ending them is 
   assert.deepEqual(Object.values(secondWorkspace.state.panels).map((panel) => panel.type), ["file"]);
 });
 
+test("the first start with a holder on a data root that never had one restores as it always did", async () => {
+  // An upgrade from a release whose terminals ended with the server: the
+  // workspace remembers terminals, but no holder ever held them and nothing
+  // was saved. Keeping those panels would greet every project with dead,
+  // empty tabs.
+  const workspace = reloaded(seededWorkspace(["old-1", "old-2"]));
+  const created = [];
+  const holder = {
+    ...fakeHolder(),
+    hadPriorState: () => false,
+    setLimit() {},
+    async detach() {},
+    async endAll() {},
+    start() { throw new Error("nothing is reattached on this start"); },
+  };
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: SERVER_ID,
+    serverVersion: "1.0.0",
+    capabilities: [],
+    sessionHolder: holder,
+    workspace,
+    workspaceStartup: {
+      firstRun: false,
+      createTerminal: async (request) => { created.push(request.projectId); },
+    },
+  });
+  await composition.start();
+  try {
+    assert.deepEqual(Object.keys(workspace.state.terminalSessions), []);
+    assert.deepEqual(Object.values(workspace.state.panels).map((panel) => panel.type), ["file"]);
+    assert.deepEqual(created.sort(), ["default", "other"]);
+  } finally {
+    await composition.shutdown();
+  }
+});
+
 test("a saved tail becomes the panel's output and is deleted when the panel closes", async (t) => {
   const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), "th-")));
   t.after(() => rmSync(dataRoot, { recursive: true, force: true }));

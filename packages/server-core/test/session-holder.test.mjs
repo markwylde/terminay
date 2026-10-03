@@ -114,7 +114,7 @@ const spawnRequest = (sessionId, extra = {}) => ({
   sessionId, projectId: "p1", shellPath: "/bin/zsh", args: ["-l"], cwd: "/tmp", env: { A: "1" }, cols: 80, rows: 24, ...extra,
 });
 /** Let queued socket writes and their handlers run. */
-const settle = () => delay(20);
+const settle = () => delay(50);
 
 function collect(stream) {
   const chunks = [];
@@ -195,7 +195,9 @@ test("spawn, write, resize, signal, and exit reach the PTY and come back", async
   client.write("s1", bytesOf("ls\n"));
   client.resize("s1", 120, 40);
   client.signal("s1", "SIGINT");
-  await settle();
+  // Wait for the round trip itself, not for a fixed time: the exit is the last
+  // thing to come back, and a loaded machine can take longer than any guess.
+  for (let attempt = 0; attempt < 200 && seen.exits.length === 0; attempt += 1) await delay(10);
 
   assert.equal(seen.text(), "hello world");
   assert.deepEqual(seen.chunks.map((chunk) => chunk.position), [0, 6]);
