@@ -48,6 +48,8 @@ Per-job timings, read from the Gitea API and the job logs of runs 17051, 17060, 
 
 **Fourteen shards.** Five other Linux jobs are still running when the E2E image is ready, leaving fifteen runners. Fourteen shards start at once with one runner spare. More shards than free runners only queue.
 
+**Key the base image on what an install reads.** The base key hashed every byte of `package.json`, so adding a test file to the `smoke` script published a new base and sent every runner a gigabyte to pull: run 17087 spent 228 seconds in the image job and over two minutes of each shard that way, for a one-line script edit. The key now reads a manifest without the scripts npm does not run during an install. The base's installed dependencies are the same either way, and the per-commit image copies the real manifest over the base's.
+
 **Keep the layered registry images of ADR-0032.** Building the application inside every shard instead of once was considered: it removes the image job from the chain, but puts fourteen TypeScript and Vite builds on hosts that each carry several runners. One build, one push and a ten-second pull is cheaper.
 
 ## Risks / Trade-offs

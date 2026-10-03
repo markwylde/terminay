@@ -271,6 +271,24 @@ test("the base image key covers every file the base Dockerfile copies", async ()
   assert.match(dockerfile, /^LABEL net\.wylde\.ci\.retain=true$/mu);
 });
 
+test("the base image key ignores npm scripts an install never runs", async () => {
+  const { e2eBaseImageInputContent } = await import("./e2e-base-image-key.mjs");
+  const manifest = (fields) => Buffer.from(JSON.stringify({ name: "x", dependencies: { a: "1.0.0" }, ...fields }));
+  const content = (fields) => e2eBaseImageInputContent("apps/x/package.json", manifest(fields)).toString("utf8");
+  const base = content({ scripts: { postinstall: "node a.mjs", smoke: "node --test one.mjs" } });
+
+  // A longer test list is the commonest manifest edit; it must not move the key.
+  assert.equal(content({ scripts: { postinstall: "node a.mjs", smoke: "node --test one.mjs two.mjs" } }), base);
+  assert.equal(content({ scripts: { postinstall: "node a.mjs" } }), base);
+  // Whatever npm runs or resolves during an install does move it.
+  assert.notEqual(content({ scripts: { postinstall: "node b.mjs", smoke: "node --test one.mjs" } }), base);
+  assert.notEqual(content({ dependencies: { a: "1.0.1" }, scripts: { postinstall: "node a.mjs" } }), base);
+  assert.notEqual(content({ overrides: { b: "2.0.0" }, scripts: { postinstall: "node a.mjs" } }), base);
+  // Only manifests are read this way; every other input counts byte for byte.
+  const lockfile = Buffer.from('{"scripts":{"smoke":"x"}}');
+  assert.equal(e2eBaseImageInputContent("package-lock.json", lockfile), lockfile);
+});
+
 test("the per-commit image ships a committed browser-fixture dependency cache", async () => {
   const dockerfile = await text("Dockerfile.e2e");
   const buildAt = dockerfile.indexOf("npm run build:app");
