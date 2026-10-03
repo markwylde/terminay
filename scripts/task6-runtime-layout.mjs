@@ -121,7 +121,7 @@ export async function inspectRuntimeLayoutMetadata(root) {
 		);
 	}
 	if (
-		!/"files"\s*:\s*\[\s*"dist"\s*,\s*"dist-web"\s*,\s*"dist-electron"\s*\]/u.test(
+		!/"files"\s*:\s*\[\s*"dist"\s*,\s*"dist-web"\s*,\s*"dist-electron"\s*[,\]]/u.test(
 			builder,
 		)
 	) {
