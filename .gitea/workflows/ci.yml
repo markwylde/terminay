@@ -64,19 +64,19 @@ jobs:
           test "$(node -p 'process.arch')" = arm64
           test "$(uname -m)" = arm64
 
-      - name: Verify packaged built-in extension lifecycle
+      # The DMG boot works on a staged copy with its own data directory, so it
+      # runs beside the two checks of the application in the release directory:
+      # the built-in extension lifecycle, then the session holder starting a
+      # shell. This is the only macOS runner, and each check is mostly waiting.
+      - name: Verify the packaged built-ins and session holder, and boot from a read-only DMG copy
         env:
           TERMINAY_ELECTRON_BUILT_INS: release/0.0.0/mac-arm64/Terminay.app/Contents/Resources/built-in-extensions
           TERMINAY_STANDALONE_BUILT_INS: apps/terminay-server/dist/built-in-extensions
-        run: npm run test:packaged-built-in-extension-runtime
-
-      - name: Verify the packaged session holder starts a shell
-        run: node --test scripts/packaged-session-holder-macos.test.mjs
-
-      - name: Boot packaged application from a read-only DMG copy
-        env:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
-        run: bash scripts/packaged-macos-pr-smoke.sh
+        run: |
+          node scripts/run-together.mjs \
+            'npm run test:packaged-built-in-extension-runtime && node --test scripts/packaged-session-holder-macos.test.mjs' \
+            'bash scripts/packaged-macos-pr-smoke.sh'
 
   packaged-linux-built-in-lifecycle:
     name: Packaged Linux built-in lifecycle (linux-x64)
