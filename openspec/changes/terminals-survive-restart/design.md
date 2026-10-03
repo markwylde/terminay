@@ -332,6 +332,13 @@ nor killed the holder; the held shell kept its pid, answered while nothing was
 attached, and was picked up by the new version through the older holder. See
 `openspec/adr/evidence/session-holder-survives-update.md`.
 
+**The standalone server under systemd is settled.** Installed by the real
+installer in a container with systemd as PID 1, a held shell kept its pid
+through `systemctl restart` and stop/start, answered while the service was
+stopped, and survived the removal of the version directory its holder was
+started from. Without `KillMode=process` a single restart ended it. The same
+evidence file has the steps.
+
 The spike was planned for three host behaviours: whether Squirrel.Mac's installer waits on, or kills, a second process of
 the same bundle; whether a holder survives an AppImage's FUSE mount being
 unmounted when the main process exits; and whether macOS attributes the shells'

@@ -2,8 +2,8 @@
 
 Evidence for ADR-0035's open item and for task group 1 of
 `openspec/changes/terminals-survive-restart`. This file records what was run
-and what happened. The macOS in-place update has been observed; nothing here
-ran on Linux.
+and what happened. The macOS in-place update and the standalone server under a
+real systemd have been observed. The Linux AppImage has not.
 
 ## Environment
 
@@ -90,6 +90,50 @@ version 1. This is one run on one machine.
 Nothing was left running, the scratch data directory was removed, and the
 installed application's updater cache was put back as it was found.
 
+## The standalone server under a real systemd
+
+Run in a Debian 12 container (arm64) with systemd as PID 1
+(`podman run --systemd=always`), `node:24-bookworm` plus `systemd`, and a
+`terminay` account. The server was installed by the real installer from the
+published rolling archive:
+
+```sh
+terminay daemon install main --system --run-as terminay --expose off
+```
+
+which downloaded `terminay-server-main-linux-arm64.tar.gz` (revision
+`7a4261c34f68`), verified its checksum and signature, wrote the unit, and
+started it. `TERMINAY_SESSION_HOLDER=1` was then added to
+`/etc/terminay/server.env` and the server started on a fresh data root.
+
+| Step | Observed |
+| --- | --- |
+| Unit as installed | `KillSignal=SIGTERM`, `KillMode=process`, `TimeoutStopSec=15s` |
+| Archive | `server/dist/sessionHolderEntry.js` is present |
+| First start | holder (pid 269, the archive's bundled `node`) and one `bash` (pid 276) as its child, both as `terminay`, both in `system.slice/terminay-server.service` |
+| `systemctl restart` | same holder pid, same shell pid; session `default` `running`, one terminal panel |
+| `systemctl stop` | service `inactive`; holder and shell alive |
+| Shell while stopped | answered `echo stopped-$((40+2))` through the holder |
+| Second connection while a server is attached | refused as `busy` |
+| Installation removed | the version directory the holder was started from was deleted and `current` pointed at a copy; the shell still answered through the holder |
+| `systemctl start` from the copy | service `active`; session `running`; the original holder still serving it |
+| Negative control | with the `KillMode=process` line removed and the unit reloaded, one `systemctl restart` ended the holder and the shell, and the session was recorded `exited` |
+| `terminay daemon uninstall` | holder and shell ended; no process of the `terminay` account left; the data root kept |
+
+Two things worth knowing:
+
+- systemd says so when it starts a unit that still has processes from the last
+  run: `Found left-over process 1114 (bash) in control group while starting
+  unit. Ignoring. This usually indicates unclean termination of a previous run,
+  or service implementation deficiencies.` With held terminals that message is
+  expected on every start, and is not an error.
+- The holder and its shells stay in the unit's control group, so they count
+  toward any resource limit set on the unit.
+
+Not exercised here: a real `daemon upgrade` between two published versions
+(there was only one), a unit written by an older release being repaired by an
+upgrade, an x64 machine, and a user-scope install.
+
 ## Not observed
 
 - **Restart to update.** The update was installed by quitting, not through the
@@ -99,5 +143,5 @@ installed application's updater cache was put back as it was found.
   the held shell was idle at its prompt.
 - **macOS privacy permissions** for a shell whose launching application has
   exited.
-- **Linux:** an AppImage whose mount is released when the main process exits,
-  and a standalone archive under a real systemd.
+- **Linux desktop:** an AppImage whose mount is released when the main process
+  exits. The container host is arm64 and the AppImage is x86_64.
