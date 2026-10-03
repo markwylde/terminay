@@ -543,31 +543,45 @@ export interface AdvertisedIceAddress {
 	readonly port: number;
 }
 
+/**
+ * A run of consecutive UDP ports every ICE candidate is confined to, so that
+ * publishing or forwarding the run reaches all of them.
+ *
+ * It is a budget shared by every live peer: the runtime gives each candidate
+ * of each peer its own socket, and two sockets of one address family cannot
+ * share a port. A peer that finds the run spent gathers nothing.
+ */
+export interface PinnedIcePortRange {
+	readonly firstPort: number;
+	readonly span: number;
+}
+
 export function hostedPeerConfiguration(
 	connectHost: string | undefined,
 	iceServers?: readonly HostedIceServer[],
 	hostAddresses?: readonly string[],
 	advertise?: AdvertisedIceAddress,
+	pinned?: PinnedIcePortRange,
 ): Record<string, unknown> {
-	// Pinning the port range is what makes the advertised candidate forwardable:
-	// an ephemeral port cannot be named in a forwarding rule ahead of time.
+	// Pinning the port range is what makes a candidate forwardable: an ephemeral
+	// port cannot be named in a forwarding rule ahead of time. An advertised
+	// address always pins, beginning at its own port; a range may also be pinned
+	// with no advertised address, for a server whose forwarded address the
+	// client already knows from the origin it signalled through.
 	//
 	// The runtime gives every candidate its own socket from this range, so the
-	// range is also a budget. It is deliberately small — four ports an operator
-	// can publish in one line — which means a host with many local addresses
-	// offers fewer of them than it would unpinned. The advertised address is
-	// first in the list and so keeps its socket; the addresses given up are the
-	// ones that were not reaching this client anyway, which is why the option
-	// was set.
+	// range is also a budget. It is deliberately small by default — four ports
+	// an operator can publish in one line — which means a host with many local
+	// addresses offers fewer of them than it would unpinned. The advertised
+	// address is first in the list and so keeps its socket; the addresses given
+	// up are the ones that were not reaching this client anyway, which is why
+	// the option was set.
+	const firstPort = advertise?.port ?? pinned?.firstPort;
+	const span = pinned?.span ?? ADVERTISED_PORT_SPAN;
 	const advertised =
-		advertise === undefined
+		firstPort === undefined
 			? {}
-			: {
-					icePortRange: [
-						advertise.port,
-						advertise.port + ADVERTISED_PORT_SPAN - 1,
-					] as const,
-				};
+			: { icePortRange: [firstPort, firstPort + span - 1] as const };
 	const loopback =
 		connectHost === '127.0.0.1' ||
 		connectHost === 'localhost' ||

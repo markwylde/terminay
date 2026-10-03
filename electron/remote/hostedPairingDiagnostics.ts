@@ -16,6 +16,7 @@ const EVENT_NAMES = {
 	'peer-closed': 'local-server.remote-webrtc.peer-closed',
 	'candidate-pair': 'local-server.remote-webrtc.candidate-pair',
 	'approval-pending': 'local-server.remote-pairing.approval-pending',
+	'ice-range-exhausted': 'local-server.remote-webrtc.ice-range-exhausted',
 } as const;
 
 const STREAM_TYPES = new Set([
@@ -25,6 +26,7 @@ const STREAM_TYPES = new Set([
 	'application-lane',
 	'peer-closed',
 	'candidate-pair',
+	'ice-range-exhausted',
 ]);
 
 export function hostedPairingDiagnosticEvent(
@@ -35,6 +37,7 @@ export function hostedPairingDiagnosticEvent(
 		event.type === 'failed' ||
 		event.type === 'signaling-closed' ||
 		event.type === 'peer-closed' ||
+		event.type === 'ice-range-exhausted' ||
 		event.sendFailure === true ||
 		event.channelState === 'closed' ||
 		event.channelState === 'failed';

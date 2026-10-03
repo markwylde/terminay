@@ -167,6 +167,64 @@ jobs:
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: npm run test:real-webrtc
 
+  # Builds the official image and pairs Desktop's own pairing and reconnect
+  # code with it, from a container whose network position each case chooses.
+  # The image is the artifact a person runs first, so it is gated here rather
+  # than discovered broken after a release publishes it.
+  container-image-smoke:
+    name: Container image smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@12.2.0
+          npm ci
+
+      - name: Validate image packaging contract
+        run: node --test scripts/ghcr-image.test.mjs
+
+      - name: Build the official image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            --file ./Dockerfile \
+            --tag "terminay-image-smoke:${GITHUB_SHA}" \
+            --build-arg OCI_REVISION="${GITHUB_SHA}" \
+            .
+
+      # The device half of the test is bundled from Desktop's sources, which
+      # import these workspace packages by their built output.
+      - name: Build the packages Desktop's pairing code imports
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+        run: npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
+
+      - name: Pair Desktop's pairing code with the image
+        run: |
+          node scripts/container-image-smoke.mjs \
+            --image "terminay-image-smoke:${GITHUB_SHA}" \
+            --engine docker
+
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        run: |
+          docker image rm "terminay-image-smoke:${GITHUB_SHA}" >/dev/null 2>&1 || true
+          sh scripts/prune-ci-docker-images.sh
+
   mcp-cli-compatibility:
     name: Real MCP CLI compatibility
     runs-on: ubuntu-latest

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Entrypoint of the official image: the standalone server in the foreground, as
+# the container's main process. Configuration comes from the image's
+# environment defaults and anything the operator overrides; arguments are
+# passed through, so `docker run <image> --version` works.
+set -eu
+
+umask 077
+data_root=${TERMINAY_DATA_ROOT:-/var/lib/terminay}
+case "$data_root" in
+  /*) ;;
+  *) echo "TERMINAY_DATA_ROOT must be an absolute path in the container" >&2; exit 78 ;;
+esac
+if [ ! -d "$data_root" ]; then
+  mkdir -p "$data_root"
+fi
+if [ ! -w "$data_root" ]; then
+  echo "Terminay data root is not writable by uid $(id -u): $data_root" >&2
+  exit 78
+fi
+export TERMINAY_DATA_ROOT="$data_root"
+
+exec /opt/terminay/bin/terminay-server "$@"

@@ -1,7 +1,29 @@
+import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import type { AdvertisedIceAddress } from './remote/hostedPeerLifecycle.js';
 
 export type { AdvertisedIceAddress };
+
+/** Length of the pinned ICE range when none is configured. It equals the
+ * peer configuration's `ADVERTISED_PORT_SPAN`; this module stays free of
+ * runtime imports so option parsing can be loaded on its own. */
+export const DEFAULT_ICE_PORT_SPAN = 4;
+
+/** First UDP port of the ICE range a server pins when it is told to pin one
+ * without being told where. */
+export const DEFAULT_ICE_PORT = 51_000;
+
+/**
+ * The one address or name at which devices reach this server.
+ *
+ * `address` is a routable literal: usable both in an origin and as an ICE
+ * candidate. `loopback` and `name` can only name an origin — a candidate must
+ * be a literal address, and a browser need not probe a remote loopback one.
+ */
+export interface PublicHost {
+	readonly host: string;
+	readonly kind: 'address' | 'loopback' | 'name';
+}
 
 /** The exposure paths a standalone server may open at startup. */
 export type ServerExposureMode = 'hosted' | 'direct';
@@ -57,6 +79,18 @@ export interface ServerCliOptions {
 	 * port forward, or in a container whose network the client cannot route to.
 	 * Added to the gathered candidates, never in place of them. */
 	readonly advertiseAddress?: AdvertisedIceAddress;
+	/** The one address or name devices reach this server at. Derives the direct
+	 * origin and, for a routable literal, the advertised ICE address, wherever
+	 * the administrator did not set those explicitly. A routing hint only. */
+	readonly publicHost?: PublicHost;
+	/** First port of a run of UDP ports every ICE candidate is confined to, for
+	 * a range pinned with no advertised address. An advertised address pins the
+	 * range at its own port and leaves this unset. */
+	readonly icePort?: number;
+	/** Length of the pinned run. A budget shared by every live peer. */
+	readonly icePortSpan: number;
+	/** Source revision this build was made from, when the build recorded one. */
+	readonly serverRevision?: string;
 	/** Whether this standalone host should reconcile its managed provider hooks. */
 	readonly agentIntegrationEnabled: boolean;
 	readonly aiProviders: readonly ('codex' | 'claude-code')[];
@@ -138,25 +172,78 @@ export function parseServerCliOptions(
 	const exposeModes = parseExposeModes(
 		value(argv, '--expose') ?? env.TERMINAY_EXPOSE,
 	);
+	const publicHostValue = value(argv, '--public-host') ?? env.TERMINAY_PUBLIC_HOST;
+	const publicHost =
+		publicHostValue === undefined || publicHostValue.trim() === ''
+			? undefined
+			: parsePublicHost(publicHostValue);
+	const httpPort =
+		httpPortValue === undefined
+			? undefined
+			: parsePort(httpPortValue, '--http-port');
 	const directOriginValue =
 		value(argv, '--direct-origin') ?? env.TERMINAY_DIRECT_ORIGIN;
+	// An explicit origin wins. Otherwise the public host names it, on the port
+	// the listener answers on — the only port a client could reach it at.
 	const directOrigin =
-		directOriginValue === undefined
-			? undefined
-			: normalizeDirectOrigin(directOriginValue);
+		directOriginValue !== undefined
+			? normalizeDirectOrigin(directOriginValue)
+			: publicHost !== undefined && exposeModes.includes('direct')
+				? directOriginForPublicHost(publicHost, httpPort)
+				: undefined;
 	if (exposeModes.includes('direct') && directOrigin === undefined) {
 		throw new Error(
-			'--expose direct requires --direct-origin (TERMINAY_DIRECT_ORIGIN)',
+			'--expose direct requires --direct-origin (TERMINAY_DIRECT_ORIGIN) or --public-host (TERMINAY_PUBLIC_HOST)',
 		);
 	}
+	const icePortValue = value(argv, '--ice-port') ?? env.TERMINAY_ICE_PORT;
+	const configuredIcePort =
+		icePortValue === undefined || icePortValue.trim() === ''
+			? undefined
+			: parseIcePort(icePortValue);
+	const icePortSpanValue =
+		value(argv, '--ice-port-span') ?? env.TERMINAY_ICE_PORT_SPAN;
+	const icePortSpan =
+		icePortSpanValue === undefined || icePortSpanValue.trim() === ''
+			? DEFAULT_ICE_PORT_SPAN
+			: parseIcePortSpan(icePortSpanValue);
 	const advertiseAddressValue =
 		value(argv, '--advertise-address') ?? env.TERMINAY_WEBRTC_ADVERTISE_ADDRESS;
 	// An empty value clears a previously configured address rather than failing,
-	// so an operator can turn it off the same way they turned it on.
+	// so an operator can turn it off the same way they turned it on. It also
+	// declines the address a public host would otherwise derive: the operator
+	// said none.
 	const advertiseAddress =
-		advertiseAddressValue === undefined || advertiseAddressValue.trim() === ''
-			? undefined
-			: parseAdvertiseAddress(advertiseAddressValue);
+		advertiseAddressValue !== undefined
+			? advertiseAddressValue.trim() === ''
+				? undefined
+				: parseAdvertiseAddress(advertiseAddressValue)
+			: publicHost?.kind === 'address'
+				? Object.freeze({
+						host: publicHost.host,
+						port: configuredIcePort ?? DEFAULT_ICE_PORT,
+					})
+				: undefined;
+	if (
+		advertiseAddress !== undefined &&
+		configuredIcePort !== undefined &&
+		advertiseAddress.port !== configuredIcePort
+	) {
+		throw new Error(
+			'--ice-port must equal the --advertise-address port: the advertised candidate is offered on the first pinned port',
+		);
+	}
+	// An advertised address pins the range at its own port without this option
+	// being set; `icePort` records only what the administrator configured.
+	const icePort = configuredIcePort;
+	const firstPinnedPort = advertiseAddress?.port ?? configuredIcePort;
+	if (
+		firstPinnedPort !== undefined &&
+		firstPinnedPort + icePortSpan - 1 > 65535
+	) {
+		throw new Error('the pinned ICE port range runs past port 65535');
+	}
+	const serverRevision = parseRevision(env.TERMINAY_SERVER_REVISION);
 	return Object.freeze({
 		command,
 		serverId,
@@ -182,9 +269,7 @@ export function parseServerCliOptions(
 			? {}
 			: { publicOrigin: normalizePublicOrigin(publicOrigin) }),
 		...(httpHost === undefined ? {} : { httpHost }),
-		...(httpPortValue === undefined
-			? {}
-			: { httpPort: parsePort(httpPortValue, '--http-port') }),
+		...(httpPort === undefined ? {} : { httpPort }),
 		...(healthHost === undefined ? {} : { healthHost }),
 		...(healthPortValue === undefined
 			? {}
@@ -195,6 +280,10 @@ export function parseServerCliOptions(
 		exposeModes,
 		...(directOrigin === undefined ? {} : { directOrigin }),
 		...(advertiseAddress === undefined ? {} : { advertiseAddress }),
+		...(publicHost === undefined ? {} : { publicHost }),
+		...(icePort === undefined ? {} : { icePort }),
+		icePortSpan,
+		...(serverRevision === undefined ? {} : { serverRevision }),
 		agentIntegrationEnabled: parseAgentIntegration(agentIntegrationValue),
 		aiProviders: parseAiProviders(aiProvidersValue),
 		...(vaultUnlockFdValue === undefined
@@ -220,7 +309,11 @@ export function formatServerHelp(): string {
 		'  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)',
 		"  --hosted-domain DOMAIN  hosted signaling domain for this server's session origin (TERMINAY_HOSTED_DOMAIN)",
 		'  --expose MODES     exposure to enable at startup: off, hosted, direct, or hosted,direct (TERMINAY_EXPOSE)',
-		"  --direct-origin URL advertised HTTPS origin of this server's own signaling listener; required by --expose direct (TERMINAY_DIRECT_ORIGIN)",
+		"  --direct-origin URL advertised HTTPS origin of this server's own signaling listener; required by --expose direct unless --public-host is set (TERMINAY_DIRECT_ORIGIN)",
+		'  --public-host HOST the one address or name devices reach this server at; derives the direct origin and, for a routable literal address, the advertised ICE address (TERMINAY_PUBLIC_HOST)',
+		'  --advertise-address HOST:PORT  a literal address and UDP port to offer as an additional ICE candidate (TERMINAY_WEBRTC_ADVERTISE_ADDRESS)',
+		'  --ice-port PORT    first UDP port of a pinned ICE range, so the range can be published or forwarded (TERMINAY_ICE_PORT)',
+		'  --ice-port-span N  number of consecutive UDP ports in the pinned ICE range; a budget shared by every connected device (TERMINAY_ICE_PORT_SPAN)',
 		'  --agent-integration MODE  observe supported agent session journals: enabled or disabled (TERMINAY_AGENT_INTEGRATION)',
 		'  --ai-providers LIST  opt in to bounded server CLI providers: codex,claude-code (TERMINAY_AI_PROVIDERS)',
 		'  --health-host HOST unauthenticated liveness/readiness bind host (TERMINAY_HEALTH_HOST)',
@@ -319,6 +412,93 @@ function normalizeDirectOrigin(value: string): string {
 		throw new Error('--direct-origin must be an exact origin');
 	}
 	return parsed.origin;
+}
+
+/**
+ * Parse the public host: a literal address or a DNS name, with no scheme, port,
+ * or path. Brackets around an IPv6 literal are accepted and dropped.
+ */
+export function parsePublicHost(value: string): PublicHost {
+	const trimmed = value.trim();
+	const host =
+		trimmed.startsWith('[') && trimmed.endsWith(']')
+			? trimmed.slice(1, -1)
+			: trimmed;
+	if (isIP(host) === 4) {
+		if (host === '0.0.0.0')
+			throw new Error('--public-host must be an address devices can reach');
+		return Object.freeze({
+			host,
+			kind: host.startsWith('127.') ? 'loopback' : 'address',
+		});
+	}
+	if (isIP(host) === 6) {
+		const compact = host.toLowerCase();
+		if (compact === '::')
+			throw new Error('--public-host must be an address devices can reach');
+		return Object.freeze({
+			host: compact,
+			kind: compact === '::1' ? 'loopback' : 'address',
+		});
+	}
+	if (
+		host.length > 253 ||
+		!/^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/u.test(
+			host,
+		) ||
+		/^[0-9.]+$/u.test(host)
+	) {
+		throw new Error(
+			'--public-host must be a literal address or a host name, with no scheme, port, or path',
+		);
+	}
+	const name = host.toLowerCase();
+	return Object.freeze({
+		host: name,
+		kind: name === 'localhost' || name.endsWith('.localhost') ? 'loopback' : 'name',
+	});
+}
+
+function directOriginForPublicHost(
+	publicHost: PublicHost,
+	httpPort: number | undefined,
+): string {
+	// Port 0 asks the listener to choose, so there is no port to name yet.
+	if (httpPort === undefined || httpPort === 0) {
+		throw new Error(
+			'--public-host needs --http-port (TERMINAY_HTTP_PORT) to derive the direct origin',
+		);
+	}
+	const host = publicHost.host.includes(':')
+		? `[${publicHost.host}]`
+		: publicHost.host;
+	return normalizeDirectOrigin(`https://${host}:${httpPort}`);
+}
+
+function parseIcePort(value: string): number {
+	if (!/^[0-9]+$/u.test(value)) throw new Error('--ice-port must be a number');
+	const port = Number(value);
+	if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
+		throw new Error('--ice-port must be between 1 and 65535');
+	return port;
+}
+
+function parseIcePortSpan(value: string): number {
+	if (!/^[0-9]+$/u.test(value))
+		throw new Error('--ice-port-span must be a number');
+	const span = Number(value);
+	// The WebRTC runtime rejects a range of one port.
+	if (!Number.isSafeInteger(span) || span < 2 || span > 1024)
+		throw new Error('--ice-port-span must be between 2 and 1024');
+	return span;
+}
+
+function parseRevision(value: string | undefined): string | undefined {
+	if (value === undefined || value.trim() === '') return undefined;
+	const revision = value.trim();
+	if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/u.test(revision))
+		throw new Error('TERMINAY_SERVER_REVISION is not a revision identifier');
+	return revision;
 }
 
 /**

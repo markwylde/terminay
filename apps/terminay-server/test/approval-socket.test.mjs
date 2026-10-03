@@ -135,6 +135,64 @@ test('the pairing op reports one live handoff per exposure mode and can mint a f
 	);
 });
 
+test('the status op reports readiness, build, and reachability, and nothing else', async () => {
+	assert.deepEqual(parseApprovalSocketRequest({ op: 'status' }), {
+		op: 'status',
+	});
+	assert.throws(
+		() => parseApprovalSocketRequest({ op: 'status', verbose: true }),
+		/invalid/u,
+	);
+
+	const full = await handleApprovalSocketRequest(
+		{ op: 'status' },
+		{
+			...authority({ modes: ['hosted', 'direct'] }),
+			serverStatus: () => ({
+				ready: true,
+				version: '4.2.0',
+				revision: 'abc123def4567890',
+				exposeModes: ['hosted', 'direct'],
+				publicHost: '192.168.2.218',
+				advertiseAddress: '192.168.2.218:51000',
+				// An authority that carries more than the summary still cannot
+				// send it: the response is rebuilt from the six named fields.
+				dataRoot: '/var/lib/terminay',
+				hostKey: 'never',
+			}),
+		},
+	);
+	assert.deepEqual(full, {
+		ok: true,
+		status: {
+			ready: true,
+			version: '4.2.0',
+			revision: 'abc123def4567890',
+			exposeModes: ['hosted', 'direct'],
+			publicHost: '192.168.2.218',
+			advertiseAddress: '192.168.2.218:51000',
+		},
+	});
+
+	// What a server was not told is absent rather than empty.
+	const bare = await handleApprovalSocketRequest(
+		{ op: 'status' },
+		{
+			...authority(),
+			serverStatus: () => ({ ready: false, version: '4.2.0', exposeModes: [] }),
+		},
+	);
+	assert.deepEqual(bare, {
+		ok: true,
+		status: { ready: false, version: '4.2.0', exposeModes: [] },
+	});
+
+	assert.deepEqual(
+		await handleApprovalSocketRequest({ op: 'status' }, authority()),
+		{ ok: false, error: 'this server does not report its status' },
+	);
+});
+
 test('a server nobody exposed answers the pairing op with no URL at all', async () => {
 	assert.deepEqual(
 		await handleApprovalSocketRequest({ op: 'pairing' }, authority()),

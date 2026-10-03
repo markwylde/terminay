@@ -39,6 +39,11 @@ import {
 	createDesktopClientNonce,
 } from './desktopAuthenticatedWebRtc';
 import type { DesktopDeviceCredentialStore } from './deviceCredentialStore';
+import {
+	deriveDirectOriginCandidates,
+	descriptionCandidates,
+	directOriginAddresses,
+} from './directOriginCandidate';
 
 /**
  * Desktop as a hosted client, on exactly the contract the browser shell uses:
@@ -186,6 +191,10 @@ export async function connectDesktopHostedPeer(
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
 		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
 		iceDisconnectLimitMs?: number;
+		/** Test seam; production resolves the direct origin's host itself. */
+		resolveDirectOriginAddresses?: (
+			directOrigin: string,
+		) => Promise<readonly string[]>;
 	}>,
 ): Promise<DesktopHostedPeer> {
 	const sessionOrigin = normalizeHostedOrigin(options.sessionOrigin);
@@ -296,6 +305,33 @@ export async function connectDesktopHostedPeer(
 	let serverId: string | undefined;
 	const remoteIce: Array<Readonly<{ candidate: string; sdpMid: string }>> = [];
 	let remoteSet = false;
+	// The host of a direct origin reaches the server's machine: signaling just
+	// arrived through it. A server behind a forward or in a container may offer
+	// no address this client can route to, so each UDP host port it offers is
+	// also tried at that host. Hosted signaling derives nothing — the relay's
+	// host is not the server's. Derived candidates are added only once the
+	// server's signed description has verified, and a hint that cannot be added
+	// never fails the connection.
+	const directAddresses =
+		classifyPairingOrigin(sessionOrigin) === 'direct'
+			? (options.resolveDirectOriginAddresses ?? directOriginAddresses)(
+					sessionOrigin,
+				)
+			: Promise.resolve([] as readonly string[]);
+	const derivedCandidates = new Set<string>();
+	const addDirectOriginCandidates = async (
+		offered: Readonly<{ candidate: string; sdpMid: string }>,
+	) => {
+		for (const candidate of deriveDirectOriginCandidates(
+			offered.candidate,
+			await directAddresses,
+			derivedCandidates,
+		)) {
+			await peer
+				.addIceCandidate({ candidate, sdpMid: offered.sdpMid })
+				.catch(() => undefined);
+		}
+	};
 	const scopeId =
 		options.scope.kind === 'pairing'
 			? secrets!.pairingRoomId
@@ -486,8 +522,12 @@ export async function connectDesktopHostedPeer(
 						type: options.scope.kind === 'pairing' ? 'answer' : 'device-answer',
 						sdp: { type: 'answer', sdp: local.sdp },
 					});
-					for (const candidate of remoteIce.splice(0))
+					for (const candidate of descriptionCandidates(description.sdp))
+						await addDirectOriginCandidates(candidate);
+					for (const candidate of remoteIce.splice(0)) {
 						await peer.addIceCandidate(candidate);
+						await addDirectOriginCandidates(candidate);
+					}
 					return;
 				}
 				if (message.type === 'ice' || message.type === 'device-ice') {
@@ -504,8 +544,10 @@ export async function connectDesktopHostedPeer(
 						candidate: candidate.candidate,
 						sdpMid: candidate.sdpMid,
 					};
-					if (remoteSet) await peer.addIceCandidate(parsed);
-					else remoteIce.push(parsed);
+					if (remoteSet) {
+						await peer.addIceCandidate(parsed);
+						await addDirectOriginCandidates(parsed);
+					} else remoteIce.push(parsed);
 				}
 			})().catch((error: unknown) =>
 				finish(error instanceof Error ? error : new Error(String(error))),
@@ -575,6 +617,10 @@ export async function pairDesktopHostedDevice(
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
 		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
 		iceDisconnectLimitMs?: number;
+		/** Test seam; production resolves the direct origin's host itself. */
+		resolveDirectOriginAddresses?: (
+			directOrigin: string,
+		) => Promise<readonly string[]>;
 		onMatchCode?: (
 			code: Readonly<{ matchCode: string; expiresAt: number }>,
 		) => void;
@@ -624,6 +670,11 @@ export async function pairDesktopHostedDevice(
 		...(options.iceDisconnectLimitMs === undefined
 			? {}
 			: { iceDisconnectLimitMs: options.iceDisconnectLimitMs }),
+		...(options.resolveDirectOriginAddresses === undefined
+			? {}
+			: {
+					resolveDirectOriginAddresses: options.resolveDirectOriginAddresses,
+				}),
 	});
 	try {
 		const paired = await establishDevicePairing({
@@ -687,6 +738,10 @@ export async function connectDesktopHostedRemote(
 		onCandidatePair?: (pair: SelectedIceCandidatePair) => void;
 		/** Test seam; production uses `DEFAULT_ICE_DISCONNECT_LIMIT_MS`. */
 		iceDisconnectLimitMs?: number;
+		/** Test seam; production resolves the direct origin's host itself. */
+		resolveDirectOriginAddresses?: (
+			directOrigin: string,
+		) => Promise<readonly string[]>;
 	}>,
 ): Promise<DesktopHostedConnection> {
 	const origin = normalizeHostedOrigin(options.origin);
@@ -736,6 +791,11 @@ export async function connectDesktopHostedRemote(
 		...(options.iceDisconnectLimitMs === undefined
 			? {}
 			: { iceDisconnectLimitMs: options.iceDisconnectLimitMs }),
+		...(options.resolveDirectOriginAddresses === undefined
+			? {}
+			: {
+					resolveDirectOriginAddresses: options.resolveDirectOriginAddresses,
+				}),
 	});
 	try {
 		const { ticket } = await authenticateDevice({
