@@ -432,7 +432,7 @@ test("GitService serializes concurrent worktree removals for one repository", as
 test("GitService clean-only removal deletes only worktrees that are still clean", async () => {
   const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-clean-"));
-  const paths = Object.fromEntries(["clean", "squashed", "untracked", "unmerged", "advanced", "locked"].map((name) => [name, join(root, name)]));
+  const paths = Object.fromEntries(["clean", "squashed", "untracked", "unmerged", "advanced", "locked", "locked-dirty"].map((name) => [name, join(root, name)]));
   try {
     await git(["init", "-b", "main"], root);
     await git(["config", "user.email", "test@example.invalid"], root);
@@ -450,7 +450,8 @@ test("GitService clean-only removal deletes only worktrees that are still clean"
     await writeFile(join(paths.unmerged, "unmerged.txt"), "unmerged\n");
     await git(["add", "unmerged.txt"], paths.unmerged);
     await git(["commit", "-m", "unmerged work"], paths.unmerged);
-    await git(["worktree", "lock", paths.locked], root);
+    await git(["worktree", "lock", "--reason", "claude session locked (pid 1)", paths.locked], root);
+    await git(["worktree", "lock", "--reason", "agent at work", paths["locked-dirty"]], root);
 
     const service = new GitService();
     const binding = await service.bindProject("project", root);
@@ -462,7 +463,6 @@ test("GitService clean-only removal deletes only worktrees that are still clean"
 
     await assert.rejects(() => service.removeCleanWorktree(request(main)), (error) => error instanceof GitServiceError && error.code === "worktree-main");
     await assert.rejects(() => service.removeCleanWorktree({ ...request(find("clean")), expectedHead: undefined }), (error) => error instanceof GitServiceError && error.code === "invalid-operation");
-    await assert.rejects(() => service.removeCleanWorktree(request(find("locked"))), (error) => error instanceof GitServiceError && error.code === "worktree-locked");
     await assert.rejects(() => service.removeCleanWorktree(request(find("unmerged"))), (error) => error instanceof GitServiceError && error.code === "worktree-dirty");
 
     // Work that lands after the reviewed listing is never swept away.
@@ -474,7 +474,15 @@ test("GitService clean-only removal deletes only worktrees that are still clean"
     await git(["commit", "-m", "advanced after the listing"], paths.advanced);
     await assert.rejects(() => service.removeCleanWorktree(request(find("advanced"))), (error) => error instanceof GitServiceError && error.code === "stale-revision");
 
-    for (const name of ["clean", "squashed"]) {
+    // A lock never hides work: a locked worktree that is no longer clean is
+    // refused and keeps its lock and the reason recorded with it.
+    await writeFile(join(paths["locked-dirty"], "late.txt"), "written after the listing\n");
+    await assert.rejects(() => service.removeCleanWorktree(request(find("locked-dirty"))), (error) => error instanceof GitServiceError && error.code === "worktree-dirty");
+    await access(join(paths["locked-dirty"], "late.txt"));
+    assert.match((await execFileAsync("git", ["worktree", "list", "--porcelain"], { cwd: root })).stdout, /^locked agent at work$/m);
+
+    // A lock alone does not keep a clean worktree.
+    for (const name of ["clean", "squashed", "locked"]) {
       const removed = await service.removeCleanWorktree(request(find(name)));
       assert.equal(removed.applied, true);
       assert.equal(removed.state, "removed");
@@ -483,7 +491,7 @@ test("GitService clean-only removal deletes only worktrees that are still clean"
       await git(["rev-parse", "--verify", `refs/heads/${name}`], root);
     }
     const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
-    assert.deepEqual(after.worktrees.filter((worktree) => !worktree.isMain).map((worktree) => worktree.path.split("/").at(-1)).sort(), ["advanced", "locked", "unmerged", "untracked"]);
+    assert.deepEqual(after.worktrees.filter((worktree) => !worktree.isMain).map((worktree) => worktree.path.split("/").at(-1)).sort(), ["advanced", "locked-dirty", "unmerged", "untracked"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

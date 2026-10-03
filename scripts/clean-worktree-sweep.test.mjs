@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   cleanWorktreeSweepConfirmation,
   cleanWorktreeSweepOutcome,
+  cleanWorktreeSweepTargetName,
   isBulkDeletableWorktree,
   isWorktreeShownClean,
 } from '../src/workspace/cleanWorktreeSweep.ts'
@@ -47,7 +48,6 @@ test('the bulk delete nominates clean linked worktrees and nothing protected or 
     { isMain: true },
     { isBare: true },
     { isCurrent: true },
-    { isLocked: true },
     { isPrunable: true },
     { head: null },
     { errorMessage: 'Worktree status failed.' },
@@ -56,6 +56,13 @@ test('the bulk delete nominates clean linked worktrees and nothing protected or 
   }
   assert.equal(isBulkDeletableWorktree(worktree(), new Set(['/workspace/repo-feature'])), false)
   assert.equal(isBulkDeletableWorktree(worktree(), new Set(['/workspace/other'])), true)
+})
+
+test('a lock does not keep a clean worktree out of the bulk delete, and is named', () => {
+  assert.equal(isBulkDeletableWorktree(worktree({ isLocked: true })), true)
+  assert.equal(isBulkDeletableWorktree(worktree({ isLocked: true, entries: [{ path: '/workspace/repo-feature/a' }] })), false)
+  assert.equal(cleanWorktreeSweepTargetName(worktree({ isLocked: true })), 'repo-feature (locked)')
+  assert.equal(cleanWorktreeSweepTargetName(worktree()), 'repo-feature')
 })
 
 test('the confirmation counts and names every target, truncating a long list', () => {

@@ -687,6 +687,8 @@ test('git pane menu deletes every clean worktree and leaves changed ones alone',
     await git(['worktree', 'add', '-b', branch, worktree.rootDir])
   }
   await dirty.writeText('untracked.txt', 'work in progress\n')
+  // An agent session locks the worktree it creates and leaves the lock behind.
+  await git(['worktree', 'lock', '--reason', 'claude session (pid 1)', cleanTwo.rootDir])
 
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
@@ -707,7 +709,7 @@ test('git pane menu deletes every clean worktree and leaves changed ones alone',
   const [declined] = await dialogs.getCalls()
   expect(declined.message).toMatch(/^Delete 2 clean worktrees\?/)
   expect(declined.message).toContain('git-pane-sweep-clean-one')
-  expect(declined.message).toContain('git-pane-sweep-clean-two')
+  expect(declined.message).toContain('git-pane-sweep-clean-two (locked)')
   expect(declined.message).not.toContain('git-pane-sweep-dirty')
   expect(declined.message).not.toContain('git-pane-sweep-main')
   await expect(row('git-pane-sweep-clean-one')).toBeVisible()

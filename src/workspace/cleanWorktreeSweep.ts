@@ -18,8 +18,9 @@ export function isWorktreeShownClean(worktree: WorktreeCleanliness): boolean {
 
 /** Whether "Delete all clean worktrees" may nominate this worktree. The server
  * decides again before removing anything; this only chooses what the user is
- * asked to confirm. A lock is an explicit "keep this", and a worktree whose
- * status could not be read is not known to be clean. */
+ * asked to confirm. A lock does not protect a clean worktree: agent sessions
+ * leave theirs behind, and the confirmation names each locked target. A
+ * worktree whose status could not be read is not known to be clean. */
 export function isBulkDeletableWorktree(
 	worktree: GitWorktreeStatus,
 	busyWorktreePaths?: ReadonlySet<string>,
@@ -29,7 +30,6 @@ export function isBulkDeletableWorktree(
 		!worktree.isMain &&
 		!worktree.isBare &&
 		!worktree.isCurrent &&
-		!worktree.isLocked &&
 		!worktree.isPrunable &&
 		worktree.head !== null &&
 		worktree.errorMessage === undefined &&
@@ -48,6 +48,13 @@ function listedNames(names: readonly string[]): string {
 
 function worktreeCount(count: number): string {
 	return `${count} clean worktree${count === 1 ? '' : 's'}`;
+}
+
+/** How the confirmation names a target, so a lock about to be lifted is seen. */
+export function cleanWorktreeSweepTargetName(
+	worktree: Pick<GitWorktreeStatus, 'name' | 'isLocked'>,
+): string {
+	return worktree.isLocked ? `${worktree.name} (locked)` : worktree.name;
 }
 
 export function cleanWorktreeSweepConfirmation(
