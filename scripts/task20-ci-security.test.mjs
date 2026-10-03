@@ -129,7 +129,7 @@ test("every release job has an explicit bounded runtime", () => {
   const jobs = new Map([...jobsSection.matchAll(/^ {2}([a-z][\w-]*):\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/gmu)]
     .map(([, name, body]) => [name, body]));
 
-  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes"]);
+  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes", "publish-server-image"]);
   for (const [name, body] of jobs) {
     const timeout = body.match(/^ {4}timeout-minutes:\s*(\d+)\s*$/mu);
     assert.ok(timeout, `${name} must define an explicit job timeout`);
@@ -171,13 +171,17 @@ test("release write permission is isolated to jobs that mutate release state", (
   const jobsSection = release.slice(jobsStart + "\njobs:\n".length);
   const jobs = new Map([...jobsSection.matchAll(/^ {2}([a-z][\w-]*):\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/gmu)]
     .map(([, name, body]) => [name, body]));
-  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes"]);
+  assert.deepEqual([...jobs.keys()], ["smoke-test", "release", "build-binaries", "build-standalone-server", "publish-cli", "publish-release-notes", "publish-server-image"]);
 
   assert.doesNotMatch(jobs.get("smoke-test"), /^ {4}permissions:/mu,
     "smoke-test must inherit the read-only workflow token");
   // npm trusted publishing needs an OIDC token, never release write access.
   assert.match(jobs.get("publish-cli"), /^ {4}permissions:\n {6}contents: read\n(?: {6}#.*\n)* {6}id-token: write$/mu,
     "publish-cli must hold a read-only contents token beside its OIDC token");
+  // Dispatching the image workflow needs to raise a workflow event and nothing
+  // else: it must not be able to touch the release it follows.
+  assert.match(jobs.get("publish-server-image"), /^ {4}permissions:\n {6}contents: read\n(?: {6}#.*\n)* {6}actions: write$/mu,
+    "publish-server-image must hold a read-only contents token beside its dispatch permission");
   for (const name of ["release", "build-binaries", "build-standalone-server", "publish-release-notes"]) {
     assert.match(jobs.get(name), /^ {4}permissions:\n {6}contents: write$/mu,
       `${name} must explicitly declare the narrowly scoped release-write token`);
