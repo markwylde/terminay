@@ -9,14 +9,28 @@
 // `beforeAll`, or that declares itself one group. Splitting it would repeat
 // the setup in every shard, or break tests that rely on running in order.
 
+//
+// A test tagged `@heavy` counts for several: one that packages the application
+// or waits for a real minute boundary takes as long as a handful of ordinary
+// tests, and its shard should be dealt that many fewer.
+
 const TITLE_SEPARATOR = ' › ';
+/** How many ordinary tests a `@heavy` one stands for when shards are filled. */
+export const HEAVY_TEST_WEIGHT = 6;
 
 /** Every test in a `playwright test --list --reporter=json` report, in order. */
 export function listedTests(report) {
 	const tests = [];
 	const visit = (suite, titles) => {
 		for (const spec of suite.specs ?? [])
-			tests.push({ file: spec.file, titles: [...titles, spec.title] });
+			tests.push({
+				file: spec.file,
+				titles: [...titles, spec.title],
+				// The JSON reporter writes tags without their `@`.
+				weight: (spec.tags ?? []).some((tag) => tag.replace(/^@/u, '') === 'heavy')
+					? HEAVY_TEST_WEIGHT
+					: 1,
+			});
 		for (const child of suite.suites ?? [])
 			visit(child, [...titles, child.title]);
 	};
@@ -59,17 +73,17 @@ export function shardUnits(tests, keepsTogether) {
 }
 
 /**
- * Deal units to `total` shards: each goes to the shard holding the fewest
- * tests so far, the earliest on a tie. For single tests that is a plain deal
- * in turn; a whole file counts for as many tests as it has.
+ * Deal units to `total` shards: each goes to the shard holding the least so
+ * far, the earliest on a tie. For ordinary single tests that is a plain deal
+ * in turn; a whole file counts for all its tests, and a heavy test for several.
  */
 export function dealToShards(units, total) {
-	const shards = Array.from({ length: total }, () => ({ count: 0, units: [] }));
+	const shards = Array.from({ length: total }, () => ({ load: 0, units: [] }));
 	for (const unit of units) {
 		let target = shards[0];
-		for (const shard of shards) if (shard.count < target.count) target = shard;
+		for (const shard of shards) if (shard.load < target.load) target = shard;
 		target.units.push(unit);
-		target.count += unit.tests.length;
+		for (const test of unit.tests) target.load += test.weight ?? 1;
 	}
 	return shards.map((shard) => shard.units);
 }
