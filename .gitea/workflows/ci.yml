@@ -204,6 +204,15 @@ jobs:
             --build-arg OCI_REVISION="${GITHUB_SHA}" \
             .
 
+      # The device half of the test is bundled from Desktop's sources, which
+      # import these workspace packages by their built output.
+      - name: Build the packages Desktop's pairing code imports
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+        run: npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
+
       - name: Pair Desktop's pairing code with the image
         run: |
           node scripts/container-image-smoke.mjs \
