@@ -61,6 +61,10 @@ import './AppWindowHost.css';
 /** Fired by the workspace when the docking layout or active project changes. */
 export const APP_WINDOW_LAYOUT_EVENT = 'terminay-app-window-layout';
 const RAIL_VARIABLE = '--app-window-rail';
+const RAIL_SELECTOR = ':scope > .terminal-app-window-rail';
+const TERMINAL_SELECTOR = ':scope > .terminal-panel-root';
+/** A phone or tablet: focusing the terminal there raises the software keyboard. */
+const TOUCH_DEVICE_QUERY = '(hover: none) and (pointer: coarse)';
 /**
  * How long a view that is about to be removed is kept after it has been told,
  * so that it hears. A frame that is removed at once never receives the message.
@@ -154,11 +158,19 @@ export function AppWindowHost(): ReactElement | null {
 			const next = new Map<string, PaneFrame>();
 			for (const [key, pane] of panesRef.current) {
 				const rect = pane.element.getBoundingClientRect();
+				// Windows and tabs end where the rail ends. A pane may put rows of
+				// its own under the rail (on a phone, the keyboard's command bar),
+				// and nothing of a window may cover those.
+				const rail = pane.element.querySelector(RAIL_SELECTOR)?.getBoundingClientRect();
+				const bottom =
+					rail !== undefined && rail.bottom > rect.top
+						? Math.min(rail.bottom, rect.bottom)
+						: rect.bottom;
 				const frame: PaneFrame = {
 					left: Math.round(rect.left),
 					top: Math.round(rect.top),
 					width: Math.round(rect.width),
-					height: Math.round(rect.height),
+					height: Math.round(bottom - rect.top),
 					visible: isPaneVisible(pane),
 				};
 				if (!sameFrame(previous.get(key), frame)) changed = true;
@@ -180,7 +192,13 @@ export function AppWindowHost(): ReactElement | null {
 			});
 		};
 		const observer = new ResizeObserver(schedule);
-		for (const pane of panes.values()) observer.observe(pane.element);
+		for (const pane of panes.values()) {
+			observer.observe(pane.element);
+			// The rail moves, without the pane changing size, when a row appears
+			// under it. The terminal above it changes size whenever that happens.
+			const terminal = pane.element.querySelector(TERMINAL_SELECTOR);
+			if (terminal !== null) observer.observe(terminal);
+		}
 		window.addEventListener('resize', schedule);
 		window.addEventListener(APP_WINDOW_LAYOUT_EVENT, schedule);
 		measure();
@@ -415,6 +433,8 @@ function AppWindowCard(props: CardProps): ReactElement {
 	const isTab = placed.placement === 'tab';
 	const hidden = !frame.visible || placed.placement === 'hidden';
 	const drag = useRef<{ startX: number; offset: number; moved: boolean } | null>(null);
+	/** The press that just ended moved the tab, so its click is not an activation. */
+	const dragged = useRef(false);
 	const [dragging, setDragging] = useState(false);
 	// A view runs here while this client controls the terminal. When that stops
 	// being so (control moves, the window is closing) the view is told, and its
@@ -454,19 +474,31 @@ function AppWindowCard(props: CardProps): ReactElement {
 	}, [pane.element, frame.visible]);
 
 	const restore = (): void => void client.setState(appWindow.id, 'open').catch(() => {});
+	// On a touch device the focus stays where it was: focusing the terminal
+	// would raise the software keyboard over what the user is looking at.
+	const returnFocus = (): void => {
+		if (!matchMedia(TOUCH_DEVICE_QUERY).matches) pane.focusTerminal();
+	};
 	const minimise = (): void => {
 		props.onFullscreen(entry.paneKey, undefined);
 		void client.setState(appWindow.id, 'minimised').catch(() => {});
-		pane.focusTerminal();
+		returnFocus();
 	};
 	const close = (): void => {
 		void client.close(appWindow.id).catch(() => {});
-		pane.focusTerminal();
+		returnFocus();
 	};
 
 	// Only a minimised window can be dragged, and only along the bottom edge.
 	const onPointerDown = (event: ReactPointerEvent<HTMLElement>): void => {
-		if (!isTab || (event.target as HTMLElement).closest('button') !== null) return;
+		if ((event.target as HTMLElement).closest('button') !== null) {
+			// A tapped control does not take the focus, so a terminal that has the
+			// keyboard up keeps it.
+			if (event.pointerType === 'touch') event.preventDefault();
+			return;
+		}
+		if (!isTab) return;
+		dragged.current = false;
 		drag.current = { startX: event.clientX, offset: placed.rect.x, moved: false };
 		try {
 			event.currentTarget.setPointerCapture(event.pointerId);
@@ -491,7 +523,15 @@ function AppWindowCard(props: CardProps): ReactElement {
 		const state = drag.current;
 		drag.current = null;
 		setDragging(false);
-		if (state !== null && !state.moved) restore();
+		dragged.current = state?.moved === true;
+	};
+	// A tab opens on the click, not on the pointer's release. The click comes
+	// after the release, so opening on the release would leave that click to
+	// land on whatever the opening window had put under the pointer by then:
+	// on a phone, its minimise control.
+	const onTabClick = (): void => {
+		if (dragged.current) dragged.current = false;
+		else restore();
 	};
 
 	const source =
@@ -527,6 +567,7 @@ function AppWindowCard(props: CardProps): ReactElement {
 							role: 'button',
 							tabIndex: 0,
 							'aria-label': `Open ${appWindow.title}`,
+							onClick: onTabClick,
 							onKeyDown: (event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
