@@ -57,5 +57,5 @@
 
 - [x] 7.1 Document app windows and connected servers in `docs/product-overview.md` and the MCP tool descriptions. Verified by: the docs build and the tool descriptions appear in `tools/list`.
 - [x] 7.2 Remove `scripts/spikes/mcp-apps/` once the evidence file is complete, keeping the evidence file. Verified by: `git grep mcp-apps scripts/` returns nothing and the ADR links resolve.
-- [ ] 7.3 Run `openspec validate --all`, `npm run smoke`, the MCP suites, and the full E2E. Verified by: all pass.
-- [ ] 7.4 Open the pull request on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
+- [x] 7.3 Run `openspec validate --all`, `npm run smoke`, the MCP suites, and the full E2E. Verified by: all pass.
+- [x] 7.4 Open the pull request on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
