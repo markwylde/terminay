@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { TerminalActivityEvaluation } from '../terminalActivityStore';
+import { requestFrameOrTimeout } from './frameOrTimeout';
 
 type TerminalActivityControllerOptions = {
 	acknowledgeAgent: (sessionId: string) => void;
@@ -72,7 +73,7 @@ export function useTerminalActivityController({
 				timersRef.current.set(sessionId, timer);
 			}
 			if (changed)
-				window.requestAnimationFrame(() => onOverviewChangedRef.current());
+				requestFrameOrTimeout(() => onOverviewChangedRef.current());
 		},
 		[],
 	);
