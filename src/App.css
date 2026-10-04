@@ -2918,7 +2918,8 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace-status-bar__tab {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 64px;
   position: relative;
   height: 100%;
   display: inline-flex;
@@ -2943,6 +2944,7 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace-status-bar__tab-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2971,8 +2973,9 @@ body.project-tabbar-reordering .project-tabbar {
   background-color: #fff;
 }
 
+/* The path gives up width before the title and the branch do. */
 .workspace-status-bar__path {
-  flex: 0 1 auto;
+  flex: 0 8 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;
@@ -2986,6 +2989,7 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace-status-bar__crumbs {
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -2995,13 +2999,24 @@ body.project-tabbar-reordering .project-tabbar {
   white-space: nowrap;
 }
 
+/* Leading segments are clipped away before the last one loses a character:
+   the directory the user is in is the segment worth reading. */
 .workspace-status-bar__crumb-wrap {
+  flex: 0 1000 auto;
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
+}
+
+.workspace-status-bar__crumb-wrap:last-child {
+  flex-shrink: 1;
 }
 
 .workspace-status-bar__crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 2px 3px;
   opacity: 0.72;
 }
@@ -3018,6 +3033,7 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .workspace-status-bar__sep {
+  flex: none;
   opacity: 0.4;
 }
 
@@ -3146,6 +3162,31 @@ body.project-tabbar-reordering .project-tabbar {
   to {
     transform: scale(1.6);
     opacity: 0;
+  }
+}
+
+/* At phone width there is room for the directory's own name and nothing above
+   it, so the parents go rather than each keeping a sliver. */
+@media (max-width: 640px) {
+  .workspace-status-bar__focused {
+    gap: 6px;
+  }
+
+  .workspace-status-bar__tab {
+    max-width: 40%;
+  }
+
+  .workspace-status-bar__crumb-wrap:not(:last-child),
+  .workspace-status-bar__crumb-wrap:last-child > .workspace-status-bar__sep {
+    display: none;
+  }
+
+  .workspace-status-bar__path {
+    flex-shrink: 1;
+  }
+
+  .workspace-status-bar__branch {
+    padding: 3px 8px;
   }
 }
 
@@ -4142,8 +4183,10 @@ body.project-tabbar-reordering .project-tabbar {
   padding: 0;
 }
 
+/* The traffic lights sit over the row's left edge whatever the width, so the
+   row starts clear of them; its own padding makes up the rest of the inset. */
 .app-shell--macos .project-tabbar--compact {
-  padding-left: 0;
+  padding-left: 74px;
 }
 
 .compact-chrome {
