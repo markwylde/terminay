@@ -16,7 +16,7 @@ export const MIRROR_SNAPSHOT_PART_CHARS = 128 * 1024;
 /** The most bytes one part can be: three per UTF-16 unit, with room to spare. */
 export const MIRROR_MAX_PART_BYTES = 512 * 1024;
 /** A snapshot of more parts than this is a runaway, not a view. */
-export const MIRROR_MAX_SNAPSHOT_PARTS = 256;
+export const MIRROR_MAX_SNAPSHOT_PARTS = 128;
 /** A batch of changes larger than this is replaced by a fresh snapshot. */
 export const MIRROR_MAX_BATCH_BYTES = 256 * 1024;
 

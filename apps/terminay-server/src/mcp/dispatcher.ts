@@ -31,6 +31,7 @@ import {
 	CONTROL_LARGE_FRAME_OPERATIONS,
 	CONTROL_MAX_LARGE_FRAME_BYTES,
 	ControlEndpointError,
+	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
 
 export interface ServerControlHandlers {
@@ -902,19 +903,28 @@ export function createTerminalControlAdapter(
 	return async (request, context) => {
 		const outcome = await dispatch(request, context);
 		if (isControlFailure(outcome)) return outcome;
+		// Listing the connected tools is the adapter's own housekeeping: its
+		// answer never reaches the model, so context taken here would be lost.
+		if (request.op === 'list_connected_tools') return outcome;
 		const notes = takeModelContext(context);
 		if (notes.length === 0) return outcome;
 		const result =
 			isRecord(outcome) && outcome.ok === true && 'result' in outcome
 				? outcome.result
 				: outcome;
-		return {
-			ok: true,
-			result,
-			modelContext: notes
-				.map((note) => `Context from the open window "${note.title}":\n${note.text}`)
-				.join('\n\n'),
-		};
+		// The adapter accepts a bounded amount. Whole notes are kept while they
+		// fit, so the model never gets half of one.
+		let modelContext = '';
+		let dropped = 0;
+		for (const note of notes) {
+			const text = `Context from the open window "${note.title}":\n${note.text}`;
+			const next = modelContext === '' ? text : `${modelContext}\n\n${text}`;
+			if (Buffer.byteLength(next, 'utf8') > MAX_MODEL_CONTEXT_BYTES - 256) dropped += 1;
+			else modelContext = next;
+		}
+		if (dropped > 0)
+			modelContext += `${modelContext === '' ? '' : '\n\n'}(Context from ${dropped} more open window${dropped === 1 ? ' was' : 's were'} too long to include.)`;
+		return { ok: true, result, modelContext };
 	};
 }
 

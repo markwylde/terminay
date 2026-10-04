@@ -23,6 +23,7 @@ function transport(answers = {}) {
     query: async (operation, payload) => { calls.push(["query", operation, payload]); return answers[operation]; },
     queryWithBody: async (operation, payload) => { calls.push(["queryWithBody", operation, payload]); return answers[operation]; },
     command: async (operation, payload) => { calls.push(["command", operation, payload]); return answers[operation] ?? {}; },
+    commandWithBody: async (operation, payload, body) => { calls.push(["commandWithBody", operation, payload, JSON.parse(new TextDecoder().decode(body))]); return answers[operation] ?? {}; },
     subscribe: (event, listener) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener]);
       return () => listeners.set(event, (listeners.get(event) ?? []).filter((entry) => entry !== listener));
@@ -66,11 +67,14 @@ test("content decodes the document from the body and carries the tool data", asy
         window: window(),
         csp: { connectDomains: ["https://api.example"], resourceDomains: [] },
         permissions: { clipboardWrite: {} },
+      },
+      // The document and the tool data are the body: either may be larger than an envelope.
+      body: new TextEncoder().encode(JSON.stringify({
+        html: "<h1>héllo</h1>",
         tool: { name: "draw" },
         toolInput: { shape: "circle" },
         toolResult: { content: [{ type: "text", text: "drawn" }] },
-      },
-      body: new TextEncoder().encode("<h1>héllo</h1>"),
+      })),
     },
   });
   const content = await new AppWindowClient(fake).content("win_1");
@@ -80,6 +84,11 @@ test("content decodes the document from the body and carries the tool data", asy
   assert.deepEqual(content.toolResult, { content: [{ type: "text", text: "drawn" }] });
   assert.equal("toolCancelled" in content, false);
   assert.deepEqual(fake.calls, [["queryWithBody", APP_WINDOW_OPERATIONS.content, { windowId: "win_1" }]]);
+  // A body that is not the expected document is refused, not rendered.
+  for (const body of ["<h1>raw html</h1>", JSON.stringify({ tool: {} }), JSON.stringify({ html: 7 })]) {
+    const bad = transport({ [APP_WINDOW_OPERATIONS.content]: { result: { window: window() }, body: new TextEncoder().encode(body) } });
+    await assert.rejects(new AppWindowClient(bad).content("win_1"), TypeError);
+  }
 });
 
 test("a csp that is not lists of origins is rejected", async () => {
@@ -114,7 +123,20 @@ test("a view request returns the server's response and refuses other methods", a
   const client = new AppWindowClient(fake);
   assert.deepEqual(await client.viewRequest("win_1", "tools/call", { name: "poll", arguments: {} }), { content: [] });
   await assert.rejects(client.viewRequest("win_1", "prompts/get", {}), TypeError);
-  assert.equal(fake.calls.length, 1);
+  // The method is in the envelope and the parameters are the body.
+  assert.deepEqual(fake.calls, [["commandWithBody", APP_WINDOW_OPERATIONS.viewRequest, { windowId: "win_1", method: "tools/call" }, { name: "poll", arguments: {} }]]);
+});
+
+test("a view response too large for a command result is fetched as a body", async () => {
+  const large = { content: [{ type: "text", text: "v".repeat(100 * 1024) }] };
+  const fake = transport({
+    [APP_WINDOW_OPERATIONS.viewRequest]: { responseId: "res_1" },
+    [APP_WINDOW_OPERATIONS.viewResponse]: { result: { windowId: "win_1" }, body: new TextEncoder().encode(JSON.stringify(large)) },
+  });
+  assert.deepEqual(await new AppWindowClient(fake).viewRequest("win_1", "tools/call", { name: "poll" }), large);
+  assert.deepEqual(fake.calls.at(-1), ["queryWithBody", APP_WINDOW_OPERATIONS.viewResponse, { windowId: "win_1", responseId: "res_1" }]);
+  // Neither a response nor a handle is not an answer.
+  await assert.rejects(new AppWindowClient(transport({ [APP_WINDOW_OPERATIONS.viewRequest]: {} })).viewRequest("win_1", "tools/call", {}), TypeError);
 });
 
 test("onChanged follows the server event until unsubscribed", () => {

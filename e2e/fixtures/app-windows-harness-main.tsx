@@ -44,6 +44,8 @@ type Spec = {
 	toolInput?: unknown;
 	toolResult?: unknown;
 	csp?: AppWindowContent['csp'];
+	/** The server cannot deliver this window's content. */
+	broken?: boolean;
 };
 
 /** Everything that changes the shared store or crosses the relay. */
@@ -81,6 +83,7 @@ function App() {
 	const calls = useRef<unknown[][]>([]);
 	const mirrorLog = useRef<Harness['mirrorLog']>([]);
 	const lossy = useRef(false);
+	const broken = useRef(new Set<string>());
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const sequence = useRef(0);
 	const latest = useRef(windows);
@@ -101,6 +104,7 @@ function App() {
 			switch (action.type) {
 				case 'add': {
 					const kind = action.spec.kind ?? 'agent';
+					if (action.spec.broken === true) broken.current.add(action.id);
 					sequence.current = Math.max(sequence.current, Number(action.id.split('_')[1]));
 					contents.current.set(action.id, {
 						html: action.spec.html,
@@ -210,6 +214,7 @@ function App() {
 				const window = latest.current.find((entry) => entry.id === id);
 				const content = contents.current.get(id);
 				if (window === undefined || content === undefined) throw new Error('gone');
+				if (broken.current.has(id)) throw new Error('resource response exceeded protocol limits');
 				return { window, ...content };
 			},
 			setState: async (id: string, state: AppWindow['state']) => {
@@ -251,7 +256,7 @@ function App() {
 			},
 			publishMirror: async (windowId: string, batch: AppWindowMirrorBatch) => {
 				if (!isController.current)
-					throw Object.assign(new Error('only the controlling client may publish'), { code: 'forbidden' });
+					throw Object.assign(new Error('only the controlling client may publish'), { code: 'forbidden', details: { reason: 'not-controller' } });
 				const window = latest.current.find((entry) => entry.id === windowId);
 				if (window === undefined) throw new Error('gone');
 				mirrorLog.current.push({

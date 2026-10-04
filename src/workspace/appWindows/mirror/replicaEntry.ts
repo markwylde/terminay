@@ -53,8 +53,27 @@ interface AddedNode {
 			contentHeight: document.documentElement?.scrollHeight ?? 0,
 		});
 
+	/**
+	 * A recording is untrusted, and one element acts without script: a `meta`
+	 * that refreshes, which would take the mirror to another page. It is made
+	 * inert before it can be placed in the document. (The view's own policy
+	 * `meta` goes the same way; the mirror has its own.)
+	 */
+	const defuse = (node: Node | null): Node | null => {
+		if (!(node instanceof Element)) return node;
+		const metas = [
+			...(node.matches('meta[http-equiv]') ? [node] : []),
+			...node.querySelectorAll('meta[http-equiv]'),
+		];
+		for (const meta of metas) {
+			meta.removeAttribute('http-equiv');
+			meta.removeAttribute('content');
+		}
+		return node;
+	};
+
 	const build = (node: SerializedNode, skipChild: boolean): Node | null =>
-		buildNodeWithSN(node, { doc: document, mirror, skipChild, hackCss: true, cache });
+		defuse(buildNodeWithSN(node, { doc: document, mirror, skipChild, hackCss: true, cache }));
 
 	function snapshot(data: Json): void {
 		const root = data.node as SerializedNode & { childNodes?: SerializedNode[] };
@@ -124,6 +143,9 @@ interface AddedNode {
 
 	function attribute(node: Element, name: string, value: unknown): void {
 		if (name.startsWith('on') || name.startsWith('rr_')) return;
+		// No recorded change may turn a `meta` into one that acts.
+		if (node.localName === 'meta' && (name.toLowerCase() === 'http-equiv' || name.toLowerCase() === 'content'))
+			return;
 		try {
 			if (value === null) node.removeAttribute(name);
 			else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')

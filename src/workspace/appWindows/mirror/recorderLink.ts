@@ -10,17 +10,19 @@ import {
 	MIRROR_MAX_BATCH_BYTES,
 	MIRROR_MAX_PART_BYTES,
 	MIRROR_MAX_SNAPSHOT_PARTS,
+	MIRROR_SNAPSHOT_PART_CHARS,
 	MIRROR_MESSAGE_KEY,
 	type MirrorBatch,
 	type MirrorRecorderControl,
 } from './mirrorProtocol.ts';
+import { isNotControllerError } from '../controlErrors.ts';
 
 export interface RecorderLinkOptions {
 	/** Post a message to the view's sandbox proxy. */
 	readonly post: (message: unknown) => void;
 	/** The recorder script, sent to the view the first time it must record. */
 	readonly recorderScript: string;
-	/** Hand a batch to the server. Rejects with `code: 'forbidden'` when this client no longer controls the terminal. */
+	/** Hand a batch to the server. Rejects with a not-controller refusal when this client no longer controls the terminal. */
 	readonly publish: (batch: Omit<MirrorBatch, 'type'>) => Promise<void>;
 }
 
@@ -41,6 +43,9 @@ export function parseMirrorBatch(message: unknown): Omit<MirrorBatch, 'type'> | 
 		return undefined;
 	const limit = kind === 'snapshot' ? MIRROR_MAX_PART_BYTES : MIRROR_MAX_BATCH_BYTES;
 	if (data.length > limit || encoder.encode(data).byteLength > limit) return undefined;
+	// A part is cut by characters, so that the parts of one snapshot, joined in
+	// an observer's memory, have a known ceiling.
+	if (kind === 'snapshot' && data.length > MIRROR_SNAPSHOT_PART_CHARS) return undefined;
 	return {
 		epoch: epoch as number,
 		seq: seq as number,
@@ -94,7 +99,7 @@ export class ViewRecorderLink {
 			() => this.control({ type: 'ack' }),
 			(error: unknown) => {
 				// This client stopped controlling the terminal: the recording is over.
-				if ((error as { code?: unknown } | null)?.code === 'forbidden') this.stop();
+				if (isNotControllerError(error)) this.stop();
 				// Anything else lost one batch; the mirrors notice the gap and ask again.
 				else this.control({ type: 'ack' });
 			},

@@ -23,6 +23,8 @@ import {
 let server: Server;
 let origin: string;
 let directory: string;
+/** Every path the server was asked for, to show what a frame did or did not load. */
+const hits: string[] = [];
 
 const VIEW = `
 <style>.box { padding: 4px; } .added { color: rgb(10, 200, 30); }</style>
@@ -74,6 +76,7 @@ test.beforeAll(async () => {
 	const workspace = { 'content-security-policy': DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY };
 	server = createServer((request, response) => {
 		const url = new URL(request.url ?? '/', 'http://mirror');
+		hits.push(url.pathname);
 		const send = (type: string, body: string | Buffer, headers: Record<string, string> = workspace) => {
 			response.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', ...headers });
 			response.end(body);
@@ -101,6 +104,7 @@ type Spike = {
 	state: { batches: { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[]; reports: { type: string }[]; hold: boolean };
 	resnapshot(): void;
 	stop(): void;
+	forge(data: string): void;
 	release(): void;
 };
 type SpikeWindow = Window & { startMirrorSpike(html: string): void; mirrorSpike: Spike };
@@ -266,4 +270,85 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 	// And changes follow it as before.
 	await view.locator('#add').click();
 	await expect(replica.locator('#list li')).toHaveCount(9);
+});
+
+test('neither a view nor a mirror can leave the document it was given', async ({ page }) => {
+	const { view, replica } = await open(page);
+	hits.length = 0;
+
+	// A recording that carries a refreshing meta, as a hostile view could send.
+	const forged = JSON.stringify([
+		{ type: 4, data: { href: 'about:srcdoc', width: 440, height: 320 }, timestamp: 1 },
+		{
+			type: 2,
+			timestamp: 2,
+			data: {
+				initialOffset: { left: 0, top: 0 },
+				node: {
+					type: 0,
+					id: 1,
+					childNodes: [
+						{
+							type: 2,
+							tagName: 'html',
+							attributes: {},
+							id: 2,
+							childNodes: [
+								{
+									type: 2,
+									tagName: 'head',
+									attributes: {},
+									id: 3,
+									childNodes: [
+										{
+											type: 2,
+											tagName: 'meta',
+											attributes: { 'http-equiv': 'refresh', content: `0;url=${origin}/exfil-mirror` },
+											id: 4,
+											childNodes: [],
+										},
+									],
+								},
+								{
+									type: 2,
+									tagName: 'body',
+									attributes: {},
+									id: 5,
+									childNodes: [{ type: 2, tagName: 'p', attributes: { id: 'forged' }, id: 6, childNodes: [{ type: 3, textContent: 'forged', id: 7 }] }],
+								},
+							],
+						},
+					],
+				},
+			},
+		},
+	]);
+	await page.evaluate((data) => (window as unknown as SpikeWindow).mirrorSpike.forge(data), forged);
+	await expect(replica.locator('#forged')).toHaveText('forged');
+	// The meta is there as an inert element: it refreshes nothing.
+	await expect(replica.locator('meta[http-equiv]')).toHaveCount(0);
+	await page.waitForTimeout(1200);
+	await expect(replica.locator('#forged')).toHaveText('forged');
+	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+
+	// A view that navigates itself would carry data out past its policy and
+	// leave a foreign page speaking as the view. Nothing is requested.
+	await view.locator('body').evaluate((_body, target) => {
+		location.href = `${target}/exfil-view?secret=1`;
+	}, origin).catch(() => undefined);
+	await page.waitForTimeout(1200);
+	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+	// The same by a refreshing meta the view writes into itself.
+	const { view: second } = await open(page);
+	hits.length = 0;
+	await second.locator('body').evaluate((_body, target) => {
+		const meta = document.createElement('meta');
+		meta.httpEquiv = 'refresh';
+		meta.content = `0;url=${target}/exfil-meta`;
+		document.head.append(meta);
+	}, origin).catch(() => undefined);
+	await page.waitForTimeout(1200);
+	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+	// The workspace page itself went nowhere.
+	expect(page.url()).toBe(`${origin}/`);
 });

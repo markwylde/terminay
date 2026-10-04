@@ -22,6 +22,7 @@ import {
 	type ControlOperation,
 	type ControlResponse,
 	encodeControlMessage,
+	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
 import {
 	DEFAULT_READ_MAX_BYTES,
@@ -777,7 +778,6 @@ function serveConnectedTools(
 }
 
 const CONNECTED_TOOL_NAME = /^[a-z0-9][a-z0-9-]{0,62}__[A-Za-z0-9_.-]{1,128}$/u;
-const MAX_MODEL_CONTEXT_BYTES = 64 * 1024;
 
 function frameLimit(operation: ControlOperation): number {
 	return CONTROL_LARGE_FRAME_OPERATIONS.has(operation)

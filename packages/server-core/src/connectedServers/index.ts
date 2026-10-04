@@ -207,11 +207,19 @@ export class ConnectedServerRegistry {
 				renamed,
 			);
 			const view: ConnectedServerView = { ...next, envNames, headerNames };
+			// What is held in memory is what was written: a save that cannot be
+			// committed leaves the list as it was.
+			const before = this.servers;
 			this.servers =
 				existing === undefined
 					? [...this.servers, view]
 					: this.servers.map((server) => (server === existing ? view : server));
-			await this.commit();
+			try {
+				await this.commit();
+			} catch (error) {
+				this.servers = before;
+				throw error;
+			}
 			return { ...view };
 		});
 	}

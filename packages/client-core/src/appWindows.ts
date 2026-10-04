@@ -13,6 +13,7 @@ export const APP_WINDOW_OPERATIONS = Object.freeze({
   message: "app-windows.message",
   context: "app-windows.context",
   viewRequest: "app-windows.view-request",
+  viewResponse: "app-windows.view-response",
   mirrorStatus: "app-windows.mirror.status",
   mirrorWatch: "app-windows.mirror.watch",
   mirrorUnwatch: "app-windows.mirror.unwatch",
@@ -56,8 +57,10 @@ export interface AppWindowMirrorData extends AppWindowMirrorBatch {
 export const MAX_APP_WINDOW_MIRROR_PART_BYTES = 512 * 1024;
 /** One batch of changes. */
 export const MAX_APP_WINDOW_MIRROR_BATCH_BYTES = 256 * 1024;
+/** One part of a snapshot, in characters, so the parts joined in memory have a ceiling. */
+export const MAX_APP_WINDOW_MIRROR_PART_CHARS = 128 * 1024;
 /** A snapshot of more parts than this is a runaway, not a view. */
-export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 256;
+export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 128;
 
 export type AppWindowState = "open" | "minimised";
 
@@ -127,15 +130,18 @@ export class AppWindowClient {
   async content(windowId: string, options: QueryOptions = {}): Promise<AppWindowContent> {
     const { result, body } = await this.transport.queryWithBody<JsonValue>(APP_WINDOW_OPERATIONS.content, { windowId: boundedId(windowId) }, options);
     if (!isRecord(result)) throw new TypeError("app window content is invalid");
+    // The document and the tool data arrive together as the body: either may be larger than an envelope.
+    const data = parseBody(body);
+    if (!isRecord(data) || typeof data.html !== "string") throw new TypeError("app window content is invalid");
     return Object.freeze({
       window: validateWindow(result.window),
-      html: new TextDecoder("utf-8", { fatal: false }).decode(body),
+      html: data.html,
       ...(result.csp === undefined ? {} : { csp: validateCsp(result.csp) }),
       ...(isRecord(result.permissions) ? { permissions: result.permissions } : {}),
-      ...(result.tool === undefined ? {} : { tool: result.tool }),
-      ...(result.toolInput === undefined ? {} : { toolInput: result.toolInput }),
-      ...(result.toolResult === undefined ? {} : { toolResult: result.toolResult }),
-      ...(typeof result.toolCancelled === "string" ? { toolCancelled: result.toolCancelled.slice(0, 1024) } : {}),
+      ...(data.tool === undefined ? {} : { tool: data.tool }),
+      ...(data.toolInput === undefined ? {} : { toolInput: data.toolInput }),
+      ...(data.toolResult === undefined ? {} : { toolResult: data.toolResult }),
+      ...(typeof data.toolCancelled === "string" ? { toolCancelled: data.toolCancelled.slice(0, 1024) } : {}),
     });
   }
 
@@ -161,9 +167,17 @@ export class AppWindowClient {
   /** Forward an MCP App view's request to the server that supplied the view. */
   async viewRequest(windowId: string, method: "tools/call" | "resources/read", params: JsonValue, options: CommandOptions = {}): Promise<JsonValue> {
     if (method !== "tools/call" && method !== "resources/read") throw new TypeError("view request method is invalid");
-    const result = await this.transport.command<JsonValue>(APP_WINDOW_OPERATIONS.viewRequest, { windowId: boundedId(windowId), method, params }, options);
-    if (!isRecord(result) || result.response === undefined) throw new TypeError("view response is invalid");
-    return result.response;
+    if (typeof this.transport.commandWithBody !== "function") throw new Error("view requests are unavailable on this transport");
+    const id = boundedId(windowId);
+    // The parameters go as the body, and a large response comes back as one: neither is bounded by an envelope.
+    const result = await this.transport.commandWithBody<JsonValue>(APP_WINDOW_OPERATIONS.viewRequest, { windowId: id, method }, new TextEncoder().encode(JSON.stringify(params ?? {})), options);
+    if (!isRecord(result)) throw new TypeError("view response is invalid");
+    if (result.response !== undefined) return result.response;
+    if (typeof result.responseId !== "string") throw new TypeError("view response is invalid");
+    const { body } = await this.transport.queryWithBody<JsonValue>(APP_WINDOW_OPERATIONS.viewResponse, { windowId: id, responseId: result.responseId });
+    const response = parseBody(body);
+    if (response === undefined) throw new TypeError("view response is invalid");
+    return response;
   }
 
   /** Whether another client is watching this terminal's windows, so its views should be recorded. */
@@ -245,6 +259,7 @@ function validateMirrorBatch(value: JsonValue): AppWindowMirrorBatch {
   if (parts !== undefined && (kind !== "snapshot" || !Number.isSafeInteger(parts) || (parts as number) < 2 || (parts as number) > MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS)) throw new TypeError("app window mirror batch is invalid");
   const limit = kind === "snapshot" ? MAX_APP_WINDOW_MIRROR_PART_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
   if (data.length > limit || new TextEncoder().encode(data).byteLength > limit) throw new TypeError("app window mirror batch is too large");
+  if (kind === "snapshot" && data.length > MAX_APP_WINDOW_MIRROR_PART_CHARS) throw new TypeError("app window mirror batch is too large");
   return Object.freeze({ epoch: epoch as number, seq: seq as number, kind, data, ...(parts === undefined ? {} : { parts: parts as number }), ...(reason === undefined ? {} : { reason }) });
 }
 
@@ -285,6 +300,14 @@ function validateCsp(value: JsonValue): AppWindowCsp {
     if (list !== undefined) csp[key] = list;
   }
   return Object.freeze(csp);
+}
+
+function parseBody(body: Uint8Array): JsonValue | undefined {
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: false }).decode(body)) as JsonValue;
+  } catch {
+    return undefined;
+  }
 }
 
 function boundedText(value: unknown): string {

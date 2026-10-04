@@ -754,7 +754,12 @@ export function createServerCoreComposition(
 						);
 						await terminal.input(
 							window.terminalSessionId,
-							commandSubmissionInput(text, bracketed),
+							// Without bracketed paste every line break would submit a line
+							// of its own; a window message is submitted once.
+							commandSubmissionInput(
+								bracketed ? text : text.replace(/\s*\r?\n\s*/g, ' ').trim(),
+								bracketed,
+							),
 							authorization,
 						);
 					},

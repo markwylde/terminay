@@ -176,3 +176,34 @@ Not done:
 - A physical touch device.
 - A hosted session end to end; that needs the `terminay.com` change deployed.
 - Codex; the account was at its usage limit.
+
+## Independent review and what it changed
+
+Date: 2026-10-04. A separate reviewer read the whole change against `main` and
+confirmed most of the following by probe. Each was fixed with a test that fails
+without the fix.
+
+| Finding | Fix | Test |
+| - | - | - |
+| App-window and mirror operations ignored a client's project or session binding: a client bound to project B could list, read, close, and watch windows of project A. | Listing is filtered and every lookup refuses a window outside the caller's boundary as not found; mirror operations refuse a terminal outside it. | `app-windows.test.mjs`, `app-windows-composition.test.mjs` |
+| A view's message reached the PTY with control bytes, so it could end the paste, interrupt, and submit a line of its own. | A message with any control character other than tab and line feed is refused. Without bracketed paste, line breaks are written as spaces, so a message is submitted once. | same two files, with the bytes written to the PTY |
+| Nothing kept a view's frame on the document it was given: a view could navigate itself, carrying data out past its policy, and a forged recording could refresh a mirror onto another page. | The proxy adds `frame-src 'none'` to itself after creating the frame, so the frame can load nothing else and the view, which took its policy at creation, can still frame what it may. A frame that loads a second document is removed. The replica makes every `meta[http-equiv]` inert. | `e2e/app-view-mirror.spec.ts` (no request reaches the server), `e2e/app-windows.spec.ts` on Desktop |
+| A connected server that failed to start changed the tool-list revision on every listing, so agents listed again and the server was started again, without end. | A change is announced when a server's state changes, not each time it fails the same way. A failed server is left for 30 seconds before a listing tries it again; saving its entry or calling one of its tools by name tries at once. | `connected-servers.test.mjs` |
+| Tool input, results, and view responses over 64 KiB broke the window, which stayed blank. | They travel as binary bodies. A view response too large for a command result is held once for the caller to fetch. A window whose content cannot be loaded says so. | `app-windows.test.mjs`, client-core tests, `e2e/app-windows-browser.spec.ts` |
+| Model context a view left was consumed by the adapter's own listing of connected tools. | Listing does not take it. Context from many windows is kept in whole notes up to what the adapter accepts. | `app-window-tools.test.mjs` |
+| A refused request was retried on any `forbidden`, so declining a permission prompted twice. (As shipped the retry never ran at all, because the error's code was not read through its wrapper.) | The server marks "not the controlling client" refusals; only those are retried, through the wrapper. | `mirror.test.ts` |
+| A view was never told it was being removed: the message was posted to a frame already gone. | The view is told, and its frame kept for 150 ms, before a replacement, a move of control, or a close removes it. | `e2e/app-windows-browser.spec.ts` |
+| One caller cancelling failed a connection another caller was waiting for; a save during a connect failed an unchanged entry. | A connection attempt belongs to no caller and is stopped only when its project or the gateway closes; an unchanged entry keeps its identity across saves. | `connected-servers.test.mjs` |
+
+Smaller: a snapshot request could be coalesced away for good if the controlling
+client missed it (a repeat from the same watcher now goes through); an observer
+could be made to buffer about 128 MiB (parts are bounded in characters and a
+snapshot to 128 parts, about 16 M characters); disabling MCP left windows open
+(it now ends them); a UI resource with no content type was accepted (it is now
+refused); two quick saves could apply connected servers out of order; a failed
+commit left the list in memory ahead of disk; a mirror that became available
+after a view started was not recorded.
+
+Not changed: `app-windows.changed` still tells every subscriber the ids,
+terminals, and states of all windows, without titles or content, as the event
+journal does for every feature.

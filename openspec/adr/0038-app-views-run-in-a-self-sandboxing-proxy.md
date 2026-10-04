@@ -43,6 +43,12 @@ admits a same-site URL as a frame.
 6. **A host on which the proxy cannot be framed reports the capability
    unavailable.** The workspace proves the proxy answers before it offers app
    windows. Isolation is never weakened to make a view run.
+7. **A view's frame holds only the document it was given.** A document's own
+   policy cannot stop it navigating itself, which would carry data out past
+   that policy and leave a foreign page speaking as the view. Once it has
+   created the frame, the proxy forbids itself to load anything else in it
+   (`frame-src 'none'`, added after creation so the view does not inherit
+   it), and it removes a frame that loads a second document all the same.
 
 ## Consequences
 

@@ -269,3 +269,54 @@ App windows SHALL be offered behind a protocol capability, and a client that doe
 
 - **WHEN** the same window is opened in the Desktop host and in a browser host at the same pane size
 - **THEN** its placement, controls, and behaviour are the same
+
+### Requirement: A view stays the document it was given
+
+A view's frame SHALL hold only the document the workspace gave it. A view SHALL NOT be able to navigate its own frame to another document, whether by script, by a link, by a form, or by a refreshing `meta`; an attempt SHALL send no request. Should a view's frame load a second document all the same, the frame SHALL be removed and nothing more SHALL be relayed for it. A view MAY still frame what its own policy allows.
+
+#### Scenario: A view navigates itself
+
+- **WHEN** a view sets its own location to another site
+- **THEN** no request is made to that site, and no page from it runs in the window or speaks as the view
+
+#### Scenario: A view declared with no network
+
+- **WHEN** an MCP App view whose policy allows no connections tries to send data out by navigating to a URL that carries it
+- **THEN** the data does not leave
+
+### Requirement: A window message is text
+
+Text a view sends to be typed into its terminal SHALL contain no control characters other than tab and line feed; the server SHALL refuse a message that does, and SHALL write nothing. A permitted message SHALL be submitted to the terminal exactly once: where the terminal has not enabled bracketed paste, its line breaks SHALL be written as spaces.
+
+#### Scenario: A view sends an escape sequence
+
+- **WHEN** a view sends a message containing an escape sequence, an interrupt character, or a carriage return
+- **THEN** the server refuses it and nothing is written to the terminal
+
+#### Scenario: A multi-line message in a plain shell
+
+- **WHEN** a view sends a two-line message to a terminal that has not enabled bracketed paste
+- **THEN** the terminal receives the two lines joined by a space, followed by one Enter
+
+### Requirement: Windows are visible only within a client's boundary
+
+A client authenticated into one project, or one terminal session, SHALL see and act on only the windows of that project or session: windows outside it SHALL NOT be listed to it, and reading, changing, closing, or watching one SHALL be refused as though it did not exist.
+
+#### Scenario: A client bound to another project
+
+- **WHEN** a client bound to project B lists windows, or asks for the content of a window in project A
+- **THEN** the list omits project A's windows and the content request is refused
+
+### Requirement: A window that cannot be loaded says so
+
+When the controlling client cannot obtain a window's content, the window SHALL say that it could not be loaded and SHALL remain closable. Tool input, tool results, and a view's own requests and responses SHALL be carried at their permitted sizes, not limited by the size of a protocol envelope.
+
+#### Scenario: A tool result of several hundred kilobytes
+
+- **WHEN** a connected tool with a view returns a 300 KiB result
+- **THEN** the view receives the whole result
+
+#### Scenario: Content cannot be fetched
+
+- **WHEN** the server cannot deliver a window's content
+- **THEN** the window shows that it could not be loaded, and can be closed

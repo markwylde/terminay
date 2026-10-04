@@ -124,15 +124,16 @@ export function createAppWindowControlAdapter(
 					);
 				throw error;
 			}
-			if (window !== undefined) windows.setToolResult(window.id, result);
+			// Nothing over the limit reaches the agent or the view.
 			if (
 				Buffer.byteLength(JSON.stringify(result), 'utf8') >
 				MAX_CONNECTED_TOOL_RESULT_BYTES
-			)
-				return failure(
-					'limit_exceeded',
-					`The result of ${params.name} is larger than 1 MiB.`,
-				);
+			) {
+				const message = `The result of ${params.name} is larger than 1 MiB.`;
+				if (window !== undefined) windows.setToolCancelled(window.id, message);
+				return failure('limit_exceeded', message);
+			}
+			if (window !== undefined) windows.setToolResult(window.id, result);
 			return window === undefined
 				? result
 				: withViewNotice(result, window.title);
@@ -181,11 +182,8 @@ export function createAppWindowControlAdapter(
 				ui,
 				signal,
 			);
-			if (
-				resource.mimeType !== undefined &&
-				resource.mimeType !== MCP_APP_RESOURCE_MIME_TYPE
-			)
-				return undefined;
+			// Only a resource that says it is an MCP App view is shown as one.
+			if (resource.mimeType !== MCP_APP_RESOURCE_MIME_TYPE) return undefined;
 			if (
 				Buffer.byteLength(resource.html, 'utf8') > MAX_MCP_APP_RESOURCE_BYTES
 			)

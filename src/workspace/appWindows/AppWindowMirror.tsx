@@ -95,8 +95,9 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 			const report = data?.[MIRROR_MESSAGE_KEY] as Record<string, unknown> | undefined;
 			if (typeof report !== 'object' || report === null) return;
 			if (report.type === 'ready') {
-				// The replica can draw now, so this is when to start receiving.
-				stopWatching?.();
+				// The replica can draw now, so this is when to start receiving. It
+				// says so once; whatever says it again is not asking for a mirror.
+				if (stopWatching !== undefined) return;
 				stopWatching = mirror.watch(appWindow.terminalSessionId, appWindow.id, sink);
 			} else if (report.type === 'size') {
 				const width = dimension(report.width);
