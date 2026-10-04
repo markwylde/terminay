@@ -199,6 +199,7 @@ import {
 	observeTerminalClosePreflight,
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
+import { requestFrameOrTimeout } from './workspace/frameOrTimeout';
 import { CompactChromeRow } from './workspace/CompactChromeRow';
 import { CompactSwitcher } from './workspace/CompactSwitcher';
 import type {
@@ -1989,7 +1990,7 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			if (didChange) {
-				window.requestAnimationFrame(publishWorkspaceInventory);
+				requestFrameOrTimeout(publishWorkspaceInventory);
 			}
 		}, [
 			agentStatusSnapshot,
@@ -2424,7 +2425,7 @@ const ProjectWorkspace = forwardRef<
 								reconciledPanel.api.setActive();
 								setFocusedSessionId(sessionId);
 								scheduleCreatedTerminalFocus(sessionId);
-								window.requestAnimationFrame(publishWorkspaceInventory);
+								requestFrameOrTimeout(publishWorkspaceInventory);
 								resolve();
 								return;
 							}
@@ -2913,7 +2914,7 @@ const ProjectWorkspace = forwardRef<
 				}
 			}
 
-			window.requestAnimationFrame(publishWorkspaceInventory);
+			requestFrameOrTimeout(publishWorkspaceInventory);
 		}, [
 			project.id,
 			project.title,
@@ -2942,7 +2943,7 @@ const ProjectWorkspace = forwardRef<
 				});
 			}
 
-			window.requestAnimationFrame(publishWorkspaceInventory);
+			requestFrameOrTimeout(publishWorkspaceInventory);
 		}, [
 			publishWorkspaceInventory,
 			settings.activityIndicators.showActiveTabs,
@@ -3013,7 +3014,7 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 					});
 
-					window.requestAnimationFrame(publishWorkspaceInventory);
+					requestFrameOrTimeout(publishWorkspaceInventory);
 				} finally {
 					window.requestAnimationFrame(() => {
 						if (sessionId) {
@@ -3175,7 +3176,7 @@ const ProjectWorkspace = forwardRef<
 						activePanel.api.setTitle(text);
 						setTerminalTitleRevision((revision) => revision + 1);
 						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-						window.requestAnimationFrame(publishWorkspaceInventory);
+						requestFrameOrTimeout(publishWorkspaceInventory);
 					} else {
 						activePanel.api.updateParameters({ terminalNote: text });
 					}
