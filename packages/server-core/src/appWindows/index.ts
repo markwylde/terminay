@@ -375,7 +375,9 @@ export class AppWindowService {
 			if (window.pendingContext === undefined) continue;
 			// What does not fit this result stays for the next one: a note is
 			// delivered whole or not yet, never cut and never dropped.
-			const size = byteLength(window.pendingContext) + byteLength(window.title) + 64;
+			// Measured as it will travel: JSON escapes some characters to several bytes.
+			const size =
+				byteLength(JSON.stringify(window.pendingContext)) + byteLength(JSON.stringify(window.title)) + 64;
 			if (used + size > maxBytes && taken.length > 0) continue;
 			used += size;
 			taken.push({ title: window.title, text: window.pendingContext });
@@ -517,7 +519,7 @@ export class AppWindowService {
 				},
 				[APP_WINDOW_OPERATIONS.context]: async (request: CommandRequest) => {
 					const window = this.fromHolder(request);
-					window.pendingContext = boundedText(
+					window.pendingContext = plainText(
 						record(request.envelope.payload)?.text,
 					);
 					return asJson({ windowId: window.id });
@@ -708,13 +710,19 @@ function validHtml(value: string, source: AppWindowSource): string {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses.
 const KEYSTROKE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 
-function messageText(value: unknown): string {
+/** Text from a view that is text and nothing else: for the terminal, or for the model. */
+function plainText(value: unknown): string {
 	const text = boundedText(value);
 	if (KEYSTROKE.test(text))
 		throw protocolError(
 			'validation',
-			'a window message may contain text, tabs, and line breaks only',
+			'text from a window may contain text, tabs, and line breaks only',
 		);
+	return text;
+}
+
+function messageText(value: unknown): string {
+	const text = plainText(value);
 	// White space alone would be a bare Enter: an answer to whatever the
 	// terminal is asking, which is not a message.
 	if (text.trim().length === 0)

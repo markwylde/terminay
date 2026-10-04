@@ -65,6 +65,10 @@ const RAIL_VARIABLE = '--app-window-rail';
  * so that it hears. A frame that is removed at once never receives the message.
  */
 const VIEW_TEARDOWN_GRACE_MS = 150;
+/** Messages between a view's sandbox proxy and the workspace; never relayed for a view. */
+const PROXY_KEY = 'terminayProxy';
+/** A Tab pressed in the workspace this recently is what moved the focus into a view. */
+const FOCUS_BY_TAB_MS = 500;
 
 type PaneFrame = Readonly<{
 	left: number;
@@ -637,6 +641,8 @@ function AppWindowView(props: ViewProps): ReactElement {
 	// so the view being replaced is told before its frame is taken away.
 	const [activeKey, setActiveKey] = useState(documentKey);
 	const [failed, setFailed] = useState(false);
+	// The view's frame was removed by its proxy: the page tried to become another.
+	const [gone, setGone] = useState(false);
 
 	const latest = useRef({ placed, narrow, pane, entry, props });
 	latest.current = { placed, narrow, pane, entry, props };
@@ -771,6 +777,7 @@ function AppWindowView(props: ViewProps): ReactElement {
 			viewAliveRef.current = false;
 			setAllow(undefined);
 			setFailed(false);
+			setGone(false);
 			setActiveKey(documentKey);
 		};
 		if (bridgeRef.current === null) {
@@ -804,6 +811,22 @@ function AppWindowView(props: ViewProps): ReactElement {
 		const onMessage = (event: MessageEvent): void => {
 			if (frameRef.current === null || event.source !== frameRef.current.contentWindow)
 				return;
+			// What the proxy itself says about the view, which a view cannot send.
+			const proxy = (event.data as { [PROXY_KEY]?: { type?: unknown; id?: unknown; active?: unknown } } | null)?.[PROXY_KEY];
+			if (typeof proxy === 'object' && proxy !== null) {
+				if (proxy.type === 'view-gone') setGone(true);
+				else if (proxy.type === 'activation' && proxy.id === focusQuestion.current && proxy.active !== true) {
+					// The view has the keyboard and nobody gave it: it took the focus
+					// itself. Keys meant for the terminal would go to it, and one of
+					// them would count as the gesture that lets it type back. The
+					// focus goes back where it was.
+					if (document.activeElement === frameRef.current) {
+						frameRef.current?.blur();
+						latest.current.pane.focusTerminal();
+					}
+				}
+				return;
+			}
 			const recorder = recorderRef.current;
 			if (recorder?.handle(event.data) === true) return;
 			// Anything a view says other than its proxy announcing itself shows
@@ -820,6 +843,37 @@ function AppWindowView(props: ViewProps): ReactElement {
 		return () => window.removeEventListener('message', onMessage);
 	}, []);
 
+	// A view can take the keyboard focus by itself. When the focus moves into
+	// this view's frame, the proxy is asked whether a person has just acted in
+	// it; the answer is handled with the proxy's other messages above. Tabbing
+	// in from the workspace is a person's doing and needs no asking.
+	const focusQuestion = useRef(0);
+	useEffect(() => {
+		let lastTab = 0;
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === 'Tab') lastTab = Date.now();
+		};
+		const onBlur = (): void => {
+			// The focused element is settled once the event has been dispatched.
+			setTimeout(() => {
+				const frame = frameRef.current;
+				if (frame === null || document.activeElement !== frame) return;
+				if (Date.now() - lastTab < FOCUS_BY_TAB_MS) return;
+				focusQuestion.current += 1;
+				frame.contentWindow?.postMessage(
+					{ [PROXY_KEY]: { type: 'activation?', id: focusQuestion.current } },
+					'*',
+				);
+			}, 0);
+		};
+		window.addEventListener('keydown', onKeyDown, true);
+		window.addEventListener('blur', onBlur);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+			window.removeEventListener('blur', onBlur);
+		};
+	}, []);
+
 	// Tell the view when its container changes.
 	const contextKey = `${placed.placement}:${placed.bodyWidth}:${placed.bodyHeight ?? ''}:${placed.bodyMaxHeight ?? ''}:${narrow}`;
 	useEffect(() => {
@@ -828,6 +882,12 @@ function AppWindowView(props: ViewProps): ReactElement {
 
 	if (failed)
 		return <p className="app-window__notice">This window could not be loaded.</p>;
+	if (gone)
+		return (
+			<p className="app-window__notice">
+				This window stopped because its page tried to leave or replace itself.
+			</p>
+		);
 	if (allow === undefined) return <div className="app-window__loading" aria-busy="true" />;
 	return (
 		<iframe

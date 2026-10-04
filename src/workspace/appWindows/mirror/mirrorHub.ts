@@ -217,7 +217,17 @@ export class AppWindowMirrorHub {
 			set(() => {
 				this.waits.delete(sessionId);
 				const session = this.watched.get(sessionId);
-				if (this.disposed || session === undefined || !session.resyncing) return;
+				if (this.disposed || session === undefined) return;
+				// Still waiting for a snapshot that was asked for, or for the rest
+				// of one whose first parts came and whose last never did.
+				const partial = [...session.windows.values()].filter(
+					(entry) => entry.position?.pending !== undefined,
+				);
+				if (!session.resyncing && partial.length === 0) return;
+				for (const entry of partial) {
+					entry.position = undefined;
+					entry.sink.loading();
+				}
 				session.resyncing = false;
 				this.resync(sessionId);
 			}, this.options.snapshotWaitMs ?? SNAPSHOT_WAIT_MS),
@@ -229,6 +239,12 @@ export class AppWindowMirrorHub {
 		if (timer === undefined) return;
 		this.waits.delete(sessionId);
 		(this.options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)))(timer);
+	}
+
+	/** A mirror drew the snapshot it was given: whatever went wrong before is over. */
+	drawn(sessionId: string): void {
+		const session = this.watched.get(sessionId);
+		if (session !== undefined) session.attempts = 0;
 	}
 
 	/** A mirror could not draw what it was given. */
@@ -253,8 +269,10 @@ export class AppWindowMirrorHub {
 			entry.sink.unavailable();
 			return;
 		}
+		// A snapshot that has arrived is not yet one that could be drawn: the
+		// count of attempts is cleared by `drawn`, when the mirror says it was.
 		const complete = (snapshot: string): void => {
-			session.attempts = 0;
+			this.stopWaiting(data.terminalSessionId);
 			entry.sink.apply('snapshot', snapshot);
 		};
 		if (data.kind === 'snapshot' && data.seq === 0) {
@@ -265,8 +283,10 @@ export class AppWindowMirrorHub {
 				entry.position = { epoch: data.epoch, next: 1 };
 				complete(data.data);
 			} else {
-				// The mirror keeps showing what it had until the whole snapshot is here.
+				// The mirror keeps showing what it had until the whole snapshot is
+				// here, and does not wait for the rest of it for ever.
 				entry.position = { epoch: data.epoch, next: 1, pending: { parts, chunks: [data.data] } };
+				this.waitForSnapshot(data.terminalSessionId);
 			}
 			return;
 		}
@@ -277,6 +297,8 @@ export class AppWindowMirrorHub {
 			if (data.seq === position.next && data.kind === 'snapshot' && pending !== undefined) {
 				position.next += 1;
 				pending.chunks.push(data.data);
+				// Each part that arrives is progress; the wait starts again.
+				this.waitForSnapshot(data.terminalSessionId);
 				if (pending.chunks.length === pending.parts) {
 					delete position.pending;
 					complete(pending.chunks.join(''));

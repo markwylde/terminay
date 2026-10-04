@@ -26,7 +26,8 @@ export const MCP_UI_EXTENSION = 'io.modelcontextprotocol/ui';
 export const MCP_UI_MIME_TYPE = 'text/html;profile=mcp-app';
 export const CONNECTED_SERVER_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const MAX_TOOLS_PER_ENTRY = 256;
-const DEFAULT_CONNECT_TIMEOUT_MS = 20_000;
+/** Long enough for a first `npx -y` to fetch a package before it can answer. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 60_000;
 /** How long a server that failed to start is left alone before a listing tries it again. */
 const RETRY_FAILED_AFTER_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
@@ -107,6 +108,12 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 	private readonly failures = new Map<string, string>();
 	/** When each connection last failed to open, by connection key. */
 	private readonly failedAt = new Map<string, number>();
+	/**
+	 * The tools each connection last offered. A server that has gone away keeps
+	 * its tools on the list, so an agent can still ask for one by name, which is
+	 * what brings the server back: nothing else would, once it is being left alone.
+	 */
+	private readonly lastTools = new Map<string, readonly UpstreamTool[]>();
 	private readonly listeners = new Set<() => void>();
 	private generation = 0;
 
@@ -140,12 +147,27 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 		for (const name of this.failures.keys()) {
 			const before = previous.get(name);
 			const after = current.get(name);
-			if (after === undefined || JSON.stringify(before) !== JSON.stringify(after)) {
+			if (after === undefined || JSON.stringify(before) !== JSON.stringify(after))
 				this.failures.delete(name);
-				for (const key of [...this.failedAt.keys()])
-					if (key === name || key.startsWith(`${name}\u0000`)) this.failedAt.delete(key);
-			}
 		}
+		const belongsTo = (key: string, name: string): boolean =>
+			key === name || key.startsWith(`${name}\u0000`);
+		for (const [name, before] of previous) {
+			const after = current.get(name);
+			if (after !== undefined && JSON.stringify(before) === JSON.stringify(after)) continue;
+			// An attempt for the entry as it was must not be joined by, or blamed
+			// on, the entry as it is now.
+			for (const [key, stop] of [...this.opening])
+				if (belongsTo(key, name)) {
+					stop.abort(new Error('The entry changed while connecting.'));
+					this.opening.delete(key);
+					this.connecting.delete(key);
+				}
+			for (const key of [...this.lastTools.keys()])
+				if (belongsTo(key, name)) this.lastTools.delete(key);
+		}
+		// Saving is the user asking for another try, changed or not.
+		this.failedAt.clear();
 		this.changed();
 	}
 
@@ -182,17 +204,20 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 
 	async listTools(projectId: string, signal: AbortSignal): Promise<readonly ConnectedTool[]> {
 		const tools: ConnectedTool[] = [];
-		// A failing entry contributes nothing and never blocks the others.
+		const enabled = this.entries.filter((entry) => entry.enabled);
+		// A failing entry never blocks the others.
 		const connections = await Promise.all(
-			this.entries
-				.filter((entry) => entry.enabled)
-				.map((entry) => this.connect(entry, projectId, signal)),
+			enabled.map((entry) => this.connect(entry, projectId, signal)),
 		);
-		for (const connection of connections) {
-			if (connection === undefined) continue;
-			for (const tool of connection.tools.filter(modelVisible))
+		for (const [index, connection] of connections.entries()) {
+			const entry = enabled[index] as ConnectedServerEntry;
+			// A server that was connected and is not now still offers what it
+			// last offered. Calling one of those tools is what starts it again.
+			const offered =
+				connection?.tools ?? this.lastTools.get(this.keyOf(entry, projectId)) ?? [];
+			for (const tool of offered.filter(modelVisible))
 				tools.push({
-					name: `${connection.entry.name}${TOOL_SEPARATOR}${tool.name}`,
+					name: `${entry.name}${TOOL_SEPARATOR}${tool.name}`,
 					...(tool.description === undefined ? {} : { description: tool.description }),
 					...(tool.title === undefined ? {} : { title: tool.title }),
 					inputSchema: tool.inputSchema,
@@ -317,6 +342,7 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 		for (const stop of [...this.opening.values()]) stop.abort(new Error('Connected servers were closed.'));
 		this.failures.clear();
 		this.failedAt.clear();
+		this.lastTools.clear();
 		this.changed();
 	}
 
@@ -410,6 +436,7 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 			attempt = this.open(entry, projectId, key, stop.signal)
 				.then((connection) => {
 					this.failedAt.delete(key);
+					this.lastTools.set(key, connection.tools);
 					return connection;
 				})
 				.catch((error: unknown) => {
@@ -427,9 +454,11 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 					return undefined;
 				})
 				.finally(() => {
-					this.connecting.delete(key);
+					// Only its own record: a newer attempt may have taken the key.
+					if (this.connecting.get(key) === started) this.connecting.delete(key);
 					if (this.opening.get(key) === stop) this.opening.delete(key);
 				});
+			const started = attempt;
 			this.connecting.set(key, attempt);
 		}
 		return abortable(attempt, signal);

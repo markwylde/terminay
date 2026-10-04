@@ -72,6 +72,8 @@ type Harness = {
 	setPaneSize(width: number, height: number): void;
 	/** Make this page's connection lose part of every large snapshot. */
 	setLossy(value: boolean): void;
+	/** What has been typed into the stand-in terminal. */
+	typed(): string;
 	windows(): { id: string; title: string; state: string }[];
 };
 
@@ -83,6 +85,7 @@ function App() {
 	const calls = useRef<unknown[][]>([]);
 	const mirrorLog = useRef<Harness['mirrorLog']>([]);
 	const lossy = useRef(false);
+	const typed = useRef<string[]>([]);
 	const broken = useRef(new Set<string>());
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const sequence = useRef(0);
@@ -299,6 +302,7 @@ function App() {
 			replaceWindow: (id, html) => dispatch({ type: 'replace', id, html }),
 			setController,
 			setPaneSize: (width, height) => setSize({ width, height }),
+			typed: () => typed.current.join(''),
 			setLossy: (value) => {
 				lossy.current = value;
 			},
@@ -323,7 +327,10 @@ function App() {
 			renewControl: async () => {
 				calls.current.push(['renewControl']);
 			},
-			focusTerminal: () => calls.current.push(['focusTerminal']),
+			focusTerminal: () => {
+				calls.current.push(['focusTerminal']);
+				document.getElementById('terminal')?.focus();
+			},
 		});
 	}, [controller, dispatch]);
 
@@ -349,9 +356,18 @@ function App() {
 				className="terminal-panel"
 				style={{ width: size.width, height: size.height }}
 			>
-				<div id="terminal" className="terminal-panel-root">
-					terminal output
-				</div>
+				{/* A stand-in for the terminal: it takes the focus and records what is typed into it. */}
+				<textarea
+					id="terminal"
+					className="terminal-panel-root"
+					aria-label="Terminal"
+					readOnly
+					value="terminal output"
+					style={{ border: 0, resize: 'none', background: 'transparent', color: 'inherit', font: 'inherit' }}
+					onKeyDown={(event) => {
+						if (event.key.length === 1) typed.current.push(event.key);
+					}}
+				/>
 				<div className="terminal-app-window-rail" aria-hidden="true" />
 			</div>
 			<AppWindowHost />

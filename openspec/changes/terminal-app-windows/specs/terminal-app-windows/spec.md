@@ -272,21 +272,56 @@ App windows SHALL be offered behind a protocol capability, and a client that doe
 
 ### Requirement: A view stays the document it was given
 
-A view's frame SHALL hold only the document the workspace gave it. A view SHALL NOT be able to navigate its own frame to another document, whether by script, by a link, by a form, or by a refreshing `meta`; an attempt SHALL send no request. Should a view's frame load a second document all the same, the frame SHALL be removed and nothing more SHALL be relayed for it. A view MAY still frame what its own policy allows.
+A view's frame SHALL hold only the document the workspace gave it. No document from another address SHALL load in the frame, whether the view sets its own location, follows a link, submits a form, or carries a refreshing `meta`; and no such document SHALL speak as the view. A view whose frame comes to load a second document, or which writes a new document over itself, SHALL be removed, and its window SHALL say that it stopped and why, and SHALL remain closable. A view MAY still frame what its own policy allows.
+
+The workspace does not claim that an attempted navigation is invisible on the network. A browser may open a connection to the destination before it refuses to load it, so the name of a host a view chooses can leave by name lookup and connection setup. The address beyond the host name, and any content, do not.
 
 #### Scenario: A view navigates itself
 
 - **WHEN** a view sets its own location to another site
-- **THEN** no request is made to that site, and no page from it runs in the window or speaks as the view
+- **THEN** no page from that site loads in the window or speaks as the view, the view is removed, and the window says it stopped because its page tried to leave
 
 #### Scenario: A view declared with no network
 
 - **WHEN** an MCP App view whose policy allows no connections tries to send data out by navigating to a URL that carries it
-- **THEN** no request is made and the data does not leave that way
+- **THEN** no request for that URL is made and no page is loaded
+
+#### Scenario: A view rewrites itself
+
+- **WHEN** a view calls `document.open` and writes a new document after it has loaded
+- **THEN** the view is removed and the window says why
+
+### Requirement: Links in a view do what they are for
+
+A link in a view SHALL NOT navigate the view. Activating a link to a place in the same document SHALL scroll to that place. Activating a link to a web page SHALL ask the host to open it in the user's browser, under the same rule as any request to open a link, and the view SHALL remain as it was.
+
+#### Scenario: A link to a section
+
+- **WHEN** the user clicks `<a href="#details">` in a view
+- **THEN** the view scrolls to the element with that id and keeps running
+
+#### Scenario: A link to a web page
+
+- **WHEN** the user clicks a link to an `https` page in a view
+- **THEN** the page opens in the user's browser and the view is unchanged
+
+### Requirement: A view cannot take the keyboard
+
+A view SHALL hold the keyboard focus only when the user gave it: by clicking or tapping in the view, or by moving the focus into it with the keyboard. When a view takes the focus by itself, the workspace SHALL return the focus to the terminal, so that keys typed for the terminal are not delivered to the view and cannot count as the user's gesture in it.
+
+#### Scenario: A view focuses itself as it loads
+
+- **WHEN** a view calls `focus` on itself as soon as it is shown, while the user is typing in the terminal
+- **THEN** the terminal keeps the focus, the keys go to the terminal, and the view receives none
+
+#### Scenario: The user clicks into a view
+
+- **WHEN** the user clicks a text field in a view and types
+- **THEN** the view has the focus and receives the keys
 
 ### Requirement: A window message is text
 
-Text a view sends to be typed into its terminal SHALL contain no control characters other than tab and line feed; the server SHALL refuse a message that does, and SHALL write nothing. A permitted message SHALL be submitted to the terminal exactly once: where the terminal has not enabled bracketed paste, its line breaks SHALL be written as spaces.
+Text a view sends to be typed into its terminal SHALL contain no control characters other than tab and line feed; the server SHALL refuse a message that does, and SHALL write nothing. A permitted message SHALL be submitted to the terminal exactly once: where the terminal has not enabled bracketed paste, its line breaks and tabs SHALL be written as spaces, since each would be a keystroke there. Text a view leaves as context for the model SHALL be held to the same characters.
 
 #### Scenario: A view sends an escape sequence
 

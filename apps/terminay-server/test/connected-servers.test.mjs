@@ -226,7 +226,9 @@ test("listeners hear when the offered tools may have changed, and a lost connect
     // server that exits as soon as it has connected must not be started by
     // each of those listings: that is a loop with no agent in it.
     const settled = changes
-    for (let index = 0; index < 5; index += 1) assert.deepEqual(await gateway.listTools("project-a", signal()), [])
+    // While it is being left alone its tools stay on the list, so an agent can
+    // still ask for one, which is what brings the server back.
+    for (let index = 0; index < 5; index += 1) assert.equal((await gateway.listTools("project-a", signal())).length, 4)
     assert.equal((await starts()).length, 1)
     assert.equal(changes, settled)
     // Asking for one of its tools by name starts it at once.
@@ -236,7 +238,8 @@ test("listeners hear when the offered tools may have changed, and a lost connect
     // Lost again and left alone for a while, the next listing brings it back.
     process.kill((await starts())[1].pid)
     for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
-    assert.deepEqual(await gateway.listTools("project-a", signal()), [])
+    assert.equal((await gateway.listTools("project-a", signal())).length, 4)
+    assert.equal((await starts()).length, 2)
     clock += 31_000
     assert.equal((await gateway.listTools("project-a", signal())).length, 4)
     assert.equal((await starts()).length, 3)
@@ -357,6 +360,58 @@ test("saving the list while a server is connecting does not fail an entry that d
     gateway.setEntries([entry(), entry({ name: "second" })])
     assert.ok((await listing).some((tool) => tool.name === "diagrams__draw"))
     assert.equal(gateway.status()[0].state, "connected")
+  } finally {
+    gateway.closeAll()
+  }
+})
+
+// --- found by a third review ---
+
+test("an entry corrected while its old version is still connecting is tried at once, and not blamed for the old one", async () => {
+  const { gateway, entry } = await setup({
+    // A command that never answers: the attempt for it would run to its timeout.
+    entries: (make) => [make({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], env: {} })],
+  })
+  try {
+    const stuck = gateway.listTools("project-a", signal())
+    // The user fixes the entry while that is still going.
+    gateway.setEntries([entry()])
+    assert.deepEqual(await stuck, [])
+    const tools = await gateway.listTools("project-a", signal())
+    assert.ok(tools.some((tool) => tool.name === "diagrams__draw"))
+    assert.deepEqual(gateway.status(), [{ name: "diagrams", state: "connected", tools: 4 }])
+  } finally {
+    gateway.closeAll()
+  }
+})
+
+test("saving an entry again, unchanged, is a request to try it again now", async () => {
+  const failing = await failingCommand()
+  const clock = 9_000_000
+  const broken = { name: "broken", enabled: true, transport: "stdio", command: process.execPath, args: [failing.script], env: {} }
+  const { gateway } = await setup({ now: () => clock, entries: () => [broken] })
+  try {
+    await gateway.listTools("project-a", signal())
+    await gateway.listTools("project-a", signal())
+    assert.equal(await failing.starts(), 1)
+    // Exactly the same entry: the save itself is what asks.
+    gateway.setEntries([{ ...broken }])
+    await gateway.listTools("project-a", signal())
+    assert.equal(await failing.starts(), 2)
+  } finally {
+    gateway.closeAll()
+  }
+})
+
+test("a server that has gone away does not keep its tools once its entry changes or is disabled", async () => {
+  const { gateway, entry, starts } = await setup()
+  try {
+    await gateway.listTools("project-a", signal())
+    process.kill((await starts())[0].pid)
+    for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal((await gateway.listTools("project-a", signal())).length, 4)
+    gateway.setEntries([entry({ enabled: false })])
+    assert.deepEqual(await gateway.listTools("project-a", signal()), [])
   } finally {
     gateway.closeAll()
   }

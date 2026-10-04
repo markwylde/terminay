@@ -270,3 +270,63 @@ of that to the server that supplied it through that server's own tools.
   policy admits only files under the bundle root, so this is probably refused
   there, which is stricter than the spec's "may".
 - The reviewer's Desktop-specific observations, which were made by reading.
+
+## Third independent review
+
+Date: 2026-10-04. A third reviewer, told to distrust both earlier rounds,
+confirmed the server-side fixes hold and that their tests fail without them,
+and found the following.
+
+| Finding | Fix | Test |
+| - | - | - |
+| A view can take the keyboard focus by itself. Keys typed for the terminal then go to the view, and one of them counts as the gesture that lets it type into the terminal. The second round's claim that a view could not fake a gesture was wrong. | When the focus moves into a view's frame, the workspace asks the proxy whether the browser has recorded a gesture in the view; if not, and the focus did not arrive by Tab, the focus goes back to the terminal. | `e2e/app-windows-browser.spec.ts`: a view that focuses itself on load does not keep the focus, keys reach the terminal, nothing is sent; a real click keeps the focus and sends |
+| Any ordinary link ended the view and left a blank window, because the proxy removes a frame that navigates. | Every view handles its own link clicks: a link to a place in the page scrolls, a link to a web page is handed to the host to open. A view that is removed now says so in its window. | same file: both link kinds, and a view that leaves or rewrites itself |
+| A server that exited did not come back: after the back-off nothing listed again, and agents no longer knew its tools. A cold start could exceed the connect timeout. | A server that has gone keeps its last tools on the list, so calling one starts it again. Saving an entry, changed or not, tries at once. The connect timeout is 60 seconds. | `apps/terminay-server/test/connected-servers.test.mjs` |
+| An entry corrected while its old version was still connecting joined that attempt and was charged with its failure. | The old attempt is stopped and forgotten when its entry changes. | same file |
+| Context for the model could contain control characters, which JSON escapes sixfold, taking a result over its bound and losing the notes. | Context is held to the same characters as a message, and the budget counts encoded size. | `packages/server-core/test/app-windows.test.mjs` |
+| The mirror boundary answered differently for another project's terminal depending on whether it had windows. | One answer for every mirror operation. | `app-windows-composition.test.mjs` |
+| A view whose snapshots the replica refused kept observers asking without end; a snapshot whose last part was lost was never asked for again; a recording stopped and started mid-batch dropped its first part. | A mirror counts as recovered when it has drawn, not when a snapshot arrives; the wait covers a snapshot's parts; a stop ends what the link was pacing. | `mirror/mirror.test.ts` |
+| A tab is a keystroke in a plain shell. | Written as a space where bracketed paste is off. | `app-windows-composition.test.mjs` |
+| `/app-view.html/` and `/app-view.html%2F` served the proxy from terminay.com without its policy. | Refused. | `specs/appView.test.mjs` there |
+| Two more task verifications cited tests that do not exist. | Corrected. | `tasks.md` |
+
+### A second limit that cannot be closed here: a host name can leave
+
+A view that sets its own location is refused: no page loads, and its frame is
+removed. But the reviewer measured, in Chrome 154, that the browser opens a
+connection to the destination before it refuses the load. A raw listener
+received a TLS ClientHello for each attempt. The name of a host the view
+chooses therefore leaves by name lookup and connection setup. The path, the
+query, and any content do not.
+
+Stopping the navigation where it starts was tried and does not work: a
+sandboxed frame has an opaque origin, and the Navigation API fires no
+`navigate` event there, so there is nothing to cancel. (Measured: with a
+listener in place, a view that set its location was still refused only by the
+proxy and removed.) `location` cannot be replaced by script. No sandbox flag
+or policy directive forbids a frame navigating itself; `navigate-to` was
+dropped from CSP.
+
+Together with WebRTC above, this means "an MCP App view allowed no
+connections" governs what the view loads, fetches and frames, and is not a
+guarantee that nothing can be signalled out. The spec now says exactly that.
+The exposure is the same narrow one: such a view sees its own tool's data and
+what the user does in it, and can already send that to the server that supplied
+it.
+
+### Test lesson
+
+A test's own look inside a frame (`locator.evaluate`, or anything built on it)
+counts, to the browser, as someone using that frame. A test of "nothing happens
+without a gesture" that first reads the frame is racing itself. The gesture and
+focus tests learn the outcome without touching the view's frame, and were run
+three times over without a failure.
+
+### Not changed
+
+- Publishing a recording is paced by the server's acknowledgement and has no
+  rate limit of its own; a view can keep the relay as busy as the connection
+  allows. A busy legitimate view does the same.
+- For a local server, changing its environment variables does not drop its
+  stored credentials. A client allowed to save entries can already start any
+  command as the same user.

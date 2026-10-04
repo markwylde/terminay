@@ -201,6 +201,47 @@ function escapeAttribute(value: string): string {
 }
 
 /**
+ * Runs first in every view. A view's frame may hold only the document it was
+ * given, so a link that navigated would end the view. Links are therefore
+ * handled here, and still do what they were for: a link to a place in the page
+ * scrolls there, and a link to a web page is handed to the host, which opens it
+ * in the person's browser if they really clicked it.
+ *
+ * This is for the person's benefit, not a boundary: a view that sets its own
+ * location is not stopped here (a sandboxed frame gets no navigation events to
+ * cancel). The proxy refuses to load the destination and removes the frame.
+ */
+export const VIEW_LINK_HANDLER = `(() => {
+	const post = window.parent.postMessage;
+	const host = window.parent;
+	const apply = Reflect.apply;
+	let opened = 0;
+	window.addEventListener('click', (event) => {
+		const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+		let anchor = null;
+		for (const node of path) {
+			if (node && node.nodeType === 1 && (node.localName === 'a' || node.localName === 'area') && node.hasAttribute('href')) { anchor = node; break; }
+		}
+		if (!anchor) return;
+		const raw = String(anchor.getAttribute('href')).trim();
+		if (raw.charAt(0) === '#') {
+			event.preventDefault();
+			let id = raw.slice(1);
+			try { id = decodeURIComponent(id); } catch {}
+			const target = id === '' ? document.documentElement : (document.getElementById(id) || document.getElementsByName(id)[0]);
+			if (target) target.scrollIntoView();
+			return;
+		}
+		let url = '';
+		try { url = String(new URL(raw, document.baseURI)); } catch { return; }
+		if (!/^https?:/i.test(url)) return;
+		event.preventDefault();
+		opened += 1;
+		apply(post, host, [{ jsonrpc: '2.0', id: 'terminay-link-' + opened, method: 'ui/open-link', params: { url } }, '*']);
+	}, true);
+})();`;
+
+/**
  * The view document: the author's HTML with Terminay's policy, and for an
  * agent-authored view its bootstrap, placed ahead of everything the author
  * wrote. The policy cannot be undone by later markup: a second policy can only
@@ -210,6 +251,7 @@ export function buildViewDocument(input: ViewDocumentInput): ViewDocument {
 	const policy = viewContentSecurityPolicy(input.source, input.csp);
 	const head =
 		`<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">` +
+		`<script>${VIEW_LINK_HANDLER}</script>` +
 		(input.source.kind === 'agent'
 			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${AGENT_VIEW_BOOTSTRAP}</script>`
 			: '') +

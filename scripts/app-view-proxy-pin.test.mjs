@@ -10,7 +10,7 @@ import test from 'node:test';
  * digest in `specs/appView.test.mjs`. Change the proxy, copy it there, and
  * update both digests together.
  */
-const PROXY_SHA256 = '792f5f123a822abeda062d658ab28a937a6750d94216425ac6eef6f96308162d';
+const PROXY_SHA256 = 'be7e75d1b672540021c9c5d5db9f40249af7a3a05a89c1470b706785554c97a4';
 
 test('the sandbox proxy is the one terminay.com serves', async () => {
 	const html = await readFile(new URL('../public/app-view.html', import.meta.url));

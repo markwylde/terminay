@@ -103,6 +103,8 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 				const width = dimension(report.width);
 				const height = dimension(report.height);
 				if (width !== undefined && height !== undefined) setViewport({ width, height });
+				// The replica reports its size once it has drawn what it was given.
+				mirror.drawn(appWindow.terminalSessionId);
 			} else if (report.type === 'failed') {
 				mirror.failed(appWindow.terminalSessionId, appWindow.id);
 			}

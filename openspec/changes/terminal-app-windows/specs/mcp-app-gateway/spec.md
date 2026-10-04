@@ -125,7 +125,7 @@ Upstream connections SHALL be made only from the Terminay Server. A client SHALL
 
 ### Requirement: Stored credentials stay with their destination
 
-A connected server's stored credentials SHALL be used only for the destination they were saved for. When an entry's command, arguments, address, or transport is changed, credentials that are not supplied again with the change SHALL be removed, not carried to the new destination. A change that leaves the destination alone, such as a rename or enabling, SHALL keep them. The settings form SHALL say so wherever stored values are shown.
+A connected server's stored credentials SHALL be used only for the destination they were saved for. When an entry's command, arguments, address, or transport is changed, credentials that are not supplied again with the change SHALL be removed, not carried to the new destination. A change that leaves the destination alone, such as a rename or enabling, SHALL keep them. The settings form SHALL say so wherever stored values are shown. For a local server the destination is its command and arguments; its other variables are not part of it, so a client that may save entries can still change them. That client may already start any command as the same user.
 
 #### Scenario: A remote server's address is changed
 
@@ -139,7 +139,7 @@ A connected server's stored credentials SHALL be used only for the destination t
 
 ### Requirement: A server that fails is not restarted in a loop
 
-A connected server that fails to start, or that connects and then ends, SHALL be left alone for a period before a listing of tools starts it again. Announcing that the set of tools changed SHALL happen when a server's state changes, not each time it fails the same way. Saving the server's entry, or asking for one of its tools by name, SHALL try it at once. One caller abandoning its wait SHALL NOT fail a connection another caller is waiting for.
+A connected server that fails to start, or that connects and then ends, SHALL be left alone for a period before a listing of tools starts it again. Announcing that the set of tools changed SHALL happen when a server's state changes, not each time it fails the same way. Saving the server's entry, or asking for one of its tools by name, SHALL try it at once. One caller abandoning its wait SHALL NOT fail a connection another caller is waiting for. A server that has gone away SHALL keep the tools it last offered on the list, so that an agent can still ask for one, which starts it again; they SHALL be dropped when its entry changes or is disabled. An entry changed while its earlier version is still connecting SHALL be tried afresh, and SHALL NOT be charged with the earlier attempt.
 
 #### Scenario: A server exits as soon as it has connected
 

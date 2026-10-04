@@ -62,6 +62,8 @@ export class ViewRecorderLink {
 	private loaded = false;
 	/** A batch has been handed to the server and not yet taken. */
 	private publishing = false;
+	/** Counts the recordings this link has paced; a stop ends one. */
+	private recording = 0;
 
 	private readonly options: RecorderLinkOptions;
 
@@ -85,6 +87,11 @@ export class ViewRecorderLink {
 	stop(): void {
 		if (!this.wanted) return;
 		this.wanted = false;
+		// Stopping ends the recording this link was pacing. The recorder forgets
+		// the batch it was waiting on, so this side must too, or the first batch
+		// of the next recording would be taken for one sent out of turn.
+		this.publishing = false;
+		this.recording += 1;
 		if (this.loaded) this.control({ type: 'stop' });
 	}
 
@@ -104,12 +111,16 @@ export class ViewRecorderLink {
 		// sends one; a mirror that misses a batch asks for a fresh snapshot.
 		if (this.publishing) return true;
 		this.publishing = true;
+		const recording = this.recording;
 		this.options.publish(batch).then(
 			() => {
+				// A recording that was stopped meanwhile is owed no acknowledgement.
+				if (recording !== this.recording) return;
 				this.publishing = false;
 				this.control({ type: 'ack' });
 			},
 			(error: unknown) => {
+				if (recording !== this.recording) return;
 				this.publishing = false;
 				// This client stopped controlling the terminal: the recording is over.
 				if (isNotControllerError(error)) this.stop();
