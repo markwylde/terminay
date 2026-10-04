@@ -11,6 +11,7 @@
  * `script` elements as `noscript`.
  */
 import { type BuildCache, buildNodeWithSN, createCache, createMirror, type Mirror } from 'rrweb-snapshot';
+import { collectFieldState } from './fieldState.ts';
 import { MIRROR_MESSAGE_KEY, type MirrorReplicaControl, type MirrorReplicaReport } from './mirrorProtocol.ts';
 
 // rrweb's wire format, as far as the replica reads it.
@@ -52,6 +53,21 @@ interface AddedNode {
 			height: viewport.height,
 			contentHeight: document.documentElement?.scrollHeight ?? 0,
 		});
+
+	/**
+	 * What the view's controls hold is told to the workspace, so that if this
+	 * client takes control, what a person had typed goes into the view that
+	 * starts here. It is told at once, since control can be taken at any moment,
+	 * and only when it differs from what was last told.
+	 */
+	let lastState = '';
+	const reportState = (): void => {
+		const state = collectFieldState(document);
+		const text = JSON.stringify(state);
+		if (text === lastState) return;
+		lastState = text;
+		report({ type: 'state', state });
+	};
 
 	/**
 	 * A recording is untrusted, and one element acts without script: a `meta`
@@ -271,6 +287,7 @@ interface AddedNode {
 		try {
 			for (const event of JSON.parse(control.data) as { type: number; data: Json }[]) apply(event);
 			reportSize();
+			reportState();
 		} catch {
 			report({ type: 'failed' });
 		}

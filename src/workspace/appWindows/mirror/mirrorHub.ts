@@ -8,6 +8,7 @@
  * a batch that does not follow the last one is never applied.
  */
 import type { AppWindowClient, AppWindowMirrorBatch, AppWindowMirrorData } from '@terminay/client-core';
+import type { FieldState } from './fieldState.ts';
 
 export type MirrorHubClient = Pick<
 	AppWindowClient,
@@ -68,12 +69,23 @@ const MAX_RESYNC_ATTEMPTS = 4;
  */
 const SNAPSHOT_WAIT_MS = 5000;
 
+/**
+ * How long after a mirror stops what it last showed can still be carried into
+ * a view that starts here. Taking control replaces the mirror with the view at
+ * once; anything older is a view this client stopped looking at.
+ */
+const CARRY_OVER_MS = 30_000;
+
 export interface MirrorHubOptions {
 	readonly snapshotWaitMs?: number;
+	/** The clock, replaceable in tests. */
+	readonly now?: () => number;
 	/** The timer, replaceable in tests. */
 	readonly setTimer?: (run: () => void, ms: number) => unknown;
 	readonly clearTimer?: (timer: unknown) => void;
 }
+
+const stateKey = (sessionId: string, windowId: string): string => `${sessionId}\n${windowId}`;
 
 export class AppWindowMirrorHub {
 	private readonly recorders = new Map<string, Map<string, MirrorRecorder>>();
@@ -86,6 +98,8 @@ export class AppWindowMirrorHub {
 	private readonly options: MirrorHubOptions;
 	/** The wait for each watched terminal's outstanding snapshot. */
 	private readonly waits = new Map<string, unknown>();
+	/** What each mirrored view's controls held, and when its mirror stopped. */
+	private readonly states = new Map<string, { state: FieldState; stoppedAt?: number }>();
 
 	constructor(client: MirrorHubClient, options: MirrorHubOptions = {}) {
 		this.client = client;
@@ -109,6 +123,7 @@ export class AppWindowMirrorHub {
 		}
 		this.watched.clear();
 		this.recorders.clear();
+		this.states.clear();
 	}
 
 	// --- the controlling client ---
@@ -183,6 +198,8 @@ export class AppWindowMirrorHub {
 			const current = this.watched.get(sessionId);
 			if (current?.windows.get(windowId) !== entry) return;
 			current.windows.delete(windowId);
+			const held = this.states.get(stateKey(sessionId, windowId));
+			if (held !== undefined) held.stoppedAt = this.now();
 			if (current.windows.size > 0) return;
 			this.watched.delete(sessionId);
 			this.stopWaiting(sessionId);
@@ -239,6 +256,38 @@ export class AppWindowMirrorHub {
 		if (timer === undefined) return;
 		this.waits.delete(sessionId);
 		(this.options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)))(timer);
+	}
+
+	/** A mirror says what the view it shows holds: what was typed, ticked, chosen, and where it is scrolled. */
+	rememberState(sessionId: string, windowId: string, state: FieldState): void {
+		// Only a mirror being shown has anything to say.
+		if (this.watched.get(sessionId)?.windows.has(windowId) !== true) return;
+		this.forgetStale();
+		this.states.set(stateKey(sessionId, windowId), { state });
+	}
+
+	/**
+	 * A view is starting on this client. If this client was mirroring that
+	 * window until a moment ago, it has just taken control: what the mirror
+	 * showed is handed over, once, to be put into the new view.
+	 */
+	takeState(sessionId: string, windowId: string): FieldState | undefined {
+		this.forgetStale();
+		const key = stateKey(sessionId, windowId);
+		const held = this.states.get(key);
+		if (held === undefined || held.stoppedAt === undefined) return undefined;
+		this.states.delete(key);
+		return held.state;
+	}
+
+	private now(): number {
+		return (this.options.now ?? Date.now)();
+	}
+
+	private forgetStale(): void {
+		const now = this.now();
+		for (const [key, held] of this.states)
+			if (held.stoppedAt !== undefined && now - held.stoppedAt > CARRY_OVER_MS) this.states.delete(key);
 	}
 
 	/** A mirror drew the snapshot it was given: whatever went wrong before is over. */

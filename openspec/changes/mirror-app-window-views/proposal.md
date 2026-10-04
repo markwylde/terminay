@@ -18,7 +18,7 @@ Views should behave as the terminal does. The client in control runs the view; e
 
 Not changing:
 
-- What happens on takeover. The new controlling client starts the view afresh from the server's record, and state that lived only inside the old view does not transfer. A mirror cannot be promoted to a live view.
+- A mirror cannot be promoted to a live view: on takeover the new controlling client starts the view from the server's record. What a person had filled in is carried into it from the mirror (text, ticked boxes, selections, scroll position). State a view keeps only in its own script does not transfer.
 - View isolation (ADR-0038). The mirror runs in the same self-sandboxing proxy as a view.
 - No browser runs on the server.
 

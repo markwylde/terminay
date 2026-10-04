@@ -2,12 +2,22 @@
 
 ### Requirement: The view runs on the client that holds control
 
-A window's view SHALL run only on the client that holds the terminal's interactive presentation lease. Every other attached client SHALL show the window's tab and badge and SHALL NOT run the view; where the view mirror is available it SHALL show a live, read-only mirror of the view in the window, and otherwise it SHALL show a notice that the window runs on the controlling device. In both cases the window SHALL offer the terminal's ordinary takeover. When the lease moves to another client, the former holder SHALL tear its views down and the new holder SHALL start each view afresh from the server's record, in the same open or minimised state, with the same content, tool input, and tool result. In-page state that the view did not report to the server SHALL NOT transfer, and a mirror SHALL NOT become a running view.
+A window's view SHALL run only on the client that holds the terminal's interactive presentation lease. Every other attached client SHALL show the window's tab and badge and SHALL NOT run the view; where the view mirror is available it SHALL show a live, read-only mirror of the view in the window, and otherwise it SHALL show a notice that the window runs on the controlling device. In both cases the window SHALL offer the terminal's ordinary takeover. When the lease moves to another client, the former holder SHALL tear its views down and the new holder SHALL start each view from the server's record, in the same open or minimised state, with the same content, tool input, and tool result. A mirror SHALL NOT become a running view. When the new holder was showing a mirror of the view, what a person had put into the view SHALL be carried into the view that starts: the values of its text fields, text areas, and selections, which boxes are ticked, and where the page is scrolled. Each value SHALL be put into its control as typing does, so that the page is told of it. The value of a password field SHALL NOT be carried, and state a view keeps only in its own script SHALL NOT be carried.
 
 #### Scenario: Phone takes control
 
 - **WHEN** a window is open on a desktop client and the user takes control of that terminal from a phone
 - **THEN** the desktop client stops running the view and shows a mirror of it, and the phone opens the window as a sheet and runs the view from the server's record
+
+#### Scenario: A half-filled form survives a takeover
+
+- **WHEN** a person has typed into a text field, ticked a box, and chosen an option in a view, and a client showing the mirror of that view takes control
+- **THEN** the view that starts on that client shows the same text, the box ticked, and the same option chosen, and the page has received the input events for them
+
+#### Scenario: A password is not carried
+
+- **WHEN** a client showing a mirror takes control of a view whose password field has a value
+- **THEN** the password field of the view that starts is empty
 
 #### Scenario: Observer activates a tab
 

@@ -67,21 +67,11 @@ export type MirrorReplicaReport =
 	/** The size of the mirrored view's viewport, and of its content, in its own pixels. */
 	| { readonly type: 'size'; readonly width: number; readonly height: number; readonly contentHeight: number }
 	/** The replica could not apply what it was given and needs a fresh snapshot. */
-	| { readonly type: 'failed' };
+	| { readonly type: 'failed' }
+	/** What the mirrored view's controls hold and where it is scrolled; see `fieldState.ts`. */
+	| { readonly type: 'state'; readonly state: unknown };
 
-/**
- * Runs inside every view. It does nothing until the workspace sends the
- * recorder, so a view nobody is watching carries a few lines, not a library.
- */
-export const MIRROR_LOADER_SCRIPT = `(() => {
-	let loaded = false;
-	addEventListener('message', (event) => {
-		const message = event.data && event.data.${MIRROR_MESSAGE_KEY};
-		if (event.source !== parent || loaded || !message || message.type !== 'load' || typeof message.code !== 'string') return;
-		loaded = true;
-		const script = document.createElement('script');
-		script.textContent = message.code;
-		(document.head || document.documentElement).appendChild(script);
-		script.remove();
-	});
-})();`;
+/** Workspace → a view's loader, beside the recorder script it sends. */
+export type MirrorLoaderControl =
+	/** Put back what a person had put into the view this one replaces. */
+	{ readonly type: 'restore'; readonly state: unknown };

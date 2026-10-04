@@ -197,9 +197,10 @@ in and takes no input. What is not mirrored: the value of a password field
 (shown masked), canvas, video, audio, and frames from another origin. A view of
 any size is mirrored: a large one is streamed in parts. A device whose
 connection cannot deliver the view whole says so and stops asking, and shows
-the mirror again when it can. Taking control from a mirror restarts the window on
-the new controlling device from its stored document; whatever was typed into the
-old view and not sent is lost.
+the mirror again when it can. Taking control from a mirror starts the window on
+the new controlling device with what was filled in carried over: text, ticked
+boxes, selections, and scroll position. A password is never carried, and a view
+that keeps state only in its own script rebuilds it from what it was given.
 
 The server derives every project's root from canonical project state. Labels,
 hostnames, IPs, URLs, and paths supplied by a client cannot redirect an
