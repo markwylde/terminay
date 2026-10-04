@@ -48,7 +48,14 @@ admits a same-site URL as a frame.
    that policy and leave a foreign page speaking as the view. Once it has
    created the frame, the proxy forbids itself to load anything else in it
    (`frame-src 'none'`, added after creation so the view does not inherit
-   it), and it removes a frame that loads a second document all the same.
+   it), and it removes a frame that loads a second document all the same. This
+   keeps another page out of the frame; it does not make an attempt invisible,
+   since a browser may open a connection to the destination before refusing it.
+8. **A view acts for the user only on a gesture the browser recorded in it.**
+   The proxy passes on a request to type into the terminal or open a link only
+   while the browser reports user activation in the view, and tells the
+   workspace on request whether there was one, so that a view which takes the
+   keyboard focus by itself has it taken back.
 
 ## Consequences
 

@@ -248,15 +248,15 @@ export class AppWindowMirrorRelay {
 	private boundedSession(request: QueryRequest | CommandRequest): string {
 		const terminalSessionId = sessionId(request);
 		const window = this.options.sessionWindow(terminalSessionId);
+		const claims = record(request.context.claims);
+		const bound =
+			typeof claims?.projectId === 'string' || typeof claims?.sessionId === 'string';
 		if (
-			!withinClientBoundary(request.context, {
-				// A session with no window has no project to compare; the session
-				// claim alone decides.
-				projectId:
-					window?.projectId ??
-					String((record(request.context.claims)?.projectId as string | undefined) ?? ''),
-				terminalSessionId,
-			})
+			// A terminal with no windows has no project to compare a bound client
+			// against. Every operation answers such a client the same way, whether
+			// the terminal is another project's or simply has no windows.
+			(window === undefined && bound) ||
+			(window !== undefined && !withinClientBoundary(request.context, window))
 		)
 			// The same answer as for a terminal with no windows, so that whether
 			// another project's terminal has any is not something a client can learn.

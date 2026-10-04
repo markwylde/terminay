@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isNotControllerError } from '../controlErrors.ts';
-import { buildViewDocument, viewContentSecurityPolicy } from '../viewDocument.ts';
+import { buildViewDocument, VIEW_LINK_HANDLER, viewContentSecurityPolicy } from '../viewDocument.ts';
 import { MIRROR_RECORDER_SCRIPT, MIRROR_REPLICA_SCRIPT } from './bundles.generated.ts';
 import { buildMirrorDocument, mirrorContentSecurityPolicy } from './mirrorDocument.ts';
 import { AppWindowMirrorHub, type MirrorHubClient } from './mirrorHub.ts';
@@ -437,6 +437,8 @@ test('a mirror that never gets a whole snapshot stops asking and says it cannot 
 	// A snapshot that does arrive whole brings it back, and it may ask again later.
 	data({ epoch: 7 });
 	assert.equal(seen.at(-1), 'snapshot:S');
+	// Having been drawn, not merely received, is what counts as recovered.
+	instance.drawn('s1');
 	data({ epoch: 7, kind: 'events', seq: 5, data: 'gap' });
 	await turn();
 	assert.equal(named('resync').length, 5);
@@ -496,6 +498,7 @@ test('a mirror whose snapshot never comes asks again after a wait, a few times, 
 	// A snapshot that arrives ends the waiting and brings the mirror back.
 	data();
 	assert.equal(seen.at(-1), 'snapshot:S');
+	instance.drawn('s1');
 	elapse();
 	await turn();
 	assert.equal(named('resync').length, 4);
@@ -546,4 +549,79 @@ test('a third-party view and every mirror ask the browser to block WebRTC; an ag
 	assert.ok(viewContentSecurityPolicy({ kind: 'mcp-app' }, { connectDomains: ['https://api.example'] }).includes("webrtc 'block'"));
 	assert.ok(mirrorContentSecurityPolicy({ kind: 'agent' }, undefined, NONCE).includes("webrtc 'block'"));
 	assert.equal(viewContentSecurityPolicy({ kind: 'agent' }).includes('webrtc'), false);
+});
+
+// --- found by a third review ---
+
+test('a recording stopped and started while a batch is in flight begins cleanly', async () => {
+	const finishes: (() => void)[] = [];
+	const { recorder, posted, published } = link(() => new Promise<void>((resolve) => finishes.push(resolve)));
+	recorder.viewAlive();
+	recorder.start();
+	recorder.handle(batch({ data: '[old]' }));
+	await turn();
+	// The watcher leaves and another arrives before the server has answered.
+	recorder.stop();
+	recorder.start();
+	// The recorder, told to stop and start, sends the first part of a new snapshot.
+	assert.equal(recorder.handle(batch({ epoch: 2, data: '[new]' })), true);
+	await turn();
+	assert.deepEqual(published.map((entry) => (entry as { data: string }).data), ['[old]', '[new]']);
+	// The old recording's answer arriving late acknowledges nothing.
+	const before = posted.length;
+	finishes[0]?.();
+	await turn();
+	assert.equal(posted.length, before);
+	finishes[1]?.();
+	await turn();
+	assert.deepEqual(posted.at(-1), { type: 'ack' });
+});
+
+test('a snapshot whose last part never comes is asked for again', async () => {
+	const { hub: instance, data, named, elapse, pendingWaits } = hub();
+	const { sink: target, seen } = sink();
+	instance.watch('s1', 'w1', target);
+	data({ parts: 3, data: 'A' });
+	data({ seq: 1, data: 'B' });
+	// Two of three parts came. Nothing more does.
+	assert.equal(pendingWaits(), 1);
+	elapse();
+	await turn();
+	assert.equal(seen.at(-1), 'loading');
+	assert.deepEqual(named('resync'), [['resync', 's1']]);
+	// The part that turns up late belongs to nothing.
+	data({ seq: 2, data: 'C' });
+	assert.equal(seen.includes('snapshot:ABC'), false);
+});
+
+test('a view whose snapshots cannot be drawn does not keep a mirror asking for ever', async () => {
+	const { hub: instance, data, named } = hub();
+	const { sink: target, seen } = sink();
+	instance.watch('s1', 'w1', target);
+	// Every snapshot arrives whole and the replica refuses every one.
+	for (let epoch = 1; epoch <= 8; epoch += 1) {
+		data({ epoch });
+		instance.failed('s1', 'w1');
+		await turn();
+	}
+	assert.equal(named('resync').length, 4);
+	assert.equal(seen.at(-1), 'unavailable');
+	// One it can draw brings it back.
+	data({ epoch: 9 });
+	instance.drawn('s1');
+	instance.failed('s1', 'w1');
+	await turn();
+	assert.equal(named('resync').length, 5);
+});
+
+test('every view handles its own links, before anything the author wrote runs', () => {
+	for (const kind of ['agent', 'mcp-app'] as const) {
+		const { html } = buildViewDocument({ html: '<script>window.addEventListener("click", stop, true)</script>', source: { kind } });
+		const handler = html.indexOf(VIEW_LINK_HANDLER);
+		assert.ok(handler > html.indexOf('Content-Security-Policy'));
+		assert.ok(handler < html.indexOf('window.addEventListener("click", stop, true)'));
+		// The first script in the document, so its listener is the first to hear a click.
+		assert.equal(html.indexOf('<script>'), handler - '<script>'.length);
+	}
+	assert.equal(/<\/script/iu.test(VIEW_LINK_HANDLER), false);
 });

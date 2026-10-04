@@ -767,7 +767,10 @@ export function createServerCoreComposition(
 							// Without bracketed paste every line break would submit a line
 							// of its own; a window message is submitted once.
 							commandSubmissionInput(
-								bracketed ? text : text.replace(/\s*\r?\n\s*/g, ' ').trim(),
+								// A tab is a keystroke there too: a plain shell completes on it.
+								bracketed
+									? text
+									: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
 								bracketed,
 							),
 							authorization,

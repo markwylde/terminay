@@ -332,3 +332,26 @@ test("listing needs only read authority; everything else needs write", () => {
   for (const operation of Object.values(APP_WINDOW_OPERATIONS))
     if (operation !== APP_WINDOW_OPERATIONS.list) assert.deepEqual(policies[operation], { scope: "write" }, operation);
 });
+
+test("context a view leaves for the model is text too, and is budgeted as it will be encoded", async () => {
+  const { windows } = service();
+  const { commands } = windows.operations();
+  const leave = (windowId, text) => commands[APP_WINDOW_OPERATIONS.context](command({ windowId, text }));
+  const first = windows.open(agentWindow());
+  // Control characters would each become six bytes of JSON, and have no place in text for a model.
+  for (const hostile of ["\u0001".repeat(100), "escape\u001b[2J", "nul\u0000"]) await rejectsWith(leave(first.id, hostile), "validation");
+  assert.deepEqual(windows.takeModelContext("session-1"), []);
+
+  // Text that JSON must escape is counted at its escaped size, so a budget in bytes is one in bytes sent.
+  const quotes = "\"".repeat(8 * 1024);
+  const second = windows.open(agentWindow({ title: "Second" }));
+  await leave(first.id, quotes);
+  await leave(second.id, quotes);
+  const budget = 20 * 1024;
+  const taken = windows.takeModelContext("session-1", budget);
+  assert.equal(taken.length, 1);
+  assert.ok(JSON.stringify(taken).length <= budget);
+  // The one that did not fit is still there for the next result.
+  assert.equal(windows.takeModelContext("session-1", budget).length, 1);
+  assert.deepEqual(windows.takeModelContext("session-1", budget), []);
+});
