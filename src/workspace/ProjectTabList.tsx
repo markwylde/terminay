@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ActivityCountBadge } from './activityCountBadge';
 import { ProjectSwitcherMenu } from './ProjectSwitcherMenu';
+import { ProjectAppWindowBadge } from './appWindows/AppWindowBadge';
 import { ProjectTabActivityDot } from './ProjectTabActivityDot';
 import { type ProjectTab, projectTabIsBusy } from './projectTabModel';
 import {
@@ -439,6 +440,12 @@ export function ProjectTabList({
 									badge={activityBadgesByProject?.[keyOf(project)]}
 								/>
 								<span className="project-tab-title">{project.title}</span>
+								{project.creationStatus === undefined ? (
+									<ProjectAppWindowBadge
+										serverId={project.serverId}
+										projectId={project.id}
+									/>
+								) : null}
 								{/* The server is named only when the window is showing
 								    more than one; with one server it is noise. */}
 								{serverLabelOf(project) === undefined ? null : (
@@ -517,6 +524,12 @@ export function ProjectTabList({
 									badge={activityBadgesByProject?.[keyOf(project)]}
 								/>
 								<span className="project-tab-title">{project.title}</span>
+								{project.creationStatus === undefined ? (
+									<ProjectAppWindowBadge
+										serverId={project.serverId}
+										projectId={project.id}
+									/>
+								) : null}
 								{/* The server is named only when the window is showing
 								    more than one; with one server it is noise. */}
 								{serverLabelOf(project) === undefined ? null : (

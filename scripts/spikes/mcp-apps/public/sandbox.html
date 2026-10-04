@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MCP App sandbox proxy</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: transparent; }
+      iframe { border: 0; width: 100%; height: 100%; display: block; }
+    </style>
+  </head>
+  <body>
+    <script>
+      // SEP-1865 sandbox proxy: a different origin from the host, holding the
+      // untrusted View in an opaque-origin inner frame and relaying messages.
+      const HOST_ORIGIN = '__HOST_ORIGIN__';
+      let inner = null;
+
+      const sources = (list) => (list?.length ? list.join(' ') : '');
+      function buildCsp(csp = {}) {
+        const res = sources(csp.resourceDomains);
+        return [
+          "default-src 'none'",
+          `script-src 'unsafe-inline' ${res}`,
+          `style-src 'unsafe-inline' ${res}`,
+          `img-src data: blob: ${res}`,
+          `font-src data: ${res}`,
+          `media-src data: blob: ${res}`,
+          `connect-src ${sources(csp.connectDomains) || "'none'"}`,
+          `frame-src ${sources(csp.frameDomains) || "'none'"}`,
+          "object-src 'none'",
+          `base-uri ${sources(csp.baseUriDomains) || "'none'"}`,
+        ].join('; ');
+      }
+
+      function load({ html, sandbox, csp, permissions }) {
+        const meta = `<meta http-equiv="Content-Security-Policy" content="${buildCsp(csp)}">`;
+        const doc = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + meta) : meta + html;
+        inner = document.createElement('iframe');
+        inner.setAttribute('sandbox', sandbox ?? 'allow-scripts allow-forms');
+        const allow = Object.keys(permissions ?? {}).map((p) => (p === 'clipboardWrite' ? 'clipboard-write' : p));
+        if (allow.length) inner.setAttribute('allow', allow.join('; '));
+        inner.srcdoc = doc;
+        document.body.replaceChildren(inner);
+      }
+
+      addEventListener('message', (event) => {
+        const message = event.data;
+        if (event.source === parent) {
+          if (event.origin !== HOST_ORIGIN) return;
+          if (message?.method === 'ui/notifications/sandbox-resource-ready') load(message.params);
+          else inner?.contentWindow?.postMessage(message, '*');
+        } else if (inner && event.source === inner.contentWindow) {
+          if (typeof message?.method === 'string' && message.method.startsWith('ui/notifications/sandbox-')) return;
+          parent.postMessage(message, HOST_ORIGIN);
+        }
+      });
+
+      parent.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/sandbox-proxy-ready', params: {} }, HOST_ORIGIN);
+    </script>
+  </body>
+</html>

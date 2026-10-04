@@ -106,6 +106,10 @@ export interface TerminalOperationRegistry {
 	readonly closeConnection: (connectionId: string) => void;
 	/** Stop publishing obsolete raw output for one congested presentation. */
 	readonly suppressOutput: (attachmentId: string, connectionId: string) => void;
+	/** The client holding one session's interactive presentation lease now. */
+	readonly presentationHolder: (
+		identity: Pick<TerminalIdentity, 'projectId' | 'sessionId'>,
+	) => { readonly clientId: string; readonly attachmentId: string } | undefined;
 }
 
 interface ProtocolAttachment {
@@ -215,6 +219,16 @@ export function createTerminalOperationRegistry(
 				'terminal.detach': { scope: 'read' },
 				[TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION]: { scope: 'write' },
 			},
+		},
+		presentationHolder: (identity) => {
+			const holder = presentations.state({
+				serverId: options.service.serverId,
+				projectId: identity.projectId,
+				sessionId: identity.sessionId,
+			}).holder;
+			return holder === undefined
+				? undefined
+				: { clientId: holder.clientId, attachmentId: holder.attachmentId };
 		},
 		closeConnection: (connectionId) => {
 			const released: ProtocolAttachment[] = [];

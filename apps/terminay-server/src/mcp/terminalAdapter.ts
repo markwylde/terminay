@@ -198,6 +198,12 @@ const AUTOMATION_TOOLS: readonly string[] = [
 	'stop_automation_run',
 ];
 
+const WINDOW_TOOLS: readonly string[] = [
+	'show_window',
+	'close_window',
+	'list_windows',
+];
+
 function getMcpCapabilities(options: AdapterOptions): unknown {
 	const activityAvailable = options.activity !== undefined;
 	const workspaceAvailable = options.workspace !== undefined;
@@ -219,12 +225,13 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			'wait_for_command',
 			'wait_for_attention',
 			...AUTOMATION_TOOLS,
+			...WINDOW_TOOLS,
 		].map((tool) => ({
 			tool,
 			available:
 				// This adapter binds terminals only; a host that serves
-				// automations binds them separately.
-				AUTOMATION_TOOLS.includes(tool)
+				// automations or app windows binds them separately.
+				AUTOMATION_TOOLS.includes(tool) || WINDOW_TOOLS.includes(tool)
 					? false
 					: tool === 'wait_for_idle' ||
 				tool === 'wait_for_command' ||

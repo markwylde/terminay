@@ -70,6 +70,8 @@ import type { DictationOverlayProps } from './DictationOverlay';
 import { DictationOverlay } from './DictationOverlay';
 import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
 import { McpApprovalStrip } from './McpApprovalStrip';
+import { registerAppWindowPane } from '../workspace/appWindows/appWindowPanes';
+import { appWindowPaneKey } from '../workspace/appWindows/useServerAppWindows';
 import type { TerminalPanelParams } from './TerminalTab';
 import {
 	clearTerminalViewport,
@@ -484,6 +486,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalPresentationActionRef = useRef<() => Promise<void>>(() =>
 		Promise.resolve(),
 	);
+	// Renews this attachment's own control lease. It never displaces another
+	// holder; a controller whose timers were paused uses it before acting.
+	const terminalPresentationRenewRef = useRef<() => Promise<void>>(() =>
+		Promise.resolve(),
+	);
 	const pasteTerminalTextRef = useRef<(text: string) => void>(() => {});
 	const cancelTerminalPasteRef = useRef<() => void>(() => {});
 	const mobileTerminalModifiersRef = useRef<TerminalMobileModifiers>(
@@ -637,6 +644,28 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [terminalSessionEnded, setTerminalSessionEnded] = useState(false);
 	const [terminalPresentation, setTerminalPresentation] =
 		useState<TerminalPresentationState | null>(null);
+	// App windows are laid out over this pane by a host outside the docking
+	// layout; the pane only says where it is and whether it controls the
+	// terminal, which decides whether this client runs the terminal's views.
+	const appWindowServerId = terminalClientContext?.serverId;
+	const isPresentationController = terminalPresentation?.role === 'controller';
+	useEffect(() => {
+		const element = containerRef.current;
+		if (element === null || appWindowServerId === undefined) return;
+		return registerAppWindowPane(
+			appWindowPaneKey(appWindowServerId, props.params.sessionId),
+			{
+				serverId: appWindowServerId,
+				sessionId: props.params.sessionId,
+				element,
+				isController: isPresentationController,
+				takeControl: () =>
+					void terminalPresentationActionRef.current().catch(() => {}),
+				renewControl: () => terminalPresentationRenewRef.current(),
+				focusTerminal: () => terminalRef.current?.focus(),
+			},
+		);
+	}, [appWindowServerId, props.params.sessionId, isPresentationController]);
 	const [searchQuery, setSearchQuery] = useState('');
 	const [searchSummary, setSearchSummary] = useState<{
 		index: number;
@@ -1741,6 +1770,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							}
 						};
 						applyPresentation(attachment.presentation);
+						terminalPresentationRenewRef.current = async () => {
+							if (!terminalPresentationControllerRef.current) return;
+							const state = await attachment.changePresentation('renew');
+							if (bindingFence.isCurrent(binding)) applyPresentation(state);
+						};
 						terminalPresentationActionRef.current = async () => {
 							let state: TerminalPresentationState;
 							try {
@@ -2069,6 +2103,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					window.clearTimeout(presentationRenewTimer);
 				presentationRenewTimer = null;
 				terminalPresentationActionRef.current = () => Promise.resolve();
+				terminalPresentationRenewRef.current = () => Promise.resolve();
 				panelEventDisposer?.();
 				panelEventDisposer = null;
 				const staleAttachment = panelAttachment;
@@ -3181,6 +3216,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			{/* A sibling, not a child: the terminal effect clears the xterm root's
 			    own markup, so nothing React renders may live inside it. */}
 			<div className="terminal-panel-root" ref={xtermRootRef} />
+			{/* Reserved for minimised app-window tabs; zero height without one. */}
+			<div className="terminal-app-window-rail" aria-hidden="true" />
 			{touchSelectionCopy ? (
 				<button
 					type="button"

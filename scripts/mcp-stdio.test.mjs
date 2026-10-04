@@ -9,16 +9,28 @@ import { build } from 'esbuild'
 
 const EXPECTED_TOOLS = [
   'close_terminal',
+  'close_window',
+  'create_automation',
+  'delete_automation',
   'focus_terminal',
+  'get_automation',
   'get_mcp_capabilities',
   'get_terminal_status',
+  'list_automation_runs',
+  'list_automations',
   'list_terminals',
+  'list_windows',
   'open_terminal',
   'read_terminal',
   'rename_terminal',
+  'run_automation',
   'run_command',
   'search_terminal',
+  'set_automation_enabled',
+  'show_window',
   'split_terminal',
+  'stop_automation_run',
+  'update_automation',
   'wait_for_attention',
   'wait_for_command',
   'wait_for_idle',
@@ -47,8 +59,10 @@ test('MCP stdio adapter registers every tool and round-trips operations through 
     socketPath,
     capabilities,
     dispatch: async (request, scope) => {
-      seen.push({ scope, op: request.op, params: request.params })
       const { op } = request
+      // The adapter's own lookup of connected servers' tools is not a tool call.
+      if (op === 'list_connected_tools') return { ok: true, result: { tools: [] } }
+      seen.push({ scope, op, params: request.params })
       if (op === 'list_terminals') {
         return {
           ok: true,
@@ -139,52 +153,38 @@ test('MCP stdio adapter registers every tool and round-trips operations through 
     assert.equal(rejected.isError, true)
     assert.match(textFromToolResult(rejected), /outside the calling project/)
 
-    assert.deepEqual(seen, [
-      {
-        scope: {
+    // Identity comes from the capability, never from a parameter.
+    assert.deepEqual(
+      seen.map(({ scope, op, params }) => ({
+        terminalSessionId: scope.terminalSessionId,
+        projectId: scope.projectId,
+        scope: scope.scope,
+        op,
+        params,
+      })),
+      [
+        { terminalSessionId: 'project-a-caller', projectId: 'project-a', scope: 'write', op: 'list_terminals', params: {} },
+        {
           terminalSessionId: 'project-a-caller',
           projectId: 'project-a',
           scope: 'write',
-          connectionId: 'connection-1',
-          requestId: seen[0].scope.requestId,
-          signal: seen[0].scope.signal,
+          op: 'write_terminal',
+          params: { terminal: 'project-a-worker', text: 'printf ok', submit: true },
         },
-        op: 'list_terminals',
-        params: {},
-      },
-      {
-        scope: {
+        {
           terminalSessionId: 'project-a-caller',
           projectId: 'project-a',
           scope: 'write',
-          connectionId: 'connection-1',
-          requestId: seen[1].scope.requestId,
-          signal: seen[1].scope.signal,
+          op: 'read_terminal',
+          params: { terminal: 'project-b-secret', format: 'text', max_bytes: 16384 },
         },
-        op: 'write_terminal',
-        params: {
-          terminal: 'project-a-worker',
-          text: 'printf ok',
-          submit: true,
-        },
-      },
-      {
-        scope: {
-          terminalSessionId: 'project-a-caller',
-          projectId: 'project-a',
-          scope: 'write',
-          connectionId: 'connection-1',
-          requestId: seen[2].scope.requestId,
-          signal: seen[2].scope.signal,
-        },
-        op: 'read_terminal',
-        params: {
-          terminal: 'project-b-secret',
-          format: 'text',
-          max_bytes: 16384,
-        },
-      },
-    ])
+      ],
+    )
+    for (const { scope } of seen) {
+      assert.match(scope.connectionId, /^connection-\d+$/)
+      assert.ok(scope.signal instanceof AbortSignal)
+      assert.equal(typeof scope.requestId, 'string')
+    }
   } finally {
     await client.close().catch(() => {})
     await controlServer.stop()

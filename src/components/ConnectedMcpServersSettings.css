@@ -1,0 +1,129 @@
+.connected-servers-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.connected-servers-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 8px;
+}
+
+.connected-servers-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.connected-servers-name {
+  font-weight: 600;
+}
+
+.connected-servers-target {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connected-servers-status {
+  font-size: 12px;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.connected-servers-status[data-state="connected"] {
+  color: #7fd18b;
+  opacity: 1;
+}
+
+.connected-servers-status[data-state="not-connected"] {
+  color: #f0a35e;
+  opacity: 1;
+}
+
+.connected-servers-actions,
+.connected-servers-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connected-servers-empty {
+  margin: 10px 0 0;
+  opacity: 0.7;
+}
+
+.connected-servers-add {
+  margin-top: 10px;
+  justify-self: start;
+}
+
+.connected-servers-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 8px;
+}
+
+.connected-servers-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.connected-servers-form label > span,
+.connected-servers-credentials legend {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.connected-servers-form small {
+  opacity: 0.65;
+}
+
+.connected-servers-form textarea,
+.connected-servers-form input {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.connected-servers-credentials {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 6px;
+}
+
+.connected-servers-credential {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 6px;
+}
+
+.connected-servers-error {
+  margin: 0;
+  color: #f0a35e;
+}
+
+@media (max-width: 560px) {
+  .connected-servers-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .connected-servers-credential {
+    grid-template-columns: 1fr;
+  }
+}

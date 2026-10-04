@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Terminay app view</title>
+		<!--
+			The sandbox proxy for app windows (ADR-0038). It is framed by the workspace
+			with a sandbox attribute and, where the host serves it over HTTP, with a
+			`Content-Security-Policy: sandbox` response header, so it always runs in an
+			opaque origin. It holds the untrusted view in a nested opaque-origin frame
+			and relays messages. It has no other behaviour and trusts nothing it relays.
+		-->
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: transparent;
+			}
+			iframe {
+				border: 0;
+				width: 100%;
+				height: 100%;
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<script>
+			(() => {
+				const READY = 'ui/notifications/sandbox-proxy-ready';
+				const RESOURCE = 'ui/notifications/sandbox-resource-ready';
+				let inner = null;
+
+				function load(params) {
+					if (inner !== null || typeof params?.html !== 'string') return;
+					inner = document.createElement('iframe');
+					// Never allow-same-origin: the view must not share an origin with
+					// anything, this document included.
+					inner.setAttribute('sandbox', 'allow-scripts allow-forms');
+					if (typeof params.allow === 'string' && params.allow.length > 0)
+						inner.setAttribute('allow', params.allow);
+					inner.setAttribute('title', 'App view');
+					inner.srcdoc = params.html;
+					document.body.append(inner);
+				}
+
+				addEventListener('message', (event) => {
+					const message = event.data;
+					if (event.source === parent && parent !== window) {
+						if (message?.method === RESOURCE) load(message.params);
+						else if (inner?.contentWindow) inner.contentWindow.postMessage(message, '*');
+						return;
+					}
+					if (inner !== null && event.source === inner.contentWindow) {
+						// The view may not impersonate this proxy.
+						if (
+							typeof message?.method === 'string' &&
+							message.method.startsWith('ui/notifications/sandbox-')
+						)
+							return;
+						parent.postMessage(message, '*');
+					}
+				});
+
+				if (parent !== window)
+					parent.postMessage({ jsonrpc: '2.0', method: READY, params: {} }, '*');
+			})();
+		</script>
+	</body>
+</html>
