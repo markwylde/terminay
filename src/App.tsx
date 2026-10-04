@@ -306,6 +306,14 @@ import {
 	useServerMcpApprovals,
 } from './workspace/mcpApprovals/useServerMcpApprovals';
 import {
+	APP_WINDOW_LAYOUT_EVENT,
+	AppWindowHost,
+} from './workspace/appWindows/AppWindowHost';
+import {
+	AppWindowsContext,
+	useServerAppWindows,
+} from './workspace/appWindows/useServerAppWindows';
+import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
 } from './workspace/automations/useServerAutomations';
@@ -5068,7 +5076,16 @@ const ProjectWorkspace = forwardRef<
 										components={dockviewComponents}
 										tabComponents={dockviewTabComponents}
 										popoutUrl={popoutUrl}
-										onReady={handleDockviewReady}
+										onReady={(event) => {
+											handleDockviewReady(event);
+											// App windows follow their pane; a layout change can
+											// move a pane without resizing it.
+											const notify = (): void => {
+												window.dispatchEvent(new Event(APP_WINDOW_LAYOUT_EVENT));
+											};
+											event.api.onDidLayoutChange(notify);
+											event.api.onDidActivePanelChange(notify);
+										}}
 										floatingGroupBounds="boundedWithinViewport"
 									/>
 								</FilePanelSaveRegistryProvider>
@@ -6804,6 +6821,12 @@ function App({
 	// One projection per server; every terminal pane and tab reads its own
 	// pending approvals from it.
 	const serverMcpApprovals = useServerMcpApprovals(automationEntries);
+	// Likewise one projection of app windows per server; the host below lays
+	// them out over the terminal panes that own them.
+	const serverAppWindows = useServerAppWindows(automationEntries);
+	useEffect(() => {
+		window.dispatchEvent(new Event(APP_WINDOW_LAYOUT_EVENT));
+	}, [activeProjectId, isHomeSelected]);
 	const automationSectionServers = useMemo<
 		readonly AutomationsSectionServer[]
 	>(
@@ -7574,6 +7597,7 @@ function App({
 	) : null;
 
 	return (
+		<AppWindowsContext.Provider value={serverAppWindows}>
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
@@ -7989,6 +8013,7 @@ function App({
 							adoptedTerminals={adoptedTerminalsByProject[project.id]}
 						/>
 					))}
+				<AppWindowHost />
 				</McpApprovalsContext.Provider>
 			</div>
 			{isStatusBarVisible ? (
@@ -8024,6 +8049,7 @@ function App({
 				/>
 			) : null}
 		</div>
+		</AppWindowsContext.Provider>
 	);
 }
 

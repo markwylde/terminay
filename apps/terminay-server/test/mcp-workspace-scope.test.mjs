@@ -12,7 +12,7 @@ import {
 	WorkspaceRepository,
 } from '@terminay/server-core';
 import {
-	CONTROL_OPERATIONS,
+	CONTROL_TOOL_OPERATIONS,
 	CONTROL_PROTOCOL_VERSION,
 	ControlCapabilityStore,
 	ProjectHandleCodec,
@@ -664,7 +664,7 @@ test('automation tools are the same for project and workspace reach, and unsuppo
 	assert.deepEqual(workspaceTools, projectTools);
 	assert.deepEqual(
 		workspaceTools.map((entry) => entry.tool).sort(),
-		[...CONTROL_OPERATIONS].sort(),
+		[...CONTROL_TOOL_OPERATIONS].sort(),
 	);
 	for (const op of [
 		'list_automations',

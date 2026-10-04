@@ -20,6 +20,12 @@ import type {
 export const CONTROL_PROTOCOL_VERSION = 1 as const;
 export const CONTROL_MAX_FRAME_BYTES = 64 * 1024;
 export const CONTROL_MAX_RESPONSE_BYTES = 256 * 1024;
+/**
+ * A few operations carry a document or a connected server's payload. Only they
+ * may exceed the ordinary frame and response bounds, up to these ceilings.
+ */
+export const CONTROL_MAX_LARGE_FRAME_BYTES = 768 * 1024;
+export const CONTROL_MAX_LARGE_RESPONSE_BYTES = 1536 * 1024;
 export const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION = 8;
 export const CONTROL_MAX_IN_FLIGHT_TOTAL = 64;
 export const CONTROL_REQUEST_TIMEOUT_MS = 120_000;
@@ -52,7 +58,35 @@ export const CONTROL_OPERATIONS = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'show_window',
+	'close_window',
+	'list_windows',
+	'list_connected_tools',
+	'call_connected_tool',
 ] as const;
+
+/**
+ * Operations the stdio adapter uses to carry connected servers' tools. They
+ * are plumbing, not tools: an agent never sees them by these names.
+ */
+export const CONTROL_INTERNAL_OPERATIONS: ReadonlySet<string> = new Set([
+	'list_connected_tools',
+	'call_connected_tool',
+]);
+/** The operations that are Terminay's own MCP tools, in registration order. */
+export const CONTROL_TOOL_OPERATIONS: readonly ControlOperation[] =
+	CONTROL_OPERATIONS.filter((op) => !CONTROL_INTERNAL_OPERATIONS.has(op));
+
+/** Operations whose request may be a large frame. */
+export const CONTROL_LARGE_FRAME_OPERATIONS: ReadonlySet<string> = new Set([
+	'show_window',
+	'call_connected_tool',
+]);
+/** Operations whose response may be large. */
+export const CONTROL_LARGE_RESPONSE_OPERATIONS: ReadonlySet<string> = new Set([
+	'list_connected_tools',
+	'call_connected_tool',
+]);
 
 export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
 /** Compatibility spelling used by the pre-server control protocol. */
@@ -215,7 +249,13 @@ export interface ControlError {
 }
 
 export type ControlResponse =
-	| { readonly id: string; readonly ok: true; readonly result: unknown }
+	| {
+			readonly id: string;
+			readonly ok: true;
+			readonly result: unknown;
+			/** Text a view in the calling terminal left for the model. */
+			readonly modelContext?: string;
+	  }
 	| { readonly id: string; readonly ok: false; readonly error: ControlError };
 
 export interface ControlRequestContext extends ControlCapabilityScope {
@@ -265,6 +305,10 @@ export type ControlOperationHandlers = Partial<{
 export interface ControlEndpointLimits {
 	readonly maxFrameBytes: number;
 	readonly maxResponseBytes: number;
+	/** Frame bound for the operations in `CONTROL_LARGE_FRAME_OPERATIONS`. */
+	readonly maxLargeFrameBytes: number;
+	/** Response bound for `CONTROL_LARGE_RESPONSE_OPERATIONS`. */
+	readonly maxLargeResponseBytes: number;
 	readonly maxInFlightPerConnection: number;
 	readonly maxInFlightTotal: number;
 	readonly requestTimeoutMs: number;
@@ -797,6 +841,8 @@ export class ControlFrameMalformedError extends Error {
 /** Incremental UTF-8 JSONL decoder with a hard limit for partial frames. */
 export class ControlFrameDecoder {
 	private buffered = new Uint8Array();
+	/** Encoded byte length of each frame returned by the last `push`. */
+	lastFrameBytes: number[] = [];
 	constructor(
 		readonly maxFrameBytes = CONTROL_MAX_FRAME_BYTES,
 		private readonly maxFramesPerPush = 128,
@@ -824,6 +870,7 @@ export class ControlFrameDecoder {
 		next.set(chunk, this.buffered.byteLength);
 		this.buffered = next;
 		const values: unknown[] = [];
+		const sizes: number[] = [];
 		let offset = 0;
 		for (let index = 0; index < this.buffered.byteLength; index += 1) {
 			if (this.buffered[index] !== 0x0a) continue;
@@ -843,6 +890,7 @@ export class ControlFrameDecoder {
 				throw new ControlFrameMalformedError();
 			}
 			values.push(parsed);
+			sizes.push(line.byteLength);
 			offset = index + 1;
 			if (values.length > this.maxFramesPerPush)
 				throw new ControlFrameMalformedError(
@@ -852,6 +900,7 @@ export class ControlFrameDecoder {
 		this.buffered = this.buffered.slice(offset);
 		if (this.buffered.byteLength > this.maxFrameBytes)
 			throw new ControlFrameLimitError(this.maxFrameBytes);
+		this.lastFrameBytes = sizes;
 		return values;
 	}
 
@@ -1060,8 +1109,20 @@ export function createControlEndpoint(
 		options.maxInFlightTotal ?? CONTROL_MAX_IN_FLIGHT_TOTAL;
 	const requestTimeoutMs =
 		options.requestTimeoutMs ?? CONTROL_REQUEST_TIMEOUT_MS;
+	// A host that pins the frame bound without naming a large one keeps a
+	// single bound: nothing may then exceed what it chose.
+	const maxLargeFrameBytes = Math.max(
+		maxFrameBytes,
+		options.maxLargeFrameBytes ??
+			(options.maxFrameBytes === undefined
+				? CONTROL_MAX_LARGE_FRAME_BYTES
+				: maxFrameBytes),
+	);
+	const maxLargeResponseBytes =
+		options.maxLargeResponseBytes ?? CONTROL_MAX_LARGE_RESPONSE_BYTES;
 	const maxQueuedResponseBytes =
-		options.maxQueuedResponseBytes ?? maxResponseBytes * 2;
+		options.maxQueuedResponseBytes ??
+		Math.max(maxResponseBytes, maxLargeResponseBytes) * 2;
 	assertPositiveLimit(maxFrameBytes, 'maxFrameBytes');
 	assertPositiveLimit(maxResponseBytes, 'maxResponseBytes');
 	assertPositiveLimit(maxInFlightPerConnection, 'maxInFlightPerConnection');
@@ -1084,7 +1145,11 @@ export function createControlEndpoint(
 		options.onError?.(error);
 	};
 
-	function writeResponse(socket: Socket, response: ControlResponse): void {
+	function writeResponse(
+		socket: Socket,
+		response: ControlResponse,
+		limit = maxResponseBytes,
+	): void {
 		if (!socket.writable || socket.destroyed) return;
 		let encoded: string;
 		try {
@@ -1097,7 +1162,7 @@ export function createControlEndpoint(
 				}),
 			);
 		}
-		if (Buffer.byteLength(encoded, 'utf8') > maxResponseBytes) {
+		if (Buffer.byteLength(encoded, 'utf8') > limit) {
 			encoded = encodeControlMessage(
 				responseForError(response.id, {
 					code: 'limit_exceeded',
@@ -1162,7 +1227,13 @@ export function createControlEndpoint(
 			);
 			return;
 		}
-		if (totalInFlight >= maxInFlightTotal) {
+		// A held watch for tool-list changes is one per agent and does no
+		// work; it is bounded per connection but not counted against the server.
+		const counted = !(
+			request.op === 'list_connected_tools' &&
+			typeof request.params.after === 'string'
+		);
+		if (counted && totalInFlight >= maxInFlightTotal) {
 			writeResponse(
 				socket,
 				responseForError(request.id, {
@@ -1175,7 +1246,7 @@ export function createControlEndpoint(
 		const controller = new AbortController();
 		inFlight.set(request.id, controller);
 		allControllers.set(controller, hashToken(request.token).toString('hex'));
-		totalInFlight += 1;
+		if (counted) totalInFlight += 1;
 		let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
 			() => controller.abort('timeout'),
 			requestTimeoutMs,
@@ -1267,6 +1338,9 @@ export function createControlEndpoint(
 						id: request.id,
 						ok: true,
 						result: dispatchResult.result,
+						...(typeof dispatchResult.modelContext === 'string'
+							? { modelContext: dispatchResult.modelContext }
+							: {}),
 					} satisfies ControlResponse;
 				return {
 					id: request.id,
@@ -1280,7 +1354,13 @@ export function createControlEndpoint(
 				socket.writable &&
 				controller.signal.reason !== 'caller_closed'
 			)
-				writeResponse(socket, result);
+				writeResponse(
+					socket,
+					result,
+					CONTROL_LARGE_RESPONSE_OPERATIONS.has(request.op)
+						? Math.max(maxResponseBytes, maxLargeResponseBytes)
+						: maxResponseBytes,
+				);
 		} catch (error) {
 			reportError(error);
 			if (socket.writable && controller.signal.reason !== 'caller_closed')
@@ -1292,14 +1372,16 @@ export function createControlEndpoint(
 			clearTimeout(timeout);
 			inFlight.delete(request.id);
 			allControllers.delete(controller);
-			totalInFlight -= 1;
+			if (counted) totalInFlight -= 1;
 		}
 	}
 
 	function onConnection(socket: Socket): void {
 		const connectionId = `connection-${++nextConnectionId}`;
 		const inFlight = new Map<string, AbortController>();
-		const decoder = new ControlFrameDecoder(maxFrameBytes);
+		// The decoder admits the large bound; a frame over the ordinary bound is
+		// then accepted only for an operation that is allowed to be large.
+		const decoder = new ControlFrameDecoder(maxLargeFrameBytes);
 		connections.add(socket);
 		socket.on('data', (chunk: Buffer) => {
 			let values: unknown[];
@@ -1310,10 +1392,25 @@ export function createControlEndpoint(
 				socket.destroy(error instanceof Error ? error : undefined);
 				return;
 			}
-			for (const value of values)
+			const sizes = decoder.lastFrameBytes;
+			for (const [index, value] of values.entries()) {
+				if (
+					(sizes[index] ?? 0) > maxFrameBytes &&
+					!(
+						isPlainObject(value) &&
+						typeof value.op === 'string' &&
+						CONTROL_LARGE_FRAME_OPERATIONS.has(value.op)
+					)
+				) {
+					const error = new ControlFrameLimitError(maxFrameBytes);
+					reportError(error);
+					socket.destroy(error);
+					return;
+				}
 				void handleRequest(socket, connectionId, inFlight, value).catch(
 					reportError,
 				);
+			}
 		});
 		socket.on('error', reportError);
 		socket.on('close', () => {

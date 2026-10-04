@@ -31,6 +31,7 @@ import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DockTabChrome } from './DockTabChrome';
 import { TerminalPanelClientContext } from './TerminalPanel';
 import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
+import { TerminalAppWindowBadge } from '../workspace/appWindows/AppWindowBadge';
 import { visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
 
 export type TerminalTabMacroRunStep = {
@@ -643,6 +644,10 @@ export function TerminalTab(
 				}
 				afterTitle={
 					<>
+						<TerminalAppWindowBadge
+							serverId={terminalClientContext?.serverId}
+							sessionId={params?.sessionId}
+						/>
 						{recordingIndicator}
 						{macroTrigger}
 					</>

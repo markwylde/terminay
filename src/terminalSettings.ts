@@ -410,6 +410,9 @@ export const defaultTerminalSettings: TerminalSettings = {
 			terminalsManage: 'allow',
 			automationsRead: 'allow',
 			automationsManage: 'ask',
+			appWindows: 'allow',
+			connectedServerTools: 'allow',
+			windowMessages: 'allow',
 		},
 	},
 	allowTransparency: false,
@@ -802,6 +805,39 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'select',
 				options: TERMINAY_MCP_PERMISSION_OPTIONS,
 				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.appWindows',
+				label: 'App Windows',
+				description:
+					'Show, update, list, and close windows in the terminal the agent is running in, including the views of connected servers’ tools.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'window', 'app'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.connectedServerTools',
+				label: 'Connected Server Tools',
+				description:
+					'Use the tools of the MCP servers connected below, from an agent or from one of their own windows.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'window', 'app'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.windowMessages',
+				label: 'Window Messages',
+				description:
+					'Let a window type a message into its terminal and send it, as when you press a button in it.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'window', 'app'],
 			}),
 		],
 	},
@@ -2293,6 +2329,9 @@ function normalizeTerminayMcpPermissions(value: unknown): TerminayMcpPermissions
 		terminalsManage: policy('terminalsManage'),
 		automationsRead: policy('automationsRead'),
 		automationsManage: policy('automationsManage'),
+		appWindows: policy('appWindows'),
+		connectedServerTools: policy('connectedServerTools'),
+		windowMessages: policy('windowMessages'),
 	};
 }
 

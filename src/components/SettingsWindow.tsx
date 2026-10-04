@@ -2,7 +2,11 @@ import type {
 	ShellProfilesClient,
 	TerminayClient,
 } from '@terminay/client-core';
-import { TerminayAiClient, TerminayClientFacade } from '@terminay/client-core';
+import {
+	ConnectedServersClient,
+	TerminayAiClient,
+	TerminayClientFacade,
+} from '@terminay/client-core';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -71,6 +75,7 @@ function toParakeetRuntimeStatus(status: {
 
 import '../settings.css';
 import { ExtensionSettingsSection } from './ExtensionSettingsSection';
+import { ConnectedMcpServersSettings } from './ConnectedMcpServersSettings';
 import { ShellProfilesSettings } from './ShellProfilesSettings';
 import {
 	attachTerminalWebglRenderer,
@@ -146,6 +151,7 @@ function setValueAtPath(
 		'remoteAccess',
 		'shell',
 		'sidebar',
+		'terminayMcp',
 		'theme',
 	]);
 	const [root] = segments;
@@ -513,6 +519,13 @@ export function SettingsWindow({
 			applicationClient === undefined
 				? undefined
 				: new TerminayAiClient(new TerminayClientFacade(applicationClient)),
+		[applicationClient],
+	);
+	const connectedServersClient = useMemo(
+		() =>
+			applicationClient === undefined
+				? undefined
+				: new ConnectedServersClient(new TerminayClientFacade(applicationClient)),
 		[applicationClient],
 	);
 	const aiTabMetadataClient = useMemo(() => {
@@ -2857,6 +2870,10 @@ export function SettingsWindow({
 											</div>
 										</div>
 									))}
+									{section.id === 'terminay-mcp' &&
+									connectedServersClient !== undefined ? (
+										<ConnectedMcpServersSettings client={connectedServersClient} />
+									) : null}
 									{section.id === 'file-viewer-refresh' ? (
 										<div className="settings-row settings-row--stacked">
 											{renderCustomFileExtensionDefaults()}

@@ -168,11 +168,26 @@ MCP authority has two parts, both checked by the server on every request: the
 calling terminal's capability scope (which terminals it can reach) and the
 user's permission policy (which kinds of operation it may perform). The policy
 groups operations into Read Terminals, Full Terminal Management, Read
-Automations, and Full Automation Management, each set to Ask Permission, Always
+Automations, Full Automation Management, App Windows, and Connected Server
+Tools, with a further Window Messages policy, each set to Ask Permission, Always
 Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
 an inline prompt in the calling terminal's pane, answerable from any client
 with authority to create terminals on that server. See
 [MCP permissions](../openspec/specs/mcp-permissions/spec.md).
+
+An agent can show the user an **app window**: a floating window in the terminal
+it is running in, holding sandboxed HTML. It comes from one of two places. The
+agent can write the HTML itself with the Terminay MCP tool `show_window`. Or the
+user can list third-party MCP servers under Settings > AI > Connected MCP
+servers; Terminay then connects to them as a client that supports MCP Apps,
+offers their tools to agents as `<name>__<tool>`, and shows a tool's own UI when
+the agent calls it. Either way no agent CLI is hooked or reconfigured. A window
+belongs to the terminal that opened it, minimises to a tab on the pane's bottom
+edge, runs only on the device that controls that terminal, and can send a
+message back, which is typed into the terminal. Its content runs in an
+opaque-origin frame with no access to the workspace. See
+[terminal app windows](../openspec/specs/terminal-app-windows/spec.md) and the
+[MCP app gateway](../openspec/specs/mcp-app-gateway/spec.md).
 
 The server derives every project's root from canonical project state. Labels,
 hostnames, IPs, URLs, and paths supplied by a client cannot redirect an

@@ -63,6 +63,46 @@ test('the strip names the agent, the terminal, and the action, with all three ch
 	assert.doesNotMatch(markup, /mail-digest/);
 });
 
+test('showing a window asks with the window title and the App Windows group', () => {
+	const markup = render([
+		approval('apr_w', {
+			operation: 'show_window',
+			group: 'appWindows',
+			groupLabel: 'App Windows',
+			summary: 'show a window titled "Hello" in this terminal',
+			details: [],
+		}),
+	]);
+	assert.match(
+		markup,
+		/<strong>Claude Code<\/strong> in <strong>Terminal 1<\/strong> wants to show a window titled &quot;Hello&quot; in this terminal\./,
+	);
+	assert.match(markup, /App Windows/);
+	for (const label of ['Allow One Time', 'Allow This Session', 'Decline'])
+		assert.match(markup, new RegExp(`>${label}</button>`));
+});
+
+test('a window message asks naming the window, with the full text one tap away', () => {
+	const markup = render([
+		approval('apr_m', {
+			operation: 'window_message',
+			group: 'windowMessages',
+			groupLabel: 'Window Messages',
+			agent: 'The window "Deploy configurator"',
+			summary: 'type a message into the terminal and send it',
+			details: [{ label: 'Message', value: 'Deploy api to eu-west-1', code: true }],
+		}),
+	]);
+	assert.match(
+		markup,
+		/<strong>The window &quot;Deploy configurator&quot;<\/strong> in <strong>Terminal 1<\/strong> wants to type a message into the terminal and send it\./,
+	);
+	assert.match(markup, /Window Messages/);
+	assert.match(markup, /aria-expanded="false"[^>]*>Show details/);
+	for (const label of ['Allow One Time', 'Allow This Session', 'Decline'])
+		assert.match(markup, new RegExp(`>${label}</button>`));
+});
+
 test('queued requests show one at a time, oldest first', () => {
 	const markup = render([
 		approval('apr_1'),

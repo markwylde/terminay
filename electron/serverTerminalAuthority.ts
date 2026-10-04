@@ -316,6 +316,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly automations?: ServerCoreCompositionOptions['automations'];
 	/** Compose MCP permission approvals; set by the host that serves MCP. */
 	readonly mcpApprovals?: boolean;
+	/** Compose server-owned app windows; needs `mcpApprovals`. */
+	readonly appWindows?: ServerCoreCompositionOptions['appWindows'];
+	/** Compose the registry of user-connected MCP servers. */
+	readonly connectedServers?: ServerCoreCompositionOptions['connectedServers'];
 	/** Optional server-owned recording protocol authority supplied by Desktop. */
 	readonly recordings?: ServerCoreCompositionOptions['recordings'];
 	/** Durable server settings shared by Desktop and browser renderers. */
@@ -901,6 +905,9 @@ export class ServerTerminalAuthority {
 				'macros.v1',
 				...(options.automations === undefined ? [] : ['automations.v1']),
 				...(options.mcpApprovals === true ? ['mcp-approvals.v1'] : []),
+				...(options.mcpApprovals === true && options.appWindows !== undefined
+					? ['app-windows.v1']
+					: []),
 				'recording.v1',
 				'extensions.v1',
 				...(dictationAi === undefined ? [] : ['dictation.v1']),
@@ -973,6 +980,12 @@ export class ServerTerminalAuthority {
 				: { recordings: options.recordings }),
 			...(options.settings === undefined ? {} : { settings: options.settings }),
 			...(options.mcpApprovals === true ? { mcpApprovals: true } : {}),
+			...(options.appWindows === undefined
+				? {}
+				: { appWindows: options.appWindows }),
+			...(options.connectedServers === undefined
+				? {}
+				: { connectedServers: options.connectedServers }),
 			...(options.shellProfiles === undefined
 				? {}
 				: {
