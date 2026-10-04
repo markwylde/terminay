@@ -598,7 +598,7 @@ export class ServerConnection implements ServerConnectionLike {
 			const projected = this.projectEvent(value);
 			if (
 				projected === undefined ||
-				!matchesEvent(projected, this.authenticatedClient?.clientId, event) ||
+				!matchesEvent(projected, this.authenticatedClient?.clientId, event, this.connectionId) ||
 				!matchesEventSelector(projected.payload, selector)
 			)
 				return;
@@ -633,7 +633,7 @@ export class ServerConnection implements ServerConnectionLike {
 			const projected = this.projectEvent(value);
 			if (
 				projected !== undefined &&
-				matchesEvent(projected, this.authenticatedClient?.clientId, event)
+				matchesEvent(projected, this.authenticatedClient?.clientId, event, this.connectionId)
 			) {
 				replayedRevisions.add(projected.revision);
 				await this.sendEvent(subscriptionId, projected);
@@ -1007,10 +1007,18 @@ function matchesEvent(
 	event: OrderedEvent,
 	clientId: string | undefined,
 	name: string | undefined,
+	connectionId?: string,
 ): boolean {
 	if (name !== undefined && event.event !== name) return false;
 	const payload = objectPayload(event.payload);
-	return typeof payload.clientId !== 'string' || payload.clientId === clientId;
+	// An event may be addressed to one client, and further to one of its
+	// connections: a client id is what a client says it is, a connection is not.
+	if (typeof payload.clientId === 'string' && payload.clientId !== clientId)
+		return false;
+	return (
+		typeof payload.toConnectionId !== 'string' ||
+		payload.toConnectionId === connectionId
+	);
 }
 
 function matchesEventSelector(

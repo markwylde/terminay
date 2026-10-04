@@ -102,7 +102,7 @@ export interface AppWindowContent {
 }
 
 export interface AppWindowEventTransport extends BinaryQueryTransport {
-  readonly subscribe: (event: string, listener: (payload: JsonValue) => void) => () => void;
+  readonly subscribe: (event: string, listener: (payload: JsonValue) => void, onResync?: () => void) => () => void;
   /** Needed only for the view mirror, whose recordings travel as bytes. */
   readonly commandWithBody?: <T extends JsonValue = JsonValue>(operation: string, payload: JsonValue | undefined, body: Uint8Array, options?: CommandOptions) => Promise<T>;
   readonly subscribeWithBody?: (event: string, listener: (payload: JsonValue, body: Uint8Array) => void, onResync?: () => void) => () => void;
@@ -246,7 +246,8 @@ export class AppWindowClient {
   onChanged(listener: () => void): () => void {
     if (typeof listener !== "function") throw new TypeError("app window listener is required");
     if (typeof this.transport.subscribe !== "function") throw new Error("app window subscription is unavailable");
-    return this.transport.subscribe(APP_WINDOW_EVENTS.changed, () => listener());
+    // A notice that events were missed is as much a reason to read again as a change is.
+    return this.transport.subscribe(APP_WINDOW_EVENTS.changed, () => listener(), () => listener());
   }
 }
 

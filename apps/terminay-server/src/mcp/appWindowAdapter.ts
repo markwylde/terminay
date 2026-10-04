@@ -183,7 +183,13 @@ export function createAppWindowControlAdapter(
 				signal,
 			);
 			// Only a resource that says it is an MCP App view is shown as one.
-			if (resource.mimeType !== MCP_APP_RESOURCE_MIME_TYPE) return undefined;
+			// Compared as a media type, not as a string: case and the space after
+			// the semicolon are not part of it.
+			if (
+				resource.mimeType?.toLowerCase().replace(/\s+/gu, '') !==
+				MCP_APP_RESOURCE_MIME_TYPE
+			)
+				return undefined;
 			if (
 				Buffer.byteLength(resource.html, 'utf8') > MAX_MCP_APP_RESOURCE_BYTES
 			)

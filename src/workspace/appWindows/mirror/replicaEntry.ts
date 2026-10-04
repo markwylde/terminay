@@ -72,8 +72,21 @@ interface AddedNode {
 		return node;
 	};
 
-	const build = (node: SerializedNode, skipChild: boolean): Node | null =>
-		defuse(buildNodeWithSN(node, { doc: document, mirror, skipChild, hackCss: true, cache }));
+	/**
+	 * Given a node that says it is a document, `rrweb-snapshot` reopens the
+	 * document it is building into, which here is the replica's own: that would
+	 * end the mirror for good. Only the root of a snapshot is a document, and
+	 * the replica handles that one itself.
+	 */
+	const DOCUMENT_NODE = 0;
+	const claimsDocument = (node: SerializedNode): boolean =>
+		node.type === DOCUMENT_NODE ||
+		((node as { childNodes?: SerializedNode[] }).childNodes ?? []).some(claimsDocument);
+
+	const build = (node: SerializedNode, skipChild: boolean): Node | null => {
+		if (claimsDocument(node)) throw new Error('a recording may not contain a document node');
+		return defuse(buildNodeWithSN(node, { doc: document, mirror, skipChild, hackCss: true, cache }));
+	};
 
 	function snapshot(data: Json): void {
 		const root = data.node as SerializedNode & { childNodes?: SerializedNode[] };

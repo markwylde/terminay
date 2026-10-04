@@ -115,6 +115,8 @@ interface MutableWindow {
 	contentRevision: number;
 	createdAt: number;
 	pendingContext?: string;
+	/** A message from this window is being delivered (it may be waiting on a permission prompt). */
+	sending?: boolean;
 	/** Responses too large for a command result, held until the view fetches them. */
 	responses?: Map<string, { readonly clientId: string; readonly bytes: Uint8Array }>;
 }
@@ -363,10 +365,19 @@ export class AppWindowService {
 	 * Model context the session's views left since the last call. Each update
 	 * is delivered once; a later update replaced an undelivered earlier one.
 	 */
-	takeModelContext(terminalSessionId: string): readonly AppWindowModelContext[] {
+	takeModelContext(
+		terminalSessionId: string,
+		maxBytes: number = Number.POSITIVE_INFINITY,
+	): readonly AppWindowModelContext[] {
 		const taken: AppWindowModelContext[] = [];
+		let used = 0;
 		for (const window of this.forSession(terminalSessionId)) {
 			if (window.pendingContext === undefined) continue;
+			// What does not fit this result stays for the next one: a note is
+			// delivered whole or not yet, never cut and never dropped.
+			const size = byteLength(window.pendingContext) + byteLength(window.title) + 64;
+			if (used + size > maxBytes && taken.length > 0) continue;
+			used += size;
 			taken.push({ title: window.title, text: window.pendingContext });
 			delete window.pendingContext;
 		}
@@ -473,15 +484,32 @@ export class AppWindowService {
 				[APP_WINDOW_OPERATIONS.message]: async (request: CommandRequest) => {
 					const window = this.fromHolder(request);
 					const text = messageText(record(request.envelope.payload)?.text);
+					// A message is something the person looking at a window sends
+					// from it. A window that is minimised is not being looked at; one
+					// that has just sent is minimised, so it cannot send again until
+					// it has been opened again.
+					if (window.state !== 'open')
+						throw protocolError(
+							'forbidden',
+							'a minimised window cannot send a message; open it first',
+						);
+					if (window.sending === true)
+						throw protocolError('resource', 'this window is already sending a message');
 					if (this.options.deliverMessage === undefined)
 						throw protocolError('unavailable', 'window messages are unavailable');
-					await this.options.deliverMessage(
-						view(window),
-						text,
-						request.context.signal,
-					);
+					window.sending = true;
+					try {
+						await this.options.deliverMessage(
+							view(window),
+							text,
+							request.context.signal,
+						);
+					} finally {
+						window.sending = false;
+					}
 					// The terminal is where the reply appears, so get out of its way.
-					if (this.windows.has(window.id) && window.state !== 'minimised') {
+					// (Its state may have changed while the message waited for approval.)
+					if (this.windows.has(window.id) && (window.state as AppWindowState) !== 'minimised') {
 						window.state = 'minimised';
 						this.publish();
 					}
@@ -687,6 +715,10 @@ function messageText(value: unknown): string {
 			'validation',
 			'a window message may contain text, tabs, and line breaks only',
 		);
+	// White space alone would be a bare Enter: an answer to whatever the
+	// terminal is asking, which is not a message.
+	if (text.trim().length === 0)
+		throw protocolError('validation', 'a window message must say something');
 	return text;
 }
 

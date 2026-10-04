@@ -31,6 +31,7 @@ export function mirrorContentSecurityPolicy(source: ViewSource, csp: ViewCsp | u
 		"object-src 'none'",
 		"base-uri 'none'",
 		"form-action 'none'",
+		"webrtc 'block'",
 	].join('; ');
 }
 

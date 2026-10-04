@@ -78,7 +78,7 @@ An observer's window loads the same `app-view.html` proxy and gives it a *mirror
 
 ### 5. Epochs and sequence numbers make a mirror either correct or loading
 
-Every snapshot starts a new epoch with sequence 0. An observer applies a batch of changes only if it has that epoch's snapshot and the batch's sequence is the next one. Anything else: discard state, show loading, call `resync`. A snapshot is always accepted as the new truth, whatever its epoch number, because a replaced document or a new controlling client starts counting from one again. The connection reporting dropped events is treated as a gap on every mirror.
+Every snapshot starts a new epoch with sequence 0. An observer applies a batch of changes only if it has that epoch's snapshot and the batch's sequence is the next one. Anything else: discard state, show loading, call `resync`. A snapshot is always accepted as the new truth, whatever its epoch number, because a replaced document or a new controlling client starts counting from one again. The connection reporting dropped events is treated as a gap on every mirror. A mirror that has asked for a snapshot waits five seconds for it and then asks again, at most four times, before saying it cannot be shown: a request or a snapshot can be lost, and a mirror must not wait for ever. That is one bounded wait per request, not a poll (ADR-0028).
 
 ### 6. A snapshot is streamed; nothing caps the size of a view
 

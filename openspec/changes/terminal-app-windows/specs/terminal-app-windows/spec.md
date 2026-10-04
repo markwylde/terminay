@@ -178,7 +178,7 @@ A view SHALL execute in a browser context whose origin is opaque, and therefore 
 
 ### Requirement: View network policy by source
 
-The content security policy of a view SHALL depend on the window's source. An agent-authored view SHALL be allowed to load scripts, styles, images, fonts, and media from, and connect to, any `https` origin. An MCP App view SHALL be allowed only the origins its UI resource declares, and SHALL be allowed none when it declares none. No view SHALL be allowed plugin content.
+The content security policy of a view SHALL depend on the window's source. An agent-authored view SHALL be allowed to load scripts, styles, images, fonts, and media from, and connect to, any `https` origin. An MCP App view SHALL be allowed only the origins its UI resource declares, and SHALL be allowed none when it declares none. No view SHALL be allowed plugin content. The policy governs what a view loads, fetches, frames, and navigates to. For an MCP App view it SHALL also ask the browser to refuse WebRTC, which `connect-src` does not govern; where a browser does not honour that request, a peer connection remains possible, and the workspace does not claim otherwise.
 
 #### Scenario: Agent-authored view loads a library
 
@@ -282,7 +282,7 @@ A view's frame SHALL hold only the document the workspace gave it. A view SHALL 
 #### Scenario: A view declared with no network
 
 - **WHEN** an MCP App view whose policy allows no connections tries to send data out by navigating to a URL that carries it
-- **THEN** the data does not leave
+- **THEN** no request is made and the data does not leave that way
 
 ### Requirement: A window message is text
 
@@ -320,3 +320,47 @@ When the controlling client cannot obtain a window's content, the window SHALL s
 
 - **WHEN** the server cannot deliver a window's content
 - **THEN** the window shows that it could not be loaded, and can be closed
+
+### Requirement: A view acts for the user only on the user's gesture
+
+A view's request to type a message into its terminal, or to open a link in the browser, SHALL be honoured only while the user has just interacted with that view: a click, tap, or key press in it. A request made without one, such as one a document makes as it loads, SHALL be refused and the view told so. Whether the user has interacted SHALL be established by the sandbox proxy from the browser's own record of user activation, never from anything the view says.
+
+A message SHALL be accepted only from a window that is open, SHALL be refused when it is white space alone, and one window SHALL have at most one message being delivered at a time. Because a delivered message minimises its window, a window sends one message each time the user opens it. Links SHALL be opened no faster than one a second per view.
+
+#### Scenario: A view sends a message as it loads
+
+- **WHEN** a view sends a message for the terminal as soon as it is shown, before the user has touched it
+- **THEN** nothing is written to the terminal and the view is told the user is not using the window
+
+#### Scenario: A view sends white space
+
+- **WHEN** a view sends a message that is only a line break
+- **THEN** the server refuses it, and no Enter is written to the terminal
+
+#### Scenario: A view sends a burst of messages
+
+- **WHEN** a view sends twenty messages at once after one click
+- **THEN** one is written to the terminal, the window is minimised, and the rest are refused
+
+#### Scenario: A view opens a link as it loads
+
+- **WHEN** a view asks to open a link before the user has touched it
+- **THEN** no browser is opened
+
+### Requirement: The controlling client is a connection, not a name
+
+Where an operation is reserved to the client controlling a terminal, the server SHALL require the connection that holds the terminal's presentation lease. Another connection that presents the same client identifier SHALL NOT be treated as the controller.
+
+#### Scenario: A second connection names the controlling client
+
+- **WHEN** a connection that has not attached to the terminal presents the controlling client's identifier and sends a window message
+- **THEN** the server refuses it and nothing is written to the terminal
+
+### Requirement: A failed read does not end running views
+
+When a client fails to read the list of windows from a server it has already read from, it SHALL keep showing the windows it had, with their views running, and SHALL read again when the server next reports a change or reports that changes were missed.
+
+#### Scenario: One list request fails
+
+- **WHEN** a client's request for the window list fails once while a view is running
+- **THEN** the view keeps running with its state

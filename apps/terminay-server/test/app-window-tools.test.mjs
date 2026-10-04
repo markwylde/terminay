@@ -53,7 +53,7 @@ function setup({ policies = {}, gateway = fakeGateway(), withContext = true } = 
   const dispatch = createTerminalControlAdapter({
     adapter: {},
     appWindows: createAppWindowControlAdapter({ windows, ...(gateway === null ? {} : { gateway }) }),
-    ...(withContext ? { takeModelContext: (ctx) => windows.takeModelContext(ctx.terminalSessionId) } : {}),
+    ...(withContext ? { takeModelContext: (ctx, maxBytes) => windows.takeModelContext(ctx.terminalSessionId, maxBytes) } : {}),
     permissions: createMcpPermissionGate({
       approvals,
       describe: async () => ({ agent: "Claude Code", terminalTitle: "Terminal 1", summary: "show a window", details: [] }),
@@ -293,8 +293,18 @@ test("context from many windows is kept whole or left out, and never exceeds wha
     await commands["app-windows.context"]({ envelope: { payload: { windowId, text } }, context: { signal: new AbortController().signal } })
   const next = await call("list_windows")
   assert.ok(Buffer.byteLength(next.modelContext, "utf8") <= 64 * 1024)
-  // Three whole notes fit; the rest are counted, not cut in half.
-  assert.equal(next.modelContext.split('Context from the open window "').length - 1, 3)
-  assert.match(next.modelContext, /\(Context from 5 more open windows were too long to include\.\)$/)
+  // Whole notes only: three fit this result, and the rest wait for the next ones.
+  const count = (context) => context.split('Context from the open window "').length - 1
+  assert.equal(count(next.modelContext), 3)
   assert.equal(next.modelContext.includes(text), true)
+  let delivered = 3
+  for (let round = 0; round < 3; round += 1) {
+    const later = await call("list_windows")
+    if (later.modelContext === undefined) break
+    assert.ok(Buffer.byteLength(later.modelContext, "utf8") <= 64 * 1024)
+    delivered += count(later.modelContext)
+  }
+  // Every window's note reached the model, once.
+  assert.equal(delivered, 8)
+  assert.equal("modelContext" in (await call("list_windows")), false)
 })

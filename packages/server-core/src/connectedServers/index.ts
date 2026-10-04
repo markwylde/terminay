@@ -192,12 +192,22 @@ export class ConnectedServerRegistry {
 				throw new ConnectedServerError('resource', `At most ${MAX_CONNECTED_SERVERS} servers can be connected.`);
 
 			const renamed = existing !== undefined && existing.name !== next.name;
+			// Stored credentials are never returned to a client, and so must not
+			// be sendable to a place the client chooses: they stay only while the
+			// entry still starts the same program or calls the same address.
+			const sameDestination =
+				existing !== undefined &&
+				existing.transport === next.transport &&
+				existing.command === next.command &&
+				JSON.stringify(existing.args ?? []) === JSON.stringify(next.args ?? []) &&
+				existing.url === next.url;
 			const envNames = await this.applyCredentials(
 				existing,
 				next.name,
 				'env',
 				next.transport === 'stdio' ? (input.env ?? {}) : null,
 				renamed,
+				sameDestination,
 			);
 			const headerNames = await this.applyCredentials(
 				existing,
@@ -205,6 +215,7 @@ export class ConnectedServerRegistry {
 				'header',
 				next.transport === 'http' ? (input.headers ?? {}) : null,
 				renamed,
+				sameDestination,
 			);
 			const view: ConnectedServerView = { ...next, envNames, headerNames };
 			// What is held in memory is what was written: a save that cannot be
@@ -336,6 +347,7 @@ export class ConnectedServerRegistry {
 		kind: 'env' | 'header',
 		changes: Readonly<Record<string, string | null>> | null,
 		renamed: boolean,
+		keep: boolean,
 	): Promise<readonly string[]> {
 		const { vault } = this.options;
 		const before = new Set(
@@ -349,7 +361,10 @@ export class ConnectedServerRegistry {
 		const after = new Set<string>();
 		if (changes !== null) {
 			for (const key of before) {
-				if (changes[key] !== undefined) continue;
+				if (Object.hasOwn(changes, key)) continue;
+				// A credential was given for one destination. When the entry now
+				// points somewhere else, it is not carried there unless given again.
+				if (!keep) continue;
 				after.add(key);
 				// A rename moves the credentials it keeps to ids under the new name.
 				if (renamed) {

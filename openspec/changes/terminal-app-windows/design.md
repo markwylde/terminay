@@ -105,7 +105,8 @@ renderer the authority for something MCP created.
 
 *Bounds:* 8 windows per session, 512 KiB agent HTML, 4 MiB UI resource, 16 KiB
 message and model-context text, 1 MiB proxied result. The control endpoint's request
-frame bound rises from 64 KiB to 768 KiB for `show_window`, which carries a document,
+frame bound rises from 64 KiB to 3.25 MiB for `show_window`, which carries a document
+(512 KiB of HTML can be 3 MiB once JSON has escaped it),
 and for `call_connected_tool`, which carries a tool's arguments; other operations
 keep 64 KiB. Between server and clients, a window's document, its tool input and
 result, and a view's own requests and responses travel as binary bodies, because a

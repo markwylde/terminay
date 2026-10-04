@@ -51,9 +51,9 @@ test("the privileged server resolves entries with their credentials", async () =
 test("an edit keeps credentials it does not mention, replaces those it sets, and removes those set to null", async () => {
   const { registry, vault } = setup();
   await registry.save(local({ env: { KEEP: "kept", CHANGE: "old", DROP: "gone" } }));
-  const edited = await registry.save(local({ previousName: "diagrams", command: "node", args: [], env: { CHANGE: "new", DROP: null, ADD: "added" } }));
+  const edited = await registry.save(local({ previousName: "diagrams", enabled: false, env: { CHANGE: "new", DROP: null, ADD: "added" } }));
   assert.deepEqual(edited.envNames, ["ADD", "CHANGE", "KEEP"]);
-  assert.equal(edited.command, "node");
+  assert.equal(edited.enabled, false);
   assert.deepEqual((await registry.resolved())[0].env, { ADD: "added", CHANGE: "new", KEEP: "kept" });
   assert.equal(vault.secrets.size, 3);
 });
@@ -171,4 +171,39 @@ test("no more than 32 servers can be connected", async () => {
   for (let index = 0; index < 32; index += 1) await registry.save(local({ name: `server-${index}` }));
   await rejectsWith(registry.save(local({ name: "one-too-many" })), "resource");
   assert.equal(registry.list().length, 32);
+});
+
+test("stored credentials are not carried to a destination the entry is changed to", async () => {
+  // A remote server: its header must not be sent to a new address.
+  const remote = setup();
+  await remote.registry.save({ name: "api", enabled: true, transport: "http", url: "https://mcp.example/v1", headers: { Authorization: "Bearer s3cret" } });
+  const moved = await remote.registry.save({ previousName: "api", name: "api", enabled: true, transport: "http", url: "https://attacker.example/collect" });
+  assert.deepEqual(moved.headerNames, []);
+  assert.deepEqual([...remote.vault.secrets.values()], []);
+  assert.deepEqual((await remote.registry.resolved())[0].headers, {});
+
+  // A local server: its environment must not be handed to another program, or to other arguments.
+  for (const change of [{ command: "sh" }, { args: ["-c", "env > /tmp/leak"] }]) {
+    const { registry, vault } = setup();
+    await registry.save(local({ env: { API_TOKEN: "s3cret" } }));
+    const changed = await registry.save({ ...local(change), previousName: "diagrams" });
+    assert.deepEqual(changed.envNames, []);
+    assert.deepEqual([...vault.secrets.values()], []);
+  }
+
+  // Given again with the change, a credential is kept; and changes that leave
+  // the destination alone (a rename, enabling) keep what is stored.
+  const { registry, vault } = setup();
+  await registry.save(local({ env: { API_TOKEN: "s3cret" } }));
+  assert.deepEqual((await registry.save({ ...local({ args: ["-y", "diagrams-mcp@2"] }), previousName: "diagrams", env: { API_TOKEN: "s3cret" } })).envNames, ["API_TOKEN"]);
+  assert.deepEqual((await registry.save({ ...local({ name: "charts", args: ["-y", "diagrams-mcp@2"], enabled: false }), previousName: "diagrams" })).envNames, ["API_TOKEN"]);
+  assert.deepEqual([...vault.secrets.values()], ["s3cret"]);
+});
+
+test("a variable may be named like a built-in property and is kept across saves", async () => {
+  const { registry } = setup();
+  await registry.save(local({ env: { constructor: "a", toString: "b", REGION: "eu" } }));
+  const again = await registry.save({ ...local(), previousName: "diagrams" });
+  assert.deepEqual(again.envNames, ["REGION", "constructor", "toString"]);
+  assert.deepEqual((await registry.resolved())[0].env, { REGION: "eu", constructor: "a", toString: "b" });
 });

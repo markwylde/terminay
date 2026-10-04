@@ -122,3 +122,31 @@ Upstream connections SHALL be made only from the Terminay Server. A client SHALL
 
 - **WHEN** a remote party attempts to reach the Terminay MCP endpoint over a network after entries are configured
 - **THEN** no network MCP endpoint exists
+
+### Requirement: Stored credentials stay with their destination
+
+A connected server's stored credentials SHALL be used only for the destination they were saved for. When an entry's command, arguments, address, or transport is changed, credentials that are not supplied again with the change SHALL be removed, not carried to the new destination. A change that leaves the destination alone, such as a rename or enabling, SHALL keep them. The settings form SHALL say so wherever stored values are shown.
+
+#### Scenario: A remote server's address is changed
+
+- **WHEN** an entry with a stored `Authorization` header is saved with a different address and no header values
+- **THEN** the stored header is removed, and nothing is sent to the new address with it
+
+#### Scenario: An entry is renamed
+
+- **WHEN** an entry with stored credentials is saved under a new name with the same command and arguments
+- **THEN** its credentials are kept
+
+### Requirement: A server that fails is not restarted in a loop
+
+A connected server that fails to start, or that connects and then ends, SHALL be left alone for a period before a listing of tools starts it again. Announcing that the set of tools changed SHALL happen when a server's state changes, not each time it fails the same way. Saving the server's entry, or asking for one of its tools by name, SHALL try it at once. One caller abandoning its wait SHALL NOT fail a connection another caller is waiting for.
+
+#### Scenario: A server exits as soon as it has connected
+
+- **WHEN** a connected server completes its handshake and then exits, while an agent's adapter is waiting to hear of changes to the tool list
+- **THEN** the server is not started again by the listing that the change provokes, and is started when a tool of it is next asked for or after it has been left alone for a while
+
+#### Scenario: A server that cannot start
+
+- **WHEN** an agent lists tools five times while one connected server cannot start
+- **THEN** that server is started once, and the tool list is not announced as changed after the first failure

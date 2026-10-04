@@ -24,7 +24,12 @@ export const CONTROL_MAX_RESPONSE_BYTES = 256 * 1024;
  * A few operations carry a document or a connected server's payload. Only they
  * may exceed the ordinary frame and response bounds, up to these ceilings.
  */
-export const CONTROL_MAX_LARGE_FRAME_BYTES = 768 * 1024;
+/**
+ * Enough for the largest document an agent may show however its JSON encoding
+ * escapes it: a control character becomes six bytes, so 512 KiB can become
+ * 3 MiB, plus the rest of the request.
+ */
+export const CONTROL_MAX_LARGE_FRAME_BYTES = 3328 * 1024;
 export const CONTROL_MAX_LARGE_RESPONSE_BYTES = 1536 * 1024;
 export const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION = 8;
 export const CONTROL_MAX_IN_FLIGHT_TOTAL = 64;

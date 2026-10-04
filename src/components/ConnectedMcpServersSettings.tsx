@@ -187,6 +187,12 @@ export function ConnectedMcpServersSettings(props: {
 		return (
 			<fieldset className="connected-servers-credentials">
 				<legend>{label}</legend>
+				{rows.some((row) => row.stored) ? (
+					<p className="connected-servers-hint">
+						Saved values are kept only while the {kind === 'env' ? 'command and arguments' : 'address'} stay
+						the same. Change {kind === 'env' ? 'them' : 'it'} and you will need to enter the values again.
+					</p>
+				) : null}
 				{rows.map((row) => (
 					<div key={row.id} className="connected-servers-credential">
 						<input

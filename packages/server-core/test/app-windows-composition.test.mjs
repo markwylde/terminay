@@ -166,8 +166,10 @@ test("a client bound to another project cannot list, read, close, or watch a ter
     await rejectsWith(bound.client.command(APP_WINDOW_OPERATIONS.close, { windowId: window.id }), "not_found");
     await rejectsWith(bound.client.command(APP_WINDOW_OPERATIONS.setState, { windowId: window.id, state: "minimised" }), "not_found");
     const session = { terminalSessionId: identity.sessionId };
-    await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "forbidden");
-    await rejectsWith(bound.client.query(APP_WINDOW_MIRROR_OPERATIONS.status, session), "forbidden");
+    await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "not_found");
+    await rejectsWith(bound.client.query(APP_WINDOW_MIRROR_OPERATIONS.status, session), "not_found");
+    // The same answer as for a terminal that has no windows at all.
+    await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, { terminalSessionId: "no-such-session" }), "not_found");
     // Nothing was delivered to it, and the window is untouched.
     const published = await desktop.client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot" }, new TextEncoder().encode("[]"));
     assert.equal(published.result.delivered, 0);
@@ -538,6 +540,92 @@ test("a watcher that disconnects stops the recording, and a client that cannot s
     for (let attempt = 0; attempt < 50 && wanted.at(-1).wanted; attempt += 1) await settle();
     assert.equal(wanted.at(-1).wanted, false);
     assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
+  } finally {
+    await server.close();
+  }
+});
+
+// --- found by a second review ---
+
+test("a window cannot press Enter on its own: white space is not a message, and one message is all it gets until reopened", async () => {
+  const server = await composed();
+  try {
+    const { client } = await server.connect("desktop");
+    const window = open(server);
+    const send = (text) => client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text });
+    // Each of these would have written a bare Enter, answering whatever the terminal was asking.
+    for (const blank of ["\n", " ", "\t", " \n ", "\n\n\n"]) await rejectsWith(send(blank), "validation");
+    assert.deepEqual(server.process().writes, []);
+
+    // A burst: one is delivered, the window is minimised, and the rest are refused.
+    const outcomes = await Promise.allSettled(Array.from({ length: 20 }, (_unused, index) => send(`message ${index}`)));
+    assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
+    assert.equal(server.process().writes.length, 1);
+    await rejectsWith(send("again"), "forbidden");
+    assert.equal(server.process().writes.length, 1);
+
+    // Opened again by the user, it may send once more.
+    await client.command(APP_WINDOW_OPERATIONS.setState, { windowId: window.id, state: "open" });
+    await send("after reopening");
+    assert.equal(server.process().writes.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a second connection that only names the controlling client is not the controller", async () => {
+  const server = await composed();
+  try {
+    const desktop = await server.connect("desktop");
+    const window = open(server);
+    // The same client id, on a connection that never attached to the terminal.
+    const impostor = await server.connect("desktop", { attach: false });
+    await rejectsWith(impostor.client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "typed by an impostor" }), "forbidden");
+    await rejectsWith(impostor.client.command(APP_WINDOW_OPERATIONS.context, { windowId: window.id, text: "x" }), "forbidden");
+    await rejectsWith(impostor.client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot" }, new TextEncoder().encode("[]")), "forbidden");
+    assert.deepEqual(server.process().writes, []);
+    await desktop.client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "typed by the controller" });
+    assert.deepEqual(server.process().writes, ["typed by the controller\r"]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a recording goes to the connection that asked to watch, not to another that names the same client", async () => {
+  const { server, desktop, phone, session, publish } = await mirrored();
+  try {
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    const shadow = await server.connect("phone", { attach: false });
+    const shadowData = await listen(shadow.client, APP_WINDOW_MIRROR_EVENTS.data);
+    const published = await publish(desktop, {}, "[\"private\"]");
+    await settle();
+    assert.equal(published.result.delivered, 1);
+    assert.deepEqual(shadowData, []);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a refusal reaches a feature client with the reason it needs to tell a lapsed lease from a declined permission", async () => {
+  const server = await composed({ permissions: { windowMessages: "deny" } });
+  try {
+    const desktop = await server.connect("desktop");
+    const phone = await server.connect("phone");
+    const window = open(server);
+    const { TerminayClientFacade } = await import("@terminay/client-core");
+    // As the workspace calls it: through the facade that wraps a failure.
+    const reason = async (client, operation, payload) => {
+      try {
+        await new TerminayClientFacade(client).command(operation, payload);
+        return "accepted";
+      } catch (error) {
+        const cause = error.cause ?? error;
+        return [cause.code, cause.details?.reason];
+      }
+    };
+    assert.deepEqual(await reason(phone.client, APP_WINDOW_OPERATIONS.context, { windowId: window.id, text: "x" }), ["forbidden", "not-controller"]);
+    // Never Allow is also "forbidden", and must not look like a lapsed lease.
+    assert.deepEqual(await reason(desktop.client, APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "hi" }), ["forbidden", undefined]);
   } finally {
     await server.close();
   }

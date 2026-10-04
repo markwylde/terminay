@@ -60,6 +60,8 @@ export class ViewRecorderLink {
 	private alive = false;
 	private wanted = false;
 	private loaded = false;
+	/** A batch has been handed to the server and not yet taken. */
+	private publishing = false;
 
 	private readonly options: RecorderLinkOptions;
 
@@ -95,9 +97,20 @@ export class ViewRecorderLink {
 		const batch = parseMirrorBatch(message);
 		// A view that sends rubbish is not paced by it: nothing is acknowledged.
 		if (batch === undefined || !this.wanted) return true;
+		// One batch at a time is a rule this side keeps, not one it trusts the
+		// view to keep: the recorder runs inside the view. A batch sent before
+		// the last was acknowledged is dropped, so a view cannot have the
+		// workspace queue recordings without bound. An honest recorder never
+		// sends one; a mirror that misses a batch asks for a fresh snapshot.
+		if (this.publishing) return true;
+		this.publishing = true;
 		this.options.publish(batch).then(
-			() => this.control({ type: 'ack' }),
+			() => {
+				this.publishing = false;
+				this.control({ type: 'ack' });
+			},
 			(error: unknown) => {
+				this.publishing = false;
 				// This client stopped controlling the terminal: the recording is over.
 				if (isNotControllerError(error)) this.stop();
 				// Anything else lost one batch; the mirrors notice the gap and ask again.

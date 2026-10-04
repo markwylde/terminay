@@ -89,6 +89,11 @@ export function viewContentSecurityPolicy(
 		"object-src 'none'",
 		`base-uri ${base.length === 0 ? "'none'" : base.join(' ')}`,
 		"form-action 'none'",
+		// `connect-src` does not govern WebRTC, which reaches a peer directly. An
+		// MCP App cannot declare peers, so it asks for none. Chromium does not
+		// enforce this directive (measured on 153), so today it states intent;
+		// the gap is recorded in the spec and the evidence file.
+		"webrtc 'block'",
 	].join('; ');
 }
 
