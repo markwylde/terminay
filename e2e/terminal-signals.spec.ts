@@ -236,9 +236,21 @@ test.describe('terminal activity signals', () => {
   })
 
   test('dismissing a notification acknowledges the terminal without selecting it', async ({
+    electronApp,
     mainWindow,
   }) => {
+    // The application icon badge carries the same number as the header.
+    const badgeTotal = () =>
+      electronApp.evaluate(
+        () =>
+          (
+            globalThis as typeof globalThis & {
+              __terminayTestAppBadgeTotal?: () => number
+            }
+          ).__terminayTestAppBadgeTotal?.() ?? -1,
+      )
     const { tab } = await withBackgroundTerminal(mainWindow)
+    await expect.poll(badgeTotal).toBe(0)
 
     await writeToBackgroundSession(
       mainWindow,
@@ -250,6 +262,7 @@ test.describe('terminal activity signals', () => {
     const projectDot = mainWindow.locator('.project-tab--active .project-tab-activity-dot')
     await expect(projectDot).toHaveCount(1)
     await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+    await expect.poll(badgeTotal).toBe(1)
 
     await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
     const menu = mainWindow.getByRole('menu', { name: 'Notifications' })
@@ -259,6 +272,7 @@ test.describe('terminal activity signals', () => {
     await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
     await expect(projectDot).toHaveCount(0)
     await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+    await expect.poll(badgeTotal).toBe(0)
 
     // Nothing was selected, and the list stays open on its empty state.
     await expect(tab).not.toHaveClass(/terminal-tab-content--active/)

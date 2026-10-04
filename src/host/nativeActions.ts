@@ -241,6 +241,21 @@ export async function updateNativeMenuAccelerators(
 	await request({ type: 'menu.accelerators.update', accelerators });
 }
 
+/** Desktop mirrors this window's Notifications count on the application icon.
+ * Browser hosts have no bridge and report nothing; a host that does not know
+ * the action simply leaves its icon unbadged. */
+export async function setApplicationBadgeCount(count: number): Promise<void> {
+	if (bridge() === undefined) return;
+	try {
+		await request({
+			type: 'badge.count.set',
+			count: Math.min(Math.max(Math.trunc(count), 0), 9_999),
+		});
+	} catch {
+		// The icon badge is an echo of the header; the header stays authoritative.
+	}
+}
+
 export async function updateDeviceTerminalSettings(
 	settings: import('@terminay/protocol').JsonValue,
 ): Promise<import('@terminay/protocol').JsonValue | null> {
