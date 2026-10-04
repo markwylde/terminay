@@ -194,9 +194,10 @@ of the window, as it sees the terminal itself. The controlling device records
 the view's document and its changes and the server relays them; the server runs
 no browser and keeps none of it. A mirror is scaled to fit the window it is shown
 in and takes no input. What is not mirrored: the value of a password field
-(shown masked), canvas, video, audio, and frames from another origin. A view
-whose snapshot is over 768 KiB, or that changes faster than 1 MiB a second, is
-not mirrored and says so. Taking control from a mirror restarts the window on
+(shown masked), canvas, video, audio, and frames from another origin. A view of
+any size is mirrored: a large one is streamed in parts. A device whose
+connection cannot deliver the view whole says so and stops asking, and shows
+the mirror again when it can. Taking control from a mirror restarts the window on
 the new controlling device from its stored document; whatever was typed into the
 old view and not sent is lost.
 

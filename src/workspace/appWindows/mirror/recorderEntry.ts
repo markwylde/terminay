@@ -1,18 +1,19 @@
 /**
  * The view recorder (ADR-0039). This file is bundled with `rrweb` into one
- * script and inlined into every view document. It runs inside the untrusted
- * view, idle until the workspace says someone is watching.
+ * script that the workspace sends to a view the first time someone watches it.
+ * It runs inside the untrusted view.
  *
  * It sends one batch at a time and waits for the workspace to acknowledge it,
  * so a slow connection slows the recording down instead of queueing without
- * bound.
+ * bound. A snapshot is streamed as a run of parts, so its size is not limited
+ * by what one message may carry.
  */
 import { record } from 'rrweb';
 import {
 	MIRROR_MAX_BATCH_BYTES,
-	MIRROR_MAX_BYTES_PER_SECOND,
-	MIRROR_MAX_SNAPSHOT_BYTES,
+	MIRROR_MAX_SNAPSHOT_PARTS,
 	MIRROR_MESSAGE_KEY,
+	MIRROR_SNAPSHOT_PART_CHARS,
 	type MirrorBatch,
 	type MirrorRecorderControl,
 } from './mirrorProtocol.ts';
@@ -30,12 +31,13 @@ const BATCH_DELAY_MS = 40;
 	/** Events of the current epoch not yet sent. The first batch of an epoch is its snapshot. */
 	let queue: unknown[] = [];
 	let snapshotPending = false;
+	/** The parts of the snapshot being sent that have not gone yet. */
+	let parts: string[] = [];
+	let partCount = 0;
 	let inFlight = false;
 	let scheduled = false;
 	/** The current epoch was abandoned; nothing more is sent until a new one starts. */
 	let halted = false;
-	let windowStartedAt = 0;
-	let windowBytes = 0;
 
 	const post = (batch: Omit<MirrorBatch, 'type'>): void => {
 		inFlight = true;
@@ -46,44 +48,69 @@ const BATCH_DELAY_MS = 40;
 		halted = true;
 		recording = false;
 		queue = [];
+		parts = [];
 		snapshotPending = false;
 		stop?.();
 		stop = undefined;
 		post({ epoch, seq: seq++, kind: 'unavailable', data: '[]', reason });
 	};
 
+	/** Cut a snapshot into parts small enough to send, never through a surrogate pair. */
+	const split = (data: string): string[] => {
+		const pieces: string[] = [];
+		let at = 0;
+		while (at < data.length) {
+			let end = Math.min(at + MIRROR_SNAPSHOT_PART_CHARS, data.length);
+			if (end < data.length) {
+				const unit = data.charCodeAt(end - 1);
+				if (unit >= 0xd800 && unit <= 0xdbff) end -= 1;
+			}
+			pieces.push(data.slice(at, end));
+			at = end;
+		}
+		return pieces;
+	};
+
+	const sendPart = (): void => {
+		const data = parts.shift();
+		if (data === undefined) return;
+		post({ epoch, seq: seq++, kind: 'snapshot', data, ...(partCount > 1 ? { parts: partCount } : {}) });
+	};
+
 	const flush = (): void => {
 		scheduled = false;
-		if (inFlight || halted || queue.length === 0) return;
+		if (inFlight || halted) return;
+		// A snapshot goes out whole, part after part, before any change to it.
+		if (parts.length > 0) {
+			sendPart();
+			return;
+		}
+		if (queue.length === 0) return;
 		const data = JSON.stringify(queue);
-		// UTF-16 length is a floor for the byte size; a cheap, safe-side check
-		// follows with the real size only when it could matter.
-		const bytes = data.length * 3 > MIRROR_MAX_BATCH_BYTES ? new Blob([data]).size : data.length;
 		if (snapshotPending) {
-			if (bytes > MIRROR_MAX_SNAPSHOT_BYTES) {
+			const pieces = split(data);
+			if (pieces.length > MIRROR_MAX_SNAPSHOT_PARTS) {
 				unavailable('too-large');
 				return;
 			}
-		} else if (bytes > MIRROR_MAX_BATCH_BYTES) {
+			queue = [];
+			snapshotPending = false;
+			parts = pieces;
+			partCount = pieces.length;
+			sendPart();
+			return;
+		}
+		// UTF-16 length is a floor for the byte size; the real size is measured
+		// only when it could matter.
+		const bytes = data.length * 3 > MIRROR_MAX_BATCH_BYTES ? new Blob([data]).size : data.length;
+		if (bytes > MIRROR_MAX_BATCH_BYTES) {
 			// Too much changed to send as changes: start again from a snapshot.
 			queue = [];
 			record.takeFullSnapshot(true);
 			return;
 		}
-		const now = Date.now();
-		if (now - windowStartedAt > 1000) {
-			windowStartedAt = now;
-			windowBytes = 0;
-		}
-		windowBytes += bytes;
-		if (!snapshotPending && windowBytes > MIRROR_MAX_BYTES_PER_SECOND) {
-			unavailable('too-busy');
-			return;
-		}
 		queue = [];
-		const kind = snapshotPending ? 'snapshot' : 'events';
-		snapshotPending = false;
-		post({ epoch, seq: seq++, kind, data });
+		post({ epoch, seq: seq++, kind: 'events', data });
 	};
 
 	const schedule = (): void => {
@@ -97,11 +124,12 @@ const BATCH_DELAY_MS = 40;
 		// waiting for it, and sending it would wait for an answer that never comes.
 		if (halted || !recording) return;
 		if (event.type === META_EVENT) {
-			// A snapshot is on its way: whatever was waiting belongs to a view
-			// state the snapshot replaces.
+			// A snapshot is on its way: whatever was waiting, and whatever is left
+			// of a snapshot still being sent, belongs to a view state it replaces.
 			epoch += 1;
 			seq = 0;
 			queue = [];
+			parts = [];
 			snapshotPending = true;
 		}
 		queue.push(event);
@@ -116,6 +144,7 @@ const BATCH_DELAY_MS = 40;
 		}
 		// A fresh recording owes nothing to whatever the last one left unsent.
 		queue = [];
+		parts = [];
 		inFlight = false;
 		// rrweb emits the first snapshot before `record` returns.
 		recording = true;
@@ -141,12 +170,15 @@ const BATCH_DELAY_MS = 40;
 			stop?.();
 			stop = undefined;
 			queue = [];
+			parts = [];
 			inFlight = false;
 			halted = false;
 			snapshotPending = false;
 		} else if (control.type === 'ack') {
 			inFlight = false;
-			if (queue.length > 0) schedule();
+			// The rest of a snapshot follows at once; changes are gathered first.
+			if (parts.length > 0) flush();
+			else if (queue.length > 0) schedule();
 		}
 	});
 })();

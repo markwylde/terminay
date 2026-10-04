@@ -6,7 +6,7 @@ import {
   APP_WINDOW_OPERATIONS,
   AppWindowClient,
   MAX_APP_WINDOW_MIRROR_BATCH_BYTES,
-  MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES,
+  MAX_APP_WINDOW_MIRROR_PART_BYTES,
 } from "../dist/index.js";
 
 const bytes = (text) => new TextEncoder().encode(text);
@@ -66,6 +66,10 @@ test("a batch is published as bytes, with only its position in the envelope", as
   const client = new AppWindowClient(wire);
   await client.publishMirror("win_1", { epoch: 2, seq: 0, kind: "snapshot", data: "[\"é\"]" });
   await client.publishMirror("win_1", { epoch: 2, seq: 1, kind: "unavailable", data: "[]", reason: "too-busy" });
+  // A snapshot streamed in parts says how many, on each part.
+  await client.publishMirror("win_1", { epoch: 3, seq: 1, kind: "snapshot", data: "tail", parts: 2 });
+  assert.deepEqual(wire.calls.pop(), ["commandWithBody", APP_WINDOW_OPERATIONS.mirrorPublish, { windowId: "win_1", epoch: 3, seq: 1, kind: "snapshot", parts: 2 }, "tail"]);
+  await assert.rejects(client.publishMirror("win_1", { epoch: 3, seq: 1, kind: "events", data: "[]", parts: 2 }), TypeError);
   assert.deepEqual(wire.calls, [
     ["commandWithBody", APP_WINDOW_OPERATIONS.mirrorPublish, { windowId: "win_1", epoch: 2, seq: 0, kind: "snapshot" }, "[\"é\"]"],
     ["commandWithBody", APP_WINDOW_OPERATIONS.mirrorPublish, { windowId: "win_1", epoch: 2, seq: 1, kind: "unavailable", reason: "too-busy" }, "[]"],
@@ -81,7 +85,7 @@ test("a batch that is malformed or over the limit is not sent", async () => {
     { epoch: 1, seq: 0.5, kind: "snapshot", data: "[]" },
     { epoch: 1, seq: 0, kind: "snapshot", data: 7 },
     { epoch: 1, seq: 0, kind: "snapshot", data: "[]", reason: "because" },
-    { epoch: 1, seq: 0, kind: "snapshot", data: "x".repeat(MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES + 1) },
+    { epoch: 1, seq: 0, kind: "snapshot", data: "x".repeat(MAX_APP_WINDOW_MIRROR_PART_BYTES + 1) },
     { epoch: 1, seq: 1, kind: "events", data: "x".repeat(MAX_APP_WINDOW_MIRROR_BATCH_BYTES + 1) },
     { epoch: 1, seq: 1, kind: "events", data: "é".repeat(MAX_APP_WINDOW_MIRROR_BATCH_BYTES / 2 + 1) },
   ])

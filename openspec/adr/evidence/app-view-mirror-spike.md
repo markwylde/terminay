@@ -76,10 +76,20 @@ two-client test and covered there and in the spike.
 
 ## What changed from the proposal
 
-- **Limits.** The server's event lane queues at most 1 MiB per subscription, and
-  a larger frame is replaced by a resync notice. A 4 MiB snapshot was accepted
-  and never delivered. The limits are therefore 768 KiB for a snapshot, 256 KiB
-  for a batch of changes, and 1 MiB relayed per window per second.
+- **Streaming, not a size cap.** The server's event lane queues at most 1 MiB per
+  subscription, and a larger frame is replaced by a resync notice: a 4 MiB
+  snapshot sent as one message was accepted and never delivered. A first build
+  capped a view at 768 KiB to fit; that cap is gone. A snapshot is streamed as
+  parts of at most 128 Ki characters, each acknowledged before the next.
+  Measured: a view with 1.2 M UTF-16 units of multi-byte text and surrogate
+  pairs arrived in ten parts and matched exactly; a 2 MiB view was mirrored
+  whole between two pages. There is no rate limit; one message is in flight at
+  a time.
+- **A slow observer gives up cleanly.** Acknowledgement paces the controlling
+  client against the server, not each observer. Measured with a stand-in relay
+  that loses the second part of every snapshot: the observer asked four times,
+  showed that the window cannot be mirrored, stopped asking, and showed the
+  mirror again when a snapshot next arrived whole.
 - **Bytes, not JSON.** The protocol caps a JSON envelope at 64 KiB, so a
   recording travels as the body of the publish command and of the event. The
   connection now sends an event's body for any event that has one, uncoalesced.
@@ -100,8 +110,8 @@ two-client test and covered there and in the spike.
   live; input on the mirror reaches nothing; a replaced document is followed;
   minimising stops the recording and reopening restarts it; taking control swaps
   the roles and restarts the view; a 440-wide view is scaled into a 390-wide
-  phone sheet; a view over the snapshot limit shows as unavailable and keeps
-  working where it runs.
+  phone sheet; a multi-megabyte view is streamed and mirrored whole; a
+  connection that loses parts gives up after four attempts and recovers.
 - `e2e/app-windows.spec.ts`: on Desktop, a hostile view that forges mirror
   traffic changes nothing.
 

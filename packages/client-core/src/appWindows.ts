@@ -40,6 +40,8 @@ export interface AppWindowMirrorBatch {
   readonly seq: number;
   readonly kind: AppWindowMirrorKind;
   readonly data: string;
+  /** On a snapshot: how many consecutive batches, from sequence 0, carry it. Absent means one. */
+  readonly parts?: number;
   readonly reason?: AppWindowMirrorUnavailableReason;
 }
 
@@ -50,10 +52,12 @@ export interface AppWindowMirrorData extends AppWindowMirrorBatch {
   readonly contentRevision: number;
 }
 
-/** One complete view snapshot. A larger view is not mirrored. */
-export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES = 768 * 1024;
+/** One message of a snapshot. A snapshot of any size is sent as a run of these. */
+export const MAX_APP_WINDOW_MIRROR_PART_BYTES = 512 * 1024;
 /** One batch of changes. */
 export const MAX_APP_WINDOW_MIRROR_BATCH_BYTES = 256 * 1024;
+/** A snapshot of more parts than this is a runaway, not a view. */
+export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 256;
 
 export type AppWindowState = "open" | "minimised";
 
@@ -234,13 +238,14 @@ export class AppWindowClient {
 
 function validateMirrorBatch(value: JsonValue): AppWindowMirrorBatch {
   if (!isRecord(value) || typeof value.data !== "string") throw new TypeError("app window mirror batch is invalid");
-  const { epoch, seq, kind, data, reason } = value;
+  const { epoch, seq, kind, data, reason, parts } = value;
   if (kind !== "snapshot" && kind !== "events" && kind !== "unavailable") throw new TypeError("app window mirror batch is invalid");
   if (!Number.isSafeInteger(epoch) || (epoch as number) < 0 || !Number.isSafeInteger(seq) || (seq as number) < 0) throw new TypeError("app window mirror batch is invalid");
   if (reason !== undefined && reason !== "too-large" && reason !== "too-busy") throw new TypeError("app window mirror batch is invalid");
-  const limit = kind === "snapshot" ? MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
+  if (parts !== undefined && (kind !== "snapshot" || !Number.isSafeInteger(parts) || (parts as number) < 2 || (parts as number) > MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS)) throw new TypeError("app window mirror batch is invalid");
+  const limit = kind === "snapshot" ? MAX_APP_WINDOW_MIRROR_PART_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
   if (data.length > limit || new TextEncoder().encode(data).byteLength > limit) throw new TypeError("app window mirror batch is too large");
-  return Object.freeze({ epoch: epoch as number, seq: seq as number, kind, data, ...(reason === undefined ? {} : { reason }) });
+  return Object.freeze({ epoch: epoch as number, seq: seq as number, kind, data, ...(parts === undefined ? {} : { parts: parts as number }), ...(reason === undefined ? {} : { reason }) });
 }
 
 function validateWindow(value: JsonValue | undefined): AppWindow {

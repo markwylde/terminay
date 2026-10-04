@@ -64,6 +64,8 @@ Three ways to show a view on more than one client were considered:
   opaque-origin sandbox must be re-measured when its version changes. The
   replica reads `rrweb`'s event format directly, so a version change can break
   it; the sandbox test in `e2e/app-view-mirror.spec.ts` is the check.
-- A recording must fit the server's event delivery budget, which bounds a
-  snapshot well below the size of the largest view document. A view over the
-  limit is not mirrored.
+- One message must fit the server's event delivery budget, so a snapshot is
+  streamed in parts and a view's size does not limit whether it is mirrored.
+  The controlling client is paced against the server, not against each
+  observer; an observer on a much slower link can fail to receive a large
+  snapshot whole, and then says so instead of asking forever.

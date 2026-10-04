@@ -100,19 +100,35 @@ A client that starts watching, a client that reconnects, and a mirror that recei
 - **WHEN** an observer receives part of a recording out of order
 - **THEN** it discards the mirror's state, shows loading, and resumes from a fresh snapshot
 
-### Requirement: Mirrored content is bounded and masked
+### Requirement: Excluded content is masked or left out
 
-The value of a password field SHALL NOT leave the controlling client; a mirror SHALL show it masked. Canvas content, video, audio, and frames from another origin inside a view SHALL NOT be mirrored, and a mirror SHALL show a placeholder of the same size in their place. A snapshot or a burst of changes larger than the published limits SHALL NOT be relayed; observers SHALL then show the notice that the window runs on the controlling device, and the view on the controlling client SHALL be unaffected.
+The value of a password field SHALL NOT leave the controlling client; a mirror SHALL show it masked. Canvas content, video, audio, and frames from another origin inside a view SHALL NOT be mirrored, and a mirror SHALL show a placeholder of the same size in their place.
 
 #### Scenario: Password field
 
 - **WHEN** the person in control types into a password field in a view
 - **THEN** observers see the field filled with mask characters and the typed characters are not sent to the server
 
-#### Scenario: A view too large to mirror
+### Requirement: A view of any size is mirrored
 
-- **WHEN** a view's snapshot exceeds the snapshot limit
-- **THEN** observers show the notice in place of a mirror, and the view keeps working on the controlling client
+The size of a view SHALL NOT decide whether it is mirrored. A snapshot too large for one message SHALL be streamed in parts, and an observer SHALL show it once every part has arrived, continuing to show what it had until then. The controlling client SHALL send one message at a time and wait for it to be accepted before sending the next, so that a busy or large view is paced by the connection and not dropped.
+
+An observer whose connection repeatedly fails to deliver a whole snapshot SHALL stop asking after a small fixed number of attempts, SHALL show that the window cannot be mirrored and that it is running on the controlling device, and SHALL show the mirror again when a whole snapshot next arrives. The view on the controlling client SHALL be unaffected throughout.
+
+#### Scenario: A view of several megabytes
+
+- **WHEN** a view's document grows to several megabytes while an observer is watching
+- **THEN** the observer's mirror shows the whole view, including the new content
+
+#### Scenario: A connection that cannot keep up
+
+- **WHEN** part of every snapshot is lost on the way to an observer
+- **THEN** the observer asks again a fixed number of times, then shows that the window cannot be mirrored and stops asking, and the view keeps working on the controlling client
+
+#### Scenario: The connection recovers
+
+- **WHEN** a whole snapshot reaches an observer that had stopped asking
+- **THEN** its mirror shows the view again
 
 ### Requirement: A mirror is isolated as a view is
 

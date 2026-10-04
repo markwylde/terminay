@@ -528,7 +528,7 @@ test('taking control from an observer swaps who runs the view and who mirrors it
 	}
 });
 
-test('a mirror is scaled to fit a phone, and a view too large to mirror says so without breaking', async ({ browser }) => {
+test('a mirror is scaled to fit a phone, a large view is streamed whole, and a connection that cannot keep up says so', async ({ browser }) => {
 	const { context, controller, join } = await twoClients(browser, { width: 390, height: 740 });
 	try {
 		await add(controller, { title: 'Deploy', html: MIRRORED });
@@ -551,15 +551,36 @@ test('a mirror is scaled to fit a phone, and a view too large to mirror says so 
 		expect(Math.round(drawn.height)).toBeLessThanOrEqual(Math.round(stage.height) + 1);
 		expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
-		// A view that grows past what a snapshot may hold is not mirrored...
-		await view(running).locator('body').evaluate(() => (window as unknown as { flood(bytes: number): void }).flood(900 * 1024));
-		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'unavailable');
+		// A view far larger than one message carries is streamed in parts and mirrored whole.
+		const flood = (bytes: number) =>
+			view(running).locator('body').evaluate((_body, size) => (window as unknown as { flood(bytes: number): void }).flood(size), bytes);
+		await flood(2 * 1024 * 1024);
+		const replica = mirrorOf(sheet);
+		await expect(replica.locator('#flood')).toHaveCount(1, { timeout: 20_000 });
+		expect(await replica.locator('#flood').evaluate((node) => node.textContent?.length)).toBe(2 * 1024 * 1024);
+		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live');
+		expect((await mirrorLog(controller)).some((entry) => entry.kind === 'unavailable')).toBe(false);
+
+		// A connection that keeps losing part of each snapshot asks a few times, then says so and stops.
+		await phone.evaluate(() => (window as unknown as { harness: { setLossy(value: boolean): void } }).harness.setLossy(true));
+		await flood(400 * 1024);
+		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'unavailable', { timeout: 20_000 });
 		await expect(sheet.locator('.app-window__mirror-status')).toContainText('cannot be mirrored right now');
 		await expect(sheet.getByRole('button', { name: 'Take control' })).toBeVisible();
-		// ...and keeps working where it runs.
+		expect(await named(phone, 'resyncMirror')).toHaveLength(4);
+		// The view is unaffected where it runs.
 		await view(running).locator('#add').click();
 		await expect(view(running).locator('#list li')).toHaveCount(1);
-		expect((await mirrorLog(controller)).at(-1)).toMatchObject({ kind: 'unavailable' });
+		// It does not keep asking.
+		await phone.waitForTimeout(500);
+		expect(await named(phone, 'resyncMirror')).toHaveLength(4);
+
+		// When a snapshot next arrives whole, the mirror is back.
+		await phone.evaluate(() => (window as unknown as { harness: { setLossy(value: boolean): void } }).harness.setLossy(false));
+		await flood(400 * 1024);
+		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live', { timeout: 20_000 });
+		await expect(replica.locator('#flood')).toHaveCount(3);
+		await expect(replica.locator('#list li')).toHaveCount(1);
 	} finally {
 		await context.close();
 	}
