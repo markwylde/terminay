@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useTerminalSettings } from '../../hooks/useTerminalSettings';
 import {
+	canLoadWholeFileContent,
 	createFileDraftBuffer,
 	createFileSessionStore,
 	createServerFileGateway,
@@ -1048,10 +1049,12 @@ function CanonicalFilePanel(
 				return;
 			}
 			if (!fileInfo.isBinary) {
-				if (
-					engine === 'performant' &&
-					fileInfo.size > LARGE_FILE_THRESHOLD_BYTES
-				) {
+				// This effect also runs while the large-file chooser is still
+				// pending: the file is known before the chooser is shown. Reading
+				// a large file whole at that point builds gigabytes of
+				// intermediate strings in the renderer for content the user has
+				// not asked for.
+				if (!canLoadWholeFileContent(fileInfo, engine)) {
 					setDraftText('');
 					return;
 				}

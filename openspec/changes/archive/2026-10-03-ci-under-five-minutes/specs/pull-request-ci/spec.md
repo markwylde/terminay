@@ -1,9 +1,4 @@
-# pull-request-ci Specification
-
-## Purpose
-How pull-request CI builds and distributes the Electron E2E test environment, shards the suite across runners, and reports where test time goes.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Layered E2E test environment
 
@@ -28,29 +23,6 @@ Pull-request CI SHALL build the Electron E2E test environment as two images. A d
 
 - **WHEN** a runner that has already pulled an E2E image built on the current base pulls the next commit's E2E image
 - **THEN** only the per-commit layers are downloaded
-
-### Requirement: Runner image cleanup keeps the current base
-
-The CI Docker cleanup step SHALL keep the newest dependency base image and the base named by the running job, and SHALL remove superseded base images, so that runners keep reusable base layers without growing without bound.
-
-#### Scenario: Superseded base is removed
-
-- **WHEN** a runner holds two base images and a job built on the newer one finishes
-- **THEN** the cleanup step removes the older base and keeps the newer one
-
-### Requirement: Warm browser-fixture dependency cache
-
-The E2E image SHALL include the browser-shell fixture's committed Vite dependency cache, produced during the image build with the same configuration the fixture uses. Before any test runs, Playwright's global setup SHALL confirm that the cache is committed, building it only if it is missing. No browser-shell test SHALL start a fixture server against a cold dependency cache.
-
-#### Scenario: Shard starts warm
-
-- **WHEN** an E2E shard starts from the CI image
-- **THEN** the global setup finds the committed dependency cache and completes without bundling dependencies
-
-#### Scenario: Missing cache is built once
-
-- **WHEN** the dependency cache is absent, for example in a local image built before this requirement
-- **THEN** the global setup builds and commits it once before the first test
 
 ### Requirement: Balanced E2E shards
 
@@ -81,14 +53,7 @@ The E2E suite SHALL be sharded by test rather than by file, so that each of the 
 - **WHEN** two tests cannot be told apart in a shard's test list
 - **THEN** the shard runs the slice the test runner's own sharding gives it, and no test is skipped
 
-### Requirement: Per-test timing in CI logs
-
-Each CI E2E shard SHALL record every test's duration in a machine-readable report that it keeps with the shard's artifacts, and SHALL print the slowest tests with their durations in the job log whether the tests pass or fail. Printing the summary SHALL NOT change the shard's exit status.
-
-#### Scenario: Slowest tests appear in the log
-
-- **WHEN** an E2E shard finishes
-- **THEN** its job log lists the slowest tests in that shard with their durations, followed by the shard's original pass or fail result
+## ADDED Requirements
 
 ### Requirement: Five-minute run budget
 

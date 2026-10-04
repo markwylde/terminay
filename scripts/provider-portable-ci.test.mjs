@@ -34,12 +34,14 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   // The official image is built and paired with on every pull request, by the
   // same client code Desktop ships, before a release can publish it.
   assert.match(job(giteaCi, "container-image-smoke"), /docker build[\s\S]*--file \.\/Dockerfile/u);
   assert.match(job(giteaCi, "container-image-smoke"), /node scripts\/container-image-smoke\.mjs/u);
+  // Every case runs: a job that named cases with --only could drop the control.
+  assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /--only/u);
   assert.match(job(giteaCi, "container-image-smoke"), /prune-ci-docker-images\.sh/u);
   assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /docker push|docker login/u);
   // Real-peer tests skip wherever the selected runtime is not staged, which is
@@ -78,12 +80,30 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
   assert.match(triggerRelease, /npm run test:release-evidence/u);
   assert.match(decision, /test:release-evidence/u);
   assert.match(giteaCi, /name: Build, lint, and unit tests/u);
-  assert.match(giteaCi, /run: npm run test:ci/u);
+  // The gate and the workspace suites run beside each other. Between them
+  // they run exactly what `npm run test:ci` runs, each part once.
+  const parts = (command) => command.split(" && ").sort();
+  const gate = /^ {8}run: (npm run smoke && .*)$/mu.exec(job(giteaCi, "build-and-test"))?.[1] ?? "";
+  const workspaces = /^ {8}run: (npm run test:workspaces)$/mu.exec(job(giteaCi, "workspace-tests"))?.[1] ?? "";
+  assert.deepEqual(
+    parts(`${gate} && ${workspaces}`),
+    parts(JSON.parse(packageJson).scripts["test:ci"]),
+    "the two unit jobs must cover npm run test:ci between them",
+  );
+  // Each job installs from npm's cache in the runner tool cache. Archiving
+  // that cache through setup-node uploaded it again at the end of every job.
+  assert.doesNotMatch(giteaCi, /^ {10}cache: npm$/mu);
+  // setup-node caches on its own when package.json names a package manager.
+  assert.equal(
+    (giteaCi.match(/uses: actions\/setup-node@/gu) ?? []).length,
+    (giteaCi.match(/^ {10}package-manager-cache: false$/gmu) ?? []).length,
+  );
+  assert.equal((giteaCi.match(/npm_config_cache: \$\{\{ runner\.tool_cache \}\}\/npm-cache/gu) ?? []).length, 5);
   assert.match(job(giteaCi, "e2e-test"), /needs: e2e-image/u);
   assert.equal((giteaCi.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
   assert.equal((giteaCi.match(/x86_64\|amd64/g) ?? []).length, 2);
-  assert.match(job(giteaCi, "e2e-test"), /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/u);
-  assert.match(job(giteaCi, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/10\)/u);
+  assert.match(job(giteaCi, "e2e-test"), /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u);
+  assert.match(job(giteaCi, "e2e-test"), /name: E2E \(\$\{\{ matrix\.shard \}\}\/18\)/u);
   assert.match(giteaCi, /group: terminay-ci-\$\{\{ github\.ref \}\}/u);
   assert.match(giteaCi, /cancel-in-progress: true/u);
 
@@ -103,7 +123,7 @@ test("Gitea CI uses its compatible shared-image transport", () => {
   assert.match(giteaE2e, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
   assert.match(giteaE2e, /TERMINAY_E2E_PLATFORM: linux\/amd64/u);
   assert.match(giteaE2e, /if: \$\{\{ always\(\) \}\}/u);
-  assert.match(giteaE2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-10/u);
+  assert.match(giteaE2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-18/u);
   assert.match(giteaE2e, /retention-days: 7/u);
 });
 

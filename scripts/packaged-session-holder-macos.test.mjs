@@ -178,12 +178,19 @@ test(
 		// Quitting the application leaves the holder and its shell running.
 		const exited = new Promise((resolveExit) => app.once('exit', resolveExit));
 		app.kill('SIGTERM');
-		await Promise.race([
-			exited,
-			delay(30_000).then(() => {
-				throw new Error('the packaged application did not quit');
-			}),
-		]);
+		// The deadline is cancelled once the application has quit: a pending
+		// timer would keep this test process, and the job, alive until it fired.
+		const deadline = new AbortController();
+		try {
+			await Promise.race([
+				exited,
+				delay(30_000, undefined, { signal: deadline.signal }).then(() => {
+					throw new Error('the packaged application did not quit');
+				}),
+			]);
+		} finally {
+			deadline.abort();
+		}
 		await delay(500);
 		assert.equal(isAlive(holder.pid), true, 'the holder ended with the app');
 		assert.equal(isAlive(shell), true, 'the shell ended with the app');

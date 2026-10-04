@@ -26,7 +26,12 @@
   "files": [
     "dist",
     "dist-web",
-    "dist-electron"
+    "dist-electron",
+    // Icon component libraries. Only the renderer imports them and Vite
+    // bundles what it uses, so their installed copies are never loaded.
+    // They were 27,000 of the 48,000 files in app.asar.
+    "!**/node_modules/@tabler/**",
+    "!**/node_modules/lucide-react/**"
   ],
   // The selection record is always packaged. Release preparation stages the
   // verified self-contained runtime beside it; the production loader fails
