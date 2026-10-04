@@ -40,8 +40,10 @@ Three ways to show a view on more than one client were considered:
    sandbox, in a document whose content security policy allows the replica's
    script by nonce and no other script.
 5. **A mirror is never promoted to a view.** When control moves, the new holder
-   starts the view from the server's record (ADR-0037); in-page state does not
-   transfer.
+   starts the view from the server's record (ADR-0037). What a person had put
+   into the view's form controls, and where it was scrolled, is read from the
+   mirror the new holder was showing and put into the view that starts. State a
+   view keeps only in its own script does not transfer.
 6. **Recording happens only while someone is watching**, and recovery is always
    a fresh snapshot from the controlling client, requested on demand, never on a
    timer (ADR-0028).
@@ -57,7 +59,8 @@ Three ways to show a view on more than one client were considered:
 - Canvas, video, audio, and cross-origin frames inside a view are not mirrored.
 - A mirror shows the controlling client's layout scaled to fit, not a layout
   native to the observer's screen.
-- State loss on takeover remains, and is now visible to the person taking over.
+- A takeover keeps what was filled in. A view that holds state only in script
+  variables still loses that state, and must rebuild from what it is given.
 - A view that needs several people to interact at once must keep its state on
   its own server and be driven through tools; the mirror does not provide it.
 - `rrweb` becomes a pinned runtime dependency whose behaviour inside an

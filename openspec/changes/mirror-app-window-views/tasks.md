@@ -30,7 +30,8 @@
 - [x] 5.2 Apply batches by epoch and sequence; on a gap, a failed replica, or dropped events, show loading and resync once. Verified by: `mirror/mirror.test.ts`.
 - [x] 5.3 Present the mirror in `AppWindowHost` for a non-controlling client: no input, scaled to the window width, height from the scaled view, a bar saying what it is with the takeover action, and loading and unavailable states. Verified by: `e2e/app-windows-browser.spec.ts` at desktop and phone width.
 - [x] 5.4 Watch only while a window of the terminal is open on a non-controlling client, and unwatch when none is. Verified by: `mirror/mirror.test.ts` for the watch count, and the browser E2E for minimise and reopen.
-- [x] 5.5 Say beside the takeover action on a mirror that taking control restarts the window. Verified by: an E2E assertion on the text.
+- [x] 5.5 Say beside the takeover action on a mirror that taking control keeps what is filled in. Verified by: an E2E assertion on the text.
+- [x] 5.6 Carry what a person filled in (text, ticked boxes, selections, scroll position) from a mirror into the view that starts when its client takes control; never a password. Verified by: `mirror.test.ts` for the hub's hand-over and the state's validation, and the takeover test in `e2e/app-windows-browser.spec.ts`.
 
 ## 6. End to end
 

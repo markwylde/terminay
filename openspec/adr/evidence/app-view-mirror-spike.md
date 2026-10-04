@@ -109,7 +109,8 @@ two-client test and covered there and in the spike.
   attaches late sees the view's current state; typing and DOM changes follow
   live; input on the mirror reaches nothing; a replaced document is followed;
   minimising stops the recording and reopening restarts it; taking control swaps
-  the roles and restarts the view; a 440-wide view is scaled into a 390-wide
+  the roles and carries what was filled in (text, a ticked box, a selection; not
+  a password) into the view that starts; a 440-wide view is scaled into a 390-wide
   phone sheet; a multi-megabyte view is streamed and mirrored whole; a
   connection that loses parts gives up after four attempts and recovers.
 - `e2e/app-windows.spec.ts`: on Desktop, a hostile view that forges mirror

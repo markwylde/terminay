@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isNotControllerError } from '../controlErrors.ts';
 import { buildViewDocument, VIEW_LINK_HANDLER, viewContentSecurityPolicy } from '../viewDocument.ts';
-import { MIRROR_RECORDER_SCRIPT, MIRROR_REPLICA_SCRIPT } from './bundles.generated.ts';
+import { MIRROR_LOADER_SCRIPT, MIRROR_RECORDER_SCRIPT, MIRROR_REPLICA_SCRIPT } from './bundles.generated.ts';
+import { MAX_FIELD_CHARS, MAX_FIELDS, parseFieldState } from './fieldState.ts';
 import { buildMirrorDocument, mirrorContentSecurityPolicy } from './mirrorDocument.ts';
 import { AppWindowMirrorHub, type MirrorHubClient } from './mirrorHub.ts';
 import {
-	MIRROR_LOADER_SCRIPT,
 	MIRROR_MAX_BATCH_BYTES,
 	MIRROR_MAX_PART_BYTES,
 	MIRROR_SNAPSHOT_PART_CHARS,
@@ -225,7 +225,7 @@ function hub(wantedNow = false) {
 	const named = (name: string) => calls.filter((call) => call[0] === name);
 	const data = (overrides: Record<string, unknown> = {}) =>
 		onData({ windowId: 'w1', terminalSessionId: 's1', contentRevision: 1, epoch: 1, seq: 0, kind: 'snapshot', data: 'S', ...overrides } as never);
-	return { hub: instance, calls, named, data, elapse, pendingWaits: () => timers.size, gap: () => onGap(), wanted: (sessionId: string, value: boolean) => onWanted(sessionId, value) };
+	return { hub: instance, client, calls, named, data, elapse, pendingWaits: () => timers.size, gap: () => onGap(), wanted: (sessionId: string, value: boolean) => onWanted(sessionId, value) };
 }
 
 function sink() {
@@ -624,4 +624,52 @@ test('every view handles its own links, before anything the author wrote runs', 
 		assert.equal(html.indexOf('<script>'), handler - '<script>'.length);
 	}
 	assert.equal(/<\/script/iu.test(VIEW_LINK_HANDLER), false);
+});
+
+// --- what a person filled in, carried over a takeover ---
+
+test('what a mirror showed is handed to the view that replaces it, once, and only for a while', () => {
+	let now = 1000;
+	const client = hub().client;
+	const instance = new AppWindowMirrorHub(client, { now: () => now, setTimer: () => 0, clearTimer: () => {} });
+	const state = { fields: [{ key: 'id:name', value: 'half' }], scrollX: 0, scrollY: 40 };
+
+	// A window this client does not mirror has nothing to remember.
+	instance.rememberState('s1', 'w1', state);
+	const stop = instance.watch('s1', 'w1', sink().sink);
+	assert.equal(instance.takeState('s1', 'w1'), undefined);
+
+	instance.rememberState('s1', 'w1', state);
+	// While the mirror is still shown, no view is starting here.
+	assert.equal(instance.takeState('s1', 'w1'), undefined);
+	stop();
+	now += 500;
+	assert.deepEqual(instance.takeState('s1', 'w1'), state);
+	assert.equal(instance.takeState('s1', 'w1'), undefined);
+
+	// A mirror this client stopped looking at long ago is not a takeover.
+	const again = instance.watch('s1', 'w1', sink().sink);
+	instance.rememberState('s1', 'w1', state);
+	again();
+	now += 60_000;
+	assert.equal(instance.takeState('s1', 'w1'), undefined);
+});
+
+test('a state from another sandbox is taken only when well formed and within the limits', () => {
+	assert.deepEqual(
+		parseFieldState({ fields: [{ key: 'id:a', value: 'x' }, { key: 'nth:2', checked: true }], scrollX: 3, scrollY: -1 }),
+		{ fields: [{ key: 'id:a', value: 'x' }, { key: 'nth:2', checked: true }], scrollX: 3, scrollY: 0 },
+	);
+	for (const bad of [
+		null,
+		'text',
+		{ fields: 'no' },
+		{ fields: [{ key: '', value: 'x' }] },
+		{ fields: [{ key: 'id:a' }] },
+		{ fields: [{ key: 'id:a', value: 7 }] },
+		{ fields: [{ key: 'k'.repeat(513), value: 'x' }] },
+		{ fields: Array.from({ length: MAX_FIELDS + 1 }, (_, index) => ({ key: `nth:${index}`, checked: true })) },
+		{ fields: [{ key: 'id:a', value: 'x'.repeat(MAX_FIELD_CHARS + 1) }] },
+	])
+		assert.equal(parseFieldState(bad), undefined);
 });

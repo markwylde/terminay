@@ -8,7 +8,7 @@
  * the author knowing the MCP Apps protocol.
  */
 
-import { MIRROR_LOADER_SCRIPT } from './mirror/mirrorProtocol.ts';
+import { MIRROR_LOADER_SCRIPT } from './mirror/bundles.generated.ts';
 
 export type ViewSource =
 	| { readonly kind: 'agent' }

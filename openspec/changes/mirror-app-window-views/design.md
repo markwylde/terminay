@@ -22,7 +22,7 @@ In-force ADRs that bind this design: 0005 and 0011 (untrusted renderer content),
 
 **Non-Goals:**
 
-- Transferring a view's in-page state on takeover.
+- Transferring state a view keeps only in its own script on takeover. What a person filled in is carried; see "Takeover".
 - Observers interacting with a view.
 - Mirroring canvas, video, audio, or cross-origin frames.
 - X11 or VNC window sources.
@@ -103,7 +103,7 @@ The last row is the only limit that is not a guard. Acknowledgement paces the co
 
 ### 8. Observer presentation
 
-The window frame, placement, tab, and badge are unchanged. The body shows the mirror with pointer events disabled, scaled by `observerWidth / recordedWidth` with a CSS transform, and the window's height follows the scaled height. A one-line bar reads "Mirror · Take control to use this window" with the existing takeover action. Loading and unavailable states reuse the existing notice.
+The window frame, placement, tab, and badge are unchanged. The body shows the mirror with pointer events disabled, scaled by `observerWidth / recordedWidth` with a CSS transform, and the window's height follows the scaled height. A one-line bar reads "Mirror, view only. Taking control keeps what is filled in." with the existing takeover action. Loading and unavailable states reuse the existing notice.
 
 ### 9. Capability
 
@@ -127,7 +127,11 @@ Mirroring is a property of the *view* presentation, selected in `AppWindowHost`.
 - **[Mirror fidelity]** Styles that depend on viewport width render at the holder's width and are scaled, so a phone observer sees a small desktop layout, not a phone layout. Accepted: the mirror shows what the person in control sees.
 - **[A view detects or interferes with the recorder]** A hostile view can break its own mirror. It gains nothing: recording data is untrusted and sandboxed on arrival.
 - **[Password masking relies on `type=password`]** A view that draws its own secret field in a plain text input is mirrored in clear. Observers already see everything typed into the terminal.
-- **[Takeover still resets the view]** Unchanged and stated in the spec, but a mirror makes the loss visible: an observer watches a half-filled form, takes control, and gets an empty one. The mirror's bar says so next to the Take control button.
+- **[Takeover starts a new view]** A mirror is a drawing, so the view starts again on the client that takes control. What a person filled in is carried across (below); what a view holds only in script variables is not, and such a view must rebuild itself from its tool input and result as it does on any start.
+
+### Takeover
+
+The replica tells the workspace, shortly after each batch it draws, what the view's controls hold and where it is scrolled (`fieldState.ts`). The workspace checks it and keeps the latest per window. When a mirror stops and a view starts in its place within thirty seconds, the state is handed once to the view's loader, which puts each value into its control through the element's own setter and dispatches `input` and `change`, then scrolls. A control not yet in the page is waited for, for four seconds. Controls are matched by id, then name, then position among the document's controls. A password field is masked before it leaves the controlling client, so there is nothing to carry. At most 500 controls and 256 Ki characters are carried.
 - **[Two live clients on one real server are not exercised together in one test]** → the relay is tested against the real server with real protocol clients, and the window layer on two pages against a stand-in relay.
 
 ## Migration Plan

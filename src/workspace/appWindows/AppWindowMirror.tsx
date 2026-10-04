@@ -12,6 +12,7 @@ import { type ReactElement, useEffect, useRef, useState } from 'react';
 import { APP_VIEW_SANDBOX, appViewProxyUrl } from './appViewAvailability';
 import type { AppWindowPane } from './appWindowPanes';
 import { buildMirrorDocument } from './mirror/mirrorDocument.ts';
+import { parseFieldState } from './mirror/fieldState.ts';
 import type { AppWindowMirrorHub, MirrorSink } from './mirror/mirrorHub.ts';
 import { MIRROR_MESSAGE_KEY, type MirrorReplicaControl } from './mirror/mirrorProtocol.ts';
 
@@ -107,6 +108,10 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 				mirror.drawn(appWindow.terminalSessionId);
 			} else if (report.type === 'failed') {
 				mirror.failed(appWindow.terminalSessionId, appWindow.id);
+			} else if (report.type === 'state') {
+				// Kept in case this client takes control: it goes into the view that starts here.
+				const state = parseFieldState(report.state);
+				if (state !== undefined) mirror.rememberState(appWindow.terminalSessionId, appWindow.id, state);
 			}
 		};
 		window.addEventListener('message', onMessage);
@@ -158,7 +163,7 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 				)}
 			</div>
 			<div className="app-window__mirror-bar">
-				<span>Mirror, view only. Taking control restarts this window.</span>
+				<span>Mirror, view only. Taking control keeps what is filled in.</span>
 				<button type="button" onClick={pane.takeControl}>
 					Take control
 				</button>

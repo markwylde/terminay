@@ -380,6 +380,10 @@ const MIRRORED = `<style>.added { color: rgb(10, 200, 30); }</style>
 <h1 id="title">Deploy</h1>
 <input id="name" value="">
 <input id="secret" type="password" value="">
+<input id="agree" type="checkbox">
+<select id="region"><option value="us">US</option><option value="eu">EU</option></select>
+<textarea></textarea>
+<output id="echo"></output>
 <button id="add">Add</button>
 <button id="send">Send</button>
 <ul id="list"></ul>
@@ -391,7 +395,10 @@ const MIRRORED = `<style>.added { color: rgb(10, 200, 30); }</style>
 		document.getElementById('list').append(item);
 	};
 	document.getElementById('send').onclick = () => window.terminay.sendMessage('from the view');
-	window.flood = (bytes) => {
+	document.getElementById('name').addEventListener('input', (event) => {
+		document.getElementById('echo').textContent = event.target.value;
+	});
+	window.flood =(bytes) => {
 		const node = document.createElement('p');
 		node.id = 'flood';
 		node.style.cssText = 'height:0;overflow:hidden;margin:0';
@@ -505,13 +512,27 @@ test('taking control from an observer swaps who runs the view and who mirrors it
 		const second = card(observer, 'Deploy');
 		await expect(mirrorOf(second).locator('#name')).toHaveValue('half-filled form');
 
+		// More of what a person does in a view: a box ticked, a choice made, text in a field with no id.
+		await view(first).locator('#agree').check();
+		await view(first).locator('#region').selectOption('eu');
+		await view(first).locator('textarea').fill('two\nlines');
+		await view(first).locator('#secret').fill('hunter2');
+		await expect(mirrorOf(second).locator('textarea')).toHaveValue('two\nlines');
+
 		// The prompt says what taking control does to the window.
-		await expect(second.locator('.app-window__mirror-bar')).toContainText('Taking control restarts this window');
+		await expect(second.locator('.app-window__mirror-bar')).toContainText('Taking control keeps what is filled in');
 		await second.getByRole('button', { name: 'Take control' }).click();
 
-		// The former observer runs the view, afresh from the stored document.
+		// The former observer runs the view, and what was filled in came with it.
 		await expect(view(second).locator('#title')).toHaveText('Deploy');
-		await expect(view(second).locator('#name')).toHaveValue('');
+		await expect(view(second).locator('#name')).toHaveValue('half-filled form');
+		await expect(view(second).locator('#agree')).toBeChecked();
+		await expect(view(second).locator('#region')).toHaveValue('eu');
+		await expect(view(second).locator('textarea')).toHaveValue('two\nlines');
+		// The page was told, as it is when a person types.
+		await expect(view(second).locator('#echo')).toHaveText('half-filled form');
+		// A password never reached the mirror, so there was none to carry.
+		await expect(view(second).locator('#secret')).toHaveValue('');
 		await expect(second.locator('.app-window__mirror')).toHaveCount(0);
 		// The former controller stops running it and mirrors the new one.
 		await expect(first.locator('.app-window__frame')).toHaveCount(0);

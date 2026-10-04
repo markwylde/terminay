@@ -156,7 +156,19 @@ test('a view recorded in the sandbox is redrawn live in a second sandbox', async
 	expect(all.map((batch) => batch.seq)).toEqual(all.map((_batch, index) => index));
 	// The replica reported the recorded viewport.
 	const reports = await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.state.reports);
-	expect(reports.at(-1)).toMatchObject({ type: 'size', width: 440 });
+	expect(reports.filter((report) => report.type === 'size').at(-1)).toMatchObject({ type: 'size', width: 440 });
+	// And what the view's controls hold, for a client that takes control.
+	expect(reports.filter((report) => report.type === 'state').at(-1)).toMatchObject({
+		type: 'state',
+		state: {
+			fields: expect.arrayContaining([
+				{ key: 'id:name', value: 'typed by the controller' },
+				{ key: 'id:agree', checked: true },
+				{ key: 'id:pick', value: 'b' },
+			]),
+			scrollY: 300,
+		},
+	});
 });
 
 test('nothing a recording carries can run in a mirror, and a password never leaves the view', async ({ page }) => {

@@ -44,6 +44,7 @@ import { AppWindowMirror } from './AppWindowMirror';
 import { isNotControllerError } from './controlErrors.ts';
 import { MIRROR_RECORDER_SCRIPT } from './mirror/bundles.generated.ts';
 import type { AppWindowMirrorHub } from './mirror/mirrorHub.ts';
+import { MIRROR_MESSAGE_KEY, type MirrorLoaderControl } from './mirror/mirrorProtocol.ts';
 import { ViewRecorderLink } from './mirror/recorderLink.ts';
 import { AppViewBridge, type ViewHostContext } from './viewBridge';
 import { buildViewDocument } from './viewDocument';
@@ -834,6 +835,20 @@ function AppWindowView(props: ViewProps): ReactElement {
 			const method = (event.data as { method?: unknown } | null)?.method;
 			if (typeof method !== 'string' || !method.startsWith('ui/notifications/sandbox-'))
 {
+				if (!viewAliveRef.current) {
+					// This client was mirroring the window until it took control.
+					// What the mirror showed a person had typed, ticked and chosen
+					// goes into the view that has just started in its place.
+					const { entry: current } = latest.current;
+					const state = current.mirror?.takeState(
+						current.window.terminalSessionId,
+						current.window.id,
+					);
+					if (state !== undefined) {
+						const restore: MirrorLoaderControl = { type: 'restore', state };
+						frameRef.current?.contentWindow?.postMessage({ [MIRROR_MESSAGE_KEY]: restore }, '*');
+					}
+				}
 				viewAliveRef.current = true;
 				recorder?.viewAlive();
 			}
