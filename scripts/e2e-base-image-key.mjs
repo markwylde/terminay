@@ -19,12 +19,43 @@ export async function e2eBaseImageInputs(dockerfile = 'Dockerfile.e2e-base') {
 	return [...inputs].sort();
 }
 
-/** Content hash of the base image's inputs: each path and its bytes. */
+/** The scripts npm runs while installing; every other script is inert then. */
+const INSTALL_SCRIPTS = new Set([
+	'preinstall',
+	'install',
+	'postinstall',
+	'prepublish',
+	'preprepare',
+	'prepare',
+	'postprepare',
+]);
+
+/**
+ * What an input contributes to the base image. A manifest contributes
+ * everything except the scripts npm does not run during an install: the base
+ * holds installed dependencies, and the per-commit image copies the real
+ * manifest over the one the base was built with. Adding a test to an npm
+ * script therefore leaves the base, and every runner's copy of it, in place.
+ */
+export function e2eBaseImageInputContent(input, bytes) {
+	if (!/(?:^|\/)package\.json$/u.test(input)) return bytes;
+	const manifest = JSON.parse(bytes.toString('utf8'));
+	if (manifest.scripts !== undefined) {
+		manifest.scripts = Object.fromEntries(
+			Object.entries(manifest.scripts).filter(([name]) =>
+				INSTALL_SCRIPTS.has(name),
+			),
+		);
+	}
+	return Buffer.from(JSON.stringify(manifest));
+}
+
+/** Content hash of the base image's inputs: each path and what it contributes. */
 export async function e2eBaseImageKey() {
 	const hash = createHash('sha256');
 	for (const input of await e2eBaseImageInputs()) {
 		hash.update(`${input}\0`);
-		hash.update(await readFile(input));
+		hash.update(e2eBaseImageInputContent(input, await readFile(input)));
 		hash.update('\0');
 	}
 	return hash.digest('hex');

@@ -340,6 +340,7 @@ const scheduled = seeded(
 
 scheduled(
 	'a schedule opens a terminal through MCP that is grouped under its run and outlives it',
+	{ tag: '@heavy' },
 	async ({ mainWindow }) => {
 		// Waits for one real minute boundary.
 		test.setTimeout(150_000);

@@ -21,9 +21,12 @@
 //                if it connects, the two networks are not isolated and the two
 //                cases above prove nothing.
 //
-// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman]
+// The cases share nothing, so each runs in its own process and they all run at
+// once; `--only` runs the named cases in this process, one after another.
+//
+// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman] [--only <case,...>]
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,12 +44,13 @@ const only = args.only?.split(',');
 const run_id = randomBytes(4).toString('hex');
 const name = (suffix) => `terminay-smoke-${run_id}-${suffix}`;
 const HOLD_MS = 10_000;
-// Published on the container host for the two isolated cases. They are not the
-// image's defaults, so the test can run beside a real Terminay container.
-const SIGNALING_PORT = 28_443;
-const ICE_PORT = 52_100;
+// The width of the ICE range an isolated case publishes on the container host.
 const ICE_SPAN = 16;
+const CASES = ['bare', 'advertised', 'derived', 'control'];
 const created = { containers: new Set(), networks: new Set(), volumes: new Set() };
+
+if (!only) process.exit(await runCasesTogether());
+for (const label of only) if (!CASES.includes(label)) fail(`unknown case: ${label}`);
 
 const work = await mkdtemp(join(tmpdir(), 'terminay-image-smoke-'));
 let failed = false;
@@ -66,11 +70,9 @@ try {
 	});
 
 	const cases = { bare, advertised, derived, control };
-	for (const [label, body] of Object.entries(cases)) {
-		if (only && !only.includes(label)) continue;
+	for (const label of only) {
 		log(`--- ${label}`);
-		await body();
-		// The isolated cases publish the same host ports, one after another.
+		await cases[label]();
 		for (const container of created.containers)
 			run([engine, 'rm', '--force', '--volumes', container], { allowFailure: true });
 		created.containers.clear();
@@ -95,6 +97,39 @@ try {
 	await rm(work, { force: true, recursive: true });
 }
 process.exit(failed ? 1 : 0);
+
+/**
+ * Run every case at once, each in a process of its own, and print each one's
+ * output whole when it ends so the cases do not interleave in the log.
+ */
+async function runCasesTogether() {
+	const script = fileURLToPath(import.meta.url);
+	const statuses = await Promise.all(
+		CASES.map(
+			(label) =>
+				new Promise((resolve) => {
+					const child = spawn(
+						process.execPath,
+						[script, ...process.argv.slice(2), '--only', label],
+						{ stdio: ['ignore', 'pipe', 'pipe'] },
+					);
+					let output = '';
+					child.stdout.on('data', (chunk) => {
+						output += chunk;
+					});
+					child.stderr.on('data', (chunk) => {
+						output += chunk;
+					});
+					child.on('close', (status) => {
+						process.stdout.write(output);
+						if (status !== 0) log(`failed ${label} (exit ${status})`);
+						resolve(status);
+					});
+				}),
+		),
+	);
+	return statuses.every((status) => status === 0) ? 0 : 1;
+}
 
 async function bare() {
 	const network = createNetwork('bare');
@@ -175,23 +210,21 @@ async function advertised() {
 	const serverNetwork = createNetwork('adv-server');
 	const deviceNetwork = createNetwork('adv-device');
 	const host = hostAddressFrom(deviceNetwork);
-	const server = startServer('advertised', [
+	const { server, ports: { signaling, ice } } = startPublishedServer('advertised', (ports) => [
 		'--network', serverNetwork,
-		'--publish', `${SIGNALING_PORT}:${SIGNALING_PORT}/tcp`,
-		'--publish', `${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}:${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}/udp`,
-		'--env', `TERMINAY_HTTP_PORT=${SIGNALING_PORT}`,
-		'--env', `TERMINAY_ICE_PORT=${ICE_PORT}`,
+		'--env', `TERMINAY_HTTP_PORT=${ports.signaling}`,
+		'--env', `TERMINAY_ICE_PORT=${ports.ice}`,
 		'--env', `TERMINAY_PUBLIC_HOST=${host}`,
 	]);
 	await waitReady(server);
 	const status = daemonStatus(server);
 	assert(
-		status.includes(`${host}:${ICE_PORT}`),
-		`status does not report the advertised address ${host}:${ICE_PORT}:\n${status}`,
+		status.includes(`${host}:${ice}`),
+		`status does not report the advertised address ${host}:${ice}:\n${status}`,
 	);
 	const url = pairingUrl(server);
 	assert(
-		new URL(url).origin === `https://${host}:${SIGNALING_PORT}`,
+		new URL(url).origin === `https://${host}:${signaling}`,
 		`the direct link does not name the public host: ${new URL(url).origin}`,
 	);
 	await device({
@@ -230,15 +263,13 @@ async function forwardedWithoutAdvertisedAddress(prefix, derive) {
 	const serverNetwork = createNetwork(`${prefix}-server`);
 	const deviceNetwork = createNetwork(`${prefix}-device`);
 	const host = hostAddressFrom(deviceNetwork);
-	const server = startServer(prefix, [
+	const { server } = startPublishedServer(prefix, (ports) => [
 		'--network', serverNetwork,
-		'--publish', `${SIGNALING_PORT}:${SIGNALING_PORT}/tcp`,
-		'--publish', `${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}:${ICE_PORT}-${ICE_PORT + ICE_SPAN - 1}/udp`,
 		// The origin is on the host, the range is pinned and published, and no
 		// address is advertised: the device has to derive the candidate.
-		'--env', `TERMINAY_HTTP_PORT=${SIGNALING_PORT}`,
-		'--env', `TERMINAY_DIRECT_ORIGIN=https://${host}:${SIGNALING_PORT}`,
-		'--env', `TERMINAY_ICE_PORT=${ICE_PORT}`,
+		'--env', `TERMINAY_HTTP_PORT=${ports.signaling}`,
+		'--env', `TERMINAY_DIRECT_ORIGIN=https://${host}:${ports.signaling}`,
+		'--env', `TERMINAY_ICE_PORT=${ports.ice}`,
 	]);
 	await waitReady(server);
 	const status = daemonStatus(server);
@@ -251,6 +282,35 @@ async function forwardedWithoutAdvertisedAddress(prefix, derive) {
 		server,
 		derive,
 	});
+}
+
+/**
+ * Start a server that publishes a signaling port and a pinned ICE range on the
+ * container host. The host is shared: the other cases publish there at the same
+ * moment, and so may another run of this test or a real Terminay container. So
+ * the ports are drawn at random, below the range the kernel hands out, and
+ * drawn again when the engine reports them taken.
+ */
+function startPublishedServer(suffix, flagsFor) {
+	for (let attempt = 1; ; attempt += 1) {
+		const ports = {
+			signaling: 20_000 + randomInt(10_000),
+			ice: 10_000 + ICE_SPAN * randomInt(600),
+		};
+		try {
+			const server = startServer(suffix, [
+				'--publish', `${ports.signaling}:${ports.signaling}/tcp`,
+				'--publish', `${ports.ice}-${ports.ice + ICE_SPAN - 1}:${ports.ice}-${ports.ice + ICE_SPAN - 1}/udp`,
+				...flagsFor(ports),
+			]);
+			return { server, ports };
+		} catch (error) {
+			const taken = /port is already allocated|address already in use/iu.test(String(error));
+			if (!taken || attempt === 5) throw error;
+			// The engine leaves the container it could not start.
+			run([engine, 'rm', '--force', name(suffix)], { allowFailure: true });
+		}
+	}
 }
 
 /** Run the device in a container and approve it when it shows a match code. */

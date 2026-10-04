@@ -537,7 +537,7 @@ test('fast real release of the Files/Git boundary does not spring back', async (
  * pane set. Each attempt samples through the first post-release second; the
  * assertion prints every failed release rather than concealing a 2-in-3 rate.
  */
-test('twenty immediate real releases of the Files/Git boundary never spring back', async ({
+test('twenty immediate real releases of the Files/Git boundary never spring back', { tag: '@heavy' }, async ({
 	mainWindow,
 }) => {
 	test.setTimeout(75_000);

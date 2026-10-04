@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	canLoadWholeFileContent,
 	detectFileCapabilities,
+	LARGE_FILE_THRESHOLD_BYTES,
+	resolveFileViewerEngine,
 	resolveFileViewerMode,
 } from '../src/services/fileViewer/capabilities.ts';
 import { formatStatusBarFileSize } from '../src/workspace/workspaceStatusBarModel.ts';
@@ -121,6 +124,22 @@ test('a text file too large to preview still opens in Text', () => {
 	);
 	assert.equal(capabilities.defaultMode, 'text');
 	assert.deepEqual(capabilities.primaryModes, ['text', 'diff']);
+});
+
+test('a large file is not read whole until Monaco is chosen for it', () => {
+	const large = file('large.txt', { size: LARGE_FILE_THRESHOLD_BYTES + 1 });
+	const capabilities = detectFileCapabilities(large);
+	assert.equal(capabilities.shouldPromptForEngineChoice, true);
+	// Opening it leaves the engine undecided while the chooser is shown.
+	const pending = resolveFileViewerEngine(large, capabilities, 'auto');
+	assert.equal(pending, 'auto');
+	assert.equal(canLoadWholeFileContent(large, pending), false);
+	assert.equal(canLoadWholeFileContent(large, 'performant'), false);
+	assert.equal(canLoadWholeFileContent(large, 'monaco'), true);
+
+	const boundary = file('boundary.txt', { size: LARGE_FILE_THRESHOLD_BYTES });
+	assert.equal(canLoadWholeFileContent(boundary, 'auto'), true);
+	assert.equal(canLoadWholeFileContent(boundary, 'performant'), true);
 });
 
 test('status bar file sizes stay short', () => {

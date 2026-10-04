@@ -173,7 +173,9 @@ async function terminateFailedComposition(app: ElectronApplication): Promise<voi
 	]);
 }
 
-test('development orchestration and extracted packaged app expose identical canonical runtime state', async () => {
+// Packages the application before it starts: @heavy, so its shard is dealt
+// fewer other tests.
+test('development orchestration and extracted packaged app expose identical canonical runtime state', { tag: '@heavy' }, async () => {
 	test.setTimeout(240_000);
 	const root = await mkdtemp(path.join(os.tmpdir(), 'terminay-runtime-parity-'));
 	let development: ElectronApplication | undefined;
