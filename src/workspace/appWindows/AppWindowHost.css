@@ -15,7 +15,12 @@
   overflow: hidden;
   pointer-events: auto;
   color: #e6e6e6;
-  background: var(--app-window-surface, #1b1e24);
+  /* The surface is tinted from the pane's theme background, which may be
+     translucent. It is laid over a solid colour so that nothing behind a
+     window or a tab ever shows through it. */
+  background:
+    linear-gradient(var(--app-window-surface, #1b1e24), var(--app-window-surface, #1b1e24)),
+    #15191a;
   /* The edge is drawn as a shadow, not a border, so the body is exactly the
      height the layout gave it and a view sized to its content never scrolls. */
   border: 0;
