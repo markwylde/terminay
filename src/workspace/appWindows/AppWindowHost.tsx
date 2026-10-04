@@ -41,6 +41,7 @@ import {
 	appWindowPaneKey,
 } from './useServerAppWindows';
 import { AppWindowMirror } from './AppWindowMirror';
+import { isNotControllerError } from './controlErrors.ts';
 import { MIRROR_RECORDER_SCRIPT } from './mirror/bundles.generated.ts';
 import type { AppWindowMirrorHub } from './mirror/mirrorHub.ts';
 import { ViewRecorderLink } from './mirror/recorderLink.ts';
@@ -59,6 +60,11 @@ import './AppWindowHost.css';
 /** Fired by the workspace when the docking layout or active project changes. */
 export const APP_WINDOW_LAYOUT_EVENT = 'terminay-app-window-layout';
 const RAIL_VARIABLE = '--app-window-rail';
+/**
+ * How long a view that is about to be removed is kept after it has been told,
+ * so that it hears. A frame that is removed at once never receives the message.
+ */
+const VIEW_TEARDOWN_GRACE_MS = 150;
 
 type PaneFrame = Readonly<{
 	left: number;
@@ -307,25 +313,70 @@ export function AppWindowHost(): ReactElement | null {
 		});
 	}, []);
 
-	if (entries.length === 0) return null;
+	// A window that has ended is kept, hidden, for a moment after it leaves the
+	// server's list, so that its view can be told it is going before its frame
+	// is removed. This is worked out while rendering: a window dropped for even
+	// one render would lose its frame at once.
+	const liveKeys = new Set(entries.map((entry) => entry.key));
+	const previousEntries = useRef<readonly WindowEntry[]>([]);
+	const leaving = useRef(new Map<string, WindowEntry>());
+	for (const entry of previousEntries.current)
+		if (!liveKeys.has(entry.key) && !leaving.current.has(entry.key))
+			leaving.current.set(entry.key, entry);
+	for (const key of liveKeys) leaving.current.delete(key);
+	previousEntries.current = entries;
+	const [, forget] = useState(0);
+	const leavingCount = leaving.current.size;
+	useEffect(() => {
+		if (leavingCount === 0) return;
+		const keys = [...leaving.current.keys()];
+		const timer = setTimeout(() => {
+			for (const key of keys) leaving.current.delete(key);
+			forget((count) => count + 1);
+		}, VIEW_TEARDOWN_GRACE_MS * 2);
+		return () => clearTimeout(timer);
+	}, [leavingCount]);
+	const departing = [...leaving.current.values()];
+	const lastShown = useRef(
+		new Map<string, { frame: PaneFrame; placed: PlacedWindow; pane: AppWindowPane; narrow: boolean }>(),
+	);
+
+	if (entries.length === 0 && departing.length === 0) return null;
+	for (const key of [...lastShown.current.keys()])
+		if (!liveKeys.has(key) && !leaving.current.has(key)) lastShown.current.delete(key);
 	return (
 		<div className="app-window-host">
-			{entries.map((entry) => {
-				const frame = layouts.frames.get(entry.paneKey);
-				const placed = layouts.placed.get(entry.key);
-				const pane = panes.get(entry.paneKey);
-				if (frame === undefined || placed === undefined || pane === undefined)
-					return null;
+			{[...entries, ...departing].map((entry) => {
+				const isLeaving = !liveKeys.has(entry.key);
+				const shown = isLeaving
+					? lastShown.current.get(entry.key)
+					: (() => {
+							const frame = layouts.frames.get(entry.paneKey);
+							const placed = layouts.placed.get(entry.key);
+							const pane = panes.get(entry.paneKey);
+							if (frame === undefined || placed === undefined || pane === undefined)
+								return undefined;
+							const next = {
+								frame,
+								placed,
+								pane,
+								narrow: layouts.narrow.get(entry.paneKey) === true,
+							};
+							lastShown.current.set(entry.key, next);
+							return next;
+						})();
+				if (shown === undefined) return null;
 				return (
 					<AppWindowCard
 						key={entry.key}
 						entry={entry}
-						pane={pane}
-						frame={frame}
-						placed={placed}
-						narrow={layouts.narrow.get(entry.paneKey) === true}
+						pane={shown.pane}
+						frame={isLeaving ? { ...shown.frame, visible: false } : shown.frame}
+						placed={shown.placed}
+						narrow={shown.narrow}
 						available={available}
 						isFullscreen={fullscreen.get(entry.paneKey) === entry.key}
+						leaving={isLeaving}
 						onResized={onResized}
 						onTabOffset={onTabOffset}
 						onFullscreen={onFullscreen}
@@ -344,6 +395,8 @@ type CardProps = Readonly<{
 	narrow: boolean;
 	available: boolean | undefined;
 	isFullscreen: boolean;
+	/** The window has ended and is kept only until its view has been told. */
+	leaving: boolean;
 	onResized: (key: string, height: number) => void;
 	onTabOffset: (key: string, offset: number) => void;
 	onFullscreen: (paneKey: string, key: string | undefined) => void;
@@ -356,6 +409,22 @@ function AppWindowCard(props: CardProps): ReactElement {
 	const hidden = !frame.visible || placed.placement === 'hidden';
 	const drag = useRef<{ startX: number; offset: number; moved: boolean } | null>(null);
 	const [dragging, setDragging] = useState(false);
+	// A view runs here while this client controls the terminal. When that stops
+	// being so (control moves, the window is closing) the view is told, and its
+	// frame is kept for a moment so that it hears.
+	const teardownRef = useRef<((reason: string) => void) | null>(null);
+	const wantView = available === true && pane.isController && !props.leaving;
+	const [showView, setShowView] = useState(wantView);
+	useEffect(() => {
+		if (wantView) {
+			setShowView(true);
+			return;
+		}
+		if (!showView) return;
+		teardownRef.current?.('closed');
+		const timer = setTimeout(() => setShowView(false), VIEW_TEARDOWN_GRACE_MS);
+		return () => clearTimeout(timer);
+	}, [wantView, showView]);
 	// The host sits outside the pane, so the window borrows the pane's colours
 	// explicitly: it should look like part of the terminal it belongs to.
 	const colours = useMemo(() => {
@@ -486,7 +555,19 @@ function AppWindowCard(props: CardProps): ReactElement {
 					<p className="app-window__notice">
 						App windows cannot be shown on this connection.
 					</p>
-				) : !pane.isController && entry.mirror !== undefined && available === true ? (
+				) : showView ? (
+					<AppWindowView
+						entry={entry}
+						pane={pane}
+						placed={placed}
+						narrow={narrow}
+						teardownRef={teardownRef}
+						onResized={props.onResized}
+						onFullscreen={props.onFullscreen}
+					/>
+				) : props.leaving ? null : !pane.isController &&
+					entry.mirror !== undefined &&
+					available === true ? (
 					// A minimised window shows only its tab, so it mirrors nothing.
 					isTab ? null : (
 						<AppWindowMirror
@@ -507,15 +588,6 @@ function AppWindowCard(props: CardProps): ReactElement {
 							Take control
 						</button>
 					</div>
-				) : available === true ? (
-					<AppWindowView
-						entry={entry}
-						pane={pane}
-						placed={placed}
-						narrow={narrow}
-						onResized={props.onResized}
-						onFullscreen={props.onFullscreen}
-					/>
 				) : null}
 			</div>
 		</section>
@@ -527,6 +599,8 @@ type ViewProps = Readonly<{
 	pane: AppWindowPane;
 	placed: PlacedWindow;
 	narrow: boolean;
+	/** Set by the view: tells it that it is about to be removed. */
+	teardownRef: { current: ((reason: string) => void) | null };
 	onResized: (key: string, height: number) => void;
 	onFullscreen: (paneKey: string, key: string | undefined) => void;
 }>;
@@ -538,6 +612,8 @@ function AppWindowView(props: ViewProps): ReactElement {
 	const frameRef = useRef<HTMLIFrameElement | null>(null);
 	const bridgeRef = useRef<AppViewBridge | null>(null);
 	const recorderRef = useRef<ViewRecorderLink | null>(null);
+	/** The view's own document has spoken, so it is running and can be recorded. */
+	const viewAliveRef = useRef(false);
 	const [allow, setAllow] = useState<string | undefined>(undefined);
 	const [recorderCount, setRecorderCount] = useState(0);
 	const mirror = entry.mirror;
@@ -547,6 +623,10 @@ function AppWindowView(props: ViewProps): ReactElement {
 		appWindow.source.kind === 'agent'
 			? `${appWindow.id}:${appWindow.contentRevision}`
 			: appWindow.id;
+	// The document actually on screen. It follows `documentKey` a moment late,
+	// so the view being replaced is told before its frame is taken away.
+	const [activeKey, setActiveKey] = useState(documentKey);
+	const [failed, setFailed] = useState(false);
 
 	const latest = useRef({ placed, narrow, pane, entry, props });
 	latest.current = { placed, narrow, pane, entry, props };
@@ -570,7 +650,9 @@ function AppWindowView(props: ViewProps): ReactElement {
 		try {
 			return await work();
 		} catch (error) {
-			if ((error as { code?: unknown } | null)?.code !== 'forbidden') throw error;
+			// Only a lapsed lease is worth a second try. A permission the user
+			// declined is an answer, and asking again would prompt them again.
+			if (!isNotControllerError(error)) throw error;
 			await latest.current.pane.renewControl();
 			return work();
 		}
@@ -603,8 +685,24 @@ function AppWindowView(props: ViewProps): ReactElement {
 						? {}
 						: { toolCancelled: content.toolCancelled }),
 				} as const;
+				// While another client watches this terminal, the view is recorded
+				// for it (ADR-0039). The recorder is sent only then. A view that
+				// started before this server offered a mirror gets its link now.
+				const ensureRecorder = (): void => {
+					if (recorderRef.current !== null || mirror === undefined) return;
+					recorderRef.current = new ViewRecorderLink({
+						post: (message) =>
+							frameRef.current?.contentWindow?.postMessage(message, '*'),
+						recorderScript: MIRROR_RECORDER_SCRIPT,
+						publish: (batch) =>
+							asController(() => mirror.publish(appWindow.id, batch)),
+					});
+					if (viewAliveRef.current) recorderRef.current.viewAlive();
+					setRecorderCount((count) => count + 1);
+				};
 				if (bridgeRef.current !== null) {
 					bridgeRef.current.updateContent(bridgeContent);
+					ensureRecorder();
 					return;
 				}
 				bridgeRef.current = new AppViewBridge(bridgeContent, {
@@ -638,40 +736,51 @@ function AppWindowView(props: ViewProps): ReactElement {
 					},
 					close: () => void client.close(appWindow.id).catch(() => {}),
 				});
-				// While another client watches this terminal, the view is recorded
-				// for it (ADR-0039). The recorder is sent only then.
-				recorderRef.current =
-					mirror === undefined
-						? null
-						: new ViewRecorderLink({
-								post: (message) =>
-									frameRef.current?.contentWindow?.postMessage(message, '*'),
-								recorderScript: MIRROR_RECORDER_SCRIPT,
-								publish: (batch) =>
-									asController(() => mirror.publish(appWindow.id, batch)),
-							});
-				if (recorderRef.current !== null) setRecorderCount((count) => count + 1);
+				ensureRecorder();
 				setAllow(built.allow);
 			})
 			.catch(() => {
-				// The window ended, or this client may not read it.
+				// The window ended, this client may not read it, or its content
+				// could not be carried. Say so; an empty box explains nothing.
+				if (!cancelled && bridgeRef.current === null) setFailed(true);
 			});
 		return () => {
 			cancelled = true;
 		};
-		// The revision is what changes the content; the key decides whether the
-		// view is new.
-	}, [client, appWindow.id, appWindow.contentRevision, hostContext, asController, mirror]);
+		// The revision is what changes the content; the active key decides
+		// whether the view is new.
+	}, [client, appWindow.id, appWindow.contentRevision, activeKey, hostContext, asController, mirror]);
 
-	// A new document is a new view: the old bridge goes with the old frame.
+	// A new document is a new view. The old view is told it is going, given a
+	// moment to hear it, and only then is its frame replaced.
 	useEffect(() => {
-		return () => {
-			bridgeRef.current?.teardown('closed');
+		if (documentKey === activeKey) return;
+		const replace = (): void => {
 			bridgeRef.current = null;
 			recorderRef.current = null;
+			viewAliveRef.current = false;
 			setAllow(undefined);
+			setFailed(false);
+			setActiveKey(documentKey);
 		};
-	}, [documentKey]);
+		if (bridgeRef.current === null) {
+			replace();
+			return;
+		}
+		bridgeRef.current.teardown('replaced');
+		const timer = setTimeout(replace, VIEW_TEARDOWN_GRACE_MS);
+		return () => clearTimeout(timer);
+	}, [documentKey, activeKey]);
+
+	// Whoever removes this view (the window closing, control moving) tells it
+	// first through this.
+	const { teardownRef } = props;
+	useEffect(() => {
+		teardownRef.current = (reason) => bridgeRef.current?.teardown(reason);
+		return () => {
+			teardownRef.current = null;
+		};
+	}, [teardownRef]);
 
 	// Offer this view to the mirror for as long as it runs. Each new view has
 	// its own recorder; the count is what tells this effect one was made.
@@ -691,7 +800,10 @@ function AppWindowView(props: ViewProps): ReactElement {
 			// that the view's own document is running and can be recorded.
 			const method = (event.data as { method?: unknown } | null)?.method;
 			if (typeof method !== 'string' || !method.startsWith('ui/notifications/sandbox-'))
+{
+				viewAliveRef.current = true;
 				recorder?.viewAlive();
+			}
 			void bridgeRef.current?.handle(event.data);
 		};
 		window.addEventListener('message', onMessage);
@@ -704,10 +816,12 @@ function AppWindowView(props: ViewProps): ReactElement {
 		bridgeRef.current?.contextChanged();
 	}, [contextKey]);
 
+	if (failed)
+		return <p className="app-window__notice">This window could not be loaded.</p>;
 	if (allow === undefined) return <div className="app-window__loading" aria-busy="true" />;
 	return (
 		<iframe
-			key={documentKey}
+			key={activeKey}
 			ref={frameRef}
 			className="app-window__frame"
 			title={appWindow.title}

@@ -33,12 +33,19 @@ export const APP_WINDOW_MIRROR_EVENTS = Object.freeze({
 
 export const APP_WINDOW_MIRROR_CAPABILITY = 'app-window-mirror.v1';
 
+/**
+ * Why a request made for a view was refused: the caller does not hold the
+ * terminal's presentation lease. A client whose lease merely lapsed renews it
+ * and tries once more; any other refusal is final.
+ */
+export const NOT_CONTROLLER = 'not-controller';
+
 /** One message of a snapshot. A snapshot of any size is sent as a run of these. */
 export const MAX_APP_WINDOW_MIRROR_PART_BYTES = 512 * 1024;
 /** One batch of changes. */
 export const MAX_APP_WINDOW_MIRROR_BATCH_BYTES = 256 * 1024;
 /** A snapshot of more parts than this is a runaway, not a view. */
-export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 256;
+export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 128;
 
 export type AppWindowMirrorKind = 'snapshot' | 'events' | 'unavailable';
 
@@ -65,6 +72,8 @@ interface Session {
 	readonly watchers: Map<string, string>;
 	/** The holder that has been asked for a snapshot and has not sent one yet. */
 	snapshotAskedOf?: string;
+	/** Connections that have asked for the snapshot now outstanding. */
+	readonly askedBy: Set<string>;
 }
 
 
@@ -99,22 +108,29 @@ export class AppWindowMirrorRelay {
 		this.sessions.delete(terminalSessionId);
 	}
 
+	/** Every window has ended: nobody is watching anything. */
+	endAll(): void {
+		this.sessions.clear();
+	}
+
 	operations(): OperationRegistries {
 		return {
 			queries: {
 				[APP_WINDOW_MIRROR_OPERATIONS.status]: async (request: QueryRequest) => {
-					const terminalSessionId = sessionId(request);
+					const terminalSessionId = this.boundedSession(request);
 					// The controlling client asks this as it starts a view, which is
 					// also when a snapshot request it may have missed stops mattering.
 					const session = this.sessions.get(terminalSessionId);
-					if (session?.snapshotAskedOf === request.context.clientId)
+					if (session?.snapshotAskedOf === request.context.clientId) {
 						delete session.snapshotAskedOf;
+						session.askedBy.clear();
+					}
 					return asJson({ terminalSessionId, wanted: this.wanted(terminalSessionId) });
 				},
 			},
 			commands: {
 				[APP_WINDOW_MIRROR_OPERATIONS.watch]: async (request: CommandRequest) => {
-					const terminalSessionId = sessionId(request);
+					const terminalSessionId = this.boundedSession(request);
 					// A client that cannot draw a mirror must not start a recording.
 					if (
 						request.context.clientCapabilities?.includes(
@@ -127,24 +143,31 @@ export class AppWindowMirrorRelay {
 					const session = this.session(terminalSessionId);
 					const before = this.wanted(terminalSessionId);
 					session.watchers.set(request.context.connectionId, request.context.clientId);
+					session.askedBy.add(request.context.connectionId);
 					// Someone new is watching: they need a snapshot whether or not
 					// recording was already running.
 					this.askForSnapshot(terminalSessionId, !before);
 					return asJson({ terminalSessionId, watching: true });
 				},
 				[APP_WINDOW_MIRROR_OPERATIONS.unwatch]: async (request: CommandRequest) => {
-					const terminalSessionId = sessionId(request);
+					const terminalSessionId = this.boundedSession(request);
 					const session = this.sessions.get(terminalSessionId);
 					if (session?.watchers.delete(request.context.connectionId) === true)
 						this.afterWatchersChanged(terminalSessionId, true);
 					return asJson({ terminalSessionId, watching: false });
 				},
 				[APP_WINDOW_MIRROR_OPERATIONS.resync]: async (request: CommandRequest) => {
-					const terminalSessionId = sessionId(request);
+					const terminalSessionId = this.boundedSession(request);
 					const session = this.sessions.get(terminalSessionId);
 					if (session?.watchers.has(request.context.connectionId) !== true)
 						throw protocolError('forbidden', 'this connection is not watching that terminal');
-					this.askForSnapshot(terminalSessionId, false);
+					// Requests from different watchers for the same snapshot are one
+					// request. A watcher asking again has waited and got nothing, so
+					// its request goes through: the first may have been lost, or the
+					// controlling client may not have been able to record yet.
+					const again = session.askedBy.has(request.context.connectionId);
+					session.askedBy.add(request.context.connectionId);
+					this.askForSnapshot(terminalSessionId, again);
 					return asJson({ terminalSessionId });
 				},
 				[APP_WINDOW_MIRROR_OPERATIONS.publish]: async (request: CommandRequest) => {
@@ -159,6 +182,7 @@ export class AppWindowMirrorRelay {
 						throw protocolError(
 							'forbidden',
 							'only the client controlling this terminal can publish its views',
+							{ details: { reason: NOT_CONTROLLER } },
 						);
 					const { epoch, seq, kind, reason, parts } = payload ?? {};
 					if (
@@ -182,7 +206,10 @@ export class AppWindowMirrorRelay {
 					if (request.body.byteLength > limit)
 						throw protocolError('validation', 'mirror batch is too large');
 					const session = this.sessions.get(window.terminalSessionId);
-					if (session !== undefined && kind !== 'events') delete session.snapshotAskedOf;
+					if (session !== undefined && kind !== 'events') {
+						delete session.snapshotAskedOf;
+						session.askedBy.clear();
+					}
 					const audience = this.audience(window.terminalSessionId, request.context.clientId);
 					for (const clientId of audience)
 						this.options.eventJournal?.publishTransient(
@@ -213,10 +240,28 @@ export class AppWindowMirrorRelay {
 		};
 	}
 
+	/** The terminal session a request names, refused when it is outside the caller's boundary. */
+	private boundedSession(request: QueryRequest | CommandRequest): string {
+		const terminalSessionId = sessionId(request);
+		const window = this.options.sessionWindow(terminalSessionId);
+		if (
+			!withinClientBoundary(request.context, {
+				// A session with no window has no project to compare; the session
+				// claim alone decides.
+				projectId:
+					window?.projectId ??
+					String((record(request.context.claims)?.projectId as string | undefined) ?? ''),
+				terminalSessionId,
+			})
+		)
+			throw protocolError('forbidden', 'that terminal is outside this connection’s boundary');
+		return terminalSessionId;
+	}
+
 	private session(terminalSessionId: string): Session {
 		let session = this.sessions.get(terminalSessionId);
 		if (session === undefined) {
-			session = { watchers: new Map() };
+			session = { watchers: new Map(), askedBy: new Set() };
 			this.sessions.set(terminalSessionId, session);
 		}
 		return session;
@@ -254,6 +299,28 @@ export class AppWindowMirrorRelay {
 			asJson({ clientId: holder, terminalSessionId, wanted }),
 		);
 	}
+}
+
+/**
+ * Whether a connection's authenticated boundary admits a terminal. A client
+ * bound to one project, or to one terminal session, may not see or touch the
+ * windows of another, exactly as it may not attach to that terminal.
+ */
+export function withinClientBoundary(
+	context: Pick<RequestContext, 'claims'>,
+	target: { readonly projectId: string; readonly terminalSessionId: string },
+): boolean {
+	const claims = context.claims;
+	if (typeof claims !== 'object' || claims === null || Array.isArray(claims))
+		return true;
+	if (typeof claims.projectId === 'string' && claims.projectId !== target.projectId)
+		return false;
+	if (
+		typeof claims.sessionId === 'string' &&
+		claims.sessionId !== target.terminalSessionId
+	)
+		return false;
+	return true;
 }
 
 function sessionId(request: QueryRequest | CommandRequest): string {

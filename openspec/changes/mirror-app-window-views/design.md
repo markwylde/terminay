@@ -89,7 +89,7 @@ One message cannot carry a large snapshot: the server queues at most 1 MiB of ev
 | Bound | Value | What happens |
 | - | - | - |
 | One part of a snapshot | 128 Ki characters, at most 512 KiB | The unit of streaming, not a limit on the view |
-| Parts in one snapshot | 256 (about 32 M characters) | A runaway guard; beyond it the view is reported as not mirrorable |
+| Parts in one snapshot | 128 (about 16 M characters) | A runaway guard; beyond it the view is reported as not mirrorable |
 | One batch of changes | 256 KiB | The recorder drops it and streams a snapshot instead |
 | Snapshot requests in a row with none arriving whole | 4 | The mirror says it cannot be shown and stops asking; the next whole snapshot brings it back |
 

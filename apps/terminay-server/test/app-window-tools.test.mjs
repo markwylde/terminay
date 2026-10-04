@@ -167,9 +167,10 @@ test("a connected tool with a UI opens a window, gives the view its input and re
   assert.deepEqual(window.source, { kind: "mcp-app", server: "diagrams", tool: "draw", resourceUri: "ui://diagrams/draw" })
   const { queries } = windows.operations()
   const content = await queries["app-windows.content"]({ envelope: { payload: { windowId: window.id } }, context: {} })
-  assert.equal(new TextDecoder().decode(content.body), "<p>view</p>")
-  assert.deepEqual(content.result.toolInput, { shape: "circle" })
-  assert.deepEqual(content.result.toolResult.structuredContent, { shapes: 1 })
+  const data = JSON.parse(new TextDecoder().decode(content.body))
+  assert.equal(data.html, "<p>view</p>")
+  assert.deepEqual(data.toolInput, { shape: "circle" })
+  assert.deepEqual(data.toolResult.structuredContent, { shapes: 1 })
   assert.deepEqual(content.result.csp, { connectDomains: ["https://api.example"] })
 })
 
@@ -198,6 +199,8 @@ test("with Connected Server Tools denied the tool does not run", async () => {
 test("a wrong content type or an oversized resource opens no window and the tool still runs", async () => {
   for (const resource of [
     { html: "<p>x</p>", mimeType: "text/html" },
+    // A resource that does not say what it is is not an MCP App view.
+    { html: "<p>x</p>" },
     { html: "x".repeat(4 * 1024 * 1024 + 1), mimeType: "text/html;profile=mcp-app" },
   ]) {
     const gateway = fakeGateway({ readUiResource: async () => resource })
@@ -216,7 +219,7 @@ test("a failing tool tells its view it was cancelled and the agent gets the erro
   const [window] = windows.list("session-1")
   const { queries } = windows.operations()
   const content = await queries["app-windows.content"]({ envelope: { payload: { windowId: window.id } }, context: {} })
-  assert.equal(content.result.toolCancelled, "upstream exploded")
+  assert.equal(JSON.parse(new TextDecoder().decode(content.body)).toolCancelled, "upstream exploded")
 })
 
 test("a result over 1 MiB is replaced by a bounded error naming the tool", async () => {
@@ -225,6 +228,18 @@ test("a result over 1 MiB is replaced by a bounded error naming the tool", async
   const result = await call("call_connected_tool", { name: "diagrams__plain", arguments: {} })
   assert.equal(result.error.code, "limit_exceeded")
   assert.match(result.error.message, /diagrams__plain/)
+})
+
+test("a result over 1 MiB never reaches its view either: the view is told the call failed", async () => {
+  const gateway = fakeGateway({ callTool: async () => ({ content: [{ type: "text", text: "x".repeat(MAX_CONNECTED_TOOL_RESULT_BYTES) }] }) })
+  const { windows, call } = setup({ gateway })
+  const result = await call("call_connected_tool", { name: "diagrams__draw", arguments: {} })
+  assert.equal(result.error.code, "limit_exceeded")
+  const [window] = windows.list()
+  const content = await windows.operations().queries["app-windows.content"]({ envelope: { payload: { windowId: window.id } }, context: {} })
+  const data = JSON.parse(new TextDecoder().decode(content.body))
+  assert.equal("toolResult" in data, false)
+  assert.match(data.toolCancelled, /larger than 1 MiB/)
 })
 
 test("connected tools are listed for the calling project; with no gateway there are none and calls are unsupported", async () => {
@@ -251,4 +266,35 @@ test("model context a view left rides once on the next result from its terminal"
   assert.equal(next.result.windows.length, 1)
   const after = await call("list_windows")
   assert.equal("modelContext" in after, false)
+})
+
+test("the adapter's own listing of connected tools does not use up a view's context", async () => {
+  const { windows, call } = setup()
+  const shown = await call("show_window", { title: "Picker", html: "<p>x</p>" })
+  const { commands } = windows.operations()
+  await commands["app-windows.context"]({ envelope: { payload: { windowId: shown.window, text: "selection: blue" } }, context: { signal: new AbortController().signal } })
+  // What the stdio adapter does on tools/list and whenever the list changes: its answer never reaches the model.
+  for (let index = 0; index < 3; index += 1) {
+    const listing = await call("list_connected_tools")
+    assert.equal("modelContext" in listing, false)
+    assert.ok(Array.isArray(listing.tools))
+  }
+  const next = await call("list_windows")
+  assert.equal(next.modelContext, 'Context from the open window "Picker":\nselection: blue')
+})
+
+test("context from many windows is kept whole or left out, and never exceeds what the adapter accepts", async () => {
+  const { windows, call } = setup()
+  const { commands } = windows.operations()
+  const text = "c".repeat(16 * 1024 - 8)
+  const shown = []
+  for (let index = 0; index < 8; index += 1) shown.push((await call("show_window", { title: `Window ${index}`, html: "<p>x</p>" })).window)
+  for (const windowId of shown)
+    await commands["app-windows.context"]({ envelope: { payload: { windowId, text } }, context: { signal: new AbortController().signal } })
+  const next = await call("list_windows")
+  assert.ok(Buffer.byteLength(next.modelContext, "utf8") <= 64 * 1024)
+  // Three whole notes fit; the rest are counted, not cut in half.
+  assert.equal(next.modelContext.split('Context from the open window "').length - 1, 3)
+  assert.match(next.modelContext, /\(Context from 5 more open windows were too long to include\.\)$/)
+  assert.equal(next.modelContext.includes(text), true)
 })

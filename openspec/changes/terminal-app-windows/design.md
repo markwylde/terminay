@@ -105,8 +105,11 @@ renderer the authority for something MCP created.
 
 *Bounds:* 8 windows per session, 512 KiB agent HTML, 4 MiB UI resource, 16 KiB
 message and model-context text, 1 MiB proxied result. The control endpoint's request
-frame bound rises from 64 KiB to 768 KiB for `show_window` only; other operations
-keep 64 KiB.
+frame bound rises from 64 KiB to 768 KiB for `show_window`, which carries a document,
+and for `call_connected_tool`, which carries a tool's arguments; other operations
+keep 64 KiB. Between server and clients, a window's document, its tool input and
+result, and a view's own requests and responses travel as binary bodies, because a
+protocol envelope is capped at 64 KiB.
 
 ### 4. Views follow the presentation lease
 

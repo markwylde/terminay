@@ -42,7 +42,28 @@
 						inner.setAttribute('allow', params.allow);
 					inner.setAttribute('title', 'App view');
 					inner.srcdoc = params.html;
-					document.body.append(inner);
+					// The view is the document it was given and stays that document.
+					// Its own policy cannot stop it navigating itself somewhere else,
+					// which would carry data out past that policy and leave a foreign
+					// page speaking as the view. Two things prevent it. From here on
+					// this document forbids its frame to load anything: the policy is
+					// added after the frame exists, so the view does not inherit it
+					// and may still frame what its own policy allows. And should the
+					// frame load a second document all the same, it is removed.
+					let loaded = false;
+					const frame = inner;
+					frame.addEventListener('load', () => {
+						if (!loaded) {
+							loaded = true;
+							return;
+						}
+						frame.remove();
+					});
+					document.body.append(frame);
+					const policy = document.createElement('meta');
+					policy.httpEquiv = 'Content-Security-Policy';
+					policy.content = "frame-src 'none'";
+					document.head.append(policy);
 				}
 
 				addEventListener('message', (event) => {

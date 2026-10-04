@@ -69,6 +69,9 @@ export const CONTROL_OPERATIONS = [
  * Operations the stdio adapter uses to carry connected servers' tools. They
  * are plumbing, not tools: an agent never sees them by these names.
  */
+/** The most text a view's model context may add to one tool result. */
+export const MAX_MODEL_CONTEXT_BYTES = 64 * 1024;
+
 export const CONTROL_INTERNAL_OPERATIONS: ReadonlySet<string> = new Set([
 	'list_connected_tools',
 	'call_connected_tool',

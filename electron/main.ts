@@ -2757,6 +2757,12 @@ function applyMcpSetting(settings: Record<string, unknown>): void {
 			? (candidate as { enabled: boolean }).enabled
 			: true;
 	mcpCapabilities.setEnabled(enabled);
+	// With MCP off no agent can reach a window it opened, and a window must not
+	// go on calling the servers that were connected for agents.
+	if (!enabled) {
+		serverTerminalAuthority?.composition.appWindows?.endAll();
+		mcpGateway.closeAll();
+	}
 }
 
 async function startMcpControlEndpoint(): Promise<void> {
@@ -2805,10 +2811,17 @@ function bindMcpGateway(authority: ServerTerminalAuthority): void {
 	removeMcpGatewayBindings?.();
 	const { connectedServers, appWindows, mcpApprovals } = authority.composition;
 	if (connectedServers === undefined) return;
+	// Resolving reads the vault, so two saves in quick succession can finish out
+	// of order. Only the latest one is applied.
+	let syncs = 0;
 	const sync = (): void => {
+		syncs += 1;
+		const current = syncs;
 		void connectedServers
 			.resolved()
-			.then((entries) => mcpGateway.setEntries(entries))
+			.then((entries) => {
+				if (current === syncs) mcpGateway.setEntries(entries);
+			})
 			.catch((error) => console.error('[mcp] connected servers failed', error));
 	};
 	connectedServers.bindStatus(() => mcpGateway.status());

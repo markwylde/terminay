@@ -80,6 +80,9 @@ const HOSTILE = `
 	parent.postMessage({ terminayMirror: { type: 'apply', kind: 'snapshot', data: '[]' } }, '*');
 	await new Promise((resolve) => setTimeout(resolve, 300));
 	document.getElementById('report').textContent = JSON.stringify(report);
+	// Last, because it would end this document if it worked: leave for another page.
+	await new Promise((resolve) => setTimeout(resolve, 700));
+	location.href = 'https://example.com/?left-the-sandbox';
 })();
 </script>`;
 
@@ -308,6 +311,11 @@ test('a hostile view cannot reach the workspace, navigate it, or issue host comm
 	await expect(view(hostile).locator('#swapped')).toHaveCount(0);
 	expect(mainWindow.url()).toBe(url);
 	await expect(activeTerminalPanel(mainWindow)).toBeVisible();
+	// The view then tried to navigate itself to another site. No frame of this
+	// window ever holds that page.
+	await mainWindow.waitForTimeout(1500);
+	expect(mainWindow.frames().filter((frame) => frame.url().includes('example.com'))).toEqual([]);
+	expect(mainWindow.url()).toBe(url);
 	// The proxy itself has an opaque origin and no host bridge either.
 	const proxy = hostile.frameLocator('.app-window__frame');
 	expect(await proxy.locator('body').evaluate(() => self.origin)).toBe('null');

@@ -105,6 +105,8 @@ function start(viewHtml: string): void {
 			state,
 			resnapshot: () => mirror(view, { type: 'start' }),
 			stop: () => mirror(view, { type: 'stop' }),
+			/** Give the replica a recording the view never made, as a hostile view could. */
+			forge: (data: string) => mirror(replica, { type: 'apply', kind: 'snapshot', data }),
 			release: () => {
 				state.hold = false;
 				for (const batch of waiting) forward(batch);

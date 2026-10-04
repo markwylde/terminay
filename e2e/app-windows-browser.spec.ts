@@ -81,7 +81,7 @@ test.afterAll(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 
-type Spec = { title: string; html: string; kind?: 'agent' | 'mcp-app'; toolInput?: unknown; toolResult?: unknown; csp?: unknown };
+type Spec = { title: string; html: string; kind?: 'agent' | 'mcp-app'; toolInput?: unknown; toolResult?: unknown; csp?: unknown; broken?: boolean };
 type HarnessWindow = Window & {
 	harness: {
 		calls: unknown[][];
@@ -584,4 +584,59 @@ test('a mirror is scaled to fit a phone, a large view is streamed whole, and a c
 	} finally {
 		await context.close();
 	}
+});
+
+// --- a view is told before it is removed; a window that cannot load says so ---
+
+const TEARDOWN_VIEW = (name: string) => `<p id="v">${name}</p><script>
+addEventListener('message', (event) => {
+	const message = event.data;
+	if (message && message.method === 'ui/resource-teardown')
+		window.terminay.updateContext('${name} heard teardown: ' + message.params.reason);
+});
+</script>`;
+
+test('a view is told it is going before its frame is removed: on close, on replacement, and when control moves', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	const heard = async () => (await named(page, 'updateContext')).map((call) => call[2]);
+
+	// The agent replaces the document.
+	const id = await add(page, { title: 'Doc', html: TEARDOWN_VIEW('first') });
+	const doc = card(page, 'Doc');
+	await expect(view(doc).locator('#v')).toHaveText('first');
+	await page.evaluate(
+		([windowId, html]) => (window as unknown as HarnessWindow).harness.replaceWindow(windowId as string, html as string),
+		[id, TEARDOWN_VIEW('second')],
+	);
+	await expect(view(doc).locator('#v')).toHaveText('second');
+	await expect.poll(heard).toEqual(['first heard teardown: replaced']);
+
+	// Control moves to another device.
+	await page.evaluate(() => (window as unknown as HarnessWindow).harness.setController(false));
+	await expect(doc.locator('.app-window__frame')).toHaveCount(0);
+	await expect.poll(heard).toEqual(['first heard teardown: replaced', 'second heard teardown: closed']);
+	await page.evaluate(() => (window as unknown as HarnessWindow).harness.setController(true));
+	await expect(view(doc).locator('#v')).toHaveText('second');
+
+	// The window is closed.
+	await doc.getByRole('button', { name: 'Close window' }).click();
+	await expect(doc).toHaveCount(0);
+	expect(await heard()).toEqual([
+		'first heard teardown: replaced',
+		'second heard teardown: closed',
+		'second heard teardown: closed',
+	]);
+});
+
+test('a window whose content cannot be loaded says so', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	await add(page, { title: 'Broken', html: '<p>never shown</p>', broken: true });
+	const broken = card(page, 'Broken');
+	await expect(broken).toContainText('This window could not be loaded.');
+	await expect(broken.locator('.app-window__frame')).toHaveCount(0);
+	// It can still be closed.
+	await broken.getByRole('button', { name: 'Close window' }).click();
+	await expect(broken).toHaveCount(0);
 });

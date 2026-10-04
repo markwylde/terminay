@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { isNotControllerError } from '../controlErrors.ts';
 import { buildViewDocument } from '../viewDocument.ts';
 import { MIRROR_RECORDER_SCRIPT, MIRROR_REPLICA_SCRIPT } from './bundles.generated.ts';
 import { buildMirrorDocument, mirrorContentSecurityPolicy } from './mirrorDocument.ts';
@@ -8,6 +9,7 @@ import {
 	MIRROR_LOADER_SCRIPT,
 	MIRROR_MAX_BATCH_BYTES,
 	MIRROR_MAX_PART_BYTES,
+	MIRROR_SNAPSHOT_PART_CHARS,
 } from './mirrorProtocol.ts';
 import { parseMirrorBatch, ViewRecorderLink } from './recorderLink.ts';
 
@@ -94,7 +96,9 @@ test('a batch is accepted only when well formed and within the limits', () => {
 		batch({ kind: 'events', data: 'é'.repeat(MIRROR_MAX_BATCH_BYTES / 2 + 1) }),
 	])
 		assert.equal(parseMirrorBatch(bad), undefined);
-	assert.ok(parseMirrorBatch(batch({ data: 'x'.repeat(MIRROR_MAX_PART_BYTES) })));
+	assert.ok(parseMirrorBatch(batch({ data: 'x'.repeat(MIRROR_SNAPSHOT_PART_CHARS) })));
+	// A part is bounded in characters too, so an observer's memory has a ceiling.
+	assert.equal(parseMirrorBatch(batch({ data: 'x'.repeat(MIRROR_SNAPSHOT_PART_CHARS + 1) })), undefined);
 });
 
 function link(publish: (batch: unknown) => Promise<void> = async () => {}) {
@@ -169,7 +173,10 @@ test('a batch nobody asked for is not published', async () => {
 });
 
 test('losing control ends the recording; any other failure only loses that batch', async () => {
-	const forbidden = link(() => Promise.reject(Object.assign(new Error('no'), { code: 'forbidden' })));
+	// As it arrives: an operation error wrapping the server's refusal.
+	const forbidden = link(() =>
+		Promise.reject(Object.assign(new Error('no'), { cause: { code: 'forbidden', details: { reason: 'not-controller' } } })),
+	);
 	forbidden.recorder.viewAlive();
 	forbidden.recorder.start();
 	forbidden.recorder.handle(batch());
@@ -356,7 +363,7 @@ test('a snapshot may say it comes in parts; nothing else may', () => {
 		batch({ parts: 0 }),
 		batch({ parts: 2.5 }),
 		batch({ parts: '3' }),
-		batch({ parts: 257 }),
+		batch({ parts: 129 }),
 		batch({ kind: 'events', seq: 1, parts: 3 }),
 		batch({ kind: 'unavailable', parts: 3 }),
 	])
@@ -419,4 +426,34 @@ test('a mirror that never gets a whole snapshot stops asking and says it cannot 
 	data({ epoch: 7, kind: 'events', seq: 5, data: 'gap' });
 	await turn();
 	assert.equal(named('resync').length, 5);
+});
+
+// --- which refusals are worth a second try ---
+
+test('only a not-controller refusal is retried; a declined permission is an answer', async () => {
+	const notController = { code: 'forbidden', details: { reason: 'not-controller' } };
+	assert.equal(isNotControllerError(notController), true);
+	// As a feature facade throws it: an operation error wrapping the client error.
+	assert.equal(isNotControllerError(Object.assign(new Error('x'), { cause: notController })), true);
+	for (const other of [
+		{ code: 'forbidden' },
+		{ code: 'forbidden', details: { reason: 'declined' } },
+		{ code: 'forbidden', message: 'App Windows is set to Never Allow' },
+		{ code: 'validation', details: { reason: 'not-controller' } },
+		Object.assign(new Error('x'), { cause: { code: 'forbidden' } }),
+		new Error('network'),
+		null,
+		undefined,
+		'forbidden',
+	])
+		assert.equal(isNotControllerError(other), false);
+
+	// A recording refused for any other reason loses that batch and carries on;
+	// it does not end the recording as losing control does.
+	const declined = link(() => Promise.reject(Object.assign(new Error('no'), { code: 'forbidden' })));
+	declined.recorder.viewAlive();
+	declined.recorder.start();
+	declined.recorder.handle(batch());
+	await turn();
+	assert.deepEqual(declined.posted.at(-1), { type: 'ack' });
 });

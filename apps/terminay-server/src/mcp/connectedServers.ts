@@ -27,6 +27,8 @@ export const MCP_UI_MIME_TYPE = 'text/html;profile=mcp-app';
 export const CONNECTED_SERVER_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const MAX_TOOLS_PER_ENTRY = 256;
 const DEFAULT_CONNECT_TIMEOUT_MS = 20_000;
+/** How long a server that failed to start is left alone before a listing tries it again. */
+const RETRY_FAILED_AFTER_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_REASON_CHARS = 300;
 const TOOL_SEPARATOR = '__';
@@ -64,6 +66,8 @@ export interface ConnectedServerGatewayOptions {
 	 * always removed, so a connected server can never call back in. */
 	readonly baseEnvironment?: () => Readonly<Record<string, string | undefined>>;
 	readonly connectTimeoutMs?: number;
+	/** The clock, for deciding when a failed server may be tried again. */
+	readonly now?: () => number;
 	readonly requestTimeoutMs?: number;
 	readonly clientVersion?: string;
 }
@@ -98,7 +102,11 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 	private entries: readonly ConnectedServerEntry[] = [];
 	private readonly connections = new Map<string, Connection>();
 	private readonly connecting = new Map<string, Promise<Connection | undefined>>();
+	/** Stops a connection attempt that nobody may have any more: its project closed, or the gateway did. */
+	private readonly opening = new Map<string, AbortController>();
 	private readonly failures = new Map<string, string>();
+	/** When each connection last failed to open, by connection key. */
+	private readonly failedAt = new Map<string, number>();
 	private readonly listeners = new Set<() => void>();
 	private generation = 0;
 
@@ -109,7 +117,16 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 	setEntries(next: readonly ConnectedServerEntry[]): void {
 		const valid = next.filter((entry) => CONNECTED_SERVER_NAME.test(entry.name));
 		const previous = new Map(this.entries.map((entry) => [entry.name, entry]));
-		this.entries = Object.freeze(valid.map((entry) => Object.freeze({ ...entry })));
+		// An entry that did not change keeps its identity, so a connection being
+		// opened for it is not mistaken for one to an entry that was replaced.
+		this.entries = Object.freeze(
+			valid.map((entry) => {
+				const before = previous.get(entry.name);
+				return before !== undefined && JSON.stringify(before) === JSON.stringify(entry)
+					? before
+					: Object.freeze({ ...entry });
+			}),
+		);
 		const current = new Map(this.entries.map((entry) => [entry.name, entry]));
 		for (const [key, connection] of [...this.connections]) {
 			const entry = current.get(connection.entry.name);
@@ -123,8 +140,11 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 		for (const name of this.failures.keys()) {
 			const before = previous.get(name);
 			const after = current.get(name);
-			if (after === undefined || JSON.stringify(before) !== JSON.stringify(after))
+			if (after === undefined || JSON.stringify(before) !== JSON.stringify(after)) {
 				this.failures.delete(name);
+				for (const key of [...this.failedAt.keys()])
+					if (key === name || key.startsWith(`${name}\u0000`)) this.failedAt.delete(key);
+			}
 		}
 		this.changed();
 	}
@@ -286,14 +306,22 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 				this.drop(key, connection);
 				dropped = true;
 			}
+		for (const [key, stop] of [...this.opening])
+			if (key.endsWith(`\u0000${projectId}`)) stop.abort(new Error('The project closed.'));
 		if (dropped) this.changed();
 	}
 
 	/** The server is stopping or MCP was disabled. */
 	closeAll(): void {
 		for (const [key, connection] of [...this.connections]) this.drop(key, connection);
+		for (const stop of [...this.opening.values()]) stop.abort(new Error('Connected servers were closed.'));
 		this.failures.clear();
+		this.failedAt.clear();
 		this.changed();
+	}
+
+	private now(): number {
+		return (this.options.now ?? Date.now)();
 	}
 
 	private get requestTimeout(): number {
@@ -337,7 +365,7 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 		const entry = this.entries.find((candidate) => candidate.name === entryName);
 		if (entry === undefined || !entry.enabled)
 			throw new ConnectedServerError('not_found', `No connected server is named ${entryName}.`);
-		const connection = await this.connect(entry, projectId, signal);
+		const connection = await this.connect(entry, projectId, signal, true);
 		if (connection === undefined)
 			throw new ConnectedServerError(
 				'internal',
@@ -355,21 +383,56 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 		entry: ConnectedServerEntry,
 		projectId: string,
 		signal: AbortSignal,
+		retryFailed = false,
 	): Promise<Connection | undefined> {
 		const key = this.keyOf(entry, projectId);
 		const live = this.connections.get(key);
 		if (live !== undefined && !live.closed) return Promise.resolve(live);
-		const pending = this.connecting.get(key);
-		if (pending !== undefined) return pending;
-		const attempt = this.open(entry, projectId, key, signal)
-			.catch((error: unknown) => {
-				this.failures.set(entry.name, reasonOf(error));
-				this.changed();
-				return undefined;
-			})
-			.finally(() => this.connecting.delete(key));
-		this.connecting.set(key, attempt);
-		return attempt;
+		// A server that just failed is not started again by every listing that
+		// follows. It is tried again once it has been left alone for a while, when
+		// its entry is saved, or when one of its tools is asked for by name.
+		const failedAt = this.failedAt.get(key);
+		if (
+			!retryFailed &&
+			failedAt !== undefined &&
+			this.now() - failedAt < RETRY_FAILED_AFTER_MS
+		)
+			return Promise.resolve(undefined);
+		// A caller that has already given up starts nothing.
+		if (signal.aborted) return Promise.reject(signal.reason ?? new Error('cancelled'));
+		let attempt = this.connecting.get(key);
+		if (attempt === undefined) {
+			const stop = new AbortController();
+			this.opening.set(key, stop);
+			// One attempt serves every caller waiting for this server, so it
+			// belongs to none of them: a caller giving up stops waiting, and the
+			// attempt runs on for the others, bounded by its own timeout.
+			attempt = this.open(entry, projectId, key, stop.signal)
+				.then((connection) => {
+					this.failedAt.delete(key);
+					return connection;
+				})
+				.catch((error: unknown) => {
+					// Stopped because nobody may have it any more: not a failure of the server.
+					if (stop.signal.aborted) return undefined;
+					const reason = reasonOf(error);
+					this.failedAt.set(key, this.now());
+					// The tool list changes when a server's state does, not each
+					// time it fails the same way: announcing that would have every
+					// agent list again, and every listing start the server again.
+					if (this.failures.get(entry.name) !== reason) {
+						this.failures.set(entry.name, reason);
+						this.changed();
+					}
+					return undefined;
+				})
+				.finally(() => {
+					this.connecting.delete(key);
+					if (this.opening.get(key) === stop) this.opening.delete(key);
+				});
+			this.connecting.set(key, attempt);
+		}
+		return abortable(attempt, signal);
 	}
 
 	private async open(
@@ -412,8 +475,9 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 				tools: tools.slice(0, MAX_TOOLS_PER_ENTRY) as unknown as UpstreamTool[],
 				closed: false,
 			};
-			// The entry may have been removed or changed while this was connecting.
-			if (!this.entries.includes(entry)) {
+			// The entry may have been removed or changed while this was connecting,
+			// or the project or the gateway closed.
+			if (signal.aborted || !this.entries.includes(entry)) {
 				await client.close().catch(() => {});
 				throw new ConnectedServerError('not_found', 'The entry changed while connecting.');
 			}
@@ -488,6 +552,16 @@ function uiResourceUri(tool: UpstreamTool): string | undefined {
 	return typeof uri === 'string' && uri.startsWith('ui://') && uri.length <= 2048
 		? uri
 		: undefined;
+}
+
+/** Wait for shared work until it settles or this caller gives up; giving up does not stop the work. */
+function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+	if (signal.aborted) return Promise.reject(signal.reason ?? new Error('cancelled'));
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = (): void => reject(signal.reason ?? new Error('cancelled'));
+		signal.addEventListener('abort', onAbort, { once: true });
+		work.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+	});
 }
 
 function reasonOf(error: unknown): string {

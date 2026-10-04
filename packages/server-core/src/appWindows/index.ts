@@ -7,7 +7,7 @@ import type {
 	QueryRequest,
 	RequestContext,
 } from '../types.js';
-import { AppWindowMirrorRelay } from './mirror.js';
+import { AppWindowMirrorRelay, NOT_CONTROLLER, withinClientBoundary } from './mirror.js';
 
 export * from './mirror.js';
 
@@ -27,6 +27,7 @@ export const APP_WINDOW_OPERATIONS = Object.freeze({
 	message: 'app-windows.message',
 	context: 'app-windows.context',
 	viewRequest: 'app-windows.view-request',
+	viewResponse: 'app-windows.view-response',
 } as const);
 
 export const APP_WINDOW_EVENTS = Object.freeze({
@@ -44,6 +45,12 @@ export const MAX_MCP_APP_RESOURCE_BYTES = 4 * 1024 * 1024;
 export const MAX_APP_WINDOW_TEXT_BYTES = 16 * 1024;
 /** Parameters of one request a view makes of its own server. */
 export const MAX_APP_WINDOW_VIEW_REQUEST_BYTES = 256 * 1024;
+/** What a view's own server may answer one request with. */
+export const MAX_APP_WINDOW_VIEW_RESPONSE_BYTES = 4 * 1024 * 1024;
+/** A response this small returns with the command; a larger one is fetched as a body. */
+const MAX_INLINE_VIEW_RESPONSE_BYTES = 32 * 1024;
+/** Large responses one window holds for its view to fetch. */
+const MAX_HELD_VIEW_RESPONSES = 4;
 
 export type AppWindowState = 'open' | 'minimised';
 
@@ -108,6 +115,8 @@ interface MutableWindow {
 	contentRevision: number;
 	createdAt: number;
 	pendingContext?: string;
+	/** Responses too large for a command result, held until the view fetches them. */
+	responses?: Map<string, { readonly clientId: string; readonly bytes: Uint8Array }>;
 }
 
 export type AppWindowErrorCode =
@@ -171,6 +180,7 @@ export interface AppWindowModelContext {
 }
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder('utf-8', { fatal: true });
 const byteLength = (text: string): number => encoder.encode(text).byteLength;
 
 export class AppWindowService {
@@ -181,6 +191,7 @@ export class AppWindowService {
 	private readonly now: () => number;
 	private readonly generateId: () => string;
 	private nextId = 0;
+	private nextResponseId = 0;
 	/** Relays recorded views to the clients watching a terminal (ADR-0039). */
 	readonly mirror: AppWindowMirrorRelay | undefined;
 
@@ -342,6 +353,7 @@ export class AppWindowService {
 
 	/** The server is stopping or MCP was disabled: everything ends. */
 	endAll(): void {
+		this.mirror?.endAll();
 		if (this.windows.size === 0) return;
 		this.windows.clear();
 		this.publish();
@@ -388,12 +400,19 @@ export class AppWindowService {
 	private windowOperations(): OperationRegistries {
 		return {
 			queries: {
-				[APP_WINDOW_OPERATIONS.list]: async () =>
-					asJson({ windows: this.list() }),
+				[APP_WINDOW_OPERATIONS.list]: async (request: QueryRequest) =>
+					asJson({
+						windows: this.list().filter((window) =>
+							withinClientBoundary(request.context, window),
+						),
+					}),
+
 				[APP_WINDOW_OPERATIONS.content]: async (
 					request: QueryRequest,
 				): Promise<BinaryQueryHandlerResult> => {
 					const window = this.requested(request);
+					// The document and the tool data can each be far larger than a
+					// protocol envelope may be, so they travel together as the body.
 					return {
 						result: asJson({
 							window: view(window),
@@ -401,19 +420,36 @@ export class AppWindowService {
 							...(window.permissions === undefined
 								? {}
 								: { permissions: window.permissions }),
-							...(window.tool === undefined ? {} : { tool: window.tool }),
-							...(window.toolInput === undefined
-								? {}
-								: { toolInput: window.toolInput }),
-							...(window.toolResult === undefined
-								? {}
-								: { toolResult: window.toolResult }),
-							...(window.toolCancelled === undefined
-								? {}
-								: { toolCancelled: window.toolCancelled }),
 						}),
-						body: encoder.encode(window.html),
+						body: encoder.encode(
+							JSON.stringify({
+								html: window.html,
+								...(window.tool === undefined ? {} : { tool: window.tool }),
+								...(window.toolInput === undefined
+									? {}
+									: { toolInput: window.toolInput }),
+								...(window.toolResult === undefined
+									? {}
+									: { toolResult: window.toolResult }),
+								...(window.toolCancelled === undefined
+									? {}
+									: { toolCancelled: window.toolCancelled }),
+							}),
+						),
 					};
+				},
+				[APP_WINDOW_OPERATIONS.viewResponse]: async (
+					request: QueryRequest,
+				): Promise<BinaryQueryHandlerResult> => {
+					const window = this.requested(request);
+					const responseId = record(request.envelope.payload)?.responseId;
+					const held =
+						typeof responseId === 'string' ? window.responses?.get(responseId) : undefined;
+					// Given once, and only to the client that made the request.
+					if (held === undefined || held.clientId !== request.context.clientId)
+						throw protocolError('not_found', 'that response is no longer held');
+					window.responses?.delete(responseId as string);
+					return { result: asJson({ windowId: window.id }), body: held.bytes };
 				},
 			},
 			commands: {
@@ -436,7 +472,7 @@ export class AppWindowService {
 				},
 				[APP_WINDOW_OPERATIONS.message]: async (request: CommandRequest) => {
 					const window = this.fromHolder(request);
-					const text = boundedText(record(request.envelope.payload)?.text);
+					const text = messageText(record(request.envelope.payload)?.text);
 					if (this.options.deliverMessage === undefined)
 						throw protocolError('unavailable', 'window messages are unavailable');
 					await this.options.deliverMessage(
@@ -460,29 +496,59 @@ export class AppWindowService {
 				},
 				[APP_WINDOW_OPERATIONS.viewRequest]: async (request: CommandRequest) => {
 					const window = this.fromHolder(request);
-					const payload = record(request.envelope.payload);
-					const method = payload?.method;
-					const params = record(payload?.params) ?? {};
+					const method = record(request.envelope.payload)?.method;
 					if (method !== 'tools/call' && method !== 'resources/read')
 						throw protocolError('validation', 'view request method is invalid');
-					if (
-						byteLength(JSON.stringify(params)) > MAX_APP_WINDOW_VIEW_REQUEST_BYTES
-					)
+					// The parameters are the command's body: they may be larger than
+					// a protocol envelope.
+					if (request.body.byteLength > MAX_APP_WINDOW_VIEW_REQUEST_BYTES)
 						throw protocolError('validation', 'view request is too large');
+					let params: Record<string, JsonValue> | undefined;
+					try {
+						params =
+							request.body.byteLength === 0
+								? {}
+								: (record(JSON.parse(decoder.decode(request.body))) as
+										| Record<string, JsonValue>
+										| undefined);
+					} catch {
+						params = undefined;
+					}
+					if (params === undefined)
+						throw protocolError('validation', 'view request parameters are invalid');
 					const viewRequest = this.viewRequest;
 					if (window.source.kind !== 'mcp-app' || viewRequest === undefined)
 						throw protocolError(
 							'forbidden',
 							'this window has no server to call',
 						);
-					return asJson({
-						response: await viewRequest(
-							view(window),
-							method,
-							params as Readonly<Record<string, JsonValue>>,
-							request.context.signal,
-						),
-					});
+					const response = await viewRequest(
+						view(window),
+						method,
+						params,
+						request.context.signal,
+					);
+					const bytes = encoder.encode(JSON.stringify(response ?? null));
+					if (bytes.byteLength > MAX_APP_WINDOW_VIEW_RESPONSE_BYTES)
+						throw protocolError('validation', 'the server’s response is too large for a view');
+					// A small response returns with the command. A large one is held
+					// for the caller to fetch as a body, since a command's result
+					// travels in an envelope.
+					if (bytes.byteLength <= MAX_INLINE_VIEW_RESPONSE_BYTES)
+						return asJson({ response });
+					if (!this.windows.has(window.id))
+						throw protocolError('not_found', 'window no longer exists');
+					window.responses ??= new Map();
+					const responses = window.responses;
+					while (responses.size >= MAX_HELD_VIEW_RESPONSES) {
+						const oldest = responses.keys().next().value;
+						if (oldest === undefined) break;
+						responses.delete(oldest);
+					}
+					this.nextResponseId += 1;
+					const responseId = `res_${this.nextResponseId.toString(36)}`;
+					responses.set(responseId, { clientId: request.context.clientId, bytes });
+					return asJson({ responseId });
 				},
 			},
 			policies: {
@@ -493,6 +559,7 @@ export class AppWindowService {
 				[APP_WINDOW_OPERATIONS.message]: { scope: 'write' },
 				[APP_WINDOW_OPERATIONS.context]: { scope: 'write' },
 				[APP_WINDOW_OPERATIONS.viewRequest]: { scope: 'write' },
+				[APP_WINDOW_OPERATIONS.viewResponse]: { scope: 'write' },
 			},
 		};
 	}
@@ -506,8 +573,10 @@ export class AppWindowService {
 		)
 			throw protocolError('validation', 'window id is invalid');
 		const window = this.windows.get(windowId);
-		if (window === undefined)
+		// A window outside the caller's project or session does not exist for it.
+		if (window === undefined || !withinClientBoundary(request.context, window))
 			throw protocolError('not_found', 'window no longer exists');
+
 		return window;
 	}
 
@@ -517,6 +586,7 @@ export class AppWindowService {
 			throw protocolError(
 				'forbidden',
 				'only the client controlling this terminal can speak for its windows',
+				{ details: { reason: NOT_CONTROLLER } },
 			);
 		return window;
 	}
@@ -599,6 +669,25 @@ function validHtml(value: string, source: AppWindowSource): string {
 			`The HTML document is larger than ${Math.floor(limit / 1024)} KiB.`,
 		);
 	return value;
+}
+
+/**
+ * Text a view asks to have typed into its terminal. It comes from untrusted
+ * HTML, so it is text and nothing else: a control character would be a
+ * keystroke (an escape sequence that ends the paste, an interrupt, a carriage
+ * return that submits early). Tab and line feed are the only ones allowed.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses.
+const KEYSTROKE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
+
+function messageText(value: unknown): string {
+	const text = boundedText(value);
+	if (KEYSTROKE.test(text))
+		throw protocolError(
+			'validation',
+			'a window message may contain text, tabs, and line breaks only',
+		);
+	return text;
 }
 
 function boundedText(value: unknown): string {
