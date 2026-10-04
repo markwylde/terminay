@@ -1,0 +1,54 @@
+title: Agent-aware idle wait
+intro: |
+  Today the macro "wait for inactivity" step resolves after N seconds with no
+  terminal output, and knows nothing about agents. The idea is to make it
+  resolve only when the terminal has been quiet for N seconds AND the agent in
+  that terminal is not busy. Three things to settle before a proposal.
+
+status: submitted
+submitted_at: "2026-10-04T10:28:22+01:00"
+
+questions:
+  - id: idle_states
+    type: select
+    prompt: Which agent states should hold the wait open?
+    help: |
+      Agent states are working, waiting (needs approval or an answer), blocked,
+      done, and idle. I'd lean towards only "working" holding it open, so a
+      macro can still press Enter on an approval prompt.
+    required: true
+    options:
+      - Only working holds it open (waiting, blocked, done, idle count as idle)
+      - Working, waiting and blocked hold it open (resolves only when the turn is finished)
+      - Make it a choice on each step
+    answer: Only working holds it open (waiting, blocked, done, idle count as idle)
+
+  - id: exposure
+    type: select
+    prompt: How should this be exposed in macros?
+    help: |
+      I'd lean towards changing the existing step with no new setting: it is
+      agent-aware whenever an agent is bound to the terminal, and output-only
+      otherwise, exactly as today.
+    required: true
+    options:
+      - Change the existing step, no new setting
+      - Add a checkbox on the step, default on
+      - Add a separate new step type and leave the existing one output-only
+    answer: Change the existing step, no new setting
+
+  - id: mcp_wait_for_idle
+    type: select
+    prompt: Should the MCP wait_for_idle tool get the same behaviour?
+    help: |
+      It uses the same output-only wait underneath. I'd lean towards yes, so
+      there is one definition of idle everywhere.
+    options:
+      - Yes, one definition of idle everywhere
+      - No, macros only
+      - Leave it out of scope for now
+    answer: Yes, one definition of idle everywhere
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

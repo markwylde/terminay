@@ -183,6 +183,17 @@ export interface TerminalInactivityTimer {
 	readonly clearTimeout: (timer: unknown) => void;
 }
 
+/**
+ * Server-owned reason to keep a quiet terminal's inactivity wait open, such as
+ * a bound agent that is working without printing. The terminal service asks
+ * only about the waiting session's own identity.
+ */
+export interface TerminalInactivityHold {
+	readonly isHeld: (identity: TerminalIdentity) => boolean;
+	/** Reports the session whose held answer may have changed. */
+	readonly subscribe: (listener: (sessionId: string) => void) => () => void;
+}
+
 export type TerminalSessionStatus = 'running' | 'exited' | 'interrupted';
 export type TerminalExitReason =
 	| 'exit'
@@ -387,6 +398,8 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
 	readonly generateSessionId?: (projectId: string) => string;
 	/** Optional host-neutral timer implementation for inactivity supervision. */
 	readonly inactivityTimer?: TerminalInactivityTimer;
+	/** Optional hold consulted before a quiet period resolves a wait. */
+	readonly inactivityHold?: TerminalInactivityHold;
 	readonly onEvent?: TerminalEventListener;
 	/** Server-owned lifecycle observers such as agent journal tracking. */
 	readonly sessionLifecycle?: TerminalSessionLifecycle;
