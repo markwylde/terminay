@@ -47,6 +47,11 @@ const DEFAULT_MAX_OUTPUT_CHUNK_BYTES = 64 * 1024;
 const CHECKPOINT_PAUSE_BYTES = 256 * 1024;
 /** How long a fresh presentation waits for the checkpoint drain to catch up. */
 const CHECKPOINT_SETTLE_DEADLINE_MS = 250;
+/** How long a fresh presentation waits for an adopted session's retained
+ * output. That output is finite, so unlike a terminal that never falls silent
+ * it is worth waiting out: pinning part-way through it presents an old screen
+ * that a quiet program never repaints. */
+const ADOPTION_SETTLE_DEADLINE_MS = 10_000;
 const CHECKPOINT_RESUME_BYTES = 128 * 1024;
 const DEFAULT_MAX_REPLAY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_QUEUED_OUTPUT_BYTES = 256 * 1024;
@@ -99,6 +104,13 @@ interface MutableSession {
 	checkpointPendingBytes: number;
 	checkpointPaused: boolean;
 	checkpointDraining: boolean;
+	/** Set while the checkpoint authority is still working through the output a
+	 * session holder retained for this adopted session, which ends at `through`. */
+	adoptionReplay?: {
+		readonly through: number;
+		readonly done: Promise<void>;
+		readonly finish: () => void;
+	};
 	readonly checkpointQueue: CheckpointOutputChunk[];
 	readonly checkpointDrainWaiters: Set<() => void>;
 }
@@ -935,6 +947,23 @@ export class TerminalService {
 		this.sessionsById.set(identity.sessionId, mutable);
 		this.startPresentationCheckpoint(mutable);
 		this.attachProcess(mutable, options.process);
+		// The process has just delivered everything the holder retained. Until
+		// the checkpoint authority has taken it all in, no checkpoint shows the
+		// screen the session was left on.
+		if (
+			mutable.status === 'running' &&
+			(mutable.checkpointDraining || mutable.checkpointQueue.length !== 0)
+		) {
+			let finish = (): void => undefined;
+			const done = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			mutable.adoptionReplay = {
+				through: mutable.outputPosition,
+				done,
+				finish,
+			};
+		}
 		return new TerminalSessionHandle(this, mutable);
 	}
 
@@ -1141,8 +1170,9 @@ export class TerminalService {
 	 */
 	settlePresentation(
 		session: string | TerminalIdentity,
-		deadlineMs = CHECKPOINT_SETTLE_DEADLINE_MS,
+		deadlineMs?: number,
 	): Promise<void> {
+		const waitMs = deadlineMs ?? CHECKPOINT_SETTLE_DEADLINE_MS;
 		if (this.presentationCheckpoints === undefined) return Promise.resolve();
 		const sessionId = typeof session === 'string' ? session : session.sessionId;
 		const mutable =
@@ -1153,6 +1183,16 @@ export class TerminalService {
 		// A terminal that never falls silent must not be able to stall an attach.
 		// Waiting is an optimisation that removes the common hydration gap; when
 		// it cannot be had in time, the caller still has a bounded skip.
+		const replay = mutable.adoptionReplay;
+		if (replay !== undefined && deadlineMs === undefined)
+			return new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, ADOPTION_SETTLE_DEADLINE_MS);
+				timer.unref?.();
+				void replay.done.then(() => {
+					clearTimeout(timer);
+					resolve();
+				});
+			}).then(() => this.settlePresentation(mutable.identity, waitMs));
 		return new Promise((resolve) => {
 			let done = false;
 			const finish = (): void => {
@@ -1160,7 +1200,7 @@ export class TerminalService {
 				done = true;
 				resolve();
 			};
-			const timer = setTimeout(finish, deadlineMs);
+			const timer = setTimeout(finish, waitMs);
 			timer.unref?.();
 			void this.waitForPresentationDrain(mutable).then(() => {
 				clearTimeout(timer);
@@ -1429,6 +1469,7 @@ export class TerminalService {
 			mutable.checkpointPendingBytes = 0;
 			for (const resolve of mutable.checkpointDrainWaiters) resolve();
 			mutable.checkpointDrainWaiters.clear();
+			this.finishAdoptionReplay(mutable);
 			this.presentationCheckpoints?.closeSession(mutable.identity);
 			for (const subscription of [...mutable.subscribers])
 				subscription.close('service_shutdown');
@@ -1626,6 +1667,12 @@ export class TerminalService {
 			.catch(() => undefined)
 			.finally(() => {
 				mutable.checkpointDraining = false;
+				if (
+					mutable.adoptionReplay !== undefined &&
+					chunk.position + chunk.bytes.byteLength >=
+						mutable.adoptionReplay.through
+				)
+					this.finishAdoptionReplay(mutable);
 				mutable.checkpointPendingBytes = Math.max(
 					0,
 					mutable.checkpointPendingBytes - chunk.bytes.byteLength,
@@ -1643,6 +1690,12 @@ export class TerminalService {
 				}
 				this.drainPresentationOutput(mutable);
 			});
+	}
+
+	private finishAdoptionReplay(mutable: MutableSession): void {
+		const replay = mutable.adoptionReplay;
+		mutable.adoptionReplay = undefined;
+		replay?.finish();
 	}
 
 	private waitForPresentationDrain(mutable: MutableSession): Promise<void> {
@@ -1699,6 +1752,7 @@ export class TerminalService {
 		mutable.foregroundProcessUnsubscribe?.();
 		mutable.checkpointQueue.length = 0;
 		mutable.checkpointPendingBytes = 0;
+		this.finishAdoptionReplay(mutable);
 		for (const resolve of mutable.checkpointDrainWaiters) resolve();
 		mutable.checkpointDrainWaiters.clear();
 		this.presentationCheckpoints?.closeSession(mutable.identity);
