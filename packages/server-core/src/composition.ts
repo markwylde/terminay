@@ -716,11 +716,21 @@ export function createServerCoreComposition(
 			: new AppWindowService({
 					eventJournal,
 					// Resolved at request time: the terminal registry is composed below.
-					isPresentationHolder: (window, context) =>
-						terminalOperations.presentationHolder({
+					// The lease belongs to one attachment, made on one connection. A
+					// second connection that only names the same client is not the
+					// controller: a client id is what a client says it is.
+					isPresentationHolder: (window, context) => {
+						const holder = terminalOperations.presentationHolder({
 							projectId: window.projectId,
 							sessionId: window.terminalSessionId,
-						})?.clientId === context.clientId,
+						});
+						return (
+							holder !== undefined &&
+							holder.clientId === context.clientId &&
+							(holder.connectionId === undefined ||
+								holder.connectionId === context.connectionId)
+						);
+					},
 					presentationHolder: (window) =>
 						terminalOperations.presentationHolder({
 							projectId: window.projectId,

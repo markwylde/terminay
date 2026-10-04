@@ -326,16 +326,18 @@ export function AppWindowHost(): ReactElement | null {
 	for (const key of liveKeys) leaving.current.delete(key);
 	previousEntries.current = entries;
 	const [, forget] = useState(0);
-	const leavingCount = leaving.current.size;
+	// Which windows are leaving, not how many: one returning as another leaves
+	// is a change, though the count is the same.
+	const leavingKeys = [...leaving.current.keys()].join('\n');
 	useEffect(() => {
-		if (leavingCount === 0) return;
-		const keys = [...leaving.current.keys()];
+		if (leavingKeys === '') return;
+		const keys = leavingKeys.split('\n');
 		const timer = setTimeout(() => {
 			for (const key of keys) leaving.current.delete(key);
 			forget((count) => count + 1);
 		}, VIEW_TEARDOWN_GRACE_MS * 2);
 		return () => clearTimeout(timer);
-	}, [leavingCount]);
+	}, [leavingKeys]);
 	const departing = [...leaving.current.values()];
 	const lastShown = useRef(
 		new Map<string, { frame: PaneFrame; placed: PlacedWindow; pane: AppWindowPane; narrow: boolean }>(),
@@ -415,13 +417,21 @@ function AppWindowCard(props: CardProps): ReactElement {
 	const teardownRef = useRef<((reason: string) => void) | null>(null);
 	const wantView = available === true && pane.isController && !props.leaving;
 	const [showView, setShowView] = useState(wantView);
+	// A view that has been told it is going does go, even if the reason passes
+	// before its frame is removed: it is then started afresh, not left running
+	// after being told it was over.
+	const told = useRef(false);
 	useEffect(() => {
-		if (wantView) {
-			setShowView(true);
+		if (!showView) {
+			told.current = false;
+			if (wantView) setShowView(true);
 			return;
 		}
-		if (!showView) return;
-		teardownRef.current?.('closed');
+		if (wantView && !told.current) return;
+		if (!told.current) {
+			told.current = true;
+			teardownRef.current?.('closed');
+		}
 		const timer = setTimeout(() => setShowView(false), VIEW_TEARDOWN_GRACE_MS);
 		return () => clearTimeout(timer);
 	}, [wantView, showView]);

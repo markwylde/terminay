@@ -486,6 +486,10 @@ export class ConnectedServerGateway implements ConnectedToolGateway {
 				connection.closed = true;
 				if (this.connections.get(key) === connection) this.connections.delete(key);
 				this.failures.set(entry.name, 'The server closed the connection.');
+				// A server that connects and then exits is left alone as one that
+				// fails to start is. Without this, the change announced below has
+				// every waiting adapter list again, and each listing start it again.
+				this.failedAt.set(key, this.now());
 				this.changed();
 			};
 			client.setNotificationHandler(ToolListChangedNotificationSchema, () => {

@@ -403,6 +403,8 @@ export interface TerminalControlAdapterOptions {
 	/** Model context the calling terminal's views left for the next result. */
 	readonly takeModelContext?: (
 		context: ControlRequestContext,
+		/** The most bytes of notes to take; what does not fit is left for later. */
+		maxBytes: number,
 	) => readonly { readonly title: string; readonly text: string }[];
 	readonly permissions?: ControlPermissionGate;
 	readonly operationScopes?: Partial<Record<ControlOperation, ControlScope>>;
@@ -906,25 +908,21 @@ export function createTerminalControlAdapter(
 		// Listing the connected tools is the adapter's own housekeeping: its
 		// answer never reaches the model, so context taken here would be lost.
 		if (request.op === 'list_connected_tools') return outcome;
-		const notes = takeModelContext(context);
+		// The adapter accepts a bounded amount, so only as many whole notes are
+		// taken as fit. The rest stay with their windows for the next result.
+		const notes = takeModelContext(context, MAX_MODEL_CONTEXT_BYTES - 1024);
 		if (notes.length === 0) return outcome;
 		const result =
 			isRecord(outcome) && outcome.ok === true && 'result' in outcome
 				? outcome.result
 				: outcome;
-		// The adapter accepts a bounded amount. Whole notes are kept while they
-		// fit, so the model never gets half of one.
-		let modelContext = '';
-		let dropped = 0;
-		for (const note of notes) {
-			const text = `Context from the open window "${note.title}":\n${note.text}`;
-			const next = modelContext === '' ? text : `${modelContext}\n\n${text}`;
-			if (Buffer.byteLength(next, 'utf8') > MAX_MODEL_CONTEXT_BYTES - 256) dropped += 1;
-			else modelContext = next;
-		}
-		if (dropped > 0)
-			modelContext += `${modelContext === '' ? '' : '\n\n'}(Context from ${dropped} more open window${dropped === 1 ? ' was' : 's were'} too long to include.)`;
-		return { ok: true, result, modelContext };
+		return {
+			ok: true,
+			result,
+			modelContext: notes
+				.map((note) => `Context from the open window "${note.title}":\n${note.text}`)
+				.join('\n\n'),
+		};
 	};
 }
 

@@ -24,6 +24,7 @@ import {
 	useState,
 } from 'react';
 import { AppWindowMirrorHub } from './mirror/mirrorHub.ts';
+import { createWindowLoader } from './windowLoader.ts';
 
 export type AppWindowConnectionEntry = Readonly<{
 	serverId: string;
@@ -54,8 +55,6 @@ function startController(
 	const client = new AppWindowClient(
 		new TerminayClientFacade(entry.applicationClient),
 	);
-	let disposed = false;
-	let generation = 0;
 	let mirror: AppWindowMirrorHub | undefined;
 	if (entry.capabilities?.includes(APP_WINDOW_MIRROR_CAPABILITY) === true) {
 		try {
@@ -65,35 +64,26 @@ function startController(
 		}
 	}
 	const shared = mirror === undefined ? {} : { mirror };
-	const load = async () => {
-		const requested = ++generation;
-		try {
-			const windows = await client.list();
-			if (disposed || requested !== generation) return;
+	const loader = createWindowLoader<AppWindow>({
+		list: () => client.list(),
+		publish: (windows, loaded) =>
 			publish(
 				entry.serverId,
-				Object.freeze({ serverId: entry.serverId, windows, client, loaded: true, ...shared }),
-			);
-		} catch {
-			// Before the server answers, or without authority, there is nothing to show.
-			if (!disposed && requested === generation)
-				publish(
-					entry.serverId,
-					Object.freeze({ serverId: entry.serverId, windows: [], client, loaded: false, ...shared }),
-				);
-		}
-	};
+				Object.freeze({ serverId: entry.serverId, windows, client, loaded, ...shared }),
+			),
+	});
 	let unsubscribe: (() => void) | undefined;
 	try {
-		unsubscribe = client.onChanged(() => void load());
+		// A change, and a notice that changes were missed, both mean: read again.
+		unsubscribe = client.onChanged(() => void loader.load());
 	} catch {
 		// A transport without subscriptions still answers the initial read.
 	}
-	void load();
+	void loader.load();
 	return Object.freeze({
 		applicationClient: entry.applicationClient,
 		dispose: () => {
-			disposed = true;
+			loader.dispose();
 			unsubscribe?.();
 			mirror?.dispose();
 		},

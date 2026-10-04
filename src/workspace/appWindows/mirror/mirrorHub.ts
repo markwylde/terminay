@@ -61,6 +61,19 @@ interface WatchedSession {
  * that cannot carry a snapshot before the next gap would otherwise ask forever.
  */
 const MAX_RESYNC_ATTEMPTS = 4;
+/**
+ * How long a mirror waits for a snapshot it asked for before asking again. The
+ * request, or the snapshot, can be lost; without this a mirror would wait for
+ * ever. It is one wait per request, and it stops after the attempts above.
+ */
+const SNAPSHOT_WAIT_MS = 5000;
+
+export interface MirrorHubOptions {
+	readonly snapshotWaitMs?: number;
+	/** The timer, replaceable in tests. */
+	readonly setTimer?: (run: () => void, ms: number) => unknown;
+	readonly clearTimer?: (timer: unknown) => void;
+}
 
 export class AppWindowMirrorHub {
 	private readonly recorders = new Map<string, Map<string, MirrorRecorder>>();
@@ -70,9 +83,13 @@ export class AppWindowMirrorHub {
 	private disposed = false;
 
 	private readonly client: MirrorHubClient;
+	private readonly options: MirrorHubOptions;
+	/** The wait for each watched terminal's outstanding snapshot. */
+	private readonly waits = new Map<string, unknown>();
 
-	constructor(client: MirrorHubClient) {
+	constructor(client: MirrorHubClient, options: MirrorHubOptions = {}) {
 		this.client = client;
+		this.options = options;
 		this.subscriptions.push(
 			client.onMirrorWanted((sessionId, wanted) => this.setWanted(sessionId, wanted)),
 			client.onMirrorData(
@@ -86,8 +103,10 @@ export class AppWindowMirrorHub {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const unsubscribe of this.subscriptions) unsubscribe();
-		for (const sessionId of this.watched.keys())
+		for (const sessionId of this.watched.keys()) {
+			this.stopWaiting(sessionId);
 			void this.client.unwatchMirror(sessionId).catch(() => {});
+		}
 		this.watched.clear();
 		this.recorders.clear();
 	}
@@ -155,7 +174,10 @@ export class AppWindowMirrorHub {
 		sink.loading();
 		// Watching asks the controlling client for a snapshot of every view; a
 		// window joining a terminal already watched has to ask for itself.
-		if (first) void this.client.watchMirror(sessionId).catch(() => sink.unavailable());
+		if (first) {
+			this.waitForSnapshot(sessionId);
+			void this.client.watchMirror(sessionId).catch(() => sink.unavailable());
+		}
 		else this.resync(sessionId);
 		return () => {
 			const current = this.watched.get(sessionId);
@@ -163,6 +185,7 @@ export class AppWindowMirrorHub {
 			current.windows.delete(windowId);
 			if (current.windows.size > 0) return;
 			this.watched.delete(sessionId);
+			this.stopWaiting(sessionId);
 			if (!this.disposed) void this.client.unwatchMirror(sessionId).catch(() => {});
 		};
 	}
@@ -179,9 +202,33 @@ export class AppWindowMirrorHub {
 		}
 		session.attempts += 1;
 		session.resyncing = true;
+		this.waitForSnapshot(sessionId);
 		void this.client.resyncMirror(sessionId).catch(() => {
 			session.resyncing = false;
 		});
+	}
+
+	/** Having asked for a snapshot, ask again if none has come after a while. */
+	private waitForSnapshot(sessionId: string): void {
+		this.stopWaiting(sessionId);
+		const set = this.options.setTimer ?? ((run, ms) => setTimeout(run, ms));
+		this.waits.set(
+			sessionId,
+			set(() => {
+				this.waits.delete(sessionId);
+				const session = this.watched.get(sessionId);
+				if (this.disposed || session === undefined || !session.resyncing) return;
+				session.resyncing = false;
+				this.resync(sessionId);
+			}, this.options.snapshotWaitMs ?? SNAPSHOT_WAIT_MS),
+		);
+	}
+
+	private stopWaiting(sessionId: string): void {
+		const timer = this.waits.get(sessionId);
+		if (timer === undefined) return;
+		this.waits.delete(sessionId);
+		(this.options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)))(timer);
 	}
 
 	/** A mirror could not draw what it was given. */
@@ -197,7 +244,10 @@ export class AppWindowMirrorHub {
 		const session = this.watched.get(data.terminalSessionId);
 		const entry = session?.windows.get(data.windowId);
 		if (session === undefined || entry === undefined) return;
-		if (data.kind === 'unavailable' || (data.kind === 'snapshot' && data.seq === 0)) session.resyncing = false;
+		if (data.kind === 'unavailable' || (data.kind === 'snapshot' && data.seq === 0)) {
+			session.resyncing = false;
+			this.stopWaiting(data.terminalSessionId);
+		}
 		if (data.kind === 'unavailable') {
 			entry.position = undefined;
 			entry.sink.unavailable();

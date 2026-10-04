@@ -232,3 +232,10 @@ test('teardown is announced to an initialised view', async () => {
 	assert.deepEqual(posted[0].params, { reason: 'closed by user' });
 	assert.equal(typeof posted[0].id, 'string');
 });
+
+test('links are opened one at a time, not in a burst', async () => {
+	const { send, calls, posted } = setup();
+	for (let index = 0; index < 5; index += 1) await send('ui/open-link', { url: `https://example.com/${index}` }, index);
+	assert.deepEqual(calls, [['openLink', 'https://example.com/0']]);
+	assert.equal(posted.filter((message) => message.error !== undefined).length, 4);
+});

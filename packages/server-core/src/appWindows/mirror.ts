@@ -82,11 +82,12 @@ export class AppWindowMirrorRelay {
 
 	constructor(private readonly options: AppWindowMirrorRelayOptions) {}
 
-	/** Clients watching a session, other than `holder`. */
-	private audience(terminalSessionId: string, holder: string | undefined): Set<string> {
-		const clients = new Set(this.sessions.get(terminalSessionId)?.watchers.values() ?? []);
-		if (holder !== undefined) clients.delete(holder);
-		return clients;
+	/** The connections watching a session, other than those of `holder`, each with its client. */
+	private audience(terminalSessionId: string, holder: string | undefined): Map<string, string> {
+		const watching = new Map<string, string>();
+		for (const [connectionId, clientId] of this.sessions.get(terminalSessionId)?.watchers ?? [])
+			if (clientId !== holder) watching.set(connectionId, clientId);
+		return watching;
 	}
 
 	/** Whether the controlling client should be recording this session's views. */
@@ -211,11 +212,14 @@ export class AppWindowMirrorRelay {
 						session.askedBy.clear();
 					}
 					const audience = this.audience(window.terminalSessionId, request.context.clientId);
-					for (const clientId of audience)
+					// Addressed to the connection that asked to watch, not to whoever
+					// names the same client: a recording is as private as the terminal.
+					for (const [toConnectionId, clientId] of audience)
 						this.options.eventJournal?.publishTransient(
 							APP_WINDOW_MIRROR_EVENTS.data,
 							asJson({
 								clientId,
+								toConnectionId,
 								windowId: window.id,
 								terminalSessionId: window.terminalSessionId,
 								contentRevision: window.contentRevision,
@@ -254,7 +258,9 @@ export class AppWindowMirrorRelay {
 				terminalSessionId,
 			})
 		)
-			throw protocolError('forbidden', 'that terminal is outside this connection’s boundary');
+			// The same answer as for a terminal with no windows, so that whether
+			// another project's terminal has any is not something a client can learn.
+			throw protocolError('not_found', 'this terminal has no windows');
 		return terminalSessionId;
 	}
 

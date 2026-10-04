@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isNotControllerError } from '../controlErrors.ts';
-import { buildViewDocument } from '../viewDocument.ts';
+import { buildViewDocument, viewContentSecurityPolicy } from '../viewDocument.ts';
 import { MIRROR_RECORDER_SCRIPT, MIRROR_REPLICA_SCRIPT } from './bundles.generated.ts';
 import { buildMirrorDocument, mirrorContentSecurityPolicy } from './mirrorDocument.ts';
 import { AppWindowMirrorHub, type MirrorHubClient } from './mirrorHub.ts';
@@ -207,11 +207,25 @@ function hub(wantedNow = false) {
 		onMirrorData: (listener, gap) => { onData = listener as never; onGap = gap ?? (() => {}); return () => calls.push(['off-data']); },
 		onMirrorWanted: (listener) => { onWanted = listener; return () => calls.push(['off-wanted']); },
 	};
-	const instance = new AppWindowMirrorHub(client);
+	// Waits are run by hand, so a test decides when "a while" has passed.
+	const timers = new Set<() => void>();
+	const instance = new AppWindowMirrorHub(client, {
+		setTimer: (run) => {
+			timers.add(run);
+			return run;
+		},
+		clearTimer: (timer) => void timers.delete(timer as () => void),
+	});
+	const elapse = (): void => {
+		for (const run of [...timers]) {
+			timers.delete(run);
+			run();
+		}
+	};
 	const named = (name: string) => calls.filter((call) => call[0] === name);
 	const data = (overrides: Record<string, unknown> = {}) =>
 		onData({ windowId: 'w1', terminalSessionId: 's1', contentRevision: 1, epoch: 1, seq: 0, kind: 'snapshot', data: 'S', ...overrides } as never);
-	return { hub: instance, calls, named, data, gap: () => onGap(), wanted: (sessionId: string, value: boolean) => onWanted(sessionId, value) };
+	return { hub: instance, calls, named, data, elapse, pendingWaits: () => timers.size, gap: () => onGap(), wanted: (sessionId: string, value: boolean) => onWanted(sessionId, value) };
 }
 
 function sink() {
@@ -456,4 +470,80 @@ test('only a not-controller refusal is retried; a declined permission is an answ
 	declined.recorder.handle(batch());
 	await turn();
 	assert.deepEqual(declined.posted.at(-1), { type: 'ack' });
+});
+
+// --- found by a second review ---
+
+test('a mirror whose snapshot never comes asks again after a wait, a few times, and then says so', async () => {
+	const { hub: instance, data, named, elapse, pendingWaits } = hub();
+	const { sink: target, seen } = sink();
+	const stop = instance.watch('s1', 'w1', target);
+	await turn();
+	// Watching asked. Nothing answers: the request, or the snapshot, was lost.
+	assert.deepEqual(named('resync'), []);
+	for (let round = 1; round <= 4; round += 1) {
+		elapse();
+		await turn();
+		assert.equal(named('resync').length, round);
+	}
+	elapse();
+	await turn();
+	assert.equal(named('resync').length, 4);
+	assert.equal(seen.at(-1), 'unavailable');
+	// It is no longer waiting for anything.
+	assert.equal(pendingWaits(), 0);
+
+	// A snapshot that arrives ends the waiting and brings the mirror back.
+	data();
+	assert.equal(seen.at(-1), 'snapshot:S');
+	elapse();
+	await turn();
+	assert.equal(named('resync').length, 4);
+
+	// A wait is dropped with the watch.
+	data({ kind: 'events', seq: 9, data: 'gap' });
+	await turn();
+	assert.equal(pendingWaits(), 1);
+	stop();
+	assert.equal(pendingWaits(), 0);
+});
+
+test('a snapshot that arrives in time cancels the wait', async () => {
+	const { hub: instance, data, named, elapse, pendingWaits } = hub();
+	instance.watch('s1', 'w1', sink().sink);
+	assert.equal(pendingWaits(), 1);
+	data();
+	assert.equal(pendingWaits(), 0);
+	elapse();
+	await turn();
+	assert.deepEqual(named('resync'), []);
+});
+
+test('the workspace holds a view to one batch at a time, whatever the view does', async () => {
+	let finish: () => void = () => {};
+	const { recorder, posted, published } = link(() => new Promise<void>((resolve) => { finish = resolve; }));
+	recorder.viewAlive();
+	recorder.start();
+	// A view that ignores the pacing and sends a flood.
+	for (let index = 0; index < 500; index += 1) recorder.handle(batch({ seq: index, data: `[${index}]` }));
+	await turn();
+	assert.equal(published.length, 1);
+	assert.deepEqual(published[0], { epoch: 1, seq: 0, kind: 'snapshot', data: '[0]' });
+	finish();
+	await turn();
+	assert.deepEqual(posted.at(-1), { type: 'ack' });
+	// After the acknowledgement the next one is taken.
+	recorder.handle(batch({ seq: 1, kind: 'events', data: '[1]' }));
+	await turn();
+	assert.equal(published.length, 2);
+});
+
+test('a third-party view and every mirror ask the browser to block WebRTC; an agent view, which has open network access, does not', () => {
+	// `connect-src` does not govern WebRTC. The directive that does is not
+	// enforced by Chromium as of 153 (measured; see the evidence file), so this
+	// states intent and takes effect wherever a browser honours it.
+	assert.ok(viewContentSecurityPolicy({ kind: 'mcp-app' }).includes("webrtc 'block'"));
+	assert.ok(viewContentSecurityPolicy({ kind: 'mcp-app' }, { connectDomains: ['https://api.example'] }).includes("webrtc 'block'"));
+	assert.ok(mirrorContentSecurityPolicy({ kind: 'agent' }, undefined, NONCE).includes("webrtc 'block'"));
+	assert.equal(viewContentSecurityPolicy({ kind: 'agent' }).includes('webrtc'), false);
 });

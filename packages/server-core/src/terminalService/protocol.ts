@@ -109,7 +109,14 @@ export interface TerminalOperationRegistry {
 	/** The client holding one session's interactive presentation lease now. */
 	readonly presentationHolder: (
 		identity: Pick<TerminalIdentity, 'projectId' | 'sessionId'>,
-	) => { readonly clientId: string; readonly attachmentId: string } | undefined;
+	) =>
+		| {
+				readonly clientId: string;
+				readonly attachmentId: string;
+				/** The connection that made the attachment holding the lease. */
+				readonly connectionId?: string;
+		  }
+		| undefined;
 }
 
 interface ProtocolAttachment {
@@ -228,7 +235,16 @@ export function createTerminalOperationRegistry(
 			}).holder;
 			return holder === undefined
 				? undefined
-				: { clientId: holder.clientId, attachmentId: holder.attachmentId };
+				: {
+						clientId: holder.clientId,
+						attachmentId: holder.attachmentId,
+						...(protocolAttachments.get(holder.attachmentId) === undefined
+							? {}
+							: {
+									connectionId: protocolAttachments.get(holder.attachmentId)
+										?.connectionId as string,
+								}),
+					};
 		},
 		closeConnection: (connectionId) => {
 			const released: ProtocolAttachment[] = [];

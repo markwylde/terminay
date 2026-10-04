@@ -640,3 +640,34 @@ test('a window whose content cannot be loaded says so', async ({ page }) => {
 	await broken.getByRole('button', { name: 'Close window' }).click();
 	await expect(broken).toHaveCount(0);
 });
+
+// --- found by a second review ---
+
+const UNATTENDED = `<p id="load">waiting</p><p id="click">not pressed</p><button id="go">Send</button><script>
+const say = (id, text) => { document.getElementById(id).textContent = text; };
+// As the document loads, with nobody having touched it: type into the terminal, and open a browser.
+Promise.allSettled([
+	window.terminay.sendMessage('y'),
+	window.terminay.openLink('https://example.com/?carried-out'),
+]).then((outcomes) => say('load', outcomes.map((outcome) => outcome.status === 'fulfilled' ? 'done' : outcome.reason.message).join(' | ')));
+document.getElementById('go').onclick = () =>
+	window.terminay.sendMessage('pressed by a person').then(() => say('click', 'sent'), (error) => say('click', 'refused: ' + error.message));
+</script>`;
+
+test('a view types into the terminal or opens a link only on a person’s gesture in it', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	const id = await add(page, { title: 'Unattended', html: UNATTENDED });
+	const window = card(page, 'Unattended');
+	// Nothing a document does by itself reaches the terminal or the browser.
+	await expect(view(window).locator('#load')).toHaveText(
+		'The user is not using this window | The user is not using this window',
+	);
+	expect(await named(page, 'sendMessage')).toEqual([]);
+	await expect(window).toHaveAttribute('data-placement', 'window');
+	// A person pressing a button in it is what sends.
+	await settled(window);
+	await view(window).locator('#go').click();
+	await expect.poll(async () => named(page, 'sendMessage')).toEqual([['sendMessage', id, 'pressed by a person']]);
+});
+

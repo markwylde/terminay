@@ -30,6 +30,8 @@
 			(() => {
 				const READY = 'ui/notifications/sandbox-proxy-ready';
 				const RESOURCE = 'ui/notifications/sandbox-resource-ready';
+				/** What a view may ask for only on a person's gesture. */
+				const GESTURE_ONLY = new Set(['ui/message', 'ui/open-link']);
 				let inner = null;
 
 				function load(params) {
@@ -80,6 +82,23 @@
 							message.method.startsWith('ui/notifications/sandbox-')
 						)
 							return;
+						// Typing into the terminal and opening a browser are things a
+						// person does through a view, not things a document does as it
+						// loads. They are passed on only while the person has just
+						// used the view: a click or a key press in it activates this
+						// document too, and nothing the view runs can fake that.
+						if (GESTURE_ONLY.has(message?.method) && navigator.userActivation?.isActive !== true) {
+							if (message.id !== undefined)
+								inner.contentWindow.postMessage(
+									{
+										jsonrpc: '2.0',
+										id: message.id,
+										error: { code: -32000, message: 'The user is not using this window' },
+									},
+									'*',
+								);
+							return;
+						}
 						parent.postMessage(message, '*');
 					}
 				});

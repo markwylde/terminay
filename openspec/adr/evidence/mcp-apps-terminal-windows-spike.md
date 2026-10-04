@@ -180,8 +180,9 @@ Not done:
 ## Independent review and what it changed
 
 Date: 2026-10-04. A separate reviewer read the whole change against `main` and
-confirmed most of the following by probe. Each was fixed with a test that fails
-without the fix.
+confirmed most of the following by probe. Each was fixed with a test. (This
+section first said each test fails without its fix; the next section corrects
+that for one row.)
 
 | Finding | Fix | Test |
 | - | - | - |
@@ -207,3 +208,65 @@ after a view started was not recorded.
 Not changed: `app-windows.changed` still tells every subscriber the ids,
 terminals, and states of all windows, without titles or content, as the event
 journal does for every feature.
+
+## Second independent review
+
+Date: 2026-10-04. A second reviewer, told to distrust the fixes above, read
+both pull requests again.
+
+**A correction to the section above.** It said each fix had a test that fails
+without it. That was false for the frame-navigation row: the test navigated to
+an `http://127.0.0.1` address, which the proxy's own `frame-src https:` header
+already refuses, so it passed with the fix removed. The test now targets an
+`https` address and watches for the request. It was run with the fix stripped
+from the proxy and failed (the browser asked for
+`https://terminay-exfil.invalid/view?secret=1`), and passes with it.
+
+| Finding | Fix | Test |
+| - | - | - |
+| A view could press Enter in the terminal by itself: a white-space message wrote a bare `\r`, with no gesture and no pacing. | White space alone is refused. A message is taken only from an open window, one at a time; a delivered message minimises the window, so it sends once per opening. The sandbox proxy passes on `ui/message` and `ui/open-link` only while the browser reports user activation in the view. | `app-windows-composition.test.mjs`; `e2e/app-windows-browser.spec.ts` (a view that sends on load is refused, a click sends); `e2e/app-windows.spec.ts` on Desktop |
+| A server that connected and then exited was started again without limit (76 starts in 6 seconds, no agent involved). | A server whose connection ends is left alone as one that fails to start is. | `apps/terminay-server/test/connected-servers.test.mjs` |
+| One-batch-at-a-time pacing of a recording was kept by the recorder, which runs inside the untrusted view. | The workspace drops a batch that arrives before the last was taken. | `mirror/mirror.test.ts` (500 batches, one publish) |
+| `ui/open-link` opened a browser with no gesture or pacing. | Gated on user activation by the proxy, and at most one a second. | same E2E; `viewBridge.test.ts` |
+| Saved credentials could be re-pointed: saving an entry with a new address or command kept its stored values. | Credentials not supplied again are removed when the destination changes. The form says so. | `packages/server-core/test/connected-servers.test.mjs` |
+| One failed `list()` cleared every window and ended every view; missed events were never recovered. | A failed read keeps what was shown; a resync notice reads again. | `windowLoader.test.ts` |
+| "The controlling client" was matched by client id, which a client states for itself. | The connection holding the lease is required; a recording is addressed to the connection that asked to watch. | `app-windows-composition.test.mjs` |
+| A forged recording with a document node made `rrweb-snapshot` reopen the replica's own document. | Refused before building; the replica reports failure and draws the next snapshot. | `e2e/app-view-mirror.spec.ts` |
+| A mirror whose snapshot never came waited for ever. | It asks again after 5 seconds, up to four times, then says it cannot be shown. | `mirror/mirror.test.ts` |
+| Three task verifications cited tests that are not in the branch. | The tasks now cite the tests that exist; the hostile-view test also attempts a download and an unattended message. | `tasks.md` |
+
+Smaller, also fixed: a window that returned as another left could stay mounted
+and hidden; a view told it was closing could be left running if control came
+straight back; model context that did not fit a result was dropped (it now stays
+for the next result); a document whose JSON encoding escaped heavily could
+exceed the control frame (the bound now covers the worst case); an environment
+variable named like a built-in property was lost on save; the MCP App content
+type was compared as a string, not as a media type; a mirror request for
+another project's terminal answered differently depending on whether it had
+windows; nothing kept the two copies of the proxy document in step (both
+repositories now pin its digest); an encoded path served the proxy from
+`terminay.com` without its policy.
+
+### Not fixed: WebRTC
+
+`connect-src` does not govern WebRTC, so a view allowed no connections can
+still reach a peer of its choosing with `RTCPeerConnection`. The directive that
+covers this is `webrtc 'block'`. Measured in the end-to-end image's Chromium
+153.0.8010.12: a top-level page served with `Content-Security-Policy: webrtc
+'block'` sent the same four STUN datagrams to a local listener as a page served
+without it. The directive is not enforced. No sandbox flag or permissions
+policy covers peer connections, and removing the constructor from a view is not
+a defence, because a view can take a fresh one from an `about:blank` frame.
+
+The view and mirror policies carry `webrtc 'block'` for MCP App views, so it
+takes effect wherever a browser honours it. The spec says what is and is not
+governed. What this leaves exposed is narrow: an MCP App view sees its own
+tool's input and result and what the user does in it, and can already send any
+of that to the server that supplied it through that server's own tools.
+
+### Not verified
+
+- On Desktop, a view framing an allowed origin. Electron's frame navigation
+  policy admits only files under the bundle root, so this is probably refused
+  there, which is stricter than the spec's "may".
+- The reviewer's Desktop-specific observations, which were made by reading.

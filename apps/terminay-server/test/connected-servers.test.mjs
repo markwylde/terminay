@@ -205,8 +205,9 @@ test("an unchanged entry keeps its connection when the list is saved again", asy
   }
 })
 
-test("listeners hear when the offered tools may have changed, and a lost connection is re-made on demand", async () => {
-  const { gateway, starts } = await setup()
+test("listeners hear when the offered tools may have changed, and a lost connection is re-made on demand, not in a loop", async () => {
+  let clock = 5_000_000
+  const { gateway, starts } = await setup({ now: () => clock })
   try {
     let changes = 0
     const stop = gateway.onChanged(() => { changes += 1 })
@@ -218,11 +219,27 @@ test("listeners hear when the offered tools may have changed, and a lost connect
     for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(gateway.status()[0].state, "not-connected")
     assert.ok(changes > seen)
-    // No timer brought it back: only the next request does.
+    // No timer brought it back.
     await new Promise((resolve) => setTimeout(resolve, 150))
     assert.equal((await starts()).length, 1)
-    assert.equal((await gateway.listTools("project-a", signal())).length, 4)
+    // The change just announced makes every waiting adapter list again. A
+    // server that exits as soon as it has connected must not be started by
+    // each of those listings: that is a loop with no agent in it.
+    const settled = changes
+    for (let index = 0; index < 5; index += 1) assert.deepEqual(await gateway.listTools("project-a", signal()), [])
+    assert.equal((await starts()).length, 1)
+    assert.equal(changes, settled)
+    // Asking for one of its tools by name starts it at once.
+    await gateway.callTool("project-a", "diagrams__plain", {}, signal())
     assert.equal((await starts()).length, 2)
+    assert.equal((await gateway.listTools("project-a", signal())).length, 4)
+    // Lost again and left alone for a while, the next listing brings it back.
+    process.kill((await starts())[1].pid)
+    for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepEqual(await gateway.listTools("project-a", signal()), [])
+    clock += 31_000
+    assert.equal((await gateway.listTools("project-a", signal())).length, 4)
+    assert.equal((await starts()).length, 3)
     stop()
   } finally {
     gateway.closeAll()

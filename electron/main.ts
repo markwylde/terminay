@@ -2774,9 +2774,10 @@ async function startMcpControlEndpoint(): Promise<void> {
 			adapter: createDesktopMcpTerminalAdapter(),
 			automations: createDesktopMcpAutomationAdapter(),
 			appWindows: createDesktopMcpAppWindowAdapter(),
-			takeModelContext: (context) =>
+			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
+					maxBytes,
 				) ?? [],
 			permissions: createDesktopMcpPermissionGate(),
 		}),

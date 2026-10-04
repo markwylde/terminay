@@ -13,6 +13,7 @@ const PROXY_READY = 'ui/notifications/sandbox-proxy-ready';
 const RESOURCE_READY = 'ui/notifications/sandbox-resource-ready';
 const MAX_VIEW_TEXT_CHARS = 16 * 1024;
 const MAX_URL_CHARS = 4096;
+const MIN_LINK_INTERVAL_MS = 1000;
 
 export type ViewDisplayMode = 'pip' | 'fullscreen';
 
@@ -75,6 +76,7 @@ export class AppViewBridge {
 	private cancelledSent = false;
 	private lastContext = '';
 	private nextHostId = 0;
+	private lastLinkAt = 0;
 	private content: ViewBridgeContent;
 	private readonly host: ViewBridgeHost;
 
@@ -179,6 +181,10 @@ export class AppViewBridge {
 					!isWebUrl(url)
 				)
 					return fail(-32000, 'Invalid URL');
+				// One link at a time: a view cannot fill the screen with tabs.
+				if (Date.now() - this.lastLinkAt < MIN_LINK_INTERVAL_MS)
+					return fail(-32000, 'Too many links were opened; try again in a moment');
+				this.lastLinkAt = Date.now();
 				this.host.openLink(url);
 				reply({});
 				return;
