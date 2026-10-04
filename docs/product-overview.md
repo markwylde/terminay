@@ -168,11 +168,39 @@ MCP authority has two parts, both checked by the server on every request: the
 calling terminal's capability scope (which terminals it can reach) and the
 user's permission policy (which kinds of operation it may perform). The policy
 groups operations into Read Terminals, Full Terminal Management, Read
-Automations, and Full Automation Management, each set to Ask Permission, Always
+Automations, Full Automation Management, App Windows, and Connected Server
+Tools, with a further Window Messages policy, each set to Ask Permission, Always
 Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
 an inline prompt in the calling terminal's pane, answerable from any client
 with authority to create terminals on that server. See
 [MCP permissions](../openspec/specs/mcp-permissions/spec.md).
+
+An agent can show the user an **app window**: a floating window in the terminal
+it is running in, holding sandboxed HTML. It comes from one of two places. The
+agent can write the HTML itself with the Terminay MCP tool `show_window`. Or the
+user can list third-party MCP servers under Settings > AI > Connected MCP
+servers; Terminay then connects to them as a client that supports MCP Apps,
+offers their tools to agents as `<name>__<tool>`, and shows a tool's own UI when
+the agent calls it. Either way no agent CLI is hooked or reconfigured. A window
+belongs to the terminal that opened it, minimises to a tab on the pane's bottom
+edge, runs only on the device that controls that terminal, and can send a
+message back, which is typed into the terminal. Its content runs in an
+opaque-origin frame with no access to the workspace. See
+[terminal app windows](../openspec/specs/terminal-app-windows/spec.md) and the
+[MCP app gateway](../openspec/specs/mcp-app-gateway/spec.md).
+
+Every other device attached to that terminal sees a live, read-only **mirror**
+of the window, as it sees the terminal itself. The controlling device records
+the view's document and its changes and the server relays them; the server runs
+no browser and keeps none of it. A mirror is scaled to fit the window it is shown
+in and takes no input. What is not mirrored: the value of a password field
+(shown masked), canvas, video, audio, and frames from another origin. A view of
+any size is mirrored: a large one is streamed in parts. A device whose
+connection cannot deliver the view whole says so and stops asking, and shows
+the mirror again when it can. Taking control from a mirror starts the window on
+the new controlling device with what was filled in carried over: text, ticked
+boxes, selections, and scroll position. A password is never carried, and a view
+that keeps state only in its own script rebuilds it from what it was given.
 
 The server derives every project's root from canonical project state. Labels,
 hostnames, IPs, URLs, and paths supplied by a client cannot redirect an

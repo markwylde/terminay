@@ -96,6 +96,30 @@ export class TerminayClientFacade implements QueryCommandTransport {
     };
   }
 
+  /** As `subscribe`, for events that carry bytes alongside their payload. */
+  subscribeWithBody(event: string, listener: (payload: JsonValue, body: Uint8Array) => void, onResync?: () => void): () => void {
+    const subscribe = this.client.subscribe;
+    if (typeof subscribe !== "function") {
+      throw new Error("canonical event subscriptions are unavailable on this transport");
+    }
+    let active = true;
+    let subscription: ClientSubscription<JsonValue> | undefined;
+    const pending = subscribe.call(this.client, event) as Promise<ClientSubscription<JsonValue>>;
+    void pending.then((next) => {
+      if (!active) {
+        void next.unsubscribe().catch(() => undefined);
+        return;
+      }
+      subscription = next;
+      next.onEvent((value) => listener(value.payload, value.body ?? new Uint8Array()));
+      if (onResync !== undefined) next.onResync(onResync);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      void subscription?.unsubscribe().catch(() => undefined);
+    };
+  }
+
   /** Establish a canonical subscription before returning its disposer. Feature
    * projection clients use this form when setup must fail visibly and replay
    * gaps require a feature-owned resnapshot. */

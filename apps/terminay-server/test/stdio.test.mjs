@@ -39,6 +39,9 @@ const expectedTools = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'show_window',
+	'close_window',
+	'list_windows',
 ];
 
 test('headless MCP rejects non-local sockets and malformed inherited capabilities', async () => {
@@ -415,11 +418,19 @@ test('headless MCP recovers after a malformed local control response closes its 
 	const socketPath = join(root, 'control.sock');
 	let connections = 0;
 	const control = createServer((socket) => {
-		connections += 1;
-		const connection = connections;
+		let connection;
 		const decoder = new ControlFrameDecoder();
 		socket.on('data', (chunk) => {
 			for (const request of decoder.push(chunk)) {
+				// The adapter's own lookup of connected tools is not a tool call:
+				// answer it plainly and count only the connections tools use.
+				if (request.op === 'list_connected_tools') {
+					socket.write(
+						encodeControlMessage({ id: request.id, ok: true, result: { tools: [] } }),
+					);
+					continue;
+				}
+				connection ??= ++connections;
 				if (connection === 1) {
 					// Valid JSON framing but not a valid ControlResponse. The MCP
 					// client must reject this request, discard only this socket, and

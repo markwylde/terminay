@@ -145,6 +145,8 @@ export * from './languageService/index.js';
 export * from './macroService/index.js';
 export * from './automationService/index.js';
 export * from './mcpApprovals/index.js';
+export * from './appWindows/index.js';
+export * from './connectedServers/index.js';
 export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
 export * from './outboundDelivery.js';

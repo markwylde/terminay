@@ -19,7 +19,9 @@ import {
 } from '@terminay/protocol';
 import type { AuthenticatedClient, ServerCore } from '@terminay/server-core';
 import {
+	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
+	isAppViewProxyAssetPath,
 	type UiBundleManifest,
 	type UiBundleStore,
 	type VerifiedUiBundle,
@@ -162,6 +164,18 @@ const UI_SECURITY_HEADERS = Object.freeze({
 	// manifest CSP's frame-ancestors directive.
 	'X-Frame-Options': 'DENY',
 	'Cross-Origin-Opener-Policy': 'same-origin',
+	'Cross-Origin-Resource-Policy': 'same-origin',
+});
+/**
+ * The app-window sandbox proxy (ADR-0038) is the one asset the workspace
+ * frames. Its policy forces an opaque origin and admits only this origin as an
+ * ancestor, so it carries no `X-Frame-Options: DENY`.
+ */
+const APP_VIEW_PROXY_HEADERS = Object.freeze({
+	'Content-Security-Policy': APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
+	'Permissions-Policy': UI_SECURITY_HEADERS['Permissions-Policy'],
+	'Referrer-Policy': 'no-referrer',
+	'X-Content-Type-Options': 'nosniff',
 	'Cross-Origin-Resource-Policy': 'same-origin',
 });
 
@@ -734,7 +748,9 @@ export class LocalUiServer {
 		}
 		const content = Buffer.from(bundle.read(asset.path));
 		response.writeHead(200, {
-			...UI_SECURITY_HEADERS,
+			...(isAppViewProxyAssetPath(asset.path)
+				? APP_VIEW_PROXY_HEADERS
+				: UI_SECURITY_HEADERS),
 			'Content-Type': asset.contentType || 'application/octet-stream',
 			'Content-Length': String(content.byteLength),
 			'Cache-Control': 'public, max-age=31536000, immutable',

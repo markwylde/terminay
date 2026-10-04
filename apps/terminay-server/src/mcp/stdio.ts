@@ -3,10 +3,17 @@ import { connect, type Socket } from 'node:net';
 import { isAbsolute } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+	type CallToolResult,
+	CallToolRequestSchema,
+	ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
+	CONTROL_LARGE_FRAME_OPERATIONS,
 	CONTROL_MAX_FRAME_BYTES,
+	CONTROL_MAX_LARGE_FRAME_BYTES,
+	CONTROL_MAX_LARGE_RESPONSE_BYTES,
 	CONTROL_MAX_RESPONSE_BYTES,
 	CONTROL_PROTOCOL_VERSION,
 	type ControlError,
@@ -15,6 +22,7 @@ import {
 	type ControlOperation,
 	type ControlResponse,
 	encodeControlMessage,
+	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
 import {
 	DEFAULT_READ_MAX_BYTES,
@@ -33,6 +41,10 @@ import {
 	MAX_AUTOMATION_RUNS_LIMIT,
 	MCP_AUTOMATION_EVENT_KINDS,
 } from './automationTools.js';
+import {
+	MAX_WINDOW_HTML_BYTES,
+	MAX_WINDOW_TITLE_CHARS,
+} from './appWindowTools.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
 export { SERVER_MCP_ENTRY } from './ownership.js';
@@ -104,8 +116,15 @@ interface LocalControlClient {
 		operation: ControlOperation,
 		params: Record<string, unknown>,
 		signal?: AbortSignal,
-	): Promise<unknown>;
+	): Promise<ControlReply>;
 	close(): void;
+}
+
+/** A successful control response: its result, and any text a window in the
+ * calling terminal left for the model. */
+interface ControlReply {
+	readonly result: unknown;
+	readonly modelContext?: string;
 }
 
 /** Headless MCP adapter for the server-owned local control socket. This file
@@ -126,9 +145,11 @@ export async function runServerMcpStdio(
 		signal?: AbortSignal,
 	) => {
 		try {
-			const result = await client.request(operation, params, signal);
-			const text = boundedResultText(operation, result);
-			return { content: [{ type: 'text' as const, text }] };
+			const reply = await client.request(operation, params, signal);
+			const text = boundedResultText(operation, reply.result);
+			return {
+				content: [{ type: 'text' as const, text }, ...contextBlocks(reply)],
+			};
 		} catch (error) {
 			const typed = toMcpControlError(error);
 			return {
@@ -149,12 +170,16 @@ export async function runServerMcpStdio(
 		}
 	};
 	registerTools(server, call);
+	const stopWatchingConnectedTools = serveConnectedTools(server, client);
 
 	// The SDK transport does not observe stdin EOF itself. Close the local
 	// capability socket when the MCP host closes stdin so pending waits cannot
 	// keep a headless process alive indefinitely.
 	const transport = new StdioServerTransport();
-	const closeClient = (): void => client.close();
+	const closeClient = (): void => {
+		stopWatchingConnectedTools();
+		client.close();
+	};
 	transport.onclose = closeClient;
 	process.stdin.once('end', closeClient);
 	process.stdin.once('close', closeClient);
@@ -418,6 +443,7 @@ function registerTools(
 		async (params, extra) => call('wait_for_attention', params, extra.signal),
 	);
 	registerAutomationTools(server, call);
+	registerWindowTools(server, call);
 }
 
 const APPROVAL_NOTE =
@@ -586,6 +612,196 @@ function registerAutomationTools(
 	);
 }
 
+function registerWindowTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const handle = z.string().regex(ID_PATTERN);
+	server.registerTool(
+		'show_window',
+		{
+			description: `Show the user an interactive window in the terminal you are running in, built from your own HTML. Use it when a picture, a form, a table, or a small tool communicates better than text: a chart, a diff viewer, a picker, a preview. The document is a complete HTML page. Inline <script> and <style> work, and it may load scripts, styles, images, and fonts from, and fetch, any https origin. It runs sandboxed: it has no access to the terminal, the filesystem, or cookies, and cannot keep data between runs, so put everything it needs in the document. The window sizes itself to the content up to 60% of the terminal's height. Pass the handle of a window you opened to replace its content in place. To hear back from the user, call window.terminay.sendMessage("text") from a button the user presses: the text is typed into this terminal as the user's next message. It works only as the result of a click or key press in the window, once each time the window is open (sending minimises it), and the text must be plain text. window.terminay.updateContext("text") quietly attaches text to your next tool result, window.terminay.openLink(url) opens an http(s) link in the user's browser when they click, and window.terminay.close() closes the window. Ordinary links work: one to "#id" scrolls, and one to a web page opens in the browser. The page cannot navigate itself or call document.write after it has loaded; a window that does is stopped. Returns the window's handle. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				title: z
+					.string()
+					.min(1)
+					.max(MAX_WINDOW_TITLE_CHARS)
+					.refine((value) => value.trim().length > 0, 'title must not be blank'),
+				html: z
+					.string()
+					.min(1)
+					.refine(
+						(value) => Buffer.byteLength(value, 'utf8') <= MAX_WINDOW_HTML_BYTES,
+						'html must be at most 512 KiB',
+					),
+				window: handle.optional(),
+			},
+		},
+		async (params, extra) => call('show_window', params, extra.signal),
+	);
+	server.registerTool(
+		'close_window',
+		{
+			description: `Close one window in the terminal you are running in, by the handle show_window or list_windows returned. ${APPROVAL_NOTE}`,
+			inputSchema: { window: handle },
+		},
+		async (params, extra) => call('close_window', params, extra.signal),
+	);
+	server.registerTool(
+		'list_windows',
+		{
+			description:
+				'List the windows in the terminal you are running in, each with its handle, title, source, and whether it is open or minimised.',
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_windows', {}, extra.signal),
+	);
+}
+
+type ToolsListHandler = (
+	request: unknown,
+	extra: unknown,
+) => Promise<{ tools: unknown[] }>;
+type ToolsCallHandler = (
+	request: { params: { name: string; arguments?: Record<string, unknown> } },
+	extra: { signal?: AbortSignal },
+) => Promise<CallToolResult>;
+
+/**
+ * Carry the tools of the user's connected MCP servers (ADR-0037). Terminay's
+ * own tools stay registered with McpServer; its list and call handlers are
+ * wrapped so a connected tool, named `<entry>__<tool>`, is listed after them
+ * and forwarded through the control socket. A failure to reach connected
+ * servers never hides Terminay's own tools.
+ *
+ * Returns a function that stops watching for tool-list changes.
+ */
+function serveConnectedTools(
+	server: McpServer,
+	client: LocalControlClient,
+): () => void {
+	const handlers = (
+		server.server as unknown as {
+			_requestHandlers: Map<string, unknown>;
+		}
+	)._requestHandlers;
+	const ownList = handlers.get('tools/list') as ToolsListHandler | undefined;
+	const ownCall = handlers.get('tools/call') as ToolsCallHandler | undefined;
+	if (ownList === undefined || ownCall === undefined)
+		throw new Error('Terminay MCP tool handlers are not registered');
+	let revision = '';
+
+	const listConnected = async (
+		signal?: AbortSignal,
+		after?: string,
+	): Promise<unknown[]> => {
+		const reply = await client.request(
+			'list_connected_tools',
+			after === undefined ? {} : { after },
+			signal,
+		);
+		const result = isRecord(reply.result) ? reply.result : {};
+		const tools = Array.isArray(result.tools) ? result.tools : [];
+		const valid = tools.filter(
+			(tool): tool is Record<string, unknown> =>
+				isRecord(tool) &&
+				typeof tool.name === 'string' &&
+				CONNECTED_TOOL_NAME.test(tool.name) &&
+				isRecord(tool.inputSchema),
+		);
+		if (typeof result.revision === 'string') revision = result.revision;
+		return valid;
+	};
+
+	server.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
+		const own = await ownList(request, extra);
+		let extraTools: unknown[] = [];
+		try {
+			extraTools = await listConnected();
+		} catch {
+			// Terminay's own tools are still offered.
+		}
+		return { ...own, tools: [...own.tools, ...extraTools] } as never;
+	});
+	server.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+		const name = request.params.name;
+		if (!CONNECTED_TOOL_NAME.test(name))
+			return (await ownCall(request as never, extra)) as never;
+		try {
+			const reply = await client.request(
+				'call_connected_tool',
+				{ name, arguments: request.params.arguments ?? {} },
+				extra.signal,
+			);
+			const result = isRecord(reply.result) ? reply.result : {};
+			const content = Array.isArray(result.content) ? result.content : [];
+			return {
+				...result,
+				content: [...content, ...contextBlocks(reply)],
+			} as never;
+		} catch (error) {
+			const typed = toMcpControlError(error);
+			return {
+				isError: true,
+				content: [{ type: 'text', text: `${typed.code}: ${typed.message}` }],
+			} as never;
+		}
+	});
+
+	// One held request per change: the server answers only once the offered
+	// set differs from `revision`. This is a watch, not a poll, and it stops
+	// for good when the socket or the feature is gone.
+	const watch = new AbortController();
+	void (async () => {
+		try {
+			// Learn the current revision first, so only a later change notifies.
+			await listConnected(watch.signal);
+			while (!watch.signal.aborted) {
+				// A host that reports no revision, or answers a held request
+				// without one changing, cannot be watched; never spin on it.
+				if (revision === '') return;
+				const before = revision;
+				await listConnected(watch.signal, before);
+				if (watch.signal.aborted || revision === before) return;
+				await server.server.sendToolListChanged().catch(() => {});
+			}
+		} catch {
+			// The socket closed or this host has no such operation.
+		}
+	})();
+	return () => watch.abort();
+}
+
+const CONNECTED_TOOL_NAME = /^[a-z0-9][a-z0-9-]{0,62}__[A-Za-z0-9_.-]{1,128}$/u;
+
+function frameLimit(operation: ControlOperation): number {
+	return CONTROL_LARGE_FRAME_OPERATIONS.has(operation)
+		? CONTROL_MAX_LARGE_FRAME_BYTES
+		: CONTROL_MAX_FRAME_BYTES;
+}
+
+function replyOf(response: ControlResponse & { ok: true }): ControlReply {
+	return {
+		result: response.result,
+		...(response.modelContext === undefined
+			? {}
+			: { modelContext: response.modelContext }),
+	};
+}
+
+function contextBlocks(
+	reply: ControlReply,
+): { type: 'text'; text: string }[] {
+	return reply.modelContext === undefined
+		? []
+		: [{ type: 'text', text: reply.modelContext }];
+}
+
 function boundedIdentifier(maxChars = MAX_TERMINAL_REF_CHARS): z.ZodString {
 	return z
 		.string()
@@ -691,7 +907,7 @@ function createLocalControlClient(
 	let closed = false;
 	const pending = new Map<
 		string,
-		{ resolve: (value: unknown) => void; reject: (error: Error) => void }
+		{ resolve: (value: ControlReply) => void; reject: (error: Error) => void }
 	>();
 	// Socket callbacks can arrive after a replacement connection has already
 	// been created.  Only the socket that raised the failure may clear/reject
@@ -705,7 +921,7 @@ function createLocalControlClient(
 	};
 	const ensure = (): Socket => {
 		if (socket !== undefined) return socket;
-		const decoder = new ControlFrameDecoder(CONTROL_MAX_RESPONSE_BYTES);
+		const decoder = new ControlFrameDecoder(CONTROL_MAX_LARGE_RESPONSE_BYTES);
 		const candidate = connect(socketPath);
 		socket = candidate;
 		candidate.on('data', (chunk: Buffer) => {
@@ -742,7 +958,7 @@ function createLocalControlClient(
 				const waiter = pending.get(response.id);
 				if (waiter === undefined) continue;
 				pending.delete(response.id);
-				if (response.ok) waiter.resolve(response.result);
+				if (response.ok) waiter.resolve(replyOf(response));
 				else waiter.reject(new ServerMcpControlError(response.error));
 			}
 		});
@@ -778,7 +994,7 @@ function createLocalControlClient(
 						op: operation,
 						params,
 					});
-					if (Buffer.byteLength(encoded, 'utf8') > CONTROL_MAX_FRAME_BYTES)
+					if (Buffer.byteLength(encoded, 'utf8') > frameLimit(operation))
 						throw new ServerMcpControlError({
 							code: 'limit_exceeded',
 							message: 'The MCP control request exceeded its size limit.',
@@ -811,7 +1027,7 @@ function createLocalControlClient(
 		operation: ControlOperation,
 		params: Record<string, unknown>,
 		signal: AbortSignal,
-	): Promise<unknown> {
+	): Promise<ControlReply> {
 		if (signal.aborted)
 			return Promise.reject(
 				new ServerMcpControlError({
@@ -841,7 +1057,7 @@ function createLocalControlClient(
 				error instanceof Error ? error : new Error(String(error)),
 			);
 		}
-		if (Buffer.byteLength(encoded, 'utf8') > CONTROL_MAX_FRAME_BYTES)
+		if (Buffer.byteLength(encoded, 'utf8') > frameLimit(operation))
 			return Promise.reject(
 				new ServerMcpControlError({
 					code: 'limit_exceeded',
@@ -849,7 +1065,7 @@ function createLocalControlClient(
 				}),
 			);
 		return new Promise((resolve, reject) => {
-			const decoder = new ControlFrameDecoder(CONTROL_MAX_RESPONSE_BYTES);
+			const decoder = new ControlFrameDecoder(CONTROL_MAX_LARGE_RESPONSE_BYTES);
 			const connection = connect(socketPath);
 			dedicated.add(connection);
 			let settled = false;
@@ -904,7 +1120,7 @@ function createLocalControlClient(
 					}
 					settle(() =>
 						response.ok
-							? resolve(response.result)
+							? resolve(replyOf(response))
 							: reject(new ServerMcpControlError(response.error)),
 					);
 					return;
@@ -929,7 +1145,15 @@ function parseControlResponse(value: unknown): ControlResponse | null {
 	)
 		return null;
 	if (value.ok === true)
-		return { id: value.id, ok: true, result: value.result };
+		return {
+			id: value.id,
+			ok: true,
+			result: value.result,
+			...(typeof value.modelContext === 'string' &&
+			Buffer.byteLength(value.modelContext, 'utf8') <= MAX_MODEL_CONTEXT_BYTES
+				? { modelContext: value.modelContext }
+				: {}),
+		};
 	if (
 		!isRecord(value.error) ||
 		!isControlErrorCode(value.error.code) ||

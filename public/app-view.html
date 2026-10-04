@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Terminay app view</title>
+		<!--
+			The sandbox proxy for app windows (ADR-0038). It is framed by the workspace
+			with a sandbox attribute and, where the host serves it over HTTP, with a
+			`Content-Security-Policy: sandbox` response header, so it always runs in an
+			opaque origin. It holds the untrusted view in a nested opaque-origin frame
+			and relays messages. It has no other behaviour and trusts nothing it relays.
+		-->
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: transparent;
+			}
+			iframe {
+				border: 0;
+				width: 100%;
+				height: 100%;
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<script>
+			(() => {
+				const READY = 'ui/notifications/sandbox-proxy-ready';
+				const RESOURCE = 'ui/notifications/sandbox-resource-ready';
+				/** Messages between this proxy and the workspace about the view, never relayed for it. */
+				const PROXY_KEY = 'terminayProxy';
+				/** What a view may ask for only on a person's gesture. */
+				const GESTURE_ONLY = new Set(['ui/message', 'ui/open-link']);
+				let inner = null;
+
+				function load(params) {
+					if (inner !== null || typeof params?.html !== 'string') return;
+					inner = document.createElement('iframe');
+					// Never allow-same-origin: the view must not share an origin with
+					// anything, this document included.
+					inner.setAttribute('sandbox', 'allow-scripts allow-forms');
+					if (typeof params.allow === 'string' && params.allow.length > 0)
+						inner.setAttribute('allow', params.allow);
+					inner.setAttribute('title', 'App view');
+					inner.srcdoc = params.html;
+					// The view is the document it was given and stays that document.
+					// Its own policy cannot stop it navigating itself somewhere else,
+					// which would carry data out past that policy and leave a foreign
+					// page speaking as the view. Two things prevent it. From here on
+					// this document forbids its frame to load anything: the policy is
+					// added after the frame exists, so the view does not inherit it
+					// and may still frame what its own policy allows. And should the
+					// frame load a second document all the same, it is removed.
+					let loaded = false;
+					const frame = inner;
+					frame.addEventListener('load', () => {
+						if (!loaded) {
+							loaded = true;
+							return;
+						}
+						frame.remove();
+						// Say so, so the window can explain itself instead of going blank.
+						parent.postMessage({ [PROXY_KEY]: { type: 'view-gone' } }, '*');
+					});
+					document.body.append(frame);
+					const policy = document.createElement('meta');
+					policy.httpEquiv = 'Content-Security-Policy';
+					policy.content = "frame-src 'none'";
+					document.head.append(policy);
+				}
+
+				addEventListener('message', (event) => {
+					const message = event.data;
+					if (event.source === parent && parent !== window) {
+						// The workspace asks whether a person has just acted in the view.
+						// It asks when the view takes the keyboard focus, which a view
+						// can do by itself: a view that did so without a gesture is not
+						// being used, and the workspace takes the focus back.
+						if (message?.[PROXY_KEY]?.type === 'activation?') {
+							parent.postMessage(
+								{
+									[PROXY_KEY]: {
+										type: 'activation',
+										id: message[PROXY_KEY].id,
+										active: navigator.userActivation?.isActive === true,
+									},
+								},
+								'*',
+							);
+							return;
+						}
+						if (message?.method === RESOURCE) load(message.params);
+						else if (inner?.contentWindow) inner.contentWindow.postMessage(message, '*');
+						return;
+					}
+					if (inner !== null && event.source === inner.contentWindow) {
+						// The view may not impersonate this proxy.
+						if (
+							(typeof message?.method === 'string' &&
+								message.method.startsWith('ui/notifications/sandbox-')) ||
+							(typeof message === 'object' && message !== null && PROXY_KEY in message)
+						)
+							return;
+						// Typing into the terminal and opening a browser are things a
+						// person does through a view, not things a document does as it
+						// loads. They are passed on only while the person has just
+						// used the view: a click or a key press in it activates this
+						// document too. A view cannot set that itself; it can only try
+						// to be given a key press by taking the focus, which the
+						// workspace undoes (see the activation question above).
+						if (GESTURE_ONLY.has(message?.method) && navigator.userActivation?.isActive !== true) {
+							if (message.id !== undefined)
+								inner.contentWindow.postMessage(
+									{
+										jsonrpc: '2.0',
+										id: message.id,
+										error: { code: -32000, message: 'The user is not using this window' },
+									},
+									'*',
+								);
+							return;
+						}
+						parent.postMessage(message, '*');
+					}
+				});
+
+				if (parent !== window)
+					parent.postMessage({ jsonrpc: '2.0', method: READY, params: {} }, '*');
+			})();
+		</script>
+	</body>
+</html>

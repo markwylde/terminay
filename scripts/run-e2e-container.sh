@@ -75,6 +75,7 @@ docker create \
   --name "$container" \
   --init \
   --shm-size 2g \
+  --env TERMINAY_E2E_REAL_MCP_APP \
   "$image" \
   "$@" >/dev/null
 
