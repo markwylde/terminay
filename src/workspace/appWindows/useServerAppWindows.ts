@@ -8,6 +8,7 @@
  */
 
 import {
+	APP_WINDOW_MIRROR_CAPABILITY,
 	APP_WINDOWS_CAPABILITY,
 	type AppWindow,
 	AppWindowClient,
@@ -22,6 +23,7 @@ import {
 	useRef,
 	useState,
 } from 'react';
+import { AppWindowMirrorHub } from './mirror/mirrorHub.ts';
 
 export type AppWindowConnectionEntry = Readonly<{
 	serverId: string;
@@ -34,6 +36,8 @@ export type ServerAppWindows = Readonly<{
 	/** Oldest first. */
 	windows: readonly AppWindow[];
 	client: AppWindowClient;
+	/** Present when this server mirrors views to the clients not in control. */
+	mirror?: AppWindowMirrorHub;
 	/** False until the first list has been read from this server. */
 	loaded: boolean;
 }>;
@@ -52,6 +56,15 @@ function startController(
 	);
 	let disposed = false;
 	let generation = 0;
+	let mirror: AppWindowMirrorHub | undefined;
+	if (entry.capabilities?.includes(APP_WINDOW_MIRROR_CAPABILITY) === true) {
+		try {
+			mirror = new AppWindowMirrorHub(client);
+		} catch {
+			// A transport without subscriptions shows windows without mirrors.
+		}
+	}
+	const shared = mirror === undefined ? {} : { mirror };
 	const load = async () => {
 		const requested = ++generation;
 		try {
@@ -59,14 +72,14 @@ function startController(
 			if (disposed || requested !== generation) return;
 			publish(
 				entry.serverId,
-				Object.freeze({ serverId: entry.serverId, windows, client, loaded: true }),
+				Object.freeze({ serverId: entry.serverId, windows, client, loaded: true, ...shared }),
 			);
 		} catch {
 			// Before the server answers, or without authority, there is nothing to show.
 			if (!disposed && requested === generation)
 				publish(
 					entry.serverId,
-					Object.freeze({ serverId: entry.serverId, windows: [], client, loaded: false }),
+					Object.freeze({ serverId: entry.serverId, windows: [], client, loaded: false, ...shared }),
 				);
 		}
 	};
@@ -82,6 +95,7 @@ function startController(
 		dispose: () => {
 			disposed = true;
 			unsubscribe?.();
+			mirror?.dispose();
 		},
 	});
 }

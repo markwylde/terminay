@@ -5,6 +5,8 @@ import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import { FEATURE_CAPABILITIES } from "@terminay/protocol";
 import {
   APP_WINDOW_EVENTS,
+  APP_WINDOW_MIRROR_EVENTS,
+  APP_WINDOW_MIRROR_OPERATIONS,
   APP_WINDOW_OPERATIONS,
   ServerSettingsRepository,
   createServerCoreComposition,
@@ -56,12 +58,12 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
     ...(appWindows === null ? {} : { appWindows }),
   });
   const cleanups = [];
-  const connect = async (clientId, { attach = true } = {}) => {
+  const connect = async (clientId, { attach = true, mirror = true } = {}) => {
     const pair = createInMemoryTransportPair({ autoOpen: false });
     await pair.open();
     const connection = composition.core.accept(pair.server);
     const task = connection.start();
-    const client = new TerminayClient({ transport: pair.client, clientId, capabilities: [FEATURE_CAPABILITIES.appWindows] });
+    const client = new TerminayClient({ transport: pair.client, clientId, capabilities: [FEATURE_CAPABILITIES.appWindows, ...(mirror ? [FEATURE_CAPABILITIES.appWindowMirror] : [])] });
     const hello = await client.connect();
     cleanups.push(async () => {
       await client.close().catch(() => undefined);
@@ -277,6 +279,201 @@ test("a terminal's windows end when its process exits", async () => {
     server.process().emitExit();
     for (let attempt = 0; attempt < 50 && server.composition.appWindows.list().length > 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(server.composition.appWindows.list().length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+// --- the view mirror relay (ADR-0039) ---
+
+const settle = async () => { for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve)); };
+const bytes = (text) => new TextEncoder().encode(text);
+const text = (body) => new TextDecoder().decode(body ?? new Uint8Array());
+
+async function listen(client, event) {
+  const seen = [];
+  const subscription = await client.subscribe(event);
+  subscription.onEvent((entry) => seen.push(entry.body === undefined ? entry.payload : { ...entry.payload, data: text(entry.body) }));
+  return seen;
+}
+
+/** A desktop that controls the terminal, a phone that observes it, and one window. */
+async function mirrored() {
+  const server = await composed();
+  const desktop = await server.connect("desktop", { attach: false });
+  await desktop.client.command("terminal.attach", { clientId: "desktop", identity, fromPosition: 0 });
+  const phone = await server.connect("phone", { attach: false });
+  const attachedPhone = await phone.client.command("terminal.attach", { clientId: "phone", identity, fromPosition: 0 });
+  const window = open(server);
+  const wanted = await listen(desktop.client, APP_WINDOW_MIRROR_EVENTS.wanted);
+  const data = await listen(phone.client, APP_WINDOW_MIRROR_EVENTS.data);
+  const session = { terminalSessionId: identity.sessionId };
+  /** Publish one batch as `client`; the recording is the command's body. */
+  const publish = (client, overrides = {}, recording = "[\"snapshot\"]") =>
+    client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot", ...overrides }, bytes(recording));
+  return { server, desktop: desktop.client, phone: phone.client, attachedPhone, window, wanted, data, session, publish };
+}
+
+test("the server advertises the view mirror with app windows", async () => {
+  const server = await composed();
+  try {
+    assert.ok((await server.connect("desktop", { attach: false })).hello.capabilities.includes("app-window-mirror.v1"));
+  } finally {
+    await server.close();
+  }
+});
+
+test("a recording from the controlling client reaches the clients watching that terminal, and only them", async () => {
+  const { server, desktop, phone, window, wanted, data, session, publish } = await mirrored();
+  try {
+    const bystander = await server.connect("tablet");
+    const bystanderData = await listen(bystander.client, APP_WINDOW_MIRROR_EVENTS.data);
+    const holderData = await listen(desktop, APP_WINDOW_MIRROR_EVENTS.data);
+
+    // Nobody is watching yet, so the controlling client is not asked to record.
+    assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
+    assert.equal((await publish(desktop)).result.delivered, 0);
+
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.deepEqual(wanted, [{ clientId: "desktop", terminalSessionId: identity.sessionId, wanted: true }]);
+    assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, true);
+
+    assert.equal((await publish(desktop)).result.delivered, 1);
+    await publish(desktop, { seq: 1, kind: "events" }, "[\"change\"]");
+    await settle();
+    assert.deepEqual(data.map(({ windowId, contentRevision, epoch, seq, kind, data: recording }) => ({ windowId, contentRevision, epoch, seq, kind, recording })), [
+      { windowId: window.id, contentRevision: window.contentRevision, epoch: 1, seq: 0, kind: "snapshot", recording: "[\"snapshot\"]" },
+      { windowId: window.id, contentRevision: window.contentRevision, epoch: 1, seq: 1, kind: "events", recording: "[\"change\"]" },
+    ]);
+    // A client that is attached but not watching gets none of it, nor does the publisher.
+    assert.deepEqual(bystanderData, []);
+    assert.deepEqual(holderData, []);
+
+    // Unwatching stops the recording.
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.unwatch, session);
+    await settle();
+    assert.deepEqual(wanted.at(-1), { clientId: "desktop", terminalSessionId: identity.sessionId, wanted: false });
+    assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("only the controlling client may publish a recording, before and after control moves", async () => {
+  const { server, desktop, phone, attachedPhone, data, session, publish } = await mirrored();
+  try {
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await rejectsWith(publish(phone), "forbidden");
+
+    const desktopData = await listen(desktop, APP_WINDOW_MIRROR_EVENTS.data);
+    const phoneWanted = await listen(phone, APP_WINDOW_MIRROR_EVENTS.wanted);
+    await phone.command("terminal.presentation", { clientId: "phone", identity, attachmentId: attachedPhone.result.attachmentId, mode: "takeover" });
+    // What the former holder still had in flight is refused.
+    await rejectsWith(publish(desktop, { seq: 1, kind: "events" }), "forbidden");
+
+    // The roles swap: the desktop watches, and the phone is asked to record.
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.unwatch, session);
+    await desktop.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.deepEqual(phoneWanted.at(-1), { clientId: "phone", terminalSessionId: identity.sessionId, wanted: true });
+    await publish(phone, {}, "[\"from the phone\"]");
+    await settle();
+    assert.deepEqual(desktopData.map((entry) => entry.data), ["[\"from the phone\"]"]);
+    assert.deepEqual(data, []);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a recording is bounded, and the server keeps none of it", async () => {
+  const { server, desktop, phone, data, session, publish } = await mirrored();
+  try {
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    const large = "x".repeat(300 * 1024);
+    // More than a batch of changes may hold, but within a snapshot.
+    await rejectsWith(publish(desktop, { seq: 1, kind: "events" }, large), "validation");
+    await publish(desktop, {}, large);
+    // A snapshot at the limit goes through whole; one byte more does not.
+    const full = "y".repeat(768 * 1024);
+    await publish(desktop, { epoch: 2 }, full);
+    await rejectsWith(publish(desktop, { epoch: 3 }, `${full}y`), "validation");
+    // Multi-byte text is measured in bytes.
+    await rejectsWith(publish(desktop, { seq: 1, kind: "events" }, "é".repeat(150 * 1024)), "validation");
+    await rejectsWith(publish(desktop, { kind: "video" }), "validation");
+    await rejectsWith(publish(desktop, { seq: -1 }), "validation");
+    await rejectsWith(publish(desktop, { windowId: "win_missing" }), "not_found");
+    await settle();
+    assert.deepEqual(data.map((entry) => entry.data.length), [large.length, full.length]);
+
+    // Nothing of a delivered batch stays in the relay.
+    const marker = `KEPT-NOWHERE-${"z".repeat(64)}`;
+    await publish(desktop, { epoch: 4 }, JSON.stringify([marker]));
+    await settle();
+    assert.equal(data.at(-1).data.includes(marker), true);
+    const seen = new Set();
+    const holds = (value) => {
+      if (typeof value === "string") return value.includes(marker);
+      if (value instanceof Uint8Array) return text(value).includes(marker);
+      if (typeof value !== "object" || value === null || seen.has(value)) return false;
+      seen.add(value);
+      if (value instanceof Map) return [...value.entries()].some(([key, entry]) => holds(key) || holds(entry));
+      if (value instanceof Set) return [...value].some(holds);
+      return Object.values(value).some(holds);
+    };
+    assert.equal(holds(server.composition.appWindows.mirror), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a mirror that falls out of step gets one snapshot request through to the controlling client", async () => {
+  const { server, desktop, phone, wanted, session, publish } = await mirrored();
+  try {
+    // Only a watcher may ask.
+    await rejectsWith(phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session), "forbidden");
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.equal(wanted.length, 1);
+    // The snapshot the watch asked for has not arrived: asking again adds nothing.
+    await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
+    await settle();
+    assert.equal(wanted.length, 1);
+
+    await publish(desktop);
+    for (let attempt = 0; attempt < 3; attempt += 1) await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
+    await settle();
+    assert.equal(wanted.length, 2);
+    assert.deepEqual(wanted.at(-1), { clientId: "desktop", terminalSessionId: identity.sessionId, wanted: true });
+
+    // A second watcher needs a snapshot too, once the last one has been sent.
+    await publish(desktop, { epoch: 2 });
+    const tablet = await server.connect("tablet");
+    await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.equal(wanted.length, 3);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a watcher that disconnects stops the recording, and a client that cannot show a mirror never starts one", async () => {
+  const { server, desktop, wanted, session } = await mirrored();
+  try {
+    const old = await server.connect("old-phone", { mirror: false });
+    await rejectsWith(old.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "unavailable");
+    await settle();
+    assert.deepEqual(wanted, []);
+    await rejectsWith(desktop.command(APP_WINDOW_MIRROR_OPERATIONS.watch, { terminalSessionId: "no-such-session" }), "not_found");
+
+    const tablet = await server.connect("tablet");
+    await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
+    await settle();
+    assert.equal(wanted.at(-1).wanted, true);
+    await tablet.client.close();
+    for (let attempt = 0; attempt < 50 && wanted.at(-1).wanted; attempt += 1) await settle();
+    assert.equal(wanted.at(-1).wanted, false);
+    assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
   } finally {
     await server.close();
   }

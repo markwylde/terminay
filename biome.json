@@ -13,7 +13,8 @@
       "!dist-electron",
       "!release",
       "!node_modules",
-      "!vendor"
+      "!vendor",
+      "!**/*.generated.ts"
     ]
   },
   "formatter": {

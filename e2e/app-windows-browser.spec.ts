@@ -373,3 +373,194 @@ test('the proxy opened on its own, outside the workspace, is an opaque origin wi
 		}),
 	).toBe('denied');
 });
+
+// --- the view mirror (ADR-0039): two clients of one terminal ---
+
+const MIRRORED = `<style>.added { color: rgb(10, 200, 30); }</style>
+<h1 id="title">Deploy</h1>
+<input id="name" value="">
+<input id="secret" type="password" value="">
+<button id="add">Add</button>
+<button id="send">Send</button>
+<ul id="list"></ul>
+<script>
+	document.getElementById('add').onclick = () => {
+		const item = document.createElement('li');
+		item.className = 'added';
+		item.textContent = 'item ' + (document.querySelectorAll('li').length + 1);
+		document.getElementById('list').append(item);
+	};
+	document.getElementById('send').onclick = () => window.terminay.sendMessage('from the view');
+	window.flood = (bytes) => {
+		const node = document.createElement('p');
+		node.id = 'flood';
+		node.style.cssText = 'height:0;overflow:hidden;margin:0';
+		node.textContent = 'x'.repeat(bytes);
+		document.body.append(node);
+	};
+</script>`;
+
+type MirrorLogEntry = { direction: string; kind: string; epoch: number; seq: number };
+const mirrorOf = (locator: Locator): FrameLocator =>
+	locator.frameLocator('.app-window__mirror-frame').frameLocator('iframe');
+const mirrorLog = (page: Page): Promise<MirrorLogEntry[]> =>
+	page.evaluate(
+		() => (window as unknown as { harness: { mirrorLog: MirrorLogEntry[] } }).harness.mirrorLog,
+	);
+
+async function twoClients(browser: Browser, observerViewport = { width: 1100, height: 760 }) {
+	const context = await browser.newContext({ viewport: { width: 1100, height: 760 } });
+	const controller = await context.newPage();
+	await open(controller, '/?mirror');
+	const join = async (): Promise<Page> => {
+		const observer = await context.newPage();
+		await observer.setViewportSize(observerViewport);
+		await open(observer, '/?mirror&role=observer');
+		return observer;
+	};
+	return { context, controller, join };
+}
+
+test('an observer sees the controlling client’s view live, read-only, and only while it watches', async ({ browser }) => {
+	const { context, controller, join } = await twoClients(browser);
+	try {
+		const id = await add(controller, { title: 'Deploy', html: MIRRORED });
+		const running = card(controller, 'Deploy');
+		await expect(view(running).locator('#title')).toHaveText('Deploy');
+		// State the view reaches before anyone else is attached.
+		await view(running).locator('#name').fill('typed before anyone watched');
+		await view(running).locator('#add').click();
+		// Nobody is watching, so nothing was recorded.
+		expect(await mirrorLog(controller)).toEqual([]);
+
+		// A second client attaches and sees the view as it is now.
+		const observer = await join();
+		const mirrored = card(observer, 'Deploy');
+		await expect(mirrored.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live');
+		const replica = mirrorOf(mirrored);
+		await expect(replica.locator('#title')).toHaveText('Deploy');
+		await expect(replica.locator('#name')).toHaveValue('typed before anyone watched');
+		await expect(replica.locator('#list li')).toHaveText(['item 1']);
+		// The observer runs no view of its own, and says what it is showing.
+		await expect(mirrored.locator('.app-window__frame')).toHaveCount(0);
+		await expect(mirrored.locator('.app-window__mirror-bar')).toContainText('Mirror, view only');
+		expect((await mirrorLog(controller))[0]).toMatchObject({ direction: 'out', kind: 'snapshot', seq: 0 });
+
+		// What the person in control does appears without the observer doing anything.
+		await view(running).locator('#name').fill('typed live');
+		await view(running).locator('#add').click();
+		await expect(replica.locator('#name')).toHaveValue('typed live');
+		await expect(replica.locator('#list li')).toHaveText(['item 1', 'item 2']);
+		expect(await replica.locator('#list li').first().evaluate((node) => getComputedStyle(node).color)).toBe('rgb(10, 200, 30)');
+		// A password is masked before it leaves the controlling client.
+		await view(running).locator('#secret').fill('hunter2');
+		await expect(replica.locator('#secret')).toHaveValue('*******');
+
+		// The mirror is the same size as the view, and takes no input.
+		await settled(running);
+		await settled(mirrored);
+		expect(Math.round((await box(mirrored)).width)).toBe(Math.round((await box(running)).width));
+		const stage = await box(mirrored.locator('.app-window__mirror-stage'));
+		await observer.mouse.click(stage.x + 60, stage.y + 30);
+		await observer.mouse.click(stage.x + 40, stage.y + stage.height / 2);
+		await observer.keyboard.type('typed at the mirror');
+		await observer.waitForTimeout(300);
+		await expect(view(running).locator('#name')).toHaveValue('typed live');
+		await expect(view(running).locator('#list li')).toHaveCount(2);
+		expect(await named(observer, 'sendMessage')).toHaveLength(0);
+		expect(await named(controller, 'sendMessage')).toHaveLength(0);
+		expect((await mirrorLog(observer)).every((entry) => entry.direction === 'in')).toBe(true);
+
+		// The agent replaces the document: the mirror follows.
+		await controller.evaluate((windowId) => (window as unknown as HarnessWindow).harness.replaceWindow(windowId, '<p id="v">second version</p>'), id);
+		await expect(view(running).locator('#v')).toHaveText('second version');
+
+		await expect(replica.locator('#v')).toHaveText('second version');
+		await expect(replica.locator('#title')).toHaveCount(0);
+
+		// Minimised, the observer shows a tab and stops watching; the recording stops with it.
+		await mirrored.getByRole('button', { name: 'Minimise window' }).click();
+		await expect(mirrored).toHaveAttribute('data-placement', 'tab');
+		await expect(running).toHaveAttribute('data-placement', 'tab');
+		await expect.poll(async () => (await named(observer, 'unwatchMirror')).length).toBe(1);
+		const sent = (await mirrorLog(controller)).length;
+		await running.locator('.app-window__header').click();
+		await expect(running).toHaveAttribute('data-placement', 'window');
+		// Reopened on both, the observer watches again and is in step again.
+		await expect(mirrored.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live');
+		await expect(mirrorOf(mirrored).locator('#v')).toHaveText('second version');
+		expect((await mirrorLog(controller)).length).toBeGreaterThan(sent);
+	} finally {
+		await context.close();
+	}
+});
+
+test('taking control from an observer swaps who runs the view and who mirrors it', async ({ browser }) => {
+	const { context, controller, join } = await twoClients(browser);
+	try {
+		await add(controller, { title: 'Deploy', html: MIRRORED });
+		const first = card(controller, 'Deploy');
+		await view(first).locator('#name').fill('half-filled form');
+		const observer = await join();
+		const second = card(observer, 'Deploy');
+		await expect(mirrorOf(second).locator('#name')).toHaveValue('half-filled form');
+
+		// The prompt says what taking control does to the window.
+		await expect(second.locator('.app-window__mirror-bar')).toContainText('Taking control restarts this window');
+		await second.getByRole('button', { name: 'Take control' }).click();
+
+		// The former observer runs the view, afresh from the stored document.
+		await expect(view(second).locator('#title')).toHaveText('Deploy');
+		await expect(view(second).locator('#name')).toHaveValue('');
+		await expect(second.locator('.app-window__mirror')).toHaveCount(0);
+		// The former controller stops running it and mirrors the new one.
+		await expect(first.locator('.app-window__frame')).toHaveCount(0);
+		await expect(first.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live');
+		await view(second).locator('#name').fill('typed on the new controller');
+		await expect(mirrorOf(first).locator('#name')).toHaveValue('typed on the new controller');
+		// Only the client in control publishes.
+		const after = (await mirrorLog(controller)).length;
+		await view(second).locator('#add').click();
+		await expect(mirrorOf(first).locator('#list li')).toHaveCount(1);
+		expect((await mirrorLog(controller)).slice(after).every((entry) => entry.direction === 'in')).toBe(true);
+	} finally {
+		await context.close();
+	}
+});
+
+test('a mirror is scaled to fit a phone, and a view too large to mirror says so without breaking', async ({ browser }) => {
+	const { context, controller, join } = await twoClients(browser, { width: 390, height: 740 });
+	try {
+		await add(controller, { title: 'Deploy', html: MIRRORED });
+		const running = card(controller, 'Deploy');
+		await expect(view(running).locator('#title')).toHaveText('Deploy');
+		const phone = await join();
+		await phone.evaluate(() => (window as unknown as HarnessWindow).harness.setPaneSize(390, 640));
+		const sheet = card(phone, 'Deploy');
+		await expect(sheet).toHaveAttribute('data-placement', 'sheet');
+		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'live');
+		await expect(mirrorOf(sheet).locator('#title')).toHaveText('Deploy');
+
+		// The whole width of the 440-wide view fits the 390-wide sheet.
+		await settled(sheet);
+		const frame = sheet.locator('.app-window__mirror-frame');
+		const drawn = await box(frame);
+		expect(Math.round(drawn.width)).toBe(390);
+		expect(await frame.evaluate((node) => (node as HTMLElement).offsetWidth)).toBe(440);
+		const stage = await box(sheet.locator('.app-window__mirror-stage'));
+		expect(Math.round(drawn.height)).toBeLessThanOrEqual(Math.round(stage.height) + 1);
+		expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+		// A view that grows past what a snapshot may hold is not mirrored...
+		await view(running).locator('body').evaluate(() => (window as unknown as { flood(bytes: number): void }).flood(900 * 1024));
+		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'unavailable');
+		await expect(sheet.locator('.app-window__mirror-status')).toContainText('cannot be mirrored right now');
+		await expect(sheet.getByRole('button', { name: 'Take control' })).toBeVisible();
+		// ...and keeps working where it runs.
+		await view(running).locator('#add').click();
+		await expect(view(running).locator('#list li')).toHaveCount(1);
+		expect((await mirrorLog(controller)).at(-1)).toMatchObject({ kind: 'unavailable' });
+	} finally {
+		await context.close();
+	}
+});

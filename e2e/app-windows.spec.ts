@@ -74,6 +74,10 @@ const HOSTILE = `
 	parent.postMessage({ jsonrpc: '2.0', id: 'x1', method: 'workspace/run-command', params: { command: 'touch /tmp/pwned' } }, '*');
 	parent.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/sandbox-resource-ready', params: { html: '<p id="swapped">swapped</p>' } }, '*');
 	parent.postMessage({ type: 'server-ui-host:request-action', action: 'quit' }, '*');
+	// Forged view-mirror traffic: a recording nobody asked for, and the controls only the workspace sends.
+	parent.postMessage({ terminayMirror: { type: 'batch', epoch: 1, seq: 0, kind: 'snapshot', data: '[{"type":4,"data":{"href":"javascript:alert(1)"}}]' } }, '*');
+	parent.postMessage({ terminayMirror: { type: 'load', code: 'top.location = "https://example.com/"' } }, '*');
+	parent.postMessage({ terminayMirror: { type: 'apply', kind: 'snapshot', data: '[]' } }, '*');
 	await new Promise((resolve) => setTimeout(resolve, 300));
 	document.getElementById('report').textContent = JSON.stringify(report);
 })();

@@ -40,6 +40,10 @@ import {
 	AppWindowsContext,
 	appWindowPaneKey,
 } from './useServerAppWindows';
+import { AppWindowMirror } from './AppWindowMirror';
+import { MIRROR_RECORDER_SCRIPT } from './mirror/bundles.generated.ts';
+import type { AppWindowMirrorHub } from './mirror/mirrorHub.ts';
+import { ViewRecorderLink } from './mirror/recorderLink.ts';
 import { AppViewBridge, type ViewHostContext } from './viewBridge';
 import { buildViewDocument } from './viewDocument';
 import {
@@ -70,6 +74,8 @@ type WindowEntry = Readonly<{
 	serverId: string;
 	window: AppWindow;
 	client: AppWindowClient;
+	/** Present when this server mirrors views to clients not in control. */
+	mirror?: AppWindowMirrorHub;
 }>;
 
 const sameFrame = (left: PaneFrame | undefined, right: PaneFrame): boolean =>
@@ -110,6 +116,7 @@ export function AppWindowHost(): ReactElement | null {
 					serverId: server.serverId,
 					window,
 					client: server.client,
+					...(server.mirror === undefined ? {} : { mirror: server.mirror }),
 				});
 		return list;
 	}, [byServer]);
@@ -479,6 +486,20 @@ function AppWindowCard(props: CardProps): ReactElement {
 					<p className="app-window__notice">
 						App windows cannot be shown on this connection.
 					</p>
+				) : !pane.isController && entry.mirror !== undefined && available === true ? (
+					// A minimised window shows only its tab, so it mirrors nothing.
+					isTab ? null : (
+						<AppWindowMirror
+							windowKey={entry.key}
+							window={appWindow}
+							client={client}
+							mirror={entry.mirror}
+							pane={pane}
+							bodyWidth={placed.bodyWidth}
+							autoHeight={placed.placement === 'window' || placed.placement === 'sheet'}
+							onResized={props.onResized}
+						/>
+					)
 				) : !pane.isController ? (
 					<div className="app-window__notice">
 						<p>This window runs on the device controlling the terminal.</p>
@@ -516,7 +537,10 @@ function AppWindowView(props: ViewProps): ReactElement {
 	const { window: appWindow, client } = entry;
 	const frameRef = useRef<HTMLIFrameElement | null>(null);
 	const bridgeRef = useRef<AppViewBridge | null>(null);
+	const recorderRef = useRef<ViewRecorderLink | null>(null);
 	const [allow, setAllow] = useState<string | undefined>(undefined);
+	const [recorderCount, setRecorderCount] = useState(0);
+	const mirror = entry.mirror;
 	// An agent may replace its document, which is a new view; an MCP App's
 	// revision only means its tool result arrived.
 	const documentKey =
@@ -614,6 +638,19 @@ function AppWindowView(props: ViewProps): ReactElement {
 					},
 					close: () => void client.close(appWindow.id).catch(() => {}),
 				});
+				// While another client watches this terminal, the view is recorded
+				// for it (ADR-0039). The recorder is sent only then.
+				recorderRef.current =
+					mirror === undefined
+						? null
+						: new ViewRecorderLink({
+								post: (message) =>
+									frameRef.current?.contentWindow?.postMessage(message, '*'),
+								recorderScript: MIRROR_RECORDER_SCRIPT,
+								publish: (batch) =>
+									asController(() => mirror.publish(appWindow.id, batch)),
+							});
+				if (recorderRef.current !== null) setRecorderCount((count) => count + 1);
 				setAllow(built.allow);
 			})
 			.catch(() => {
@@ -624,21 +661,37 @@ function AppWindowView(props: ViewProps): ReactElement {
 		};
 		// The revision is what changes the content; the key decides whether the
 		// view is new.
-	}, [client, appWindow.id, appWindow.contentRevision, hostContext, asController]);
+	}, [client, appWindow.id, appWindow.contentRevision, hostContext, asController, mirror]);
 
 	// A new document is a new view: the old bridge goes with the old frame.
 	useEffect(() => {
 		return () => {
 			bridgeRef.current?.teardown('closed');
 			bridgeRef.current = null;
+			recorderRef.current = null;
 			setAllow(undefined);
 		};
 	}, [documentKey]);
+
+	// Offer this view to the mirror for as long as it runs. Each new view has
+	// its own recorder; the count is what tells this effect one was made.
+	useEffect(() => {
+		const recorder = recorderRef.current;
+		if (recorderCount === 0 || mirror === undefined || recorder === null) return;
+		return mirror.registerRecorder(appWindow.terminalSessionId, appWindow.id, recorder);
+	}, [recorderCount, mirror, appWindow.terminalSessionId, appWindow.id]);
 
 	useEffect(() => {
 		const onMessage = (event: MessageEvent): void => {
 			if (frameRef.current === null || event.source !== frameRef.current.contentWindow)
 				return;
+			const recorder = recorderRef.current;
+			if (recorder?.handle(event.data) === true) return;
+			// Anything a view says other than its proxy announcing itself shows
+			// that the view's own document is running and can be recorded.
+			const method = (event.data as { method?: unknown } | null)?.method;
+			if (typeof method !== 'string' || !method.startsWith('ui/notifications/sandbox-'))
+				recorder?.viewAlive();
 			void bridgeRef.current?.handle(event.data);
 		};
 		window.addEventListener('message', onMessage);

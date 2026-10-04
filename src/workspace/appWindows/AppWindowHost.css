@@ -218,3 +218,80 @@
     transition: none;
   }
 }
+
+/* A window on a client that does not control its terminal: a read-only
+   mirror of the view, drawn at the view's own size and scaled to fit. */
+.app-window__mirror {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-window__mirror-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-window__mirror-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  background: transparent;
+  transform-origin: 0 0;
+  /* Nothing typed or clicked on a mirror goes anywhere. */
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-window__mirror[data-status="loading"] .app-window__mirror-frame,
+.app-window__mirror[data-status="unavailable"] .app-window__mirror-frame {
+  visibility: hidden;
+}
+
+.app-window__mirror-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 10px 16px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  opacity: 0.85;
+}
+
+.app-window__mirror-bar {
+  flex: none;
+  box-sizing: border-box;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 12px;
+  font: 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  border-top: 1px solid var(--app-window-border, rgb(255 255 255 / 0.2));
+}
+
+.app-window__mirror-bar span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.app-window__mirror-bar button {
+  flex: none;
+  padding: 3px 10px;
+  font: inherit;
+  color: inherit;
+  background: rgb(255 255 255 / 0.08);
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+}

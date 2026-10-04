@@ -721,6 +721,11 @@ export function createServerCoreComposition(
 							projectId: window.projectId,
 							sessionId: window.terminalSessionId,
 						})?.clientId === context.clientId,
+					presentationHolder: (window) =>
+						terminalOperations.presentationHolder({
+							projectId: window.projectId,
+							sessionId: window.terminalSessionId,
+						})?.clientId,
 					deliverMessage: async (window, text, signal) => {
 						const outcome = await mcpApprovals.authorize({
 							terminalSessionId: window.terminalSessionId,
@@ -1155,6 +1160,7 @@ export function createServerCoreComposition(
 		terminalOperations.closeConnection(connectionId);
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
+		appWindows?.closeConnection(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};
 	const coreOptions: ServerCoreOptions = {
@@ -1687,7 +1693,7 @@ function uniqueCapabilities(
 				? [FEATURE_CAPABILITIES.mcpApprovals]
 				: []),
 			...(options.appWindows !== undefined && options.mcpApprovals === true
-				? [FEATURE_CAPABILITIES.appWindows]
+				? [FEATURE_CAPABILITIES.appWindows, FEATURE_CAPABILITIES.appWindowMirror]
 				: []),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
