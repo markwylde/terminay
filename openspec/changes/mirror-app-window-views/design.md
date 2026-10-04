@@ -80,15 +80,22 @@ An observer's window loads the same `app-view.html` proxy and gives it a *mirror
 
 Every snapshot starts a new epoch with sequence 0. An observer applies a batch of changes only if it has that epoch's snapshot and the batch's sequence is the next one. Anything else: discard state, show loading, call `resync`. A snapshot is always accepted as the new truth, whatever its epoch number, because a replaced document or a new controlling client starts counting from one again. The connection reporting dropped events is treated as a gap on every mirror.
 
-### 6. Limits
+### 6. A snapshot is streamed; nothing caps the size of a view
 
-| Limit | Value | On exceeding |
+A snapshot of any size is sent as a run of parts of at most 128 Ki characters, each its own message, each acknowledged before the next is sent. The first part says how many there are; a watching client joins them and draws the snapshot once it has them all, and keeps showing what it had until then. Changes are numbered after the parts and apply only to a whole snapshot.
+
+One message cannot carry a large snapshot: the server queues at most 1 MiB of events per subscription and replaces a larger frame with a resync notice. The first build sent a snapshot as one message and so had a 768 KiB cap on a view; streaming removes it.
+
+| Bound | Value | What happens |
 | - | - | - |
-| Snapshot | 768 KiB | Not relayed; watchers show that the window cannot be mirrored until a later snapshot fits |
-| Batch of changes | 256 KiB | The recorder drops it and takes a snapshot instead |
-| Bytes recorded per window per second | 1 MiB | The recorder stops; watchers show that the window cannot be mirrored; it resumes with a snapshot when a watcher asks |
+| One part of a snapshot | 128 Ki characters, at most 512 KiB | The unit of streaming, not a limit on the view |
+| Parts in one snapshot | 256 (about 32 M characters) | A runaway guard; beyond it the view is reported as not mirrorable |
+| One batch of changes | 256 KiB | The recorder drops it and streams a snapshot instead |
+| Snapshot requests in a row with none arriving whole | 4 | The mirror says it cannot be shown and stops asking; the next whole snapshot brings it back |
 
-The snapshot limit comes from the server's event delivery: a subscription's lane queues at most 1 MiB, and a larger frame is replaced by a resync notice. The proposal's 4 MiB was measured to be accepted and never delivered. The recorder enforces all three; the workspace and the server enforce the two size limits again.
+There is no rate limit. One message is in flight at a time, so a busy view is paced by the connection, as terminal output is.
+
+The last row is the only limit that is not a guard. Acknowledgement paces the controlling client against the server, not against each observer, so an observer on a much slower link can be sent parts faster than it drains them, lose one, and ask again. It gives up after four attempts instead of asking forever.
 
 ### 7. What is recorded
 
@@ -115,8 +122,8 @@ Mirroring is a property of the *view* presentation, selected in `AppWindowHost`.
 ## Risks / Trade-offs
 
 - **[The replica reads `rrweb`'s event format itself]** → the format is pinned with the version, and `e2e/app-view-mirror.spec.ts` exercises it in the real sandbox. Event kinds the replica does not handle (adopted and constructed stylesheets, canvas, media, selection) are ignored, so such a view mirrors incompletely, not incorrectly ordered.
-- **[A busy view floods the connection]** → acknowledgement-based flow control, a per-second byte budget, and falling back to "cannot be mirrored".
-- **[The snapshot limit is well below the largest view]** A view document may be 4 MiB; a snapshot may be 768 KiB. Script text is not part of a snapshot, so most views fit, but a view with a very large DOM is not mirrored. Raising the limit means chunking snapshots or raising the server's event lane budget; neither is in this change.
+- **[A busy view floods the connection]** → one message in flight at a time, acknowledged before the next, so the view is paced by the connection.
+- **[An observer on a much slower link than the controlling client]** Acknowledgement paces the controlling client against the server, not against each observer. Such an observer can lose part of a large snapshot and ask again; it gives up after four attempts and says so. Pacing against the slowest observer would need per-observer acknowledgement through the server and is not in this change.
 - **[Mirror fidelity]** Styles that depend on viewport width render at the holder's width and are scaled, so a phone observer sees a small desktop layout, not a phone layout. Accepted: the mirror shows what the person in control sees.
 - **[A view detects or interferes with the recorder]** A hostile view can break its own mirror. It gains nothing: recording data is untrusted and sandboxed on arrival.
 - **[Password masking relies on `type=password`]** A view that draws its own secret field in a plain text input is mirrored in clear. Observers already see everything typed into the terminal.

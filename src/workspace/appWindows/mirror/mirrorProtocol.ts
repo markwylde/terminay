@@ -7,12 +7,18 @@
 
 export const MIRROR_MESSAGE_KEY = 'terminayMirror' as const;
 
-/** One complete view snapshot may be this large; a larger view is not mirrored. */
-export const MIRROR_MAX_SNAPSHOT_BYTES = 768 * 1024;
+/**
+ * A snapshot is streamed as a run of parts of at most this many characters, so
+ * a view of any size can be mirrored without one message outgrowing what the
+ * server will queue for a client.
+ */
+export const MIRROR_SNAPSHOT_PART_CHARS = 128 * 1024;
+/** The most bytes one part can be: three per UTF-16 unit, with room to spare. */
+export const MIRROR_MAX_PART_BYTES = 512 * 1024;
+/** A snapshot of more parts than this is a runaway, not a view. */
+export const MIRROR_MAX_SNAPSHOT_PARTS = 256;
 /** A batch of changes larger than this is replaced by a fresh snapshot. */
 export const MIRROR_MAX_BATCH_BYTES = 256 * 1024;
-/** A view that produces more than this in a second is paused until someone asks again. */
-export const MIRROR_MAX_BYTES_PER_SECOND = 1024 * 1024;
 
 export type MirrorBatchKind =
 	/** Starts an epoch: everything a replica needs to draw the view. */
@@ -38,8 +44,16 @@ export interface MirrorBatch {
 	readonly epoch: number;
 	readonly seq: number;
 	readonly kind: MirrorBatchKind;
-	/** JSON text of an array of recorded events; opaque to the workspace and the server. */
+	/**
+	 * JSON text of an array of recorded events, or one part of it; opaque to the
+	 * workspace and the server.
+	 */
 	readonly data: string;
+	/**
+	 * On a snapshot: how many consecutive batches, starting at sequence 0, carry
+	 * it. Their `data` joined in order is the snapshot. Absent means one.
+	 */
+	readonly parts?: number;
 	readonly reason?: MirrorUnavailableReason;
 }
 

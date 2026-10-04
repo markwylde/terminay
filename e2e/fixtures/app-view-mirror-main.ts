@@ -12,10 +12,10 @@ import { buildViewDocument } from '../../src/workspace/appWindows/viewDocument';
 const READY = 'ui/notifications/sandbox-proxy-ready';
 const RESOURCE = 'ui/notifications/sandbox-resource-ready';
 
-type Batch = { type: string; epoch: number; seq: number; kind: string; data: string; reason?: string };
+type Batch = { type: string; epoch: number; seq: number; kind: string; data: string; reason?: string; parts?: number };
 
 const state = {
-	batches: [] as { epoch: number; seq: number; kind: string; bytes: number; reason?: string }[],
+	batches: [] as { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[],
 	reports: [] as unknown[],
 	/** While true, batches are neither forwarded nor acknowledged. */
 	hold: false,
@@ -38,8 +38,16 @@ function start(viewHtml: string): void {
 	const mirror = (frame: HTMLIFrameElement, message: unknown) => send(frame, { [MIRROR_MESSAGE_KEY]: message });
 	let replicaReady = false;
 	let waiting: Batch[] = [];
+	// As a watching client does: a snapshot sent in parts is put back together
+	// before the replica is given it.
+	let assembling: string[] = [];
 	const forward = (batch: Batch) => {
-		if (batch.kind !== 'unavailable') mirror(replica, { type: 'apply', kind: batch.kind, data: batch.data });
+		if (batch.kind === 'snapshot') {
+			if (batch.seq === 0) assembling = [];
+			assembling.push(batch.data);
+			if (assembling.length === (batch.parts ?? 1))
+				mirror(replica, { type: 'apply', kind: 'snapshot', data: assembling.join('') });
+		} else if (batch.kind === 'events') mirror(replica, { type: 'apply', kind: 'events', data: batch.data });
 		mirror(view, { type: 'ack' });
 	};
 
@@ -85,6 +93,7 @@ function start(viewHtml: string): void {
 			seq: batch.seq,
 			kind: batch.kind,
 			bytes: new Blob([batch.data]).size,
+			...(batch.parts === undefined ? {} : { parts: batch.parts }),
 			...(batch.reason === undefined ? {} : { reason: batch.reason }),
 		});
 		if (state.hold || !replicaReady) waiting.push(batch);

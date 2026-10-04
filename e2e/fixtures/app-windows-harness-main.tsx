@@ -68,6 +68,8 @@ type Harness = {
 	replaceWindow(id: string, html: string): void;
 	setController(value: boolean): void;
 	setPaneSize(width: number, height: number): void;
+	/** Make this page's connection lose part of every large snapshot. */
+	setLossy(value: boolean): void;
 	windows(): { id: string; title: string; state: string }[];
 };
 
@@ -78,6 +80,7 @@ function App() {
 	const contents = useRef(new Map<string, Omit<AppWindowContent, 'window'>>());
 	const calls = useRef<unknown[][]>([]);
 	const mirrorLog = useRef<Harness['mirrorLog']>([]);
+	const lossy = useRef(false);
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const sequence = useRef(0);
 	const latest = useRef(windows);
@@ -177,6 +180,9 @@ function App() {
 					return;
 				case 'data':
 					if (local || !watching) return;
+					// A connection that cannot keep up: the second part of every
+					// multi-part snapshot never arrives.
+					if (lossy.current && action.data.kind === 'snapshot' && action.data.seq === 1) return;
 					mirrorLog.current.push({
 						direction: 'in',
 						windowId: action.data.windowId,
@@ -288,6 +294,9 @@ function App() {
 			replaceWindow: (id, html) => dispatch({ type: 'replace', id, html }),
 			setController,
 			setPaneSize: (width, height) => setSize({ width, height }),
+			setLossy: (value) => {
+				lossy.current = value;
+			},
 			windows: () => latest.current.map(({ id, title, state }) => ({ id, title, state })),
 		};
 		(window as unknown as { harness: Harness }).harness = harness;

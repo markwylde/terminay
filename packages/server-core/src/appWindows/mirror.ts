@@ -33,10 +33,12 @@ export const APP_WINDOW_MIRROR_EVENTS = Object.freeze({
 
 export const APP_WINDOW_MIRROR_CAPABILITY = 'app-window-mirror.v1';
 
-/** One complete view snapshot. A larger view is not mirrored. */
-export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES = 768 * 1024;
+/** One message of a snapshot. A snapshot of any size is sent as a run of these. */
+export const MAX_APP_WINDOW_MIRROR_PART_BYTES = 512 * 1024;
 /** One batch of changes. */
 export const MAX_APP_WINDOW_MIRROR_BATCH_BYTES = 256 * 1024;
+/** A snapshot of more parts than this is a runaway, not a view. */
+export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS = 256;
 
 export type AppWindowMirrorKind = 'snapshot' | 'events' | 'unavailable';
 
@@ -158,7 +160,15 @@ export class AppWindowMirrorRelay {
 							'forbidden',
 							'only the client controlling this terminal can publish its views',
 						);
-					const { epoch, seq, kind, reason } = payload ?? {};
+					const { epoch, seq, kind, reason, parts } = payload ?? {};
+					if (
+						parts !== undefined &&
+						(kind !== 'snapshot' ||
+							!Number.isSafeInteger(parts) ||
+							(parts as number) < 2 ||
+							(parts as number) > MAX_APP_WINDOW_MIRROR_SNAPSHOT_PARTS)
+					)
+						throw protocolError('validation', 'mirror batch parts are invalid');
 					if (kind !== 'snapshot' && kind !== 'events' && kind !== 'unavailable')
 						throw protocolError('validation', 'mirror batch kind is invalid');
 					if (!isCounter(epoch) || !isCounter(seq))
@@ -168,7 +178,7 @@ export class AppWindowMirrorRelay {
 					// The recording itself is the request's body: bytes the relay
 					// measures and passes on, and never reads.
 					const limit =
-						kind === 'snapshot' ? MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
+						kind === 'snapshot' ? MAX_APP_WINDOW_MIRROR_PART_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
 					if (request.body.byteLength > limit)
 						throw protocolError('validation', 'mirror batch is too large');
 					const session = this.sessions.get(window.terminalSessionId);
@@ -185,6 +195,7 @@ export class AppWindowMirrorRelay {
 								epoch,
 								seq,
 								kind,
+								...(parts === undefined ? {} : { parts }),
 								...(reason === undefined ? {} : { reason }),
 							}),
 							request.body,

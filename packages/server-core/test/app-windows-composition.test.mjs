@@ -394,17 +394,25 @@ test("a recording is bounded, and the server keeps none of it", async () => {
     // More than a batch of changes may hold, but within a snapshot.
     await rejectsWith(publish(desktop, { seq: 1, kind: "events" }, large), "validation");
     await publish(desktop, {}, large);
-    // A snapshot at the limit goes through whole; one byte more does not.
-    const full = "y".repeat(768 * 1024);
+    // One part of a snapshot at the limit goes through; one byte more does not.
+    const full = "y".repeat(512 * 1024);
     await publish(desktop, { epoch: 2 }, full);
     await rejectsWith(publish(desktop, { epoch: 3 }, `${full}y`), "validation");
     // Multi-byte text is measured in bytes.
     await rejectsWith(publish(desktop, { seq: 1, kind: "events" }, "é".repeat(150 * 1024)), "validation");
     await rejectsWith(publish(desktop, { kind: "video" }), "validation");
+    // How many parts a snapshot comes in travels with it; only a snapshot has parts.
+    await rejectsWith(publish(desktop, { parts: 1 }), "validation");
+    await rejectsWith(publish(desktop, { parts: 257 }), "validation");
+    await rejectsWith(publish(desktop, { seq: 1, kind: "events", parts: 2 }), "validation");
     await rejectsWith(publish(desktop, { seq: -1 }), "validation");
     await rejectsWith(publish(desktop, { windowId: "win_missing" }), "not_found");
     await settle();
     assert.deepEqual(data.map((entry) => entry.data.length), [large.length, full.length]);
+    // A snapshot in three parts arrives as three messages, each saying so.
+    for (const seq of [0, 1, 2]) await publish(desktop, { epoch: 9, seq, parts: 3 }, `part-${seq}`);
+    await settle();
+    assert.deepEqual(data.slice(-3).map(({ seq, parts, data: recording }) => [seq, parts, recording]), [[0, 3, "part-0"], [1, 3, "part-1"], [2, 3, "part-2"]]);
 
     // Nothing of a delivered batch stays in the relay.
     const marker = `KEPT-NOWHERE-${"z".repeat(64)}`;

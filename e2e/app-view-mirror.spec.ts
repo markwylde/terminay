@@ -98,7 +98,7 @@ test.afterAll(async () => {
 });
 
 type Spike = {
-	state: { batches: { epoch: number; seq: number; kind: string; bytes: number; reason?: string }[]; reports: { type: string }[]; hold: boolean };
+	state: { batches: { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[]; reports: { type: string }[]; hold: boolean };
 	resnapshot(): void;
 	stop(): void;
 	release(): void;
@@ -199,7 +199,8 @@ test('nothing a recording carries can run in a mirror, and a password never leav
 	await expect(replica.locator('#secret')).toHaveValue('*******');
 });
 
-test('the recorder waits for acknowledgement, restarts from a snapshot on request, and gives up on a view too large', async ({ page }) => {
+test('the recorder waits for acknowledgement, restarts from a snapshot on request, and streams a view of any size', async ({ page }) => {
+	test.setTimeout(120_000);
 	const { view, replica } = await open(page);
 
 	// Held batches are not acknowledged, so at most one more is sent.
@@ -238,11 +239,31 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 
 	// More than a batch may hold becomes a snapshot instead.
 	await view.locator('body').evaluate(() => (window as unknown as { flood(bytes: number): void }).flood(300 * 1024));
-	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ epoch: 5, seq: 0, kind: 'snapshot' });
+	// That snapshot is larger than one message carries, so it is streamed in parts.
 	await expect(replica.locator('#flood')).toHaveCount(1);
+	const fifth = (await batches(page)).filter((batch) => batch.epoch === 5 && batch.kind === 'snapshot');
+	expect(fifth[0]).toMatchObject({ seq: 0 });
+	expect(fifth[0]?.parts).toBeGreaterThan(1);
+	expect(fifth.map((batch) => batch.seq)).toEqual(fifth.map((_batch, index) => index));
+	expect(fifth).toHaveLength(fifth[0]?.parts ?? 0);
 
-	// More than a snapshot may hold is not sent at all.
-	await view.locator('body').evaluate(() => (window as unknown as { flood(bytes: number): void }).flood(900 * 1024));
-	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ kind: 'unavailable', reason: 'too-large' });
-	expect((await batches(page)).every((batch) => batch.bytes <= 768 * 1024)).toBe(true);
+	// A view far larger than any one message is mirrored all the same.
+	await view.locator('body').evaluate(() => {
+		const node = document.createElement('p');
+		node.id = 'huge';
+		// Never laid out: this is about carrying the text, not drawing a million glyphs.
+		node.hidden = true;
+		// Multi-byte text, and a surrogate pair at every place a part could be cut.
+		node.textContent = 'é😀'.repeat(400 * 1024);
+		document.body.append(node);
+	});
+	await expect(replica.locator('#huge')).toHaveCount(1, { timeout: 20_000 });
+	expect(await replica.locator('#huge').evaluate((node) => node.textContent === 'é😀'.repeat(400 * 1024))).toBe(true);
+	const all = await batches(page);
+	expect(all.every((batch) => batch.bytes <= 512 * 1024)).toBe(true);
+	expect(all.some((batch) => batch.kind === 'unavailable')).toBe(false);
+	expect(all.at(-1)?.parts).toBeGreaterThan(8);
+	// And changes follow it as before.
+	await view.locator('#add').click();
+	await expect(replica.locator('#list li')).toHaveCount(9);
 });

@@ -12,7 +12,7 @@ Views should behave as the terminal does. The client in control runs the view; e
 - Recording runs only while at least one other client is watching. A client that starts watching, or a mirror that falls out of step, gets a fresh full snapshot from the controlling client.
 - The mirror is scaled to fit the watching client's window, so a desktop-width view is legible in a phone sheet.
 - Password fields are masked in the recording. Canvas, video, and cross-origin frames inside a view are not mirrored and show a placeholder.
-- A view too large or too busy to mirror within the limits shows the existing notice on watching clients instead of a broken mirror.
+- A view of any size is mirrored: a large snapshot is streamed in parts. An observer whose connection cannot deliver a whole snapshot says so, stops asking, and recovers when one arrives.
 - A new negotiated capability, `app-window-mirror.v1`. A client or server without it behaves as today.
 - New dependency: `rrweb`, pinned to one exact version and shipped in the workspace bundle.
 

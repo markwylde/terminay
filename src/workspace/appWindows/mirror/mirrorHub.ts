@@ -36,7 +36,12 @@ export interface MirrorSink {
 	unavailable(): void;
 }
 
-type Position = { epoch: number; next: number };
+type Position = {
+	epoch: number;
+	next: number;
+	/** A snapshot arriving in parts: what has come so far, and how many there are. */
+	pending?: { readonly parts: number; readonly chunks: string[] };
+};
 
 interface Watched {
 	readonly sink: MirrorSink;
@@ -47,7 +52,15 @@ interface WatchedSession {
 	readonly windows: Map<string, Watched>;
 	/** A snapshot has been asked for and has not arrived. */
 	resyncing: boolean;
+	/** Snapshots asked for in a row without one arriving whole. */
+	attempts: number;
 }
+
+/**
+ * How many times in a row a mirror asks again before it gives up. A connection
+ * that cannot carry a snapshot before the next gap would otherwise ask forever.
+ */
+const MAX_RESYNC_ATTEMPTS = 4;
 
 export class AppWindowMirrorHub {
 	private readonly recorders = new Map<string, Map<string, MirrorRecorder>>();
@@ -134,7 +147,7 @@ export class AppWindowMirrorHub {
 		let session = this.watched.get(sessionId);
 		const first = session === undefined;
 		if (session === undefined) {
-			session = { windows: new Map(), resyncing: true };
+			session = { windows: new Map(), resyncing: true, attempts: 0 };
 			this.watched.set(sessionId, session);
 		}
 		const entry: Watched = { sink, position: undefined };
@@ -158,6 +171,13 @@ export class AppWindowMirrorHub {
 	resync(sessionId: string): void {
 		const session = this.watched.get(sessionId);
 		if (session === undefined || session.resyncing) return;
+		if (session.attempts >= MAX_RESYNC_ATTEMPTS) {
+			// This connection is not keeping up. Say so instead of asking forever;
+			// the next snapshot that does arrive whole brings the mirror back.
+			for (const entry of session.windows.values()) entry.sink.unavailable();
+			return;
+		}
+		session.attempts += 1;
 		session.resyncing = true;
 		void this.client.resyncMirror(sessionId).catch(() => {
 			session.resyncing = false;
@@ -177,24 +197,44 @@ export class AppWindowMirrorHub {
 		const session = this.watched.get(data.terminalSessionId);
 		const entry = session?.windows.get(data.windowId);
 		if (session === undefined || entry === undefined) return;
-		if (data.kind !== 'events') session.resyncing = false;
+		if (data.kind === 'unavailable' || (data.kind === 'snapshot' && data.seq === 0)) session.resyncing = false;
 		if (data.kind === 'unavailable') {
 			entry.position = undefined;
 			entry.sink.unavailable();
 			return;
 		}
-		if (data.kind === 'snapshot') {
-			if (data.seq !== 0) return;
+		const complete = (snapshot: string): void => {
+			session.attempts = 0;
+			entry.sink.apply('snapshot', snapshot);
+		};
+		if (data.kind === 'snapshot' && data.seq === 0) {
 			// Every snapshot is the new truth. Epochs only pair changes with their
 			// snapshot; a new document, or a new controlling client, counts from one.
-			entry.position = { epoch: data.epoch, next: 1 };
-			entry.sink.apply('snapshot', data.data);
+			const parts = data.parts ?? 1;
+			if (parts === 1) {
+				entry.position = { epoch: data.epoch, next: 1 };
+				complete(data.data);
+			} else {
+				// The mirror keeps showing what it had until the whole snapshot is here.
+				entry.position = { epoch: data.epoch, next: 1, pending: { parts, chunks: [data.data] } };
+			}
 			return;
 		}
 		const position = entry.position;
 		if (position !== undefined && data.epoch === position.epoch) {
 			if (data.seq < position.next) return;
-			if (data.seq === position.next) {
+			const pending = position.pending;
+			if (data.seq === position.next && data.kind === 'snapshot' && pending !== undefined) {
+				position.next += 1;
+				pending.chunks.push(data.data);
+				if (pending.chunks.length === pending.parts) {
+					delete position.pending;
+					complete(pending.chunks.join(''));
+				}
+				return;
+			}
+			// Changes apply only to a snapshot that has arrived whole.
+			if (data.seq === position.next && data.kind === 'events' && pending === undefined) {
 				position.next += 1;
 				entry.sink.apply('events', data.data);
 				return;

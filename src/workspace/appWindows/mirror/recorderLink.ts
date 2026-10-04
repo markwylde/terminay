@@ -8,7 +8,8 @@
  */
 import {
 	MIRROR_MAX_BATCH_BYTES,
-	MIRROR_MAX_SNAPSHOT_BYTES,
+	MIRROR_MAX_PART_BYTES,
+	MIRROR_MAX_SNAPSHOT_PARTS,
 	MIRROR_MESSAGE_KEY,
 	type MirrorBatch,
 	type MirrorRecorderControl,
@@ -30,19 +31,22 @@ export function parseMirrorBatch(message: unknown): Omit<MirrorBatch, 'type'> | 
 	if (typeof message !== 'object' || message === null) return undefined;
 	const value = (message as Record<string, unknown>)[MIRROR_MESSAGE_KEY];
 	if (typeof value !== 'object' || value === null) return undefined;
-	const { type, epoch, seq, kind, data, reason } = value as Record<string, unknown>;
+	const { type, epoch, seq, kind, data, reason, parts } = value as Record<string, unknown>;
 	if (type !== 'batch' || typeof data !== 'string') return undefined;
 	if (kind !== 'snapshot' && kind !== 'events' && kind !== 'unavailable') return undefined;
 	if (!Number.isSafeInteger(epoch) || (epoch as number) < 0) return undefined;
 	if (!Number.isSafeInteger(seq) || (seq as number) < 0) return undefined;
 	if (reason !== undefined && reason !== 'too-large' && reason !== 'too-busy') return undefined;
-	const limit = kind === 'snapshot' ? MIRROR_MAX_SNAPSHOT_BYTES : MIRROR_MAX_BATCH_BYTES;
+	if (parts !== undefined && (kind !== 'snapshot' || !Number.isSafeInteger(parts) || (parts as number) < 2 || (parts as number) > MIRROR_MAX_SNAPSHOT_PARTS))
+		return undefined;
+	const limit = kind === 'snapshot' ? MIRROR_MAX_PART_BYTES : MIRROR_MAX_BATCH_BYTES;
 	if (data.length > limit || encoder.encode(data).byteLength > limit) return undefined;
 	return {
 		epoch: epoch as number,
 		seq: seq as number,
 		kind,
 		data,
+		...(parts === undefined ? {} : { parts: parts as number }),
 		...(reason === undefined ? {} : { reason }),
 	};
 }

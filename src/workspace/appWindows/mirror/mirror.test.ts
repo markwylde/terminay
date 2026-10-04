@@ -7,7 +7,7 @@ import { AppWindowMirrorHub, type MirrorHubClient } from './mirrorHub.ts';
 import {
 	MIRROR_LOADER_SCRIPT,
 	MIRROR_MAX_BATCH_BYTES,
-	MIRROR_MAX_SNAPSHOT_BYTES,
+	MIRROR_MAX_PART_BYTES,
 } from './mirrorProtocol.ts';
 import { parseMirrorBatch, ViewRecorderLink } from './recorderLink.ts';
 
@@ -88,13 +88,13 @@ test('a batch is accepted only when well formed and within the limits', () => {
 		batch({ seq: 1.5 }),
 		batch({ data: 7 }),
 		batch({ reason: 'because' }),
-		batch({ data: 'x'.repeat(MIRROR_MAX_SNAPSHOT_BYTES + 1) }),
+		batch({ data: 'x'.repeat(MIRROR_MAX_PART_BYTES + 1) }),
 		batch({ kind: 'events', data: 'x'.repeat(MIRROR_MAX_BATCH_BYTES + 1) }),
 		// Measured in bytes, not characters.
 		batch({ kind: 'events', data: 'é'.repeat(MIRROR_MAX_BATCH_BYTES / 2 + 1) }),
 	])
 		assert.equal(parseMirrorBatch(bad), undefined);
-	assert.ok(parseMirrorBatch(batch({ data: 'x'.repeat(MIRROR_MAX_SNAPSHOT_BYTES) })));
+	assert.ok(parseMirrorBatch(batch({ data: 'x'.repeat(MIRROR_MAX_PART_BYTES) })));
 });
 
 function link(publish: (batch: unknown) => Promise<void> = async () => {}) {
@@ -152,7 +152,7 @@ test('rubbish from a view is swallowed, never published, and never acknowledged'
 	const before = posted.length;
 	assert.equal(recorder.handle(batch({ kind: 'video' })), true);
 	assert.equal(recorder.handle(wrap('nonsense')), true);
-	assert.equal(recorder.handle(batch({ data: 'x'.repeat(MIRROR_MAX_SNAPSHOT_BYTES + 1) })), true);
+	assert.equal(recorder.handle(batch({ data: 'x'.repeat(MIRROR_MAX_PART_BYTES + 1) })), true);
 	// Something that is not a mirror message is left for the view bridge.
 	assert.equal(recorder.handle({ jsonrpc: '2.0', method: 'ui/initialize' }), false);
 	await turn();
@@ -344,4 +344,79 @@ test('disposing the hub stops watching and listening', async () => {
 	await turn();
 	assert.deepEqual(named('unwatch'), [['unwatch', 's1']]);
 	assert.equal(calls.filter((call) => call[0] === 'off-data' || call[0] === 'off-wanted').length, 2);
+});
+
+// --- snapshots streamed in parts ---
+
+test('a snapshot may say it comes in parts; nothing else may', () => {
+	assert.deepEqual(parseMirrorBatch(batch({ parts: 3 })), { epoch: 1, seq: 0, kind: 'snapshot', data: '[]', parts: 3 });
+	assert.deepEqual(parseMirrorBatch(batch({ seq: 2, parts: 3 })), { epoch: 1, seq: 2, kind: 'snapshot', data: '[]', parts: 3 });
+	for (const bad of [
+		batch({ parts: 1 }),
+		batch({ parts: 0 }),
+		batch({ parts: 2.5 }),
+		batch({ parts: '3' }),
+		batch({ parts: 257 }),
+		batch({ kind: 'events', seq: 1, parts: 3 }),
+		batch({ kind: 'unavailable', parts: 3 }),
+	])
+		assert.equal(parseMirrorBatch(bad), undefined);
+});
+
+test('a snapshot in parts is applied once, whole, and changes wait for it', async () => {
+	const { hub: instance, data, named } = hub();
+	const { sink: target, seen } = sink();
+	instance.watch('s1', 'w1', target);
+	data({ parts: 3, data: 'A' });
+	data({ seq: 1, data: 'B' });
+	// Not drawn until the last part is here.
+	assert.deepEqual(seen, ['loading']);
+	data({ seq: 2, data: 'C' });
+	assert.deepEqual(seen, ['loading', 'snapshot:ABC']);
+	// Changes are numbered after the parts.
+	data({ kind: 'events', seq: 3, data: 'E3' });
+	assert.deepEqual(seen.slice(2), ['events:E3']);
+
+	// A new snapshot arriving in parts: the mirror keeps what it shows meanwhile.
+	data({ epoch: 2, parts: 2, data: 'X' });
+	assert.equal(seen.length, 3);
+	// A change that arrives before the snapshot is whole is a gap.
+	data({ epoch: 2, kind: 'events', seq: 1, data: 'too early' });
+	await turn();
+	assert.equal(seen.at(-1), 'loading');
+	assert.equal(named('resync').length, 1);
+	// What is left of the abandoned snapshot does not ask again.
+	data({ epoch: 2, seq: 1, data: 'Y' });
+	await turn();
+	assert.equal(named('resync').length, 1);
+
+	// A part lost on the way is a gap too.
+	data({ epoch: 3, parts: 3, data: 'P' });
+	data({ epoch: 3, seq: 2, data: 'R' });
+	await turn();
+	assert.equal(seen.at(-1), 'loading');
+	assert.equal(named('resync').length, 2);
+	data({ epoch: 4, parts: 2, data: 'P' });
+	data({ epoch: 4, seq: 1, data: 'Q' });
+	assert.equal(seen.at(-1), 'snapshot:PQ');
+});
+
+test('a mirror that never gets a whole snapshot stops asking and says it cannot be mirrored', async () => {
+	const { hub: instance, data, named } = hub();
+	const { sink: target, seen } = sink();
+	instance.watch('s1', 'w1', target);
+	// Each snapshot loses its second part.
+	for (let epoch = 1; epoch <= 6; epoch += 1) {
+		data({ epoch, parts: 3, data: 'P' });
+		data({ epoch, seq: 2, data: 'R' });
+		await turn();
+	}
+	assert.equal(named('resync').length, 4);
+	assert.equal(seen.at(-1), 'unavailable');
+	// A snapshot that does arrive whole brings it back, and it may ask again later.
+	data({ epoch: 7 });
+	assert.equal(seen.at(-1), 'snapshot:S');
+	data({ epoch: 7, kind: 'events', seq: 5, data: 'gap' });
+	await turn();
+	assert.equal(named('resync').length, 5);
 });
