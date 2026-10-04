@@ -10,6 +10,7 @@ import {
 	createAgentOperationRegistry,
 } from './activity/agentProtocol.js';
 import { AgentStatusService } from './activity/agentService.js';
+import { createAgentInactivityHold } from './activity/inactivityHold.js';
 import type { ProjectAgentScope } from './activity/projectAgentScope.js';
 import type { SessionSourceBridge } from './activity/sessionSourceBridge.js';
 import type { SessionSourceSupervisor } from './extensions/sessionSources.js';
@@ -1420,6 +1421,10 @@ function composeTerminal(
 		...terminalOptions,
 		serverId: options.serverId,
 		ptyFactory,
+		...(options.agents === undefined ||
+		terminalOptions.inactivityHold !== undefined
+			? {}
+			: { inactivityHold: createAgentInactivityHold(options.agents) }),
 		...(options.activity === undefined && options.agents === undefined
 			? {}
 			: {

@@ -22,6 +22,7 @@ import type {
 	TerminalExitReason,
 	TerminalForegroundObservation,
 	TerminalIdentity,
+	TerminalInactivityHold,
 	TerminalInactivityOptions,
 	TerminalInactivityTimer,
 	TerminalOutputEvent,
@@ -320,6 +321,8 @@ export class TerminalService {
 	private readonly eventListener: TerminalEventListener | undefined;
 	private readonly sessionLifecycle: TerminalSessionLifecycle | undefined;
 	private readonly inactivityTimer: TerminalInactivityTimer;
+	private readonly inactivityHold: TerminalInactivityHold | undefined;
+	private inactivityHoldUnsubscribe: (() => void) | undefined;
 	private readonly presentationCheckpoints:
 		| TerminalPresentationCheckpointAuthority
 		| undefined;
@@ -367,6 +370,10 @@ export class TerminalService {
 		this.eventListener = options.onEvent;
 		this.sessionLifecycle = options.sessionLifecycle;
 		this.inactivityTimer = options.inactivityTimer ?? defaultInactivityTimer;
+		this.inactivityHold = options.inactivityHold;
+		this.inactivityHoldUnsubscribe = this.inactivityHold?.subscribe(
+			(sessionId) => this.inactivityHoldChanged(sessionId),
+		);
 		this.presentationCheckpoints = options.presentationCheckpoints;
 		this.limits = Object.freeze(normalizeLimits(options));
 		if (this.eventListener !== undefined)
@@ -1295,8 +1302,9 @@ export class TerminalService {
 
 	/**
 	 * Resolve after a session has produced no non-empty PTY output for the
-	 * requested period. Input, resize, focus, and client attachment do not
-	 * count as activity. Terminal exit resolves outstanding waits immediately.
+	 * requested period and nothing holds it open. Input, resize, focus, and
+	 * client attachment do not count as activity. Terminal exit resolves
+	 * outstanding waits immediately.
 	 */
 	waitForInactivity(
 		session: string | TerminalIdentity,
@@ -1420,6 +1428,8 @@ export class TerminalService {
 	): Promise<readonly TerminalExitEvent[]> {
 		if (this.stopping && this.sessionsById.size === 0) return [];
 		this.stopping = true;
+		this.inactivityHoldUnsubscribe?.();
+		this.inactivityHoldUnsubscribe = undefined;
 		if (options.detach === true) {
 			this.detachAll();
 			return [];
@@ -1902,10 +1912,35 @@ export class TerminalService {
 			!mutable.inactivityWaiters.has(waiter)
 		)
 			return;
-		waiter.timer = this.inactivityTimer.setTimeout(
-			() => this.resolveInactivityWaiter(mutable, waiter),
-			waiter.durationMs,
-		);
+		waiter.timer = this.inactivityTimer.setTimeout(() => {
+			waiter.timer = undefined;
+			// A held waiter stays outstanding with no timer until its hold changes.
+			if (this.inactivityHeld(mutable)) return;
+			this.resolveInactivityWaiter(mutable, waiter);
+		}, waiter.durationMs);
+	}
+
+	private inactivityHeld(mutable: MutableSession): boolean {
+		try {
+			return this.inactivityHold?.isHeld(mutable.identity) === true;
+		} catch {
+			// A faulty hold source cannot keep a quiet terminal waiting.
+			return false;
+		}
+	}
+
+	/** Start the quiet period again for waiters whose hold has been released. */
+	private inactivityHoldChanged(sessionId: string): void {
+		const mutable = this.sessionsById.get(sessionId);
+		if (mutable === undefined || this.inactivityHeld(mutable)) return;
+		for (const waiter of [...mutable.inactivityWaiters]) {
+			if (waiter.settled || waiter.timer !== undefined) continue;
+			try {
+				this.armInactivityWaiter(mutable, waiter);
+			} catch (error) {
+				this.rejectInactivityWaiter(mutable, waiter, error);
+			}
+		}
 	}
 
 	private resolveInactivityWaiter(

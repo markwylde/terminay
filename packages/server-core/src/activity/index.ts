@@ -2,6 +2,7 @@ export * from './agentProtocol.js';
 export * from './agentService.js';
 export * from './agentStore.js';
 export * from './agentTypes.js';
+export * from './inactivityHold.js';
 export * from './parser.js';
 export * from './processAncestry.js';
 export * from './projectAgentScope.js';
