@@ -189,6 +189,17 @@ opaque-origin frame with no access to the workspace. See
 [terminal app windows](../openspec/specs/terminal-app-windows/spec.md) and the
 [MCP app gateway](../openspec/specs/mcp-app-gateway/spec.md).
 
+Every other device attached to that terminal sees a live, read-only **mirror**
+of the window, as it sees the terminal itself. The controlling device records
+the view's document and its changes and the server relays them; the server runs
+no browser and keeps none of it. A mirror is scaled to fit the window it is shown
+in and takes no input. What is not mirrored: the value of a password field
+(shown masked), canvas, video, audio, and frames from another origin. A view
+whose snapshot is over 768 KiB, or that changes faster than 1 MiB a second, is
+not mirrored and says so. Taking control from a mirror restarts the window on
+the new controlling device from its stored document; whatever was typed into the
+old view and not sent is lost.
+
 The server derives every project's root from canonical project state. Labels,
 hostnames, IPs, URLs, and paths supplied by a client cannot redirect an
 operation or widen its root.

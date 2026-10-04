@@ -13,11 +13,47 @@ export const APP_WINDOW_OPERATIONS = Object.freeze({
   message: "app-windows.message",
   context: "app-windows.context",
   viewRequest: "app-windows.view-request",
+  mirrorStatus: "app-windows.mirror.status",
+  mirrorWatch: "app-windows.mirror.watch",
+  mirrorUnwatch: "app-windows.mirror.unwatch",
+  mirrorPublish: "app-windows.mirror.publish",
+  mirrorResync: "app-windows.mirror.resync",
 } as const);
 
 export const APP_WINDOW_EVENTS = Object.freeze({
   changed: "app-windows.changed",
+  mirrorData: "app-windows.mirror.data",
+  mirrorWanted: "app-windows.mirror.wanted",
 } as const);
+
+/** Feature capability of a server and client that mirror a view to the clients not controlling its terminal. */
+export const APP_WINDOW_MIRROR_CAPABILITY = "app-window-mirror.v1" as const;
+
+export type AppWindowMirrorKind = "snapshot" | "events" | "unavailable";
+export type AppWindowMirrorUnavailableReason = "too-large" | "too-busy";
+
+/** One recorded batch of a view. `data` is opaque: only a mirror document reads it. */
+export interface AppWindowMirrorBatch {
+  /** Counts the snapshots a view has sent; a batch belongs to the snapshot of its epoch. */
+  readonly epoch: number;
+  /** Position within the epoch; its snapshot is 0. */
+  readonly seq: number;
+  readonly kind: AppWindowMirrorKind;
+  readonly data: string;
+  readonly reason?: AppWindowMirrorUnavailableReason;
+}
+
+/** A batch as a watching client receives it. */
+export interface AppWindowMirrorData extends AppWindowMirrorBatch {
+  readonly windowId: string;
+  readonly terminalSessionId: string;
+  readonly contentRevision: number;
+}
+
+/** One complete view snapshot. A larger view is not mirrored. */
+export const MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES = 768 * 1024;
+/** One batch of changes. */
+export const MAX_APP_WINDOW_MIRROR_BATCH_BYTES = 256 * 1024;
 
 export type AppWindowState = "open" | "minimised";
 
@@ -60,6 +96,9 @@ export interface AppWindowContent {
 
 export interface AppWindowEventTransport extends BinaryQueryTransport {
   readonly subscribe: (event: string, listener: (payload: JsonValue) => void) => () => void;
+  /** Needed only for the view mirror, whose recordings travel as bytes. */
+  readonly commandWithBody?: <T extends JsonValue = JsonValue>(operation: string, payload: JsonValue | undefined, body: Uint8Array, options?: CommandOptions) => Promise<T>;
+  readonly subscribeWithBody?: (event: string, listener: (payload: JsonValue, body: Uint8Array) => void, onResync?: () => void) => () => void;
 }
 
 const MAX_TITLE = 256;
@@ -123,12 +162,85 @@ export class AppWindowClient {
     return result.response;
   }
 
+  /** Whether another client is watching this terminal's windows, so its views should be recorded. */
+  async mirrorWanted(terminalSessionId: string, options: QueryOptions = {}): Promise<boolean> {
+    const result = await this.transport.query<JsonValue>(APP_WINDOW_OPERATIONS.mirrorStatus, { terminalSessionId: boundedId(terminalSessionId) }, options);
+    if (!isRecord(result) || typeof result.wanted !== "boolean") throw new TypeError("app window mirror status is invalid");
+    return result.wanted;
+  }
+
+  /** Start receiving the recorded views of a terminal this client does not control. */
+  async watchMirror(terminalSessionId: string, options: CommandOptions = {}): Promise<void> {
+    await this.transport.command(APP_WINDOW_OPERATIONS.mirrorWatch, { terminalSessionId: boundedId(terminalSessionId) }, options);
+  }
+
+  async unwatchMirror(terminalSessionId: string, options: CommandOptions = {}): Promise<void> {
+    await this.transport.command(APP_WINDOW_OPERATIONS.mirrorUnwatch, { terminalSessionId: boundedId(terminalSessionId) }, options);
+  }
+
+  /** Ask the controlling client for a fresh snapshot of the terminal's views. */
+  async resyncMirror(terminalSessionId: string, options: CommandOptions = {}): Promise<void> {
+    await this.transport.command(APP_WINDOW_OPERATIONS.mirrorResync, { terminalSessionId: boundedId(terminalSessionId) }, options);
+  }
+
+  /** Hand one recorded batch of a view to the watching clients. Only the client controlling the terminal may. */
+  async publishMirror(windowId: string, batch: AppWindowMirrorBatch, options: CommandOptions = {}): Promise<void> {
+    if (typeof this.transport.commandWithBody !== "function") throw new Error("app window mirror is unavailable on this transport");
+    const { data, ...position } = validateMirrorBatch(batch as unknown as JsonValue);
+    await this.transport.commandWithBody(APP_WINDOW_OPERATIONS.mirrorPublish, { windowId: boundedId(windowId), ...position }, new TextEncoder().encode(data), options);
+  }
+
+  /**
+   * Recorded batches of the terminals this client watches. `onGap` runs when
+   * the connection reports that events were dropped, so a mirror must resync.
+   */
+  onMirrorData(listener: (data: AppWindowMirrorData) => void, onGap?: () => void): () => void {
+    if (typeof listener !== "function") throw new TypeError("app window listener is required");
+    if (typeof this.transport.subscribeWithBody !== "function") throw new Error("app window mirror is unavailable on this transport");
+    return this.transport.subscribeWithBody(APP_WINDOW_EVENTS.mirrorData, (payload, body) => {
+      let data: AppWindowMirrorData;
+      try {
+        if (!isRecord(payload) || !Number.isSafeInteger(payload.contentRevision)) return;
+        data = Object.freeze({
+          ...validateMirrorBatch({ ...payload, data: new TextDecoder("utf-8", { fatal: false }).decode(body) }),
+          windowId: boundedId(payload.windowId),
+          terminalSessionId: boundedId(payload.terminalSessionId),
+          contentRevision: payload.contentRevision as number,
+        });
+      } catch {
+        // A malformed batch is dropped; the gap it leaves makes the mirror resync.
+        return;
+      }
+      listener(data);
+    }, onGap);
+  }
+
+  /** Told to the controlling client: whether to record a terminal's views, or to send a fresh snapshot. */
+  onMirrorWanted(listener: (terminalSessionId: string, wanted: boolean) => void): () => void {
+    if (typeof listener !== "function") throw new TypeError("app window listener is required");
+    return this.transport.subscribe(APP_WINDOW_EVENTS.mirrorWanted, (payload) => {
+      if (!isRecord(payload) || typeof payload.terminalSessionId !== "string" || typeof payload.wanted !== "boolean") return;
+      listener(payload.terminalSessionId, payload.wanted);
+    });
+  }
+
   /** Ids only; refetch the details with `list()` and `content()`. */
   onChanged(listener: () => void): () => void {
     if (typeof listener !== "function") throw new TypeError("app window listener is required");
     if (typeof this.transport.subscribe !== "function") throw new Error("app window subscription is unavailable");
     return this.transport.subscribe(APP_WINDOW_EVENTS.changed, () => listener());
   }
+}
+
+function validateMirrorBatch(value: JsonValue): AppWindowMirrorBatch {
+  if (!isRecord(value) || typeof value.data !== "string") throw new TypeError("app window mirror batch is invalid");
+  const { epoch, seq, kind, data, reason } = value;
+  if (kind !== "snapshot" && kind !== "events" && kind !== "unavailable") throw new TypeError("app window mirror batch is invalid");
+  if (!Number.isSafeInteger(epoch) || (epoch as number) < 0 || !Number.isSafeInteger(seq) || (seq as number) < 0) throw new TypeError("app window mirror batch is invalid");
+  if (reason !== undefined && reason !== "too-large" && reason !== "too-busy") throw new TypeError("app window mirror batch is invalid");
+  const limit = kind === "snapshot" ? MAX_APP_WINDOW_MIRROR_SNAPSHOT_BYTES : MAX_APP_WINDOW_MIRROR_BATCH_BYTES;
+  if (data.length > limit || new TextEncoder().encode(data).byteLength > limit) throw new TypeError("app window mirror batch is too large");
+  return Object.freeze({ epoch: epoch as number, seq: seq as number, kind, data, ...(reason === undefined ? {} : { reason }) });
 }
 
 function validateWindow(value: JsonValue | undefined): AppWindow {

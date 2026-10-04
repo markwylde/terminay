@@ -7,6 +7,9 @@ import type {
 	QueryRequest,
 	RequestContext,
 } from '../types.js';
+import { AppWindowMirrorRelay } from './mirror.js';
+
+export * from './mirror.js';
 
 /**
  * Server-owned app windows (ADR-0037).
@@ -139,6 +142,11 @@ export interface AppWindowServiceOptions {
 		context: RequestContext,
 	) => boolean;
 	/**
+	 * The client holding the interactive presentation lease of the window's
+	 * terminal now. Without it, views are not mirrored to other clients.
+	 */
+	readonly presentationHolder?: (window: AppWindowView) => string | undefined;
+	/**
 	 * Type a view's message into the owning terminal. Evaluates the Window
 	 * Messages policy; throws to refuse.
 	 */
@@ -173,9 +181,41 @@ export class AppWindowService {
 	private readonly now: () => number;
 	private readonly generateId: () => string;
 	private nextId = 0;
+	/** Relays recorded views to the clients watching a terminal (ADR-0039). */
+	readonly mirror: AppWindowMirrorRelay | undefined;
 
 	constructor(private readonly options: AppWindowServiceOptions) {
 		this.viewRequest = options.viewRequest;
+		const presentationHolder = options.presentationHolder;
+		this.mirror =
+			presentationHolder === undefined
+				? undefined
+				: new AppWindowMirrorRelay({
+						...(options.eventJournal === undefined
+							? {}
+							: { eventJournal: options.eventJournal }),
+						window: (windowId) => {
+							const window = this.windows.get(windowId);
+							return window === undefined ? undefined : view(window);
+						},
+						sessionWindow: (terminalSessionId) => {
+							const window = this.forSession(terminalSessionId)[0];
+							return window === undefined ? undefined : view(window);
+						},
+						isPresentationHolder: (window, context) => {
+							const current = this.windows.get(window.id);
+							return (
+								current !== undefined &&
+								options.isPresentationHolder(view(current), context)
+							);
+						},
+						presentationHolder: (window) => {
+							const current = this.windows.get(window.id);
+							return current === undefined
+								? undefined
+								: presentationHolder(view(current));
+						},
+					});
 		this.maxWindowsPerSession =
 			options.maxWindowsPerSession ?? MAX_APP_WINDOWS_PER_SESSION;
 		this.now = options.now ?? Date.now;
@@ -293,6 +333,7 @@ export class AppWindowService {
 
 	/** The terminal session ended: its windows end with it. */
 	endSession(terminalSessionId: string): void {
+		this.mirror?.endSession(terminalSessionId);
 		const owned = this.forSession(terminalSessionId);
 		if (owned.length === 0) return;
 		for (const window of owned) this.windows.delete(window.id);
@@ -329,6 +370,22 @@ export class AppWindowService {
 	 * that changes a window or speaks for a view needs write authority, and a
 	 * view's own requests are honoured only from the presentation holder. */
 	operations(): OperationRegistries {
+		const own = this.windowOperations();
+		const mirror = this.mirror?.operations();
+		if (mirror === undefined) return own;
+		return {
+			queries: { ...own.queries, ...mirror.queries },
+			commands: { ...own.commands, ...mirror.commands },
+			policies: { ...own.policies, ...mirror.policies },
+		};
+	}
+
+	/** Forget what a closed connection was watching. */
+	closeConnection(connectionId: string): void {
+		this.mirror?.closeConnection(connectionId);
+	}
+
+	private windowOperations(): OperationRegistries {
 		return {
 			queries: {
 				[APP_WINDOW_OPERATIONS.list]: async () =>

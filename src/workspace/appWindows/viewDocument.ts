@@ -8,6 +8,8 @@
  * the author knowing the MCP Apps protocol.
  */
 
+import { MIRROR_LOADER_SCRIPT } from './mirror/mirrorProtocol.ts';
+
 export type ViewSource =
 	| { readonly kind: 'agent' }
 	| { readonly kind: 'mcp-app' };
@@ -205,7 +207,9 @@ export function buildViewDocument(input: ViewDocumentInput): ViewDocument {
 		`<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">` +
 		(input.source.kind === 'agent'
 			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${AGENT_VIEW_BOOTSTRAP}</script>`
-			: '');
+			: '') +
+		// Present in every view and inert until someone watches it (ADR-0039).
+		`<script>${MIRROR_LOADER_SCRIPT}</script>`;
 	// A doctype must stay first or the view renders in quirks mode. Nothing
 	// else may precede the policy, so it goes directly after the doctype rather
 	// than inside whatever <head> the author wrote.
