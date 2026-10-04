@@ -89,6 +89,7 @@ type HarnessWindow = Window & {
 		replaceWindow(id: string, html: string): void;
 		setController(value: boolean): void;
 		setPaneSize(width: number, height: number): void;
+		setBottomBar(height: number): void;
 		windows(): { id: string; title: string; state: string }[];
 	};
 };
@@ -355,6 +356,60 @@ test('on a touch phone the window is a sheet, and its tab is dragged by touch al
 		// A tap opens it again.
 		await header.tap();
 		await expect(sheet).toHaveAttribute('data-placement', 'sheet');
+	} finally {
+		await context.close();
+	}
+});
+
+test('on a phone a window and its tab sit above the keyboard command bar, are opaque, and leave the keyboard alone', async ({ browser }) => {
+	const context = await mobile(browser);
+	const page = await context.newPage();
+	try {
+		await open(page);
+		await page.evaluate(() => {
+			(window as unknown as HarnessWindow).harness.setPaneSize(390, 640);
+			// A theme whose terminal background is translucent.
+			(document.getElementById('pane') as HTMLElement).style.background = 'rgb(20 30 10 / 0.4)';
+		});
+		await add(page, { title: 'Hello World', html: '<h1>Hello, World!</h1>' });
+		const sheet = card(page, 'Hello World');
+		await expect(sheet).toHaveAttribute('data-placement', 'sheet');
+		await settled(sheet);
+		const pane = await box(page.locator('#pane'));
+
+		// The keyboard comes up for the terminal: its command bar is a row under the rail.
+		await page.evaluate(() => (window as unknown as HarnessWindow).harness.setBottomBar(84));
+		const bar = page.locator('#bottom-bar');
+		const barTop = Math.round((await box(bar)).y);
+		expect(barTop).toBe(Math.round(pane.y + pane.height - 84));
+		await expect.poll(async () => Math.round((await box(sheet)).y + (await box(sheet)).height)).toBe(barTop);
+
+		// Nothing behind the window shows through it.
+		expect(await sheet.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(21, 25, 26)');
+
+		// Minimised, the tab is in the rail, above the command bar, and no control took the focus.
+		await sheet.getByRole('button', { name: 'Minimise window' }).tap();
+		await expect(sheet).toHaveAttribute('data-placement', 'tab');
+		await settled(sheet);
+		const rail = await box(page.locator('.terminal-app-window-rail'));
+		const tab = await box(sheet);
+		expect(Math.round(tab.y + tab.height)).toBe(barTop);
+		expect(Math.round(tab.y)).toBeGreaterThanOrEqual(Math.round(rail.y));
+		expect(await sheet.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(21, 25, 26)');
+		expect(await named(page, 'focusTerminal')).toHaveLength(0);
+
+		// Filling the pane stops at the command bar too.
+		await sheet.locator('.app-window__header').tap();
+		await expect(sheet).toHaveAttribute('data-placement', 'sheet');
+		await sheet.getByRole('button', { name: 'Fill the pane' }).tap();
+		await expect(sheet).toHaveAttribute('data-placement', 'fullscreen');
+		await expect.poll(async () => Math.round((await box(sheet)).y + (await box(sheet)).height)).toBe(barTop);
+
+		// The keyboard goes away: the window takes the pane's own bottom edge again.
+		await page.evaluate(() => (window as unknown as HarnessWindow).harness.setBottomBar(0));
+		await expect
+			.poll(async () => Math.round((await box(sheet)).y + (await box(sheet)).height))
+			.toBe(Math.round(pane.y + pane.height));
 	} finally {
 		await context.close();
 	}

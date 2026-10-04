@@ -679,6 +679,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [mobileTerminalModifiers, setMobileTerminalModifiers] =
 		useState<TerminalMobileModifiers>(EMPTY_TERMINAL_MOBILE_MODIFIERS);
 	const [isMobileKeyboardVisible, setIsMobileKeyboardVisible] = useState(false);
+	// The software keyboard may be up for something outside this panel, such as
+	// a text field in an app window. The accessory row belongs to the terminal.
+	const [isPanelFocused, setIsPanelFocused] = useState(false);
 	const [terminalContextMenu, setTerminalContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -934,6 +937,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		return () => {
 			viewport.removeEventListener('resize', updateKeyboardVisibility);
 			viewport.removeEventListener('scroll', updateKeyboardVisibility);
+		};
+	}, []);
+
+	useEffect(() => {
+		const container = containerRef.current;
+		if (container === null) return;
+		const update = () =>
+			setIsPanelFocused(container.contains(document.activeElement));
+		// The focused element is settled once the event has been dispatched.
+		const onFocusOut = () => setTimeout(update, 0);
+		update();
+		container.addEventListener('focusin', update);
+		container.addEventListener('focusout', onFocusOut);
+		return () => {
+			container.removeEventListener('focusin', update);
+			container.removeEventListener('focusout', onFocusOut);
 		};
 	}, []);
 
@@ -3304,7 +3323,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					</div>
 				</div>
 			) : null}
-			{isMobileKeyboardVisible ? (
+			{isMobileKeyboardVisible && isPanelFocused ? (
 				<fieldset
 					className="terminal-mobile-keyboard-accessory"
 					aria-label="Terminal keyboard controls"

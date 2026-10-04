@@ -70,6 +70,8 @@ type Harness = {
 	replaceWindow(id: string, html: string): void;
 	setController(value: boolean): void;
 	setPaneSize(width: number, height: number): void;
+	/** A row of the pane's own under the rail, as the phone keyboard's command bar is. */
+	setBottomBar(height: number): void;
 	/** Make this page's connection lose part of every large snapshot. */
 	setLossy(value: boolean): void;
 	/** What has been typed into the stand-in terminal. */
@@ -81,6 +83,7 @@ function App() {
 	const [windows, setWindows] = useState<AppWindow[]>([]);
 	const [controller, setController] = useState(PARAMS.get('role') !== 'observer');
 	const [size, setSize] = useState({ width: 900, height: 600 });
+	const [bottomBar, setBottomBar] = useState(0);
 	const contents = useRef(new Map<string, Omit<AppWindowContent, 'window'>>());
 	const calls = useRef<unknown[][]>([]);
 	const mirrorLog = useRef<Harness['mirrorLog']>([]);
@@ -302,6 +305,7 @@ function App() {
 			replaceWindow: (id, html) => dispatch({ type: 'replace', id, html }),
 			setController,
 			setPaneSize: (width, height) => setSize({ width, height }),
+			setBottomBar,
 			typed: () => typed.current.join(''),
 			setLossy: (value) => {
 				lossy.current = value;
@@ -369,6 +373,7 @@ function App() {
 					}}
 				/>
 				<div className="terminal-app-window-rail" aria-hidden="true" />
+				{bottomBar > 0 ? <div id="bottom-bar" style={{ flex: 'none', height: bottomBar }} /> : null}
 			</div>
 			<AppWindowHost />
 		</AppWindowsContext.Provider>

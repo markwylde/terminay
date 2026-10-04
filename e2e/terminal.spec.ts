@@ -1786,4 +1786,45 @@ test.describe('terminal behavior', () => {
 			).toHaveCount(1);
 		}
 	});
+
+	test('the accessory row is shown only while the keyboard is up for the terminal', async ({
+		mainWindow,
+	}) => {
+		await expectTerminalInputFocused(mainWindow);
+		const accessoryShown = await mainWindow.evaluate(() => {
+			const viewport = window.visualViewport;
+			if (viewport === null) return false;
+			try {
+				const reduced = Math.max(120, viewport.height - 240);
+				Object.defineProperty(viewport, 'height', {
+					configurable: true,
+					get: () => reduced,
+				});
+				viewport.dispatchEvent(new Event('resize'));
+				return true;
+			} catch {
+				return false;
+			}
+		});
+		test.skip(!accessoryShown, 'the visual viewport cannot be resized here');
+		const accessory = mainWindow.locator('.terminal-mobile-keyboard-accessory');
+		await expect(accessory).toHaveCount(1);
+
+		// The keyboard stays up for a field outside the terminal, as a text field
+		// in an app window is.
+		await mainWindow.evaluate(() => {
+			const field = document.createElement('input');
+			field.id = 'outside-terminal-field';
+			document.body.append(field);
+			field.focus();
+		});
+		await expect(accessory).toHaveCount(0);
+
+		await mainWindow.evaluate(() =>
+			document.getElementById('outside-terminal-field')?.remove(),
+		);
+		await visibleTerminalRoot(mainWindow).click();
+		await expectTerminalInputFocused(mainWindow);
+		await expect(accessory).toHaveCount(1);
+	});
 });
