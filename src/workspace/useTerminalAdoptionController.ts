@@ -13,6 +13,7 @@ import type {
 	TerminalTabMoveProject,
 } from '../components/TerminalTab';
 import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
+import { requestFrameOrTimeout } from './frameOrTimeout';
 import {
 	recallActiveSession,
 	shouldActivateAdoptedTerminal,
@@ -216,7 +217,7 @@ export function useTerminalAdoptionController({
 			}
 			onError(null);
 			syncPanelFocusState();
-			window.requestAnimationFrame(publishWorkspaceInventory);
+			requestFrameOrTimeout(publishWorkspaceInventory);
 			recordBootstrapDiagnostic('app.workspace.adopt.end');
 			return true;
 		},
