@@ -44,4 +44,4 @@
 - [x] 7.1 Document the mirror, what is not mirrored, the limits, and the takeover behaviour in `docs/product-overview.md`. Verified by: the paragraph exists and names the limits in the design.
 - [x] 7.2 Complete `openspec/adr/evidence/app-view-mirror-spike.md` with what was and was not measured. Verified by: it has a "Not measured" section.
 - [x] 7.3 Run `openspec validate --all`, `npm run smoke`, and the app-window E2E suites. Verified by: all pass.
-- [ ] 7.4 Push to pull request #332 on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
+- [x] 7.4 Push to pull request #332 on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
