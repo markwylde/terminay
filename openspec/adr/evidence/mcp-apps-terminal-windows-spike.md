@@ -1,8 +1,9 @@
 # MCP Apps in a terminal: gateway and window placement spike
 
 Date: 2026-10-04
-Code: `scripts/spikes/mcp-apps/` (run `node scripts/spikes/mcp-apps/server.mjs`,
-open `http://127.0.0.1:4517`)
+Code: the harness lived in `scripts/spikes/mcp-apps/` and was removed once the
+feature shipped. It is in history at commit `88a175e3`; there, run
+`node scripts/spikes/mcp-apps/server.mjs` and open `http://127.0.0.1:4517`.
 Supports: ADR-0037, ADR-0038
 
 ## Question
