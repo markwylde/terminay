@@ -73,6 +73,8 @@ export class ServerConnection implements ServerConnectionLike {
 	private currentState: State = 'new';
 	private authenticatedClient: AuthenticatedClient | undefined;
 	private readonly clientCapabilities = new Set<string>();
+	/** Numbers the byte-carrying events sent, so none replaces another. */
+	private streamedEventItems = 0;
 	private readonly dispatcher: OperationDispatcher;
 	private readonly options: ServerCoreOptions;
 	private readonly transport: ByteTransport;
@@ -596,7 +598,7 @@ export class ServerConnection implements ServerConnectionLike {
 			const projected = this.projectEvent(value);
 			if (
 				projected === undefined ||
-				!matchesEvent(projected, this.authenticatedClient?.clientId, event) ||
+				!matchesEvent(projected, this.authenticatedClient?.clientId, event, this.connectionId) ||
 				!matchesEventSelector(projected.payload, selector)
 			)
 				return;
@@ -631,7 +633,7 @@ export class ServerConnection implements ServerConnectionLike {
 			const projected = this.projectEvent(value);
 			if (
 				projected !== undefined &&
-				matchesEvent(projected, this.authenticatedClient?.clientId, event)
+				matchesEvent(projected, this.authenticatedClient?.clientId, event, this.connectionId)
 			) {
 				replayedRevisions.add(projected.revision);
 				await this.sendEvent(subscriptionId, projected);
@@ -725,11 +727,19 @@ export class ServerConnection implements ServerConnectionLike {
 			// features that do not yet have a semantic coalescing key. Full snapshot
 			// projections coalesce aggressively; ordered deltas retain unique keys
 			// until the bounded lane replaces them with event_resync.
+			// An event that carries bytes is one item of a feature-owned stream,
+			// not a projection a later event can stand in for, so it is never
+			// coalesced; the bounded lane still replaces a backlog with
+			// event_resync, and the feature recovers from there.
+			const body = event.body;
 			await this.outbound.sendState(
-				encodeFrame(envelope, new Uint8Array(), this.options.limits),
+				encodeFrame(envelope, body ?? new Uint8Array(), this.options.limits),
 				{
 					laneId: subscriptionId,
-					key: projectionDeliveryKey(event),
+					key:
+						body === undefined
+							? projectionDeliveryKey(event)
+							: `${event.event}:item:${++this.streamedEventItems}`,
 					createResyncFrame: () =>
 						encodeFrame(
 							{
@@ -997,10 +1007,18 @@ function matchesEvent(
 	event: OrderedEvent,
 	clientId: string | undefined,
 	name: string | undefined,
+	connectionId?: string,
 ): boolean {
 	if (name !== undefined && event.event !== name) return false;
 	const payload = objectPayload(event.payload);
-	return typeof payload.clientId !== 'string' || payload.clientId === clientId;
+	// An event may be addressed to one client, and further to one of its
+	// connections: a client id is what a client says it is, a connection is not.
+	if (typeof payload.clientId === 'string' && payload.clientId !== clientId)
+		return false;
+	return (
+		typeof payload.toConnectionId !== 'string' ||
+		payload.toConnectionId === connectionId
+	);
 }
 
 function matchesEventSelector(

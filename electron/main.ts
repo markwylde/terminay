@@ -22,6 +22,7 @@ import {
 	type ByteTransport,
 	createTerminayHostBytePacket,
 	parseTerminayHostBytePacket,
+	protocolError,
 	type TerminayHostActionRequest,
 	type TerminayHostConnectionProfile,
 	type TerminayHostContext,
@@ -54,8 +55,11 @@ import {
 	type AutomationControlAdapter,
 	assertAutomationSpaceCapacity,
 	automationControlError,
-	CONTROL_OPERATIONS,
+	type AppWindowControlAdapter,
+	ConnectedServerGateway,
 	CONTROL_PERMISSION_GROUPS,
+	CONTROL_TOOL_OPERATIONS,
+	createAppWindowControlAdapter,
 	CONTROL_SOCKET_ENV,
 	CONTROL_TOKEN_ENV,
 	ControlCapabilityStore,
@@ -82,7 +86,10 @@ import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetR
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
-import { createAutomationFileBackends } from '../packages/server-core/src/automationService/fileBackend';
+import {
+	createAutomationFileBackends,
+	createJsonFileBackend,
+} from '../packages/server-core/src/automationService/fileBackend';
 import { AutomationRepository } from '../packages/server-core/src/automationService/repository';
 import { AutomationRunLog } from '../packages/server-core/src/automationService/runLog';
 import type { AutomationSubject } from '../packages/server-core/src/automationService/types';
@@ -1483,6 +1490,19 @@ const embeddedMacros = new MacroRepository({
 const embeddedAutomationBackends = createAutomationFileBackends(
 	app.getPath('userData'),
 );
+// Connected MCP servers: mcp-connected-servers.v1.json in userData. The file
+// holds no credential; those are in the vault.
+const embeddedConnectedServersBackend = createJsonFileBackend<unknown>(
+	path.join(app.getPath('userData'), 'mcp-connected-servers.v1.json'),
+);
+/** Terminay's client side of the user's connected MCP servers (ADR-0037). */
+const mcpGateway = new ConnectedServerGateway({
+	projectRoot: (projectId) =>
+		serverTerminalAuthority?.workspace.state.projects[projectId]?.root,
+	clientVersion: app.getVersion(),
+});
+let removeMcpGatewayBindings: (() => void) | undefined;
+
 const embeddedAutomations = new AutomationRepository(
 	embeddedAutomationBackends.definitions,
 	{
@@ -1671,6 +1691,17 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			runLog: embeddedAutomationRuns,
 		},
 		mcpApprovals: true,
+		connectedServers: {
+			backend: embeddedConnectedServersBackend,
+			vault: embeddedVault.vault,
+		},
+		appWindows: {
+			terminalTitle: (terminalSessionId) =>
+				Object.values(authority?.workspace.state.panels ?? {}).find(
+					(panel) =>
+						panel.type === 'terminal' && panel.sessionId === terminalSessionId,
+				)?.title,
+		},
 		macros: {
 			repository: embeddedMacros,
 			environmentFor: (request, target) => {
@@ -1901,6 +1932,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		(_digest, terminalSessionId) =>
 			authority.composition.mcpApprovals?.revokeTerminal(terminalSessionId),
 	);
+	bindMcpGateway(authority);
 	endStartupPhase('workspace-init');
 	beginStartupPhase('mcp-endpoint');
 	applyMcpSetting(embeddedServerSettings.settings);
@@ -2725,6 +2757,12 @@ function applyMcpSetting(settings: Record<string, unknown>): void {
 			? (candidate as { enabled: boolean }).enabled
 			: true;
 	mcpCapabilities.setEnabled(enabled);
+	// With MCP off no agent can reach a window it opened, and a window must not
+	// go on calling the servers that were connected for agents.
+	if (!enabled) {
+		serverTerminalAuthority?.composition.appWindows?.endAll();
+		mcpGateway.closeAll();
+	}
 }
 
 async function startMcpControlEndpoint(): Promise<void> {
@@ -2735,6 +2773,12 @@ async function startMcpControlEndpoint(): Promise<void> {
 		dispatch: createTerminalControlAdapter({
 			adapter: createDesktopMcpTerminalAdapter(),
 			automations: createDesktopMcpAutomationAdapter(),
+			appWindows: createDesktopMcpAppWindowAdapter(),
+			takeModelContext: (context, maxBytes) =>
+				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
+					context.terminalSessionId,
+					maxBytes,
+				) ?? [],
 			permissions: createDesktopMcpPermissionGate(),
 		}),
 		onError: (error) => console.error('[mcp] control endpoint failed', error),
@@ -2753,8 +2797,112 @@ async function stopMcpControlEndpoint(): Promise<void> {
 	removeMcpSettingsObserver = undefined;
 	const endpoint = mcpControlEndpoint;
 	mcpControlEndpoint = null;
+	// With MCP off, or the server stopping, connected servers stop too.
+	mcpGateway.closeAll();
 	if (endpoint !== null) await endpoint.stop();
 	else mcpCapabilities.revokeAll();
+}
+
+/**
+ * Keep the gateway's entries equal to the registry's, report its status back
+ * for Settings, and route an MCP App view's own requests to the server that
+ * supplied the view, behind the Connected Server Tools policy.
+ */
+function bindMcpGateway(authority: ServerTerminalAuthority): void {
+	removeMcpGatewayBindings?.();
+	const { connectedServers, appWindows, mcpApprovals } = authority.composition;
+	if (connectedServers === undefined) return;
+	// Resolving reads the vault, so two saves in quick succession can finish out
+	// of order. Only the latest one is applied.
+	let syncs = 0;
+	const sync = (): void => {
+		syncs += 1;
+		const current = syncs;
+		void connectedServers
+			.resolved()
+			.then((entries) => {
+				if (current === syncs) mcpGateway.setEntries(entries);
+			})
+			.catch((error) => console.error('[mcp] connected servers failed', error));
+	};
+	connectedServers.bindStatus(() => mcpGateway.status());
+	const stopRegistry = connectedServers.onChanged(sync);
+	const stopGateway = mcpGateway.onChanged(() =>
+		connectedServers.notifyStatusChanged(),
+	);
+	// A project that closes takes its local servers with it.
+	let openProjects = new Set(Object.keys(authority.workspace.state.projects));
+	const stopWorkspace = authority.workspace.subscribe(() => {
+		const next = new Set(Object.keys(authority.workspace.state.projects));
+		for (const projectId of openProjects)
+			if (!next.has(projectId)) mcpGateway.closeProject(projectId);
+		openProjects = next;
+	});
+	appWindows?.bindViewRequests(async (window, method, params, signal) => {
+		if (window.source.kind !== 'mcp-app')
+			throw protocolError('forbidden', 'This window has no server.');
+		const outcome = await mcpApprovals?.authorize({
+			terminalSessionId: window.terminalSessionId,
+			projectId: window.projectId,
+			operation: 'call_connected_tool',
+			group: 'connectedServerTools',
+			agent: `The window "${window.title}"`,
+			terminalTitle:
+				mcpPanelFor(window.terminalSessionId, window.projectId)?.title ??
+				'this terminal',
+			summary: `use ${window.source.server}'s tool ${String(params.name ?? params.uri ?? '')}`,
+			details: [],
+			signal,
+		});
+		// A view sees a refusal as a refusal, with the reason, never as a fault.
+		if (outcome !== undefined && !outcome.ok)
+			throw protocolError('forbidden', outcome.error.message);
+		try {
+			return await mcpGateway.callFromView(
+				window.projectId,
+				window.source.server,
+				method,
+				params,
+				signal,
+			);
+		} catch (error) {
+			const code = (error as { code?: unknown } | null)?.code;
+			throw protocolError(
+				code === 'not_found' ? 'not_found' : code === 'forbidden' ? 'forbidden' : 'unavailable',
+				error instanceof Error ? error.message.slice(0, 500) : 'The request failed.',
+			);
+		}
+	});
+	removeMcpGatewayBindings = () => {
+		stopRegistry();
+		stopGateway();
+		stopWorkspace();
+	};
+	sync();
+}
+
+/** The window tools, bound to whichever authority is composed when called. */
+function createDesktopMcpAppWindowAdapter(): AppWindowControlAdapter {
+	const bound = (): AppWindowControlAdapter => {
+		const windows = serverTerminalAuthority?.composition.appWindows;
+		if (windows === undefined)
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'App windows are unavailable on this server.',
+			);
+		return createAppWindowControlAdapter({ windows, gateway: mcpGateway });
+	};
+	return {
+		showWindow: (params, context, signal) =>
+			bound().showWindow(params, context, signal),
+		closeWindow: (params, context, signal) =>
+			bound().closeWindow(params, context, signal),
+		listWindows: (context, signal) => bound().listWindows(context, signal),
+		listConnectedTools: (context, signal, after) =>
+			bound().listConnectedTools(context, signal, after),
+		callConnectedTool: (params, context, signal, mayShowWindow) =>
+			bound().callConnectedTool(params, context, signal, mayShowWindow),
+	};
 }
 
 function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
@@ -3074,7 +3222,10 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 		'wait_for_attention',
 	]);
 	const approvals = serverTerminalAuthority?.composition.mcpApprovals;
-	return CONTROL_OPERATIONS.map((tool) => {
+	if (serverTerminalAuthority?.composition.appWindows === undefined)
+		for (const tool of ['show_window', 'close_window', 'list_windows'] as const)
+			unavailable.add(tool);
+	return CONTROL_TOOL_OPERATIONS.map((tool) => {
 		const group = CONTROL_PERMISSION_GROUPS[tool];
 		return {
 			tool,
@@ -3229,6 +3380,7 @@ function createDesktopMcpPermissionGate(): ControlPermissionGate {
 
 async function describeMcpRequest(request: {
 	readonly op: ControlOperation;
+	readonly group: string;
 	readonly params: Readonly<Record<string, unknown>>;
 	readonly context: ControlRequestContext;
 }): Promise<
@@ -3244,7 +3396,12 @@ async function describeMcpRequest(request: {
 		'a terminal';
 	const agent = mcpAgentLabel(context.terminalSessionId);
 	try {
-		const described = await describeMcpOperation(op, params, context);
+		const described = await describeMcpOperation(
+			op,
+			params,
+			context,
+			request.group,
+		);
 		return { agent, terminalTitle, ...described };
 	} catch (error) {
 		const mapped =
@@ -3262,6 +3419,7 @@ async function describeMcpOperation(
 	op: ControlOperation,
 	params: Readonly<Record<string, unknown>>,
 	context: ControlRequestContext,
+	group?: string,
 ): Promise<Pick<McpApprovalDescription, 'summary' | 'details'>> {
 	const text = (value: unknown): string =>
 		typeof value === 'string' ? value : '';
@@ -3362,6 +3520,35 @@ async function describeMcpOperation(
 			return { summary: `split ${targetTitle()}`, details: [] };
 		case 'list_terminals':
 			return { summary: 'list your terminals', details: [] };
+		case 'show_window':
+			return {
+				summary:
+					params.window === undefined
+						? `show a window titled "${text(params.title)}" in this terminal`
+						: `update its window to "${text(params.title)}"`,
+				details: [],
+			};
+		case 'close_window':
+			return { summary: 'close one of its windows', details: [] };
+		case 'list_windows':
+			return { summary: 'list the windows in this terminal', details: [] };
+		case 'call_connected_tool':
+			// One call asks twice: to run the tool, then to show its view.
+			return group === 'appWindows'
+				? {
+						summary: `show the view of ${text(params.name)} in a window in this terminal`,
+						details: [],
+					}
+				: {
+						summary: `use the connected tool ${text(params.name)}`,
+						details: [
+							{
+								label: 'Arguments',
+								value: JSON.stringify(params.arguments ?? {}, null, 2),
+								code: true,
+							},
+						],
+					};
 		default:
 			return {
 				summary: `${op.replaceAll('_', ' ')} ${targetTitle()}`,

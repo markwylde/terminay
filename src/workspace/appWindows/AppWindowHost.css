@@ -1,0 +1,297 @@
+/* App windows float above the workspace, each over the pane of its terminal. */
+.app-window-host {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+/* The window. The same element is the minimised tab. */
+.app-window {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  color: #e6e6e6;
+  background: var(--app-window-surface, #1b1e24);
+  /* The edge is drawn as a shadow, not a border, so the body is exactly the
+     height the layout gave it and a view sized to its content never scrolls. */
+  border: 0;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px var(--app-window-border, rgb(255 255 255 / 0.16)),
+    0 12px 34px rgb(0 0 0 / 0.5);
+  transition:
+    left 0.16s ease,
+    top 0.16s ease,
+    width 0.16s ease,
+    height 0.16s ease,
+    border-radius 0.16s ease;
+}
+
+.app-window--dragging {
+  transition: none;
+}
+
+.app-window[data-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app-window[data-placement="sheet"] {
+  border-radius: 14px 14px 0 0;
+}
+
+.app-window[data-placement="fullscreen"] {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-window[data-placement="tab"] {
+  border-radius: 8px 8px 0 0;
+  box-shadow:
+    0 0 0 1px var(--app-window-border, rgb(255 255 255 / 0.16)),
+    0 -2px 10px rgb(0 0 0 / 0.3);
+  cursor: grab;
+}
+
+.app-window[data-placement="tab"]:hover,
+.app-window[data-placement="tab"]:focus-within {
+  box-shadow:
+    0 0 0 1px var(--accent-color, #8fb7e8),
+    0 -2px 10px rgb(0 0 0 / 0.3);
+}
+
+.app-window--dragging[data-placement="tab"] {
+  cursor: grabbing;
+}
+
+.app-window__header {
+  box-sizing: border-box;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 6px 0 10px;
+  font: 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  user-select: none;
+  touch-action: none;
+  background: rgb(255 255 255 / 0.05);
+  border-bottom: 1px solid var(--app-window-border, rgb(255 255 255 / 0.12));
+}
+
+.app-window[data-narrow="true"] .app-window__header {
+  flex-basis: 40px;
+  font-size: 13px;
+}
+
+.app-window[data-placement="tab"] .app-window__header {
+  flex: 1;
+  border-bottom: 0;
+  padding: 0 12px 0 10px;
+  outline: none;
+}
+
+.app-window__glyph {
+  color: var(--accent-color, #8fb7e8);
+}
+
+.app-window__title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-window__source {
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-window[data-narrow="true"] .app-window__source {
+  display: none;
+}
+
+.app-window__spacer {
+  flex: 1;
+}
+
+.app-window__header button {
+  flex: none;
+  padding: 3px 7px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-window__header button:hover,
+.app-window__header button:focus-visible {
+  opacity: 1;
+  background: rgb(255 255 255 / 0.12);
+}
+
+.app-window[data-narrow="true"] .app-window__header button {
+  padding: 8px 11px;
+  font-size: 17px;
+}
+
+.app-window__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* A minimised view keeps running; only its tab shows. */
+.app-window[data-placement="tab"] .app-window__body {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.app-window__frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+
+.app-window__loading {
+  flex: 1;
+}
+
+.app-window__notice {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  opacity: 0.85;
+}
+
+.app-window__notice p {
+  margin: 0;
+}
+
+.app-window__notice button {
+  padding: 5px 12px;
+  font: inherit;
+  color: inherit;
+  background: rgb(255 255 255 / 0.08);
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* The strip a terminal pane reserves under its terminal while it has a
+   minimised window. The window host sets the variable; with no tab it is 0. */
+.terminal-app-window-rail {
+  flex: 0 0 var(--app-window-rail, 0px);
+  min-height: 0;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 0.25);
+  border-top: 0 solid rgb(255 255 255 / 0.1);
+}
+
+.terminal-panel[style*="--app-window-rail"] .terminal-app-window-rail {
+  border-top-width: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-window {
+    transition: none;
+  }
+}
+
+/* A window on a client that does not control its terminal: a read-only
+   mirror of the view, drawn at the view's own size and scaled to fit. */
+.app-window__mirror {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-window__mirror-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-window__mirror-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  background: transparent;
+  transform-origin: 0 0;
+  /* Nothing typed or clicked on a mirror goes anywhere. */
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-window__mirror[data-status="loading"] .app-window__mirror-frame,
+.app-window__mirror[data-status="unavailable"] .app-window__mirror-frame {
+  visibility: hidden;
+}
+
+.app-window__mirror-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 10px 16px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  opacity: 0.85;
+}
+
+.app-window__mirror-bar {
+  flex: none;
+  box-sizing: border-box;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 12px;
+  font: 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  border-top: 1px solid var(--app-window-border, rgb(255 255 255 / 0.2));
+}
+
+.app-window__mirror-bar span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.app-window__mirror-bar button {
+  flex: none;
+  padding: 3px 10px;
+  font: inherit;
+  color: inherit;
+  background: rgb(255 255 255 / 0.08);
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+}

@@ -22,6 +22,11 @@ export const MCP_PERMISSION_GROUPS = [
 	'terminalsManage',
 	'automationsRead',
 	'automationsManage',
+	'appWindows',
+	'connectedServerTools',
+	// Not an agent operation: a message a window types into its terminal. It
+	// shares the policy table, grants, and approval prompt of the groups.
+	'windowMessages',
 ] as const;
 
 export type McpPermissionGroup = (typeof MCP_PERMISSION_GROUPS)[number];
@@ -35,6 +40,9 @@ export const DEFAULT_MCP_PERMISSIONS: McpPermissionPolicies = Object.freeze({
 	terminalsManage: 'allow',
 	automationsRead: 'allow',
 	automationsManage: 'ask',
+	appWindows: 'allow',
+	connectedServerTools: 'allow',
+	windowMessages: 'allow',
 });
 
 export const MCP_PERMISSION_GROUP_LABELS: Readonly<
@@ -44,6 +52,9 @@ export const MCP_PERMISSION_GROUP_LABELS: Readonly<
 	terminalsManage: 'Full Terminal Management',
 	automationsRead: 'Read Automations',
 	automationsManage: 'Full Automation Management',
+	appWindows: 'App Windows',
+	connectedServerTools: 'Connected Server Tools',
+	windowMessages: 'Window Messages',
 });
 
 export const MCP_APPROVAL_OPERATIONS = Object.freeze({

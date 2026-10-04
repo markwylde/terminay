@@ -132,6 +132,12 @@ export type TerminayMcpPermissions = {
 	terminalsManage: TerminayMcpPermissionPolicy;
 	automationsRead: TerminayMcpPermissionPolicy;
 	automationsManage: TerminayMcpPermissionPolicy;
+	/** Showing and closing windows in the calling terminal. */
+	appWindows: TerminayMcpPermissionPolicy;
+	/** Using the tools of user-connected MCP servers. */
+	connectedServerTools: TerminayMcpPermissionPolicy;
+	/** A window typing a message into its terminal. */
+	windowMessages: TerminayMcpPermissionPolicy;
 };
 
 /** Server-owned enablement and permission policy for the local Terminay MCP bridge. */

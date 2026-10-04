@@ -1,0 +1,109 @@
+title: Terminal app windows — scope
+intro: |
+  The window UX is settled (bottom-left float, edge tab, rail only while
+  minimised, bottom sheet on phone). These are the decisions the prototype
+  did not make, and each one changes what the proposal says.
+
+status: submitted
+submitted_at: "2026-10-04T11:18:45+01:00"
+
+questions:
+  - id: change_shape
+    type: select
+    prompt: One change, or two?
+    help: |
+      There are two separable pieces. (A) The window itself plus a built-in
+      tool that lets the agent show its own HTML ("show me a hello world
+      window"). This needs no third-party servers and is the smaller half.
+      (B) The gateway: Terminay connects to other MCP servers and shows their
+      MCP Apps. This adds server configuration, credentials and tool proxying.
+      I'd propose both in one change but order the tasks so A lands and works
+      before B starts.
+    required: true
+    options:
+      - One change, A then B (recommended)
+      - Two changes; propose A now and B after it ships
+      - Two changes; propose both now
+    answer: One change, A then B (recommended)
+
+  - id: upstream_config
+    type: select
+    prompt: Where does the user tell Terminay which MCP servers to connect to?
+    help: |
+      For an MCP App to appear, Terminay must be the client of that server.
+      I'd lean towards a Terminay setting: it is explicit and works the same
+      for every agent. Reading the agents' own config files is less typing but
+      means parsing each agent's format, and the agent would still load its own
+      copy of the server, so every tool would appear twice.
+    required: true
+    options:
+      - A list in Terminay settings (recommended)
+      - A file in the project (checked in, like .mcp.json)
+      - Both settings and a project file
+      - Import from the agents' own config files
+    answer: A list in Terminay settings (recommended)
+    comment: 'No. I don''t understand. Explain this better and simplier. I''m thinking of a brand new tool in Terminay MCP called "show_user_some_html" (but better named). What has this got to do with client of a server? If the user installed the Terminay MCP tool (the one that already allows them to control terminal windows) then wouldn''t this just be another mcp method inside ther Terminay MCP tool? '
+
+  - id: html_tool_network
+    type: select
+    prompt: What can agent-authored HTML reach?
+    help: |
+      This is HTML the model wrote, running in a sandboxed iframe. With no
+      network it is a self-contained page: inline scripts and styles only, no
+      CDN libraries, no fetch. That is the safe default and still covers
+      charts, forms and small tools. Allowing listed domains lets the agent
+      pull in a library from a CDN, at the cost of a consent step.
+    required: true
+    options:
+      - No network at all (recommended)
+      - No network by default; the agent can request domains and the user approves
+      - Open network access
+    answer: Open network access
+
+  - id: html_tool_reply
+    type: select
+    prompt: Can an agent-authored window talk back to the agent?
+    help: |
+      MCP Apps can send a message into the conversation; in Terminay that is
+      typed into the terminal's prompt. Giving the agent's own windows the same
+      ability makes them useful for forms and pickers ("choose one, I'll
+      continue"), not just display.
+    required: true
+    options:
+      - Yes, same as MCP Apps (recommended)
+      - No, display only
+    answer: Yes, same as MCP Apps (recommended)
+
+  - id: message_consent
+    type: select
+    prompt: When a window sends a message, it types into your terminal. Ask first?
+    help: |
+      The text is typed and submitted as if you wrote it, so a hostile or
+      buggy app could instruct the agent. I'd add this to the existing MCP
+      permission settings as its own group, defaulting to "ask" with a
+      per-terminal "always allow" in the prompt.
+    required: true
+    options:
+      - New permission group, default ask (recommended)
+      - Always allow; it only fires on a click inside the window
+      - Type it into the prompt but never press Enter; I submit it myself
+    answer: New permission group, default ask (recommended)
+    comment: It's fine. The permission model comes from inside claude/codex/etc. If the user doesn't want html to run then they disable it in claude. not our call. BUT I do think we can have permissions in Settings. Like, I think we can choose whether Terminay MCP can create terminals/close terminals/write into them, etc? I thjink it's in Settings > AI. Just add some more options. But the default are allow.
+
+  - id: remote_clients
+    type: select
+    prompt: With a phone and a desktop attached to the same terminal, where does a window appear?
+    help: |
+      Simplest and most consistent with the rest of Terminay is every attached
+      client, each running its own copy of the view. The catch is that the two
+      copies do not share in-page state (a half-filled form on the desktop is
+      blank on the phone).
+    options:
+      - Every attached client, independent copies (recommended)
+      - Only the client that has that terminal focused
+      - Desktop only for now; phones come later
+    comment: It needs to be able to transaction when another device "Takes control". So if it starts on desktop, then the user takes control of their phone, we need to move it to their phone
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

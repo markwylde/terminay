@@ -1,0 +1,124 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+	buildViewDocument,
+	viewAllowAttribute,
+	viewContentSecurityPolicy,
+} from './viewDocument.ts';
+
+const directive = (policy: string, name: string): string | undefined =>
+	policy
+		.split(';')
+		.map((part) => part.trim())
+		.find((part) => part.startsWith(`${name} `));
+
+test('an agent-authored view may load from and connect to any https origin', () => {
+	const policy = viewContentSecurityPolicy({ kind: 'agent' });
+	assert.equal(directive(policy, 'default-src'), "default-src 'none'");
+	assert.equal(directive(policy, 'script-src'), "script-src 'unsafe-inline' https: blob:");
+	assert.equal(directive(policy, 'connect-src'), 'connect-src https: wss:');
+	assert.equal(directive(policy, 'object-src'), "object-src 'none'");
+	assert.equal(directive(policy, 'form-action'), "form-action 'none'");
+	// Whatever an agent passes as csp is ignored: its policy is fixed.
+	assert.equal(
+		viewContentSecurityPolicy({ kind: 'agent' }, { connectDomains: ['https://x.example'] }),
+		policy,
+	);
+});
+
+test('an MCP App with declared domains gets exactly those origins', () => {
+	const policy = viewContentSecurityPolicy(
+		{ kind: 'mcp-app' },
+		{
+			connectDomains: ['https://api.example', 'wss://live.example:8443'],
+			resourceDomains: ['https://cdn.example'],
+			frameDomains: ['https://embed.example'],
+		},
+	);
+	assert.equal(directive(policy, 'connect-src'), 'connect-src https://api.example wss://live.example:8443');
+	assert.equal(directive(policy, 'script-src'), "script-src 'unsafe-inline' https://cdn.example");
+	assert.equal(directive(policy, 'img-src'), 'img-src data: blob: https://cdn.example');
+	assert.equal(directive(policy, 'frame-src'), 'frame-src https://embed.example');
+	assert.equal(directive(policy, 'base-uri'), "base-uri 'none'");
+});
+
+test('an MCP App that declares nothing may reach nothing', () => {
+	const policy = viewContentSecurityPolicy({ kind: 'mcp-app' });
+	assert.equal(directive(policy, 'connect-src'), "connect-src 'none'");
+	assert.equal(directive(policy, 'frame-src'), "frame-src 'none'");
+	assert.equal(directive(policy, 'script-src'), "script-src 'unsafe-inline'");
+	assert.equal(directive(policy, 'img-src'), 'img-src data: blob:');
+});
+
+test('a declared value cannot inject a directive, a keyword, or another scheme', () => {
+	const policy = viewContentSecurityPolicy(
+		{ kind: 'mcp-app' },
+		{
+			connectDomains: [
+				"https://ok.example; script-src *",
+				"'unsafe-eval'",
+				'*',
+				'http://plain.example',
+				'https://ok.example',
+				'data:',
+				'https://a.example https://b.example',
+				'https://*.wild.example',
+			],
+		},
+	);
+	assert.equal(
+		directive(policy, 'connect-src'),
+		'connect-src https://ok.example https://*.wild.example',
+	);
+	assert.equal(policy.split('script-src').length, 2);
+});
+
+test('the policy is the first thing in the document, ahead of the author’s markup', () => {
+	const built = buildViewDocument({
+		html: '<html><head><script>window.early = 1</script></head><body>hi</body></html>',
+		source: { kind: 'mcp-app' },
+	});
+	const meta = built.html.indexOf('http-equiv="Content-Security-Policy"');
+	assert.ok(meta > 0 && meta < built.html.indexOf('window.early'));
+	assert.ok(built.html.startsWith('<!doctype html><meta'));
+	// An MCP App speaks the protocol itself: nothing else is injected.
+	assert.equal(built.html.includes('window, \'terminay\''), false);
+	assert.equal(built.html.includes('<style>'), false);
+});
+
+test('an existing doctype stays first so the view is not in quirks mode', () => {
+	const built = buildViewDocument({
+		html: '  <!DOCTYPE html>\n<html><body>hi</body></html>',
+		source: { kind: 'mcp-app' },
+	});
+	assert.ok(built.html.startsWith('  <!DOCTYPE html><meta http-equiv'));
+	assert.equal(built.html.match(/<!doctype/giu)?.length, 1);
+});
+
+test('an agent-authored view gets the bootstrap before its own content', () => {
+	const built = buildViewDocument({ html: '<h1>Hello world</h1>', source: { kind: 'agent' } });
+	const bootstrap = built.html.indexOf("'terminay'");
+	assert.ok(bootstrap > 0 && bootstrap < built.html.indexOf('<h1>Hello world</h1>'));
+	assert.match(built.html, /ui\/initialize/u);
+	assert.match(built.html, /ui\/notifications\/size-changed/u);
+	assert.match(built.html, /sendMessage/u);
+	assert.equal(built.allow, '');
+});
+
+test('the policy attribute cannot be closed by a declared value', () => {
+	const built = buildViewDocument({
+		html: '<p>x</p>',
+		source: { kind: 'mcp-app' },
+		csp: { connectDomains: ['https://ok.example"><script>alert(1)</script>'] },
+	});
+	assert.equal(built.html.includes('<script>alert(1)</script>'), false);
+});
+
+test('only an MCP App may be granted the permissions its resource asked for', () => {
+	assert.equal(
+		viewAllowAttribute({ kind: 'mcp-app' }, { clipboardWrite: {}, camera: {}, usb: {} }),
+		'camera; clipboard-write',
+	);
+	assert.equal(viewAllowAttribute({ kind: 'mcp-app' }, undefined), '');
+	assert.equal(viewAllowAttribute({ kind: 'agent' }, { camera: {} }), '');
+});

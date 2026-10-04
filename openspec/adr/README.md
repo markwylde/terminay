@@ -63,3 +63,6 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0034](./0034-no-media-relay-reachability-from-candidates-and-routing-hints.md) | Terminay operates no media relay; reachability comes from candidates, routing hints, and the user's own network | accepted | 2026-10-03 |
 | [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 | 2026-10-03 |
 | [0036](./0036-five-minute-ci-budget-with-parallel-gates-and-eighteen-shards.md) | CI has a five-minute budget, met by running independent work in separate jobs and eighteen E2E shards | accepted, supersedes 0032 | 2026-10-03 |
+| [0037](./0037-mcp-apps-reach-terminals-through-a-terminay-gateway.md) | MCP Apps and agent-authored UI reach a terminal through Terminay's own MCP server, acting as a gateway | accepted | 2026-10-04 |
+| [0038](./0038-app-views-run-in-a-self-sandboxing-proxy.md) | App views run in an opaque-origin frame inside a self-sandboxing proxy document | accepted | 2026-10-04 |
+| [0039](./0039-app-views-are-mirrored-from-the-controlling-client.md) | An app view is mirrored to observers from the controlling client; the server relays and keeps nothing | accepted | 2026-10-04 |

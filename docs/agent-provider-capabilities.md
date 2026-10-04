@@ -25,6 +25,23 @@ and changes only when the pinned library version changes.
 Each supported agent can be switched off on its own under the extension's card
 in **Settings → Extensions**.
 
+## App windows
+
+Any agent with a Terminay MCP install target can show an app window, because
+the window tools (`show_window`, `close_window`, `list_windows`) and the tools of
+connected MCP servers are ordinary tools of the Terminay MCP server. Nothing is
+agent-specific. What an agent must do is pass the terminal's environment to the
+MCP server it starts, since the calling terminal is identified by
+`TERMINAY_CONTROL_TOKEN`.
+
+| Agent | `show_window` | Connected server tool with a view | Checked |
+|---|---|---|---|
+| Claude Code | Works | Works | 2.1.289, 2026-10-04 |
+| Codex | Not checked | Not checked | The check could not run: the account was at its usage limit |
+
+The other install targets have not been checked. Rerun the check with
+`node scripts/app-windows-real-agents.mjs`.
+
 ## Where sessions appear
 
 A live session appears in a project's Agents panel when its working directory

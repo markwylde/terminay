@@ -3,6 +3,7 @@ import {
 	FEATURE_CAPABILITIES,
 	LANGUAGE_CAPABILITY,
 	type JsonValue,
+	protocolError,
 } from '@terminay/protocol';
 import {
 	type AgentOperationRegistry,
@@ -59,6 +60,13 @@ import {
 	McpApprovalService,
 	mcpPermissionsFromSettings,
 } from './mcpApprovals/index.js';
+import { AppWindowService } from './appWindows/index.js';
+import {
+	type ConnectedServerBackend,
+	ConnectedServerRegistry,
+	type ConnectedServerVault,
+} from './connectedServers/index.js';
+import { commandSubmissionInput } from './terminalService/commandSubmission.js';
 import type { AutomationRepository } from './automationService/repository.js';
 import type { AutomationRunLog } from './automationService/runLog.js';
 import type { AutomationRunController } from './automationService/types.js';
@@ -278,6 +286,19 @@ export interface ServerCoreCompositionOptions
 	 * that serves the MCP control socket asks for it; its policy is read from
 	 * `settings` when present. */
 	readonly mcpApprovals?: boolean;
+	/** Compose server-owned app windows (ADR-0037). Needs `mcpApprovals`, whose
+	 * Window Messages policy gates what a view types into its terminal. */
+	readonly appWindows?: {
+		/** The display title of a terminal, for an approval prompt. */
+		readonly terminalTitle?: (terminalSessionId: string) => string | undefined;
+	};
+	/** Compose the registry of user-connected MCP servers (ADR-0037). The host
+	 * that serves MCP supplies where the list is kept and the vault that holds
+	 * its credentials. */
+	readonly connectedServers?: {
+		readonly backend: ConnectedServerBackend;
+		readonly vault: ConnectedServerVault;
+	};
 	/** Optional project-scoped filesystem watch and folder-size authority. */
 	readonly fileObservations?: ServerFileObservationAdapter;
 	/**
@@ -375,6 +396,10 @@ export interface ServerCoreComposition {
 	readonly automationMcp?: AutomationMcpOperations;
 	/** Pending MCP approvals and session grants, when composed. */
 	readonly mcpApprovals?: McpApprovalService;
+	/** Server-owned app windows, when composed. */
+	readonly appWindows?: AppWindowService;
+	/** The user's connected MCP servers, when composed. */
+	readonly connectedServers?: ConnectedServerRegistry;
 	/** The composed run executor, when no host `controller` was supplied. */
 	readonly automationExecutor?: AutomationExecutor;
 	/** Audit trail of automation definition changes and runs. */
@@ -685,6 +710,89 @@ export function createServerCoreComposition(
 					mcpApprovals.setPolicies(mcpPermissionsFromSettings(state.settings)),
 				);
 	// --- end MCP permission approvals ---
+	// --- app windows (ADR-0037) ---
+	const appWindows =
+		options.appWindows === undefined || mcpApprovals === undefined
+			? undefined
+			: new AppWindowService({
+					eventJournal,
+					// Resolved at request time: the terminal registry is composed below.
+					// The lease belongs to one attachment, made on one connection. A
+					// second connection that only names the same client is not the
+					// controller: a client id is what a client says it is.
+					isPresentationHolder: (window, context) => {
+						const holder = terminalOperations.presentationHolder({
+							projectId: window.projectId,
+							sessionId: window.terminalSessionId,
+						});
+						return (
+							holder !== undefined &&
+							holder.clientId === context.clientId &&
+							(holder.connectionId === undefined ||
+								holder.connectionId === context.connectionId)
+						);
+					},
+					presentationHolder: (window) =>
+						terminalOperations.presentationHolder({
+							projectId: window.projectId,
+							sessionId: window.terminalSessionId,
+						})?.clientId,
+					deliverMessage: async (window, text, signal) => {
+						const outcome = await mcpApprovals.authorize({
+							terminalSessionId: window.terminalSessionId,
+							projectId: window.projectId,
+							operation: 'window_message',
+							group: 'windowMessages',
+							agent: `The window "${window.title}"`,
+							terminalTitle:
+								options.appWindows?.terminalTitle?.(window.terminalSessionId) ??
+								'this terminal',
+							summary: 'type a message into the terminal and send it',
+							details: [{ label: 'Message', value: text, code: true }],
+							signal,
+						});
+						if (!outcome.ok)
+							throw protocolError('forbidden', outcome.error.message);
+						const authorization = {
+							serverId: options.serverId,
+							projectId: window.projectId,
+							sessionId: window.terminalSessionId,
+							scope: 'write',
+						} as const;
+						const bracketed = await terminal.bracketedPasteMode(
+							window.terminalSessionId,
+							authorization,
+						);
+						await terminal.input(
+							window.terminalSessionId,
+							// Without bracketed paste every line break would submit a line
+							// of its own; a window message is submitted once.
+							commandSubmissionInput(
+								// A tab is a keystroke there too: a plain shell completes on it.
+								bracketed
+									? text
+									: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
+								bracketed,
+							),
+							authorization,
+						);
+					},
+				});
+	const removeAppWindowExitObserver =
+		appWindows === undefined
+			? undefined
+			: terminal.onEvent((event) => {
+					if (event.type === 'exit') appWindows.endSession(event.sessionId);
+				});
+	const connectedServers =
+		options.connectedServers === undefined
+			? undefined
+			: new ConnectedServerRegistry({
+					backend: options.connectedServers.backend,
+					vault: options.connectedServers.vault,
+					eventJournal,
+				});
+	// --- end app windows ---
 	// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
 	// Both consume the run controller only through the `automations.controller`
 	// injection point, resolved at fire time.
@@ -1026,7 +1134,13 @@ export function createServerCoreComposition(
 							macroOperations?.operations ?? {},
 							automationOperations?.operations ?? {},
 						),
-						mcpApprovals?.operations() ?? {},
+						mergeOperationRegistries(
+							mcpApprovals?.operations() ?? {},
+							mergeOperationRegistries(
+								appWindows?.operations() ?? {},
+								connectedServers?.operations() ?? {},
+							),
+						),
 					),
 				),
 				workspaceOperations?.operations ?? {},
@@ -1065,6 +1179,7 @@ export function createServerCoreComposition(
 		terminalOperations.closeConnection(connectionId);
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
+		appWindows?.closeConnection(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};
 	const coreOptions: ServerCoreOptions = {
@@ -1300,6 +1415,8 @@ export function createServerCoreComposition(
 			await attempt(() => {
 				removeMcpPolicyObserver?.();
 				mcpApprovals?.revokeAll();
+				removeAppWindowExitObserver?.();
+				appWindows?.endAll();
 			});
 			lifecycle = 'stopped';
 			if (failures.length > 0)
@@ -1333,6 +1450,8 @@ export function createServerCoreComposition(
 		...(automationExecutor === undefined ? {} : { automationExecutor }),
 		...(automationMcp === undefined ? {} : { automationMcp }),
 		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
+		...(appWindows === undefined ? {} : { appWindows }),
+		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),
 		...(automationScheduler === undefined ? {} : { automationScheduler }),
 		...(automationTriggers === undefined ? {} : { automationTriggers }),
@@ -1595,6 +1714,9 @@ function uniqueCapabilities(
 				: [FEATURE_CAPABILITIES.automations]),
 			...(options.mcpApprovals === true
 				? [FEATURE_CAPABILITIES.mcpApprovals]
+				: []),
+			...(options.appWindows !== undefined && options.mcpApprovals === true
+				? [FEATURE_CAPABILITIES.appWindows, FEATURE_CAPABILITIES.appWindowMirror]
 				: []),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),

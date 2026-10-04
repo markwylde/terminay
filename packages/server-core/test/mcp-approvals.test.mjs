@@ -46,8 +46,15 @@ test("defaults keep terminal tools frictionless and ask before managing automati
     terminalsManage: "allow",
     automationsRead: "allow",
     automationsManage: "ask",
+    appWindows: "allow",
+    connectedServerTools: "allow",
+    windowMessages: "allow",
   });
   assert.deepEqual({ ...mcpPermissionsFromSettings({ terminayMcp: { enabled: true } }) }, { ...DEFAULT_MCP_PERMISSIONS });
+  assert.deepEqual(
+    { ...mcpPermissionsFromSettings({ terminayMcp: { permissions: { appWindows: "ask", connectedServerTools: "deny", windowMessages: "ask" } } }) },
+    { ...DEFAULT_MCP_PERMISSIONS, appWindows: "ask", connectedServerTools: "deny", windowMessages: "ask" },
+  );
   assert.deepEqual(
     { ...mcpPermissionsFromSettings({ terminayMcp: { permissions: { terminalsManage: "deny", automationsManage: "sometimes" } } }) },
     { ...DEFAULT_MCP_PERMISSIONS, terminalsManage: "deny" },

@@ -19,7 +19,20 @@ import {
 	parseStopAutomationRun,
 	parseUpdateAutomation,
 } from './automationTools.js';
-import { ControlEndpointError } from './controlEndpoint.js';
+import {
+	type AppWindowControlAdapter,
+	isAppWindowParamFailure,
+	parseCallConnectedTool,
+	parseCloseWindow,
+	parseListConnectedTools,
+	parseShowWindow,
+} from './appWindowTools.js';
+import {
+	CONTROL_LARGE_FRAME_OPERATIONS,
+	CONTROL_MAX_LARGE_FRAME_BYTES,
+	ControlEndpointError,
+	MAX_MODEL_CONTEXT_BYTES,
+} from './controlEndpoint.js';
 
 export interface ServerControlHandlers {
 	readonly getMcpCapabilities?: (
@@ -140,6 +153,31 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly showWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly listWindows?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly listConnectedTools?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly callConnectedTool?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 }
 
 /**
@@ -196,6 +234,13 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	set_automation_enabled: 'automationsManage',
 	run_automation: 'automationsManage',
 	stop_automation_run: 'automationsManage',
+	show_window: 'appWindows',
+	close_window: 'appWindows',
+	list_windows: 'appWindows',
+	// Listing never prompts: a tool the policy refuses stays listed and
+	// refuses when called.
+	list_connected_tools: undefined,
+	call_connected_tool: 'connectedServerTools',
 });
 
 /** Typed parameter contracts for the server-owned MCP operation boundary. */
@@ -353,6 +398,14 @@ export interface TerminalControlAdapterOptions {
 	readonly adapter: TerminalControlAdapter;
 	/** Host binding for the automation tools; absent hosts report them unsupported. */
 	readonly automations?: AutomationControlAdapter;
+	/** Host binding for the app-window and connected-server tools. */
+	readonly appWindows?: AppWindowControlAdapter;
+	/** Model context the calling terminal's views left for the next result. */
+	readonly takeModelContext?: (
+		context: ControlRequestContext,
+		/** The most bytes of notes to take; what does not fit is left for later. */
+		maxBytes: number,
+	) => readonly { readonly title: string; readonly text: string }[];
 	readonly permissions?: ControlPermissionGate;
 	readonly operationScopes?: Partial<Record<ControlOperation, ControlScope>>;
 	readonly maxParamsBytes?: number;
@@ -387,6 +440,11 @@ const DEFAULT_SCOPES: Readonly<
 	set_automation_enabled: 'write',
 	run_automation: 'write',
 	stop_automation_run: 'write',
+	show_window: 'write',
+	close_window: 'write',
+	list_windows: 'read',
+	list_connected_tools: 'read',
+	call_connected_tool: 'write',
 });
 
 const HANDLER_BY_OPERATION: Readonly<
@@ -416,6 +474,11 @@ const HANDLER_BY_OPERATION: Readonly<
 	set_automation_enabled: 'setAutomationEnabled',
 	run_automation: 'runAutomation',
 	stop_automation_run: 'stopAutomationRun',
+	show_window: 'showWindow',
+	close_window: 'closeWindow',
+	list_windows: 'listWindows',
+	list_connected_tools: 'listConnectedTools',
+	call_connected_tool: 'callConnectedTool',
 });
 
 /** Build the server-owned dispatcher consumed by the local socket. It never
@@ -451,7 +514,12 @@ export function createServerControlDispatcher(
 				},
 			};
 		}
-		if (Buffer.byteLength(encodedParams, 'utf8') > maxParamsBytes) {
+		if (
+			Buffer.byteLength(encodedParams, 'utf8') >
+			(CONTROL_LARGE_FRAME_OPERATIONS.has(request.op)
+				? Math.max(maxParamsBytes, CONTROL_MAX_LARGE_FRAME_BYTES)
+				: maxParamsBytes)
+		) {
 			return {
 				ok: false,
 				error: {
@@ -765,8 +833,60 @@ export function createTerminalControlAdapter(
 								: automations.stopAutomationRun(parsed, context, signal);
 						}),
 				};
+	const appWindows = options.appWindows;
+	const permissions = options.permissions;
+	const appWindowHandlers: Partial<ServerControlHandlers> =
+		appWindows === undefined
+			? {}
+			: {
+					showWindow: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseShowWindow(params);
+							return isAppWindowParamFailure(parsed)
+								? parsed
+								: appWindows.showWindow(parsed, context, signal);
+						}),
+					closeWindow: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseCloseWindow(params);
+							return isAppWindowParamFailure(parsed)
+								? parsed
+								: appWindows.closeWindow(parsed, context, signal);
+						}),
+					listWindows: (_params, context, signal) =>
+						invoke(signal, () => appWindows.listWindows(context, signal)),
+					listConnectedTools: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseListConnectedTools(params);
+							return isAppWindowParamFailure(parsed)
+								? parsed
+								: appWindows.listConnectedTools(context, signal, parsed.after);
+						}),
+					callConnectedTool: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseCallConnectedTool(params);
+							if (isAppWindowParamFailure(parsed)) return parsed;
+							// The tool has passed Connected Server Tools. Showing its view
+							// is a second question, asked of App Windows; a refusal there
+							// leaves the tool to run without one.
+							const mayShowWindow = async (): Promise<boolean> =>
+								permissions === undefined ||
+								(await permissions.authorize({
+									op: 'call_connected_tool',
+									group: 'appWindows',
+									params,
+									context,
+								})) === undefined;
+							return appWindows.callConnectedTool(
+								parsed,
+								context,
+								signal,
+								mayShowWindow,
+							);
+						}),
+				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
-		handlers: { ...handlers, ...automationHandlers },
+		handlers: { ...handlers, ...automationHandlers, ...appWindowHandlers },
 		...(options.permissions === undefined
 			? {}
 			: { permissions: options.permissions }),
@@ -777,7 +897,33 @@ export function createTerminalControlAdapter(
 			? {}
 			: { maxParamsBytes: options.maxParamsBytes }),
 	};
-	return createServerControlDispatcher(dispatcherOptions);
+	const dispatch = createServerControlDispatcher(dispatcherOptions);
+	const takeModelContext = options.takeModelContext;
+	if (takeModelContext === undefined) return dispatch;
+	// Whatever a view asked the model to know rides on the next successful
+	// result from its terminal, once.
+	return async (request, context) => {
+		const outcome = await dispatch(request, context);
+		if (isControlFailure(outcome)) return outcome;
+		// Listing the connected tools is the adapter's own housekeeping: its
+		// answer never reaches the model, so context taken here would be lost.
+		if (request.op === 'list_connected_tools') return outcome;
+		// The adapter accepts a bounded amount, so only as many whole notes are
+		// taken as fit. The rest stay with their windows for the next result.
+		const notes = takeModelContext(context, MAX_MODEL_CONTEXT_BYTES - 1024);
+		if (notes.length === 0) return outcome;
+		const result =
+			isRecord(outcome) && outcome.ok === true && 'result' in outcome
+				? outcome.result
+				: outcome;
+		return {
+			ok: true,
+			result,
+			modelContext: notes
+				.map((note) => `Context from the open window "${note.title}":\n${note.text}`)
+				.join('\n\n'),
+		};
+	};
 }
 
 async function invokeAdapter<T>(
