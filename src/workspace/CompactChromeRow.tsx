@@ -37,7 +37,6 @@ export type CompactChromeRowProps = Readonly<{
 	connection: CompactConnectionPresentation;
 	connectionButtonRef?: RefObject<HTMLButtonElement | null>;
 	/** False on Home, where the command acts on no project. */
-	isCommandBarAvailable: boolean;
 	isExplorerOpen: boolean;
 	isHomeSelected: boolean;
 	isSwitcherOpen: boolean;
@@ -59,7 +58,6 @@ export function CompactChromeRow({
 	breadcrumbButtonRef,
 	connection,
 	connectionButtonRef,
-	isCommandBarAvailable,
 	isExplorerOpen,
 	isHomeSelected,
 	isSwitcherOpen,
@@ -114,7 +112,6 @@ export function CompactChromeRow({
 				type="button"
 				className="compact-chrome__icon"
 				onClick={onOpenCommandBar}
-				disabled={!isCommandBarAvailable}
 				aria-label="Open command bar"
 				title="Open command bar"
 				data-compact-command-bar="true"

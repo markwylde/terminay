@@ -14,7 +14,12 @@ const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
 const tabsSection = (page: Page) =>
 	page.locator('[data-terminay-home-section-tab="tabs"]');
-const dashboard = (page: Page) => page.locator('[data-terminay-dashboard]');
+// Home stays mounted behind a project once it has been shown, so the dashboard
+// "is there" only while Home is the selected view.
+const dashboard = (page: Page) =>
+	page.locator(
+		'[data-terminay-home-active="true"] [data-terminay-dashboard]',
+	);
 const projectRow = (page: Page, projectId: string) =>
 	page.locator(`[data-terminay-dashboard-project="${projectId}"]`);
 const panelRows = (page: Page) => page.locator('[data-terminay-dashboard-panel]');
@@ -172,10 +177,11 @@ test.describe('workspace dashboard', () => {
 
 		// The title cell truncates rather than growing the row.
 		const title = mainWindow.locator('.workspace-dashboard__title').first();
-		const overflows = await title.evaluate(
-			(element) => element.scrollWidth > element.clientWidth,
-		);
-		expect(overflows).toBe(true);
+		await expect
+			.poll(() =>
+				title.evaluate((element) => element.scrollWidth > element.clientWidth),
+			)
+			.toBe(true);
 	});
 
 	test('activating a row lands on that project and panel', async ({

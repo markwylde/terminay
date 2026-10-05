@@ -11,7 +11,6 @@ import {
 } from '@terminay/client-core';
 import type { DockviewApi } from 'dockview';
 import { DockviewReact } from 'dockview';
-import { AnimatePresence, motion } from 'framer-motion';
 import {
 	CircleStop,
 	Eraser,
@@ -31,11 +30,11 @@ import {
 	PanelBottom,
 	RefreshCw,
 	Trash2,
-	Search,
 	Settings,
 	Sidebar,
 	Sparkles,
 	Terminal,
+	Workflow,
 	X,
 } from 'lucide-react';
 import {
@@ -290,15 +289,15 @@ import { useMacroLauncherController } from './workspace/useMacroLauncherControll
 import { useMacroRunController } from './workspace/useMacroRunController';
 import { useProjectCollection } from './workspace/useProjectCollection';
 import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
-import {
-	AutomationsSection,
-	type AutomationsFocusRequest,
-	type AutomationsSectionServer,
-} from './workspace/automations/AutomationsSection';
+import type {
+	AutomationsData,
+	AutomationsSectionServer,
+} from './workspace/automations/AutomationPanels';
 import {
 	describeTrigger as describeAutomationTrigger,
 	nextRunAt as nextAutomationRunAt,
 	overviewOutcome as automationOverviewOutcome,
+	selectAutomationServer,
 } from './workspace/automations/automationsModel';
 import { MissedRunsNotice } from './workspace/automations/MissedRunsNotice';
 import {
@@ -321,18 +320,27 @@ import {
 	HomeOverview,
 	type HomeOverviewAutomationTarget,
 } from './workspace/HomeOverview';
-import { HomeSearch } from './workspace/HomeSearch';
-import { HomeView } from './workspace/HomeView';
-import type {
-	HomeSearchAutomation,
-	HomeSearchResult,
+import {
+	HomeWorkspace,
+	type HomeWorkspaceHandle,
+} from './workspace/HomeWorkspace';
+import {
+	type CommandBarItem,
+	CommandBarDialog,
+	commandBarPlaceItems,
+	filterCommandBarItems,
+	useCommandBarNavigation,
+	ViewCommandBar,
+} from './workspace/CommandBar';
+import { buildCrossServerDashboardGroups } from './workspace/crossServerRows';
+import {
+	type HomeSearchAutomation,
+	type HomeSearchResult,
+	searchHome,
 } from './workspace/homeSearchModel';
 import { buildHomeOverview } from './workspace/homeOverviewModel';
-import type { HomeSection } from './workspace/homeSection';
 import {
-	recallHomeSection,
 	recallHomeSidebarVisible,
-	rememberHomeSection,
 	rememberHomeSidebarVisible,
 } from './workspace/localViewState';
 import {
@@ -523,24 +531,6 @@ type OpenFileOptions = {
 	presentation?: 'file-viewer' | 'documentation';
 };
 
-type MacroLauncherGroup = 'Terminal' | 'Workspace' | 'Macros';
-
-type MacroLauncherItem = {
-	description: string;
-	group: MacroLauncherGroup;
-	icon: ReactNode;
-	id: string;
-	onSelect: () => void;
-	searchText: string;
-	shortcutLabel?: string;
-	title: string;
-};
-
-type MacroLauncherGroupedItem = {
-	index: number;
-	item: MacroLauncherItem;
-};
-
 type ProjectWorkspaceHandle = {
 	acceptMovedTerminal: (terminal: MovedTerminalTab) => boolean;
 	acceptServerTerminal: (
@@ -582,6 +572,8 @@ type ProjectWorkspaceProps = {
 	macros: MacroDefinition[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
+	/** The places the Command Bar offers for what has been typed. */
+	searchPlaces: (query: string) => readonly CommandBarItem[];
 	/** Toggles the device-local status bar; a window-wide preference. */
 	onToggleStatusBar: () => void;
 	isStatusBarVisible: boolean;
@@ -677,69 +669,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function isAgentAttentionState(state: AgentState): boolean {
 	return state === 'waiting' || state === 'blocked';
-}
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function getCommandSearchScore(
-	item: {
-		title: string;
-		description: string;
-		searchText: string;
-	},
-	query: string,
-): number {
-	const normalizedQuery = query.trim().toLowerCase();
-	if (!normalizedQuery) {
-		return 0;
-	}
-
-	const title = item.title.toLowerCase();
-	const description = item.description.toLowerCase();
-	const searchText = item.searchText.toLowerCase();
-	const boundaryQueryPattern = new RegExp(
-		`\\b${escapeRegExp(normalizedQuery)}`,
-	);
-	const queryWords = normalizedQuery.split(/\s+/).filter(Boolean);
-	const titleWords = title.split(/[^a-z0-9]+/).filter(Boolean);
-	let score = 0;
-
-	if (title === normalizedQuery) {
-		score += 1_000;
-	}
-	if (title.startsWith(normalizedQuery)) {
-		score += 700;
-	}
-	if (boundaryQueryPattern.test(title)) {
-		score += 500;
-	}
-	if (title.includes(normalizedQuery)) {
-		score += 300;
-	}
-	if (
-		queryWords.length > 0 &&
-		queryWords.every((word) =>
-			titleWords.some((titleWord) => titleWord.startsWith(word)),
-		)
-	) {
-		score += 250;
-	}
-	if (boundaryQueryPattern.test(description)) {
-		score += 120;
-	}
-	if (description.includes(normalizedQuery)) {
-		score += 80;
-	}
-	if (boundaryQueryPattern.test(searchText)) {
-		score += 40;
-	}
-	if (searchText.includes(normalizedQuery)) {
-		score += 20;
-	}
-
-	return score;
 }
 
 function ModalBackdrop({
@@ -1300,6 +1229,7 @@ const ProjectWorkspace = forwardRef<
 			onPopoutProject,
 			onTerminalTabDrag,
 			onShowDashboard,
+			searchPlaces,
 			onToggleStatusBar,
 			isStatusBarVisible,
 			statusBarSlot,
@@ -3432,8 +3362,7 @@ const ProjectWorkspace = forwardRef<
 		);
 
 		const filteredMacros = useMemo(() => {
-			const normalizedQuery = macroQuery.trim().toLowerCase();
-			const commandItems: MacroLauncherItem[] = [
+			const commandItems: CommandBarItem[] = [
 				{
 					group: 'Terminal',
 					icon: <Terminal size={18} strokeWidth={2.1} />,
@@ -3674,7 +3603,7 @@ const ProjectWorkspace = forwardRef<
 					},
 				},
 				...macros.map(
-					(macro): MacroLauncherItem => ({
+					(macro): CommandBarItem => ({
 						group: 'Macros',
 						icon: <Play size={18} strokeWidth={2.1} />,
 						id: macro.id,
@@ -3700,29 +3629,19 @@ const ProjectWorkspace = forwardRef<
 				),
 			];
 
-			if (!normalizedQuery) {
-				return commandItems;
-			}
-
-			return commandItems
-				.map((macro, index) => ({
-					macro,
-					index,
-					score: getCommandSearchScore(macro, normalizedQuery),
-				}))
-				.filter(({ score }) => score > 0)
-				.sort((left, right) => {
-					if (left.macro.group === 'Macros' && right.macro.group === 'Macros') {
-						return left.index - right.index;
-					}
-
-					if (right.score !== left.score) {
-						return right.score - left.score;
-					}
-
-					return left.index - right.index;
-				})
-				.map(({ macro }) => macro);
+			// Places come after commands and macros, and only once something is
+			// typed. Choosing one leaves the Command Bar.
+			return [
+				...filterCommandBarItems(commandItems, macroQuery),
+				...searchPlaces(macroQuery).map((place) => ({
+					...place,
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						place.onSelect();
+					},
+				})),
+			];
 		}, [
 			addTerminal,
 			auxiliaryRoutes,
@@ -3742,27 +3661,10 @@ const ProjectWorkspace = forwardRef<
 			onToggleStatusBar,
 			isStatusBarVisible,
 			openProfileChooser,
+			searchPlaces,
 			startDictation,
 			toggleFileExplorerSidebar,
 		]);
-		const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
-		const macroLauncherGroups = useMemo(() => {
-			const groups = new Map<MacroLauncherGroup, MacroLauncherGroupedItem[]>();
-
-			filteredMacros.forEach((item, index) => {
-				const groupItems = groups.get(item.group) ?? [];
-				groupItems.push({ index, item });
-				groups.set(item.group, groupItems);
-			});
-
-			return (['Terminal', 'Workspace', 'Macros'] as const)
-				.map((group) => ({
-					group,
-					items: groups.get(group) ?? [],
-				}))
-				.filter(({ items }) => items.length > 0);
-		}, [filteredMacros]);
-
 		const requestClosePanel = useCallback(
 			async (panelId: string) => {
 				window.terminayTest?.reportAppCommandStage(`close:${panelId}:started`);
@@ -4521,112 +4423,16 @@ const ProjectWorkspace = forwardRef<
 			};
 		}, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen]);
 
-		useEffect(() => {
-			if (!isMacroLauncherOpen) {
-				return;
-			}
-
-			window.requestAnimationFrame(() => {
-				macroLauncherInputRef.current?.focus();
-				macroLauncherInputRef.current?.select();
-			});
-		}, [isMacroLauncherOpen]);
-
-		useEffect(() => {
-			if (filteredMacros.length === 0) {
-				setSelectedMacroIndex(0);
-				return;
-			}
-
-			setSelectedMacroIndex((current) =>
-				Math.min(current, filteredMacros.length - 1),
-			);
-		}, [filteredMacros.length]);
-
-		useEffect(() => {
-			if (!isMacroLauncherOpen) {
-				return;
-			}
-
-			const onKeyDown = (event: KeyboardEvent) => {
-				if (event.key === 'Escape') {
-					event.preventDefault();
-					closeMacroLauncher();
-					return;
-				}
-
-				if (event.key === 'ArrowDown') {
-					event.preventDefault();
-					setSelectedMacroIndex((current) =>
-						filteredMacros.length === 0
-							? 0
-							: (current + 1) % filteredMacros.length,
-					);
-					return;
-				}
-
-				if (event.key === 'ArrowUp') {
-					event.preventDefault();
-					setSelectedMacroIndex((current) =>
-						filteredMacros.length === 0
-							? 0
-							: (current - 1 + filteredMacros.length) % filteredMacros.length,
-					);
-					return;
-				}
-
-				if (event.key === 'Enter') {
-					event.preventDefault();
-					const macro = filteredMacros[selectedMacroIndex];
-					if (macro) {
-						macro.onSelect();
-					}
-				}
-			};
-
-			window.addEventListener('keydown', onKeyDown);
-			return () => {
-				window.removeEventListener('keydown', onKeyDown);
-			};
-		}, [
-			closeMacroLauncher,
-			filteredMacros,
-			isMacroLauncherOpen,
-			selectedMacroIndex,
-		]);
-
-		useEffect(() => {
-			if (!isMacroLauncherOpen) {
-				return;
-			}
-
-			const list = macroLauncherListRef.current;
-			const activeItem = activeMacroId
-				? macroLauncherItemRefs.current.get(activeMacroId)
-				: null;
-			if (!list || !activeItem) {
-				return;
-			}
-
-			const animationFrameId = window.requestAnimationFrame(() => {
-				const listRect = list.getBoundingClientRect();
-				const activeRect = activeItem.getBoundingClientRect();
-				const padding = 12;
-				if (activeRect.top < listRect.top + padding) {
-					list.scrollTop = Math.max(
-						0,
-						list.scrollTop + activeRect.top - listRect.top - padding,
-					);
-				} else if (activeRect.bottom > listRect.bottom - padding) {
-					list.scrollTop =
-						list.scrollTop + activeRect.bottom - listRect.bottom + padding;
-				}
-			});
-
-			return () => {
-				window.cancelAnimationFrame(animationFrameId);
-			};
-		}, [activeMacroId, isMacroLauncherOpen]);
+		useCommandBarNavigation({
+			inputRef: macroLauncherInputRef,
+			isOpen: isMacroLauncherOpen,
+			itemRefs: macroLauncherItemRefs,
+			items: filteredMacros,
+			listRef: macroLauncherListRef,
+			onClose: closeMacroLauncher,
+			selectedIndex: selectedMacroIndex,
+			setSelectedIndex: setSelectedMacroIndex,
+		});
 
 		useEffect(() => {
 			if (!macroToRun) {
@@ -5172,120 +4978,18 @@ const ProjectWorkspace = forwardRef<
 						</div>
 					</div>
 				) : null}
-				<AnimatePresence>
-					{isMacroLauncherOpen && (
-						<div
-							className="macro-launcher-overlay"
-							onClick={closeMacroLauncher}
-						>
-							<motion.div
-								initial={{ opacity: 0, scale: 0.98, y: -20 }}
-								animate={{ opacity: 1, scale: 1, y: 0 }}
-								exit={{ opacity: 0, scale: 0.98, y: -10 }}
-								transition={{ duration: 0.15, ease: 'easeOut' }}
-								className="macro-launcher"
-								role="dialog"
-								aria-modal="true"
-								aria-label="Command bar"
-								onClick={(e) => e.stopPropagation()}
-							>
-								<div className="macro-launcher-search-container">
-									<div className="macro-launcher-search-icon">
-										<Search size={20} strokeWidth={2.5} aria-hidden="true" />
-									</div>
-									<input
-										ref={macroLauncherInputRef}
-										type="search"
-										className="macro-launcher-input"
-										value={macroQuery}
-										onChange={(event) => {
-											setMacroQuery(event.target.value);
-											setSelectedMacroIndex(0);
-										}}
-										aria-label="Search commands"
-										placeholder="Search commands..."
-										spellCheck={false}
-										autoComplete="off"
-									/>
-									<div className="macro-launcher-shortcut">
-										<span>ESC</span>
-									</div>
-								</div>
-
-								<div ref={macroLauncherListRef} className="macro-launcher-list">
-									{filteredMacros.length === 0 ? (
-										<div className="macro-launcher-empty">
-											<p>No commands match your search.</p>
-										</div>
-									) : (
-										macroLauncherGroups.map(({ group, items }) => (
-											<section className="macro-launcher-group" key={group}>
-												<div className="macro-launcher-group-label">
-													{group}
-												</div>
-												<div className="macro-launcher-group-items">
-													{items.map(({ item: macro, index }) => (
-														<button
-															key={macro.id}
-															type="button"
-															ref={(element) => {
-																if (element) {
-																	macroLauncherItemRefs.current.set(
-																		macro.id,
-																		element,
-																	);
-																	return;
-																}
-
-																macroLauncherItemRefs.current.delete(macro.id);
-															}}
-															className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
-															onMouseEnter={() => setSelectedMacroIndex(index)}
-															onClick={() => macro.onSelect()}
-														>
-															<span className="macro-launcher-item-icon">
-																{macro.icon}
-															</span>
-															<div className="macro-launcher-item-content">
-																<span className="macro-launcher-item-title">
-																	{macro.title}
-																</span>
-																<span className="macro-launcher-item-description">
-																	{macro.description}
-																</span>
-															</div>
-															<div className="macro-launcher-item-actions">
-																{macro.shortcutLabel ? (
-																	<span className="macro-launcher-command-shortcut">
-																		{macro.shortcutLabel}
-																	</span>
-																) : null}
-																{index === selectedMacroIndex && (
-																	<div className="macro-launcher-item-hint">
-																		<span>⏎</span>
-																	</div>
-																)}
-															</div>
-														</button>
-													))}
-												</div>
-											</section>
-										))
-									)}
-								</div>
-
-								<div className="macro-launcher-footer">
-									<div className="macro-launcher-footer-hint">
-										<span className="macro-launcher-key">↑↓</span> to navigate
-									</div>
-									<div className="macro-launcher-footer-hint">
-										<span className="macro-launcher-key">⏎</span> to run
-									</div>
-								</div>
-							</motion.div>
-						</div>
-					)}
-				</AnimatePresence>
+				<CommandBarDialog
+					inputRef={macroLauncherInputRef}
+					isOpen={isMacroLauncherOpen}
+					itemRefs={macroLauncherItemRefs}
+					items={filteredMacros}
+					listRef={macroLauncherListRef}
+					onClose={closeMacroLauncher}
+					onQueryChange={setMacroQuery}
+					onSelectIndex={setSelectedMacroIndex}
+					query={macroQuery}
+					selectedIndex={selectedMacroIndex}
+				/>
 
 				{isTerminalSwitcherOpen ? (
 					<div
@@ -5852,14 +5556,34 @@ function App({
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
 	// Home's sidebar is this device's, and it is nobody's project: its
-	// visibility and section are kept apart from every project's sidebar, so
-	// toggling one never moves the other.
+	// visibility is kept apart from every project's sidebar, so toggling one
+	// never moves the other.
 	const [isHomeSidebarVisible, setIsHomeSidebarVisible] = useState(
 		recallHomeSidebarVisible,
 	);
-	const [homeSection, setHomeSectionState] = useState<HomeSection>(
-		recallHomeSection,
+	const homeRef = useRef<HomeWorkspaceHandle | null>(null);
+	// Home is mounted the first time it is shown and kept from then on, so a
+	// window that never visits Home never builds it. A tab asked for before
+	// that is opened as soon as Home exists.
+	const pendingHomeOpensRef = useRef<
+		Parameters<HomeWorkspaceHandle['open']>[0][]
+	>([]);
+	const openInHome = useCallback(
+		(target: Parameters<HomeWorkspaceHandle['open']>[0]) => {
+			if (homeRef.current === null) pendingHomeOpensRef.current.push(target);
+			else homeRef.current.open(target);
+		},
+		[],
 	);
+	const attachHome = useCallback((handle: HomeWorkspaceHandle | null) => {
+		homeRef.current = handle;
+		if (handle === null) return;
+		for (const target of pendingHomeOpensRef.current.splice(0))
+			handle.open(target);
+	}, []);
+	// The Command Bar as the workspace view draws it: with Home in front, or
+	// with no project in the window to draw it.
+	const [isViewCommandBarOpen, setIsViewCommandBarOpen] = useState(false);
 	const [homeSidebarWidth, setHomeSidebarWidth] = useState(
 		HOME_SIDEBAR_DEFAULT_WIDTH,
 	);
@@ -5870,10 +5594,6 @@ function App({
 	const toggleHomeSidebar = useCallback(() => {
 		setHomeSidebarVisibility(!isHomeSidebarVisible);
 	}, [isHomeSidebarVisible, setHomeSidebarVisibility]);
-	const selectHomeSection = useCallback((section: HomeSection) => {
-		setHomeSectionState(section);
-		rememberHomeSection(section);
-	}, []);
 	// Switching servers rebinds every workspace surface, so the project the
 	// person clicked is only reachable once this server's collection has it.
 	useEffect(() => {
@@ -6620,6 +6340,21 @@ function App({
 				toggleHomeSidebar();
 				return Promise.resolve();
 			}
+			// With Home in front, or no project to draw it, the Command Bar is the
+			// workspace view's own.
+			if (
+				command === 'open-command-bar' &&
+				(isHomeSelected || !workspaceRefs.current.get(activeProjectId))
+			) {
+				setIsViewCommandBarOpen(true);
+				return Promise.resolve();
+			}
+			// Closing the tab in front means Home's tab while Home is in front,
+			// never a panel of the project behind it.
+			if (command === 'close-active' && isHomeSelected) {
+				homeRef.current?.requestCloseActiveTab();
+				return Promise.resolve();
+			}
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
@@ -6925,17 +6660,49 @@ function App({
 			remoteStatus,
 		],
 	);
-	const [automationsFocus, setAutomationsFocus] =
-		useState<AutomationsFocusRequest>();
+	// Something elsewhere — an overview widget, the Command Bar, the missed-run
+	// notice — asking Home to show an automation, a run, or a new automation.
+	// It opens that tab, or brings it to the front, and shows Home.
 	const openAutomationsFromOverview = useCallback(
 		(target: HomeOverviewAutomationTarget) => {
-			setAutomationsFocus((previous) => ({
-				target,
-				nonce: (previous?.nonce ?? 0) + 1,
-			}));
-			selectHomeSection('automations');
+			selectHome();
+			if (target.kind !== 'create') {
+				openInHome(target);
+				return;
+			}
+			const serverId = selectAutomationServer(
+				automationSectionServers,
+				undefined,
+				currentServerId,
+			).selected?.serverId;
+			openInHome(
+				serverId === undefined ? { kind: 'list' } : { kind: 'new', serverId },
+			);
 		},
-		[selectHomeSection],
+		[automationSectionServers, currentServerId, openInHome, selectHome],
+	);
+	const openHomeSection = useCallback(
+		(section: 'home' | 'tabs' | 'automations') => {
+			selectHome();
+			openInHome({ kind: 'section', section });
+		},
+		[openInHome, selectHome],
+	);
+	const automationsData = useMemo<AutomationsData>(
+		() => ({
+			automations: serverAutomations,
+			now: automationClock,
+			servers: automationSectionServers,
+			...(currentServerId === undefined
+				? {}
+				: { workingServerId: currentServerId }),
+		}),
+		[
+			automationClock,
+			automationSectionServers,
+			currentServerId,
+			serverAutomations,
+		],
 	);
 	const homeSearchAutomations = useMemo<readonly HomeSearchAutomation[]>(
 		() =>
@@ -7195,7 +6962,7 @@ function App({
 		(result: HomeSearchResult) => {
 			switch (result.kind) {
 				case 'section':
-					selectHomeSection(result.section);
+					openHomeSection(result.section);
 					return;
 				case 'project':
 				case 'panel':
@@ -7217,8 +6984,53 @@ function App({
 			activateDashboardAgent,
 			activateDashboardRow,
 			openAutomationsFromOverview,
-			selectHomeSection,
+			openHomeSection,
 		],
+	);
+	const dashboardGroups = useMemo(
+		() => buildCrossServerDashboardGroups(dashboardSources),
+		[dashboardSources],
+	);
+	const placeServerLabels = useMemo(
+		() =>
+			new Map(
+				dashboardSources.map((source) => [
+					source.serverId,
+					source.serverLabel ?? source.serverId,
+				]),
+			),
+		[dashboardSources],
+	);
+	// The places the Command Bar offers for what has been typed: nothing until
+	// something is.
+	const searchPlaces = useCallback(
+		(query: string) =>
+			commandBarPlaceItems(
+				searchHome(dashboardGroups, homeSearchAutomations, query),
+				chooseHomeSearchResult,
+				placeServerLabels,
+			),
+		[
+			chooseHomeSearchResult,
+			dashboardGroups,
+			homeSearchAutomations,
+			placeServerLabels,
+		],
+	);
+	const closeViewCommandBar = useCallback(
+		() => setIsViewCommandBarOpen(false),
+		[],
+	);
+	const searchViewPlaces = useCallback(
+		(query: string) =>
+			searchPlaces(query).map((place) => ({
+				...place,
+				onSelect: () => {
+					setIsViewCommandBarOpen(false);
+					place.onSelect();
+				},
+			})),
+		[searchPlaces],
 	);
 
 	// The compact row's only route into the command set. It takes the same
@@ -7354,6 +7166,140 @@ function App({
 		};
 	}, [isActivityMenuOpen]);
 
+	const [hasShownHome, setHasShownHome] = useState(isHomeSelected);
+	if (isHomeSelected && !hasShownHome) setHasShownHome(true);
+	const renderHomeSection = useCallback(
+		(section: 'home' | 'tabs') =>
+			section === 'home' ? (
+				<HomeOverview
+					now={automationClock}
+					overview={homeOverview}
+					onOpenAutomations={openAutomationsFromOverview}
+					onOpenTabs={() => openHomeSection('tabs')}
+				/>
+			) : (
+				<WorkspaceDashboard
+					onActivate={activateDashboardRow}
+					onActivateAgent={activateDashboardAgent}
+					sources={dashboardSources}
+				/>
+			),
+		[
+			activateDashboardAgent,
+			activateDashboardRow,
+			automationClock,
+			dashboardSources,
+			homeOverview,
+			openAutomationsFromOverview,
+			openHomeSection,
+		],
+	);
+	// The commands that are the workspace view's own. None needs a project, so
+	// these are what the Command Bar lists with Home in front or with no
+	// project in the window.
+	const viewCommands = useMemo<readonly CommandBarItem[]>(() => {
+		const run = (work: () => void) => () => {
+			setIsViewCommandBarOpen(false);
+			work();
+		};
+		return [
+			{
+				group: 'Workspace',
+				icon: <FolderPlus size={18} strokeWidth={2.1} />,
+				id: 'new-project',
+				title: 'New project',
+				description: 'Open a new project in this window.',
+				searchText: `new project create open ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'new-project',
+					isMac,
+				),
+				onSelect: run(() => void createServerProject()),
+			},
+			{
+				group: 'Workspace',
+				icon: <Workflow size={18} strokeWidth={2.1} />,
+				id: 'new-automation',
+				title: 'New automation',
+				description: 'Run something on a schedule or when something happens.',
+				searchText: 'new automation create schedule trigger cron',
+				onSelect: run(() => openAutomationsFromOverview({ kind: 'create' })),
+			},
+			{
+				group: 'Workspace',
+				icon: <LayoutDashboard size={18} strokeWidth={2.1} />,
+				id: 'show-dashboard',
+				title: 'Show dashboard',
+				description: 'See every project and tab in this workspace at a glance.',
+				searchText: `show dashboard home overview projects tabs status at a glance ${getCommandShortcut(settings.keyboardShortcuts, 'show-dashboard')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'show-dashboard',
+					isMac,
+				),
+				onSelect: run(() => openHomeSection('tabs')),
+			},
+			{
+				group: 'Workspace',
+				icon: <Sidebar size={18} strokeWidth={2.1} />,
+				id: 'toggle-home-sidebar',
+				title: isHomeSidebarVisible ? 'Hide sidebar' : 'Show sidebar',
+				description: 'Show or hide the Home sidebar.',
+				searchText: `toggle sidebar show hide home sections ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'toggle-file-explorer-sidebar',
+					isMac,
+				),
+				onSelect: run(() => {
+					selectHome();
+					toggleHomeSidebar();
+				}),
+			},
+			{
+				group: 'Workspace',
+				icon: <PanelBottom size={18} strokeWidth={2.1} />,
+				id: 'toggle-status-bar',
+				title: isStatusBarVisible ? 'Hide status bar' : 'Show status bar',
+				description: 'Show or hide the status bar at the bottom of the window.',
+				searchText: `toggle status bar show hide ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-status-bar')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'toggle-status-bar',
+					isMac,
+				),
+				onSelect: run(toggleStatusBar),
+			},
+			{
+				group: 'Workspace',
+				icon: <Settings size={18} strokeWidth={2.1} />,
+				id: 'open-settings',
+				title: 'Open settings',
+				description: 'Change how Terminay looks and behaves.',
+				searchText: `open settings preferences ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'open-settings',
+					isMac,
+				),
+				onSelect: run(() => void auxiliaryRouteController.openSettings()),
+			},
+		];
+	}, [
+		auxiliaryRouteController,
+		createServerProject,
+		isHomeSidebarVisible,
+		isMac,
+		isStatusBarVisible,
+		openAutomationsFromOverview,
+		openHomeSection,
+		selectHome,
+		settings.keyboardShortcuts,
+		toggleHomeSidebar,
+		toggleStatusBar,
+	]);
+
 	// A project workspace owns the keyboard while it is on screen. When none is —
 	// the dashboard is showing, or this view holds no projects — the workspace
 	// view answers for the commands that are its own rather than a project's.
@@ -7374,7 +7320,12 @@ function App({
 			if (
 				command !== 'show-dashboard' &&
 				command !== 'toggle-status-bar' &&
-				!(isHomeSelected && command === 'toggle-file-explorer-sidebar')
+				command !== 'open-command-bar' &&
+				!(
+					isHomeSelected &&
+					(command === 'toggle-file-explorer-sidebar' ||
+						command === 'close-active')
+				)
 			)
 				return;
 			event.preventDefault();
@@ -7634,7 +7585,6 @@ function App({
 							tone: remoteButtonTone,
 						}}
 						connectionButtonRef={compactConnectionRef}
-						isCommandBarAvailable={!isHomeSelected && activeProject !== null}
 						isExplorerOpen={
 							isHomeSelected
 								? isHomeSidebarVisible
@@ -7932,49 +7882,32 @@ function App({
 					</div>
 				) : null}
 				<McpApprovalsContext.Provider value={serverMcpApprovals}>
-					{isHomeSelected ? (
-						<HomeView
-							band={
-								<HomeSearch
-									sources={dashboardSources}
-									automations={homeSearchAutomations}
-									onChoose={chooseHomeSearchResult}
-								/>
-							}
-							isSidebarVisible={isHomeSidebarVisible}
-							onDismissSidebar={() => setHomeSidebarVisibility(false)}
-							onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
-							onSelectSection={selectHomeSection}
-							onSidebarWidthCommit={setHomeSidebarWidth}
-							section={homeSection}
-							sidebarWidth={homeSidebarWidth}
-						>
-							{homeSection === 'home' ? (
-								<HomeOverview
-									now={automationClock}
-									overview={homeOverview}
-									onOpenAutomations={openAutomationsFromOverview}
-									onOpenTabs={() => selectHomeSection('tabs')}
-								/>
-							) : homeSection === 'tabs' ? (
-								<WorkspaceDashboard
-									onActivate={activateDashboardRow}
-									onActivateAgent={activateDashboardAgent}
-									sources={dashboardSources}
-								/>
-							) : (
-								<AutomationsSection
-									automations={serverAutomations}
-									now={automationClock}
-									servers={automationSectionServers}
-									workingServerId={currentServerId}
-									{...(automationsFocus === undefined
-										? {}
-										: { focus: automationsFocus })}
-								/>
-							)}
-						</HomeView>
+					{hasShownHome ? (
+					<HomeWorkspace
+						ref={attachHome}
+						automations={automationsData}
+						commandBarShortcutLabel={getCommandShortcutLabel(
+							settings.keyboardShortcuts,
+							'open-command-bar',
+							isMac,
+						)}
+						isActive={isHomeSelected}
+						isCompact={isCompactChrome}
+						isSidebarVisible={isHomeSidebarVisible}
+						onDismissSidebar={() => setHomeSidebarVisibility(false)}
+						onOpenCommandBar={() => setIsViewCommandBarOpen(true)}
+						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
+						onSidebarWidthCommit={setHomeSidebarWidth}
+						renderSection={renderHomeSection}
+						sidebarWidth={homeSidebarWidth}
+					/>
 					) : null}
+					<ViewCommandBar
+						commands={viewCommands}
+						isOpen={isViewCommandBarOpen}
+						onClose={closeViewCommandBar}
+						searchPlaces={searchViewPlaces}
+					/>
 					<MissedRunsNotice automations={serverAutomations} />
 					{projects.map((project) => (
 						<ProjectWorkspace
@@ -7995,6 +7928,7 @@ function App({
 							macros={macros}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
+							searchPlaces={searchPlaces}
 							onToggleStatusBar={toggleStatusBar}
 							isStatusBarVisible={isStatusBarVisible}
 							statusBarSlot={statusBarSlot}

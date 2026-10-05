@@ -661,6 +661,11 @@
 	min-width: 0;
 }
 
+/* The terminal's tab is its Home tab; the host inside draws no strip. */
+.home-automations__terminal-view .dv-tabs-and-actions-container {
+	display: none;
+}
+
 .automations-exited-terminal {
 	display: flex;
 	flex-direction: column;
