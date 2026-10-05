@@ -161,6 +161,18 @@ test("definitions are validated: cron, events, bounds, cooldown floor, and macro
   await invalid(command({ action: { kind: "runCommand", command: "   " } }), /action\.command/);
   await invalid(command({ action: { kind: "runCommand", command: "x", maxDurationSeconds: 0 } }), /maxDurationSeconds/);
   await invalid(command({ action: { kind: "shout" } }), /action\.kind/);
+  await invalid(command({ action: { kind: "promptAgent", command: "agent \"$PROMPT\"" } }), /action\.prompt/);
+  await invalid(command({ action: { kind: "promptAgent", command: "agent \"$PROMPT\"", prompt: " \n " } }), /action\.prompt/);
+  await invalid(command({ action: { kind: "promptAgent", command: "agent \"$PROMPT\"", prompt: "a\0b" } }), /action\.prompt/);
+  await invalid(command({ action: { kind: "promptAgent", command: "agent \"$PROMPT\"", prompt: "x".repeat(32_769) } }), /action\.prompt/);
+  await invalid(command({ action: { kind: "promptAgent", command: " ", prompt: "hello" } }), /action\.command/);
+  // A prompt is kept byte for byte, serves every trigger a command does, and may use no cooldown.
+  const prompt = "  Say hello.\r\n\nIt's \"quoted\" $(date)\n";
+  for (const [id, trigger] of [["prompt-schedule", { kind: "schedule", cron: "0 9 * * *" }], ["prompt-project", { kind: "event", event: "project.opened" }], ["prompt-agent", { kind: "event", event: "agent.finished" }]]) {
+    const prompted = await repository.upsert(command({ id, trigger, action: { kind: "promptAgent", command: "agent \"$PROMPT\"", prompt, cwd: "/tmp" }, settings: { cooldownSeconds: 0 } }));
+    assert.deepEqual(prompted.state.automations.at(-1).action, { kind: "promptAgent", command: "agent \"$PROMPT\"", prompt, cwd: "/tmp", maxDurationSeconds: 3600 });
+    assert.equal(prompted.state.automations.at(-1).settings.cooldownSeconds, 0);
+  }
   await invalid(command({ enabled: "yes" }), /enabled/);
   await invalid(command({ id: "../escape" }), /id/);
 

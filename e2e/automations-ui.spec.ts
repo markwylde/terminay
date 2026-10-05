@@ -137,18 +137,19 @@ test.describe('Automations section', () => {
 		await mainWindow.locator('[data-terminay-automation-new]').click();
 		await field(mainWindow, 'name').fill('Keep going');
 
-		// A schedule has no subject terminal: only "Run a command" is offered.
+		// A schedule has no subject terminal: only actions that launch their own terminal are offered.
 		const action = field(mainWindow, 'action');
-		await expect(action.locator('option')).toHaveText(['Run a command']);
+		await expect(action.locator('option')).toHaveText(['Run a command', 'Prompt an agent']);
 
 		await editor(mainWindow)
 			.locator('[data-terminay-automation-trigger-kind="event"]')
 			.check();
 		await field(mainWindow, 'event').selectOption('project.opened');
-		await expect(action.locator('option')).toHaveText(['Run a command']);
+		await expect(action.locator('option')).toHaveText(['Run a command', 'Prompt an agent']);
 		await field(mainWindow, 'event').selectOption('agent.needsInput');
 		await expect(action.locator('option')).toHaveText([
 			'Run a command',
+			'Prompt an agent',
 			'Run a Macro on the terminal',
 			'Write text into the terminal',
 		]);
@@ -335,6 +336,38 @@ test.describe('Automation runs', () => {
 		await expect(
 			mainWindow.locator(`[data-terminay-automation-run-detail="${runId}"]`),
 		).toBeVisible();
+	});
+
+	test('prompting an agent passes a multi-line prompt to the command untouched', async ({
+		mainWindow,
+	}) => {
+		const prompt = 'Say hello to the user.\nIt\'s "quoted" $(echo injected) `tick`';
+		await openAutomations(mainWindow);
+		await mainWindow.locator('[data-terminay-automation-new]').click();
+		await expect(editor(mainWindow)).toBeVisible();
+		await field(mainWindow, 'name').fill('Prompt once');
+		// A command has no prompt to fill in.
+		await expect(field(mainWindow, 'prompt')).toHaveCount(0);
+		await field(mainWindow, 'action').selectOption('promptAgent');
+		await field(mainWindow, 'command').fill('printf \'[%s]\\n\' "$PROMPT"');
+		await field(mainWindow, 'prompt').fill(prompt);
+		await mainWindow.locator('[data-terminay-automation-save]').click();
+		const saved = mainWindow.locator('[data-terminay-automation-detail]');
+		await expect(saved).toContainText('Prompt an agent');
+		await expect(
+			saved.locator('[data-terminay-automation-prompt]'),
+		).toHaveText(prompt);
+
+		await mainWindow.locator('[data-terminay-automation-run-now]').click();
+		const detail = mainWindow.locator('[data-terminay-automation-run-detail]');
+		await expect(
+			detail.locator('[data-terminay-automation-outcome]'),
+		).toHaveAttribute('data-terminay-automation-outcome', 'succeeded', {
+			timeout: 20_000,
+		});
+		await expect(
+			detail.locator('[data-terminay-automation-run-tail]'),
+		).toContainText(`[${prompt}]`);
 	});
 
 	test('runs can be deleted and pruned, the prune form remembers its days, and keep history saves', async ({

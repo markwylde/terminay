@@ -253,6 +253,42 @@ test("run now is refused until an executor is composed", async () => {
   }
 });
 
+test("a prompt-agent automation reaches the client whole and runs by hand without a subject", async () => {
+  const started = [];
+  let runLog;
+  const controller = {
+    async start(request) {
+      started.push(request);
+      return runLog.record({
+        runId: "run-prompt",
+        automationId: request.automation.id,
+        triggerKind: request.automation.trigger.kind,
+        firedAt: request.firedAt,
+        startedBy: request.startedBy,
+        status: "running",
+        startedAt: request.firedAt,
+        suppressedEvents: 0,
+      });
+    },
+    async stop() { return true; },
+  };
+  const fixture = await setup(controller);
+  runLog = fixture.runLog;
+  try {
+    const { automations } = await fixture.connect("writer");
+    const prompt = "Say hello.\n\nIt's \"quoted\" $(date)\n";
+    const action = { kind: "promptAgent", command: 'agent "$PROMPT"', prompt };
+    const saved = await automations.upsert({ id: "prompted", name: "Prompted", trigger: { kind: "event", event: "agent.finished" }, action });
+    assert.deepEqual(saved.automations[0].action, { ...action, maxDurationSeconds: 3600 });
+    // It launches its own terminal, so a terminal event needs no subject chosen.
+    const entry = await automations.run("prompted");
+    assert.equal(entry.startedBy, "user");
+    assert.equal(started[0].automation.action.prompt, prompt);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("runs can be deleted and pruned, the prune choice is shared, and removals publish ids only", async () => {
   const fixture = await setup();
   const day = 86_400_000;
