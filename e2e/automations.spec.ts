@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { frontHomeTab as front } from './support/home-tabs';
 import { submitTerminalCommand } from './support/terminal';
 import {
 	activeTerminalPanel,
@@ -77,6 +78,9 @@ const seeded = (
 const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
 
+/** Brings the automation's tab to the front, opening it from the list. Each
+ * of these suites opens one automation, so its tab is the only one of its
+ * kind; a run it opens gets a tab of its own beside it. */
 async function openAutomation(page: Page, name: string): Promise<Locator> {
 	await homeControl(page).click();
 	await page.locator('[data-terminay-home-section-tab="automations"]').click();
@@ -347,28 +351,25 @@ scheduled(
 		const projectTabs = mainWindow.locator('.project-tab');
 		const tabsBefore = await projectTabs.count();
 		const detail = await openAutomation(mainWindow, 'Spawn a worker');
-		const outcome = mainWindow.locator(
+		const outcome = front(mainWindow).locator(
 			'[data-terminay-automation-run-detail] [data-terminay-automation-outcome]',
 		);
 
 		const assertWorkerUnder = async (runId: string) => {
 			// The run terminal closed ("keep terminal after run" is off); the
 			// terminal the script opened stays, running, under the run — in the
-			// run's detail, and in the list's terminals grouped by run.
-			const openRun = mainWindow.locator(
-				`[data-terminay-automation-run-detail="${runId}"]`,
-			);
-			if ((await openRun.count()) === 0)
-				await mainWindow
-					.locator(`[data-terminay-automation-run="${runId}"]`)
-					.click();
-			const inRun = mainWindow.locator(
+			// run's tab, and in the list's terminals grouped by run.
+			await openAutomation(mainWindow, 'Spawn a worker');
+			await detail.locator(`[data-terminay-automation-run="${runId}"]`).click();
+			const inRun = front(mainWindow).locator(
 				`[data-terminay-automation-run-detail="${runId}"] [data-terminay-automation-terminal]`,
 			);
 			await expect(inRun).toHaveCount(1);
 			await expect(inRun).toContainText('MCP worker');
-			await mainWindow.locator('[data-terminay-automations-back]').click();
-			const group = mainWindow.locator(
+			await mainWindow
+				.locator('[data-terminay-home-section-tab="automations"]')
+				.click();
+			const group = front(mainWindow).locator(
 				`[data-terminay-automation-terminal-group="${runId}"]`,
 			);
 			await expect(group).toContainText('Spawn a worker');
@@ -393,7 +394,7 @@ scheduled(
 			{ timeout: 20_000 },
 		);
 		await expect(
-			mainWindow.locator('[data-terminay-automation-run-tail]'),
+			front(mainWindow).locator('[data-terminay-automation-run-tail]'),
 		).toContainText('open_terminal ok');
 		const triggeredRunId = await triggered.getAttribute(
 			'data-terminay-automation-run',
@@ -403,7 +404,7 @@ scheduled(
 
 		// Run now does the same at once, under its own run.
 		await detail.locator('[data-terminay-automation-run-now]').click();
-		const runDetail = mainWindow.locator(
+		const runDetail = front(mainWindow).locator(
 			'[data-terminay-automation-run-detail]',
 		);
 		await expect(runDetail).not.toHaveAttribute(
@@ -469,7 +470,7 @@ needsInput(
 		const run = detail.locator('[data-terminay-automation-run]');
 		await expect(run).toHaveCount(1);
 		await run.click();
-		const runDetail = mainWindow.locator(
+		const runDetail = front(mainWindow).locator(
 			'[data-terminay-automation-run-detail]',
 		);
 		await expect(

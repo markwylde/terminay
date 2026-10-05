@@ -3,14 +3,21 @@ import path from 'node:path';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import {
+	activeHome,
+	closeFrontHomeTab,
+	frontHomeTab as front,
+} from './support/home-tabs';
+import {
 	activeTerminalPanel,
 	settledTerminalSessionId,
 } from './support/terminal-session';
 
 /**
- * Home's Automations section: the list, the editor, run history with the
- * automation space's terminals, the missed-run notice, and the overview
- * widgets that lead into it.
+ * Home's Automations section: the list, and the tabs it opens — an
+ * automation with its run history, the editor, a run, the automation space's
+ * terminals — along with the overview widgets that lead into them. Every one
+ * is a Home tab, so each step says which tab it is looking at: the one in
+ * front.
  */
 
 const AUTOMATION_SPACE_ID = 'system:automations';
@@ -19,8 +26,10 @@ const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
 const sectionTab = (page: Page, section: 'home' | 'tabs' | 'automations') =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
-const automations = (page: Page) => page.locator('[data-terminay-automations]');
-const editor = (page: Page) => page.locator('[data-terminay-automation-editor]');
+const automations = (page: Page) =>
+	front(page).locator('[data-terminay-automations]');
+const editor = (page: Page) =>
+	front(page).locator('[data-terminay-automation-editor]');
 const field = (page: Page, name: string) =>
 	editor(page).locator(`[data-terminay-automation-field="${name}"]`);
 const rowNamed = (page: Page, name: string): Locator =>
@@ -36,22 +45,22 @@ async function openAutomations(page: Page): Promise<void> {
 	await expect(
 		page.locator('[data-terminay-automations-unsupported]'),
 	).toHaveCount(0);
-	await expect(page.locator('[data-terminay-automation-new]')).toBeVisible();
+	await expect(front(page).locator('[data-terminay-automation-new]').first()).toBeVisible();
 }
 
 async function createCommandAutomation(
 	page: Page,
 	options: { name: string; command: string; keepTerminal?: boolean },
 ): Promise<string> {
-	await page.locator('[data-terminay-automation-new]').click();
+	await front(page).locator('[data-terminay-automation-new]').first().click();
 	await expect(editor(page)).toBeVisible();
 	await field(page, 'name').fill(options.name);
 	await field(page, 'command').fill(options.command);
 	if (options.keepTerminal === true)
 		await field(page, 'keep-terminal').check();
-	await page.locator('[data-terminay-automation-save]').click();
-	// Saving opens the automation it saved.
-	const detail = page.locator('[data-terminay-automation-detail]');
+	await front(page).locator('[data-terminay-automation-save]').click();
+	// Saving closes the editor's tab and opens the automation it saved.
+	const detail = front(page).locator('[data-terminay-automation-detail]');
 	await expect(detail).toContainText(options.name);
 	const id = await detail.getAttribute('data-terminay-automation-detail');
 	if (id === null) throw new Error('Saved automation has no id');
@@ -80,7 +89,7 @@ test.describe('Automations section', () => {
 		).toHaveCount(0);
 		await expect(automations(mainWindow)).toContainText('No automations yet');
 
-		await mainWindow.locator('[data-terminay-automation-new]').click();
+		await front(mainWindow).locator('[data-terminay-automation-new]').first().click();
 		await field(mainWindow, 'name').fill('Hourly report');
 		// A preset writes the expression, and the preview reads it back.
 		await field(mainWindow, 'preset').selectOption('hourly');
@@ -97,11 +106,11 @@ test.describe('Automations section', () => {
 		await expect(field(mainWindow, 'preset')).toHaveValue('weekdays');
 		await field(mainWindow, 'cron').fill('0 * * * *');
 		await field(mainWindow, 'command').fill('echo report');
-		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
 		await expect(
-			mainWindow.locator('[data-terminay-automation-detail]'),
+			front(mainWindow).locator('[data-terminay-automation-detail]'),
 		).toBeVisible();
-		await mainWindow.locator('[data-terminay-automations-back]').click();
+		await sectionTab(mainWindow, 'automations').click();
 
 		const row = rowNamed(mainWindow, 'Hourly report');
 		await expect(row).toBeVisible();
@@ -134,7 +143,7 @@ test.describe('Automations section', () => {
 		mainWindow,
 	}) => {
 		await openAutomations(mainWindow);
-		await mainWindow.locator('[data-terminay-automation-new]').click();
+		await front(mainWindow).locator('[data-terminay-automation-new]').first().click();
 		await field(mainWindow, 'name').fill('Keep going');
 
 		// A schedule has no subject terminal: only actions that launch their own terminal are offered.
@@ -155,11 +164,11 @@ test.describe('Automations section', () => {
 		]);
 		await action.selectOption('writeText');
 		await field(mainWindow, 'text').fill('continue');
-		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
 		await expect(
-			mainWindow.locator('[data-terminay-automation-detail]'),
+			front(mainWindow).locator('[data-terminay-automation-detail]'),
 		).toContainText('Write text into the terminal');
-		await mainWindow.locator('[data-terminay-automations-back]').click();
+		await sectionTab(mainWindow, 'automations').click();
 
 		const row = rowNamed(mainWindow, 'Keep going');
 		await expect(row.locator('[data-terminay-automation-trigger]')).toHaveText(
@@ -175,7 +184,7 @@ test.describe('Automations section', () => {
 		mainWindow,
 	}) => {
 		await openAutomations(mainWindow);
-		await mainWindow.locator('[data-terminay-automation-new]').click();
+		await front(mainWindow).locator('[data-terminay-automation-new]').first().click();
 		await field(mainWindow, 'name').fill('Wrong trigger');
 		await editor(mainWindow)
 			.locator('[data-terminay-automation-trigger-kind="event"]')
@@ -191,7 +200,7 @@ test.describe('Automations section', () => {
 		await expect(
 			editor(mainWindow).locator('[data-terminay-automation-combination-hint]'),
 		).toBeVisible();
-		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
 		await expect(
 			editor(mainWindow).locator('[data-terminay-automation-error]'),
 		).toHaveText('Scheduled triggers have no subject terminal.');
@@ -206,7 +215,7 @@ test.describe('Automations section', () => {
 				'[data-terminay-automation-schedule-preview="invalid"]',
 			),
 		).toContainText(/minute/i);
-		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
 		await expect(
 			editor(mainWindow).locator('[data-terminay-automation-error]'),
 		).toContainText(/minute/i);
@@ -300,8 +309,8 @@ test.describe('Automation runs', () => {
 			name: 'Echo once',
 			command: 'echo automation-e2e-tail',
 		});
-		await mainWindow.locator('[data-terminay-automation-run-now]').click();
-		const detail = mainWindow.locator('[data-terminay-automation-run-detail]');
+		await front(mainWindow).locator('[data-terminay-automation-run-now]').click();
+		const detail = front(mainWindow).locator('[data-terminay-automation-run-detail]');
 		await expect(detail).toBeVisible();
 		await expect(
 			detail.locator('[data-terminay-automation-outcome]'),
@@ -316,12 +325,12 @@ test.describe('Automation runs', () => {
 		);
 		// "Keep terminal after run" is off: the terminal is gone, the tail stays.
 		await expect(
-			mainWindow.locator('[data-terminay-automation-terminal]'),
+			front(mainWindow).locator('[data-terminay-automation-terminal]'),
 		).toHaveCount(0);
 		const runId = await detail.getAttribute('data-terminay-automation-run-detail');
 		if (runId === null) throw new Error('Run detail has no run id');
 
-		// The recent-runs widget opens that run in the Automations section.
+		// The recent-runs widget brings that run's tab back to the front.
 		await sectionTab(mainWindow, 'home').click();
 		const recent = mainWindow.locator(`[data-terminay-home-run="${runId}"]`);
 		await expect(recent).toHaveAttribute(
@@ -329,12 +338,12 @@ test.describe('Automation runs', () => {
 			'success',
 		);
 		await recent.click();
-		await expect(mainWindow.locator('[data-terminay-home-view]')).toHaveAttribute(
+		await expect(activeHome(mainWindow)).toHaveAttribute(
 			'data-terminay-home-view',
 			'automations',
 		);
 		await expect(
-			mainWindow.locator(`[data-terminay-automation-run-detail="${runId}"]`),
+			front(mainWindow).locator(`[data-terminay-automation-run-detail="${runId}"]`),
 		).toBeVisible();
 	});
 
@@ -343,7 +352,7 @@ test.describe('Automation runs', () => {
 	}) => {
 		const prompt = 'Say hello to the user.\nIt\'s "quoted" $(echo injected) `tick`';
 		await openAutomations(mainWindow);
-		await mainWindow.locator('[data-terminay-automation-new]').click();
+		await front(mainWindow).locator('[data-terminay-automation-new]').first().click();
 		await expect(editor(mainWindow)).toBeVisible();
 		await field(mainWindow, 'name').fill('Prompt once');
 		// A command has no prompt to fill in.
@@ -351,15 +360,15 @@ test.describe('Automation runs', () => {
 		await field(mainWindow, 'action').selectOption('promptAgent');
 		await field(mainWindow, 'command').fill('printf \'[%s]\\n\' "$PROMPT"');
 		await field(mainWindow, 'prompt').fill(prompt);
-		await mainWindow.locator('[data-terminay-automation-save]').click();
-		const saved = mainWindow.locator('[data-terminay-automation-detail]');
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
+		const saved = front(mainWindow).locator('[data-terminay-automation-detail]');
 		await expect(saved).toContainText('Prompt an agent');
 		await expect(
 			saved.locator('[data-terminay-automation-prompt]'),
 		).toHaveText(prompt);
 
-		await mainWindow.locator('[data-terminay-automation-run-now]').click();
-		const detail = mainWindow.locator('[data-terminay-automation-run-detail]');
+		await front(mainWindow).locator('[data-terminay-automation-run-now]').click();
+		const detail = front(mainWindow).locator('[data-terminay-automation-run-detail]');
 		await expect(
 			detail.locator('[data-terminay-automation-outcome]'),
 		).toHaveAttribute('data-terminay-automation-outcome', 'succeeded', {
@@ -378,17 +387,23 @@ test.describe('Automation runs', () => {
 			name: 'Prune me',
 			command: 'echo prune-e2e',
 		});
-		const runRows = mainWindow.locator('[data-terminay-automation-run]');
+		const runRows = front(mainWindow).locator('[data-terminay-automation-run]');
+		// Run now opens the run in a tab of its own; closing it returns to the
+		// automation's tab, where the run is in the history.
 		const runOnce = async (expected: number) => {
-			await mainWindow.locator('[data-terminay-automation-run-now]').click();
-			await expect(runRows).toHaveCount(expected);
+			await front(mainWindow).locator('[data-terminay-automation-run-now]').click();
 			await expect(
-				mainWindow.locator(
+				front(mainWindow).locator(
 					'[data-terminay-automation-run-detail] [data-terminay-automation-outcome]',
 				),
 			).toHaveAttribute('data-terminay-automation-outcome', 'succeeded', {
 				timeout: 20_000,
 			});
+			await closeFrontHomeTab(mainWindow);
+			await expect(
+				front(mainWindow).locator('[data-terminay-automation-detail]'),
+			).toBeVisible();
+			await expect(runRows).toHaveCount(expected);
 		};
 		await runOnce(1);
 		await runOnce(2);
@@ -399,35 +414,35 @@ test.describe('Automation runs', () => {
 			.getAttribute('data-terminay-automation-run');
 		if (first === null) throw new Error('Run row has no run id');
 		await runRows.first().hover();
-		await mainWindow
+		await front(mainWindow)
 			.locator(`[data-terminay-automation-delete-run="${first}"]`)
 			.click();
 		await expect(runRows).toHaveCount(1);
 		await expect(
-			mainWindow.locator(`[data-terminay-automation-run="${first}"]`),
+			front(mainWindow).locator(`[data-terminay-automation-run="${first}"]`),
 		).toHaveCount(0);
 
 		// Prune starts at 30 days, where nothing is old enough.
-		const days = mainWindow.locator('[data-terminay-automation-prune-days]');
-		const confirm = mainWindow.locator(
+		const days = front(mainWindow).locator('[data-terminay-automation-prune-days]');
+		const confirm = front(mainWindow).locator(
 			'[data-terminay-automation-confirm-prune]',
 		);
-		await mainWindow.locator('[data-terminay-automation-prune]').click();
+		await front(mainWindow).locator('[data-terminay-automation-prune]').click();
 		await expect(days).toHaveValue('30');
 		await expect(confirm).toBeDisabled();
 		await days.fill('0');
 		await expect(
-			mainWindow.locator('[data-terminay-automation-prune-form]'),
+			front(mainWindow).locator('[data-terminay-automation-prune-form]'),
 		).toContainText('1 run will be removed.');
 		await confirm.click();
 		await expect(runRows).toHaveCount(0);
 		await expect(
-			mainWindow.locator('[data-terminay-automation-prune-form]'),
+			front(mainWindow).locator('[data-terminay-automation-prune-form]'),
 		).toHaveCount(0);
 
 		// The next Prune opens pre-filled with the last choice, still editable.
 		await runOnce(1);
-		await mainWindow.locator('[data-terminay-automation-prune]').click();
+		await front(mainWindow).locator('[data-terminay-automation-prune]').click();
 		await expect(days).toHaveValue('0');
 		await days.fill('5');
 		await expect(confirm).toBeDisabled();
@@ -440,9 +455,9 @@ test.describe('Automation runs', () => {
 		await mainWindow.getByRole('button', { name: 'Edit', exact: true }).click();
 		await expect(field(mainWindow, 'keep-history')).toHaveValue('');
 		await field(mainWindow, 'keep-history').fill('7');
-		await mainWindow.locator('[data-terminay-automation-save]').click();
+		await front(mainWindow).locator('[data-terminay-automation-save]').click();
 		await expect(
-			mainWindow.locator('[data-terminay-automation-detail]'),
+			front(mainWindow).locator('[data-terminay-automation-detail]'),
 		).toBeVisible();
 		await mainWindow.getByRole('button', { name: 'Edit', exact: true }).click();
 		await expect(field(mainWindow, 'keep-history')).toHaveValue('7');
@@ -459,20 +474,20 @@ test.describe('Automation runs', () => {
 			command: 'echo automation-e2e-kept',
 			keepTerminal: true,
 		});
-		await mainWindow.locator('[data-terminay-automation-run-now]').click();
+		await front(mainWindow).locator('[data-terminay-automation-run-now]').click();
 		await expect(
-			mainWindow.locator('[data-terminay-automation-run-detail] [data-terminay-automation-outcome]'),
+			front(mainWindow).locator('[data-terminay-automation-run-detail] [data-terminay-automation-outcome]'),
 		).toHaveAttribute('data-terminay-automation-outcome', 'succeeded', {
 			timeout: 20_000,
 		});
 
 		// The kept terminal is listed under its run and stays viewable after
 		// its process exited: a read-only terminal with its output and exit.
-		const kept = mainWindow.locator('[data-terminay-automation-terminal]');
+		const kept = front(mainWindow).locator('[data-terminay-automation-terminal]');
 		await expect(kept).toHaveCount(1);
 		await expect(kept).toContainText('Exited');
 		await kept.click();
-		const view = mainWindow.locator('[data-terminay-automation-exited-terminal]');
+		const view = front(mainWindow).locator('[data-terminay-automation-exited-terminal]');
 		await expect(view).toHaveAttribute(
 			'data-terminay-automation-exited-terminal-state',
 			'ready',
@@ -619,7 +634,7 @@ missed.describe('Missed-run notice', () => {
 			.locator('.automations-row__main')
 			.click();
 		await expect(
-			mainWindow.locator('[data-terminay-automation-run]'),
+			front(mainWindow).locator('[data-terminay-automation-run]'),
 		).toHaveCount(1);
 	});
 });
