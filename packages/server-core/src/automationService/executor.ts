@@ -34,12 +34,14 @@ import { AUTOMATION_PRINCIPAL, type AutomationAuditLog } from './audit.js';
 import { boundTail, type AutomationRunLog } from './runLog.js';
 import {
 	AUTOMATION_OUTPUT_TAIL_BYTES,
+	AUTOMATION_PROMPT_VARIABLE,
 	type AutomationDefinition,
 	type AutomationRunController,
 	type AutomationRunEntry,
 	type AutomationRunOutcome,
 	type AutomationRunStartRequest,
 	type AutomationSkipReason,
+	launchesRunTerminal,
 	MIN_SUBJECT_ACTION_COOLDOWN_SECONDS,
 } from './types.js';
 
@@ -301,6 +303,7 @@ export class AutomationExecutor implements AutomationRunController {
 			);
 		switch (automation.action.kind) {
 			case 'runCommand':
+			case 'promptAgent':
 				return this.startCommand(request);
 			case 'runMacro':
 			case 'writeText':
@@ -336,8 +339,8 @@ export class AutomationExecutor implements AutomationRunController {
 		request: AutomationRunStartRequest,
 	): Promise<AutomationRunEntry> {
 		const { automation } = request;
-		if (automation.action.kind !== 'runCommand')
-			throw new TypeError('not a run-command automation');
+		if (!launchesRunTerminal(automation.action))
+			throw new TypeError('not a run-terminal automation');
 		const action = automation.action;
 		const workspace = this.options.workspace;
 		const home = await (
@@ -386,6 +389,9 @@ export class AutomationExecutor implements AutomationRunController {
 				resolved,
 				action.command,
 				this.contextEnvironment(request),
+				action.kind === 'promptAgent'
+					? { [AUTOMATION_PROMPT_VARIABLE]: action.prompt }
+					: {},
 			);
 			// Tag before spawn so the terminal's very first events are dropped.
 			this.markRunTerminal(sessionId);
@@ -505,7 +511,7 @@ export class AutomationExecutor implements AutomationRunController {
 			...(outputTail === undefined ? {} : { outputTail }),
 			...(outcome === 'timedOut'
 				? {
-						reason: `stopped after its maximum duration of ${run.automation.action.kind === 'runCommand' ? run.automation.action.maxDurationSeconds : 0} s`,
+						reason: `stopped after its maximum duration of ${launchesRunTerminal(run.automation.action) ? run.automation.action.maxDurationSeconds : 0} s`,
 					}
 				: outcome === 'stopped'
 					? { reason: 'stopped by a user' }
@@ -746,7 +752,7 @@ export class AutomationExecutor implements AutomationRunController {
 	// Loop guard
 
 	private guard(automation: AutomationDefinition, sessionId: string): void {
-		const subjectAction = automation.action.kind !== 'runCommand';
+		const subjectAction = !launchesRunTerminal(automation.action);
 		const configured = automation.settings.cooldownSeconds;
 		const seconds = subjectAction
 			? Math.max(MIN_SUBJECT_ACTION_COOLDOWN_SECONDS, configured)
@@ -1004,12 +1010,15 @@ export class AutomationExecutor implements AutomationRunController {
  * `command` and exits: `-l -c` for POSIX shells, `-Command` for PowerShell,
  * `/d /s /c` for cmd, and `sh -lc` inside WSL when the profile names no shell.
  * The profile's own interactive arguments are not used: a run is never an
- * interactive shell.
+ * interactive shell. `variables` are the run's own content (a prompt-agent
+ * run's `PROMPT`): set verbatim, replacing any inherited value, and never
+ * parsed as shell.
  */
 export function nonInteractiveLaunch(
 	resolved: TerminalResolvedLaunch,
 	command: string,
 	context: Readonly<Partial<Record<AutomationContextVariable, string>>>,
+	variables: Readonly<Record<string, string>> = {},
 ): TerminalResolvedLaunch {
 	const isWsl = resolved.args[0] === '--distribution';
 	let prefix: string[] = [];
@@ -1029,11 +1038,14 @@ export function nonInteractiveLaunch(
 		// Inherited automation context never leaks into a run.
 		if ((AUTOMATION_CONTEXT_VARIABLES as readonly string[]).includes(name.toUpperCase()))
 			continue;
+		// Nor does a differently-cased spelling of a variable the run sets.
+		if (Object.hasOwn(variables, name.toUpperCase())) continue;
 		env[name] = value;
 	}
 	for (const [name, value] of Object.entries(context)) env[name] = value;
+	for (const [name, value] of Object.entries(variables)) env[name] = value;
 	if (isWsl) {
-		const names = Object.keys(context);
+		const names = [...Object.keys(context), ...Object.keys(variables)];
 		const current = (env.WSLENV ?? '').split(':').filter((entry) => entry.length > 0);
 		const known = new Set(current.map((entry) => entry.split('/')[0]?.toUpperCase()));
 		for (const name of names) if (!known.has(name)) current.push(name);

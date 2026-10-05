@@ -19,6 +19,7 @@ import {
   createAutomationOperationRegistry,
   createInitialWorkspace,
   createWorkspaceOperationRegistry,
+  nonInteractiveLaunch,
   OrderedEventJournal,
 } from "../dist/index.js";
 
@@ -472,4 +473,52 @@ test("the audit trail records definition changes with the editing actor", async 
   assert.deepEqual(entry.actor, { clientId: "editor", connectionId: "conn-1" });
   assert.equal(JSON.stringify(entry).includes("runCommand"), false, "metadata only");
   registry.dispose();
+});
+
+test("prompt agent: the prompt reaches the command verbatim as PROMPT and is never parsed as shell", { skip: !posix }, async (t) => {
+  const h = await harness(t);
+  const prompt = "line one\nit's \"quoted\" `tick` $(echo injected) $HOME *";
+  const automation = definition({
+    action: {
+      kind: "promptAgent",
+      command: "printf '<<%s>>\\n' \"$PROMPT\"; echo \"cwd=$(pwd)\"; echo \"event=$TERMINAY_EVENT\"; exit 4",
+      prompt,
+      maxDurationSeconds: 60,
+    },
+  });
+  const entry = await h.executor.start({ automation, startedBy: "user", firedAt: 1 });
+  assert.equal(h.terminal.getSession(entry.sessionId).projectId, AUTOMATION_SPACE_PROJECT_ID);
+  const done = await finished(h.runLog, entry.runId);
+  assert.equal(done.outcome, "failed");
+  assert.equal(done.exitCode, 4, "the outcome is the command's exit code");
+  assert.ok(done.outputTail.includes(`<<${prompt}>>`), done.outputTail);
+  assert.match(done.outputTail, new RegExp(`^cwd=${h.home}$`, "m"), "cwd defaults to home");
+  assert.match(done.outputTail, /^event=schedule$/m, "the run still sees its context");
+});
+
+test("prompt agent: the max-duration timer applies as it does to a command", { skip: !posix }, async (t) => {
+  const h = await harness(t, { setTimer: (callback, ms) => setTimeout(callback, ms / 20) });
+  const timed = await h.executor.start({
+    automation: definition({ action: { kind: "promptAgent", command: "echo started; sleep 30", prompt: "wait", maxDurationSeconds: 2 } }),
+    startedBy: "trigger", firedAt: 1,
+  });
+  const done = await finished(h.runLog, timed.runId);
+  assert.equal(done.outcome, "timedOut");
+  assert.match(done.reason, /maximum duration of 2 s/);
+});
+
+test("a run's own variables replace inherited spellings, reach WSL, and are absent unless given", () => {
+  const resolved = { shellPath: "/bin/zsh", args: ["-l"], env: { PATH: "/bin", Prompt: "inherited", TERMINAY_EVENT: "stale" } };
+  const prompted = nonInteractiveLaunch(resolved, "agent \"$PROMPT\"", { TERMINAY_EVENT: "manual" }, { PROMPT: "a\nb" });
+  assert.deepEqual(prompted.args, ["-l", "-c", "agent \"$PROMPT\""], "the command line is never rewritten");
+  assert.deepEqual(prompted.env, { PATH: "/bin", TERMINAY_EVENT: "manual", PROMPT: "a\nb" });
+
+  const plain = nonInteractiveLaunch(resolved, "true", { TERMINAY_EVENT: "manual" });
+  assert.deepEqual(plain.env, { PATH: "/bin", Prompt: "inherited", TERMINAY_EVENT: "manual" }, "a command run sets no PROMPT of its own");
+
+  const wsl = nonInteractiveLaunch(
+    { shellPath: "wsl.exe", args: ["--distribution", "Ubuntu"], env: { WSLENV: "FOO/p" } },
+    "agent \"$PROMPT\"", { TERMINAY_EVENT: "manual" }, { PROMPT: "hi" },
+  );
+  assert.equal(wsl.env.WSLENV, "FOO/p:TERMINAY_EVENT:PROMPT");
 });

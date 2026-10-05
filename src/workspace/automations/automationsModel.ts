@@ -421,17 +421,24 @@ export type AutomationActionKind = AutomationAction['kind'];
 export const ACTION_LABELS: Readonly<Record<AutomationActionKind, string>> =
 	Object.freeze({
 		runCommand: 'Run a command',
+		promptAgent: 'Prompt an agent',
 		runMacro: 'Run a Macro on the terminal',
 		writeText: 'Write text into the terminal',
 	});
+
+/** Whether the action launches its own run terminal, rather than acting on
+ * the event's subject terminal. */
+export function launchesRunTerminal(kind: AutomationActionKind): boolean {
+	return kind === 'runCommand' || kind === 'promptAgent';
+}
 
 /** The actions a trigger can serve, in the order the picker lists them. */
 export function actionKindsFor(
 	trigger: AutomationTrigger,
 ): readonly AutomationActionKind[] {
 	return hasTerminalSubject(trigger)
-		? ['runCommand', 'runMacro', 'writeText']
-		: ['runCommand'];
+		? ['runCommand', 'promptAgent', 'runMacro', 'writeText']
+		: ['runCommand', 'promptAgent'];
 }
 
 /** Why an action cannot serve a trigger, in the server's words, or undefined. */
@@ -439,7 +446,8 @@ export function combinationProblem(
 	trigger: AutomationTrigger,
 	action: AutomationActionKind,
 ): string | undefined {
-	if (action === 'runCommand' || hasTerminalSubject(trigger)) return undefined;
+	if (launchesRunTerminal(action) || hasTerminalSubject(trigger))
+		return undefined;
 	if (trigger.kind === 'schedule')
 		return 'Scheduled triggers have no subject terminal.';
 	return trigger.event === 'device.connected'
@@ -456,6 +464,8 @@ export type AutomationForm = Readonly<{
 	event: AutomationEventKind;
 	actionKind: AutomationActionKind;
 	command: string;
+	/** A prompt-agent action's prompt, exactly as typed. */
+	prompt: string;
 	shellProfileId: string;
 	cwd: string;
 	/** Text, so a half-typed number is not lost; whole minutes. */
@@ -482,6 +492,7 @@ export function emptyAutomationForm(): AutomationForm {
 		event: 'agent.finished',
 		actionKind: 'runCommand',
 		command: '',
+		prompt: '',
 		shellProfileId: '',
 		cwd: '',
 		maxDurationMinutes: '60',
@@ -512,9 +523,10 @@ export function formFromAutomation(
 		cron: trigger.kind === 'schedule' ? trigger.cron : base.cron,
 		event: trigger.kind === 'event' ? trigger.event : base.event,
 		actionKind: action.kind,
-		...(action.kind === 'runCommand'
+		...(action.kind === 'runCommand' || action.kind === 'promptAgent'
 			? {
 					command: action.command,
+					...(action.kind === 'promptAgent' ? { prompt: action.prompt } : {}),
 					shellProfileId: action.shellProfileId ?? '',
 					cwd: action.cwd ?? '',
 					maxDurationMinutes: String(
@@ -556,7 +568,7 @@ export type DraftResult =
  */
 export function formToDraft(form: AutomationForm): DraftResult {
 	const maxMinutes = wholeNumber(form.maxDurationMinutes);
-	if (form.actionKind === 'runCommand' && maxMinutes === undefined)
+	if (launchesRunTerminal(form.actionKind) && maxMinutes === undefined)
 		return fail('Maximum duration must be a whole number of minutes.');
 	const cooldown = wholeNumber(form.cooldownSeconds);
 	if (cooldown === undefined)
@@ -570,8 +582,8 @@ export function formToDraft(form: AutomationForm): DraftResult {
 	let action: AutomationDraft['action'];
 	switch (form.actionKind) {
 		case 'runCommand':
-			action = {
-				kind: 'runCommand',
+		case 'promptAgent': {
+			const launch = {
 				command: form.command,
 				...(form.shellProfileId === ''
 					? {}
@@ -579,7 +591,12 @@ export function formToDraft(form: AutomationForm): DraftResult {
 				...(form.cwd.trim() === '' ? {} : { cwd: form.cwd.trim() }),
 				maxDurationSeconds: (maxMinutes as number) * 60,
 			};
+			action =
+				form.actionKind === 'runCommand'
+					? { kind: 'runCommand', ...launch }
+					: { kind: 'promptAgent', prompt: form.prompt, ...launch };
 			break;
+		}
 		case 'runMacro':
 			if (form.macroId === '') return fail('Choose a Macro to run.');
 			action = {

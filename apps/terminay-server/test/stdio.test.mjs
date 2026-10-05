@@ -530,7 +530,11 @@ test('cancelling an MCP tool call closes its control connection so a pending app
 				arguments: {
 					name: 'Digest',
 					trigger: { kind: 'schedule', cron: '0 9 * * *' },
-					action: { kind: 'runCommand', command: 'mail-digest' },
+					action: {
+						kind: 'promptAgent',
+						command: 'mail-digest',
+						prompt: 'Summarise.\nThen stop.',
+					},
 				},
 			},
 			undefined,
@@ -540,6 +544,7 @@ test('cancelling an MCP tool call closes its control connection so a pending app
 		while (received === undefined && Date.now() - started < 5_000)
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		assert.equal(received?.params.action.command, 'mail-digest');
+		assert.equal(received?.params.action.prompt, 'Summarise.\nThen stop.');
 		controller.abort();
 		await assert.rejects(call);
 		assert.equal(await connectionClosed, true);

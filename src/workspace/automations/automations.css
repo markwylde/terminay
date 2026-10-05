@@ -53,6 +53,21 @@
 	color: rgba(220, 226, 240, 0.75);
 }
 
+.automations-prompt {
+	margin: 0 0 12px;
+	max-height: 240px;
+	overflow: auto;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 6px;
+	font-family: inherit;
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: rgba(220, 226, 240, 0.75);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .automations-muted {
 	color: rgba(220, 226, 240, 0.42);
 }

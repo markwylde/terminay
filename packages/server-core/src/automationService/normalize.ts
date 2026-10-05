@@ -12,6 +12,7 @@ import {
 	type AutomationTrigger,
 	DEFAULT_AUTOMATION_COOLDOWN_SECONDS,
 	DEFAULT_AUTOMATION_MAX_DURATION_SECONDS,
+	launchesRunTerminal,
 	MAX_AUTOMATION_KEEP_HISTORY_DAYS,
 	MIN_SUBJECT_ACTION_COOLDOWN_SECONDS,
 } from './types.js';
@@ -20,6 +21,7 @@ export const AUTOMATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_NAME_LENGTH = 200;
 const MAX_COMMAND_BYTES = 16_384;
 const MAX_TEXT_BYTES = 16_384;
+export const MAX_PROMPT_BYTES = 32_768;
 const MAX_CWD_LENGTH = 4096;
 const MAX_CRON_LENGTH = 256;
 const MAX_FIELD_VALUES = 128;
@@ -127,7 +129,8 @@ export function normalizeAction(value: unknown): AutomationAction {
 	const record = asRecord(value);
 	if (record === undefined) throw invalid('action', 'must be an object');
 	switch (record.kind) {
-		case 'runCommand': {
+		case 'runCommand':
+		case 'promptAgent': {
 			const command = boundedText(
 				record.command,
 				'action.command',
@@ -156,13 +159,22 @@ export function normalizeAction(value: unknown): AutomationAction {
 				1,
 				MAX_DURATION_SECONDS,
 			);
-			return {
-				kind: 'runCommand',
-				command,
+			const launch = {
 				...(shellProfileId === undefined ? {} : { shellProfileId }),
 				...(cwd === undefined ? {} : { cwd }),
 				maxDurationSeconds,
 			};
+			if (record.kind === 'runCommand')
+				return { kind: 'runCommand', command, ...launch };
+			// Kept byte for byte: line breaks and surrounding space are the user's.
+			const prompt = boundedText(
+				record.prompt,
+				'action.prompt',
+				MAX_PROMPT_BYTES,
+			);
+			if (prompt.trim().length === 0 || prompt.includes('\0'))
+				throw invalid('action.prompt', 'must be a prompt');
+			return { kind: 'promptAgent', command, prompt, ...launch };
 		}
 		case 'runMacro':
 			return {
@@ -185,7 +197,7 @@ export function normalizeAction(value: unknown): AutomationAction {
 		default:
 			throw invalid(
 				'action.kind',
-				'must be runCommand, runMacro, or writeText',
+				'must be runCommand, promptAgent, runMacro, or writeText',
 			);
 	}
 }
@@ -195,7 +207,7 @@ export function assertCombination(
 	trigger: AutomationTrigger,
 	action: AutomationAction,
 ): void {
-	if (action.kind === 'runCommand') return;
+	if (launchesRunTerminal(action)) return;
 	const reason = subjectActionRefusal(trigger);
 	if (reason !== undefined)
 		throw new AutomationServiceError('invalid_combination', reason, {
@@ -223,7 +235,7 @@ export function normalizeSettings(
 ): AutomationSettings {
 	const record = asRecord(value ?? {});
 	if (record === undefined) throw invalid('settings', 'must be an object');
-	const subjectAction = action.kind !== 'runCommand';
+	const subjectAction = !launchesRunTerminal(action);
 	const cooldownSeconds = boundedInteger(
 		record.cooldownSeconds,
 		'settings.cooldownSeconds',

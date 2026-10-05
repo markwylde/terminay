@@ -49,6 +49,17 @@ export type AutomationAction =
 			readonly maxDurationSeconds: number;
 	  }
 	| {
+			readonly kind: 'promptAgent';
+			readonly command: string;
+			/** Reaches the command verbatim as the `PROMPT` environment variable;
+			 * never spliced into the command line. */
+			readonly prompt: string;
+			readonly shellProfileId?: string;
+			/** Absent means the user's home directory, never a project root. */
+			readonly cwd?: string;
+			readonly maxDurationSeconds: number;
+	  }
+	| {
 			readonly kind: 'runMacro';
 			readonly macroId: string;
 			readonly fieldValues: Readonly<Record<string, MacroFieldValue>>;
@@ -56,6 +67,23 @@ export type AutomationAction =
 	| { readonly kind: 'writeText'; readonly text: string; readonly submit: boolean };
 
 export type AutomationSubjectActionKind = 'runMacro' | 'writeText';
+
+/** An action that launches its own run terminal in the automation space. */
+export type AutomationRunTerminalAction = Extract<
+	AutomationAction,
+	{ readonly kind: 'runCommand' | 'promptAgent' }
+>;
+
+/** Whether the action launches its own run terminal, rather than acting on
+ * an event's subject terminal. */
+export function launchesRunTerminal(
+	action: AutomationAction,
+): action is AutomationRunTerminalAction {
+	return action.kind === 'runCommand' || action.kind === 'promptAgent';
+}
+
+/** The environment variable a prompt-agent run's prompt is passed in. */
+export const AUTOMATION_PROMPT_VARIABLE = 'PROMPT';
 
 export interface AutomationSettings {
 	readonly keepTerminalAfterRun: boolean;

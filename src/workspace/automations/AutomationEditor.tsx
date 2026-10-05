@@ -33,6 +33,7 @@ import {
 	type AutomationActionKind,
 	type AutomationForm,
 	actionKindsFor,
+	launchesRunTerminal,
 	combinationProblem,
 	cronForPresetKind,
 	formToDraft,
@@ -557,12 +558,13 @@ export function AutomationEditor({
 							className="automation-editor__hint"
 							data-terminay-automation-combination-hint
 						>
-							{problem} Choose “Run a command”, or a terminal event.
+							{problem} Choose “Run a command” or “Prompt an agent”, or a
+							terminal event.
 						</p>
 					)}
 				</Row>
 
-				{form.actionKind === 'runCommand' ? (
+				{launchesRunTerminal(form.actionKind) ? (
 					<>
 						<Row label="Command" htmlFor={fieldId('command')}>
 							<input
@@ -570,11 +572,34 @@ export function AutomationEditor({
 								className="automation-editor__input automation-editor__input--mono"
 								value={form.command}
 								spellCheck={false}
-								placeholder="~/bin/fix-conflicted-prs.sh"
+								placeholder={
+									form.actionKind === 'promptAgent'
+										? 'agent "$PROMPT"'
+										: '~/bin/fix-conflicted-prs.sh'
+								}
 								onChange={(event) => update({ command: event.target.value })}
 								data-terminay-automation-field="command"
 							/>
+							{form.actionKind === 'promptAgent' ? (
+								<p className="automation-editor__hint">
+									The prompt below reaches this command as <code>$PROMPT</code>.
+									Write it in quotes — <code>"$PROMPT"</code> — so every shell
+									passes it as one argument.
+								</p>
+							) : null}
 						</Row>
+						{form.actionKind === 'promptAgent' ? (
+							<Row label="Prompt" htmlFor={fieldId('prompt')}>
+								<textarea
+									id={fieldId('prompt')}
+									className="automation-editor__input automation-editor__textarea"
+									rows={8}
+									value={form.prompt}
+									onChange={(event) => update({ prompt: event.target.value })}
+									data-terminay-automation-field="prompt"
+								/>
+							</Row>
+						) : null}
 						<Row label="Working directory" htmlFor={fieldId('cwd')}>
 							<input
 								id={fieldId('cwd')}
