@@ -11,6 +11,7 @@ import { AutomationServiceError } from './errors.js';
 import { AUTOMATION_ID_PATTERN } from './normalize.js';
 import { AutomationRepository } from './repository.js';
 import { AutomationRunLog } from './runLog.js';
+import { launchesRunTerminal } from './types.js';
 import type {
 	AutomationApplyResult,
 	AutomationRunController,
@@ -370,7 +371,7 @@ export function createAutomationOperationRegistry(
 			payload.subject === undefined || payload.subject === null
 				? undefined
 				: parseSubject(payload.subject, options.serverId);
-		if (automation.action.kind !== 'runCommand') {
+		if (!launchesRunTerminal(automation.action)) {
 			// A subject action run by hand needs a terminal chosen by the user.
 			if (subject?.kind !== 'terminal')
 				throw new AutomationServiceError(

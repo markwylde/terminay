@@ -60,6 +60,7 @@ import {
 	formFromAutomation,
 	groupSpaceTerminals,
 	hasTerminalSubject,
+	launchesRunTerminal,
 	latestRuns,
 	nextRunAt,
 	prunableRuns,
@@ -813,7 +814,7 @@ export function AutomationsSection({
 		const next = nextRunAt(automation, now, data.timeZone);
 		const needsSubject =
 			hasTerminalSubject(automation.trigger) &&
-			automation.action.kind !== 'runCommand';
+			!launchesRunTerminal(automation.action.kind);
 		const runTerminals = (run: AutomationRunEntry) =>
 			groups.find((group) => group.run?.runId === run.runId)?.terminals ?? [];
 		return (
@@ -829,7 +830,8 @@ export function AutomationsSection({
 						<>
 							{describeTrigger(automation.trigger)} ·{' '}
 							{ACTION_LABELS[automation.action.kind]}
-							{automation.action.kind === 'runCommand' ? (
+							{automation.action.kind === 'runCommand' ||
+							automation.action.kind === 'promptAgent' ? (
 								<>
 									{' '}
 									<code className="automations-code">
@@ -900,6 +902,14 @@ export function AutomationsSection({
 					</button>
 				</PageHeader>
 				{errorBanner}
+				{automation.action.kind === 'promptAgent' ? (
+					<pre
+						className="automations-prompt"
+						data-terminay-automation-prompt="true"
+					>
+						{automation.action.prompt}
+					</pre>
+				) : null}
 				{confirmingDelete === automation.id ? (
 					<div
 						className="automations-banner"
