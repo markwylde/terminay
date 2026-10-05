@@ -2,9 +2,10 @@
  * Where a terminal's app windows sit inside its pane.
  *
  * Pure geometry, so the rules can be tested without a browser: an open window
- * floats at the bottom-left at its content height, capped at 60% of the pane; on
- * a narrow pane it is a sheet across the bottom; a minimised window is a tab on
- * the bottom edge, inside a rail that exists only while there is a tab.
+ * floats at the bottom-left at its content height, capped at 60% of the pane,
+ * until the user moves or resizes it; on a narrow pane it is a sheet across the
+ * bottom; a minimised window is a tab on the bottom edge, inside a rail that
+ * exists only while there is a tab.
  */
 
 /** A pane narrower than this is treated as a phone. */
@@ -18,6 +19,10 @@ export const TAB_HEIGHT = 28;
 export const TAB_HEIGHT_NARROW = 34;
 export const TAB_GAP = 6;
 export const TAB_MAX_WIDTH = 260;
+/** A resized window is never smaller than this. */
+export const WINDOW_MIN_WIDTH = 220;
+/** How much of a moved window's title bar, from its left, stays inside the pane. */
+export const WINDOW_TITLE_KEEP = 160;
 const RAIL_PADDING = 5;
 /** Content height assumed until a view reports its own. */
 const DEFAULT_CONTENT_HEIGHT = 180;
@@ -32,6 +37,20 @@ export interface LayoutWindow {
 	readonly tabOffset?: number;
 	/** The tab's natural width for its title. */
 	readonly tabWidth: number;
+	/** Where the user dragged the open window to, from the pane's top-left. */
+	readonly position?: WindowPoint;
+	/** The size the user gave the open window, title bar included. */
+	readonly size?: WindowSize;
+}
+
+export interface WindowPoint {
+	readonly x: number;
+	readonly y: number;
+}
+
+export interface WindowSize {
+	readonly width: number;
+	readonly height: number;
 }
 
 export interface WindowRect {
@@ -135,18 +154,35 @@ export function layoutAppWindows(input: WindowLayoutInput): WindowLayout {
 				bodyWidth: paneWidth,
 				bodyMaxHeight: maxBody,
 			};
-		const width = Math.min(WINDOW_MAX_WIDTH, paneWidth - WINDOW_EDGE * 2);
+		// A window the user resized keeps that size, whatever its content's is.
+		const { size, position } = window;
+		const width =
+			size === undefined
+				? Math.min(WINDOW_MAX_WIDTH, paneWidth - WINDOW_EDGE * 2)
+				: Math.max(WINDOW_MIN_WIDTH, Math.round(size.width));
+		const sizedHeight =
+			size === undefined
+				? height
+				: Math.max(header + MIN_BODY_HEIGHT, Math.round(size.height));
+		// A window the user moved stays where it was put, as far as its title bar
+		// stays inside the pane and above the rail. Its body may run past the
+		// pane's right and bottom edges, where it is cut off.
+		const x =
+			position === undefined
+				? WINDOW_EDGE
+				: clamp(Math.round(position.x), 0, paneWidth - WINDOW_TITLE_KEEP);
+		const y =
+			position === undefined
+				? Math.max(WINDOW_EDGE, paneHeight - railHeight - WINDOW_EDGE - sizedHeight)
+				: clamp(Math.round(position.y), 0, paneHeight - railHeight - header);
 		return {
 			id: window.id,
 			placement: 'window',
-			rect: {
-				x: WINDOW_EDGE,
-				y: Math.max(WINDOW_EDGE, paneHeight - railHeight - WINDOW_EDGE - height),
-				width,
-				height,
-			},
+			rect: { x, y, width, height: sizedHeight },
 			bodyWidth: width,
-			bodyMaxHeight: maxBody,
+			...(size === undefined
+				? { bodyMaxHeight: maxBody }
+				: { bodyHeight: sizedHeight - header }),
 		};
 	});
 	return { narrow, railHeight, windows };
@@ -171,4 +207,39 @@ export function tabOffsetAfterDrag(
 	paneWidth: number,
 ): number {
 	return clamp(startOffset + deltaX, WINDOW_EDGE, paneWidth - tabWidth - WINDOW_EDGE);
+}
+
+/** Which edges of a window a resize moves: -1 the left or top, 1 the right or bottom. */
+export interface ResizeEdges {
+	readonly x: -1 | 0 | 1;
+	readonly y: -1 | 0 | 1;
+}
+
+/**
+ * The rectangle a resize produces. The edge that is not being dragged stays
+ * where it is, the window never gets smaller than its minimum, and its left
+ * and top edges never leave the pane.
+ */
+export function rectAfterResize(
+	start: WindowRect,
+	edges: ResizeEdges,
+	deltaX: number,
+	deltaY: number,
+	headerHeight: number,
+): WindowRect {
+	const minHeight = headerHeight + MIN_BODY_HEIGHT;
+	const right = start.x + start.width;
+	const bottom = start.y + start.height;
+	let { x, y, width, height } = start;
+	if (edges.x === 1) width = Math.max(WINDOW_MIN_WIDTH, start.width + deltaX);
+	if (edges.x === -1) {
+		width = clamp(start.width - deltaX, WINDOW_MIN_WIDTH, right);
+		x = right - width;
+	}
+	if (edges.y === 1) height = Math.max(minHeight, start.height + deltaY);
+	if (edges.y === -1) {
+		height = clamp(start.height - deltaY, minHeight, bottom);
+		y = bottom - height;
+	}
+	return { x, y, width, height };
 }

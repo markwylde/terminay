@@ -10,6 +10,7 @@
 
 import type { AppWindow, AppWindowClient } from '@terminay/client-core';
 import {
+	type MouseEvent as ReactMouseEvent,
 	type PointerEvent as ReactPointerEvent,
 	type ReactElement,
 	useCallback,
@@ -50,11 +51,17 @@ import { AppViewBridge, type ViewHostContext } from './viewBridge';
 import { buildViewDocument } from './viewDocument';
 import {
 	layoutAppWindows,
+	NARROW_PANE_WIDTH,
 	type PlacedWindow,
+	type ResizeEdges,
+	rectAfterResize,
 	TAB_MAX_WIDTH,
 	tabOffsetAfterDrag,
 	WINDOW_HEADER_HEIGHT,
 	WINDOW_HEADER_HEIGHT_NARROW,
+	type WindowPoint,
+	type WindowRect,
+	type WindowSize,
 } from './windowLayout';
 import './AppWindowHost.css';
 
@@ -101,10 +108,35 @@ const sameFrame = (left: PaneFrame | undefined, right: PaneFrame): boolean =>
 	left.height === right.height &&
 	left.visible === right.visible;
 
-/** A tab's width for its title, without measuring the DOM. */
-function tabWidthFor(title: string): number {
-	return Math.min(TAB_MAX_WIDTH, 46 + Math.ceil([...title].length * 7.4));
+/**
+ * A tab's width for its title and its close control, without measuring the
+ * DOM. On a phone the control is finger-sized and the title keeps its room, so
+ * that a tap meant to open the window does not land on the control.
+ */
+function tabWidthFor(title: string, narrow: boolean): number {
+	const letters = [...title].length;
+	return Math.min(
+		TAB_MAX_WIDTH,
+		narrow ? 86 + Math.ceil(letters * 8) : 68 + Math.ceil(letters * 7.4),
+	);
 }
+
+/** Where the user put an open window and how big they made it, on this client. */
+type WindowGeometry = Readonly<{ position?: WindowPoint; size?: WindowSize }>;
+
+/** A pointer must travel this far before a press on a title bar is a drag. */
+const DRAG_THRESHOLD = 4;
+
+const RESIZE_HANDLES: readonly (readonly [string, ResizeEdges])[] = [
+	['n', { x: 0, y: -1 }],
+	['s', { x: 0, y: 1 }],
+	['w', { x: -1, y: 0 }],
+	['e', { x: 1, y: 0 }],
+	['nw', { x: -1, y: -1 }],
+	['ne', { x: 1, y: -1 }],
+	['sw', { x: -1, y: 1 }],
+	['se', { x: 1, y: 1 }],
+];
 
 export function AppWindowHost(): ReactElement | null {
 	const byServer = useContext(AppWindowsContext);
@@ -119,6 +151,7 @@ export function AppWindowHost(): ReactElement | null {
 		() => new Map(),
 	);
 	const [tabOffsets, setTabOffsets] = useState<ReadonlyMap<string, number>>(() => new Map());
+	const [geometry, setGeometry] = useState<ReadonlyMap<string, WindowGeometry>>(() => new Map());
 	const [fullscreen, setFullscreen] = useState<ReadonlyMap<string, string>>(() => new Map());
 
 	const entries = useMemo<readonly WindowEntry[]>(() => {
@@ -242,7 +275,8 @@ export function AppWindowHost(): ReactElement | null {
 					state: window.state,
 					contentHeight: contentHeights.get(key),
 					tabOffset: tabOffsets.get(key),
-					tabWidth: tabWidthFor(window.title),
+					tabWidth: tabWidthFor(window.title, frame.width < NARROW_PANE_WIDTH),
+					...geometry.get(key),
 				})),
 				...(fullscreenId === undefined ? {} : { fullscreenId }),
 			});
@@ -253,7 +287,7 @@ export function AppWindowHost(): ReactElement | null {
 		for (const paneKey of [...lastFrames.current.keys()])
 			if (!byPane.has(paneKey)) lastFrames.current.delete(paneKey);
 		return { placed, rails, narrow, frames: effective };
-	}, [entries, frames, contentHeights, tabOffsets, fullscreen]);
+	}, [entries, frames, contentHeights, tabOffsets, geometry, fullscreen]);
 
 	// The pane reserves the rail under its terminal, so the terminal ends above
 	// the tabs. The variable is all the pane needs to know about windows.
@@ -311,6 +345,7 @@ export function AppWindowHost(): ReactElement | null {
 		};
 		setContentHeights(prune);
 		setTabOffsets(prune);
+		setGeometry(prune);
 		setFullscreen((previous) => {
 			if ([...previous.values()].every((key) => live.has(key))) return previous;
 			return new Map([...previous].filter(([, key]) => live.has(key)));
@@ -326,6 +361,9 @@ export function AppWindowHost(): ReactElement | null {
 	}, []);
 	const onTabOffset = useCallback((key: string, offset: number) => {
 		setTabOffsets((previous) => new Map(previous).set(key, offset));
+	}, []);
+	const onGeometry = useCallback((key: string, change: WindowGeometry) => {
+		setGeometry((previous) => new Map(previous).set(key, { ...previous.get(key), ...change }));
 	}, []);
 	const onFullscreen = useCallback((paneKey: string, key: string | undefined) => {
 		setFullscreen((previous) => {
@@ -404,6 +442,7 @@ export function AppWindowHost(): ReactElement | null {
 						leaving={isLeaving}
 						onResized={onResized}
 						onTabOffset={onTabOffset}
+						onGeometry={onGeometry}
 						onFullscreen={onFullscreen}
 					/>
 				);
@@ -424,6 +463,7 @@ type CardProps = Readonly<{
 	leaving: boolean;
 	onResized: (key: string, height: number) => void;
 	onTabOffset: (key: string, offset: number) => void;
+	onGeometry: (key: string, change: WindowGeometry) => void;
 	onFullscreen: (paneKey: string, key: string | undefined) => void;
 }>;
 
@@ -431,8 +471,18 @@ function AppWindowCard(props: CardProps): ReactElement {
 	const { entry, pane, frame, placed, narrow, available } = props;
 	const { window: appWindow, client } = entry;
 	const isTab = placed.placement === 'tab';
+	// Only a floating window is moved and resized: not a sheet, not one that
+	// fills the pane.
+	const isFloating = placed.placement === 'window';
 	const hidden = !frame.visible || placed.placement === 'hidden';
-	const drag = useRef<{ startX: number; offset: number; moved: boolean } | null>(null);
+	const drag = useRef<{ startX: number; startY: number; rect: WindowRect; moved: boolean } | null>(null);
+	const resize = useRef<{ startX: number; startY: number; rect: WindowRect; edges: ResizeEdges } | null>(null);
+	/**
+	 * Where a finger actually came down, when the press was a touch. A browser
+	 * aims a tap at a small control near the finger, so both the press and its
+	 * click can arrive on a control the finger was not on.
+	 */
+	const touched = useRef<WindowPoint | undefined>(undefined);
 	/** The press that just ended moved the tab, so its click is not an activation. */
 	const dragged = useRef(false);
 	const [dragging, setDragging] = useState(false);
@@ -489,17 +539,25 @@ function AppWindowCard(props: CardProps): ReactElement {
 		returnFocus();
 	};
 
-	// Only a minimised window can be dragged, and only along the bottom edge.
+	// A minimised window is dragged along the bottom edge only; a floating one
+	// anywhere its title bar stays inside the pane.
 	const onPointerDown = (event: ReactPointerEvent<HTMLElement>): void => {
+		touched.current =
+			event.pointerType === 'touch' ? { x: event.clientX, y: event.clientY } : undefined;
 		if ((event.target as HTMLElement).closest('button') !== null) {
 			// A tapped control does not take the focus, so a terminal that has the
 			// keyboard up keeps it.
 			if (event.pointerType === 'touch') event.preventDefault();
 			return;
 		}
-		if (!isTab) return;
+		if (!isTab && !isFloating) return;
 		dragged.current = false;
-		drag.current = { startX: event.clientX, offset: placed.rect.x, moved: false };
+		drag.current = {
+			startX: event.clientX,
+			startY: event.clientY,
+			rect: placed.rect,
+			moved: false,
+		};
 		try {
 			event.currentTarget.setPointerCapture(event.pointerId);
 		} catch {
@@ -510,14 +568,25 @@ function AppWindowCard(props: CardProps): ReactElement {
 	const onPointerMove = (event: ReactPointerEvent<HTMLElement>): void => {
 		const state = drag.current;
 		if (state === null) return;
-		const delta = event.clientX - state.startX;
-		if (!state.moved && Math.abs(delta) < 5) return;
+		const deltaX = event.clientX - state.startX;
+		const deltaY = event.clientY - state.startY;
+		if (
+			!state.moved &&
+			Math.abs(deltaX) < DRAG_THRESHOLD &&
+			(isTab || Math.abs(deltaY) < DRAG_THRESHOLD)
+		)
+			return;
 		state.moved = true;
 		setDragging(true);
-		props.onTabOffset(
-			entry.key,
-			tabOffsetAfterDrag(state.offset, delta, placed.rect.width, frame.width),
-		);
+		if (isTab)
+			props.onTabOffset(
+				entry.key,
+				tabOffsetAfterDrag(state.rect.x, deltaX, placed.rect.width, frame.width),
+			);
+		else
+			props.onGeometry(entry.key, {
+				position: { x: state.rect.x + deltaX, y: state.rect.y + deltaY },
+			});
 	};
 	const onPointerUp = (): void => {
 		const state = drag.current;
@@ -529,9 +598,57 @@ function AppWindowCard(props: CardProps): ReactElement {
 	// after the release, so opening on the release would leave that click to
 	// land on whatever the opening window had put under the pointer by then:
 	// on a phone, its minimise control.
-	const onTabClick = (): void => {
+	const onTabClick = (event: ReactMouseEvent<HTMLElement>): void => {
+		if ((event.target as HTMLElement).closest('button') !== null) return;
 		if (dragged.current) dragged.current = false;
 		else restore();
+	};
+
+	const closeFromTab = (event: ReactMouseEvent<HTMLElement>): void => {
+		const finger = touched.current;
+		touched.current = undefined;
+		const control = event.currentTarget.getBoundingClientRect();
+		// A click from the keyboard has no press behind it. A finger that came
+		// down beside the control meant the tab: closing is not undone, opening is.
+		const beside =
+			event.detail !== 0 &&
+			finger !== undefined &&
+			(finger.x < control.left ||
+				finger.x > control.right ||
+				finger.y < control.top ||
+				finger.y > control.bottom);
+		if (beside) restore();
+		else close();
+	};
+
+	const onResizeDown = (event: ReactPointerEvent<HTMLElement>, edges: ResizeEdges): void => {
+		event.preventDefault();
+		resize.current = { startX: event.clientX, startY: event.clientY, rect: placed.rect, edges };
+		setDragging(true);
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// As for a drag: the resize still works while the pointer stays over the handle.
+		}
+	};
+	const onResizeMove = (event: ReactPointerEvent<HTMLElement>): void => {
+		const state = resize.current;
+		if (state === null) return;
+		const rect = rectAfterResize(
+			state.rect,
+			state.edges,
+			event.clientX - state.startX,
+			event.clientY - state.startY,
+			WINDOW_HEADER_HEIGHT,
+		);
+		props.onGeometry(entry.key, {
+			position: { x: rect.x, y: rect.y },
+			size: { width: rect.width, height: rect.height },
+		});
+	};
+	const onResizeEnd = (): void => {
+		resize.current = null;
+		setDragging(false);
 	};
 
 	const source =
@@ -551,6 +668,13 @@ function AppWindowCard(props: CardProps): ReactElement {
 				top: frame.top + placed.rect.y,
 				width: placed.rect.width,
 				height: placed.rect.height,
+				// A floating window belongs to its pane: what the user has moved
+				// or stretched past the pane's edge is cut off there.
+				...(isFloating
+					? {
+							clipPath: `inset(${-placed.rect.y}px ${placed.rect.x + placed.rect.width - frame.width}px ${placed.rect.y + placed.rect.height - frame.height}px ${-placed.rect.x}px)`,
+						}
+					: {}),
 			}}
 		>
 			<header
@@ -569,6 +693,7 @@ function AppWindowCard(props: CardProps): ReactElement {
 							'aria-label': `Open ${appWindow.title}`,
 							onClick: onTabClick,
 							onKeyDown: (event) => {
+								if (event.target !== event.currentTarget) return;
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
 									restore();
@@ -581,7 +706,14 @@ function AppWindowCard(props: CardProps): ReactElement {
 					▣
 				</span>
 				<span className="app-window__title">{appWindow.title}</span>
-				{isTab ? null : (
+				{isTab ? (
+					<>
+						<span className="app-window__spacer" />
+						<button type="button" aria-label={`Close ${appWindow.title}`} onClick={closeFromTab}>
+							×
+						</button>
+					</>
+				) : (
 					<>
 						<span className="app-window__source">{source}</span>
 						<span className="app-window__spacer" />
@@ -633,7 +765,10 @@ function AppWindowCard(props: CardProps): ReactElement {
 							mirror={entry.mirror}
 							pane={pane}
 							bodyWidth={placed.bodyWidth}
-							autoHeight={placed.placement === 'window' || placed.placement === 'sheet'}
+							autoHeight={
+								placed.bodyHeight === undefined &&
+								(placed.placement === 'window' || placed.placement === 'sheet')
+							}
 							onResized={props.onResized}
 						/>
 					)
@@ -646,6 +781,20 @@ function AppWindowCard(props: CardProps): ReactElement {
 					</div>
 				) : null}
 			</div>
+			{isFloating
+				? RESIZE_HANDLES.map(([name, edges]) => (
+						<div
+							key={name}
+							className="app-window__resize"
+							data-edge={name}
+							aria-hidden="true"
+							onPointerDown={(event) => onResizeDown(event, edges)}
+							onPointerMove={onResizeMove}
+							onPointerUp={onResizeEnd}
+							onPointerCancel={onResizeEnd}
+						/>
+					))
+				: null}
 		</section>
 	);
 }
@@ -698,7 +847,13 @@ function AppWindowView(props: ViewProps): ReactElement {
 			platform: isNarrow ? 'mobile' : 'desktop',
 			touch: isNarrow || matchMedia('(pointer: coarse)').matches,
 			width: place.bodyWidth,
-			...(fill ? { height: place.bodyHeight ?? 0 } : { maxHeight: place.bodyMaxHeight }),
+			// A window that fills the pane, or that the user resized, has a height
+			// of its own; otherwise the view's content decides, up to a limit.
+			...(place.bodyHeight !== undefined
+				? { height: place.bodyHeight }
+				: fill
+					? { height: 0 }
+					: { maxHeight: place.bodyMaxHeight }),
 			theme: 'dark',
 			variables: themeVariables(style),
 		};
@@ -769,7 +924,10 @@ function AppWindowView(props: ViewProps): ReactElement {
 					resized: (height) => {
 						const place = latest.current.placed.placement;
 						// Only meaningful while the view controls its own height.
-						if (place === 'window' || place === 'sheet')
+						if (
+							latest.current.placed.bodyHeight === undefined &&
+							(place === 'window' || place === 'sheet')
+						)
 							latest.current.props.onResized(latest.current.entry.key, height);
 					},
 					// The server honours a view only from the client controlling its

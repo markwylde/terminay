@@ -312,6 +312,88 @@ test('a host that cannot frame the proxy reports app windows unavailable and run
 	expect(await named(page, 'content')).toHaveLength(0);
 });
 
+test('a floating window is dragged by its title bar and resized by its edges, inside its pane', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	await add(page, { title: 'Form', html: '<h1>Form</h1><p>One</p><p>Two</p>' });
+	const form = card(page, 'Form');
+	await expect(form).toHaveAttribute('data-placement', 'window');
+	await settled(form);
+	const pane = await box(page.locator('#pane'));
+	const start = await box(form);
+	const header = form.locator('.app-window__header');
+	const drag = async (from: { x: number; y: number }, by: { x: number; y: number }) => {
+		await page.mouse.move(from.x, from.y);
+		await page.mouse.down();
+		await page.mouse.move(from.x + by.x / 2, from.y + by.y / 2, { steps: 4 });
+		await page.mouse.move(from.x + by.x, from.y + by.y, { steps: 4 });
+		await page.mouse.up();
+		await settled(form);
+	};
+	const grip = async () => {
+		const title = await box(header);
+		return { x: title.x + 150, y: title.y + title.height / 2 };
+	};
+	const relative = async () => {
+		const now = await box(form);
+		return { x: Math.round(now.x - pane.x), y: Math.round(now.y - pane.y), width: Math.round(now.width), height: Math.round(now.height) };
+	};
+
+	// Dragged by the title bar, it goes where it is put and keeps its size.
+	await drag(await grip(), { x: 200, y: -150 });
+	expect(await relative()).toEqual({
+		x: 212,
+		y: Math.round(start.y - pane.y) - 150,
+		width: 440,
+		height: Math.round(start.height),
+	});
+
+	// Its body may leave the pane, where it is cut off; its title bar may not.
+	await drag(await grip(), { x: 2000, y: 2000 });
+	const low = await relative();
+	expect([low.x, low.y]).toEqual([Math.round(pane.width) - 160, Math.round(pane.height) - 32]);
+	const outside = await page.evaluate(
+		([x, y]) => document.elementFromPoint(x, y)?.closest('.app-window') !== null,
+		[pane.x + pane.width + 40, pane.y + pane.height - 16],
+	);
+	expect(outside).toBe(false);
+	await drag(await grip(), { x: -3000, y: -3000 });
+	expect([(await relative()).x, (await relative()).y]).toEqual([0, 0]);
+
+	// Resized from a corner and from an edge, the view is told its new size.
+	await drag(await grip(), { x: 100, y: 100 });
+	const before = await box(form);
+	await drag({ x: before.x + before.width - 5, y: before.y + before.height - 5 }, { x: 160, y: 120 });
+	expect(await relative()).toEqual({ x: 100, y: 100, width: 600, height: Math.round(before.height) + 120 });
+	const wide = await box(form);
+	await drag({ x: wide.x + 2, y: wide.y + wide.height / 2 }, { x: -50, y: 0 });
+	expect(await relative()).toEqual({ x: 50, y: 100, width: 650, height: Math.round(wide.height) });
+	await expect
+		.poll(async () => view(form).locator('body').evaluate(() => [innerWidth, innerHeight]))
+		.toEqual([650, Math.round(wide.height) - 32]);
+	// It cannot be made smaller than its minimum.
+	const sized = await box(form);
+	await drag({ x: sized.x + sized.width - 5, y: sized.y + sized.height - 5 }, { x: -2000, y: -2000 });
+	expect(await relative()).toEqual({ x: 50, y: 100, width: 220, height: 112 });
+
+	// Minimised and opened again, it is where it was left, at the size it was given.
+	await form.getByRole('button', { name: 'Minimise window' }).click();
+	await expect(form).toHaveAttribute('data-placement', 'tab');
+	await settled(form);
+	await header.click();
+	await expect(form).toHaveAttribute('data-placement', 'window');
+	await settled(form);
+	expect(await relative()).toEqual({ x: 50, y: 100, width: 220, height: 112 });
+
+	// A tab has its own close control, which closes the window without opening it.
+	await form.getByRole('button', { name: 'Minimise window' }).click();
+	await expect(form).toHaveAttribute('data-placement', 'tab');
+	await form.getByRole('button', { name: 'Close Form' }).click();
+	await expect(page.locator('.app-window')).toHaveCount(0);
+	expect(await named(page, 'close')).toHaveLength(1);
+	expect((await named(page, 'setState')).filter((call) => call[2] === 'open')).toHaveLength(1);
+});
+
 function mobile(browser: Browser) {
 	return browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 740 } });
 }
@@ -353,9 +435,15 @@ test('on a touch phone the window is a sheet, and its tab is dragged by touch al
 		expect(moved.x).toBeGreaterThan(tab.x + 100);
 		expect(Math.round(moved.y)).toBe(Math.round(tab.y));
 		await expect(sheet).toHaveAttribute('data-placement', 'tab');
-		// A tap opens it again.
+		// A tap on the tab opens it again, though its close control is a finger's width away.
 		await header.tap();
 		await expect(sheet).toHaveAttribute('data-placement', 'sheet');
+		// A tap on the close control itself closes the window from its tab.
+		await sheet.getByRole('button', { name: 'Minimise window' }).tap();
+		await expect(sheet).toHaveAttribute('data-placement', 'tab');
+		await settled(sheet);
+		await sheet.getByRole('button', { name: 'Close Draw' }).tap();
+		await expect(page.locator('.app-window')).toHaveCount(0);
 	} finally {
 		await context.close();
 	}
