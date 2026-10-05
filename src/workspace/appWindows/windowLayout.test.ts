@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	layoutAppWindows,
 	railHeightFor,
+	rectAfterResize,
 	tabOffsetAfterDrag,
 	type LayoutWindow,
 } from './windowLayout.ts';
@@ -104,4 +105,71 @@ test('a fill request for a minimised window is ignored', () => {
 	const layout = layoutAppWindows({ paneWidth: 1250, paneHeight: 700, windows: [tab('a')], fullscreenId: 'a' });
 	assert.equal(layout.windows[0].placement, 'tab');
 	assert.equal(layout.railHeight, 33);
+});
+
+test('a moved window stays where it was put and keeps its content height', () => {
+	const [placed] = layoutAppWindows({
+		paneWidth: 1250,
+		paneHeight: 700,
+		windows: [{ ...open('a', 240), position: { x: 300, y: 40 } }],
+	}).windows;
+	assert.deepEqual(placed.rect, { x: 300, y: 40, width: 440, height: 272 });
+	assert.equal(placed.bodyMaxHeight, 388);
+	assert.equal(placed.bodyHeight, undefined);
+});
+
+test('a moved window may run off the right and bottom, but its title bar stays in the pane', () => {
+	const place = (x: number, y: number) =>
+		layoutAppWindows({
+			paneWidth: 1250,
+			paneHeight: 700,
+			windows: [{ ...open('a', 240), position: { x, y } }],
+		}).windows[0].rect;
+	assert.deepEqual([place(5000, 5000).x, place(5000, 5000).y], [1250 - 160, 700 - 32]);
+	assert.deepEqual([place(-500, -500).x, place(-500, -500).y], [0, 0]);
+});
+
+test('a moved window keeps its title bar above the rail', () => {
+	const layout = layoutAppWindows({
+		paneWidth: 1250,
+		paneHeight: 700,
+		windows: [tab('t'), { ...open('a', 240), position: { x: 100, y: 5000 } }],
+	});
+	assert.equal(layout.windows[1].rect.y, 700 - layout.railHeight - 32);
+});
+
+test('a resized window has the size it was given and tells its view a fixed height', () => {
+	const [placed] = layoutAppWindows({
+		paneWidth: 1250,
+		paneHeight: 700,
+		windows: [{ ...open('a', 240), position: { x: 100, y: 50 }, size: { width: 900, height: 1500 } }],
+	}).windows;
+	assert.deepEqual(placed.rect, { x: 100, y: 50, width: 900, height: 1500 });
+	assert.equal(placed.bodyWidth, 900);
+	assert.equal(placed.bodyHeight, 1500 - 32);
+	assert.equal(placed.bodyMaxHeight, undefined);
+});
+
+test('a phone sheet ignores a position and size given on a wider pane', () => {
+	const [placed] = layoutAppWindows({
+		paneWidth: 390,
+		paneHeight: 700,
+		windows: [{ ...open('a', 240), position: { x: 100, y: 50 }, size: { width: 900, height: 600 } }],
+	}).windows;
+	assert.equal(placed.placement, 'sheet');
+	assert.deepEqual(placed.rect, { x: 0, y: 700 - 280, width: 390, height: 280 });
+});
+
+test('resizing moves only the dragged edges, down to a minimum size', () => {
+	const start = { x: 100, y: 200, width: 440, height: 300 };
+	assert.deepEqual(rectAfterResize(start, { x: 1, y: 1 }, 60, 40, 32), { x: 100, y: 200, width: 500, height: 340 });
+	assert.deepEqual(rectAfterResize(start, { x: -1, y: -1 }, -60, -40, 32), { x: 40, y: 160, width: 500, height: 340 });
+	assert.deepEqual(rectAfterResize(start, { x: 1, y: 0 }, -1000, 999, 32), { x: 100, y: 200, width: 220, height: 300 });
+	// The opposite edge stays put when the minimum is reached.
+	assert.deepEqual(rectAfterResize(start, { x: -1, y: -1 }, 1000, 1000, 32), { x: 320, y: 388, width: 220, height: 112 });
+});
+
+test('resizing from the left or top stops at the pane edge', () => {
+	const start = { x: 100, y: 200, width: 440, height: 300 };
+	assert.deepEqual(rectAfterResize(start, { x: -1, y: -1 }, -1000, -1000, 32), { x: 0, y: 0, width: 540, height: 500 });
 });

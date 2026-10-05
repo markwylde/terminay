@@ -73,6 +73,49 @@
   cursor: grabbing;
 }
 
+/* The edges and corners a floating window is resized by. They lie over the
+   window's own edge, so they take nothing from the terminal around it. */
+.app-window__resize {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+
+.app-window__resize[data-edge="n"],
+.app-window__resize[data-edge="s"] {
+  left: 16px;
+  right: 16px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.app-window__resize[data-edge="w"],
+.app-window__resize[data-edge="e"] {
+  top: 16px;
+  bottom: 16px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.app-window__resize[data-edge="n"] { top: 0; }
+.app-window__resize[data-edge="s"] { bottom: 0; }
+.app-window__resize[data-edge="w"] { left: 0; }
+.app-window__resize[data-edge="e"] { right: 0; }
+
+.app-window__resize[data-edge="nw"],
+.app-window__resize[data-edge="ne"],
+.app-window__resize[data-edge="sw"],
+.app-window__resize[data-edge="se"] {
+  /* Larger than the edges: the window's rounded corner takes some of it. */
+  width: 16px;
+  height: 16px;
+}
+
+.app-window__resize[data-edge="nw"] { top: 0; left: 0; cursor: nwse-resize; }
+.app-window__resize[data-edge="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+.app-window__resize[data-edge="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
+.app-window__resize[data-edge="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
+
 .app-window__header {
   box-sizing: border-box;
   flex: 0 0 32px;
@@ -97,7 +140,7 @@
 .app-window[data-placement="tab"] .app-window__header {
   flex: 1;
   border-bottom: 0;
-  padding: 0 12px 0 10px;
+  padding: 0 4px 0 10px;
   outline: none;
 }
 

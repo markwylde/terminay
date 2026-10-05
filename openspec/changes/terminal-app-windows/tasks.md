@@ -59,3 +59,9 @@
 - [x] 7.2 Remove `scripts/spikes/mcp-apps/` once the evidence file is complete, keeping the evidence file. Verified by: `git grep mcp-apps scripts/` returns nothing and the ADR links resolve.
 - [x] 7.3 Run `openspec validate --all`, `npm run smoke`, the MCP suites, and the full E2E. Verified by: all pass.
 - [x] 7.4 Open the pull request on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
+
+## 8. Moving and resizing
+
+- [x] 8.1 Let the user move a floating window by its title bar and resize it by its edges and corners, kept inside its pane with the title bar always visible and the body cut off at the pane's edge; keep the sheet and the filled pane fixed. Verified by: `windowLayout.test.ts` for the placement and resize rules, and the drag and resize test in `e2e/app-windows-browser.spec.ts`.
+- [x] 8.2 Add a close control to a minimised window's tab. Verified by: the same browser test closes a window from its tab without opening it.
+
