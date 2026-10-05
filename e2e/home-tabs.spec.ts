@@ -231,12 +231,16 @@ test.describe('Home tabs', () => {
 
 		// What a device remembered: the list beside the automation, plus a tab
 		// for an automation that has since been deleted and an unsaved draft.
+		// Written as the page goes away, after Home has stopped saving, so the
+		// reload reads exactly this and not an arrangement saved in between.
 		const remember = (layout: unknown) =>
 			mainWindow.evaluate((value) => {
-				window.localStorage.setItem(
-					'terminay.view.home-layout.v1',
-					typeof value === 'string' ? value : JSON.stringify(value),
-				);
+				window.addEventListener('pagehide', () => {
+					window.localStorage.setItem(
+						'terminay.view.home-layout.v1',
+						typeof value === 'string' ? value : JSON.stringify(value),
+					);
+				});
 			}, layout);
 		await remember({
 			grid: {
