@@ -137,18 +137,19 @@ test.describe('Automations section', () => {
 		await mainWindow.locator('[data-terminay-automation-new]').click();
 		await field(mainWindow, 'name').fill('Keep going');
 
-		// A schedule has no subject terminal: only "Run a command" is offered.
+		// A schedule has no subject terminal: only actions that launch their own terminal are offered.
 		const action = field(mainWindow, 'action');
-		await expect(action.locator('option')).toHaveText(['Run a command']);
+		await expect(action.locator('option')).toHaveText(['Run a command', 'Prompt an agent']);
 
 		await editor(mainWindow)
 			.locator('[data-terminay-automation-trigger-kind="event"]')
 			.check();
 		await field(mainWindow, 'event').selectOption('project.opened');
-		await expect(action.locator('option')).toHaveText(['Run a command']);
+		await expect(action.locator('option')).toHaveText(['Run a command', 'Prompt an agent']);
 		await field(mainWindow, 'event').selectOption('agent.needsInput');
 		await expect(action.locator('option')).toHaveText([
 			'Run a command',
+			'Prompt an agent',
 			'Run a Macro on the terminal',
 			'Write text into the terminal',
 		]);
