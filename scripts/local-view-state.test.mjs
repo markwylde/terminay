@@ -543,18 +543,111 @@ test('a Home sidebar visibility that cannot be read is open', async () => {
   assert.equal(module.recallHomeSidebarVisible(), true)
 })
 
-test('a device remembers the Home section it last showed, Home by default', async () => {
+test('a device with no remembered Home tabs opens on the section it last showed', async () => {
   const { module } = await loadModule()
   globalThis.localStorage = fakeStorage()
   try {
-    assert.equal(module.recallHomeSection(), 'home')
-    module.rememberHomeSection('tabs')
-    assert.equal(module.recallHomeSection(), 'tabs')
-    module.rememberHomeSection('automations')
-    assert.equal(module.recallHomeSection(), 'automations')
+    assert.deepEqual(module.recallDefaultHomeTab(), { kind: 'section', section: 'home' })
+    assert.equal(module.recallHomeLayout(), undefined)
   } finally {
     delete globalThis.localStorage
   }
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-section.v1': 'automations',
+  })
+  try {
+    assert.deepEqual(module.recallDefaultHomeTab(), { kind: 'section', section: 'automations' })
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+function homeLayout(views, panels = {}) {
+  return {
+    grid: {
+      root: { type: 'branch', data: [{ type: 'leaf', data: { views, activeView: views[0], id: '1' }, size: 800 }], size: 600 },
+      width: 800,
+      height: 600,
+      orientation: 'HORIZONTAL',
+    },
+    panels,
+    activeGroup: '1',
+  }
+}
+
+test('a device remembers its Home tabs and how they were arranged', async () => {
+  const { module } = await loadModule()
+  const storage = fakeStorage()
+  globalThis.localStorage = storage
+  try {
+    module.rememberHomeLayout(homeLayout(['section:tabs', 'automation:server-a:auto-1']))
+    const recalled = module.recallHomeLayout()
+    assert.deepEqual(recalled.grid.root.data[0].data.views, ['section:tabs', 'automation:server-a:auto-1'])
+    assert.deepEqual(Object.keys(recalled.panels).sort(), ['automation:server-a:auto-1', 'section:tabs'])
+    assert.deepEqual([...storage.raw.keys()], ['terminay.view.home-layout.v1'])
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('remembered Home tabs are a hint: drafts, unknown tabs, and stored parameters are dropped', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.home-layout.v1': JSON.stringify(
+      homeLayout(
+        ['automation-new:server-a:3', 'file:/etc/passwd', 'section:automations', 'automation-edit:server-a:auto-1'],
+        {
+          'section:automations': {
+            id: 'section:automations',
+            contentComponent: 'terminal',
+            title: 'Automations',
+            params: { sessionId: 'not-yours' },
+          },
+        },
+      ),
+    ),
+  })
+  try {
+    const recalled = module.recallHomeLayout()
+    const leaf = recalled.grid.root.data[0].data
+    assert.deepEqual(leaf.views, ['section:automations', 'automation-edit:server-a:auto-1'])
+    assert.equal(leaf.activeView, 'section:automations')
+    assert.deepEqual(recalled.panels['section:automations'], {
+      id: 'section:automations',
+      contentComponent: 'home',
+      tabComponent: 'homeTab',
+      renderer: 'always',
+      title: 'Automations',
+      params: { descriptor: { kind: 'section', section: 'automations' } },
+    })
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('Home tabs that cannot be read, or hold nothing restorable, are no arrangement and no error', async () => {
+  const { module } = await loadModule()
+  for (const stored of ['{not json', '[]', '{"grid":{}}', JSON.stringify(homeLayout(['automation-new:server-a:1']))]) {
+    globalThis.localStorage = fakeStorage({ 'terminay.view.home-layout.v1': stored })
+    try {
+      assert.equal(module.recallHomeLayout(), undefined)
+    } finally {
+      delete globalThis.localStorage
+    }
+  }
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberHomeLayout(homeLayout(['section:tabs'])))
+    assert.equal(module.recallHomeLayout(), undefined)
+    assert.deepEqual(module.recallDefaultHomeTab(), { kind: 'section', section: 'home' })
+  } finally {
+    delete globalThis.localStorage
+  }
+  assert.doesNotThrow(() => module.rememberHomeLayout(homeLayout(['section:tabs'])))
+  assert.equal(module.recallHomeLayout(), undefined)
 })
 
 test('a Home section that is not one of the three, or cannot be read, is Home', async () => {
@@ -572,12 +665,10 @@ test('a Home section that is not one of the three, or cannot be read, is Home', 
     setItem() { throw new Error('storage disabled') },
   }
   try {
-    assert.doesNotThrow(() => module.rememberHomeSection('tabs'))
     assert.equal(module.recallHomeSection(), 'home')
   } finally {
     delete globalThis.localStorage
   }
-  assert.doesNotThrow(() => module.rememberHomeSection('automations'))
   assert.equal(module.recallHomeSection(), 'home')
 })
 
@@ -588,13 +679,13 @@ test('Home sidebar state never touches a project\'s remembered state', async () 
   try {
     module.rememberActiveSession('project-a', 'session-1')
     module.rememberHomeSidebarVisible(false)
-    module.rememberHomeSection('tabs')
+    module.rememberHomeLayout(homeLayout(['section:tabs']))
     assert.equal(module.recallActiveSession('project-a'), 'session-1')
     assert.deepEqual(
       [...storage.raw.keys()].sort(),
       [
         'terminay.view.active-session.v1',
-        'terminay.view.home-section.v1',
+        'terminay.view.home-layout.v1',
         'terminay.view.home-sidebar-visible.v1',
       ],
     )

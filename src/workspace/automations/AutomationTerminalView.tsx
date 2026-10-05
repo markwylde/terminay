@@ -5,7 +5,8 @@
  * so this is its only renderer. It mounts the same `TerminalPanel` a project
  * uses, inside its own Dockview, bound to the space's project on the owning
  * connection — so the terminals attach, focus, take input, and close exactly
- * as project terminals do.
+ * as project terminals do. Each automation terminal has a Home tab of its own,
+ * so this host is given one terminal and draws no tab strip.
  */
 
 import {
@@ -156,7 +157,13 @@ export function AutomationTerminalView({
 			data-terminay-automation-terminal-view="true"
 		>
 			<TerminalPanelClientContext.Provider value={clientContext}>
-				<DockviewReact components={components} onReady={handleReady} />
+				{/* One terminal per Home tab: Home's own strip is the tab strip, so
+				    this host draws none and takes no drops. */}
+				<DockviewReact
+					components={components}
+					onReady={handleReady}
+					disableDnd
+				/>
 			</TerminalPanelClientContext.Provider>
 		</div>
 	);

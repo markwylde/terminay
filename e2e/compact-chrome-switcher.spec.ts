@@ -148,7 +148,7 @@ test.describe('compact chrome', () => {
 		await expect(commandBar).toHaveCount(0);
 	});
 
-	test('the command bar control is unavailable on the dashboard', async ({
+	test('the command bar opens on Home, without a project in front', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -158,11 +158,21 @@ test.describe('compact chrome', () => {
 			'data-terminay-selected-view',
 			'home',
 		);
-		// The command acts on the project in front; with none it says so rather
-		// than looking live and doing nothing.
+		const control = mainWindow.locator('[data-compact-command-bar="true"]');
+		await expect(control).toBeEnabled();
+		await control.click();
+		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
+		await expect(commandBar).toBeVisible();
+		// It lists what belongs to the workspace view, and nothing that needs
+		// the project behind Home.
 		await expect(
-			mainWindow.locator('[data-compact-command-bar="true"]'),
-		).toBeDisabled();
+			commandBar.getByText('Show dashboard', { exact: true }),
+		).toBeVisible();
+		await expect(
+			commandBar.getByText('Edit tab settings', { exact: true }),
+		).toHaveCount(0);
+		await mainWindow.keyboard.press('Escape');
+		await expect(commandBar).toHaveCount(0);
 	});
 
 	test('long-pressing a switcher terminal row opens that terminal editor', async ({
