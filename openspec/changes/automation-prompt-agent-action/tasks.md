@@ -30,6 +30,6 @@
 - [x] 3.2 `npm run lint`, `npm run typecheck`, and the touched unit suites exit
       zero.
 - [ ] 3.3 An e2e case in `e2e/automations-ui.spec.ts` creates a prompt-agent
-      automation with command `printenv PROMPT`, runs it now, and reads the
+      automation that prints `"$PROMPT"`, runs it now, and reads the
       prompt back from the run output. Verified by `npm run test:e2e`.
 - [ ] 3.4 Open the pull request on `origin` and read back green CI statuses.
