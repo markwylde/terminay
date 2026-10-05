@@ -136,6 +136,16 @@ test("describe states the action in full, and refuses what could never succeed",
     value: "mail-digest --since yesterday",
     code: true,
   });
+  const prompted = await operations.describe({
+    kind: "create",
+    input: { ...digest, action: { kind: "promptAgent", command: 'agent "$PROMPT"', prompt: "Say hello.\nThen stop." } },
+  });
+  assert.equal(prompted.details.find((line) => line.label === "Runs").value, 'agent "$PROMPT"');
+  assert.deepEqual(prompted.details.find((line) => line.label === "Prompt"), {
+    label: "Prompt",
+    value: "Say hello.\nThen stop.",
+    code: true,
+  });
   const created = await operations.create(digest, actor);
   const update = await operations.describe({
     kind: "update",

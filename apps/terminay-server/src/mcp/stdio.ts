@@ -485,6 +485,30 @@ function registerAutomationTools(
 			maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
 		}),
 		z.object({
+			kind: z.literal('promptAgent'),
+			command: z
+				.string()
+				.min(1)
+				.max(16_384)
+				.describe(
+					'The command line that receives the prompt, written in full, e.g. `my-agent "$PROMPT"`. Nothing is added to it.',
+				),
+			prompt: z
+				.string()
+				.min(1)
+				.max(32_768)
+				.describe(
+					'Free multi-line text passed to the command verbatim as the PROMPT environment variable. It needs no shell escaping.',
+				),
+			shellProfileId: z.string().regex(ID_PATTERN).optional(),
+			cwd: z
+				.string()
+				.max(4096)
+				.optional()
+				.describe('Working directory; defaults to the home directory.'),
+			maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
+		}),
+		z.object({
 			kind: z.literal('runMacro'),
 			macroId: z.string().regex(ID_PATTERN),
 			fieldValues: z

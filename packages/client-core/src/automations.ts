@@ -57,6 +57,7 @@ export type AutomationTrigger =
 
 export type AutomationAction =
   | { readonly kind: "runCommand"; readonly command: string; readonly shellProfileId?: string; readonly cwd?: string; readonly maxDurationSeconds: number }
+  | { readonly kind: "promptAgent"; readonly command: string; readonly prompt: string; readonly shellProfileId?: string; readonly cwd?: string; readonly maxDurationSeconds: number }
   | { readonly kind: "runMacro"; readonly macroId: string; readonly fieldValues: Readonly<Record<string, MacroFieldValue>> }
   | { readonly kind: "writeText"; readonly text: string; readonly submit: boolean };
 
@@ -87,7 +88,7 @@ export interface AutomationDefinition {
 export type AutomationDraft = Omit<AutomationDefinition, "id" | "evaluatedThrough" | "settings" | "action" | "enabled"> & {
   readonly id?: string;
   readonly enabled?: boolean;
-  readonly action: AutomationAction | (Omit<Extract<AutomationAction, { kind: "runCommand" }>, "maxDurationSeconds"> & { readonly maxDurationSeconds?: number });
+  readonly action: AutomationAction | (Omit<Extract<AutomationAction, { kind: "runCommand" }>, "maxDurationSeconds"> & { readonly maxDurationSeconds?: number }) | (Omit<Extract<AutomationAction, { kind: "promptAgent" }>, "maxDurationSeconds"> & { readonly maxDurationSeconds?: number });
   readonly settings?: Partial<AutomationSettings>;
 };
 
@@ -346,8 +347,13 @@ function validateAction(value: JsonValue | undefined): AutomationAction {
   if (!isRecord(value)) throw new TypeError("automation action is invalid");
   switch (value.kind) {
     case "runCommand":
+    case "promptAgent": {
       if (typeof value.command !== "string" || !safeUInt(value.maxDurationSeconds) || (value.shellProfileId !== undefined && typeof value.shellProfileId !== "string") || (value.cwd !== undefined && typeof value.cwd !== "string")) break;
-      return Object.freeze({ kind: "runCommand", command: value.command, maxDurationSeconds: value.maxDurationSeconds, ...(value.shellProfileId === undefined ? {} : { shellProfileId: value.shellProfileId as string }), ...(value.cwd === undefined ? {} : { cwd: value.cwd as string }) });
+      const launch = { command: value.command, maxDurationSeconds: value.maxDurationSeconds, ...(value.shellProfileId === undefined ? {} : { shellProfileId: value.shellProfileId as string }), ...(value.cwd === undefined ? {} : { cwd: value.cwd as string }) };
+      if (value.kind === "runCommand") return Object.freeze({ kind: "runCommand", ...launch });
+      if (typeof value.prompt !== "string") break;
+      return Object.freeze({ kind: "promptAgent", prompt: value.prompt, ...launch });
+    }
     case "runMacro": {
       if (!isRecord(value.fieldValues)) break;
       const fieldValues: Record<string, MacroFieldValue> = {};

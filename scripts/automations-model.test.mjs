@@ -142,12 +142,19 @@ test('presets round-trip through their expressions', () => {
 test('subject actions are offered only for terminal-subject events', () => {
 	assert.deepEqual(actionKindsFor({ kind: 'schedule', cron: '* * * * *' }), [
 		'runCommand',
+		'promptAgent',
 	]);
 	assert.deepEqual(actionKindsFor({ kind: 'event', event: 'project.opened' }), [
 		'runCommand',
+		'promptAgent',
 	]);
+	assert.deepEqual(
+		combinationProblem({ kind: 'schedule', cron: '* * * * *' }, 'promptAgent'),
+		undefined,
+	);
 	assert.deepEqual(actionKindsFor({ kind: 'event', event: 'terminal.idle' }), [
 		'runCommand',
+		'promptAgent',
 		'runMacro',
 		'writeText',
 	]);
@@ -370,4 +377,38 @@ test('pruning 0 days counts a run that started after the section clock', () => {
 	const now = 1_000;
 	const runs = [{ runId: 'fresh', automationId: 'a', status: 'finished', startedAt: now + 5_000 }];
 	assert.equal(prunableRuns(runs, 0, now).length, 1);
+});
+
+test('a prompt-agent automation round-trips with its prompt exactly as typed', () => {
+	const prompt = '  Say hello.\n\nIt\'s "quoted" $(date)\n';
+	const automation = {
+		id: 'auto-2',
+		name: 'Morning hello',
+		enabled: true,
+		trigger: { kind: 'schedule', cron: '0 9 * * *' },
+		action: {
+			kind: 'promptAgent',
+			command: 'agent "$PROMPT"',
+			prompt,
+			shellProfileId: 'zsh',
+			maxDurationSeconds: 600,
+		},
+		settings: { keepTerminalAfterRun: false, recordSession: true, cooldownSeconds: 0 },
+		evaluatedThrough: 0,
+	};
+	const form = formFromAutomation(automation);
+	assert.equal(form.actionKind, 'promptAgent');
+	assert.equal(form.prompt, prompt);
+	assert.equal(form.maxDurationMinutes, '10');
+	const result = formToDraft(form);
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.draft.action, automation.action);
+	assert.equal(formToDraft({ ...form, maxDurationMinutes: 'soon' }).ok, false);
+	// Switching back to a command drops the prompt from what is saved.
+	assert.deepEqual(formToDraft({ ...form, actionKind: 'runCommand' }).draft.action, {
+		kind: 'runCommand',
+		command: 'agent "$PROMPT"',
+		shellProfileId: 'zsh',
+		maxDurationSeconds: 600,
+	});
 });

@@ -5,6 +5,7 @@ import type { McpApprovalDetail } from '../mcpApprovals/index.js';
 import type { AutomationAuditRecord } from './protocol.js';
 import type { AutomationRepository } from './repository.js';
 import type { AutomationRunLog } from './runLog.js';
+import { launchesRunTerminal } from './types.js';
 import type {
 	AutomationAction,
 	AutomationDefinition,
@@ -374,7 +375,7 @@ export function createAutomationMcpOperations(
 			await repository.load();
 			const automation = repository.find(id);
 			if (automation === undefined) throw notFound();
-			if (automation.action.kind !== 'runCommand' && subject?.kind !== 'terminal')
+			if (!launchesRunTerminal(automation.action) && subject?.kind !== 'terminal')
 				throw new AutomationServiceError(
 					'invalid_combination',
 					'running this automation now needs a subject terminal',
@@ -491,8 +492,11 @@ function definitionDetails(definition: AutomationDefinition): McpApprovalDetail[
 	];
 	switch (action.kind) {
 		case 'runCommand':
+		case 'promptAgent':
+			lines.push({ label: 'Runs', value: action.command, code: true });
+			if (action.kind === 'promptAgent')
+				lines.push({ label: 'Prompt', value: action.prompt, code: true });
 			lines.push(
-				{ label: 'Runs', value: action.command, code: true },
 				{ label: 'Working directory', value: action.cwd ?? 'Home directory' },
 				{ label: 'Stops after', value: `${action.maxDurationSeconds} seconds` },
 			);
