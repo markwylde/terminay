@@ -1,11 +1,14 @@
 /**
- * Home, with its sidebar.
+ * Home's shell: its sidebar, beside whatever Home is showing.
  *
  * Home is not a project, so its sidebar holds no Explorer, Documentation,
- * Agents, or Git panes. It is a menu over Home's three sections. It reuses the
- * project sidebar's geometry — the same split layout, width separator, and
- * narrow-layout drawer — so it inherits the drawer's focus and dismissal rules
- * rather than defining its own.
+ * Agents, or Git panes. It lists Home's three sections and opens each as a
+ * tab. It reuses the project sidebar's geometry — the same split layout, width
+ * separator, and narrow-layout drawer — so it inherits the drawer's focus and
+ * dismissal rules rather than defining its own.
+ *
+ * Home stays mounted while a project is in front, hidden and inert, so that
+ * nothing typed into one of its tabs is lost by looking elsewhere.
  */
 
 import { House, LayoutList, Workflow } from 'lucide-react';
@@ -21,7 +24,7 @@ import {
 } from './homeSection.ts';
 import './homeView.css';
 
-const SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
+export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 	automations: <Workflow size={15} aria-hidden="true" />,
 	home: <House size={15} aria-hidden="true" />,
 	tabs: <LayoutList size={15} aria-hidden="true" />,
@@ -30,45 +33,45 @@ const SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 const ID_PREFIX = 'home-section';
 
 export type HomeViewProps = Readonly<{
-	/**
-	 * The band across the top of Home, in Home's chrome colour: what Home's
-	 * control opens into, as a project tab opens into its tab strip.
-	 */
-	band?: ReactNode;
-	/** The selected section's content. */
+	/** Home's tabs. */
 	children: ReactNode;
+	/** The section the tab in front belongs to; none when no tab is open. */
+	currentSection: HomeSection | undefined;
+	/** False while a project is in front: Home is kept, but out of the way. */
+	isActive: boolean;
 	isSidebarVisible: boolean;
 	/** Dismissal a person asked for (Escape, the scrim, the toggle). */
 	onDismissSidebar: () => void;
+	/** Open a section as a tab, or bring its tab to the front. */
+	onOpenSection: (section: HomeSection) => void;
 	/**
 	 * The narrow drawer closing itself because a section was chosen. It hides
 	 * the drawer without changing the visibility this device remembers: only a
 	 * person's own toggle does that.
 	 */
 	onSectionChosenInDrawer?: () => void;
-	onSelectSection: (section: HomeSection) => void;
 	onSidebarWidthCommit: (width: number) => void;
-	section: HomeSection;
 	sidebarWidth: number;
 }>;
 
 export function HomeView({
-	band,
 	children,
+	currentSection,
+	isActive,
 	isSidebarVisible,
 	onDismissSidebar,
+	onOpenSection,
 	onSectionChosenInDrawer,
-	onSelectSection,
 	onSidebarWidthCommit,
-	section,
 	sidebarWidth,
 }: HomeViewProps) {
-	const tabRefs = useRef(new Map<HomeSection, HTMLButtonElement | null>());
+	const itemRefs = useRef(new Map<HomeSection, HTMLButtonElement | null>());
+	const showsSidebar = isSidebarVisible && isActive;
 
 	const choose = (next: HomeSection) => {
-		onSelectSection(next);
+		onOpenSection(next);
 		// A drawer over a phone-width window has done its job once a section is
-		// chosen; leaving it open would hide the section just picked.
+		// chosen; leaving it open would hide the tab just opened.
 		if (
 			typeof window !== 'undefined' &&
 			window.matchMedia(NARROW_LAYOUT_MEDIA_QUERY).matches
@@ -77,16 +80,20 @@ export function HomeView({
 		}
 	};
 
+	// Arrow keys move through the list; opening a section is Enter or Space, as
+	// on any button, so moving through the list never rearranges Home's tabs.
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		const currentIndex = HOME_SECTIONS.indexOf(section);
+		const focused = HOME_SECTIONS.findIndex(
+			(candidate) => itemRefs.current.get(candidate) === document.activeElement,
+		);
+		const from = focused === -1 ? 0 : focused;
 		let nextIndex: number;
 		switch (event.key) {
 			case 'ArrowDown':
-				nextIndex = (currentIndex + 1) % HOME_SECTIONS.length;
+				nextIndex = (from + 1) % HOME_SECTIONS.length;
 				break;
 			case 'ArrowUp':
-				nextIndex =
-					(currentIndex - 1 + HOME_SECTIONS.length) % HOME_SECTIONS.length;
+				nextIndex = (from - 1 + HOME_SECTIONS.length) % HOME_SECTIONS.length;
 				break;
 			case 'Home':
 				nextIndex = 0;
@@ -99,25 +106,24 @@ export function HomeView({
 		}
 		event.preventDefault();
 		const next = HOME_SECTIONS[nextIndex];
-		if (next === undefined) return;
-		// Arrow keys move the selection, as the project sidebar's group tabs do,
-		// but never dismiss a drawer: the keyboard user is still in the menu.
-		onSelectSection(next);
-		tabRefs.current.get(next)?.focus();
+		if (next !== undefined) itemRefs.current.get(next)?.focus();
 	};
 
+	// One item is in the tab order: the current section, else the first.
+	const tabStop = currentSection ?? HOME_SECTIONS[0];
+
 	return (
-		<div className="home-view" data-terminay-home-view={section}>
-			{band === undefined ? null : (
-				<div className="home-band" data-terminay-home-band="true">
-					{band}
-				</div>
-			)}
+		<div
+			className={`home-view${isActive ? '' : ' home-view--hidden'}`}
+			data-terminay-home-view={currentSection ?? 'none'}
+			data-terminay-home-active={isActive ? 'true' : 'false'}
+			inert={!isActive}
+		>
 			<WorkspaceSplitLayout
 				className="home-view__layout"
-				isNavigationVisible={isSidebarVisible}
+				isNavigationVisible={showsSidebar}
 				navigation={
-					isSidebarVisible ? (
+					showsSidebar ? (
 						<nav className="home-sidebar" data-terminay-home-sidebar="true">
 							<div
 								className="home-sidebar__sections"
@@ -127,24 +133,23 @@ export function HomeView({
 								onKeyDown={handleKeyDown}
 							>
 								{HOME_SECTIONS.map((candidate) => {
-									const selected = candidate === section;
+									const current = candidate === currentSection;
 									return (
 										<button
 											key={candidate}
 											ref={(element) => {
-												tabRefs.current.set(candidate, element);
+												itemRefs.current.set(candidate, element);
 											}}
 											type="button"
 											role="tab"
-											id={`${ID_PREFIX}-tab-${candidate}`}
-											aria-selected={selected}
-											aria-controls={`${ID_PREFIX}-panel`}
-											tabIndex={selected ? 0 : -1}
-											className={`home-sidebar__section${selected ? ' home-sidebar__section--active' : ''}`}
+											id={`${ID_PREFIX}-item-${candidate}`}
+											aria-selected={current}
+											tabIndex={candidate === tabStop ? 0 : -1}
+											className={`home-sidebar__section${current ? ' home-sidebar__section--active' : ''}`}
 											data-terminay-home-section-tab={candidate}
 											onClick={() => choose(candidate)}
 										>
-											{SECTION_ICONS[candidate]}
+											{HOME_SECTION_ICONS[candidate]}
 											<span className="home-sidebar__label">
 												{HOME_SECTION_LABELS[candidate]}
 											</span>
@@ -158,23 +163,7 @@ export function HomeView({
 				navigationWidth={sidebarWidth}
 				onNavigationDismiss={onDismissSidebar}
 				onNavigationWidthCommit={onSidebarWidthCommit}
-				content={
-					<div
-						className="home-view__panel"
-						id={`${ID_PREFIX}-panel`}
-						// With the sidebar hidden there is no tab to label the panel,
-						// so it names itself.
-						{...(isSidebarVisible
-							? {
-									role: 'tabpanel',
-									'aria-labelledby': `${ID_PREFIX}-tab-${section}`,
-								}
-							: { role: 'region', 'aria-label': HOME_SECTION_LABELS[section] })}
-						data-terminay-home-section={section}
-					>
-						{children}
-					</div>
-				}
+				content={<div className="home-view__panel">{children}</div>}
 			/>
 		</div>
 	);

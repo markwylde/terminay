@@ -1,10 +1,10 @@
 /**
- * Home's search: one box that finds anything Home can take you to.
+ * Places: everything the Command Bar can take you to.
  *
  * It searches the same model the Tabs section shows — every project, tab, and
  * agent of every attached server — plus Home's own sections and each server's
  * automations. A result is a place to go, never a filter: choosing one leaves
- * the search and opens that thing.
+ * the Command Bar and opens that thing.
  *
  * Matching is case-insensitive substring matching, as the dashboard filter's
  * is, so a word that finds a row in Tabs finds it here too. A match at the start

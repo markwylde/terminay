@@ -26,6 +26,7 @@ import {
 	useId,
 	useMemo,
 	useState,
+	useRef,
 } from 'react';
 import {
 	ACTION_LABELS,
@@ -66,6 +67,11 @@ export type AutomationEditorProps = Readonly<{
 	timeZone?: string;
 	/** The page header, given the Cancel and Save controls to place in it. */
 	renderHeader: (controls: ReactNode) => ReactNode;
+	/**
+	 * What is in the form now, and whether it differs from what the editor was
+	 * opened with. Its tab uses this to title itself and to mark unsaved edits.
+	 */
+	onChange?: (form: AutomationForm, dirty: boolean) => void;
 }>;
 
 function pad(value: number): string {
@@ -195,6 +201,7 @@ export function AutomationEditor({
 	initial,
 	now,
 	onCancel,
+	onChange,
 	onSave,
 	renderHeader,
 	timeZone,
@@ -212,10 +219,17 @@ export function AutomationEditor({
 	const update = (patch: Partial<AutomationForm>) =>
 		setForm((current) => ({ ...current, ...patch }));
 
+	// The editor's tab fixes what it edits for as long as it is open: what was
+	// typed is never replaced by a newer copy of the automation arriving.
+	const initialRef = useRef(initial);
+	const onChangeRef = useRef(onChange);
+	onChangeRef.current = onChange;
 	useEffect(() => {
-		setForm(initial);
-		setError(undefined);
-	}, [initial]);
+		onChangeRef.current?.(
+			form,
+			JSON.stringify(form) !== JSON.stringify(initialRef.current),
+		);
+	}, [form]);
 
 	const trigger = formTrigger(form);
 	const offered = actionKindsFor(trigger);

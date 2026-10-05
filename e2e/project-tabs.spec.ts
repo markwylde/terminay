@@ -1,6 +1,6 @@
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { sendAppCommand } from './support/app';
+import { openMacroLauncher, sendAppCommand } from './support/app';
 import { submitTerminalCommand } from './support/terminal';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import { settledTerminalSessionId } from './support/terminal-session';
@@ -718,7 +718,22 @@ test.describe('project tabs', () => {
 			'data-terminay-selected-view',
 			'home',
 		);
-		await expect(mainWindow.locator('[data-terminay-home-band]')).toBeVisible();
+		await expect(
+			mainWindow.locator('[data-terminay-home-tabs]'),
+		).toBeVisible();
+
+		// With no project there is still a Command Bar, listing only what
+		// needs none.
+		await openMacroLauncher(mainWindow);
+		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
+		await expect(
+			commandBar.getByText('New project', { exact: true }),
+		).toBeVisible();
+		await expect(
+			commandBar.getByText('Create a new terminal tab', { exact: true }),
+		).toHaveCount(0);
+		await mainWindow.keyboard.press('Escape');
+		await expect(commandBar).toHaveCount(0);
 
 		// A new project from Home opens in the server's default folder and is
 		// shown, with its terminal focused.

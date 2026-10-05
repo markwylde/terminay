@@ -4231,8 +4231,8 @@ body.project-tabbar-reordering .project-tabbar {
   color: #fff;
 }
 
-/* The Command Bar acts on the project in front, so on the dashboard it says it
-   is unavailable rather than looking live and doing nothing. */
+/* A chrome control that cannot answer says so rather than looking live and
+   doing nothing. */
 .compact-chrome__icon:disabled {
   opacity: 0.35;
   cursor: default;

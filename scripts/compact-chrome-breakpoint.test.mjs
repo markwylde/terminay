@@ -205,9 +205,9 @@ test('the compact row carries the Command Bar between dashboard and breadcrumb',
 
 	// It names itself; the glyph alone says nothing about what it opens.
 	assert.match(row, /aria-label="Open command bar"/);
-	// The command acts on the project in front, so the control says when there
-	// is none rather than looking live and doing nothing.
-	assert.match(row, /disabled=\{!isCommandBarAvailable\}/);
+	// The Command Bar opens whichever view is selected, so the control is never
+	// withheld.
+	assert.doesNotMatch(row, /isCommandBarAvailable/);
 });
 
 test('the Command Bar control takes the same dispatch as the accelerator', async () => {
@@ -220,9 +220,11 @@ test('the Command Bar control takes the same dispatch as the accelerator', async
 		app,
 		/<CompactChromeRow[\s\S]*?onOpenCommandBar=\{openCompactCommandBar\}/,
 	);
+	// With Home in front, or no project to draw it, the workspace view answers
+	// the same command with its own Command Bar.
 	assert.match(
 		app,
-		/<CompactChromeRow[\s\S]*?isCommandBarAvailable=\{!isHomeSelected && activeProject !== null\}/,
+		/command === 'open-command-bar' &&\s*\(isHomeSelected \|\| !workspaceRefs\.current\.get\(activeProjectId\)\)\s*\) \{\s*setIsViewCommandBarOpen\(true\);/,
 	);
 	// One definition of what opening the Command Bar means: the control must not
 	// reach past the command into the launcher's own state.

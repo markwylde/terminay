@@ -27,6 +27,7 @@ import {
 	type HomeSection,
 	isHomeSection,
 } from './homeSection.ts';
+import { type HomeTabDescriptor, sanitizeHomeLayout } from './homeTabs.ts';
 
 const STORAGE_KEY = 'terminay.view.active-session.v1';
 /** Bounded so a long-lived browser profile cannot accumulate dead projects. */
@@ -258,18 +259,11 @@ export function recallHomeSidebarVisible(): boolean {
 }
 
 /**
- * Which Home section this device last showed. A hint like everything else here:
- * an unreadable, disabled, or nonsense value is the Home overview and no error.
+ * Which Home section this device last showed, from before Home had tabs. It is
+ * read once, to choose the tab a device with no remembered arrangement opens
+ * on, and is never written.
  */
 const HOME_SECTION_STORAGE_KEY = 'terminay.view.home-section.v1';
-
-export function rememberHomeSection(section: HomeSection): void {
-	try {
-		globalThis.localStorage?.setItem(HOME_SECTION_STORAGE_KEY, section);
-	} catch {
-		/* A device that cannot remember still works; it starts on Home. */
-	}
-}
 
 export function recallHomeSection(): HomeSection {
 	try {
@@ -278,6 +272,42 @@ export function recallHomeSection(): HomeSection {
 	} catch {
 		return DEFAULT_HOME_SECTION;
 	}
+}
+
+/**
+ * The Home tabs this device had open, and how they were arranged.
+ *
+ * Home's arrangement is this device's alone (ADR-0040), so unlike a project's
+ * layout it is kept here as the tab host's own document. It is a hint like
+ * everything else in this module: what comes back has been reduced to tabs
+ * Home can still name, and anything unreadable is simply no arrangement.
+ */
+const HOME_LAYOUT_STORAGE_KEY = 'terminay.view.home-layout.v1';
+
+export function rememberHomeLayout(layout: unknown): void {
+	try {
+		globalThis.localStorage?.setItem(
+			HOME_LAYOUT_STORAGE_KEY,
+			JSON.stringify(layout),
+		);
+	} catch {
+		/* A device that cannot remember still works; it starts on Home's tab. */
+	}
+}
+
+export function recallHomeLayout(): Record<string, unknown> | undefined {
+	try {
+		const raw = globalThis.localStorage?.getItem(HOME_LAYOUT_STORAGE_KEY);
+		if (typeof raw !== 'string') return undefined;
+		return sanitizeHomeLayout(JSON.parse(raw));
+	} catch {
+		return undefined;
+	}
+}
+
+/** The tab a device with no remembered arrangement opens Home on. */
+export function recallDefaultHomeTab(): HomeTabDescriptor {
+	return { kind: 'section', section: recallHomeSection() };
 }
 
 export interface AdoptedTerminalActivation {
