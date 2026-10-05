@@ -26,7 +26,7 @@ An app window SHALL belong to exactly one terminal session: the session whose MC
 
 ### Requirement: Open window placement
 
-An open window SHALL float above its terminal's pane without changing the terminal's size. On a pane at least 560 CSS pixels wide it SHALL be at most 440 pixels wide, sit at the bottom-left of the pane, and take the height of its content, capped at 60% of the pane's height; taller content SHALL scroll inside the window. On a narrower pane it SHALL be a sheet spanning the pane's width at the bottom edge, under the same height cap. A window SHALL have a title bar showing its title and its source, with controls to minimise it, make it fill the pane, and close it. An open window SHALL NOT be draggable. A window's surface SHALL be opaque whatever the terminal's theme background is, so that nothing behind it shows through. Where the pane shows rows of its own under the terminal, such as the software keyboard's accessory row, a window SHALL end above them, including while it fills the pane. On a touch device, the window's title-bar controls SHALL NOT move the keyboard focus, so that using them neither raises nor dismisses the software keyboard.
+An open window SHALL float above its terminal's pane without changing the terminal's size. On a pane at least 560 CSS pixels wide it SHALL, until the user moves or resizes it, be at most 440 pixels wide, sit at the bottom-left of the pane, and take the height of its content, capped at 60% of the pane's height; taller content SHALL scroll inside the window. On a narrower pane it SHALL be a sheet spanning the pane's width at the bottom edge, under the same height cap. A window SHALL have a title bar showing its title and its source, with controls to minimise it, make it fill the pane, and close it. A window's surface SHALL be opaque whatever the terminal's theme background is, so that nothing behind it shows through. Where the pane shows rows of its own under the terminal, such as the software keyboard's accessory row, a window SHALL end above them, including while it fills the pane. On a touch device, the window's title-bar controls SHALL NOT move the keyboard focus, so that using them neither raises nor dismisses the software keyboard.
 
 #### Scenario: Short content on a desktop pane
 
@@ -72,9 +72,38 @@ A terminal SHALL have at most one open window at a time. Opening or restoring a 
 - **WHEN** the user restores a minimised window while another is open
 - **THEN** the restored window is open and the other is minimised
 
+### Requirement: A floating window is moved and resized by the user
+
+On a pane at least 560 CSS pixels wide, the user SHALL be able to move an open window by dragging its title bar and to resize it by dragging any of its edges or corners. A window SHALL stay within its terminal's pane: its title bar SHALL remain inside the pane and above the rail, with at least the left 160 pixels of the title bar visible, while its body MAY extend past the pane's right and bottom edges, where it SHALL be cut off at the pane's edge and SHALL NOT cover anything outside the pane. A resized window SHALL be at least 220 pixels wide with a body at least 80 pixels tall, SHALL keep the size it was given whatever the height of its content, and its view SHALL be told that size; content that does not fit SHALL scroll inside the window. A window that has been moved but not resized SHALL keep taking the height of its content. A window's position and size SHALL be a preference of the client that set them, SHALL be kept while the window is minimised or fills the pane, and SHALL NOT change the terminal's size. A sheet on a narrower pane and a window that fills the pane SHALL NOT be movable or resizable.
+
+#### Scenario: Dragging a window by its title bar
+
+- **WHEN** the user drags an open window's title bar 200 pixels right and 150 pixels up
+- **THEN** the window moves by that much and keeps its size
+
+#### Scenario: Dragging a window towards the outside of its pane
+
+- **WHEN** the user drags an open window past the pane's bottom-right corner
+- **THEN** its title bar stops inside the pane, its body is cut off at the pane's edge, and nothing outside the pane is covered
+
+#### Scenario: Resizing a window
+
+- **WHEN** the user drags the bottom-right corner of an open window outwards
+- **THEN** the window grows by that much, its top-left corner stays where it was, and its view is told the new width and height
+
+#### Scenario: Minimising a moved window
+
+- **WHEN** the user minimises a window they moved and resized, then restores it
+- **THEN** it opens where it was left, at the size it was given
+
+#### Scenario: Phone-width pane
+
+- **WHEN** a window is open as a sheet on a pane 390 pixels wide
+- **THEN** it cannot be moved or resized
+
 ### Requirement: Minimised windows are edge tabs in a rail
 
-A minimised window SHALL appear as a tab attached to the bottom edge of its terminal's pane, showing the window's title. While a terminal has at least one minimised window, the pane SHALL reserve a rail along its bottom edge that holds the tabs, and the terminal viewport SHALL end above the rail so that no terminal output, cursor, or input surface is covered. While a terminal has no minimised window there SHALL be no rail and the terminal SHALL fill the pane. Tabs SHALL line up from the left in creation order. A tab SHALL be draggable along the bottom edge only, and its position SHALL be a preference of the client that moved it. Activating a tab SHALL restore its window. An open window SHALL sit above the rail. Where the pane shows rows of its own under the terminal, such as the software keyboard's accessory row, the rail and its tabs SHALL sit directly above those rows and SHALL NOT cover them. A tab's surface SHALL be opaque.
+A minimised window SHALL appear as a tab attached to the bottom edge of its terminal's pane, showing the window's title and a control that closes the window without opening it. While a terminal has at least one minimised window, the pane SHALL reserve a rail along its bottom edge that holds the tabs, and the terminal viewport SHALL end above the rail so that no terminal output, cursor, or input surface is covered. While a terminal has no minimised window there SHALL be no rail and the terminal SHALL fill the pane. Tabs SHALL line up from the left in creation order. A tab SHALL be draggable along the bottom edge only, and its position SHALL be a preference of the client that moved it. Activating a tab SHALL restore its window. An open window SHALL sit above the rail. Where the pane shows rows of its own under the terminal, such as the software keyboard's accessory row, the rail and its tabs SHALL sit directly above those rows and SHALL NOT cover them. A tab's surface SHALL be opaque.
 
 #### Scenario: Minimising the only window
 
@@ -85,6 +114,11 @@ A minimised window SHALL appear as a tab attached to the bottom edge of its term
 
 - **WHEN** a terminal on a phone has a minimised window and its keyboard accessory row is shown
 - **THEN** the tab sits in the rail directly above the accessory row and covers none of its keys
+
+#### Scenario: Closing a window from its tab
+
+- **WHEN** the user activates the close control on a minimised window's tab
+- **THEN** the window ends without opening, and its tab is removed
 
 #### Scenario: Restoring the only minimised window
 
