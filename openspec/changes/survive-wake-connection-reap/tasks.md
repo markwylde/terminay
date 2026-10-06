@@ -30,4 +30,4 @@
 
 - [x] 5.1 Run `npm run lint`, the type check, and `npm run test:ci`. Verified by all three exiting zero.
 - [x] 5.2 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 5.3 Open the pull request on `origin` with `tea` and read back every commit status on the head SHA. Verified by each status being `success` or `skipped`.
+- [x] 5.3 Open the pull request on `origin` with `tea` and read back every commit status on the head SHA. Verified by each status being `success` or `skipped`.
