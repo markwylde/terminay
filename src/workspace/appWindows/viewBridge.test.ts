@@ -239,3 +239,121 @@ test('links are opened one at a time, not in a burst', async () => {
 	assert.deepEqual(calls, [['openLink', 'https://example.com/0']]);
 	assert.equal(posted.filter((message) => message.error !== undefined).length, 4);
 });
+
+test('a message with files reaches the host with their names and sizes, and the host reads each part from the view', async () => {
+	// biome-ignore lint/suspicious/noExplicitAny: the reader is called loosely
+	let read: any;
+	const sent: unknown[] = [];
+	const { bridge, posted, send } = setup(
+		{ source: 'agent', attachments: true },
+		{
+			sendAttachments: async (text, attachments, readPart) => {
+				sent.push([text, attachments]);
+				read = readPart;
+				const bytes = await readPart(1, 4, 3);
+				sent.push([...bytes]);
+			},
+		},
+	);
+	const sending = send(
+		'ui/message',
+		{
+			role: 'user',
+			content: { type: 'text', text: '' },
+			attachments: [
+				{ id: 'file-1', name: 'photo.jpg', size: 10, path: '/etc/passwd' },
+				{ id: 'file-2', name: 'notes.txt', size: 7 },
+			],
+		},
+		5,
+	);
+	await new Promise((resolve) => setImmediate(resolve));
+	// The host is told a name and a size and nothing else a view said.
+	assert.deepEqual(sent, [['', [{ name: 'photo.jpg', size: 10 }, { name: 'notes.txt', size: 7 }]]]);
+	const asked = posted.at(-1);
+	assert.equal(asked.method, 'terminay/attachment-part');
+	assert.deepEqual(asked.params, { id: 'file-2', offset: 4, length: 3 });
+	// A reply nobody asked for, and one of the wrong kind, change nothing.
+	await bridge.handle({ jsonrpc: '2.0', id: 'host-999', result: { bytes: new ArrayBuffer(3) } });
+	await bridge.handle({ jsonrpc: '2.0', id: asked.id, result: { bytes: Uint8Array.of(1, 2, 3).buffer } });
+	await sending;
+	assert.deepEqual(sent.at(-1), [1, 2, 3]);
+	assert.deepEqual(posted.at(-1), { jsonrpc: '2.0', id: 5, result: {} });
+	// A part that was not offered, or is not a sensible size, is never asked for.
+	const before = posted.length;
+	await assert.rejects(read(2, 0, 1));
+	await assert.rejects(read(0, 0, 256 * 1024 + 1));
+	await assert.rejects(read(0, -1, 1));
+	await assert.rejects(read(0, 0, 0));
+	assert.equal(posted.length, before);
+});
+
+test('a view that answers with the wrong bytes, or goes away, fails the message', async () => {
+	for (const answer of [
+		{ result: { bytes: new ArrayBuffer(2) } },
+		{ result: { bytes: 'abc' } },
+		{ result: {} },
+		{ error: { code: -32000, message: 'No such attachment' } },
+		undefined,
+	]) {
+		const { bridge, posted, send } = setup(
+			{ source: 'agent', attachments: true },
+			{ sendAttachments: async (_text, _attachments, readPart) => void (await readPart(0, 0, 3)) },
+		);
+		const sending = send('ui/message', { content: { type: 'text', text: 'hi' }, attachments: [{ id: 'f', name: 'a', size: 3 }] }, 6);
+		await new Promise((resolve) => setImmediate(resolve));
+		if (answer === undefined) bridge.teardown('closed');
+		else await bridge.handle({ jsonrpc: '2.0', id: posted.at(-1).id, ...answer });
+		await sending;
+		const reply = posted.find((message) => message.id === 6);
+		assert.equal(reply.error.code, -32000);
+	}
+});
+
+test('attachments are refused where they are not offered, in excess, and when malformed, before the host is asked', async () => {
+	const one = [{ id: 'f', name: 'a.txt', size: 1 }];
+	const message = (attachments: unknown, text: unknown = 'hi') => ({ content: { type: 'text', text }, attachments });
+	const sendAttachments = async () => assert.fail('the host must not be asked');
+	// An MCP App view, a connection without the capability, and a host that cannot.
+	for (const [content, host] of [
+		[{ source: 'mcp-app', attachments: true }, { sendAttachments }],
+		[{ source: 'agent', attachments: false }, { sendAttachments }],
+		[{ source: 'agent' }, { sendAttachments }],
+		[{ source: 'agent', attachments: true }, {}],
+	] as const) {
+		const { posted, calls, send } = setup(content, host);
+		await send('ui/message', message(one), 7);
+		assert.deepEqual(posted.at(-1), { jsonrpc: '2.0', id: 7, error: { code: -32000, message: 'Attachments are unavailable' } });
+		// And it is not quietly sent as text without its files.
+		assert.deepEqual(calls, []);
+	}
+	const { posted, calls, send } = setup({ source: 'agent', attachments: true }, { sendAttachments });
+	const many = Array.from({ length: 17 }, (_, index) => ({ id: `f${index}`, name: 'a', size: 1 }));
+	for (const bad of [
+		message([]),
+		message(many),
+		message('files'),
+		message([{ id: 'f', name: '', size: 1 }]),
+		message([{ id: 'f', name: 'n'.repeat(256), size: 1 }]),
+		message([{ id: 'f', name: 'a', size: -1 }]),
+		message([{ id: 'f', name: 'a', size: 1.5 }]),
+		message([{ id: 'f', name: 'a', size: '1' }]),
+		message([{ id: '', name: 'a', size: 1 }]),
+		message([{ name: 'a', size: 1 }]),
+		message(one, 'x'.repeat(16 * 1024 + 1)),
+		message(one, 7),
+	]) {
+		await send('ui/message', bad, 8);
+		assert.deepEqual(posted.at(-1), { jsonrpc: '2.0', id: 8, error: { code: -32602, message: 'Invalid message format' } });
+	}
+	assert.deepEqual(calls, []);
+});
+
+test('what the host says about a message with files is what the view hears', async () => {
+	const { posted, send } = setup(
+		{ source: 'agent', attachments: true },
+		{ sendAttachments: async () => Promise.reject(new Error('The message was not sent')) },
+	);
+	await send('ui/message', { content: { type: 'text', text: 'hi' }, attachments: [{ id: 'f', name: 'a', size: 1 }] }, 9);
+	assert.deepEqual(posted.at(-1), { jsonrpc: '2.0', id: 9, error: { code: -32000, message: 'The message was not sent' } });
+});
