@@ -40,3 +40,27 @@ Output SHALL be evidence that the foreground may have changed, and SHALL NOT be 
 
 - **WHEN** destructive close protection requests a fresh observation for a session whose output-driven sampling is inside a ramp interval
 - **THEN** the fresh sample begins immediately and is not delayed by the ramp
+
+### Requirement: Activity protocol surface
+
+The protocol SHALL expose the projection as `activity.snapshot` and `activity.delta`, SHALL emit canonical `activity` events on the normal ordered event journal, and SHALL accept `activity.acknowledge` only with the exact immutable `projectId` and `sessionId`. Destructive close protection SHALL use `activity.close-preflight` with that same exact project identity and, for a terminal close, the exact session identity. The preflight SHALL return a bounded fresh observation for only those sessions; `activity.snapshot` and `activity.delta` SHALL remain committed projection reads and SHALL never wait for live host inspection. Every activity operation name SHALL be a valid wire operation name, so that a client can encode the request and the server receives it. This is the client boundary used by both browser and Desktop hosts, and no `terminal:activity` IPC message is part of the server contract.
+
+#### Scenario: Acknowledge with mismatched ids
+
+- **WHEN** `activity.acknowledge` names a project or session other than the exact immutable pair
+- **THEN** the request is not accepted
+
+#### Scenario: Close preflight
+
+- **WHEN** a client calls `activity.close-preflight` for a terminal close
+- **THEN** it names the exact project and session identity and receives a bounded fresh observation for only those sessions
+
+#### Scenario: Close preflight over a real connection
+
+- **WHEN** a connected client sends `activity.close-preflight` for a running terminal whose committed projection still shows the shell in the foreground
+- **THEN** the request is encoded and delivered, the server takes a fresh host observation for that session, and the result reflects that observation rather than the committed projection
+
+#### Scenario: Desktop host activity
+
+- **WHEN** a Desktop host reads terminal activity
+- **THEN** it uses the same protocol surface and no `terminal:activity` IPC message

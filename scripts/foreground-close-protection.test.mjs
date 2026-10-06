@@ -119,7 +119,7 @@ test('a failed close preflight query is limited, never an invisible hang', async
 				},
 			},
 			async closePreflight() {
-				throw new Error('unknown operation activity.closePreflight');
+				throw new Error('unknown operation activity.close-preflight');
 			},
 		},
 		{ projectId: 'project-a', sessionId: 'session-a' },

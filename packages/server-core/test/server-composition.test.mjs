@@ -491,7 +491,7 @@ test("composition feeds PTY bytes into the activity service and serves its snaps
   try {
     await pair.open();
     await client.connect();
-    assert.equal(composition.operations.queries.get("activity.closePreflight") !== undefined, true);
+    assert.equal(composition.operations.queries.get("activity.close-preflight") !== undefined, true);
     const snapshot = await client.query("activity.snapshot");
     assert.equal(snapshot.result.sessions[identity.sessionId].attention, true);
     await client.command("activity.acknowledge", { projectId: identity.projectId, sessionId: identity.sessionId });

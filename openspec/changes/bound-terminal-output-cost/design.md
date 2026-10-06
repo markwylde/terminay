@@ -179,7 +179,58 @@ from `activity/` is a new edge inside `server-core`; if the workspace boundary
 check objects, the ramp moves to a neutral module and both import it — still
 one implementation.
 
-### 3. Tests assert scaling, not time
+### 3. Make the close preflight encodable, and test it through the wire
+
+Decision 2 rests on destructive close taking its own fresh sample. The first
+version of this change failed two end-to-end tests (`warns only when closing a
+terminal with a foreground process`, `warns when closing a silent TUI with
+helper children`) because that was not true in any running client.
+
+`ActivityClient.closePreflight` sends the operation `activity.closePreflight`.
+`packages/protocol` validates operation names against
+`/^[a-z][a-z0-9._:-]{0,255}$/` when a frame is encoded, so the capital `P`
+makes `encodeFrame` throw `invalid operation` in the client. The request is
+never written to the transport. `observeTerminalClosePreflight` catches the
+error and falls back to the committed activity snapshot. The server handler,
+its authorisation, and `observeFresh` are all correct and were all unreachable;
+every existing test of them calls the handler directly from the registry and so
+never crosses the codec.
+
+Close protection therefore worked only because sampling on every output chunk
+kept the committed projection within milliseconds of the truth. Those tests
+click close about 100 ms after the command's echo, which is inside the ramp's
+first interval, so with honest pacing the stale projection said "shell".
+
+- Rename the operation to `activity.close-preflight` in the client, the server
+  registry, and the automation-space visibility filter. Hyphenated operation
+  names are already in use (`remote-access.toggle-server`).
+- Add a test that sends the preflight from a real `ActivityClient` over a real
+  connection with a committed projection that is deliberately stale, and
+  asserts the PTY was asked for a fresh observation and the result reflects
+  it. Add a test that every activity operation name encodes, and that client
+  and server agree on the names.
+
+*Alternative: relax the operation-name pattern to allow capitals.* Rejected.
+It widens a wire-format rule for every operation to accommodate one misnamed
+one, and an older server would still reject the frame.
+
+*Alternative: keep sampling per chunk so the committed projection stays fresh
+enough.* Rejected. It is the defect this change exists to remove, and it only
+ever made close protection probabilistic: a command that printed nothing was
+already up to 1.5 s stale.
+
+*Alternative: lower the ramp floor until the tests pass.* Rejected. The tests
+close within ~100 ms; no spacing that bounds the cost would be short enough,
+and it would leave the unreachable preflight in place.
+
+**Boundary:** the rename changes one name on the client–server protocol
+surface. It crosses no trust boundary: authorisation of the preflight
+(project claim, session's project, read scope) is unchanged and is now
+actually exercised. A new client against an older server receives an
+unknown-operation error and falls back to the committed projection, exactly
+as every client does today.
+
+### 4. Tests assert scaling, not time
 
 Each cost test builds two instances that differ only in the quantity that must
 not matter (retained bytes, retained chunk count), measures the same small
@@ -200,7 +251,9 @@ unmodified.
 - [A foreground change during continuous output reaches the passive projection
   later than today — by up to the ramp interval, bounded in practice by the
   existing 1500 ms interval sample] → Close protection asks for its own fresh
-  sample and is not behind the ramp. Output after quiet still samples at once,
+  sample and is not behind the ramp, and decision 3 makes that request
+  actually reach the server. The synchronous quit confirmation still reads
+  the committed projection, as it always has for silent processes. Output after quiet still samples at once,
   which covers a command starting.
 - [The run at the end of a ramp interval depends on a timer] → It is the shared
   ramp's existing behaviour, already relied on by agent discovery. The first
