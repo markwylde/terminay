@@ -61,6 +61,8 @@ declare global {
 		};
 		terminayLocalConnectionFaultTest?: {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
+			closeServerConnection: () => Promise<number>;
+			refuseProjectCreations: (count: number) => Promise<void>;
 		};
 		terminayAgentStatusTest?: {
 			publishSessions: (payload: {
