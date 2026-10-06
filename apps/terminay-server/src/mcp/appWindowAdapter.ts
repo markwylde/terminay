@@ -56,10 +56,12 @@ export function createAppWindowControlAdapter(
 								title: params.title,
 								source: { kind: 'agent' },
 								html: params.html,
+								...(params.data === undefined ? {} : { data: params.data }),
 							})
 						: windows.replace(context.terminalSessionId, params.window, {
 								title: params.title,
 								html: params.html,
+								...(params.data === undefined ? {} : { data: params.data }),
 							});
 				return {
 					window: window.id,

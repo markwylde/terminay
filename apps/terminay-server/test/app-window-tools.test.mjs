@@ -92,6 +92,27 @@ test("show_window with a handle updates that window in place", async () => {
   assert.deepEqual(windows.list("session-1").map((w) => w.title), ["Hello 2"])
 })
 
+test("show_window keeps the data it was given with the document, and a replacement without data clears it", async () => {
+  const { windows, call } = setup()
+  const content = async (id) => {
+    const response = await windows.operations().queries["app-windows.content"]({
+      envelope: { payload: { windowId: id } },
+      body: new Uint8Array(),
+      context: { clientId: "client-1", connectionId: "connection-1", signal: new AbortController().signal },
+    })
+    return JSON.parse(new TextDecoder().decode(response.body))
+  }
+  const first = await call("show_window", { title: "Questions", html: "<p>1</p>", data: { questions: ["Ship it?"] } })
+  assert.deepEqual((await content(first.window)).data, { questions: ["Ship it?"] })
+  await call("show_window", { title: "Questions", html: "<p>2</p>", window: first.window, data: [1, 2] })
+  assert.deepEqual((await content(first.window)).data, [1, 2])
+  await call("show_window", { title: "Questions", html: "<p>3</p>", window: first.window })
+  assert.equal("data" in (await content(first.window)), false)
+  const refused = await call("show_window", { title: "Big", html: "<p>x</p>", data: "d".repeat(64 * 1024) }).catch((error) => error)
+  assert.equal(windows.list("session-1").length, 1)
+  assert.ok(refused)
+})
+
 test("an oversized document, a bad title, and a ninth window are refused without creating anything", async () => {
   const { windows, call } = setup()
   const tooLarge = await call("show_window", { title: "Big", html: "x".repeat(MAX_AGENT_WINDOW_HTML_BYTES + 1) })

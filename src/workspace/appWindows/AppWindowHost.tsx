@@ -881,6 +881,7 @@ function AppWindowView(props: ViewProps): ReactElement {
 				const kind = content.window.source.kind;
 				const built = buildViewDocument({
 					html: content.html,
+					...(content.data === undefined ? {} : { data: content.data }),
 					source: { kind },
 					...(content.csp === undefined ? {} : { csp: content.csp }),
 					...(content.permissions === undefined

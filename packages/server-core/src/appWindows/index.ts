@@ -39,6 +39,8 @@ export const MAX_APP_WINDOWS_PER_SESSION = 8;
 export const MAX_APP_WINDOW_TITLE_CHARS = 80;
 /** An HTML document the agent wrote. */
 export const MAX_AGENT_WINDOW_HTML_BYTES = 512 * 1024;
+/** The JSON value an agent gives its document to read, serialised. */
+export const MAX_APP_WINDOW_DATA_BYTES = 64 * 1024;
 /** A UI resource read from a connected MCP server. */
 export const MAX_MCP_APP_RESOURCE_BYTES = 4 * 1024 * 1024;
 /** Text a view sends to the conversation or as model context. */
@@ -78,6 +80,8 @@ export interface AppWindowOpenInput {
 	readonly title: string;
 	readonly source: AppWindowSource;
 	readonly html: string;
+	/** What an agent-authored document reads as `window.terminay.data`. */
+	readonly data?: JsonValue;
 	readonly csp?: AppWindowCsp;
 	readonly permissions?: Readonly<Record<string, unknown>>;
 	/** The tool definition and call arguments an MCP App view starts from. */
@@ -106,6 +110,7 @@ interface MutableWindow {
 	source: AppWindowSource;
 	state: AppWindowState;
 	html: string;
+	data?: JsonValue;
 	csp?: AppWindowCsp;
 	permissions?: Readonly<Record<string, unknown>>;
 	tool?: JsonValue;
@@ -251,6 +256,7 @@ export class AppWindowService {
 	open(input: AppWindowOpenInput): AppWindowView {
 		const title = validTitle(input.title);
 		const html = validHtml(input.html, input.source);
+		const data = validData(input.data);
 		const held = this.forSession(input.terminalSessionId).length;
 		if (held >= this.maxWindowsPerSession)
 			throw new AppWindowError(
@@ -268,6 +274,7 @@ export class AppWindowService {
 			html,
 			contentRevision: 1,
 			createdAt: this.now(),
+			...(data === undefined ? {} : { data }),
 			...(input.csp === undefined ? {} : { csp: input.csp }),
 			...(input.permissions === undefined
 				? {}
@@ -280,12 +287,12 @@ export class AppWindowService {
 		return view(window);
 	}
 
-	/** Replace an agent-authored window's title and document in place and
+	/** Replace an agent-authored window's title, document, and data in place and
 	 * restore it. The handle is valid only for the session that owns it. */
 	replace(
 		terminalSessionId: string,
 		windowId: string,
-		next: { readonly title: string; readonly html: string },
+		next: { readonly title: string; readonly html: string; readonly data?: JsonValue },
 	): AppWindowView {
 		const window = this.owned(terminalSessionId, windowId);
 		if (window.source.kind !== 'agent')
@@ -295,9 +302,14 @@ export class AppWindowService {
 			);
 		const title = validTitle(next.title);
 		const html = validHtml(next.html, window.source);
+		const data = validData(next.data);
 		this.minimiseSession(terminalSessionId);
 		window.title = title;
 		window.html = html;
+		// The data belongs to the document it came with: a replacement without
+		// any leaves the window with none.
+		if (data === undefined) delete window.data;
+		else window.data = data;
 		window.state = 'open';
 		window.contentRevision += 1;
 		this.publish();
@@ -437,6 +449,7 @@ export class AppWindowService {
 						body: encoder.encode(
 							JSON.stringify({
 								html: window.html,
+								...(window.data === undefined ? {} : { data: window.data }),
 								...(window.tool === undefined ? {} : { tool: window.tool }),
 								...(window.toolInput === undefined
 									? {}
@@ -699,6 +712,28 @@ function validHtml(value: string, source: AppWindowSource): string {
 			`The HTML document is larger than ${Math.floor(limit / 1024)} KiB.`,
 		);
 	return value;
+}
+
+function validData(value: JsonValue | undefined): JsonValue | undefined {
+	if (value === undefined) return undefined;
+	let serialised: string | undefined;
+	try {
+		serialised = JSON.stringify(value);
+	} catch {
+		serialised = undefined;
+	}
+	if (serialised === undefined)
+		throw new AppWindowError('window_invalid', 'Window data must be a JSON value.');
+	if (
+		serialised.length > MAX_APP_WINDOW_DATA_BYTES ||
+		byteLength(serialised) > MAX_APP_WINDOW_DATA_BYTES
+	)
+		throw new AppWindowError(
+			'window_too_large',
+			`Window data is larger than ${MAX_APP_WINDOW_DATA_BYTES / 1024} KiB.`,
+		);
+	// Kept as the value it serialises to, so nothing shared with the caller remains.
+	return JSON.parse(serialised) as JsonValue;
 }
 
 /**

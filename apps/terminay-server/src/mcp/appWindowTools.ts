@@ -1,6 +1,7 @@
 import type {
 	AppWindowCsp,
 	MAX_AGENT_WINDOW_HTML_BYTES as ServerMaxHtmlBytes,
+	MAX_APP_WINDOW_DATA_BYTES as ServerMaxDataBytes,
 	MAX_APP_WINDOW_TITLE_CHARS as ServerMaxTitleChars,
 } from '@terminay/server-core';
 import type { JsonValue } from '@terminay/protocol';
@@ -18,6 +19,7 @@ import type { ControlError, ControlRequestContext } from './controlEndpoint.js';
 // to its source. The binding to the window store lives in appWindowAdapter.ts.
 export const MAX_WINDOW_TITLE_CHARS = 80 as const satisfies typeof ServerMaxTitleChars;
 export const MAX_WINDOW_HTML_BYTES = (512 * 1024) as 524288 satisfies typeof ServerMaxHtmlBytes;
+export const MAX_WINDOW_DATA_BYTES = (64 * 1024) as 65536 satisfies typeof ServerMaxDataBytes;
 
 /** A connected server's result larger than this is replaced by an error. */
 export const MAX_CONNECTED_TOOL_RESULT_BYTES = 1024 * 1024;
@@ -26,6 +28,8 @@ export const MCP_APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app';
 export interface ShowWindowParams {
 	readonly title: string;
 	readonly html: string;
+	/** A JSON value the document reads as `window.terminay.data`. */
+	readonly data?: JsonValue;
 	/** Handle of an agent-authored window of this terminal to replace. */
 	readonly window?: string;
 }
@@ -164,11 +168,30 @@ export function parseShowWindow(
 		return badRequest('html must be a non-empty string');
 	if (params.window !== undefined && !isHandle(params.window))
 		return badRequest('window must be a window handle');
+	if (params.data !== undefined && !fitsWindowData(params.data))
+		return badRequest(
+			`data must be a JSON value of at most ${MAX_WINDOW_DATA_BYTES / 1024} KiB`,
+		);
 	return {
 		title: params.title,
 		html: params.html,
+		...(params.data === undefined ? {} : { data: params.data as JsonValue }),
 		...(params.window === undefined ? {} : { window: params.window as string }),
 	};
+}
+
+/** Whether a value serialises to JSON within the window-data bound. */
+export function fitsWindowData(value: unknown): boolean {
+	let serialised: string | undefined;
+	try {
+		serialised = JSON.stringify(value);
+	} catch {
+		return false;
+	}
+	return (
+		serialised !== undefined &&
+		Buffer.byteLength(serialised, 'utf8') <= MAX_WINDOW_DATA_BYTES
+	);
 }
 
 export function parseCloseWindow(

@@ -26,6 +26,8 @@ export interface ViewDocumentInput {
 	readonly source: ViewSource;
 	readonly csp?: ViewCsp;
 	readonly permissions?: Readonly<Record<string, unknown>>;
+	/** A JSON value an agent-authored document reads as `window.terminay.data`. */
+	readonly data?: unknown;
 }
 
 export interface ViewDocument {
@@ -154,7 +156,12 @@ export const AGENT_VIEW_BOOTSTRAP = `(() => {
 		else waiter.resolve(message.result);
 	});
 	const text = (value) => ({ type: 'text', text: String(value) });
+	const frozen = (value) => {
+		if (value && typeof value === 'object') { for (const key of Object.keys(value)) frozen(value[key]); Object.freeze(value); }
+		return value;
+	};
 	Object.defineProperty(window, 'terminay', { value: Object.freeze({
+		data: frozen(typeof terminayData === 'undefined' ? undefined : terminayData),
 		sendMessage: (value) => request('ui/message', { role: 'user', content: text(value) }),
 		updateContext: (value) => request('ui/update-model-context', { content: [text(value)] }),
 		openLink: (url) => request('ui/open-link', { url: String(url) }),
@@ -242,6 +249,35 @@ export const VIEW_LINK_HANDLER = `(() => {
 })();`;
 
 /**
+ * A JSON value as script source that can only ever be that value. It is parsed
+ * from a string literal, never written as an object literal, so a key such as
+ * `__proto__` is a key; and every character that could end the script element
+ * or the literal is escaped, so nothing in the data is read as markup or code.
+ */
+export function inertJsonLiteral(value: unknown): string | undefined {
+	let json: string | undefined;
+	try {
+		json = JSON.stringify(value);
+	} catch {
+		json = undefined;
+	}
+	if (json === undefined) return undefined;
+	const literal = JSON.stringify(json).replace(
+		/[<>&\u2028\u2029]/gu,
+		(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+	);
+	return `JSON.parse(${literal})`;
+}
+
+/** The bootstrap, with the window's data in scope for it and for nothing else. */
+function agentBootstrap(data: unknown): string {
+	const literal = data === undefined ? undefined : inertJsonLiteral(data);
+	return literal === undefined
+		? AGENT_VIEW_BOOTSTRAP
+		: `{const terminayData=${literal};${AGENT_VIEW_BOOTSTRAP}}`;
+}
+
+/**
  * The view document: the author's HTML with Terminay's policy, and for an
  * agent-authored view its bootstrap, placed ahead of everything the author
  * wrote. The policy cannot be undone by later markup: a second policy can only
@@ -253,7 +289,7 @@ export function buildViewDocument(input: ViewDocumentInput): ViewDocument {
 		`<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">` +
 		`<script>${VIEW_LINK_HANDLER}</script>` +
 		(input.source.kind === 'agent'
-			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${AGENT_VIEW_BOOTSTRAP}</script>`
+			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${agentBootstrap(input.data)}</script>`
 			: '') +
 		// Present in every view and inert until someone watches it (ADR-0039).
 		`<script>${MIRROR_LOADER_SCRIPT}</script>`;
