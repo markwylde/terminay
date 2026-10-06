@@ -44,4 +44,4 @@
 - [x] 6.1 Document `html_file`, `data`, attachments, the 8 MiB confirmation, and that files are not removed, in `docs/product-overview.md`. Verified by: the section exists and states each.
 - [x] 6.2 Add the scratch directory, its growth, the `tmpfs` limit in the container examples, and how to clear it to `docs/operations/standalone-server.md`. Verified by: the runbook names the directory and the command.
 - [x] 6.3 Run `openspec validate --all`, `npm run smoke`, the server, client, and adapter test suites, and the app-window E2E suites through `npm run test:e2e`. Verified by: all pass.
-- [ ] 6.4 Open a pull request on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
+- [x] 6.4 Open a pull request on `origin` (Gitea) and read back every CI status. Verified by: every status is `success` or `skipped`.
