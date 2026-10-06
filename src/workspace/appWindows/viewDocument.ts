@@ -28,6 +28,8 @@ export interface ViewDocumentInput {
 	readonly permissions?: Readonly<Record<string, unknown>>;
 	/** A JSON value an agent-authored document reads as `window.terminay.data`. */
 	readonly data?: unknown;
+	/** Whether a message from an agent-authored view may carry files. */
+	readonly attachments?: boolean;
 }
 
 export interface ViewDocument {
@@ -145,6 +147,7 @@ export const AGENT_VIEW_BOOTSTRAP = `(() => {
 		const message = event.data;
 		if (event.source !== parent || !message || message.jsonrpc !== '2.0') return;
 		if (typeof message.method === 'string') {
+			if (message.method === 'terminay/attachment-part' && message.id !== undefined) return part(message.id, message.params || {});
 			if (message.method === 'ui/notifications/host-context-changed') apply(message.params);
 			if (message.id !== undefined) parent.postMessage({ jsonrpc: '2.0', id: message.id, result: {} }, '*');
 			return;
@@ -156,13 +159,43 @@ export const AGENT_VIEW_BOOTSTRAP = `(() => {
 		else waiter.resolve(message.result);
 	});
 	const text = (value) => ({ type: 'text', text: String(value) });
+	const canAttach = typeof terminayAttachments !== 'undefined' && terminayAttachments === true;
+	// Files offered with a message that is being sent. The host asks for them a
+	// part at a time, so a file of any size is never copied whole.
+	const offered = new Map();
+	let nextFile = 0;
+	function part(id, params) {
+		const refuse = () => parent.postMessage({ jsonrpc: '2.0', id, error: { code: -32000, message: 'No such attachment' } }, '*');
+		const file = offered.get(params.id);
+		if (!file || !(params.offset >= 0) || !(params.length > 0)) return refuse();
+		file.slice(params.offset, params.offset + params.length).arrayBuffer().then(
+			(bytes) => parent.postMessage({ jsonrpc: '2.0', id, result: { bytes } }, '*', [bytes]),
+			refuse,
+		);
+	}
+	const sendWithFiles = (value, files) => {
+		if (!canAttach) return Promise.reject(new Error('Attachments are unavailable'));
+		if (!files.every((file) => file instanceof Blob)) return Promise.reject(new TypeError('files must be File or Blob objects'));
+		const attachments = files.map((file) => {
+			const id = 'file-' + (++nextFile);
+			offered.set(id, file);
+			return { id, name: String(file.name || 'file').slice(0, 255), size: file.size };
+		});
+		const forget = () => { for (const attachment of attachments) offered.delete(attachment.id); };
+		return request('ui/message', { role: 'user', content: text(value === undefined || value === null ? '' : value), attachments })
+			.then((result) => { forget(); return result; }, (error) => { forget(); throw error; });
+	};
 	const frozen = (value) => {
 		if (value && typeof value === 'object') { for (const key of Object.keys(value)) frozen(value[key]); Object.freeze(value); }
 		return value;
 	};
 	Object.defineProperty(window, 'terminay', { value: Object.freeze({
 		data: frozen(typeof terminayData === 'undefined' ? undefined : terminayData),
-		sendMessage: (value) => request('ui/message', { role: 'user', content: text(value) }),
+		attachments: canAttach,
+		sendMessage: (value, options) => {
+			const files = options && options.files ? Array.from(options.files) : [];
+			return files.length === 0 ? request('ui/message', { role: 'user', content: text(value) }) : sendWithFiles(value, files);
+		},
 		updateContext: (value) => request('ui/update-model-context', { content: [text(value)] }),
 		openLink: (url) => request('ui/open-link', { url: String(url) }),
 		close: () => request('ui/request-close', {}),
@@ -269,12 +302,13 @@ export function inertJsonLiteral(value: unknown): string | undefined {
 	return `JSON.parse(${literal})`;
 }
 
-/** The bootstrap, with the window's data in scope for it and for nothing else. */
-function agentBootstrap(data: unknown): string {
+/** The bootstrap, with the window's data and what the host offers in scope for it and for nothing else. */
+function agentBootstrap(data: unknown, attachments: boolean): string {
 	const literal = data === undefined ? undefined : inertJsonLiteral(data);
-	return literal === undefined
-		? AGENT_VIEW_BOOTSTRAP
-		: `{const terminayData=${literal};${AGENT_VIEW_BOOTSTRAP}}`;
+	const scope =
+		(literal === undefined ? '' : `const terminayData=${literal};`) +
+		(attachments ? 'const terminayAttachments=true;' : '');
+	return scope === '' ? AGENT_VIEW_BOOTSTRAP : `{${scope}${AGENT_VIEW_BOOTSTRAP}}`;
 }
 
 /**
@@ -289,7 +323,7 @@ export function buildViewDocument(input: ViewDocumentInput): ViewDocument {
 		`<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">` +
 		`<script>${VIEW_LINK_HANDLER}</script>` +
 		(input.source.kind === 'agent'
-			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${agentBootstrap(input.data)}</script>`
+			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${agentBootstrap(input.data, input.attachments === true)}</script>`
 			: '') +
 		// Present in every view and inert until someone watches it (ADR-0039).
 		`<script>${MIRROR_LOADER_SCRIPT}</script>`;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -88,6 +89,8 @@ test('show_window tells the agent how to build a window and hear back from it', 
 			assert.match(show.description, /https/);
 			assert.match(show.description, /window\.terminay\.sendMessage/);
 			assert.match(show.description, /html_file/);
+			assert.match(show.description, /sendMessage\("text", \{ files \}\)/);
+			assert.match(show.description, /Attached: <path>/);
 			assert.match(show.description, /window\.terminay\.data/);
 			// The document comes inline or from a file, so neither is required by the schema.
 			assert.deepEqual(show.inputSchema.required, ['title']);
@@ -159,6 +162,9 @@ test('show_window refuses a document it cannot read as one, before anything reac
 			await writeFile(empty, '');
 			const directory = join(root, 'directory');
 			await mkdir(directory);
+			// A pipe nobody writes to: reading it would wait for ever.
+			const pipe = join(root, 'pipe.html');
+			execFileSync('mkfifo', [pipe]);
 			const show = (args) => client.callTool({ name: 'show_window', arguments: { title: 'x', ...args } });
 			const cases = [
 				[{ html: '<p>x</p>', html_file: secret }, /^bad_request: give exactly one/],
@@ -167,6 +173,7 @@ test('show_window refuses a document it cannot read as one, before anything reac
 				[{ html_file: join(root, 'missing.html') }, /^not_found: html_file does not exist/],
 				[{ html_file: directory }, /^bad_request: html_file must be a regular file/],
 				[{ html_file: '/dev/null' }, /^bad_request: html_file must be a regular file/],
+				[{ html_file: pipe }, /^bad_request: html_file must be a regular file/],
 				[{ html_file: big }, /^bad_request: html_file must be at most 512 KiB/],
 				[{ html_file: binary }, /^bad_request: html_file must be UTF-8 text/],
 				[{ html_file: empty }, /^bad_request: html_file is empty/],

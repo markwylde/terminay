@@ -114,6 +114,7 @@ test("the server advertises app windows only when they are composed", async () =
   try {
     const { client, hello } = await without.connect("desktop", { attach: false });
     assert.equal(hello.capabilities.includes("app-windows.v1"), false);
+    assert.equal(hello.capabilities.includes("app-window-attachments.v1"), false);
     assert.equal(without.composition.appWindows, undefined);
     await assert.rejects(client.query(APP_WINDOW_OPERATIONS.list, {}));
   } finally {
@@ -636,4 +637,176 @@ test("a refusal reaches a feature client with the reason it needs to tell a laps
   } finally {
     await server.close();
   }
+});
+
+// --- attachments on a window message (ADR-0042) ---
+
+const { AppWindowClient: FeatureClient, TerminayClientFacade } = await import("@terminay/client-core");
+/** The feature client the workspace uses, over a real protocol client. */
+const featureClient = (client) => new FeatureClient(new TerminayClientFacade(client));
+const { mkdtemp: makeTemporaryDirectory, readdir: readDirectory, readFile: readWholeFile } = await import("node:fs/promises");
+const { tmpdir: temporaryRoot } = await import("node:os");
+const { join: joinPath } = await import("node:path");
+
+async function withAttachments(options, run) {
+  const attachmentDirectory = joinPath(await makeTemporaryDirectory(joinPath(temporaryRoot(), "terminay-composed-attachments-")), "terminay-attachments");
+  const server = await composed({ ...options, appWindows: { ...(options.appWindows ?? {}), attachmentDirectory } });
+  const files = () => readDirectory(attachmentDirectory).catch(() => []);
+  try {
+    await run({ server, attachmentDirectory, files });
+  } finally {
+    await server.close();
+  }
+}
+const photo = (size, fill = 5) => new Uint8Array(size).fill(fill);
+/** A refusal as the workspace sees it: the facade wraps the protocol error as the cause. */
+async function refusedWith(promise, code) {
+  await assert.rejects(promise, (error) => { assert.equal((error.cause ?? error).code, code); return true; });
+}
+const reader = (bytes) => async (_file, offset, length) => bytes.subarray(offset, offset + length);
+const moment = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test("the server advertises attachments with app windows, and a photo sent with an answer is typed as a path the shell can open", async () => {
+  await withAttachments({}, async ({ server, attachmentDirectory, files }) => {
+    const { client, hello } = await server.connect("desktop");
+    assert.ok(hello.capabilities.includes("app-window-attachments.v1"));
+    const seen = [];
+    const subscription = await client.subscribe(APP_WINDOW_EVENTS.changed);
+    subscription.onEvent((event) => seen.push(event.payload));
+    const window = open(server);
+    const bytes = photo(300 * 1024);
+    const progress = [];
+    await featureClient(client).sendMessageWithAttachments(window.id, "2. Use the new logo? Yes", [{ name: "logo.png", size: bytes.byteLength }], reader(bytes), { onProgress: (sent) => progress.push(sent) });
+    const [name] = await files();
+    assert.match(name, /^[0-9a-f]{16}-logo\.png$/);
+    const path = joinPath(attachmentDirectory, name);
+    // This terminal has not enabled bracketed paste, so the line break is a space and the message is submitted once.
+    assert.deepEqual(server.process().writes, [`2. Use the new logo? Yes Attached: ${path}\r`]);
+    assert.deepEqual(new Uint8Array(await readWholeFile(path)), bytes);
+    assert.deepEqual(progress, [256 * 1024, 300 * 1024]);
+    assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
+    // No client is ever told where the file went.
+    await moment();
+    await subscription.unsubscribe().catch(() => undefined);
+    assert.equal(JSON.stringify(seen).includes("terminay-attachments"), false);
+    assert.equal(JSON.stringify(seen).includes(name), false);
+    // The file outlives its terminal.
+    server.process().emitExit();
+    await moment();
+    assert.equal(server.composition.appWindows.list(identity.sessionId).length, 0);
+    assert.deepEqual(await files(), [name]);
+  });
+});
+
+test("with bracketed paste the message and its attachment lines are one paste", async () => {
+  await withAttachments({}, async ({ server, attachmentDirectory, files }) => {
+    const { client } = await server.connect("desktop");
+    server.process().emitData("\u001b[?2004h");
+    await moment();
+    const window = open(server);
+    await featureClient(client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 2 }, { name: "b.txt", size: 0 }], reader(photo(2)));
+    const names = await files();
+    assert.equal(names.length, 2);
+    const [written] = server.process().writes.slice(-1);
+    assert.ok(written.startsWith("\u001b[200~Attached: "));
+    assert.ok(written.endsWith("\u001b[201~\r"));
+    assert.match(written.slice(6, -7), /^Attached: \S+-a\.txt\nAttached: \S+-b\.txt$/u);
+    assert.ok(written.includes(attachmentDirectory));
+  });
+});
+
+test("Never Allow and a declined prompt upload nothing; an allowed prompt names each file and its size", async () => {
+  await withAttachments({ permissions: { windowMessages: "deny" } }, async ({ server, files }) => {
+    const { client } = await server.connect("desktop");
+    const window = open(server);
+    let read = 0;
+    await refusedWith(featureClient(client).sendMessageWithAttachments(window.id, "hi", [{ name: "a.txt", size: 2 }], async () => { read += 1; return photo(2); }), "forbidden");
+    assert.equal(read, 0);
+    assert.deepEqual(await files(), []);
+    assert.deepEqual(server.process().writes, []);
+  });
+  await withAttachments({ permissions: { windowMessages: "ask" } }, async ({ server, files }) => {
+    const { client } = await server.connect("desktop");
+    const approvals = server.composition.mcpApprovals;
+    const prompted = async () => {
+      for (let attempt = 0; attempt < 50 && approvals.list().length === 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+      return approvals.list()[0];
+    };
+    const attachments = [{ name: "screenshot.png", size: 2 * 1024 * 1024 }, { name: "notes\u001b[2J.txt", size: 12 }];
+    const window = open(server);
+    let read = 0;
+    const declined = featureClient(client).sendMessageWithAttachments(window.id, "Here is the error", attachments, async (_file, _offset, length) => { read += 1; return photo(length); });
+    const first = await prompted();
+    assert.equal(first.group, "windowMessages");
+    assert.deepEqual(first.details, [
+      { label: "Message", value: "Here is the error", code: true },
+      { label: "Attachment", value: "screenshot.png (2.0 MiB)" },
+      // A name is shown as text: the escape sequence in it is not one.
+      { label: "Attachment", value: "notes [2J.txt (12 B)" },
+    ]);
+    assert.match(first.summary, /2 files/);
+    approvals.decide(first.id, "decline");
+    await refusedWith(declined, "forbidden");
+    assert.equal(read, 0);
+    assert.deepEqual(await files(), []);
+    assert.deepEqual(server.process().writes, []);
+    // The window was not used up by the refusal.
+    const allowed = featureClient(client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 3 }], reader(photo(3)));
+    const second = await prompted();
+    assert.deepEqual(second.details, [{ label: "Attachment", value: "a.txt (3 B)" }]);
+    approvals.decide(second.id, "once");
+    await allowed;
+    assert.equal((await files()).length, 1);
+    assert.equal(server.process().writes.length, 1);
+  });
+});
+
+test("an observer cannot attach, and a takeover part way through removes what had arrived and types nothing", async () => {
+  await withAttachments({}, async ({ server, files }) => {
+    const desktop = await server.connect("desktop", { attach: false });
+    await desktop.client.command("terminal.attach", { clientId: "desktop", identity, fromPosition: 0 });
+    const phone = await server.connect("phone", { attach: false });
+    const attachedPhone = await phone.client.command("terminal.attach", { clientId: "phone", identity, fromPosition: 0 });
+    const window = open(server);
+    await refusedWith(featureClient(phone.client).sendMessageWithAttachments(window.id, "from the phone", [{ name: "a.txt", size: 2 }], reader(photo(2))), "forbidden");
+    assert.deepEqual(await files(), []);
+
+    const bytes = photo(600 * 1024);
+    let parts = 0;
+    const interrupted = featureClient(desktop.client).sendMessageWithAttachments(window.id, "from the desktop", [{ name: "big.bin", size: bytes.byteLength }], async (_file, offset, length) => {
+      parts += 1;
+      // After the first part has landed, the phone takes control.
+      if (parts === 2) {
+        assert.equal((await files()).length, 1);
+        await phone.client.command("terminal.presentation", { clientId: "phone", identity, attachmentId: attachedPhone.result.attachmentId, mode: "takeover" });
+      }
+      return bytes.subarray(offset, offset + length);
+    });
+    await refusedWith(interrupted, "forbidden");
+    await moment();
+    assert.deepEqual(await files(), []);
+    assert.deepEqual(server.process().writes, []);
+    // The window is the new holder's to send from.
+    await featureClient(phone.client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 2 }], reader(photo(2)));
+    assert.equal((await files()).length, 1);
+    assert.equal(server.process().writes.length, 1);
+  });
+});
+
+test("a connection that drops part way through an upload leaves no partial file", async () => {
+  await withAttachments({}, async ({ server, files }) => {
+    const { client } = await server.connect("desktop");
+    const window = open(server);
+    const bytes = photo(600 * 1024);
+    let parts = 0;
+    const dropped = featureClient(client).sendMessageWithAttachments(window.id, "hi", [{ name: "big.bin", size: bytes.byteLength }], async (_file, offset, length) => {
+      parts += 1;
+      if (parts === 2) await client.close();
+      return bytes.subarray(offset, offset + length);
+    });
+    await assert.rejects(dropped);
+    for (let attempt = 0; attempt < 50 && (await files()).length > 0; attempt += 1) await moment();
+    assert.deepEqual(await files(), []);
+    assert.deepEqual(server.process().writes, []);
+  });
 });

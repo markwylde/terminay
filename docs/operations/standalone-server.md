@@ -361,6 +361,26 @@ markwylde/terminay` to add tools. The image runs with `--cap-drop=ALL`,
 `--security-opt no-new-privileges`, and `--read-only` given a writable
 `/var/lib/terminay` and `/tmp`.
 
+### Files attached in app windows
+
+When a person attaches a file to a message they send from an app window, the
+server writes it to `terminay-attachments` under its temporary directory
+(`$TMPDIR`, else `/tmp`), in a directory only the server's user can read. A
+file has no size limit, and the server never removes one it has delivered, so
+the directory grows until the operating system clears it. Two things follow:
+
+- Where `/tmp` is a `tmpfs`, as in the container examples here, attachments are
+  held in memory and cannot exceed the `tmpfs` size. An upload that does not fit
+  fails cleanly: the person is told, nothing is typed, and the partial file is
+  removed. Give `/tmp` more room, or point `TMPDIR` at a volume, if people will
+  attach large files.
+- On a long-lived host that never clears `/tmp`, remove old attachments
+  yourself. Nothing reads them after the agent has, so this is safe at any time:
+
+  ```sh
+  find "${TMPDIR:-/tmp}/terminay-attachments" -type f -mtime +7 -delete
+  ```
+
 The image declares a health check against the server's readiness endpoint,
 which listens on loopback inside the container and returns lifecycle status
 only. `terminay daemon status` reports readiness, the version, and the source

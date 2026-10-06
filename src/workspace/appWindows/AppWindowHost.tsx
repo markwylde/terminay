@@ -98,6 +98,8 @@ type WindowEntry = Readonly<{
 	client: AppWindowClient;
 	/** Present when this server mirrors views to clients not in control. */
 	mirror?: AppWindowMirrorHub;
+	/** Whether a message from this window may carry files. */
+	attachments: boolean;
 }>;
 
 const sameFrame = (left: PaneFrame | undefined, right: PaneFrame): boolean =>
@@ -164,6 +166,7 @@ export function AppWindowHost(): ReactElement | null {
 					serverId: server.serverId,
 					window,
 					client: server.client,
+					attachments: server.attachments,
 					...(server.mirror === undefined ? {} : { mirror: server.mirror }),
 				});
 		return list;
@@ -821,7 +824,11 @@ function AppWindowView(props: ViewProps): ReactElement {
 	const viewAliveRef = useRef(false);
 	const [allow, setAllow] = useState<string | undefined>(undefined);
 	const [recorderCount, setRecorderCount] = useState(0);
+	// A message with files that is waiting on the person, or on its way.
+	const [sending, setSending] = useState<AttachmentSend | undefined>(undefined);
+	const sendingRef = useRef<AbortController | null>(null);
 	const mirror = entry.mirror;
+	const attachments = entry.attachments;
 	// An agent may replace its document, which is a new view; an MCP App's
 	// revision only means its tool result arrived.
 	const documentKey =
@@ -882,6 +889,7 @@ function AppWindowView(props: ViewProps): ReactElement {
 				const built = buildViewDocument({
 					html: content.html,
 					...(content.data === undefined ? {} : { data: content.data }),
+					attachments,
 					source: { kind },
 					...(content.csp === undefined ? {} : { csp: content.csp }),
 					...(content.permissions === undefined
@@ -889,6 +897,7 @@ function AppWindowView(props: ViewProps): ReactElement {
 						: { permissions: content.permissions }),
 				});
 				const bridgeContent = {
+					attachments,
 					html: built.html,
 					allow: built.allow,
 					source: kind,
@@ -936,6 +945,48 @@ function AppWindowView(props: ViewProps): ReactElement {
 					// while its timers were paused, so it renews its own lease first.
 					sendMessage: (text) =>
 						asController(() => client.sendMessage(appWindow.id, text)),
+					sendAttachments: async (text, files, readPart) => {
+						if (sendingRef.current !== null)
+							throw new Error('This window is already sending a message');
+						const stop = new AbortController();
+						sendingRef.current = stop;
+						const total = files.reduce((sum, file) => sum + file.size, 0);
+						const notSent = new Error('The message was not sent');
+						try {
+							// A large upload is the person's decision, and it is asked for
+							// out here in the frame, where a view can neither draw the
+							// question nor answer it.
+							if (total > LARGE_ATTACHMENT_BYTES) {
+								const agreed = await new Promise<boolean>((resolve) => {
+									stop.signal.addEventListener('abort', () => resolve(false), { once: true });
+									setSending({ phase: 'confirm', count: files.length, total, answer: resolve });
+								});
+								if (!agreed) throw notSent;
+							}
+							setSending({ phase: 'upload', count: files.length, total, sent: 0, cancel: () => stop.abort() });
+							// A view that stops answering must not hold the upload open
+							// past the person cancelling it.
+							const read: typeof readPart = (file, offset, length) =>
+								new Promise((resolve, reject) => {
+									stop.signal.addEventListener('abort', () => reject(notSent), { once: true });
+									readPart(file, offset, length).then(resolve, reject);
+								});
+							await asController(() =>
+								client.sendMessageWithAttachments(appWindow.id, text, files, read, {
+									signal: stop.signal,
+									onProgress: (sent) =>
+										setSending((current) =>
+											current?.phase === 'upload' ? { ...current, sent } : current,
+										),
+								}),
+							);
+						} catch (error) {
+							throw stop.signal.aborted ? notSent : error;
+						} finally {
+							sendingRef.current = null;
+							setSending(undefined);
+						}
+					},
 					updateContext: (text) =>
 						asController(() => client.updateContext(appWindow.id, text)),
 					viewRequest: (method, params) =>
@@ -966,13 +1017,15 @@ function AppWindowView(props: ViewProps): ReactElement {
 		};
 		// The revision is what changes the content; the active key decides
 		// whether the view is new.
-	}, [client, appWindow.id, appWindow.contentRevision, activeKey, hostContext, asController, mirror]);
+	}, [client, appWindow.id, appWindow.contentRevision, activeKey, hostContext, asController, mirror, attachments]);
 
 	// A new document is a new view. The old view is told it is going, given a
 	// moment to hear it, and only then is its frame replaced.
 	useEffect(() => {
 		if (documentKey === activeKey) return;
 		const replace = (): void => {
+			// What the old document was sending is not sent for the new one.
+			sendingRef.current?.abort();
 			bridgeRef.current = null;
 			recorderRef.current = null;
 			viewAliveRef.current = false;
@@ -994,8 +1047,14 @@ function AppWindowView(props: ViewProps): ReactElement {
 	// first through this.
 	const { teardownRef } = props;
 	useEffect(() => {
-		teardownRef.current = (reason) => bridgeRef.current?.teardown(reason);
+		teardownRef.current = (reason) => {
+			sendingRef.current?.abort();
+			bridgeRef.current?.teardown(reason);
+		};
 		return () => {
+			// The view is leaving with its window: stop what it was sending.
+			sendingRef.current?.abort();
+			bridgeRef.current?.abandonParts();
 			teardownRef.current = null;
 		};
 	}, [teardownRef]);
@@ -1105,16 +1164,92 @@ function AppWindowView(props: ViewProps): ReactElement {
 		);
 	if (allow === undefined) return <div className="app-window__loading" aria-busy="true" />;
 	return (
-		<iframe
-			key={activeKey}
-			ref={frameRef}
-			className="app-window__frame"
-			title={appWindow.title}
-			src={appViewProxyUrl()}
-			sandbox={APP_VIEW_SANDBOX}
-			referrerPolicy="no-referrer"
-			{...(allow === '' ? {} : { allow })}
-		/>
+		<div className="app-window__view">
+			<iframe
+				key={activeKey}
+				ref={frameRef}
+				className="app-window__frame"
+				title={appWindow.title}
+				src={appViewProxyUrl()}
+				sandbox={APP_VIEW_SANDBOX}
+				referrerPolicy="no-referrer"
+				{...(allow === '' ? {} : { allow })}
+			/>
+			{sending === undefined ? null : <AttachmentSendBar sending={sending} />}
+		</div>
+	);
+}
+
+/** Attachments above this total are sent only after the person confirms. */
+export const LARGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+type AttachmentSend =
+	| Readonly<{
+			phase: 'confirm';
+			count: number;
+			total: number;
+			answer: (send: boolean) => void;
+	  }>
+	| Readonly<{
+			phase: 'upload';
+			count: number;
+			total: number;
+			sent: number;
+			cancel: () => void;
+	  }>;
+
+/** A file size for a person to read. */
+export function formatAttachmentSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	const units = ['KB', 'MB', 'GB', 'TB'];
+	let value = bytes / 1024;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * The strip under a view while a message with files waits on the person or is
+ * on its way. It is the workspace's own, outside the sandbox: a view cannot
+ * draw it, press its buttons, or hide it.
+ */
+function AttachmentSendBar(props: { sending: AttachmentSend }): ReactElement {
+	const { sending } = props;
+	const files = sending.count === 1 ? '1 file' : `${sending.count} files`;
+	if (sending.phase === 'confirm')
+		return (
+			<div className="app-window__send" role="alertdialog" aria-label="Send large attachments?">
+				<span className="app-window__send-text">
+					Send {files} ({formatAttachmentSize(sending.total)}) to this terminal's server?
+				</span>
+				<button type="button" onClick={() => sending.answer(false)}>
+					Don't send
+				</button>
+				<button
+					type="button"
+					className="app-window__send-primary"
+					onClick={() => sending.answer(true)}
+				>
+					Send
+				</button>
+			</div>
+		);
+	const percent =
+		sending.total === 0 ? 100 : Math.min(100, Math.floor((sending.sent / sending.total) * 100));
+	return (
+		<div className="app-window__send" role="status">
+			<span className="app-window__send-text">
+				Sending {files}: {formatAttachmentSize(sending.sent)} of{' '}
+				{formatAttachmentSize(sending.total)}
+			</span>
+			<progress className="app-window__send-progress" max={100} value={percent} />
+			<button type="button" onClick={sending.cancel}>
+				Cancel
+			</button>
+		</div>
 	);
 }
 

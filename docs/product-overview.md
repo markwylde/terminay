@@ -189,6 +189,28 @@ opaque-origin frame with no access to the workspace. See
 [terminal app windows](../openspec/specs/terminal-app-windows/spec.md) and the
 [MCP app gateway](../openspec/specs/mcp-app-gateway/spec.md).
 
+An agent that reuses one window design does not write it out each time.
+`show_window` takes `html_file`, the absolute path of a saved HTML file, in
+place of `html`, with `data`, a JSON value of up to 64 KiB that the page reads
+as `window.terminay.data` before its own scripts run. The file is read by the
+MCP adapter, which is the agent's own child process; Terminay Server is sent the
+document and never the path, and the file's contents are not returned to the
+agent.
+
+A person can **attach files** to the message a window sends. The page passes the
+files they picked to `window.terminay.sendMessage(text, { files })`, up to 16 of
+any type. Terminay Server saves each one under `terminay-attachments` in its
+temporary directory, under a name it chooses, and adds an `Attached: <path>`
+line per file to the message it types into the terminal, so the agent can open
+them; the page is never told a path. Attachments are held to everything a
+window message is: the person's gesture, control of the terminal, and the Window
+Messages permission, whose prompt names each file and its size. A file has no
+size limit and is streamed in 256 KiB parts. When one message's files total more
+than 8 MiB the window asks the person to confirm first, and an upload shows its
+progress and can be cancelled. Terminay does not remove an attached file: it
+stays until the operating system clears the temporary directory. Attachments and
+`data` are for windows an agent wrote, not for the views of connected servers.
+
 Every other device attached to that terminal sees a live, read-only **mirror**
 of the window, as it sees the terminal itself. The controlling device records
 the view's document and its changes and the server relays them; the server runs

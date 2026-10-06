@@ -163,3 +163,14 @@ test('a document without data, and an MCP App view, get no data in scope', () =>
 	assert.equal(inertJsonLiteral(() => 1), undefined);
 	assert.equal(inertJsonLiteral(null), 'JSON.parse("null")');
 });
+
+test('an agent-authored view is told whether a message may carry files, and an MCP App view is not', () => {
+	const offered = buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: true }).html;
+	assert.ok(offered.includes('const terminayAttachments=true;'));
+	const both = buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: true, data: { a: 1 } }).html;
+	assert.ok(both.includes('const terminayData=JSON.parse('));
+	assert.ok(both.includes('const terminayAttachments=true;'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' } }).html.includes('terminayAttachments=true'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: false }).html.includes('terminayAttachments=true'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'mcp-app' }, attachments: true }).html.includes('terminayAttachments'));
+});
