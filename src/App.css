@@ -3213,6 +3213,16 @@ body.project-tabbar-reordering .project-tabbar {
   color: #ff9a9a;
 }
 
+.workspace-empty-state--actionable {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-empty-state__actions {
+  display: flex;
+  gap: 8px;
+}
+
 .project-workspace {
   position: absolute;
   inset: 0;

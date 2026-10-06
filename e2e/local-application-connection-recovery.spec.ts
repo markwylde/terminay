@@ -69,3 +69,71 @@ test('a Local application transport loss recovers without replacing the terminal
 	).toHaveCount(initialTerminalCount + 1, { timeout: 5_000 });
 	await expect(mainWindow.getByText('Server did not publish a terminal panel')).toHaveCount(0);
 });
+
+test('a Local connection the server closes is noticed by the window without waiting for a heartbeat', async ({
+	mainWindow,
+}) => {
+	test.setTimeout(45_000);
+	await activeSessionId(mainWindow);
+	// The window's heartbeat probes every 10 seconds and needs two misses, so
+	// anything it reports arrives 10-20 seconds after the close. A close the
+	// window observes on its endpoint arrives within a turn of the event loop.
+	const NOTICED_WITHOUT_HEARTBEAT_MS = 5_000;
+
+	await mainWindow.evaluate(() => {
+		const target = window as Window & {
+			__terminayServerClientState?: string;
+			__terminayServerClientStates?: { state: string; at: number }[];
+		};
+		let current = target.__terminayServerClientState;
+		const seen: { state: string; at: number }[] = [];
+		target.__terminayServerClientStates = seen;
+		Object.defineProperty(target, '__terminayServerClientState', {
+			configurable: true,
+			get: () => current,
+			set: (state: string) => {
+				current = state;
+				seen.push({ state, at: performance.now() });
+			},
+		});
+	});
+
+	const closedAt = await mainWindow.evaluate(async () => {
+		if (!window.terminayLocalConnectionFaultTest)
+			throw new Error('Local connection fault test seam is unavailable');
+		const at = performance.now();
+		const closed =
+			await window.terminayLocalConnectionFaultTest.closeServerConnection();
+		if (closed < 1) throw new Error('the server had no connection to close');
+		return at;
+	});
+
+	const firstLossAfterMs = async () =>
+		await mainWindow.evaluate((since) => {
+			const seen =
+				(
+					window as Window & {
+						__terminayServerClientStates?: { state: string; at: number }[];
+					}
+				).__terminayServerClientStates ?? [];
+			const loss = seen.find((entry) => entry.state !== 'connected');
+			return loss === undefined ? null : loss.at - since;
+		}, closedAt);
+	await expect
+		.poll(firstLossAfterMs, { timeout: 30_000 })
+		.not.toBeNull();
+	expect(await firstLossAfterMs()).toBeLessThan(NOTICED_WITHOUT_HEARTBEAT_MS);
+
+	await expect
+		.poll(
+			() =>
+				mainWindow.evaluate(
+					() =>
+						(
+							window as Window & { __terminayServerClientState?: string }
+						).__terminayServerClientState,
+				),
+			{ timeout: LOCAL_RECOVERY_TIMEOUT_MS },
+		)
+		.toBe('connected');
+});
