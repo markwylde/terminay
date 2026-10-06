@@ -25,3 +25,5 @@
 
 - Publishing an image for each beta extends the existing release channels (ADR-0016, ADR-0027) to one more artifact rather than establishing a new commitment.
 - The CI contract "server image publication is versioned-release-only" is a test-level rule, replaced in design decision 7.
+- `connections.rename` and `connections.forget` are two more closed actions inside the existing `connections` host capability (ADR-0005, ADR-0018). They add no capability, cross no new boundary, and keep origins and credentials in the host.
+- Taking the client version from the Desktop bundle's build-time version relies on ADR-0018's commitment that Desktop runs its packaged bundle for every connection.

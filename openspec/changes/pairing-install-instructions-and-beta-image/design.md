@@ -32,9 +32,13 @@ In-force ADRs that bear on this: ADR-0005 and ADR-0018 (the renderer is untruste
 
 - *Alternative: have the server or a hosted endpoint say which image to use.* Rejected: there is no server yet at this point, and the app's own version is the fact that matters.
 
-### 2. The host supplies its version; the renderer does not discover it
+### 2. On Desktop the bundle's version is the client's version
 
-**Boundary:** the shared UI is untrusted renderer code with no Node or ambient IPC access (ADR-0005, ADR-0018). Desktop passes its application version to the Remote Control window through the existing preload surface as plain data, and `SharedConnectionsRouteBody` takes it as an optional prop. The web renderer passes nothing, which yields the untagged image. The value is display-only: it is interpolated into text the person copies, never executed, and never sent anywhere. It is validated against the version grammar before use so that an unexpected string cannot shape the displayed command.
+Desktop runs the workspace bundle packaged with it for every connection, and that bundle is built from the same stamped `package.json` as the application, so its build-time `__TERMINAY_VERSION__` is the application's version. The shell passes it to the Connections route as `appVersion` only when the host is Desktop. A browser session's bundle is its server's and passes nothing, which yields the untagged image. No host bridge or protocol change is needed.
+
+**Boundary:** the shared UI is untrusted renderer code (ADR-0005, ADR-0018) and gains no host access for this. The value is display-only: it is interpolated into text the person copies, never executed, and never sent anywhere. It is validated against the version grammar before use, so an unexpected string cannot shape the displayed command.
+
+- *Alternative: a version field in the host context.* Rejected: a protocol and bridge change to carry a value the Desktop bundle already has.
 
 ### 3. The screen: two options, one disclosure, one link
 
@@ -56,12 +60,17 @@ Stable shows `sudo npx terminay daemon install`, which takes the newest release.
 
 ### 5. The prerelease dispatches the image workflow with its beta version
 
-`server-image.yml` gains `workflow_dispatch` inputs: `version` and `channel`. `main-prerelease.yml` gets a final job that runs after the prerelease assets are published and dispatches the image workflow at the built commit with the beta version and `channel=main`. The image workflow validates the version against the beta grammar when dispatched on a branch, stamps it through the Dockerfile's existing `OCI_VERSION` argument, and tags the result with that version and `beta`. A release continues to dispatch at its tag, with no version input, and publishes `X.Y.Z`, `X.Y`, and `latest`.
+`server-image.yml` gains `workflow_dispatch` inputs `version` and `revision`. `main-prerelease.yml` gets a final job that runs after the prerelease assets are published, and only when the desktop beta was built, and dispatches the image workflow on the default branch with the beta version and the commit it was built from. A dispatch names a branch, not a commit, so the commit travels as an input and is what every job checks out.
+
+A first job, `plan`, decides what the run publishes before anything is built: a release tag publishes its own version and refuses inputs; a version must be on the default branch, match the beta grammar, and name a full commit that branch contains; anything else builds and smokes the image and publishes nothing. The channel is derived, `tag` for a release and `main` for a beta, rather than taken as an input. The version is stamped through the Dockerfile's `OCI_VERSION` argument.
+
+Runs are grouped per version, so a later beta never cancels the image an installed earlier beta names.
 
 **Boundary:** dispatch is the event a workflow token may raise (the release fix established this). The dispatching job holds `contents: read` and `actions: write` and nothing else. The image workflow, not the caller, holds the registry credentials.
 
 - *Alternative: build the image inside `main-prerelease.yml`.* Rejected: two places that know how to build and tag the image.
 - *Alternative: a workflow_run trigger.* Rejected: it cannot carry the beta version, which is computed from the run number of the prerelease.
+- *Alternative: a `channel` input.* Rejected: it is implied by which of the two forms the run is, and an input could contradict it.
 
 ### 6. Native per-architecture image builds, joined by manifest
 
@@ -73,11 +82,31 @@ Two jobs build and push by digest, one per architecture on its native runner, an
 
 "Server image publication is versioned-release-only" becomes "the image workflow publishes only at a release tag or for a dispatched beta version, and never from a pull request". The property it protected — no image from an unreviewed or unversioned build — is kept: a beta image exists only for a commit on the default branch whose prerelease assets published.
 
+### 8. Remote Control's saved servers are the host's remembered profiles
+
+On Desktop the Remote Control window reads the `connections` capability's profile list through `useConnections()`, the list the connection menu already uses, and shows every remembered profile except Local. The route keeps accepting a `ConnectionProfileStore`, which a browser session supplies; where there is none it takes the host's summaries instead. A status is shown only where the source can speak for the server: the Remote Control window is its own document with its own attached set, so its "offline" would mean "not attached in this window" and is not shown.
+
+The Desktop host subscribes to the `connections.changed` event main already publishes, and main publishes it to every window when the remembered set changes, so a server paired, renamed, or forgotten in one window is current in the others.
+
+- *Alternative: build a `ConnectionProfileStore` from the host list.* Rejected: a profile there requires an origin, and the host deliberately keeps origins out of the bundle.
+
+### 9. Rename and forget are host actions in the `connections` capability
+
+`connections.rename` changes the label in the remembered metadata. `connections.forget` detaches the profile in every window, removes this device's credential for its origin, then removes the metadata. The credential goes first: a profile that is still listed can be forgotten again, while a credential with no profile could never be found. Forget refuses Local, and refuses a profile some window runs on as its primary. A credential shared by two profiles of one origin stays until the last is forgotten.
+
+**Boundary:** both are parsed as closed actions (exact keys, an identifier, a bounded single-line label) and authorized under the existing `connections` capability. The renderer names a profile id and never an origin or a credential. Revocation is a server operation and is not offered for a remembered server here.
+
+### 10. One pane, one subject
+
+The main pane shows the selected sidebar item only. A server shows its name and the actions that work; rename and the forget confirmation replace the actions in place rather than appearing elsewhere on the page. Add connection puts the pairing field and its two buttons on one row with progress beneath. Outcome and error lines share one strip above the pane. The Settings chrome hides its navigation at phone width; here the navigation is the saved servers, so it stays above the pane.
+
 ## Risks / Trade-offs
 
 - [The command names an image that does not exist: the image job failed, or the client is older than the first image] → the image is published after the other artifacts, so a failure is visible in the release; the screen links to the installation guide, which uses the untagged image. Releases before this change have no image; Desktop builds from before it have no install section either.
 - [A beta image on every push costs build minutes and registry storage] → native builds keep it to roughly the archive build's time; old beta tags can be pruned by a later retention job. Not addressed here.
-- [The web manager is a different repository] → task 4.4 establishes whether it renders this component; if not, the instructions there are a follow-up change in `terminay.com`.
+- [The web manager is a different repository] → it has its own Add connection page; the instructions there, and the installation guide's Docker and manual-install sections the screen links to, are a follow-up change in `terminay.com`.
+- [`beta` could move backwards if an older beta's image run finishes after a newer one's] → prereleases are serialized and dispatch in order, so the runs would have to overtake each other; versioned tags are unaffected.
+- [Forgetting a server attached in another window leaves that window's tabs for it greyed] → they are inert and detachable from its connection menu, as for any lost connection.
 - [Copy shows a command the person runs with their own privileges] → the text is assembled from constants and a validated version; nothing from a server, a URL, or user input reaches it.
 - [Beta Linux hosts install `main`, which may be a newer commit than the beta client] → the protocol negotiates compatibility per connection (ADR-0018); the alternative is no Linux option for beta clients.
 
@@ -93,5 +122,5 @@ Rollback: revert the prerelease dispatch job to stop beta images; revert the UI 
 ## Open Questions
 
 - Should old beta image tags be pruned, and after how long?
-- Does `app.terminay.com` render this shared component, or its own Add connection page?
+- After pairing, Desktop remounts the pairing window onto the new server. Whether Remote Control should instead stay open on the new server's entry is not addressed here.
 - No in-force ADR needs revisiting. ADR-0032's statement that the GitHub mirror runs publication workflows only still holds: this adds a publication, not a verification lane.

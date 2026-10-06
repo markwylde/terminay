@@ -61,6 +61,11 @@ export interface WorkspaceConnectionHost {
 	subscribeProfiles?(
 		listener: (profiles: readonly ConnectionProfileSummary[]) => void,
 	): () => void;
+	/** Present only where the host owns a remembered list this bundle may
+	 * change. Rename is display metadata; forget removes this device's
+	 * credential and metadata and revokes nothing on the server. */
+	renameProfile?(profileId: string, label: string): Promise<void>;
+	forgetProfile?(profileId: string): Promise<void>;
 }
 
 export const NO_ATTACHED_CONNECTIONS: WorkspaceConnectionHost = Object.freeze({
@@ -79,6 +84,9 @@ type HostActionRequester = Readonly<{
 		action: unknown,
 		options?: Readonly<{ userGesture?: boolean }>,
 	): Promise<unknown>;
+	subscribeEvent?(
+		listener: (message: Readonly<{ event: unknown }>) => void,
+	): () => void;
 }>;
 
 /**
@@ -151,6 +159,42 @@ export function createDesktopConnectionHost(
 				() => undefined,
 			);
 		},
+		...(supportsAttach
+			? {
+					renameProfile: async (profileId: string, label: string) => {
+						await requestAction({
+							type: 'connections.rename',
+							profileId,
+							label,
+						});
+					},
+					forgetProfile: async (profileId: string) => {
+						await requestAction({ type: 'connections.forget', profileId });
+					},
+					// The host says when its remembered set or a status changes, so
+					// a server paired or forgotten in another window shows up here.
+					subscribeProfiles: (
+						listener: (profiles: readonly ConnectionProfileSummary[]) => void,
+					) => {
+						if (typeof host.subscribeEvent !== 'function')
+							return () => undefined;
+						return host.subscribeEvent((message) => {
+							const event = message.event;
+							if (
+								typeof event !== 'object' ||
+								event === null ||
+								(event as Record<string, unknown>).type !==
+									'connections.changed'
+							)
+								return;
+							const profiles = readProfiles(event);
+							if (profiles === undefined) return;
+							listedProfiles = profiles;
+							listener(profiles);
+						});
+					},
+				}
+			: {}),
 		// The host hands the restored composition back in the bootstrap context,
 		// beside window geometry. There is nothing further to ask it for.
 		readComposition: async () => context.composition,
