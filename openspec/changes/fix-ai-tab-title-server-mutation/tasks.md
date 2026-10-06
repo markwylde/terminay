@@ -41,4 +41,4 @@
 
 - [x] 8.1 `npm run lint`, typecheck, the Node test suites, and `openspec validate --all` pass. Verified by command output.
 - [x] 8.2 `npm run test:e2e -- e2e/ai-tab-metadata.spec.ts` passes in Docker, including the reproduction test. Verified by command output.
-- [ ] 8.3 Open the pull request on `origin` (Gitea) and read back every commit status on the head SHA as `success` or `skipped`. Verified by the status list.
+- [x] 8.3 Open the pull request on `origin` (Gitea) and read back every commit status on the head SHA as `success` or `skipped`. Verified by the status list.
