@@ -34,7 +34,7 @@ test("FileViewerClient consumes server-authorized capability metadata and resolv
   const client = new FileViewerClient(transport);
   const capabilities = await client.getCapabilities("archive.bin", "project-a");
   assert.equal(capabilities.preferredMode, "hex");
-  assert.deepEqual(calls[0], { operation: "files.preview-metadata", payload: { path: "archive.bin", projectId: "project-a" } });
+  assert.deepEqual(calls[0], { operation: "files.preview-metadata", payload: { path: "archive.bin", projectId: "project-a", options: { acceptPreviewKinds: ["html"] } } });
   assert.deepEqual(chooseFileViewerMode(capabilities, "preview"), { mode: "hex", requestedMode: "preview", reason: "unavailable" });
   assert.deepEqual(chooseFileViewerMode({ ...capability(), preferredMode: "text", canEditText: true }, "diff"), { mode: "text", requestedMode: "diff", reason: "unavailable" });
 });

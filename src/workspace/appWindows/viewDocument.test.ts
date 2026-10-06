@@ -122,3 +122,48 @@ test('only an MCP App may be granted the permissions its resource asked for', ()
 	assert.equal(viewAllowAttribute({ kind: 'mcp-app' }, undefined), '');
 	assert.equal(viewAllowAttribute({ kind: 'agent' }, { camera: {} }), '');
 });
+
+test('a previewed project file may reach nothing and cannot widen that', () => {
+	const expected =
+		"default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; " +
+		"img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; " +
+		"frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; webrtc 'block'";
+	assert.equal(viewContentSecurityPolicy({ kind: 'file' }), expected);
+	// Declared origins belong to an MCP App's resource; a file has none to give.
+	assert.equal(
+		viewContentSecurityPolicy(
+			{ kind: 'file' },
+			{
+				resourceDomains: ['https://cdn.example.com'],
+				connectDomains: ['https://api.example.com'],
+				frameDomains: ['https://frames.example.com'],
+				baseUriDomains: ['https://base.example.com'],
+			},
+		),
+		expected,
+	);
+	assert.equal(
+		viewAllowAttribute({ kind: 'file' }, { camera: {}, microphone: {}, clipboardWrite: {} }),
+		'',
+	);
+});
+
+test('a previewed project file gets the policy first, its own link handling, and no mirror loader', () => {
+	const built = buildViewDocument({
+		html: '<!DOCTYPE html><html><head><title>t</title></head><body>hi</body></html>',
+		source: { kind: 'file' },
+		permissions: { camera: {} },
+	});
+	assert.equal(built.allow, '');
+	assert.ok(
+		built.html.startsWith(
+			'<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'',
+		),
+	);
+	assert.ok(built.html.includes("method: 'ui/open-link'"));
+	assert.ok(built.html.includes("terminayPreview: 'ready'"));
+	// A relative link would resolve against the workspace's own origin.
+	assert.ok(built.html.includes('if (!/^https?:\\/\\//i.test(raw)) return;'));
+	assert.equal(built.html.includes('terminayMirror'), false);
+	assert.ok(built.html.endsWith('<body>hi</body></html>'));
+});

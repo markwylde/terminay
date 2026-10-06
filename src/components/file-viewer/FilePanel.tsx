@@ -16,6 +16,7 @@ import {
 	createFileSessionStore,
 	createServerFileGateway,
 	detectFileCapabilities,
+	detectPreviewKind,
 	LARGE_FILE_THRESHOLD_BYTES,
 	resolveFileViewerEngine,
 	resolveFileViewerMode,
@@ -77,6 +78,11 @@ import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
 import { PerformantTextViewer } from './modes/PerformantTextViewer';
 import { PreviewViewer } from './modes/PreviewViewer';
+import {
+	HTML_PREVIEW_UNAVAILABLE_REASON,
+	type HtmlPreviewResources,
+} from './preview/HtmlPreview';
+import { appViewAvailable } from '../../workspace/appWindows/appViewAvailability';
 import {
 	materializeCanonicalPerformantDraft,
 	materializePerformantDraft,
@@ -1251,6 +1257,46 @@ function CanonicalFilePanel(
 		props.api.setTitle(documentDisplayTitle(draftText, filePath));
 	}, [draftText, filePath, isDirty, presentation, props.api]);
 
+	// An HTML file is previewed as a page, which needs the sandbox proxy. Only
+	// such a file asks whether this host can run one.
+	const isPage =
+		fileInfo != null &&
+		(fileInfo.viewerCapabilities?.previewKind ?? detectPreviewKind(fileInfo)) ===
+			'html';
+	const [pagePreview, setPagePreview] = useState<boolean | undefined>(undefined);
+	useEffect(() => {
+		if (!isPage) return;
+		let cancelled = false;
+		void appViewAvailable().then((value) => {
+			if (!cancelled) setPagePreview(value);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [isPage]);
+	const pagePath = isPage && fileInfo != null ? fileInfo.path : null;
+	const htmlResources = useMemo((): HtmlPreviewResources | undefined => {
+		if (pagePath === null) return undefined;
+		let relativePath: string;
+		try {
+			relativePath = toProjectRelativePath(projectRoot, pagePath);
+		} catch {
+			return undefined;
+		}
+		const slash = relativePath.lastIndexOf('/');
+		const root = projectRoot.replace(/[\\/]+$/u, '');
+		return {
+			baseDirectory: slash === -1 ? '' : relativePath.slice(0, slash),
+			// The gateway turns the path back into a project-relative one, and the
+			// server authorizes it at the read.
+			read: (resourcePath, maxBytes) =>
+				fileGateway.readFileBytes(`${root}/${resourcePath}`, {
+					offset: 0,
+					length: maxBytes,
+				}),
+		};
+	}, [fileGateway, pagePath, projectRoot]);
+
 	if (!fileInfo && loadError) {
 		return (
 			<div className="file-panel file-panel--load-error" role="alert">
@@ -1273,7 +1319,8 @@ function CanonicalFilePanel(
 		return <div className="file-panel file-panel--loading">Loading file…</div>;
 	}
 
-	const capabilities = detectFileCapabilities(fileInfo);
+	const capabilities = detectFileCapabilities(fileInfo, { pagePreview });
+	const pagePreviewUnavailable = isPage && pagePreview === false;
 	const canDiff =
 		gitRepoInfo?.canDiff === true ||
 		diff?.isTracked === true ||
@@ -1339,13 +1386,20 @@ function CanonicalFilePanel(
 				<div className="file-panel__toolbar-row">
 				<FileModeSwitcher
 					activeMode={effectiveMode}
-					modes={capabilities.primaryModes}
-					moreModes={capabilities.secondaryModes}
-					disabledReasons={
-						diffUnavailableReason === undefined
-							? undefined
-							: { diff: diffUnavailableReason }
+					modes={
+						pagePreviewUnavailable
+							? [...capabilities.primaryModes, 'preview']
+							: capabilities.primaryModes
 					}
+					moreModes={capabilities.secondaryModes}
+					disabledReasons={{
+						...(diffUnavailableReason === undefined
+							? {}
+							: { diff: diffUnavailableReason }),
+						...(pagePreviewUnavailable
+							? { preview: HTML_PREVIEW_UNAVAILABLE_REASON }
+							: {}),
+					}}
 					onChangeMode={(nextMode) => {
 						void handleModeChange(nextMode);
 					}}
@@ -1406,6 +1460,7 @@ function CanonicalFilePanel(
 				) : !isDocumentation && effectiveMode === 'preview' ? (
 					<PreviewViewer
 						file={fileInfo}
+						htmlResources={htmlResources}
 						previewSourceUrl={previewSourceUrl}
 						text={draftText}
 					/>
