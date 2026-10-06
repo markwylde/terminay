@@ -80,6 +80,33 @@ test('a Local connection the server closes is noticed by the window without wait
 	// window observes on its endpoint arrives within a turn of the event loop.
 	const NOTICED_WITHOUT_HEARTBEAT_MS = 5_000;
 
+	// The sidebar's panes query the server on their own schedule, which is
+	// what makes them the callers most likely to be caught mid-request.
+	const sidebar = mainWindow.locator('.file-explorer-sidebar');
+	if (!(await sidebar.isVisible()))
+		await mainWindow.getByLabel('Toggle file explorer').click();
+	await expect(mainWindow.locator('.sidebar-pane').first()).toBeVisible();
+
+	// The window now learns of the close while requests are still being made,
+	// so every caller has to treat a lost connection as an outcome, not throw
+	// it into the void.
+	await mainWindow.evaluate(() => {
+		const rejections: string[] = [];
+		(
+			window as Window & { __terminayUnhandledRejections?: string[] }
+		).__terminayUnhandledRejections = rejections;
+		window.addEventListener('unhandledrejection', (event) => {
+			const reason = event.reason as {
+				name?: string;
+				message?: string;
+				operation?: string;
+				stack?: string;
+			} | null;
+			rejections.push(
+				`${reason?.name ?? typeof reason}: ${reason?.message ?? String(reason)} [${reason?.operation ?? 'no operation'}]\n${reason?.stack ?? ''}`,
+			);
+		});
+	});
 	await mainWindow.evaluate(() => {
 		const target = window as Window & {
 			__terminayServerClientState?: string;
@@ -136,4 +163,11 @@ test('a Local connection the server closes is noticed by the window without wait
 			{ timeout: LOCAL_RECOVERY_TIMEOUT_MS },
 		)
 		.toBe('connected');
+	expect(
+		await mainWindow.evaluate(
+			() =>
+				(window as Window & { __terminayUnhandledRejections?: string[] })
+					.__terminayUnhandledRejections ?? [],
+		),
+	).toEqual([]);
 });
