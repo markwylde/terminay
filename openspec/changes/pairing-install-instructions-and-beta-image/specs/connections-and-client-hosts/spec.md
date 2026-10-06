@@ -6,7 +6,7 @@ The Add connection surface SHALL show, beneath the pairing URL field, a section 
 
 Further options SHALL sit behind a single disclosure that is collapsed by default: a Docker command for browsers and phones that sets the public host and publishes the signaling and UDP ports, a Docker command for a Linux host using host networking, and a link to the manual archive install. The section SHALL link to the installation guide on the Terminay website and SHALL NOT explain networking, exposure, or troubleshooting itself.
 
-The section SHALL be shown in Terminay Desktop and in the web manager, SHALL not obstruct or delay pairing with a URL the person already has, and SHALL be reachable and operable by keyboard with each command exposed to assistive technology as text.
+The section SHALL be shown wherever Add connection is offered, in Terminay Desktop and in the web manager, SHALL not obstruct or delay pairing with a URL the person already has, and SHALL be reachable and operable by keyboard with each command exposed to assistive technology as text.
 
 #### Scenario: A person with no server
 
@@ -54,3 +54,65 @@ The Docker commands shown by Add connection SHALL name the official image at the
 
 - **WHEN** Add connection is shown by the web manager or by a development build
 - **THEN** the Docker command names `markwylde/terminay` with no tag
+
+### Requirement: Remote Control lists the host's remembered servers
+
+On Terminay Desktop the Remote Control saved-server list SHALL be the host's remembered connection profiles, the same set the connection menu offers to attach, and SHALL NOT include Local. The list SHALL reflect a server that was paired, renamed, or forgotten in any window without the Remote Control window being reopened. A row SHALL show a connection status only where its source can speak for the server; a remembered server that this window has not attached SHALL NOT be presented as offline.
+
+#### Scenario: A server paired earlier is listed
+
+- **WHEN** Desktop remembers a server and the person opens Remote Control
+- **THEN** that server is in the saved-server list
+- **AND** Local is not
+
+#### Scenario: A server that the menu offers to attach is manageable
+
+- **WHEN** the connection menu offers **Attach** for a remembered server
+- **THEN** Remote Control lists that same server
+
+#### Scenario: Pairing in another window
+
+- **WHEN** a server is paired while Remote Control is open
+- **THEN** it appears in the saved-server list without reopening the window
+
+### Requirement: Renaming and forgetting a remembered server on Desktop
+
+Remote Control on Desktop SHALL offer **Rename** and **Forget** for a remembered server through source-bound host actions that name the profile by id and carry no origin or credential. Rename SHALL accept a single-line label of at most 256 characters and change display metadata only. Forget SHALL require confirmation that says it does not revoke server access, SHALL close the profile's connection in every window, and SHALL remove this device's credential for that server before it removes the profile, so that a failure leaves the profile listed and no credential without one. Forget SHALL refuse Local and SHALL refuse a server that a window runs on as its primary connection. Actions that the host does not support for a server SHALL be absent rather than disabled.
+
+#### Scenario: Renaming a server
+
+- **WHEN** the person renames a remembered server
+- **THEN** its new label is shown in Remote Control and in the connection menu
+- **AND** nothing on the server changes
+
+#### Scenario: Forgetting a server
+
+- **WHEN** the person confirms Forget for a remembered server
+- **THEN** the server leaves the saved-server list and the connection menu
+- **AND** this device's credential for it is removed
+- **AND** the device remains authorized on the server until it is revoked there
+
+#### Scenario: Forget cannot remove the credential
+
+- **WHEN** removing the credential fails
+- **THEN** the server stays in the list and the failure is shown
+
+#### Scenario: A server a window runs on
+
+- **WHEN** the person tries to forget the server that is a window's primary connection
+- **THEN** it is refused with a message to close that window first
+
+### Requirement: Remote Control pane shows one subject
+
+The Remote Control main pane SHALL show only the selected sidebar item: a server's name with the actions available for it, or Add connection. Rename and the forget confirmation SHALL appear in that pane in place of the actions. Outcome and error messages SHALL appear in one place above the pane. The window SHALL be legible in the light and the dark theme. At phone width the saved-server list and Exposure SHALL remain reachable above the pane, and no content SHALL require horizontal scrolling.
+
+#### Scenario: Selecting a server
+
+- **WHEN** the person selects a saved server
+- **THEN** the pane shows that server's name and only the actions that can be performed on it
+
+#### Scenario: Phone width
+
+- **WHEN** Remote Control is shown at phone width
+- **THEN** the saved servers and Add connection are reachable
+- **AND** the page does not scroll horizontally

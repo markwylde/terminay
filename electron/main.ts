@@ -164,6 +164,7 @@ import {
 	type DesktopConnectionProfileRecord,
 	DesktopWindowConnections,
 } from './desktopWindowConnections';
+import { forgetRememberedConnection } from './forgetRememberedConnection';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -908,6 +909,11 @@ function loadRememberedRemoteConnections(): void {
 function rememberRemoteConnection(profile: RememberedRemoteConnection): void {
 	loadRememberedRemoteConnections();
 	rememberedRemoteConnections.set(profile.id, profile);
+	persistRememberedRemoteConnections();
+	publishRememberedRemoteConnections();
+}
+
+function persistRememberedRemoteConnections(): void {
 	const destination = rememberedRemoteConnectionsPath();
 	mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
 	const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -992,6 +998,50 @@ const windowConnectionsByWebContents = new Map<
 	number,
 	DesktopWindowConnections
 >();
+
+/** Every window lists the same remembered set, so each is told when it changes. */
+function publishRememberedRemoteConnections(): void {
+	for (const connections of windowConnectionsByWebContents.values())
+		connections.refresh();
+}
+
+/** Rename changes display metadata only. Local is not a remembered profile. */
+function renameRememberedRemoteConnection(
+	profileId: string,
+	label: string,
+): void {
+	loadRememberedRemoteConnections();
+	const profile = rememberedRemoteConnections.get(profileId);
+	if (profile === undefined)
+		throw new Error('That connection profile is no longer available.');
+	rememberedRemoteConnections.set(profileId, { ...profile, label });
+	persistRememberedRemoteConnections();
+	publishRememberedRemoteConnections();
+}
+
+/**
+ * Forget removes this device's credential and metadata for a remembered
+ * server. It changes nothing on that server: the device stays authorized there
+ * until it is revoked.
+ */
+async function forgetRememberedRemoteConnection(
+	profileId: string,
+): Promise<void> {
+	loadRememberedRemoteConnections();
+	const forgotten = await forgetRememberedConnection({
+		profileId,
+		localProfileId: embeddedLocalProfileId,
+		profiles: rememberedRemoteConnections,
+		windows: [...windowConnectionsByWebContents.values()],
+		removeCredential: (origin) =>
+			createDesktopDeviceCredentialStore().remove(origin),
+		removeProfile: (id) => {
+			rememberedRemoteConnections.delete(id);
+			persistRememberedRemoteConnections();
+		},
+	});
+	if (forgotten) publishRememberedRemoteConnections();
+}
 
 /** Device-local window composition, persisted beside geometry. */
 const desktopWindowCompositions = new DesktopWindowCompositionStore(
@@ -4846,6 +4896,12 @@ function createWindow(options?: {
 						return await connections.attach(action.profileId);
 					case 'connections.detach':
 						await connections.detach(action.profileId);
+						return;
+					case 'connections.rename':
+						renameRememberedRemoteConnection(action.profileId, action.label);
+						return;
+					case 'connections.forget':
+						await forgetRememberedRemoteConnection(action.profileId);
 						return;
 					case 'connections.composition.write':
 						connections.writeComposition(action.composition);

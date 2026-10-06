@@ -983,3 +983,32 @@ test('browser-safe bundle compatibility accepts the canonical manifest wire shap
 		{ compatible: true, unavailableOptionalCapabilities: ['nativeWindows'] },
 	);
 });
+
+test('rename and forget of a remembered connection are closed host actions', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'connections.rename',
+			profileId: 'remote:abc',
+			label: '  Build box  ',
+		}),
+		{ type: 'connections.rename', profileId: 'remote:abc', label: 'Build box' },
+	);
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'connections.forget',
+			profileId: 'remote:abc',
+		}),
+		{ type: 'connections.forget', profileId: 'remote:abc' },
+	);
+	for (const action of [
+		{ type: 'connections.rename', profileId: 'remote:abc', label: '   ' },
+		{ type: 'connections.rename', profileId: 'remote:abc', label: 'a\nb' },
+		{ type: 'connections.rename', profileId: 'remote:abc', label: 'x'.repeat(257) },
+		{ type: 'connections.rename', profileId: 'remote:abc' },
+		{ type: 'connections.rename', profileId: '../x', label: 'ok' },
+		{ type: 'connections.rename', profileId: 'remote:abc', label: 'ok', origin: 'https://x' },
+		{ type: 'connections.forget', profileId: '' },
+		{ type: 'connections.forget', profileId: 'remote:abc', revoke: true },
+	])
+		assert.throws(() => parseTerminayHostAction(action), TypeError);
+});
