@@ -93,6 +93,8 @@ export interface AppWindow {
 export interface AppWindowContent {
   readonly window: AppWindow;
   readonly html: string;
+  /** What an agent-authored document reads as `window.terminay.data`. */
+  readonly data?: JsonValue;
   readonly csp?: AppWindowCsp;
   readonly permissions?: Readonly<Record<string, JsonValue>>;
   readonly tool?: JsonValue;
@@ -136,6 +138,7 @@ export class AppWindowClient {
     return Object.freeze({
       window: validateWindow(result.window),
       html: data.html,
+      ...(data.data === undefined ? {} : { data: data.data }),
       ...(result.csp === undefined ? {} : { csp: validateCsp(result.csp) }),
       ...(isRecord(result.permissions) ? { permissions: result.permissions } : {}),
       ...(data.tool === undefined ? {} : { tool: data.tool }),

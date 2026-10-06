@@ -66,3 +66,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0037](./0037-mcp-apps-reach-terminals-through-a-terminay-gateway.md) | MCP Apps and agent-authored UI reach a terminal through Terminay's own MCP server, acting as a gateway | accepted | 2026-10-04 |
 | [0038](./0038-app-views-run-in-a-self-sandboxing-proxy.md) | App views run in an opaque-origin frame inside a self-sandboxing proxy document | accepted | 2026-10-04 |
 | [0039](./0039-app-views-are-mirrored-from-the-controlling-client.md) | An app view is mirrored to observers from the controlling client; the server relays and keeps nothing | accepted | 2026-10-04 |
+| [0041](./0041-the-mcp-adapter-may-read-a-document-the-agent-names.md) | The MCP adapter may read a document the agent names, to show the user; the server never opens it | accepted | 2026-10-07 |
+| [0042](./0042-window-attachments-are-an-unbounded-streamed-scratch-write.md) | Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them | accepted | 2026-10-07 |
