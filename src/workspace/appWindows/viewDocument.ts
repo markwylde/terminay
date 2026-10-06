@@ -12,7 +12,9 @@ import { MIRROR_LOADER_SCRIPT } from './mirror/bundles.generated.ts';
 
 export type ViewSource =
 	| { readonly kind: 'agent' }
-	| { readonly kind: 'mcp-app' };
+	| { readonly kind: 'mcp-app' }
+	/** A project file previewed as a page (ADR-0041). */
+	| { readonly kind: 'file' };
 
 export interface ViewCsp {
 	readonly connectDomains?: readonly string[];
@@ -51,6 +53,26 @@ const AGENT_POLICY = [
 ].join('; ');
 
 /**
+ * What a previewed project file may reach: nothing. Everything it shows was
+ * inlined by the workspace, so no origin is named and none can be declared.
+ * Chromium does not enforce `webrtc` (see the note on an MCP App's policy).
+ */
+const FILE_POLICY = [
+	"default-src 'none'",
+	"script-src 'unsafe-inline' data:",
+	"style-src 'unsafe-inline' data:",
+	'img-src data: blob:',
+	'font-src data:',
+	'media-src data: blob:',
+	"connect-src 'none'",
+	"frame-src 'none'",
+	"object-src 'none'",
+	"base-uri 'none'",
+	"form-action 'none'",
+	"webrtc 'block'",
+].join('; ');
+
+/**
  * An origin an MCP App may declare. Anything else is dropped, so a declared
  * value can never smuggle a second directive or a keyword into the policy.
  */
@@ -71,6 +93,7 @@ export function viewContentSecurityPolicy(
 	csp: ViewCsp = {},
 ): string {
 	if (source.kind === 'agent') return AGENT_POLICY;
+	if (source.kind === 'file') return FILE_POLICY;
 	const resource = origins(csp.resourceDomains);
 	const connect = origins(csp.connectDomains);
 	const frame = origins(csp.frameDomains);
@@ -241,6 +264,47 @@ export const VIEW_LINK_HANDLER = `(() => {
 	}, true);
 })();`;
 
+/** What a previewed page says once its markup has been parsed. */
+export const FILE_VIEW_READY_KEY = 'terminayPreview';
+
+/**
+ * Runs first in a previewed project file, in place of `VIEW_LINK_HANDLER`. The
+ * page's address is the proxy's, so a relative link would resolve against the
+ * workspace's own origin: only a link written out in full is a web link here.
+ * A link to anywhere else, another project page included, goes nowhere, since
+ * following it would end the preview. It also says when the page has been
+ * parsed, so the preview being replaced can stay on screen until then.
+ */
+export const FILE_VIEW_LINK_HANDLER = `(() => {
+	const post = window.parent.postMessage;
+	const host = window.parent;
+	const apply = Reflect.apply;
+	let opened = 0;
+	window.addEventListener('click', (event) => {
+		const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+		let anchor = null;
+		for (const node of path) {
+			if (node && node.nodeType === 1 && (node.localName === 'a' || node.localName === 'area') && (node.hasAttribute('href') || node.hasAttribute('xlink:href'))) { anchor = node; break; }
+		}
+		if (!anchor) return;
+		const raw = String(anchor.getAttribute('href') || anchor.getAttribute('xlink:href') || '').trim();
+		event.preventDefault();
+		if (raw.charAt(0) === '#') {
+			let id = raw.slice(1);
+			try { id = decodeURIComponent(id); } catch {}
+			const target = id === '' ? document.documentElement : (document.getElementById(id) || document.getElementsByName(id)[0]);
+			if (target) target.scrollIntoView();
+			return;
+		}
+		if (!/^https?:\\/\\//i.test(raw)) return;
+		opened += 1;
+		apply(post, host, [{ jsonrpc: '2.0', id: 'terminay-link-' + opened, method: 'ui/open-link', params: { url: raw } }, '*']);
+	}, true);
+	const ready = () => apply(post, host, [{ ${FILE_VIEW_READY_KEY}: 'ready' }, '*']);
+	if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', ready, { once: true });
+	else ready();
+})();`;
+
 /**
  * The view document: the author's HTML with Terminay's policy, and for an
  * agent-authored view its bootstrap, placed ahead of everything the author
@@ -249,14 +313,19 @@ export const VIEW_LINK_HANDLER = `(() => {
  */
 export function buildViewDocument(input: ViewDocumentInput): ViewDocument {
 	const policy = viewContentSecurityPolicy(input.source, input.csp);
+	const policyTag = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">`;
 	const head =
-		`<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}">` +
-		`<script>${VIEW_LINK_HANDLER}</script>` +
-		(input.source.kind === 'agent'
-			? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${AGENT_VIEW_BOOTSTRAP}</script>`
-			: '') +
-		// Present in every view and inert until someone watches it (ADR-0039).
-		`<script>${MIRROR_LOADER_SCRIPT}</script>`;
+		input.source.kind === 'file'
+			? // A file preview is rendered by each client from the shared draft, so
+				// it is never mirrored and carries no loader.
+				`${policyTag}<script>${FILE_VIEW_LINK_HANDLER}</script>`
+			: policyTag +
+				`<script>${VIEW_LINK_HANDLER}</script>` +
+				(input.source.kind === 'agent'
+					? `<meta charset="utf-8"><style>${AGENT_VIEW_BASE_STYLE}</style><script>${AGENT_VIEW_BOOTSTRAP}</script>`
+					: '') +
+				// Present in every view and inert until someone watches it (ADR-0039).
+				`<script>${MIRROR_LOADER_SCRIPT}</script>`;
 	// A doctype must stay first or the view renders in quirks mode. Nothing
 	// else may precede the policy, so it goes directly after the doctype rather
 	// than inside whatever <head> the author wrote.
