@@ -43,6 +43,8 @@ type UseTerminalAdoptionControllerOptions = {
 		panelId: string,
 		targetProjectId: string,
 	) => void;
+	/** A note edited in this client, to be committed to the server. */
+	onUpdateNote: (panelId: string, note: string | undefined) => void;
 	panelSessionsRef: MutableRefObject<Map<string, string>>;
 	project: ProjectIdentity;
 	publishWorkspaceInventory: () => void;
@@ -71,6 +73,7 @@ export function useTerminalAdoptionController({
 	hydrateRecording,
 	onError,
 	onMoveToProject,
+	onUpdateNote,
 	panelSessionsRef,
 	project,
 	publishWorkspaceInventory,
@@ -169,10 +172,12 @@ export function useTerminalAdoptionController({
 					onRevealRecording: (recordingId) => void revealRecording(recordingId),
 					onStartRecording: () => void startRecording(movedTerminal.sessionId),
 					onStopRecording: () => void stopRecording(movedTerminal.sessionId),
-					onUpdateNote: (terminalNote) =>
+					onUpdateNote: (terminalNote) => {
 						apiRef.current
 							?.getPanel(panelId)
-							?.api.updateParameters({ terminalNote }),
+							?.api.updateParameters({ terminalNote });
+						onUpdateNote(panelId, terminalNote);
+					},
 					projectColor: project.color,
 					projectsForMove: getProjectsForMove(),
 					recordingError: movedTerminal.recordingError,
