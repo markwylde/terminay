@@ -72,6 +72,10 @@ test('a lost connection is told apart from a refusal', () => {
 		isConnectionLoss(Object.assign(new Error('gone'), { code: 'disconnected' })),
 		true,
 	);
+	assert.equal(
+		isConnectionLoss(new Error('wrapped by a feature client', { cause: outcomeUnknown() })),
+		true,
+	);
 	assert.equal(isConnectionLoss(new Error('root is not a directory')), false);
 	assert.equal(isConnectionLoss('nope'), false);
 });

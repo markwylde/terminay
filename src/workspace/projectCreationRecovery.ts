@@ -26,16 +26,24 @@ export type InterruptedCreationDecision =
 	| Readonly<{ kind: 'resend' }>
 	| Readonly<{ kind: 'fail'; message: string }>;
 
-/** The transport went away under a request; nothing was refused. */
+/** The transport went away under a request; nothing was refused. Feature
+ * clients wrap the transport's error, so the cause chain is searched too. */
 export function isConnectionLoss(error: unknown): boolean {
-	if (!(error instanceof Error)) return false;
-	const code = (error as { code?: unknown }).code;
-	return (
-		error.name === 'CommandOutcomeUnknownError' ||
-		error.name === 'ClientDisconnectedError' ||
-		code === 'unknown_command_outcome' ||
-		code === 'disconnected'
-	);
+	for (
+		let source = error, depth = 0;
+		source instanceof Error && depth < 4;
+		source = source.cause, depth += 1
+	) {
+		const code = (source as { code?: unknown }).code;
+		if (
+			source.name === 'CommandOutcomeUnknownError' ||
+			source.name === 'ClientDisconnectedError' ||
+			code === 'unknown_command_outcome' ||
+			code === 'disconnected'
+		)
+			return true;
+	}
+	return false;
 }
 
 /**
