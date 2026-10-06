@@ -111,6 +111,9 @@ export type TerminalPanelParams = {
 	projectColor?: string;
 	terminalNote?: string;
 	titleUpdateNonce?: number;
+	/** A title is being generated here; shown in place of the title, which
+	 * stays the server's until the result is applied. */
+	aiTitlePending?: boolean;
 };
 
 const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a';
@@ -618,7 +621,7 @@ export function TerminalTab(
 	return (
 		<>
 			<DockTabChrome
-				title={title}
+				title={params?.aiTitlePending ? 'Generating...' : title}
 				panelId={props.api.id}
 				isActive={isFocused}
 				hasCustomColor={hasCustomColor}
