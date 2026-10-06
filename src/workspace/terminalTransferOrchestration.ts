@@ -22,8 +22,9 @@ export type MovedTerminalTab = {
 	sessionId: string;
 	terminalSessionStatus?: 'running' | 'exited' | 'interrupted';
 	/**
-	 * The immutable server project identity that owns the retained PTY. Moving
-	 * its presentation must never recreate or silently re-home the process.
+	 * The project the server places this terminal in, and so the project its
+	 * panel attaches under. A terminal changes project only when the server
+	 * moves it; a presentation handed between workspaces here follows that.
 	 */
 	serverProjectId?: string;
 	showActiveTabActivityIndicator?: boolean;
