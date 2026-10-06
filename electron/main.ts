@@ -1750,6 +1750,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		},
 		onEvent: handleServerTerminalEvent,
+		// A capability is scoped to the project its terminal was in when it was
+		// issued. The token lives in the running shell, so it cannot be replaced.
+		onTerminalRehomed: (move) => {
+			mcpCapabilities.revokeSession(move.sessionId);
+		},
 		// An extension host that dies is otherwise invisible: the child suppresses
 		// Node's own stack print so it can report the error itself, and a packaged
 		// child has no readable stderr. Extensions are trusted code and this

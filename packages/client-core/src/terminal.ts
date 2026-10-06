@@ -625,7 +625,11 @@ export class TerminayTerminalClient {
 		key: string,
 	): Promise<TerminalClientAttachment> {
 		const prior = this.attachments.get(key);
-		if (prior !== undefined) await this.detachMutable(prior);
+		// A prior attachment the server has already ended — its terminal moved to
+		// another project and back, or the server restarted — cannot be detached,
+		// and has nothing left to release. It must not stop this display opening.
+		if (prior !== undefined)
+			await this.detachMutable(prior).catch(() => undefined);
 		// A reconnect states the position it actually rendered, or asks for a
 		// fresh presentation. There is deliberately no remembered watermark to
 		// fall back on: resuming from a cursor this display never reached is

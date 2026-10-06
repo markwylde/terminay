@@ -194,6 +194,20 @@ export class TerminalServiceAdapter {
 			this.closeAttachment(id, reason);
 	}
 
+	/** Close every attachment made under one identity, telling each sink. */
+	closeSession(
+		identity: TerminalIdentity,
+		reason: TerminalCloseReason = 'service_shutdown',
+	): void {
+		for (const [id, mutable] of [...this.attachments])
+			if (
+				mutable.identity.serverId === identity.serverId &&
+				mutable.identity.projectId === identity.projectId &&
+				mutable.identity.sessionId === identity.sessionId
+			)
+				this.closeAttachment(id, reason);
+	}
+
 	/** @internal */
 	closeAttachment(id: string, reason: TerminalCloseReason): void {
 		const mutable = this.attachments.get(id);
