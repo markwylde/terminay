@@ -40,9 +40,17 @@ a constant load because it never stops printing. Full method and figures are in
   then goes behind the shared damping ramp that already fronts other
   change-driven work (ADR-0028): at most one host sample per ramp interval,
   with output inside an interval collapsing into one sample at its end.
-- Destructive-close observation is untouched: it still obtains a fresh sample
-  for its addressed session immediately, never waits on output pacing, and the
-  interval that covers silent foreground processes stays.
+- Destructive-close observation is not behind the ramp: it obtains a fresh
+  sample for its addressed session immediately, and the interval that covers
+  silent foreground processes stays.
+- The close preflight actually reaches the server. Its operation name,
+  `activity.closePreflight`, contains a capital letter that the wire protocol's
+  operation-name rule rejects when the client encodes the request, so the query
+  has never been sent: every client has silently fallen back to the committed
+  projection, and close protection has in practice been carried by the
+  per-chunk sampling this change removes. Two end-to-end close-warning tests
+  failed on the first version of this change for exactly that reason. The
+  operation is renamed `activity.close-preflight` on both sides.
 
 Not in this change, because the measured remainder after the three fixes is
 2.7% CPU at a *higher* chunk rate (443/s): presentation checkpointing in a
@@ -67,7 +75,9 @@ None.
 - `terminal-activity-signals`: `Session-owned bounded foreground observation`
   gains a rate bound — sustained output causes at most one host sample per
   shared-ramp interval per session — while keeping prompt refresh after quiet
-  and settlement without silence.
+  and settlement without silence. `Activity protocol surface` names the close
+  preflight `activity.close-preflight` and requires every activity operation
+  name to be encodable on the wire.
 - `terminal-stream-congestion-and-recovery`: `Server continues consuming PTY
   output` gains a cost bound — the work to retain an output event is
   proportional to that event, independent of how much output, or how many
@@ -94,5 +104,13 @@ None.
 - `package.json` — `test:server-terminal-runtime` is not reached by `smoke` or
   any CI job today, so the authority tests gate nothing until that is wired.
 
-No protocol, persistence, or settings change. Replay bounds, replay contents,
-and close-protection semantics are identical before and after.
+- `packages/client-core/src/activityClient.ts`,
+  `packages/server-core/src/activity/protocol.ts`,
+  `packages/server-core/src/automationSpaceVisibility.ts` — the close preflight
+  operation name.
+
+No persistence or settings change. One protocol operation is renamed; because
+no client could ever encode the old name, nothing that worked stops working. A
+new client against an older server gets an unknown-operation error and falls
+back to the committed projection, which is what every client does today.
+Replay bounds and replay contents are identical before and after.

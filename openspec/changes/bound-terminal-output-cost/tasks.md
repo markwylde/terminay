@@ -76,7 +76,28 @@
   implementation. Not needed: `check:boundaries` accepts the
   import, so the ramp stays where it is.
 
-## 6. Prove it
+## 6. Close preflight reaches the server
+
+- [x] 6a.1 Find why two end-to-end close-warning tests failed on the first
+  version of this change. Verified by a probe that sends
+  `activity.closePreflight` through a real client and fails in `encodeFrame`
+  with `invalid operation`, before anything is written to the transport.
+- [x] 6a.2 Rename the operation to `activity.close-preflight` in
+  `packages/client-core/src/activityClient.ts`,
+  `packages/server-core/src/activity/protocol.ts` and
+  `packages/server-core/src/automationSpaceVisibility.ts`, and in the tests
+  that name it. Verified by
+  `packages/server-core/test/activity-close-preflight-wire.test.mjs`: a real
+  `ActivityClient` over a real connection, with a stale committed projection,
+  causes exactly one fresh PTY observation and reports the session running.
+- [x] 6a.3 Assert that every activity operation name encodes on the wire and
+  that client and server agree on the names. Verified by the first case in the
+  same file.
+- [x] 6a.4 Confirm both end-to-end close-warning tests pass. Verified by
+  `npm run test:e2e -- e2e/workspace.spec.ts` and by the pull request's E2E
+  shards.
+
+## 7. Prove it
 
 - [x] 6.1 Re-run the evidence harness on the fixed build and append the
   figures to the evidence file. Verified by main CPU at or below ~4% and `ps`

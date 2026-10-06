@@ -122,7 +122,7 @@ test("activity and agent snapshots, deltas, events, and targeted commands withho
         both: agentEntry({ projectIds: [SPACE, "project-a"] }),
         user: agentEntry({ activationTerminalSessionId: "user-1", terminalSessionId: "user-1", projectIds: ["project-a"] }),
       } })],
-      ["activity.closePreflight", () => ({ sessions: [] })],
+      ["activity.close-preflight", () => ({ sessions: [] })],
       ["other.query", () => ({ untouched: SPACE })],
     ]),
     commands: new Map([["agent.acknowledge", () => ({ acknowledged: true })]]),
@@ -141,15 +141,15 @@ test("activity and agent snapshots, deltas, events, and targeted commands withho
   const agents = (await query("agent.snapshot", legacy)).entries;
   assert.deepEqual(Object.keys(agents).sort(), ["both", "user"]);
   assert.deepEqual(agents.both.projectIds, ["project-a"]);
-  await assert.rejects(query("activity.closePreflight", legacy, { projectId: SPACE }), notFound);
-  await assert.rejects(query("activity.closePreflight", legacy, { projectId: "project-a", sessionId: "auto-1" }), notFound);
+  await assert.rejects(query("activity.close-preflight", legacy, { projectId: SPACE }), notFound);
+  await assert.rejects(query("activity.close-preflight", legacy, { projectId: "project-a", sessionId: "auto-1" }), notFound);
   assert.throws(() => operations.commands.get("agent.acknowledge")(request("agent.acknowledge", legacy, { projectId: SPACE, sessionId: "auto-1" })), notFound);
   assert.deepEqual(await query("other.query", legacy), { untouched: SPACE });
 
   const capable = [AUTOMATIONS_FEATURE_CAPABILITY];
   assert.deepEqual(Object.keys((await query("activity.snapshot", capable)).sessions).sort(), ["auto-1", "user-1"]);
   assert.equal(Object.keys((await query("agent.snapshot", capable)).entries).length, 4);
-  assert.deepEqual(await query("activity.closePreflight", capable, { projectId: SPACE }), { sessions: [] });
+  assert.deepEqual(await query("activity.close-preflight", capable, { projectId: SPACE }), { sessions: [] });
 
   // Journal events, projected per connection before delivery.
   const project = createAutomationSpaceEventProjector(visibility);
