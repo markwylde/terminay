@@ -212,6 +212,24 @@ test("a restart sorts every persisted session into running, exited, or interrupt
   assert.deepEqual(holder.pruned, [["lost", "tail-exit"]]);
 });
 
+test("a terminal moved to another project before the restart is adopted under that project", async () => {
+  const seeded = seededWorkspace(["moved"]);
+  assert.equal(seeded.apply({ commandId: "move", command: { type: "panel.move", panelId: "panel-moved", targetProjectId: "other" } }).ok, true);
+  const workspace = reloaded(seeded);
+  // The holder still carries the project the shell was launched in.
+  const holder = fakeHolder({ moved: { pid: 5151, from: 0, retained: "moved output" } });
+  assert.equal((await holder.start())[0].projectId, "default");
+  const terminal = service();
+
+  const result = await reattachHeldSessions({ serverId: SERVER_ID, workspace, terminal, holder, now: () => 1000 });
+
+  assert.deepEqual(result.adopted, ["moved"]);
+  const adopted = terminal.getSession("moved");
+  assert.deepEqual([adopted.projectId, adopted.status, adopted.pid], ["other", "running", 5151]);
+  assert.equal(workspace.state.panels["panel-moved"].projectId, "other");
+  assert.equal(replayOf(terminal, "moved").output, "moved output");
+});
+
 test("a held session that had already ended replays its output and then its exit", async () => {
   const workspace = reloaded(seededWorkspace(["done"]));
   const holder = fakeHolder({ done: { pid: 77, from: 0, retained: "bye\n", exit: { exitCode: 3, signal: null } } });

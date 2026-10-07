@@ -537,7 +537,10 @@ type OpenFileOptions = {
 };
 
 type ProjectWorkspaceHandle = {
-	acceptMovedTerminal: (terminal: MovedTerminalTab) => boolean;
+	acceptMovedTerminal: (
+		terminal: MovedTerminalTab,
+		options?: { activate?: boolean },
+	) => boolean;
 	acceptServerTerminal: (
 		panelId: string,
 		sessionId: string,
@@ -562,6 +565,12 @@ type ProjectWorkspaceHandle = {
 	focusActiveTerminal: () => void;
 	/** True when the given terminal session lives in this workspace's project. */
 	ownsControlSession: (sessionId: string) => boolean;
+	/** The session behind one of this workspace's terminal panels, if any. */
+	terminalSessionForPanel: (panelId: string) => string | undefined;
+	/** The panel through which this workspace presents a session, if any. */
+	terminalPanelForSession: (sessionId: string) => string | undefined;
+	/** Show a failure in this project's own error banner. */
+	reportError: (message: string) => void;
 	/** Handle an MCP control request scoped to a terminal in this project. */
 	handleControlRequest: (
 		op: string,
@@ -3340,6 +3349,14 @@ const ProjectWorkspace = forwardRef<
 						continue;
 					}
 					if (!panel) continue;
+					// The server moved this terminal to another project, which now
+					// presents it. Letting go of it here closes nothing: the panel
+					// and its session stay live under the project that owns them.
+					if (canonical.projectId !== project.id) {
+						movingTerminalSessionIdsRef.current.add(sessionId);
+						api.removePanel(panel);
+						continue;
+					}
 					if (canonical.title !== undefined && panel.title !== canonical.title) {
 						panel.api.setTitle(canonical.title);
 						setTerminalTitleRevision((revision) => revision + 1);
@@ -3363,7 +3380,7 @@ const ProjectWorkspace = forwardRef<
 					});
 				}
 			},
-			[],
+			[project.id],
 		);
 
 		const filteredMacros = useMemo(() => {
@@ -3978,6 +3995,13 @@ const ProjectWorkspace = forwardRef<
 				exportProjectForMove,
 				focusActiveTerminal,
 				ownsControlSession,
+				terminalSessionForPanel: (panelId: string) =>
+					panelSessionMapRef.current.get(panelId),
+				terminalPanelForSession: (sessionId: string) =>
+					[...panelSessionMapRef.current].find(
+						([, mapped]) => mapped === sessionId,
+					)?.[0],
+				reportError: setErrorText,
 				handleControlRequest,
 			}),
 			[
@@ -5500,6 +5524,12 @@ function App({
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
+	/**
+	 * Terminal moves this device asked the server for and has not yet seen in a
+	 * confirmed projection, by session id, with the project each is headed to.
+	 * It decides one thing: whether this device follows the terminal there.
+	 */
+	const pendingTerminalMovesRef = useRef(new Map<string, string>());
 	const draggingProjectIdRef = useRef<string | null>(null);
 	const heldActiveProjectIdRef = useRef<string | null>(null);
 	const projectCreationInFlightRef = useRef(false);
@@ -5558,6 +5588,8 @@ function App({
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
+	const activateProjectRef = useRef(activateProject);
+	activateProjectRef.current = activateProject;
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
 	// A failed creation is a tab like any other: shown while it is the one
@@ -6212,13 +6244,43 @@ function App({
 					pendingPresentations += 1;
 					continue;
 				}
-				const accepted = workspace.acceptServerTerminal(
-					panel.id,
-					session.id,
-					panel.title,
-					panel.cwd,
-					session.status,
-				);
+				// Another project here still presents a terminal the server has
+				// moved. Hand the same presentation over, so the terminal is shown
+				// once and keeps what is local to its tab.
+				const requestedHere =
+					pendingTerminalMovesRef.current.get(session.id) === session.projectId;
+				pendingTerminalMovesRef.current.delete(session.id);
+				let relocated: MovedTerminalTab | null = null;
+				for (const presenter of workspaceRefs.current.values()) {
+					if (presenter == null || presenter === workspace) continue;
+					const presentedPanelId = presenter.terminalPanelForSession(
+						session.id,
+					);
+					if (presentedPanelId === undefined) continue;
+					relocated = presenter.exportTerminalForMove(presentedPanelId);
+					break;
+				}
+				// Only the device that asked for the move follows the terminal.
+				if (requestedHere) activateProjectRef.current(session.projectId);
+				const accepted =
+					relocated === null
+						? workspace.acceptServerTerminal(
+								panel.id,
+								session.id,
+								panel.title,
+								panel.cwd,
+								session.status,
+							)
+						: workspace.acceptMovedTerminal(
+								{
+									...relocated,
+									panelId: panel.id,
+									serverProjectId: session.projectId,
+									terminalSessionStatus: session.status,
+									title: panel.title ?? relocated.title,
+								},
+								{ activate: requestedHere },
+							);
 				if (!accepted) {
 					pendingPresentations += 1;
 				}
@@ -6350,17 +6412,39 @@ function App({
 				return;
 			}
 
-			const movedTerminal = sourceWorkspace.exportTerminalForMove(panelId);
-			if (!movedTerminal) {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			const sessionId = sourceWorkspace.terminalSessionForPanel(panelId);
+			const canonicalPanel =
+				sessionId === undefined
+					? undefined
+					: Object.values(store?.snapshot?.panels ?? {}).find(
+							(candidate) => candidate.sessionId === sessionId,
+						);
+			if (
+				store === undefined ||
+				sessionId === undefined ||
+				canonicalPanel === undefined
+			) {
 				return;
 			}
 
-			activateProject(targetProjectId);
-			window.requestAnimationFrame(() => {
-				targetWorkspace.acceptMovedTerminal(movedTerminal);
-			});
+			// The server moves the terminal. Nothing changes here until it has:
+			// reconciliation relocates the tab once the move is the confirmed
+			// projection, and a refused move leaves the tab exactly where it is.
+			pendingTerminalMovesRef.current.set(sessionId, targetProjectId);
+			void store
+				.movePanel({ panelId: canonicalPanel.id, targetProjectId })
+				.catch((error: unknown) => {
+					if (pendingTerminalMovesRef.current.get(sessionId) === targetProjectId)
+						pendingTerminalMovesRef.current.delete(sessionId);
+					sourceWorkspace.reportError(
+						error instanceof Error
+							? error.message
+							: 'Unable to move this terminal to that project.',
+					);
+				});
 		},
-		[activateProject],
+		[terminalClientContext?.workspaceSnapshotStore],
 	);
 	/**
 	 * The terminal tab being dragged toward the project bar, if any.

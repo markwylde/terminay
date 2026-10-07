@@ -83,7 +83,8 @@ interface CheckpointOutputChunk {
 }
 
 interface MutableSession {
-	readonly identity: TerminalIdentity;
+	/** Replaced, never edited, when the terminal's panel moves project. */
+	identity: TerminalIdentity;
 	readonly cwd: string;
 	readonly createdAt: number;
 	readonly dimensions: { cols: number; rows: number };
@@ -506,6 +507,33 @@ export class TerminalService {
 				),
 			),
 		);
+	}
+
+	/**
+	 * Bind a live session to the project its panel was moved to.
+	 *
+	 * The identity under the old project is retired and a new one takes its
+	 * place for the same PTY, output, and position. Every subscription made
+	 * under the retired identity ends; holders subscribe again under the new
+	 * one. Returns the retired identity, or `undefined` when this service holds
+	 * no such session or it already belongs to that project.
+	 */
+	rehomeSession(
+		sessionId: string,
+		targetProjectId: string,
+	): TerminalIdentity | undefined {
+		assertId(sessionId, 'sessionId');
+		assertId(targetProjectId, 'projectId');
+		const mutable = this.sessionsById.get(sessionId);
+		if (mutable === undefined) return undefined;
+		const retired = mutable.identity;
+		if (retired.projectId === targetProjectId) return undefined;
+		const identity = Object.freeze({ ...retired, projectId: targetProjectId });
+		for (const subscription of [...mutable.subscribers])
+			subscription.close('service_shutdown');
+		this.presentationCheckpoints?.rehomeSession(retired, identity);
+		mutable.identity = identity;
+		return retired;
 	}
 
 	getSession(
