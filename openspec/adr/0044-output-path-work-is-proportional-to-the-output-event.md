@@ -1,4 +1,4 @@
-# ADR-0041: Work on the terminal output path is proportional to the output event
+# ADR-0044: Work on the terminal output path is proportional to the output event
 
 Status: accepted
 Date: 2026-10-07
