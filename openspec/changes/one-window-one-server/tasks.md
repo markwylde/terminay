@@ -1,8 +1,8 @@
 ## 1. Specs first
 
-- [ ] 1.1 Archive each unarchived change whose deltas carry multi-server wording and whose work is merged: `compact-unified-switcher`, `compact-switcher-close`, `compact-command-bar-entry`, `home-dockview-tabs`, `dashboard-views-and-agent-detail`, `dashboard-board-group-by-project`, `dashboard-board-column-order`, `notifications-icon-and-project-dot`, `drag-terminal-tab-to-project`, `pairing-install-instructions-and-beta-image`, `survive-wake-connection-reap`, `terminals-survive-restart`, `builtin-agents-extension`. Leave any that is not merged, and list it in the pull request. Verified by `openspec validate --all --archived`.
-- [ ] 1.2 Write the second pass of deltas for every requirement listed in design decision 12, against the main specs as they stand after 1.1. Verified by `openspec validate one-window-one-server` and by a grep of the change's resulting requirement text finding no "attached connection", "Attach", "Detach", "composition", or "server selector".
-- [ ] 1.3 Confirm no main spec requirement outside this change's deltas still depends on a window holding more than one server. Verified by repeating the inventory grep over `openspec/specs` and recording the result in the pull request.
+- [x] 1.1 Archive each unarchived change whose deltas carry multi-server wording and whose work is merged. Eleven archived; `pairing-install-instructions-and-beta-image` and `terminals-survive-restart` left open with their multi-server wording corrected in place. Verified by `openspec validate --all` passing.
+- [x] 1.2 Write the second pass of deltas against the main specs as they stand after 1.1. Verified by `openspec validate one-window-one-server` and by a search of the change's added and modified requirement text finding no attached connection, Attach, Detach, composition, primary connection, or server selector.
+- [ ] 1.3 Owner review of the reworded requirements, in particular the ones flagged in the pull request. Verified by the pull request being approved.
 
 ## 2. Switching in the host
 
@@ -14,13 +14,14 @@
 
 ## 3. The connection menu
 
-- [ ] 3.1 Make the Desktop connection menu list Local and every saved server, mark the window's server, switch on choosing a row, and offer **Open in new window** on the others; show a switch in progress and a failed switch's reason. Verified by component tests and by the E2E in 3.3.
+- [ ] 3.1 Make the Desktop connection menu list Local and every saved server, mark the window's server, switch on choosing a row, and offer **Open in new window** on the others; show a switch in progress and a failed switch's reason. Verified by component tests and by the E2E in 3.4.
 - [ ] 3.2 Keep the connection menu usable while the window's server is offline, reconnecting, unauthenticated, or incompatible. Verified by an Electron E2E that stops a standalone server and switches the window back to Local.
-- [ ] 3.3 Electron E2E for the journey: pair a standalone server, land on it, switch to Local, switch back, and find the remote server's terminal still running. Verified by the suite passing in pull-request CI.
+- [ ] 3.3 List the remembered servers in the compact switcher on Desktop and switch from it. Verified by a compact-width E2E.
+- [ ] 3.4 Electron E2E for the journey: pair a standalone server, land on it, switch to Local, switch back, and find the remote server's terminal still running. Verified by the suite passing in pull-request CI.
 
 ## 4. Pairing
 
-- [ ] 4.1 Target the workspace window that opened Remote Control when pairing succeeds, leave Remote Control as Remote Control, and leave the workspace window alone when the first connection fails or that window has closed. Verified by unit tests of the pairing attempt sequence and by the E2E in 3.3.
+- [ ] 4.1 Target the workspace window that opened Remote Control when pairing succeeds, leave Remote Control as Remote Control, and leave the workspace window alone when the first connection fails or that window has closed. Verified by unit tests of the pairing attempt sequence and by the E2E in 3.4.
 - [ ] 4.2 Update the forget refusal to name switching the window away. Verified by `scripts/desktop-window-connections.test.mjs` or its successor.
 
 ## 5. Removing the multi-server window

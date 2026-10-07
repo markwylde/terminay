@@ -57,7 +57,7 @@ The Docker commands shown by Add connection SHALL name the official image at the
 
 ### Requirement: Remote Control lists the host's remembered servers
 
-On Terminay Desktop the Remote Control saved-server list SHALL be the host's remembered connection profiles, the same set the connection menu offers to attach, and SHALL NOT include Local. The list SHALL reflect a server that was paired, renamed, or forgotten in any window without the Remote Control window being reopened. A row SHALL show a connection status only where its source can speak for the server; a remembered server that this window has not attached SHALL NOT be presented as offline.
+On Terminay Desktop the Remote Control saved-server list SHALL be the host's remembered connection profiles, the same set the connection menu lists, and SHALL NOT include Local. The list SHALL reflect a server that was paired, renamed, or forgotten in any window without the Remote Control window being reopened. A row SHALL show a connection status only where its source can speak for the server; a remembered server that this window is not showing SHALL NOT be presented as offline.
 
 #### Scenario: A server paired earlier is listed
 
@@ -65,9 +65,9 @@ On Terminay Desktop the Remote Control saved-server list SHALL be the host's rem
 - **THEN** that server is in the saved-server list
 - **AND** Local is not
 
-#### Scenario: A server that the menu offers to attach is manageable
+#### Scenario: A server that the menu lists is manageable
 
-- **WHEN** the connection menu offers **Attach** for a remembered server
+- **WHEN** the connection menu lists a remembered server
 - **THEN** Remote Control lists that same server
 
 #### Scenario: Pairing in another window
@@ -77,7 +77,7 @@ On Terminay Desktop the Remote Control saved-server list SHALL be the host's rem
 
 ### Requirement: Renaming and forgetting a remembered server on Desktop
 
-Remote Control on Desktop SHALL offer **Rename** and **Forget** for a remembered server through source-bound host actions that name the profile by id and carry no origin or credential. Rename SHALL accept a single-line label of at most 256 characters and change display metadata only. Forget SHALL require confirmation that says it does not revoke server access, SHALL close the profile's connection in every window, and SHALL remove this device's credential for that server before it removes the profile, so that a failure leaves the profile listed and no credential without one. Forget SHALL refuse Local and SHALL refuse a server that a window runs on as its primary connection. Actions that the host does not support for a server SHALL be absent rather than disabled.
+Remote Control on Desktop SHALL offer **Rename** and **Forget** for a remembered server through source-bound host actions that name the profile by id and carry no origin or credential. Rename SHALL accept a single-line label of at most 256 characters and change display metadata only. Forget SHALL require confirmation that says it does not revoke server access, and SHALL remove this device's credential for that server before it removes the profile, so that a failure leaves the profile listed and no credential without one. Forget SHALL refuse Local and SHALL refuse a server while any window is showing it, with a message to switch that window to another server first. Actions that the host does not support for a server SHALL be absent rather than disabled.
 
 #### Scenario: Renaming a server
 
@@ -97,10 +97,10 @@ Remote Control on Desktop SHALL offer **Rename** and **Forget** for a remembered
 - **WHEN** removing the credential fails
 - **THEN** the server stays in the list and the failure is shown
 
-#### Scenario: A server a window runs on
+#### Scenario: A server a window is showing
 
-- **WHEN** the person tries to forget the server that is a window's primary connection
-- **THEN** it is refused with a message to close that window first
+- **WHEN** the person tries to forget a server that a window is showing
+- **THEN** it is refused with a message to switch that window to another server first
 
 ### Requirement: Remote Control pane shows one subject
 

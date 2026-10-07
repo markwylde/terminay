@@ -93,31 +93,23 @@ Two windows may show the same remote server, as a torn-off window already does. 
 
 A browser session already shows one server, chosen in the manager. The framed-host `connections.*` attach surface in `apps/terminay-web/src/framedConnectionHost.ts` and `src/web/sessionTransportHost.ts` is removed. A manager that still offers it is harmless: the bundle no longer asks.
 
-### 12. Spec deltas are written in two passes
+### 12. Spec deltas were written in two passes
 
-Thirteen unarchived changes modify requirements this change also rewrites. A delta written against today's main spec would be overwritten when they archive, or would overwrite them. So this change's deltas written now are limited to requirements none of those changes touch: the connection model in `connections-and-client-hosts`, the tab strip and new-project control in `workspace-and-project-tabs`, and the four selector requirements. The rest are written after the archive step, against the main specs as they then stand. They are:
+Thirteen unarchived changes modified requirements this change also rewrites. Eleven of them, whose work was merged, were archived first: `dashboard-views-and-agent-detail`, `compact-unified-switcher`, `compact-switcher-close`, `compact-command-bar-entry`, `dashboard-board-group-by-project`, `builtin-agents-extension`, `dashboard-board-column-order`, `notifications-icon-and-project-dot`, `drag-terminal-tab-to-project`, `home-dockview-tabs`, and `survive-wake-connection-reap`. The rest of this change's deltas were then written against the main specs as they stood.
 
-- `connections-and-client-hosts`: Versioned source-bound host bridge; Bounded host bridge surface; Web connection host scope; Bundle content stays out of the manager origin; One responsive workspace implementation; Remote code containment in Electron; Renderer context contents; Browser connection journeys; Allowed and forbidden host-local profile data; Desktop persistence allowlist; Desktop bundle commitment from the packaged artifact; Exposing a server from a client host; and, once archived, Remote Control lists the host's remembered servers and Renaming and forgetting a remembered server on Desktop.
-- `workspace-and-project-tabs`: Project tab management; Project activity count follows viewed terminals; Project tab activity count badge; Project switcher rows show the activity count badge; Project overflow switcher; Reordering projects; Pending project tab during creation; New project roots; Panel creation, splitting, and movement; Window closing and application shutdown; Canonical workspace state and presentation-local selection; Authorization derives from server identities; Compact switcher terminal creation shows the created terminal; Compact bar presentation; Unified compact switcher; Compact switcher panel rows; Dropping a terminal tab on a project tab.
-- `server-owned-workspace-state`: Canonical model ownership and client role; Workspace views are not window ids; Client-owned device-local state; Desktop persistence allowlist; Browser connection-host persistence; Consistency scope; Native project-host window binding; Identity-based authority for requests; Disconnect and restart lifecycle; Workspace state non-goals; Cross-client convergence for panel changes; Ids are namespaced by server.
-- `server-runtime-and-protocol`: Servers bundle their own workspace UI; Host supplies transport and presentation bridge only; Desktop byte endpoint binds server identity; Bundle manifest declarations govern launch; Contract and bootstrap failure reporting; Bundle acquisition per host.
-- `remote-access`: Ownership boundaries; Closed framed-host message schema; Server-bundled workspace delivery; Single connection generation per mounted workspace; One live connection per device; Desktop remote-code containment; Consistent workspace across clients; Returning to the manager list.
-- `agent-status-and-sidebar`: Server-owned authorization and client subscription; Agents pane presentation; Terminal tab and header status surfaces; Header activity dropdown count badges are fixed-size circles; Header Notifications control; Notifications list; Dismissing notifications.
-- `workspace-dashboard`: Dashboard row model; Home overview section; Home search; Dashboard agent detail; Dashboard summary and filter; Board grouping by project; Command Bar contents; Automation tabs.
-- `automations`: Automations section.
-- `mcp-server`: One MCP socket per server and no cross-server addressing.
-- `dictation`: Dictation resolves its server from the target terminal.
-- `workspace-status-bar`: Remote access indicator.
-- `terminal-stream-congestion-and-recovery`: Renderer behaviour while the client is unusable.
-- `recording`: Recording surfaces require the canonical client. `settings-shortcuts-and-desktop-integration`: Server settings client boundary.
+Two stay unarchived because real work remains in them: `pairing-install-instructions-and-beta-image` (follow-ups in `terminay.com`) and `terminals-survive-restart` (AppImage and packaging tasks). Their own deltas carried multi-server wording in three requirements, which was reworded in place so that whichever change archives last does not bring it back: "Remote Control lists the host's remembered servers", "Renaming and forgetting a remembered server on Desktop", and "Disconnect and restart lifecycle". `terminals-survive-restart` and this change both restate "Disconnect and restart lifecycle" in full; whichever archives second must carry the other's sentence about restart.
+
+A requirement whose scenario names were themselves about several servers could not be modified in place, because a modified requirement must keep every scenario name. Those are removed and restated under a new name, which is why this change renames many requirements without changing what they cover.
+
+### 13. Switching at phone width
+
+On a compact workspace the connection control and the breadcrumb open one switcher, and the wide connection menu is not shown. On Desktop that switcher lists the remembered servers beneath the project groups, with the window's server marked, and choosing one switches the window (decision 2). **Open in new window** is not offered at this width.
 
 ## Risks / Trade-offs
 
 - [A person loses sight of an agent waiting on another server] → accepted by the owner for now. Two windows show two servers. A host-readable activity summary is recorded as an open item in the new ADR.
 - [Two windows on one remote server may fight over one device connection] → verified first in apply (task 2.1). If the server replaces the older connection, **Open in new window** focuses an existing window on that server instead of opening a second, and tear-off of a remote window is resolved the same way.
 - [A window starts on an unreachable server] → the connection menu stays usable in the failure state, and Local is one choice away.
-- [The second pass of spec deltas is large] → it is mechanical: each listed requirement loses its attached-connection wording. The list above is the checklist, and `openspec validate` gates it.
-- [Archiving thirteen changes first is its own piece of work] → each is finished or nearly so by its task count; any that turns out not to be mergeable is left unarchived and its overlapping requirement is handled in this change's delta instead, noted in the pull request.
 - [The `terminay.com` manager may still offer attach] → harmless to this bundle, and removing it there is a follow-up.
 - [Stale composition files on disk] → ignored, never read; they hold no secrets.
 - [A large deletion across `src/App.tsx`] → done after the switch works end to end, in steps that each keep the suite green.

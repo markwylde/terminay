@@ -32,7 +32,7 @@ Decisions taken with the owner: switching happens in the current window with a n
 - `recording`: the server selector requirement is removed.
 - `settings-shortcuts-and-desktop-integration`: the server selector requirement for Settings and Extensions is removed.
 - `shell-profiles-and-terminal-launch`: the server selector requirement is removed.
-- `server-owned-workspace-state`, `server-runtime-and-protocol`, `remote-access`, `agent-status-and-sidebar`, `workspace-dashboard`, `automations`, `mcp-server`, `dictation`, `workspace-status-bar`, `terminal-stream-congestion-and-recovery`: requirements whose wording assumes several attached connections are restated for one. Their deltas are written after the archive step in task group 1, because thirteen unarchived changes modify the same requirements and a delta written against today's text would be overwritten or would overwrite theirs. `design.md` lists every requirement concerned.
+- `server-owned-workspace-state`, `server-runtime-and-protocol`, `remote-access`, `agent-status-and-sidebar`, `workspace-dashboard`, `automations`, `mcp-server`, `dictation`, `workspace-status-bar`, `terminal-stream-congestion-and-recovery`: requirements whose wording assumes several servers in one window are restated for one. Where a requirement's point is isolation between servers, the point is kept and expressed across windows.
 
 ## Impact
 
@@ -42,4 +42,4 @@ Decisions taken with the owner: switching happens in the current window with a n
 - **Browser hosts:** `apps/terminay-web/src/framedConnectionHost.ts` and `src/web/sessionTransportHost.ts` lose the attached-connection surface. The manager at `app.terminay.com` is in the `terminay.com` repository; if it shipped attach, removing it there is a follow-up.
 - **Device-local data:** `window-composition.v1.json` is no longer read or written. Saved servers and their credentials are untouched.
 - **Decisions:** a new ADR supersedes ADR-0018, keeping its bundle and compatibility commitments and replacing its many-connections-per-window ones.
-- **Unarchived changes:** thirteen in-flight changes carry multi-server wording in their deltas and are archived before this change's remaining deltas are written.
+- **Unarchived changes:** eleven merged changes that carried multi-server wording are archived as part of this work; `pairing-install-instructions-and-beta-image` and `terminals-survive-restart` stay open and have that wording corrected in their own deltas.
