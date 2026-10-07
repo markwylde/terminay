@@ -54,6 +54,9 @@ test('a window is titled by its server, then what it holds', () => {
 	assert.equal(workspaceWindowTitle('Local', 'Terminay, ddd'), 'Local - Terminay, ddd');
 	assert.equal(workspaceWindowTitle('Remote 1', ''), 'Remote 1');
 	assert.equal(workspaceWindowTitle('Remote 1', '   '), 'Remote 1');
+	// The page's own file name is not a description of the window.
+	assert.equal(workspaceWindowTitle('Local', 'server.html'), 'Local');
+	assert.equal(workspaceWindowTitle('Local', 'Home'), 'Local - Home');
 	// The page cannot put anything before the server's name, break the title
 	// across lines, or make it unbounded.
 	assert.equal(workspaceWindowTitle('Local', 'a\nb\u0000c\t d'), 'Local - a b c d');
