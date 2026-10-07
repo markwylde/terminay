@@ -15,6 +15,10 @@ import type {
 export interface AuthenticatedClient {
 	/** Identity from the authentication layer, never from hello.authScope. */
 	readonly clientId: ProtocolId;
+	/** The enrolled device this client belongs to, where it has one. Several
+	 * clients, one per window, may share a device. Authority and audit read
+	 * this; a client identity is only ever a key. */
+	readonly deviceId?: ProtocolId;
 	readonly authScope: AuthScope;
 	/** Named privileged operations granted by the transport/device authority.
 	 * Scope remains the coarse read/write gate; services enforce these grants. */
@@ -44,6 +48,10 @@ export interface ServerIdentity {
 export interface RequestContext {
 	readonly connectionId: ProtocolId;
 	readonly clientId: ProtocolId;
+	/** The enrolled device behind this client, where it has one. State that
+	 * must outlive a window, and anything that names who acted, keys on this
+	 * rather than on the client identity. */
+	readonly deviceId?: ProtocolId;
 	readonly authScope: AuthScope;
 	readonly permissions?: readonly string[];
 	readonly claims?: JsonValue;

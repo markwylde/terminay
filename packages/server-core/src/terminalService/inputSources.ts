@@ -305,6 +305,13 @@ export class TerminalInputSourceAdapter {
 	releaseClient(identity: TerminalIdentity, clientId: string): boolean {
 		validateClientId(clientId);
 		const key = sessionKey(identity);
+		// A client identity lasts as long as its window. Its input sequence
+		// marks go with it, or each new window would leave one behind for the
+		// life of the terminal.
+		const sequencePrefix = `${key}\u0000${clientId}\u0000`;
+		for (const sequenceKey of [...this.lastSequences.keys()])
+			if (sequenceKey.startsWith(sequencePrefix))
+				this.lastSequences.delete(sequenceKey);
 		const owner = this.resizeOwners.get(key);
 		if (owner?.clientId !== clientId) return false;
 		this.resizeOwners.delete(key);

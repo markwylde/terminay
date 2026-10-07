@@ -208,3 +208,42 @@ test("creating a second project does not stop an existing terminal from streamin
     await h.close();
   }
 });
+
+test("two windows of one device are two clients: both stream, and closing one leaves the other", async () => {
+  const h = await harness();
+  try {
+    const session = await h.service.createSession({ projectId: "project-one", cols: 80, rows: 24 });
+    const identity = h.identityFor(session);
+
+    // What a pairing host gives two windows of one device: a client identity
+    // each, where they once shared the device's.
+    const main = await h.connect("window:main-of-device-a");
+    const second = await h.connect("window:second-of-device-a");
+
+    const mainAttachment = await main.terminal.attach({ ...identity, clientId: main.clientId, fromPosition: 0 });
+    const secondAttachment = await second.terminal.attach({ ...identity, clientId: second.clientId, fromPosition: 0 });
+    assert.notEqual(mainAttachment.attachmentId, secondAttachment.attachmentId);
+
+    const mainOutput = [];
+    const secondOutput = [];
+    observe(mainAttachment, mainOutput);
+    observe(secondAttachment, secondOutput);
+    h.pty.processes[0].emitData("BOTH-WINDOWS\n");
+    await settle();
+    assert.equal(mainOutput.join("").includes("BOTH-WINDOWS"), true);
+    assert.equal(secondOutput.join("").includes("BOTH-WINDOWS"), true,
+      "the second window's attach did not end the first's");
+
+    // The second window closes. Only what it owned is released.
+    await second.client.close();
+    await second.task;
+    await settle();
+    h.pty.processes[0].emitData("AFTER-ONE-CLOSED\n");
+    await settle();
+    assert.equal(mainOutput.join("").includes("AFTER-ONE-CLOSED"), true,
+      "the remaining window keeps its attachment and its stream");
+    assert.equal(secondOutput.join("").includes("AFTER-ONE-CLOSED"), false);
+  } finally {
+    await h.close();
+  }
+});

@@ -3,6 +3,10 @@ import type {
 	TerminayClient,
 } from '@terminay/client-core';
 import {
+	groupLiveConnectionsByDevice,
+	liveWindowsLabel,
+} from '../shared/liveConnectionsByDevice';
+import {
 	ConnectedServersClient,
 	TerminayAiClient,
 	TerminayClientFacade,
@@ -2483,9 +2487,9 @@ export function SettingsWindow({
 									No active remote connections.
 								</p>
 							) : (
-								activeConnections.map((connection) => (
+								groupLiveConnectionsByDevice(activeConnections).map((connection) => (
 									<div
-										key={connection.connectionId}
+										key={connection.deviceId}
 										className="settings-remote-item"
 										style={{
 											padding: '16px 20px',
@@ -2510,8 +2514,8 @@ export function SettingsWindow({
 													color: 'var(--settings-text-muted)',
 												}}
 											>
-												{connection.attachedSessionCount} attached session
-												{connection.attachedSessionCount === 1 ? '' : 's'}
+												{liveWindowsLabel(connection.windowCount) ||
+													`${connection.attachedSessionCount} attached session${connection.attachedSessionCount === 1 ? '' : 's'}`}
 											</p>
 										</div>
 										<button

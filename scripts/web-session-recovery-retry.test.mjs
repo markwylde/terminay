@@ -259,6 +259,7 @@ test('failures a retry cannot fix stop the loop and keep their terminal presenta
 		'Server host identity changed; explicit re-pairing is required.',
 		'This device was revoked.',
 		'Unknown device.',
+		'This device already has 8 windows connected to this server. Close one to open another.',
 	]) {
 		assert.equal(isUnrecoverableConnectFailure(new Error(message)), true, message);
 		const harness = createLoop({ run: () => Promise.reject(new Error(message)) });
