@@ -5,6 +5,7 @@ import {
 	compositionTabKey,
 	createCompositionSession,
 	createLocalCompositionPersistence,
+	insertCompositionTabBefore,
 	moveCompositionTab,
 	normalizeComposition,
 	orderCompositionTabs,
@@ -26,6 +27,48 @@ function project(serverId, id, title = id) {
 function source(serverId, label, projects, overrides = {}) {
 	return { serverId, serverLabel: label, usable: true, projects, ...overrides }
 }
+
+test('a dropped tab lands immediately before the tab it was dropped on', () => {
+	const a = { serverId: 's', projectId: 'a' }
+	const b = { serverId: 's', projectId: 'b' }
+	const c = { serverId: 't', projectId: 'a' }
+	const dropped = { serverId: 's', projectId: 'd' }
+
+	assert.deepEqual(insertCompositionTabBefore([a, b, c], dropped, a), [
+		dropped,
+		a,
+		b,
+		c,
+	])
+	assert.deepEqual(insertCompositionTabBefore([a, b, c], dropped, c), [
+		a,
+		b,
+		dropped,
+		c,
+	])
+	// No tab under the pointer, or one the strip no longer has: last.
+	assert.deepEqual(insertCompositionTabBefore([a, b, c], dropped, null), [
+		a,
+		b,
+		c,
+		dropped,
+	])
+	assert.deepEqual(
+		insertCompositionTabBefore([a, b], dropped, { serverId: 'x', projectId: 'y' }),
+		[a, b, dropped],
+	)
+	// A tab the strip already remembers moves rather than appearing twice.
+	assert.deepEqual(insertCompositionTabBefore([dropped, a, b], dropped, b), [
+		a,
+		dropped,
+		b,
+	])
+	assert.deepEqual(insertCompositionTabBefore([a, dropped, b], dropped, null), [
+		a,
+		b,
+		dropped,
+	])
+})
 
 test('two servers whose project ids collide both render a tab', () => {
 	// Two servers restored from one data-root copy hand out the same ids.

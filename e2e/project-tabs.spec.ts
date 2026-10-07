@@ -111,6 +111,72 @@ async function waitUntilNativeWindowHasBusyTerminal(
 		.toBeGreaterThan(0);
 }
 
+type ScreenPoint = { x: number; y: number };
+
+/** The tear-off decision is made in the main process from the OS cursor, which
+ * synthetic page input never moves, so the test states where the cursor is. */
+async function setCursorScreenPoint(
+	electronApp: ElectronApplication,
+	point: ScreenPoint,
+): Promise<void> {
+	await electronApp.evaluate(({ screen }, next) => {
+		screen.getCursorScreenPoint = () => next;
+	}, point);
+}
+
+/** Screen points on a window's project tab bar and well clear of it. */
+async function tabBarScreenPoints(
+	electronApp: ElectronApplication,
+	page: Page,
+): Promise<{ onBar: ScreenPoint; clearOfBar: ScreenPoint }> {
+	const nativeWindow = await electronApp.browserWindow(page);
+	const content = await nativeWindow.evaluate((window) =>
+		window.getContentBounds(),
+	);
+	const x = Math.round(content.x + content.width / 2);
+	return {
+		onBar: { x, y: content.y + 24 },
+		clearOfBar: { x, y: content.y + 400 },
+	};
+}
+
+/** Pull a project tab out of its strip and keep holding it, torn off. */
+async function holdTornOffProjectTab(
+	electronApp: ElectronApplication,
+	page: Page,
+	tab: Locator,
+): Promise<void> {
+	const { clearOfBar } = await tabBarScreenPoints(electronApp, page);
+	const box = await tab.boundingBox();
+	if (!box) throw new Error('Expected the project tab to have a layout box');
+	const centerX = box.x + box.width / 2;
+	const centerY = box.y + box.height / 2;
+	await setCursorScreenPoint(electronApp, clearOfBar);
+	const windowCount = () =>
+		electronApp.evaluate(
+			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+		);
+	const windowsBeforeDrag = await windowCount();
+	await page.mouse.move(centerX, centerY);
+	await page.mouse.down();
+	await page.mouse.move(centerX, centerY + 180, { steps: 12 });
+	// The main process shows a drag ghost window once the tab is torn off.
+	await expect.poll(windowCount).toBe(windowsBeforeDrag + 1);
+}
+
+/** Pull a project tab out of its strip and release it with the cursor at
+ * `releaseAt`. */
+async function tearOffProjectTab(
+	electronApp: ElectronApplication,
+	page: Page,
+	tab: Locator,
+	releaseAt: ScreenPoint,
+): Promise<void> {
+	await holdTornOffProjectTab(electronApp, page, tab);
+	await setCursorScreenPoint(electronApp, releaseAt);
+	await page.mouse.up();
+}
+
 test.describe('project tabs', () => {
 	test('dragging a project into a new window preserves its canonical project and terminal', async ({
 		electronApp,
@@ -198,6 +264,306 @@ test.describe('project tabs', () => {
 				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
 			),
 		).toBeVisible();
+	});
+
+	test('a project dragged out and back in can be dragged out again', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		const movedProject = mainWindow.locator('.project-tab', {
+			hasText: 'Project 2',
+		});
+		const projectId = await movedProject.getAttribute('data-project-id');
+		if (!projectId) throw new Error('Expected the moved project identity');
+		const main = await tabBarScreenPoints(electronApp, mainWindow);
+		// The project's terminal is the same live session wherever it goes.
+		const sessionId = await settledTerminalSessionId(
+			mainWindow.locator('.project-workspace--active .terminal-panel').first(),
+		);
+		const expectLiveTerminal = async (page: Page) => {
+			await expect(
+				page.locator(
+					`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+				),
+			).toBeVisible();
+			await expect(page.getByText('This session has ended')).toHaveCount(0);
+		};
+
+		// Out: released over no tab bar, the project opens in its own window.
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			movedProject,
+			main.clearOfBar,
+		);
+		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+		]);
+		await expect(popoutWindow.locator('.project-tab')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+
+		// Keep the two tab bars apart so each release point names one window.
+		const popoutNativeWindow = await electronApp.browserWindow(popoutWindow);
+		await popoutNativeWindow.evaluate(
+			(window, position) => window.setPosition(position.x, position.y),
+			{ x: main.onBar.x - 200, y: main.onBar.y + 200 },
+		);
+
+		// Back in: released over the main window's tab bar to the right of
+		// every tab, the project becomes its last and active tab and the
+		// emptied window closes.
+		await tearOffProjectTab(
+			electronApp,
+			popoutWindow,
+			popoutWindow.locator('.project-tab'),
+			main.onBar,
+		);
+		await expect(
+			mainWindow.locator(`.project-tab[data-project-id="${projectId}"]`),
+		).toHaveCount(1);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+			'Project 2',
+		]);
+		await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+		await expect.poll(() => popoutWindow.isClosed()).toBe(true);
+		await expectLiveTerminal(mainWindow);
+
+		// Out again: the returned project still tears off into a new window.
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			mainWindow.locator(`.project-tab[data-project-id="${projectId}"]`),
+			main.clearOfBar,
+		);
+		const secondPopoutWindow = await waitForWorkspacePopout(
+			electronApp,
+			mainWindow,
+		);
+		await expect(secondPopoutWindow.locator('.project-tab')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+		await expectLiveTerminal(secondPopoutWindow);
+	});
+
+	test('a project held over another window lands where it is dropped and becomes active', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		const movedProject = mainWindow.locator('.project-tab', {
+			hasText: 'Project 2',
+		});
+		const projectId = await movedProject.getAttribute('data-project-id');
+		if (!projectId) throw new Error('Expected the moved project identity');
+		const main = await tabBarScreenPoints(electronApp, mainWindow);
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			movedProject,
+			main.clearOfBar,
+		);
+		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+		]);
+		await expect(mainWindow.locator('.project-tab--active')).toHaveText(
+			'Project',
+		);
+		const popoutNativeWindow = await electronApp.browserWindow(popoutWindow);
+		await popoutNativeWindow.evaluate(
+			(window, position) => window.setPosition(position.x, position.y),
+			{ x: main.onBar.x - 200, y: main.onBar.y + 200 },
+		);
+		const firstTab = await mainWindow.locator('.project-tab').boundingBox();
+		if (!firstTab) throw new Error('Expected the remaining tab layout box');
+		const mainContent = await (
+			await electronApp.browserWindow(mainWindow)
+		).evaluate((window) => window.getContentBounds());
+		const beforeFirstTab = {
+			x: Math.round(mainContent.x + firstTab.x + 4),
+			y: main.onBar.y,
+		};
+		const placeholder = mainWindow.locator('.project-tab--drop-placeholder');
+		const tabFill = (tab: Locator) =>
+			tab.evaluate(
+				(element) => getComputedStyle(element, '::before').backgroundColor,
+			);
+		const draggedTabFill = await tabFill(
+			popoutWindow.locator('.project-tab--active'),
+		);
+		expect(draggedTabFill).not.toBe(
+			await tabFill(mainWindow.locator('.project-tab--active')),
+		);
+
+		await holdTornOffProjectTab(
+			electronApp,
+			popoutWindow,
+			popoutWindow.locator('.project-tab'),
+		);
+		await expect(placeholder).toHaveCount(0);
+
+		// Held over the main window's bar: the strip shows it at the pointer.
+		await setCursorScreenPoint(electronApp, beforeFirstTab);
+		await expect(placeholder).toHaveText('Project 2');
+		// It keeps the dragged project's colour, not this window's.
+		await expect.poll(() => tabFill(placeholder)).toBe(draggedTabFill);
+		await expect(mainWindow.locator('.project-tab').first()).toHaveClass(
+			/project-tab--drop-placeholder/,
+		);
+		await setCursorScreenPoint(electronApp, main.onBar);
+		await expect(mainWindow.locator('.project-tab').last()).toHaveClass(
+			/project-tab--drop-placeholder/,
+		);
+
+		// Off the bar again: the strip gives it back.
+		await setCursorScreenPoint(electronApp, main.clearOfBar);
+		await expect(placeholder).toHaveCount(0);
+
+		// Released before the first tab: it is first, and active.
+		await setCursorScreenPoint(electronApp, beforeFirstTab);
+		await expect(placeholder).toHaveCount(1);
+		await popoutWindow.mouse.up();
+		await expect(placeholder).toHaveCount(0);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project 2',
+			'Project',
+		]);
+		await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+		await expect.poll(() => popoutWindow.isClosed()).toBe(true);
+		// The order is the window's own: it survives a reload.
+		await mainWindow.reload();
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project 2',
+			'Project',
+		]);
+	});
+
+	test('a second project can be dragged out after the first', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(3);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		const main = await tabBarScreenPoints(electronApp, mainWindow);
+
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			mainWindow.locator('.project-tab', { hasText: 'Project 3' }),
+			main.clearOfBar,
+		);
+		const firstPopout = await waitForWorkspacePopout(electronApp, mainWindow);
+		await expect(firstPopout.locator('.project-tab-title')).toHaveText([
+			'Project 3',
+		]);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+			'Project 2',
+		]);
+
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			mainWindow.locator('.project-tab', { hasText: 'Project 2' }),
+			main.clearOfBar,
+		);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+		]);
+		await expect
+			.poll(
+				async () => {
+					const titles: string[] = [];
+					for (const page of electronApp.windows()) {
+						if (page === mainWindow || page.isClosed()) continue;
+						titles.push(
+							...(await page.locator('.project-tab-title').allTextContents()),
+						);
+					}
+					return titles.sort();
+				},
+				{ timeout: 20_000 },
+			)
+			.toEqual(['Project 2', 'Project 3']);
+	});
+
+	test('reordering after a tear-off keeps the dragged tab in the strip', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(3);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		const main = await tabBarScreenPoints(electronApp, mainWindow);
+		await tearOffProjectTab(
+			electronApp,
+			mainWindow,
+			mainWindow.locator('.project-tab', { hasText: 'Project 3' }),
+			main.clearOfBar,
+		);
+		await waitForWorkspacePopout(electronApp, mainWindow);
+		const tabs = mainWindow.locator('.project-tab');
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+			'Project 2',
+		]);
+
+		const firstBox = await tabs.first().boundingBox();
+		const secondBox = await tabs.nth(1).boundingBox();
+		if (!firstBox || !secondBox) {
+			throw new Error('Project tab drag geometry is unavailable');
+		}
+		await mainWindow.mouse.move(
+			secondBox.x + secondBox.width / 2,
+			secondBox.y + secondBox.height / 2,
+		);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(
+			firstBox.x + 8,
+			firstBox.y + firstBox.height / 2,
+			{ steps: 10 },
+		);
+		const dragged = mainWindow.locator('.project-tab--dragging');
+		await expect(dragged).toHaveCount(1);
+		await expect(dragged).not.toHaveClass(/project-tab--torn-off/);
+		expect((await dragged.boundingBox())?.width).toBeGreaterThanOrEqual(
+			secondBox.width - 1,
+		);
+		await mainWindow.mouse.up();
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project 2',
+			'Project',
+		]);
 	});
 
 	test('closing a torn-off window takes its notifications off the application icon', async ({

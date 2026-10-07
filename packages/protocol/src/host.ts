@@ -215,6 +215,20 @@ export type TerminayHostEvent = Readonly<{
 				active: boolean;
 		  }>
 		| Readonly<{
+				/** A project tab torn off another window is over this window's
+				 * project bar (`hover`), has left it (`leave`), or was released on
+				 * it (`drop`). `x` is the pointer's distance from the window's left
+				 * edge. Presentation only: the project moves through `project.move`. */
+				type: 'workspace.drop-target';
+				phase: TerminayWorkspaceDropPhase;
+				x: number;
+				serverId: string;
+				projectId: string;
+				title: string;
+				emoji: string;
+				color: string;
+		  }>
+		| Readonly<{
 				/** The native window entered or left fullscreen, where macOS hides
 				 * the traffic lights the tab bar otherwise makes room for. */
 				type: 'window.fullscreen-state';
@@ -330,6 +344,8 @@ export type TerminayHostAction =
 	| Readonly<{
 			type: 'workspace.drag.start';
 			viewId: string;
+			/** The project being dragged, so a window it is held over can show it. */
+			projectId: string;
 			preview: Readonly<{
 				title: string;
 				emoji: string;
@@ -387,6 +403,12 @@ export interface TerminayHostActionRequest {
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+export type TerminayWorkspaceDropPhase = 'hover' | 'leave' | 'drop';
+const WORKSPACE_DROP_PHASES = new Set<TerminayWorkspaceDropPhase>([
+	'hover',
+	'leave',
+	'drop',
+]);
 const BUNDLE_ID = /^[A-Za-z0-9_-]{8,128}$/u;
 const MAX_VERSION = 65_535;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -464,6 +486,41 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'workspace.drag-state',
 			active: event.active,
+		});
+	} else if (event.type === 'workspace.drop-target') {
+		exactKeys(
+			event,
+			[
+				'type',
+				'phase',
+				'x',
+				'serverId',
+				'projectId',
+				'title',
+				'emoji',
+				'color',
+			],
+			'host workspace drop target event',
+		);
+		if (
+			!WORKSPACE_DROP_PHASES.has(event.phase as TerminayWorkspaceDropPhase) ||
+			typeof event.x !== 'number' ||
+			!Number.isSafeInteger(event.x) ||
+			event.x < 0 ||
+			event.x > 100_000 ||
+			typeof event.color !== 'string' ||
+			!/^#[0-9a-fA-F]{3,8}$/u.test(event.color)
+		)
+			throw new TypeError('host workspace drop target is invalid');
+		parsedEvent = Object.freeze({
+			type: 'workspace.drop-target',
+			phase: event.phase as TerminayWorkspaceDropPhase,
+			x: event.x,
+			serverId: identifier(event.serverId, 'drop target server id', ID),
+			projectId: identifier(event.projectId, 'drop target project id', ID),
+			title: boundedText(event.title, 'drop target title', 512, true),
+			emoji: boundedText(event.emoji, 'drop target emoji', 64, true),
+			color: event.color,
 		});
 	} else if (event.type === 'window.fullscreen-state') {
 		exactKeys(event, ['type', 'fullScreen'], 'host window fullscreen event');
@@ -1205,7 +1262,11 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				token: identifier(action.token, 'server-owned reveal token', ID),
 			});
 		case 'workspace.drag.start': {
-			exactKeys(action, ['type', 'viewId', 'preview'], 'workspace drag action');
+			exactKeys(
+				action,
+				['type', 'viewId', 'projectId', 'preview'],
+				'workspace drag action',
+			);
 			const preview = record(action.preview, 'workspace drag preview');
 			exactKeys(
 				preview,
@@ -1224,6 +1285,7 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 			return Object.freeze({
 				type: 'workspace.drag.start',
 				viewId: identifier(action.viewId, 'workspace view id', ID),
+				projectId: identifier(action.projectId, 'workspace project id', ID),
 				preview: Object.freeze({
 					title: boundedText(preview.title, 'workspace drag title', 512, true),
 					emoji: boundedText(preview.emoji, 'workspace drag emoji', 64, true),
