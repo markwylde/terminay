@@ -4891,6 +4891,10 @@ function createWindow(options?: {
 							window.webContents.id,
 							action.viewId,
 							action.preview,
+							{
+								serverId: launch.context.serverId,
+								projectId: action.projectId,
+							},
 						);
 						return;
 					case 'workspace.drag.end':
@@ -5435,7 +5439,11 @@ const GHOST_HEIGHT = 56;
 let projectDragPollTimer: ReturnType<typeof setInterval> | null = null;
 let projectDragSourceWebContentsId: number | null = null;
 let projectDragPreview: ProjectDragPreview | null = null;
+let projectDragProject: { serverId: string; projectId: string } | null = null;
 let projectDragTornOff = false;
+// The other window whose bar the torn-off tab is held over, and where.
+let projectDropTargetWebContentsId: number | null = null;
+let projectDropTargetX: number | null = null;
 let tabGhostWindow: BrowserWindow | null = null;
 let ghostWindowWidth = 0;
 
@@ -5594,25 +5602,80 @@ function setProjectTabTornOff(tornOff: boolean): void {
 	}
 }
 
+/** End the drag session however it ended. The source window was told when its
+ * tab tore off, so it is told here that the tear-off is over. */
 function stopProjectDragTracking(): void {
 	if (projectDragPollTimer) {
 		clearInterval(projectDragPollTimer);
 		projectDragPollTimer = null;
 	}
+	setProjectDropTarget(null);
+	setProjectTabTornOff(false);
 	destroyTabGhostWindow();
-	projectDragTornOff = false;
 	projectDragSourceWebContentsId = null;
 	projectDragPreview = null;
+	projectDragProject = null;
+}
+
+function sendProjectDropTarget(
+	webContentsId: number,
+	phase: 'hover' | 'leave' | 'drop',
+	x: number,
+): void {
+	if (projectDragProject === null || projectDragPreview === null) return;
+	webContents.fromId(webContentsId)?.send('server-ui-host:event', {
+		type: 'workspace.drop-target',
+		phase,
+		x,
+		serverId: projectDragProject.serverId,
+		projectId: projectDragProject.projectId,
+		title: projectDragPreview.title,
+		emoji: projectDragPreview.emoji,
+		color: projectDragPreview.color,
+	});
+}
+
+/** The pointer's distance from the left edge of a window's content. */
+function projectDropX(
+	webContentsId: number,
+	point: { x: number; y: number },
+): number {
+	const bar = getBarScreenRect(webContentsId);
+	if (bar === null) return 0;
+	return Math.max(0, Math.min(Math.round(point.x - bar.x), bar.width));
+}
+
+/** Tell the window the tab is held over where it is, and the window it has
+ * left that it has gone. */
+function setProjectDropTarget(
+	webContentsId: number | null,
+	point?: { x: number; y: number },
+): void {
+	const previous = projectDropTargetWebContentsId;
+	if (previous !== null && previous !== webContentsId)
+		sendProjectDropTarget(previous, 'leave', 0);
+	if (webContentsId === null || point === undefined) {
+		projectDropTargetWebContentsId = null;
+		projectDropTargetX = null;
+		return;
+	}
+	const x = projectDropX(webContentsId, point);
+	if (previous === webContentsId && projectDropTargetX === x) return;
+	projectDropTargetWebContentsId = webContentsId;
+	projectDropTargetX = x;
+	sendProjectDropTarget(webContentsId, 'hover', x);
 }
 
 function beginCanonicalProjectDrag(
 	senderId: number,
 	viewId: string,
 	preview: ProjectDragPreview,
+	project: { serverId: string; projectId: string },
 ): void {
 	workspaceViewByWebContents.set(senderId, viewId);
 	projectDragSourceWebContentsId = senderId;
 	projectDragPreview = preview;
+	projectDragProject = project;
 	projectDragTornOff = false;
 	if (projectDragPollTimer) clearInterval(projectDragPollTimer);
 	projectDragPollTimer = setInterval(() => {
@@ -5627,11 +5690,25 @@ function beginCanonicalProjectDrag(
 			return;
 		}
 		if (sourceBar && pointInRect(point, sourceBar)) {
+			setProjectDropTarget(null);
 			setProjectTabTornOff(false);
 			return;
 		}
-		moveTabGhostToCursor(point);
+		const target = projectDropWindowAt(point);
+		setProjectDropTarget(target, point);
+		// A strip showing the tab stands in for the floating preview.
+		if (target === null) moveTabGhostToCursor(point);
+		else if (tabGhostWindow && !tabGhostWindow.isDestroyed())
+			tabGhostWindow.hide();
 	}, 16);
+}
+
+/** The window, other than the drag's source, whose project bar is at the
+ * point and which presents a workspace view a project can move into. */
+function projectDropWindowAt(point: { x: number; y: number }): number | null {
+	const hit = findAppWindowTabBarAtPoint(point);
+	if (hit === null || hit === projectDragSourceWebContentsId) return null;
+	return workspaceViewByWebContents.has(hit) ? hit : null;
 }
 
 function endCanonicalProjectDrag():
@@ -5640,21 +5717,27 @@ function endCanonicalProjectDrag():
 	| { action: 'popout'; x: number; y: number } {
 	const sourceId = projectDragSourceWebContentsId;
 	const wasTornOff = projectDragTornOff;
-	if (projectDragPollTimer) clearInterval(projectDragPollTimer);
-	projectDragPollTimer = null;
-	destroyTabGhostWindow();
-	projectDragTornOff = false;
-	projectDragSourceWebContentsId = null;
-	projectDragPreview = null;
 	const point = screen.getCursorScreenPoint();
 	const hit = findAppWindowTabBarAtPoint(point);
-	if (!wasTornOff || hit === sourceId) return { action: 'reorder' };
-	if (hit !== null) {
-		const targetViewId = workspaceViewByWebContents.get(hit);
-		return targetViewId === undefined
-			? { action: 'reorder' }
-			: { action: 'merge', targetViewId };
+	const target = wasTornOff ? projectDropWindowAt(point) : null;
+	const targetViewId =
+		target === null ? undefined : workspaceViewByWebContents.get(target);
+	if (target !== null && targetViewId !== undefined) {
+		// The drop replaces the hover, so the window is not also told the tab
+		// left; it takes the tab, the front, and the keyboard.
+		sendProjectDropTarget(target, 'drop', projectDropX(target, point));
+		projectDropTargetWebContentsId = null;
+		projectDropTargetX = null;
+		const contents = webContents.fromId(target);
+		const targetWindow =
+			contents === undefined ? null : BrowserWindow.fromWebContents(contents);
+		targetWindow?.show();
+		targetWindow?.focus();
 	}
+	stopProjectDragTracking();
+	if (!wasTornOff || hit === sourceId) return { action: 'reorder' };
+	if (targetViewId !== undefined) return { action: 'merge', targetViewId };
+	if (hit !== null) return { action: 'reorder' };
 	return { action: 'popout', x: point.x, y: point.y };
 }
 

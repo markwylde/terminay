@@ -247,6 +247,7 @@ import {
 import {
 	type CompositionTabHandle,
 	compositionTabKey,
+	insertCompositionTabBefore,
 	parseCompositionTabKey,
 } from './shared/connections/composition';
 import {
@@ -5764,13 +5765,13 @@ function App({
 		setRequestedServerId(undefined);
 	}, [byServerId, requestedServerId]);
 	const {
+		clearIncomingProjectDrop,
 		draggingProjectId,
-		dropPreview,
 		handleProjectTabDragEnd,
 		handleProjectTabDragMove,
 		handleProjectTabDragStart,
+		incomingProjectDrop,
 		isDraggingTabTornOff,
-		isProjectDropTarget,
 		popoutProject,
 		projectTabBarRef,
 	} = useProjectTabTransfer({
@@ -7717,6 +7718,65 @@ function App({
 		if (projectId === undefined || namesServers) return;
 		persistMovedProject(projectId);
 	};
+	// A project tab from another window, held over or released on this bar.
+	// It is shown where it will land; once released and arrived it takes that
+	// place by the path a strip reorder takes, and becomes the active tab.
+	const isProjectDropTarget = incomingProjectDrop !== null;
+	const incomingDropBeforeIndex =
+		incomingProjectDrop?.before == null
+			? -1
+			: displayedProjects.findIndex(
+					(tab) =>
+						tab.serverId === incomingProjectDrop.before?.serverId &&
+						tab.id === incomingProjectDrop.before?.projectId,
+				);
+	const dropPreview =
+		incomingProjectDrop === null
+			? null
+			: {
+					index:
+						incomingDropBeforeIndex < 0
+							? displayedProjects.length
+							: incomingDropBeforeIndex,
+					preview: incomingProjectDrop.preview,
+				};
+	const placeDroppedProject = () => {
+		if (incomingProjectDrop === null || !incomingProjectDrop.dropped) return;
+		const moved = {
+			serverId: incomingProjectDrop.serverId,
+			projectId: incomingProjectDrop.projectId,
+		};
+		const byHandle = new Map(displayedProjects.map((tab) => [tab.handle, tab]));
+		const movedHandle = compositionTabKey(moved.serverId, moved.projectId);
+		if (!byHandle.has(movedHandle)) return;
+		clearIncomingProjectDrop();
+		onReorderComposed(
+			insertCompositionTabBefore(
+				displayedProjects.map((tab) => ({
+					serverId: tab.serverId,
+					projectId: tab.id,
+				})),
+				moved,
+				incomingProjectDrop.before,
+			).flatMap((handle) => {
+				const tab = byHandle.get(
+					compositionTabKey(handle.serverId, handle.projectId),
+				);
+				return tab === undefined || tab.creationStatus !== undefined
+					? []
+					: [tab];
+			}),
+		);
+		persistMovedComposedTab(movedHandle);
+		activateComposedTab(movedHandle);
+	};
+	const placeDroppedProjectRef = useRef(placeDroppedProject);
+	placeDroppedProjectRef.current = placeDroppedProject;
+	// The drop and the tabs it waits for are the triggers; the placement reads
+	// everything else fresh.
+	useEffect(() => {
+		placeDroppedProjectRef.current();
+	}, [incomingProjectDrop, displayedProjects]);
 	const closeComposedTab = (handle: string) => {
 		const target = resolveTabHandle(handle);
 		// Closing belongs to the server that owns the project; go there first.
