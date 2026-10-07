@@ -183,6 +183,13 @@ ipcRenderer.on('server-ui-host:byte-endpoint', (event) => {
 	port.onmessageerror = () => {
 		for (const listener of byteListeners) listener(null);
 	};
+	// Main closing its end is the server ending this connection. The page
+	// must hear that now: it has no other way to learn the endpoint is dead
+	// short of a heartbeat going unanswered.
+	port.addEventListener('close', () => {
+		if (bytePort !== port) return;
+		for (const listener of [...byteListeners]) listener(null);
+	});
 	port.start();
 });
 
@@ -255,6 +262,7 @@ ipcRenderer.on(
 		port.onmessageerror = () => {
 			for (const listener of [...endpoint.listeners]) listener(null);
 		};
+		port.addEventListener('close', () => closeConnectionEndpoint(endpoint));
 		port.start();
 		const waiters = connectionWaiters.get(connectionId);
 		if (waiters === undefined) return;
@@ -382,6 +390,12 @@ if (
 				for (const listener of [...byteListeners]) listener(null);
 				return { connectionId: `local:${bound.windowId}` };
 			},
+			// Unlike the fault above, nothing here touches the window's side:
+			// the server closes its end and the window has to notice.
+			refuseProjectCreations: (count: number) =>
+				ipcRenderer.invoke('test:refuse-project-creations', count) as Promise<void>,
+			closeServerConnection: () =>
+				ipcRenderer.invoke('test:close-renderer-connections') as Promise<number>,
 		}),
 	);
 	contextBridge.exposeInMainWorld(

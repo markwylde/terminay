@@ -33,7 +33,7 @@ export const FILE_VIEWER_OPERATIONS = Object.freeze({
 });
 
 export type FileViewerMode = "preview" | "text" | "hex" | "diff";
-export type FileViewerPreviewKind = "markdown" | "image" | "pdf" | "text" | "hex" | "unsupported";
+export type FileViewerPreviewKind = "markdown" | "image" | "pdf" | "html" | "text" | "hex" | "unsupported";
 
 /** Content-free, server-authorized capability metadata for one file. */
 export interface FileViewerCapabilities {
@@ -304,6 +304,7 @@ export interface FolderMarkdownTaskOptions {
   readonly ignoredDirectories?: readonly string[];
 }
 
+const ACCEPTED_PREVIEW_KINDS: FileViewerPreviewKind[] = ["html"];
 const DEFAULT_CONTENT_STREAM_CHUNK_BYTES = 256 * 1024;
 const DEFAULT_CONTENT_STREAM_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CONTENT_STREAM_CHUNK_BYTES = MAX_FILE_CONTENT_RANGE_BYTES;
@@ -315,7 +316,9 @@ export class FileViewerClient {
   constructor(private readonly transport: QueryCommandTransport) {}
 
   async getCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerCapabilities> {
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
+    // The server names a preview kind added after the original set only to a
+    // client that says it renders it; a server that predates the option ignores it.
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId), options: { acceptPreviewKinds: [...ACCEPTED_PREVIEW_KINDS] } };
     return validateCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.capabilities, payload, options));
   }
 
@@ -788,7 +791,7 @@ function decodeBase64(value: string, maxBytes = 4 * 1024 * 1024): Uint8Array {
 function bytesToBase64(value: Uint8Array): string { let binary = ""; for (const byte of value) binary += String.fromCharCode(byte); return btoa(binary); }
 function boundedText(value: string, name: string): string { if (typeof value !== "string" || value.length > 100 * 1024 * 1024) throw new RangeError(`${name} is invalid`); return value; }
 function isCatalogEntryKindOrUndefined(value: unknown): value is FileCatalogEntryKind | undefined { return value === undefined || value === "file" || value === "directory" || value === "symlink" || value === "other"; }
-function isPreviewKind(value: unknown): value is FileViewerPreviewKind { return value === "markdown" || value === "image" || value === "pdf" || value === "text" || value === "hex" || value === "unsupported"; }
+function isPreviewKind(value: unknown): value is FileViewerPreviewKind { return value === "markdown" || value === "image" || value === "pdf" || value === "html" || value === "text" || value === "hex" || value === "unsupported"; }
 function isPreferredMode(value: unknown): value is "preview" | "text" | "hex" { return value === "preview" || value === "text" || value === "hex"; }
 function isContentKind(value: unknown): value is FileViewerContentKind { return value === "text" || value === "markdown" || value === "image" || value === "pdf" || value === "binary"; }
 function isWatchState(value: unknown): value is FileViewerSessionMetadata["watchState"] { return value === "watching" || value === "conflict" || value === "unavailable" || value === "closed"; }
