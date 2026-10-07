@@ -42,9 +42,11 @@ import {
 	MCP_AUTOMATION_EVENT_KINDS,
 } from './automationTools.js';
 import {
+	fitsWindowData,
 	MAX_WINDOW_HTML_BYTES,
 	MAX_WINDOW_TITLE_CHARS,
 } from './appWindowTools.js';
+import { readWindowDocument } from './windowDocument.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
 export { SERVER_MCP_ENTRY } from './ownership.js';
@@ -648,7 +650,7 @@ function registerWindowTools(
 	server.registerTool(
 		'show_window',
 		{
-			description: `Show the user an interactive window in the terminal you are running in, built from your own HTML. Use it when a picture, a form, a table, or a small tool communicates better than text: a chart, a diff viewer, a picker, a preview. The document is a complete HTML page. Inline <script> and <style> work, and it may load scripts, styles, images, and fonts from, and fetch, any https origin. It runs sandboxed: it has no access to the terminal, the filesystem, or cookies, and cannot keep data between runs, so put everything it needs in the document. The window sizes itself to the content up to 60% of the terminal's height. Pass the handle of a window you opened to replace its content in place. To hear back from the user, call window.terminay.sendMessage("text") from a button the user presses: the text is typed into this terminal as the user's next message. It works only as the result of a click or key press in the window, once each time the window is open (sending minimises it), and the text must be plain text. window.terminay.updateContext("text") quietly attaches text to your next tool result, window.terminay.openLink(url) opens an http(s) link in the user's browser when they click, and window.terminay.close() closes the window. Ordinary links work: one to "#id" scrolls, and one to a web page opens in the browser. The page cannot navigate itself or call document.write after it has loaded; a window that does is stopped. Returns the window's handle. ${APPROVAL_NOTE}`,
+			description: `Show the user an interactive window in the terminal you are running in, built from your own HTML. Use it when a picture, a form, a table, or a small tool communicates better than text: a chart, a diff viewer, a picker, a preview. The document is a complete HTML page, given either inline as html or as html_file, the absolute path of an HTML file on this machine; give exactly one. To reuse one design, save it as a file and pass html_file with data, any JSON value up to 64 KiB, which the page reads as window.terminay.data before its own scripts run (undefined when none was given): that avoids writing the document out again. The file's contents are shown to the user and are not returned to you. Inline <script> and <style> work, and the page may load scripts, styles, images, and fonts from, and fetch, any https origin. It runs sandboxed: it has no access to the terminal, the filesystem, or cookies, and cannot keep data between runs, so put everything it needs in the document or in data. The window sizes itself to the content up to 60% of the terminal's height. Pass the handle of a window you opened to replace its content and data in place. To hear back from the user, call window.terminay.sendMessage("text") from a button the user presses: the text is typed into this terminal as the user's next message. It works only as the result of a click or key press in the window, once each time the window is open (sending minimises it), and the text must be plain text. The user can attach files to that message: pass the File objects they picked, from an <input type="file">, as window.terminay.sendMessage("text", { files }), up to 16; each is saved on this machine and its path is added to the message on its own "Attached: <path>" line for you to open. The page is never told the path. window.terminay.attachments is false where files cannot be sent. window.terminay.updateContext("text") quietly attaches text to your next tool result, window.terminay.openLink(url) opens an http(s) link in the user's browser when they click, and window.terminay.close() closes the window. Ordinary links work: one to "#id" scrolls, and one to a web page opens in the browser. The page cannot navigate itself or call document.write after it has loaded; a window that does is stopped. Returns the window's handle. ${APPROVAL_NOTE}`,
 			inputSchema: {
 				title: z
 					.string()
@@ -661,11 +663,31 @@ function registerWindowTools(
 					.refine(
 						(value) => Buffer.byteLength(value, 'utf8') <= MAX_WINDOW_HTML_BYTES,
 						'html must be at most 512 KiB',
-					),
+					)
+					.optional(),
+				html_file: z.string().min(1).max(MAX_CWD_CHARS).optional(),
+				data: z
+					.unknown()
+					.refine(
+						(value) => value === undefined || fitsWindowData(value),
+						'data must be a JSON value of at most 64 KiB',
+					)
+					.optional(),
 				window: handle.optional(),
 			},
 		},
-		async (params, extra) => call('show_window', params, extra.signal),
+		async ({ html_file: htmlFile, ...params }, extra) => {
+			if ((params.html === undefined) === (htmlFile === undefined))
+				return toolFailure('bad_request', 'give exactly one of html and html_file');
+			if (htmlFile === undefined)
+				return call('show_window', params, extra.signal);
+			// Read here, in the agent's own process tree: the server is sent the
+			// document and never the path (ADR-0045).
+			const document = await readWindowDocument(htmlFile, MAX_WINDOW_HTML_BYTES);
+			return document.ok
+				? call('show_window', { ...params, html: document.html }, extra.signal)
+				: toolFailure(document.code, document.message);
+		},
 	);
 	server.registerTool(
 		'close_window',
@@ -815,6 +837,15 @@ function replyOf(response: ControlResponse & { ok: true }): ControlReply {
 		...(response.modelContext === undefined
 			? {}
 			: { modelContext: response.modelContext }),
+	};
+}
+
+/** A refusal the adapter makes itself, in the shape a refused control request takes. */
+function toolFailure(code: ControlErrorCode, message: string): CallToolResult {
+	return {
+		isError: true,
+		content: [{ type: 'text', text: `${code}: ${message}` }],
+		structuredContent: { error: { code, message } },
 	};
 }
 

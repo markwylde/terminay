@@ -998,7 +998,11 @@ export class ServerTerminalAuthority {
 				...(options.automations === undefined ? [] : ['automations.v1']),
 				...(options.mcpApprovals === true ? ['mcp-approvals.v1'] : []),
 				...(options.mcpApprovals === true && options.appWindows !== undefined
-					? ['app-windows.v1', 'app-window-mirror.v1']
+					? [
+							'app-windows.v1',
+							'app-window-mirror.v1',
+							'app-window-attachments.v1',
+						]
 					: []),
 				'recording.v1',
 				'extensions.v1',

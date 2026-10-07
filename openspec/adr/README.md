@@ -71,3 +71,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0042](./0042-file-previews-that-run-script-use-the-app-view-sandbox.md) | A file preview that runs file-provided script uses the app-view sandbox, with resources inlined by the workspace and no network | accepted | 2026-10-07 |
 | [0043](./0043-a-terminal-changes-project-by-retiring-its-identity.md) | A terminal changes project by retiring its identity and binding a new one | accepted | 2026-10-07 |
 | [0044](./0044-output-path-work-is-proportional-to-the-output-event.md) | Work on the terminal output path is proportional to the output event | accepted | 2026-10-07 |
+| [0045](./0045-the-mcp-adapter-may-read-a-document-the-agent-names.md) | The MCP adapter may read a document the agent names, to show the user; the server never opens it | accepted | 2026-10-07 |
+| [0046](./0046-window-attachments-are-an-unbounded-streamed-scratch-write.md) | Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them | accepted | 2026-10-07 |

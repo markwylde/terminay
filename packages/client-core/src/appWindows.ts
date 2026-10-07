@@ -11,6 +11,10 @@ export const APP_WINDOW_OPERATIONS = Object.freeze({
   setState: "app-windows.set-state",
   close: "app-windows.close",
   message: "app-windows.message",
+  messageBegin: "app-windows.message-begin",
+  messagePart: "app-windows.message-part",
+  messageFinish: "app-windows.message-finish",
+  messageCancel: "app-windows.message-cancel",
   context: "app-windows.context",
   viewRequest: "app-windows.view-request",
   viewResponse: "app-windows.view-response",
@@ -26,6 +30,27 @@ export const APP_WINDOW_EVENTS = Object.freeze({
   mirrorData: "app-windows.mirror.data",
   mirrorWanted: "app-windows.mirror.wanted",
 } as const);
+
+/** Feature capability of a server and client that carry files on a window message. */
+export const APP_WINDOW_ATTACHMENTS_CAPABILITY = "app-window-attachments.v1" as const;
+/** Files one message may carry. */
+export const MAX_APP_WINDOW_ATTACHMENTS = 16;
+/** One part of a file. A file has no size limit; a part does. */
+export const MAX_APP_WINDOW_ATTACHMENT_PART_BYTES = 256 * 1024;
+/** An offered name, as a view states it. */
+export const MAX_APP_WINDOW_ATTACHMENT_NAME_CHARS = 255;
+
+/** A file a person attaches to a window message: a name to show people, and its size. */
+export interface AppWindowAttachment {
+  readonly name: string;
+  readonly size: number;
+}
+
+export interface AppWindowAttachmentSendOptions {
+  readonly signal?: AbortSignal;
+  /** Called after each part is acknowledged, with the bytes the server has taken so far. */
+  readonly onProgress?: (sentBytes: number, totalBytes: number) => void;
+}
 
 /** Feature capability of a server and client that mirror a view to the clients not controlling its terminal. */
 export const APP_WINDOW_MIRROR_CAPABILITY = "app-window-mirror.v1" as const;
@@ -93,6 +118,8 @@ export interface AppWindow {
 export interface AppWindowContent {
   readonly window: AppWindow;
   readonly html: string;
+  /** What an agent-authored document reads as `window.terminay.data`. */
+  readonly data?: JsonValue;
   readonly csp?: AppWindowCsp;
   readonly permissions?: Readonly<Record<string, JsonValue>>;
   readonly tool?: JsonValue;
@@ -136,6 +163,7 @@ export class AppWindowClient {
     return Object.freeze({
       window: validateWindow(result.window),
       html: data.html,
+      ...(data.data === undefined ? {} : { data: data.data }),
       ...(result.csp === undefined ? {} : { csp: validateCsp(result.csp) }),
       ...(isRecord(result.permissions) ? { permissions: result.permissions } : {}),
       ...(data.tool === undefined ? {} : { tool: data.tool }),
@@ -157,6 +185,55 @@ export class AppWindowClient {
   /** Type a view's message into the terminal that owns the window. Only the client controlling that terminal may. */
   async sendMessage(windowId: string, text: string, options: CommandOptions = {}): Promise<void> {
     await this.transport.command(APP_WINDOW_OPERATIONS.message, { windowId: boundedId(windowId), text: boundedText(text) }, options);
+  }
+
+  /**
+   * Send a view's message with files. The server is asked first, for the whole message; then each file goes in
+   * parts, the next one read only when the last was acknowledged, so nothing here ever holds a whole file. If
+   * anything fails or `signal` aborts, the server is told to drop what arrived and nothing is typed.
+   */
+  async sendMessageWithAttachments(
+    windowId: string,
+    text: string,
+    attachments: readonly AppWindowAttachment[],
+    readPart: (file: number, offset: number, length: number) => Promise<Uint8Array>,
+    options: AppWindowAttachmentSendOptions = {},
+  ): Promise<void> {
+    const commandWithBody = this.transport.commandWithBody;
+    if (typeof commandWithBody !== "function") throw new Error("attachments are unavailable on this transport");
+    const id = boundedId(windowId);
+    const files = validateAttachments(attachments);
+    // With a file to send the text may be empty: the file is the message.
+    const body = text === "" ? "" : boundedText(text);
+    const signal = options.signal;
+    const command = signal === undefined ? {} : { signal };
+    signal?.throwIfAborted();
+    const begun = await this.transport.command<JsonValue>(APP_WINDOW_OPERATIONS.messageBegin, { windowId: id, text: body, attachments: files.map(({ name, size }) => ({ name, size })) }, command);
+    if (!isRecord(begun) || typeof begun.uploadId !== "string") throw new TypeError("app window upload is invalid");
+    const uploadId = boundedId(begun.uploadId);
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    let sent = 0;
+    try {
+      for (const [file, { size }] of files.entries()) {
+        for (let offset = 0; offset < size; ) {
+          signal?.throwIfAborted();
+          const part = await readPart(file, offset, Math.min(MAX_APP_WINDOW_ATTACHMENT_PART_BYTES, size - offset));
+          if (!(part instanceof Uint8Array) || part.byteLength === 0 || part.byteLength > MAX_APP_WINDOW_ATTACHMENT_PART_BYTES || offset + part.byteLength > size)
+            throw new TypeError("attachment part is invalid");
+          signal?.throwIfAborted();
+          await commandWithBody.call(this.transport, APP_WINDOW_OPERATIONS.messagePart, { windowId: id, uploadId, file, offset }, part, command);
+          offset += part.byteLength;
+          sent += part.byteLength;
+          options.onProgress?.(sent, total);
+        }
+      }
+      signal?.throwIfAborted();
+      await this.transport.command(APP_WINDOW_OPERATIONS.messageFinish, { windowId: id, uploadId }, command);
+    } catch (error) {
+      // Best effort and unsignalled: the reason for stopping is often that `signal` aborted.
+      await this.transport.command(APP_WINDOW_OPERATIONS.messageCancel, { windowId: id, uploadId }).catch(() => undefined);
+      throw error;
+    }
   }
 
   /** Leave text for the model, delivered once with the next tool result from the owning terminal. */
@@ -301,6 +378,15 @@ function validateCsp(value: JsonValue): AppWindowCsp {
     if (list !== undefined) csp[key] = list;
   }
   return Object.freeze(csp);
+}
+
+function validateAttachments(value: readonly AppWindowAttachment[]): readonly AppWindowAttachment[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_APP_WINDOW_ATTACHMENTS) throw new TypeError("app window attachments are invalid");
+  return value.map((attachment) => {
+    if (!isRecord(attachment as unknown) || typeof attachment.name !== "string" || attachment.name.length === 0 || attachment.name.length > MAX_APP_WINDOW_ATTACHMENT_NAME_CHARS || !Number.isSafeInteger(attachment.size) || attachment.size < 0)
+      throw new TypeError("app window attachment is invalid");
+    return { name: attachment.name, size: attachment.size };
+  });
 }
 
 function parseBody(body: Uint8Array): JsonValue | undefined {

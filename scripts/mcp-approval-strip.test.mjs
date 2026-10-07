@@ -103,6 +103,28 @@ test('a window message asks naming the window, with the full text one tap away',
 		assert.match(markup, new RegExp(`>${label}</button>`));
 });
 
+test('a window message with files names each file and its size in its details', () => {
+	const details = [
+		{ label: 'Message', value: 'Here is the error', code: true },
+		{ label: 'Attachment', value: 'screenshot.png (2.0 MiB)' },
+		{ label: 'Attachment', value: 'trace.log (12 B)' },
+	];
+	const request = approval('apr_f', {
+		operation: 'window_message',
+		group: 'windowMessages',
+		groupLabel: 'Window Messages',
+		agent: 'The window "Bug report"',
+		summary: 'type a message into the terminal and send it, with 2 files saved on this server',
+		details,
+	});
+	const markup = render([request]);
+	assert.match(markup, /wants to type a message into the terminal and send it, with 2 files saved on this server\./);
+	assert.match(markup, /aria-expanded="false"[^>]*>Show details/);
+	// Attachments alone are still something to show.
+	const filesOnly = render([{ ...request, details: details.slice(1) }]);
+	assert.match(filesOnly, />Show details/);
+});
+
 test('queued requests show one at a time, oldest first', () => {
 	const markup = render([
 		approval('apr_1'),

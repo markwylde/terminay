@@ -81,7 +81,7 @@ test.afterAll(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 
-type Spec = { title: string; html: string; kind?: 'agent' | 'mcp-app'; toolInput?: unknown; toolResult?: unknown; csp?: unknown; broken?: boolean };
+type Spec = { title: string; html: string; data?: unknown; kind?: 'agent' | 'mcp-app'; toolInput?: unknown; toolResult?: unknown; csp?: unknown; broken?: boolean };
 type HarnessWindow = Window & {
 	harness: {
 		calls: unknown[][];
@@ -90,6 +90,7 @@ type HarnessWindow = Window & {
 		setController(value: boolean): void;
 		setPaneSize(width: number, height: number): void;
 		setBottomBar(height: number): void;
+		setUploadHeld(value: boolean): void;
 		windows(): { id: string; title: string; state: string }[];
 	};
 };
@@ -954,4 +955,167 @@ test('a view that leaves or replaces its document is removed, and the window say
 		html: `<p>before</p><script>setTimeout(() => { document.open(); document.write('<p>rewritten</p>'); document.close(); }, 300);</script>`,
 	});
 	await expect(card(page, 'Rewriter')).toContainText(stopped);
+});
+
+// --- a saved document with data, and files on a message (app-window-files-and-attachments) ---
+
+const READS_DATA = `<!doctype html><pre id="first">unset</pre><script>
+	// The first script of the document: the data is already there.
+	const data = window.terminay.data;
+	let wrote = 'no';
+	try { data.questions.push('added'); wrote = data.questions.length === 3 ? 'yes' : 'no'; } catch { wrote = 'refused'; }
+	document.getElementById('first').textContent = JSON.stringify({ questions: data.questions, markup: data.markup, wrote, ran: window.ran === true });
+</script>`;
+
+test('a document reads the data it was shown with, before its own script runs, and only as data', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	await add(page, {
+		title: 'Questions',
+		html: READS_DATA,
+		data: { questions: ['Ship it?', 'Twice?'], markup: '</script><script>window.ran = true</script>' },
+	});
+	await expect(view(card(page, 'Questions')).locator('#first')).toHaveText(
+		JSON.stringify({ questions: ['Ship it?', 'Twice?'], markup: '</script><script>window.ran = true</script>', wrote: 'refused', ran: false }),
+	);
+	await add(page, { title: 'Plain', html: '<pre id="first"></pre><script>document.getElementById("first").textContent = String(window.terminay.data)</script>' });
+	await expect(view(card(page, 'Plain')).locator('#first')).toHaveText('undefined');
+});
+
+/** A view that sends one file of `size` bytes with an answer, and says what it was told. */
+const ATTACHES = (size: number, onLoad = false) => `<p id="can"></p><p id="state">idle</p><button id="go">Send</button><script>
+	document.getElementById('can').textContent = String(window.terminay.attachments);
+	const send = () => {
+		const bytes = new Uint8Array(${size});
+		for (let index = 0; index < bytes.length; index += 4096) bytes[index] = (index / 4096) % 251;
+		const file = new File([bytes], 'holiday photo.png', { type: 'image/png' });
+		return window.terminay.sendMessage('2. Use the new logo? Yes', { files: [file] });
+	};
+	const say = (text) => { document.getElementById('state').textContent = text; };
+	document.getElementById('go').onclick = () => { say('sending'); send().then(() => say('sent'), (error) => say('failed: ' + error.message)); };
+	${onLoad ? "send().then(() => 'sent', (error) => error.message).then((result) => window.terminay.updateContext('on load: ' + result));" : ''}
+</script>`;
+const checksum = (size: number): number => {
+	let sum = 0;
+	for (let index = 0; index < size; index += 4096) sum += (index / 4096) % 251;
+	return sum >>> 0;
+};
+const KIB = 1024;
+const MIB = 1024 * 1024;
+
+test('a photo attached to an answer is read from the view in parts and sent with it, with no question asked', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	const size = 300 * KIB;
+	const id = await add(page, { title: 'Attach', html: ATTACHES(size) });
+	const window = card(page, 'Attach');
+	await expect(view(window).locator('#can')).toHaveText('true');
+	await settled(window);
+	await view(window).locator('#go').click();
+	await expect(view(window).locator('#state')).toHaveText('sent');
+	expect(await named(page, 'attachmentsDelivered')).toEqual([
+		['attachmentsDelivered', id, '2. Use the new logo? Yes', [{ name: 'holiday photo.png', size, sum: checksum(size), largestPart: 256 * KIB }]],
+	]);
+	// It went as a message with files, not also as a plain one.
+	expect(await named(page, 'sendMessage')).toEqual([]);
+	await expect(page.locator('.app-window__send')).toHaveCount(0);
+	await expect(window).toHaveAttribute('data-placement', 'tab');
+});
+
+test('large attachments are sent only when the person confirms in the window frame, and declining tells the view', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	const size = 9 * MIB;
+	const id = await add(page, { title: 'Video', html: ATTACHES(size) });
+	const window = card(page, 'Video');
+	await settled(window);
+	await view(window).locator('#go').click();
+	const bar = window.locator('.app-window__send');
+	await expect(bar).toContainText('Send 1 file (9.0 MB)');
+	// It is the workspace's own, outside the view's frame.
+	await expect(view(window).locator('.app-window__send')).toHaveCount(0);
+	expect(await named(page, 'sendAttachments')).toEqual([]);
+	await bar.getByRole('button', { name: "Don't send" }).click();
+	await expect(view(window).locator('#state')).toHaveText('failed: The message was not sent');
+	await expect(bar).toHaveCount(0);
+	expect(await named(page, 'sendAttachments')).toEqual([]);
+	await expect(window).toHaveAttribute('data-placement', 'window');
+	// Asked again, and this time agreed to.
+	await view(window).locator('#go').click();
+	await bar.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(view(window).locator('#state')).toHaveText('sent');
+	expect(await named(page, 'attachmentsDelivered')).toEqual([
+		['attachmentsDelivered', id, '2. Use the new logo? Yes', [{ name: 'holiday photo.png', size, sum: checksum(size), largestPart: 256 * KIB }]],
+	]);
+});
+
+test('an upload shows its progress and can be cancelled, which sends nothing', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	await page.evaluate(() => (window as unknown as HarnessWindow).harness.setUploadHeld(true));
+	await add(page, { title: 'Slow', html: ATTACHES(700 * KIB) });
+	const window = card(page, 'Slow');
+	await settled(window);
+	await view(window).locator('#go').click();
+	const bar = window.locator('.app-window__send');
+	await expect(bar).toContainText('Sending 1 file: 256 KB of 700 KB');
+	await bar.getByRole('button', { name: 'Cancel' }).click();
+	await expect(view(window).locator('#state')).toHaveText('failed: The message was not sent');
+	await expect(bar).toHaveCount(0);
+	expect(await named(page, 'attachmentsCancelled')).toHaveLength(1);
+	expect(await named(page, 'attachmentsDelivered')).toEqual([]);
+	await expect(window).toHaveAttribute('data-placement', 'window');
+	// Closing the window part way through stops an upload too.
+	await page.evaluate(() => (window as unknown as HarnessWindow).harness.setUploadHeld(true));
+	await view(window).locator('#go').click();
+	await expect(bar).toContainText('Sending');
+	await window.getByRole('button', { name: 'Close' }).click();
+	await expect.poll(async () => (await named(page, 'attachmentsCancelled')).length).toBe(2);
+	expect(await named(page, 'attachmentsDelivered')).toEqual([]);
+});
+
+test('on a phone the confirmation fits the sheet and is answered by touch', async ({ browser }) => {
+	const context = await mobile(browser);
+	const page = await context.newPage();
+	try {
+		await open(page);
+		await page.evaluate(() => (window as unknown as HarnessWindow).harness.setPaneSize(390, 700));
+		await add(page, { title: 'Phone', html: ATTACHES(9 * MIB) });
+		const window = card(page, 'Phone');
+		await settled(window);
+		await view(window).locator('#go').tap();
+		const bar = window.locator('.app-window__send');
+		await expect(bar).toBeVisible();
+		const outer = await box(window);
+		for (const name of ["Don't send", 'Send']) {
+			const button = await box(bar.getByRole('button', { name, exact: true }));
+			expect(button.x).toBeGreaterThanOrEqual(outer.x);
+			expect(button.x + button.width).toBeLessThanOrEqual(outer.x + outer.width + 0.5);
+			expect(button.height).toBeGreaterThanOrEqual(34);
+		}
+		await bar.getByRole('button', { name: 'Send', exact: true }).tap();
+		await expect.poll(async () => (await named(page, 'attachmentsDelivered')).length).toBe(1);
+	} finally {
+		await context.close();
+	}
+});
+
+test('files are not sent without a gesture, nor on a connection that does not carry them', async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 760 });
+	await open(page);
+	await add(page, { title: 'Unattended files', html: ATTACHES(4 * KIB, true) });
+	await expect
+		.poll(async () => (await named(page, 'updateContext')).map((call) => call[2]))
+		.toEqual(['on load: The user is not using this window']);
+	expect(await named(page, 'sendAttachments')).toEqual([]);
+
+	await open(page, '/?no-attachments');
+	await add(page, { title: 'No files here', html: ATTACHES(4 * KIB) });
+	const window = card(page, 'No files here');
+	await expect(view(window).locator('#can')).toHaveText('false');
+	await settled(window);
+	await view(window).locator('#go').click();
+	await expect(view(window).locator('#state')).toHaveText('failed: Attachments are unavailable');
+	expect(await named(page, 'sendAttachments')).toEqual([]);
+	expect(await named(page, 'sendMessage')).toEqual([]);
 });

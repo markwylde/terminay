@@ -6,6 +6,7 @@ import {
   AppWindowError,
   AppWindowService,
   MAX_AGENT_WINDOW_HTML_BYTES,
+  MAX_APP_WINDOW_DATA_BYTES,
   MAX_APP_WINDOW_TEXT_BYTES,
   MAX_MCP_APP_RESOURCE_BYTES,
 } from "../dist/index.js";
@@ -115,6 +116,29 @@ test("replace updates an agent window in place and restores it; an MCP App windo
   assert.equal(windows.list("session-1").find((w) => w.id === app.id).state, "minimised");
   assert.equal(windows.list("session-1").length, 2);
   assert.throws(() => windows.replace("session-1", app.id, { title: "x", html: "<p>x</p>" }), (error) => error.code === "window_invalid");
+});
+
+test("a window keeps the data it was shown with; replacing the content replaces or clears it, and it is bounded", async () => {
+  const { windows } = service();
+  const { queries } = windows.operations();
+  const data = async (id) => bodyOf(await queries[APP_WINDOW_OPERATIONS.content](command({ windowId: id })));
+  const given = { questions: ["Ship it?"], markup: "</script><script>alert(1)</script>" };
+  const shown = windows.open(agentWindow({ data: given }));
+  assert.deepEqual((await data(shown.id)).data, given);
+  // A copy is kept: changing what was passed in changes nothing.
+  given.questions.push("changed");
+  assert.deepEqual((await data(shown.id)).data.questions, ["Ship it?"]);
+  windows.replace("session-1", shown.id, { title: "Hello", html: "<h1>2</h1>", data: null });
+  assert.equal((await data(shown.id)).data, null);
+  windows.replace("session-1", shown.id, { title: "Hello", html: "<h1>3</h1>" });
+  assert.equal("data" in (await data(shown.id)), false);
+  const plain = windows.open(agentWindow());
+  assert.equal("data" in (await data(plain.id)), false);
+  const before = windows.list().length;
+  assert.throws(() => windows.open(agentWindow({ data: "d".repeat(MAX_APP_WINDOW_DATA_BYTES) })), (error) => error.code === "window_too_large");
+  assert.throws(() => windows.replace("session-1", shown.id, { title: "Hello", html: "<p>x</p>", data: "é".repeat(MAX_APP_WINDOW_DATA_BYTES / 2) }), (error) => error.code === "window_too_large");
+  assert.equal(windows.list().length, before);
+  windows.open(agentWindow({ data: "d".repeat(MAX_APP_WINDOW_DATA_BYTES - 2) }));
 });
 
 test("a session's windows end with it and leave other sessions alone", () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,7 +88,12 @@ test('show_window tells the agent how to build a window and hear back from it', 
 			const show = tools.find((tool) => tool.name === 'show_window');
 			assert.match(show.description, /https/);
 			assert.match(show.description, /window\.terminay\.sendMessage/);
-			assert.deepEqual(show.inputSchema.required.sort(), ['html', 'title']);
+			assert.match(show.description, /html_file/);
+			assert.match(show.description, /sendMessage\("text", \{ files \}\)/);
+			assert.match(show.description, /Attached: <path>/);
+			assert.match(show.description, /window\.terminay\.data/);
+			// The document comes inline or from a file, so neither is required by the schema.
+			assert.deepEqual(show.inputSchema.required, ['title']);
 			assert.ok(tools.some((tool) => tool.name === 'close_window'));
 			assert.ok(tools.find((tool) => tool.name === 'list_windows').annotations.readOnlyHint);
 		},
@@ -113,6 +119,75 @@ test('show_window carries a large document and returns the handle; an oversized 
 			const blank = await client.callTool({ name: 'show_window', arguments: { title: '   ', html: '<p>x</p>' } });
 			assert.equal(blank.isError, true);
 			assert.equal(requests.length, before);
+		},
+	);
+});
+
+test('show_window reads html_file in the adapter and sends the document, never the path', async () => {
+	await withAdapter(
+		(request) =>
+			request.op === 'show_window' ? ok({ window: 'win_1', title: request.params.title, state: 'open' }) : ok({ tools: [] }),
+		async ({ client, requests }) => {
+			const root = await mkdtemp(join(tmpdir(), 'terminay-window-document-'));
+			const file = join(root, 'questionnaire.html');
+			const html = '<!doctype html><h1>Questions</h1><script>document.title = window.terminay.data.questions.length</script>';
+			await writeFile(file, html);
+			const data = { questions: ['Ship it?', 'Twice?'] };
+			const shown = await client.callTool({ name: 'show_window', arguments: { title: 'Questions', html_file: file, data } });
+			assert.equal(shown.isError, undefined);
+			assert.match(text(shown)[0], /"window":"win_1"/);
+			// The document is shown to the user; it is not handed back to the agent.
+			assert.ok(!text(shown).join('\n').includes('Questions</h1>'));
+			const sent = requests.find((request) => request.op === 'show_window');
+			assert.equal(sent.params.html, html);
+			assert.deepEqual(sent.params.data, data);
+			assert.equal('html_file' in sent.params, false);
+			assert.ok(!JSON.stringify(sent).includes(root));
+		},
+	);
+});
+
+test('show_window refuses a document it cannot read as one, before anything reaches the server', async () => {
+	await withAdapter(
+		(request) => (request.op === 'show_window' ? ok({ window: 'win_1', title: 'x', state: 'open' }) : ok({ tools: [] })),
+		async ({ client, requests }) => {
+			const root = await mkdtemp(join(tmpdir(), 'terminay-window-document-'));
+			const secret = join(root, 'secret.html');
+			await writeFile(secret, 'TOP-SECRET-CONTENTS');
+			const big = join(root, 'big.html');
+			await writeFile(big, 'x'.repeat(512 * 1024 + 1));
+			const binary = join(root, 'binary.html');
+			await writeFile(binary, Buffer.from([0x3c, 0x70, 0x3e, 0xff, 0xfe, 0xc3]));
+			const empty = join(root, 'empty.html');
+			await writeFile(empty, '');
+			const directory = join(root, 'directory');
+			await mkdir(directory);
+			// A pipe nobody writes to: reading it would wait for ever.
+			const pipe = join(root, 'pipe.html');
+			execFileSync('mkfifo', [pipe]);
+			const show = (args) => client.callTool({ name: 'show_window', arguments: { title: 'x', ...args } });
+			const cases = [
+				[{ html: '<p>x</p>', html_file: secret }, /^bad_request: give exactly one/],
+				[{}, /^bad_request: give exactly one/],
+				[{ html_file: 'relative/page.html' }, /^bad_request: html_file must be an absolute path/],
+				[{ html_file: join(root, 'missing.html') }, /^not_found: html_file does not exist/],
+				[{ html_file: directory }, /^bad_request: html_file must be a regular file/],
+				[{ html_file: '/dev/null' }, /^bad_request: html_file must be a regular file/],
+				[{ html_file: pipe }, /^bad_request: html_file must be a regular file/],
+				[{ html_file: big }, /^bad_request: html_file must be at most 512 KiB/],
+				[{ html_file: binary }, /^bad_request: html_file must be UTF-8 text/],
+				[{ html_file: empty }, /^bad_request: html_file is empty/],
+			];
+			for (const [args, expected] of cases) {
+				const refused = await show(args);
+				assert.equal(refused.isError, true, JSON.stringify(args));
+				assert.match(text(refused)[0], expected);
+				assert.ok(!text(refused).join('\n').includes('TOP-SECRET-CONTENTS'));
+			}
+			// Data too large for a window never leaves the adapter either.
+			const oversized = await show({ html: '<p>x</p>', data: { text: 'd'.repeat(64 * 1024) } });
+			assert.equal(oversized.isError, true);
+			assert.equal(requests.filter((request) => request.op === 'show_window').length, 0);
 		},
 	);
 });

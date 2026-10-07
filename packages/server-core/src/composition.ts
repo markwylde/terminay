@@ -60,7 +60,11 @@ import {
 	McpApprovalService,
 	mcpPermissionsFromSettings,
 } from './mcpApprovals/index.js';
-import { AppWindowService } from './appWindows/index.js';
+import {
+	type AppWindowAttachment,
+	AppWindowService,
+	type AppWindowView,
+} from './appWindows/index.js';
 import {
 	type ConnectedServerBackend,
 	ConnectedServerRegistry,
@@ -291,6 +295,8 @@ export interface ServerCoreCompositionOptions
 	readonly appWindows?: {
 		/** The display title of a terminal, for an approval prompt. */
 		readonly terminalTitle?: (terminalSessionId: string) => string | undefined;
+		/** Where window message attachments are written. Defaults to a server-owned directory under os.tmpdir(). */
+		readonly attachmentDirectory?: string;
 	};
 	/** Compose the registry of user-connected MCP servers (ADR-0037). The host
 	 * that serves MCP supplies where the list is kept and the vault that holds
@@ -749,6 +755,70 @@ export function createServerCoreComposition(
 				);
 	// --- end MCP permission approvals ---
 	// --- app windows (ADR-0037) ---
+	/** Evaluate Window Messages for one message, with the files it carries. */
+	const authorizeWindowMessage = async (
+		window: AppWindowView,
+		text: string,
+		attachments: readonly AppWindowAttachment[],
+		signal: AbortSignal,
+	): Promise<void> => {
+		if (mcpApprovals === undefined)
+			throw protocolError('unavailable', 'window messages are unavailable');
+		const outcome = await mcpApprovals.authorize({
+			terminalSessionId: window.terminalSessionId,
+			projectId: window.projectId,
+			operation: 'window_message',
+			group: 'windowMessages',
+			agent: `The window "${window.title}"`,
+			terminalTitle:
+				options.appWindows?.terminalTitle?.(window.terminalSessionId) ??
+				'this terminal',
+			summary:
+				attachments.length === 0
+					? 'type a message into the terminal and send it'
+					: `type a message into the terminal and send it, with ${attachments.length === 1 ? 'a file' : `${attachments.length} files`} saved on this server`,
+			details: [
+				...(text.length === 0
+					? []
+					: [{ label: 'Message', value: text, code: true }]),
+				...attachments.map((attachment) => ({
+					label: 'Attachment',
+					value: `${attachment.name} (${formatByteSize(attachment.size)})`,
+				})),
+			],
+			signal,
+		});
+		if (!outcome.ok) throw protocolError('forbidden', outcome.error.message);
+	};
+	/** Paste a window's message into its terminal and submit it once. */
+	const typeWindowMessage = async (
+		window: AppWindowView,
+		text: string,
+	): Promise<void> => {
+		const authorization = {
+			serverId: options.serverId,
+			projectId: window.projectId,
+			sessionId: window.terminalSessionId,
+			scope: 'write',
+		} as const;
+		const bracketed = await terminal.bracketedPasteMode(
+			window.terminalSessionId,
+			authorization,
+		);
+		await terminal.input(
+			window.terminalSessionId,
+			// Without bracketed paste every line break would submit a line
+			// of its own; a window message is submitted once.
+			commandSubmissionInput(
+				// A tab is a keystroke there too: a plain shell completes on it.
+				bracketed
+					? text
+					: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
+				bracketed,
+			),
+			authorization,
+		);
+	};
 	const appWindows =
 		options.appWindows === undefined || mcpApprovals === undefined
 			? undefined
@@ -776,44 +846,15 @@ export function createServerCoreComposition(
 							sessionId: window.terminalSessionId,
 						})?.clientId,
 					deliverMessage: async (window, text, signal) => {
-						const outcome = await mcpApprovals.authorize({
-							terminalSessionId: window.terminalSessionId,
-							projectId: window.projectId,
-							operation: 'window_message',
-							group: 'windowMessages',
-							agent: `The window "${window.title}"`,
-							terminalTitle:
-								options.appWindows?.terminalTitle?.(window.terminalSessionId) ??
-								'this terminal',
-							summary: 'type a message into the terminal and send it',
-							details: [{ label: 'Message', value: text, code: true }],
-							signal,
-						});
-						if (!outcome.ok)
-							throw protocolError('forbidden', outcome.error.message);
-						const authorization = {
-							serverId: options.serverId,
-							projectId: window.projectId,
-							sessionId: window.terminalSessionId,
-							scope: 'write',
-						} as const;
-						const bracketed = await terminal.bracketedPasteMode(
-							window.terminalSessionId,
-							authorization,
-						);
-						await terminal.input(
-							window.terminalSessionId,
-							// Without bracketed paste every line break would submit a line
-							// of its own; a window message is submitted once.
-							commandSubmissionInput(
-								// A tab is a keystroke there too: a plain shell completes on it.
-								bracketed
-									? text
-									: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
-								bracketed,
-							),
-							authorization,
-						);
+						await authorizeWindowMessage(window, text, [], signal);
+						await typeWindowMessage(window, text);
+					},
+					attachments: {
+						authorize: authorizeWindowMessage,
+						type: (window, text) => typeWindowMessage(window, text),
+						...(options.appWindows.attachmentDirectory === undefined
+							? {}
+							: { directory: options.appWindows.attachmentDirectory }),
 					},
 				});
 	const removeAppWindowExitObserver =
@@ -1754,7 +1795,11 @@ function uniqueCapabilities(
 				? [FEATURE_CAPABILITIES.mcpApprovals]
 				: []),
 			...(options.appWindows !== undefined && options.mcpApprovals === true
-				? [FEATURE_CAPABILITIES.appWindows, FEATURE_CAPABILITIES.appWindowMirror]
+				? [
+						FEATURE_CAPABILITIES.appWindows,
+						FEATURE_CAPABILITIES.appWindowMirror,
+						FEATURE_CAPABILITIES.appWindowAttachments,
+					]
 				: []),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
@@ -1924,4 +1969,13 @@ function entries<T>(
 		return [...(value as ReadonlyMap<string, T>).entries()];
 	}
 	return Object.entries(value as Record<string, T>);
+}
+
+/** A file size for a person to read. */
+function formatByteSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+	if (bytes < 1024 * 1024 * 1024)
+		return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }

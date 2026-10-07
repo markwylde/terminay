@@ -133,6 +133,7 @@ declare module 'node:fs' {
 	}
 	interface Stats {
 		readonly size: number;
+		readonly uid: number;
 		readonly birthtimeMs: number;
 		isFile(): boolean;
 		isDirectory(): boolean;
@@ -183,6 +184,7 @@ declare module 'node:fs' {
 declare module 'node:fs/promises' {
 	interface Stats {
 		readonly size: number;
+		readonly uid: number;
 		readonly mtimeMs: number;
 		readonly birthtimeMs: number;
 		isDirectory(): boolean;
@@ -196,6 +198,12 @@ declare module 'node:fs/promises' {
 			length: number,
 			position: number,
 		): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
+		write(
+			buffer: Uint8Array,
+			offset: number,
+			length: number,
+			position: number,
+		): Promise<{ readonly bytesWritten: number }>;
 		close(): Promise<void>;
 	}
 	interface Dirent {
@@ -204,7 +212,11 @@ declare module 'node:fs/promises' {
 		isFile(): boolean;
 		isSymbolicLink(): boolean;
 	}
-	export function open(path: string, flags: string): Promise<FileHandle>;
+	export function open(
+		path: string,
+		flags: string,
+		mode?: number,
+	): Promise<FileHandle>;
 	export function readFile(path: string): Promise<Buffer>;
 	export function readFile(path: string, encoding: 'utf8'): Promise<string>;
 	export function readlink(path: string): Promise<string>;
