@@ -288,6 +288,12 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				? {}
 				: {
 						canPair: true,
+						// Desktop runs the bundle packaged with it, so the bundle's
+						// version is the application's. A browser session's bundle
+						// is its server's, and names no version here.
+						...(typeof __TERMINAY_VERSION__ === 'string'
+							? { appVersion: __TERMINAY_VERSION__ }
+							: {}),
 						pairingApproval: desktopPairing.approval,
 						pairingProgress: desktopPairing.progress,
 						onPairingHandoff: async ({ pairingUrl, attemptId }) => {
