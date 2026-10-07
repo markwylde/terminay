@@ -235,6 +235,9 @@ export function isUnrecoverableConnectFailure(cause: unknown): boolean {
 		message.includes('re-pairing is required') ||
 		message.includes('revoked') ||
 		message.includes('unknown device') ||
+		// The device already holds every window the server allows. Retrying
+		// changes nothing until one of them closes.
+		message.includes('windows connected to this server') ||
 		message.includes('not trusted')
 	);
 }

@@ -277,7 +277,21 @@ export class DesktopServerOwnedExposure {
 		return this.getStatus();
 	}
 
-	closeConnection(connectionId: string): RemoteAccessStatus {
+	/** Close a live connection. A hosted connection belongs to a device, and
+	 * closing it closes every window that device has open; the device stays
+	 * trusted. */
+	async closeConnection(connectionId: string): Promise<RemoteAccessStatus> {
+		const hosted = this.hostedConnections.find(
+			(connection) => connection.connectionId === connectionId,
+		);
+		if (hosted !== undefined && this.hosted !== undefined) {
+			await this.hosted.closeDevice(hosted.deviceId);
+			this.hostedConnections = this.hostedConnections.filter(
+				(connection) => connection.deviceId !== hosted.deviceId,
+			);
+			this.onStatusChanged?.();
+			return this.getStatus();
+		}
 		this.requireExposure().manager.closePeer(connectionId);
 		return this.getStatus();
 	}
