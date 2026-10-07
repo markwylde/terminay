@@ -2180,7 +2180,13 @@ const ProjectWorkspace = forwardRef<
 		});
 
 		const activateTerminal = useCallback(
-			(panelId: string, sessionId: string) => {
+			(
+				panelId: string,
+				sessionId: string,
+				// Going to a terminal dismisses the error on screen. Being put
+				// back on one is not that: an error raised meanwhile stays.
+				options: { keepError?: boolean } = {},
+			) => {
 				const panel = activateTerminalPanel({
 					api: dockviewApiRef.current,
 					panelId,
@@ -2193,7 +2199,7 @@ const ProjectWorkspace = forwardRef<
 				interactedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 				markTerminalActivityViewed(sessionId);
-				setErrorText(null);
+				if (options.keepError !== true) setErrorText(null);
 				window.requestAnimationFrame(() => {
 					window.dispatchEvent(
 						new CustomEvent('terminay-focus-terminal', {
@@ -3012,9 +3018,11 @@ const ProjectWorkspace = forwardRef<
 
 					requestFrameOrTimeout(publishWorkspaceInventory);
 				} finally {
+					// Closing the editor returns the person to their terminal; it
+					// must not dismiss an error that arrived while it was open.
 					window.requestAnimationFrame(() => {
 						if (sessionId) {
-							activateTerminal(panelId, sessionId);
+							activateTerminal(panelId, sessionId, { keepError: true });
 							return;
 						}
 
