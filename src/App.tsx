@@ -5698,7 +5698,9 @@ function App({
 	}, [ownViewMissing, ownViewStore]);
 	// The host titles the window by its server and adds what the page says it
 	// holds: the projects in this window.
-	const windowTitleDetail = projects.map((project) => project.title).join(', ');
+	// A window with no projects is showing Home.
+	const windowTitleDetail =
+		projects.map((project) => project.title).join(', ') || 'Home';
 	const hostTitlesWindow = hostPresentation?.nativeWindowControls === true;
 	useEffect(() => {
 		// A browser tab keeps the page's own title.

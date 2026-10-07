@@ -73,5 +73,8 @@ export function workspaceWindowTitle(
 		.replace(/\s+/gu, ' ')
 		.trim()
 		.slice(0, TITLE_LIMIT);
-	return detail.length === 0 ? serverLabel : `${serverLabel} - ${detail}`;
+	// Until the workspace names its contents the page's title is its own file
+	// name, which says nothing about the window.
+	if (detail.length === 0 || /\.html?$/iu.test(detail)) return serverLabel;
+	return `${serverLabel} - ${detail}`;
 }
