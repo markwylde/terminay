@@ -87,6 +87,17 @@ test.describe('Home sidebar', () => {
 			homeView(mainWindow).locator('.sidebar-group-tabs'),
 		).toHaveCount(0);
 
+		// Its empty band continues Home's tab strip across the sidebar.
+		const band = await mainWindow
+			.locator('[data-terminay-home-sidebar-band]')
+			.boundingBox();
+		const strip = await homeView(mainWindow)
+			.locator('.dv-tabs-and-actions-container')
+			.first()
+			.boundingBox();
+		expect(band?.y).toBe(strip?.y);
+		expect(band?.height).toBe(strip?.height);
+
 		// One empty-ish project and no automations: the overview says so.
 		await expect(
 			mainWindow.locator(
