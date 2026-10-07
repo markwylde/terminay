@@ -1,4 +1,4 @@
-import { WorkspaceClient, type PanelActivationRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
+import { WorkspaceClient, type PanelActivationRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	parseServerWorkspaceDelta,
@@ -261,6 +261,12 @@ export class WorkspaceSnapshotStore {
 	async moveProject(request: ProjectMoveRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		await this.workspace.moveProject(request, options)
+	}
+
+	/** Move a panel to another project. A terminal panel's live session moves with it. */
+	async movePanel(request: PanelMoveRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.movePanel(request, options)
 	}
 
 	async closeView(viewId: string, options: WorkspaceCommandOptions = {}): Promise<void> {

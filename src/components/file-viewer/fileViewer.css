@@ -1218,6 +1218,40 @@
 	padding: 20px;
 }
 
+.file-preview-html {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.file-preview-html__notice {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 6px 12px;
+	border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+	font-size: 12px;
+	opacity: 0.85;
+}
+
+.file-preview-html__stage {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+}
+
+/* A page with no background of its own expects a browser's white one. */
+.file-preview-html__frame {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	background: #fff;
+	color-scheme: light;
+}
+
 .file-preview-text {
 	flex: 1;
 	min-height: 0;

@@ -121,6 +121,7 @@ import {
 	type WorkspaceCommand,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
@@ -281,6 +282,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
+	/** A terminal's panel was moved to another project and the terminal has
+	 * been re-homed with it. Anything the host issued for the terminal under
+	 * its old project, such as an MCP capability, ends here. */
+	readonly onTerminalRehomed?: (move: TerminalSessionRehome) => void;
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
@@ -442,6 +447,7 @@ export class ServerTerminalAuthority {
 	private readonly workspaceCommandTestRecords:
 		| ServerWorkspaceTestCommandRecord[]
 		| undefined;
+	private projectCreationTestRefusals = 0;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -928,6 +934,7 @@ export class ServerTerminalAuthority {
 				prepareProjectRootUpdate: (projectId, root) =>
 					this.prepareProjectRootUpdate(projectId, root),
 				releaseProject: (projectId) => this.releaseProject(projectId),
+				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
 			agents: this.agents,
@@ -1137,6 +1144,22 @@ export class ServerTerminalAuthority {
 	 * workspace capability from this hook: it can only reset and read its own
 	 * redacted observation buffer through the main-process test IPC seam.
 	 */
+	/**
+	 * Test-only: the server closes every embedded renderer connection, as it
+	 * does when it reaps one. The window is told nothing by this hook; what it
+	 * learns, it learns from its byte endpoint.
+	 */
+	async closeRendererConnectionsForTest(): Promise<number> {
+		const connections = [...this.rendererConnectionsByOwner.values()];
+		await Promise.all(connections.map((connection) => connection.close()));
+		return connections.length;
+	}
+
+	/** Test-only: the server refuses this many of the next project creations. */
+	refuseProjectCreationsForTest(count: number): void {
+		this.projectCreationTestRefusals = count;
+	}
+
 	resetWorkspaceCommandTestRecords(): void {
 		this.workspaceCommandTestRecords?.splice(0);
 	}
@@ -1170,6 +1193,13 @@ export class ServerTerminalAuthority {
 			this.workspaceCommandTestRecords?.push(
 				workspaceCommandTestRecord(envelope.command),
 			);
+			if (
+				envelope.command.type === 'project.create' &&
+				this.projectCreationTestRefusals > 0
+			) {
+				this.projectCreationTestRefusals -= 1;
+				throw new Error('The server refused this project for the test.');
+			}
 			return apply(envelope);
 		};
 	}
@@ -1434,6 +1464,26 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+	}
+
+	/**
+	 * Follow a terminal to the project its panel was moved to. The composition
+	 * has already re-homed the terminal itself; this is the embedded host's own
+	 * bookkeeping, plus whatever the host issued under the old project.
+	 */
+	private rehomeTerminalSession(move: TerminalSessionRehome): void {
+		this.consumers.detachSession({
+			serverId: this.service.serverId,
+			projectId: move.sourceProjectId,
+			sessionId: move.sessionId,
+		});
+		const session = this.sessions.get(move.sessionId);
+		if (session !== undefined)
+			this.sessions.set(move.sessionId, {
+				...session,
+				projectId: move.targetProjectId,
+			});
+		this.options.onTerminalRehomed?.(move);
 	}
 
 	/**

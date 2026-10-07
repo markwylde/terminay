@@ -57,9 +57,26 @@ test('hovering a terminal tab over a project tab does not activate it', () => {
 })
 
 test('the drop moves through the one existing move path', () => {
-	// A second export or adopt call would be a second move implementation.
+	// The server performs the move, and only one function asks it to.
+	assert.equal(app.split('.movePanel(').length - 1, 1)
+	const move = between(app, 'const moveTerminalToProject = useCallback(', '[terminalClientContext?.workspaceSnapshotStore]')
+	assert.match(move, /\.movePanel\(\{ panelId: canonicalPanel\.id, targetProjectId \}\)/)
+	// The move function itself rearranges nothing: a tab changes project only
+	// when reconciliation places it where the confirmed projection says.
+	assert.equal(move.includes('exportTerminalForMove('), false)
+	assert.equal(move.includes('acceptMovedTerminal('), false)
+	assert.equal(move.includes('activateProject('), false)
+	// A refused move forgets that this device asked for it and says why, in
+	// the project the terminal is still in.
+	assert.match(
+		move,
+		/\.catch\(\(error: unknown\) => \{[\s\S]*?pendingTerminalMovesRef\.current\.delete\(sessionId\);[\s\S]*?sourceWorkspace\.reportError\(/,
+	)
 	assert.equal(app.split('.exportTerminalForMove(').length - 1, 1)
-	assert.equal(app.split('.acceptMovedTerminal(movedTerminal)').length - 1, 1)
+	assert.equal(app.split('.acceptMovedTerminal(').length - 1, 1)
+	const reconcile = between(app, 'const runPass = () => {', 'const schedulePass = () => {')
+	assert.ok(reconcile.includes('.exportTerminalForMove('))
+	assert.ok(reconcile.includes('.acceptMovedTerminal('))
 	assert.match(
 		between(app, 'const reportTerminalTabDrag = useCallback(\n\t\t(sourceProjectId', '[moveTerminalToProject]'),
 		/moveTerminalToProject\(\s*ended\.sourceProjectId,\s*ended\.panelId,\s*targetProjectId,\s*\)/,

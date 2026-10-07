@@ -155,6 +155,28 @@ test('normal peer closure terminates incoming work and releases a server connect
   replacementChannel.port2.close()
 })
 
+test('a transport whose far end closes leaves open, ends its reads, and refuses a later send', async () => {
+  const { port1, port2 } = new MessageChannel()
+  const transport = new ServerPortTransport(
+    new ServerScopedMessagePort(port1, 'desktop-local'),
+  )
+  const states = []
+  transport.onStateChange((state) => states.push(state))
+  await transport.open()
+  const pendingRead = transport.incoming[Symbol.asyncIterator]().next()
+
+  // The server ends the connection by closing its end. Nothing is sent.
+  port2.close()
+
+  await assert.rejects(pendingRead, /server port closed/u)
+  assert.equal(transport.state, 'failed')
+  assert.deepEqual(states, ['open', 'failed'])
+  await assert.rejects(
+    transport.send(new Uint8Array([1])),
+    'a request after the far end closed fails as a lost connection',
+  )
+})
+
 class FakeMessagePort {
   onmessage = null
   onmessageerror = null
