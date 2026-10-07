@@ -162,6 +162,7 @@ export * from './terminalService/index.js';
 export * from './types.js';
 export * from './uiBundle/index.js';
 export * from './automationSpaceVisibility.js';
+export * from './folderRoots.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';

@@ -327,6 +327,8 @@ function automationSpaceIds(state: WorkspaceState): ReadonlySet<string> {
 	const ids = new Set<string>();
 	for (const project of Object.values(state.projects))
 		if (isAutomationSpace(project)) ids.add(project.id);
+	for (const folder of Object.values(state.folders))
+		if (ids.has(folder.projectId)) ids.add(folder.id);
 	for (const panel of Object.values(state.panels))
 		if (ids.has(panel.projectId)) ids.add(panel.id);
 	for (const session of Object.values(state.terminalSessions))
@@ -512,6 +514,7 @@ async function applyCommand(
 	const command = await withDefaultProjectRoot(options, requested);
 	enforceProjectClaim(workspace.state, request, command);
 	enforceAutomationSpace(workspace.state, request, command);
+	enforceFolderRules(workspace.state, command);
 	if (
 		command.type === 'project.create' &&
 		options.prepareProjectRootUpdate !== undefined
@@ -687,7 +690,27 @@ function commandProjectIds(
 		case 'panel.reorder':
 		case 'panel.split':
 		case 'panel.activate':
+		case 'folder.create':
+		case 'folder.reorder':
 			return [command.projectId];
+		case 'folder.rename':
+		case 'folder.delete':
+		case 'folder.link.update':
+		case 'folder.offer.set':
+		case 'folder.offer.accept':
+		case 'folder.offer.decline': {
+			const folder = state.folders[command.folderId];
+			return folder === undefined ? [] : [folder.projectId];
+		}
+		case 'panel.moveToFolder': {
+			// A folder move stays inside one project; naming a folder of another
+			// project puts both in scope so a project claim refuses it.
+			const panel = state.panels[command.panelId];
+			const folder = state.folders[command.folderId];
+			return panel === undefined || folder === undefined
+				? []
+				: [panel.projectId, folder.projectId];
+		}
 		case 'panel.create':
 			return [command.panel.projectId];
 		case 'panel.update':
@@ -729,10 +752,16 @@ function projectScopedState(
 			viewOrder: [],
 			views: {},
 			projects: {},
+			folders: {},
 			panels: {},
 			terminalSessions: {},
 		};
 	}
+	const folders = Object.fromEntries(
+		project.folderIds
+			.map((id) => [id, state.folders[id]])
+			.filter(([, folder]) => folder !== undefined),
+	);
 	const view = state.views[project.viewId];
 	if (view === undefined) throw new Error('workspace project view is missing');
 	const panels = Object.fromEntries(
@@ -756,6 +785,7 @@ function projectScopedState(
 			},
 		},
 		projects: { [project.id]: project },
+		folders,
 		panels,
 		terminalSessions,
 	};
@@ -770,6 +800,7 @@ function projectScopedDelta(
 	const visibleIds = new Set([
 		...Object.keys(state.views),
 		...Object.keys(state.projects),
+		...Object.keys(state.folders),
 		...Object.keys(state.panels),
 		...Object.keys(state.terminalSessions),
 	]);
@@ -835,7 +866,35 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
 	if (command.type === 'terminal.markExited') {
 		throw protocolError('forbidden', 'terminal exit marks are host-owned');
 	}
+	// Only the server links a folder to a worktree or records who created one:
+	// both come from its own worktree listing, never from a client (ADR-0050).
+	if (
+		command.type === 'folder.link.update' ||
+		command.type === 'folder.offer.set' ||
+		(command.type === 'folder.create' &&
+			(command.worktree !== undefined ||
+				command.createdByPanelId !== undefined))
+	) {
+		throw protocolError('forbidden', 'folder worktree links are host-owned');
+	}
 	return command as unknown as WorkspaceCommand;
+}
+
+/** A linked folder stands for a worktree that exists. A client removes it by
+ * deleting the worktree; only the server removes the folder itself, once the
+ * worktree is gone. */
+function enforceFolderRules(
+	state: WorkspaceState,
+	command: WorkspaceCommand,
+): void {
+	if (
+		command.type === 'folder.delete' &&
+		state.folders[command.folderId]?.kind === 'linked'
+	)
+		throw protocolError(
+			'forbidden',
+			'a linked folder is removed by deleting its worktree',
+		);
 }
 
 function objectPayload(value: JsonValue): Record<string, JsonValue> {

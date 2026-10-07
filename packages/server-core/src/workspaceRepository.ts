@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { constants, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+	copyFile,
+	mkdir,
+	readFile,
+	rename,
+	writeFile,
+} from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { WorkspaceState } from './workspace.js';
 import {
@@ -17,6 +23,10 @@ export interface WorkspaceStateBackend {
 	 * production backends provide an atomic implementation. */
 	commitSync?(state: WorkspaceState): void;
 	backup?(state: WorkspaceState): Promise<void>;
+	/** Keep what is stored now, untouched, before it is rewritten in a newer
+	 * schema. Called at most once per load, and never replaces a copy an earlier
+	 * upgrade from the same schema already kept. */
+	preserveBeforeUpgrade?(fromSchemaVersion: number): Promise<void>;
 }
 
 export interface RepositoryConflict {
@@ -128,6 +138,13 @@ export class WorkspaceRepository {
 			recoveryChanged
 		) {
 			try {
+				// An older build cannot read the upgraded file, so the stored one is
+				// kept aside first; if that fails the upgrade is not written.
+				if (
+					typeof rawSchemaVersion === 'number' &&
+					rawSchemaVersion !== WORKSPACE_SCHEMA_VERSION
+				)
+					await this.backend.preserveBeforeUpgrade?.(rawSchemaVersion);
 				await this.backend.commit(state);
 			} catch (error) {
 				throw persistenceFailure('persistence_uncommittable', error);
@@ -226,6 +243,17 @@ export class FileWorkspaceStateBackend implements WorkspaceStateBackend {
 		} catch (error) {
 			if ((error as { code?: string }).code === 'ENOENT') return undefined;
 			throw error;
+		}
+	}
+	async preserveBeforeUpgrade(fromSchemaVersion: number): Promise<void> {
+		try {
+			await copyFile(
+				this.filePath,
+				`${this.filePath}.schema-${fromSchemaVersion}.backup`,
+				constants.COPYFILE_EXCL,
+			);
+		} catch (error) {
+			if ((error as { code?: string }).code !== 'EEXIST') throw error;
 		}
 	}
 	async commit(state: WorkspaceState): Promise<void> {

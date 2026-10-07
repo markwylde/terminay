@@ -221,6 +221,7 @@ test("the persisted workspace round-trips the automations kind and still loads k
 
     // Existing data written before the kind existed loads unchanged.
     const legacy = structuredClone(first.workspace.state);
+    for (const folderId of legacy.projects[SPACE].folderIds) delete legacy.folders[folderId];
     delete legacy.projects[SPACE];
     const loaded = migrateWorkspaceState(JSON.parse(JSON.stringify(legacy)), "server-a");
     assert.equal(loaded.projects["project-a"].kind, undefined);
