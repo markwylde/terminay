@@ -35,11 +35,15 @@ const SERVER = 'harness-server';
 const SESSION = 'session-a';
 const PARAMS = new URLSearchParams(location.search);
 const MIRROR = PARAMS.has('mirror');
+/** `?no-attachments` is a connection that does not carry files on a window message. */
+const ATTACHMENTS = !PARAMS.has('no-attachments');
 const ME = `${PARAMS.get('role') ?? 'controller'}-${Math.random().toString(36).slice(2)}`;
 
 type Spec = {
 	title: string;
 	html: string;
+	/** What the document reads as `window.terminay.data`. */
+	data?: unknown;
 	kind?: 'agent' | 'mcp-app';
 	toolInput?: unknown;
 	toolResult?: unknown;
@@ -72,6 +76,8 @@ type Harness = {
 	setPaneSize(width: number, height: number): void;
 	/** A row of the pane's own under the rail, as the phone keyboard's command bar is. */
 	setBottomBar(height: number): void;
+	/** Hold an upload after its first part, as a slow connection would, until released. */
+	setUploadHeld(value: boolean): void;
 	/** Make this page's connection lose part of every large snapshot. */
 	setLossy(value: boolean): void;
 	/** What has been typed into the stand-in terminal. */
@@ -88,6 +94,7 @@ function App() {
 	const calls = useRef<unknown[][]>([]);
 	const mirrorLog = useRef<Harness['mirrorLog']>([]);
 	const lossy = useRef(false);
+	const uploadHeld = useRef(false);
 	const typed = useRef<string[]>([]);
 	const broken = useRef(new Set<string>());
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -114,6 +121,7 @@ function App() {
 					sequence.current = Math.max(sequence.current, Number(action.id.split('_')[1]));
 					contents.current.set(action.id, {
 						html: action.spec.html,
+						...(action.spec.data === undefined ? {} : { data: action.spec.data as never }),
 						...(action.spec.csp === undefined ? {} : { csp: action.spec.csp }),
 						...(action.spec.toolInput === undefined ? {} : { toolInput: action.spec.toolInput as never }),
 						...(action.spec.toolResult === undefined ? {} : { toolResult: action.spec.toolResult as never }),
@@ -237,6 +245,47 @@ function App() {
 				calls.current.push(['sendMessage', id, text]);
 				change(id, 'minimised');
 			},
+			// As the server and its client do together: the files are read from
+			// the view a part at a time, each part acknowledged before the next,
+			// and a message that is stopped delivers nothing.
+			sendMessageWithAttachments: async (
+				id: string,
+				text: string,
+				attachments: readonly { name: string; size: number }[],
+				readPart: (file: number, offset: number, length: number) => Promise<Uint8Array>,
+				options: { signal?: AbortSignal; onProgress?: (sent: number, total: number) => void } = {},
+			) => {
+				calls.current.push(['sendAttachments', id, text, attachments]);
+				const total = attachments.reduce((sum, file) => sum + file.size, 0);
+				const received: { name: string; size: number; sum: number; largestPart: number }[] = [];
+				let sent = 0;
+				try {
+					for (const [file, { name, size }] of attachments.entries()) {
+						let sum = 0;
+						let largestPart = 0;
+						for (let offset = 0; offset < size; ) {
+							options.signal?.throwIfAborted();
+							const part = await readPart(file, offset, Math.min(256 * 1024, size - offset));
+							for (const byte of part) sum = (sum + byte) >>> 0;
+							largestPart = Math.max(largestPart, part.byteLength);
+							offset += part.byteLength;
+							sent += part.byteLength;
+							options.onProgress?.(sent, total);
+							while (uploadHeld.current) {
+								options.signal?.throwIfAborted();
+								await new Promise((resolve) => setTimeout(resolve, 20));
+							}
+						}
+						received.push({ name, size, sum, largestPart });
+					}
+					options.signal?.throwIfAborted();
+				} catch (error) {
+					calls.current.push(['attachmentsCancelled', id]);
+					throw error;
+				}
+				calls.current.push(['attachmentsDelivered', id, text, received]);
+				change(id, 'minimised');
+			},
 			updateContext: async (id: string, text: string) => {
 				calls.current.push(['updateContext', id, text]);
 			},
@@ -310,6 +359,9 @@ function App() {
 			setLossy: (value) => {
 				lossy.current = value;
 			},
+			setUploadHeld: (value) => {
+				uploadHeld.current = value;
+			},
 			windows: () => latest.current.map(({ id, title, state }) => ({ id, title, state })),
 		};
 		(window as unknown as { harness: Harness }).harness = harness;
@@ -343,7 +395,14 @@ function App() {
 			new Map<string, ServerAppWindows>([
 				[
 					SERVER,
-					{ serverId: SERVER, windows, client, loaded: true, ...(mirror === undefined ? {} : { mirror }) },
+					{
+						serverId: SERVER,
+						windows,
+						client,
+						loaded: true,
+						attachments: ATTACHMENTS,
+						...(mirror === undefined ? {} : { mirror }),
+					},
 				],
 			]),
 		[windows, client, mirror],

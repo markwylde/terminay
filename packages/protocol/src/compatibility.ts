@@ -22,6 +22,8 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	appWindows: 'app-windows.v1',
 	/** A terminal's app-window views mirrored live to the clients not controlling it. */
 	appWindowMirror: 'app-window-mirror.v1',
+	/** Files a person attaches to a message they send from an app window. */
+	appWindowAttachments: 'app-window-attachments.v1',
 	recording: 'recording.v1',
 	dictation: 'dictation.v1',
 	extensions: 'extensions.v1',
@@ -63,6 +65,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.mcpApprovals,
 			FEATURE_CAPABILITIES.appWindows,
 			FEATURE_CAPABILITIES.appWindowMirror,
+			FEATURE_CAPABILITIES.appWindowAttachments,
 			FEATURE_CAPABILITIES.recording,
 			FEATURE_CAPABILITIES.dictation,
 			FEATURE_CAPABILITIES.extensions,

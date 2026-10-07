@@ -14,6 +14,25 @@ const RESOURCE_READY = 'ui/notifications/sandbox-resource-ready';
 const MAX_VIEW_TEXT_CHARS = 16 * 1024;
 const MAX_URL_CHARS = 4096;
 const MIN_LINK_INTERVAL_MS = 1000;
+const ATTACHMENT_PART = 'terminay/attachment-part';
+/** Files one message may carry. */
+export const MAX_VIEW_ATTACHMENTS = 16;
+const MAX_ATTACHMENT_NAME_CHARS = 255;
+/** The most the host asks a view for at once. */
+const MAX_ATTACHMENT_PART_BYTES = 256 * 1024;
+
+/** A file a view offers with a message. */
+export interface ViewAttachment {
+	readonly name: string;
+	readonly size: number;
+}
+
+/** Read one part of an offered file from the view. */
+export type ViewAttachmentReader = (
+	file: number,
+	offset: number,
+	length: number,
+) => Promise<Uint8Array>;
 
 export type ViewDisplayMode = 'pip' | 'fullscreen';
 
@@ -35,6 +54,8 @@ export interface ViewBridgeContent {
 	readonly html: string;
 	readonly allow: string;
 	readonly source: 'agent' | 'mcp-app';
+	/** Whether this connection carries files on a window message. */
+	readonly attachments?: boolean;
 	readonly tool?: unknown;
 	readonly toolInput?: unknown;
 	readonly toolResult?: unknown;
@@ -48,6 +69,15 @@ export interface ViewBridgeHost {
 	/** The view reported its content height. */
 	resized(height: number): void;
 	sendMessage(text: string): Promise<void>;
+	/**
+	 * Send a message with files. The host decides whether to send (it may ask
+	 * the person first) and reads each file from the view a part at a time.
+	 */
+	sendAttachments?(
+		text: string,
+		attachments: readonly ViewAttachment[],
+		readPart: ViewAttachmentReader,
+	): Promise<void>;
 	updateContext(text: string): Promise<void>;
 	/** An MCP App view calling its own server. */
 	viewRequest(
@@ -77,6 +107,15 @@ export class AppViewBridge {
 	private lastContext = '';
 	private nextHostId = 0;
 	private lastLinkAt = 0;
+	/** Parts the host has asked the view for and not yet had. */
+	private readonly parts = new Map<
+		string,
+		{
+			readonly length: number;
+			readonly resolve: (bytes: Uint8Array) => void;
+			readonly reject: (error: Error) => void;
+		}
+	>();
 	private content: ViewBridgeContent;
 	private readonly host: ViewBridgeHost;
 
@@ -89,8 +128,11 @@ export class AppViewBridge {
 	async handle(message: unknown): Promise<void> {
 		if (!isRpc(message)) return;
 		const { id, method } = message;
-		// A reply to something the host asked (teardown): nothing to do.
-		if (method === undefined) return;
+		// A reply to something the host asked: a part of a file, or teardown.
+		if (method === undefined) {
+			this.partArrived(message);
+			return;
+		}
 		const params = isRecord(message.params) ? message.params : {};
 		const reply = (result: unknown): void => {
 			if (id !== undefined) this.host.post({ jsonrpc: '2.0', id, result });
@@ -152,6 +194,36 @@ export class AppViewBridge {
 				return;
 			}
 			case 'ui/message': {
+				if (params.attachments !== undefined) {
+					const sendAttachments = this.host.sendAttachments?.bind(this.host);
+					if (
+						this.content.source !== 'agent' ||
+						this.content.attachments !== true ||
+						sendAttachments === undefined
+					)
+						return fail(-32000, 'Attachments are unavailable');
+					const offered = offeredAttachments(params.attachments);
+					// With a file to send, the text may be empty.
+					const body = attachmentMessageText(params.content);
+					if (offered === undefined || body === undefined)
+						return fail(-32602, 'Invalid message format');
+					try {
+						await sendAttachments(
+							body,
+							offered.map(({ name, size }) => ({ name, size })),
+							(file, offset, length) => {
+								const id = offered[file]?.id;
+								return id === undefined
+									? Promise.reject(new Error('No such attachment'))
+									: this.requestPart(id, offset, length);
+							},
+						);
+						reply({});
+					} catch (error) {
+						fail(-32000, errorText(error, 'Message sending denied'));
+					}
+					return;
+				}
 				const text = messageText(params.content);
 				if (text === undefined) return fail(-32602, 'Invalid message format');
 				try {
@@ -242,8 +314,53 @@ export class AppViewBridge {
 		});
 	}
 
+	/** Ask the view for one part of a file it offered with a message. */
+	private requestPart(id: string, offset: number, length: number): Promise<Uint8Array> {
+		if (
+			!Number.isSafeInteger(offset) ||
+			offset < 0 ||
+			!Number.isSafeInteger(length) ||
+			length <= 0 ||
+			length > MAX_ATTACHMENT_PART_BYTES
+		)
+			return Promise.reject(new RangeError('attachment part is invalid'));
+		this.nextHostId += 1;
+		const requestId = `host-${this.nextHostId}`;
+		return new Promise((resolve, reject) => {
+			this.parts.set(requestId, { length, resolve, reject });
+			this.host.post({
+				jsonrpc: '2.0',
+				id: requestId,
+				method: ATTACHMENT_PART,
+				params: { id, offset, length },
+			});
+		});
+	}
+
+	/** A view answered a request for part of a file. It is untrusted: it gets
+	 * exactly the bytes asked for accepted, and nothing else. */
+	private partArrived(message: Rpc): void {
+		if (typeof message.id !== 'string') return;
+		const waiting = this.parts.get(message.id);
+		if (waiting === undefined) return;
+		this.parts.delete(message.id);
+		const result = (message as { readonly result?: unknown }).result;
+		const bytes = isRecord(result) ? result.bytes : undefined;
+		if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== waiting.length)
+			waiting.reject(new Error('The window did not provide the file'));
+		else waiting.resolve(new Uint8Array(bytes));
+	}
+
+	/** The view is gone: whatever was being read from it will never arrive. */
+	abandonParts(): void {
+		const waiting = [...this.parts.values()];
+		this.parts.clear();
+		for (const part of waiting) part.reject(new Error('The window closed'));
+	}
+
 	/** Tell the view it is about to be removed. */
 	teardown(reason: string): void {
+		this.abandonParts();
 		if (!this.initialized) return;
 		this.nextHostId += 1;
 		this.host.post({
@@ -315,6 +432,37 @@ function isRpc(value: unknown): value is Rpc {
 function messageText(content: unknown): string | undefined {
 	if (!isRecord(content) || content.type !== 'text') return undefined;
 	return boundedText(content.text);
+}
+
+/** The text of a message that carries files: bounded as any message is, and allowed to be empty. */
+function attachmentMessageText(content: unknown): string | undefined {
+	if (!isRecord(content) || content.type !== 'text') return undefined;
+	return content.text === '' ? '' : boundedText(content.text);
+}
+
+function offeredAttachments(
+	value: unknown,
+): readonly (ViewAttachment & { readonly id: string })[] | undefined {
+	if (!Array.isArray(value) || value.length === 0 || value.length > MAX_VIEW_ATTACHMENTS)
+		return undefined;
+	const offered: (ViewAttachment & { id: string })[] = [];
+	for (const entry of value) {
+		if (
+			!isRecord(entry) ||
+			typeof entry.id !== 'string' ||
+			entry.id.length === 0 ||
+			entry.id.length > 64 ||
+			typeof entry.name !== 'string' ||
+			entry.name.length === 0 ||
+			entry.name.length > MAX_ATTACHMENT_NAME_CHARS ||
+			typeof entry.size !== 'number' ||
+			!Number.isSafeInteger(entry.size) ||
+			entry.size < 0
+		)
+			return undefined;
+		offered.push({ id: entry.id, name: entry.name, size: entry.size });
+	}
+	return offered;
 }
 
 function contextText(params: Record<string, unknown>): string | undefined {

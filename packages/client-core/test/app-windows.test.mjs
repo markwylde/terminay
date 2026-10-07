@@ -83,6 +83,12 @@ test("content decodes the document from the body and carries the tool data", asy
   assert.deepEqual(content.toolInput, { shape: "circle" });
   assert.deepEqual(content.toolResult, { content: [{ type: "text", text: "drawn" }] });
   assert.equal("toolCancelled" in content, false);
+  // A window shown without data has none; one shown with data carries it, null included.
+  assert.equal("data" in content, false);
+  for (const data of [{ questions: ["Ship it?"] }, null, 0, ""]) {
+    const withData = transport({ [APP_WINDOW_OPERATIONS.content]: { result: { window: window() }, body: new TextEncoder().encode(JSON.stringify({ html: "<p>q</p>", data })) } });
+    assert.deepEqual((await new AppWindowClient(withData).content("win_1")).data, data);
+  }
   assert.deepEqual(fake.calls, [["queryWithBody", APP_WINDOW_OPERATIONS.content, { windowId: "win_1" }]]);
   // A body that is not the expected document is refused, not rendered.
   for (const body of ["<h1>raw html</h1>", JSON.stringify({ tool: {} }), JSON.stringify({ html: 7 })]) {
@@ -152,4 +158,65 @@ test("onChanged follows the server event until unsubscribed", () => {
   assert.equal(seen, 1);
   const { subscribe: _subscribe, ...withoutSubscriptions } = fake;
   assert.throws(() => new AppWindowClient(withoutSubscriptions).onChanged(() => {}), /unavailable/);
+});
+
+test("a message with attachments is begun, sent in acknowledged parts, and finished; a failure cancels it", async () => {
+  const PART = 256 * 1024;
+  const calls = [];
+  const fail = { at: undefined };
+  const fake = {
+    command: async (operation, payload) => {
+      calls.push([operation, payload]);
+      if (operation === fail.at) throw new Error("refused");
+      return operation === APP_WINDOW_OPERATIONS.messageBegin ? { uploadId: "up_1" } : {};
+    },
+    commandWithBody: async (operation, payload, body) => {
+      calls.push([operation, payload, body.byteLength]);
+      if (operation === fail.at) throw new Error("refused");
+      return {};
+    },
+  };
+  const client = new AppWindowClient(fake);
+  const files = [{ name: "photo.jpg", size: PART + 10 }, { name: "empty.txt", size: 0 }, { name: "note.txt", size: 3 }];
+  const reads = [];
+  const read = async (file, offset, length) => { reads.push([file, offset, length]); return new Uint8Array(length); };
+  const progress = [];
+  await client.sendMessageWithAttachments("win_1", "", files, read, { onProgress: (sent, total) => progress.push([sent, total]) });
+  assert.deepEqual(reads, [[0, 0, PART], [0, PART, 10], [2, 0, 3]]);
+  assert.deepEqual(calls, [
+    [APP_WINDOW_OPERATIONS.messageBegin, { windowId: "win_1", text: "", attachments: files }],
+    [APP_WINDOW_OPERATIONS.messagePart, { windowId: "win_1", uploadId: "up_1", file: 0, offset: 0 }, PART],
+    [APP_WINDOW_OPERATIONS.messagePart, { windowId: "win_1", uploadId: "up_1", file: 0, offset: PART }, 10],
+    [APP_WINDOW_OPERATIONS.messagePart, { windowId: "win_1", uploadId: "up_1", file: 2, offset: 0 }, 3],
+    [APP_WINDOW_OPERATIONS.messageFinish, { windowId: "win_1", uploadId: "up_1" }],
+  ]);
+  assert.deepEqual(progress, [[PART, PART + 13], [PART + 10, PART + 13], [PART + 13, PART + 13]]);
+
+  // A refused part, a view that returns the wrong bytes, and an abort each cancel the upload.
+  for (const attempt of [
+    () => { fail.at = APP_WINDOW_OPERATIONS.messagePart; return client.sendMessageWithAttachments("win_1", "hi", files, read); },
+    () => { fail.at = undefined; return client.sendMessageWithAttachments("win_1", "hi", files, async () => new Uint8Array(PART + 1)); },
+    () => { fail.at = undefined; const stop = new AbortController(); return client.sendMessageWithAttachments("win_1", "hi", files, async (_file, _offset, length) => { stop.abort(); return new Uint8Array(length); }, { signal: stop.signal }); },
+  ]) {
+    calls.length = 0;
+    await assert.rejects(attempt());
+    assert.deepEqual(calls.at(-1), [APP_WINDOW_OPERATIONS.messageCancel, { windowId: "win_1", uploadId: "up_1" }]);
+    assert.ok(!calls.some(([operation]) => operation === APP_WINDOW_OPERATIONS.messageFinish));
+  }
+
+  // A refused begin uploads nothing and has nothing to cancel.
+  calls.length = 0;
+  fail.at = APP_WINDOW_OPERATIONS.messageBegin;
+  await assert.rejects(client.sendMessageWithAttachments("win_1", "hi", files, read));
+  assert.equal(calls.length, 1);
+
+  // Nothing is sent for a list the server would refuse anyway.
+  calls.length = 0;
+  fail.at = undefined;
+  await assert.rejects(client.sendMessageWithAttachments("win_1", "hi", [], read), TypeError);
+  await assert.rejects(client.sendMessageWithAttachments("win_1", "hi", Array.from({ length: 17 }, () => files[2]), read), TypeError);
+  await assert.rejects(client.sendMessageWithAttachments("win_1", "hi", [{ name: "", size: 1 }], read), TypeError);
+  await assert.rejects(client.sendMessageWithAttachments("win_1", "hi", [{ name: "a", size: -1 }], read), TypeError);
+  await assert.rejects(new AppWindowClient({ command: fake.command }).sendMessageWithAttachments("win_1", "hi", files, read), /unavailable/);
+  assert.equal(calls.length, 0);
 });

@@ -1,4 +1,5 @@
-import { writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { FrameLocator, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
@@ -67,6 +68,10 @@ const HOSTILE = `
 <script>
 // First of all, before anyone could have touched this view: type into the terminal.
 parent.postMessage({ jsonrpc: '2.0', id: 'm1', method: 'ui/message', params: { role: 'user', content: { type: 'text', text: 'typed-by-the-hostile-view' } } }, '*');
+// And the same with a file attached, naming where it would like the file to go.
+parent.postMessage({ jsonrpc: '2.0', id: 'm2', method: 'ui/message', params: { role: 'user', content: { type: 'text', text: 'file-from-the-hostile-view' }, attachments: [{ id: 'f1', name: '../../hostile-view-attachment.txt', size: 4 }] } }, '*');
+// And answers to requests for parts of a file that nobody made.
+parent.postMessage({ jsonrpc: '2.0', id: 'host-1', result: { bytes: new ArrayBuffer(4) } }, '*');
 (async () => {
 	const report = { origin: self.origin, hostBridge: typeof window.terminayHost };
 	try { report.parentDom = String(parent.parent.document.title); } catch (error) { report.parentDom = 'denied'; }
@@ -288,6 +293,56 @@ test('an agent shows its own HTML in a window that minimises to an edge tab', as
 	await expect(windowTitled(mainWindow, 'Replaced')).toHaveCount(0);
 });
 
+// A view that sends a picture with its answer. The text ends in a backslash so
+// the shell reads the attachment line as part of the same echo.
+const ATTACH = `
+<p id="can"></p>
+<button id="go">Send</button>
+<output id="sent"></output>
+<script>
+	document.getElementById('can').textContent = String(window.terminay.attachments);
+	document.getElementById('go').addEventListener('click', () => {
+		const bytes = new Uint8Array(3 * 1024 * 1024);
+		for (let index = 0; index < bytes.length; index += 1024) bytes[index] = (index / 1024) % 251;
+		window.terminay
+			.sendMessage('echo got-the-file \\\\', { files: [new File([bytes], 'screen shot.png', { type: 'image/png' })] })
+			.then((result) => 'sent ' + JSON.stringify(result), (error) => 'refused: ' + error.message)
+			.then((outcome) => { document.getElementById('sent').textContent = outcome; });
+	});
+</script>`;
+
+test('a file attached to a window message is saved by the server and its path typed into the terminal', async ({
+	mainWindow,
+	userDataDir,
+}) => {
+	test.setTimeout(120_000);
+	const script = path.join(userDataDir, 'app-window-attach.mjs');
+	const params = path.join(userDataDir, 'app-window-attach.json');
+	await writeFile(script, MCP_SCRIPT);
+	await writeFile(params, JSON.stringify({ title: 'Attach', html: ATTACH }));
+	await submitTerminalCommand(
+		mainWindow,
+		`'${process.execPath}' '${script}' show_window '${params}'`,
+		activeTerminalPanel(mainWindow),
+	);
+	const attach = windowTitled(mainWindow, 'Attach');
+	await expect(view(attach).locator('#can')).toHaveText('true');
+	await settled(attach);
+	await view(attach).locator('#go').click();
+	// The view is told it was delivered, and nothing about where the file went.
+	await expect(view(attach).locator('#sent')).toHaveText('sent {}');
+	await expect(attach).toHaveAttribute('data-placement', 'tab');
+	// The terminal was given the text and the path, as one submission.
+	const attached = /got-the-file\s+Attached: (\/[^\s]*?terminay-attachments\/[0-9a-f]{16}-screen_shot\.png)/u;
+	await expect(rows(mainWindow)).toContainText(attached);
+	const [, file] = attached.exec((await rows(mainWindow).textContent()) ?? '') ?? [];
+	const written = await readFile(file as string);
+	expect(written.byteLength).toBe(3 * 1024 * 1024);
+	for (const index of [0, 1024, 250 * 1024, 251 * 1024, 3 * 1024 * 1024 - 1024])
+		expect(written[index]).toBe((index / 1024) % 251);
+	expect(written[1]).toBe(0);
+});
+
 test('a window that arrives while another project is in front stays with its own project', async ({
 	mainWindow,
 	userDataDir,
@@ -412,6 +467,10 @@ test('a hostile view cannot reach the workspace, navigate it, or issue host comm
 	await expect(activeTerminalPanel(mainWindow)).toBeVisible();
 	// Nothing was typed into the terminal, and nothing was downloaded.
 	await expect(rows(mainWindow)).not.toContainText('typed-by-the-hostile-view');
+	await expect(rows(mainWindow)).not.toContainText('file-from-the-hostile-view');
+	await expect(hostile.locator('.app-window__send')).toHaveCount(0);
+	const scratch = await readdir(path.join(os.tmpdir(), 'terminay-attachments')).catch(() => [] as string[]);
+	expect(scratch.filter((name) => name.includes('hostile-view-attachment'))).toEqual([]);
 	expect(downloads).toBe(0);
 	// The proxy itself has an opaque origin and no host bridge either.
 	const proxy = hostile.frameLocator('.app-window__frame');

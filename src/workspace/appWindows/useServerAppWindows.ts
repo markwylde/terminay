@@ -8,6 +8,7 @@
  */
 
 import {
+	APP_WINDOW_ATTACHMENTS_CAPABILITY,
 	APP_WINDOW_MIRROR_CAPABILITY,
 	APP_WINDOWS_CAPABILITY,
 	type AppWindow,
@@ -39,6 +40,8 @@ export type ServerAppWindows = Readonly<{
 	client: AppWindowClient;
 	/** Present when this server mirrors views to the clients not in control. */
 	mirror?: AppWindowMirrorHub;
+	/** Whether a window message may carry files on this connection. */
+	attachments: boolean;
 	/** False until the first list has been read from this server. */
 	loaded: boolean;
 }>;
@@ -63,7 +66,11 @@ function startController(
 			// A transport without subscriptions shows windows without mirrors.
 		}
 	}
-	const shared = mirror === undefined ? {} : { mirror };
+	const shared = {
+		attachments:
+			entry.capabilities?.includes(APP_WINDOW_ATTACHMENTS_CAPABILITY) === true,
+		...(mirror === undefined ? {} : { mirror }),
+	};
 	const loader = createWindowLoader<AppWindow>({
 		list: () => client.list(),
 		publish: (windows, loaded) =>

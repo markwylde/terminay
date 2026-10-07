@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	buildViewDocument,
+	inertJsonLiteral,
 	viewAllowAttribute,
 	viewContentSecurityPolicy,
 } from './viewDocument.ts';
@@ -121,6 +122,57 @@ test('only an MCP App may be granted the permissions its resource asked for', ()
 	);
 	assert.equal(viewAllowAttribute({ kind: 'mcp-app' }, undefined), '');
 	assert.equal(viewAllowAttribute({ kind: 'agent' }, { camera: {} }), '');
+});
+
+test("window data reaches an agent-authored document as a value and never as markup or code", () => {
+	const hostile = {
+		markup: '</script><script>alert(1)</script><!--',
+		separators: 'a\u2028b\u2029c',
+		entity: '&lt;',
+		__proto__: { polluted: true },
+		nested: [1, { deep: 'x' }],
+	};
+	const literal = inertJsonLiteral(hostile);
+	assert.ok(literal !== undefined);
+	for (const forbidden of ['<', '>', '&', '\u2028', '\u2029'])
+		assert.ok(!literal.includes(forbidden), `literal contains ${JSON.stringify(forbidden)}`);
+	// Evaluated as script, it is exactly the value that was given.
+	const value = new Function(`return ${literal}`)() as typeof hostile;
+	assert.deepEqual(JSON.parse(JSON.stringify(value)), JSON.parse(JSON.stringify(hostile)));
+	assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+	assert.equal(Object.getPrototypeOf(value), Object.prototype);
+
+	const built = buildViewDocument({
+		html: '<!doctype html><script>document.title = String(window.terminay.data.nested.length)</script>',
+		source: { kind: 'agent' },
+		data: hostile,
+	});
+	// The data is in scope of the bootstrap, ahead of the author's script.
+	const dataAt = built.html.indexOf('const terminayData=JSON.parse(');
+	assert.ok(dataAt > 0);
+	assert.ok(dataAt < built.html.indexOf('document.title'));
+	// Nothing in the data closed the bootstrap's script element early.
+	assert.ok(!built.html.includes('<script>alert(1)'));
+	assert.equal(built.html.split('</script>').length, buildViewDocument({ html: '<!doctype html><script>document.title = String(window.terminay.data.nested.length)</script>', source: { kind: 'agent' } }).html.split('</script>').length);
+});
+
+test('a document without data, and an MCP App view, get no data in scope', () => {
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' } }).html.includes('terminayData='));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'mcp-app' }, data: { a: 1 } }).html.includes('terminayData'));
+	assert.equal(inertJsonLiteral(undefined), undefined);
+	assert.equal(inertJsonLiteral(() => 1), undefined);
+	assert.equal(inertJsonLiteral(null), 'JSON.parse("null")');
+});
+
+test('an agent-authored view is told whether a message may carry files, and an MCP App view is not', () => {
+	const offered = buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: true }).html;
+	assert.ok(offered.includes('const terminayAttachments=true;'));
+	const both = buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: true, data: { a: 1 } }).html;
+	assert.ok(both.includes('const terminayData=JSON.parse('));
+	assert.ok(both.includes('const terminayAttachments=true;'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' } }).html.includes('terminayAttachments=true'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'agent' }, attachments: false }).html.includes('terminayAttachments=true'));
+	assert.ok(!buildViewDocument({ html: '<p>x</p>', source: { kind: 'mcp-app' }, attachments: true }).html.includes('terminayAttachments'));
 });
 
 test('a previewed project file may reach nothing and cannot widen that', () => {
