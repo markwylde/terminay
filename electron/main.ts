@@ -5838,6 +5838,25 @@ if (process.env.TERMINAY_TEST === '1') {
 		serverTerminalAuthority.resetWorkspaceCommandTestRecords();
 	});
 
+	ipcMain.handle(
+		'test:refuse-project-creations',
+		(event, count: unknown) => {
+			assertBoundServerUiEvent(event);
+			if (!serverTerminalAuthority)
+				throw new Error('embedded server is unavailable');
+			if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)
+				throw new TypeError('refusal count is invalid');
+			serverTerminalAuthority.refuseProjectCreationsForTest(count);
+		},
+	);
+
+	ipcMain.handle('test:close-renderer-connections', async (event) => {
+		assertBoundServerUiEvent(event);
+		if (!serverTerminalAuthority)
+			throw new Error('embedded server is unavailable');
+		return await serverTerminalAuthority.closeRendererConnectionsForTest();
+	});
+
 	ipcMain.handle('test:get-workspace-command-records', (event) => {
 		assertBoundServerUiEvent(event);
 		if (!serverTerminalAuthority)

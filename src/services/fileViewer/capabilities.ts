@@ -28,6 +28,7 @@ const IMAGE_EXTENSIONS = new Set([
   '.webp',
 ])
 const PDF_EXTENSIONS = new Set(['.pdf'])
+const HTML_EXTENSIONS = new Set(['.html', '.htm', '.xhtml'])
 const TEXT_EXTENSIONS = new Set([
   '.c',
   '.cc',
@@ -39,6 +40,7 @@ const TEXT_EXTENSIONS = new Set([
   '.go',
   '.graphql',
   '.h',
+  '.htm',
   '.html',
   '.ini',
   '.java',
@@ -60,6 +62,7 @@ const TEXT_EXTENSIONS = new Set([
   '.ts',
   '.tsx',
   '.txt',
+  '.xhtml',
   '.xml',
   '.yaml',
   '.yml',
@@ -76,6 +79,10 @@ export function detectPreviewKind(file: FileInfo): FilePreviewCapabilities['prev
 
   if (MARKDOWN_EXTENSIONS.has(file.extension)) {
     return 'markdown'
+  }
+
+  if (HTML_EXTENSIONS.has(file.extension) && !file.isBinary) {
+    return 'html'
   }
 
   if (!file.isBinary) {
@@ -108,6 +115,7 @@ function resolveViewModes(input: {
   canEditText: boolean
   canPreview: boolean
   canTasks: boolean
+  previewLeads: boolean
 }): Pick<FilePreviewCapabilities, 'primaryModes' | 'secondaryModes'> {
   if (!input.canEditText) {
     const primaryModes: FileViewerMode[] = []
@@ -118,17 +126,25 @@ function resolveViewModes(input: {
 
   const primaryModes: FileViewerMode[] = input.canTasks
     ? [...(input.canPreview ? (['preview'] as const) : []), 'tasks', 'text']
-    : ['text', ...(input.canPreview ? (['preview'] as const) : [])]
+    : input.previewLeads && input.canPreview
+      ? ['preview', 'text']
+      : ['text', ...(input.canPreview ? (['preview'] as const) : [])]
   if (input.canDiff) primaryModes.push('diff')
   return { primaryModes, secondaryModes: input.canEditHex ? ['hex'] : [] }
 }
 
-export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities {
+export function detectFileCapabilities(
+  file: FileInfo,
+  host: { /** Whether this host can run the sandbox a page preview needs. */ pagePreview?: boolean } = {},
+): FilePreviewCapabilities {
   const serverCapabilities = file.viewerCapabilities
   const previewKind = serverCapabilities?.previewKind ?? detectPreviewKind(file)
-  const canPreview = serverCapabilities === undefined
+  // A page is rendered in the sandbox or not at all, so a host without the
+  // sandbox has no Preview for it and the file opens in Text.
+  const pagePreviewUnavailable = previewKind === 'html' && host.pagePreview === false
+  const canPreview = !pagePreviewUnavailable && (serverCapabilities === undefined
     ? previewKind !== 'unsupported' && previewKind !== 'hex'
-    : serverCapabilities.safePreview
+    : serverCapabilities.safePreview)
   const canTasks = previewKind === 'markdown'
   const isBinary = serverCapabilities?.isBinary ?? (file.isBinary && !isTextLikeFile(file))
   const canEditText = !file.isDirectory && (serverCapabilities?.canEditText ?? !isBinary)
@@ -141,6 +157,7 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
     canEditText,
     canPreview,
     canTasks,
+    previewLeads: previewKind === 'html',
   })
 
   const offered = (mode: FileViewerMode) =>
@@ -148,7 +165,7 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
   const preferredMode = serverCapabilities?.preferredMode
   const defaultMode: FileViewerMode = preferredMode !== undefined && offered(preferredMode)
     ? preferredMode
-    : canTasks && canPreview
+    : (canTasks || (previewKind === 'html' && serverCapabilities === undefined)) && canPreview
       ? 'preview'
       : canEditText
         ? 'text'

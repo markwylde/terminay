@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CanonicalProjectPathResolver, FileCatalog, FileServiceError } from "../dist/fileService/index.js";
 
-function memoryCatalog() {
+function memoryCatalog(catalogOptions = {}) {
   const entries = new Map([
     ["/project", { isDirectory: true, size: 0 }],
     ["/project/src", { isDirectory: true, size: 0 }],
@@ -15,6 +15,10 @@ function memoryCatalog() {
     ["/project/bad.md", { isFile: true, size: 1, mtimeMs: 15 }],
     ["/project/notes.customunknown", { isFile: true, size: 24, mtimeMs: 15 }],
     ["/project/huge.txt", { isFile: true, size: 100 * 1024 * 1024 + 1, mtimeMs: 16 }],
+    ["/project/index.html", { isFile: true, size: 22, mtimeMs: 17 }],
+    ["/project/page.htm", { isFile: true, size: 22, mtimeMs: 17 }],
+    ["/project/doc.xhtml", { isFile: true, size: 22, mtimeMs: 17 }],
+    ["/project/binary.html", { isFile: true, size: 3, mtimeMs: 17 }],
     ["/project/node_modules", { isDirectory: true, size: 0 }],
     ["/project/node_modules/ignored.js", { isFile: true, size: 99 }],
     ["/outside", { isDirectory: true, size: 0 }],
@@ -45,6 +49,10 @@ function memoryCatalog() {
         "/project/blob.bin": new Uint8Array([0, 1, 2]),
         "/project/bad.md": new Uint8Array([0xff]),
         "/project/notes.customunknown": new TextEncoder().encode("unknown but valid text\n"),
+        "/project/index.html": new TextEncoder().encode("<!doctype html><p>hi\n"),
+        "/project/page.htm": new TextEncoder().encode("<!doctype html><p>hi\n"),
+        "/project/doc.xhtml": new TextEncoder().encode("<!doctype html><p>hi\n"),
+        "/project/binary.html": new Uint8Array([0, 1, 2]),
       };
       return (contents[path] ?? new Uint8Array()).slice(offset, offset + length);
     },
@@ -54,7 +62,7 @@ function memoryCatalog() {
     remove(path) { if (links.delete(path)) return; entries.delete(path); children.delete(path); },
   };
   const resolver = new CanonicalProjectPathResolver("/project", storage);
-  return { catalog: new FileCatalog(resolver, storage, { maxEntries: 32, maxDepth: 8 }), storage };
+  return { catalog: new FileCatalog(resolver, storage, { maxEntries: 32, maxDepth: 8, ...catalogOptions }), storage };
 }
 
 test("catalog lists canonical metadata with bounded pagination and marks escaped symlinks", async () => {
@@ -158,4 +166,39 @@ test("catalog preview metadata is canonical, bounded, and content-free", async (
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(() => catalog.previewMetadata("README.md", { signal: controller.signal }), /aborted/i);
+});
+
+test("catalog classifies HTML as a page preview for a client that renders one", async () => {
+  const { catalog } = memoryCatalog();
+  const accept = { acceptPreviewKinds: ["html"] };
+  for (const name of ["index.html", "page.htm", "doc.xhtml"]) {
+    const page = await catalog.previewMetadata(name, accept);
+    assert.equal(page.previewKind, "html", name);
+    assert.equal(page.isBinary, false, name);
+    assert.equal(page.canEditText, true, name);
+    assert.equal(page.safePreview, true, name);
+    assert.equal(page.preferredMode, "preview", name);
+  }
+  assert.equal((await catalog.previewMetadata("doc.xhtml", accept)).mimeType, "application/xhtml+xml");
+
+  // A client that predates the kind rejects a snapshot carrying it, so it is
+  // told what it was always told: this is text, and it opens in Text.
+  for (const options of [undefined, {}, { acceptPreviewKinds: "html" }, { acceptPreviewKinds: ["markdown"] }]) {
+    const page = await catalog.previewMetadata("index.html", options);
+    assert.equal(page.previewKind, "text");
+    assert.equal(page.preferredMode, "text");
+  }
+
+  const binary = await catalog.previewMetadata("binary.html", accept);
+  assert.equal(binary.previewKind, "hex");
+  assert.equal(binary.canEditText, false);
+});
+
+test("catalog withholds the page preview from an HTML file over the preview limit", async () => {
+  const { catalog } = memoryCatalog({ maxPreviewBytes: 8 });
+  const page = await catalog.previewMetadata("index.html", { acceptPreviewKinds: ["html"] });
+  assert.equal(page.previewKind, "text");
+  assert.equal(page.safePreview, false);
+  assert.equal(page.preferredMode, "text");
+  assert.equal(page.canEditText, true);
 });
