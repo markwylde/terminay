@@ -3,14 +3,15 @@
 ### Requirement: Disconnect and restart lifecycle
 
 Client disconnect MUST NOT delete projects, close panels, or kill PTYs. The
-lifecycle of each connection SHALL be independent: a connection that drops,
-reconnects, or fails authorization SHALL leave every other connection of the same
-window connected and operable. Terminal exit SHALL update all referencing panels
-and connected clients once. A successful-exit close decision SHALL use the
-terminal surface's already-observed setting at the exit boundary and MUST NOT wait
-for another settings request after the session has ended. Server restart SHALL
-reload durable workspace state, SHALL reattach every PTY that is still running,
-and SHALL mark every formerly live PTY that is no longer running as ended.
+lifecycle of each connection SHALL be independent: a window whose connection
+drops, reconnects, or fails authorization SHALL leave every other window of the
+same device connected and operable. Terminal exit SHALL update all referencing
+panels and connected clients once. A successful-exit close decision SHALL use
+the terminal surface's already-observed setting at the exit boundary and
+MUST NOT wait for another settings request after the session has ended. Server
+restart SHALL reload durable workspace state, SHALL reattach every PTY that is
+still running, and SHALL mark every formerly live PTY that is no longer running
+as ended.
 
 #### Scenario: Client disconnects
 
@@ -36,9 +37,10 @@ and SHALL mark every formerly live PTY that is no longer running as ended.
 
 #### Scenario: One connection of several drops
 
-- **WHEN** one attached connection of a window drops or restarts
-- **THEN** the window's other connections stay connected and operable, and their
-  projects, panels, and terminals are untouched
+- **WHEN** a device has windows showing different servers and one window's
+  connection drops or its server restarts
+- **THEN** the other windows stay connected and operable, and their projects,
+  panels, and terminals are untouched
 
 ### Requirement: Restoring a non-empty repository
 

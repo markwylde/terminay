@@ -2,11 +2,7 @@
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support the capabilities needed by the official Codex,
-Claude Code, Grok, OpenCode, and omp agent extensions, the official language
-server extensions, and the official worktree insight extensions. Themes, editor
-plugins, autocomplete sources, arbitrary commands, renderer components, and
-generic Server Core operation registration SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, language servers, and worktree insights. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -19,6 +15,11 @@ generic Server Core operation registration SHALL be out of scope.
 - **WHEN** a package declares a language server contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
+#### Scenario: Session source contribution
+
+- **WHEN** a package declares a session source or MCP install target contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
 #### Scenario: Worktree insight contribution
 
 - **WHEN** a package declares a worktree insight contribution
@@ -26,13 +27,11 @@ generic Server Core operation registration SHALL be out of scope.
 
 ### Requirement: Contribution arrays
 
-`contributes.agentProviders`, `contributes.languageServers`, and
-`contributes.worktreeInsights` SHALL be the supported contribution arrays, and
-at least one supported contribution SHALL be required.
+`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, and `contributes.worktreeInsights` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
 
 #### Scenario: Agent-only package
 
-- **WHEN** a package contributes one or more agent providers
+- **WHEN** a package contributes one or more session sources
 - **THEN** it passes contribution validation
 
 #### Scenario: No contributions
@@ -42,8 +41,7 @@ at least one supported contribution SHALL be required.
 
 #### Scenario: Language-server-only package
 
-- **WHEN** a package contributes one or more language servers and no agent
-  provider
+- **WHEN** a package contributes one or more language servers and nothing else
 - **THEN** it passes contribution validation
 
 #### Scenario: Worktree-insight-only package

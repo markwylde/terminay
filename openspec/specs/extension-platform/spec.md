@@ -31,11 +31,7 @@ the server's matching UI bundle and MUST NOT load extension code.
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support the capabilities needed by the official Codex,
-Claude Code, Grok, OpenCode, and omp agent extensions and the official language
-server extensions. Themes, editor plugins, autocomplete sources, arbitrary
-commands, renderer components, and generic Server Core operation registration
-SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, and language servers. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -46,6 +42,11 @@ SHALL be out of scope.
 #### Scenario: Language server contribution
 
 - **WHEN** a package declares a language server contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Session source contribution
+
+- **WHEN** a package declares a session source or MCP install target contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
 ### Requirement: Server-wide installation scope
@@ -63,14 +64,7 @@ Desktop's embedded server.
 
 ### Requirement: Official catalogue and release-bundled artifacts
 
-Terminay SHALL ship an official catalogue containing the built-in Codex, Claude
-Code, Grok, OpenCode, omp, and TypeScript language npm packages and their
-expected metadata.
-Verified package artifacts for that exact release SHALL be embedded in Electron
-and standalone server distributions, installed without network access, and
-enabled by default. Official packages SHALL use the same public manifest,
-extension host, broker, and compatibility checks as custom packages. The
-**Official** badge SHALL be catalogue metadata, not a privileged runtime tier.
+Terminay SHALL ship an official catalogue containing the built-in agents and TypeScript language npm packages and their expected metadata. Verified package artifacts for that exact release SHALL be embedded in Electron and standalone server distributions, installed without network access, and enabled by default. Official packages SHALL use the same public manifest, extension host, and compatibility checks as custom packages. The **Official** badge SHALL be catalogue metadata, not a privileged runtime tier.
 
 #### Scenario: Offline first start
 
@@ -81,8 +75,7 @@ extension host, broker, and compatibility checks as custom packages. The
 #### Scenario: Built-in has no private access
 
 - **WHEN** a built-in package activates
-- **THEN** it passes the same public manifest, host, broker, and compatibility
-  contract as a custom package and receives no private API access
+- **THEN** it passes the same public manifest, host, and compatibility contract as a custom package and receives no private API access
 
 ### Requirement: Install from npm
 
@@ -148,10 +141,16 @@ registries, and shell-like specifications SHALL be rejected.
 
 ### Requirement: Archive inspection fails closed
 
-Archive traversal, absolute paths, links, non-regular entries, duplicate package
-manifests, excess entry or unpacked-size bounds, malformed gzip or tar data,
-lifecycle or native build requirements, and a materialized manifest that differs
-from preview SHALL fail closed before extension code is imported.
+The following SHALL fail closed before extension code is imported:
+
+- archive traversal, absolute paths, links, or non-regular entries
+- duplicate package manifests
+- excess entry or unpacked-size bounds
+- malformed gzip or tar data
+- a required install lifecycle script
+- a materialized manifest that differs from preview
+
+Prebuilt native modules SHALL be accepted.
 
 #### Scenario: Traversal entry in an archive
 
@@ -163,6 +162,11 @@ from preview SHALL fail closed before extension code is imported.
 
 - **WHEN** the materialized manifest does not match the confirmed preview
 - **THEN** the install fails closed
+
+#### Scenario: Prebuilt native module
+
+- **WHEN** an archive contains a prebuilt `.node` module and requires no install script
+- **THEN** inspection accepts it
 
 ### Requirement: Uploaded package labelling
 
@@ -180,13 +184,16 @@ dependency facts, and the trusted-code warning.
 
 ### Requirement: One package, one immutable extension identity
 
-One npm package SHALL contribute one immutable extension identity. Its
-`package.json` SHALL contain a closed, runtime-validated `terminay` object with a
-`manifestVersion`; a globally collision-resistant immutable extension id; a
-display name and bounded description; a Terminay Extension API range and Terminay
-and Node engine compatibility; one relative ESM entrypoint exported inside the
-package; declared permissions; Terminay extension dependencies and compatible
-contribution ranges; and namespaced coding-agent provider contributions.
+One npm package SHALL contribute one immutable extension identity. Its `package.json` SHALL contain a closed, runtime-validated `terminay` object with:
+
+- a `manifestVersion`
+- a globally collision-resistant immutable extension id
+- a display name and bounded description
+- a Terminay Extension API range, and Terminay and Node engine compatibility
+- one relative ESM entrypoint exported inside the package
+- declared permissions
+- Terminay extension dependencies and compatible contribution ranges
+- namespaced contributions
 
 #### Scenario: Closed manifest object
 
@@ -200,13 +207,11 @@ contribution ranges; and namespaced coding-agent provider contributions.
 
 ### Requirement: Contribution arrays
 
-`contributes.agentProviders` and `contributes.languageServers` SHALL be the
-supported contribution arrays, and at least one supported contribution SHALL be
-required.
+`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, and `contributes.languageServers` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
 
 #### Scenario: Agent-only package
 
-- **WHEN** a package contributes one or more agent providers
+- **WHEN** a package contributes one or more session sources
 - **THEN** it passes contribution validation
 
 #### Scenario: No contributions
@@ -216,8 +221,7 @@ required.
 
 #### Scenario: Language-server-only package
 
-- **WHEN** a package contributes one or more language servers and no agent
-  provider
+- **WHEN** a package contributes one or more language servers and nothing else
 - **THEN** it passes contribution validation
 
 ### Requirement: Identity separation and namespacing
@@ -292,20 +296,17 @@ host APIs.
 
 ### Requirement: Agent observation permission
 
-An agent provider SHALL declare the `agent-observation` permission. The
-permission SHALL authorize agent-context delivery and canonical publication, and
-MUST NOT grant client authority or direct canonical-store mutation.
+A session source SHALL require the `agent-observation` permission, and an MCP install target SHALL require the `mcp-registration` permission. `agent-observation` SHALL authorize session-snapshot publication and receipt of the enabled harness set. `mcp-registration` SHALL authorize receipt of the Terminay MCP server command. Neither SHALL grant client authority or direct canonical-store mutation.
 
 #### Scenario: Missing permission
 
-- **WHEN** a provider publishes agent events without declaring
-  `agent-observation`
-- **THEN** the publication is refused
+- **WHEN** a package declares a session source without `agent-observation`, or an MCP install target without `mcp-registration`
+- **THEN** manifest validation fails
 
 #### Scenario: Permission scope
 
 - **WHEN** `agent-observation` is granted
-- **THEN** it authorizes agent-context delivery and canonical publication only
+- **THEN** it authorizes session-snapshot publication only
 
 ### Requirement: Extensions are trusted Node programs
 
@@ -540,12 +541,7 @@ observed.
 
 ### Requirement: A failed host is restarted under supervision
 
-A host whose child exits unexpectedly SHALL be restarted automatically when its
-computed restart backoff expires, without requiring a server or application
-restart. Backoff SHALL grow with consecutive failures up to the maximum, and
-restart attempts SHALL stop once the extension is quarantined. A restart SHALL
-re-publish the extension's contributions so terminals matched after it returns
-are admitted normally.
+A host whose child exits unexpectedly SHALL be restarted automatically when its computed restart backoff expires, without requiring a server or application restart. Backoff SHALL grow with consecutive failures up to the maximum, and restart attempts SHALL stop once the extension is quarantined. A restart SHALL re-publish the extension's contributions. Its session sources SHALL report their full live set again.
 
 #### Scenario: Host crashes once during a session
 
@@ -562,10 +558,8 @@ are admitted normally.
 
 #### Scenario: Agent provider returns after a crash
 
-- **WHEN** an agent provider's host is restarted and a matching CLI is already
-  running in a terminal
-- **THEN** that terminal is re-observed and can bind without a new terminal or
-  a new CLI process
+- **WHEN** a session source's host is restarted while an agent runs in a terminal
+- **THEN** the source reports that session again and it binds to its terminal without a new terminal or CLI process
 
 ### Requirement: Quarantine is recoverable without an application restart
 
@@ -689,23 +683,28 @@ extension MUST NOT launch another Desktop application instance or window.
 
 ### Requirement: Transactional installation pipeline
 
-Installation SHALL resolve exact package, version, and integrity and fetch
-metadata for preview; require an authorized confirmation bound to that preview
-digest; create an isolated staging slot and exact lockfile; reject non-npmjs,
-git, file, link, or remote dependencies and missing integrity; materialize
-production dependencies with lifecycle scripts disabled, development dependencies
-omitted, and binary links disabled; reject trees containing native `.node`
-modules, `binding.gyp`, or required install lifecycle scripts; validate file,
-count, size, symlink, entrypoint, manifest, API, and engine limits and record
-package-lock and inventory hashes; atomically promote an immutable
-content-addressed version slot; probe it in a fresh extension host; and change
-the active pointer only after successful definition and registration.
+Installation SHALL:
+
+- resolve the exact package, version, and integrity, and fetch metadata for preview
+- require an authorized confirmation bound to that preview digest
+- create an isolated staging slot and exact lockfile
+- reject non-npmjs, git, file, link, or remote dependencies, and missing integrity
+- materialize production and optional dependencies with lifecycle scripts disabled, development dependencies omitted, and binary links disabled
+- reject trees containing `binding.gyp` or required install lifecycle scripts, while accepting prebuilt native `.node` modules
+- validate file, count, size, symlink, entrypoint, manifest, API, and engine limits, and record package-lock and inventory hashes
+- atomically promote an immutable content-addressed version slot
+- probe it in a fresh extension host
+- change the active pointer only after successful definition and registration
 
 #### Scenario: Exact package installs cleanly
 
 - **WHEN** a custom exact npm package is installed
-- **THEN** it materializes with lifecycle scripts disabled and cannot use a git,
-  file, http, or alias specification or a native or install-dependent tree
+- **THEN** it materializes with lifecycle scripts disabled and cannot use a git, file, http, or alias specification or a tree requiring a native build or install script
+
+#### Scenario: Prebuilt native dependency
+
+- **WHEN** a package's production or optional dependency ships a prebuilt `.node` module
+- **THEN** it materializes and the extension may load it
 
 #### Scenario: Active pointer moves last
 
@@ -896,12 +895,17 @@ groups, rows, fields, buttons, badges, and disclosure patterns.
 
 ### Requirement: Extensions section content
 
-The Extensions section SHALL name the selected Terminay Server as the authority
-and SHALL show built-in Codex, Claude Code, Grok, OpenCode, omp, and
-TypeScript language cards, installed and disabled states, available explicit
-updates, compatibility and failure details, permissions, dependants, and
-**Install from npm…**. A language server extension's card SHALL show the
-languages it serves and an enable toggle for that extension.
+The Extensions section SHALL name the selected Terminay Server as the authority. It SHALL show:
+
+- the built-in agents and TypeScript language cards
+- installed and disabled states
+- available explicit updates
+- compatibility and failure details
+- permissions
+- dependants
+- **Install from npm…**
+
+A session source extension's card SHALL show its harness switches. A language server extension's card SHALL show the languages it serves and an enable toggle for that extension.
 
 #### Scenario: Viewing extension state
 
@@ -909,6 +913,11 @@ languages it serves and an enable toggle for that extension.
 - **THEN** the selected server is named as the authority and built-in cards,
   installed and disabled state, available explicit updates, compatibility and
   failure detail, permissions, dependants, and **Install from npm…** are shown
+
+#### Scenario: Viewing the built-in agents extension
+
+- **WHEN** the user views the built-in agents extension's card
+- **THEN** it shows switches for Claude Code, Codex, Grok, and oh-my-pi
 
 #### Scenario: Viewing a language server extension
 
@@ -986,162 +995,19 @@ success result rather than leaving the spent confirmation visible.
 - **WHEN** an install completes successfully
 - **THEN** the review panel is replaced by an explicit success result
 
-### Requirement: Agent provider registration and terminal-incarnation admission
-
-An extension SHALL register an agent provider at activation through
-`context.agents.registerProvider(definition, runtime)`, which SHALL return a
-disposable registration. Registration SHALL fail closed for a provider id the
-manifest did not contribute, a duplicate provider id, or a registration
-attempted after deactivation. Each provider contribution SHALL declare a
-namespaced provider id, display metadata, supported platforms, executable and
-process matchers, and provider version and mapping declarations. The host SHALL
-issue a terminal context bound to the exact server, project, terminal session,
-and process incarnation, and SHALL reject publications, acknowledgements,
-cancellations, and observation requests that name a stale context, another
-terminal, or an undeclared provider. Oversized or malformed host messages SHALL
-be rejected without reaching the canonical store.
-
-#### Scenario: Undeclared provider id
-
-- **WHEN** an extension registers a provider id its manifest did not contribute
-- **THEN** the registration is refused
-
-#### Scenario: Duplicate registration
-
-- **WHEN** an extension registers the same provider id twice, or registers after
-  deactivation
-- **THEN** the registration is refused
-
-#### Scenario: Cross-terminal handle
-
-- **WHEN** an extension uses a handle issued for another terminal or a retired
-  context
-- **THEN** the operation is rejected and nothing is written to the canonical
-  store
-
-#### Scenario: Oversized message
-
-- **WHEN** an oversized or malformed message arrives on the extension host
-  channel
-- **THEN** it is rejected before it reaches the canonical store
-
-### Requirement: Exact-once observer retirement
-
-Terminal exit, provider disable, provider update, project removal, extension
-child crash, and server shutdown SHALL each retire the affected observation
-contexts exactly once, and a repeated cause SHALL NOT retire them again.
-Retirement SHALL cancel the extension's observers and SHALL permit a fresh
-admission afterwards. A stalled or crashed retirement for one provider SHALL
-leave unrelated providers' contexts usable, and per-extension process isolation
-with restart and backoff SHALL be preserved.
-
-#### Scenario: Repeated retirement cause
-
-- **WHEN** the same retirement cause is applied twice to one context
-- **THEN** the context is retired exactly once
-
-#### Scenario: Retirement then re-admission
-
-- **WHEN** a context is retired and the terminal matches a provider again
-- **THEN** a fresh admission is accepted
-
-#### Scenario: Crashing extension
-
-- **WHEN** one extension's child crashes or stalls during retirement
-- **THEN** unrelated providers' contexts remain usable and the crashed extension
-  restarts under the ordinary backoff
-
-### Requirement: Terminal-scoped directory list and watch operations
-
-The public observation broker SHALL offer terminal-scoped directory listing and
-directory watching for the exact terminal, with bounded results, cancellation,
-and atomic-replacement handling. These operations SHALL be available only through
-the broker and SHALL NOT read a directory outside the broker-issued scope.
-
-A listing MAY declare the exact filenames it is looking for. Where it does,
-only files with those names SHALL be considered, and only they SHALL be charged
-against the declared limits, so a caller that already knows the filename it
-wants is bounded by that file rather than by everything sharing the directory
-with it. Each declared name SHALL be a single path segment; a name that is not
-SHALL be refused rather than resolved.
-
-#### Scenario: Bounded directory watch
-
-- **WHEN** an extension watches a directory through the broker
-- **THEN** results are bounded, replacement is handled, and cancellation
-  disposes the watcher
-
-#### Scenario: Out-of-scope directory
-
-- **WHEN** an extension lists or watches a directory outside its broker-issued
-  terminal scope
-- **THEN** the request is refused
-
-#### Scenario: Listing that declares the filename it wants
-
-- **WHEN** a listing declares an exact filename and the directory also holds
-  files large or numerous enough to exhaust the declared limits
-- **THEN** only the declared filename is considered and charged, and the
-  listing is not truncated by the files it never asked for
-
-#### Scenario: Declared name that is not a single segment
-
-- **WHEN** a declared name contains a path separator or a traversal segment
-- **THEN** the request is refused
-
-### Requirement: Public observation adapters and driver toolkit
-
-The public SDK SHALL define an observation-adapter interface and a driver
-toolkit that an extension MAY use to implement a provider: bounded JSONL replay
-and follow, incomplete-line buffering, truncation and atomic-replacement
-detection including inode or device replacement, over-limit discard,
-cancellation helpers, versioned mapping selection, safe string handling, and
-canonical event builders with validation. The toolkit SHALL accept public
-adapters and plain data so an extension MAY back it with Node APIs or with the
-observation broker, and a provider MAY implement another bounded format without
-using the toolkit. Diagnostics produced through the toolkit SHALL be typed and
-safe to display, carrying no paths, prompts, credentials, native payloads, or
-arbitrary provider errors.
-
-#### Scenario: Split record across chunks
-
-- **WHEN** a JSONL record or UTF-8 sequence is split across follow chunks
-- **THEN** the toolkit buffers it until complete rather than emitting a partial
-  record
-
-#### Scenario: Truncation or replacement
-
-- **WHEN** the observed file is truncated or atomically replaced
-- **THEN** the toolkit reports the reset and re-establishes reading
-
-#### Scenario: Unavailable provider diagnostic
-
-- **WHEN** a provider becomes unavailable
-- **THEN** a typed diagnostic is produced with no path, prompt, credential,
-  native payload, or raw provider error
-
 ### Requirement: Public agent-extension harness and third-party author example
 
-The public SDK SHALL ship an in-memory agent-extension test harness and a
-documented author example. The repository SHALL contain a minimal third-party
-agent extension package that is not derived from an official provider and that
-builds, packs, activates, and passes conformance using only the public SDK.
-Generated API reference material SHALL document every bound, cancellation rule,
-ordering guarantee, rebind rule, error class, and lifecycle example needed to
-build, test, package, and diagnose an agent extension without reading Terminay
-source.
+The public SDK SHALL ship an in-memory session-source test harness and a documented author example. The repository SHALL contain a minimal third-party session-source extension package that is not derived from an official one. That package SHALL build, pack, activate, and pass conformance using only the public SDK. Generated API reference material SHALL document every snapshot bound, the reset, upsert, and removal ordering guarantees, the harness-switch rules, and the error classes needed to build, test, package, and diagnose a session source without reading Terminay source.
 
 #### Scenario: Third-party fixture extension
 
-- **WHEN** the independent third-party agent fixture is packed and activated
-- **THEN** it registers a provider, observes a fixture session, and publishes
-  canonical lifecycle events using only the public SDK
+- **WHEN** the independent third-party session-source fixture is packed and activated
+- **THEN** it registers a source and publishes session snapshots using only the public SDK
 
 #### Scenario: Author documentation completeness
 
 - **WHEN** an author consults the generated API reference
-- **THEN** it documents the bounds, cancellation rules, ordering and rebind
-  guarantees, error classes, and lifecycle examples for an agent extension
+- **THEN** it documents snapshot bounds, ordering guarantees, harness-switch rules, and error classes for a session source
 
 ### Requirement: Author SDK entry shape
 
@@ -1173,19 +1039,17 @@ callbacks SHALL be registered at activation.
 
 ### Requirement: Registration is bound to declared contributions
 
-Registering a provider SHALL be accepted only for an id the registering
-package's own manifest declares. A registration made under an id the package
-does not declare, or under another package's namespace, SHALL be refused.
+Registering a session source, MCP install target, or language server SHALL be accepted only for an id the registering package's own manifest declares. A registration made under an id the package does not declare, or under another package's namespace, SHALL be refused.
 
 #### Scenario: Undeclared provider id
 
-- **WHEN** an extension registers a provider under an id its manifest does not
+- **WHEN** an extension registers a contribution under an id its manifest does not
   declare
 - **THEN** the registration is refused
 
 #### Scenario: Declared provider id
 
-- **WHEN** an extension registers a provider under an id its manifest declares
+- **WHEN** an extension registers a contribution under an id its manifest declares
 - **THEN** the registration is accepted and returns a disposable registration
 
 ### Requirement: Disposable registrations and host-driven cleanup
@@ -1211,17 +1075,12 @@ resources.
 
 ### Requirement: Cancellation and disposal on every long-running API
 
-Each terminal observation context SHALL carry a cancellation signal that fires
-when the foreground process leaves, the terminal closes, or the extension is
-disabled. Every long-running API SHALL accept that signal, and watchers SHALL be
-asynchronously disposable and idempotent to close.
+Every long-running API SHALL accept a cancellation signal. A session source runtime SHALL receive a signal that fires when the source is disposed, the extension is disabled, or agent status is switched off. Each MCP install target call SHALL receive a signal that fires on its deadline or on disposal. Watchers SHALL be asynchronously disposable and idempotent to close.
 
 #### Scenario: Foreground process leaves
 
-- **WHEN** the observed process exits, the terminal closes, or the extension is
-  disabled
-- **THEN** the terminal context's cancellation signal fires and every
-  long-running call it was passed to stops
+- **WHEN** agent status is switched off or the extension is disabled
+- **THEN** the session source's cancellation signal fires and it stops watching
 
 #### Scenario: Closing a watcher twice
 
@@ -1230,93 +1089,75 @@ asynchronously disposable and idempotent to close.
 
 ### Requirement: Public conformance test harness
 
-`@terminay/extension-api` SHALL publish a testing entry point providing an
-extension harness and terminal fixtures. A package SHALL be able to drive its
-complete provider mapping and assert the canonical events produced without
-importing Server Core or any other private Terminay module. The harness SHALL
-check agreement between manifest and registration, value bounds, cancellation,
-terminal session scope, lifecycle validity, and privacy exclusions.
+`@terminay/extension-api` SHALL publish a testing entry point providing an extension harness. A package SHALL be able to drive its session sources and MCP install targets and assert what they publish without importing Server Core or any other private Terminay module. The harness SHALL check:
+
+- agreement between manifest and registration
+- snapshot bounds
+- declared harnesses and the enabled-set rule
+- reset, upsert, and removal validity
+- cancellation
+- privacy exclusions
 
 #### Scenario: Testing a mapping
 
-- **WHEN** a package runs its mapping against a fixture terminal through the
-  public harness
-- **THEN** it asserts the canonical lifecycle events produced without importing
-  Server Core
+- **WHEN** a package runs its session source through the public harness
+- **THEN** it asserts the snapshots published without importing Server Core
 
 #### Scenario: Harness conformance checks
 
 - **WHEN** a package is exercised through the harness
-- **THEN** manifest and registration agreement, bounds, cancellation, session
-  scope, lifecycle validity, and privacy exclusions are checked
+- **THEN** manifest and registration agreement, bounds, harness rules, publication validity, cancellation, and privacy exclusions are checked
 
 ### Requirement: Host-owned behaviours excluded from extension authorship
 
-Sidebar components and styling, project and terminal navigation, client
-subscriptions and remote transport, acknowledgement and unread behaviour,
-canonical event ordering and replay rejection, extension enable and disable
-surfaces, extension process lifetime and crash backoff, and
-Electron-versus-standalone packaging SHALL be owned by Terminay. An extension
-SHALL supply only provider knowledge and canonical lifecycle facts, and the API
-SHALL offer it no means of implementing those host behaviours.
+Terminay SHALL own all of these, and the API SHALL offer an extension no means of implementing them:
+
+- sidebar components and styling
+- project scoping and worktree resolution
+- terminal binding
+- project and terminal navigation
+- client subscriptions and remote transport
+- acknowledgement and unread behaviour
+- canonical ordering
+- extension enable and disable surfaces, and harness switch surfaces
+- the MCP install surface
+- extension process lifetime and crash backoff
+- Electron-versus-standalone packaging
+
+An extension SHALL supply only session facts and MCP registration knowledge.
 
 #### Scenario: Extension attempts a host behaviour
 
 - **WHEN** an extension attempts to render sidebar UI, navigate the workspace,
-  manage client subscriptions, or order canonical events
+  bind a session to a terminal, or order canonical events
 - **THEN** no such API is available to it
 
 #### Scenario: Provider responsibilities
 
-- **WHEN** an agent provider package is authored
-- **THEN** it implements executable recognition, process-to-session binding
-  evidence, provider home and journal resolution, supported mapping versions,
-  title and model sources, lifecycle and subagent mappings, privacy exclusions,
-  and honest fallback, and nothing else
-
-### Requirement: Host-issued terminal context for observation
-
-An agent extension MAY combine its host-issued terminal context with Node
-process and filesystem APIs to establish terminal or journal identity. The host
-SHALL accept canonical events only for the terminal context it issued.
-
-#### Scenario: Observing a terminal
-
-- **WHEN** an agent extension observes a terminal
-- **THEN** it establishes terminal or journal identity from the host-issued
-  terminal context together with Node process and filesystem APIs
-
-#### Scenario: Event for an unissued terminal context
-
-- **WHEN** an extension publishes a canonical event for a terminal context the
-  host did not issue
-- **THEN** the event is rejected
+- **WHEN** a session source package is authored
+- **THEN** it implements session detection, harness reporting, bounded snapshots, and privacy exclusions, and nothing else
 
 ### Requirement: Public extension API capabilities for agent extensions
 
-The API SHALL permit an extension to define redacted profile types; contribute
-declarative status, progress, confirmation, and lifecycle surfaces; receive its
-own namespaced configuration, data, and cache directories; request resolution of
-its own profile-bound secret fields through a scoped broker; implement provider
-runtime callbacks through bounded typed IPC with cancellation, deadlines, and
-concurrency limits; contribute a coding-agent provider and register its
-provider-specific observation runtime; use a terminal-scoped observation broker
-for bounded process, TTY, open-file, realpath, stat, read, and append or replace
-evidence; and publish validated provider-neutral root, turn, tool, wait, model,
-completion, exit, and subagent lifecycle events to the host-owned canonical
-projection.
+The API SHALL permit an extension to:
+
+- define redacted profile types
+- contribute declarative status, progress, confirmation, and lifecycle surfaces
+- receive its own namespaced configuration, data, and cache directories
+- request resolution of its own profile-bound secret fields through a scoped broker
+- implement runtime callbacks through bounded typed IPC with cancellation, deadlines, and concurrency limits
+- contribute a session source and publish bounded machine-wide session snapshots
+- contribute MCP install targets that receive the host-supplied MCP server command
 
 #### Scenario: Runtime callback bounds
 
-- **WHEN** a provider runtime callback runs
-- **THEN** it is subject to cancellation, deadlines, and concurrency limits over
-  bounded typed IPC
+- **WHEN** an MCP install target callback runs
+- **THEN** it is subject to cancellation, deadlines, and concurrency limits over bounded typed IPC
 
 #### Scenario: Publishing agent lifecycle events
 
-- **WHEN** an agent provider publishes root, turn, tool, wait, model, completion,
-  exit, or subagent events
-- **THEN** they are validated and written to the host-owned canonical projection
+- **WHEN** a session source publishes snapshots
+- **THEN** they are validated before they reach the host-owned canonical projection
 
 ### Requirement: Extension dependencies are declared, not imported
 
@@ -1336,45 +1177,20 @@ install another extension without administrator confirmation.
 - **WHEN** installing an extension would require installing another extension
 - **THEN** it is not installed silently without administrator confirmation
 
-### Requirement: Terminal-scoped handles are opaque and scoped to one terminal
-
-File and process handles supplied through a terminal observation context SHALL
-be opaque values scoped to the terminal context that issued them. Terminay SHALL
-validate that every handle an extension references was issued by that same
-terminal context, and SHALL refuse a handle reused with another terminal context
-or synthesised by the extension. Path resolution helpers SHALL apply the server
-host's path rules.
-
-#### Scenario: Handle reused across terminals
-
-- **WHEN** an extension passes a handle issued for one terminal context into
-  another terminal context
-- **THEN** the call is refused
-
-#### Scenario: Path resolution through the observation API
-
-- **WHEN** an extension canonicalises a file handle through the observation API
-- **THEN** resolution applies the server host's filesystem path rules
-
 ### Requirement: Node APIs and the terminal-evidence boundary
 
-An extension MAY use public Node.js APIs and its declared npm dependencies for
-ordinary work on the Terminay Server account. Such access SHALL NOT constitute
-terminal identity evidence on its own. An operation that establishes evidence
-about the terminal SHALL use the observation API. An extension MUST NOT import a
-private Terminay module to obtain internal services.
+An extension MAY use public Node.js APIs and its declared npm dependencies, native ones included, for ordinary work on the Terminay Server account. Nothing an extension reports SHALL be treated as terminal identity. Terminal binding SHALL be decided by the host from process ancestry. An extension MUST NOT import a private Terminay module to obtain internal services.
 
 #### Scenario: Reading extension preferences
 
 - **WHEN** an extension reads its own configuration file from the Terminay
   Server account with Node APIs
-- **THEN** the read is permitted and is not accepted as terminal identity
-  evidence
+- **THEN** the read is permitted
 
 #### Scenario: Establishing terminal evidence
 
-- **WHEN** an extension needs evidence about a terminal it is observing
-- **THEN** it uses the observation API rather than an unscoped Node read
+- **WHEN** a session source reports a session
+- **THEN** the host, not the extension, decides which terminal, if any, it binds to
 
 ### Requirement: Language server contribution and registration
 
@@ -1436,31 +1252,77 @@ unavailable outcome.
 - **THEN** its language sessions are cancelled and their language server children
   are terminated with the extension's other bounded work
 
-### Requirement: Not-bound observation names the directories it awaits
+### Requirement: Agent session source contribution and registration
 
-An agent provider's observation result SHALL be able to report `not-bound` together with a list of terminal-scoped directory handles whose contents decide whether the provider can bind, each marked as the directory's own entries or its whole tree. Each handle SHALL be one the provider obtained through the same terminal context's file observation broker; a handle the context never issued SHALL be dropped, and a result whose handles are all dropped SHALL be treated as `not-bound` with no wait set. The extension child SHALL report only the canonical directory paths the broker resolved for those handles, bounded in number, and the host SHALL watch each such directory for that terminal incarnation, recursively only where the provider asked, and SHALL re-run the provider's observation on the first change in any of them. The host SHALL close those watches when the incarnation binds, is cancelled, or is retired, SHALL bound how many directories one incarnation holds open, and SHALL open no watch and schedule no timer for a `not-bound` result that names no directory.
+A package SHALL declare each session source under `contributes.agentSessionSources`. Each declaration SHALL carry:
 
-#### Scenario: Provider awaits its session directory
+- a namespaced source id
+- a display name
+- supported platforms
+- a bounded list of harnesses, each with a stable harness id and a display name
+- a bounded list of server environment variable names the source needs, such as a harness's home-directory override, which the host SHALL pass to the extension child when set
 
-- **WHEN** a provider returns `not-bound` naming a directory handle from its terminal context
-- **THEN** the host watches that directory for the incarnation and re-runs observation when it changes
+At activation the extension SHALL register each declared source through `context.agents.registerSessionSource(id, runtime)`, which SHALL return a disposable registration. Registration SHALL be refused for an undeclared id, a duplicate id, or a registration after deactivation. The runtime SHALL receive the set of harnesses currently switched on and a publisher. Through the publisher it SHALL send:
 
-#### Scenario: Awaited handle the context never issued
+- the full set of live sessions (a reset)
+- upserts of individual session snapshots
+- removals by session id
 
-- **WHEN** a provider names a directory handle its terminal context never resolved
-- **THEN** the handle is dropped, no watch is opened for it, and a result with no remaining handles is treated as `not-bound` with nothing to await
+A session snapshot SHALL carry:
 
-#### Scenario: Tree and directory watches
+- a source-scoped session id
+- a declared harness id
+- the owning process id
+- the working directory
+- optionally: title, model, status (`running`, `waiting`, `blocked`, or `idle`), waiting description, current tool name, last-turn outcome and end time, a bounded error message, and a bounded list of subagents, each with a stable id, optional parent id, type, title, and status
 
-- **WHEN** a provider names one directory as a tree and another as a plain directory
-- **THEN** the host watches the first recursively and the second shallowly, and a directory named both ways is watched once, as a tree
+Every string SHALL be bounded, and a snapshot naming an undeclared harness or a harness that is switched off SHALL be rejected. The host SHALL deliver changes to the enabled harness set to the running source, and the source SHALL stop reporting a harness switched off and SHALL report the live sessions of a harness switched on.
 
-#### Scenario: Incarnation retired while awaiting
+#### Scenario: Registering a declared source
 
-- **WHEN** a terminal incarnation with open discovery watches is cancelled or retired
-- **THEN** every watch opened for it is closed exactly once
+- **WHEN** an extension registers a session source id its manifest declared
+- **THEN** the registration is accepted and returns a disposable registration
 
-#### Scenario: Nothing to await
+#### Scenario: Undeclared harness in a snapshot
 
-- **WHEN** a provider returns `not-bound` with no directory handles
-- **THEN** the host opens no watch and schedules no timer for that incarnation
+- **WHEN** a source publishes a snapshot naming a harness it did not declare
+- **THEN** the snapshot is rejected and the store is unchanged
+
+#### Scenario: Harness switched on at runtime
+
+- **WHEN** the user switches a harness on while its source is running
+- **THEN** the source receives the new enabled set and publishes that harness's live sessions
+
+### Requirement: Harness switches for session sources
+
+Settings SHALL show, under each extension that contributes a session source, one switch per declared harness. Every switch SHALL be on by default. Switch state SHALL be server-scoped host settings keyed by source id and harness id, and SHALL persist across restarts, upgrades, and extension updates. The host SHALL apply a switch change to the running source without restarting its extension.
+
+#### Scenario: Harness switches shown
+
+- **WHEN** the user views an extension that contributes a session source declaring four harnesses
+- **THEN** its card shows four harness switches, each on unless the user switched it off
+
+#### Scenario: Switch survives an update
+
+- **WHEN** the user switches off a harness and the extension is later updated
+- **THEN** the harness remains off
+
+### Requirement: MCP install target contribution
+
+A package SHALL declare each MCP install target under `contributes.mcpInstallTargets`. Each declaration SHALL carry a namespaced target id and a client display name. At activation the extension SHALL register each declared target through `context.mcp.registerInstallTarget(id, runtime)`, which SHALL return a disposable registration. The runtime SHALL implement `status`, `install`, and `uninstall`. Each SHALL receive the host-supplied Terminay MCP server command — executable, arguments, and environment — and a cancellation signal. `status` SHALL return:
+
+- one of not installed, installed, changed, unavailable, or error
+- the provider-owned configuration path it inspects
+- a bounded, redacted detail message
+
+The host SHALL supply the MCP server command only when the server can run the MCP adapter. Otherwise it SHALL report every target unavailable without calling the extension. Registration SHALL be refused for undeclared or duplicate ids.
+
+#### Scenario: Target status requested
+
+- **WHEN** the host asks a registered target for its status
+- **THEN** the extension returns a bounded state, configuration path, and redacted detail
+
+#### Scenario: Server without an MCP adapter
+
+- **WHEN** the server cannot run the Terminay MCP adapter
+- **THEN** every install target is reported unavailable and no extension call is made
