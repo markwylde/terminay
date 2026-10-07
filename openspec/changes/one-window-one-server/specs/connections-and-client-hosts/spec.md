@@ -82,6 +82,91 @@ On Desktop, device enrollment SHALL be a closed host action: Electron SHALL perf
 - **WHEN** enrollment succeeds but the first connection to the new server fails
 - **THEN** the server is saved, the workspace window stays on the server it was showing, and the failure is reported in Remote Control
 
+### Requirement: Bounded host bridge surface
+
+The bridge surface SHALL be limited to semantic window and view focus, route presentation and close, menu commands, clipboard write, approved file selection, credential-free HTTP and HTTPS external links, server-owned reveal tokens, update status, notifications, a versioned `connections` capability, and explicitly declared OS integration. The `connections` capability SHALL list the remembered connection profiles by id and label, rename a profile, forget a profile, switch the requesting window to a remembered profile, open a remembered profile in a new window, and let the renderer subscribe to changes of that list, and SHALL expose no credential, signaling state, or raw transport handle. The bridge SHALL never expose `BrowserWindow`, arbitrary paths, raw transport handles, generic IPC, or server application commands. Server-bundled renderers SHALL receive one `TerminayClient` byte endpoint, reaching the window's server, and a capability provider rather than Electron APIs. Its bridge SHALL contain no terminal data, pairing secrets, device keys, arbitrary filesystem paths, or generic Electron IPC.
+
+#### Scenario: Bridge exposes no Electron internals
+
+- **WHEN** a server-bundled renderer inspects its injected context
+- **THEN** it finds one byte endpoint and a capability provider, and no `BrowserWindow`, raw transport handle, generic IPC, or arbitrary path
+
+#### Scenario: Malicious bundle gains nothing
+
+- **WHEN** a malicious or compromised server bundle exercises the host bridge
+- **THEN** it cannot obtain Electron Node access or another session origin's credentials
+
+#### Scenario: Opening a connection through the capability
+
+- **WHEN** the renderer asks the `connections` capability to open a remembered profile in a new window
+- **THEN** the host opens a window bound to that profile, and the requesting renderer receives no byte endpoint for it and no credential, signaling state, or raw transport handle
+
+#### Scenario: Switching through the capability
+
+- **WHEN** the renderer asks the `connections` capability to switch its window to a remembered profile
+- **THEN** the host performs the switch and the renderer receives only success or a failure reason
+
+### Requirement: One responsive workspace implementation
+
+The product SHALL have one full responsive workspace UI implementation: each server bundles it; Desktop loads it from its pinned embedded-server artifact and runs it for every window; a browser session loads it through its server's session origin and the existing verified asset flow; and it works standalone when the session URL is opened directly. Stable session origins SHALL run the server's exact bundled responsive UI.
+
+#### Scenario: Direct session URL renders the workspace
+
+- **WHEN** a session URL is opened directly
+- **THEN** the server's bundled responsive UI runs standalone
+
+#### Scenario: Every host loads the same implementation
+
+- **WHEN** Desktop and a browser session each open a workspace
+- **THEN** each runs one bundled workspace UI for its window's server
+
+### Requirement: Renderer context contents
+
+The resulting renderer context SHALL contain only non-secret identity, negotiated versions and capabilities, one opaque byte-endpoint handle for the window's server with the sanitized identity of that server, the id of the one profile the window is bound to, and the sanitized list of remembered profiles for the connection menu, each carrying its id and label only. Bootstrap credentials, signaling state, transport objects, protected keys, and raw cache paths SHALL remain in Desktop main.
+
+#### Scenario: Renderer holds no secrets
+
+- **WHEN** a renderer inspects its context
+- **THEN** it finds non-secret identity, negotiated versions and capabilities, remembered profile labels, and one opaque byte-endpoint handle only
+
+#### Scenario: One endpoint per connection
+
+- **WHEN** a window is bound to a server
+- **THEN** the renderer context carries exactly one opaque byte-endpoint handle, with that server's sanitized identity
+
+#### Scenario: Remembered profiles are labels only
+
+- **WHEN** a window shows Local while two remote servers are remembered
+- **THEN** the renderer context lists those two profiles by id and label, and carries no byte endpoint, status, or workspace content for them
+
+### Requirement: Desktop persistence allowlist
+
+Desktop persistence SHALL be a closed allowlist of sanitized profiles, protected credential references, native geometry, the exact profile and view binding of each window, update state, OS permission decisions, and explicit device preferences. Workspace snapshots, application DTOs, project roots, panel and terminal state, server settings, and feature capability projections SHALL be forbidden in the host store. Unclassified fields SHALL fail closed.
+
+#### Scenario: Unclassified field is rejected
+
+- **WHEN** a field outside the allowlist is written to the Desktop host store
+- **THEN** the write fails closed
+
+#### Scenario: Workspace state stays server-owned
+
+- **WHEN** Desktop persists host state
+- **THEN** no workspace snapshot, application DTO, project root, panel or terminal state, server setting, or capability projection is stored
+
+### Requirement: Desktop bundle commitment from the packaged artifact
+
+Desktop SHALL commit a native window only after the bundle inventory read from its pinned embedded-server artifact has been verified, its host compatibility requirements accepted, and the window's server binding reserved. The artifact SHALL be read directly, without a public listener and without a network fetch. An incomplete or invalid inventory SHALL leave the window uncommitted with a typed diagnostic.
+
+#### Scenario: Verification precedes window commitment
+
+- **WHEN** Desktop prepares a window
+- **THEN** it commits the window only after verifying the packaged bundle inventory and accepting its host compatibility requirements
+
+#### Scenario: Invalid inventory leaves the window uncommitted
+
+- **WHEN** the packaged bundle inventory is incomplete or invalid
+- **THEN** the window stays uncommitted and a typed diagnostic is shown
+
 ## ADDED Requirements
 
 ### Requirement: Connections route contract
@@ -224,7 +309,7 @@ On Desktop the connection menu SHALL list every remembered server as a single li
 #### Scenario: Choosing a server
 
 - **WHEN** the user chooses another server in the Desktop connection menu
-- **THEN** the window shows that server's workspace and no longer shows the previous one
+- **THEN** the window shows that server's workspace in place of the previous one
 
 ### Requirement: Connection terms
 
@@ -316,6 +401,130 @@ The ways of starting a server that Add connection presents SHALL come from one o
 - **WHEN** the person chooses the Linux host provider
 - **THEN** its instructions replace Docker's
 
+### Requirement: Host bridge is versioned and source-bound
+
+Native actions SHALL be exposed through a versioned, source-bound host bridge. The host SHALL inject a frozen context containing the bridge version, host kind, the exact identity of the one server and profile the window is bound to, the sanitized list of remembered profiles by id and label, and individually negotiated capabilities. A renderer SHALL NOT enable Desktop behaviour with a URL or query parameter, server payload, local setting, or claimed mode. Each request SHALL be checked against its bound window and the profile it names, SHALL reject unknown payload fields and any profile the host does not remember, and SHALL require a user gesture for actions that can read or change native state.
+
+#### Scenario: No renderer-selected privilege switch
+
+- **WHEN** a renderer supplies a query parameter, server payload, local setting, or claimed mode requesting Desktop privileges
+- **THEN** no Desktop behaviour is enabled
+
+#### Scenario: Unknown fields are rejected
+
+- **WHEN** a bridge request carries unknown payload fields
+- **THEN** the request is rejected
+
+#### Scenario: Native state changes need a gesture
+
+- **WHEN** a bridge action can read or change native state
+- **THEN** it requires a user gesture
+
+#### Scenario: Request naming an unremembered profile
+
+- **WHEN** a bridge request names a profile the host does not remember
+- **THEN** the request is rejected
+
+#### Scenario: Context names one bound profile
+
+- **WHEN** a renderer inspects its injected context
+- **THEN** it names exactly one bound server and profile, and lists the other remembered profiles by id and label only
+
+### Requirement: Web connection manager scope
+
+`app.terminay.com` SHALL have no Local server option and SHALL never claim browser filesystem or PTY authority. Its disconnected state SHALL be a connection picker: a saved-profile list with **Add new connection**, which opens a dedicated page to scan a pairing QR or paste a pairing URL, plus rename, open, and forget actions. Selecting a profile SHALL frame that server's session in the current PWA view, and an explicit action MAY open a first-party session tab. The manager SHALL frame one session for one server and SHALL open no transport to any other saved server on that session's behalf. The PWA SHALL contain connection-profile management, the framed session host, and the origin-keyed credential vault, SHALL NOT run the workspace, and SHALL show at most one framed session at a time.
+
+#### Scenario: Web host offers no Local option
+
+- **WHEN** a browser user opens the connection manager
+- **THEN** the same add, manage, and switch journey is available with no Local option
+
+#### Scenario: One framed session at a time
+
+- **WHEN** the user opens another saved profile
+- **THEN** it replaces the currently framed session, and the view shows that server only
+
+#### Scenario: Manager opens no other transport
+
+- **WHEN** a session is framed while other profiles are saved
+- **THEN** the manager opens no transport to any other saved server, and the framed session reaches only its own server
+
+### Requirement: Bundle bytes stay out of the manager origin
+
+The stable session origin of a browser session's server SHALL install that server's bounded workspace bundle after authentication. Bundle bytes, feature frames, pairing fragments, PINs, and connection tickets SHALL never enter the manager origin. Framed-session device credentials SHALL enter only the origin-keyed vault. `app.terminay.com` SHALL be the stable connection manager, and the framed server's verified bundle SHALL render the workspace at its stable session origin. A saved server that is not the framed one SHALL contribute no bundle bytes to any origin.
+
+#### Scenario: Manager origin holds no bundle bytes
+
+- **WHEN** a framed session installs a server bundle
+- **THEN** the bytes are handled at the session origin and never enter the manager origin
+
+#### Scenario: Other saved servers ship no bundle
+
+- **WHEN** a session is framed while other profiles are saved
+- **THEN** no bundle bytes are transferred for any server other than the framed one
+
+### Requirement: Server code containment in Electron
+
+Server-provided code inside Electron SHALL run with sandboxing, context isolation, Node integration disabled, and no ambient privileged preload. A minimal host bridge SHALL validate every native action. The Desktop shell SHALL resolve the bundle manifest and assets only on the exact session origin of the window's server. Same-origin bundle navigation SHALL be allowed; arbitrary origins, URL credentials or query state, new windows, downloads, permission prompts, and custom protocol handlers SHALL be denied by default. A privileged host MAY explicitly allow one guarded request through the native policy boundary. A window's server SHALL deliver application bytes over the window's one endpoint, and a server the window is not bound to SHALL NOT contribute bytes, script, asset, or navigation to the window.
+
+#### Scenario: Off-origin navigation is denied
+
+- **WHEN** a bundle attempts to navigate to an arbitrary origin
+- **THEN** the navigation is denied
+
+#### Scenario: Downloads and permission prompts are denied by default
+
+- **WHEN** a bundle triggers a download, new window, permission prompt, or custom protocol handler
+- **THEN** it is denied unless a privileged host explicitly allows that one guarded request
+
+#### Scenario: Another remembered server contributes nothing
+
+- **WHEN** a window shows one server while other servers are remembered
+- **THEN** no other server contributes bytes, script, asset, or navigation to that window
+
+### Requirement: Browser pairing and reconnect journeys
+
+Terminay SHALL support two browser entry journeys — opening the hosted pairing link and the `app.terminay.com` PWA add flow — and both SHALL use the same session-origin pairing, credential, server-bundle, and reconnect contracts. Opening the advertised hosted URL SHALL land on the manager, which consumes the fragment in memory, strips query and hash from the visible URL, and asks **Save and connect** with an optional title prefilled from `hostName` or the session id; Cancel SHALL discard the material and Confirm SHALL write the bookmark and frame `https://<session-id>.terminay.com/v1/#<secret>` without storing the fragment. The framed session origin SHALL establish WebRTC, verify and launch that server's bundle as the window's one workspace bundle, create the device key, submit enrollment, display the match code while awaiting host approval, and complete enrollment, storing that key in the manager vault for `event.origin` when framed. First pairing with any server SHALL happen at that server's own session origin. A later visit to the saved profile or the stable session origin SHALL reconnect without reuse of the pairing URL. A first-party visit to a session-origin `/v1/` pairing URL SHALL enrol at the session origin with session-origin IndexedDB.
+
+#### Scenario: Both journeys share one prompt
+
+- **WHEN** the user opens a hosted pairing link in a browser or scans or pastes it inside the PWA
+- **THEN** the same **Save and connect** prompt appears and enrollment is framed at the session origin
+
+#### Scenario: Returning to the manager restores the profile
+
+- **WHEN** the user returns to the manager after a framed session
+- **THEN** the iframe unloads and the saved profile is restored from local browser storage
+
+#### Scenario: Saved connection reconnects from the vault
+
+- **WHEN** the user selects the saved connection later
+- **THEN** its stable session origin is framed, receives its device credential from the manager vault, and reconnects without a pairing URL
+
+#### Scenario: Pairing a second server
+
+- **WHEN** the user pairs a new server while another profile is already saved
+- **THEN** first pairing runs at the new server's own session origin, and the saved profile and its vaulted credential are untouched
+
+### Requirement: Host-local profile data allowed and forbidden
+
+Allowed host-local profile data SHALL be the stable server id or fingerprint, the exact non-secret session origin, the user label and explicitly shared server display name, created, last-opened, and last-connected timestamps, local window and view mapping consisting of the server each window shows and the workspace view chosen on it, non-secret UI preferences, and known, offline, expired, revoked, archived, or unreachable state. Pairing URL fragments and full unconsumed pairing URLs, PINs, terminal tickets, server secrets, terminal output, command history, project roots, filenames, and recordings SHALL be forbidden in connection-manager `localStorage`, URLs, logs, and bookmark records. Device private keys SHALL never enter bookmark storage, `localStorage`, URLs, or logs; in the framed PWA they SHALL live only in the origin-keyed manager IndexedDB vault and in closed `postMessage` clones to the matching session iframe.
+
+#### Scenario: Bookmark record excludes secrets
+
+- **WHEN** a connection profile is written
+- **THEN** it contains no pairing fragment, PIN, ticket, server secret, terminal output, command history, project root, filename, or recording
+
+#### Scenario: Device key stays out of localStorage
+
+- **WHEN** a framed PWA session holds a device key
+- **THEN** it lives only in the origin-keyed manager IndexedDB vault and in closed clones to the matching iframe
+
+#### Scenario: Window mapping holds identities only
+
+- **WHEN** the server a window shows is written host-locally
+- **THEN** the record holds a profile id and a view id, and no project root, filename, or workspace content
+
 ## REMOVED Requirements
 
 ### Requirement: Connection vocabulary
@@ -371,3 +580,39 @@ The ways of starting a server that Add connection presents SHALL come from one o
 **Reason**: Its text and scenarios describe a window holding a primary connection and attached connections. A window shows one server.
 
 **Migration**: Restated for one server per window as "Connections route contract".
+
+### Requirement: Versioned source-bound host bridge
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Host bridge is versioned and source-bound".
+
+### Requirement: Web connection host scope
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Web connection manager scope".
+
+### Requirement: Bundle content stays out of the manager origin
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Bundle bytes stay out of the manager origin".
+
+### Requirement: Remote code containment in Electron
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Server code containment in Electron".
+
+### Requirement: Browser connection journeys
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Browser pairing and reconnect journeys".
+
+### Requirement: Allowed and forbidden host-local profile data
+
+**Reason**: One of its scenarios is named for a server attached to a window, and its text describes a window holding a primary connection and attached connections. A window shows one server.
+
+**Migration**: Restated for one server per window as "Host-local profile data allowed and forbidden".
