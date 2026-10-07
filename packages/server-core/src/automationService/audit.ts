@@ -11,6 +11,8 @@ export const AUTOMATION_PRINCIPAL = Object.freeze({
 export interface AutomationAuditActor {
 	readonly clientId: string;
 	readonly connectionId: string;
+	/** The enrolled device that acted, where the client belongs to one. */
+	readonly deviceId?: string;
 }
 
 /** One audit trail entry. Metadata only: never a command line, text, cwd,

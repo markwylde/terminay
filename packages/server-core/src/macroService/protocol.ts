@@ -205,7 +205,12 @@ export function createMacroOperationRegistry(
 				launcherId: request.context.connectionId,
 				disconnectPolicy,
 			});
-			owners.set(handle.runId, request.context.clientId);
+			// A run may outlive the window that started it, so it is owned by
+			// the device where there is one.
+			owners.set(
+				handle.runId,
+				request.context.deviceId ?? request.context.clientId,
+			);
 			targets.set(handle.runId, target);
 			options.eventJournal.append(
 				MACRO_EVENTS.runChanged,
@@ -232,7 +237,7 @@ export function createMacroOperationRegistry(
 				throw macroError('macro_not_found', 'macro run is unavailable');
 			const owner = owners.get(runId);
 			if (
-				owner !== request.context.clientId &&
+				owner !== (request.context.deviceId ?? request.context.clientId) &&
 				request.context.authScope !== 'admin'
 			)
 				throw macroError(
