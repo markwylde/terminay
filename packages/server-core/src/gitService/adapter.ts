@@ -153,6 +153,16 @@ export interface GitProtocolAdapterOptions {
 	) => Promise<string | null | undefined> | string | null | undefined;
 	/** Extension-published worktree properties and forge sign-in prompts. */
 	readonly insights?: GitWorktreeInsights;
+	/**
+	 * Called before Terminay moves or renames a worktree, with the path it is
+	 * moving from. The function it returns is called when the move has finished,
+	 * with the new path, or null when nothing moved.
+	 */
+	readonly onWorktreeMove?: (move: {
+		readonly projectId: string;
+		readonly repositoryId: string;
+		readonly fromPath: string | null;
+	}) => (toPath: string | null) => void;
 }
 
 export interface GitOperationHandlers {
@@ -185,6 +195,7 @@ export class ServerGitAdapter {
 	private readonly actions: GitWorktreeActionHandlers;
 	private readonly hostCapabilities: ReadonlySet<GitHostCapability>;
 	private readonly resolveProjectRoot: GitProtocolAdapterOptions['resolveProjectRoot'];
+	private readonly onWorktreeMove: GitProtocolAdapterOptions['onWorktreeMove'];
 	private readonly canRevealOnHost: GitProtocolAdapterOptions['canRevealOnHost'];
 	private readonly proposalProjects = new Map<string, string>();
 	private readonly insights: GitWorktreeInsights | undefined;
@@ -202,6 +213,7 @@ export class ServerGitAdapter {
 		this.resolveProjectRoot = options.resolveProjectRoot;
 		this.canRevealOnHost = options.canRevealOnHost;
 		this.insights = options.insights;
+		this.onWorktreeMove = options.onWorktreeMove;
 		this.hostCapabilities = new Set(
 			options.hostCapabilities ?? inferHostCapabilities(this.actions),
 		);
@@ -525,7 +537,41 @@ export class ServerGitAdapter {
 			request.authorization,
 			request.projectId,
 		);
-		return (await this.git.moveWorktree({
+		// Tell the host a worktree is about to move, and where from, so that what
+		// it keeps per worktree can follow the move instead of seeing one worktree
+		// vanish and another appear.
+		const fromPath =
+			this.onWorktreeMove === undefined
+				? null
+				: await this.git
+						.worktrees(projectId)
+						.then(
+							(listing) =>
+								listing.worktrees.find(
+									(worktree) => worktree.id === request.worktreeId,
+								)?.path ?? null,
+						)
+						.catch(() => null);
+		const moved = this.onWorktreeMove?.({
+			projectId,
+			repositoryId: request.repositoryId,
+			fromPath,
+		});
+		let toPath: string | null = null;
+		try {
+			const result = await this.moveWorktreeRequest(projectId, request);
+			if (result.applied) toPath = result.path;
+			return result as unknown as JsonValue;
+		} finally {
+			moved?.(toPath);
+		}
+	}
+
+	private async moveWorktreeRequest(
+		projectId: string,
+		request: GitMoveRequest,
+	): Promise<import('./types.js').GitWorktreeMoveResult> {
+		return this.git.moveWorktree({
 			projectId,
 			repositoryId: request.repositoryId,
 			worktreeId: request.worktreeId,
@@ -534,7 +580,7 @@ export class ServerGitAdapter {
 				? {}
 				: { expectedHead: request.expectedHead }),
 			...(request.signal === undefined ? {} : { signal: request.signal }),
-		})) as unknown as JsonValue;
+		});
 	}
 
 	async proposeQuickPush(
