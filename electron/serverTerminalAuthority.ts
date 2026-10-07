@@ -1348,19 +1348,35 @@ export class ServerTerminalAuthority {
 		const payload = protocolPayload(request.envelope.payload);
 		const requestedPath = protocolString(payload.path, 'file path');
 		const projectId = protocolString(payload.projectId, 'project id');
-		const context = this.fileSessionProjects.get(projectId);
-		const root = this.fileProjectRoots.get(projectId);
-		if (context === undefined || root === undefined)
-			throw new Error('file diff project is unavailable');
+		const scope = await this.fileRequestScope(
+			projectId,
+			payload.folderId,
+			'file diff project is unavailable',
+		);
 		const canonicalPath = isAbsolute(requestedPath)
 			? await realpath(requestedPath)
-			: await context.resolver.resolve(requestedPath, { requireFile: true });
-		const project = this.projectForPath(canonicalPath);
-		if (project.projectId !== projectId)
+			: await scope.resolver.resolve(requestedPath, { requireFile: true });
+		// In a folder the file must lie in that folder's root; otherwise in the
+		// root of the project the request names.
+		const project =
+			scope.folder === undefined
+				? this.projectForPath(canonicalPath)
+				: { projectId, root: scope.root };
+		if (
+			project.projectId !== projectId ||
+			(canonicalPath !== project.root &&
+				!canonicalPath.startsWith(`${project.root}${sep}`))
+		)
 			throw new Error('file diff target is outside the connected project');
 		const relativePath = relative(project.root, canonicalPath);
 		const result = await this.git.diff(
-			{ projectId: project.projectId, path: relativePath },
+			{
+				projectId: project.projectId,
+				path: relativePath,
+				...(scope.folder?.worktreeId === undefined
+					? {}
+					: { worktreeId: scope.folder.worktreeId }),
+			},
 			request.context.signal,
 		);
 		writePortDiagnostic({
@@ -1397,10 +1413,12 @@ export class ServerTerminalAuthority {
 		const payload = protocolPayload(request.envelope.payload);
 		const projectId = protocolString(payload.projectId, 'project id');
 		const path = protocolString(payload.path, 'file path');
-		const context = this.fileSessionProjects.get(projectId);
-		if (context === undefined)
-			throw new Error('file mutation project is unavailable');
-		const canonicalPath = await context.resolver.resolve(path, {
+		const scope = await this.fileRequestScope(
+			projectId,
+			payload.folderId,
+			'file mutation project is unavailable',
+		);
+		const canonicalPath = await scope.resolver.resolve(path, {
 			requireFile: true,
 		});
 		const value = await stat(canonicalPath);
@@ -1433,11 +1451,71 @@ export class ServerTerminalAuthority {
 		const path = protocolString(payload.path, 'file path');
 		const projectRoot = protocolString(payload.projectRoot, 'project root');
 		const canonicalRoot = await realpath(projectRoot);
-		const project = this.projectForPath(await realpath(path));
-		if (project.root !== canonicalRoot)
-			throw new Error('sparse file target is outside the connected project');
+		const canonicalPath = await realpath(path);
+		if (payload.folderId === undefined) {
+			const project = this.projectForPath(canonicalPath);
+			if (project.root !== canonicalRoot)
+				throw new Error('sparse file target is outside the connected project');
+		} else {
+			// The root the client names is checked against the one the server
+			// resolves for the folder; it never decides where the save may land.
+			const folderId = protocolString(payload.folderId, 'folder id');
+			const folder = this.workspace.state.folders[folderId];
+			if (folder === undefined)
+				throw new Error('sparse file target is outside the connected project');
+			const scope = await this.fileRequestScope(
+				folder.projectId,
+				folderId,
+				'sparse file project is unavailable',
+			);
+			if (
+				scope.root !== canonicalRoot ||
+				!canonicalPath.startsWith(`${scope.root}${sep}`)
+			)
+				throw new Error('sparse file target is outside the connected project');
+		}
 		await save(payload as unknown as FileViewerSparseFileSaveRequest);
 		return null;
+	}
+
+	/**
+	 * The resolver and canonical root one file request runs in: the project's
+	 * own, or a folder's when the request names one. A folder's root is resolved
+	 * by the server for this request alone (ADR-0050).
+	 */
+	private async fileRequestScope(
+		projectId: string,
+		folderId: unknown,
+		unavailable: string,
+	): Promise<{
+		readonly resolver: CanonicalProjectPathResolver;
+		readonly root: string;
+		/** Present when the request named a folder. */
+		readonly folder?: { readonly worktreeId?: string };
+	}> {
+		if (folderId === undefined) {
+			const context = this.fileSessionProjects.get(projectId);
+			const root = this.fileProjectRoots.get(projectId);
+			if (context === undefined || root === undefined)
+				throw new Error(unavailable);
+			return { resolver: context.resolver, root };
+		}
+		const context = await this.folders.session.resolve(
+			projectId,
+			protocolString(folderId, 'folder id'),
+		);
+		const root = await context.resolver.root();
+		// Git addresses a worktree by its own id, found from the same listing
+		// the folder's root was confirmed against.
+		const listing = await this.git.worktrees(projectId);
+		const worktreeId = listing.worktrees.find(
+			(worktree) => worktree.path === root,
+		)?.id;
+		return {
+			resolver: context.resolver,
+			root,
+			folder: worktreeId === undefined ? {} : { worktreeId },
+		};
 	}
 
 	private projectForPath(path: string): { projectId: string; root: string } {
