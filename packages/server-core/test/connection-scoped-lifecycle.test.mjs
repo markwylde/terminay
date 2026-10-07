@@ -350,3 +350,72 @@ test("a heartbeat keeps an idle connection alive indefinitely", async () => {
     await session.task;
   }
 });
+
+/** A wall clock the test can jump forward, as a sleeping machine's does. */
+function createSleepableClock() {
+  let sleptMs = 0;
+  return {
+    now: () => Date.now() + sleptMs,
+    sleep(ms) { sleptMs += ms; },
+  };
+}
+
+test("a silence deadline that came due while the server was suspended is replaced, not honoured", async () => {
+  const reaped = [];
+  const clock = createSleepableClock();
+  const core = createServerCore({
+    serverId: "heartbeat-suspended",
+    serverVersion: "test",
+    capabilities: [],
+    heartbeatTimeoutMs: 100,
+    heartbeatNow: clock.now,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+    onConnectionClosed: (connectionId) => reaped.push(connectionId),
+  });
+  const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
+
+  // The machine sleeps for ten minutes: the deadline's timer fires on wake,
+  // far later by the wall clock than the deadline it was armed with.
+  clock.sleep(600_000);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.deepEqual(reaped, [], "sleep is not client silence");
+  assert.equal(session.connection.state, "open");
+
+  // The fresh deadline runs while the server is awake. A client that is still
+  // silent when it elapses really is gone.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(reaped, [session.connection.connectionId],
+    "the fresh deadline reaps a client that never answered");
+
+  await session.client.close().catch(() => undefined);
+  await session.task;
+});
+
+test("a client that answers within the fresh deadline after a suspension stays connected", async () => {
+  const reaped = [];
+  const clock = createSleepableClock();
+  const core = createServerCore({
+    serverId: "heartbeat-resumed",
+    serverVersion: "test",
+    capabilities: [],
+    heartbeatTimeoutMs: 100,
+    heartbeatNow: clock.now,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+    onConnectionClosed: (connectionId) => reaped.push(connectionId),
+  });
+  const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
+  try {
+    clock.sleep(600_000);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    for (let beat = 0; beat < 6; beat += 1) {
+      const pong = await session.client.query("connection.ping", { sentAt: Date.now() });
+      assert.equal(pong.ok, true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    assert.deepEqual(reaped, []);
+    assert.equal(session.connection.state, "open");
+  } finally {
+    await session.client.close().catch(() => undefined);
+    await session.task;
+  }
+});

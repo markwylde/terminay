@@ -584,6 +584,26 @@ export class TerminalActivityReducer {
 		}
 	}
 
+	/**
+	 * Follow a terminal to the project its panel was moved to. The move is one
+	 * revision, so a client filtering by project sees the session leave one
+	 * project and arrive in the other.
+	 */
+	rehome(
+		sessionId: string,
+		projectId: string,
+		at = this.now(),
+	): ActivityEvent | undefined {
+		assertSessionId(sessionId);
+		const session = this.sessionsById.get(sessionId);
+		if (session === undefined || session.projectId === projectId)
+			return undefined;
+		const before = snapshotOf(session);
+		session.projectId = projectId;
+		session.updatedAt = at;
+		return this.commitIfChanged(session, before);
+	}
+
 	private commitIfChanged(
 		session: MutableSession,
 		before: TerminalActivitySessionSnapshot,

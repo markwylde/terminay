@@ -1800,6 +1800,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		},
 		onEvent: handleServerTerminalEvent,
+		// A capability is scoped to the project its terminal was in when it was
+		// issued. The token lives in the running shell, so it cannot be replaced.
+		onTerminalRehomed: (move) => {
+			mcpCapabilities.revokeSession(move.sessionId);
+		},
 		// An extension host that dies is otherwise invisible: the child suppresses
 		// Node's own stack print so it can report the error itself, and a packaged
 		// child has no readable stderr. Extensions are trusted code and this
@@ -5887,6 +5892,25 @@ if (process.env.TERMINAY_TEST === '1') {
 		if (!serverTerminalAuthority)
 			throw new Error('embedded server is unavailable');
 		serverTerminalAuthority.resetWorkspaceCommandTestRecords();
+	});
+
+	ipcMain.handle(
+		'test:refuse-project-creations',
+		(event, count: unknown) => {
+			assertBoundServerUiEvent(event);
+			if (!serverTerminalAuthority)
+				throw new Error('embedded server is unavailable');
+			if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)
+				throw new TypeError('refusal count is invalid');
+			serverTerminalAuthority.refuseProjectCreationsForTest(count);
+		},
+	);
+
+	ipcMain.handle('test:close-renderer-connections', async (event) => {
+		assertBoundServerUiEvent(event);
+		if (!serverTerminalAuthority)
+			throw new Error('embedded server is unavailable');
+		return await serverTerminalAuthority.closeRendererConnectionsForTest();
 	});
 
 	ipcMain.handle('test:get-workspace-command-records', (event) => {

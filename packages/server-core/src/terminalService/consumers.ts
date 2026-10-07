@@ -72,6 +72,28 @@ export class DetachableTerminalConsumerRegistry {
 		return detached;
 	}
 
+	/**
+	 * End every consumer subscription bound to a retired identity. A terminal
+	 * moved to another project is attached to again under its new identity.
+	 */
+	detachSession(identity: TerminalIdentity): number {
+		let detached = 0;
+		for (const subscription of [...this.subscriptions.values()]) {
+			if (
+				subscription.identity.serverId !== identity.serverId ||
+				subscription.identity.projectId !== identity.projectId ||
+				subscription.identity.sessionId !== identity.sessionId
+			)
+				continue;
+			subscription.subscription.close('client');
+			this.subscriptions.delete(
+				key(subscription.identity, subscription.consumerId),
+			);
+			detached += 1;
+		}
+		return detached;
+	}
+
 	isAttached(identity: TerminalIdentity, consumerId: string): boolean {
 		assertConsumerId(consumerId);
 		const subscription = this.subscriptions.get(key(identity, consumerId));

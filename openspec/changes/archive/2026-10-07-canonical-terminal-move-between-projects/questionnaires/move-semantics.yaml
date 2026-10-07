@@ -1,0 +1,57 @@
+title: What does moving a terminal to another project mean?
+intro: |
+  The bug: the move is renderer-only, so the server still owns the terminal
+  under project 1 and the next workspace sync re-adopts it there.
+
+  The obvious fix (call the server's existing `panel.move`) is not enough on
+  its own. The terminal service identifies a live PTY by an immutable
+  {server, project, session} triple fixed at launch (terminal-workspace spec,
+  ADR-0011), and the workspace state requires a terminal panel and its session
+  to be in the same project. Today nothing in the product ever sends
+  `panel.move` for a live terminal, so the two have never had to agree.
+  A canonical move would put the panel in project 2 while the PTY still
+  answers only to project 1, and attaching would be refused.
+
+status: dismissed
+submitted_at: "2026-10-07T10:10:02+01:00"
+
+questions:
+  - id: approach
+    type: select
+    prompt: Which meaning should the move have?
+    help: |
+      rehome — The server moves the panel AND re-homes the live terminal to
+      project 2. It is project 2's terminal everywhere: other devices, after
+      restart, MCP reach, agent status, activity counts. Largest: server-core
+      terminal service, session holder, MCP capability swap, and a new ADR
+      superseding the "immutable project identity" rule (session id stays
+      immutable; project becomes re-homable by an authorized move).
+      This is what I'd recommend as the end state — it is the only one where
+      "moved" means one thing.
+
+      placement-only — The server moves the panel; the PTY keeps its
+      launch-project identity and clients attach with that. Converges across
+      devices and restart, medium size, but splits "where it shows" from
+      "what it belongs to": MCP reach, shell environment and authorization
+      stay project 1's.
+
+      local-only — Keep the move a per-device presentation (what the code
+      comments describe today) and just stop the reconcile pass re-adopting
+      it. Renderer-only and small. After a reload, restart, or on another
+      device the terminal is back in project 1.
+    required: true
+    options: [rehome, placement-only, local-only]
+
+  - id: stopgap_first
+    type: boolean
+    prompt: Ship the small renderer-only fix first as its own PR, so the duplicate/disconnect stops now?
+    help: |
+      It would make the current move stable on this device while the server
+      work lands separately. I'd say yes — the bug is user-facing today and
+      the server change is not a one-day job.
+    show_if:
+      approach: [rehome, placement-only]
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

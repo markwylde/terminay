@@ -29,6 +29,7 @@ export type FilePreviewKind =
   | 'markdown'
   | 'image'
   | 'pdf'
+  | 'html'
   | 'text'
   | 'hex'
   | 'unsupported'

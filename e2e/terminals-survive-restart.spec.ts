@@ -4,6 +4,7 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
 import { settledTerminalSessionId } from './support/terminal-session';
+import { contextMenuItem } from './support/ui';
 
 /**
  * Quitting Terminay and opening it again brings back the same terminals.
@@ -184,6 +185,94 @@ test('quitting and relaunching brings back the same terminal, its output, and it
 			.poll(() => isAlive(holder.pid), { timeout: 15_000 })
 			.toBe(false);
 		expect(holderRecords(userDataDir)).toEqual([]);
+	} finally {
+		await relaunched?.close().catch(() => undefined);
+		// Whatever a failed assertion left running must not outlive the test.
+		for (const record of holderRecords(userDataDir)) {
+			try {
+				process.kill(record.pid, 'SIGKILL');
+			} catch {
+				/* already gone */
+			}
+		}
+	}
+});
+
+test('a terminal moved to another project is still in that project, and still running, after a relaunch', async ({
+	electronApp,
+	mainWindow,
+	tempDir,
+	userDataDir,
+}, testInfo) => {
+	test.setTimeout(180_000);
+	let relaunched: Awaited<ReturnType<typeof launchDesktopApp>> | undefined;
+	try {
+		const sessionId = await settledTerminalSessionId(
+			mainWindow.locator('.terminal-panel:visible'),
+		);
+		const movedPanel = (page: Page) =>
+			page.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+			);
+		const projectTab = (page: Page, title: string) =>
+			page.locator('.project-tab').filter({ hasText: new RegExp(`^${title}$`) });
+		await typeLine(
+			mainWindow,
+			sessionId,
+			'while :; do date +TICK_%s; sleep 1; done',
+		);
+		await expect(movedPanel(mainWindow).locator('.xterm-rows')).toContainText(
+			/TICK_\d+/,
+			{ timeout: 10_000 },
+		);
+
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await projectTab(mainWindow, 'Project').click();
+		await mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first()
+			.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Move to project').click();
+		await contextMenuItem(mainWindow, 'Project 2').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(movedPanel(mainWindow)).toBeVisible();
+
+		await expect
+			.poll(() => holderRecords(userDataDir).length, { timeout: 10_000 })
+			.toBe(1);
+		await quitChoosing(electronApp, 'keep');
+
+		relaunched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
+		const window = await prepareWindow(await relaunched.electronApp.firstWindow());
+		await expect(window.locator('.project-tabbar')).toBeVisible({
+			timeout: READY_TIMEOUT_MS,
+		});
+
+		// The project it was moved to, not the one it was started in.
+		await projectTab(window, 'Project 2').click();
+		await expect(movedPanel(window)).toBeVisible({ timeout: READY_TIMEOUT_MS });
+		const rows = movedPanel(window).locator('.xterm-rows');
+		const lastTick = async () =>
+			((await rows.textContent()) ?? '').match(/TICK_\d+/gu)?.at(-1) ?? null;
+		await expect.poll(lastTick, { timeout: READY_TIMEOUT_MS }).not.toBeNull();
+		const before = await lastTick();
+		await expect.poll(lastTick, { timeout: 15_000 }).not.toBe(before);
+		await expect(
+			movedPanel(window).locator('.terminal-panel-connection-error'),
+		).toHaveCount(0);
+
+		await projectTab(window, 'Project').click();
+		await expect(window.locator('.project-tab--active')).toContainText(
+			'Project',
+		);
+		await expect(movedPanel(window)).toHaveCount(0);
+
+		await quitChoosing(relaunched.electronApp, 'end');
 	} finally {
 		await relaunched?.close().catch(() => undefined);
 		// Whatever a failed assertion left running must not outlive the test.

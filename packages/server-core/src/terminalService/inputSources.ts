@@ -311,6 +311,18 @@ export class TerminalInputSourceAdapter {
 		return true;
 	}
 
+	/**
+	 * Forget a retired identity. Input still queued for it is refused by the
+	 * terminal service's own identity check when its turn comes.
+	 */
+	releaseSession(identity: TerminalIdentity): void {
+		const key = sessionKey(identity);
+		this.resizeOwners.delete(key);
+		const prefix = `${key}\u0000`;
+		for (const sequenceKey of [...this.lastSequences.keys()])
+			if (sequenceKey.startsWith(prefix)) this.lastSequences.delete(sequenceKey);
+	}
+
 	getResizeOwnership(
 		identity: TerminalIdentity,
 	): TerminalResizeOwnership | undefined {
