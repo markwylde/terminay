@@ -33,6 +33,25 @@ export function subscribeWorkspaceDragState(
 	});
 }
 
+export type WorkspaceDropTargetEvent = Extract<
+	TerminayHostEvent['event'],
+	{ type: 'workspace.drop-target' }
+>;
+
+/** A project tab torn off another window is over, has left, or was dropped on
+ * this window's project bar. */
+export function subscribeWorkspaceDropTarget(
+	listener: (event: WorkspaceDropTargetEvent) => void,
+): () => void {
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'workspace.drop-target') {
+			listener(message.event);
+		}
+	});
+}
+
 export function subscribeWindowFullScreenState(
 	listener: (fullScreen: boolean) => void,
 ): () => void {

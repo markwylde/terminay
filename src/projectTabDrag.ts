@@ -39,3 +39,59 @@ export function computeDropIndex(tabCenters: number[], clientX: number): number 
   }
   return index
 }
+
+/** The drag preview widths the host accepts for `workspace.drag.start`. */
+export const PROJECT_DRAG_PREVIEW_MIN_WIDTH = 80
+export const PROJECT_DRAG_PREVIEW_MAX_WIDTH = 2000
+
+/** A tab's laid-out width as a drag preview width the host accepts. */
+export function projectDragPreviewWidth(width: number): number {
+  if (!Number.isFinite(width)) return PROJECT_DRAG_PREVIEW_MIN_WIDTH
+  return Math.min(
+    PROJECT_DRAG_PREVIEW_MAX_WIDTH,
+    Math.max(PROJECT_DRAG_PREVIEW_MIN_WIDTH, Math.round(width)),
+  )
+}
+
+export type NativeProjectDragSession<Start, Decision> = {
+  /** True once this drag has asked the host for a native session. */
+  readonly requested: boolean
+  start(input: Start): void
+  /** The host's decision, or null when no native session ran: none was
+   * requested, or the host refused to start one. */
+  finish(): Promise<Decision | null>
+}
+
+/**
+ * One in-strip drag's native tear-off session. A start the host refuses is
+ * reported once and leaves the drag in-strip, so `end` is never asked about a
+ * session that does not exist.
+ */
+export function createNativeProjectDragSession<Start, Decision>(host: {
+  begin(input: Start): Promise<void>
+  end(): Promise<Decision>
+  onRefused(error: unknown): void
+}): NativeProjectDragSession<Start, Decision> {
+  let started: Promise<boolean> | null = null
+  return {
+    get requested() {
+      return started !== null
+    },
+    start(input) {
+      if (started !== null) return
+      started = host.begin(input).then(
+        () => true,
+        (error: unknown) => {
+          host.onRefused(error)
+          return false
+        },
+      )
+    },
+    async finish() {
+      const pending = started
+      started = null
+      if (pending === null || !(await pending)) return null
+      return host.end()
+    },
+  }
+}

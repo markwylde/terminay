@@ -308,6 +308,7 @@ export type WorkspaceDragDecision =
 
 export async function beginWorkspaceDrag(input: {
 	viewId: string;
+	projectId: string;
 	preview: { title: string; emoji: string; color: string; width: number };
 }): Promise<void> {
 	await request({ type: 'workspace.drag.start', ...input });

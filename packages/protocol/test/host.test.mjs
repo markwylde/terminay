@@ -179,11 +179,13 @@ test('workspace drag actions and state are closed logical-view contracts', () =>
 		parseTerminayHostAction({
 			type: 'workspace.drag.start',
 			viewId: 'view-a',
+			projectId: 'project-a',
 			preview: { title: 'Project', emoji: '', color: '#123abc', width: 160 },
 		}),
 		{
 			type: 'workspace.drag.start',
 			viewId: 'view-a',
+			projectId: 'project-a',
 			preview: { title: 'Project', emoji: '', color: '#123abc', width: 160 },
 		},
 	);
@@ -223,6 +225,7 @@ test('workspace drag actions and state are closed logical-view contracts', () =>
 			parseTerminayHostAction({
 				type: 'workspace.drag.start',
 				viewId: 'view-a',
+				projectId: 'project-a',
 				targetWindowId: 42,
 				preview: { title: 'Project', emoji: '', color: '#123abc', width: 160 },
 			}),
@@ -233,6 +236,7 @@ test('workspace drag actions and state are closed logical-view contracts', () =>
 			parseTerminayHostAction({
 				type: 'workspace.drag.start',
 				viewId: 'view-a',
+				projectId: 'project-a',
 				preview: { title: 'Project', emoji: '', color: '#123abc', width: 79 },
 			}),
 		/preview is invalid/u,
@@ -244,6 +248,56 @@ test('workspace drag actions and state are closed logical-view contracts', () =>
 					...envelope,
 					event: { ...envelope.event, geometry: { x: 0, y: 0 } },
 				},
+				context,
+			),
+		/fields are invalid/u,
+	);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'workspace.drag.start',
+				viewId: 'view-a',
+				preview: { title: 'Project', emoji: '', color: '#123abc', width: 160 },
+			}),
+		/fields are invalid/u,
+	);
+	const dropTarget = {
+		type: 'workspace.drop-target',
+		phase: 'hover',
+		x: 240,
+		serverId: 'server-a',
+		projectId: 'project-a',
+		title: 'Project',
+		emoji: '',
+		color: '#123abc',
+	};
+	for (const phase of ['hover', 'leave', 'drop']) {
+		assert.deepEqual(
+			parseTerminayHostEvent(
+				{ ...envelope, event: { ...dropTarget, phase } },
+				context,
+			).event,
+			{ ...dropTarget, phase },
+		);
+	}
+	for (const invalid of [
+		{ phase: 'attach' },
+		{ x: 12.5 },
+		{ x: -1 },
+		{ color: 'red' },
+		{ projectId: '' },
+	]) {
+		assert.throws(() =>
+			parseTerminayHostEvent(
+				{ ...envelope, event: { ...dropTarget, ...invalid } },
+				context,
+			),
+		);
+	}
+	assert.throws(
+		() =>
+			parseTerminayHostEvent(
+				{ ...envelope, event: { ...dropTarget, targetViewId: 'view-b' } },
 				context,
 			),
 		/fields are invalid/u,

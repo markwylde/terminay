@@ -852,8 +852,13 @@
   pointer-events: none;
 }
 
+/* The fill is the dragged project's own chrome, not this window's active one. */
 .project-tab--drop-placeholder::before {
-  background-color: var(--project-chrome);
+  background-color: color-mix(
+    in srgb,
+    var(--project-color) 45%,
+    var(--tab-bg-active)
+  );
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--project-color) 70%, transparent);
 }
 
