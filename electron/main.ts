@@ -2285,6 +2285,7 @@ async function createServerOwnedTerminalSession(
 	cwd?: string,
 	projectRootOrigin?: 'explicit' | 'server-default',
 	activePanelId?: string,
+	folderId?: string,
 ): Promise<Awaited<ReturnType<ServerTerminalAuthority['create']>>> {
 	const id = randomUUID();
 	const settings = readTerminalSettings();
@@ -2295,6 +2296,7 @@ async function createServerOwnedTerminalSession(
 			...(cwd === undefined ? {} : { cwd }),
 			...(projectRootOrigin === undefined ? {} : { projectRootOrigin }),
 			...(activePanelId === undefined ? {} : { activePanelId }),
+			...(folderId === undefined ? {} : { folderId }),
 			env: getTerminalSpawnEnv(),
 			cols: 80,
 			rows: 24,
@@ -3258,16 +3260,18 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				project: params.project,
 				liveTerminals: liveTerminalsIn,
 			});
-			// The caller's panel anchors cwd inheritance only in its own project.
-			const callerPanelId =
+			// The caller's panel anchors cwd inheritance only in its own project,
+			// and the new terminal joins the folder that panel is in.
+			const callerPanel =
 				projectId === context.projectId
-					? mcpPanelFor(context.terminalSessionId, context.projectId)?.id
+					? mcpPanelFor(context.terminalSessionId, context.projectId)
 					: undefined;
 			const opened = await createServerOwnedTerminalSession(
 				projectId,
 				params.cwd,
 				undefined,
-				callerPanelId,
+				callerPanel?.id,
+				callerPanel?.folderId,
 			);
 			// An automation terminal's opens join the run that owns it, so the
 			// Automations section groups them under that run (ADR-0030).
@@ -3382,11 +3386,15 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				),
 				liveTerminalsIn(target.projectId),
 			);
+			// A split lands beside its target, so it is created in the target's
+			// folder: a folder's layout holds only that folder's panels.
+			const targetPanel = mcpPanelFor(target.id, target.projectId);
 			const opened = await createServerOwnedTerminalSession(
 				target.projectId,
 				undefined,
 				undefined,
-				mcpPanelFor(target.id, target.projectId)?.id,
+				targetPanel?.id,
+				targetPanel?.folderId,
 			);
 			const panel = mcpPanelFor(opened.id, target.projectId);
 			if (panel !== undefined)

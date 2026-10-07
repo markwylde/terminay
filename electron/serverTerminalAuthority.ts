@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync, watch as watchFileSystem } from 'node:fs';
+import { appendFileSync } from 'node:fs';
 import {
 	lstat,
 	mkdir,
@@ -14,8 +14,6 @@ import {
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import {
-	basename,
-	dirname,
 	isAbsolute,
 	relative,
 	resolve,
@@ -126,6 +124,7 @@ import {
 } from '../packages/server-core/src/workspace';
 import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
+import { fileObservationHostForRoot, ServerFolders } from './serverFolders';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -434,6 +433,8 @@ export class ServerTerminalAuthority {
 	>();
 	private readonly fileSessionProjects = new Map<string, FileProjectContext>();
 	private readonly fileProjectRoots = new Map<string, string>();
+	/** Folder roots, folder-scoped file services, and the worktree reconciler. */
+	private readonly folders: ServerFolders;
 	private readonly agentScope: ProjectAgentScope;
 	/** Starts extension session sources and receives their publications. */
 	readonly agentSources: SessionSourceSupervisor;
@@ -529,9 +530,33 @@ export class ServerTerminalAuthority {
 			onProjectChanged: (projectId, worktreeId) =>
 				git.announceWorktreeChange(projectId, worktreeId),
 		});
+		const projectFileObservationHost = fileObservationHostForRoot((projectId) =>
+			this.fileProjectRoots.get(projectId),
+		);
+		const folders = new ServerFolders({
+			workspace: () => this.workspace.state,
+			git,
+			applyHostCommand: (commandId, command) =>
+				this.composition.workspaceOperations?.applyHostCommand(
+					commandId,
+					command,
+				),
+			storage: nodeFileCatalogStorage,
+			projects: {
+				catalog: (projectId) => this.fileCatalogProjects.get(projectId),
+				content: (projectId) => this.fileContentProjects.get(projectId),
+				session: (projectId) => this.fileSessionProjects.get(projectId),
+				observation: (projectId) =>
+					this.fileProjectRoots.has(projectId)
+						? { projectId, host: projectFileObservationHost }
+						: undefined,
+			},
+		});
+		this.folders = folders;
 		const gitAdapter = new ServerGitAdapter({
 			serverId: options.serverId,
 			git: this.git,
+			onWorktreeMove: folders.onWorktreeMove,
 			resolveProjectRoot: (projectId) =>
 				this.workspace.state.projects[projectId]?.root ?? null,
 			insights: this.worktreeInsights,
@@ -568,6 +593,7 @@ export class ServerTerminalAuthority {
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
 			projects: this.fileCatalogProjects,
+			folderScope: folders.catalog.resolve,
 			onOperationFailure: (failure) =>
 				options.onFileOperationFailure?.(failure),
 		});
@@ -582,10 +608,12 @@ export class ServerTerminalAuthority {
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
 			projects: this.fileContentProjects,
+			folderScope: folders.content.resolve,
 		});
 		const fileSessionAdapter = new ServerFileAdapter({
 			serverId: options.serverId,
 			projects: this.fileSessionProjects,
+			folderScope: folders.session.resolve,
 		});
 		const eventJournal = new OrderedEventJournal();
 		this.eventJournal = eventJournal;
@@ -627,82 +655,8 @@ export class ServerTerminalAuthority {
 		const fileObservations = new ServerFileObservationAdapter({
 			serverId: options.serverId,
 			eventJournal,
-			host: {
-				watch: async ({ projectId, resource, signal, publish }) => {
-					const root = this.fileProjectRoots.get(projectId);
-					if (root === undefined)
-						throw new Error('file observation project is unavailable');
-					const target = resolve(root, resource);
-					const targetStats = await stat(target);
-					const watchedDirectory = targetStats.isDirectory()
-						? target
-						: dirname(target);
-					const watchedName = targetStats.isDirectory()
-						? null
-						: basename(target);
-					const watcher = watchFileSystem(
-						watchedDirectory,
-						{ persistent: false },
-						(eventType, entryName) => {
-							if (
-								watchedName !== null &&
-								entryName !== null &&
-								String(entryName) !== watchedName
-							)
-								return;
-							publish({
-								resource,
-								kind: eventType === 'rename' ? 'renamed' : 'changed',
-								...(entryName === null
-									? {}
-									: { relatedResource: String(entryName) }),
-							});
-						},
-					);
-					let unavailablePublished = false;
-					const publishUnavailable = () => {
-						if (signal.aborted || unavailablePublished) return;
-						unavailablePublished = true;
-						publish({ resource, kind: 'unavailable' });
-					};
-					watcher.once('error', publishUnavailable);
-					watcher.once('close', publishUnavailable);
-					signal.addEventListener('abort', () => watcher.close(), {
-						once: true,
-					});
-				},
-				calculateFolderSize: async ({
-					projectId,
-					resource,
-					signal,
-					progress,
-				}) => {
-					const root = this.fileProjectRoots.get(projectId);
-					if (root === undefined)
-						throw new Error('folder-size project is unavailable');
-					let bytes = 0;
-					let files = 0;
-					let directories = 0;
-					const visit = async (directory: string): Promise<void> => {
-						if (signal.aborted) throw signal.reason;
-						directories += 1;
-						for (const entry of await readdir(directory, {
-							withFileTypes: true,
-						})) {
-							if (signal.aborted) throw signal.reason;
-							const path = resolve(directory, entry.name);
-							if (entry.isDirectory()) await visit(path);
-							else if (entry.isFile()) {
-								files += 1;
-								bytes += (await stat(path)).size;
-							}
-							progress({ bytes, files, directories });
-						}
-					};
-					await visit(resolve(root, resource));
-					return { bytes, files, directories };
-				},
-			},
+			host: projectFileObservationHost,
+			folderScope: folders.observation.resolve,
 		});
 		const fileCatalogOperations = fileCatalogAdapter.operations();
 		const documentationCatalogOperations =
@@ -777,6 +731,7 @@ export class ServerTerminalAuthority {
 			this.worktreeInsights.attach(extensionManagement.hosts);
 		}
 		this.workspace.subscribe(() => this.worktreeInsights.refreshActivity());
+		this.workspace.subscribe(() => folders.workspaceChanged());
 		const mcpRouter =
 			mcpInstall === undefined
 				? undefined
@@ -1032,6 +987,7 @@ export class ServerTerminalAuthority {
 				scope: this.agentScope,
 			},
 			git: gitAdapter,
+			folderRoots: folders.roots,
 			eventJournal,
 			...(extensionManagement === undefined
 				? {}
@@ -1496,6 +1452,7 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+		this.folders.projectBound(projectId);
 	}
 
 	/**
@@ -1531,6 +1488,7 @@ export class ServerTerminalAuthority {
 		this.fileContentProjects.delete(projectId);
 		this.fileSessionProjects.delete(projectId);
 		this.fileProjectRoots.delete(projectId);
+		this.folders.projectReleased(projectId);
 		this.agentScope.removeProject(projectId);
 	}
 
@@ -1586,6 +1544,7 @@ export class ServerTerminalAuthority {
 				this.fileContentProjects.set(projectId, contentContext);
 				this.fileSessionProjects.set(projectId, sessionContext);
 				await this.git.bindProject(projectId, canonicalRoot);
+				this.folders.projectBound(projectId);
 			},
 		});
 	}
@@ -1656,6 +1615,9 @@ export class ServerTerminalAuthority {
 			readonly projectId: string;
 			readonly profileId?: string;
 			readonly activePanelId?: string;
+			/** The folder of the project the terminal is created in. Absent means
+			 * the project's General folder. */
+			readonly folderId?: string;
 			readonly projectRootOrigin?: 'explicit' | 'server-default';
 		},
 	): Promise<ServerTerminalAuthoritySession> {
@@ -1705,6 +1667,9 @@ export class ServerTerminalAuthority {
 							...(options.activePanelId === undefined
 								? {}
 								: { activePanelId: options.activePanelId }),
+							...(options.folderId === undefined
+								? {}
+								: { folderId: options.folderId }),
 							cols: options.cols,
 							rows: options.rows,
 						});
@@ -1725,12 +1690,21 @@ export class ServerTerminalAuthority {
 		if (!this.buffers.has(handle.sessionId))
 			this.buffers.set(handle.sessionId, this.createRecentOutput());
 		if (this.workspace.state.terminalSessions[handle.sessionId] === undefined) {
+			// A folder deleted while the terminal was spawning falls back to
+			// General instead of failing the creation.
+			const folderId =
+				options.folderId !== undefined &&
+				this.workspace.state.folders[options.folderId]?.projectId ===
+					handle.projectId
+					? options.folderId
+					: undefined;
 			const registered = this.composition.workspaceOperations?.applyHostCommand(
 				`authority:terminal:${handle.sessionId}`.slice(0, 128),
 				{
 					type: 'terminal.createPanel',
 					sessionId: handle.sessionId,
 					projectId: handle.projectId,
+					...(folderId === undefined ? {} : { folderId }),
 					panelId: `p:${handle.sessionId}`.slice(0, 128),
 					title: this.nextTerminalPanelTitle(handle.projectId),
 					cwd: handle.snapshot().cwd,
@@ -2038,6 +2012,7 @@ export class ServerTerminalAuthority {
 		this.shutdownPromise = (async () => {
 			await this.composition.shutdown();
 		})().finally(() => {
+			this.folders.dispose();
 			this.serviceEventsUnsubscribe?.();
 			this.serviceEventsUnsubscribe = undefined;
 		});
