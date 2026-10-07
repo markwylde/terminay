@@ -99,14 +99,13 @@ What changes:
   must stay usable in them so a person can leave for another server.
 - Two servers are seen side by side in two windows, not in one.
 - Activity on a server is invisible until a window shows that server.
-- A server holds one live connection per device, so Desktop shows a remote
-  server in at most one window; several windows may show Local. See
-  `./evidence/one-live-connection-per-device-and-desktop-windows.md`.
+- Several windows may show the same server. Each is its own connection under
+  the same device key, as torn-off windows already were.
 - The `connections` host capability shrinks to listing, renaming, and
   forgetting remembered profiles, switching, and opening a window.
 
 ## Open items
 
+- Confirm how a server treats two live connections from one device key, which
+  two windows on one remote server produce.
 - A host-readable activity summary for servers no window is showing.
-- Showing one remote server in two windows, which needs a transport shared
-  between windows or an identity per window.
