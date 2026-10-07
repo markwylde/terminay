@@ -125,6 +125,14 @@ export function HomeView({
 				navigation={
 					showsSidebar ? (
 						<nav className="home-sidebar" data-terminay-home-sidebar="true">
+							{/* An empty band, level with Home's tab strip, so the chrome
+							    reads as one bar across the sidebar as it does in a
+							    project. */}
+							<div
+								className="home-sidebar__band"
+								data-terminay-home-sidebar-band="true"
+								aria-hidden="true"
+							/>
 							<div
 								className="home-sidebar__sections"
 								role="tablist"
