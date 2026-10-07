@@ -8,7 +8,7 @@
 
 ## In-Force ADR Context Reviewed
 
-- openspec/adr/0038-app-views-run-in-a-self-sandboxing-proxy.md - the sandbox this change reuses. Its proxy, opaque origin, embedded policy, single-document rule, and gesture rule apply to an HTML preview unchanged. Extended to a new caller by ADR-0041, not superseded.
+- openspec/adr/0038-app-views-run-in-a-self-sandboxing-proxy.md - the sandbox this change reuses. Its proxy, opaque origin, embedded policy, single-document rule, and gesture rule apply to an HTML preview unchanged. Extended to a new caller by ADR-0042, not superseded.
 - openspec/adr/0011-security-trust-boundary-model.md - renderer content is untrusted at every privileged boundary. A previewed page gets no preload, IPC, storage, or protocol access.
 - openspec/adr/0005-sandboxed-origin-bound-client-hosts.md - the workspace's own partition and content security policy are unchanged; nothing is loosened to run a page.
 - openspec/adr/0018-one-workspace-bundle-many-server-connections.md - the preview is workspace-bundle presentation and must work in a remote browser, which rules out an Electron webview. A bundle may meet a server that does not publish `html`; the client then keeps the text preview.
@@ -21,7 +21,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0041-file-previews-that-run-script-use-the-app-view-sandbox.md - a file preview may run file-provided script only inside the ADR-0038 proxy, with project resources inlined by the workspace and no network; no Electron webview is introduced.
+- openspec/adr/0042-file-previews-that-run-script-use-the-app-view-sandbox.md - a file preview may run file-provided script only inside the ADR-0038 proxy, with project resources inlined by the workspace and no network; no Electron webview is introduced.
 
 ## Notes
 

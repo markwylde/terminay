@@ -1,5 +1,5 @@
 /**
- * Builds the document an HTML preview runs (ADR-0041).
+ * Builds the document an HTML preview runs (ADR-0042).
  *
  * The preview's frame has an opaque origin and no network, so it can fetch
  * nothing. Every project file the page refers to is read here, through the
