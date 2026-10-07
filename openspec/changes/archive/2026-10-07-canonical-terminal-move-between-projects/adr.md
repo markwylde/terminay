@@ -20,8 +20,8 @@ The supersession graph was walked: ADR-0001, 0004, 0007, 0008, 0009, 0010, 0014,
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0041-a-terminal-changes-project-by-retiring-its-identity.md - a committed `panel.move` retires a terminal's identity under the source project and binds a new one for the same PTY; nothing bound to the old identity is carried over, and only the server performs the re-home.
+- openspec/adr/0043-a-terminal-changes-project-by-retiring-its-identity.md - a committed `panel.move` retires a terminal's identity under the source project and binds a new one for the same PTY; nothing bound to the old identity is carried over, and only the server performs the re-home.
 
 ## Notes
 
-ADR-0041 does not supersede ADR-0011. It records how a terminal changes project in a way that keeps ADR-0011's invariant, and states that reading explicitly. The ADR index in `openspec/adr/README.md` gained rows for 0040, which was missing, and 0041.
+ADR-0043 does not supersede ADR-0011. It records how a terminal changes project in a way that keeps ADR-0011's invariant, and states that reading explicitly. The ADR index in `openspec/adr/README.md` gained rows for 0040, which was missing, and 0041.

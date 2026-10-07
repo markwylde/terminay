@@ -67,4 +67,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0038](./0038-app-views-run-in-a-self-sandboxing-proxy.md) | App views run in an opaque-origin frame inside a self-sandboxing proxy document | accepted | 2026-10-04 |
 | [0039](./0039-app-views-are-mirrored-from-the-controlling-client.md) | An app view is mirrored to observers from the controlling client; the server relays and keeps nothing | accepted | 2026-10-04 |
 | [0040](./0040-home-tabs-are-device-local-presentation-in-their-own-dockview.md) | Home tabs are device-local presentation hosted in their own Dockview | accepted | 2026-10-05 |
-| [0041](./0041-a-terminal-changes-project-by-retiring-its-identity.md) | A terminal changes project by retiring its identity and binding a new one | accepted | 2026-10-07 |
+| [0043](./0043-a-terminal-changes-project-by-retiring-its-identity.md) | A terminal changes project by retiring its identity and binding a new one | accepted | 2026-10-07 |

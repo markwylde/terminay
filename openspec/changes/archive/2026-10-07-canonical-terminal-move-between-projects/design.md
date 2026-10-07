@@ -40,7 +40,7 @@ Around the service, the protocol registry's `retireIdentity` ends what was bound
 
 The checkpoint authority's emulator is the one thing that is carried rather than ended. It is the terminal's scrollback, not a credential, and closing it would leave a client that attaches after the move with a blank screen. `rehomeSession` on the authority moves the emulator to the new identity and clears its pins, which are the credentials.
 
-This crosses the terminal-session boundary of ADR-0011, and is shaped to keep its invariant: an identity is never edited, so no attachment, pin, lease, or credential minted for the source project can come to resolve to state in the target project. Recorded as ADR-0041.
+This crosses the terminal-session boundary of ADR-0011, and is shaped to keep its invariant: an identity is never edited, so no attachment, pin, lease, or credential minted for the source project can come to resolve to state in the target project. Recorded as ADR-0043.
 
 *Alternative considered — re-key each map in place and keep attachments alive.* Rejected. It turns one immutable identity into a mutable one across seven layers, each of which compares identity for authorization, and one missed key leaves a credential for project A resolving to a terminal in project B. Attached clients would also have to accept events whose identity changed mid-stream, which `client-core` deliberately drops.
 
