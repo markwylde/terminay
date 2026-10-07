@@ -1993,7 +1993,7 @@ export class ServerTerminalAuthority {
 	private handleEvent(event: TerminalEvent): void {
 		if (event.type === 'output') {
 			// Retain only; recent output is assembled when something reads it, so
-			// observing an event never costs what is already retained (ADR-0041).
+			// observing an event never costs what is already retained (ADR-0044).
 			let recent = this.buffers.get(event.sessionId);
 			if (recent === undefined) {
 				recent = this.createRecentOutput();

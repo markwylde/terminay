@@ -33,7 +33,7 @@ force. The binding ones here:
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0041-output-path-work-is-proportional-to-the-output-event.md -
+- openspec/adr/0044-output-path-work-is-proportional-to-the-output-event.md -
   per-output-event work is sized by the event; a size bound is not a work
   bound; expensive follow-up goes behind the shared ramp; cost is asserted by
   scaling tests and evidenced as process CPU. Supersedes nothing.
@@ -45,5 +45,5 @@ force. The binding ones here:
   that produced them beside it.
 - Not recorded as ADRs: the shape of the bounded chunk queue and keeping the
   authority's copy separate from the service's replay. Both are implementation
-  choices inside ADR-0041's rule; the second is listed there as an open item.
+  choices inside ADR-0044's rule; the second is listed there as an open item.
 - `openspec/adr/README.md` has no index row for ADR-0040. Left as found.

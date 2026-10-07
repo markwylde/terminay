@@ -1,6 +1,6 @@
 # Terminal output cost in the main process
 
-Measurements behind [ADR-0041](../0041-output-path-work-is-proportional-to-the-output-event.md)
+Measurements behind [ADR-0044](../0044-output-path-work-is-proportional-to-the-output-event.md)
 and the change `bound-terminal-output-cost`. Taken 2026-10-07 at commit
 `85e53368` on an Apple M3 (arm64), macOS 27, Node 24.14, ~570 host processes.
 

@@ -1,6 +1,6 @@
 /**
  * A byte-bounded queue of output chunks whose cost per chunk does not depend
- * on what it already holds (ADR-0041).
+ * on what it already holds (ADR-0044).
  *
  * The byte total is maintained as chunks enter and leave, never recomputed,
  * and eviction advances a head index instead of shifting the array, so a
