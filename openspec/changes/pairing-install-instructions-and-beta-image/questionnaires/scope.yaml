@@ -1,0 +1,109 @@
+title: Install instructions on the pairing screen, and beta images
+intro: |
+  Two pieces of work: publish a beta image on every push to main, and show
+  "how to install a Terminay server" on the Add connection screen with a
+  docker run command that matches the app's own version.
+
+  These are the decisions I can't make for you. Everything else I'll decide
+  and record in the proposal.
+
+status: submitted
+submitted_at: "2026-10-03T10:24:41+01:00"
+
+questions:
+  - id: tag_prefix
+    type: select
+    prompt: Should image tags carry a "v" prefix?
+    help: |
+      Today the workflow publishes 5.13.0 (no "v"), which is the Docker Hub
+      convention. You wrote markwylde/terminay:v1.x.x. I'd publish both so
+      neither form is a dead link.
+    required: true
+    options:
+      - Both v5.13.0 and 5.13.0
+      - Only v5.13.0
+      - Only 5.13.0
+    answer: Only 5.13.0
+    comment: 'Gmm. whatever is standard. it sounds like it''s standard to not include thev. that''s fine. '
+
+  - id: beta_tag_shape
+    type: select
+    prompt: What should a beta image be tagged?
+    help: |
+      The beta version main already produces is <next stable>-beta.<run>, for
+      example 5.13.0-beta.214. That is what the beta desktop app and server
+      archive report, so I'd reuse it exactly: the app can then name the image
+      that matches itself. You wrote "v1.?.?-beta-1-?-?" - tell me if you meant
+      a different shape.
+    required: true
+    options:
+      - Same as the app's beta version (5.13.0-beta.214)
+      - Something else (say what in the comment)
+    answer: Same as the app's beta version (5.13.0-beta.214)
+
+  - id: moving_tags
+    type: multiselect
+    prompt: Which moving tags should exist?
+    help: |
+      "latest" already names the newest stable release. A "beta" tag would
+      always name the newest beta, for people who want to follow main without
+      editing a version.
+    options:
+      - latest (newest stable)
+      - beta (newest beta)
+    answer:
+      - latest (newest stable)
+      - beta (newest beta)
+
+  - id: mac_host
+    type: select
+    prompt: What should "install on a Mac host" show?
+    help: |
+      There is no standalone Terminay server for macOS: the archives and the
+      installer are Linux only. On a Mac the server either runs in Docker, or
+      it is the one inside Terminay Desktop, exposed from the Exposure screen.
+      A native macOS server is a separate, much larger piece of work.
+    required: true
+    options:
+      - Docker on the Mac, plus a pointer to Desktop's own Exposure screen
+      - Docker on the Mac only
+      - Leave Mac out until there is a native macOS server
+    answer: Docker on the Mac only
+
+  - id: install_options
+    type: multiselect
+    prompt: Which install options should the screen offer?
+    help: |
+      "npm" and "Linux host" are the same thing today: npx terminay daemon
+      install is the Linux systemd installer. I'd show Docker first, since it
+      is the one that works on every machine.
+    options:
+      - Docker (local machine, Desktop only - no ports)
+      - Docker (browsers and phones - public host and UDP ports)
+      - Linux host with systemd (npx terminay daemon install)
+      - Linux host, Docker with host networking
+      - Manual archive install (link to the docs)
+    answer:
+      - Docker (local machine, Desktop only - no ports)
+      - Docker (browsers and phones - public host and UDP ports)
+      - Linux host with systemd (npx terminay daemon install)
+      - Linux host, Docker with host networking
+      - Manual archive install (link to the docs)
+    comment: But make it a nice user interfance. Maybe something like it starts with the docker link and a linux npx instructions but then you can "Expand" an advanced install which gives more details. i don't want to over explain, I want it to be a really nice simply easy standard onboarding. We have a terminay.com docs website where we can explain in more details. So this is simple.
+
+  - id: where_shown
+    type: select
+    prompt: Where should the instructions appear?
+    help: |
+      The Add connection screen is shared between Terminay Desktop and the
+      app.terminay.com manager. The web manager has no "own version" in the
+      same sense - it would show the stable command.
+    required: true
+    options:
+      - Both Desktop and the web manager
+      - Desktop only
+    answer: Both Desktop and the web manager
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

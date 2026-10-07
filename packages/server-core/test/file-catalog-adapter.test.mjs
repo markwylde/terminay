@@ -15,6 +15,7 @@ function project() {
     ["/project/README.md", { isFile: true, size: 19, mtimeMs: 1 }],
     ["/project/src", { isDirectory: true, size: 0 }],
     ["/project/src/app.ts", { isFile: true, size: 5, mtimeMs: 2 }],
+    ["/project/index.html", { isFile: true, size: 8, mtimeMs: 3 }],
   ]);
   const children = new Map([
     ["/project", [{ name: "README.md", isFile: true }, { name: "src", isDirectory: true }]],
@@ -231,4 +232,16 @@ test("catalog adapter commands require write scope and retain bounded body bytes
     context: { connectionId: "connection-a", clientId: "client-a", authScope: "write", claims: { projectId: "project-a" }, signal: new AbortController().signal },
   });
   assert.equal(result, null);
+});
+
+test("catalog adapter names the page preview only to a client that asks for it", async () => {
+  const adapter = new ServerFileCatalogAdapter({ serverId: "server-a", projects: { "project-a": project().context } });
+  // A workspace bundle older than the kind sends no options and validates the
+  // kind against the set it knows; it must keep receiving one from that set.
+  const older = await adapter.previewMetadata({ authorization: authorization(), path: "index.html" });
+  assert.equal(older.previewKind, "text");
+  assert.equal(older.preferredMode, "text");
+  const current = await adapter.previewMetadata({ authorization: authorization(), path: "index.html", options: { acceptPreviewKinds: ["html"] } });
+  assert.equal(current.previewKind, "html");
+  assert.equal(current.preferredMode, "preview");
 });

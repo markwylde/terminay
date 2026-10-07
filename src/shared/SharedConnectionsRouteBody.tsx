@@ -9,6 +9,7 @@ import {
 } from './PairingAttemptStatus';
 import { friendlyPairingActionError } from './pairingActionError';
 import type { PairingAttemptProgress } from './pairingAttemptState';
+import { ServerInstallGuide } from './ServerInstallGuide';
 import './SharedProductionRoutes.css';
 
 interface ConnectionSummary {
@@ -16,6 +17,26 @@ interface ConnectionSummary {
 	readonly label: string;
 	readonly status: 'connected' | 'disconnected' | 'reconnecting';
 }
+
+/** A remembered server as the host lists it: display metadata only. */
+export interface SavedServerSummary {
+	readonly id: string;
+	readonly label: string;
+	readonly isLocal?: boolean;
+}
+
+/** One row of the saved-server list, whichever source it came from. */
+type ServerRow = Readonly<{
+	id: string;
+	label: string;
+	/** Absent where the listing host cannot speak for the server: what it
+	 * knows is whether this window holds a connection, not whether the server
+	 * is up. */
+	status?: string;
+	origin?: string;
+	isLocal: boolean;
+	profile?: ConnectionProfile;
+}>;
 
 let pairingAttemptSequence = 0;
 
@@ -58,6 +79,18 @@ export interface SharedConnectionsRouteBodyProps {
 		label: string,
 	) => Promise<void> | void;
 	readonly onForget?: (profile: ConnectionProfile) => Promise<void> | void;
+	/** The host's remembered servers, where the host owns that list and no
+	 * profile store exists in this document. */
+	readonly servers?: readonly SavedServerSummary[];
+	readonly onRenameServer?: (id: string, label: string) => Promise<void> | void;
+	/** Remove this device's credential and metadata for a server. It revokes
+	 * nothing on the server. */
+	readonly onForgetServer?: (id: string) => Promise<void> | void;
+	/** The remembered list may have changed; ask the host for it again. */
+	readonly onServersChanged?: () => void;
+	/** The version of the client, when its host supplies one. It only chooses
+	 * which image the install commands name. */
+	readonly appVersion?: string;
 	readonly embedded?: boolean;
 	readonly presentation?: 'page' | 'management';
 	readonly exposurePanel?: ReactNode;
@@ -84,6 +117,11 @@ export function SharedConnectionsRouteBody({
 	pairingProgress = null,
 	onRename,
 	onForget,
+	servers,
+	onRenameServer,
+	onForgetServer,
+	onServersChanged,
+	appVersion,
 	embedded = false,
 	presentation = 'page',
 	exposurePanel,
@@ -94,9 +132,9 @@ export function SharedConnectionsRouteBody({
 	const [message, setMessage] = useState<string>();
 	const [confirm, setConfirm] = useState<{
 		action: 'forget' | 'revoke';
-		profile: ConnectionProfile;
+		row: ServerRow;
 	}>();
-	const [rename, setRename] = useState<ConnectionProfile>();
+	const [rename, setRename] = useState<ServerRow>();
 	const [renameLabel, setRenameLabel] = useState('');
 	const [showPair, setShowPair] = useState(false);
 	const [pairingUrl, setPairingUrl] = useState('');
@@ -105,10 +143,32 @@ export function SharedConnectionsRouteBody({
 	const [inspectId, setInspectId] = useState<string>();
 	const exposureId = '__exposure__';
 	const snapshot = profileStore?.snapshot();
-	const profiles = snapshot?.profiles.filter(
-		(profile) => profile.archived !== true,
-	);
-	const visibleConnections = profiles ?? connections;
+	const visibleConnections: readonly ServerRow[] =
+		snapshot !== undefined
+			? snapshot.profiles
+					.filter((profile) => profile.archived !== true)
+					.map((profile) => ({
+						id: profile.id,
+						label: profile.label,
+						status: profile.status,
+						origin: profile.origin,
+						isLocal: profile.isLocal === true,
+						profile,
+					}))
+			: servers !== undefined
+				? // Local is this computer, not a saved server: Exposure covers it.
+					servers
+						.filter((server) => server.isLocal !== true)
+						.map((server) => ({
+							id: server.id,
+							label: server.label,
+							isLocal: false,
+						}))
+				: connections.map((connection) => ({ ...connection, isLocal: false }));
+	const canRename = (row: ServerRow) =>
+		!row.isLocal && (row.profile !== undefined || onRenameServer !== undefined);
+	const canForget = (row: ServerRow) =>
+		!row.isLocal && (row.profile !== undefined || onForgetServer !== undefined);
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
 	const showingExposure =
 		exposurePanel !== undefined &&
@@ -155,18 +215,22 @@ export function SharedConnectionsRouteBody({
 	};
 
 	const confirmDestructiveAction = () => {
-		if (profileStore === undefined || confirm === undefined) return;
+		if (confirm === undefined) return;
 		const selected = confirm;
+		const profile = selected.row.profile;
 		setConfirm(undefined);
 		void mutate(
 			selected.action,
 			async () => {
-				if (selected.action === 'revoke') {
-					await onRevoke?.(selected.profile);
-					profileStore.revoke(selected.profile.id, true);
+				if (profile === undefined) {
+					if (selected.action !== 'forget') return false;
+					await onForgetServer?.(selected.row.id);
+				} else if (selected.action === 'revoke') {
+					await onRevoke?.(profile);
+					profileStore?.revoke(profile.id, true);
 				} else {
-					await onForget?.(selected.profile);
-					profileStore.forget(selected.profile.id, true);
+					await onForget?.(profile);
+					profileStore?.forget(profile.id, true);
 				}
 			},
 			selected.action === 'revoke'
@@ -175,30 +239,19 @@ export function SharedConnectionsRouteBody({
 		);
 	};
 
-	const renderConnectionCard = (
-		connection: Readonly<{
-			id: string;
-			label: string;
-			status: string;
-		}>,
-		asOption = true,
-	) => {
-		const profile = profileStore?.get(connection.id);
-		const local = profile?.isLocal === true;
+	const renderConnectionCard = (connection: ServerRow) => {
+		const profile = connection.profile;
+		const local = connection.isLocal;
 		const isCurrent = connection.id === currentId;
-		const optionProps = asOption
-			? {
-					role: 'option' as const,
-					'aria-label': `${connection.label} ${connection.status}`,
-					'aria-selected': isCurrent,
-					tabIndex: isCurrent ? 0 : -1,
-				}
-			: {};
+		const status = connection.status ?? 'saved';
 		return (
 			<div
 				key={connection.id}
 				className={`shared-production-route__card shared-connection-card${isCurrent ? ' shared-connection-card--current' : ''}`}
-				{...optionProps}
+				role="option"
+				aria-label={`${connection.label} ${status}`}
+				aria-selected={isCurrent}
+				tabIndex={isCurrent ? 0 : -1}
 			>
 				<div className="shared-connection-card__identity">
 					<div className="shared-connection-card__title">
@@ -214,9 +267,9 @@ export function SharedConnectionsRouteBody({
 					)}
 				</div>
 				<span
-					className={`shared-connection-card__status shared-connection-card__status--${connection.status}`}
+					className={`shared-connection-card__status shared-connection-card__status--${status}`}
 				>
-					{connection.status}
+					{status}
 				</span>
 				<div className="shared-connection-card__actions">
 					<button
@@ -248,8 +301,8 @@ export function SharedConnectionsRouteBody({
 							disabled={busy !== undefined}
 							type="button"
 							onClick={() => {
-								setRename(profile);
-								setRenameLabel(profile.label);
+								setRename(connection);
+								setRenameLabel(connection.label);
 							}}
 						>
 							Rename
@@ -260,7 +313,9 @@ export function SharedConnectionsRouteBody({
 							className="shared-connection-card__secondary-action"
 							disabled={busy !== undefined}
 							type="button"
-							onClick={() => setConfirm({ action: 'forget', profile })}
+							onClick={() =>
+								setConfirm({ action: 'forget', row: connection })
+							}
 						>
 							Forget
 						</button>
@@ -273,7 +328,9 @@ export function SharedConnectionsRouteBody({
 								className="shared-connection-card__danger-action"
 								disabled={busy !== undefined}
 								type="button"
-								onClick={() => setConfirm({ action: 'revoke', profile })}
+								onClick={() =>
+									setConfirm({ action: 'revoke', row: connection })
+								}
 							>
 								Revoke access
 							</button>
@@ -367,141 +424,156 @@ export function SharedConnectionsRouteBody({
 		</>
 	);
 
-	const actionPanels = (
+	const renameForm = rename !== undefined && (
+		<form
+			aria-label="Rename connection"
+			className="shared-connections__action-panel"
+			onSubmit={(event) => {
+				event.preventDefault();
+				const row = rename;
+				const label = renameLabel.trim();
+				void mutate(
+					'rename',
+					async () => {
+						if (row.profile === undefined)
+							await onRenameServer?.(row.id, label);
+						else {
+							await onRename?.(row.profile, label);
+							profileStore?.rename(row.id, label);
+						}
+						setRename(undefined);
+					},
+					'Connection renamed.',
+				);
+			}}
+		>
+			<div className="shared-connections__action-panel-fields">
+				<label>
+					Connection name
+					<input
+						value={renameLabel}
+						maxLength={256}
+						required
+						onChange={(event) => setRenameLabel(event.target.value)}
+					/>
+				</label>
+			</div>
+			<div className="shared-connections__action-panel-actions">
+				<button type="submit" disabled={renameLabel.trim().length === 0}>
+					Save name
+				</button>
+				<button type="button" onClick={() => setRename(undefined)}>
+					Cancel
+				</button>
+			</div>
+		</form>
+	);
+
+	const confirmPanel = confirm !== undefined && (
+		<section
+			aria-label={`Confirm ${confirm.action}`}
+			className="shared-production-route__card shared-connections__action-panel"
+		>
+			<strong>
+				{confirm.action === 'revoke'
+					? 'Revoke server access?'
+					: 'Forget this local profile?'}
+			</strong>
+			<p>
+				{confirm.action === 'revoke'
+					? 'This invalidates this device on the server.'
+					: `${confirm.row.label} and this device's key for it are removed from this computer. Forgetting does not revoke server access.`}
+			</p>
+			<div className="shared-connections__action-panel-actions">
+				<button
+					type="button"
+					className="shared-connections__confirm-action"
+					onClick={confirmDestructiveAction}
+				>
+					Confirm {confirm.action}
+				</button>
+				<button type="button" onClick={() => setConfirm(undefined)}>
+					Cancel
+				</button>
+			</div>
+		</section>
+	);
+
+	const pairPanel = showPair && (
 		<>
-			{rename !== undefined && (
-				<form
-					aria-label="Rename connection"
-					className="shared-connections__action-panel"
-					onSubmit={(event) => {
-						event.preventDefault();
-						const profile = rename;
-						void mutate(
-							'rename',
-							async () => {
-								await onRename?.(profile, renameLabel);
-								profileStore?.rename(profile.id, renameLabel);
-								setRename(undefined);
-							},
-							'Connection renamed.',
-						);
-					}}
-				>
-					<div className="shared-connections__action-panel-fields">
-						<label>
-							Connection name
-							<input
-								value={renameLabel}
-								onChange={(event) => setRenameLabel(event.target.value)}
-							/>
-						</label>
-					</div>
-					<div className="shared-connections__action-panel-actions">
-						<button type="submit">Save name</button>
-						<button type="button" onClick={() => setRename(undefined)}>
-							Cancel
-						</button>
-					</div>
-				</form>
-			)}
-			{confirm !== undefined && (
-				<section
-					aria-label={`Confirm ${confirm.action}`}
-					className="shared-production-route__card shared-connections__action-panel"
-				>
-					<strong>
-						{confirm.action === 'revoke'
-							? 'Revoke server access?'
-							: 'Forget this local profile?'}
-					</strong>
-					<p>
-						{confirm.action === 'revoke'
-							? 'This invalidates this device on the server.'
-							: 'Forgetting does not revoke server access.'}
-					</p>
-					<div className="shared-connections__action-panel-actions">
-						<button type="button" onClick={confirmDestructiveAction}>
-							Confirm {confirm.action}
-						</button>
-						<button type="button" onClick={() => setConfirm(undefined)}>
-							Cancel
-						</button>
-					</div>
-				</section>
-			)}
-			{showPair && (
-				<form
-					aria-label="Add connection"
-					className="shared-connections__action-panel"
-					onSubmit={(event) => {
-						event.preventDefault();
-						const value = pairingUrl;
-						const attemptId = nextPairingAttemptId();
-						activePairingAttempt.current = attemptId;
-						void mutate(
-							'pair',
-							async () => {
-								try {
-									await onPairingHandoff?.({
-										attemptId,
-										pairingUrl: value,
-									});
-								} catch (cause) {
-									// A cancelled attempt rejects by design; that is the
-									// user's own decision, not an error to report.
-									if (cancelledPairingAttempts.current.delete(attemptId))
-										return false;
-									throw cause;
-								} finally {
-									if (activePairingAttempt.current === attemptId)
-										activePairingAttempt.current = null;
-								}
+			<form
+				aria-label="Add connection"
+				className="shared-connections__action-panel shared-connections__pair"
+				onSubmit={(event) => {
+					event.preventDefault();
+					const value = pairingUrl;
+					const attemptId = nextPairingAttemptId();
+					activePairingAttempt.current = attemptId;
+					void mutate(
+						'pair',
+						async () => {
+							try {
+								await onPairingHandoff?.({
+									attemptId,
+									pairingUrl: value,
+								});
+							} catch (cause) {
+								// A cancelled attempt rejects by design; that is the
+								// user's own decision, not an error to report.
 								if (cancelledPairingAttempts.current.delete(attemptId))
 									return false;
-								setPairingUrl('');
-								setShowPair(false);
-							},
-							'Server added.',
-						);
-					}}
-				>
-					<div className="shared-connections__action-panel-fields">
-						<label>
-							Pairing URL
-							<input
-								type="url"
-								value={pairingUrl}
-								onChange={(event) => setPairingUrl(event.target.value)}
-								placeholder="https://"
-								required
-							/>
-						</label>
-					</div>
-					<PairingAttemptStatus
-						approval={pairingApproval}
-						busy={busy === 'pair'}
-						progress={pairingProgress}
-					/>
-					<div className="shared-connections__action-panel-actions">
-						<button type="submit" disabled={busy === 'pair'}>
-							{busy === 'pair' ? 'Pairing…' : 'Continue pairing'}
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								const attemptId = activePairingAttempt.current;
-								if (attemptId !== null && onPairingCancel !== undefined) {
-									cancelledPairingAttempts.current.add(attemptId);
-									onPairingCancel(attemptId);
-								}
-								setShowPair(false);
-							}}
-						>
-							Cancel
-						</button>
-					</div>
-				</form>
-			)}
+								throw cause;
+							} finally {
+								if (activePairingAttempt.current === attemptId)
+									activePairingAttempt.current = null;
+							}
+							if (cancelledPairingAttempts.current.delete(attemptId))
+								return false;
+							setPairingUrl('');
+							setShowPair(false);
+							onServersChanged?.();
+						},
+						'Server added.',
+					);
+				}}
+			>
+				<div className="shared-connections__action-panel-fields">
+					<label>
+						Pairing URL
+						<input
+							type="url"
+							value={pairingUrl}
+							onChange={(event) => setPairingUrl(event.target.value)}
+							placeholder="https://"
+							required
+						/>
+					</label>
+				</div>
+				<PairingAttemptStatus
+					approval={pairingApproval}
+					busy={busy === 'pair'}
+					progress={pairingProgress}
+				/>
+				<div className="shared-connections__action-panel-actions">
+					<button type="submit" disabled={busy === 'pair'}>
+						{busy === 'pair' ? 'Pairing…' : 'Continue pairing'}
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							const attemptId = activePairingAttempt.current;
+							if (attemptId !== null && onPairingCancel !== undefined) {
+								cancelledPairingAttempts.current.add(attemptId);
+								onPairingCancel(attemptId);
+							}
+							setShowPair(false);
+						}}
+					>
+						Cancel
+					</button>
+				</div>
+			</form>
+			<ServerInstallGuide version={appVersion} />
 		</>
 	);
 
@@ -509,6 +581,128 @@ export function SharedConnectionsRouteBody({
 		const inspected = visibleConnections.find(
 			(connection) => connection.id === inspectedId,
 		);
+		const inspect = (id: string) => {
+			setInspectId(id);
+			setShowPair(false);
+			setRename(undefined);
+			setConfirm(undefined);
+		};
+		const renderServerDetail = (row: ServerRow) => {
+			const profile = row.profile;
+			const isCurrent = row.id === currentId;
+			const editing =
+				rename?.id === row.id || confirm?.row.id === row.id;
+			return (
+				<section className="remote-control-pane" aria-label={row.label}>
+					<header className="remote-control-pane__header">
+						<div className="remote-control-pane__title">
+							<h2>{row.label}</h2>
+							{isCurrent && (
+								<span className="shared-connection-card__current">Current</span>
+							)}
+						</div>
+						{row.origin !== undefined && (
+							<p className="remote-control-pane__origin">{row.origin}</p>
+						)}
+						{row.status === undefined ? (
+							<p className="remote-control-pane__lede">
+								Saved on this computer. Attach it to a window from the
+								connection menu.
+							</p>
+						) : (
+							<p className="remote-control-pane__status">
+								<span
+									className={`remote-control-status-dot remote-control-status-dot--${row.status}`}
+									aria-hidden="true"
+								/>
+								{row.status}
+							</p>
+						)}
+					</header>
+					{!editing && (
+						<div className="remote-control-pane__actions">
+							{profile !== undefined && onSelect !== undefined && (
+								<button
+									type="button"
+									className="settings-secondary-button"
+									disabled={busy !== undefined}
+									onClick={() =>
+										void mutate(
+											`select:${profile.id}`,
+											async () => {
+												await onSelect(profile);
+												profileStore?.select(profile.id);
+											},
+											`Switched to ${row.label}.`,
+										)
+									}
+								>
+									{isCurrent ? 'Reconnect' : `Switch to ${row.label}`}
+								</button>
+							)}
+							{profile !== undefined &&
+								canExpose &&
+								onExpose !== undefined &&
+								isCurrent &&
+								profile.status === 'connected' && (
+									<button
+										type="button"
+										className="settings-secondary-button"
+										disabled={busy !== undefined}
+										onClick={() =>
+											void mutate(
+												`expose:${profile.id}`,
+												() => onExpose(profile),
+												'Server exposure enabled.',
+											)
+										}
+									>
+										Expose server
+									</button>
+								)}
+							{canRename(row) && (
+								<button
+									type="button"
+									className="settings-secondary-button"
+									disabled={busy !== undefined}
+									onClick={() => {
+										setRename(row);
+										setRenameLabel(row.label);
+									}}
+								>
+									Rename
+								</button>
+							)}
+							{canForget(row) && (
+								<button
+									type="button"
+									className="settings-secondary-button"
+									disabled={busy !== undefined}
+									onClick={() => setConfirm({ action: 'forget', row })}
+								>
+									Forget
+								</button>
+							)}
+							{profile !== undefined &&
+								!row.isLocal &&
+								canRevoke &&
+								onRevoke !== undefined && (
+									<button
+										type="button"
+										className="settings-danger-button"
+										disabled={busy !== undefined}
+										onClick={() => setConfirm({ action: 'revoke', row })}
+									>
+										Revoke access
+									</button>
+								)}
+						</div>
+					)}
+					{rename?.id === row.id && renameForm}
+					{confirm?.row.id === row.id && confirmPanel}
+				</section>
+			);
+		};
 		return (
 			<div
 				className="settings-shell remote-control-window shared-connections"
@@ -519,14 +713,19 @@ export function SharedConnectionsRouteBody({
 						<div className="settings-brand">
 							<h1>Remote Control</h1>
 							<p className="settings-sidebar-lede">
-								Choose and manage the Terminay server for this workspace.
+								Servers this device connects to, and who can connect to this
+								one.
 							</p>
 						</div>
 						{canShowPair ? (
 							<button
 								type="button"
 								className="settings-primary-button"
-								onClick={() => setShowPair(true)}
+								onClick={() => {
+									setShowPair(true);
+									setRename(undefined);
+									setConfirm(undefined);
+								}}
 							>
 								Add connection…
 							</button>
@@ -541,10 +740,7 @@ export function SharedConnectionsRouteBody({
 										type="button"
 										className={`settings-nav-item${showingExposure ? ' settings-nav-item--active' : ''}`}
 										aria-pressed={showingExposure}
-										onClick={() => {
-											setInspectId(exposureId);
-											setShowPair(false);
-										}}
+										onClick={() => inspect(exposureId)}
 									>
 										<span className="settings-nav-item-inner">Exposure</span>
 									</button>
@@ -553,24 +749,37 @@ export function SharedConnectionsRouteBody({
 							<div className="settings-nav-group">
 								<div className="settings-nav-group-title">Servers</div>
 								<div role="listbox" aria-label="Saved Terminay servers">
-									{visibleConnections.map((connection) => (
-										<button
-											key={connection.id}
-											type="button"
-											role="option"
-											aria-label={`${connection.label} ${connection.status}`}
-											aria-selected={connection.id === inspectedId}
-											className={`settings-nav-item${connection.id === inspectedId ? ' settings-nav-item--active' : ''}`}
-											onClick={() => {
-												setInspectId(connection.id);
-												setShowPair(false);
-											}}
-										>
-											<span className="settings-nav-item-inner">
-												{connection.label}
-											</span>
-										</button>
-									))}
+									{visibleConnections.map((connection) => {
+										const selected =
+											!showPair && connection.id === inspectedId;
+										return (
+											<button
+												key={connection.id}
+												type="button"
+												role="option"
+												aria-label={
+													connection.status === undefined
+														? connection.label
+														: `${connection.label} ${connection.status}`
+												}
+												aria-selected={selected}
+												className={`settings-nav-item${selected ? ' settings-nav-item--active' : ''}`}
+												onClick={() => inspect(connection.id)}
+											>
+												<span className="settings-nav-item-inner">
+													{connection.status !== undefined && (
+														<span
+															className={`remote-control-status-dot remote-control-status-dot--${connection.status}`}
+															aria-hidden="true"
+														/>
+													)}
+													<span className="remote-control-nav-label">
+														{connection.label}
+													</span>
+												</span>
+											</button>
+										);
+									})}
 								</div>
 								{visibleConnections.length === 0 ? (
 									<p className="settings-empty-state">No saved servers yet.</p>
@@ -581,20 +790,43 @@ export function SharedConnectionsRouteBody({
 				</aside>
 				<main className="settings-main">
 					<div className="settings-content">
-						{statusBlocks}
+						<div className="remote-control-notices">{statusBlocks}</div>
 						{state === 'ready' && !showingExposure && emptyCopy}
 						{state === 'ready' && showingExposure && !showPair && exposurePanel}
 						{state === 'ready' &&
 							inspected !== undefined &&
 							!showPair &&
 							!showingExposure &&
-							renderConnectionCard(inspected, false)}
-						{actionPanels}
+							renderServerDetail(inspected)}
+						{showPair && (
+							<section
+								className="remote-control-pane"
+								aria-label="Add connection"
+							>
+								<header className="remote-control-pane__header">
+									<div className="remote-control-pane__title">
+										<h2>Add connection</h2>
+									</div>
+									<p className="remote-control-pane__lede">
+										Paste the pairing link from a Terminay server.
+									</p>
+								</header>
+								{pairPanel}
+							</section>
+						)}
 					</div>
 				</main>
 			</div>
 		);
 	}
+
+	const actionPanels = (
+		<>
+			{renameForm}
+			{confirmPanel}
+			{pairPanel}
+		</>
+	);
 
 	const pageInner: ReactNode = (
 		<>

@@ -310,3 +310,118 @@ test("node-pty coalesces continuous output into one in-flight sample and one pen
   assert.ok(calls <= 3, "close observation settles without waiting for output silence");
   process.dispose();
 });
+
+test("node-pty samples the host foreground at a bounded rate under sustained output", async (t) => {
+  const child = createChild();
+  let samples = 0;
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    // A host observation that completes at once, so nothing but the adapter's
+    // own pacing separates one sample from the next.
+    { resolveForegroundProcess: async () => { samples += 1; return "claude"; } },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  t.after(() => process.dispose());
+  process.onForegroundProcess(() => {});
+  process.onData(() => {});
+
+  // A repainting TUI: each chunk arrives after the previous sample settled.
+  const startedAt = performance.now();
+  for (let index = 0; index < 400; index += 1) {
+    child.emitData(`frame-${index}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const elapsedSeconds = (performance.now() - startedAt) / 1000;
+
+  // Output may refresh the projection promptly; it may not turn every chunk
+  // into a walk of the host process table.
+  const allowed = 2 + Math.ceil(elapsedSeconds * 4);
+  assert.ok(
+    samples <= allowed,
+    `${samples} host samples for 400 chunks in ${elapsedSeconds.toFixed(3)}s; at most ${allowed} are allowed`,
+  );
+  process.dispose();
+});
+
+test("node-pty close observation is not delayed by output pacing", async (t) => {
+  const child = createChild();
+  let samples = 0;
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    { resolveForegroundProcess: async () => { samples += 1; return "vim"; } },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  t.after(() => process.dispose());
+  process.onForegroundProcess(() => {});
+  for (let index = 0; index < 50; index += 1) {
+    child.emitData(`frame-${index}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  // Destructive close asks for an observation that began after the request;
+  // it is answered by a fresh sample at once, however recently output sampled.
+  const before = samples;
+  const startedAt = performance.now();
+  await process.refreshForegroundProcess();
+  assert.ok(samples > before, "the close observation reused a sample taken before it was requested");
+  assert.ok(performance.now() - startedAt < 100, "the close observation waited on output pacing");
+  process.dispose();
+});
+
+test("node-pty spaces output-driven samples by the shared ramp", () => {
+  const child = createChild();
+  let now = 0;
+  const timers = [];
+  const factory = createNodePtyFactory({ spawn: () => child }, {
+    foregroundPolling: {
+      ...createScheduler(),
+      outputRamp: {
+        now: () => now,
+        schedule: (callback, milliseconds) => { const timer = { callback, at: now + milliseconds }; timers.push(timer); return timer; },
+        cancelSchedule: (timer) => { timers.splice(timers.indexOf(timer), 1); },
+      },
+    },
+  });
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event.processName));
+  process.onData(() => {});
+  const fire = () => { const timer = timers.shift(); now = timer.at; timer.callback(); };
+
+  // Output after quiet is acted on inside the output callback itself.
+  child.process = "vim";
+  child.emitData("first\n");
+  assert.deepEqual(events, ["vim"]);
+  assert.equal(timers.length, 0, "the first sample must not wait for a timer");
+
+  // Output inside the interval collapses into exactly one sample at its end.
+  child.process = "less";
+  for (let index = 0; index < 100; index += 1) { now += 1; child.emitData(`frame-${index}\n`); }
+  assert.deepEqual(events, ["vim"], "output inside the interval sampled the host again");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].at, 1_000);
+  fire();
+  assert.deepEqual(events, ["vim", "less"]);
+  assert.equal(timers.length, 0, "the ramp rescheduled itself without new output");
+
+  // Still printing: the next floor is wider.
+  child.process = "top";
+  now += 10;
+  child.emitData("more\n");
+  assert.equal(timers[0].at, 3_000);
+  fire();
+  assert.deepEqual(events, ["vim", "less", "top"]);
+
+  // A quiet period at least as long as the current interval returns to the floor.
+  child.process = "zsh";
+  now += 60_000;
+  child.emitData("prompt\n");
+  assert.deepEqual(events, ["vim", "less", "top", "zsh"]);
+  assert.equal(timers.length, 0);
+
+  // Whatever started observing also stops it.
+  child.emitData("tail\n");
+  assert.equal(timers.length, 1);
+  process.dispose();
+  assert.equal(timers.length, 0, "disposing left a ramp timer armed");
+});

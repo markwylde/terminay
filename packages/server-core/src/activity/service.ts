@@ -46,7 +46,8 @@ export class TerminalActivityServiceError extends Error {
 }
 
 interface SessionState {
-	readonly projectId: string;
+	/** Follows the terminal when its panel moves to another project. */
+	projectId: string;
 	readonly parser: TerminalSignalParser;
 	exited: boolean;
 }
@@ -240,6 +241,24 @@ export class TerminalActivityService {
 			),
 		};
 	}
+	/**
+	 * Follow a terminal to the project its panel was moved to. Identities
+	 * naming the project it left are refused from here on.
+	 */
+	rehomeSession(
+		sessionId: string,
+		projectId: string,
+	): ActivityEvent | undefined {
+		assertId(sessionId, 'session id');
+		assertId(projectId, 'project id');
+		const state = this.sessions.get(sessionId);
+		if (state === undefined || state.projectId === projectId) return undefined;
+		state.projectId = projectId;
+		const event = this.reducer.rehome(sessionId, projectId, this.now());
+		this.reconcileDeadline();
+		return event;
+	}
+
 	projectIdForSession(sessionId: string): string | undefined {
 		return this.sessions.get(sessionId)?.projectId;
 	}

@@ -258,3 +258,27 @@ test("multiple subscribers receive one ordered canonical stream and scoped ackno
   assert.equal(first[1].snapshot.sessions["session-a"].acknowledged, true);
   assert.equal(first[1].snapshot.sessions["session-a"].attention, false);
 });
+
+test("a session follows its terminal to another project and refuses the project it left", () => {
+  const service = new TerminalActivityService({ serverId: "server-a" });
+  service.register(identity());
+  const events = [];
+  service.subscribe((event) => events.push(event));
+
+  const moved = service.rehomeSession("session-a", "project-b");
+
+  assert.equal(moved.snapshot.projectId, "project-b");
+  assert.equal(events.at(-1), moved);
+  assert.equal(service.projectIdForSession("session-a"), "project-b");
+  assert.deepEqual(Object.keys(service.snapshotForProject("project-b").sessions), ["session-a"]);
+  assert.deepEqual(Object.keys(service.snapshotForProject("project-a").sessions), []);
+  // A client following only the target project is told the session arrived.
+  assert.equal(service.replayForProject(moved.revision - 1, "project-b").events.length, 1);
+
+  assert.throws(() => service.ingestPtyOutput(identity("project-a"), "late"), (error) => error instanceof TerminalActivityServiceError && error.code === "project_mismatch");
+  service.ingestSignal(identity("project-b"), { kind: "userInput" });
+  assert.equal(service.get(identity("project-b")).projectId, "project-b");
+
+  assert.equal(service.rehomeSession("session-a", "project-b"), undefined);
+  assert.equal(service.rehomeSession("session-missing", "project-b"), undefined);
+});

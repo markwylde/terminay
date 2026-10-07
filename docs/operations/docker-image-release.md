@@ -1,13 +1,27 @@
 # Docker image release contract
 
-Terminay publishes its standalone server OCI image when the image workflow runs
-on a semver `v*.*.*` tag. One build is pushed under two names, so both resolve
-to the same manifest digest:
+Terminay publishes its standalone server OCI image for every version the
+project publishes: each semver `v*.*.*` release tag, and each beta build of the
+default branch. One manifest is pushed under two names, so both resolve to the
+same manifest digest:
 
 | Image | Registry |
 | --- | --- |
 | `markwylde/terminay` | Docker Hub. The name in the documentation and the one to give a person trying Terminay. |
 | `ghcr.io/<owner>/terminay-server` | GitHub Container Registry. |
+
+## Tags
+
+Tags carry no `v` prefix.
+
+| Published by | Tags | Moving tag |
+| --- | --- | --- |
+| Release `vX.Y.Z` | `X.Y.Z`, `X.Y`, `sha-<commit>` | `latest` |
+| Beta `X.Y.Z-beta.N` | `X.Y.Z-beta.N`, `sha-<commit>` | `beta` |
+
+`latest` only ever names a release, and `beta` only ever names a beta build. A
+beta image carries exactly the version its Desktop beta reports, so a beta
+Desktop can name the server image that matches it.
 
 The Trigger Release workflow publishes the image as its last job, by
 dispatching the image workflow at the tag it created. It has to: the release
@@ -22,10 +36,20 @@ tree the release archives carry — pinned Node runtime, compiled server, native
 with the `terminay` command on the `PATH`. How to run it is in
 [Running in a container](./standalone-server.md#running-in-a-container).
 
+The Rolling Main Prerelease workflow publishes a beta image the same way: its
+last job dispatches the image workflow on the default branch with the beta
+version and the commit it was built from, after that build's desktop and
+archive assets were published. The image workflow refuses a version that is not
+in the beta grammar, a branch that is not the default one, and a commit the
+default branch does not contain, before it builds anything. A prerelease that
+fails publishes no image.
+
 The image publishes Linux `amd64` and `arm64` manifests with an SBOM and
-BuildKit provenance attestation. A pull request builds it and pairs Desktop's
-own pairing code with it, but does not publish it. Nothing is published from
-the default branch. The hosted PWA is built and released by `terminay.com`.
+BuildKit provenance attestation. Each architecture is built on a runner of that
+architecture and pushed by digest; a final job joins the two into one manifest
+and applies the tags, so no tag is created or moved unless both were built. A
+pull request builds the image and pairs Desktop's own pairing code with it, but
+does not publish it. The hosted PWA is built and released by `terminay.com`.
 
 Publication to Docker Hub needs the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
 release secrets described in
@@ -45,8 +69,8 @@ docker pull ghcr.io/<owner>/terminay-server@sha256:<manifest-digest>
 Version tags (`X.Y.Z`) and major/minor tags (`X.Y`) are convenience selectors;
 they are not a substitute for recording the digest used in an environment.
 `sha-<commit>` identifies the source commit. `latest` names the newest tagged
-release, which is what makes the bare image name safe to try. It
-must not be used for a controlled rollout.
+release, which is what makes the bare image name safe to try. `latest` and
+`beta` move, so they must not be used for a controlled rollout.
 
 Before deployment, inspect the resolved manifest and retain its digest with the
 deployment record:

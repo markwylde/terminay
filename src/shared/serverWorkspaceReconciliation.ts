@@ -10,6 +10,8 @@ export type ServerWorkspacePanel = Readonly<{
 	sessionId?: string;
 	cwd?: string;
 	path?: string;
+	/** A terminal's server-owned note. Absent means the terminal has none. */
+	note?: string;
 }>;
 
 export type ServerWorkspaceProject = Readonly<{
@@ -258,6 +260,7 @@ export function parseServerWorkspaceSnapshot(
 			(panel.title !== undefined && typeof panel.title !== 'string') ||
 			(panel.emoji !== undefined && typeof panel.emoji !== 'string') ||
 			(panel.color !== undefined && typeof panel.color !== 'string') ||
+			(panel.note !== undefined && typeof panel.note !== 'string') ||
 			(panel.inheritsProjectColor !== undefined &&
 				typeof panel.inheritsProjectColor !== 'boolean') ||
 			(panel.activityIndicatorsEnabled !== undefined &&
