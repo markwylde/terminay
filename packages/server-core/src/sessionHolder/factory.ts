@@ -242,7 +242,7 @@ export function createSessionHolderPtyFactory(
 			resume: () => client.resume(sessionId),
 			onData: (listener) =>
 				stream.onData((_position, bytes) => {
-					void foreground.poll();
+					foreground.noteOutput();
 					listener(bytes);
 				}),
 			onExit: (listener) => {
