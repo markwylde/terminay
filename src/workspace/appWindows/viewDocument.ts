@@ -13,7 +13,7 @@ import { MIRROR_LOADER_SCRIPT } from './mirror/bundles.generated.ts';
 export type ViewSource =
 	| { readonly kind: 'agent' }
 	| { readonly kind: 'mcp-app' }
-	/** A project file previewed as a page (ADR-0041). */
+	/** A project file previewed as a page (ADR-0042). */
 	| { readonly kind: 'file' };
 
 export interface ViewCsp {

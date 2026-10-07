@@ -194,10 +194,10 @@ the file opens in Text — the existing fallback path for an unavailable view.
 - [The security contract is loosened: file-provided script now runs] → Confined
   to an opaque origin with no preload, IPC, storage, or protocol access, the
   same boundary ADR-0038 accepted for third-party MCP App HTML. Recorded as
-  ADR-0041 and as a modified `File security boundaries` requirement.
+  ADR-0042 and as a modified `File security boundaries` requirement.
 - [Chromium does not enforce the `webrtc 'block'` directive (measured for
   ADR-0038), so page script could reach a peer over WebRTC] → Same known gap as
-  app views; stated here and in ADR-0041 rather than hidden. The spec requires
+  app views; stated here and in ADR-0042 rather than hidden. The spec requires
   the policy to ask for the block, not that the browser honours it.
 - [A navigation attempt may open a connection before the frame is removed
   (ADR-0038 point 7), which can carry data in a URL] → Meta refresh and `<base>`

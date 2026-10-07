@@ -1,4 +1,4 @@
-# ADR-0041: A file preview that runs file-provided script uses the app-view sandbox, with resources inlined by the workspace and no network
+# ADR-0042: A file preview that runs file-provided script uses the app-view sandbox, with resources inlined by the workspace and no network
 
 Status: accepted
 Date: 2026-10-07

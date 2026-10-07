@@ -1,5 +1,5 @@
 /**
- * An HTML file shown as the page it describes (ADR-0041).
+ * An HTML file shown as the page it describes (ADR-0042).
  *
  * The page runs in the same sandbox proxy as an app window's view: an
  * opaque-origin frame with no Terminay authority. Everything it shows was
