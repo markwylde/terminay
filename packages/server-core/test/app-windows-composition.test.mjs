@@ -639,7 +639,7 @@ test("a refusal reaches a feature client with the reason it needs to tell a laps
   }
 });
 
-// --- attachments on a window message (ADR-0042) ---
+// --- attachments on a window message (ADR-0046) ---
 
 const { AppWindowClient: FeatureClient, TerminayClientFacade } = await import("@terminay/client-core");
 /** The feature client the workspace uses, over a real protocol client. */

@@ -196,7 +196,7 @@ export interface AppWindowServiceOptions {
 		signal: AbortSignal,
 	) => Promise<void>;
 	/**
-	 * Attachments on a window message (ADR-0042). `authorize` evaluates the
+	 * Attachments on a window message (ADR-0046). `authorize` evaluates the
 	 * Window Messages policy for the message and its files before any byte is
 	 * accepted, and throws to refuse; `type` writes the finished message to the
 	 * owning terminal. Without this, messages carry text only.

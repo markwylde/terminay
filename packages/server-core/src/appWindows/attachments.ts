@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * Files a person attaches to a window message (ADR-0042).
+ * Files a person attaches to a window message (ADR-0046).
  *
  * The bytes come from an untrusted view, so this is a named scratch write and
  * nothing more: the server owns the directory and chooses every file name, and

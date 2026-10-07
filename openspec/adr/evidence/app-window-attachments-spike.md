@@ -1,7 +1,7 @@
 # Moving file bytes out of an app view: what was measured
 
 Date: 2026-10-07
-Supports: ADR-0042
+Supports: ADR-0046
 Code: `e2e/app-windows.spec.ts`, `e2e/app-windows-browser.spec.ts`,
 `src/workspace/appWindows/viewDocument.ts`, `public/app-view.html`
 

@@ -29,11 +29,11 @@ Reviewed and not constraining: 0002, 0003, 0005, 0006, 0010, 0012, 0013, 0015,
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0041-the-mcp-adapter-may-read-a-document-the-agent-names.md - the stdio adapter may read the one document an agent names for `show_window`; the server never opens the path and the contents never return to the agent.
-- openspec/adr/0042-window-attachments-are-an-unbounded-streamed-scratch-write.md - attachments ride on a window message into a server-named scratch file, streamed with no size limit, and are not removed by Terminay.
+- openspec/adr/0045-the-mcp-adapter-may-read-a-document-the-agent-names.md - the stdio adapter may read the one document an agent names for `show_window`; the server never opens the path and the contents never return to the agent.
+- openspec/adr/0046-window-attachments-are-an-unbounded-streamed-scratch-write.md - attachments ride on a window message into a server-named scratch file, streamed with no size limit, and are not removed by Terminay.
 
 ## Notes
 
 - No in-force ADR is superseded. ADR-0023 is followed as a pattern and left as it is.
-- ADR-0042 rests on one unmeasured point: moving file parts out of the opaque-origin view through the proxy. Task 1.1 measures it first and records the result in `openspec/adr/evidence/`.
-- The size, retention, and delivery choices in ADR-0042 are the owner's, made in a questionnaire on 2026-10-07.
+- ADR-0046 rests on one unmeasured point: moving file parts out of the opaque-origin view through the proxy. Task 1.1 measures it first and records the result in `openspec/adr/evidence/`.
+- The size, retention, and delivery choices in ADR-0046 are the owner's, made in a questionnaire on 2026-10-07.
