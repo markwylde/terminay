@@ -6,7 +6,7 @@
 
 ## 2. Switching in the host
 
-- [ ] 2.1 Establish how a server treats two live connections under one device key, by opening two Desktop windows on one standalone server. Record the result in `openspec/adr/evidence/` and, if the older connection is replaced, make **Open in new window** and remote tear-off focus the existing window instead. Verified by the evidence file and an E2E for whichever behaviour results.
+- [x] 2.1 Establish how a server treats two live connections under one device key. It held one per device and replaced the older; `one-connection-per-window` changed that to one per client window, so several windows may show one remote server. Verified by that change's real-WebRTC tests of two and three windows of one device.
 - [ ] 2.2 Add `connections.select` and `connections.open-window` to the protocol as closed, capability-gated actions naming a profile id. Verified by `packages/protocol/test/host.test.mjs`.
 - [ ] 2.3 Implement switching in Electron main: resolve the remembered profile, open its transport or the Local session, and remount the requesting window only once ready; a failure leaves the window as it was and rejects with a reason. Keep the ordering in a module apart from Electron. Verified by unit tests of that module for success, unreachable server, forgotten profile, and return to Local.
 - [ ] 2.4 Implement opening a window on a remembered server. Verified by an Electron E2E through `npm run test:e2e` that ends with one window on Local and one on a standalone server.
