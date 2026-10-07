@@ -27,11 +27,11 @@ Terminay SHALL provide a local Model Context Protocol server for Claude Code, Co
 
 ### Requirement: MCP is independent of agent status observation
 
-MCP terminal control and agent-status observation SHALL be independent product capabilities. MCP SHALL register a Terminay stdio server with supported agent clients and give processes launched inside a Terminay terminal a project-scoped control capability. The Agents sidebar and terminal agent status SHALL continue to come from process-bound provider journals, including omp and Grok, and observing omp SHALL NOT register an MCP client. Installing, enabling, disabling, or removing Terminay MCP SHALL never install, edit, trust, invoke, or remove Codex, Claude Code, or omp hooks.
+MCP terminal control and agent status SHALL be independent product capabilities, even when one extension contributes both a session source and MCP install targets. MCP SHALL register a Terminay stdio server with supported agent clients and give processes launched inside a Terminay terminal a project-scoped control capability. The Agents sidebar and terminal agent status SHALL come only from session sources. Observing any harness SHALL NOT register an MCP client. Installing, enabling, disabling, or removing Terminay MCP SHALL never install, edit, trust, invoke, or remove provider hooks.
 
 #### Scenario: omp observed
 
-- **WHEN** Terminay observes an omp session for agent status
+- **WHEN** Terminay reports an oh-my-pi session for agent status
 - **THEN** no MCP client is registered
 
 #### Scenario: MCP installed
@@ -83,17 +83,28 @@ The control endpoint SHALL be local to the server machine. It SHALL NOT use WebR
 
 ### Requirement: Registration management surface
 
-Terminay SHALL expose an **Install Terminay MCP** action whose management surface detects the registration state for each supported agent, distinguishes not installed, installed, changed, unavailable, and error states, installs and removes Claude Code, Codex, Cursor CLI, Gemini CLI, and OpenCode independently, and identifies the provider-owned configuration scope being changed.
+Terminay SHALL expose an **Install Terminay MCP** action on Desktop. Its management surface SHALL list every MCP install target contributed by an enabled extension. The built-in agents extension contributes Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, and OpenCode. For each target the surface SHALL:
+
+- show one of not installed, installed, changed, unavailable, or error
+- identify the provider-owned configuration scope being changed
+- install and remove that target independently
+
+Server Core SHALL route every detection, install, and removal to the contributing extension with the host-supplied MCP server command. When no enabled extension contributes a target, the surface SHALL say that MCP install targets come from the built-in agents extension and that it is disabled or missing, and SHALL offer no install action.
 
 #### Scenario: Registration state shown
 
 - **WHEN** a user opens the MCP management surface
-- **THEN** each supported agent shows one of not installed, installed, changed, unavailable, or error, together with the provider-owned configuration scope being changed
+- **THEN** each contributed target shows one of not installed, installed, changed, unavailable, or error, together with the provider-owned configuration scope being changed
 
 #### Scenario: Independent install
 
-- **WHEN** a user installs the registration for one provider
-- **THEN** the other providers' registrations are unchanged
+- **WHEN** a user installs the registration for one target
+- **THEN** the other targets' registrations are unchanged
+
+#### Scenario: Agents extension disabled
+
+- **WHEN** the built-in agents extension is disabled and the user opens the MCP management surface
+- **THEN** it explains that install targets come from that extension and offers no install action
 
 ### Requirement: Terminay-owned registration entry
 
@@ -135,16 +146,16 @@ Unrelated provider configuration SHALL be preserved and removal SHALL delete onl
 
 ### Requirement: Versioned provider registration adapters
 
-Provider configuration formats and commands can change independently of Terminay. Provider-specific registration adapters SHALL be versioned and tested against their current supported contracts rather than sharing parsing logic with agent-status journal drivers.
+Provider configuration formats and commands can change independently of Terminay. Provider-specific registration adapters SHALL live in the extension that contributes the install target, SHALL be versioned, and SHALL be tested against their current supported contracts. They SHALL share no parsing logic with session detection.
 
 #### Scenario: Provider format changes
 
 - **WHEN** a provider changes its MCP configuration contract
-- **THEN** only that versioned registration adapter changes, and agent-status journal drivers are unaffected
+- **THEN** only that install target's adapter in the contributing extension changes, and session detection is unaffected
 
 ### Requirement: Isolated provider compatibility coverage
 
-CI SHALL run a Docker-isolated compatibility test with the supported agent CLIs installed. The test SHALL give Terminay a container-only home directory, register the packaged stdio command through the same privileged adapters used by the application, and require each real CLI to load and report the `terminay` registration. It SHALL need no provider credentials, SHALL never use the host home directory, and SHALL fail when a client stops accepting Terminay's configuration contract.
+CI SHALL run a Docker-isolated compatibility test with the supported agent CLIs installed. The test SHALL give Terminay a container-only home directory. It SHALL register the packaged stdio command through the same extension install targets used by the application, and SHALL require each real CLI to load and report the `terminay` registration. It SHALL need no provider credentials, SHALL never use the host home directory, and SHALL fail when a client stops accepting Terminay's configuration contract.
 
 #### Scenario: Client stops accepting the contract
 

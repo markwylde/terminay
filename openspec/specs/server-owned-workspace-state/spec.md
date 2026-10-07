@@ -115,11 +115,12 @@ keys and reconnect credentials; native window geometry and the mapping from
 local windows to server and view ids; the window's composition, being its primary
 connection, its set of attached connections, the workspace view attached on each
 of them, and the order of the project tabs drawn from them; which project tab and
-which terminal or panel is active in each connected presentation; sidebar
-visibility for each server and project pair; transient dialogs, menus, selection,
-drag previews, and optimistic UI state; hardware and host capabilities such as
-microphone permission; and explicitly device-specific accessibility or input
-overrides. The composition MUST NOT be sent to any server. Client-local state
+which terminal or panel is active in each connected presentation; the Home tabs
+open on the device and their arrangement; sidebar visibility for each server and
+project pair; transient dialogs, menus, selection, drag previews, and optimistic
+UI state; hardware and host capabilities such as microphone permission; and
+explicitly device-specific accessibility or input overrides. The composition and
+the Home tab arrangement MUST NOT be sent to any server. Client-local state
 MUST NOT be required to recover project membership, panel identity, or a live
 terminal after reconnect.
 
@@ -141,6 +142,11 @@ terminal after reconnect.
   connects to the same servers
 - **THEN** the composition is stored only on the first device, no server records
   it, and the second device keeps its own composition
+
+#### Scenario: Home tabs are device-local
+
+- **WHEN** a device opens, arranges, and closes Home tabs
+- **THEN** no server records the change and no other device's Home tabs change
 
 ### Requirement: Desktop persistence allowlist
 
