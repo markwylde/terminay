@@ -199,6 +199,11 @@ import {
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { requestFrameOrTimeout } from './workspace/frameOrTimeout';
+import {
+	createTerminalNoteSync,
+	decideTerminalNoteReconcile,
+	type TerminalNoteSync,
+} from './workspace/terminalNoteSync';
 import { CompactChromeRow } from './workspace/CompactChromeRow';
 import { CompactSwitcher } from './workspace/CompactSwitcher';
 import type {
@@ -1415,6 +1420,44 @@ const ProjectWorkspace = forwardRef<
 			sharedTerminalContextReaders ?? ownTerminalContextReadersRef;
 		const terminalControlStateRef = useRef(createTerminalControlState());
 		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
+		const workspaceSnapshotStoreRef = useRef(
+			terminalClientContext?.workspaceSnapshotStore,
+		);
+		workspaceSnapshotStoreRef.current =
+			terminalClientContext?.workspaceSnapshotStore;
+		const terminalNoteSyncRef = useRef<TerminalNoteSync | null>(null);
+		if (terminalNoteSyncRef.current === null)
+			terminalNoteSyncRef.current = createTerminalNoteSync({
+				send: async (panelId, note) => {
+					await workspaceSnapshotStoreRef.current?.updatePanel({
+						panelId,
+						patch: { note },
+					});
+				},
+				onError: (error) =>
+					setErrorText(
+						`Unable to save the terminal note: ${error instanceof Error ? error.message : String(error)}`,
+					),
+			});
+		const terminalNoteSync = terminalNoteSyncRef.current;
+		// The debounce must not outlive the edit: leaving the note field or the
+		// page sends whatever is still waiting.
+		useEffect(() => {
+			const flushOnNoteBlur = (event: FocusEvent) => {
+				if (
+					event.target instanceof Element &&
+					event.target.closest('.terminal-note-editor')
+				)
+					terminalNoteSync.flushAll();
+			};
+			const flushOnPageHide = () => terminalNoteSync.flushAll();
+			document.addEventListener('focusout', flushOnNoteBlur);
+			window.addEventListener('pagehide', flushOnPageHide);
+			return () => {
+				document.removeEventListener('focusout', flushOnNoteBlur);
+				window.removeEventListener('pagehide', flushOnPageHide);
+			};
+		}, [terminalNoteSync]);
 		const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
 		const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
 		const terminalActivityStoreRef = useRef(new TerminalActivityStore());
@@ -3084,14 +3127,12 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 
-				const previousTitle = activePanel.title ?? 'Terminal';
 				aiGenerationInFlightRef.current.add(inFlightKey);
 				setErrorText(null);
-				if (target === 'title') {
-					activePanel.api.setTitle('Generating...');
-					setTerminalTitleRevision((revision) => revision + 1);
-					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-				}
+				// The title itself is the server's. Show progress beside it rather
+				// than writing a placeholder a reconcile would replace.
+				if (target === 'title')
+					activePanel.api.updateParameters({ aiTitlePending: true });
 
 				try {
 					if (
@@ -3101,7 +3142,13 @@ const ProjectWorkspace = forwardRef<
 						throw new Error(
 							'AI metadata is unavailable on the selected server.',
 						);
-					const result = await serverAiClient.generateMetadata({
+					// A note still being typed must reach the server first, so the
+					// revision this generation is checked against includes it.
+					if (target === 'note')
+						await terminalNoteSync.flush(activePanel.id);
+					// The server applies the result to the panel; it arrives here as
+					// workspace state, like a title or note set anywhere else.
+					await serverAiClient.generateMetadata({
 						model,
 						provider: provider === 'claudeCode' ? 'claude-code' : provider,
 						requestId: crypto.randomUUID(),
@@ -3113,49 +3160,35 @@ const ProjectWorkspace = forwardRef<
 						},
 						targetType: target === 'title' ? 'title' : 'note',
 					});
-					const text =
-						typeof result === 'object' &&
-						result !== null &&
-						!Array.isArray(result) &&
-						typeof result.text === 'string'
-							? result.text.trim()
-							: '';
-					if (!text) {
-						throw new Error(`${providerLabel} returned an empty result.`);
-					}
-
-					if (target === 'title') {
-						activePanel.api.setTitle(text);
-						setTerminalTitleRevision((revision) => revision + 1);
-						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-						requestFrameOrTimeout(publishWorkspaceInventory);
-					} else {
-						activePanel.api.updateParameters({ terminalNote: text });
-					}
-
 					setErrorText(null);
 				} catch (error) {
-					if (target === 'title') {
-						activePanel.api.setTitle(previousTitle);
-						setTerminalTitleRevision((revision) => revision + 1);
-						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+					const cause =
+						error instanceof Error &&
+						typeof error.cause === 'object' &&
+						error.cause !== null
+							? (error.cause as { code?: unknown })
+							: null;
+					if (cause?.code === 'conflict') {
+						setErrorText(
+							`The tab ${target} was changed while AI was generating, so your edit was kept. Run the command again to generate a new ${target}.`,
+						);
+					} else {
+						const message =
+							error instanceof Error ? error.message : String(error);
+						setErrorText(`Unable to generate tab ${target}: ${message}`);
 					}
-					const message =
-						error instanceof Error ? error.message : String(error);
-					setErrorText(`Unable to generate tab ${target}: ${message}`);
 				} finally {
+					if (target === 'title')
+						activePanel.api.updateParameters({ aiTitlePending: false });
 					aiGenerationInFlightRef.current.delete(inFlightKey);
 				}
 			},
 			[
-				project.color,
-				project.emoji,
 				project.id,
-				project.rootFolder,
-				project.title,
 				serverAiClient,
-				publishWorkspaceInventory,
 				settings.aiTabMetadata,
+				terminalClientContext,
+				terminalNoteSync,
 			],
 		);
 
@@ -3310,6 +3343,7 @@ const ProjectWorkspace = forwardRef<
 				hydrateRecording: hydrateRecordingStateForSession,
 				onError: setErrorText,
 				onMoveToProject: onMoveTerminalToProject,
+				onUpdateNote: terminalNoteSync.edit,
 				panelSessionsRef: panelSessionMapRef,
 				project,
 				publishWorkspaceInventory,
@@ -3345,6 +3379,7 @@ const ProjectWorkspace = forwardRef<
 						canonicalById.get(panelId) ?? canonicalBySessionId.get(sessionId);
 					const panel = api.getPanel(panelId);
 					if (canonical === undefined) {
+						terminalNoteSync.forget(panelId);
 						if (panel) api.removePanel(panel);
 						continue;
 					}
@@ -3360,7 +3395,18 @@ const ProjectWorkspace = forwardRef<
 					if (canonical.title !== undefined && panel.title !== canonical.title) {
 						panel.api.setTitle(canonical.title);
 						setTerminalTitleRevision((revision) => revision + 1);
+						requestFrameOrTimeout(publishWorkspaceInventory);
 					}
+					const localNote = panel.params?.terminalNote;
+					const noteAction = decideTerminalNoteReconcile({
+						canonicalNote: canonical.note,
+						localNote,
+						firstSeen: terminalNoteSync.markSeen(panelId),
+						hasPendingEdit: terminalNoteSync.hasPendingEdit(panelId),
+					});
+					if (noteAction === 'adopt') terminalNoteSync.edit(panelId, localNote);
+					else if (noteAction === 'apply')
+						panel.api.updateParameters({ terminalNote: canonical.note });
 					panel.api.updateParameters({
 						...(canonical.emoji === undefined
 							? {}
@@ -3380,7 +3426,7 @@ const ProjectWorkspace = forwardRef<
 					});
 				}
 			},
-			[project.id],
+			[project.id, publishWorkspaceInventory, terminalNoteSync],
 		);
 
 		const filteredMacros = useMemo(() => {

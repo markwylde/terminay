@@ -80,6 +80,7 @@ declare global {
 			setMock: (mock: {
 				error?: string | null;
 				models?: readonly Readonly<{ id: string; label: string }>[];
+				hold?: boolean;
 				noteResult?: string;
 				titleResult?: string;
 			}) => Promise<void>;

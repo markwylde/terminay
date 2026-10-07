@@ -55,6 +55,8 @@ type AiTabMetadataTestMock = {
   noteResult?: string
   titleResult?: string
   promptResult?: string
+  /** Keep generation pending until a later mock clears it. */
+  hold?: boolean
 }
 
 type ShellEnv = Record<string, string>
@@ -597,6 +599,8 @@ export class AiTabMetadataService {
     titleResult: 'Generated Title',
   }
 
+  private readonly testHoldWaiters: (() => void)[] = []
+
   constructor(private readonly cwd: string) {}
 
   setTestMock(mock: AiTabMetadataTestMock): void {
@@ -604,6 +608,10 @@ export class AiTabMetadataService {
       ...this.testMock,
       ...mock,
       error: mock.error ?? null,
+      hold: mock.hold ?? false,
+    }
+    if (!this.testMock.hold) {
+      for (const release of this.testHoldWaiters.splice(0)) release()
     }
     if (mock.models) {
       this.claudeCodeModels = mock.models
@@ -689,6 +697,9 @@ export class AiTabMetadataService {
         (request.provider === 'claudeCode' && process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE !== '1'))
 
     if (isUsingMock) {
+      if (this.testMock.hold) {
+        await new Promise<void>((resolve) => this.testHoldWaiters.push(resolve))
+      }
       if (this.testMock.error) {
         throw new Error(this.testMock.error)
       }

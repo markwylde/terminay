@@ -45,6 +45,9 @@ export interface PanelSplitRequest {
 	readonly direction: 'horizontal' | 'vertical';
 	readonly weight?: number;
 }
+/** Longest terminal note a server accepts, in UTF-16 code units. */
+export const MAX_PANEL_NOTE_CHARS = 1200;
+
 export interface PanelUpdateRequest {
 	readonly panelId: string;
 	readonly patch: Readonly<{
@@ -54,6 +57,8 @@ export interface PanelUpdateRequest {
 		inheritsProjectColor?: boolean;
 		activityIndicatorsEnabled?: boolean;
 		presentation?: 'file-viewer' | 'documentation';
+		/** A terminal's note; `null` removes it. */
+		note?: string | null;
 	}>;
 }
 export interface ProjectCreateRequest {
@@ -389,6 +394,17 @@ export class WorkspaceClient {
 					throw new TypeError(`panel ${key} is invalid`);
 				patch[key] = value;
 			}
+		}
+		const note = request.patch.note;
+		if (note !== undefined) {
+			if (
+				note !== null &&
+				(typeof note !== 'string' ||
+					note.length > MAX_PANEL_NOTE_CHARS ||
+					note.includes('\0'))
+			)
+				throw new TypeError('panel note is invalid');
+			patch.note = note;
 		}
 		if (
 			request.patch.presentation === 'file-viewer' ||

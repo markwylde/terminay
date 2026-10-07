@@ -6,6 +6,7 @@ import test from 'node:test';
 import { MessageChannel } from 'node:worker_threads';
 import {
 	FileViewerClient,
+	TerminayAiClient,
 	TerminayClient,
 	TerminayClientFacade,
 	TerminayTerminalClient,
@@ -1468,6 +1469,106 @@ test('ServerTerminalAuthority hands a renderer stream to one destination without
 			/source renderer is not attached/u,
 		);
 	} finally {
+		await authority.shutdown();
+	}
+});
+
+test('AI metadata generation commits the title and note to the canonical panel', async () => {
+	let failure = null;
+	const requests = [];
+	const authority = new ServerTerminalAuthority({
+		serverId: 'ai-metadata',
+		terminalService: new TerminalService({
+			serverId: 'ai-metadata',
+			ptyFactory: createPtyFactory(),
+			generateSessionId: () => 'ai-session',
+		}),
+		aiMetadata: {
+			listModels: async () => [{ id: 'test-model', label: 'Test model' }],
+			generate: async (request) => {
+				requests.push(request);
+				if (failure !== null) throw new Error(failure);
+				return {
+					text:
+						request.target === 'title'
+							? 'Build Warnings'
+							: 'Reviewing package warnings.',
+				};
+			},
+		},
+	});
+	const channel = new MessageChannel();
+	const renderer = bindRendererChannel(channel);
+	try {
+		const session = await authority.create({
+			projectId: 'project-a',
+			cwd: process.cwd(),
+			cols: 80,
+			rows: 24,
+		});
+		const panel = Object.values(authority.workspace.state.panels).find(
+			(candidate) => candidate.sessionId === session.id,
+		);
+		assert.ok(panel, 'the terminal has a canonical panel');
+		const target = {
+			serverId: 'ai-metadata',
+			projectId: 'project-a',
+			panelId: panel.id,
+			sessionId: session.id,
+		};
+		authority.acceptRendererPort(renderer.port, { ownerId: 23 });
+		const client = new TerminayClient({
+			clientId: 'ai-renderer',
+			clientVersion: 'test',
+			capabilities: ['workspace'],
+			transport: new ServerPortTransport(
+				new ServerScopedMessagePort(channel.port2, 'ai-metadata'),
+			),
+		});
+		await client.connect();
+		const ai = new TerminayAiClient(new TerminayClientFacade(client));
+		const generate = (targetType, requestId) =>
+			ai.generateMetadata({
+				requestId,
+				target,
+				targetType,
+				provider: 'codex',
+				model: 'test-model',
+			});
+
+		const title = await generate('title', 'request-title');
+		assert.equal(title.text, 'Build Warnings');
+		assert.equal(
+			authority.workspace.state.panels[panel.id].title,
+			'Build Warnings',
+		);
+		assert.equal(authority.workspace.state.panels[panel.id].metadataRevision, 1);
+		assert.equal(requests[0].provider, 'codex');
+		assert.equal(requests[0].context.sessionId, session.id);
+
+		await generate('note', 'request-note');
+		assert.equal(
+			authority.workspace.state.panels[panel.id].note,
+			'Reviewing package warnings.',
+		);
+		assert.equal(requests[1].context.currentTitle, 'Build Warnings');
+
+		// A provider failure keeps its bounded message and changes nothing.
+		failure = 'Codex test failure';
+		await assert.rejects(
+			generate('title', 'request-failure'),
+			(error) =>
+				(error.cause?.message ?? error.message).includes('Codex test failure'),
+		);
+		assert.equal(
+			authority.workspace.state.panels[panel.id].title,
+			'Build Warnings',
+		);
+
+		await client.close().catch(() => undefined);
+	} finally {
+		channel.port1.close();
+		channel.port2.close();
 		await authority.shutdown();
 	}
 });

@@ -187,3 +187,20 @@ test("workspace view adapters expose only typed create and close operations", as
   ]);
   await assert.rejects(workspace.createView({ viewId: "view-a", name: "\n" }), /workspace view create request is invalid/);
 });
+
+test("workspace facade sends a bounded terminal note and rejects an invalid one before transport", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({
+    async command(operation, payload) { calls.push([operation, payload]); return { result: null }; },
+  });
+
+  await workspace.updatePanel({ panelId: "panel-a", patch: { note: "Watching the build" } });
+  await workspace.updatePanel({ panelId: "panel-a", patch: { note: "" } });
+  await workspace.updatePanel({ panelId: "panel-a", patch: { note: null } });
+  assert.deepEqual(calls.map(([, payload]) => payload.command.patch), [{ note: "Watching the build" }, { note: "" }, { note: null }]);
+
+  await assert.rejects(workspace.updatePanel({ panelId: "panel-a", patch: { note: "x".repeat(1201) } }), /panel note is invalid/);
+  await assert.rejects(workspace.updatePanel({ panelId: "panel-a", patch: { note: 7 } }), /panel note is invalid/);
+  await assert.rejects(workspace.updatePanel({ panelId: "panel-a", patch: { note: "a\0b" } }), /panel note is invalid/);
+  assert.equal(calls.length, 3);
+});
