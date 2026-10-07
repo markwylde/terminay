@@ -128,6 +128,7 @@ import {
 	parseHostedIceServers,
 	startHostedPairingHost,
 } from './remote/hostedPairingHost.js';
+import { HostedDevicePresence } from './remote/hostedPeerLifecycle.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import {
 	createPairingOperationQueue,
@@ -431,6 +432,7 @@ else if (options.command === 'mcp') {
 					// Hosted and direct exposure share one host key, one device
 					// registry, and one approval queue: they are two ways for a client
 					// to reach the same room on the same server, not two servers.
+					const devicePresence = new HostedDevicePresence();
 					const startPairingHost = (
 						mode: 'hosted' | 'direct',
 						modeHandoff: ServerPairingHandoff,
@@ -452,12 +454,16 @@ else if (options.command === 'mcp') {
 							acceptApplication: (transport, authenticatedClient) =>
 								composition.core.accept(transport, { authenticatedClient }),
 							// Remote device connected trigger (automations).
-							onPeerConnected: (peer) =>
+							// It fires for a device's first window, through either host.
+							devicePresence,
+							onPeerConnected: (peer) => {
+								if (!peer.firstWindowOfDevice) return;
 								composition.onConnectionAdmitted({
 									connectionId: peer.connectionId,
 									deviceId: peer.deviceId,
 									deviceName: peer.deviceName,
-								}),
+								});
+							},
 							handoff: modeHandoff,
 							hostKey: loadOrCreateHostedHostKey(
 								join(options.dataRoot, 'remote-host-key.v1.json'),

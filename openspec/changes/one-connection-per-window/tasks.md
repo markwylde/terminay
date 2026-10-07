@@ -7,10 +7,10 @@
 
 ## 2. Server-core: each window is its own client
 
-- [ ] 2.1 Carry the device id beside the client identity in `AuthenticatedClient`, and have the pairing host attach a peer with a client identity made from device and window. Verified by a connection test that `server_hello` reports the window's client identity and that authorization reads the device's scope.
-- [ ] 2.2 Confirm terminal attachments, input authority, presentation leases, and checkpoints of two windows of one device no longer collide. Verified by `packages/server-core/test/connection-scoped-lifecycle.test.mjs`: two windows attach one terminal and both stream; closing one releases only its own attachment, lease, and checkpoint.
-- [ ] 2.3 Audit every durable or cross-connection use of the client identity in server-core (macro run owner, extension idempotency, app-window held responses, automations, settings) and key by device anything that must outlive a window. Verified by a written list in the pull request and a test for each one changed.
-- [ ] 2.4 Fire `device.connected` only when a device's live-window count goes from zero to one, across both pairing hosts. Verified by an automations trigger test with a second window and a reconnect.
+- [x] 2.1 Carry the device id beside the client identity in `AuthenticatedClient`, and have the pairing host attach a peer with a client identity made from device and window. Verified by a connection test that `server_hello` reports the window's client identity and that authorization reads the device's scope.
+- [x] 2.2 Confirm terminal attachments, input authority, presentation leases, and checkpoints of two windows of one device no longer collide. Verified by `packages/server-core/test/connection-scoped-lifecycle.test.mjs`: two windows attach one terminal and both stream; closing one releases only its own attachment, lease, and checkpoint.
+- [x] 2.3 Audit every durable or cross-connection use of the client identity in server-core (macro run owner, extension idempotency, app-window held responses, automations, settings) and key by device anything that must outlive a window. Verified by a written list in the pull request and a test for each one changed.
+- [x] 2.4 Fire `device.connected` only when a device's live-window count goes from zero to one, across both pairing hosts. Verified by an automations trigger test with a second window and a reconnect.
 
 ## 3. Desktop
 

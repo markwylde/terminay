@@ -51,6 +51,7 @@ import {
 	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
+	type HostedDevicePresence,
 	MAX_LIVE_WINDOWS_PER_DEVICE,
 	type PinnedIcePortRange,
 	readWindowId,
@@ -173,6 +174,10 @@ export type HostedConnectedPeer = Readonly<{
 	/** The client window this connection belongs to; empty for a client that
 	 * names none. */
 	windowId: string;
+	/** True when the device had no live window on this server before this
+	 * one, across every pairing host sharing a presence. A window replacing
+	 * its own previous connection is never the first. */
+	firstWindowOfDevice: boolean;
 }>;
 
 export interface HostedPairingHostOptions {
@@ -230,6 +235,9 @@ export interface HostedPairingHostOptions {
 	) => Promise<void>;
 	readonly onHandoff?: (handoff: ServerPairingHandoff) => void;
 	readonly onPeerConnected?: (peer: HostedConnectedPeer) => void;
+	/** Shared by a server's pairing hosts, so each knows whether a device is
+	 * already connected through the other. */
+	readonly devicePresence?: HostedDevicePresence;
 	readonly onPeerDisconnected?: (connectionId: string) => void;
 	readonly onDiagnostic?: (event: HostedPairingDiagnostic) => void;
 }
@@ -352,7 +360,7 @@ export async function startHostedPairingHost(
 	const archive = options.getUiArchive
 		? await options.getUiArchive()
 		: createMinimalUiArchive();
-	const livePeers = new HostedLivePeerRegistry();
+	const livePeers = new HostedLivePeerRegistry(options.devicePresence);
 	const joinQueue = createHandshakeJoinQueue();
 	const deviceReplacements = createDeviceReplacementChain();
 	const apiChannelsByPeer = new Map<string, WeriftDataChannel>();
@@ -536,6 +544,9 @@ export async function startHostedPairingHost(
 							options.onPeerDisconnected?.(replaced.connectionId);
 						}
 					}
+					const firstWindowOfDevice =
+						replaced === undefined &&
+						livePeers.presence.count(peer.deviceId) === 0;
 					livePeers.set(
 						peer.deviceId,
 						{
@@ -545,7 +556,7 @@ export async function startHostedPairingHost(
 						},
 						peer.windowId,
 					);
-					options.onPeerConnected?.(peer);
+					options.onPeerConnected?.({ ...peer, firstWindowOfDevice });
 				},
 				(deviceId, retired) => {
 					if (deviceId !== undefined) livePeers.drop(deviceId, retired);
@@ -1820,6 +1831,8 @@ function bindControl(
 				deviceId: ticket.deviceId,
 				deviceName: device?.deviceName?.trim() || 'Browser',
 				windowId,
+				// Decided where the peer joins the registry.
+				firstWindowOfDevice: false,
 			});
 			await onApplication(connection, peer, replaced);
 			// The application lane closing ends this generation. Releasing the

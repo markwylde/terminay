@@ -348,11 +348,14 @@ export class DesktopServerOwnedExposure {
 				];
 				this.onStatusChanged?.();
 				try {
-					this.onConnectionAdmitted?.({
-						connectionId: peer.connectionId,
-						deviceId: peer.deviceId,
-						deviceName: peer.deviceName,
-					});
+					// The connected trigger is for a device coming online, not for
+					// each further window it opens.
+					if (peer.firstWindowOfDevice)
+						this.onConnectionAdmitted?.({
+							connectionId: peer.connectionId,
+							deviceId: peer.deviceId,
+							deviceName: peer.deviceName,
+						});
 				} catch {
 					// An observer failure never undoes an admission.
 				}

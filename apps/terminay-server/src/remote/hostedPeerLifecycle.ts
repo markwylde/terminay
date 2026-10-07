@@ -317,8 +317,39 @@ export function windowClientId(deviceId: string, windowId: string): string {
  * two teardowns then stopped the live session's stream. A window id is scoped
  * under its device, so one device can never name another's peer.
  */
+/**
+ * How many windows each device holds live, across every pairing host that
+ * shares this object. A server that exposes itself in two ways runs two
+ * hosts, and a device is connected if either holds a window of it.
+ */
+export class HostedDevicePresence {
+	private readonly counts = new Map<string, number>();
+
+	count(deviceId: string): number {
+		return this.counts.get(deviceId) ?? 0;
+	}
+
+	add(deviceId: string): void {
+		this.counts.set(deviceId, this.count(deviceId) + 1);
+	}
+
+	remove(deviceId: string): void {
+		const next = this.count(deviceId) - 1;
+		if (next > 0) this.counts.set(deviceId, next);
+		else this.counts.delete(deviceId);
+	}
+}
+
 export class HostedLivePeerRegistry {
 	private readonly devices = new Map<string, Map<string, HostedLivePeer>>();
+
+	/** Shared between a server's pairing hosts; private to this one when
+	 * none is given. */
+	readonly presence: HostedDevicePresence;
+
+	constructor(presence: HostedDevicePresence = new HostedDevicePresence()) {
+		this.presence = presence;
+	}
 
 	get size(): number {
 		let total = 0;
@@ -336,6 +367,7 @@ export class HostedLivePeerRegistry {
 			windows = new Map();
 			this.devices.set(deviceId, windows);
 		}
+		if (!windows.has(windowId)) this.presence.add(deviceId);
 		windows.set(windowId, live);
 	}
 
@@ -365,6 +397,7 @@ export class HostedLivePeerRegistry {
 		for (const [windowId, existing] of windows) {
 			if (existing.peer !== peer) continue;
 			windows.delete(windowId);
+			this.presence.remove(deviceId);
 			if (windows.size === 0) this.devices.delete(deviceId);
 			return existing;
 		}
@@ -382,6 +415,7 @@ export class HostedLivePeerRegistry {
 		const existing = windows?.get(windowId);
 		if (windows === undefined || existing === undefined) return undefined;
 		windows.delete(windowId);
+		this.presence.remove(deviceId);
 		if (windows.size === 0) this.devices.delete(deviceId);
 		await closeLivePeer(existing);
 		return existing;
@@ -394,6 +428,7 @@ export class HostedLivePeerRegistry {
 		if (windows === undefined) return [];
 		this.devices.delete(deviceId);
 		const closed = [...windows.values()];
+		for (const _ of closed) this.presence.remove(deviceId);
 		for (const entry of closed) await closeLivePeer(entry);
 		return closed;
 	}
@@ -402,6 +437,8 @@ export class HostedLivePeerRegistry {
 		const snapshot = [...this.devices.values()].flatMap((windows) => [
 			...windows.values(),
 		]);
+		for (const [deviceId, windows] of this.devices)
+			for (const _ of windows) this.presence.remove(deviceId);
 		this.devices.clear();
 		for (const entry of snapshot) await closeLivePeer(entry);
 	}

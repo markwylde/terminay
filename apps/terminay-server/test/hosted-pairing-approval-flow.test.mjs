@@ -385,6 +385,7 @@ test('a device pairs only after the host approves its match code, and the ticket
 	const connections = [];
 	const persisted = [];
 	const disconnected = [];
+	const admitted = [];
 	const diagnostics = [];
 	let currentHandoff = handoff;
 	const host = await startHostedPairingHost({
@@ -408,6 +409,7 @@ test('a device pairs only after the host approves its match code, and the ticket
 		serverId: 'server-a',
 		signal: { connectHost: '127.0.0.1' },
 		webrtcRuntimeRoot: RUNTIME_ROOT,
+		onPeerConnected: (peer) => admitted.push(peer),
 		onPeerDisconnected: (connectionId) => disconnected.push(connectionId),
 		iceServers: [],
 		rotateHandoff: () => exposure.rotate(),
@@ -761,6 +763,18 @@ test('a device pairs only after the host approves its match code, and the ticket
 		false,
 	);
 	assert.equal(connections.length, 4);
+
+	// The device arrived once. Its rejoin, its second window, and that
+	// window's reconnect are not the device connecting again.
+	assert.deepEqual(
+		admitted.map((peer) => [peer.connectionId, peer.windowId, peer.firstWindowOfDevice]),
+		[
+			['connection-1', '', true],
+			['connection-2', '', false],
+			['connection-3', 'window-a', false],
+			['connection-4', 'window-a', false],
+		],
+	);
 
 	// Revoking the device closes every window it has open.
 	await exposure.revokeDevice(deviceId);

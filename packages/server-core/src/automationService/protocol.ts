@@ -518,7 +518,11 @@ function parseSubject(value: JsonValue, serverId: string): AutomationSubject {
 }
 
 function actorOf(context: RequestContext) {
-	return { clientId: context.clientId, connectionId: context.connectionId };
+	return {
+		clientId: context.clientId,
+		connectionId: context.connectionId,
+		...(context.deviceId === undefined ? {} : { deviceId: context.deviceId }),
+	};
 }
 
 function objectPayload(

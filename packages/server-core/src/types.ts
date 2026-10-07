@@ -48,6 +48,10 @@ export interface ServerIdentity {
 export interface RequestContext {
 	readonly connectionId: ProtocolId;
 	readonly clientId: ProtocolId;
+	/** The enrolled device behind this client, where it has one. State that
+	 * must outlive a window, and anything that names who acted, keys on this
+	 * rather than on the client identity. */
+	readonly deviceId?: ProtocolId;
 	readonly authScope: AuthScope;
 	readonly permissions?: readonly string[];
 	readonly claims?: JsonValue;

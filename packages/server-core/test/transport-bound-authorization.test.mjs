@@ -50,6 +50,55 @@ test("transport authentication overrides forged ClientHello identity and scope",
   }
 });
 
+test("a window's client identity is its own, and its device travels beside it", async () => {
+  const seen = [];
+  const core = createServerCore({
+    serverId: "window-identity-server",
+    serverVersion: "test",
+    capabilities: [],
+    authenticate: () => ({ clientId: "unused", authScope: "none" }),
+    queries: {
+      "test.whoami": (request) => {
+        seen.push({ clientId: request.context.clientId, deviceId: request.context.deviceId, authScope: request.context.authScope });
+        return {};
+      },
+    },
+  });
+  const open = async (authenticatedClient) => {
+    const pair = createInMemoryTransportPair();
+    const connection = core.accept(pair.server, { authenticatedClient });
+    const task = connection.start();
+    const client = new TerminayClient({ transport: pair.client, clientId: "ignored" });
+    await pair.open();
+    const hello = await client.connect();
+    return { client, connection, hello, task };
+  };
+  const first = await open({ clientId: "window:first", deviceId: "device-a", authScope: "write" });
+  const second = await open({ clientId: "window:second", deviceId: "device-a", authScope: "write" });
+  const unnamed = await open({ clientId: "device-b", authScope: "write" });
+  try {
+    // Each window is told its own client identity, which is what it must echo.
+    assert.equal(first.hello.clientId, "window:first");
+    assert.equal(second.hello.clientId, "window:second");
+    assert.equal(first.connection.client.deviceId, "device-a");
+    assert.equal(second.connection.client.deviceId, "device-a");
+    await first.client.query("test.whoami", {});
+    await second.client.query("test.whoami", {});
+    await unnamed.client.query("test.whoami", {});
+    // Requests carry the device, and authority is the same for both windows.
+    assert.deepEqual(seen, [
+      { clientId: "window:first", deviceId: "device-a", authScope: "write" },
+      { clientId: "window:second", deviceId: "device-a", authScope: "write" },
+      { clientId: "device-b", deviceId: undefined, authScope: "write" },
+    ]);
+  } finally {
+    for (const value of [first, second, unnamed]) {
+      await value.client.close();
+      await value.task;
+    }
+  }
+});
+
 test("project claim covers panel objects, both panel-move projects, generic project update, and session-derived commands", async () => {
   const workspace = new WorkspaceStore(createInitialWorkspace("claim-server"));
   const viewId = workspace.state.viewOrder[0];

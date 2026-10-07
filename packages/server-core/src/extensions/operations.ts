@@ -107,7 +107,9 @@ export function createExtensionOperationHandlers(
 				'deadlineAt',
 			]);
 			const idempotencyKey = text(payload, 'idempotencyKey');
-			const key = `${request.context.clientId}:${request.envelope.operation}:${idempotencyKey}`;
+			// A retry may come from a new window of the same device, so the key
+			// is the device's where there is one.
+			const key = `${request.context.deviceId ?? request.context.clientId}:${request.envelope.operation}:${idempotencyKey}`;
 			const existing = idempotency.get(key);
 			if (existing !== undefined) return existing;
 			const operation = (async () => {

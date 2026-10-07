@@ -8,6 +8,7 @@ import {
 	HostedLivePeerRegistry,
 	REQUIRED_LANES,
 	requiredLaneClosed,
+	HostedDevicePresence,
 	MAX_LIVE_WINDOWS_PER_DEVICE,
 	readWindowId,
 } from '../src/remote/hostedPeerLifecycle.ts';
@@ -370,4 +371,34 @@ test('revoking a device tells every pairing host, and a failing one cannot mask 
 	await exposure.revokeDevice('device-b');
 	assert.deepEqual(told.slice(2), ['direct:device-b']);
 	await exposure.shutdown();
+});
+
+test('a device is connected once, however many windows and hosts it uses', async () => {
+	const presence = new HostedDevicePresence();
+	// A server exposed two ways runs two hosts that share one presence.
+	const hosted = new HostedLivePeerRegistry(presence);
+	const direct = new HostedLivePeerRegistry(presence);
+	const peer = () => ({ peer: { close: () => undefined } });
+
+	assert.equal(presence.count('device-a'), 0);
+	hosted.set('device-a', peer(), 'window-1');
+	assert.equal(presence.count('device-a'), 1);
+	// A further window, through the other host, is not the device arriving.
+	direct.set('device-a', peer(), 'window-2');
+	assert.equal(presence.count('device-a'), 2);
+	// Setting a slot that is already held does not count twice.
+	const replacement = peer();
+	hosted.set('device-a', replacement, 'window-1');
+	assert.equal(presence.count('device-a'), 2);
+
+	assert.notEqual(hosted.drop('device-a', replacement.peer), undefined);
+	assert.equal(presence.count('device-a'), 1);
+	await direct.closeDevice('device-a');
+	assert.equal(presence.count('device-a'), 0);
+
+	hosted.set('device-a', peer(), 'window-1');
+	hosted.set('device-b', peer());
+	await hosted.closeAll();
+	assert.equal(presence.count('device-a'), 0);
+	assert.equal(presence.count('device-b'), 0);
 });
