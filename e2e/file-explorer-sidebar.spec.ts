@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -11,6 +11,17 @@ import {
   setProjectRoot,
   submitFileExplorerNameModal,
 } from './support/ui'
+import {
+  activeFolderWorkspace,
+  changesPane,
+  folderGroup,
+  folderNames,
+  folderRow,
+  foldersColumn,
+  openFolderMenu,
+  projectRootOnScreen,
+  selectFolder,
+} from './support/folders'
 import { submitTerminalCommand } from './support/terminal'
 import { readDiagnosticEvents } from './support/local-desktop-diagnostics'
 
@@ -259,7 +270,7 @@ test('file explorer colors git new and modified files like VS Code', async ({ cr
   await expect(docsFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
 })
 
-test('git sidebar pane lists grouped working tree changes and opens a diff', async ({
+test('Changes pane lists grouped working tree changes and opens a diff', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -279,6 +290,9 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+  const branch = (
+    await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: workspace.rootDir })
+  ).stdout.trim()
 
   // A staged new file, an unstaged modification, and an untracked file.
   await workspace.writeText('staged-new.txt', 'staged\n')
@@ -289,17 +303,16 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
-  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-changes', {
+  // General is the checkout at the project root: its row names the branch,
+  // and Changes reports that one worktree.
+  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__branch')).toHaveText(branch, {
     timeout: 6000,
   })
-  await worktree.locator('.worktrees-panel__worktree-toggle').click()
+  const changes = changesPane(mainWindow)
+  await expect(changes.locator('.changes-pane__branch-name')).toHaveText(branch)
 
   // The Staged Changes group lists the added file with an "A" badge.
-  const stagedGroup = worktree.locator('.git-panel__group').filter({ hasText: 'Staged Changes' })
+  const stagedGroup = changes.locator('.git-panel__group').filter({ hasText: 'Staged Changes' })
   const stagedRow = stagedGroup.locator('.git-panel__row').filter({ hasText: 'staged-new.txt' })
   await expect(stagedRow).toBeVisible({ timeout: 6000 })
   await expect(stagedRow.locator('.git-panel__badge')).toHaveText('A')
@@ -314,7 +327,7 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await mainWindow.keyboard.press('Escape')
 
   // The Changes group lists the modified and untracked files.
-  const changesGroup = worktree.locator('.git-panel__group').filter({ hasText: /^Changes/ })
+  const changesGroup = changes.locator('.git-panel__group').filter({ hasText: /^Changes/ })
   const modifiedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'README.md' })
   const untrackedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'untracked.txt' })
   await expect(modifiedRow.locator('.git-panel__badge')).toHaveText('M')
@@ -323,13 +336,14 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   // Modified files are colour-coded amber, matching the file tree.
   await expect(modifiedRow.locator('.git-panel__icon')).toHaveCSS('color', 'rgb(226, 192, 141)')
 
-  // The pane header shows the number of worktrees and the pane menu. With only
-  // the main worktree there is nothing the bulk delete may target.
-  await expect(gitPane.locator('.sidebar-pane__count')).toHaveText('1')
-  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  // The pane header counts the changes of this worktree. The sweep of clean
+  // worktrees lives with the list of folders, and with only the main worktree
+  // there is nothing it may target.
+  await expect(changes.locator('.sidebar-pane__count')).toHaveText('3')
+  await foldersColumn(mainWindow).getByRole('button', { name: 'Folders actions' }).click()
   await expect(contextMenuItem(mainWindow, 'Delete all clean worktrees')).toBeDisabled()
   await mainWindow.keyboard.press('Escape')
-  await expect(gitPane).not.toHaveClass(/sidebar-pane--collapsed/)
+  await expect(changes).not.toHaveClass(/sidebar-pane--collapsed/)
 
   // Clicking a tracked change opens it in the file viewer's Diff mode, even
   // for Markdown, which otherwise opens as a document.
@@ -338,13 +352,13 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await expect(mainWindow.locator('.file-mode-switcher__button--active')).toHaveText('Diff')
   await expect(mainWindow.locator('.documentation-editor')).toHaveCount(0)
 
-  // Collapsing the Git pane hides the change list...
-  await gitPane.locator('.sidebar-pane__header').click()
-  await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
-  await expect(gitPane).toHaveClass(/sidebar-pane--collapsed/)
+  // Collapsing the Changes pane hides the change list...
+  await changes.locator('.sidebar-pane__header').click()
+  await expect(changes.locator('.git-panel__row')).toHaveCount(0)
+  await expect(changes).toHaveClass(/sidebar-pane--collapsed/)
 })
 
-test('git sidebar pane shows no changes for a clean repository', async ({ createWorkspace, mainWindow }) => {
+test('Changes pane shows no changes for a clean repository', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'git-pane-clean',
     seed: {
@@ -363,25 +377,17 @@ test('git sidebar pane shows no changes for a clean repository', async ({ create
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
-  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-clean', {
-    timeout: 6000,
-  })
+  const changes = changesPane(mainWindow)
+  await expect(changes.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
+  await expect(changes.locator('.git-panel__row')).toHaveCount(0)
 
-  await worktree.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
+  // The worktree actions of the root checkout are on General's own menu.
+  await openFolderMenu(mainWindow, 'General')
   await expect(contextMenuItem(mainWindow, 'Pull from origin')).toBeVisible()
   await mainWindow.keyboard.press('Escape')
-
-  await worktree.locator('.worktrees-panel__worktree-toggle').click()
-
-  await expect(worktree.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
-  await expect(worktree.locator('.git-panel__row')).toHaveCount(0)
 })
 
-test('git sidebar switches project root before opening a file from another worktree', async ({
+test('selecting a linked folder opens a file from its worktree without changing the project root', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -390,6 +396,7 @@ test('git sidebar switches project root before opening a file from another workt
     seed: { files: { 'README.md': 'main worktree\n' } },
   })
   const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-linked' })
+  const linkedName = basename(linkedWorktree.rootDir)
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
   await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
@@ -404,23 +411,42 @@ test('git sidebar switches project root before opening a file from another workt
 
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
+  await expect(folderRow(mainWindow, linkedName)).toBeVisible({ timeout: 6000 })
+  const projectRoot = await projectRootOnScreen(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const linked = gitPane
-    .locator('.worktrees-panel__worktree')
-    .filter({ hasText: 'git-pane-cross-worktree-linked' })
-  await expect(linked).toBeVisible({ timeout: 6000 })
-  await linked.locator('.worktrees-panel__worktree-toggle').click()
-  await linked.locator('.git-panel__row').filter({ hasText: '30-local-desktop-diagnostics.md' }).click()
+  // General reports the root checkout, which does not hold the worktree's file.
+  const worktreeFile = () =>
+    changesPane(mainWindow).locator('.git-panel__row').filter({ hasText: '30-local-desktop-diagnostics.md' })
+  await expect(changesPane(mainWindow).locator('.git-panel__message')).toHaveText('No changes', {
+    timeout: 6000,
+  })
+  await expect(worktreeFile()).toHaveCount(0)
 
-  // An untracked Markdown file has no diff, so it opens as a document.
-  await expect(mainWindow.locator('.documentation-editor')).toContainText('Opened safely.', { timeout: 6000 })
+  // Selecting the worktree's folder points Changes at that worktree.
+  await selectFolder(mainWindow, linkedName)
+  await expect(changesPane(mainWindow).locator('.changes-pane__branch-name')).toHaveText(
+    'cross-worktree-file-open',
+    { timeout: 6000 },
+  )
+  await worktreeFile().click()
+
+  // An untracked file has no diff, so it opens for reading. In a linked
+  // folder Markdown opens in the File Viewer: the Documentation presentation
+  // reads the project root, and would show the root checkout's file of the
+  // same name under this worktree's title.
+  const opened = mainWindow.locator('.project-workspace--active .file-panel:visible')
+  await expect(opened).toContainText('Opened safely.', { timeout: 6000 })
+  await expect(mainWindow.locator('.file-mode-switcher__button--active:visible')).toHaveText('Preview')
+  await expect(mainWindow.locator('.documentation-editor:visible')).toHaveCount(0)
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
+  await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
+  // The file opened as a panel of the worktree's folder, and nothing moved the
+  // project's root to reach it.
+  await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute('data-terminay-folder-kind', 'linked')
+  expect(await projectRootOnScreen(mainWindow)).toBe(projectRoot)
 })
 
-test('git sidebar drops a linked worktree delta when the default branch absorbs it, and diagnostics record why', async ({
+test('a linked folder drops its delta when the default branch absorbs it, and diagnostics record why', async ({
   createWorkspace,
   mainWindow,
   userDataDir,
@@ -447,14 +473,14 @@ test('git sidebar drops a linked worktree delta when the default branch absorbs 
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const linked = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'merged-feature' })
-  await expect(linked.locator('.worktrees-panel__delta--additions')).toHaveText('+3', { timeout: 10_000 })
+  // The worktree is a linked folder, and its row carries the size of its
+  // change against the default branch.
+  const linked = folderGroup(mainWindow, 'merged-feature')
+  await expect(linked.locator('.folders-tree__delta--additions')).toHaveText('+3', { timeout: 10_000 })
 
   await git(['merge', '--ff-only', 'merged-feature'])
-  await expect(linked.locator('.worktrees-panel__delta--additions')).toHaveCount(0, { timeout: 15_000 })
+  await expect(linked.locator('.folders-tree__delta--additions')).toHaveCount(0, { timeout: 15_000 })
+  await expect(linked.locator('[data-change="clean"]')).toBeVisible()
 
   // The user's own reload is measured rather than answered from the cache.
   await mainWindow.getByRole('button', { name: 'Reload explorer' }).click()
@@ -499,7 +525,7 @@ test('git sidebar drops a linked worktree delta when the default branch absorbs 
     expect(recorded).not.toContain(value)
 })
 
-test('git sidebar switches project root before deleting a folder from another worktree', async ({
+test('a directory of a linked folder is deleted from Changes without changing the project root', async ({
   appHarness,
   createWorkspace,
   mainWindow,
@@ -509,6 +535,7 @@ test('git sidebar switches project root before deleting a folder from another wo
     seed: { files: { 'README.md': 'main worktree\n' } },
   })
   const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-delete-linked' })
+  const linkedName = basename(linkedWorktree.rootDir)
   const dialogs = await appHarness.dialogs()
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
@@ -524,16 +551,11 @@ test('git sidebar switches project root before deleting a folder from another wo
 
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
+  await expect(folderRow(mainWindow, linkedName)).toBeVisible({ timeout: 6000 })
+  const projectRoot = await projectRootOnScreen(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const linked = gitPane
-    .locator('.worktrees-panel__worktree')
-    .filter({ hasText: 'git-pane-cross-worktree-delete-linked' })
-  await expect(linked).toBeVisible({ timeout: 6000 })
-  await linked.locator('.worktrees-panel__worktree-toggle').click()
-  const folder = linked.locator('.git-panel__folder').filter({ hasText: 'prototypes' })
+  await selectFolder(mainWindow, linkedName)
+  const folder = changesPane(mainWindow).locator('.git-panel__folder').filter({ hasText: 'prototypes' })
   await expect(folder).toBeVisible({ timeout: 6000 })
 
   await dialogs.queueConfirm(true)
@@ -551,6 +573,9 @@ test('git sidebar switches project root before deleting a folder from another wo
       return 'missing'
     }
   }).toBe('missing')
+  // The delete ran in the folder's worktree; the project is still rooted where it was.
+  expect(await projectRootOnScreen(mainWindow)).toBe(projectRoot)
+  expect(await mainRepo.readText('README.md')).toBe('main worktree\n')
 })
 
 
@@ -567,6 +592,7 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   const linkedWorktree = await createWorkspace({
     name: 'git-pane-delete-worktree-linked',
   })
+  const linkedName = basename(linkedWorktree.rootDir)
   const dialogs = await appHarness.dialogs()
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
@@ -582,16 +608,12 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const linked = gitPane
-    .locator('.worktrees-panel__worktree')
-    .filter({ hasText: 'git-pane-delete-worktree-linked' })
+  // The worktree is a linked folder; deleting it is that folder's action.
+  const linked = folderRow(mainWindow, linkedName)
   await expect(linked).toBeVisible({ timeout: 6000 })
 
-  await linked.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
-  await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeVisible()
+  await openFolderMenu(mainWindow, linkedName)
+  await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
   await dialogs.queueConfirm(true)
   await contextMenuItem(mainWindow, 'Delete worktree').click()
 
@@ -604,6 +626,8 @@ test('deleting a sibling worktree does not request its parent through Explorer',
     (event) => event.event === 'local-server.file-operation.failed',
   )
   expect(explorerFailures).toHaveLength(0)
+  const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: mainRepo.rootDir })
+  expect(stdout).not.toContain(linkedName)
 })
 
 test('deletes a locked agent worktree whose folder was already removed', async ({
@@ -612,8 +636,8 @@ test('deletes a locked agent worktree whose folder was already removed', async (
   mainWindow,
 }) => {
   // An agent session creates `.claude/worktrees/<name>`, locks it, and dies.
-  // Removing the folder by hand leaves Git holding a locked registration with
-  // no working tree; the Git panel must still be able to delete it.
+  // Removing the directory by hand leaves Git holding a locked registration
+  // with no working tree; its folder must still be able to delete it.
   const mainRepo = await createWorkspace({
     name: 'git-pane-delete-lost-worktree',
     seed: { files: { 'README.md': 'main worktree\n' } },
@@ -637,17 +661,24 @@ test('deletes a locked agent worktree whose folder was already removed', async (
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const lost = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'agent-session' })
+  const lost = folderGroup(mainWindow, 'agent-session')
   await expect(lost).toBeVisible({ timeout: 6000 })
   // A registration with no working tree is not "clean"; it is missing.
-  await expect(lost.locator('.worktrees-panel__worktree-header')).toContainText('missing')
-  await expect(lost.locator('.worktrees-panel__worktree-header')).not.toContainText('clean')
+  await expect(lost.locator('.folders-tree__change')).toHaveText('missing')
+  await expect(lost.locator('[data-change="clean"]')).toHaveCount(0)
 
+  // Selecting it says what is wrong and what to do about it.
+  await selectFolder(mainWindow, 'agent-session')
+  await expect(changesPane(mainWindow).locator('.git-panel__message')).toHaveText(
+    "Working tree is missing. Delete it to remove Git's record.",
+    { timeout: 6000 },
+  )
+
+  // Nothing can be opened in a directory that is not there, but the record of
+  // it can still be deleted.
   await dialogs.clearCalls()
-  await lost.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
+  await openFolderMenu(mainWindow, 'agent-session')
+  await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeDisabled()
   await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
   await dialogs.queueConfirm(true)
   await contextMenuItem(mainWindow, 'Delete worktree').click()
@@ -661,7 +692,7 @@ test('deletes a locked agent worktree whose folder was already removed', async (
   expect(stdout).not.toContain('agent-session')
 })
 
-test('git pane menu deletes every clean worktree and leaves changed ones alone', async ({
+test('the Folders menu deletes every clean worktree and leaves changed ones alone', async ({
   appHarness,
   createWorkspace,
   mainWindow,
@@ -696,18 +727,21 @@ test('git pane menu deletes every clean worktree and leaves changed ones alone',
   await setProjectRoot(mainWindow, mainRepo.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const row = (name: string) => gitPane.locator('.worktrees-panel__worktree').filter({ hasText: name })
-  await expect(row('git-pane-sweep-clean-one')).toBeVisible({ timeout: 6000 })
-  await expect(row('git-pane-sweep-clean-two')).toBeVisible()
-  await expect(row('git-pane-sweep-dirty').locator('.worktrees-panel__clean')).toHaveCount(0, { timeout: 6000 })
+  // Every worktree is a linked folder, and its row says whether it is clean.
+  const group = (worktree: { rootDir: string }) => folderGroup(mainWindow, basename(worktree.rootDir))
+  const clean = (worktree: { rootDir: string }) => group(worktree).locator('[data-change="clean"]')
+  await expect(clean(cleanOne)).toBeVisible({ timeout: 6000 })
+  await expect(clean(cleanTwo)).toBeVisible()
+  await expect(group(dirty).locator('.folders-tree__change')).toBeVisible({ timeout: 6000 })
+  await expect(clean(dirty)).toHaveCount(0, { timeout: 6000 })
+
+  const openFoldersMenu = () =>
+    foldersColumn(mainWindow).getByRole('button', { name: 'Folders actions' }).click()
 
   // Declining the confirmation removes nothing.
   await dialogs.clearCalls()
   await dialogs.queueConfirm(false)
-  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  await openFoldersMenu()
   await contextMenuItem(mainWindow, 'Delete all clean worktrees').click()
   const [declined] = await dialogs.getCalls()
   expect(declined.message).toMatch(/^Delete 2 clean worktrees\?/)
@@ -716,17 +750,19 @@ test('git pane menu deletes every clean worktree and leaves changed ones alone',
   expect(declined.message).not.toMatch(/git-pane-sweep-clean-one\S* \(locked\)/)
   expect(declined.message).not.toContain('git-pane-sweep-dirty')
   expect(declined.message).not.toContain('git-pane-sweep-main')
-  await expect(row('git-pane-sweep-clean-one')).toBeVisible()
+  await expect(group(cleanOne)).toBeVisible()
 
   await dialogs.clearCalls()
   await dialogs.queueConfirm(true)
-  await gitPane.getByRole('button', { name: 'Git actions' }).click()
+  await openFoldersMenu()
   await contextMenuItem(mainWindow, 'Delete all clean worktrees').click()
 
-  await expect(row('git-pane-sweep-clean-one')).toHaveCount(0, { timeout: 10000 })
-  await expect(row('git-pane-sweep-clean-two')).toHaveCount(0, { timeout: 10000 })
-  await expect(row('git-pane-sweep-dirty')).toBeVisible()
-  await expect(row('git-pane-sweep-main')).toBeVisible()
+  // The folders of the removed worktrees go with them; the changed one and
+  // General, the root checkout, stay.
+  await expect(group(cleanOne)).toHaveCount(0, { timeout: 10000 })
+  await expect(group(cleanTwo)).toHaveCount(0, { timeout: 10000 })
+  await expect(group(dirty)).toBeVisible()
+  await expect(folderRow(mainWindow, 'General')).toBeVisible()
   // A full success is silent, the dirty worktree keeps its file, and branches survive.
   expect((await dialogs.getCalls()).filter((call) => call.kind === 'alert')).toHaveLength(0)
   expect(await dirty.readText('untracked.txt')).toBe('work in progress\n')
@@ -735,7 +771,7 @@ test('git pane menu deletes every clean worktree and leaves changed ones alone',
   expect(branches).toContain('sweep-clean-two')
 })
 
-test('git sidebar pane renders a nested tree and offers a push menu', async ({
+test('Changes pane renders a nested tree, and the folder menu offers a push menu', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -766,35 +802,29 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
-  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-tree', {
-    timeout: 6000,
-  })
-  await worktree.locator('.worktrees-panel__worktree-toggle').click()
+  const changes = changesPane(mainWindow)
+  await expect(changes.locator('.changes-pane__branch-name')).toHaveText(featureBranch, { timeout: 6000 })
 
   // Tree is the default view: nested folder rows are rendered.
-  const utilRow = worktree.locator('.git-panel__row').filter({ hasText: 'util.ts' })
+  const utilRow = changes.locator('.git-panel__row').filter({ hasText: 'util.ts' })
   await expect(utilRow).toBeVisible({ timeout: 6000 })
-  // A single section has no redundant group header (the worktree row covers it).
-  await expect(worktree.locator('.git-panel__group-header')).toHaveCount(0)
-  await expect(worktree.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
-  await expect(worktree.locator('.git-panel__folder-name').filter({ hasText: 'lib' })).toBeVisible()
+  // A single section has no redundant group header (the pane header covers it).
+  await expect(changes.locator('.git-panel__group-header')).toHaveCount(0)
+  await expect(changes.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+  await expect(changes.locator('.git-panel__folder-name').filter({ hasText: 'lib' })).toBeVisible()
   // In tree mode the row does not repeat the directory path.
   await expect(utilRow.locator('.git-panel__dir')).toHaveCount(0)
 
   // Collapsing the "lib" folder hides its files.
-  await worktree.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await changes.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toHaveCount(0)
   // Re-expand.
-  await worktree.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await changes.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toBeVisible()
 
-  // Double-clicking a Git folder mirrors Explorer by opening a Folder tab while
-  // leaving its disclosure state unchanged.
-  const libFolder = worktree.locator('.git-panel__folder').filter({ hasText: 'lib' })
+  // Double-clicking a changed directory mirrors Explorer by opening a Folder
+  // tab while leaving its disclosure state unchanged.
+  const libFolder = changes.locator('.git-panel__folder').filter({ hasText: 'lib' })
   await libFolder.dblclick()
   await expect(mainWindow.getByLabel('Close folder tab')).toHaveCount(1)
   await expect(utilRow).toBeVisible()
@@ -810,9 +840,9 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
-  // The worktree row's actions menu leads to the push-agent menu offering the
-  // four commit-and-push actions.
-  const actionsButton = worktree.getByLabel(/^Actions for /)
+  // General's actions menu leads to the push-agent menu offering the four
+  // commit-and-push actions for the root checkout.
+  const actionsButton = folderRow(mainWindow, 'General').getByLabel('Actions for General')
   await expect(actionsButton).toBeVisible()
   await actionsButton.click()
   await contextMenuItem(mainWindow, 'Commit & push with AI…').click()
@@ -848,40 +878,37 @@ test('sidebar state persists independently for each project after renderer reloa
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  // The Git pane lives in whichever project workspace is currently active.
-  const activeGitPane = () =>
-    mainWindow
-      .locator('.project-workspace--active .sidebar-pane')
-      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  // The Changes pane lives in whichever project workspace is currently active.
+  const activeChangesPane = () => changesPane(mainWindow)
 
-  // Collapse Git only in project 1.
-  const gitPane1 = activeGitPane()
-  await expect(gitPane1).toBeVisible()
-  await expect(gitPane1).not.toHaveClass(/sidebar-pane--collapsed/)
-  await gitPane1.locator('.sidebar-pane__header').click()
-  await expect(gitPane1).toHaveClass(/sidebar-pane--collapsed/)
+  // Collapse Changes only in project 1.
+  const changesPane1 = activeChangesPane()
+  await expect(changesPane1).toBeVisible()
+  await expect(changesPane1).not.toHaveClass(/sidebar-pane--collapsed/)
+  await changesPane1.locator('.sidebar-pane__header').click()
+  await expect(changesPane1).toHaveClass(/sidebar-pane--collapsed/)
   // Project 2 starts with its own default state rather than inheriting project 1.
   await mainWindow.getByLabel('Create project').click()
   await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
   await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
-  const gitPane2 = activeGitPane()
-  await expect(gitPane2).toBeVisible()
-  await expect(gitPane2).not.toHaveClass(/sidebar-pane--collapsed/)
+  const changesPane2 = activeChangesPane()
+  await expect(changesPane2).toBeVisible()
+  await expect(changesPane2).not.toHaveClass(/sidebar-pane--collapsed/)
 
   // A renderer reload hydrates the canonical project-local state.
   await mainWindow.reload()
   await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
   await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-  await expect(activeGitPane()).not.toHaveClass(/sidebar-pane--collapsed/)
+  await expect(activeChangesPane()).not.toHaveClass(/sidebar-pane--collapsed/)
 
-  // Project 1 retains its own collapsed Git pane after that reload.
+  // Project 1 retains its own collapsed Changes pane after that reload.
   await mainWindow.locator('.project-tab').first().click()
-  await expect(activeGitPane()).toHaveClass(/sidebar-pane--collapsed/)
+  await expect(activeChangesPane()).toHaveClass(/sidebar-pane--collapsed/)
 })
 
-test('git sidebar pane reports when the folder is not a git repository', async ({
+test('Changes pane reports when the folder is not in a git repository', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -897,14 +924,16 @@ test('git sidebar pane reports when the folder is not a git repository', async (
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-
-  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+  await expect(changesPane(mainWindow).locator('.git-panel__message')).toHaveText(
+    'This folder is not in a Git repository',
+    { timeout: 6000 },
+  )
+  // No Git action is offered where there is no repository.
+  await expect(changesPane(mainWindow).locator('.sidebar-pane__action-button')).toHaveCount(0)
+  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__meta')).toHaveCount(0)
 })
 
-test('git sidebar pane refreshes after setting project root from terminal cwd', async ({
+test('Files, Changes, and the Folders tree refresh after setting project root from terminal cwd', async ({
   appHarness,
   createWorkspace,
   mainWindow,
@@ -941,10 +970,12 @@ test('git sidebar pane refreshes after setting project root from terminal cwd', 
   await setProjectRoot(mainWindow, nonRepo.rootDir)
   await openFileExplorer(mainWindow)
 
-  const gitPane = mainWindow
-    .locator('.project-workspace--active .sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+  const changes = changesPane(mainWindow)
+  const notARepository = changes
+    .locator('.git-panel__message')
+    .filter({ hasText: 'This folder is not in a Git repository' })
+  await expect(notARepository).toBeVisible({ timeout: 6000 })
+  await expect(folderNames(mainWindow)).toHaveText(['General'])
 
   const cwdReady = `cwd-ready-${sessionId}`
   await writeToActiveTerminal(
@@ -956,15 +987,26 @@ test('git sidebar pane refreshes after setting project root from terminal cwd', 
   await mainWindow.locator('.terminal-panel').first().click()
   await appHarness.sendAppCommand('set-project-root-folder-to-working-directory')
 
+  // The project is now rooted at the linked worktree. General stands for that
+  // checkout: Files lists it and Changes reports its branch.
+  await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
+    'data-terminay-project-root',
+    linkedWorktree.rootDir,
+  )
   await expect(fileExplorerItem(mainWindow, 'README.md')).toBeVisible()
-  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
-  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-linked-worktree', {
+  await expect(changes.locator('.changes-pane__branch-name')).toHaveText('server-client-architecture', {
     timeout: 6000,
   })
-  await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
+  await expect(notARepository).toHaveCount(0)
+  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__branch')).toHaveText(
+    'server-client-architecture',
+  )
+  // Every other worktree of the repository gains its folder without a
+  // restart: here, the main checkout the project is no longer rooted at.
+  await expect(folderRow(mainWindow, basename(mainRepo.rootDir))).toBeVisible({ timeout: 6000 })
 })
 
-test('git sidebar pane refreshes after keyboard sidebar open and keyboard root update', async ({
+test('Changes pane refreshes after keyboard sidebar open and keyboard root update', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -993,6 +1035,9 @@ test('git sidebar pane refreshes after keyboard sidebar open and keyboard root u
   await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: repo.rootDir })
   await execFileAsync('git', ['add', '.'], { cwd: repo.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo.rootDir })
+  const branch = (
+    await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo.rootDir })
+  ).stdout.trim()
 
   await setProjectRoot(mainWindow, nonRepo.rootDir)
   await mainWindow.locator('.terminal-panel').first().click()
@@ -1006,19 +1051,19 @@ test('git sidebar pane refreshes after keyboard sidebar open and keyboard root u
 
   await mainWindow.keyboard.press(`${modifier}+O`)
 
-  const gitPane = mainWindow
-    .locator('.project-workspace--active .sidebar-pane')
-    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+  const changes = changesPane(mainWindow)
+  const notARepository = changes
+    .locator('.git-panel__message')
+    .filter({ hasText: 'This folder is not in a Git repository' })
+  await expect(notARepository).toBeVisible({ timeout: 6000 })
 
   await mainWindow.keyboard.press(`${modifier}+R`)
 
   await expect(fileExplorerItem(mainWindow, 'src')).toBeVisible()
-  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
-  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-keyboard-after', {
-    timeout: 6000,
-  })
-  await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
+  await expect(changes.locator('.changes-pane__branch-name')).toHaveText(branch, { timeout: 6000 })
+  await expect(notARepository).toHaveCount(0)
+  // General gains its Git presentation without the project being reopened.
+  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__branch')).toHaveText(branch)
 })
 
 test('file explorer refreshes git colors after external changes', async ({ createWorkspace, mainWindow }) => {

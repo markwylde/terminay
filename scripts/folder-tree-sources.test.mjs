@@ -70,7 +70,7 @@ test('the panel in front is the one the inventory marks', () => {
 	assert.equal(activePanelIdFromInventory([entry('a')]), undefined);
 });
 
-test('worktrees carry their branch, pull request, and checks', () => {
+test('worktrees carry their branch, change, pull request, and checks', () => {
 	const worktrees = folderTreeWorktrees(
 		gitStatus([
 			worktree('/repo', 'main'),
@@ -80,10 +80,15 @@ test('worktrees carry their branch, pull request, and checks', () => {
 			}),
 		]),
 	);
-	assert.deepEqual(worktrees[0], { path: '/repo', branch: 'main' });
+	assert.deepEqual(worktrees[0], {
+		path: '/repo',
+		branch: 'main',
+		change: { kind: 'clean' },
+	});
 	assert.deepEqual(worktrees[1], {
 		path: '/repo/.worktrees/one',
 		branch: 'feat/one',
+		change: { kind: 'clean' },
 		pullRequest: { number: 350, state: 'open', title: 'One', url: 'https://example.test/350' },
 		checks: { failed: 0, pending: 1, passed: 26, skipped: 2 },
 	});

@@ -272,6 +272,54 @@ test('a project outside any repository keeps only its General folder', async (t)
 	assert.equal(authority.workspace.state.projects.plain.folderIds.length, 1);
 });
 
+test('a folder is revealed by id: General and a plain folder outside a repository, and a linked folder at its worktree', async (t) => {
+	const plainRoot = await realpath(
+		await mkdtemp(join(tmpdir(), 'terminay-desktop-folders-reveal-')),
+	);
+	t.after(() => rm(plainRoot, { recursive: true, force: true }));
+	const repo = await repository(t);
+	const feature = await repo.addWorktree('feature');
+	const revealed = [];
+	const { authority, facade, workspace, createProject } = await embeddedServer(
+		t,
+		'folders-reveal',
+		{ revealPathOnHost: (path) => void revealed.push(path) },
+	);
+	await createProject('notes', plainRoot);
+	await createProject('repo', repo.root);
+	const general = (projectId) =>
+		authority.workspace.state.projects[projectId].folderIds[0];
+
+	// The listing tells a client at the host that it may ask, repository or not.
+	assert.equal(
+		(await facade.query('git.worktrees.list', { projectId: 'notes' }))
+			.folderRevealAvailable,
+		true,
+	);
+
+	await workspace.createFolder({ projectId: 'notes', name: 'Servers' });
+	const plain = authority.workspace.state.projects.notes.folderIds
+		.map((folderId) => authority.workspace.state.folders[folderId])
+		.find((folder) => folder.kind === 'plain');
+	const linked = await folderFor(authority, 'repo', feature);
+	const reveal = (projectId, folderId, extra = {}) =>
+		facade.command('git.folder.reveal', { projectId, folderId, ...extra });
+
+	assert.deepEqual(await reveal('notes', general('notes')), { revealed: true });
+	assert.deepEqual(await reveal('notes', plain.id), { revealed: true });
+	assert.deepEqual(await reveal('repo', general('repo')), { revealed: true });
+	// A path sent with the request decides nothing.
+	assert.deepEqual(await reveal('repo', linked.id, { path: '/etc' }), {
+		revealed: true,
+	});
+	assert.deepEqual(revealed, [plainRoot, plainRoot, repo.root, feature]);
+
+	// A folder of another project is refused before anything is shown.
+	await assert.rejects(reveal('notes', linked.id));
+	await assert.rejects(reveal('repo', 'no-such-folder'));
+	assert.equal(revealed.length, 4);
+});
+
 test('file operations naming a folder run in that folder’s worktree', async (t) => {
 	const repo = await repository(t);
 	const worktree = await repo.addWorktree('feature');

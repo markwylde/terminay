@@ -30,6 +30,7 @@ export const GIT_OPERATIONS = Object.freeze({
 	switchProject: 'git.worktree.switch-project',
 	renamePresentation: 'git.worktree.rename',
 	reveal: 'git.worktree.reveal',
+	revealFolder: 'git.folder.reveal',
 	copy: 'git.worktree.copy',
 	pull: 'git.worktree.pull',
 	removeWorktree: 'git.worktree.remove',
@@ -101,6 +102,15 @@ export interface GitRenamePresentationRequest extends GitWorktreeRef {
 export interface GitRevealRequest extends GitWorktreeRef {
 	readonly userGesture?: boolean;
 }
+/**
+ * Show a folder of a project in the host's file manager. The request names the
+ * folder; the host resolves its root. No path crosses the protocol.
+ */
+export interface GitFolderRevealRequest {
+	readonly authorization: GitAuthorization;
+	readonly projectId?: string;
+	readonly folderId: string;
+}
 export interface GitCopyRequest extends GitWorktreeRef {
 	readonly userGesture?: boolean;
 }
@@ -133,6 +143,13 @@ export interface GitWorktreeActionHandlers {
 		request: GitRevealRequest,
 	) => JsonValue | Promise<JsonValue>;
 	readonly copy?: (request: GitCopyRequest) => JsonValue | Promise<JsonValue>;
+	/**
+	 * Reveal the root of a folder, which need not be in a repository. The host
+	 * turns the folder id into a root; a failure to do so rejects.
+	 */
+	readonly revealFolder?: (
+		request: GitFolderRevealRequest & { readonly projectId: string },
+	) => JsonValue | Promise<JsonValue>;
 }
 
 export interface GitProtocolAdapterOptions {
@@ -253,7 +270,17 @@ export class ServerGitAdapter {
 		return boundGitQueryResult({
 			...(this.withInsights(result) as Record<string, JsonValue>),
 			revealAvailable: this.revealAvailable(request.authorization),
+			folderRevealAvailable: this.folderRevealAvailable(request.authorization),
 		});
+	}
+
+	/** As `revealAvailable`, for a folder named by id, in or out of a repository. */
+	private folderRevealAvailable(authorization: GitAuthorization): boolean {
+		return (
+			this.actions.revealFolder !== undefined &&
+			this.hostCapabilities.has('nativeWindows') &&
+			(this.canRevealOnHost?.(authorization) ?? true)
+		);
 	}
 
 	/** Reveal is offered only where the host can act and the client is there. */
@@ -460,6 +487,37 @@ export class ServerGitAdapter {
 			this.actions.reveal,
 			request,
 			'nativeWindows',
+		);
+	}
+	/**
+	 * Reveal a folder's root on the server host. The project is authorized
+	 * here; that the folder belongs to it is the host resolver's check.
+	 */
+	async revealFolder(request: GitFolderRevealRequest): Promise<JsonValue> {
+		this.requireScope(request.authorization, 'write');
+		const projectId = this.requireProject(
+			request.authorization,
+			request.projectId,
+		);
+		const handler = this.actions.revealFolder;
+		if (handler === undefined || !this.hostCapabilities.has('nativeWindows'))
+			throw new GitServiceError(
+				'invalid-operation',
+				'reveal folder is unavailable in this server host',
+			);
+		if (this.canRevealOnHost?.(request.authorization) === false)
+			throw new GitServiceError(
+				'invalid-operation',
+				'reveal folder is available only from the server host',
+			);
+		// The handler is given ids and nothing a client could have used to name
+		// a directory.
+		return sanitizeHostResult(
+			await handler({
+				authorization: request.authorization,
+				projectId,
+				folderId: request.folderId,
+			}),
 		);
 	}
 	copy(request: GitCopyRequest): Promise<JsonValue> {
@@ -686,6 +744,8 @@ export class ServerGitAdapter {
 					this.renamePresentation(this.renameRequest(request)),
 				[GIT_OPERATIONS.reveal]: (request) =>
 					this.reveal(this.refActionRequest(request, 'reveal')),
+				[GIT_OPERATIONS.revealFolder]: (request) =>
+					this.revealFolder(this.folderRevealRequest(request)),
 				[GIT_OPERATIONS.copy]: (request) =>
 					this.copy(this.refActionRequest(request, 'copy')),
 				[GIT_OPERATIONS.pull]: (request) =>
@@ -852,6 +912,17 @@ export class ServerGitAdapter {
 			GitSwitchProjectRequest &
 			GitRevealRequest &
 			GitCopyRequest;
+	}
+
+	private folderRevealRequest(request: CommandRequest): GitFolderRevealRequest {
+		const payload = objectPayload(request);
+		const authorization = this.authorization(request);
+		const projectId = stringValue(payload.projectId) ?? authorization.projectId;
+		return {
+			authorization,
+			projectId: requiredId(projectId, 'projectId'),
+			folderId: requiredId(payload.folderId, 'folderId'),
+		};
 	}
 
 	private renameRequest(request: CommandRequest): GitRenamePresentationRequest {
@@ -1044,7 +1115,8 @@ function inferHostCapabilities(
 	if (
 		actions.openTerminal !== undefined ||
 		actions.switchProject !== undefined ||
-		actions.reveal !== undefined
+		actions.reveal !== undefined ||
+		actions.revealFolder !== undefined
 	)
 		capabilities.push('nativeWindows');
 	if (actions.copy !== undefined) capabilities.push('clipboard');

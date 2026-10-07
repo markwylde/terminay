@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { changesPane, folderRow } from './support/folders';
 import { settledTerminalSessionId } from './support/terminal-session';
 import {
 	fileExplorerItem,
@@ -267,7 +268,7 @@ test.describe('workspace shell', () => {
 		).toContainText(outputMarker);
 	});
 
-	test('closes the project when its last tab is closed', async ({
+	test('keeps the project open, showing the empty-folder placeholder, when its last tab is closed', async ({
 		appHarness,
 		mainWindow,
 	}) => {
@@ -285,18 +286,51 @@ test.describe('workspace shell', () => {
 
 		await appHarness.sendAppCommand('close-active');
 
+		// Closing the final panel closes that panel and nothing else: both
+		// projects are still open and the one in front is still in front.
+		const workspace = mainWindow.locator('.project-workspace--active');
+		await expect(workspace.locator('.terminal-tab-content')).toHaveCount(0);
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
+			'Project 2',
 		]);
 		await expect(
 			mainWindow.locator('.project-tab--active .project-tab-title'),
-		).toHaveText('Project');
+		).toHaveText('Project 2');
+		const placeholder = workspace.locator('[data-terminay-folder-empty="true"]');
+		await expect(placeholder).toBeVisible();
+		await expect(placeholder).toContainText('General');
+		await expect(placeholder).toContainText(
+			'No terminals are open in this folder.',
+		);
+		// The other project's terminal was not touched.
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
+
+		// With nothing left to close, the command closes nothing: a project
+		// closes only when the project itself is closed.
+		await mainWindow.locator('.project-tab').nth(1).click();
+		await expect(placeholder).toBeVisible();
+		await appHarness.sendAppCommand('close-active');
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+			'Project 2',
+		]);
 	});
 
 	test('keeps the app open when closing the first project while another project exists', async ({
 		appHarness,
+		electronApp,
 		mainWindow,
 	}) => {
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
+		});
 		await appHarness.sendAppCommand('new-project');
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
@@ -308,7 +342,12 @@ test.describe('workspace shell', () => {
 			mainWindow.locator('.project-tab--active .project-tab-title'),
 		).toHaveText('Project');
 
-		await appHarness.sendAppCommand('close-active');
+		// A project closes when the project itself is closed, from its tab.
+		await mainWindow
+			.locator('.project-tab')
+			.first()
+			.getByLabel('Close Project')
+			.click();
 
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project 2',
@@ -316,6 +355,10 @@ test.describe('workspace shell', () => {
 		await expect(
 			mainWindow.locator('.project-tab--active .project-tab-title'),
 		).toHaveText('Project 2');
+		expect(mainWindow.isClosed()).toBe(false);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
 	});
 
 	test('splits the active terminal vertically', async ({
@@ -421,20 +464,29 @@ test.describe('workspace shell', () => {
 		);
 		await editWindow.getByRole('button', { name: 'Cancel' }).click();
 
+		// Files and Changes follow the new root, and General, the folder that
+		// stands for the root checkout, names its branch.
 		await openFileExplorer(mainWindow);
-		const gitPane = mainWindow.locator('.sidebar-pane').filter({
-			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }),
-		});
-		const worktree = gitPane.locator('.worktrees-panel__worktree').first();
+		await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute(
+			'data-terminay-project-root',
+			expectedRoot,
+		);
+		await expect(fileExplorerItem(mainWindow, 'README.md')).toBeVisible();
+		const branch = (
+			await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+				cwd: workspace.rootDir,
+			})
+		).stdout.trim();
+		const changes = changesPane(mainWindow);
+		await expect(changes.locator('.changes-pane__branch-name')).toHaveText(
+			branch,
+			{ timeout: 6000 },
+		);
+		await expect(changes.locator('.git-panel__message')).toHaveText(
+			'No changes',
+		);
 		await expect(
-			worktree.locator('.worktrees-panel__worktree-name'),
-		).toContainText('shortcut-project-root', {
-			timeout: 6000,
-		});
-		await expect(
-			gitPane
-				.locator('.git-panel__message')
-				.filter({ hasText: 'Not a git repository' }),
-		).toHaveCount(0);
+			folderRow(mainWindow, 'General').locator('.folders-tree__branch'),
+		).toHaveText(branch);
 	});
 });

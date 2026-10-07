@@ -16,6 +16,7 @@ import {
 	toContainedProjectRelativePath,
 } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
+import { parseWorktreeProperties } from '../services/git/worktreeProperties';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
 	FileExplorerEntry,
@@ -865,6 +866,43 @@ export function useFileExplorerController({
 		},
 		[gitClient, onOperationError],
 	);
+	// A folder is shown by id: the server decides which directory it is, so
+	// this works for a plain folder and for a project outside any repository.
+	const handleRevealFolder = useCallback(
+		(folderId: string) => {
+			if (gitClient === undefined) return;
+			gitClient
+				.revealFolder({ projectId: project.id, folderId })
+				.catch((error: unknown) => {
+					console.error('[terminay] folder reveal failed', error);
+					onOperationError('Explorer', error);
+				});
+		},
+		[gitClient, onOperationError, project.id],
+	);
+	/** Every check of one worktree; a listing carries only the counts. */
+	const listedWorktreesRef = useRef(worktreePanelStatus?.worktrees);
+	listedWorktreesRef.current = worktreePanelStatus?.worktrees;
+	const handleLoadWorktreeChecks = useCallback(
+		async (worktreePath: string) => {
+			const worktree = listedWorktreesRef.current?.find(
+				(candidate) => candidate.path === worktreePath,
+			);
+			if (worktree === undefined) return undefined;
+			if (gitClient === undefined || worktree.worktreeId === undefined)
+				return worktree.properties?.checks;
+			const result = await gitClient.worktreeProperties({
+				projectId: project.id,
+				worktreeId: worktree.worktreeId,
+			});
+			const properties =
+				typeof result === 'object' && result !== null && !Array.isArray(result)
+					? parseWorktreeProperties(result.properties)
+					: undefined;
+			return properties?.checks ?? worktree.properties?.checks;
+		},
+		[gitClient, project.id],
+	);
 	// The Changes pane lists the worktree of the folder on screen, which is
 	// this explorer's own root, so a change is opened as a file of this folder.
 	const handleOpenGitEntry = useCallback(
@@ -1160,6 +1198,8 @@ export function useFileExplorerController({
 		handlePullWorktreeFromOrigin,
 		handleRename,
 		handleRenameWorktree,
+		handleLoadWorktreeChecks,
+		handleRevealFolder,
 		handleRevealWorktree,
 		loadDirectory,
 		loadingPaths,

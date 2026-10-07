@@ -19,7 +19,7 @@ import {
 const LINKED_BRANCH = "feature-zebra";
 const LINKED_DIRECTORY = "sibling-tree";
 
-async function reportingService(t, { flushMs = 20, onObservation, wrapRunner } = {}) {
+async function reportingService(t, { flushMs = 20, onObservation, wrapRunner, refreshRampMs = [0] } = {}) {
   const { GitService, NodeGitCommandRunner } = await import("../dist/gitService/index.js");
   const fixture = await createRepository();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -30,7 +30,7 @@ async function reportingService(t, { flushMs = 20, onObservation, wrapRunner } =
   const service = new GitService({
     runner,
     watcher,
-    refreshRampMs: [0],
+    refreshRampMs,
     observationFlushMs: flushMs,
     onObservation: onObservation ?? ((report) => reports.push(report)),
   });
@@ -252,6 +252,45 @@ test("a change that arrives during a measurement is reported by the measurement 
   assert.deepEqual({ claim: second.claim, carried: second.carried }, { claim: "all", carried: 0 });
   assert.deepEqual(second.changes.byClass, { "default-branch-ref": 1 });
   assert.equal(second.worktrees.find((worktree) => worktree.role === "linked").additions, 0);
+});
+
+test("a listing that names one worktree does not narrow a claim on every worktree", async (t) => {
+  // A fast-forward writes the index before the branch ref. The index event is
+  // measured at once and announces the main worktree. A client answers that
+  // announcement with a listing naming the main worktree, and by then the ref
+  // has moved: the watch's own refresh is still waiting out its interval, so
+  // the client's listing is the one holding the claim on every worktree.
+  const context = await reportingService(t, { refreshRampMs: [0, 60_000] });
+  await addLinkedWorktree(context.fixture);
+  const first = await bindAndList(context);
+  const main = first.worktrees.find((worktree) => worktree.isMain);
+  assert.equal(first.worktrees.find((worktree) => !worktree.isMain).lineAdditions, 3);
+  context.reports.length = 0;
+
+  await git(["merge", "--ff-only", LINKED_BRANCH], context.fixture.main);
+  context.watcher.emit(context.fixture.gitDir, "index");
+  await eventually(() => of(context.reports, "measurement.completed").length === 1, "the index change was never measured");
+  assert.equal(last(context.reports, "measurement.completed").claim, "scoped");
+  context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
+
+  const listing = await context.service.worktrees({ projectId: "project-a", worktreeId: main.id });
+
+  const linked = listing.worktrees.find((worktree) => !worktree.isMain);
+  assert.deepEqual(
+    { additions: linked.lineAdditions, ahead: linked.aheadOfDefaultBranchCount },
+    { additions: 0, ahead: 0 },
+    "the worktree the listing did not name was carried forward with its old delta",
+  );
+  const moved = last(context.reports, "measurement.completed");
+  assert.deepEqual(
+    { raisedBy: moved.raisedBy, claim: moved.claim, remeasured: moved.remeasured, carried: moved.carried },
+    { raisedBy: "request", claim: "all", remeasured: 2, carried: 0 },
+  );
+  assert.equal(moved.changes.byClass["default-branch-ref"], 1);
+  // Nothing is owed afterwards: the next listing is the cached one.
+  const again = await context.service.worktrees({ projectId: "project-a" });
+  assert.equal(again.worktrees.find((worktree) => !worktree.isMain).lineAdditions, 0);
+  assert.equal(of(context.reports, "measurement.completed").length, 2);
 });
 
 test("a failed measurement reports that its claim was handed back", async (t) => {

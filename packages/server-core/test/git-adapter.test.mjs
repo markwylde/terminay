@@ -73,6 +73,114 @@ test('Git protocol adapter offers reveal only to clients at the server host', as
 	}
 });
 
+test('Git protocol adapter reveals a folder by id, in a project with no repository, and only for clients at the server host', async () => {
+	const { GitService, ServerGitAdapter, GIT_OPERATIONS, GitServiceError } =
+		await import('../dist/gitService/index.js');
+	// No repository here: revealing a folder needs none.
+	const root = await mkdtemp(join(tmpdir(), 'terminay-git-adapter-folder-'));
+	try {
+		const git = new GitService();
+		const revealed = [];
+		const adapter = new ServerGitAdapter({
+			serverId: 'server-a',
+			git,
+			resolveProjectRoot: () => root,
+			actions: {
+				revealFolder: (request) => {
+					revealed.push(request);
+					// A host that leaks the directory is not relayed to the client.
+					return { revealed: true, path: root };
+				},
+			},
+			canRevealOnHost: (auth) => auth.clientId === 'local-window',
+		});
+		const as = (clientId) => ({ ...authorization(), clientId });
+		const local = await adapter.list({ authorization: as('local-window') });
+		assert.equal(local.repositoryRoot, null);
+		assert.equal(local.folderRevealAvailable, true);
+		// Only a folder can be revealed here; there is no worktree to name.
+		assert.equal(local.revealAvailable, false);
+		assert.equal(
+			(await adapter.list({ authorization: as('remote-peer') }))
+				.folderRevealAvailable,
+			false,
+		);
+
+		const result = await adapter
+			.operations()
+			.commands[GIT_OPERATIONS.revealFolder]({
+				envelope: {
+					type: 'command',
+					commandId: 'reveal-folder',
+					correlationId: 'reveal-folder',
+					operation: GIT_OPERATIONS.revealFolder,
+					// A path is not part of the request, and one sent anyway is dropped.
+					payload: { folderId: 'folder-general', path: '/etc' },
+				},
+				body: new Uint8Array(),
+				context: { ...context('write'), clientId: 'local-window' },
+			});
+		assert.deepEqual(result, { revealed: true });
+		assert.equal(revealed.length, 1);
+		assert.equal(revealed[0].projectId, 'project-a');
+		assert.equal(revealed[0].folderId, 'folder-general');
+		assert.equal(Object.hasOwn(revealed[0], 'path'), false);
+
+		const refused = (promise, pattern) =>
+			assert.rejects(
+				promise,
+				(error) =>
+					error instanceof GitServiceError &&
+					error.code === 'invalid-operation' &&
+					pattern.test(error.message),
+			);
+		await refused(
+			adapter.revealFolder({
+				authorization: as('remote-peer'),
+				folderId: 'folder-general',
+			}),
+			/only from the server host/,
+		);
+		// A read-only client and a client scoped to another project are refused
+		// before the host is asked anything.
+		await assert.rejects(
+			adapter.revealFolder({
+				authorization: { ...as('local-window'), scope: 'read' },
+				folderId: 'folder-general',
+			}),
+		);
+		await assert.rejects(
+			adapter.revealFolder({
+				authorization: as('local-window'),
+				projectId: 'project-b',
+				folderId: 'folder-general',
+			}),
+		);
+		// A host with no file manager to show it in refuses, and says so in listings.
+		const headless = new ServerGitAdapter({
+			serverId: 'server-a',
+			git,
+			resolveProjectRoot: () => root,
+		});
+		assert.equal(
+			(await headless.list({ authorization: as('local-window') }))
+				.folderRevealAvailable,
+			false,
+		);
+		await refused(
+			headless.revealFolder({
+				authorization: as('local-window'),
+				folderId: 'folder-general',
+			}),
+			/unavailable in this server host/,
+		);
+		assert.equal(revealed.length, 1);
+		git.close();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('Git protocol adapter lists canonical worktrees and delegates opaque worktree actions', async () => {
 	const { GitService, ServerGitAdapter, GIT_OPERATIONS, GitServiceError } =
 		await import('../dist/gitService/index.js');

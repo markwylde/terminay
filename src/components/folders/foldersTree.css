@@ -123,8 +123,144 @@
 	font-weight: 600;
 }
 
-.folders-tree__pr {
+/* Change size, pull request, and checks sit together at the row's far end, so
+   a long branch name is what gives way. */
+.folders-tree__facts {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
 	margin-left: auto;
+}
+
+/* The pull request opens in the browser and the checks open their list. They
+   are buttons inside the row, declared before the tones so a tone still
+   colours them. */
+.folders-tree__pr--link,
+.folders-tree__checks--link {
+	appearance: none;
+	margin: 0;
+	padding: 0 2px;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: inherit;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.folders-tree__pr--link:hover,
+.folders-tree__checks--link:hover {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.folders-tree__pr--link:focus-visible,
+.folders-tree__checks--link:focus-visible,
+.folders-tree__check--link:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.5);
+}
+
+.folders-tree__change {
+	display: inline-flex;
+	gap: 4px;
+	flex: none;
+	font-weight: 500;
+}
+
+.folders-tree__change--clean {
+	color: rgba(220, 226, 240, 0.34);
+}
+
+.folders-tree__change--changed,
+.folders-tree__change--missing {
+	color: #f14c4c;
+}
+
+.folders-tree__delta {
+	font-weight: 600;
+}
+
+.folders-tree__delta--additions {
+	color: #73c991;
+}
+
+.folders-tree__delta--deletions {
+	color: #f14c4c;
+}
+
+/* The checks of one folder, beneath its row. One check to a line. */
+.folders-tree__checks-list {
+	margin: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 2px 10px 6px 30px;
+	font-size: 11px;
+	color: rgba(220, 226, 240, 0.72);
+}
+
+.folders-tree__check {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 2px 4px;
+	white-space: nowrap;
+}
+
+.folders-tree__check > svg {
+	flex: none;
+}
+
+.folders-tree__check > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folders-tree__check-item {
+	display: flex;
+	min-width: 0;
+}
+
+.folders-tree__check--link {
+	appearance: none;
+	flex: 1 1 auto;
+	margin: 0;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.folders-tree__check--link:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: #fff;
+}
+
+.folders-tree__check--note {
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.folders-tree__check-icon--failed {
+	color: #f14c4c;
+}
+
+.folders-tree__check-icon--pending {
+	color: #cca700;
+}
+
+.folders-tree__check-icon--passed {
+	color: #73c991;
+}
+
+.folders-tree__check-icon--skipped {
+	color: rgba(220, 226, 240, 0.4);
 }
 
 .folders-tree__pr--open,
@@ -301,6 +437,26 @@
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
 	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 78%, transparent);
+}
+
+.folders-column__menu {
+	all: unset;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	margin-left: auto;
+	border-radius: 4px;
+	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 62%, transparent);
+}
+
+.folders-column__menu:hover,
+.folders-column__menu:focus-visible,
+.folders-column__menu--active {
+	background: rgba(255, 255, 255, 0.12);
+	color: var(--tab-text-selected, #ffffff);
 }
 
 .folders-column__body {

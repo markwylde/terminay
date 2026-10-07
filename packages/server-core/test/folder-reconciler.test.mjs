@@ -81,14 +81,21 @@ test("a worktree that disappears has its terminals moved to General, in order an
   assert.deepEqual(workspace.state.terminalSessions, sessions);
 });
 
-test("a renamed folder stays linked, and prunable or bare entries get no folder", async () => {
+test("a renamed folder stays linked, a bare entry gets no folder, and a registration whose directory is gone keeps one", async () => {
   const { reconciler, git, host, linked } = fixture();
   git.worktrees = [MAIN, row("/repo/.worktrees/feature"), row("/gone", { isPrunable: true }), row("/bare.git", { isBare: true })];
   await reconciler.reconcile("project-a");
-  assert.deepEqual(linked().map((folder) => folder.name), ["feature"]);
+  // The missing worktree is still registered, and its folder is where it is deleted from.
+  assert.deepEqual(linked().map((folder) => folder.name), ["feature", "gone"]);
   host({ type: "folder.rename", folderId: linked()[0].id, name: "Releases" });
   await reconciler.reconcile("project-a");
-  assert.deepEqual(linked().map((folder) => [folder.name, folder.worktree.path]), [["Releases", "/repo/.worktrees/feature"]]);
+  assert.deepEqual(linked().map((folder) => [folder.name, folder.worktree.path]), [["Releases", "/repo/.worktrees/feature"], ["gone", "/gone"]]);
+  // A worktree whose directory disappears while it is listed keeps its folder and its panels.
+  git.worktrees = [MAIN, row("/repo/.worktrees/feature", { isPrunable: true }), row("/gone", { isPrunable: true })];
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(linked().map((folder) => folder.name), ["Releases", "gone"]);
+  // A missing checkout is never the one General stands for.
+  assert.deepEqual(worktreesNeedingFolders([row("/repo", { isPrunable: true })], "/repo").map((entry) => entry.path), ["/repo"]);
 });
 
 test("a failed or indefinite listing changes nothing; a root that is not a repository drops linked folders", async () => {

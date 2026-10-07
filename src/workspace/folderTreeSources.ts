@@ -15,10 +15,12 @@ import type {
 	ServerWorkspacePanel,
 	ServerWorkspaceProject,
 } from '../shared/serverWorkspaceReconciliation.ts';
-import type { WorktreePanelStatus } from '../types/terminay';
+import type { GitWorktreeStatus, WorktreePanelStatus } from '../types/terminay';
+import { isWorktreeShownClean } from './cleanWorktreeSweep.ts';
 import { dashboardStatusFor } from './dashboardRows.ts';
 import {
 	buildFolderTree,
+	type FolderTreeChange,
 	type FolderTreeFolderRow,
 	type FolderTreePanelFacts,
 	type FolderTreeWorktree,
@@ -68,6 +70,7 @@ export function folderTreeWorktrees(
 	return status.worktrees.map((worktree) => ({
 		path: worktree.path,
 		branch: worktree.branch,
+		change: worktreeChange(worktree),
 		...(worktree.properties?.pullRequest === undefined
 			? {}
 			: {
@@ -76,6 +79,9 @@ export function folderTreeWorktrees(
 						state: worktree.properties.pullRequest.state,
 						title: worktree.properties.pullRequest.title,
 						url: worktree.properties.pullRequest.url,
+						...(worktree.properties.pullRequest.mergeable === undefined
+							? {}
+							: { mergeable: worktree.properties.pullRequest.mergeable }),
 					},
 				}),
 		...(worktree.properties?.checks === undefined
@@ -89,6 +95,29 @@ export function folderTreeWorktrees(
 					},
 				}),
 	}));
+}
+
+/**
+ * What a row says about a worktree's work. A registration with no working tree
+ * is missing, not clean. Otherwise the measured size of the change is shown
+ * when there is one, and `clean` only under the one definition of it.
+ */
+export function worktreeChange(
+	worktree: Pick<
+		GitWorktreeStatus,
+		| 'isPrunable'
+		| 'isDirtyBranch'
+		| 'entries'
+		| 'lineAdditions'
+		| 'lineDeletions'
+	>,
+): FolderTreeChange {
+	if (worktree.isPrunable) return { kind: 'missing' };
+	const additions = worktree.lineAdditions ?? 0;
+	const deletions = worktree.lineDeletions ?? 0;
+	if (additions > 0 || deletions > 0)
+		return { kind: 'delta', additions, deletions };
+	return isWorktreeShownClean(worktree) ? { kind: 'clean' } : { kind: 'changed' };
 }
 
 export type ProjectFolderTreeInput = {

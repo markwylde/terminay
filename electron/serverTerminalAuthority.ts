@@ -627,6 +627,21 @@ export class ServerTerminalAuthority {
 								await revealPath(worktree.path);
 								return { revealed: true };
 							},
+							// A folder is named by id and need not be in a repository:
+							// its root is whatever the resolver says it is now.
+							revealFolder: async (request) => {
+								const revealPath = options.revealPathOnHost;
+								if (revealPath === undefined)
+									throw new Error('The folder cannot be shown on this host.');
+								const resolved = await folders.roots.resolve(
+									request.projectId,
+									request.folderId,
+								);
+								if (!resolved.root)
+									throw new Error('The folder has no directory to show.');
+								await revealPath(resolved.root);
+								return { revealed: true };
+							},
 						},
 						// Only the reveal action is wired; terminals and project
 						// switching stay with the renderer.

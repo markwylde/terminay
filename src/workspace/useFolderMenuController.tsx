@@ -22,6 +22,8 @@ import type { WorkspaceInventoryEntry } from './workspaceInventory';
 
 /** How long a move or a local close is given to show up before the flow stops. */
 const SETTLE_TIMEOUT_MS = 10_000;
+/** How long this device is given to draw what the server has already done. */
+const LOCAL_SETTLE_TIMEOUT_MS = 3_000;
 
 type Options = {
 	project: { id: string; rootFolder: string };
@@ -41,7 +43,9 @@ type Options = {
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
 	/** Asks its own question, then removes the worktree. */
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => Promise<void>;
-	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
+	/** Show a folder's directory in the file manager. The server is told the
+	 * folder and decides the directory, so this needs no repository. */
+	onRevealFolder: (folderId: string) => void;
 	/** Create a terminal in a folder, starting in that folder's root. */
 	onOpenShell: (folderId: string) => void;
 	/** Close a panel as closing its tab does, with every question that asks. */
@@ -175,16 +179,27 @@ export function useFolderMenuController(options: Options) {
 				);
 			const isLocal = (panelId: string) =>
 				held().find((panel) => panel.panelId === panelId)?.isLocal === true;
-			// A panel only this device knows is gone once its workspace says so,
-			// which is a frame or two after its tab closes.
+			// What this device shows follows the server by a frame or two. A panel
+			// the server no longer places in the folder, but which this device still
+			// lists there, has left and is only waiting to be drawn that way; a
+			// panel the server still places there was kept, and is not waited for.
+			const shownAsLeft = (panelId: string) =>
+				waitUntil(() => {
+					const panel = held().find(
+						(candidate) => candidate.panelId === panelId,
+					);
+					return panel === undefined || !panel.isLocal;
+				}, LOCAL_SETTLE_TIMEOUT_MS);
 			const closePanel = async (panelId: string) => {
 				const local = isLocal(panelId);
 				await latest.current.onClosePanel(folderId, panelId);
+				// A panel only this device knows is gone once its workspace says so.
 				if (local)
 					await waitUntil(
 						() => !held().some((panel) => panel.panelId === panelId),
 						500,
 					);
+				else await shownAsLeft(panelId);
 			};
 			try {
 				await deleteFolderAndItsPanels({
@@ -215,6 +230,7 @@ export function useFolderMenuController(options: Options) {
 						);
 						if (moved === null)
 							throw new Error('Timed out waiting for the panel to move.');
+						await shownAsLeft(panelId);
 					},
 					closePanel,
 					remove: async () => {
@@ -255,18 +271,6 @@ export function useFolderMenuController(options: Options) {
 			folder.kind === 'plain'
 				? undefined
 				: worktreeOfFolder(folder, project.rootFolder, worktreeStatus);
-		// Showing a directory in the file manager is a Git service operation
-		// addressed by worktree, so a plain folder reveals the checkout that
-		// holds the project root. Outside a repository there is nothing to name.
-		const revealWorktree =
-			worktree ??
-			(folder.kind === 'plain'
-				? worktreeOfFolder(
-						{ kind: 'general' },
-						project.rootFolder,
-						worktreeStatus,
-					)
-				: undefined);
 		const directory = folderDirectory(folder, project.rootFolder, worktreeStatus);
 		const anchor = { x: menu.x, y: menu.y };
 		const folderId = menu.folderId;
@@ -303,8 +307,7 @@ export function useFolderMenuController(options: Options) {
 					options.onOpenShell(folderId);
 					return;
 				case 'reveal':
-					if (revealWorktree !== undefined)
-						options.onRevealWorktree(revealWorktree);
+					options.onRevealFolder(folderId);
 					return;
 			}
 		};
@@ -322,9 +325,8 @@ export function useFolderMenuController(options: Options) {
 					isDeleting:
 						worktree !== undefined &&
 						options.deletingWorktreePaths.has(worktree.path),
-					canReveal:
-						worktreeStatus?.revealAvailable === true &&
-						revealWorktree !== undefined,
+					// The server reveals a folder by id, in or out of a repository.
+					canReveal: worktreeStatus?.folderRevealAvailable === true,
 				})}
 				onAction={run}
 				onClose={closeFolderMenu}

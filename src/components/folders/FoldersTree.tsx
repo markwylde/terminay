@@ -1,16 +1,41 @@
-import { EllipsisVertical, Folder, GitBranch, Plus } from 'lucide-react';
+import {
+	CircleCheck,
+	CircleDashed,
+	CircleX,
+	EllipsisVertical,
+	Folder,
+	GitBranch,
+	MinusCircle,
+	Plus,
+} from 'lucide-react';
 import {
 	type DragEvent,
 	type KeyboardEvent,
 	type MouseEvent,
+	useEffect,
 	useState,
 } from 'react';
 import type {
+	WorktreeCheckState,
+	WorktreeProperties,
+} from '../../types/terminay';
+import type {
+	FolderTreeChange,
 	FolderTreeFolderRow,
 	FolderTreeTerminalRow,
 } from '../../workspace/folderTreeModel';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
+import {
+	checksAccessibleName,
+	checksHeadline,
+	checksTone,
+	pullRequestAccessibleName,
+	pullRequestTitle,
+	shownCheckItems,
+} from './worktreePropertyPresentation';
 import './foldersTree.css';
+
+type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
 
 export type FoldersTreeProps = {
 	folders: readonly FolderTreeFolderRow[];
@@ -27,6 +52,13 @@ export type FoldersTreeProps = {
 	onTerminalDrag?: (
 		drag: { folderId: string; panelId: string } | null,
 	) => void;
+	/**
+	 * Opens a pull request or a check in the browser. Absent where a row only
+	 * reports, such as in a peek: the number and the count are then plain text.
+	 */
+	onOpenLink?: (url: string) => void;
+	/** Every check of a folder's worktree; a row carries only the counts. */
+	onLoadChecks?: (worktreePath: string) => Promise<WorktreeChecks | undefined>;
 	/** A peek lists what is there and nothing else: no placeholders or actions. */
 	variant?: 'tree' | 'peek';
 };
@@ -47,9 +79,22 @@ export function FoldersTree({
 	acceptsTerminalDrop = false,
 	onDropTerminal,
 	onTerminalDrag,
+	onOpenLink,
+	onLoadChecks,
 	variant = 'tree',
 }: FoldersTreeProps) {
 	const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+	/** Folders whose list of checks is shown. */
+	const [openChecks, setOpenChecks] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const toggleChecks = (folderId: string) =>
+		setOpenChecks((current) => {
+			const next = new Set(current);
+			if (next.has(folderId)) next.delete(folderId);
+			else next.add(folderId);
+			return next;
+		});
 	const isPeek = variant === 'peek';
 
 	const openMenu = (folderId: string, event: MouseEvent) => {
@@ -100,7 +145,19 @@ export function FoldersTree({
 								? undefined
 								: (event) => openMenu(folder.id, event)
 						}
+						onOpenLink={onOpenLink}
+						checksOpen={openChecks.has(folder.id)}
+						onToggleChecks={() => toggleChecks(folder.id)}
 					/>
+					{openChecks.has(folder.id) &&
+					folder.checks !== undefined &&
+					onOpenLink !== undefined ? (
+						<FolderChecksList
+							folder={folder}
+							onOpenLink={onOpenLink}
+							onLoadChecks={onLoadChecks}
+						/>
+					) : null}
 					{folder.terminals.map((terminal) => (
 						<TerminalRow
 							key={terminal.panelId}
@@ -168,13 +225,33 @@ function FolderRow({
 	folder,
 	onSelect,
 	onMenu,
+	onOpenLink,
+	checksOpen,
+	onToggleChecks,
 }: Readonly<{
 	folder: FolderTreeFolderRow;
 	onSelect: () => void;
 	onMenu?: (event: MouseEvent) => void;
+	onOpenLink?: (url: string) => void;
+	checksOpen: boolean;
+	onToggleChecks: () => void;
 }>) {
-	const { pullRequest, checks } = folder;
-	const hasSecondLine = folder.branch !== undefined;
+	const { pullRequest, checks, change } = folder;
+	const checkCount =
+		checks === undefined
+			? 0
+			: checks.failed + checks.pending + checks.passed + checks.skipped;
+	const hasSecondLine =
+		folder.branch !== undefined ||
+		pullRequest !== undefined ||
+		checkCount > 0 ||
+		change !== undefined;
+	// A press on a control in the row is that control's, never the row's.
+	const own = (act: () => void) => (event: MouseEvent) => {
+		event.stopPropagation();
+		act();
+	};
+	const pullRequestUrl = pullRequest?.url;
 	return (
 		<div
 			className={`folders-tree__row folders-tree__row--folder${folder.isSelected ? ' folders-tree__row--selected' : ''}`}
@@ -193,26 +270,60 @@ function FolderRow({
 				</span>
 				{hasSecondLine ? (
 					<span className="folders-tree__meta">
-						<span className="folders-tree__branch" title={folder.branch}>
-							<GitBranch size={12} aria-hidden="true" />
-							<span>{folder.branch}</span>
+						{folder.branch === undefined ? null : (
+							<span className="folders-tree__branch" title={folder.branch}>
+								<GitBranch size={12} aria-hidden="true" />
+								<span>{folder.branch}</span>
+							</span>
+						)}
+						<span className="folders-tree__facts">
+							{change === undefined ? null : <FolderChange change={change} />}
+							{pullRequest === undefined ? null : onOpenLink !== undefined &&
+								pullRequestUrl !== undefined ? (
+								<button
+									type="button"
+									className={`folders-tree__pr folders-tree__pr--link folders-tree__pr--${pullRequest.state}`}
+									aria-label={pullRequestAccessibleName(pullRequest)}
+									title={pullRequestTitle(pullRequest)}
+									onClick={own(() => onOpenLink(pullRequestUrl))}
+								>
+									#{pullRequest.number}
+								</button>
+							) : (
+								<span
+									className={`folders-tree__pr folders-tree__pr--${pullRequest.state}`}
+									title={pullRequestTitle(pullRequest)}
+								>
+									#{pullRequest.number}
+								</span>
+							)}
+							{checks === undefined || checkCount === 0 ? null : onOpenLink !==
+								undefined ? (
+								<button
+									type="button"
+									className={`folders-tree__checks folders-tree__checks--link folders-tree__checks--${checksTone(checks)}`}
+									aria-label={checksAccessibleName(checks)}
+									aria-expanded={checksOpen}
+									title={checksAccessibleName(checks).replace(
+										/\. Show checks$/,
+										'',
+									)}
+									onClick={own(onToggleChecks)}
+								>
+									{checksHeadline(checks)}
+								</button>
+							) : (
+								<span
+									className={`folders-tree__checks folders-tree__checks--${checksTone(checks)}`}
+									title={checksAccessibleName(checks).replace(
+										/\. Show checks$/,
+										'',
+									)}
+								>
+									{checksHeadline(checks)}
+								</span>
+							)}
 						</span>
-						{pullRequest === undefined ? null : (
-							<span
-								className={`folders-tree__pr folders-tree__pr--${pullRequest.state}`}
-								title={`#${pullRequest.number} ${pullRequest.title}`}
-							>
-								#{pullRequest.number}
-							</span>
-						)}
-						{checks === undefined ? null : (
-							<span
-								className={`folders-tree__checks folders-tree__checks--${checksTone(checks)}`}
-								title={`${checks.passed} passed, ${checks.failed} failed, ${checks.pending} pending`}
-							>
-								{checks.passed + checks.failed + checks.pending}
-							</span>
-						)}
 					</span>
 				) : null}
 			</span>
@@ -247,6 +358,7 @@ function TerminalRow({
 			role="treeitem"
 			aria-selected={terminal.isActive}
 			tabIndex={0}
+			data-folder-terminal-session={terminal.sessionId}
 			draggable={onDragStart !== undefined}
 			onClick={onSelect}
 			onKeyDown={activateOnKey(onSelect)}
@@ -282,13 +394,132 @@ function TerminalRow({
 	);
 }
 
-/** Failed wins over pending, which wins over passed, as on a worktree row. */
-function checksTone(
-	checks: Readonly<{ failed: number; pending: number }>,
-): 'failed' | 'pending' | 'passed' {
-	if (checks.failed > 0) return 'failed';
-	if (checks.pending > 0) return 'pending';
-	return 'passed';
+function formatCount(value: number): string {
+	if (value < 1_000) return String(value);
+	return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`;
+}
+
+/** A linked folder's worktree against the default branch, in a few characters. */
+function FolderChange({ change }: Readonly<{ change: FolderTreeChange }>) {
+	if (change.kind === 'delta')
+		return (
+			<span
+				className="folders-tree__change"
+				data-change="delta"
+				title={`+${change.additions} −${change.deletions} against the default branch`}
+			>
+				<span className="folders-tree__delta folders-tree__delta--additions">
+					+{formatCount(change.additions)}
+				</span>
+				<span className="folders-tree__delta folders-tree__delta--deletions">
+					−{formatCount(change.deletions)}
+				</span>
+			</span>
+		);
+	return (
+		<span
+			className={`folders-tree__change folders-tree__change--${change.kind}`}
+			data-change={change.kind}
+		>
+			{change.kind}
+		</span>
+	);
+}
+
+const CHECK_ICONS: Readonly<Record<WorktreeCheckState, typeof CircleX>> = {
+	failed: CircleX,
+	pending: CircleDashed,
+	passed: CircleCheck,
+	skipped: MinusCircle,
+};
+
+/**
+ * The individual checks of a folder's worktree, beneath its row. The row holds
+ * the counts; the items are fetched when the list is opened and again when the
+ * counts change. Each line is one check, never wrapped.
+ */
+function FolderChecksList({
+	folder,
+	onOpenLink,
+	onLoadChecks,
+}: Readonly<{
+	folder: FolderTreeFolderRow;
+	onOpenLink: (url: string) => void;
+	onLoadChecks?: (worktreePath: string) => Promise<WorktreeChecks | undefined>;
+}>) {
+	const [loaded, setLoaded] = useState<WorktreeChecks | undefined>(undefined);
+	const counts = folder.checks;
+	const countsKey =
+		counts === undefined
+			? ''
+			: `${counts.failed}/${counts.pending}/${counts.passed}/${counts.skipped}`;
+	const worktreePath = folder.worktreePath;
+	// Asked again when the counts change: they are what says a check moved.
+	useEffect(() => {
+		if (onLoadChecks === undefined || worktreePath === undefined) return;
+		let cancelled = false;
+		void onLoadChecks(worktreePath)
+			.then((checks) => {
+				if (!cancelled) setLoaded(checks);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [countsKey, onLoadChecks, worktreePath]);
+	if (loaded === undefined)
+		return (
+			<ul
+				className="folders-tree__checks-list"
+				aria-label={`Checks for ${folder.name}`}
+			>
+				<li className="folders-tree__check folders-tree__check--note">
+					Loading checks…
+				</li>
+			</ul>
+		);
+	const { shown, hidden } = shownCheckItems(loaded);
+	return (
+		<ul
+			className="folders-tree__checks-list"
+			aria-label={`Checks for ${folder.name}`}
+		>
+			{shown.map((item) => {
+				const Icon = CHECK_ICONS[item.state];
+				const content = (
+					<>
+						<Icon
+							size={12}
+							aria-label={item.state}
+							className={`folders-tree__check-icon folders-tree__check-icon--${item.state}`}
+						/>
+						<span>{item.name}</span>
+					</>
+				);
+				const url = item.url;
+				return url === undefined ? (
+					<li key={item.name} className="folders-tree__check">
+						{content}
+					</li>
+				) : (
+					<li key={item.name} className="folders-tree__check-item">
+						<button
+							type="button"
+							className="folders-tree__check folders-tree__check--link"
+							onClick={() => onOpenLink(url)}
+						>
+							{content}
+						</button>
+					</li>
+				);
+			})}
+			{hidden > 0 ? (
+				<li className="folders-tree__check folders-tree__check--note">
+					+ {hidden} more
+				</li>
+			) : null}
+		</ul>
+	);
 }
 
 function activateOnKey(activate: () => void) {

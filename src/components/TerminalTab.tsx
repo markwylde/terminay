@@ -8,6 +8,7 @@ import {
 	Circle,
 	ExternalLink,
 	FileEdit,
+	FolderInput,
 	FolderSync,
 	LoaderCircle,
 	Settings,
@@ -66,6 +67,12 @@ export type TerminalTabMoveProject = {
 	title: string;
 };
 
+/** Another folder of the terminal's own project it can be moved to. */
+export type TerminalTabMoveFolder = {
+	id: string;
+	name: string;
+};
+
 export type TerminalPanelParams = {
 	sessionId: string;
 	terminalHydrationStatus?: 'loading' | 'ready' | 'failed';
@@ -99,6 +106,9 @@ export type TerminalPanelParams = {
 	onClearMacroRun?: (runId: string) => void;
 	macroRuns?: TerminalTabMacroRun[];
 	onMoveToProject?: (projectId: string) => void;
+	/** Move this terminal to another folder of its project. */
+	onMoveToFolder?: (folderId: string) => void;
+	foldersForMove?: TerminalTabMoveFolder[];
 	onRevealRecording?: (recordingId: string) => void;
 	onStartRecording?: () => void;
 	onStopRecording?: () => void;
@@ -189,6 +199,10 @@ export function TerminalTab(
 		top: number;
 	} | null>(null);
 	const [moveMenuPosition, setMoveMenuPosition] = useState<{
+		left: number;
+		top: number;
+	} | null>(null);
+	const [folderMenuPosition, setFolderMenuPosition] = useState<{
 		left: number;
 		top: number;
 	} | null>(null);
@@ -411,6 +425,7 @@ export function TerminalTab(
 	}, [macroRuns]);
 
 	const moveProjects = params?.projectsForMove ?? [];
+	const moveFolders = params?.foldersForMove ?? [];
 	const hasTerminalNote = typeof params?.terminalNote === 'string';
 	const recordingId = params?.recordingId;
 	const contextMenuItems: ContextMenuItem[] = [
@@ -496,6 +511,25 @@ export function TerminalTab(
 			onClick: () => {},
 			key: 'move-separator',
 		},
+		// Offered only where the project has another folder to move to.
+		...(moveFolders.length === 0
+			? []
+			: [
+					{
+						label: 'Move to folder',
+						icon: <FolderInput size={14} />,
+						onClick: () => {
+							if (!contextMenuPosition) {
+								return;
+							}
+
+							setFolderMenuPosition({
+								left: contextMenuPosition.left + 16,
+								top: contextMenuPosition.top + 16,
+							});
+						},
+					},
+				]),
 		{
 			label: 'Move to project',
 			icon: <FolderSync size={14} />,
@@ -519,6 +553,16 @@ export function TerminalTab(
 		onClick: () => {
 			params?.onMoveToProject?.(project.id);
 			setMoveMenuPosition(null);
+			setContextMenuPosition(null);
+		},
+	}));
+
+	const folderMenuItems: ContextMenuItem[] = moveFolders.map((folder) => ({
+		key: folder.id,
+		label: folder.name,
+		onClick: () => {
+			params?.onMoveToFolder?.(folder.id);
+			setFolderMenuPosition(null);
 			setContextMenuPosition(null);
 		},
 	}));
@@ -671,6 +715,15 @@ export function TerminalTab(
 					y={moveMenuPosition.top}
 					items={moveMenuItems}
 					onClose={() => setMoveMenuPosition(null)}
+					portalContainer={portalRoot ?? undefined}
+				/>
+			) : null}
+			{folderMenuPosition ? (
+				<ContextMenu
+					x={folderMenuPosition.left}
+					y={folderMenuPosition.top}
+					items={folderMenuItems}
+					onClose={() => setFolderMenuPosition(null)}
 					portalContainer={portalRoot ?? undefined}
 				/>
 			) : null}
