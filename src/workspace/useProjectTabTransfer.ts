@@ -10,14 +10,59 @@ import {
 	closeHostPresentation,
 	endWorkspaceDrag,
 	presentWorkspaceView,
+	type WorkspaceDragDecision,
 } from '../host/nativeActions';
+import {
+	computeDropIndex,
+	createNativeProjectDragSession,
+	projectDragPreviewWidth,
+} from '../projectTabDrag';
+import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
-import { subscribeWorkspaceDragState } from '../host/nativeEvents';
-import type { ProjectTabDragPreview } from '../types/terminay';
+import {
+	subscribeWorkspaceDragState,
+	subscribeWorkspaceDropTarget,
+} from '../host/nativeEvents';
 import type { ProjectTab } from './projectTabModel';
 
 /** Stay in-bar until the pointer leaves the strip; native tear-off is 100px. */
 const PROJECT_TAB_NATIVE_DRAG_OFFSET_Y = 40;
+/** How long a released tab waits for its project before it is forgotten. */
+const DROPPED_PROJECT_ARRIVAL_TIMEOUT_MS = 10_000;
+
+/** A project tab from another window held over, or released on, this bar. */
+export type IncomingProjectDrop = {
+	serverId: string;
+	projectId: string;
+	preview: Pick<ProjectTab, 'color' | 'emoji' | 'title'>;
+	/** The tab it lands immediately before; null lands it last. */
+	before: { serverId: string; projectId: string } | null;
+	/** Released: the project is on its way and takes this place when it arrives. */
+	dropped: boolean;
+};
+
+/** The visible tab a pointer at `x` would insert before, from tab centres. */
+function projectTabAtDropX(
+	bar: HTMLElement | null,
+	x: number,
+): IncomingProjectDrop['before'] {
+	if (bar === null) return null;
+	const tabs = [
+		...bar.querySelectorAll<HTMLElement>(
+			'.project-tab[data-project-id]:not(.project-tab--overflowed):not(.project-tab--torn-off)',
+		),
+	];
+	const centers = tabs.map((tab) => {
+		const rect = tab.getBoundingClientRect();
+		return rect.left + rect.width / 2;
+	});
+	const tab = tabs[computeDropIndex(centers, x)];
+	const serverId = tab?.dataset.serverId;
+	const projectId = tab?.dataset.projectId;
+	return serverId === undefined || projectId === undefined
+		? null
+		: { serverId, projectId };
+}
 
 export function useProjectTabTransfer({
 	draggingProjectIdRef,
@@ -33,38 +78,94 @@ export function useProjectTabTransfer({
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
 		null,
 	);
-	const nativeDragStartedRef = useRef(false);
+	const nativeDragRef = useRef(
+		createNativeProjectDragSession<
+			Parameters<typeof beginWorkspaceDrag>[0],
+			WorkspaceDragDecision
+		>({
+			begin: beginWorkspaceDrag,
+			end: endWorkspaceDrag,
+			onRefused: (error) => {
+				recordBootstrapDiagnostic('workspace.drag.start-refused');
+				console.warn('native project drag was refused', error);
+			},
+		}),
+	);
+	// Torn-off belongs to one drag: the host announces it, but a drag never
+	// starts or ends torn off whether or not the host's retraction arrives.
 	const [isDraggingTabTornOff, setDraggingTabTornOff] = useState(false);
 	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
 	useEffect(() => subscribeWorkspaceDragState(setDraggingTabTornOff), []);
 
+	const [incomingProjectDrop, setIncomingProjectDrop] =
+		useState<IncomingProjectDrop | null>(null);
+	useEffect(
+		() =>
+			subscribeWorkspaceDropTarget((event) => {
+				if (event.phase === 'leave') {
+					// A released tab stays shown until its project arrives.
+					setIncomingProjectDrop((current) =>
+						current?.dropped ? current : null,
+					);
+					return;
+				}
+				setIncomingProjectDrop({
+					serverId: event.serverId,
+					projectId: event.projectId,
+					preview: {
+						title: event.title,
+						emoji: event.emoji,
+						color: event.color,
+					},
+					before: projectTabAtDropX(projectTabBarRef.current, event.x),
+					dropped: event.phase === 'drop',
+				});
+			}),
+		[],
+	);
+	const clearIncomingProjectDrop = useCallback(
+		() => setIncomingProjectDrop(null),
+		[],
+	);
+	const awaitingDroppedProject = incomingProjectDrop?.dropped === true;
+	useEffect(() => {
+		if (!awaitingDroppedProject) return;
+		const timer = window.setTimeout(
+			clearIncomingProjectDrop,
+			DROPPED_PROJECT_ARRIVAL_TIMEOUT_MS,
+		);
+		return () => window.clearTimeout(timer);
+	}, [awaitingDroppedProject, clearIncomingProjectDrop]);
+
 	const handleProjectTabDragStart = useCallback((projectId: string) => {
 		setDraggingProjectId(projectId);
 		draggingProjectIdRef.current = projectId;
-		nativeDragStartedRef.current = false;
+		setDraggingTabTornOff(false);
 	}, [draggingProjectIdRef]);
 
 	const handleProjectTabDragMove = useCallback(
 		(projectId: string, offsetY: number) => {
 			if (
-				nativeDragStartedRef.current ||
+				nativeDragRef.current.requested ||
 				workspaceViewId === null ||
 				Math.abs(offsetY) <= PROJECT_TAB_NATIVE_DRAG_OFFSET_Y
 			) {
 				return;
 			}
-			nativeDragStartedRef.current = true;
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			const tab = projectTabBarRef.current?.querySelector<HTMLElement>(
 				`[data-project-id="${projectId}"]`,
 			);
-			void beginWorkspaceDrag({
+			nativeDragRef.current.start({
 				viewId: workspaceViewId,
+				projectId,
 				preview: {
 					title: project?.title ?? 'Project',
 					emoji: project?.emoji ?? '',
 					color: project?.color ?? '#4db5ff',
-					width: tab ? Math.round(tab.getBoundingClientRect().width) : 160,
+					width: projectDragPreviewWidth(
+						tab ? tab.getBoundingClientRect().width : 160,
+					),
 				},
 			});
 		},
@@ -75,10 +176,12 @@ export function useProjectTabTransfer({
 		async (projectId: string) => {
 			const nextIds = projectsRef.current.map((item) => item.id);
 			const nextIndex = nextIds.indexOf(projectId);
-			const startedNative = nativeDragStartedRef.current;
-			nativeDragStartedRef.current = false;
 			setDraggingProjectId(null);
 			draggingProjectIdRef.current = null;
+			const decision: WorkspaceDragDecision = (await nativeDragRef.current
+				.finish()
+				.catch(() => null)) ?? { action: 'reorder' };
+			setDraggingTabTornOff(false);
 			if (workspaceSnapshotStore === undefined || workspaceViewId === null)
 				return;
 			const project = projectsRef.current.find((item) => item.id === projectId);
@@ -100,13 +203,6 @@ export function useProjectTabTransfer({
 					targetViewId: workspaceViewId,
 				});
 			};
-			if (!startedNative) {
-				await persistReorder();
-				return;
-			}
-			const decision = await endWorkspaceDrag().catch(() => ({
-				action: 'reorder' as const,
-			}));
 			if (decision.action === 'reorder') {
 				await persistReorder();
 				return;
@@ -196,16 +292,13 @@ export function useProjectTabTransfer({
 	);
 
 	return {
+		clearIncomingProjectDrop,
 		draggingProjectId,
-		dropPreview: null as {
-			index: number;
-			preview: ProjectTabDragPreview;
-		} | null,
 		handleProjectTabDragEnd,
 		handleProjectTabDragMove,
 		handleProjectTabDragStart,
+		incomingProjectDrop,
 		isDraggingTabTornOff,
-		isProjectDropTarget: false,
 		popoutProject,
 		projectTabBarRef,
 	};

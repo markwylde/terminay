@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
 
-const { pointInRect, distanceToRect, computeDropIndex } = await importModule()
+const {
+  pointInRect,
+  distanceToRect,
+  computeDropIndex,
+  projectDragPreviewWidth,
+  createNativeProjectDragSession,
+} = await importModule()
 
 const BAR = { x: 100, y: 0, width: 400, height: 40 }
 
@@ -40,6 +46,74 @@ test('computeDropIndex slots before, between, and after tabs by cursor X', () =>
 test('computeDropIndex with no tabs always inserts at zero', () => {
   assert.equal(computeDropIndex([], 0), 0)
   assert.equal(computeDropIndex([], 9999), 0)
+})
+
+test('projectDragPreviewWidth keeps a tab width inside what the host accepts', () => {
+  assert.equal(projectDragPreviewWidth(0), 80) // a collapsed tab
+  assert.equal(projectDragPreviewWidth(79), 80)
+  assert.equal(projectDragPreviewWidth(80), 80)
+  assert.equal(projectDragPreviewWidth(120.6), 121)
+  assert.equal(projectDragPreviewWidth(2000), 2000)
+  assert.equal(projectDragPreviewWidth(2001), 2000)
+  assert.equal(projectDragPreviewWidth(Number.NaN), 80)
+})
+
+test('a native drag the host starts ends with the host decision', async () => {
+  const calls = []
+  const session = createNativeProjectDragSession({
+    begin: async (input) => void calls.push(['begin', input]),
+    end: async () => {
+      calls.push(['end'])
+      return { action: 'popout', x: 1, y: 2 }
+    },
+    onRefused: () => calls.push(['refused']),
+  })
+
+  assert.equal(session.requested, false)
+  session.start('first')
+  session.start('second') // one session per drag
+  assert.equal(session.requested, true)
+  assert.deepEqual(await session.finish(), { action: 'popout', x: 1, y: 2 })
+  assert.deepEqual(calls, [['begin', 'first'], ['end']])
+  assert.equal(session.requested, false)
+})
+
+test('a native drag the host refuses is reported once and never ended', async () => {
+  const refusals = []
+  let ends = 0
+  const refusal = new Error('workspace drag preview is invalid')
+  const session = createNativeProjectDragSession({
+    begin: async () => {
+      throw refusal
+    },
+    end: async () => {
+      ends += 1
+      return { action: 'reorder' }
+    },
+    onRefused: (error) => refusals.push(error),
+  })
+
+  session.start('drag')
+  assert.equal(await session.finish(), null)
+  assert.deepEqual(refusals, [refusal])
+  assert.equal(ends, 0)
+  // The next drag from the same window starts clean.
+  assert.equal(session.requested, false)
+})
+
+test('a drag that never left the strip asks the host nothing', async () => {
+  let ends = 0
+  const session = createNativeProjectDragSession({
+    begin: async () => undefined,
+    end: async () => {
+      ends += 1
+      return { action: 'reorder' }
+    },
+    onRefused: () => undefined,
+  })
+
+  assert.equal(await session.finish(), null)
+  assert.equal(ends, 0)
 })
 
 async function importModule() {

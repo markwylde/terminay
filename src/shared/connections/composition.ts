@@ -99,6 +99,27 @@ export function moveCompositionTab(
 	]);
 }
 
+/** Put one tab immediately before another, or last when there is no such
+ * other tab: where a tab dropped onto the strip lands. A tab already in the
+ * order moves; one that is not is inserted. */
+export function insertCompositionTabBefore(
+	order: readonly CompositionTabHandle[],
+	moved: CompositionTabHandle,
+	before: CompositionTabHandle | null,
+): readonly CompositionTabHandle[] {
+	const without = order.filter((handle) => !sameCompositionTab(handle, moved));
+	const anchor =
+		before === null
+			? -1
+			: without.findIndex((handle) => sameCompositionTab(handle, before));
+	const index = anchor < 0 ? without.length : anchor;
+	return Object.freeze([
+		...without.slice(0, index),
+		moved,
+		...without.slice(index),
+	]);
+}
+
 export function buildComposition(
 	primaryProfileId: string,
 	attached: readonly Readonly<{ profileId: string; viewId?: string }>[],
