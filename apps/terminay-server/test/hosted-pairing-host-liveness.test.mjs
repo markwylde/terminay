@@ -8,6 +8,8 @@ import {
 	HostedLivePeerRegistry,
 	REQUIRED_LANES,
 	requiredLaneClosed,
+	MAX_LIVE_WINDOWS_PER_DEVICE,
+	readWindowId,
 } from '../src/remote/hostedPeerLifecycle.ts';
 import { createPairingOperationQueue } from '../src/remote/pairingOperationQueue.ts';
 
@@ -172,10 +174,15 @@ test('the production hosted pairing host owns ICE servers, grace, and one handsh
 	// A device's live peer is replaced only after the joiner consumed a ticket:
 	// an unauthenticated device-join never touches it.
 	assert.doesNotMatch(host, /await livePeers\.close\(scope\.deviceId\)/u);
+	// The replacement closes this window's previous peer and no other.
 	assert.match(
 		host,
-		/const replaced = await context\.livePeers\.close\(authenticated\.deviceId\)/u,
+		/const replaced = await context\.livePeers\.close\(\s*authenticated\.deviceId,\s*windowId,\s*\)/u,
 	);
+	// Which window it is comes from the authenticated lane, never signaling.
+	assert.match(host, /const windowId = readWindowId\(request\.windowId\)/u);
+	assert.doesNotMatch(host, /message\.windowId|scope\.windowId/u);
+	assert.match(host, /options\.remote\.onDeviceRevoked\?\.\(/u);
 	// That takeover is ordered per device. Sharing the handshake join queue put
 	// the application-auth reply behind unrelated addIceCandidate work.
 	assert.match(
@@ -225,4 +232,142 @@ test('a replaced peer is reported as disconnected without waiting for a native c
 	if (replaced?.connectionId !== undefined)
 		disconnected.push(replaced.connectionId);
 	assert.deepEqual(disconnected, ['connection-superseded']);
+});
+
+
+test('a device holds one live peer per window, and a reconnect replaces only its own', async () => {
+	const order = [];
+	const live = (name) => ({
+		peer: { close: () => order.push(`peer:${name}`) },
+		connection: { close: () => order.push(`connection:${name}`) },
+	});
+	const registry = new HostedLivePeerRegistry();
+	const main = live('main');
+	const settings = live('settings');
+	registry.set('device-a', main, 'window-1');
+	registry.set('device-a', settings, 'window-2');
+	registry.set('device-b', live('b'), 'window-1');
+	assert.equal(registry.size, 3);
+	assert.equal(registry.countForDevice('device-a'), 2);
+
+	// The second window did not disturb the first.
+	assert.equal(registry.get('device-a', 'window-1'), main);
+	assert.deepEqual(order, []);
+
+	// A window reconnecting retires its own previous peer, connection first.
+	assert.equal(await registry.close('device-a', 'window-1'), main);
+	assert.deepEqual(order, ['connection:main', 'peer:main']);
+	assert.equal(registry.get('device-a', 'window-2'), settings);
+	assert.equal(registry.countForDevice('device-b'), 1);
+
+	// Another device using the same window id names its own entry only.
+	assert.equal(await registry.close('device-c', 'window-2'), undefined);
+	assert.equal(registry.get('device-a', 'window-2'), settings);
+
+	// A late teardown is matched by peer, whichever window it was.
+	assert.equal(registry.drop('device-a', main.peer), undefined);
+	assert.equal(registry.drop('device-a', settings.peer), settings);
+	assert.equal(registry.countForDevice('device-a'), 0);
+});
+
+test('clients that name no window still replace each other', async () => {
+	const registry = new HostedLivePeerRegistry();
+	const first = { peer: { close: () => undefined } };
+	const second = { peer: { close: () => undefined } };
+	registry.set('device-a', first);
+	assert.equal(await registry.close('device-a'), first);
+	registry.set('device-a', second);
+	assert.equal(registry.countForDevice('device-a'), 1);
+	assert.equal(registry.get('device-a'), second);
+	// The unnamed window and a named one are different windows.
+	assert.equal(registry.get('device-a', 'window-1'), undefined);
+});
+
+test('closing a device closes every window it has, and nobody else', async () => {
+	const closed = [];
+	const live = (name) => ({
+		peer: { close: () => closed.push(name) },
+		connectionId: name,
+	});
+	const registry = new HostedLivePeerRegistry();
+	registry.set('device-a', live('a1'), 'window-1');
+	registry.set('device-a', live('a2'), 'window-2');
+	registry.set('device-a', live('a0'));
+	registry.set('device-b', live('b1'), 'window-1');
+
+	const retired = await registry.closeDevice('device-a');
+	assert.deepEqual(retired.map((entry) => entry.connectionId).sort(), [
+		'a0',
+		'a1',
+		'a2',
+	]);
+	assert.deepEqual([...closed].sort(), ['a0', 'a1', 'a2']);
+	assert.equal(registry.countForDevice('device-a'), 0);
+	assert.equal(registry.countForDevice('device-b'), 1);
+	assert.deepEqual(await registry.closeDevice('device-a'), []);
+});
+
+test('a device is refused a window past its limit, but never a reconnect', () => {
+	const registry = new HostedLivePeerRegistry();
+	const peer = () => ({ peer: { close: () => undefined } });
+	for (let index = 0; index < MAX_LIVE_WINDOWS_PER_DEVICE; index += 1) {
+		assert.equal(registry.admits('device-a', `window-${index}`), true);
+		registry.set('device-a', peer(), `window-${index}`);
+	}
+	assert.equal(registry.admits('device-a', 'window-new'), false);
+	assert.equal(registry.admits('device-a'), false);
+	// Reconnecting an existing window is not a further window.
+	assert.equal(registry.admits('device-a', 'window-3'), true);
+	// Another device has its own allowance.
+	assert.equal(registry.admits('device-b', 'window-new'), true);
+	// Refusal closed nothing.
+	assert.equal(registry.countForDevice('device-a'), MAX_LIVE_WINDOWS_PER_DEVICE);
+});
+
+test('a window id is a bounded identifier or it is refused', () => {
+	assert.equal(readWindowId(undefined), '');
+	assert.equal(readWindowId('w_1-Ab'), 'w_1-Ab');
+	assert.equal(readWindowId('a'.repeat(64)), 'a'.repeat(64));
+	for (const invalid of [
+		'',
+		'a'.repeat(65),
+		'-leading',
+		'has space',
+		'a:b',
+		'a.b',
+		'a/b',
+		'a\u0000b',
+		null,
+		7,
+		{},
+		['w'],
+	])
+		assert.equal(readWindowId(invalid), null);
+});
+
+test('revoking a device tells every pairing host, and a failing one cannot mask it', async () => {
+	const { createServerRemoteExposure } = await import(
+		'../dist/remote/serverExposure.js'
+	);
+	const exposure = createServerRemoteExposure({
+		serverId: 'server-a',
+		sessionOrigin: 'http://session.localhost:1',
+		pairingUrlFormat: 'hosted-compact',
+		cleanupIntervalMs: 0,
+	});
+	const told = [];
+	// The hosted and the direct pairing host each watch the one exposure.
+	const stopHosted = exposure.onDeviceRevoked((deviceId) =>
+		told.push(`hosted:${deviceId}`),
+	);
+	exposure.onDeviceRevoked(() => {
+		throw new Error('a host that fails to close its peers');
+	});
+	exposure.onDeviceRevoked((deviceId) => told.push(`direct:${deviceId}`));
+	await exposure.revokeDevice('device-a');
+	assert.deepEqual(told, ['hosted:device-a', 'direct:device-a']);
+	stopHosted();
+	await exposure.revokeDevice('device-b');
+	assert.deepEqual(told.slice(2), ['direct:device-b']);
+	await exposure.shutdown();
 });

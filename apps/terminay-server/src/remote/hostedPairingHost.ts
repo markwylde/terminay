@@ -51,7 +51,10 @@ import {
 	HostedLivePeerRegistry,
 	HostedPeerLifecycle,
 	hostedPeerConfiguration,
+	MAX_LIVE_WINDOWS_PER_DEVICE,
 	type PinnedIcePortRange,
+	readWindowId,
+	windowClientId,
 	requiredLaneClosed,
 	resolveIceRecoveryGraceMs,
 	selectedIceCandidatePair,
@@ -167,6 +170,9 @@ export type HostedConnectedPeer = Readonly<{
 	connectionId: string;
 	deviceId: string;
 	deviceName: string;
+	/** The client window this connection belongs to; empty for a client that
+	 * names none. */
+	windowId: string;
 }>;
 
 export interface HostedPairingHostOptions {
@@ -301,6 +307,9 @@ export type HostedPairingDiagnostic = Readonly<{
 
 export interface HostedPairingHost {
 	readonly close: () => Promise<void>;
+	/** Close every live window of one device without revoking it. Resolves
+	 * with how many were closed. */
+	readonly closeDevice: (deviceId: string) => Promise<number>;
 	/** Mint and advertise a replacement one-time pairing room. Live peers stay up. */
 	readonly mintPairing: () => Promise<void>;
 	/** Wait for approval-triggered room rotation and relay re-registration. */
@@ -374,6 +383,26 @@ export async function startHostedPairingHost(
 		options.onDiagnostic?.(event);
 	};
 
+	// Revocation is the device's, so it closes every window the device has
+	// open here. Nothing else closes a window on another window's behalf.
+	const closeDevicePeers = async (deviceId: string): Promise<number> => {
+		const retired = await livePeers.closeDevice(deviceId);
+		for (const live of retired) {
+			diagnose({ type: 'peer-closed', reasonClass: 'device-closed' });
+			if (live.connectionId !== undefined)
+				options.onPeerDisconnected?.(live.connectionId);
+		}
+		return retired.length;
+	};
+	const stopRevocationWatch =
+		options.remote.onDeviceRevoked?.((deviceId) => {
+			void deviceReplacements
+				.run(deviceId, () => closeDevicePeers(deviceId))
+				.catch((error) => {
+					console.error(error instanceof Error ? error.message : error);
+				});
+		}) ?? (() => undefined);
+
 	// Approval decisions arrive from the exposure surface, not from the peer.
 	// Push the outcome to the peer that asked, and only to that peer.
 	const stopApprovalPush = options.remote.onApprovalResolved((resolution) => {
@@ -428,6 +457,7 @@ export async function startHostedPairingHost(
 		if (closed) return;
 		closed = true;
 		stopApprovalPush();
+		stopRevocationWatch();
 		clearTimeout(pairingRefreshTimer);
 		clearTimeout(deviceRefreshTimer);
 		for (const entry of [...handshakes.values()])
@@ -506,11 +536,15 @@ export async function startHostedPairingHost(
 							options.onPeerDisconnected?.(replaced.connectionId);
 						}
 					}
-					livePeers.set(peer.deviceId, {
-						peer: next,
-						connection,
-						connectionId: peer.connectionId,
-					});
+					livePeers.set(
+						peer.deviceId,
+						{
+							peer: next,
+							connection,
+							connectionId: peer.connectionId,
+						},
+						peer.windowId,
+					);
 					options.onPeerConnected?.(peer);
 				},
 				(deviceId, retired) => {
@@ -907,6 +941,8 @@ export async function startHostedPairingHost(
 
 	return {
 		close,
+		closeDevice: (deviceId) =>
+			deviceReplacements.run(deviceId, () => closeDevicePeers(deviceId)),
 		mintPairing: () => refreshPairing('mint'),
 		waitForPairingRefresh: () => pairingRefreshChain,
 	};
@@ -1691,15 +1727,33 @@ function bindControl(
 		} catch {
 			ticket = undefined;
 		}
+		// Which window this is arrives here, on the authenticated lane beside
+		// the ticket, and nowhere earlier: it decides which live peer is replaced.
+		const windowId = readWindowId(request.windowId);
+		// A device at its window limit is refused. A window reconnecting replaces
+		// its own peer and is not a further window.
+		const atWindowLimit =
+			ticket !== undefined &&
+			windowId !== null &&
+			!context.livePeers.admits(ticket.deviceId, windowId);
 		// An already-authenticated peer still spends whatever it presented, but
 		// never opens a second application connection for itself.
-		const ok = ticket !== undefined && !auth.authenticated;
+		const ok =
+			ticket !== undefined &&
+			windowId !== null &&
+			!atWindowLimit &&
+			!auth.authenticated;
 		if (ok) auth.authenticated = true;
 		try {
 			safeChannelSend(
 				channel,
 				JSON.stringify({
-					error: ok ? undefined : 'Terminay rejected the workspace.',
+					error: ok
+						? undefined
+						: atWindowLimit
+							? WINDOW_LIMIT_MESSAGE
+							: 'Terminay rejected the workspace.',
+					...(atWindowLimit ? { code: WINDOW_LIMIT_CODE } : {}),
 					id: request.id,
 					ok,
 					type: 'application-authenticated',
@@ -1709,17 +1763,26 @@ function bindControl(
 			console.error(error instanceof Error ? error.message : error);
 			return;
 		}
-		if (!ok || !ticket || context.options.acceptApplication === undefined)
+		if (
+			!ok ||
+			!ticket ||
+			windowId === null ||
+			context.options.acceptApplication === undefined
+		)
 			return;
 		const authenticated = ticket;
 		// Only now, with a consumed ticket for this device, does the previous
-		// live peer for the device get retired, and its server-side cleanup
-		// completes before the replacement attaches to the workspace. Ordering
-		// is per device, so another device's takeover never waits on this one.
+		// live peer of this window get retired, and its server-side cleanup
+		// completes before the replacement attaches to the workspace. The
+		// device's other windows are untouched. Ordering is per device, so
+		// another device's takeover never waits on this one.
 		void context
 			.replaceDevicePeer(authenticated.deviceId, async () => {
-				const replaced = await context.livePeers.close(authenticated.deviceId);
-				await acceptAuthenticatedApplication(authenticated, replaced);
+				const replaced = await context.livePeers.close(
+					authenticated.deviceId,
+					windowId,
+				);
+				await acceptAuthenticatedApplication(authenticated, windowId, replaced);
 			})
 			.catch((error) => {
 				console.error(error instanceof Error ? error.message : error);
@@ -1728,6 +1791,7 @@ function bindControl(
 
 	async function acceptAuthenticatedApplication(
 		ticket: ReturnType<ServerRemoteExposure['consumeConnectionTicket']>,
+		windowId: string,
 		replaced: HostedLivePeer | undefined,
 	): Promise<void> {
 		try {
@@ -1735,7 +1799,10 @@ function bindControl(
 				new HeadlessChannelTransport(asHeadlessChannel(application, stream)),
 				{
 					authScope: 'admin',
-					clientId: ticket.deviceId,
+					// Each window is its own client of the workspace. Authority is
+					// still the device's.
+					clientId: windowClientId(ticket.deviceId, windowId),
+					deviceId: ticket.deviceId,
 					permissions: [
 						'environments:read',
 						'environments:manage',
@@ -1752,6 +1819,7 @@ function bindControl(
 				connectionId: connection.connectionId,
 				deviceId: ticket.deviceId,
 				deviceName: device?.deviceName?.trim() || 'Browser',
+				windowId,
 			});
 			await onApplication(connection, peer, replaced);
 			// The application lane closing ends this generation. Releasing the
@@ -1770,6 +1838,10 @@ function bindControl(
 		}
 	}
 }
+
+/** What a client is told when its device already holds every window it may. */
+export const WINDOW_LIMIT_CODE = 'window-limit';
+const WINDOW_LIMIT_MESSAGE = `This device already has ${MAX_LIVE_WINDOWS_PER_DEVICE} windows connected to this server. Close one to open another.`;
 
 function asHeadlessChannel(
 	channel: WeriftDataChannel,
