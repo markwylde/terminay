@@ -166,6 +166,10 @@ import {
 } from './desktopWindowConnections';
 import { forgetRememberedConnection } from './forgetRememberedConnection';
 import {
+	createProfileConnectQueue,
+	DesktopWindowIds,
+} from './remote/desktopWindowIdentity';
+import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
@@ -827,6 +831,9 @@ function applyAgentIntegrationSetting(
 // MessagePort. Keep the selected authority separately so a reload reconnects
 // the same profile instead of allowing the Local load hook to take over.
 const remoteProfileBindingsByWebContents = new Map<number, string>();
+// Each native window is its own client window to a remote server.
+const desktopWindowIds = new DesktopWindowIds();
+const desktopProfileConnects = createProfileConnectQueue();
 const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
 const launchRecoveryWebContents = new Set<number>();
 const deferredCanonicalLaunches = new Map<number, () => Promise<void>>();
@@ -1166,7 +1173,10 @@ async function openDesktopConnectionLane(
 	const remote = rememberedRemoteConnections.get(profile.id);
 	if (remote === undefined)
 		throw new Error('That connection profile is no longer available.');
-	const lanes = await openDesktopRemoteLanes(remote);
+	const lanes = await openDesktopRemoteLanes(
+		remote,
+		desktopWindowIds.for(ownerId),
+	);
 	try {
 		const serverId =
 			lanes.serverId ??
@@ -4213,7 +4223,9 @@ async function presentCanonicalAuxiliaryRoute(
 			const profile = rememberedRemoteConnections.get(context.profileId);
 			if (profile === undefined)
 				throw new Error('The selected remote profile is no longer available.');
-			const lanes = await openDesktopRemoteLanes(profile);
+			// The window does not exist yet; it adopts this id once it does.
+			const windowId = desktopWindowIds.mint();
+			const lanes = await openDesktopRemoteLanes(profile, windowId);
 			try {
 				workspaceWindow = createWindow({
 					bounds: { x, y },
@@ -4226,6 +4238,7 @@ async function presentCanonicalAuxiliaryRoute(
 				throw error;
 			}
 			if (workspaceWindow !== null) {
+				desktopWindowIds.adopt(workspaceWindow.webContents.id, windowId);
 				remoteProfileBindingsByWebContents.set(
 					workspaceWindow.webContents.id,
 					profile.id,
@@ -4280,7 +4293,9 @@ async function presentCanonicalAuxiliaryRoute(
 		const profile = rememberedRemoteConnections.get(context.profileId);
 		if (profile === undefined)
 			throw new Error('The selected remote profile is no longer available.');
-		const lanes = await openDesktopRemoteLanes(profile);
+		// The window does not exist yet; it adopts this id once it does.
+		const windowId = desktopWindowIds.mint();
+		const lanes = await openDesktopRemoteLanes(profile, windowId);
 		try {
 			auxiliaryWindow = createWindow({
 				auxiliary: { ...auxiliary, presentationId },
@@ -4292,6 +4307,7 @@ async function presentCanonicalAuxiliaryRoute(
 			throw error;
 		}
 		if (auxiliaryWindow !== null) {
+			desktopWindowIds.adopt(auxiliaryWindow.webContents.id, windowId);
 			remoteProfileBindingsByWebContents.set(
 				auxiliaryWindow.webContents.id,
 				profile.id,
@@ -4619,6 +4635,7 @@ function createWindow(options?: {
 				auxiliaryWindowsByPresentation.delete(key);
 		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+		desktopWindowIds.release(windowWebContentsId);
 		launchRecoveryWebContents.delete(windowWebContentsId);
 		deferredCanonicalLaunches.delete(windowWebContentsId);
 	});
@@ -4953,7 +4970,10 @@ function createWindow(options?: {
 				diagnostic: endpointDiagnostic,
 				launch,
 				reconnect: () =>
-					reconnectCanonicalDesktopRemoteTransport(launch.context.profileId),
+					reconnectCanonicalDesktopRemoteTransport(
+						launch.context.profileId,
+						desktopWindowIds.for(windowWebContentsId),
+					),
 				sender: targetWebContents,
 				transport,
 			});
@@ -5023,6 +5043,7 @@ function createWindow(options?: {
 				connect: (profile, hooks) =>
 					prepareCanonicalDesktopRemoteConnection(
 						profile,
+						desktopWindowIds.for(windowWebContentsId),
 						hooks.onConnectionFailure,
 						hooks.onConnectionStatus,
 					),
@@ -5230,6 +5251,25 @@ function desktopHostedSignalOptions(): DesktopHostedSignalOptions | undefined {
  */
 async function openDesktopRemoteLanes(
 	profile: RememberedRemoteConnection,
+	windowId: string,
+	onConnectionFailure?: () => void,
+	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
+): Promise<DesktopRemoteLanes> {
+	// One attempt at a time per server: two windows connecting together would
+	// otherwise retire each other's handshake.
+	return desktopProfileConnects.run(profile.id, () =>
+		openDesktopRemoteLanesNow(
+			profile,
+			windowId,
+			onConnectionFailure,
+			onConnectionStatus,
+		),
+	);
+}
+
+async function openDesktopRemoteLanesNow(
+	profile: RememberedRemoteConnection,
+	windowId: string,
 	onConnectionFailure?: () => void,
 	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
 ): Promise<DesktopRemoteLanes> {
@@ -5249,6 +5289,7 @@ async function openDesktopRemoteLanes(
 			origin: profile.origin,
 			store: createDesktopDeviceCredentialStore(),
 			webrtcRuntimeRoot,
+			windowId,
 			iceServers: parseHostedIceServers(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,
 			),
@@ -5333,6 +5374,7 @@ function desktopWebRtcReconnectAuth(connected: DesktopReconnectTransport) {
  * the renderer never sees enrollment or reconnect material. */
 async function prepareCanonicalDesktopRemoteConnection(
 	profile: RememberedRemoteConnection,
+	windowId: string,
 	onConnectionFailure?: () => void,
 	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
 ): Promise<
@@ -5340,6 +5382,7 @@ async function prepareCanonicalDesktopRemoteConnection(
 > {
 	const lanes = await openDesktopRemoteLanes(
 		profile,
+		windowId,
 		onConnectionFailure,
 		onConnectionStatus,
 	);
@@ -5359,12 +5402,13 @@ async function prepareCanonicalDesktopRemoteConnection(
  * after this authenticated transport has been established. */
 async function reconnectCanonicalDesktopRemoteTransport(
 	profileId: string,
+	windowId: string,
 ): Promise<ByteTransport> {
 	loadRememberedRemoteConnections();
 	const profile = rememberedRemoteConnections.get(profileId);
 	if (profile === undefined)
 		throw new Error('The selected remote profile is no longer available.');
-	return (await openDesktopRemoteLanes(profile)).transport;
+	return (await openDesktopRemoteLanes(profile, windowId)).transport;
 }
 
 function setDockIcon(): void {

@@ -116,3 +116,27 @@ test("the restart action reaches the quarantine-clearing path and reports the re
   assert.deepEqual(calls, [extensionId]);
   assert.equal(result.result.extensions[0].runtimeState, "running");
 });
+
+test("a mutation retried from another window of the same device is the same mutation", async () => {
+  const fixture = installer();
+  let confirms = 0;
+  const confirm = fixture.confirm;
+  fixture.confirm = async (...args) => { confirms += 1; return confirm(...args); };
+  const handlers = createExtensionOperationHandlers({ installer: fixture, authorityLabel: "This server" });
+  const from = (clientId, deviceId) => {
+    const request = command("extensions.install", { previewDigest: "digest", confirmation: true, expectedRevision: 0 }, 0);
+    request.context = { ...request.context, clientId, ...(deviceId === undefined ? {} : { deviceId }) };
+    return request;
+  };
+  // The window that asked reloads and retries under a new client identity.
+  const first = await handlers.commands["extensions.install"](from("window:before-reload", "device-a"));
+  const retried = await handlers.commands["extensions.install"](from("window:after-reload", "device-a"));
+  assert.equal(confirms, 1);
+  assert.deepEqual(retried, first);
+  // The same key from another device is that device's own request.
+  await assert.rejects(
+    handlers.commands["extensions.install"](from("window:other", "device-b")),
+    (error) => error.code === "conflict",
+  );
+  assert.equal(confirms, 1);
+});

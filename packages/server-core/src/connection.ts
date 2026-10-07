@@ -685,6 +685,9 @@ export class ServerConnection implements ServerConnectionLike {
 		return {
 			connectionId: this.connectionId,
 			clientId: this.authenticatedClient?.clientId ?? 'unknown',
+			...(this.authenticatedClient?.deviceId === undefined
+				? {}
+				: { deviceId: this.authenticatedClient.deviceId }),
 			authScope: this.authenticatedClient?.authScope ?? 'none',
 			...(this.authenticatedClient?.permissions === undefined
 				? {}

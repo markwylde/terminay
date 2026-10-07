@@ -395,6 +395,52 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	assert.equal(relay.state.log.includes('device-join'), true);
 	assert.equal(relay.state.log.includes('client-join'), true);
 
+	// Each native window is its own connection. Two windows of this device
+	// stay connected together, and beside the connection that named no window.
+	const openWindow = async (windowId) => {
+		const opened = await connectDesktopHostedRemote({
+			origin: sessionOrigin,
+			store,
+			webrtcRuntimeRoot: RUNTIME_ROOT,
+			expectedServerId: 'server-a',
+			windowId,
+			iceServers: [],
+			signal: { connectHost: '127.0.0.1' },
+		});
+		t.after(() =>
+			opened.transport.close({ code: 'normal' }).catch(() => undefined),
+		);
+		return opened;
+	};
+	await openWindow('w-main');
+	await openWindow('w-settings');
+	assert.equal(connections.length, 3);
+	assert.deepEqual(
+		connections.map((entry) => entry.closed),
+		[false, false, false],
+		'a second and a third window disconnect nobody',
+	);
+
+	// A window reconnecting replaces its own connection and no other.
+	await openWindow('w-main');
+	const startedAt = Date.now();
+	while (!connections[1].closed) {
+		if (Date.now() - startedAt > 30_000)
+			throw new Error("the window's previous connection was not replaced");
+		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+	}
+	assert.deepEqual(
+		connections.map((entry) => entry.closed),
+		[false, true, false, false],
+	);
+	// Which window it is never passes through the relay.
+	assert.equal(
+		relay.state.frames.some(
+			(frame) => frame.includes('w-main') || frame.includes('w-settings'),
+		),
+		false,
+	);
+
 	// A different pinned key is a visible identity change, never silently accepted.
 	const wrongStore = new DesktopDeviceCredentialStore({
 		directory: join(directory, 'credentials-wrong'),

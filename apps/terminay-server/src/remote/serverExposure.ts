@@ -157,6 +157,7 @@ export class ServerRemoteExposure {
 	>();
 	private readonly approvalListeners = new Set<EnrollmentApprovalListener>();
 	private readonly pendingListeners = new Set<PendingApprovalListener>();
+	private readonly revocationListeners = new Set<(deviceId: string) => void>();
 	private approvalSequence = 0;
 
 	constructor(options: ServerRemoteExposureOptions) {
@@ -452,6 +453,13 @@ export class ServerRemoteExposure {
 		return () => this.approvalListeners.delete(listener);
 	}
 
+	/** Told after a device is revoked, so whoever holds its live connections
+	 * can close them. */
+	onDeviceRevoked(listener: (deviceId: string) => void): () => void {
+		this.revocationListeners.add(listener);
+		return () => this.revocationListeners.delete(listener);
+	}
+
 	onApprovalRequested(listener: PendingApprovalListener): () => void {
 		this.pendingListeners.add(listener);
 		return () => this.pendingListeners.delete(listener);
@@ -525,6 +533,14 @@ export class ServerRemoteExposure {
 		const count = await this.controller.revokeDevice(deviceId);
 		this.devices.revokeDevice(deviceId);
 		this.audit.record({ action: 'device-revoked', deviceId });
+		for (const listener of [...this.revocationListeners]) {
+			try {
+				listener(deviceId);
+			} catch {
+				// Revocation has already taken effect; a listener that fails to
+				// close a connection must not undo or mask it.
+			}
+		}
 		return count;
 	}
 

@@ -329,7 +329,7 @@ async function connectClient(relay, options) {
 				channel.addEventListener('message', listener);
 			});
 		},
-		authenticate(ticket) {
+		authenticate(ticket, windowId) {
 			const id = randomBytes(6).toString('hex');
 			const channel = channels.get('control');
 			return new Promise((resolveAuth) => {
@@ -344,7 +344,14 @@ async function connectClient(relay, options) {
 					resolveAuth(response.ok);
 				};
 				channel.addEventListener('message', listener);
-				channel.send(JSON.stringify({ type: 'application-auth', id, ticket }));
+				channel.send(
+					JSON.stringify({
+						type: 'application-auth',
+						id,
+						ticket,
+						...(windowId === undefined ? {} : { windowId }),
+					}),
+				);
 			});
 		},
 		close() {
@@ -378,12 +385,14 @@ test('a device pairs only after the host approves its match code, and the ticket
 	const connections = [];
 	const persisted = [];
 	const disconnected = [];
+	const admitted = [];
 	const diagnostics = [];
 	let currentHandoff = handoff;
 	const host = await startHostedPairingHost({
-		acceptApplication: () => {
+		acceptApplication: (_transport, client) => {
 			const connection = {
 				connectionId: `connection-${connections.length + 1}`,
+				client,
 				closed: false,
 				start: async () => undefined,
 				close: async () => {
@@ -400,6 +409,7 @@ test('a device pairs only after the host approves its match code, and the ticket
 		serverId: 'server-a',
 		signal: { connectHost: '127.0.0.1' },
 		webrtcRuntimeRoot: RUNTIME_ROOT,
+		onPeerConnected: (peer) => admitted.push(peer),
 		onPeerDisconnected: (connectionId) => disconnected.push(connectionId),
 		iceServers: [],
 		rotateHandoff: () => exposure.rotate(),
@@ -691,6 +701,87 @@ test('a device pairs only after the host approves its match code, and the ticket
 	assert.equal(connections[1].closed, false, 'the replacement stays live');
 	const context2 = await rejoin.request('/api/host-context', {});
 	assert.equal(context2.serverId, 'server-a');
+
+	// A second window of the same device connects beside it. It names itself
+	// on the authenticated lane, and nothing of the first window is closed.
+	const openWindow = async (windowId) => {
+		const window = await connectClient(relay, {
+			mode: 'device',
+			deviceId,
+			sessionOrigin,
+			serverId: 'server-a',
+			pinnedHostKey: hostKey.publicKey,
+			deviceProof: proof,
+		});
+		t.after(() => window.close());
+		await window.open();
+		const windowChallenge = await window.request('/api/devices/challenge', {
+			deviceId,
+		});
+		const ticket = await window.request('/api/devices/verify', {
+			deviceId,
+			challengeId: windowChallenge.challengeId,
+			deviceSignature: sign(
+				'sha256',
+				Buffer.from(windowChallenge.signingInput),
+				{
+					key: key.privateKey,
+					padding: constants.RSA_PKCS1_PSS_PADDING,
+					saltLength: 32,
+				},
+			).toString('base64url'),
+		});
+		return { window, ticket: ticket.ticket, windowId };
+	};
+	const second = await openWindow('window-a');
+	assert.equal(await second.window.authenticate(second.ticket, 'window-a'), true);
+	await waitFor(() => connections.length === 3, 'the second window to attach');
+	assert.equal(connections[1].closed, false, 'the first window stays live');
+	// The unnamed window keeps the device id as its client; a named window is
+	// its own client, and both carry the device for authority.
+	assert.equal(connections[1].client.clientId, deviceId);
+	assert.equal(connections[1].client.deviceId, deviceId);
+	assert.match(connections[2].client.clientId, /^window:[A-Za-z0-9_-]{43}$/u);
+	assert.equal(connections[2].client.deviceId, deviceId);
+	assert.equal(connections[2].client.authScope, connections[1].client.authScope);
+
+	// That window reconnecting replaces its own peer and no other.
+	const again = await openWindow('window-a');
+	assert.equal(await again.window.authenticate(again.ticket, 'window-a'), true);
+	await waitFor(
+		() => connections.length === 4 && connections[2].closed,
+		"the window's previous peer to be replaced",
+	);
+	assert.equal(connections[1].closed, false, 'the other window is untouched');
+	assert.equal(connections[3].closed, false);
+	assert.equal(connections[3].client.clientId, connections[2].client.clientId);
+
+	// A window id that is not a bounded identifier is refused outright.
+	const malformed = await openWindow('not a window id');
+	assert.equal(
+		await malformed.window.authenticate(malformed.ticket, 'not a window id'),
+		false,
+	);
+	assert.equal(connections.length, 4);
+
+	// The device arrived once. Its rejoin, its second window, and that
+	// window's reconnect are not the device connecting again.
+	assert.deepEqual(
+		admitted.map((peer) => [peer.connectionId, peer.windowId, peer.firstWindowOfDevice]),
+		[
+			['connection-1', '', true],
+			['connection-2', '', false],
+			['connection-3', 'window-a', false],
+			['connection-4', 'window-a', false],
+		],
+	);
+
+	// Revoking the device closes every window it has open.
+	await exposure.revokeDevice(deviceId);
+	await waitFor(
+		() => connections[1].closed && connections[3].closed,
+		'revocation to close every window of the device',
+	);
 });
 
 test('the data-root socket mints a fresh pairing room while a live peer keeps working', {

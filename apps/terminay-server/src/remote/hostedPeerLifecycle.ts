@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export type HostedIceServer = Readonly<{
 	credential?: string;
 	urls: string | readonly string[];
@@ -270,27 +272,118 @@ export type HostedLivePeer = Readonly<{
 	connectionId?: string;
 }>;
 
+/** The most windows one device may hold live on one server. A further window
+ * is refused; no window is closed to make room for another. */
+export const MAX_LIVE_WINDOWS_PER_DEVICE = 8;
+
+const WINDOW_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+
 /**
- * At most one live peer per device.
+ * The window a client says it is, from its `application-auth`.
+ *
+ * Absent means the device's one unnamed window, which is how every client
+ * behaved before windows were told apart. A value that is present but is not
+ * a bounded identifier is refused rather than treated as absent: it steers
+ * which live peer is replaced.
+ */
+export function readWindowId(value: unknown): string | null {
+	if (value === undefined) return '';
+	if (typeof value !== 'string' || !WINDOW_ID.test(value)) return null;
+	return value;
+}
+
+/**
+ * The workspace client identity of one window of a device.
+ *
+ * A client that names no window keeps its device id, as every remote client
+ * did before windows were told apart. A named window gets an identity derived
+ * from both, so it can never equal another device's id or another window's.
+ */
+export function windowClientId(deviceId: string, windowId: string): string {
+	if (windowId === '') return deviceId;
+	return `window:${createHash('sha256')
+		.update(deviceId)
+		.update('\0')
+		.update(windowId)
+		.digest('base64url')}`;
+}
+
+/**
+ * At most one live peer per window of each device.
  *
  * A reconnect must retire the connection it replaces at join time. Letting a
  * superseded peer linger until its own transport finally gives up is what
- * produced two live server connections for one device, and the later of the
- * two teardowns then stopped the live session's stream.
+ * produced two live server connections for one window, and the later of the
+ * two teardowns then stopped the live session's stream. A window id is scoped
+ * under its device, so one device can never name another's peer.
  */
+/**
+ * How many windows each device holds live, across every pairing host that
+ * shares this object. A server that exposes itself in two ways runs two
+ * hosts, and a device is connected if either holds a window of it.
+ */
+export class HostedDevicePresence {
+	private readonly counts = new Map<string, number>();
+
+	count(deviceId: string): number {
+		return this.counts.get(deviceId) ?? 0;
+	}
+
+	add(deviceId: string): void {
+		this.counts.set(deviceId, this.count(deviceId) + 1);
+	}
+
+	remove(deviceId: string): void {
+		const next = this.count(deviceId) - 1;
+		if (next > 0) this.counts.set(deviceId, next);
+		else this.counts.delete(deviceId);
+	}
+}
+
 export class HostedLivePeerRegistry {
-	private readonly peers = new Map<string, HostedLivePeer>();
+	private readonly devices = new Map<string, Map<string, HostedLivePeer>>();
+
+	/** Shared between a server's pairing hosts; private to this one when
+	 * none is given. */
+	readonly presence: HostedDevicePresence;
+
+	constructor(presence: HostedDevicePresence = new HostedDevicePresence()) {
+		this.presence = presence;
+	}
 
 	get size(): number {
-		return this.peers.size;
+		let total = 0;
+		for (const windows of this.devices.values()) total += windows.size;
+		return total;
 	}
 
-	get(deviceId: string): HostedLivePeer | undefined {
-		return this.peers.get(deviceId);
+	get(deviceId: string, windowId = ''): HostedLivePeer | undefined {
+		return this.devices.get(deviceId)?.get(windowId);
 	}
 
-	set(deviceId: string, live: HostedLivePeer): void {
-		this.peers.set(deviceId, live);
+	set(deviceId: string, live: HostedLivePeer, windowId = ''): void {
+		let windows = this.devices.get(deviceId);
+		if (windows === undefined) {
+			windows = new Map();
+			this.devices.set(deviceId, windows);
+		}
+		if (!windows.has(windowId)) this.presence.add(deviceId);
+		windows.set(windowId, live);
+	}
+
+	/** Whether this window may connect. A window that is already live is
+	 * reconnecting and replaces its own peer, so it is never a further window;
+	 * a new one is refused once the device holds every window it may. */
+	admits(deviceId: string, windowId = ''): boolean {
+		return (
+			this.get(deviceId, windowId) !== undefined ||
+			this.countForDevice(deviceId) < MAX_LIVE_WINDOWS_PER_DEVICE
+		);
+	}
+
+	/** How many windows this device holds live. */
+	countForDevice(deviceId: string): number {
+		return this.devices.get(deviceId)?.size ?? 0;
 	}
 
 	/** Drop the entry only when it still describes this exact peer, so a late
@@ -299,25 +392,54 @@ export class HostedLivePeerRegistry {
 		deviceId: string,
 		peer: HostedLivePeer['peer'],
 	): HostedLivePeer | undefined {
-		const existing = this.peers.get(deviceId);
-		if (existing === undefined || existing.peer !== peer) return undefined;
-		this.peers.delete(deviceId);
-		return existing;
+		const windows = this.devices.get(deviceId);
+		if (windows === undefined) return undefined;
+		for (const [windowId, existing] of windows) {
+			if (existing.peer !== peer) continue;
+			windows.delete(windowId);
+			this.presence.remove(deviceId);
+			if (windows.size === 0) this.devices.delete(deviceId);
+			return existing;
+		}
+		return undefined;
 	}
 
-	/** Close and forget one device's live peer, awaiting its server-side
-	 * connection cleanup so the replacement never overlaps with it. */
-	async close(deviceId: string): Promise<HostedLivePeer | undefined> {
-		const existing = this.peers.get(deviceId);
-		if (existing === undefined) return undefined;
-		this.peers.delete(deviceId);
+	/** Close and forget one window's live peer, awaiting its server-side
+	 * connection cleanup so the replacement never overlaps with it. The
+	 * device's other windows are left alone. */
+	async close(
+		deviceId: string,
+		windowId = '',
+	): Promise<HostedLivePeer | undefined> {
+		const windows = this.devices.get(deviceId);
+		const existing = windows?.get(windowId);
+		if (windows === undefined || existing === undefined) return undefined;
+		windows.delete(windowId);
+		this.presence.remove(deviceId);
+		if (windows.size === 0) this.devices.delete(deviceId);
 		await closeLivePeer(existing);
 		return existing;
 	}
 
+	/** Close every window of one device: revocation, or closing it from the
+	 * live list. */
+	async closeDevice(deviceId: string): Promise<readonly HostedLivePeer[]> {
+		const windows = this.devices.get(deviceId);
+		if (windows === undefined) return [];
+		this.devices.delete(deviceId);
+		const closed = [...windows.values()];
+		for (const _ of closed) this.presence.remove(deviceId);
+		for (const entry of closed) await closeLivePeer(entry);
+		return closed;
+	}
+
 	async closeAll(): Promise<void> {
-		const snapshot = [...this.peers.values()];
-		this.peers.clear();
+		const snapshot = [...this.devices.values()].flatMap((windows) => [
+			...windows.values(),
+		]);
+		for (const [deviceId, windows] of this.devices)
+			for (const _ of windows) this.presence.remove(deviceId);
+		this.devices.clear();
 		for (const entry of snapshot) await closeLivePeer(entry);
 	}
 }

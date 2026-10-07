@@ -153,3 +153,23 @@ test("resize ownership is explicit, leases expire stale clients, and mobile view
   assert.deepEqual(pty.processes[0].resizes, [{ cols: 100, rows: 30 }, { cols: 120, rows: 40 }, { cols: 40, rows: 16 }, { cols: 60, rows: 20 }]);
   await service.shutdown();
 });
+
+test("a released client takes its input sequence marks with it", async () => {
+  const pty = fakePty();
+  const service = new TerminalService({ serverId: identity.serverId, ptyFactory: pty });
+  await service.createSession({ projectId: identity.projectId, sessionId: identity.sessionId, cols: 80, rows: 24 });
+  const adapter = new TerminalInputSourceAdapter(service, { maxQueuedInputBytes: 128 });
+  const write = (clientId, sequence) => adapter.write({
+    identity, clientId, source: "keyboard", data: "x", sequence, authorization: authorization(clientId),
+  });
+  await write("window:one", 5);
+  await write("window:two", 5);
+  assert.throws(() => write("window:one", 5), (error) => error.code === "invalid_position");
+
+  // A window's identity ends with the window. Nothing of it is kept for the
+  // life of the terminal, and another window's marks are untouched.
+  adapter.releaseClient(identity, "window:one");
+  await write("window:one", 1);
+  assert.throws(() => write("window:two", 5), (error) => error.code === "invalid_position");
+  await service.shutdown();
+});
