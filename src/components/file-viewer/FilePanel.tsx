@@ -70,6 +70,10 @@ import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { isDocumentPath } from './openFilePresentation';
 import {
+	presentationForFolder,
+	projectRootFileServices,
+} from './projectRootFileServices';
+import {
 	isDocumentationAcknowledgedWatchEvent,
 	resolveFileWatchDisposition,
 	retainDocumentationAcknowledgedRevision,
@@ -174,10 +178,18 @@ function CanonicalFilePanel(
 	const {
 		filePath,
 		initialMode,
-		presentation = 'file-viewer',
+		presentation: requestedPresentation = 'file-viewer',
 		preferredEngine = 'auto',
 		projectRoot,
 	} = props.params;
+	// What a linked folder's panel may not use, decided in one place.
+	const rootServices = projectRootFileServices(
+		terminalClientContext.linkedFolderId,
+	);
+	const presentation = presentationForFolder(
+		requestedPresentation,
+		terminalClientContext.linkedFolderId,
+	);
 	const baseParamsRef = useRef(props.params);
 	// Dockview keeps the panel instance while callers switch between File Viewer
 	// and Documentation.  Keep subsequent dirty/title metadata writes from
@@ -213,8 +225,9 @@ function CanonicalFilePanel(
 	// connection's gateway instead of holding a disposed one.
 	const applicationClient = terminalClientContext.applicationClient;
 	const speaksLanguage =
+		rootServices.languageIntelligence &&
 		terminalClientContext.serverCapabilities?.includes(LANGUAGE_CAPABILITY) ===
-		true;
+			true;
 	const [languageGateway, setLanguageGateway] = useState<
 		LanguageGateway | undefined
 	>();
@@ -946,7 +959,8 @@ function CanonicalFilePanel(
 				if (!isMounted) {
 					return;
 				}
-				const defaultMode = /\.mdx$/iu.test(info.name)
+				const defaultMode =
+					rootServices.mdxPreview && /\.mdx$/iu.test(info.name)
 					? 'preview'
 					: resolveFileViewerMode(
 							capabilities,
@@ -1339,6 +1353,7 @@ function CanonicalFilePanel(
 		props.api.updateParameters({ ...baseParamsRef.current, presentation: next });
 	};
 	const isMdxPreview =
+		rootServices.mdxPreview &&
 		!isDocumentation &&
 		effectiveMode === 'preview' &&
 		/\.mdx$/iu.test(fileInfo.name);
@@ -1414,7 +1429,7 @@ function CanonicalFilePanel(
 						Invalid HEX
 					</span>
 				) : null}
-				{isDocumentPath(fileInfo.name) ? (
+				{rootServices.documentation && isDocumentPath(fileInfo.name) ? (
 					<button
 						className="file-panel__action file-panel__open-as-document"
 						onClick={() => setPresentation('documentation')}

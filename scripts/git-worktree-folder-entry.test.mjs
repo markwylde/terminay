@@ -2,10 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { isDirectoryEntry } from '../src/workspace/fileExplorerEntries.ts'
-import {
-  gitFilesystemActionWorktreeRoot,
-  rootFolderToRestoreAfter,
-} from '../src/workspace/gitFilesystemScope.ts'
+import { folderChanges } from '../src/workspace/folderWorktree.ts'
 import { loadServerGitWorkspace } from '../src/services/git/serverGitWorkspaceAdapter.ts'
 
 test('a worktree directory change reaches the sidebar as a directory', async () => {
@@ -45,59 +42,47 @@ test('a symlinked directory lists as a folder and a symlinked file does not', ()
   assert.equal(isDirectoryEntry({ kind: 'file' }), false)
 })
 
-test('a mutation in another worktree hands the project root back afterwards', () => {
-  const worktrees = [{ path: '/workspace/repo' }, { path: '/workspace/repo-feature' }]
-  const worktreeRoot = gitFilesystemActionWorktreeRoot(
-    '/workspace/repo-feature/node_modules',
+test('a linked folder reports its worktree and the changes in it, the directory change included', async () => {
+  const projection = await loadServerGitWorkspace(
+    gitClientWithWorktreeEntries([
+      { path: 'node_modules', kind: 'untracked', isDirectory: true, staged: false, previousPath: null },
+    ]),
+    'project',
+  )
+  const changes = folderChanges(
+    { kind: 'linked', worktree: { repositoryId: 'repository-1', path: '/workspace/repo-feature' } },
     '/workspace/repo',
-    worktrees,
+    projection.worktrees,
   )
 
-  assert.equal(worktreeRoot, '/workspace/repo-feature')
-  assert.equal(
-    rootFolderToRestoreAfter({
-      kind: 'delete',
-      restoreRootFolder: '/workspace/repo',
-      worktreeRoot,
-    }),
-    '/workspace/repo',
+  assert.equal(changes.kind, 'worktree')
+  assert.equal(changes.status.branch, 'feature')
+  assert.equal(changes.status.repoRoot, '/workspace/repo-feature')
+  assert.deepEqual(
+    changes.status.entries.map((entry) => [entry.path, entry.isDirectory]),
+    [['/workspace/repo-feature/node_modules', true]],
   )
-  assert.equal(
-    rootFolderToRestoreAfter({
-      kind: 'rename',
-      restoreRootFolder: '/workspace/repo',
-      worktreeRoot,
-    }),
-    '/workspace/repo',
-  )
-  // Opening an entry is navigation into the worktree, so it stays there.
-  assert.equal(
-    rootFolderToRestoreAfter({
-      kind: 'open-entry',
-      restoreRootFolder: '/workspace/repo',
-      worktreeRoot,
-    }),
-    null,
-  )
-  assert.equal(
-    rootFolderToRestoreAfter({
-      kind: 'delete',
-      restoreRootFolder: '/workspace/repo-feature',
-      worktreeRoot,
-    }),
-    null,
-  )
+  // General is the checkout at the project root, which has none of them.
+  const general = folderChanges({ kind: 'general' }, '/workspace/repo', projection.worktrees)
+  assert.equal(general.kind, 'worktree')
+  assert.equal(general.status.branch, 'main')
+  assert.deepEqual(general.status.entries, [])
 })
 
-test('the Explorer restores the borrowed root once the mutation settles', async () => {
+test('a change is created, renamed, deleted, and opened without the project root moving', async () => {
   const source = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
 
-  assert.match(source, /restoreRootFolder: project\.rootFolder/u)
-  assert.match(source, /const restoreRootFolder = rootFolderToRestoreAfter\(action\)/u)
-  assert.match(
-    source,
-    /void completed\.finally\(\(\) => \{\s*onUpdateProject\(project\.id, \{ rootFolder: restoreRootFolder \}\);/u,
-  )
+  assert.equal(/onUpdateProject|restoreRootFolder|rootFolderToRestoreAfter/u.test(source), false)
+  // Each mutation goes straight to the file client of the folder on screen.
+  for (const handler of ['handleRename', 'handleDelete', 'handleNewFile', 'handleNewFolder']) {
+    const body = source.match(
+      new RegExp(`const ${handler} = useCallback\\([\\s\\S]*?\\n\\t\\);`, 'u'),
+    )?.[0]
+    assert.ok(body, `expected ${handler}`)
+    assert.match(body, /await (?:renameEntryAtPath|deleteEntryAtPath|createFileAtPath|createDirectoryAtPath)\(/u)
+  }
+  const open = source.match(/const handleOpenGitEntry = useCallback\([\s\S]*?\n\t\);/u)?.[0] ?? ''
+  assert.match(open, /void onOpenFile\(\s*entry\.path,/u)
 })
 
 test('the Git panel opens and labels a directory change as a folder', async () => {

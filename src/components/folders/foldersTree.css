@@ -315,6 +315,157 @@
 	flex: 1 1 auto;
 }
 
+/* --- A terminal was moved into its new worktree's folder ------------------- */
+
+.folder-capture-notices {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 auto;
+	font-size: 12px;
+	color: #dce2f0;
+}
+
+/* At the foot of the Folders column. */
+.folder-capture-notices--column {
+	gap: 6px;
+	padding: 8px;
+	border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.folder-capture-notice {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	padding: 8px 10px;
+	border-radius: 7px;
+	background: rgba(255, 255, 255, 0.07);
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.folder-capture-notice__text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	color: rgba(220, 226, 240, 0.85);
+}
+
+.folder-capture-notice__actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.folder-capture-notice__undo {
+	all: unset;
+	padding: 3px 9px;
+	border-radius: 5px;
+	font-weight: 600;
+	cursor: pointer;
+	background: color-mix(in srgb, var(--project-color, #57b7ff) 60%, #0d1014);
+	color: #fff;
+}
+
+.folder-capture-notice__dismiss {
+	all: unset;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	margin-left: auto;
+	border-radius: 4px;
+	cursor: pointer;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.folder-capture-notice__undo:hover,
+.folder-capture-notice__dismiss:hover {
+	filter: brightness(1.15);
+}
+
+.folder-capture-notice__undo:focus-visible,
+.folder-capture-notice__dismiss:focus-visible {
+	outline: 2px solid rgba(120, 170, 255, 0.9);
+	outline-offset: 1px;
+}
+
+/* Across the top of the project, where its error banner goes, when the
+ * Folders column is hidden. */
+.folder-capture-notices--banner {
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	background: rgba(255, 255, 255, 0.04);
+}
+
+.folder-capture-notices--banner .folder-capture-notice {
+	flex-direction: row;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 12px;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.folder-capture-notices--banner .folder-capture-notice__text {
+	flex: 1 1 auto;
+}
+
+.folder-capture-notices--banner .folder-capture-notice__dismiss {
+	margin-left: 0;
+}
+
+/* The Folders column is open but not drawn below the narrow layout
+ * breakpoint (`NARROW_LAYOUT_MEDIA_QUERY`), so the banner stands in there. */
+.folder-capture-notices--when-narrow {
+	display: none;
+}
+
+@media (max-width: 720px) {
+	.folder-capture-notices--when-narrow {
+		display: flex;
+	}
+}
+
+/* --- Deleting a folder that still holds panels ----------------------------- */
+
+.folder-panels-question__text,
+.folder-panels-question__hint {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.folder-panels-question__hint {
+	color: rgba(220, 226, 240, 0.6);
+	font-size: 12px;
+}
+
+/* --- A project tab's peek --------------------------------------------------- */
+
+/* Drawn in a portal beneath the tab it belongs to. It is not a child of the
+ * tab, so nothing a tab does with the pointer passes through it. */
+.project-tab-peek {
+	position: fixed;
+	z-index: 9000;
+	box-sizing: border-box;
+	width: 280px;
+	max-width: calc(100vw - 16px);
+	padding: 4px 0;
+	overflow: hidden;
+	border-radius: 0 0 9px 9px;
+	background: var(--terminal-panel-surface, #12161c);
+	box-shadow:
+		0 12px 32px rgba(0, 0, 0, 0.5),
+		inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+	-webkit-app-region: no-drag;
+}
+
+.project-tab-peek__empty {
+	padding: 8px 12px;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
 /* --- A folder with no panels ---------------------------------------------- */
 
 /* Matches Home with every tab closed: the same surface, type, and action. */

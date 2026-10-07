@@ -4,23 +4,13 @@ import test from 'node:test'
 
 const source = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
 const gitFilesystemScopeSource = await readFile('src/workspace/gitFilesystemScope.ts', 'utf8')
-const worktreesPanelSource = await readFile('src/components/git-panel/WorktreesPanel.tsx', 'utf8')
+const appSource = await readFile('src/App.tsx', 'utf8')
 
-test('worktree presentation reserves clean for worktrees without committed or working changes', () => {
-  assert.match(worktreesPanelSource, /hasUnmergedOrUncommittedWork \? \(/u)
-  assert.match(worktreesPanelSource, />changed<\/span>/u)
-})
-
-test('Git tree filesystem mutations switch to the owning worktree before Explorer commands', () => {
+test('Explorer commands address the root of the folder on screen and never move the project root', () => {
   assert.match(gitFilesystemScopeSource, /export function owningWorktreeForPath/u)
-  assert.match(gitFilesystemScopeSource, /export function gitFilesystemActionWorktreeRoot/u)
-  assert.match(source, /queueOwningWorktreeAction/u)
-  assert.match(source, /kind: 'delete'/u)
   assert.match(source, /toContainedProjectRelativePath\(path, project\.rootFolder\)/u)
-  assert.match(
-    source,
-    /onUpdateProject\(project\.id, \{ rootFolder: worktreeRoot \}\)/u,
-  )
+  assert.equal(/queueOwningWorktreeAction|onUpdateProject/u.test(source), false)
+  assert.equal(/gitFilesystemActionWorktreeRoot/u.test(gitFilesystemScopeSource), false)
 })
 
 test('caught worktree removal failures reach bounded renderer diagnostics', () => {
@@ -115,20 +105,16 @@ test('server replies with a protocol error instead of hanging oversized projecti
   assert.match(serverConnectionSource, /protocolError\("resource", "response exceeded protocol limits"/u)
 })
 
-test('worktree panel ignores equivalent Git projection object churn', () => {
-  assert.match(worktreesPanelSource, /const worktreePathSignature\s*=/u)
+test('the Changes pane ignores equivalent Git projection object churn', () => {
+  // An equivalent listing keeps the object the pane already has, so what the
+  // pane derives from it is not rebuilt for a refresh that changed nothing.
   assert.match(
-    worktreesPanelSource,
-    /status\.worktrees\.map\(\(worktree\) => worktree\.path\)\.join\('\\n'\)/u,
+    source,
+    /setWorktreePanelStatus\(\(current\) =>\s*sameWorktreePanelStatus\(current, projection\.worktrees\)\s*\? current\s*: projection\.worktrees,/u,
   )
   assert.match(
-    worktreesPanelSource,
-    /\}, \[status\?\.repoRoot, worktreePathSignature\]\);/u,
-  )
-  assert.doesNotMatch(
-    worktreesPanelSource,
-    /\}, \[status\]\);/u,
-    'Worktree collapse bookkeeping must not reset on equivalent status object identity churn.',
+    appSource,
+    /const changes = useMemo\(\s*\(\) => folderChanges\(folder, project\.rootFolder, worktreePanelStatus\),\s*\[folder, project\.rootFolder, worktreePanelStatus\],/u,
   )
 })
 

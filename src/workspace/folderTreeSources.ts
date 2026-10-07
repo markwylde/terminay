@@ -5,9 +5,9 @@
  * known about each panel, and the repository's worktrees. The last two already
  * exist for other surfaces, and the tree reads those rather than a copy: a
  * panel's status and title come from the inventory the dashboard reads, and a
- * worktree's branch, pull request, and checks from the listing the Git pane
- * reads. A row here therefore cannot disagree with a dashboard row or a
- * worktree row about the same thing.
+ * worktree's branch, pull request, and checks from the listing the Changes pane
+ * reads. A row here therefore cannot disagree with a dashboard row or the
+ * Changes pane about the same thing.
  */
 
 import type {
