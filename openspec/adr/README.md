@@ -73,3 +73,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0044](./0044-output-path-work-is-proportional-to-the-output-event.md) | Work on the terminal output path is proportional to the output event | accepted | 2026-10-07 |
 | [0045](./0045-the-mcp-adapter-may-read-a-document-the-agent-names.md) | The MCP adapter may read a document the agent names, to show the user; the server never opens it | accepted | 2026-10-07 |
 | [0046](./0046-window-attachments-are-an-unbounded-streamed-scratch-write.md) | Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them | accepted | 2026-10-07 |
+| [0048](./0048-a-connection-belongs-to-a-window-and-authority-to-a-device.md) | A live connection belongs to a client window; authority belongs to the device | accepted | 2026-10-07 |
