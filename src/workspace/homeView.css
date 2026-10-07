@@ -322,6 +322,15 @@
 	border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+/* Drawn as the project sidebar's tab bar is, so it joins Home's tab strip. */
+.home-sidebar__band {
+	box-sizing: border-box;
+	flex: 0 0 auto;
+	height: var(--panel-tab-strip-height, 34px);
+	background: var(--project-chrome);
+	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+}
+
 .home-sidebar__sections {
 	display: flex;
 	flex-direction: column;
