@@ -145,6 +145,7 @@ export type FileCatalogPreviewKind =
 	| 'markdown'
 	| 'image'
 	| 'pdf'
+	| 'html'
 	| 'text'
 	| 'hex'
 	| 'unsupported';
@@ -170,6 +171,12 @@ export interface FileCatalogPreviewMetadata {
 
 export interface FileCatalogPreviewOptions {
 	readonly signal?: AbortSignal;
+	/**
+	 * Preview kinds beyond the original set that the requesting client can
+	 * render. A client that does not name `html` is told an HTML file is text,
+	 * because a client that predates the kind rejects a snapshot carrying it.
+	 */
+	readonly acceptPreviewKinds?: readonly string[];
 }
 
 const DEFAULT_MAX_ENTRIES = 25_000;
@@ -559,17 +566,21 @@ export class FileCatalog {
 			sample,
 			this.maxPreviewBytes,
 			size,
+			Array.isArray(options.acceptPreviewKinds) &&
+				options.acceptPreviewKinds.includes('html'),
 		);
 		const isLargeFile = size > LARGE_FILE_BYTES;
 		const safePreview = classification.safePreview && !isLargeFile;
 		// Text opens in the editor, including text recognised only by its
 		// content. Preview leads only where it is the natural reading of the
-		// file: rendered Markdown, an image, or a PDF.
+		// file: rendered Markdown, a rendered page, an image, or a PDF.
 		const preferredMode: FileCatalogPreviewMode = classification.isBinary
 			? safePreview
 				? 'preview'
 				: 'hex'
-			: safePreview && classification.previewKind === 'markdown'
+			: safePreview &&
+					(classification.previewKind === 'markdown' ||
+						classification.previewKind === 'html')
 				? 'preview'
 				: 'text';
 		return Object.freeze({
@@ -924,6 +935,7 @@ function classifyPreview(
 	sample: Uint8Array,
 	maxPreviewBytes: number,
 	size: number,
+	acceptsHtml: boolean,
 ): PreviewClassification {
 	const extension = extensionOf(relativePath);
 	const mimeType = mimeTypeFor(extension, sample);
@@ -935,6 +947,9 @@ function classifyPreview(
 		extension === 'mdown' ||
 		extension === 'mkd' ||
 		extension === 'mdx';
+	const html =
+		acceptsHtml &&
+		(extension === 'html' || extension === 'htm' || extension === 'xhtml');
 	const utf8 = decodeUtf8(sample);
 	const hasNul = sample.includes(0);
 	const knownText =
@@ -958,7 +973,9 @@ function classifyPreview(
 				? 'hex'
 				: markdown
 					? 'markdown'
-					: unknownText
+					: html
+						? 'html'
+						: unknownText
 						? 'unsupported'
 						: 'text';
 	const safePreview =
@@ -966,6 +983,7 @@ function classifyPreview(
 		(previewKind === 'markdown' ||
 			previewKind === 'image' ||
 			previewKind === 'pdf' ||
+			previewKind === 'html' ||
 			previewKind === 'text');
 	return {
 		previewKind,
@@ -1085,6 +1103,7 @@ function mimeTypeFor(
 		css: 'text/css',
 		html: 'text/html',
 		htm: 'text/html',
+		xhtml: 'application/xhtml+xml',
 		xml: 'text/xml',
 		yaml: 'text/yaml',
 		yml: 'text/yaml',

@@ -99,6 +99,8 @@ import type { ServerSettingsRepository } from '../packages/server-core/src/setti
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
+	BoundedChunkQueue,
+	type ByteChunk,
 	createNodePtyFactory,
 	DetachableTerminalConsumerRegistry,
 	type TerminalAuthorization,
@@ -122,6 +124,7 @@ import {
 	type WorkspaceCommand,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
@@ -282,6 +285,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
+	/** A terminal's panel was moved to another project and the terminal has
+	 * been re-homed with it. Anything the host issued for the terminal under
+	 * its old project, such as an MCP capability, ends here. */
+	readonly onTerminalRehomed?: (move: TerminalSessionRehome) => void;
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
@@ -400,7 +407,7 @@ export class ServerTerminalAuthority {
 	private readonly options: ServerTerminalAuthorityOptions;
 	private readonly sessions = new Map<string, AuthoritySession>();
 	private readonly consumers: DetachableTerminalConsumerRegistry;
-	private readonly buffers = new Map<string, Uint8Array>();
+	private readonly buffers = new Map<string, BoundedChunkQueue<ByteChunk>>();
 	private readonly listeners = new Set<(event: TerminalEvent) => void>();
 	/** Clients on this machine's renderer ports, as opposed to remote peers. */
 	private readonly embeddedRendererClientIds = new Set<string>();
@@ -443,6 +450,7 @@ export class ServerTerminalAuthority {
 	private readonly workspaceCommandTestRecords:
 		| ServerWorkspaceTestCommandRecord[]
 		| undefined;
+	private projectCreationTestRefusals = 0;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -1010,6 +1018,7 @@ export class ServerTerminalAuthority {
 				prepareProjectRootUpdate: (projectId, root) =>
 					this.prepareProjectRootUpdate(projectId, root),
 				releaseProject: (projectId) => this.releaseProject(projectId),
+				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
 			agents: this.agents,
@@ -1229,6 +1238,22 @@ export class ServerTerminalAuthority {
 	 * workspace capability from this hook: it can only reset and read its own
 	 * redacted observation buffer through the main-process test IPC seam.
 	 */
+	/**
+	 * Test-only: the server closes every embedded renderer connection, as it
+	 * does when it reaps one. The window is told nothing by this hook; what it
+	 * learns, it learns from its byte endpoint.
+	 */
+	async closeRendererConnectionsForTest(): Promise<number> {
+		const connections = [...this.rendererConnectionsByOwner.values()];
+		await Promise.all(connections.map((connection) => connection.close()));
+		return connections.length;
+	}
+
+	/** Test-only: the server refuses this many of the next project creations. */
+	refuseProjectCreationsForTest(count: number): void {
+		this.projectCreationTestRefusals = count;
+	}
+
 	resetWorkspaceCommandTestRecords(): void {
 		this.workspaceCommandTestRecords?.splice(0);
 	}
@@ -1262,6 +1287,13 @@ export class ServerTerminalAuthority {
 			this.workspaceCommandTestRecords?.push(
 				workspaceCommandTestRecord(envelope.command),
 			);
+			if (
+				envelope.command.type === 'project.create' &&
+				this.projectCreationTestRefusals > 0
+			) {
+				this.projectCreationTestRefusals -= 1;
+				throw new Error('The server refused this project for the test.');
+			}
 			return apply(envelope);
 		};
 	}
@@ -1463,6 +1495,26 @@ export class ServerTerminalAuthority {
 	}
 
 	/**
+	 * Follow a terminal to the project its panel was moved to. The composition
+	 * has already re-homed the terminal itself; this is the embedded host's own
+	 * bookkeeping, plus whatever the host issued under the old project.
+	 */
+	private rehomeTerminalSession(move: TerminalSessionRehome): void {
+		this.consumers.detachSession({
+			serverId: this.service.serverId,
+			projectId: move.sourceProjectId,
+			sessionId: move.sessionId,
+		});
+		const session = this.sessions.get(move.sessionId);
+		if (session !== undefined)
+			this.sessions.set(move.sessionId, {
+				...session,
+				projectId: move.targetProjectId,
+			});
+		this.options.onTerminalRehomed?.(move);
+	}
+
+	/**
 	 * Drop everything this host keeps for a closed project. The composition
 	 * releases Git, file observations, and language sessions itself; these maps
 	 * are the embedded host's own.
@@ -1615,7 +1667,7 @@ export class ServerTerminalAuthority {
 		await this.registerProjectRoot(options.projectId, project.root);
 		const requestedId = options.sessionId;
 		if (requestedId !== undefined)
-			this.buffers.set(requestedId, new Uint8Array());
+			this.buffers.set(requestedId, this.createRecentOutput());
 		const resolver = this.composition.terminalLaunchResolver;
 		if (resolver === undefined && this.options.terminalService === undefined) {
 			throw new Error('canonical terminal launch resolution is unavailable');
@@ -1667,7 +1719,7 @@ export class ServerTerminalAuthority {
 		};
 		this.sessions.set(handle.sessionId, session);
 		if (!this.buffers.has(handle.sessionId))
-			this.buffers.set(handle.sessionId, new Uint8Array());
+			this.buffers.set(handle.sessionId, this.createRecentOutput());
 		if (this.workspace.state.terminalSessions[handle.sessionId] === undefined) {
 			const registered = this.composition.workspaceOperations?.applyHostCommand(
 				`authority:terminal:${handle.sessionId}`.slice(0, 128),
@@ -1746,7 +1798,7 @@ export class ServerTerminalAuthority {
 	}
 
 	getBuffer(id: string): string | null {
-		const bytes = this.buffers.get(id);
+		const bytes = this.buffers.get(id)?.readTail();
 		return bytes === undefined ? null : new TextDecoder().decode(bytes);
 	}
 
@@ -1754,7 +1806,8 @@ export class ServerTerminalAuthority {
 		sessionId: string,
 		limits: { readonly maxBytes: number; readonly maxChars: number },
 	) {
-		const bytes = this.buffers.get(sessionId) ?? new Uint8Array();
+		const bytes =
+			this.buffers.get(sessionId)?.readTail() ?? new Uint8Array();
 		const replay = new TerminalReplayBuffer({
 			maxBytes: Math.max(1, bytes.byteLength),
 		});
@@ -1987,18 +2040,22 @@ export class ServerTerminalAuthority {
 		return this.shutdownPromise;
 	}
 
+	/** Recent output must be exactly the latest bytes up to the bound, so a
+	 * chunk is dropped only once the chunks after it cover the bound. */
+	private createRecentOutput(): BoundedChunkQueue<ByteChunk> {
+		return new BoundedChunkQueue<ByteChunk>(this.maxReplayBytes, 'cover-bound');
+	}
+
 	private handleEvent(event: TerminalEvent): void {
 		if (event.type === 'output') {
-			const previous = this.buffers.get(event.sessionId) ?? new Uint8Array();
-			const next = new Uint8Array(previous.byteLength + event.bytes.byteLength);
-			next.set(previous);
-			next.set(event.bytes, previous.byteLength);
-			this.buffers.set(
-				event.sessionId,
-				next.byteLength > this.maxReplayBytes
-					? next.slice(next.byteLength - this.maxReplayBytes)
-					: next,
-			);
+			// Retain only; recent output is assembled when something reads it, so
+			// observing an event never costs what is already retained (ADR-0044).
+			let recent = this.buffers.get(event.sessionId);
+			if (recent === undefined) {
+				recent = this.createRecentOutput();
+				this.buffers.set(event.sessionId, recent);
+			}
+			recent.push({ bytes: event.bytes.slice() });
 		}
 		if (event.type === 'exit') {
 			// Keep the bounded buffer and session snapshot available for clients

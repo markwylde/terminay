@@ -889,3 +889,93 @@ test.describe('project tabs', () => {
 		);
 	});
 });
+
+test.describe('a project creation the server refuses', () => {
+	async function refuseCreations(page: Page, count: number): Promise<void> {
+		await page.evaluate(async (refusals) => {
+			if (!window.terminayLocalConnectionFaultTest)
+				throw new Error('Local connection fault test seam is unavailable');
+			await window.terminayLocalConnectionFaultTest.refuseProjectCreations(
+				refusals,
+			);
+		}, count);
+	}
+	const failedTab = (page: Page) =>
+		page.locator('.project-tab--creation-failed');
+	const failure = (page: Page) =>
+		page.locator('.workspace-empty-state--error[role="alert"]');
+
+	test('leaves every other project selectable and usable', async ({
+		mainWindow,
+	}) => {
+		await refuseCreations(mainWindow, 1);
+		await mainWindow.getByLabel('Create project').click();
+
+		await expect(failedTab(mainWindow)).toHaveCount(1);
+		await expect(failedTab(mainWindow)).toHaveClass(/project-tab--active/u);
+		await expect(failure(mainWindow)).toBeVisible();
+
+		await mainWindow
+			.locator('.project-tab:not(.project-tab--creation-failed)')
+			.first()
+			.click();
+		await expect(failure(mainWindow)).toHaveCount(0);
+		await expect(failedTab(mainWindow)).toHaveCount(1);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
+		).toHaveCount(1);
+		const marker = 'terminay-usable-beside-failed-creation';
+		await typeInVisibleTerminal(mainWindow, `printf '${marker}\\n'`);
+		await mainWindow.keyboard.press('Enter');
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText(marker);
+
+		await failedTab(mainWindow).click();
+		await expect(failure(mainWindow)).toBeVisible();
+	});
+
+	test('retry runs the creation again in place', async ({ mainWindow }) => {
+		await refuseCreations(mainWindow, 1);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(failure(mainWindow)).toBeVisible();
+
+		await failure(mainWindow).getByRole('button', { name: 'Retry' }).click();
+
+		await expect(failedTab(mainWindow)).toHaveCount(0);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+	});
+
+	test('the + control replaces the failed tab, and dismiss removes it', async ({
+		mainWindow,
+	}) => {
+		await refuseCreations(mainWindow, 2);
+		await mainWindow.getByLabel('Create project').click();
+		await expect(failure(mainWindow)).toBeVisible();
+
+		await expect(mainWindow.getByLabel('Create project')).toBeEnabled();
+		await mainWindow.getByLabel('Create project').click();
+		await expect(failure(mainWindow)).toBeVisible();
+		await expect(failedTab(mainWindow)).toHaveCount(1);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+
+		await failure(mainWindow).getByRole('button', { name: 'Dismiss' }).click();
+		await expect(failedTab(mainWindow)).toHaveCount(0);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
+		).toHaveCount(1);
+
+		await mainWindow.getByLabel('Create project').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+			0,
+		);
+	});
+});

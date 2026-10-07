@@ -49,6 +49,21 @@ test('Electron detaches authority consumers when a renderer is destroyed', async
 	);
 });
 
+test('Electron revokes a terminal MCP capability when the terminal changes project', async () => {
+	const main = await readFile(
+		new URL('../electron/main.ts', import.meta.url),
+		'utf8',
+	);
+
+	// The token lives in the running shell and cannot be replaced, so a move
+	// ends it rather than re-scoping it to the new project.
+	assert.match(
+		main,
+		/onTerminalRehomed: \(move\) => \{\s*mcpCapabilities\.revokeSession\(move\.sessionId\);\s*\}/u,
+	);
+	assert.doesNotMatch(main, /mcpCapabilities\.moveTerminal\(/u);
+});
+
 function bindRendererChannel(channel) {
 	let serverMessage;
 	let serverMessageError;
@@ -1218,6 +1233,76 @@ test('ServerTerminalAuthority tracks renderer attachment per immutable session',
 		assert.equal(authority.isRendererAttached('attachment-session', 42), false);
 		detach();
 		assert.equal(authority.isRendererAttached('attachment-session', 41), false);
+	} finally {
+		await authority.shutdown();
+	}
+});
+
+test('ServerTerminalAuthority follows a terminal whose panel is moved to another project', async () => {
+	const pty = createPtyFactory();
+	const service = new TerminalService({
+		serverId: 'authority-server',
+		ptyFactory: pty,
+		generateSessionId: () => 'moved-session',
+	});
+	const rehomed = [];
+	const authority = new ServerTerminalAuthority({
+		serverId: 'authority-server',
+		terminalService: service,
+		onTerminalRehomed: (move) => rehomed.push(move),
+	});
+
+	try {
+		await authority.create({
+			projectId: 'authority-project',
+			sessionId: 'moved-session',
+			shellPath: '/bin/zsh',
+			cwd: tmpdir(),
+			cols: 80,
+			rows: 24,
+		});
+		const operations = authority.composition.workspaceOperations;
+		const viewId = authority.workspace.state.viewOrder[0];
+		assert.equal(
+			operations.applyHostCommand('target-project', {
+				type: 'project.create',
+				projectId: 'target-project',
+				viewId,
+				root: tmpdir(),
+				name: 'Target',
+			}).ok,
+			true,
+		);
+		const panel = Object.values(authority.workspace.state.panels).find(
+			(candidate) => candidate.sessionId === 'moved-session',
+		);
+		authority.attachRenderer('moved-session', 41, () => {});
+		assert.equal(authority.isRendererAttached('moved-session', 41), true);
+
+		assert.equal(
+			operations.applyHostCommand('move-panel', {
+				type: 'panel.move',
+				panelId: panel.id,
+				targetProjectId: 'target-project',
+			}).ok,
+			true,
+		);
+
+		assert.deepEqual(rehomed, [
+			{
+				sessionId: 'moved-session',
+				sourceProjectId: 'authority-project',
+				targetProjectId: 'target-project',
+			},
+		]);
+		assert.equal(service.getSession('moved-session').projectId, 'target-project');
+		assert.equal(pty.processes.length, 1);
+		// What was attached under the old project ended with it, and the host
+		// attaches again under the project the terminal now belongs to.
+		assert.equal(authority.isRendererAttached('moved-session', 41), false);
+		const detach = authority.attachRenderer('moved-session', 41, () => {});
+		assert.equal(authority.isRendererAttached('moved-session', 41), true);
+		detach();
 	} finally {
 		await authority.shutdown();
 	}

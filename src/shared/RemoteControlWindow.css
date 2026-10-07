@@ -4,6 +4,9 @@
 	--connection-surface-hover: var(--settings-nav-hover);
 	--connection-muted: var(--settings-text-muted);
 	--connection-border: var(--settings-border);
+	--connection-text: var(--settings-text);
+	--connection-code-bg: var(--settings-code-bg);
+	--connection-code-text: var(--settings-code-text);
 	font-family: var(--settings-font);
 }
 
@@ -99,4 +102,293 @@
 
 .remote-control-window .settings-remote-panel-header {
 	margin-bottom: 20px;
+}
+
+/* One selected item fills the main pane: a title block, then its actions. */
+.remote-control-pane {
+	display: grid;
+	gap: 24px;
+	min-width: 0;
+	color: var(--settings-text);
+}
+
+.remote-control-pane__header {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.remote-control-pane__title {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.remote-control-pane__title h2 {
+	margin: 0;
+	overflow: hidden;
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.remote-control-pane__lede,
+.remote-control-pane__origin,
+.remote-control-pane__status {
+	margin: 0;
+	color: var(--settings-text-muted);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.remote-control-pane__origin {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.remote-control-pane__status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	text-transform: capitalize;
+}
+
+.remote-control-pane__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.remote-control-window .settings-secondary-button:hover {
+	background: var(--settings-nav-hover);
+}
+
+.remote-control-window .settings-danger-button {
+	background: transparent;
+	color: var(--settings-danger);
+}
+
+.remote-control-window .settings-danger-button:hover {
+	border-color: var(--settings-danger);
+	background: color-mix(in srgb, var(--settings-danger) 10%, transparent);
+}
+
+.remote-control-status-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--settings-text-muted);
+}
+
+.remote-control-status-dot--connected {
+	background: var(--settings-success);
+}
+
+.remote-control-status-dot--connecting,
+.remote-control-status-dot--reconnecting,
+.remote-control-status-dot--degraded {
+	background: #f59e0b;
+}
+
+.remote-control-status-dot--revoked,
+.remote-control-status-dot--incompatible,
+.remote-control-status-dot--unauthenticated {
+	background: var(--settings-danger);
+}
+
+.remote-control-window .settings-nav-item-inner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.remote-control-nav-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Outcome and error lines sit above the pane and take no room when empty. */
+.remote-control-notices {
+	display: grid;
+	gap: 8px;
+}
+
+.remote-control-notices:not(:empty) {
+	margin-bottom: 20px;
+}
+
+.remote-control-notices > p,
+.remote-control-notices > div {
+	margin: 0;
+	padding: 10px 12px;
+	border: 1px solid var(--settings-border);
+	border-radius: 8px;
+	background: var(--settings-card-bg);
+	color: var(--settings-text);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.remote-control-notices > [role='alert'] {
+	border-color: color-mix(in srgb, var(--settings-danger) 45%, transparent);
+	background: color-mix(in srgb, var(--settings-danger) 8%, var(--settings-card-bg));
+}
+
+.remote-control-notices > [role='alert'] p {
+	margin: 0 0 8px;
+}
+
+/* Forms inside a pane use the settings palette in both themes. */
+.remote-control-window .shared-connections__action-panel {
+	gap: 12px;
+}
+
+.remote-control-window .shared-connections__action-panel > label,
+.remote-control-window .shared-connections__action-panel-fields > label {
+	color: var(--settings-text);
+	font-size: 13px;
+}
+
+.remote-control-window .shared-connections__action-panel input {
+	min-height: 36px;
+	padding: 8px 12px;
+	border-radius: 6px;
+	font-size: 13px;
+}
+
+.remote-control-window .shared-connections__action-panel button {
+	min-height: 36px;
+	border-color: var(--settings-border);
+	border-radius: 6px;
+	color: var(--settings-text);
+	font-size: 13px;
+}
+
+.remote-control-window .shared-connections__action-panel button:hover {
+	border-color: var(--settings-text-muted);
+	background: var(--settings-nav-hover);
+	color: var(--settings-text);
+}
+
+.remote-control-window .shared-connections__action-panel-actions button[type='submit']:hover {
+	border-color: var(--settings-accent-hover);
+	background: var(--settings-accent-hover);
+	color: #fff;
+}
+
+.remote-control-window .shared-connections__action-panel-actions {
+	justify-content: flex-start;
+	gap: 8px;
+}
+
+.remote-control-window .shared-connections__action-panel.shared-production-route__card {
+	padding: 16px;
+	border: 1px solid var(--settings-border);
+	border-radius: 8px;
+	background: var(--settings-card-bg);
+}
+
+.remote-control-window .shared-connections__action-panel.shared-production-route__card p {
+	margin: 0;
+	color: var(--settings-text-muted);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.remote-control-window .shared-connections__confirm-action {
+	border-color: var(--settings-danger);
+	color: var(--settings-danger);
+}
+
+.remote-control-window .shared-connections__confirm-action:hover {
+	border-color: var(--settings-danger);
+	background: color-mix(in srgb, var(--settings-danger) 10%, transparent);
+	color: var(--settings-danger);
+}
+
+/* The pairing field and its buttons share one row; progress sits beneath. */
+.remote-control-window .shared-connections__pair {
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		'field actions'
+		'status status';
+	align-items: end;
+	column-gap: 8px;
+}
+
+.remote-control-window .shared-connections__pair > .shared-connections__action-panel-fields {
+	grid-area: field;
+}
+
+.remote-control-window .shared-connections__pair > .shared-connections__action-panel-actions {
+	grid-area: actions;
+	flex-wrap: nowrap;
+}
+
+.remote-control-window .shared-connections__pair > :not(.shared-connections__action-panel-fields):not(.shared-connections__action-panel-actions) {
+	grid-column: 1 / -1;
+	margin: 0;
+	color: var(--settings-text-muted);
+	font-size: 13px;
+}
+
+.remote-control-window .shared-connections__pair > .shared-connections__match-code {
+	color: var(--settings-text);
+}
+
+.remote-control-window .settings-empty-hero {
+	padding: 64px 0;
+}
+
+@media (max-width: 560px) {
+	.remote-control-window .shared-connections__pair {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas:
+			'field'
+			'status'
+			'actions';
+	}
+
+	.remote-control-window .shared-connections__pair > .shared-connections__action-panel-actions button {
+		flex: 1;
+		min-height: 44px;
+	}
+
+	.remote-control-pane__actions > button {
+		flex: 1 1 auto;
+		min-height: 44px;
+	}
+}
+
+.remote-control-window .settings-primary-button {
+	color: #fff;
+}
+
+/* The Settings chrome drops its navigation at this width. Here the navigation
+ * is the saved servers, so it stays, above the selected item. */
+@media (max-width: 768px) {
+	.remote-control-window .settings-sidebar-header {
+		padding: 16px 16px 12px;
+	}
+
+	.remote-control-window .settings-nav {
+		display: block;
+		max-height: 40dvh;
+		overflow-y: auto;
+	}
+
+	.remote-control-window .settings-nav-item {
+		min-height: 44px;
+	}
+
+	.remote-control-window .settings-content {
+		padding: 20px 16px 32px;
+	}
 }

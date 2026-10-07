@@ -1611,6 +1611,7 @@ export class WorkspaceStore {
 					};
 				}
 				changed.push(panel.id, from.id, to.id);
+				if (panel.type === 'terminal') changed.push(panel.sessionId);
 				break;
 			}
 			case 'panel.close': {

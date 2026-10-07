@@ -1,0 +1,90 @@
+title: HTML preview in a webview
+intro: |
+  Five things to settle before I write the proposal for rendering .html, .htm,
+  and .xhtml files in the file viewer's Preview tab.
+
+  Background: the file-viewer spec says "Preview rendering SHALL be sandboxed
+  and SHALL NOT execute file-provided script". Electron's <webview> tag is
+  deliberately off in every window (webviewTag: false, will-attach-webview
+  denied). App views already render untrusted HTML in an opaque-origin
+  sandboxed iframe through the ADR-0038 proxy document, which also works in
+  remote browser clients.
+
+status: submitted
+submitted_at: "2026-10-07T11:46:45+01:00"
+
+questions:
+  - id: surface
+    type: select
+    prompt: What does "webview" mean here?
+    help: |
+      I'd pick the sandboxed iframe: it works on Desktop and remote browser
+      clients and keeps the webviewTag-off posture. A real Electron webview is
+      Desktop only, needs a fallback for remote clients, and needs a new ADR
+      reversing that posture.
+    required: true
+    options:
+      - Sandboxed opaque-origin iframe reusing the ADR-0038 proxy (Recommended)
+      - Real Electron webview / WebContentsView, Desktop only
+    answer: Sandboxed opaque-origin iframe reusing the ADR-0038 proxy (Recommended)
+
+  - id: remote_fallback
+    type: select
+    prompt: What do remote browser clients get for an HTML Preview?
+    required: true
+    show_if:
+      surface: Real Electron webview / WebContentsView, Desktop only
+    options:
+      - A sandboxed iframe
+      - No Preview tab for HTML
+      - Preview tab present, with a "Desktop only" explanation
+
+  - id: scripts
+    type: select
+    prompt: May the page's own JavaScript run in Preview?
+    help: |
+      I'd allow it inside the opaque-origin sandbox, where it has no Terminay
+      authority. That amends the "no file-provided script" rule to carve out
+      HTML preview. A static render leaves that rule untouched but breaks most
+      real pages.
+    required: true
+    options:
+      - Yes, inside the sandbox with no Terminay authority (Recommended)
+      - No, static HTML and CSS only
+      - Off by default, with a per-panel "Run scripts" toggle
+    answer: Yes, inside the sandbox with no Terminay authority (Recommended)
+
+  - id: resources
+    type: select
+    prompt: What can the previewed page load?
+    help: |
+      I'd allow sibling project files only. External resources let a page
+      send data out of the machine; nothing at all leaves every stylesheet and
+      image reference broken.
+    required: true
+    options:
+      - Project files by relative path, within the authorized project scope; no network (Recommended)
+      - Project files plus external http(s) resources
+      - Nothing; the single HTML document only
+    answer: Project files by relative path, within the authorized project scope; no network (Recommended)
+
+  - id: draft
+    type: select
+    prompt: What does Preview show while the file has unsaved edits in Text?
+    help: Markdown preview already follows the draft.
+    options:
+      - The live draft, re-rendered after a short debounce (Recommended)
+      - The saved file only; refreshes on save
+    answer: The live draft, re-rendered after a short debounce (Recommended)
+
+  - id: default_mode
+    type: select
+    prompt: Which tab opens first for an HTML file?
+    options:
+      - Text, as today (Recommended)
+      - Preview
+    answer: Preview
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?
