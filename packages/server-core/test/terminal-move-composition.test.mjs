@@ -12,7 +12,7 @@ import {
 
 /**
  * Moving a terminal panel to another project re-homes the live terminal with
- * it (ADR-0041): one `panel.move` from a client leaves every server component
+ * it (ADR-0043): one `panel.move` from a client leaves every server component
  * agreeing that the terminal belongs to the target project.
  */
 

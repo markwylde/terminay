@@ -1,4 +1,4 @@
-# ADR-0041: A terminal changes project by retiring its identity and binding a new one
+# ADR-0043: A terminal changes project by retiring its identity and binding a new one
 
 Status: accepted
 Date: 2026-10-07
