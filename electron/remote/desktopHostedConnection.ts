@@ -158,7 +158,10 @@ export interface DesktopHostedPeer {
 	readonly serverId: string;
 	readonly sessionOrigin: string;
 	/** Consume a ticket on the control lane; true only when the server accepted it. */
-	authenticate(ticket: string): Promise<boolean>;
+	/** Present the ticket, and which window this is where the caller has one.
+	 * Rejects with `DesktopWindowLimitError` when the device already holds
+	 * every window the server allows. */
+	authenticate(ticket: string, windowId?: string): Promise<boolean>;
 	close(): void;
 }
 
@@ -595,8 +598,8 @@ export async function connectDesktopHostedPeer(
 		hostPublicKey,
 		serverId,
 		sessionOrigin,
-		authenticate: (ticket: string) =>
-			authenticateApplication(rawChannels.get('control')!, ticket),
+		authenticate: (ticket: string, windowId?: string) =>
+			authenticateApplication(rawChannels.get('control')!, ticket, windowId),
 		close,
 	});
 }
@@ -730,6 +733,9 @@ export async function connectDesktopHostedRemote(
 		store: DesktopDeviceCredentialStore;
 		webrtcRuntimeRoot: string;
 		expectedServerId?: string;
+		/** The native window this connection is for. A reconnect presenting the
+		 * same id replaces that window's previous connection and no other. */
+		windowId?: string;
 		iceServers?: readonly HostedIceServer[];
 		signal?: DesktopHostedSignalOptions;
 		abort?: AbortSignal;
@@ -805,7 +811,7 @@ export async function connectDesktopHostedRemote(
 			signChallenge: (signingInput) =>
 				options.store.signChallenge(origin, signingInput),
 		});
-		if (!(await peer.authenticate(ticket))) {
+		if (!(await peer.authenticate(ticket, options.windowId))) {
 			throw new Error('Desktop reconnect was denied by the server.');
 		}
 		const hostContext = await peer.api.postJson<unknown>(
@@ -1033,9 +1039,24 @@ export function createDesktopApiLane(channel: ApiLaneChannel): Readonly<{
 	return Object.freeze({ transport, fail });
 }
 
+/** The server refused this window because the device already holds every
+ * window it may. Nothing was closed to make room; retrying changes nothing
+ * until one of the device's windows closes. */
+export class DesktopWindowLimitError extends Error {
+	readonly code = 'window-limit';
+	constructor(message: string) {
+		super(message);
+		this.name = 'DesktopWindowLimitError';
+	}
+}
+
+const WINDOW_LIMIT_FALLBACK =
+	'This device already has as many windows connected to this server as it allows. Close one to open another.';
+
 function authenticateApplication(
 	control: WeriftChannel,
 	ticket: string,
+	windowId?: string,
 ): Promise<boolean> {
 	const id = `auth-${randomBytes(6).toString('base64url')}`;
 	return new Promise((resolve, reject) => {
@@ -1058,10 +1079,31 @@ function authenticateApplication(
 				return;
 			control.removeEventListener('message', listener);
 			clearTimeout(timer);
+			if (message.ok !== true && message.code === 'window-limit') {
+				reject(
+					new DesktopWindowLimitError(
+						typeof message.error === 'string' &&
+							message.error.length > 0 &&
+							message.error.length <= 300
+							? message.error
+							: WINDOW_LIMIT_FALLBACK,
+					),
+				);
+				return;
+			}
 			resolve(message.ok === true);
 		};
 		control.addEventListener('message', listener);
-		control.send(JSON.stringify({ type: 'application-auth', id, ticket }));
+		// Which window this is travels here, on the authenticated lane beside
+		// the ticket. It never passes through signaling.
+		control.send(
+			JSON.stringify({
+				type: 'application-auth',
+				id,
+				ticket,
+				...(windowId === undefined ? {} : { windowId }),
+			}),
+		);
 	});
 }
 
