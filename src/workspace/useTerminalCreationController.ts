@@ -54,10 +54,14 @@ type UseTerminalCreationControllerOptions = {
 		| ((request: {
 				activePanelId?: string;
 				cwd?: string;
+				folderId?: string;
 				profileId?: string;
 				projectId: string;
 		  }) => Promise<{ sessionId: string }>)
 		| null;
+	/** The folder a new terminal is created in. Absent means the project's
+	 * General folder. Named by id only: the server decides the directory. */
+	folderId?: string;
 	hydrateRecording: (sessionId: string) => void;
 	onError: (message: string | null) => void;
 	projectId: string;
@@ -124,6 +128,7 @@ async function activateCreatedTerminalPresentation(
 export function useTerminalCreationController({
 	apiRef,
 	createSession,
+	folderId,
 	hydrateRecording,
 	onError,
 	projectId,
@@ -158,6 +163,7 @@ export function useTerminalCreationController({
 
 				const { sessionId } = await createSession({
 					projectId,
+					...(folderId === undefined ? {} : { folderId }),
 					...(activePanel === undefined
 						? {}
 						: { activePanelId: activePanel.id }),
@@ -225,6 +231,7 @@ export function useTerminalCreationController({
 		[
 			apiRef,
 			createSession,
+			folderId,
 			hydrateRecording,
 			onError,
 			projectId,

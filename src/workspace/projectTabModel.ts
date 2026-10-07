@@ -140,6 +140,64 @@ export function withProjectSidebarActiveGroup(
 	};
 }
 
+/** The Folders tree's width on a device that has not resized it. */
+export const DEFAULT_FOLDERS_TREE_WIDTH = 232;
+
+/** A device that has never toggled a project's Folders tree shows it open. */
+export function isProjectFoldersTreeOpenOnDevice(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+): boolean {
+	return (
+		sidebarSettings.projectFoldersVisibility[
+			projectSidebarVisibilityKey(serverId, projectId)
+		] !== false
+	);
+}
+
+export function withProjectFoldersTreeVisibility(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+	isOpen: boolean,
+): SidebarSettings {
+	return {
+		...sidebarSettings,
+		projectFoldersVisibility: {
+			...sidebarSettings.projectFoldersVisibility,
+			[projectSidebarVisibilityKey(serverId, projectId)]: isOpen,
+		},
+	};
+}
+
+export function projectFoldersTreeWidthOnDevice(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+): number {
+	return (
+		sidebarSettings.projectFoldersWidth[
+			projectSidebarVisibilityKey(serverId, projectId)
+		] ?? DEFAULT_FOLDERS_TREE_WIDTH
+	);
+}
+
+export function withProjectFoldersTreeWidth(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+	width: number,
+): SidebarSettings {
+	return {
+		...sidebarSettings,
+		projectFoldersWidth: {
+			...sidebarSettings.projectFoldersWidth,
+			[projectSidebarVisibilityKey(serverId, projectId)]: Math.round(width),
+		},
+	};
+}
+
 export function projectSidebarState(project: ProjectSidebarInput): ProjectSidebarState {
 	return {
 		...project,

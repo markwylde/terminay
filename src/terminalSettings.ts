@@ -498,6 +498,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 		panelOrder: [...SIDEBAR_PANEL_IDS],
 		projectVisibility: {},
 		projectActiveGroup: {},
+		projectFoldersVisibility: {},
+		projectFoldersWidth: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -2346,6 +2348,20 @@ function normalizeProjectSidebarVisibility(value: unknown): Record<string, boole
 	return Object.fromEntries(entries.slice(-256));
 }
 
+function normalizeProjectFoldersWidth(value: unknown): Record<string, number> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const entries = Object.entries(value).flatMap(([key, width]) =>
+		typeof width === 'number' &&
+		Number.isFinite(width) &&
+		key.length > 0 &&
+		key.length <= 512
+			? ([[key, Math.min(2_000, Math.max(120, Math.round(width)))]] as const)
+			: [],
+	);
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeProjectSidebarActiveGroup(
 	value: unknown,
 ): Record<string, SidebarGroupId> {
@@ -2947,6 +2963,12 @@ export function normalizeTerminalSettings(
 			),
 			projectActiveGroup: normalizeProjectSidebarActiveGroup(
 				sidebarInput.projectActiveGroup,
+			),
+			projectFoldersVisibility: normalizeProjectSidebarVisibility(
+				sidebarInput.projectFoldersVisibility,
+			),
+			projectFoldersWidth: normalizeProjectFoldersWidth(
+				sidebarInput.projectFoldersWidth,
 			),
 		},
 		theme: {

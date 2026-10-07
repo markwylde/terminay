@@ -95,6 +95,12 @@ type Options = {
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 	onSetError: (message: string | null) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
+	/**
+	 * False when `project.rootFolder` is a linked folder's worktree rather than
+	 * the project's own root. The explorer then never repoints the project to
+	 * reach a path: its root is not the project's to move.
+	 */
+	ownsProjectRoot?: boolean;
 	project: ProjectTab;
 };
 
@@ -364,6 +370,7 @@ export function useFileExplorerController({
 	onOperationSucceeded,
 	onSetError,
 	onUpdateProject,
+	ownsProjectRoot = true,
 	project,
 }: Options) {
 	const [directoryChildren, setDirectoryChildren] = useState<
@@ -424,6 +431,7 @@ export function useFileExplorerController({
 			path: string,
 			createAction: (worktreeRoot: string) => PendingGitFilesystemActionKind,
 		): boolean => {
+			if (!ownsProjectRoot) return false;
 			const worktreeRoot = gitFilesystemActionWorktreeRoot(
 				path,
 				project.rootFolder,
@@ -437,7 +445,13 @@ export function useFileExplorerController({
 			onUpdateProject(project.id, { rootFolder: worktreeRoot });
 			return true;
 		},
-		[onUpdateProject, project.id, project.rootFolder, worktreePanelStatus],
+		[
+			onUpdateProject,
+			ownsProjectRoot,
+			project.id,
+			project.rootFolder,
+			worktreePanelStatus,
+		],
 	);
 
 	const requestFileExplorerName = useCallback(
@@ -900,7 +914,9 @@ export function useFileExplorerController({
 					throw new Error('Git worktree controls are unavailable.');
 				}
 				await gitClient.move(reference, name, worktree.head);
-				if (project.rootFolder === worktree.path) {
+				// A linked folder follows its renamed worktree through the server's
+				// own link; only the project's root is this explorer's to move.
+				if (ownsProjectRoot && project.rootFolder === worktree.path) {
 					onUpdateProject(project.id, { rootFolder: nextPath });
 					setExpandedPaths({ [nextPath]: true });
 				}
@@ -915,6 +931,7 @@ export function useFileExplorerController({
 			onSetError,
 			onOperationError,
 			onUpdateProject,
+			ownsProjectRoot,
 			project.id,
 			project.rootFolder,
 			requestFileExplorerName,

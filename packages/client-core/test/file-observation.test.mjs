@@ -58,3 +58,28 @@ test("stopping a watch on a lost connection settles quietly through a feature tr
   }));
   await assert.rejects(refused.stopWatch("watch-1"), /not owned by this client/u);
 });
+
+test("a folder-scoped observation client names its folder on watch and folder-size starts", async () => {
+  const payloads = [];
+  const transport = {
+    async command(operation, payload) {
+      payloads.push({ operation, payload });
+      if (operation === "files.watch.start") return { subscriptionId: "watch-1", projectId: payload.projectId, resource: payload.resource, cursor: 0 };
+      return { jobId: "size-1", projectId: payload.projectId, resource: payload.resource };
+    },
+    async query() { return null; },
+    async subscribeEvents() { return () => {}; },
+  };
+  const project = new FileObservationClient(transport);
+  const folder = project.forFolder("folder-wt");
+  await project.startWatch("project-a", "docs");
+  await folder.startWatch("project-a", "docs");
+  await folder.startFolderSize("project-a", "");
+  assert.deepEqual(payloads, [
+    { operation: "files.watch.start", payload: { projectId: "project-a", resource: "docs" } },
+    { operation: "files.watch.start", payload: { projectId: "project-a", folderId: "folder-wt", resource: "docs" } },
+    { operation: "files.folder-size.start", payload: { projectId: "project-a", folderId: "folder-wt", resource: "" } },
+  ]);
+  assert.equal(project.forFolder(undefined), project);
+  assert.throws(() => project.forFolder("../escape"), /folderId is invalid/);
+});

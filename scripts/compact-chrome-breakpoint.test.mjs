@@ -224,7 +224,7 @@ test('the Command Bar control takes the same dispatch as the accelerator', async
 	// the same command with its own Command Bar.
 	assert.match(
 		app,
-		/command === 'open-command-bar' &&\s*\(isHomeSelected \|\| !workspaceRefs\.current\.get\(activeProjectId\)\)\s*\) \{\s*setIsViewCommandBarOpen\(true\);/,
+		/command === 'open-command-bar' &&\s*\(isHomeSelected \|\| !commandWorkspace\(activeProjectId\)\)\s*\) \{\s*setIsViewCommandBarOpen\(true\);/,
 	);
 	// One definition of what opening the Command Bar means: the control must not
 	// reach past the command into the launcher's own state.

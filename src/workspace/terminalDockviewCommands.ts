@@ -71,19 +71,12 @@ export function activateTerminalPanel(options: {
 	return panel;
 }
 
+/** Closing the last panel is not special: the folder it was in stays, empty,
+ * and the project stays open. */
 export function closeActiveDockviewPanel(options: {
 	api: DockviewApi | null;
-	onCloseLastPanel: () => void;
 }): void {
-	const activePanel = options.api?.activePanel;
-	if (!activePanel) {
-		return;
-	}
-	if (options.api?.panels.length === 1) {
-		options.onCloseLastPanel();
-		return;
-	}
-	activePanel.api.close();
+	options.api?.activePanel?.api.close();
 }
 
 export async function saveActiveDockviewPanel(options: {

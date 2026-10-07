@@ -299,6 +299,18 @@ test('TerminayTerminalClient creates a server-owned terminal session', async () 
 		cols: 120,
 		rows: 40,
 	});
+
+	// A terminal is placed in a folder by id. No directory travels with it: the
+	// server decides where a linked folder starts a terminal.
+	await client.create({ projectId: 'project-a', folderId: 'folder-wt' });
+	assert.deepEqual(transport.calls[1][1], {
+		projectId: 'project-a',
+		folderId: 'folder-wt',
+	});
+	await assert.rejects(
+		() => client.create({ projectId: 'project-a', folderId: '' }),
+		/terminal folderId is invalid/,
+	);
 });
 
 test('TerminayTerminalClient waits on canonical server inactivity with exact identity', async () => {

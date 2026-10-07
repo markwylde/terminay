@@ -422,3 +422,51 @@ test("FileViewerClient accepts folder Markdown task aggregation in a binary quer
     payload: { path: "specs", projectId: "project-a", options: {} },
   }]);
 });
+
+test("a folder-scoped FileViewerClient names its folder and never a root", async () => {
+  const calls = [];
+  const transport = {
+    async query(operation, payload) {
+      calls.push({ operation, payload });
+      if (operation === "files.list") return { root: ".", offset: 0, truncated: false, entries: [] };
+      throw new Error(`unanswered query ${operation}`);
+    },
+    async command(operation, payload) { calls.push({ operation, payload }); return null; },
+  };
+  const project = new FileViewerClient(transport);
+  const folder = project.forFolder("folder-wt");
+  await project.listFolder(".", "project-a");
+  await folder.listFolder(".", "project-a");
+  await folder.createDirectory("src", "project-a");
+  await folder.renameEntry("a.txt", "b.txt", "project-a");
+  await folder.deleteEntry("b.txt", false, "project-a");
+  // The reply is not modelled here; only what was asked matters.
+  await folder.openFile("a.txt", "project-a").catch(() => undefined);
+  await folder.readContentText("a.txt", 0, 16, "project-a").catch(() => undefined);
+  assert.deepEqual(calls.map(({ operation, payload }) => [operation, payload.folderId]), [
+    ["files.list", undefined],
+    ["files.list", "folder-wt"],
+    ["files.create-directory", "folder-wt"],
+    ["files.rename", "folder-wt"],
+    ["files.delete", "folder-wt"],
+    ["files.open", "folder-wt"],
+    ["files.content-text", "folder-wt"],
+  ]);
+  assert.equal("folderId" in calls[0].payload, false);
+  assert.equal(calls.every(({ payload }) => payload.projectId === "project-a"), true);
+  assert.equal(calls.some(({ payload }) => "root" in payload || "projectRoot" in payload), false);
+  assert.equal(project.forFolder(undefined), project);
+  assert.equal(folder.forFolder("folder-wt"), folder);
+  assert.throws(() => project.forFolder(""), /folder id is invalid/);
+});
+
+test("a folder-scoped FileViewerClient refuses operations the host resolves against the project root", async () => {
+  let transportCalls = 0;
+  const folder = new FileViewerClient({
+    async query() { transportCalls += 1; return {}; },
+    async command() { transportCalls += 1; return null; },
+  }).forFolder("folder-wt");
+  await assert.rejects(() => folder.getGitDiff("a.txt", "project-a"), /not available for a linked folder/);
+  await assert.rejects(() => folder.getMutationRevision("a.txt", "project-a"), /not available for a linked folder/);
+  assert.equal(transportCalls, 0);
+});
