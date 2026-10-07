@@ -50,6 +50,11 @@ export type ConnectionsContextValue = Readonly<{
 	refreshProfiles: () => void;
 	attach: (profileId: string) => void;
 	detach: (profileId: string) => Promise<void>;
+	/** Present only where the host lets this window change its remembered
+	 * profiles. Forget removes this device's access to a server and revokes
+	 * nothing on it. */
+	renameProfile?: (profileId: string, label: string) => Promise<void>;
+	forgetProfile?: (profileId: string) => Promise<void>;
 	/** The window's remembered tab order across every attached server. A hint
 	 * validated against what exists, never an instruction. */
 	tabOrder: readonly CompositionTabHandle[];
@@ -123,6 +128,24 @@ export function ConnectionsProvider({
 			.then(setProfiles)
 			.catch(() => undefined);
 	}, [host]);
+	const renameProfile = useMemo(() => {
+		const rename = host?.renameProfile;
+		if (rename === undefined) return undefined;
+		return async (profileId: string, label: string) => {
+			await rename(profileId, label);
+			refreshProfiles();
+		};
+	}, [host, refreshProfiles]);
+	const forgetProfile = useMemo(() => {
+		const forget = host?.forgetProfile;
+		if (forget === undefined) return undefined;
+		return async (profileId: string) => {
+			await forget(profileId);
+			// The host closed this window's lane to it; let go of its tabs too.
+			await registry.detach(profileId).catch(() => undefined);
+			refreshProfiles();
+		};
+	}, [host, refreshProfiles, registry]);
 	useEffect(() => {
 		refreshProfiles();
 		return host?.subscribeProfiles?.(setProfiles);
@@ -205,6 +228,8 @@ export function ConnectionsProvider({
 				refreshProfiles,
 				attach,
 				detach,
+				...(renameProfile === undefined ? {} : { renameProfile }),
+				...(forgetProfile === undefined ? {} : { forgetProfile }),
 				tabOrder,
 				setTabOrder,
 				compositionRestored,
@@ -219,9 +244,11 @@ export function ConnectionsProvider({
 			attach,
 			compositionRestored,
 			detach,
+			forgetProfile,
 			host,
 			profiles,
 			refreshProfiles,
+			renameProfile,
 			setTabOrder,
 			snapshot,
 			tabOrder,

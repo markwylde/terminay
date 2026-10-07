@@ -8,6 +8,10 @@
  */
 
 export const APP_VIEW_PROXY_READY = 'ui/notifications/sandbox-proxy-ready';
+/** What the workspace sends the proxy: the document its view is to run. */
+export const APP_VIEW_RESOURCE_READY = 'ui/notifications/sandbox-resource-ready';
+/** Marks what the proxy itself says about its view, which a view cannot send. */
+export const APP_VIEW_PROXY_KEY = 'terminayProxy';
 export const APP_VIEW_SANDBOX = 'allow-scripts allow-forms';
 const PROBE_TIMEOUT_MS = 4000;
 

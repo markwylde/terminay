@@ -2,6 +2,14 @@ import type { Page } from '@playwright/test'
 import { normalizeTerminalSettings } from '../src/terminalSettings'
 import type { AiTabMetadataProvider } from '../src/types/terminay'
 import { expect, test } from './fixtures'
+import { sendAppCommand } from './support/app'
+import {
+  activateDockTab,
+  cancelEditWindow,
+  contextMenuItem,
+  openTerminalEditWindow,
+  submitEditWindow,
+} from './support/ui'
 import { typeInVisibleTerminal } from './support/terminal-input'
 
 const isRealCodexRun = process.env.TERMINAY_TEST_USE_REAL_CODEX === '1'
@@ -52,6 +60,7 @@ async function configureAiTabMetadata(
 
 async function setAiMock(page: Page, options?: {
 	error?: string | null
+	hold?: boolean
 	models?: readonly Readonly<{ id: string; label: string }>[]
 }) {
   if (isRealProviderRun) {
@@ -65,6 +74,7 @@ async function setAiMock(page: Page, options?: {
 
 		await window.terminayAiMetadataTest.setMock({
 			error: nextOptions?.error ?? null,
+			hold: nextOptions?.hold ?? false,
 			models: nextOptions?.models ?? [
         { id: 'codex-test-model', label: 'Codex Test Model' },
         { id: 'codex-alt-model', label: 'Codex Alt Model' },
@@ -156,6 +166,104 @@ test.describe('AI tab metadata command bar actions', () => {
     await expect(mainWindow.getByRole('textbox', { name: 'Terminal note' })).toHaveValue(
       'Reviewing package warnings from the latest build.',
     )
+  })
+
+  test('keeps a generated title after the workspace reconciles with the server', async ({ appHarness, mainWindow }) => {
+    await setAiMock(mainWindow)
+    await configureAiTabMetadata(appHarness, mainWindow)
+
+    const tabTitles = mainWindow.locator('.project-workspace--active .terminal-tab-title')
+    await expect(tabTitles.first()).toHaveText('Terminal 1')
+
+    await tabTitles.first().click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Set tab title with AI').click()
+    await expect(tabTitles.first()).toHaveText('Build Warnings')
+
+    // Opening another terminal changes the server workspace snapshot, which
+    // reconciles every presented panel against its canonical server title.
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(tabTitles).toHaveCount(2)
+    await expect(tabTitles.filter({ hasText: 'Terminal 2' })).toHaveCount(1)
+
+    await expect(tabTitles.filter({ hasText: 'Build Warnings' })).toHaveCount(1)
+    await expect(tabTitles.filter({ hasText: 'Terminal 1' })).toHaveCount(0)
+  })
+
+  test('shows a pending indication while generating without changing the title', async ({ appHarness, mainWindow }) => {
+    await setAiMock(mainWindow, { hold: true })
+    await configureAiTabMetadata(appHarness, mainWindow)
+
+    const title = mainWindow.locator('.project-workspace--active .terminal-tab-title').first()
+    await title.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Set tab title with AI').click()
+    await expect(title).toHaveText('Generating...')
+
+    // The indication is this client's presentation only: the editor still
+    // offers the terminal's real title.
+    const editWindow = await openTerminalEditWindow(mainWindow)
+    await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue('Terminal 1')
+    await cancelEditWindow(editWindow)
+
+    await setAiMock(mainWindow)
+    await expect(title).toHaveText('Build Warnings')
+  })
+
+  test('keeps a manual rename made while a title is generating', async ({ appHarness, mainWindow }) => {
+    await setAiMock(mainWindow, { hold: true })
+    await configureAiTabMetadata(appHarness, mainWindow)
+
+    const title = mainWindow.locator('.project-workspace--active .terminal-tab-title').first()
+    await title.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Set tab title with AI').click()
+    await expect(title).toHaveText('Generating...')
+
+    const editWindow = await openTerminalEditWindow(mainWindow)
+    await editWindow.getByPlaceholder('Terminal name').fill('Mine')
+    await submitEditWindow(editWindow)
+
+    await setAiMock(mainWindow)
+    await expect(mainWindow.locator('.error-banner')).toContainText('your edit was kept')
+    await expect(title).toHaveText('Mine')
+  })
+
+  test('keeps a generated title and note after the window reloads', async ({ appHarness, mainWindow }) => {
+    await setAiMock(mainWindow)
+    await configureAiTabMetadata(appHarness, mainWindow)
+
+    await appHarness.openMacroLauncher(mainWindow)
+    await runCommandBarItem(mainWindow, 'Set tab title with AI')
+    const title = mainWindow.locator('.project-workspace--active .terminal-tab-title').first()
+    await expect(title).toHaveText('Build Warnings')
+
+    await appHarness.openMacroLauncher(mainWindow)
+    await runCommandBarItem(mainWindow, 'Set tab note with AI')
+    const note = mainWindow.getByRole('textbox', { name: 'Terminal note' })
+    await expect(note).toHaveValue('Reviewing package warnings from the latest build.')
+
+    await mainWindow.reload({ waitUntil: 'domcontentloaded' })
+    await expect(title).toHaveText('Build Warnings')
+    await expect(note).toHaveValue('Reviewing package warnings from the latest build.')
+  })
+
+  test('keeps a typed note through reconciles and after the window reloads', async ({ mainWindow }) => {
+    const title = mainWindow.locator('.project-workspace--active .terminal-tab-title').first()
+    await title.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Add Note').click()
+
+    const note = mainWindow.getByRole('textbox', { name: 'Terminal note' })
+    await note.pressSequentially('Watching the deploy', { delay: 40 })
+    await expect(note).toHaveValue('Watching the deploy')
+
+    // Opening another terminal reconciles every panel against server state;
+    // it must not rewind what was typed.
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-title')).toHaveCount(2)
+    await activateDockTab(mainWindow, 'Terminal 1')
+    await expect(note).toHaveValue('Watching the deploy')
+
+    await mainWindow.reload({ waitUntil: 'domcontentloaded' })
+    await activateDockTab(mainWindow, 'Terminal 1')
+    await expect(note).toHaveValue('Watching the deploy')
   })
 
   test('leaves metadata unchanged when disabled or when the provider fails', async ({ appHarness, mainWindow }) => {

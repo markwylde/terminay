@@ -229,7 +229,7 @@ const RESULT_FILTERS: Readonly<
 
 /** Requests naming a hidden project or session are refused as not found. */
 const TARGETED_OPERATIONS = new Set([
-	'activity.closePreflight',
+	'activity.close-preflight',
 	'activity.acknowledge',
 	'agent.acknowledge',
 ]);

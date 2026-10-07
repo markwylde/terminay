@@ -6,16 +6,105 @@ on:
       - "v*.*.*"
   # The release workflow creates its tag with the workflow token, and GitHub
   # starts no workflow for a push made with that token. It dispatches this one
-  # at the tag instead, which is the only event that token may raise.
+  # at the tag instead, which is the only event that token may raise. The
+  # rolling prerelease dispatches it on the default branch with the beta
+  # version it published.
   workflow_dispatch:
+    inputs:
+      version:
+        description: Beta version to publish from the default branch (X.Y.Z-beta.N). Leave empty at a release tag.
+        type: string
+        default: ""
+      revision:
+        description: Commit that beta version was built from. Required with a version.
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 
 concurrency:
-  group: terminay-server-image-${{ github.ref }}
+  # One run per published version: a later beta never cancels the image an
+  # installed earlier beta names.
+  group: terminay-server-image-${{ github.ref }}-${{ inputs.version }}
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Decide what this run publishes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      version: ${{ steps.plan.outputs.version }}
+      revision: ${{ steps.plan.outputs.revision }}
+      channel: ${{ steps.plan.outputs.channel }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Nothing is built until the request is known to be one of the two
+      # versions the project publishes: a release tag, or a beta of a commit
+      # on the default branch.
+      - name: Validate the requested version
+        id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ -n "$VERSION" ] || [ -n "$REVISION" ]; then
+              echo "A release tag publishes its own version; version and revision must be empty." >&2
+              exit 1
+            fi
+            RELEASE="${GITHUB_REF_NAME#v}"
+            [[ "$RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            {
+              echo "mode=release"
+              echo "version=$RELEASE"
+              echo "revision=$GITHUB_SHA"
+              echo "channel=tag"
+            } >> "$GITHUB_OUTPUT"
+          elif [ -n "$VERSION" ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "A beta image is published from the default branch only." >&2
+              exit 1
+            fi
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]; then
+              echo "Not a beta version: $VERSION" >&2
+              exit 1
+            fi
+            if ! [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "A beta version needs the full commit it was built from." >&2
+              exit 1
+            fi
+            git merge-base --is-ancestor "$REVISION" "$GITHUB_SHA"
+            {
+              echo "mode=beta"
+              echo "version=$VERSION"
+              echo "revision=$REVISION"
+              echo "channel=main"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # A dispatch at a branch with no version builds and smokes the
+            # image and publishes nothing.
+            {
+              echo "mode=none"
+              echo "version=ci"
+              echo "revision=$GITHUB_SHA"
+              echo "channel=main"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
   smoke:
     name: Build and smoke server image
+    needs: plan
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,6 +113,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ needs.plan.outputs.revision }}
           persist-credentials: false
 
       - name: Validate image packaging contract
@@ -33,12 +123,14 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build the repository Dockerfile
+        env:
+          REVISION: ${{ needs.plan.outputs.revision }}
         run: |
           docker buildx build \
             --file ./Dockerfile \
             --tag terminay-server:ci \
             --build-arg OCI_VERSION=ci \
-            --build-arg OCI_REVISION="${GITHUB_SHA}" \
+            --build-arg OCI_REVISION="$REVISION" \
             --build-arg OCI_SOURCE="https://github.com/${GITHUB_REPOSITORY}" \
             --load \
             .
@@ -49,13 +141,21 @@ jobs:
           docker run --rm --read-only --tmpfs /tmp terminay-server:ci \
             --status --data-root /tmp/terminay-status
 
-  publish:
-    name: Publish server image to GHCR and Docker Hub
-    needs: smoke
-    # Only at a release tag, whether it was pushed or dispatched. A dispatch at
-    # a branch builds and smokes the image and publishes nothing.
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
+  build:
+    name: Build server image (${{ matrix.arch }})
+    needs: [plan, smoke]
+    # Only for a release tag or a validated beta version.
+    if: ${{ needs.plan.outputs.mode != 'none' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Neither architecture is published unless both were built from this commit.
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -65,15 +165,74 @@ jobs:
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ needs.plan.outputs.revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Set up multi-architecture emulation
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # One build is published under both names, so they resolve to one
+      # Each architecture is built on a runner of that architecture and pushed
+      # by digest alone. No tag exists until the manifest job joins the two.
+      - name: Build and push the image by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            OCI_VERSION=${{ needs.plan.outputs.version }}
+            OCI_REVISION=${{ needs.plan.outputs.revision }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+            TERMINAY_CHANNEL=${{ needs.plan.outputs.channel }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/terminay-server,push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+
+      - name: Record the pushed digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish server image to GHCR and Docker Hub
+    # Tags are applied only when both architectures were built.
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download both digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: server-image-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # One manifest is published under both names, so they resolve to one
       # manifest digest. Docker Hub is added only once its credential exists:
       # the image still reaches GHCR from a repository that has not been given
       # one yet.
@@ -96,19 +255,24 @@ jobs:
             echo "dockerhub=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Images are published for tagged releases only, so `latest` names the
-      # newest release and the bare image name is always one.
+      # A release publishes X.Y.Z, X.Y, and `latest`. A beta publishes its beta
+      # version and `beta`. `latest` only ever names a release and `beta` only
+      # ever names a beta, so the bare image name is always a release.
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.registries.outputs.images }}
+          flavor: |
+            latest=false
           tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=long,prefix=sha-
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{version}},enable=${{ needs.plan.outputs.mode == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.plan.outputs.mode == 'release' }}
+            type=sha,format=long,prefix=sha-,enable=${{ needs.plan.outputs.mode == 'release' }}
+            type=raw,value=latest,enable=${{ needs.plan.outputs.mode == 'release' }}
+            type=raw,value=${{ needs.plan.outputs.version }},enable=${{ needs.plan.outputs.mode == 'beta' }}
+            type=raw,value=sha-${{ needs.plan.outputs.revision }},enable=${{ needs.plan.outputs.mode == 'beta' }}
+            type=raw,value=beta,enable=${{ needs.plan.outputs.mode == 'beta' }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -124,19 +288,31 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and publish signed-attestation image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            OCI_VERSION=${{ steps.meta.outputs.version }}
-            OCI_REVISION=${{ github.sha }}
-            OCI_SOURCE=https://github.com/${{ github.repository }}
-            TERMINAY_CHANNEL=tag
-          platforms: linux/amd64,linux/arm64
-          provenance: mode=max
-          sbom: true
+      - name: Join both architectures into one tagged manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ghcr.io/${{ github.repository_owner }}/terminay-server
+        run: |
+          test -n "$TAGS"
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              TAG_ARGS+=(--tag "$tag")
+            fi
+          done <<< "$TAGS"
+          SOURCES=()
+          for digest in "$RUNNER_TEMP"/digests/*; do
+            SOURCES+=("$SOURCE@sha256:$(basename "$digest")")
+          done
+          test "${#SOURCES[@]}" = 2
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+
+      - name: Verify the published manifest lists both architectures
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          FIRST="$(printf '%s\n' "$TAGS" | head -n 1)"
+          MANIFEST="$(docker buildx imagetools inspect "$FIRST")"
+          printf '%s\n' "$MANIFEST"
+          grep -F 'linux/amd64' <<< "$MANIFEST"
+          grep -F 'linux/arm64' <<< "$MANIFEST"

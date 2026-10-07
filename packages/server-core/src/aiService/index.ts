@@ -10,6 +10,7 @@ export * from './protocol.js';
 export * from './replay.js';
 export * from './targets.js';
 export * from './types.js';
+export * from './workspaceTargets.js';
 
 import { DictationService } from './dictation.js';
 import { AiMetadataService } from './metadata.js';

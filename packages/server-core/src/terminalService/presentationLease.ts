@@ -145,6 +145,17 @@ export class TerminalPresentationLeaseAuthority {
 		return true;
 	}
 
+	/**
+	 * Forget a retired identity outright. Its attachments are already gone, so
+	 * there is nobody left to tell, and no revision is kept for a key that can
+	 * never be leased again.
+	 */
+	releaseSession(identity: TerminalIdentity): void {
+		const key = sessionKey(identity);
+		this.leases.delete(key);
+		this.revisions.delete(key);
+	}
+
 	private current(key: string): MutableLease | undefined {
 		const current = this.leases.get(key);
 		if (current !== undefined && current.leaseExpiresAt <= this.now()) {

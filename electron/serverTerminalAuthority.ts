@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, watch as watchFileSystem } from 'node:fs';
 import {
@@ -34,9 +35,11 @@ import {
 	AI_SERVER_OPERATIONS,
 	AiService,
 	createAiOperationHandlers,
+	createWorkspaceAiTargetAuthority,
 	OpenAiDictationProvider,
 	ServerParakeetDictationProvider,
 	type ServerParakeetRuntime,
+	TerminalReplayBuffer,
 	VaultProviderCredentialResolver,
 } from '../packages/server-core/src/aiService/index';
 import type { ServerCoreCompositionOptions } from '../packages/server-core/src/composition';
@@ -96,6 +99,8 @@ import type { ServerSettingsRepository } from '../packages/server-core/src/setti
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
+	BoundedChunkQueue,
+	type ByteChunk,
 	createNodePtyFactory,
 	DetachableTerminalConsumerRegistry,
 	type TerminalAuthorization,
@@ -119,6 +124,7 @@ import {
 	type WorkspaceCommand,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
@@ -279,6 +285,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
+	/** A terminal's panel was moved to another project and the terminal has
+	 * been re-homed with it. Anything the host issued for the terminal under
+	 * its old project, such as an MCP capability, ends here. */
+	readonly onTerminalRehomed?: (move: TerminalSessionRehome) => void;
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
@@ -397,7 +407,7 @@ export class ServerTerminalAuthority {
 	private readonly options: ServerTerminalAuthorityOptions;
 	private readonly sessions = new Map<string, AuthoritySession>();
 	private readonly consumers: DetachableTerminalConsumerRegistry;
-	private readonly buffers = new Map<string, Uint8Array>();
+	private readonly buffers = new Map<string, BoundedChunkQueue<ByteChunk>>();
 	private readonly listeners = new Set<(event: TerminalEvent) => void>();
 	/** Clients on this machine's renderer ports, as opposed to remote peers. */
 	private readonly embeddedRendererClientIds = new Set<string>();
@@ -440,6 +450,7 @@ export class ServerTerminalAuthority {
 	private readonly workspaceCommandTestRecords:
 		| ServerWorkspaceTestCommandRecord[]
 		| undefined;
+	private projectCreationTestRefusals = 0;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -796,19 +807,100 @@ export class ServerTerminalAuthority {
 					: openAiProvider.transcribe(request),
 		};
 		const openAiSecretId = 'dictation-openai-api-key';
+		const aiTargetAuthority = createWorkspaceAiTargetAuthority({
+			serverId: options.serverId,
+			state: () => this.workspace.state,
+			applyHostCommand: (commandId, command) =>
+				this.composition.workspaceOperations?.applyHostCommand(
+					commandId,
+					command,
+				),
+			getSession: (sessionId) => this.service.getSession(sessionId),
+		});
+		const aiReplay = {
+			read: (
+				target: { readonly sessionId: string },
+				limits: { readonly maxBytes: number; readonly maxChars: number },
+			) => this.aiReplay(target.sessionId, limits),
+		};
+		const hostAiMetadata = options.aiMetadata;
+		// The host provider reduces its own output to a bounded user-facing
+		// message. Carry that message past the service's fixed public vocabulary
+		// for the one request that produced it; raw stdout/stderr never enters it.
+		const metadataFailure = new AsyncLocalStorage<{ message?: string }>();
+		const hostMetadataProvider = (provider: 'claudeCode' | 'codex') => ({
+			generate: async (request: {
+				readonly model: string;
+				readonly target: 'title' | 'note';
+				readonly context: {
+					readonly target: {
+						readonly projectId: string;
+						readonly sessionId: string;
+					};
+					readonly currentTitle: string;
+					readonly existingNote: string;
+					readonly text: string;
+				};
+			}) => {
+				const project =
+					this.workspace.state.projects[request.context.target.projectId];
+				try {
+					const result = await hostAiMetadata!.generate({
+						context: {
+							currentTitle: request.context.currentTitle,
+							existingNote: request.context.existingNote,
+							projectRoot: project?.root ?? '',
+							projectTitle: project?.name ?? '',
+							recentOutput: request.context.text,
+							sessionId: request.context.target.sessionId,
+						},
+						model: request.model,
+						provider,
+						target: request.target,
+					});
+					return result.text;
+				} catch (error) {
+					const store = metadataFailure.getStore();
+					if (store !== undefined)
+						store.message =
+							(error instanceof Error
+								? error.message.replace(/[\0\r\n]+/gu, ' ').slice(0, 256)
+								: '') || 'AI metadata provider failed.';
+					throw error;
+				}
+			},
+		});
+		const metadataAi =
+			hostAiMetadata === undefined
+				? undefined
+				: new AiService({
+						serverId: options.serverId,
+						authority: aiTargetAuthority,
+						replay: aiReplay,
+						providers: {
+							codex: hostMetadataProvider('codex'),
+							'claude-code': hostMetadataProvider('claudeCode'),
+						},
+					});
+		const generateAiMetadata =
+			metadataAi === undefined
+				? undefined
+				: operationEntries(
+						createAiOperationHandlers(metadataAi).commands,
+					).find(
+						([name]) => name === AI_SERVER_OPERATIONS.generateMetadata,
+					)?.[1];
 		const dictationAi =
 			options.vault === undefined
 				? undefined
 				: new AiService({
 						serverId: options.serverId,
 						authority: {
-							getTarget: (target) => this.aiTargetState(target),
-							authorize: (_clientId, target) =>
-								this.aiTargetState(target)?.live === true,
+							...aiTargetAuthority,
 							writeInput: (target, input) =>
 								this.service.input(target.sessionId, input),
 						},
-						replay: { read: (target) => this.aiReplay(target.sessionId) },
+						replay: aiReplay,
 						dictationProvider,
 						...(parakeetProvider === undefined
 							? {}
@@ -930,6 +1022,7 @@ export class ServerTerminalAuthority {
 				prepareProjectRootUpdate: (projectId, root) =>
 					this.prepareProjectRootUpdate(projectId, root),
 				releaseProject: (projectId) => this.releaseProject(projectId),
+				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
 			agents: this.agents,
@@ -1079,11 +1172,21 @@ export class ServerTerminalAuthority {
 					...fileCatalogOperations.commands,
 					...mdxRuntimeOperations.commands,
 					...fileContentOperations.commands,
-					...(options.aiMetadata === undefined
+					...(generateAiMetadata === undefined
 						? {}
 						: {
-								'ai.metadata.generate': (request: CommandRequest) =>
-									this.generateAiMetadata(request),
+								[AI_SERVER_OPERATIONS.generateMetadata]: (
+									request: CommandRequest,
+								) =>
+									metadataFailure.run({}, async () => {
+										try {
+											return await generateAiMetadata(request);
+										} catch (error) {
+											const message = metadataFailure.getStore()?.message;
+											if (message === undefined) throw error;
+											throw { code: 'unavailable', message, retryable: true };
+										}
+									}),
 							}),
 					...(options.saveSparseFile === undefined
 						? {}
@@ -1139,6 +1242,22 @@ export class ServerTerminalAuthority {
 	 * workspace capability from this hook: it can only reset and read its own
 	 * redacted observation buffer through the main-process test IPC seam.
 	 */
+	/**
+	 * Test-only: the server closes every embedded renderer connection, as it
+	 * does when it reaps one. The window is told nothing by this hook; what it
+	 * learns, it learns from its byte endpoint.
+	 */
+	async closeRendererConnectionsForTest(): Promise<number> {
+		const connections = [...this.rendererConnectionsByOwner.values()];
+		await Promise.all(connections.map((connection) => connection.close()));
+		return connections.length;
+	}
+
+	/** Test-only: the server refuses this many of the next project creations. */
+	refuseProjectCreationsForTest(count: number): void {
+		this.projectCreationTestRefusals = count;
+	}
+
 	resetWorkspaceCommandTestRecords(): void {
 		this.workspaceCommandTestRecords?.splice(0);
 	}
@@ -1172,6 +1291,13 @@ export class ServerTerminalAuthority {
 			this.workspaceCommandTestRecords?.push(
 				workspaceCommandTestRecord(envelope.command),
 			);
+			if (
+				envelope.command.type === 'project.create' &&
+				this.projectCreationTestRefusals > 0
+			) {
+				this.projectCreationTestRefusals -= 1;
+				throw new Error('The server refused this project for the test.');
+			}
 			return apply(envelope);
 		};
 	}
@@ -1278,72 +1404,6 @@ export class ServerTerminalAuthority {
 		return { ino: value.ino, mtimeMs: value.mtimeMs, size: value.size };
 	}
 
-	private async generateAiMetadata(
-		request: CommandRequest,
-	): Promise<JsonValue> {
-		const service = this.options.aiMetadata;
-		if (service === undefined)
-			throw new Error('AI metadata provider is unavailable');
-		const payload = protocolPayload(request.envelope.payload);
-		const target = protocolPayload(payload.target);
-		const serverId = protocolString(target.serverId, 'target server id');
-		const projectId = protocolString(target.projectId, 'target project id');
-		const panelId = protocolString(target.panelId, 'target panel id');
-		const sessionId = protocolString(target.sessionId, 'target session id');
-		if (serverId !== this.options.serverId)
-			throw new Error('AI target belongs to another server');
-		const project = this.workspace.state.projects[projectId];
-		const panel = this.workspace.state.panels[panelId];
-		if (
-			project === undefined ||
-			panel?.type !== 'terminal' ||
-			panel.projectId !== projectId ||
-			panel.sessionId !== sessionId
-		)
-			throw new Error('AI terminal target is unavailable');
-		const targetType = payload.targetType;
-		if (targetType !== 'title' && targetType !== 'note')
-			throw new TypeError('AI metadata target type is invalid');
-		const provider = payload.provider;
-		if (provider !== 'codex' && provider !== 'claude-code')
-			throw new TypeError('AI metadata provider is invalid');
-		const model = protocolString(payload.model, 'AI model');
-		const recentOutput = new TextDecoder().decode(
-			this.buffers.get(sessionId) ?? new Uint8Array(),
-		);
-		let result: AiTabMetadataGenerateResult;
-		try {
-			result = await service.generate({
-				context: {
-					currentTitle: panel.title ?? 'Terminal',
-					existingNote: '',
-					projectRoot: project.root,
-					projectTitle: project.name,
-					recentOutput,
-					sessionId,
-				},
-				model,
-				provider: provider === 'claude-code' ? 'claudeCode' : 'codex',
-				target: targetType,
-			});
-		} catch (error) {
-			// This local embedded adapter has already reduced provider output to a
-			// user-facing Error. Preserve that bounded message through the framed
-			// protocol instead of letting the dispatcher replace it with the opaque
-			// "command failed" fallback. Raw stdout/stderr never enters this value.
-			const message =
-				error instanceof Error
-					? error.message.replace(/[\0\r\n]+/gu, ' ').slice(0, 256)
-					: 'AI metadata provider failed.';
-			throw {
-				code: 'unavailable',
-				message: message || 'AI metadata provider failed.',
-				retryable: true,
-			};
-		}
-		return { text: result.text };
-	}
-
 	private async listAiMetadataModels(
 		request: QueryRequest,
 	): Promise<JsonValue> {
@@ -1436,6 +1496,26 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+	}
+
+	/**
+	 * Follow a terminal to the project its panel was moved to. The composition
+	 * has already re-homed the terminal itself; this is the embedded host's own
+	 * bookkeeping, plus whatever the host issued under the old project.
+	 */
+	private rehomeTerminalSession(move: TerminalSessionRehome): void {
+		this.consumers.detachSession({
+			serverId: this.service.serverId,
+			projectId: move.sourceProjectId,
+			sessionId: move.sessionId,
+		});
+		const session = this.sessions.get(move.sessionId);
+		if (session !== undefined)
+			this.sessions.set(move.sessionId, {
+				...session,
+				projectId: move.targetProjectId,
+			});
+		this.options.onTerminalRehomed?.(move);
 	}
 
 	/**
@@ -1591,7 +1671,7 @@ export class ServerTerminalAuthority {
 		await this.registerProjectRoot(options.projectId, project.root);
 		const requestedId = options.sessionId;
 		if (requestedId !== undefined)
-			this.buffers.set(requestedId, new Uint8Array());
+			this.buffers.set(requestedId, this.createRecentOutput());
 		const resolver = this.composition.terminalLaunchResolver;
 		if (resolver === undefined && this.options.terminalService === undefined) {
 			throw new Error('canonical terminal launch resolution is unavailable');
@@ -1643,7 +1723,7 @@ export class ServerTerminalAuthority {
 		};
 		this.sessions.set(handle.sessionId, session);
 		if (!this.buffers.has(handle.sessionId))
-			this.buffers.set(handle.sessionId, new Uint8Array());
+			this.buffers.set(handle.sessionId, this.createRecentOutput());
 		if (this.workspace.state.terminalSessions[handle.sessionId] === undefined) {
 			const registered = this.composition.workspaceOperations?.applyHostCommand(
 				`authority:terminal:${handle.sessionId}`.slice(0, 128),
@@ -1722,42 +1802,21 @@ export class ServerTerminalAuthority {
 	}
 
 	getBuffer(id: string): string | null {
-		const bytes = this.buffers.get(id);
+		const bytes = this.buffers.get(id)?.readTail();
 		return bytes === undefined ? null : new TextDecoder().decode(bytes);
 	}
 
-	private aiTargetState(target: {
-		readonly serverId: string;
-		readonly projectId: string;
-		readonly panelId: string;
-		readonly sessionId: string;
-	}) {
-		if (target.serverId !== this.options.serverId) return undefined;
-		const panel = this.workspace.state.panels[target.panelId];
-		const session = this.service.getSession(target.sessionId);
-		if (
-			panel?.type !== 'terminal' ||
-			panel.projectId !== target.projectId ||
-			panel.sessionId !== target.sessionId ||
-			session?.projectId !== target.projectId
-		)
-			return undefined;
-		return {
-			...target,
-			live: session.status === 'running',
-			metadataRevision: 0,
-			title: panel.title ?? 'Terminal',
-			note: '',
-		};
-	}
-
-	private aiReplay(sessionId: string) {
-		const bytes = this.buffers.get(sessionId) ?? new Uint8Array();
-		return {
-			text: new TextDecoder().decode(bytes),
-			bytes: bytes.byteLength,
-			truncated: false,
-		};
+	private aiReplay(
+		sessionId: string,
+		limits: { readonly maxBytes: number; readonly maxChars: number },
+	) {
+		const bytes =
+			this.buffers.get(sessionId)?.readTail() ?? new Uint8Array();
+		const replay = new TerminalReplayBuffer({
+			maxBytes: Math.max(1, bytes.byteLength),
+		});
+		replay.append(bytes);
+		return replay.snapshot(limits);
 	}
 
 	getCwd(id: string): string | null {
@@ -1985,18 +2044,22 @@ export class ServerTerminalAuthority {
 		return this.shutdownPromise;
 	}
 
+	/** Recent output must be exactly the latest bytes up to the bound, so a
+	 * chunk is dropped only once the chunks after it cover the bound. */
+	private createRecentOutput(): BoundedChunkQueue<ByteChunk> {
+		return new BoundedChunkQueue<ByteChunk>(this.maxReplayBytes, 'cover-bound');
+	}
+
 	private handleEvent(event: TerminalEvent): void {
 		if (event.type === 'output') {
-			const previous = this.buffers.get(event.sessionId) ?? new Uint8Array();
-			const next = new Uint8Array(previous.byteLength + event.bytes.byteLength);
-			next.set(previous);
-			next.set(event.bytes, previous.byteLength);
-			this.buffers.set(
-				event.sessionId,
-				next.byteLength > this.maxReplayBytes
-					? next.slice(next.byteLength - this.maxReplayBytes)
-					: next,
-			);
+			// Retain only; recent output is assembled when something reads it, so
+			// observing an event never costs what is already retained (ADR-0044).
+			let recent = this.buffers.get(event.sessionId);
+			if (recent === undefined) {
+				recent = this.createRecentOutput();
+				this.buffers.set(event.sessionId, recent);
+			}
+			recent.push({ bytes: event.bytes.slice() });
 		}
 		if (event.type === 'exit') {
 			// Keep the bounded buffer and session snapshot available for clients

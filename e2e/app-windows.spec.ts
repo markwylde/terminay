@@ -343,6 +343,93 @@ test('a file attached to a window message is saved by the server and its path ty
 	expect(written[1]).toBe(0);
 });
 
+test('a window that arrives while another project is in front stays with its own project', async ({
+	mainWindow,
+	userDataDir,
+}) => {
+	test.setTimeout(120_000);
+	const script = path.join(userDataDir, 'app-window-project.mjs');
+	const params = path.join(userDataDir, 'app-window-project.json');
+	await writeFile(script, MCP_SCRIPT);
+	await writeFile(params, JSON.stringify({ title: 'Asked here', html: HELLO }));
+
+	await mainWindow.getByLabel('Create project').click();
+	const projects = mainWindow.locator('.project-tab');
+	await expect(projects).toHaveCount(2);
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+	const asking = projects.first();
+	const other = projects.last();
+
+	// A terminal in the first project asks for a window, and the user moves to
+	// the other project before it arrives.
+	await asking.click();
+	await expect(asking).toHaveClass(/project-tab--active/);
+	await submitTerminalCommand(
+		mainWindow,
+		`sleep 4; '${process.execPath}' '${script}' show_window '${params}'`,
+		activeTerminalPanel(mainWindow),
+	);
+	await other.click();
+	await expect(other).toHaveClass(/project-tab--active/);
+
+	// The window has arrived: its project's tab is badged.
+	await expect(asking.locator('.app-window-badge')).toHaveAttribute(
+		'aria-label',
+		/^1 app window/,
+		{ timeout: 20_000 },
+	);
+	// It is not drawn over the project in front, and its own project says it is new.
+	const card = windowTitled(mainWindow, 'Asked here');
+	await expect(card).toBeHidden();
+	await expect(windows(mainWindow)).toHaveCount(0);
+	await expect(asking.locator('.app-window-badge')).toHaveAttribute(
+		'aria-label',
+		'1 app window, new',
+	);
+
+	// Back in the project that asked, it is over the terminal that asked.
+	await asking.click();
+	await expect(card).toHaveAttribute('data-placement', 'window');
+	await expect(card).toBeVisible();
+	await expect(view(card).locator('#greeting')).toHaveText('Hello world');
+	const pane = await boxOf(activeTerminalPanel(mainWindow));
+	const open = await boxOf(card);
+	expect(Math.round(open.x - pane.x)).toBe(12);
+	await expect(asking.locator('.app-window-badge')).toHaveAttribute(
+		'aria-label',
+		'1 app window',
+	);
+
+	// Leaving the project takes its window out of the way: what is now in
+	// front is clicked where the window was.
+	await other.click();
+	await expect(other).toHaveClass(/project-tab--active/);
+	await expect(windows(mainWindow)).toHaveCount(0);
+	await mainWindow.mouse.click(open.x + open.width / 2, open.y + open.height / 2);
+	await expect(
+		mainWindow.locator('.project-workspace--active .xterm-helper-textarea').first(),
+	).toBeFocused();
+
+	// A window of this project's own is the only one shown here.
+	await writeFile(params, JSON.stringify({ title: 'Asked there', html: HELLO }));
+	await submitTerminalCommand(
+		mainWindow,
+		`'${process.execPath}' '${script}' show_window '${params}'`,
+		activeTerminalPanel(mainWindow),
+	);
+	const second = windowTitled(mainWindow, 'Asked there');
+	await expect(second).toHaveAttribute('data-placement', 'window');
+	await expect(windows(mainWindow)).toHaveCount(1);
+	await expect(card).toBeHidden();
+
+	// And the same from the other side, with neither view reloaded or lost.
+	await asking.click();
+	await expect(card).toBeVisible();
+	await expect(second).toBeHidden();
+	await expect(windows(mainWindow)).toHaveCount(1);
+	await expect(view(card).locator('#greeting')).toHaveText('Hello world');
+});
+
 test('a hostile view cannot reach the workspace, navigate it, or issue host commands', async ({
 	mainWindow,
 	userDataDir,

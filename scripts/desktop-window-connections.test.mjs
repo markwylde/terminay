@@ -314,3 +314,131 @@ test('an attached Local lane owns its own port slot in the authority', async () 
 	);
 	assert.match(authority, /rendererConnectionsByOwner/u);
 });
+
+test('a remembered-set change is published to the window, and the primary is named', async () => {
+	const { DesktopWindowConnections } = await loadModule(
+		'electron/desktopWindowConnections.ts',
+		'refresh.mjs',
+	);
+	let remembered = [
+		{ id: 'local', isLocal: true, label: 'Local', serverId: 'server-local' },
+		{ id: 'remote:a', isLocal: false, label: 'Old name' },
+	];
+	const published = [];
+	const connections = new DesktopWindowConnections({
+		primaryProfileId: 'local',
+		primaryServerId: 'server-local',
+		listProfiles: () => remembered,
+		openLane: async () => {
+			throw new Error('not opened in this test');
+		},
+		onChanged: (profiles) => published.push(profiles),
+	});
+	assert.equal(connections.primaryProfileId, 'local');
+	remembered = [remembered[0], { ...remembered[1], label: 'New name' }];
+	connections.refresh();
+	assert.deepEqual(
+		published.at(-1).map((profile) => profile.label),
+		['Local', 'New name'],
+	);
+	remembered = [remembered[0]];
+	connections.refresh();
+	assert.deepEqual(
+		published.at(-1).map((profile) => profile.id),
+		['local'],
+	);
+});
+
+test('forget removes the credential before the profile, and never touches Local or a window primary', async () => {
+	const { forgetRememberedConnection } = await loadModule(
+		'electron/forgetRememberedConnection.ts',
+		'forget.mjs',
+	);
+	const run = async (overrides = {}) => {
+		const steps = [];
+		const profiles = new Map([
+			['remote:a', { id: 'remote:a', origin: 'https://a.example' }],
+			['remote:b', { id: 'remote:b', origin: 'https://b.example' }],
+		]);
+		const options = {
+			profileId: 'remote:a',
+			localProfileId: 'local',
+			profiles,
+			windows: [
+				{
+					primaryProfileId: 'local',
+					detach: async (id) => void steps.push(`detach:${id}`),
+				},
+				{
+					primaryProfileId: 'local',
+					detach: async (id) => void steps.push(`detach:${id}`),
+				},
+			],
+			removeCredential: async (origin) => void steps.push(`credential:${origin}`),
+			removeProfile: (id) => {
+				steps.push(`profile:${id}`);
+				profiles.delete(id);
+			},
+			...overrides,
+		};
+		return { steps, profiles, result: forgetRememberedConnection(options) };
+	};
+
+	// Every window lets go of it, then the credential, then the metadata.
+	const forgotten = await run();
+	assert.equal(await forgotten.result, true);
+	assert.deepEqual(forgotten.steps, [
+		'detach:remote:a',
+		'detach:remote:a',
+		'credential:https://a.example',
+		'profile:remote:a',
+	]);
+	assert.deepEqual([...forgotten.profiles.keys()], ['remote:b']);
+
+	// A credential that cannot be removed leaves the profile listed, so the
+	// person can try again and no secret is orphaned.
+	const failing = await run({
+		removeCredential: async () => {
+			throw new Error('disk refused');
+		},
+	});
+	await assert.rejects(failing.result, /disk refused/u);
+	assert.deepEqual([...failing.profiles.keys()], ['remote:a', 'remote:b']);
+	assert.ok(!failing.steps.some((step) => step.startsWith('profile:')));
+
+	// Local is not a remembered profile and is never forgotten.
+	const local = await run({ profileId: 'local' });
+	await assert.rejects(local.result, /Local cannot be forgotten/u);
+	assert.deepEqual(local.steps, []);
+
+	// A window that runs on this server is not pulled out from under itself.
+	const primary = await run({
+		windows: [
+			{
+				primaryProfileId: 'remote:a',
+				detach: async () => {
+					throw new Error('must not be asked');
+				},
+			},
+		],
+	});
+	await assert.rejects(primary.result, /Close the window/u);
+	assert.deepEqual([...primary.profiles.keys()], ['remote:a', 'remote:b']);
+
+	// Forgetting something already gone is not an error and changes nothing.
+	const gone = await run({ profileId: 'remote:missing' });
+	assert.equal(await gone.result, false);
+	assert.deepEqual(gone.steps, []);
+
+	// Two profiles for one origin share one credential: it stays until the
+	// last of them is forgotten.
+	const shared = await run({
+		profiles: new Map([
+			['remote:a', { id: 'remote:a', origin: 'https://a.example' }],
+			['remote:c', { id: 'remote:c', origin: 'https://a.example' }],
+		]),
+		removeProfile: () => undefined,
+	});
+	assert.equal(await shared.result, true);
+	assert.ok(!shared.steps.some((step) => step.startsWith('credential:')));
+});

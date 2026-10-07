@@ -569,6 +569,44 @@ export function createServerCoreComposition(
 							),
 						]);
 					},
+					rehomeTerminalSession: (move) => {
+						// Each owner follows independently, and none may undo a move
+						// the workspace has already committed.
+						const retired = {
+							serverId: terminal.serverId,
+							projectId: move.sourceProjectId,
+							sessionId: move.sessionId,
+						};
+						for (const follow of [
+							() => terminalOperations.retireIdentity(retired),
+							() =>
+								terminal.rehomeSession(move.sessionId, move.targetProjectId),
+							() =>
+								options.activity?.rehomeSession(
+									move.sessionId,
+									move.targetProjectId,
+								),
+							() =>
+								options.agents?.rehomeTerminal(
+									move.sessionId,
+									move.targetProjectId,
+								),
+							() => {
+								const recordings = options.recordings?.service;
+								if (recordings?.getSessionScope(move.sessionId) !== undefined)
+									recordings.updateSessionMetadata(move.sessionId, {
+										projectId: move.targetProjectId,
+									});
+							},
+							() => options.workspaceOperations?.rehomeTerminalSession?.(move),
+						]) {
+							try {
+								follow();
+							} catch {
+								// The workspace is the record of where a terminal lives.
+							}
+						}
+					},
 					eventJournal,
 					...(options.shellProfiles === undefined
 						? {}

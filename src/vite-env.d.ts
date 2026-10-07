@@ -61,6 +61,8 @@ declare global {
 		};
 		terminayLocalConnectionFaultTest?: {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
+			closeServerConnection: () => Promise<number>;
+			refuseProjectCreations: (count: number) => Promise<void>;
 		};
 		terminayAgentStatusTest?: {
 			publishSessions: (payload: {
@@ -78,6 +80,7 @@ declare global {
 			setMock: (mock: {
 				error?: string | null;
 				models?: readonly Readonly<{ id: string; label: string }>[];
+				hold?: boolean;
 				noteResult?: string;
 				titleResult?: string;
 			}) => Promise<void>;

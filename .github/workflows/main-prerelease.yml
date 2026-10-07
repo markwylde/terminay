@@ -152,6 +152,9 @@ jobs:
     # Its own job, so a signing or notarization outage never holds back the
     # server archives: the channel then keeps its previous desktop set.
     timeout-minutes: 60
+    outputs:
+      # Both platforms derive the same version from this commit and run number.
+      version: ${{ steps.beta_version.outputs.version }}
     strategy:
       # Neither platform is published unless both were built from this commit.
       fail-fast: true
@@ -596,3 +599,31 @@ jobs:
               cmp "$PUBLISHED/beta-linux.yml" release/main-desktop/beta-linux.yml
             fi
           fi
+
+  publish-beta-image:
+    name: Publish Beta Server Image
+    runs-on: ubuntu-latest
+    # One dispatch call.
+    timeout-minutes: 5
+    # Last, and only for a beta whose desktop and archives were published, so
+    # a beta image tag never names a build whose other artifacts failed.
+    needs: [build-main-desktop, publish-main-prerelease]
+    if: ${{ !cancelled() && needs.publish-main-prerelease.result == 'success' && needs.build-main-desktop.result == 'success' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      # The image workflow holds the registry credentials. Dispatching it is
+      # the one event the workflow token may raise.
+      actions: write
+
+    steps:
+      - name: Dispatch the image workflow with the beta version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build-main-desktop.outputs.version }}
+          REVISION: ${{ github.sha }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run server-image.yml --repo "$GH_REPO" --ref main \
+            -f "version=$VERSION" -f "revision=$REVISION"

@@ -104,6 +104,14 @@ export interface TerminalOperationRegistry {
 	 * its own attachments, leases, and checkpoints.
 	 */
 	readonly closeConnection: (connectionId: string) => void;
+	/**
+	 * End everything bound to an identity retired by a move to another project:
+	 * attachments (each is told its stream closed), the presentation lease,
+	 * checkpoint pins, resize ownership, and any initial-presentation
+	 * reservation. The PTY is never affected. Call before the terminal service
+	 * itself is re-homed.
+	 */
+	readonly retireIdentity: (retired: TerminalIdentity) => void;
 	/** Stop publishing obsolete raw output for one congested presentation. */
 	readonly suppressOutput: (attachmentId: string, connectionId: string) => void;
 	/** The client holding one session's interactive presentation lease now. */
@@ -293,6 +301,27 @@ export function createTerminalOperationRegistry(
 				if (reservation.connectionId === connectionId)
 					releaseInitialPresentationReservation(reservation.identity, true);
 			}
+		},
+		retireIdentity: (retired) => {
+			const released: ProtocolAttachment[] = [];
+			for (const [id, value] of protocolAttachments) {
+				if (!sameIdentity(value.identity, retired)) continue;
+				released.push(value);
+				protocolAttachments.delete(id);
+				const key = sessionKey(value.clientId, value.identity);
+				if (byClientSession.get(key) === id) byClientSession.delete(key);
+			}
+			releaseInitialPresentationReservation(retired, false);
+			presentations.releaseSession(retired);
+			inputSources.releaseSession(retired);
+			for (const value of released)
+				options.checkpoints?.releaseAttachment({
+					...value.identity,
+					clientId: value.clientId,
+					attachmentId: value.attachment.attachmentId,
+				});
+			// The attachment's own close path tells its client the stream ended.
+			attachments.closeSession(retired);
 		},
 		suppressOutput: (attachmentId, connectionId) => {
 			const value = protocolAttachments.get(attachmentId);
