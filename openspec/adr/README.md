@@ -45,7 +45,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0015](./0015-self-hosted-direct-signaling-exposure.md) | A Terminay Server may host its own data-blind signaling endpoint, authenticated by the transport transcript alone | accepted | 2026-09-07 |
 | [0016](./0016-self-contained-server-archives-and-release-channels.md) | Distribute the standalone server as signed self-contained per-architecture archives on tag and rolling `main` channels | accepted | 2026-09-07 |
 | [0017](./0017-one-server-type-every-project-executes-on-its-server.md) | There is one kind of remote, a Terminay Server, and every project executes on the server that owns it | accepted, supersedes 0009 | 2026-09-09 |
-| [0018](./0018-one-workspace-bundle-many-server-connections.md) | One workspace bundle drives many server connections, with compatibility negotiated per connection by the protocol | accepted, supersedes 0008 | 2026-09-09 |
+| [0018](./0018-one-workspace-bundle-many-server-connections.md) | One workspace bundle drives many server connections, with compatibility negotiated per connection by the protocol | accepted, supersedes 0008 (superseded by 0047) | 2026-09-09 |
 | [0019](./0019-language-intelligence-from-server-hosted-language-server-extensions.md) | Language intelligence comes from language-server extensions on the Terminay Server, behind a core-owned bounded protocol surface | accepted | 2026-09-09 |
 | [0020](./0020-per-operation-canonical-roots.md) | Canonicalize a project root once per filesystem operation, and never cache one across operations | accepted | 2026-09-14 |
 | [0021](./0021-measure-background-cost-in-spawns-not-parent-syscalls.md) | Measure idle background cost in child processes, not in the parent's syscalls | accepted | 2026-09-15 |
@@ -73,4 +73,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0044](./0044-output-path-work-is-proportional-to-the-output-event.md) | Work on the terminal output path is proportional to the output event | accepted | 2026-10-07 |
 | [0045](./0045-the-mcp-adapter-may-read-a-document-the-agent-names.md) | The MCP adapter may read a document the agent names, to show the user; the server never opens it | accepted | 2026-10-07 |
 | [0046](./0046-window-attachments-are-an-unbounded-streamed-scratch-write.md) | Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them | accepted | 2026-10-07 |
+| [0047](./0047-a-window-is-one-server-running-the-host-bundle.md) | A window is bound to one server; Desktop runs its packaged bundle for it, with compatibility negotiated by the protocol | accepted, supersedes 0018 | 2026-10-07 |
 | [0048](./0048-a-connection-belongs-to-a-window-and-authority-to-a-device.md) | A live connection belongs to a client window; authority belongs to the device | accepted | 2026-10-07 |

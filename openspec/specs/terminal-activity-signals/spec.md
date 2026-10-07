@@ -267,7 +267,7 @@ Terminal fallback activity SHALL use the existing tab-activity language: amber o
 
 ### Requirement: Fallback acknowledgement
 
-For terminal fallback activity, clicking the terminal tab, clicking into the terminal, or typing into it SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity count badge, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab SHALL report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. Structured completion or attention that arrives while the user is already interacting with that terminal SHALL be acknowledged as viewed and SHALL NOT leave a finished or attention indicator on that tab, the project activity count, or the header aggregate.
+For terminal fallback activity, clicking the terminal tab, clicking into the terminal, typing into it, or dismissing its notification from the header Notifications list SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity dot, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab and dismissing a terminal's notification SHALL each report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. A terminal counts as the one the user is interacting with only while it is both the terminal they last clicked or typed in and the focused terminal; once focus moves to another terminal, including a newly created one, it no longer does. Structured completion or attention that arrives while the user is already interacting with that terminal SHALL be acknowledged as viewed and SHALL NOT leave a finished or attention indicator on that tab, the project activity dot, or the header Notifications number.
 
 #### Scenario: Viewing clears the indicator
 
@@ -279,30 +279,40 @@ For terminal fallback activity, clicking the terminal tab, clicking into the ter
 - **WHEN** a user clicks a terminal tab
 - **THEN** it reports the same server-owned acknowledgement as typing into that terminal
 
+#### Scenario: Dismissal acknowledgement
+
+- **WHEN** a user dismisses a terminal's notification from the header Notifications list
+- **THEN** it reports the same server-owned acknowledgement as typing into that terminal, and the terminal is not selected
+
 #### Scenario: Activating a project does not acknowledge
 
 - **WHEN** a background project has a terminal with a finished or attention indicator and the user activates that project without clicking the terminal tab, clicking into the terminal, or typing
-- **THEN** the terminal indicator, project activity count, and header count remain
+- **THEN** the terminal indicator, project activity dot, and header Notifications number remain
 
 #### Scenario: Focusing a finished tab
 
 - **WHEN** a user clicks a terminal tab that shows a finished unviewed indicator
-- **THEN** the terminal indicator, that project's activity count for this terminal, and the header finished count all clear
+- **THEN** the terminal indicator and that terminal's contribution to its project's activity dot and to the header Notifications number all clear
 
 #### Scenario: Focusing an attention tab
 
 - **WHEN** a user clicks a terminal tab that shows a fallback attention indicator
-- **THEN** the terminal indicator, that project's activity count for this terminal, and the header attention count all clear
+- **THEN** the terminal indicator and that terminal's contribution to its project's activity dot and to the header Notifications number all clear
 
 #### Scenario: Completion on an already interacting terminal
 
 - **WHEN** structured completion arrives for the terminal the user is already clicking or typing in
-- **THEN** no finished indicator appears on that tab, the project activity count, or the header aggregate
+- **THEN** no finished indicator appears on that tab, the project activity dot, or the header Notifications number
 
 #### Scenario: Attention on an already interacting terminal
 
 - **WHEN** a bell or notification arrives for the terminal the user is already clicking or typing in
-- **THEN** no attention indicator appears on that tab, the project activity count, or the header aggregate
+- **THEN** no attention indicator appears on that tab, the project activity dot, or the header Notifications number
+
+#### Scenario: Completion after moving to another terminal
+
+- **WHEN** a user types in one terminal, then opens or focuses another terminal, and structured or agent completion then arrives for the first
+- **THEN** the first terminal shows a finished indicator, and its project activity dot and the header Notifications number include it
 
 #### Scenario: Project switch handoff
 
@@ -502,3 +512,41 @@ The activity snapshot SHALL identify foreground observation as `available` or `l
 
 - **WHEN** a session's observation cannot provide a current safe foreground answer
 - **THEN** the snapshot reports `limited` and this is not treated as idle
+
+### Requirement: Compact switcher activity presentation
+
+Terminal rows in the unified compact switcher SHALL present activity using the same vocabulary and priority as the terminal tab, the header activity menu, the project tab badge, and the dashboard, so no surface reads a state differently. A row SHALL indicate `working`, `waiting`, `blocked`, and `done` under the same acknowledgement rules those surfaces use, and SHALL stay neutral for `idle`. A project group heading SHALL carry that project's activity count badge with the same count, colour, and zero-hiding behaviour as that project's tab.
+
+#### Scenario: Row state matches the tab
+
+- **WHEN** a terminal is `working` and its row and its tab are both visible
+- **THEN** both indicate `working` with the same vocabulary
+
+#### Scenario: Viewing clears the row indicator
+
+- **WHEN** a terminal with an unacknowledged `done` entry is viewed
+- **THEN** its switcher row indicator clears alongside its tab indicator
+
+#### Scenario: Group heading carries the project badge
+
+- **WHEN** a project has two working terminals
+- **THEN** its switcher group heading shows the same amber badge reading `2` that its project tab shows
+
+### Requirement: Compact switcher preview line
+
+A terminal row SHALL show a preview line beneath its title when this window holds that terminal's rendered buffer, taken as the most recent non-empty line of that buffer and truncated to one line. The preview SHALL be a read of what this window already renders and SHALL NOT be requested from the server, SHALL NOT be persisted, and SHALL NOT be treated as activity authority. A row whose terminal has no rendered buffer in this window SHALL show no preview line rather than a placeholder, and SHALL remain fully operable.
+
+#### Scenario: Preview from the rendered buffer
+
+- **WHEN** a terminal rendered in this window has produced output
+- **THEN** its row shows the most recent non-empty line of that output, truncated to one line
+
+#### Scenario: No buffer, no preview
+
+- **WHEN** a terminal has no rendered buffer in this window
+- **THEN** its row shows no preview line and still activates that terminal when pressed
+
+#### Scenario: Preview never becomes authority
+
+- **WHEN** a preview line is shown for a terminal
+- **THEN** the terminal's activity state still comes from the activity projection and the preview changes no state
