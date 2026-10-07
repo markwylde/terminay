@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, watch as watchFileSystem } from 'node:fs';
 import {
 	lstat,
 	mkdir,
@@ -14,6 +14,8 @@ import {
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import {
+	basename,
+	dirname,
 	isAbsolute,
 	relative,
 	resolve,
@@ -74,7 +76,10 @@ import {
 	ServerFileCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
-import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
+import {
+	type FileObservationHost,
+	ServerFileObservationAdapter,
+} from '../packages/server-core/src/fileService/observationAdapter';
 import {
 	createSessionHolderPtyFactory,
 	type SessionHolderLaunchRequest,
@@ -124,7 +129,7 @@ import {
 } from '../packages/server-core/src/workspace';
 import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
-import { fileObservationHostForRoot, ServerFolders } from './serverFolders';
+import { ServerFolders } from './serverFolders';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -542,6 +547,7 @@ export class ServerTerminalAuthority {
 					command,
 				),
 			storage: nodeFileCatalogStorage,
+			observationHost: (root) => fileObservationHostForRoot(() => root),
 			projects: {
 				catalog: (projectId) => this.fileCatalogProjects.get(projectId),
 				content: (projectId) => this.fileContentProjects.get(projectId),
@@ -2315,6 +2321,84 @@ function protocolString(value: unknown, label: string): string {
 	)
 		throw new TypeError(`${label} is invalid`);
 	return value;
+}
+
+/**
+ * Watches and sizes paths under one root. A project and a linked folder differ
+ * only in which root that is, so both are observed through this.
+ */
+function fileObservationHostForRoot(
+	rootOf: (projectId: string) => string | undefined,
+): FileObservationHost {
+	return {
+		watch: async ({ projectId, resource, signal, publish }) => {
+			const root = rootOf(projectId);
+			if (root === undefined)
+				throw new Error('file observation project is unavailable');
+			const target = resolve(root, resource);
+			const targetStats = await stat(target);
+			const watchedDirectory = targetStats.isDirectory()
+				? target
+				: dirname(target);
+			const watchedName = targetStats.isDirectory() ? null : basename(target);
+			const watcher = watchFileSystem(
+				watchedDirectory,
+				{ persistent: false },
+				(eventType, entryName) => {
+					if (
+						watchedName !== null &&
+						entryName !== null &&
+						String(entryName) !== watchedName
+					)
+						return;
+					publish({
+						resource,
+						kind: eventType === 'rename' ? 'renamed' : 'changed',
+						...(entryName === null
+							? {}
+							: { relatedResource: String(entryName) }),
+					});
+				},
+			);
+			let unavailablePublished = false;
+			const publishUnavailable = () => {
+				if (signal.aborted || unavailablePublished) return;
+				unavailablePublished = true;
+				publish({ resource, kind: 'unavailable' });
+			};
+			watcher.once('error', publishUnavailable);
+			watcher.once('close', publishUnavailable);
+			signal.addEventListener('abort', () => watcher.close(), {
+				once: true,
+			});
+		},
+		calculateFolderSize: async ({ projectId, resource, signal, progress }) => {
+			const root = rootOf(projectId);
+			if (root === undefined)
+				throw new Error('folder-size project is unavailable');
+			let bytes = 0;
+			let files = 0;
+			let directories = 0;
+			const visit = async (directory: string): Promise<void> => {
+				if (signal.aborted) throw signal.reason;
+				directories += 1;
+				for (const entry of await readdir(directory, {
+					withFileTypes: true,
+				})) {
+					if (signal.aborted) throw signal.reason;
+					const path = resolve(directory, entry.name);
+					if (entry.isDirectory()) await visit(path);
+					else if (entry.isFile()) {
+						files += 1;
+						bytes += (await stat(path)).size;
+					}
+					progress({ bytes, files, directories });
+				}
+			};
+			await visit(resolve(root, resource));
+			return { bytes, files, directories };
+		},
+	};
 }
 
 const nodeFileCatalogStorage: FileCatalogStorage & FileSessionStorage = {

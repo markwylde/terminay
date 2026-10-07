@@ -103,8 +103,10 @@ export function createStandaloneFolders(
 	};
 	// The registry watch the Git service already holds is the only source of
 	// "a worktree was added or removed"; it surfaces as a status change.
+	// The reconciler decides which changes can affect folders, so an edit in a
+	// worktree it already knows does not re-read the listing.
 	const unsubscribe = options.git.subscribe((event) => {
-		if (event.type === 'git.status.changed') reconcile(event.projectId);
+		if (event.type === 'git.status.changed') reconciler.onGitChange(event);
 	});
 	return {
 		roots,

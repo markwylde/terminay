@@ -199,3 +199,39 @@ test("nested suspensions resume only when the last one ends, and with nothing as
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(git.reads, reads + 1);
 });
+
+test("a change inside a known worktree reads nothing; a removal, a registry change, or a new worktree runs a pass", async () => {
+  const { reconciler, git, linked } = fixture();
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  git.worktrees = [{ ...MAIN, id: "wt-main" }, { ...row("/repo/.worktrees/feature"), id: "wt-feature" }];
+  // Before any pass nothing is known, so the first change runs one.
+  reconciler.onGitChange({ projectId: "project-a", worktreeId: "wt-main" });
+  await settle();
+  assert.equal(git.reads, 1);
+  assert.equal(linked().length, 1);
+
+  // Edits inside worktrees the project already has folders for.
+  for (const worktreeId of ["wt-main", "wt-feature", "wt-main"]) reconciler.onGitChange({ projectId: "project-a", worktreeId });
+  await settle();
+  assert.equal(git.reads, 1);
+
+  // A worktree no pass has seen.
+  git.worktrees = [...git.worktrees, { ...row("/repo/.worktrees/docs"), id: "wt-docs" }];
+  reconciler.onGitChange({ projectId: "project-a", worktreeId: "wt-docs" });
+  await settle();
+  assert.equal(git.reads, 2);
+  assert.equal(linked().length, 2);
+
+  // A removal is reported with no worktree named.
+  git.worktrees = [{ ...MAIN, id: "wt-main" }];
+  reconciler.onGitChange({ projectId: "project-a", worktreeId: null });
+  await settle();
+  assert.equal(git.reads, 3);
+  assert.deepEqual(linked(), []);
+
+  // A released project forgets what it knew.
+  reconciler.release("project-a");
+  reconciler.onGitChange({ projectId: "project-a", worktreeId: "wt-main" });
+  await settle();
+  assert.equal(git.reads, 4);
+});
