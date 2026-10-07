@@ -86,3 +86,35 @@ test('a listing scoped to a worktree removed outside the service still lists the
 		[true],
 	);
 });
+
+test('a worktree that leaves the listing is announced to its project, and an unchanged listing is not', async (t) => {
+	const { GitService } = await import('../dist/gitService/index.js');
+	const fixture = await repositoryWithTwoWorktrees();
+	t.after(() => rm(fixture.root, { recursive: true, force: true }));
+
+	const service = new GitService();
+	await service.bindProject('project-a', fixture.main);
+	await service.worktrees({ projectId: 'project-a' });
+	const events = [];
+	service.subscribe((event) => {
+		if (event.type === 'git.status.changed') events.push(event);
+	});
+
+	// Nothing changed: listing again announces nothing.
+	await service.worktrees({ projectId: 'project-a', fresh: true });
+	assert.deepEqual(events, []);
+
+	// Removed from a plain shell. The remaining worktree's own status is
+	// unchanged, so only the removal itself can be what is announced.
+	await fixture.run(['worktree', 'remove', '--force', fixture.second], fixture.main);
+	const after = await service.worktrees({ projectId: 'project-a', fresh: true });
+	assert.equal(after.worktrees.length, 1);
+	assert.ok(events.some((event) => event.projectId === 'project-a' && event.worktreeId === null));
+
+	// Announcing it resets what the project was last told, so the next listing
+	// restates the remaining worktree once. After that it is quiet again.
+	await service.worktrees({ projectId: 'project-a', fresh: true });
+	events.length = 0;
+	await service.worktrees({ projectId: 'project-a', fresh: true });
+	assert.deepEqual(events, []);
+});

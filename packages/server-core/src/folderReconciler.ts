@@ -58,6 +58,8 @@ export class FolderReconciler {
 	private readonly settled = new Set<string>();
 	/** Projects with a worktree operation of Terminay's own in flight. */
 	private readonly suspended = new Map<string, number>();
+	/** The worktree ids each project's last pass saw. */
+	private readonly known = new Map<string, ReadonlySet<string>>();
 	private serial = 0;
 
 	constructor(private readonly options: FolderReconcilerOptions) {}
@@ -82,8 +84,30 @@ export class FolderReconciler {
 		return pass;
 	}
 
+	/**
+	 * React to a change the Git service reported. Most changes are an edit
+	 * inside a worktree the project already has a folder for, and need nothing.
+	 * A pass runs only for a change that names no worktree, which is how a
+	 * removal or a registry change is reported, and for a worktree no pass has
+	 * seen yet, so an idle window does not re-read the listing on every save.
+	 */
+	onGitChange(change: {
+		readonly projectId: string;
+		readonly worktreeId: string | null;
+	}): void {
+		const known = this.known.get(change.projectId);
+		if (
+			change.worktreeId !== null &&
+			known !== undefined &&
+			known.has(change.worktreeId)
+		)
+			return;
+		void this.reconcile(change.projectId);
+	}
+
 	/** Forget a project that was closed or released. */
 	release(projectId: string): void {
+		this.known.delete(projectId);
 		this.settled.delete(projectId);
 		this.again.delete(projectId);
 		this.suspended.delete(projectId);
@@ -153,6 +177,14 @@ export class FolderReconciler {
 		const listing = await this.options.worktrees(projectId);
 		if (listing.state !== 'ready' && listing.state !== 'not-repository')
 			return;
+		this.known.set(
+			projectId,
+			new Set(
+				listing.worktrees.flatMap((worktree) =>
+					worktree.id === undefined ? [] : [worktree.id],
+				),
+			),
+		);
 		const root =
 			listing.state === 'ready'
 				? await this.options.canonicalRoot(project.root)

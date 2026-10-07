@@ -1,6 +1,4 @@
-import { watch as watchFileSystem } from 'node:fs';
-import { readdir, realpath, stat } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
 import {
 	CanonicalProjectPathResolver,
 	FileCatalog,
@@ -29,84 +27,6 @@ import type {
 	WorkspaceState,
 } from '../packages/server-core/src/workspace';
 
-/**
- * Watches and sizes paths under one root. A project and a linked folder differ
- * only in which root that is, so both are observed through this.
- */
-export function fileObservationHostForRoot(
-	rootOf: (projectId: string) => string | undefined,
-): FileObservationHost {
-	return {
-		watch: async ({ projectId, resource, signal, publish }) => {
-			const root = rootOf(projectId);
-			if (root === undefined)
-				throw new Error('file observation project is unavailable');
-			const target = resolve(root, resource);
-			const targetStats = await stat(target);
-			const watchedDirectory = targetStats.isDirectory()
-				? target
-				: dirname(target);
-			const watchedName = targetStats.isDirectory() ? null : basename(target);
-			const watcher = watchFileSystem(
-				watchedDirectory,
-				{ persistent: false },
-				(eventType, entryName) => {
-					if (
-						watchedName !== null &&
-						entryName !== null &&
-						String(entryName) !== watchedName
-					)
-						return;
-					publish({
-						resource,
-						kind: eventType === 'rename' ? 'renamed' : 'changed',
-						...(entryName === null
-							? {}
-							: { relatedResource: String(entryName) }),
-					});
-				},
-			);
-			let unavailablePublished = false;
-			const publishUnavailable = () => {
-				if (signal.aborted || unavailablePublished) return;
-				unavailablePublished = true;
-				publish({ resource, kind: 'unavailable' });
-			};
-			watcher.once('error', publishUnavailable);
-			watcher.once('close', publishUnavailable);
-			signal.addEventListener('abort', () => watcher.close(), {
-				once: true,
-			});
-		},
-		calculateFolderSize: async ({ projectId, resource, signal, progress }) => {
-			const root = rootOf(projectId);
-			if (root === undefined)
-				throw new Error('folder-size project is unavailable');
-			let bytes = 0;
-			let files = 0;
-			let directories = 0;
-			const visit = async (directory: string): Promise<void> => {
-				if (signal.aborted) throw signal.reason;
-				directories += 1;
-				for (const entry of await readdir(directory, {
-					withFileTypes: true,
-				})) {
-					if (signal.aborted) throw signal.reason;
-					const path = resolve(directory, entry.name);
-					if (entry.isDirectory()) await visit(path);
-					else if (entry.isFile()) {
-						files += 1;
-						bytes += (await stat(path)).size;
-					}
-					progress({ bytes, files, directories });
-				}
-			};
-			await visit(resolve(root, resource));
-			return { bytes, files, directories };
-		},
-	};
-}
-
 /** Resolve symlinks and require a directory. */
 async function canonicalDirectory(path: string): Promise<string> {
 	const canonical = await realpath(path);
@@ -126,11 +46,17 @@ export interface ServerFoldersOptions {
 		command: WorkspaceCommand,
 	) => WorkspaceApplyResult | undefined;
 	readonly storage: FileCatalogStorage & FileSessionStorage;
+	/** The host that watches and sizes paths under one canonical root. */
+	readonly observationHost: (root: string) => FileObservationHost;
 	/** The contexts the host already keeps per project, which General and plain
 	 * folders use unchanged. */
 	readonly projects: {
-		readonly catalog: (projectId: string) => FileCatalogProjectContext | undefined;
-		readonly content: (projectId: string) => FileContentProjectContext | undefined;
+		readonly catalog: (
+			projectId: string,
+		) => FileCatalogProjectContext | undefined;
+		readonly content: (
+			projectId: string,
+		) => FileContentProjectContext | undefined;
 		readonly session: (projectId: string) => FileProjectContext | undefined;
 		readonly observation: (
 			projectId: string,
@@ -211,7 +137,7 @@ export class ServerFolders {
 			projectContext: projects.observation,
 			create: (projectId, _folderId, root) => ({
 				projectId,
-				host: fileObservationHostForRoot(() => root),
+				host: options.observationHost(root),
 			}),
 		});
 		this.reconciler = new FolderReconciler({
@@ -226,8 +152,10 @@ export class ServerFolders {
 			canonicalRoot: (root) => realpath(root).catch(() => null),
 		});
 		this.unsubscribeGit = git.subscribe((event) => {
+			// The reconciler decides which changes can affect folders, so an edit
+			// in a worktree it already knows does not re-read the listing.
 			if (event.type === 'git.status.changed')
-				void this.reconciler.reconcile(event.projectId);
+				this.reconciler.onGitChange(event);
 		});
 	}
 

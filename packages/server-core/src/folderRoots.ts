@@ -34,6 +34,8 @@ export interface FolderRoot {
 
 /** One row of the server's own worktree listing for a project's repository. */
 export interface ListedWorktree {
+	/** The Git service's id for the worktree, when the caller has it. */
+	readonly id?: string;
 	readonly repositoryId: string;
 	readonly path: string;
 	readonly isBare?: boolean;

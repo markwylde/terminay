@@ -964,6 +964,18 @@ export class GitService {
 			}
 			return listing;
 		}
+		// A worktree that left the listing has no status of its own left to
+		// publish, so nothing above announced that it went. Say so to every
+		// project of the repository, or whatever a host keeps per worktree would
+		// only learn of the removal on some later, unrelated change.
+		if (
+			previous !== undefined &&
+			[...previous.keys()].some((id) => !measured.has(id))
+		)
+			for (const projectId of publishTo) {
+				const binding = this.getBinding(projectId);
+				if (binding !== undefined) this.publishUnattributedChange(binding);
+			}
 		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
 		if (observed !== undefined) {
 			for (const id of remeasure) observed.dirty.add(id);

@@ -1,0 +1,266 @@
+.folders-tree {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
+	font-size: 13px;
+	line-height: 1.4;
+	color: #dce2f0;
+	user-select: none;
+}
+
+.folders-tree__folder {
+	display: flex;
+	flex-direction: column;
+	border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.folders-tree__folder:first-child {
+	border-top: 0;
+}
+
+.folders-tree__folder--drop-target {
+	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.7);
+	background: rgba(87, 183, 255, 0.08);
+}
+
+/* Every row is one line. A long name is cut with an ellipsis, never wrapped. */
+.folders-tree__row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	white-space: nowrap;
+	cursor: default;
+	outline: none;
+}
+
+.folders-tree__row:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.folders-tree__row:focus-visible {
+	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.6);
+}
+
+.folders-tree__row--folder {
+	align-items: flex-start;
+	padding: 7px 6px 6px 12px;
+}
+
+.folders-tree__row--selected {
+	background: color-mix(in srgb, var(--project-color, #57b7ff) 14%, transparent);
+	box-shadow: inset 2px 0 0 var(--project-color, #57b7ff);
+}
+
+.folders-tree__row--terminal {
+	height: 26px;
+	padding: 0 10px 0 30px;
+	color: rgba(220, 226, 240, 0.8);
+}
+
+.folders-tree__row--active {
+	background: color-mix(in srgb, var(--project-color, #57b7ff) 22%, transparent);
+	box-shadow: inset 2px 0 0 var(--project-color, #57b7ff);
+	color: #fff;
+}
+
+.folders-tree__icon {
+	flex: none;
+	margin-top: 2px;
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.folders-tree__text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.folders-tree__name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folders-tree__row--folder .folders-tree__name {
+	font-weight: 600;
+	color: #fff;
+}
+
+.folders-tree__row--terminal .folders-tree__name {
+	flex: 1 1 auto;
+}
+
+.folders-tree__meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.folders-tree__branch {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 1 auto;
+	min-width: 0;
+	color: #e2a45f;
+}
+
+.folders-tree__branch > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folders-tree__pr,
+.folders-tree__checks {
+	flex: none;
+	font-weight: 600;
+}
+
+.folders-tree__pr {
+	margin-left: auto;
+}
+
+.folders-tree__pr--open,
+.folders-tree__checks--passed {
+	color: #73c991;
+}
+
+.folders-tree__pr--draft,
+.folders-tree__pr--closed {
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.folders-tree__pr--merged {
+	color: #b180d7;
+}
+
+.folders-tree__checks--failed {
+	color: #f14c4c;
+}
+
+.folders-tree__checks--pending {
+	color: #cca700;
+}
+
+.folders-tree__checks::before {
+	content: "\25EF\00A0";
+}
+
+.folders-tree__menu {
+	all: unset;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 4px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.folders-tree__menu:hover,
+.folders-tree__menu:focus-visible {
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.folders-tree__status {
+	flex: none;
+}
+
+.folders-tree__tag {
+	flex: 0 1000 auto;
+	min-width: 40px;
+	max-width: 104px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 0 7px;
+	border-radius: 8px;
+	font-size: 10.5px;
+	line-height: 16px;
+	background: rgba(226, 164, 95, 0.15);
+	color: #e2a45f;
+}
+
+.folders-tree__empty {
+	height: 24px;
+	padding: 0 10px 0 30px;
+	display: flex;
+	align-items: center;
+	font-style: italic;
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.folders-tree__offer {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	margin: 2px 8px 8px 28px;
+	padding: 8px 10px;
+	border: 1px dashed rgba(226, 164, 95, 0.6);
+	border-radius: 7px;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.7);
+}
+
+.folders-tree__offer-text strong {
+	color: #dce2f0;
+	font-weight: 600;
+}
+
+.folders-tree__offer-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.folders-tree__offer-button {
+	all: unset;
+	padding: 3px 9px;
+	border-radius: 5px;
+	font-weight: 600;
+	background: rgba(255, 255, 255, 0.09);
+	color: #dce2f0;
+}
+
+.folders-tree__offer-button:hover,
+.folders-tree__offer-button:focus-visible {
+	background: rgba(255, 255, 255, 0.16);
+}
+
+.folders-tree__offer-button--primary {
+	background: color-mix(in srgb, var(--project-color, #57b7ff) 60%, #0d1014);
+	color: #fff;
+}
+
+.folders-tree__new {
+	all: unset;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	padding: 0 12px;
+	margin-top: 4px;
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.folders-tree__new:hover,
+.folders-tree__new:focus-visible {
+	color: #dce2f0;
+	background: rgba(255, 255, 255, 0.05);
+}
+
+/* The peek under a project tab is the same tree without the column around it. */
+.folders-tree--peek {
+	max-height: min(60vh, 520px);
+}
+
+.folders-tree--peek .folders-tree__row--folder {
+	padding-left: 10px;
+}
