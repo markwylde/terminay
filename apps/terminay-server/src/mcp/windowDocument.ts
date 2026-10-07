@@ -3,7 +3,7 @@ import { type FileHandle, open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
 /**
- * Reads the document an agent names for `show_window` (ADR-0041).
+ * Reads the document an agent names for `show_window` (ADR-0045).
  *
  * This runs in the stdio adapter, which the agent's CLI spawned: it has the
  * agent's own filesystem authority and nothing more. The path never leaves this

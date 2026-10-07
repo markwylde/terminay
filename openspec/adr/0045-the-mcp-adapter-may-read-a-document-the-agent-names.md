@@ -1,4 +1,4 @@
-# ADR-0041: The MCP adapter may read a document the agent names, to show the user; the server never opens it
+# ADR-0045: The MCP adapter may read a document the agent names, to show the user; the server never opens it
 
 Status: accepted
 Date: 2026-10-07

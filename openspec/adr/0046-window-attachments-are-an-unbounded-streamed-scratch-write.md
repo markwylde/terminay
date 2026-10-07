@@ -1,4 +1,4 @@
-# ADR-0042: Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them
+# ADR-0046: Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them
 
 Status: accepted
 Date: 2026-10-07

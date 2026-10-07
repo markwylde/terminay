@@ -682,7 +682,7 @@ function registerWindowTools(
 			if (htmlFile === undefined)
 				return call('show_window', params, extra.signal);
 			// Read here, in the agent's own process tree: the server is sent the
-			// document and never the path (ADR-0041).
+			// document and never the path (ADR-0045).
 			const document = await readWindowDocument(htmlFile, MAX_WINDOW_HTML_BYTES);
 			return document.ok
 				? call('show_window', { ...params, html: document.html }, extra.signal)
