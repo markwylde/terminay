@@ -1443,12 +1443,20 @@ function getRunningTerminalCount(): number {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
 	return authority.list().filter((session) => {
-		const activity = authority.activity.get({
-			serverId: session.serverId,
-			projectId: session.projectId,
-			sessionId: session.id,
-		});
-		return activity?.foregroundBusy === true;
+		// A session can be listed while its activity is not registered, and
+		// asking then throws. This runs while the application is quitting,
+		// where an uncaught error aborts the process instead of quitting it.
+		try {
+			return (
+				authority.activity.get({
+					serverId: session.serverId,
+					projectId: session.projectId,
+					sessionId: session.id,
+				})?.foregroundBusy === true
+			);
+		} catch {
+			return false;
+		}
 	}).length;
 }
 
