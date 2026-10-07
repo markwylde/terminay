@@ -352,6 +352,18 @@ export type TerminayHostAction =
 	  }>
 	| Readonly<{ type: 'connections.detach'; profileId: string }>
 	| Readonly<{
+			/** Change a remembered remote profile's display label. */
+			type: 'connections.rename';
+			profileId: string;
+			label: string;
+	  }>
+	| Readonly<{
+			/** Remove a remembered remote profile and this device's credential
+			 * for it. Server-side access is untouched: that is revocation. */
+			type: 'connections.forget';
+			profileId: string;
+	  }>
+	| Readonly<{
 			type: 'connections.composition.write';
 			composition: TerminayWorkspaceComposition;
 	  }>;
@@ -1249,6 +1261,28 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				type: 'connections.detach',
 				profileId: identifier(action.profileId, 'connection profile id', ID),
 			});
+		case 'connections.rename': {
+			exactKeys(
+				action,
+				['type', 'profileId', 'label'],
+				'connections rename action',
+			);
+			const label = boundedText(action.label, 'connection label', 256).trim();
+			// A label is one line: it is a row in a menu and a list.
+			if (/[\t\r\n]/u.test(label))
+				throw new TypeError('connection label is invalid');
+			return Object.freeze({
+				type: 'connections.rename',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+				label,
+			});
+		}
+		case 'connections.forget':
+			exactKeys(action, ['type', 'profileId'], 'connections forget action');
+			return Object.freeze({
+				type: 'connections.forget',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+			});
 		case 'connections.composition.write':
 			exactKeys(
 				action,
@@ -1356,6 +1390,8 @@ export function requiredTerminayHostCapability(
 		case 'connections.list':
 		case 'connections.attach':
 		case 'connections.detach':
+		case 'connections.rename':
+		case 'connections.forget':
 		case 'connections.composition.write':
 			return 'connections';
 	}

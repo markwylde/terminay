@@ -127,10 +127,19 @@ test("Gitea CI uses its compatible shared-image transport", () => {
   assert.match(giteaE2e, /retention-days: 7/u);
 });
 
-test("server image publication is versioned-release-only", () => {
-  assert.doesNotMatch(serverImage, /^ {2}pull_request:/mu);
+test("the server image is published only for a release tag or a dispatched beta, never from a pull request", async () => {
+  assert.doesNotMatch(serverImage, /^ {2}pull_request/mu);
   assert.doesNotMatch(serverImage, /^ {4}branches:/mu);
   assert.match(serverImage, /^ {4}tags:/mu);
+  // A beta image exists only for a default-branch commit whose prerelease
+  // assets published: the prerelease dispatches it last, and the image
+  // workflow refuses any other branch, version shape, or foreign commit.
+  const mainPrerelease = await read(".github/workflows/main-prerelease.yml");
+  assert.match(job(mainPrerelease, "publish-beta-image"), /needs: \[build-main-desktop, publish-main-prerelease\]/u);
+  assert.match(job(serverImage, "plan"), /"\$GITHUB_REF" != refs\/heads\/main/u);
+  assert.match(job(serverImage, "plan"), /git merge-base --is-ancestor "\$REVISION" "\$GITHUB_SHA"/u);
+  assert.match(job(serverImage, "build"), /^ {4}if: \$\{\{ needs\.plan\.outputs\.mode != 'none' \}\}$/mu);
+  assert.match(job(serverImage, "publish"), /^ {4}needs: \[plan, build\]$/mu);
   assert.doesNotMatch(triggerRelease, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
   assert.match(decision, /Native arm64 qualification belongs to the manually triggered release/u);
 });

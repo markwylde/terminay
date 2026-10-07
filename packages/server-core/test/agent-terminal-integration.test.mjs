@@ -82,3 +82,20 @@ test("PTY start and foreground edges reach the agent service with the shell pid"
   ]);
   await terminal.shutdown(); await agents.stop();
 });
+
+test("a terminal moved to another project is announced again under its new identity", async () => {
+  const activity = new TerminalActivityService({ serverId: "server-1" });
+  const agents = new AgentStatusService({ activity }); await agents.start();
+  const process = { pid: 9876, write() {}, resize() {}, kill() {}, onData() { return () => {}; }, onExit() { return () => {}; } };
+  const terminal = new TerminalService({ serverId: "server-1", ptyFactory: { spawn: () => process }, sessionLifecycle: composeActivityLifecycle(activity, agents, undefined) });
+  await terminal.createSession({ projectId: "project-1", sessionId: "terminal-1", shellPath: "/bin/sh", cols: 80, rows: 24 });
+  const edges = [];
+  agents.observeTerminals((edge) => edges.push(edge));
+
+  agents.rehomeTerminal("terminal-1", "project-2");
+
+  assert.equal(agents.isSessionActive({ serverId: "server-1", projectId: "project-2", sessionId: "terminal-1" }), true);
+  assert.equal(agents.isSessionActive({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" }), false);
+  assert.deepEqual(edges.map((edge) => [edge.kind, edge.terminal.identity.projectId, edge.terminal.shellPid]), [["started", "project-2", 9876]]);
+  await terminal.shutdown(); await agents.stop();
+});

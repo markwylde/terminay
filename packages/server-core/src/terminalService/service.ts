@@ -1,4 +1,5 @@
 import { recordStreamDiagnostic } from '../streamDiagnostics.js';
+import { BoundedChunkQueue } from './boundedChunkQueue.js';
 import { TerminalServiceError } from './errors.js';
 import type { TerminalResolvedLaunch } from './launchResolver.js';
 import type { TerminalPresentationCheckpointAuthority } from './presentationCheckpoint.js';
@@ -83,12 +84,13 @@ interface CheckpointOutputChunk {
 }
 
 interface MutableSession {
-	readonly identity: TerminalIdentity;
+	/** Replaced, never edited, when the terminal's panel moves project. */
+	identity: TerminalIdentity;
 	readonly cwd: string;
 	readonly createdAt: number;
 	readonly dimensions: { cols: number; rows: number };
 	readonly launch?: TerminalSessionSnapshot['launch'];
-	readonly replay: ReplayChunk[];
+	readonly replay: BoundedChunkQueue<ReplayChunk>;
 	readonly subscribers: Set<TerminalSubscription>;
 	readonly inactivityWaiters: Set<InactivityWaiter>;
 	status: TerminalSessionStatus;
@@ -508,6 +510,33 @@ export class TerminalService {
 		);
 	}
 
+	/**
+	 * Bind a live session to the project its panel was moved to.
+	 *
+	 * The identity under the old project is retired and a new one takes its
+	 * place for the same PTY, output, and position. Every subscription made
+	 * under the retired identity ends; holders subscribe again under the new
+	 * one. Returns the retired identity, or `undefined` when this service holds
+	 * no such session or it already belongs to that project.
+	 */
+	rehomeSession(
+		sessionId: string,
+		targetProjectId: string,
+	): TerminalIdentity | undefined {
+		assertId(sessionId, 'sessionId');
+		assertId(targetProjectId, 'projectId');
+		const mutable = this.sessionsById.get(sessionId);
+		if (mutable === undefined) return undefined;
+		const retired = mutable.identity;
+		if (retired.projectId === targetProjectId) return undefined;
+		const identity = Object.freeze({ ...retired, projectId: targetProjectId });
+		for (const subscription of [...mutable.subscribers])
+			subscription.close('service_shutdown');
+		this.presentationCheckpoints?.rehomeSession(retired, identity);
+		mutable.identity = identity;
+		return retired;
+	}
+
 	getSession(
 		session: string | TerminalIdentity,
 	): TerminalSessionSnapshot | undefined {
@@ -652,7 +681,7 @@ export class TerminalService {
 			cwd,
 			createdAt,
 			dimensions: { ...dimensions },
-			replay: [],
+			replay: this.createReplay(),
 			subscribers: new Set(),
 			inactivityWaiters: new Set(),
 			checkpointPendingBytes: 0,
@@ -784,7 +813,7 @@ export class TerminalService {
 				workspaceRevision: launch.workspaceRevision,
 				settingsRevision: launch.settingsRevision,
 			}),
-			replay: [],
+			replay: this.createReplay(),
 			subscribers: new Set(),
 			inactivityWaiters: new Set(),
 			checkpointPendingBytes: 0,
@@ -924,7 +953,7 @@ export class TerminalService {
 			createdAt: options.createdAt,
 			dimensions: { ...dimensions },
 			...(options.launch === undefined ? {} : { launch: options.launch }),
-			replay: [],
+			replay: this.createReplay(),
 			subscribers: new Set(),
 			inactivityWaiters: new Set(),
 			checkpointPendingBytes: 0,
@@ -999,7 +1028,7 @@ export class TerminalService {
 			);
 		const dimensions = validateDimensions(options, this.limits);
 		validatePosition(options.outputPosition);
-		const replay: ReplayChunk[] = [];
+		const replay = this.createReplay();
 		let position = options.outputPosition;
 		// Keep only what this server would have retained had it been watching.
 		const retained = options.bytes.subarray(
@@ -1580,6 +1609,15 @@ export class TerminalService {
 		}
 	}
 
+	/** The replay evicts whole chunks, so a retained position is always a chunk
+	 * boundary and never exceeds the bound. */
+	private createReplay(): BoundedChunkQueue<ReplayChunk> {
+		return new BoundedChunkQueue<ReplayChunk>(
+			this.limits.maxReplayBytes,
+			'within-bound',
+		);
+	}
+
 	private appendOutput(mutable: MutableSession, bytes: Uint8Array): void {
 		if (bytes.byteLength === 0 || mutable.status !== 'running') return;
 		this.resetInactivityWaiters(mutable);
@@ -1601,10 +1639,8 @@ export class TerminalService {
 			const chunk: ReplayChunk = { position, nextPosition, bytes: chunkBytes };
 			mutable.outputPosition = nextPosition;
 			mutable.replay.push(chunk);
-			while (replayBytes(mutable.replay) > this.limits.maxReplayBytes)
-				mutable.replay.shift();
 			mutable.replayFrom =
-				mutable.replay[0]?.position ?? mutable.outputPosition;
+				mutable.replay.first?.position ?? mutable.outputPosition;
 			const event = outputEvent(mutable, chunk, position, false);
 			this.observePresentationOutput(mutable, position, chunkBytes);
 			this.emit(event);
@@ -2193,7 +2229,7 @@ function boundedReadBytes(value: number, maximum: number): number {
 }
 
 function readReplayBytes(
-	replay: readonly ReplayChunk[],
+	replay: Iterable<ReplayChunk>,
 	fromPosition: number,
 	maxBytes: number,
 ): Uint8Array {
@@ -2297,9 +2333,6 @@ function snapshotOf(session: MutableSession): TerminalSessionSnapshot {
 
 function eventBytes(event: TerminalEvent): number {
 	return event.type === 'output' ? event.bytes.byteLength : 0;
-}
-function replayBytes(replay: readonly ReplayChunk[]): number {
-	return replay.reduce((sum, chunk) => sum + chunk.bytes.byteLength, 0);
 }
 function checkedPositionAdd(position: number, amount: number): number {
 	const next = position + amount;

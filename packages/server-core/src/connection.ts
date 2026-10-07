@@ -52,6 +52,9 @@ export const CONNECTION_HEARTBEAT_CAPABILITY = 'connection.heartbeat';
  * evidence the server gets, so it is the signal — six missed 10s pings.
  */
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
+/** Upper bound on the lateness tolerated before a fired silence deadline is
+ * read as a suspension of the server rather than silence from the client. */
+export const MAX_HEARTBEAT_SUSPEND_TOLERANCE_MS = 5_000;
 
 interface InFlightRequest {
 	readonly controller: AbortController;
@@ -91,6 +94,8 @@ export class ServerConnection implements ServerConnectionLike {
 	private connectionCleaned = false;
 	private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly heartbeatTimeoutMs: number;
+	private readonly heartbeatSuspendToleranceMs: number;
+	private readonly heartbeatNow: () => number;
 	private readonly onClosed: (() => void) | undefined;
 	private readonly onDeliveryDiagnostic: ConnectionOptions['onDeliveryDiagnostic'];
 	private closeTask: Promise<void> | undefined;
@@ -110,6 +115,13 @@ export class ServerConnection implements ServerConnectionLike {
 		this.transportAuthenticatedClient = connectionOptions.authenticatedClient;
 		this.heartbeatTimeoutMs =
 			options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+		this.heartbeatSuspendToleranceMs =
+			options.heartbeatSuspendToleranceMs ??
+			Math.min(
+				MAX_HEARTBEAT_SUSPEND_TOLERANCE_MS,
+				this.heartbeatTimeoutMs / 2,
+			);
+		this.heartbeatNow = options.heartbeatNow ?? Date.now;
 		this.dispatcher = createOperationDispatcher(options);
 		this.onClosed = connectionOptions.onClosed;
 		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
@@ -345,10 +357,25 @@ export class ServerConnection implements ServerConnectionLike {
 	 */
 	private noteInboundFrame(): void {
 		if (!this.clientCapabilities.has(CONNECTION_HEARTBEAT_CAPABILITY)) return;
+		this.armHeartbeatDeadline();
+	}
+
+	private armHeartbeatDeadline(): void {
 		if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+		const armedAt = this.heartbeatNow();
 		this.heartbeatTimer = globalThis.setTimeout(() => {
 			this.heartbeatTimer = undefined;
 			if (this.currentState !== 'open') return;
+			// A deadline that fires late came due while this process was not
+			// running: a sleeping machine, a paused container. The client had no
+			// chance to be heard in that time, so it proves nothing about the
+			// client. Give it one deadline measured while the server is awake.
+			const overshootMs =
+				this.heartbeatNow() - armedAt - this.heartbeatTimeoutMs;
+			if (overshootMs > this.heartbeatSuspendToleranceMs) {
+				this.armHeartbeatDeadline();
+				return;
+			}
 			void this.failConnection(
 				new OutboundDeliveryError({
 					code: 'timeout',

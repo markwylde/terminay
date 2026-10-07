@@ -200,6 +200,24 @@ export class AgentStatusService {
 		this.notifyTerminal({ kind: 'started', terminal });
 	}
 
+	/**
+	 * Follow a terminal to the project its panel was moved to. The terminal is
+	 * announced again under its new identity so session binding and project
+	 * attribution are re-evaluated on this edge.
+	 */
+	rehomeTerminal(sessionId: string, projectId: string): void {
+		const current = this.terminals.get(sessionId);
+		if (current === undefined || current.identity.projectId === projectId)
+			return;
+		const terminal: AgentTerminal = Object.freeze({
+			identity: Object.freeze({ ...current.identity, projectId }),
+			...(current.shellPid === undefined ? {} : { shellPid: current.shellPid }),
+		});
+		this.terminals.set(sessionId, terminal);
+		if (terminal.shellPid !== undefined)
+			this.notifyTerminal({ kind: 'started', terminal });
+	}
+
 	terminalExited(identity: ActivitySessionIdentity): void {
 		const terminal = this.terminals.get(identity.sessionId);
 		if (terminal === undefined || !sameScope(terminal.identity, identity))

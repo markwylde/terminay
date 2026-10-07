@@ -215,6 +215,11 @@ import {
 	filterCompactSwitcherGroups,
 } from './workspace/compactSwitcherModel';
 import { ProjectTabList } from './workspace/ProjectTabList';
+import {
+	createProjectAcrossReconnects,
+	isConnectionLoss,
+	type ResynchronisedProject,
+} from './workspace/projectCreationRecovery';
 import { useCompactChrome } from './workspace/useCompactChrome';
 import {
 	createProjectTab,
@@ -537,7 +542,10 @@ type OpenFileOptions = {
 };
 
 type ProjectWorkspaceHandle = {
-	acceptMovedTerminal: (terminal: MovedTerminalTab) => boolean;
+	acceptMovedTerminal: (
+		terminal: MovedTerminalTab,
+		options?: { activate?: boolean },
+	) => boolean;
 	acceptServerTerminal: (
 		panelId: string,
 		sessionId: string,
@@ -562,6 +570,12 @@ type ProjectWorkspaceHandle = {
 	focusActiveTerminal: () => void;
 	/** True when the given terminal session lives in this workspace's project. */
 	ownsControlSession: (sessionId: string) => boolean;
+	/** The session behind one of this workspace's terminal panels, if any. */
+	terminalSessionForPanel: (panelId: string) => string | undefined;
+	/** The panel through which this workspace presents a session, if any. */
+	terminalPanelForSession: (sessionId: string) => string | undefined;
+	/** Show a failure in this project's own error banner. */
+	reportError: (message: string) => void;
 	/** Handle an MCP control request scoped to a terminal in this project. */
 	handleControlRequest: (
 		op: string,
@@ -3370,6 +3384,14 @@ const ProjectWorkspace = forwardRef<
 						continue;
 					}
 					if (!panel) continue;
+					// The server moved this terminal to another project, which now
+					// presents it. Letting go of it here closes nothing: the panel
+					// and its session stay live under the project that owns them.
+					if (canonical.projectId !== project.id) {
+						movingTerminalSessionIdsRef.current.add(sessionId);
+						api.removePanel(panel);
+						continue;
+					}
 					if (canonical.title !== undefined && panel.title !== canonical.title) {
 						panel.api.setTitle(canonical.title);
 						setTerminalTitleRevision((revision) => revision + 1);
@@ -3404,7 +3426,7 @@ const ProjectWorkspace = forwardRef<
 					});
 				}
 			},
-			[publishWorkspaceInventory, terminalNoteSync],
+			[project.id, publishWorkspaceInventory, terminalNoteSync],
 		);
 
 		const filteredMacros = useMemo(() => {
@@ -4019,6 +4041,13 @@ const ProjectWorkspace = forwardRef<
 				exportProjectForMove,
 				focusActiveTerminal,
 				ownsControlSession,
+				terminalSessionForPanel: (panelId: string) =>
+					panelSessionMapRef.current.get(panelId),
+				terminalPanelForSession: (sessionId: string) =>
+					[...panelSessionMapRef.current].find(
+						([, mapped]) => mapped === sessionId,
+					)?.[0],
+				reportError: setErrorText,
 				handleControlRequest,
 			}),
 			[
@@ -5541,6 +5570,12 @@ function App({
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
+	/**
+	 * Terminal moves this device asked the server for and has not yet seen in a
+	 * confirmed projection, by session id, with the project each is headed to.
+	 * It decides one thing: whether this device follows the terminal there.
+	 */
+	const pendingTerminalMovesRef = useRef(new Map<string, string>());
 	const draggingProjectIdRef = useRef<string | null>(null);
 	const heldActiveProjectIdRef = useRef<string | null>(null);
 	const projectCreationInFlightRef = useRef(false);
@@ -5599,8 +5634,17 @@ function App({
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
+	const activateProjectRef = useRef(activateProject);
+	activateProjectRef.current = activateProject;
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
+	// A failed creation is a tab like any other: shown while it is the one
+	// selected, and left behind the moment another project is. It records the
+	// project it was selected over, so activating any other project by any
+	// route deselects it without that route knowing it exists.
+	const [failedCreationSelectedOver, setFailedCreationSelectedOver] = useState<
+		string | null
+	>(null);
 	// Home's sidebar is this device's, and it is nobody's project: its
 	// visibility is kept apart from every project's sidebar, so toggling one
 	// never moves the other.
@@ -5980,6 +6024,60 @@ function App({
 			window.removeEventListener('terminay-open-extensions', openExtensions);
 		};
 	}, [auxiliaryRouteController]);
+	// A creation outlives the connection it began on. These let it read the
+	// connection that is current when it resumes, and be woken when that changes.
+	const creationConnectionRef = useRef({
+		context: terminalClientContext,
+		phase: activeConnection?.phase,
+		version: 0,
+	});
+	const creationConnectionWaitersRef = useRef(new Set<() => void>());
+	const activeConnectionPhase = activeConnection?.phase;
+	useEffect(() => {
+		creationConnectionRef.current = {
+			context: terminalClientContext,
+			phase: activeConnectionPhase,
+			version: creationConnectionRef.current.version + 1,
+		};
+		const waiters = [...creationConnectionWaitersRef.current];
+		creationConnectionWaitersRef.current.clear();
+		for (const wake of waiters) wake();
+	}, [terminalClientContext, activeConnectionPhase]);
+	const createInitialTerminalForProjectRef = useRef(
+		createInitialTerminalForProject,
+	);
+	createInitialTerminalForProjectRef.current = createInitialTerminalForProject;
+	const resynchroniseCreatedProject = useCallback(
+		async (projectId: string): Promise<ResynchronisedProject> => {
+			for (;;) {
+				const { context, phase, version } = creationConnectionRef.current;
+				if (phase === 'unreachable' || phase === 'incompatible') return null;
+				const store = context?.workspaceSnapshotStore;
+				if (store !== undefined && (phase === undefined || phase === 'ready')) {
+					try {
+						const snapshot = await store.refresh();
+						const terminal = Object.values(snapshot.terminalSessions).find(
+							(session) => session.projectId === projectId,
+						);
+						return {
+							exists: snapshot.projects[projectId] !== undefined,
+							...(terminal === undefined
+								? {}
+								: { terminalSessionId: terminal.id }),
+						};
+					} catch (error) {
+						if (!isConnectionLoss(error)) throw error;
+					}
+					// The connection moved on while that was being read.
+					if (creationConnectionRef.current.version !== version) continue;
+				}
+				await new Promise<void>((resolve) => {
+					creationConnectionWaitersRef.current.add(resolve);
+				});
+			}
+		},
+		[],
+	);
 	const createServerProjectRef = useRef<() => Promise<void>>(async () => undefined);
 	const createServerProject = useCallback(async () => {
 		const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
@@ -5989,8 +6087,17 @@ function App({
 			addProject();
 			return;
 		}
-		if (pendingProjectCreation !== null || projectCreationInFlightRef.current) {
-			return;
+		if (projectCreationInFlightRef.current) return;
+		if (pendingProjectCreation !== null) {
+			if (pendingProjectCreation.tab.creationStatus !== 'failed') return;
+			// Starting again replaces the failed attempt, along with any
+			// project it got as far as creating.
+			if (pendingProjectCreation.projectId !== undefined) {
+				closeProject(pendingProjectCreation.projectId, {
+					skipConfirmation: true,
+				});
+			}
+			setFailedCreationSelectedOver(null);
 		}
 		projectCreationInFlightRef.current = true;
 		const initialActiveProjectId = activeProjectIdRef.current;
@@ -6019,18 +6126,39 @@ function App({
 		};
 		setPendingProjectCreation(pending);
 		try {
-			await workspaceStore.createProject({
-				projectId,
-				viewId: boundWorkspaceViewId,
-				// A window with no project has no folder to reuse; the server
-				// then creates the project in its own default folder.
-				...(homePath.trim().length > 0 ? { root: homePath } : {}),
-				color: presentation.color,
-				icon: presentation.emoji,
+			const currentStore = () => {
+				const store =
+					creationConnectionRef.current.context?.workspaceSnapshotStore;
+				if (store === undefined)
+					throw new Error('The selected server workspace is not ready.');
+				return store;
+			};
+			// A connection lost underneath either step is not a failure: the
+			// tab keeps loading and the creation resumes once the workspace
+			// has resynchronised, from what the server says it already has.
+			const sessionId = await createProjectAcrossReconnects({
+				create: () =>
+					currentStore().createProject({
+						projectId,
+						viewId: boundWorkspaceViewId,
+						// A window with no project has no folder to reuse; the
+						// server then creates the project in its own default folder.
+						...(homePath.trim().length > 0 ? { root: homePath } : {}),
+						color: presentation.color,
+						icon: presentation.emoji,
+					}),
+				launchTerminal: () =>
+					createInitialTerminalForProjectRef.current(projectId),
+				resynchronise: () => resynchroniseCreatedProject(projectId),
+				onProjectCreated: () =>
+					setPendingProjectCreation({ ...pending, projectId }),
 			});
-			setPendingProjectCreation({ ...pending, projectId });
-			const sessionId = await createInitialTerminalForProject(projectId);
-			await workspaceStore.refresh();
+			await currentStore()
+				.refresh()
+				.catch((error: unknown) => {
+					// A reconnect resynchronises the workspace on its own.
+					if (!isConnectionLoss(error)) throw error;
+				});
 			const desiredProjectId = heldActiveProjectIdRef.current;
 			heldActiveProjectIdRef.current = null;
 			projectCreationInFlightRef.current = false;
@@ -6047,6 +6175,7 @@ function App({
 			}
 		} catch (error) {
 			heldActiveProjectIdRef.current = null;
+			projectCreationInFlightRef.current = false;
 			setPendingProjectCreation((current) => ({
 				...(current ?? pending),
 				tab: {
@@ -6056,16 +6185,21 @@ function App({
 					creationStatus: 'failed',
 				},
 			}));
+			// A failure is shown where the person will see it: its own tab.
+			setFailedCreationSelectedOver(activeProjectIdRef.current);
+			// Leaves Home, if that is where the creation was started from.
+			activateProject(activeProjectIdRef.current);
 		}
 	}, [
 		activateProject,
 		activeProjectIdRef,
 		addProject,
 		boundWorkspaceViewId,
-		createInitialTerminalForProject,
+		closeProject,
 		currentServerId,
 		homePath,
 		pendingProjectCreation,
+		resynchroniseCreatedProject,
 		projectsRef,
 		settings.sidebar,
 		setActiveProjectId,
@@ -6156,13 +6290,43 @@ function App({
 					pendingPresentations += 1;
 					continue;
 				}
-				const accepted = workspace.acceptServerTerminal(
-					panel.id,
-					session.id,
-					panel.title,
-					panel.cwd,
-					session.status,
-				);
+				// Another project here still presents a terminal the server has
+				// moved. Hand the same presentation over, so the terminal is shown
+				// once and keeps what is local to its tab.
+				const requestedHere =
+					pendingTerminalMovesRef.current.get(session.id) === session.projectId;
+				pendingTerminalMovesRef.current.delete(session.id);
+				let relocated: MovedTerminalTab | null = null;
+				for (const presenter of workspaceRefs.current.values()) {
+					if (presenter == null || presenter === workspace) continue;
+					const presentedPanelId = presenter.terminalPanelForSession(
+						session.id,
+					);
+					if (presentedPanelId === undefined) continue;
+					relocated = presenter.exportTerminalForMove(presentedPanelId);
+					break;
+				}
+				// Only the device that asked for the move follows the terminal.
+				if (requestedHere) activateProjectRef.current(session.projectId);
+				const accepted =
+					relocated === null
+						? workspace.acceptServerTerminal(
+								panel.id,
+								session.id,
+								panel.title,
+								panel.cwd,
+								session.status,
+							)
+						: workspace.acceptMovedTerminal(
+								{
+									...relocated,
+									panelId: panel.id,
+									serverProjectId: session.projectId,
+									terminalSessionStatus: session.status,
+									title: panel.title ?? relocated.title,
+								},
+								{ activate: requestedHere },
+							);
 				if (!accepted) {
 					pendingPresentations += 1;
 				}
@@ -6294,17 +6458,39 @@ function App({
 				return;
 			}
 
-			const movedTerminal = sourceWorkspace.exportTerminalForMove(panelId);
-			if (!movedTerminal) {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			const sessionId = sourceWorkspace.terminalSessionForPanel(panelId);
+			const canonicalPanel =
+				sessionId === undefined
+					? undefined
+					: Object.values(store?.snapshot?.panels ?? {}).find(
+							(candidate) => candidate.sessionId === sessionId,
+						);
+			if (
+				store === undefined ||
+				sessionId === undefined ||
+				canonicalPanel === undefined
+			) {
 				return;
 			}
 
-			activateProject(targetProjectId);
-			window.requestAnimationFrame(() => {
-				targetWorkspace.acceptMovedTerminal(movedTerminal);
-			});
+			// The server moves the terminal. Nothing changes here until it has:
+			// reconciliation relocates the tab once the move is the confirmed
+			// projection, and a refused move leaves the tab exactly where it is.
+			pendingTerminalMovesRef.current.set(sessionId, targetProjectId);
+			void store
+				.movePanel({ panelId: canonicalPanel.id, targetProjectId })
+				.catch((error: unknown) => {
+					if (pendingTerminalMovesRef.current.get(sessionId) === targetProjectId)
+						pendingTerminalMovesRef.current.delete(sessionId);
+					sourceWorkspace.reportError(
+						error instanceof Error
+							? error.message
+							: 'Unable to move this terminal to that project.',
+					);
+				});
 		},
-		[activateProject],
+		[terminalClientContext?.workspaceSnapshotStore],
 	);
 	/**
 	 * The terminal tab being dragged toward the project bar, if any.
@@ -7391,14 +7577,23 @@ function App({
 		settings.keyboardShortcuts,
 	]);
 
+	const failedProjectCreation =
+		pendingProjectCreation?.tab.creationStatus === 'failed'
+			? pendingProjectCreation
+			: null;
+	// The failed tab is in front only while it is the selected one. Every
+	// other tab and Home stay selectable, and selecting one shows it.
 	const isPendingProjectFailure =
-		pendingProjectCreation?.tab.creationStatus === 'failed';
+		failedProjectCreation !== null &&
+		!isHomeSelected &&
+		failedCreationSelectedOver === activeProjectId;
 	const activeProject = isPendingProjectFailure
 		? null
 		: (projects.find((project) => project.id === activeProjectId) ?? null);
-	const displayedActiveProjectId = isPendingProjectFailure
-		? pendingProjectCreation.tab.id
-		: activeProjectId;
+	const displayedActiveProjectId =
+		isPendingProjectFailure && failedProjectCreation !== null
+			? failedProjectCreation.tab.id
+			: activeProjectId;
 	const displayedProjects: ComposedProjectTab[] = useMemo(
 		() => [...composeProjectTabs(projectTabSources, rememberedTabOrder)],
 		[projectTabSources, rememberedTabOrder],
@@ -7453,7 +7648,15 @@ function App({
 	};
 	const activateComposedTab = (handle: string) => {
 		const target = resolveTabHandle(handle);
-		if (target.projectId === pendingProjectCreation?.tab.id) return;
+		if (target.projectId === pendingProjectCreation?.tab.id) {
+			// A creation still in flight has nothing to show yet; a failed
+			// one shows its error.
+			if (failedProjectCreation === null) return;
+			setFailedCreationSelectedOver(activeProjectId);
+			activateProject(activeProjectId);
+			return;
+		}
+		setFailedCreationSelectedOver(null);
 		if (target.serverId !== currentServerId) {
 			const connection = byServerId.get(target.serverId);
 			// An unreachable or incompatible server takes no operations, so its
@@ -7533,6 +7736,7 @@ function App({
 		}
 		heldActiveProjectIdRef.current = null;
 		projectCreationInFlightRef.current = false;
+		setFailedCreationSelectedOver(null);
 		setPendingProjectCreation(null);
 	};
 	const hasAppUpdate =
@@ -7727,7 +7931,8 @@ function App({
 					onTerminalDrop={dropTerminalOnComposedTab}
 					terminalDropTargetIds={terminalDropTargetIds}
 					canCreateProject={
-						canAddProject && pendingProjectCreation === null
+						canAddProject &&
+						(pendingProjectCreation === null || failedProjectCreation !== null)
 					}
 					onCreateProject={() => void createServerProject()}
 					projects={displayedProjects}
@@ -7745,7 +7950,11 @@ function App({
 								: 'Create project'
 						}
 						aria-haspopup={namesServers ? 'menu' : undefined}
-						disabled={!canAddProject || pendingProjectCreation !== null}
+						disabled={
+							!canAddProject ||
+							(pendingProjectCreation !== null &&
+								failedProjectCreation === null)
+						}
 						onClick={(event) => {
 							// A project belongs to one server. With several attached the
 							// window asks which, defaulting to the tab in front.
@@ -7889,13 +8098,33 @@ function App({
 			) : null}
 
 			<div className="workspace-stack">
-				{isPendingProjectFailure ? (
+				{isPendingProjectFailure && failedProjectCreation !== null ? (
 					<div
-						className="workspace-empty-state workspace-empty-state--error"
+						className="workspace-empty-state workspace-empty-state--error workspace-empty-state--actionable"
 						role="alert"
 					>
-						{pendingProjectCreation.tab.creationError ??
-							'Project creation failed.'}
+						<span>
+							{failedProjectCreation.tab.creationError ??
+								'Project creation failed.'}
+						</span>
+						<span className="workspace-empty-state__actions">
+							<button type="button" onClick={() => void createServerProject()}>
+								Retry
+							</button>
+							<button
+								type="button"
+								onClick={() =>
+									closeComposedTab(
+										compositionTabKey(
+											currentServerId,
+											failedProjectCreation.tab.id,
+										),
+									)
+								}
+							>
+								Dismiss
+							</button>
+						</span>
 					</div>
 				) : null}
 				{isWorkspaceHydrating ? (

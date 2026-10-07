@@ -26,6 +26,20 @@ test('Electron opens Remote Control as a full auxiliary window', async ({
 		manager.locator('form[aria-label="Add connection"]'),
 	).toBeVisible();
 	await expect(manager.getByLabel('Pairing URL')).toBeVisible();
+	// A person with no server is shown how to start one, naming the image
+	// this build matches: a development build names the newest release.
+	const guide = manager.getByRole('region', {
+		name: "Don't have a server yet?",
+	});
+	await expect(
+		guide.getByText(
+			'docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay',
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(guide.getByText(/TERMINAY_PUBLIC_HOST=/u)).toBeHidden();
+	await guide.getByText('More options').click();
+	await expect(guide.getByText(/TERMINAY_PUBLIC_HOST=/u)).toBeVisible();
 	await expect(
 		manager.getByRole('button', { name: 'Continue pairing', exact: true }),
 	).toBeVisible();

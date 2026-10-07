@@ -100,9 +100,14 @@ export function appWindowUnseenSnapshot(): ReadonlySet<string> {
 	return unseen;
 }
 
-/** Whether a registered pane's element is on screen right now. */
+/**
+ * Whether a registered pane's element is on screen right now. An inactive tab
+ * has no size; a project that is not in front keeps its size and is only made
+ * invisible, which its panes inherit.
+ */
 export function isPaneVisible(pane: AppWindowPane | undefined): boolean {
 	if (pane === undefined || !pane.element.isConnected) return false;
 	const rect = pane.element.getBoundingClientRect();
-	return rect.width > 0 && rect.height > 0;
+	if (rect.width <= 0 || rect.height <= 0) return false;
+	return getComputedStyle(pane.element).visibility === 'visible';
 }

@@ -75,6 +75,16 @@ export class DesktopWindowConnections {
 		return this.currentComposition;
 	}
 
+	/** The profile whose bundle this window runs. */
+	get primaryProfileId(): string {
+		return this.options.primaryProfileId;
+	}
+
+	/** Publish the profile list again after the remembered set changed. */
+	refresh(): void {
+		this.publish();
+	}
+
 	/** The sanitized profile list the `connections.list` action answers with. */
 	list(): readonly TerminayHostConnectionProfile[] {
 		const profiles = this.options
