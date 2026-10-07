@@ -42,6 +42,7 @@ import {
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
+	createWorkspaceAiTargetAuthority,
 	createServerCoreComposition,
 	DocumentationCatalog,
 	FileCatalog,
@@ -80,7 +81,6 @@ import {
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	VaultProviderCredentialResolver,
-	type WorkspaceStore,
 	WorktreeInsightService,
 	withdrawnAgentExtensionSwitches,
 } from '@terminay/server-core';
@@ -813,11 +813,16 @@ async function createServerComposition(
 	const ai = new AiService({
 		serverId: options.serverId,
 		authority: {
-			getTarget: (target) =>
-				standaloneAiTarget(options.serverId, workspace, composition, target),
-			authorize: (_clientId, target) =>
-				standaloneAiTarget(options.serverId, workspace, composition, target)
-					?.live === true,
+			...createWorkspaceAiTargetAuthority({
+				serverId: options.serverId,
+				state: () => workspace.state,
+				applyHostCommand: (commandId, command) =>
+					composition.workspaceOperations?.applyHostCommand(
+						commandId,
+						command,
+					),
+				getSession: (sessionId) => composition.terminal.getSession(sessionId),
+			}),
 			writeInput: (target, input) =>
 				composition.terminal.input(target.sessionId, input),
 		},
@@ -1075,36 +1080,6 @@ function standaloneDictationSettings(
 				: 'mlx-community/parakeet-tdt-0.6b-v3',
 		language: typeof dictation.language === 'string' ? dictation.language : '',
 		prompt: typeof dictation.prompt === 'string' ? dictation.prompt : '',
-	};
-}
-
-function standaloneAiTarget(
-	serverId: string,
-	workspace: WorkspaceStore,
-	composition: ServerCoreComposition,
-	target: {
-		readonly serverId: string;
-		readonly projectId: string;
-		readonly panelId: string;
-		readonly sessionId: string;
-	},
-) {
-	if (target.serverId !== serverId) return undefined;
-	const panel = workspace.state.panels[target.panelId];
-	const session = composition.terminal.getSession(target.sessionId);
-	if (
-		panel?.type !== 'terminal' ||
-		panel.projectId !== target.projectId ||
-		panel.sessionId !== target.sessionId ||
-		session?.projectId !== target.projectId
-	)
-		return undefined;
-	return {
-		...target,
-		live: session.status === 'running',
-		metadataRevision: 0,
-		title: panel.title ?? 'Terminal',
-		note: '',
 	};
 }
 

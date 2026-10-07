@@ -1,0 +1,59 @@
+title: AI tab title fix — scope
+intro: |
+  The AI-generated tab title reverts to "Terminal X" because the server returns
+  the generated text without changing its own copy of the panel title. The
+  client sets the title locally, and the next workspace reconcile restores the
+  server's title. A failing e2e test reproduces it.
+
+  Three scope decisions before I write the proposal.
+
+status: submitted
+submitted_at: "2026-10-07T16:19:58+01:00"
+
+questions:
+  - id: note_scope
+    type: select
+    prompt: Should this change also make the AI tab note a server-owned value?
+    help: |
+      The spec says AI notes are a canonical server mutation too, but notes are
+      client-only today: the server panel has no note field. The note does not
+      visibly revert, because reconcile never touches it. I'd keep this change
+      to the title and record the note as a non-goal; making notes server-owned
+      means a new panel field and routing manual note edits through the server.
+    required: true
+    options:
+      - Title only (recommended)
+      - Title and note
+    answer: Title and note
+
+  - id: concurrent_rename
+    type: select
+    prompt: What happens if you rename the tab by hand while AI is still generating?
+    help: |
+      The spec requires a conflict rather than an overwrite, but there is no
+      check today. I'd include it: the server rejects the AI title if the panel
+      title changed since the request started, the manual title is kept, and
+      you see a conflict error.
+    required: true
+    options:
+      - Manual rename wins, AI result rejected with a conflict (recommended)
+      - AI result overwrites (last write wins)
+    answer: Manual rename wins, AI result rejected with a conflict (recommended)
+
+  - id: standalone_server
+    type: select
+    prompt: Fix the standalone Terminay Server in the same change?
+    help: |
+      apps/terminay-server has the same gap: it has no way to apply generated
+      metadata, so title generation there fails with "terminal metadata mutation
+      is unavailable". I'd fix both through one shared server-core apply path
+      so the embedded and standalone servers cannot drift.
+    required: true
+    options:
+      - Both embedded and standalone (recommended)
+      - Embedded desktop server only
+    answer: Both embedded and standalone (recommended)
+
+  - id: comments
+    type: textarea
+    prompt: Anything else you want to add?

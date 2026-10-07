@@ -68,6 +68,12 @@ export interface TerminalPanel extends PanelBase {
 	readonly type: 'terminal';
 	readonly sessionId: ProtocolId;
 	readonly cwd?: string;
+	/** Absent means the terminal has no note; an empty string is a present,
+	 * empty note. */
+	readonly note?: string;
+	/** Advances whenever the title or note changes. Server-assigned; a client
+	 * patch can never set it. Absent means 0. */
+	readonly metadataRevision?: number;
 }
 export interface FilePanel extends PanelBase {
 	readonly type: 'file';
@@ -279,6 +285,10 @@ export function canonicalizeWorkspaceState(
 				type: 'terminal',
 				sessionId: panel.sessionId,
 				...(panel.cwd === undefined ? {} : { cwd: panel.cwd }),
+				...(panel.note === undefined ? {} : { note: panel.note }),
+				...(panel.metadataRevision === undefined
+					? {}
+					: { metadataRevision: panel.metadataRevision }),
 			};
 		else if (panel.type === 'file')
 			panels[id] = {
@@ -738,6 +748,15 @@ export function validateWorkspace(state: WorkspaceState): void {
 			state.terminalSessions[panel.sessionId]?.projectId !== panel.projectId
 		)
 			throw new TypeError('terminal panel/session ownership mismatch');
+		if (panel.type === 'terminal') {
+			if (panel.note !== undefined) assertPanelNote(panel.note);
+			if (
+				panel.metadataRevision !== undefined &&
+				(!Number.isSafeInteger(panel.metadataRevision) ||
+					panel.metadataRevision < 0)
+			)
+				throw new TypeError('terminal panel metadata revision is invalid');
+		}
 	}
 	for (const [id, session] of Object.entries(state.terminalSessions)) {
 		assertId(id, 'sessionId');
@@ -834,6 +853,18 @@ function validateLayout(node: LayoutNode, panelIds: Set<string>): void {
 		throw new TypeError('invalid split layout');
 	validateLayout(node.first, panelIds);
 	validateLayout(node.second, panelIds);
+}
+
+/** Longest terminal note the server stores, in UTF-16 code units. */
+export const MAX_PANEL_NOTE_CHARS = 1200;
+
+function assertPanelNote(value: unknown): asserts value is string {
+	if (
+		typeof value !== 'string' ||
+		value.length > MAX_PANEL_NOTE_CHARS ||
+		value.includes('\0')
+	)
+		throw new TypeError('terminal panel note is invalid');
 }
 
 function assertId(value: string, name: string): void {
@@ -1473,10 +1504,28 @@ export class WorkspaceStore {
 				const patch = command.patch as Record<string, JsonValue>;
 				if ('projectId' in patch || 'id' in patch || 'type' in patch)
 					throw new Error('panel ownership/type is immutable');
-				state.panels[panel.id] = {
+				if ('metadataRevision' in patch)
+					throw new Error('panel metadata revision is server-assigned');
+				const { note, ...rest } = patch;
+				const next = {
 					...panel,
-					...(patch as Partial<WorkspacePanel>),
-				} as WorkspacePanel;
+					...(rest as Partial<WorkspacePanel>),
+				} as WorkspacePanel & { note?: string; metadataRevision?: number };
+				if ('note' in patch) {
+					if (panel.type !== 'terminal')
+						throw new Error('only a terminal panel has a note');
+					if (note === null) delete next.note;
+					else {
+						assertPanelNote(note);
+						next.note = note;
+					}
+				}
+				if (
+					panel.type === 'terminal' &&
+					(next.title !== panel.title || next.note !== panel.note)
+				)
+					next.metadataRevision = (panel.metadataRevision ?? 0) + 1;
+				state.panels[panel.id] = next;
 				changed.push(panel.id);
 				break;
 			}

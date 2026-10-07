@@ -5927,6 +5927,7 @@ if (process.env.TERMINAY_TEST === '1') {
 			mock: {
 				error?: string | null;
 				models?: AiTabMetadataModel[];
+				hold?: boolean;
 				noteResult?: string;
 				titleResult?: string;
 			},
