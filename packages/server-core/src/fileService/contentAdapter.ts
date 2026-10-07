@@ -14,6 +14,11 @@ import {
 	FileContentStreamService,
 	type FileContentTextRange,
 } from './contentStream.js';
+import {
+	type FolderScopeResolver,
+	folderIdField,
+	resolveFolderScope,
+} from './folderScope.js';
 import { ServerTextIndex } from './textIndex.js';
 
 /** Application-protocol operation names for bounded file content transfers. */
@@ -48,11 +53,17 @@ export interface FileContentAdapterOptions {
 		authorization: FileContentAuthorization,
 		projectId: string,
 	) => boolean;
+	/** The content service for one folder of a project, resolved by the server
+	 * for this one operation (ADR-0050). Absent means requests may not name a
+	 * folder. */
+	readonly folderScope?: FolderScopeResolver<FileContentProjectContext>;
 }
 
 export interface FileContentRequest {
 	readonly authorization: FileContentAuthorization;
 	readonly projectId?: string;
+	/** A folder of the project whose root the path is relative to. */
+	readonly folderId?: string;
 	readonly path: string;
 	readonly signal?: AbortSignal;
 }
@@ -66,6 +77,12 @@ export class ServerFileContentAdapter {
 	readonly serverId: string;
 	private readonly options: FileContentAdapterOptions;
 	private readonly textIndexes = new Map<string, ServerTextIndex>();
+	/** A folder's index lives as long as the content service the host resolves
+	 * for its root, so a relative path never reads another root's line index. */
+	private readonly folderTextIndexes = new WeakMap<
+		FileContentStreamService,
+		ServerTextIndex
+	>();
 
 	constructor(options: FileContentAdapterOptions) {
 		if (typeof options?.serverId !== 'string' || !validId(options.serverId))
@@ -82,7 +99,7 @@ export class ServerFileContentAdapter {
 
 	async capabilities(request: FileContentRequest): Promise<JsonValue> {
 		return asJson(
-			await this.authorizedContent(request, 'read').capabilities(
+			await (await this.authorizedContent(request, 'read')).capabilities(
 				request.path,
 				request.signal,
 			),
@@ -95,7 +112,7 @@ export class ServerFileContentAdapter {
 			readonly length: number;
 		},
 	): Promise<BinaryQueryHandlerResult> {
-		const value = await this.authorizedContent(request, 'read').readRange(
+		const value = await (await this.authorizedContent(request, 'read')).readRange(
 			request.path,
 			request.offset,
 			request.length,
@@ -111,7 +128,7 @@ export class ServerFileContentAdapter {
 		},
 	): Promise<JsonValue> {
 		return serializeText(
-			await this.authorizedContent(request, 'read').readText(
+			await (await this.authorizedContent(request, 'read')).readText(
 				request.path,
 				request.offset,
 				request.length,
@@ -128,7 +145,7 @@ export class ServerFileContentAdapter {
 		},
 	): Promise<JsonValue> {
 		return serializeHex(
-			await this.authorizedContent(request, 'read').readHex(
+			await (await this.authorizedContent(request, 'read')).readHex(
 				request.path,
 				request.offset,
 				request.length,
@@ -140,7 +157,7 @@ export class ServerFileContentAdapter {
 
 	async readPreview(request: FileContentRequest): Promise<JsonValue> {
 		return serializePreview(
-			await this.authorizedContent(request, 'read').readPreview(
+			await (await this.authorizedContent(request, 'read')).readPreview(
 				request.path,
 				request.signal,
 			),
@@ -149,7 +166,7 @@ export class ServerFileContentAdapter {
 
 	async textMetadata(request: FileContentRequest): Promise<JsonValue> {
 		return asJson(
-			await this.textIndex(request).metadata(request.path, request.signal),
+			await (await this.textIndex(request)).metadata(request.path, request.signal),
 		);
 	}
 
@@ -160,7 +177,7 @@ export class ServerFileContentAdapter {
 		},
 	): Promise<JsonValue> {
 		return asJson(
-			await this.textIndex(request).lines(
+			await (await this.textIndex(request)).lines(
 				request.path,
 				request.startLine,
 				request.lineCount,
@@ -199,10 +216,10 @@ export class ServerFileContentAdapter {
 		};
 	}
 
-	private authorizedContent(
+	private async authorizedContent(
 		request: FileContentRequest,
 		required: AuthScope,
-	): FileContentStreamService {
+	): Promise<FileContentStreamService> {
 		const projectId = request.projectId ?? request.authorization.projectId;
 		if (projectId === undefined)
 			throw new FileContentError(
@@ -241,10 +258,22 @@ export class ServerFileContentAdapter {
 				'invalid_path',
 				'file is outside the authorized project',
 			);
+		// The project is authorized above. A folder only chooses which of the
+		// project's roots the operation runs in; the server resolves it.
 		const project =
-			typeof (
-				this.options.projects as ReadonlyMap<string, FileContentProjectContext>
-			).get === 'function'
+			request.folderId !== undefined
+				? await resolveFolderScope(
+						this.options.folderScope,
+						projectId,
+						request.folderId,
+						request.signal,
+					)
+				: typeof (
+							this.options.projects as ReadonlyMap<
+								string,
+								FileContentProjectContext
+							>
+						).get === 'function'
 				? (
 						this.options.projects as ReadonlyMap<
 							string,
@@ -268,8 +297,18 @@ export class ServerFileContentAdapter {
 		return project.content;
 	}
 
-	private textIndex(request: FileContentRequest): ServerTextIndex {
-		const content = this.authorizedContent(request, 'read');
+	private async textIndex(
+		request: FileContentRequest,
+	): Promise<ServerTextIndex> {
+		const content = await this.authorizedContent(request, 'read');
+		if (request.folderId !== undefined) {
+			let scoped = this.folderTextIndexes.get(content);
+			if (scoped === undefined) {
+				scoped = new ServerTextIndex(content);
+				this.folderTextIndexes.set(content, scoped);
+			}
+			return scoped;
+		}
 		const projectId = request.projectId ?? request.authorization.projectId!;
 		let index = this.textIndexes.get(projectId);
 		if (index === undefined) {
@@ -310,6 +349,7 @@ export class ServerFileContentAdapter {
 			...(optionalProject(payload.projectId) === undefined
 				? {}
 				: { projectId: optionalProject(payload.projectId) }),
+			...folderIdField(payload.folderId),
 			path: requiredPath(payload.path),
 			signal: request.context.signal,
 		};

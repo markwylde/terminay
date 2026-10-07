@@ -16,6 +16,7 @@ import type {
 	WorkspaceProjectKind,
 	WorkspaceState,
 } from '../workspace.js';
+import { FolderRootError } from '../folderRoots.js';
 import { TerminalServiceError } from './errors.js';
 import type { TerminalDimensions, TerminalIdentity } from './types.js';
 
@@ -45,6 +46,14 @@ export interface TerminalLaunchResolverOptions {
 		sessionId: ProtocolId,
 	) => Promise<string | null>;
 	readonly pathAuthority?: TerminalLaunchPathAuthority;
+	/** The canonical root of a folder of a project, when that root is a linked
+	 * folder's worktree; null when the folder's root is the project root. The
+	 * server resolves it from the folder id alone (ADR-0050). Absent means every
+	 * folder starts terminals at the project root. */
+	readonly folderWorktreeRoot?: (
+		projectId: ProtocolId,
+		folderId: ProtocolId,
+	) => Promise<string | null>;
 	readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** Host-owned, per-session environment added after shell-profile resolution.
 	 * This is reserved for ephemeral capability material which must not be
@@ -76,6 +85,9 @@ export interface TerminalLaunchIntent extends TerminalDimensions {
 	readonly explicitProfileId?: ProtocolId;
 	readonly explicitCwd?: string;
 	readonly activePanelId?: ProtocolId;
+	/** The folder of the project the terminal is created in. Absent means the
+	 * project's General folder. */
+	readonly folderId?: ProtocolId;
 }
 
 export interface TerminalResolvedProfileMetadata {
@@ -156,6 +168,7 @@ export class TerminalLaunchResolver {
 			intent.identity.projectId,
 			intent.explicitCwd,
 			intent.activePanelId,
+			intent.folderId,
 		);
 		assertWslLaunchCanRepresentProfile(resolvedProfile);
 		const { shellPath, prefixArgs, targetSummary } =
@@ -270,6 +283,7 @@ export class TerminalLaunchResolver {
 		projectId: ProtocolId,
 		explicitCwd: string | undefined,
 		activePanelId: ProtocolId | undefined,
+		requestedFolderId: ProtocolId | undefined,
 	): Promise<string> {
 		if (explicitCwd !== undefined) {
 			const canonical = await this.explicitDirectory(explicitCwd);
@@ -287,6 +301,15 @@ export class TerminalLaunchResolver {
 				'invalid_identity',
 				'terminal project is unavailable',
 			);
+		const folderId = requestedFolderId ?? project.folderIds[0];
+		if (requestedFolderId !== undefined) {
+			const folder = workspace.folders[requestedFolderId];
+			if (folder === undefined || folder.projectId !== projectId)
+				throw new TerminalServiceError(
+					'forbidden',
+					'The folder belongs to another project.',
+				);
+		}
 		if (policy === 'home') return this.safeHomeDirectory();
 		if (policy === 'current' && activePanelId !== undefined) {
 			const panel = workspace.panels[activePanelId];
@@ -296,13 +319,42 @@ export class TerminalLaunchResolver {
 					'The active panel belongs to another project.',
 				);
 			}
-			if (panel?.projectId === projectId) {
+			// A directory is inherited only from a panel of the folder the terminal
+			// is created in: another folder may be a different worktree.
+			if (panel?.projectId === projectId && panel.folderId === folderId) {
 				const observed = await this.observedPanelDirectory(panel);
 				if (observed !== null && !this.pathAuthority.isRoot(observed))
 					return observed;
 			}
 		}
-		return this.projectDirectory(project.root, project.rootOrigin);
+		const worktree =
+			folderId === undefined
+				? null
+				: await this.folderWorktreeDirectory(projectId, folderId);
+		return worktree ?? this.projectDirectory(project.root, project.rootOrigin);
+	}
+
+	/** A linked folder's worktree, or null to start at the project root: for a
+	 * folder with no worktree, and for one whose worktree has gone missing. */
+	private async folderWorktreeDirectory(
+		projectId: ProtocolId,
+		folderId: ProtocolId,
+	): Promise<string | null> {
+		if (this.options.folderWorktreeRoot === undefined) return null;
+		let root: string | null;
+		try {
+			root = await this.options.folderWorktreeRoot(projectId, folderId);
+		} catch (error) {
+			if (
+				error instanceof FolderRootError &&
+				(error.code === 'folder_worktree_unregistered' ||
+					error.code === 'folder_root_unavailable')
+			)
+				return null;
+			throw error;
+		}
+		if (root === null || !validCwdInput(root)) return null;
+		return this.pathAuthority.canonicalDirectory(root);
 	}
 
 	private async explicitDirectory(value: string): Promise<string | null> {
