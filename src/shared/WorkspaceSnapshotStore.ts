@@ -1,4 +1,4 @@
-import { WorkspaceClient, type PanelActivationRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
+import { WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	parseServerWorkspaceDelta,
@@ -267,6 +267,37 @@ export class WorkspaceSnapshotStore {
 	async movePanel(request: PanelMoveRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		await this.workspace.movePanel(request, options)
+	}
+
+	/** Move a panel to another folder of its own project. Nothing about a terminal's identity changes. */
+	async movePanelToFolder(request: PanelFolderMoveRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.movePanelToFolder(request, options)
+	}
+
+	async createFolder(request: FolderCreateRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.createFolder(request, options)
+	}
+
+	async renameFolder(request: FolderRenameRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.renameFolder(request, options)
+	}
+
+	async reorderFolders(request: FolderReorderRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.reorderFolders(request, options)
+	}
+
+	async deleteFolder(folderId: string, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.deleteFolder(folderId, options)
+	}
+
+	async answerFolderOffer(folderId: string, answer: 'accept' | 'decline', options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.answerFolderOffer(folderId, answer, options)
 	}
 
 	async closeView(viewId: string, options: WorkspaceCommandOptions = {}): Promise<void> {

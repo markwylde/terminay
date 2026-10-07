@@ -4,7 +4,7 @@ import {
 	type ProtocolId,
 } from '@terminay/protocol';
 
-export const WORKSPACE_SCHEMA_VERSION = 5;
+export const WORKSPACE_SCHEMA_VERSION = 6;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 /** A persisted record is rejected when it carries a field this server does not
  * define, so a state file written by a different shape is never half-read. */
@@ -19,10 +19,23 @@ const PROJECT_KEYS = Object.freeze([
 	'icon',
 	'defaultShellProfileId',
 	'sidebar',
+	'folderIds',
 	'panelIds',
 	'activePanelId',
 	'layout',
 	'kind',
+]);
+const FOLDER_KEYS = Object.freeze([
+	'id',
+	'projectId',
+	'name',
+	'kind',
+	'worktree',
+	'panelIds',
+	'activePanelId',
+	'layout',
+	'captureOffer',
+	'createdByPanelId',
 ]);
 const TERMINAL_SESSION_KEYS = Object.freeze([
 	'id',
@@ -56,6 +69,9 @@ export type ProjectRootOrigin =
 export interface PanelBase {
 	readonly id: ProtocolId;
 	readonly projectId: ProtocolId;
+	/** The folder of the panel's project that holds it. A folder groups panels
+	 * and carries no authority (ADR-0049). */
+	readonly folderId: ProtocolId;
 	readonly type: PanelType;
 	readonly title?: string;
 	readonly emoji?: string;
@@ -87,6 +103,13 @@ export interface FolderPanel extends PanelBase {
 	readonly expanded?: boolean;
 }
 export type WorkspacePanel = TerminalPanel | FilePanel | FolderPanel;
+/** A panel as a command supplies it: the folder may be left out, in which case
+ * the panel lands in the project's General folder. */
+export type WorkspacePanelInput = WorkspacePanel extends infer Panel
+	? Panel extends WorkspacePanel
+		? Omit<Panel, 'folderId'> & { readonly folderId?: ProtocolId }
+		: never
+	: never;
 
 export interface StackLayout {
 	readonly kind: 'stack';
@@ -101,6 +124,33 @@ export interface SplitLayout {
 	readonly second: LayoutNode;
 }
 export type LayoutNode = StackLayout | SplitLayout;
+
+/** `general` is the one folder every project has and where panels land by
+ * default. `linked` stands for one Git worktree; `plain` is a group the user
+ * made. */
+export type WorkspaceFolderKind = 'general' | 'plain' | 'linked';
+export const GENERAL_FOLDER_NAME = 'General';
+/** Written only by the server, from its own worktree listing (ADR-0050). */
+export interface WorkspaceFolderWorktreeLink {
+	readonly repositoryId: string;
+	readonly path: string;
+}
+export interface WorkspaceFolder {
+	readonly id: ProtocolId;
+	readonly projectId: ProtocolId;
+	readonly name: string;
+	readonly kind: WorkspaceFolderKind;
+	/** Present exactly when the kind is `linked`. */
+	readonly worktree?: WorkspaceFolderWorktreeLink;
+	readonly panelIds: readonly ProtocolId[];
+	readonly activePanelId?: ProtocolId;
+	readonly layout: LayoutNode;
+	/** The panel whose terminal created this folder's worktree, while it is in
+	 * another folder of the project. */
+	readonly createdByPanelId?: ProtocolId;
+	/** An unanswered offer to move a panel into this folder. */
+	readonly captureOffer?: { readonly panelId: ProtocolId };
+}
 
 export interface WorkspaceView {
 	readonly id: ProtocolId;
@@ -180,8 +230,13 @@ export interface WorkspaceProject {
 	readonly icon?: string;
 	readonly defaultShellProfileId?: ProtocolId;
 	readonly sidebar: WorkspaceSidebarState;
+	/** The project's folders in order. The first is always General. */
+	readonly folderIds: readonly ProtocolId[];
+	/** Derived by the server from the folders: every panel of the project, in
+	 * folder order. No command sets it directly. */
 	readonly panelIds: readonly ProtocolId[];
 	readonly activePanelId?: ProtocolId;
+	/** Derived by the server from the folders. */
 	readonly layout: LayoutNode;
 }
 export interface TerminalSession {
@@ -214,6 +269,7 @@ export interface WorkspaceState {
 	readonly viewOrder: readonly ProtocolId[];
 	readonly views: Readonly<Record<ProtocolId, WorkspaceView>>;
 	readonly projects: Readonly<Record<ProtocolId, WorkspaceProject>>;
+	readonly folders: Readonly<Record<ProtocolId, WorkspaceFolder>>;
 	readonly panels: Readonly<Record<ProtocolId, WorkspacePanel>>;
 	readonly terminalSessions: Readonly<Record<ProtocolId, TerminalSession>>;
 }
@@ -255,6 +311,7 @@ export function canonicalizeWorkspaceState(
 				? {}
 				: { defaultShellProfileId: project.defaultShellProfileId }),
 			sidebar: normalizeWorkspaceSidebarState(project.sidebar),
+			folderIds: [...project.folderIds],
 			panelIds: [...project.panelIds],
 			...(project.activePanelId === undefined
 				? {}
@@ -262,11 +319,40 @@ export function canonicalizeWorkspaceState(
 			layout: canonicalizeLayout(project.layout),
 		};
 	}
+	const folders: Record<string, WorkspaceFolder> = {};
+	for (const [id, folder] of Object.entries(state.folders)) {
+		folders[id] = {
+			id: folder.id,
+			projectId: folder.projectId,
+			name: folder.name,
+			kind: folder.kind,
+			...(folder.worktree === undefined
+				? {}
+				: {
+						worktree: {
+							repositoryId: folder.worktree.repositoryId,
+							path: folder.worktree.path,
+						},
+					}),
+			panelIds: [...folder.panelIds],
+			...(folder.activePanelId === undefined
+				? {}
+				: { activePanelId: folder.activePanelId }),
+			layout: canonicalizeLayout(folder.layout),
+			...(folder.createdByPanelId === undefined
+				? {}
+				: { createdByPanelId: folder.createdByPanelId }),
+			...(folder.captureOffer === undefined
+				? {}
+				: { captureOffer: { panelId: folder.captureOffer.panelId } }),
+		};
+	}
 	const panels: Record<string, WorkspacePanel> = {};
 	for (const [id, panel] of Object.entries(state.panels)) {
 		const base = {
 			id: panel.id,
 			projectId: panel.projectId,
+			folderId: panel.folderId,
 			type: panel.type,
 			...(panel.title === undefined ? {} : { title: panel.title }),
 			...(panel.emoji === undefined ? {} : { emoji: panel.emoji }),
@@ -335,6 +421,7 @@ export function canonicalizeWorkspaceState(
 		viewOrder: [...state.viewOrder],
 		views,
 		projects,
+		folders,
 		panels,
 		terminalSessions,
 	};
@@ -367,6 +454,7 @@ type MutableWorkspaceState = {
 	viewOrder: ProtocolId[];
 	views: Record<ProtocolId, WorkspaceView>;
 	projects: Record<ProtocolId, WorkspaceProject>;
+	folders: Record<ProtocolId, WorkspaceFolder>;
 	panels: Record<ProtocolId, WorkspacePanel>;
 	terminalSessions: Record<ProtocolId, TerminalSession>;
 };
@@ -440,7 +528,41 @@ export type WorkspaceCommand =
 			readonly index?: number;
 	  }
 	| { readonly type: 'project.close'; readonly projectId: ProtocolId }
-	| { readonly type: 'panel.create'; readonly panel: WorkspacePanel }
+	| {
+			readonly type: 'folder.create';
+			readonly projectId: ProtocolId;
+			readonly name: string;
+			/** Host-only. Makes the folder a linked folder for this worktree. */
+			readonly worktree?: WorkspaceFolderWorktreeLink;
+			/** Host-only. The panel whose terminal created the worktree. */
+			readonly createdByPanelId?: ProtocolId;
+	  }
+	| {
+			readonly type: 'folder.rename';
+			readonly folderId: ProtocolId;
+			readonly name: string;
+	  }
+	| {
+			readonly type: 'folder.reorder';
+			readonly projectId: ProtocolId;
+			readonly folderIds: readonly ProtocolId[];
+	  }
+	| { readonly type: 'folder.delete'; readonly folderId: ProtocolId }
+	| {
+			/** Host-only. Follows a worktree that Terminay renamed or moved. */
+			readonly type: 'folder.link.update';
+			readonly folderId: ProtocolId;
+			readonly worktree: WorkspaceFolderWorktreeLink;
+	  }
+	| {
+			/** Host-only. Records an unanswered offer to move a panel here. */
+			readonly type: 'folder.offer.set';
+			readonly folderId: ProtocolId;
+			readonly panelId: ProtocolId;
+	  }
+	| { readonly type: 'folder.offer.accept'; readonly folderId: ProtocolId }
+	| { readonly type: 'folder.offer.decline'; readonly folderId: ProtocolId }
+	| { readonly type: 'panel.create'; readonly panel: WorkspacePanelInput }
 	| {
 			readonly type: 'panel.update';
 			readonly panelId: ProtocolId;
@@ -449,7 +571,17 @@ export type WorkspaceCommand =
 	| {
 			readonly type: 'panel.reorder';
 			readonly projectId: ProtocolId;
+			/** Absent means the one folder that holds every listed panel. */
+			readonly folderId?: ProtocolId;
 			readonly panelIds: readonly ProtocolId[];
+	  }
+	| {
+			/** Moves a panel between folders of one project. It changes no
+			 * terminal identity and never re-homes a session (ADR-0049). */
+			readonly type: 'panel.moveToFolder';
+			readonly panelId: ProtocolId;
+			readonly folderId: ProtocolId;
+			readonly index?: number;
 	  }
 	| {
 			readonly type: 'panel.split';
@@ -481,6 +613,8 @@ export type WorkspaceCommand =
 			readonly type: 'terminal.createPanel';
 			readonly sessionId: ProtocolId;
 			readonly projectId: ProtocolId;
+			/** Absent means the project's General folder. */
+			readonly folderId?: ProtocolId;
 			readonly panelId: ProtocolId;
 			readonly title?: string;
 			readonly cwd?: string;
@@ -548,6 +682,7 @@ export function createInitialWorkspace(serverId: ProtocolId): WorkspaceState {
 		viewOrder: [viewId],
 		views: { [viewId]: view },
 		projects: {},
+		folders: {},
 		panels: {},
 		terminalSessions: {},
 	};
@@ -738,11 +873,65 @@ export function validateWorkspace(state: WorkspaceState): void {
 		)
 			throw new TypeError('active panel is outside project');
 		validateLayout(project.layout, new Set(project.panelIds));
+		validateProjectFolders(state, project);
+	}
+	for (const [id, folder] of Object.entries(state.folders)) {
+		assertId(id, 'folderId');
+		const project = state.projects[folder.projectId];
+		if (
+			folder.id !== id ||
+			project === undefined ||
+			!project.folderIds.includes(id)
+		)
+			throw new TypeError('folder crosses project boundary');
+		assertOnlyKnownKeys(folder, FOLDER_KEYS, 'folder');
+		boundedName(folder.name);
+		if (
+			folder.kind !== 'general' &&
+			folder.kind !== 'plain' &&
+			folder.kind !== 'linked'
+		)
+			throw new TypeError('folder kind is invalid');
+		if ((folder.kind === 'linked') !== (folder.worktree !== undefined))
+			throw new TypeError('folder worktree link does not match its kind');
+		if (folder.worktree !== undefined) validateWorktreeLink(folder.worktree);
+		if (
+			new Set(folder.panelIds).size !== folder.panelIds.length ||
+			folder.panelIds.some((panelId) => state.panels[panelId]?.folderId !== id)
+		)
+			throw new TypeError('folder/panel ownership mismatch');
+		if (
+			folder.activePanelId !== undefined &&
+			!folder.panelIds.includes(folder.activePanelId)
+		)
+			throw new TypeError('active panel is outside folder');
+		validateLayout(folder.layout, new Set(folder.panelIds));
+		if (
+			folder.createdByPanelId !== undefined &&
+			state.panels[folder.createdByPanelId]?.projectId !== folder.projectId
+		)
+			throw new TypeError('folder creator is outside its project');
+		if (folder.captureOffer !== undefined) {
+			const offered = state.panels[folder.captureOffer.panelId];
+			if (
+				offered === undefined ||
+				offered.projectId !== folder.projectId ||
+				offered.folderId === id
+			)
+				throw new TypeError('folder offers a panel it cannot capture');
+		}
 	}
 	for (const [id, panel] of Object.entries(state.panels)) {
 		assertId(id, 'panelId');
 		if (panel.id !== id || state.projects[panel.projectId] === undefined)
 			throw new TypeError('panel crosses project boundary');
+		const folder = state.folders[panel.folderId];
+		if (
+			folder === undefined ||
+			folder.projectId !== panel.projectId ||
+			!folder.panelIds.includes(id)
+		)
+			throw new TypeError('panel is outside its folder');
 		if (
 			panel.type === 'terminal' &&
 			state.terminalSessions[panel.sessionId]?.projectId !== panel.projectId
@@ -773,16 +962,132 @@ export function validateWorkspace(state: WorkspaceState): void {
 	}
 }
 
-/** Idempotent migration boundary for the first persisted workspace shape. A
- * legacy v0 snapshot may contain only server identity and project roots; it is
- * upgraded without inventing panels or terminal content. */
+/** Every project has exactly one General folder and it comes first; every
+ * folder a project lists is its own; and the project's panel list is exactly
+ * its folders' panels in folder order. */
+function validateProjectFolders(
+	state: WorkspaceState,
+	project: WorkspaceProject,
+): void {
+	const folders = project.folderIds.map((folderId) => state.folders[folderId]);
+	if (
+		new Set(project.folderIds).size !== project.folderIds.length ||
+		folders.some(
+			(folder) => folder === undefined || folder.projectId !== project.id,
+		)
+	)
+		throw new TypeError('project/folder ownership mismatch');
+	if (
+		folders[0]?.kind !== 'general' ||
+		folders.filter((folder) => folder?.kind === 'general').length !== 1
+	)
+		throw new TypeError('project must have one General folder, first');
+	const derived = folders.flatMap((folder) => folder?.panelIds ?? []);
+	if (
+		derived.length !== project.panelIds.length ||
+		derived.some((panelId, index) => project.panelIds[index] !== panelId)
+	)
+		throw new TypeError('project panel list does not match its folders');
+	const links = new Set<string>();
+	for (const folder of folders) {
+		if (folder?.worktree === undefined) continue;
+		const key = `${folder.worktree.repositoryId}\0${folder.worktree.path}`;
+		if (links.has(key))
+			throw new TypeError('a worktree has more than one folder');
+		links.add(key);
+	}
+}
+
+function validateWorktreeLink(
+	link: WorkspaceFolderWorktreeLink,
+): WorkspaceFolderWorktreeLink {
+	if (
+		typeof link !== 'object' ||
+		link === null ||
+		typeof link.repositoryId !== 'string' ||
+		link.repositoryId.length === 0 ||
+		link.repositoryId.length > 256
+	)
+		throw new TypeError('folder worktree link is invalid');
+	return { repositoryId: link.repositoryId, path: boundedPath(link.path) };
+}
+
+/** Schema 5 had no folders: a project held its panels directly. Put each
+ * project's panels, in order and with their layout, in a General folder. A pure
+ * function of its input, so an interrupted start reruns it unchanged. */
+function migrateSchema5To6(
+	value: Record<string, unknown>,
+): Record<string, unknown> {
+	const record = (candidate: unknown): Record<string, Record<string, unknown>> =>
+		typeof candidate === 'object' &&
+		candidate !== null &&
+		!Array.isArray(candidate)
+			? (candidate as Record<string, Record<string, unknown>>)
+			: {};
+	const projects = record(value.projects);
+	const panels = record(value.panels);
+	const folders: Record<string, unknown> = {};
+	const nextProjects: Record<string, unknown> = {};
+	const nextPanels: Record<string, unknown> = { ...panels };
+	Object.keys(projects)
+		.sort()
+		.forEach((projectId, index) => {
+			const project = projects[projectId];
+			if (project === undefined) return;
+			const folderId = migratedGeneralFolderId(index);
+			const panelIds = Array.isArray(project.panelIds)
+				? (project.panelIds as string[])
+				: [];
+			folders[folderId] = {
+				id: folderId,
+				projectId,
+				name: GENERAL_FOLDER_NAME,
+				kind: 'general',
+				panelIds: [...panelIds],
+				...(project.activePanelId === undefined
+					? {}
+					: { activePanelId: project.activePanelId }),
+				layout: project.layout ?? stack(panelIds),
+			};
+			nextProjects[projectId] = { ...project, folderIds: [folderId] };
+			for (const panelId of panelIds) {
+				const panel = panels[panelId];
+				if (panel !== undefined) nextPanels[panelId] = { ...panel, folderId };
+			}
+		});
+	return {
+		...value,
+		schemaVersion: 6,
+		projects: nextProjects,
+		folders,
+		panels: nextPanels,
+	};
+}
+
+/** Folder ids are issued by the server. Ones made while upgrading a stored
+ * workspace and ones made by a command use different prefixes, so they can
+ * never collide. */
+function migratedGeneralFolderId(index: number): ProtocolId {
+	return `folder:m${index}`;
+}
+function issuedFolderId(state: WorkspaceState): ProtocolId {
+	let serial = state.revision + 1;
+	while (state.folders[`folder:r${serial}`] !== undefined) serial += 1;
+	return `folder:r${serial}`;
+}
+
+/** Idempotent migration boundary for persisted workspace shapes. A legacy v0
+ * snapshot may contain only server identity and project roots; it is upgraded
+ * without inventing panels or terminal content. A schema 5 snapshot gains
+ * folders. */
 export function migrateWorkspaceState(
 	input: unknown,
 	fallbackServerId: ProtocolId,
 ): WorkspaceState {
 	if (typeof input !== 'object' || input === null || Array.isArray(input))
 		throw new TypeError('workspace snapshot must be an object');
-	const value = input as Record<string, unknown>;
+	let value = input as Record<string, unknown>;
+	if (value.schemaVersion === 5) value = migrateSchema5To6(value);
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
 	}
@@ -816,10 +1121,19 @@ export function migrateWorkspaceState(
 			rootOrigin: 'legacy-unverified',
 			name,
 			sidebar: defaultWorkspaceSidebarState(),
+			folderIds: [],
 			panelIds: [],
 			layout: stack([]),
 		};
-		(result.projects as Record<string, WorkspaceProject>)[id] = created;
+		const general = generalFolder(
+			migratedGeneralFolderId(Object.keys(result.projects).length),
+			id,
+		);
+		(result.folders as Record<string, WorkspaceFolder>)[general.id] = general;
+		(result.projects as Record<string, WorkspaceProject>)[id] = {
+			...created,
+			folderIds: [general.id],
+		};
 		const view = result.views[defaultViewId];
 		if (view === undefined) throw new Error('default view missing');
 		(result.views as Record<string, WorkspaceView>)[defaultViewId] = {
@@ -901,17 +1215,156 @@ function withActiveProject(
 	};
 }
 
-function withActivePanel(
-	project: WorkspaceProject,
+function generalFolder(id: ProtocolId, projectId: ProtocolId): WorkspaceFolder {
+	return {
+		id,
+		projectId,
+		name: GENERAL_FOLDER_NAME,
+		kind: 'general',
+		panelIds: [],
+		layout: stack([]),
+	};
+}
+
+/** The folder with this panel list and active panel, as one stack. */
+function withFolderPanels(
+	folder: WorkspaceFolder,
 	panelIds: readonly ProtocolId[],
 	activePanelId: ProtocolId | undefined,
-): WorkspaceProject {
-	const { activePanelId: _previousActivePanelId, ...rest } = project;
+): WorkspaceFolder {
+	const { activePanelId: _previousActivePanelId, ...rest } = folder;
+	const active =
+		activePanelId !== undefined && panelIds.includes(activePanelId)
+			? activePanelId
+			: panelIds[0];
 	return {
 		...rest,
 		panelIds: [...panelIds],
-		...(activePanelId === undefined ? {} : { activePanelId }),
-		layout: stack(panelIds, activePanelId),
+		...(active === undefined ? {} : { activePanelId: active }),
+		layout: stack(panelIds, active),
+	};
+}
+
+/** Take a panel out of its folder, keeping the folder's other panels. */
+function removeFromFolder(
+	state: MutableWorkspaceState,
+	folderId: ProtocolId,
+	panelId: ProtocolId,
+): void {
+	const folder = requireFolder(state, folderId);
+	state.folders[folder.id] = withFolderPanels(
+		folder,
+		folder.panelIds.filter((id) => id !== panelId),
+		folder.activePanelId === panelId ? undefined : folder.activePanelId,
+	);
+}
+
+/** Move a panel to another folder of its own project. The source folder keeps
+ * its other panels; the target shows the panel as its active one. */
+function movePanelToFolder(
+	state: MutableWorkspaceState,
+	panelId: ProtocolId,
+	folderId: ProtocolId,
+	index: number | undefined,
+): void {
+	const panel = requirePanel(state, panelId);
+	const target = requireFolder(state, folderId);
+	if (target.projectId !== panel.projectId)
+		throw new Error('folder is outside the panel project');
+	if (target.id !== panel.folderId) removeFromFolder(state, panel.folderId, panelId);
+	const current = requireFolder(state, folderId);
+	const ids = current.panelIds.filter((id) => id !== panelId);
+	ids.splice(indexAt(index, ids.length), 0, panelId);
+	const { captureOffer, ...rest } = current;
+	state.folders[folderId] = withFolderPanels(
+		{
+			...rest,
+			...(captureOffer === undefined || captureOffer.panelId === panelId
+				? {}
+				: { captureOffer }),
+		},
+		ids,
+		panelId,
+	);
+	state.panels[panelId] = { ...panel, folderId } as WorkspacePanel;
+	syncProject(state, panel.projectId, panelId);
+}
+
+/** The folder a new panel lands in: the one named, or General. */
+function folderForNewPanel(
+	state: WorkspaceState,
+	project: WorkspaceProject,
+	folderId: ProtocolId | undefined,
+): WorkspaceFolder {
+	const folder = requireFolder(state, folderId ?? project.folderIds[0] ?? '');
+	if (folder.projectId !== project.id)
+		throw new Error('folder is outside project');
+	return folder;
+}
+
+/** Drop every folder's reference to a panel that is closing or leaving the
+ * project. */
+function forgetPanelReferences(
+	state: MutableWorkspaceState,
+	projectId: ProtocolId,
+	panelId: ProtocolId,
+): void {
+	const project = state.projects[projectId];
+	for (const folderId of project?.folderIds ?? []) {
+		const folder = state.folders[folderId];
+		if (folder === undefined) continue;
+		if (
+			folder.createdByPanelId !== panelId &&
+			folder.captureOffer?.panelId !== panelId
+		)
+			continue;
+		const {
+			createdByPanelId: creator,
+			captureOffer: offer,
+			...rest
+		} = folder;
+		state.folders[folderId] = {
+			...rest,
+			...(creator === undefined || creator === panelId
+				? {}
+				: { createdByPanelId: creator }),
+			...(offer === undefined || offer.panelId === panelId
+				? {}
+				: { captureOffer: offer }),
+		};
+	}
+}
+
+/** Recompute what a project derives from its folders: its panel list in folder
+ * order, an active panel that still exists, and its layout. Every command that
+ * changes a folder's panels ends here. */
+function syncProject(
+	state: MutableWorkspaceState,
+	projectId: ProtocolId,
+	activePanelId?: ProtocolId,
+): void {
+	const project = state.projects[projectId];
+	if (project === undefined) return;
+	const folders = project.folderIds
+		.map((folderId) => state.folders[folderId])
+		.filter((folder): folder is WorkspaceFolder => folder !== undefined);
+	const panelIds = folders.flatMap((folder) => folder.panelIds);
+	const wanted = activePanelId ?? project.activePanelId;
+	const active =
+		wanted !== undefined && panelIds.includes(wanted)
+			? wanted
+			: folders.find((folder) => folder.activePanelId !== undefined)
+					?.activePanelId;
+	const occupied = folders.filter((folder) => folder.panelIds.length > 0);
+	const { activePanelId: _previousActivePanelId, ...rest } = project;
+	state.projects[projectId] = {
+		...rest,
+		panelIds,
+		...(active === undefined ? {} : { activePanelId: active }),
+		layout:
+			occupied.length === 1 && occupied[0] !== undefined
+				? occupied[0].layout
+				: stack(panelIds, active),
 	};
 }
 
@@ -1169,17 +1622,27 @@ export class WorkspaceStore {
 		for (const project of Object.values(next.projects)) {
 			if (!project.panelIds.some((panelId) => stalePanelIds.has(panelId)))
 				continue;
-			const panelIds = project.panelIds.filter(
-				(panelId) => !stalePanelIds.has(panelId),
-			);
-			next.projects[project.id] = withActivePanel(
-				project,
-				panelIds,
-				project.activePanelId !== undefined &&
-					panelIds.includes(project.activePanelId)
-					? project.activePanelId
-					: panelIds[0],
-			);
+			for (const folderId of project.folderIds) {
+				const folder = next.folders[folderId];
+				if (folder === undefined) continue;
+				const { createdByPanelId, captureOffer, ...rest } = folder;
+				next.folders[folderId] = withFolderPanels(
+					{
+						...rest,
+						...(createdByPanelId === undefined ||
+						stalePanelIds.has(createdByPanelId)
+							? {}
+							: { createdByPanelId }),
+						...(captureOffer === undefined ||
+						stalePanelIds.has(captureOffer.panelId)
+							? {}
+							: { captureOffer }),
+					},
+					folder.panelIds.filter((panelId) => !stalePanelIds.has(panelId)),
+					folder.activePanelId,
+				);
+			}
+			syncProject(next, project.id);
 			changedIds.push(project.id);
 		}
 		for (const sessionId of Object.keys(next.terminalSessions)) {
@@ -1216,6 +1679,11 @@ export class WorkspaceStore {
 		const viewId = this.current.viewOrder[0];
 		if (viewId === undefined) throw new Error('workspace has no view');
 		const next = clone(this.current) as MutableWorkspaceState;
+		const general = generalFolder(
+			issuedFolderId(next),
+			AUTOMATION_SPACE_PROJECT_ID,
+		);
+		next.folders[general.id] = general;
 		next.projects[AUTOMATION_SPACE_PROJECT_ID] = {
 			id: AUTOMATION_SPACE_PROJECT_ID,
 			kind: AUTOMATION_PROJECT_KIND,
@@ -1225,6 +1693,7 @@ export class WorkspaceStore {
 			rootOrigin: 'server-default',
 			name: AUTOMATION_SPACE_NAME,
 			sidebar: defaultWorkspaceSidebarState(),
+			folderIds: [general.id],
 			panelIds: [],
 			layout: stack([]),
 		};
@@ -1300,6 +1769,9 @@ export class WorkspaceStore {
 				if (state.projects[command.projectId] !== undefined)
 					throw new Error('project already exists');
 				const view = requireView(state, command.viewId);
+				const general = generalFolder(issuedFolderId(state), command.projectId);
+				state.folders[general.id] = general;
+				changed.push(general.id);
 				const project: WorkspaceProject = {
 					id: command.projectId,
 					serverId: state.serverId,
@@ -1311,6 +1783,7 @@ export class WorkspaceStore {
 							? nextDefaultProjectName(state)
 							: boundedName(command.name),
 					sidebar: normalizeWorkspaceSidebarState(command.sidebar),
+					folderIds: [general.id],
 					panelIds: [],
 					layout: stack([]),
 					...(command.color === undefined
@@ -1450,6 +1923,10 @@ export class WorkspaceStore {
 					delete state.panels[panelId];
 					changed.push(panelId);
 				}
+				for (const folderId of project.folderIds) {
+					delete state.folders[folderId];
+					changed.push(folderId);
+				}
 				for (const [sessionId, session] of Object.entries(
 					state.terminalSessions,
 				)) {
@@ -1482,15 +1959,148 @@ export class WorkspaceStore {
 					if (session === undefined || session.projectId !== panel.projectId)
 						throw new Error('terminal session is outside project');
 				}
-				state.panels[panel.id] = clone(panel);
-				const ids = [...project.panelIds, panel.id];
+				const folder = folderForNewPanel(state, project, panel.folderId);
+				state.panels[panel.id] = {
+					...clone(panel),
+					folderId: folder.id,
+				} as WorkspacePanel;
+				state.folders[folder.id] = withFolderPanels(
+					folder,
+					[...folder.panelIds, panel.id],
+					panel.id,
+				);
+				syncProject(state, project.id, panel.id);
+				changed.push(panel.id, folder.id, project.id);
+				break;
+			}
+			case 'folder.create': {
+				const project = requireProject(state, command.projectId);
+				if (isAutomationSpace(project))
+					throw new Error('the automation space has no other folders');
+				const link =
+					command.worktree === undefined
+						? undefined
+						: validateWorktreeLink(command.worktree);
+				if (command.createdByPanelId !== undefined) {
+					if (link === undefined)
+						throw new Error('only a linked folder records its creator');
+					if (
+						requirePanel(state, command.createdByPanelId).projectId !== project.id
+					)
+						throw new Error('panel is outside project');
+				}
+				const folder: WorkspaceFolder = {
+					id: issuedFolderId(state),
+					projectId: project.id,
+					name: boundedName(command.name),
+					kind: link === undefined ? 'plain' : 'linked',
+					...(link === undefined ? {} : { worktree: link }),
+					panelIds: [],
+					layout: stack([]),
+					...(command.createdByPanelId === undefined
+						? {}
+						: { createdByPanelId: command.createdByPanelId }),
+				};
+				state.folders[folder.id] = folder;
 				state.projects[project.id] = {
 					...project,
-					panelIds: ids,
-					activePanelId: panel.id,
-					layout: stack(ids, panel.id),
+					folderIds: [...project.folderIds, folder.id],
 				};
-				changed.push(panel.id, project.id);
+				changed.push(folder.id, project.id);
+				break;
+			}
+			case 'folder.rename': {
+				const folder = requireFolder(state, command.folderId);
+				if (folder.kind === 'general')
+					throw new Error('the General folder cannot be renamed');
+				state.folders[folder.id] = {
+					...folder,
+					name: boundedName(command.name),
+				};
+				changed.push(folder.id);
+				break;
+			}
+			case 'folder.reorder': {
+				const project = requireProject(state, command.projectId);
+				if (
+					command.folderIds.length !== project.folderIds.length ||
+					new Set(command.folderIds).size !== project.folderIds.length ||
+					command.folderIds.some((id) => !project.folderIds.includes(id))
+				)
+					throw new Error('folder reorder crosses project boundary');
+				if (command.folderIds[0] !== project.folderIds[0])
+					throw new Error('the General folder stays first');
+				state.projects[project.id] = {
+					...project,
+					folderIds: [...command.folderIds],
+				};
+				syncProject(state, project.id);
+				changed.push(project.id, ...command.folderIds);
+				break;
+			}
+			case 'folder.delete': {
+				const folder = requireFolder(state, command.folderId);
+				if (folder.kind === 'general')
+					throw new Error('the General folder cannot be deleted');
+				if (folder.panelIds.length > 0)
+					throw new Error('folder must be empty before delete');
+				const project = requireProject(state, folder.projectId);
+				delete state.folders[folder.id];
+				state.projects[project.id] = {
+					...project,
+					folderIds: project.folderIds.filter((id) => id !== folder.id),
+				};
+				changed.push(folder.id, project.id);
+				break;
+			}
+			case 'folder.link.update': {
+				const folder = requireFolder(state, command.folderId);
+				if (folder.kind !== 'linked')
+					throw new Error('only a linked folder has a worktree');
+				state.folders[folder.id] = {
+					...folder,
+					worktree: validateWorktreeLink(command.worktree),
+				};
+				changed.push(folder.id);
+				break;
+			}
+			case 'folder.offer.set': {
+				const folder = requireFolder(state, command.folderId);
+				const panel = requirePanel(state, command.panelId);
+				if (panel.projectId !== folder.projectId)
+					throw new Error('panel is outside project');
+				if (panel.folderId === folder.id)
+					throw new Error('panel is already in the folder');
+				state.folders[folder.id] = {
+					...folder,
+					captureOffer: { panelId: panel.id },
+				};
+				changed.push(folder.id, panel.id);
+				break;
+			}
+			case 'folder.offer.accept': {
+				const folder = requireFolder(state, command.folderId);
+				if (folder.captureOffer === undefined)
+					throw new Error('folder has no offer');
+				const panelId = folder.captureOffer.panelId;
+				movePanelToFolder(state, panelId, folder.id, undefined);
+				changed.push(folder.id, panelId, folder.projectId);
+				break;
+			}
+			case 'folder.offer.decline': {
+				const folder = requireFolder(state, command.folderId);
+				if (folder.captureOffer === undefined)
+					throw new Error('folder has no offer');
+				const { captureOffer: _declined, ...rest } = folder;
+				state.folders[folder.id] = rest;
+				changed.push(folder.id);
+				break;
+			}
+			case 'panel.moveToFolder': {
+				const panel = requirePanel(state, command.panelId);
+				const from = panel.folderId;
+				movePanelToFolder(state, panel.id, command.folderId, command.index);
+				changed.push(panel.id, from, command.folderId, panel.projectId);
 				break;
 			}
 			case 'panel.update': {
@@ -1502,7 +2112,12 @@ export class WorkspaceStore {
 				)
 					throw new Error('panel patch must be an object');
 				const patch = command.patch as Record<string, JsonValue>;
-				if ('projectId' in patch || 'id' in patch || 'type' in patch)
+				if (
+					'projectId' in patch ||
+					'folderId' in patch ||
+					'id' in patch ||
+					'type' in patch
+				)
 					throw new Error('panel ownership/type is immutable');
 				if ('metadataRevision' in patch)
 					throw new Error('panel metadata revision is server-assigned');
@@ -1531,76 +2146,96 @@ export class WorkspaceStore {
 			}
 			case 'panel.reorder': {
 				const project = requireProject(state, command.projectId);
+				const folderId =
+					command.folderId ??
+					state.panels[command.panelIds[0] ?? '']?.folderId ??
+					project.folderIds[0];
+				const folder = requireFolder(state, folderId ?? '');
+				if (folder.projectId !== project.id)
+					throw new Error('folder is outside project');
 				if (
-					command.panelIds.length !== project.panelIds.length ||
-					new Set(command.panelIds).size !== project.panelIds.length ||
-					command.panelIds.some((id) => !project.panelIds.includes(id))
+					command.panelIds.length !== folder.panelIds.length ||
+					new Set(command.panelIds).size !== folder.panelIds.length ||
+					command.panelIds.some((id) => !folder.panelIds.includes(id))
 				)
-					throw new Error('panel reorder crosses project boundary');
-				state.projects[project.id] = {
-					...project,
-					panelIds: [...command.panelIds],
-					layout: stack(command.panelIds, project.activePanelId),
-				};
-				changed.push(project.id, ...command.panelIds);
+					throw new Error('panel reorder crosses folder boundary');
+				state.folders[folder.id] = withFolderPanels(
+					folder,
+					command.panelIds,
+					folder.activePanelId,
+				);
+				syncProject(state, project.id);
+				changed.push(project.id, folder.id, ...command.panelIds);
 				break;
 			}
 			case 'panel.split': {
 				const project = requireProject(state, command.projectId);
 				if (!project.panelIds.includes(command.panelId))
 					throw new Error('panel is outside project');
-				state.projects[project.id] = {
-					...project,
+				const folder = requireFolder(
+					state,
+					requirePanel(state, command.panelId).folderId,
+				);
+				state.folders[folder.id] = {
+					...folder,
 					layout: {
 						kind: 'split',
 						direction: command.direction,
 						weight: command.weight ?? 0.5,
 						first: stack([command.panelId], command.panelId),
 						second: stack(
-							project.panelIds.filter((id) => id !== command.panelId),
+							folder.panelIds.filter((id) => id !== command.panelId),
 						),
 					},
 				};
-				changed.push(project.id, command.panelId);
+				syncProject(state, project.id);
+				changed.push(project.id, folder.id, command.panelId);
 				break;
 			}
 			case 'panel.activate': {
 				const project = requireProject(state, command.projectId);
 				if (!project.panelIds.includes(command.panelId))
 					throw new Error('panel is outside project');
-				state.projects[project.id] = {
-					...project,
+				const folder = requireFolder(
+					state,
+					requirePanel(state, command.panelId).folderId,
+				);
+				state.folders[folder.id] = {
+					...folder,
 					activePanelId: command.panelId,
 					layout:
-						project.layout.kind === 'stack'
-							? stack(project.panelIds, command.panelId)
-							: project.layout,
+						folder.layout.kind === 'stack'
+							? stack(folder.panelIds, command.panelId)
+							: folder.layout,
 				};
-				changed.push(project.id, command.panelId);
+				syncProject(state, project.id, command.panelId);
+				changed.push(project.id, folder.id, command.panelId);
 				break;
 			}
 			case 'panel.move': {
 				const panel = requirePanel(state, command.panelId);
 				const from = requireProject(state, panel.projectId);
 				const to = requireProject(state, command.targetProjectId);
-				const sourceIds = from.panelIds.filter((id) => id !== panel.id);
-				const targetIds = to.panelIds.filter((id) => id !== panel.id);
+				// A panel arriving from another project lands in General.
+				const target = folderForNewPanel(state, to, undefined);
+				if (from.id === to.id) {
+					movePanelToFolder(state, panel.id, panel.folderId, command.index);
+					changed.push(panel.id, from.id);
+					break;
+				}
+				forgetPanelReferences(state, from.id, panel.id);
+				removeFromFolder(state, panel.folderId, panel.id);
+				const targetIds = [...target.panelIds];
 				targetIds.splice(indexAt(command.index, targetIds.length), 0, panel.id);
-				state.projects[from.id] = withActivePanel(
-					from,
-					sourceIds,
-					from.activePanelId === panel.id ? sourceIds[0] : from.activePanelId,
-				);
-				state.projects[to.id] = {
-					...to,
-					panelIds: targetIds,
-					activePanelId: panel.id,
-					layout: stack(targetIds, panel.id),
-				};
+				state.folders[target.id] = withFolderPanels(target, targetIds, panel.id);
 				state.panels[panel.id] = {
 					...panel,
 					projectId: to.id,
+					folderId: target.id,
 				} as WorkspacePanel;
+				syncProject(state, from.id);
+				syncProject(state, to.id, panel.id);
+				changed.push(panel.folderId, target.id);
 				if (panel.type === 'terminal') {
 					const session = state.terminalSessions[panel.sessionId];
 					if (session === undefined)
@@ -1622,15 +2257,17 @@ export class WorkspaceStore {
 					delete state.terminalSessions[panel.sessionId];
 					changed.push(panel.sessionId);
 				}
-				const panelIds = project.panelIds.filter((id) => id !== panel.id);
-				state.projects[project.id] = withActivePanel(
-					project,
-					panelIds,
+				forgetPanelReferences(state, project.id, panel.id);
+				removeFromFolder(state, panel.folderId, panel.id);
+				// Closing the active panel hands focus to its folder's next panel.
+				syncProject(
+					state,
+					project.id,
 					project.activePanelId === panel.id
-						? panelIds[0]
-						: project.activePanelId,
+						? state.folders[panel.folderId]?.activePanelId
+						: undefined,
 				);
-				changed.push(panel.id, project.id);
+				changed.push(panel.id, panel.folderId, project.id);
 				break;
 			}
 			case 'terminal.create': {
@@ -1660,6 +2297,7 @@ export class WorkspaceStore {
 				if (state.panels[command.panelId] !== undefined)
 					throw new Error('panel already exists');
 				const project = requireProject(state, command.projectId);
+				const folder = folderForNewPanel(state, project, command.folderId);
 				const createdAt = command.createdAt ?? Date.now();
 				state.terminalSessions[command.sessionId] = {
 					id: command.sessionId,
@@ -1675,6 +2313,7 @@ export class WorkspaceStore {
 				const panel: TerminalPanel = {
 					id: command.panelId,
 					projectId: project.id,
+					folderId: folder.id,
 					type: 'terminal',
 					sessionId: command.sessionId,
 					title: boundedName(command.title ?? 'Terminal'),
@@ -1684,14 +2323,13 @@ export class WorkspaceStore {
 						: { cwd: boundedPath(command.cwd) }),
 				};
 				state.panels[panel.id] = panel;
-				const ids = [...project.panelIds, panel.id];
-				state.projects[project.id] = {
-					...project,
-					panelIds: ids,
-					activePanelId: panel.id,
-					layout: stack(ids, panel.id),
-				};
-				changed.push(command.sessionId, panel.id, project.id);
+				state.folders[folder.id] = withFolderPanels(
+					folder,
+					[...folder.panelIds, panel.id],
+					panel.id,
+				);
+				syncProject(state, project.id, panel.id);
+				changed.push(command.sessionId, panel.id, folder.id, project.id);
 				break;
 			}
 			case 'terminal.markInterrupted': {
@@ -1825,6 +2463,7 @@ export function withholdAutomationSpace(state: WorkspaceState): WorkspaceState {
 		projects: Object.fromEntries(
 			Object.entries(state.projects).filter(([id]) => !hidden.has(id)),
 		),
+		folders: keep(state.folders),
 		panels: keep(state.panels),
 		terminalSessions: keep(state.terminalSessions),
 	};
@@ -1910,6 +2549,12 @@ function requireProject(
 	assertId(id, 'projectId');
 	const value = state.projects[id];
 	if (value === undefined) throw new Error('project not found');
+	return value;
+}
+function requireFolder(state: WorkspaceState, id: ProtocolId): WorkspaceFolder {
+	assertId(id, 'folderId');
+	const value = state.folders[id];
+	if (value === undefined) throw new Error('folder not found');
 	return value;
 }
 function requirePanel(state: WorkspaceState, id: ProtocolId): WorkspacePanel {
