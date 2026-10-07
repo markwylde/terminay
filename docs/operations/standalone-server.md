@@ -288,13 +288,18 @@ candidate and does not configure the UDP route.
 
 Publishing a port means knowing it in advance, so a public host or
 `TERMINAY_ICE_PORT` pins the server's ICE ports to a run of consecutive ports.
-Every candidate of every connected device takes its own port from that run; a
-device that finds it spent gathers no candidate and cannot connect, and the
+Every candidate of every connected window takes its own port from that run; a
+window that finds it spent gathers no candidate and cannot connect, and the
 server logs `ice-range-exhausted`. A container with one network interface and
-an advertised address uses two ports per device.
+an advertised address uses two ports per window.
 
-The image pins sixteen ports, 51000–51015. `TERMINAY_ICE_PORT_SPAN` changes
-that; publish the same range. With no public host and no `TERMINAY_ICE_PORT`
+Each browser tab and each Terminay Desktop window is its own connection, so a
+person with a workspace window and its Settings window open is two windows. A
+device may hold up to eight windows on one server.
+
+The image pins sixteen ports, 51000–51015, which serves about eight windows at
+once. The installer's default span of four serves about two.
+`TERMINAY_ICE_PORT_SPAN` changes the span; publish the same range. With no public host and no `TERMINAY_ICE_PORT`
 the image pins nothing, the server uses ephemeral ports, and there is no such
 limit — which is the setup Desktop uses.
 

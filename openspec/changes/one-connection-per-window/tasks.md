@@ -16,12 +16,12 @@
 
 - [x] 3.1 Generate a window id per native window in main, keep it across that window's reloads and reconnects, and send it with `application-auth`. Verified by `scripts/desktop-hosted-connection.test.mjs` asserting the id is stable across a reconnect and differs between windows.
 - [x] 3.2 Open one connection at a time to a given server profile in main. Verified by a unit test that two concurrent opens to one profile run in sequence and both succeed.
-- [ ] 3.3 Present a refused ninth window as a stated reason and do not retry it automatically. Verified by a unit test of the connect-attempt classification and a component test of the message.
+- [x] 3.3 Present a refused ninth window as a stated reason and do not retry it automatically. Verified by a unit test of the connect-attempt classification and a component test of the message.
 
 ## 4. Live connections
 
-- [ ] 4.1 Add the device id to each live-connection entry of the status projection, and group the lists in Settings, the connection menu, and Remote Control by device with a window count. Verified by model and component tests with one device holding three windows.
-- [ ] 4.2 Make closing from the list close every window of the device, and make it work for hosted connections. Verified by a test that the action closes the device's live peers and leaves the device trusted.
+- [x] 4.1 Add the device id to each live-connection entry of the status projection, and group the lists in Settings, the connection menu, and Remote Control by device with a window count. Verified by model and component tests with one device holding three windows.
+- [x] 4.2 Make closing from the list close every window of the device, and make it work for hosted connections. Verified by a test that the action closes the device's live peers and leaves the device trusted.
 
 ## 5. End to end
 
@@ -34,7 +34,7 @@
 
 ## 7. Documentation
 
-- [ ] 7.1 State in `docs/operations/standalone-server.md` that each live window takes ports from a pinned ICE range, with the windows a span of four and of sixteen serve. Verified by `npm run test:documentation`.
+- [x] 7.1 State in `docs/operations/standalone-server.md` that each live window takes ports from a pinned ICE range, with the windows a span of four and of sixteen serve. Verified by `npm run test:documentation`.
 
 ## 8. Close out
 

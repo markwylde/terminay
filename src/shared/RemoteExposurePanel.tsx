@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import {
+	groupLiveConnectionsByDevice,
+	liveWindowsLabel,
+} from './liveConnectionsByDevice';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { useRemoteAccessController } from '../workspace/useRemoteAccessController';
 import { RemotePairingModal } from './RemotePairingModal';
@@ -232,12 +236,17 @@ export function RemoteExposurePanel({
 								No active browser connections.
 							</p>
 						) : (
-							activeConnections.map((connection) => (
+							groupLiveConnectionsByDevice(activeConnections).map((connection) => (
 								<div
-									key={connection.connectionId}
+									key={connection.deviceId}
 									className="settings-remote-item"
 								>
-									<strong>{connection.deviceName}</strong>
+									<strong>
+										{connection.deviceName}
+										{connection.windowCount > 1
+											? ` · ${liveWindowsLabel(connection.windowCount)}`
+											: ''}
+									</strong>
 									<button
 										type="button"
 										className="settings-secondary-button"

@@ -1,4 +1,8 @@
 import { ChevronDown, Settings2 } from 'lucide-react';
+import {
+	groupLiveConnectionsByDevice,
+	liveWindowsLabel,
+} from '../shared/liveConnectionsByDevice';
 import { type RefObject, useEffect } from 'react';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
@@ -228,13 +232,16 @@ export function RemoteAccessConnectionMenu(props: {
 							Active Connections
 						</div>
 						{status?.connections.length ? (
-							status.connections.map((connection) => (
+							groupLiveConnectionsByDevice(status.connections).map((connection) => (
 								<div
-									key={connection.connectionId}
+									key={connection.deviceId}
 									className="remote-access-menu__connection remote-access-menu__connection--compact"
 								>
 									<span className="remote-access-menu__connection-device">
 										{connection.deviceName}
+										{connection.windowCount > 1
+											? ` · ${liveWindowsLabel(connection.windowCount)}`
+											: ''}
 									</span>
 								</div>
 							))
