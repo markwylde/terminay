@@ -22,7 +22,18 @@ import {
 	SessionHolderClient,
 	SessionHolderRefusedError,
 } from './client.js';
+import {
+	deleteHolderCloseRecord,
+	MAX_HOLDER_CLOSE_RECORDS,
+	readHolderCloseRecords,
+} from './closeRecord.js';
 import type { SessionHolderRecordFile } from './holder.js';
+import {
+	holderClosedReport,
+	type SessionHolderIdentity,
+	type SessionHolderObservationReport,
+	type SessionHolderObserver,
+} from './observation.js';
 import {
 	isSessionHolderGeneration,
 	sessionHolderDirectory,
@@ -63,6 +74,11 @@ export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	/** Unattached limit sent to every holder. `null` means no limit. */
 	readonly limitMs: number | null;
 	readonly launchTimeoutMs?: number;
+	/**
+	 * Metadata-only observer for holder lifecycle and held sessions ending.
+	 * Called on transitions, never for output, and never able to fail one.
+	 */
+	readonly onObservation?: SessionHolderObserver;
 }
 
 /** A session a holder still has, live or ended, that a server may adopt. */
@@ -125,14 +141,111 @@ export function createSessionHolderPtyFactory(
 		existsSync(sessionHolderDirectory(dataRoot)) ||
 		existsSync(sessionTailsDirectory(dataRoot));
 
-	const track = (client: SessionHolderClient): void => {
+	const observe = (report: SessionHolderObservationReport): void => {
+		try {
+			options.onObservation?.(report);
+		} catch {
+			/* an observer cannot affect a session */
+		}
+	};
+	/** What reports say about a session, kept apart from who owns it. */
+	interface ObservedSession {
+		readonly ordinal: number;
+		readonly holder: SessionHolderIdentity;
+		readonly client: SessionHolderClient;
+		live: boolean;
+		reported: boolean;
+		/** Already ended, with no server watching, when this server found it. */
+		readonly endedUnattached: boolean;
+	}
+	const observed = new Map<string, ObservedSession>();
+	const identities = new Map<SessionHolderClient, SessionHolderIdentity>();
+	/** Connections this server is closing itself. */
+	const leaving = new Set<SessionHolderClient>();
+	let nextOrdinal = 1;
+
+	const noteSession = (
+		client: SessionHolderClient,
+		holder: SessionHolderIdentity,
+		record: HolderSessionRecord,
+		endedUnattached = false,
+	): void => {
+		observed.set(record.sessionId, {
+			ordinal: nextOrdinal,
+			holder,
+			client,
+			live: record.exit === undefined,
+			reported: false,
+			endedUnattached,
+		});
+		nextOrdinal += 1;
+	};
+
+	const sessionEnded = (
+		sessionId: string,
+		detail: Pick<
+			Extract<SessionHolderObservationReport, { kind: 'session-ended' }>,
+			'exitCode' | 'signal' | 'requested' | 'endedUnattached'
+		>,
+	): void => {
+		const session = observed.get(sessionId);
+		if (session === undefined || session.reported) return;
+		session.reported = true;
+		session.live = false;
+		observe({
+			kind: 'session-ended',
+			holder: session.holder,
+			session: session.ordinal,
+			...detail,
+		});
+	};
+
+	const liveSessionsOf = (client: SessionHolderClient): number => {
+		let count = 0;
+		for (const session of observed.values())
+			if (session.client === client && session.live) count += 1;
+		return count;
+	};
+
+	const track = (client: SessionHolderClient, startedAt: number): void => {
+		const holder: SessionHolderIdentity = { pid: client.pid, startedAt };
+		identities.set(client, holder);
 		clients.set(client.generation, client);
 		client.setLimit(limitMs);
+		client.onClosing((notice) => observe(holderClosedReport(notice, false)));
 		client.onClose(() => {
+			const announced = client.closeNotice !== undefined;
+			observe({
+				kind: 'connection-closed',
+				holder,
+				requested: leaving.has(client),
+				announced,
+				liveSessions: liveSessionsOf(client),
+			});
+			// Reported already, so the next server must not report it again. The
+			// holder writes its record before it says anything.
+			if (announced) deleteHolderCloseRecord(dataRoot, client.generation);
+			leaving.delete(client);
+			identities.delete(client);
 			clients.delete(client.generation);
 			if (current === client) current = undefined;
 			for (const [sessionId, owner] of owners)
 				if (owner === client) owners.delete(sessionId);
+			// Counted on the connection record above, not reported one by one.
+			for (const [sessionId, session] of observed)
+				if (session.client === client) observed.delete(sessionId);
+		});
+	};
+
+	/** Report closes that had no server to hear them, once each. */
+	const reportUnheardCloses = (): void => {
+		const records = readHolderCloseRecords(dataRoot);
+		const dropped = Math.max(0, records.length - MAX_HOLDER_CLOSE_RECORDS);
+		records.forEach((record, index) => {
+			// A holder still attached has said so itself, and removes its own.
+			if (clients.has(record.generation)) return;
+			if (index >= dropped) observe(holderClosedReport(record.notice, true));
+			deleteHolderCloseRecord(dataRoot, record.generation);
 		});
 	};
 
@@ -141,8 +254,13 @@ export function createSessionHolderPtyFactory(
 		started = (async () => {
 			const held: HeldSessionSummary[] = [];
 			for (const record of readHolderRecords(dataRoot)) {
+				const holder: SessionHolderIdentity = {
+					pid: record.pid,
+					startedAt: record.startedAt,
+				};
 				if (!processIsAlive(record.pid)) {
 					removeHolderFiles(dataRoot, record.generation);
+					observe({ kind: 'record-removed', holder });
 					continue;
 				}
 				let client: SessionHolderClient;
@@ -156,6 +274,7 @@ export function createSessionHolderPtyFactory(
 						// Nothing this server can say to it. SIGTERM is the one request
 						// every holder honours: it saves tails and ends its sessions.
 						incompatible.push(record.generation);
+						observe({ kind: 'incompatible', holder, signal: 'SIGTERM' });
 						// Wait for it to finish, so the tails it saves are there to
 						// be read by the restore that follows.
 						const gone = holderRecordRemoved(dataRoot, record.generation);
@@ -165,18 +284,53 @@ export function createSessionHolderPtyFactory(
 							/* already gone */
 						}
 						await gone;
-					}
+					} else
+						observe({
+							kind: 'unreachable',
+							holder,
+							reason:
+								error instanceof SessionHolderRefusedError
+									? error.reason
+									: error instanceof Error
+										? error.message
+										: String(error),
+						});
 					continue;
 				}
-				track(client);
-				if (client.buildId === options.buildId && !client.draining)
-					current ??= client;
-				else if (!client.draining) client.drain();
-				for (const session of await client.list()) {
+				track(client, record.startedAt);
+				const sameBuild = client.buildId === options.buildId;
+				const wasDraining = client.draining;
+				if (sameBuild && !wasDraining) current ??= client;
+				else if (!wasDraining) client.drain();
+				const sessions = await client.list();
+				for (const session of sessions) {
 					owners.set(session.sessionId, client);
 					held.push({ ...session, generation: client.generation });
+					noteSession(
+						client,
+						holder,
+						session,
+						// A holder saves a tail with an exit only for a session that
+						// ended with no server watching it.
+						session.exit !== undefined &&
+							readSessionTail(dataRoot, session.sessionId)?.exit !== undefined,
+					);
 				}
+				const liveSessions = liveSessionsOf(client);
+				observe({
+					kind: 'attached',
+					holder,
+					buildId: client.buildId,
+					sameBuild,
+					draining: wasDraining,
+					liveSessions,
+					endedSessions: sessions.length - liveSessions,
+					limitMs,
+				});
+				if (!sameBuild && !wasDraining)
+					observe({ kind: 'drained', holder, cause: 'build-mismatch' });
 			}
+			reportUnheardCloses();
 			return held;
 		})();
 		return started;
@@ -186,15 +340,29 @@ export function createSessionHolderPtyFactory(
 		await start();
 		if (current !== undefined && !current.closed) return current;
 		launching ??= (async () => {
+			const launchStartedAt = Date.now();
 			try {
 				const generation = randomBytes(8).toString('hex');
 				if (!socketPathFits(sessionHolderSocketPath(dataRoot, generation)))
 					throw new Error('session holder socket path is too long');
 				const record = await launchHolder(options, generation, limitMs);
 				const client = await SessionHolderClient.connect(record);
-				track(client);
+				track(client, record.startedAt);
 				current = client;
+				observe({
+					kind: 'launched',
+					holder: { pid: client.pid, startedAt: record.startedAt },
+					durationMs: Date.now() - launchStartedAt,
+					limitMs,
+				});
 				return client;
+			} catch (error) {
+				observe({
+					kind: 'launch-failed',
+					durationMs: Date.now() - launchStartedAt,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				throw error;
 			} finally {
 				launching = undefined;
 			}
@@ -223,6 +391,7 @@ export function createSessionHolderPtyFactory(
 		const exitListeners = new Set<(exit: HolderExitRecord) => void>();
 		let exited = false;
 		let disposed = false;
+		let signalled = false;
 		const releaseHolderClose = client.onClose(() => {
 			// Detaching is this server leaving; anything else is the holder dying,
 			// which took the shell with it.
@@ -237,7 +406,10 @@ export function createSessionHolderPtyFactory(
 			write: (bytes) => client.write(sessionId, bytes),
 			resize: (dimensions) =>
 				client.resize(sessionId, dimensions.cols, dimensions.rows),
-			kill: (signal) => client.signal(sessionId, signal),
+			kill: (signal) => {
+				signalled = true;
+				client.signal(sessionId, signal);
+			},
 			pause: () => client.pause(sessionId),
 			resume: () => client.resume(sessionId),
 			onData: (listener) =>
@@ -252,7 +424,17 @@ export function createSessionHolderPtyFactory(
 					listener({ exitCode: exit.exitCode, signal: exit.signal });
 				};
 				exitListeners.add(forward);
-				const release = stream.onExit(forward);
+				// Only an exit the holder reports is a session ending. The one made
+				// up when a holder's connection goes is counted on that record.
+				const release = stream.onExit((exit) => {
+					sessionEnded(sessionId, {
+						exitCode: exit.exitCode,
+						signal: exit.signal,
+						requested: signalled,
+						endedUnattached: false,
+					});
+					forward(exit);
+				});
 				return () => {
 					exitListeners.delete(forward);
 					release();
@@ -298,6 +480,8 @@ export function createSessionHolderPtyFactory(
 				rows: spawnOptions.rows,
 			});
 			owners.set(sessionId, client);
+			const holder = identities.get(client);
+			if (holder !== undefined) noteSession(client, holder, record);
 			return processFor(client, record, stream);
 		},
 		start,
@@ -306,6 +490,19 @@ export function createSessionHolderPtyFactory(
 			const client = owners.get(sessionId);
 			if (client === undefined) throw new Error('session is not held');
 			const { record, from, stream } = await client.attach(sessionId, 0);
+			const session = observed.get(sessionId);
+			if (record.exit !== undefined && session !== undefined) {
+				if (session.endedUnattached)
+					sessionEnded(sessionId, {
+						exitCode: record.exit.exitCode,
+						signal: record.exit.signal,
+						requested: false,
+						endedUnattached: true,
+					});
+				// Otherwise an earlier server watched it end and reported it then.
+				session.reported = true;
+				session.live = false;
+			}
 			return { process: processFor(client, record, stream), record, from };
 		},
 		async end(sessionId) {
@@ -314,6 +511,15 @@ export function createSessionHolderPtyFactory(
 			const client = owners.get(sessionId);
 			if (client === undefined) return;
 			owners.delete(sessionId);
+			// A holder ends a session it is asked to end without reporting an exit.
+			if (observed.get(sessionId)?.live === true)
+				sessionEnded(sessionId, {
+					exitCode: null,
+					signal: null,
+					requested: true,
+					endedUnattached: false,
+				});
+			observed.delete(sessionId);
 			try {
 				await client.end(sessionId);
 			} catch {
@@ -328,6 +534,7 @@ export function createSessionHolderPtyFactory(
 						if (client.closed) resolve();
 						else client.onClose(resolve);
 					});
+					leaving.add(client);
 					try {
 						await client.endAll();
 					} catch {
@@ -342,9 +549,11 @@ export function createSessionHolderPtyFactory(
 		setLimit(next) {
 			limitMs = next;
 			for (const client of clients.values()) client.setLimit(next);
+			observe({ kind: 'limit-set', limitMs: next, holders: clients.size });
 		},
 		async detach() {
 			detaching = true;
+			for (const client of clients.values()) leaving.add(client);
 			await Promise.all([...clients.values()].map((client) => client.close()));
 		},
 		readTail: (sessionId) => {

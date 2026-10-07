@@ -42,6 +42,91 @@ export interface HolderSessionRecord {
 	readonly exit?: HolderExitRecord;
 }
 
+export const HOLDER_CLOSE_REASONS = [
+	'empty',
+	'limit',
+	'end-all',
+	'signal',
+	'first-attach-timeout',
+	'crash',
+] as const;
+export type HolderCloseReason = (typeof HOLDER_CLOSE_REASONS)[number];
+
+/**
+ * Why a holder closed and what it held, as it tells an attached server and
+ * records in the data root. It carries counts and times only: no session id,
+ * path, or output.
+ */
+export interface HolderCloseNotice {
+	readonly reason: HolderCloseReason;
+	/** The signal behind a `signal` close. */
+	readonly signal?: string;
+	/** The uncaught error behind a `crash`. */
+	readonly error?: string;
+	readonly pid: number;
+	readonly startedAt: number;
+	readonly closedAt: number;
+	readonly liveSessions: number;
+	readonly endedSessions: number;
+	/** Whether a server was attached when the holder began closing. */
+	readonly attached: boolean;
+	readonly draining: boolean;
+	readonly limitMs: number | null;
+	readonly attachCount: number;
+	readonly lastAttachAt: number | null;
+	readonly lastDetachAt: number | null;
+}
+
+const MAX_CLOSE_NOTICE_TEXT = 4_000;
+
+/** A notice read from a frame or a file, or `undefined` when it is not one. */
+export function parseHolderCloseNotice(
+	value: unknown,
+): HolderCloseNotice | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const notice = value as Record<string, unknown>;
+	const reason = HOLDER_CLOSE_REASONS.find((known) => known === notice.reason);
+	const count = (field: unknown): field is number =>
+		typeof field === 'number' && Number.isSafeInteger(field) && field >= 0;
+	const time = (field: unknown): field is number | null =>
+		field === null || count(field);
+	if (
+		reason === undefined ||
+		!count(notice.pid) ||
+		!count(notice.startedAt) ||
+		!count(notice.closedAt) ||
+		!count(notice.liveSessions) ||
+		!count(notice.endedSessions) ||
+		!count(notice.attachCount) ||
+		typeof notice.attached !== 'boolean' ||
+		typeof notice.draining !== 'boolean' ||
+		!time(notice.limitMs) ||
+		!time(notice.lastAttachAt) ||
+		!time(notice.lastDetachAt)
+	)
+		return undefined;
+	const text = (field: unknown): string | undefined =>
+		typeof field === 'string' ? field.slice(0, MAX_CLOSE_NOTICE_TEXT) : undefined;
+	const signal = text(notice.signal);
+	const error = text(notice.error);
+	return {
+		reason,
+		...(signal === undefined ? {} : { signal }),
+		...(error === undefined ? {} : { error }),
+		pid: notice.pid,
+		startedAt: notice.startedAt,
+		closedAt: notice.closedAt,
+		liveSessions: notice.liveSessions,
+		endedSessions: notice.endedSessions,
+		attached: notice.attached,
+		draining: notice.draining,
+		limitMs: notice.limitMs,
+		attachCount: notice.attachCount,
+		lastAttachAt: notice.lastAttachAt,
+		lastDetachAt: notice.lastDetachAt,
+	};
+}
+
 export interface HolderSpawnRequest {
 	readonly sessionId: string;
 	readonly projectId?: string;
@@ -127,7 +212,10 @@ export type HolderServerMessage =
 			readonly type: 'exit';
 			readonly sessionId: string;
 			readonly outputPosition: number;
-	  } & HolderExitRecord);
+	  } & HolderExitRecord)
+	// Sent once, before a closing holder ends its sessions. A server that does
+	// not know it ignores it, so it needs no new protocol version.
+	| ({ readonly type: 'closing' } & HolderCloseNotice);
 
 export type HolderMessage = HolderClientMessage | HolderServerMessage;
 

@@ -30,6 +30,23 @@ export function sessionHolderRecordPath(
 	return join(sessionHolderDirectory(dataRoot), `${generation}.json`);
 }
 
+export const SESSION_HOLDER_CLOSE_RECORD_SUFFIX = '.closed';
+
+/**
+ * Where a holder leaves the reason it closed. The name is not a holder
+ * record's, so a server looking for holders never reads it as one.
+ */
+export function sessionHolderCloseRecordPath(
+	dataRoot: string,
+	generation: string,
+): string {
+	assertGeneration(generation);
+	return join(
+		sessionHolderDirectory(dataRoot),
+		`${generation}${SESSION_HOLDER_CLOSE_RECORD_SUFFIX}`,
+	);
+}
+
 export function sessionTailsDirectory(dataRoot: string): string {
 	return join(dataRoot, 'session-tails');
 }
