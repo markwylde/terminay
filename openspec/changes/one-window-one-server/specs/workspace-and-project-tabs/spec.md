@@ -132,7 +132,7 @@ A project SHALL have an optional root folder on its server, a name, colour, icon
 
 ### Requirement: Torn-off windows activate on the same server
 
-A newly torn-off native window SHALL become the active window once its workspace is ready, and the first interaction with its terminal controls SHALL be delivered to that control rather than being consumed only to activate the window. A torn-off window SHALL show the same server as the window it was torn from.
+A newly torn-off native window SHALL become the active window once its workspace is ready, and the first interaction with its terminal controls SHALL be delivered to that control rather than being consumed only to activate the window. A torn-off window SHALL show the same server as the window it was torn from. Tearing a project into a new native window SHALL be available in a window showing Local and SHALL NOT be offered in a window showing a remote server, because a remote server holds one live connection for each device.
 
 #### Scenario: First click in a new window
 - **WHEN** a user clicks a terminal control in a newly torn-off window
@@ -142,9 +142,13 @@ A newly torn-off native window SHALL become the active window once its workspace
 - **WHEN** a project is torn out of a window showing a remote server
 - **THEN** the new window shows that same server
 
+#### Scenario: A window showing a remote server
+- **WHEN** a user drags a project tab out of a window showing a remote server
+- **THEN** no new window opens and the project stays in its window
+
 ### Requirement: Workspace views are native windows on one server
 
-Desktop SHALL present workspace views as native windows. Project tabs SHALL be draggable between native windows that show the same server, while web clients manage the same views in-page. A native window showing a different server SHALL NOT be a drop target. Moving a project SHALL preserve its panels, live PTYs, scrollback, and service identities.
+Desktop SHALL present workspace views as native windows. Project tabs SHALL be draggable between native windows that show Local, while web clients manage the same views in-page. A native window showing a different server SHALL NOT be a drop target. Moving a project SHALL preserve its panels, live PTYs, scrollback, and service identities.
 
 #### Scenario: Dragging a project between windows
 - **WHEN** a project tab is dragged into another native window showing the same server
