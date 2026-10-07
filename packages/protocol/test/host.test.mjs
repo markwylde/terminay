@@ -1066,3 +1066,24 @@ test('rename and forget of a remembered connection are closed host actions', () 
 	])
 		assert.throws(() => parseTerminayHostAction(action), TypeError);
 });
+
+test('switching a window to a server and opening one in a new window are closed host actions', () => {
+	for (const type of ['connections.select', 'connections.open-window']) {
+		assert.deepEqual(parseTerminayHostAction({ type, profileId: 'remote:abc' }), {
+			type,
+			profileId: 'remote:abc',
+		});
+		for (const action of [
+			{ type },
+			{ type, profileId: '' },
+			{ type, profileId: '../x' },
+			{ type, profileId: 'remote:abc', origin: 'https://x' },
+			{ type, profileId: 'remote:abc', credential: 'secret' },
+		])
+			assert.throws(() => parseTerminayHostAction(action), TypeError);
+		assert.equal(
+			requiredTerminayHostCapability({ type, profileId: 'remote:abc' }),
+			'connections',
+		);
+	}
+});

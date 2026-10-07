@@ -4822,3 +4822,83 @@ body.project-tabbar-reordering .project-tabbar {
   outline: 2px solid #71d9bb;
   outline-offset: 1px;
 }
+
+/* A server row: the name switches the window, the trailing control opens it
+ * in a window of its own. */
+.remote-access-menu__server-row {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+}
+
+.remote-access-menu__server-row > .remote-access-menu__item {
+	flex: 1;
+	min-width: 0;
+}
+
+.remote-access-menu__server-window {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 28px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.6;
+}
+
+.remote-access-menu__server-window:hover,
+.remote-access-menu__server-window:focus-visible {
+	background: color-mix(in srgb, currentColor 10%, transparent);
+	opacity: 1;
+}
+
+.remote-access-menu__server-window:disabled {
+	cursor: default;
+	opacity: 0.3;
+}
+
+.compact-switcher__servers {
+	display: grid;
+	gap: 2px;
+	padding: 8px 12px 4px;
+	border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.compact-switcher__servers-label {
+	padding: 4px 4px 6px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	opacity: 0.6;
+	text-transform: uppercase;
+}
+
+.compact-switcher__server {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-height: 44px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.compact-switcher__server[aria-checked='true'] {
+	background: color-mix(in srgb, currentColor 10%, transparent);
+	font-weight: 600;
+}
+
+.compact-switcher__server-meta {
+	font-size: 12px;
+	opacity: 0.6;
+}

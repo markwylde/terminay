@@ -92,7 +92,7 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 	mainWindow,
 	tempDir,
 }) => {
-	test.setTimeout(90_000);
+	test.setTimeout(240_000);
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	const server = await startStandaloneServer(tempDir);
 	try {
@@ -119,32 +119,81 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 			.getByRole('button', { name: 'Continue pairing', exact: true })
 			.click();
 
-		// Enrollment saved the server: the connection menu now offers it. The
-		// menu asks the host for remembered connections each time it opens.
-		const attach = menu.getByRole('button', {
-			name: `Attach ${serverHost}`,
-		});
-		await expect(async () => {
-			if (await menu.isVisible().catch(() => false))
-				await mainWindow.keyboard.press('Escape');
-			if (await menu.isVisible().catch(() => false))
-				await connectionMenuButton.click();
-			await connectionMenuButton.click();
-			await expect(attach).toBeVisible({ timeout: 2_000 });
-		}).toPass({ timeout: 30_000 });
-
-		// Attaching authenticates with the enrolled device key and opens the
-		// server's application stream; the menu then shows it connected.
-		await attach.click();
-		await expect(async () => {
+		// Pairing takes you there: the workspace window now shows the new
+		// server, and Remote Control is still Remote Control, listing it.
+		const openMenu = async () => {
+			await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 			if (!(await menu.isVisible().catch(() => false)))
 				await connectionMenuButton.click();
-			const row = menu
-				.locator('[data-connection-phase="ready"]')
-				.filter({ hasText: serverHost });
-			await expect(row).toBeVisible({ timeout: 2_000 });
-			await expect(row).toContainText('Connected');
-		}).toPass({ timeout: 30_000 });
+			await expect(menu).toBeVisible();
+		};
+		const row = (label: string) =>
+			menu.getByRole('menuitemradio', { name: label, exact: true });
+		await expect(async () => {
+			await openMenu();
+			await expect(row(serverHost)).toHaveAttribute('aria-checked', 'true', {
+				timeout: 2_000,
+			});
+			await expect(
+				menu.locator('[data-connection-phase="ready"]').filter({
+					hasText: serverHost,
+				}),
+			).toContainText('Connected', { timeout: 2_000 });
+		}).toPass({ timeout: 45_000 });
+		await expect(row('Local')).toHaveAttribute('aria-checked', 'false');
+		await expect(
+			manager.getByRole('heading', { name: 'Remote Control' }),
+		).toBeVisible();
+		await expect(
+			manager
+				.getByRole('listbox', { name: 'Saved Terminay servers' })
+				.getByRole('option', { name: serverHost }),
+		).toBeVisible();
+
+		// Choosing Local shows Local in this window. Nothing is attached beside
+		// it: the menu lists the servers and marks the one being shown.
+		await row('Local').click();
+		await expect(async () => {
+			await openMenu();
+			await expect(row('Local')).toHaveAttribute('aria-checked', 'true', {
+				timeout: 2_000,
+			});
+		}).toPass({ timeout: 45_000 });
+		await expect(row(serverHost)).toHaveAttribute('aria-checked', 'false');
+		await expect(menu.getByText('Attach', { exact: true })).toHaveCount(0);
+
+		// The other server can be opened in a window of its own, leaving this
+		// one on Local.
+		const second = await appHarness.openChildWindow(async () => {
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await second.locator('.project-tabbar').waitFor({ state: 'visible' });
+		const secondMenu = second
+			.locator('[role="menu"][aria-label="Connection menu"]:visible')
+			.first();
+		await expect(async () => {
+			if (!(await secondMenu.isVisible().catch(() => false)))
+				await second.getByRole('button', { name: /Open connection menu/ }).click();
+			await expect(
+				secondMenu.getByRole('menuitemradio', {
+					name: serverHost,
+					exact: true,
+				}),
+			).toHaveAttribute('aria-checked', 'true', { timeout: 2_000 });
+		}).toPass({ timeout: 45_000 });
+		await openMenu();
+		await expect(row('Local')).toHaveAttribute('aria-checked', 'true');
+
+		// And this window can go back to it while the other window shows it too.
+		await row(serverHost).click();
+		await expect(async () => {
+			await openMenu();
+			await expect(row(serverHost)).toHaveAttribute('aria-checked', 'true', {
+				timeout: 2_000,
+			});
+		}).toPass({ timeout: 45_000 });
 	} finally {
 		await server.stop();
 	}
