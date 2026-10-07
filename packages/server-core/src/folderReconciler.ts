@@ -56,6 +56,8 @@ export class FolderReconciler {
 	 * worktree found by that first pass was already there, so it is not
 	 * announced as having appeared. */
 	private readonly settled = new Set<string>();
+	/** Projects with a worktree operation of Terminay's own in flight. */
+	private readonly suspended = new Map<string, number>();
 	private serial = 0;
 
 	constructor(private readonly options: FolderReconcilerOptions) {}
@@ -64,6 +66,10 @@ export class FolderReconciler {
 	 * project never overlap; a call that arrives during a pass runs one more
 	 * pass after it. */
 	reconcile(projectId: string): Promise<void> {
+		if (this.suspended.has(projectId)) {
+			this.again.add(projectId);
+			return Promise.resolve();
+		}
 		const current = this.running.get(projectId);
 		if (current !== undefined) {
 			this.again.add(projectId);
@@ -80,6 +86,30 @@ export class FolderReconciler {
 	release(projectId: string): void {
 		this.settled.delete(projectId);
 		this.again.delete(projectId);
+		this.suspended.delete(projectId);
+	}
+
+	/**
+	 * Hold off passes for a project while Terminay changes a worktree itself.
+	 * The registry watch fires in the middle of such an operation; a pass run
+	 * then would act on a half-finished state. Call the returned function when
+	 * the operation has finished, after any `relink`; a pass that was asked for
+	 * in the meantime runs then.
+	 */
+	suspend(projectId: string): () => void {
+		this.suspended.set(projectId, (this.suspended.get(projectId) ?? 0) + 1);
+		let resumed = false;
+		return () => {
+			if (resumed) return;
+			resumed = true;
+			const remaining = (this.suspended.get(projectId) ?? 1) - 1;
+			if (remaining > 0) {
+				this.suspended.set(projectId, remaining);
+				return;
+			}
+			this.suspended.delete(projectId);
+			if (this.again.has(projectId)) void this.reconcile(projectId);
+		};
 	}
 
 	/**
@@ -114,7 +144,7 @@ export class FolderReconciler {
 			} catch (error) {
 				this.options.onError?.(projectId, error);
 			}
-		} while (this.again.has(projectId));
+		} while (this.again.has(projectId) && !this.suspended.has(projectId));
 	}
 
 	private async pass(projectId: string): Promise<void> {

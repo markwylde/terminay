@@ -158,3 +158,44 @@ test("General stands for the deepest checkout that contains the project root", (
   // A sibling whose name merely starts the same is not a container.
   assert.deepEqual(paths([row("/repo"), row("/repo-two")], "/repo-two"), ["/repo"]);
 });
+
+test("a pass is held while Terminay moves a worktree, so the folder is relinked before anything is emptied", async () => {
+  const { reconciler, git, host, linked, general } = fixture();
+  git.worktrees = [MAIN, row("/repo/.worktrees/feature")];
+  await reconciler.reconcile("project-a");
+  const folderId = linked()[0].id;
+  host({ type: "panel.moveToFolder", panelId: "panel-b", folderId });
+
+  const resume = reconciler.suspend("project-a");
+  // The registry watch fires mid-move: the old path is gone, the new one is there.
+  git.worktrees = [MAIN, row("/repo/.worktrees/renamed")];
+  const reads = git.reads;
+  await reconciler.reconcile("project-a");
+  assert.equal(git.reads, reads);
+  assert.deepEqual(linked().map((folder) => folder.worktree.path), ["/repo/.worktrees/feature"]);
+
+  reconciler.relink("project-a", "repo", "/repo/.worktrees/feature", "/repo/.worktrees/renamed");
+  resume();
+  resume();
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(linked().map((folder) => [folder.id, folder.worktree.path, folder.panelIds]), [[folderId, "/repo/.worktrees/renamed", ["panel-b"]]]);
+  assert.deepEqual(general().panelIds, ["panel-a"]);
+});
+
+test("nested suspensions resume only when the last one ends, and with nothing asked for no pass runs", async () => {
+  const { reconciler, git } = fixture();
+  await reconciler.reconcile("project-a");
+  const reads = git.reads;
+  const first = reconciler.suspend("project-a");
+  const second = reconciler.suspend("project-a");
+  first();
+  await reconciler.reconcile("project-a");
+  assert.equal(git.reads, reads);
+  second();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(git.reads, reads + 1);
+  const idle = reconciler.suspend("project-a");
+  idle();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(git.reads, reads + 1);
+});
