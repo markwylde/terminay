@@ -349,6 +349,61 @@ test('file operations naming a folder run in that folder’s worktree', async (t
 	);
 });
 
+test('a diff and a revision check naming a folder read that folder’s worktree', async (t) => {
+	const repo = await repository(t);
+	const worktree = await repo.addWorktree('feature');
+	// The same tracked file, changed only in the worktree.
+	await writeFile(join(worktree, 'README.md'), '# Changed in the worktree\n');
+	const { authority, facade, createProject } = await embeddedServer(
+		t,
+		'folders-diff',
+	);
+	await createProject('repo', repo.root);
+	const folder = await folderFor(authority, 'repo', worktree);
+	const inFolder = { projectId: 'repo', folderId: folder.id };
+	/** The diff answer is JSON carried in the response body. */
+	const diffOf = async (payload) => {
+		const answer = await facade.queryWithBody('file.get-git-diff', payload);
+		const body = answer?.body ?? answer?.bytes;
+		return body === undefined
+			? answer
+			: JSON.parse(new TextDecoder().decode(body));
+	};
+
+	const inWorktree = await diffOf({ ...inFolder, path: 'README.md' });
+	assert.equal(inWorktree.hasDiff, true);
+	assert.equal(inWorktree.repoRoot, worktree);
+	assert.equal(inWorktree.path, join(worktree, 'README.md'));
+	// Without the folder the same relative path is the main checkout's file,
+	// which has not changed.
+	const inProject = await diffOf({ projectId: 'repo', path: 'README.md' });
+	assert.equal(inProject.hasDiff, false);
+	assert.equal(inProject.repoRoot, repo.root);
+
+	const folderRevision = await facade.query('file.mutation-revision', {
+		...inFolder,
+		path: 'README.md',
+	});
+	const projectRevision = await facade.query('file.mutation-revision', {
+		projectId: 'repo',
+		path: 'README.md',
+	});
+	assert.notEqual(folderRevision.ino, projectRevision.ino);
+	assert.equal(folderRevision.size, '# Changed in the worktree\n'.length);
+
+	// A path outside the folder's worktree, and an unknown folder, are refused.
+	await assert.rejects(
+		diffOf({ ...inFolder, path: join(repo.root, 'README.md') }),
+	);
+	await assert.rejects(
+		facade.query('file.mutation-revision', {
+			projectId: 'repo',
+			folderId: 'folder:missing',
+			path: 'README.md',
+		}),
+	);
+});
+
 test('folder services are dropped when the folder goes and when the project is closed', async (t) => {
 	const repo = await repository(t);
 	const kept = await repo.addWorktree('kept');
