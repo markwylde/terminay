@@ -13,10 +13,12 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import {
 	basename,
 	dirname,
 	isAbsolute,
+	join,
 	relative,
 	resolve,
 	sep,
@@ -99,6 +101,8 @@ import {
 	ServerMdxRuntimeAdapter,
 } from '../packages/server-core/src/mdxRuntime/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import { FOLDER_TERMINAL_CAPTURED_EVENT } from '../packages/server-core/src/workspaceProtocol';
+import { createWorktreeCaptureHost } from '../packages/server-core/src/worktreeCapture';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
@@ -440,6 +444,9 @@ export class ServerTerminalAuthority {
 	private readonly fileProjectRoots = new Map<string, string>();
 	/** Folder roots, folder-scoped file services, and the worktree reconciler. */
 	private readonly folders: ServerFolders;
+	private readonly worktreeCapture: ReturnType<
+		typeof createWorktreeCaptureHost
+	>;
 	private readonly agentScope: ProjectAgentScope;
 	/** Starts extension session sources and receives their publications. */
 	readonly agentSources: SessionSourceSupervisor;
@@ -538,9 +545,42 @@ export class ServerTerminalAuthority {
 		const projectFileObservationHost = fileObservationHostForRoot((projectId) =>
 			this.fileProjectRoots.get(projectId),
 		);
+		// Which terminal created a worktree: Git in each terminal reports its own
+		// commands to this socket (ADR-0052). The path is short on purpose; Unix
+		// socket paths are capped near 104 bytes.
+		const worktreeCapture = createWorktreeCaptureHost({
+			socketPath: join(
+				tmpdir(),
+				`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
+			),
+			workspace: () => this.workspace.state,
+			apply: (commandId, command) => {
+				const applied = this.composition.workspaceOperations?.applyHostCommand(
+					commandId,
+					command,
+				);
+				if (applied === undefined)
+					throw new Error('workspace operation registry is unavailable');
+				return applied;
+			},
+			moveAutomatically: () =>
+				options.settings?.settings.moveTerminalsIntoNewWorktreeFolders !==
+				false,
+			sessions: () => this.service.listSessions(),
+			onCaptured: (captured) => {
+				this.eventJournal.append(FOLDER_TERMINAL_CAPTURED_EVENT, {
+					...captured,
+				});
+			},
+		});
+		this.worktreeCapture = worktreeCapture;
+		// Until the socket is listening, launched terminals simply do not report,
+		// and capture falls back to the process lookup.
+		void worktreeCapture.start();
 		const folders = new ServerFolders({
 			workspace: () => this.workspace.state,
 			git,
+			capture: worktreeCapture.reconcilerHooks,
 			applyHostCommand: (commandId, command) =>
 				this.composition.workspaceOperations?.applyHostCommand(
 					commandId,
@@ -994,6 +1034,7 @@ export class ServerTerminalAuthority {
 			},
 			git: gitAdapter,
 			folderRoots: folders.roots,
+			gitCommands: worktreeCapture.gitCommands,
 			eventJournal,
 			...(extensionManagement === undefined
 				? {}
@@ -2019,6 +2060,7 @@ export class ServerTerminalAuthority {
 			await this.composition.shutdown();
 		})().finally(() => {
 			this.folders.dispose();
+			this.worktreeCapture.close();
 			this.serviceEventsUnsubscribe?.();
 			this.serviceEventsUnsubscribe = undefined;
 		});

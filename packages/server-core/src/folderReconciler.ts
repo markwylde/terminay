@@ -22,6 +22,8 @@ export interface WorktreeAppeared {
 	readonly projectId: string;
 	readonly folderId: string;
 	readonly worktree: WorkspaceFolderWorktreeLink;
+	/** The panel whose terminal created the worktree, when one is established. */
+	readonly createdByPanelId?: string;
 }
 
 export interface FolderReconcilerOptions {
@@ -37,6 +39,12 @@ export interface FolderReconcilerOptions {
 	readonly worktrees: (projectId: string) => Promise<ReconcilerWorktreeListing>;
 	/** The canonical project root, or null when it cannot be resolved. */
 	readonly canonicalRoot: (root: string) => Promise<string | null>;
+	/** Which panel's terminal created a worktree that has just appeared. Asked
+	 * only for worktrees that turn up after the project was first reconciled. */
+	readonly creatorOf?: (appeared: {
+		readonly projectId: string;
+		readonly worktree: WorkspaceFolderWorktreeLink;
+	}) => Promise<string | undefined>;
 	readonly onWorktreeAppeared?: (appeared: WorktreeAppeared) => void;
 	readonly onError?: (projectId: string, error: unknown) => void;
 }
@@ -216,24 +224,54 @@ export class FolderReconciler {
 		for (const worktree of wanted) {
 			if (have.has(key(worktree))) continue;
 			const link = { repositoryId: worktree.repositoryId, path: worktree.path };
-			const created = this.apply({
-				type: 'folder.create',
-				projectId,
-				name: basename(worktree.path) || worktree.path,
-				worktree: link,
-			});
+			const name = basename(worktree.path) || worktree.path;
+			const creator = announce
+				? await this.options
+						.creatorOf?.({ projectId, worktree: link })
+						.catch(() => undefined)
+				: undefined;
+			// A creator that closed or left the project while it was being worked
+			// out makes the command invalid; the folder is still wanted.
+			const created =
+				creator === undefined
+					? this.apply({ type: 'folder.create', projectId, name, worktree: link })
+					: this.createWithCreator(projectId, name, link, creator);
 			if (!created.ok) continue;
+
 			const folderId = created.event.changedIds.find(
 				(id) => created.state.folders[id]?.worktree?.path === link.path,
 			);
+			const createdByPanelId =
+				folderId === undefined
+					? undefined
+					: created.state.folders[folderId]?.createdByPanelId;
 			if (announce && folderId !== undefined)
 				this.options.onWorktreeAppeared?.({
 					projectId,
 					folderId,
 					worktree: link,
+					...(createdByPanelId === undefined ? {} : { createdByPanelId }),
 				});
 		}
 		this.settled.add(projectId);
+	}
+
+	private createWithCreator(
+		projectId: string,
+		name: string,
+		worktree: WorkspaceFolderWorktreeLink,
+		createdByPanelId: string,
+	): WorkspaceApplyResult {
+		const withCreator = this.apply({
+			type: 'folder.create',
+			projectId,
+			name,
+			worktree,
+			createdByPanelId,
+		});
+		return withCreator.ok
+			? withCreator
+			: this.apply({ type: 'folder.create', projectId, name, worktree });
 	}
 
 	/** Move a folder's panels to General, keeping their order and leaving every

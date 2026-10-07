@@ -235,3 +235,47 @@ test("a change inside a known worktree reads nothing; a removal, a registry chan
   await settle();
   assert.equal(git.reads, 4);
 });
+
+test("a worktree that appears later records the panel that created it; one already there never asks", async () => {
+  const workspace = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const apply = (commandId, command) => workspace.apply({ commandId, command });
+  apply("p", { type: "project.create", projectId: "project-a", viewId: workspace.state.viewOrder[0], root: "/repo", name: "A" });
+  apply("t", { type: "terminal.createPanel", projectId: "project-a", sessionId: "session-a", panelId: "panel-a", createdAt: 1 });
+  const listing = { worktrees: [MAIN, row("/repo/.worktrees/old")] };
+  const asked = [];
+  const appeared = [];
+  let creator = "panel-a";
+  const reconciler = new FolderReconciler({
+    workspace: () => workspace.state,
+    apply,
+    worktrees: async () => ({ state: "ready", worktrees: listing.worktrees }),
+    canonicalRoot: async (path) => path,
+    creatorOf: async (event) => {
+      asked.push(event.worktree.path);
+      if (creator instanceof Error) throw creator;
+      return creator;
+    },
+    onWorktreeAppeared: (event) => appeared.push(event),
+  });
+  const folderFor = (path) => Object.values(workspace.state.folders).find((folder) => folder.worktree?.path === path);
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(asked, []);
+  assert.equal(folderFor("/repo/.worktrees/old").createdByPanelId, undefined);
+
+  listing.worktrees = [...listing.worktrees, row("/repo/.worktrees/feature")];
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(asked, ["/repo/.worktrees/feature"]);
+  assert.equal(folderFor("/repo/.worktrees/feature").createdByPanelId, "panel-a");
+  assert.equal(appeared.at(-1).createdByPanelId, "panel-a");
+
+  // A creator that no longer exists, and a lookup that fails, still get a folder.
+  creator = "panel-gone";
+  listing.worktrees = [...listing.worktrees, row("/repo/.worktrees/second")];
+  await reconciler.reconcile("project-a");
+  assert.equal(folderFor("/repo/.worktrees/second").createdByPanelId, undefined);
+  assert.equal(appeared.at(-1).createdByPanelId, undefined);
+  creator = new Error("lookup failed");
+  listing.worktrees = [...listing.worktrees, row("/repo/.worktrees/third")];
+  await reconciler.reconcile("project-a");
+  assert.equal(folderFor("/repo/.worktrees/third").kind, "linked");
+});

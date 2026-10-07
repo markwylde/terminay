@@ -48,6 +48,11 @@ export interface ServerFoldersOptions {
 	readonly storage: FileCatalogStorage & FileSessionStorage;
 	/** The host that watches and sizes paths under one canonical root. */
 	readonly observationHost: (root: string) => FileObservationHost;
+	/** Who created a worktree that appeared, and what to do about it. */
+	readonly capture?: Pick<
+		ConstructorParameters<typeof FolderReconciler>[0],
+		'creatorOf' | 'onWorktreeAppeared'
+	>;
 	/** The contexts the host already keeps per project, which General and plain
 	 * folders use unchanged. */
 	readonly projects: {
@@ -92,6 +97,7 @@ export class ServerFolders {
 			return {
 				state: listing.state,
 				worktrees: listing.worktrees.map((worktree) => ({
+					id: worktree.id,
 					repositoryId: worktree.repositoryId,
 					path: worktree.path,
 					isBare: worktree.isBare,
@@ -148,6 +154,7 @@ export class ServerFolders {
 					throw new Error('workspace operation registry is unavailable');
 				return applied;
 			},
+			...options.capture,
 			worktrees: (projectId) => listed(projectId),
 			canonicalRoot: (root) => realpath(root).catch(() => null),
 		});

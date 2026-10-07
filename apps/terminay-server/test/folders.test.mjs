@@ -680,6 +680,12 @@ test('the standalone server composes the folder wiring into its services', async
 		/git: gitService,\n\t\tapplyHostCommand: \(commandId, command\) =>\n\t\t\tcomposition\.workspaceOperations\?\.applyHostCommand\(commandId, command\)/u,
 	);
 	assert.match(source, /\n\t\tfolderRoots: folders\.roots,\n/u);
+	// Capture: the reconciler asks who created a worktree, and launched
+	// terminals carry Git's reporting variables.
+	assert.match(source, /\n\t\tcapture: worktreeCapture\.reconcilerHooks,\n/u);
+	assert.match(source, /\n\t\tgitCommands: worktreeCapture\.gitCommands,\n/u);
+	assert.match(source, /moveTerminalsIntoNewWorktreeFolders !== false/u);
+	assert.match(source, /stop: \(\) => \{\n\t\t\t\tworktreeCapture\.close\(\);/u);
 	assert.match(source, /\n\t\tonWorktreeMove: folders\.onWorktreeMove,\n/u);
 	assert.match(
 		source,

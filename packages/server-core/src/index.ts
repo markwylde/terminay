@@ -173,3 +173,4 @@ export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';
 export * from './workspaceRecovery.js';
 export * from './workspaceRepository.js';
+export * from './worktreeCapture.js';
