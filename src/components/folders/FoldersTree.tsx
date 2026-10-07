@@ -252,6 +252,12 @@ function TerminalRow({
 			onKeyDown={activateOnKey(onSelect)}
 			onDragStart={(event) => {
 				event.dataTransfer.effectAllowed = 'move';
+				// A drag with no data never starts in some engines. The type is
+				// one nothing else reads, so the row cannot be dropped as text.
+				event.dataTransfer.setData(
+					'application/x-terminay-terminal',
+					terminal.panelId,
+				);
 				onDragStart?.();
 			}}
 			onDragEnd={onDragEnd}

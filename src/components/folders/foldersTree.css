@@ -264,3 +264,128 @@
 .folders-tree--peek .folders-tree__row--folder {
 	padding-left: 10px;
 }
+
+/* --- The tree as a project's left column ---------------------------------- */
+
+.folders-column {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--terminal-panel-surface, var(--tab-bg-active));
+}
+
+/* The same band as the panel tab strip and the sidebar's group tabs, so the
+ * project chrome runs unbroken across the three columns. */
+.folders-column__header {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	height: var(--panel-tab-strip-height, 34px);
+	padding: 0 12px;
+	background: var(--project-chrome);
+	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+.folders-column__title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 78%, transparent);
+}
+
+.folders-column__body {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.folders-column__body > .folders-tree {
+	flex: 1 1 auto;
+}
+
+/* --- A folder with no panels ---------------------------------------------- */
+
+/* Matches Home with every tab closed: the same surface, type, and action. */
+.folder-empty {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 24px;
+	box-sizing: border-box;
+	text-align: center;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+}
+
+.folder-empty__title {
+	max-width: 100%;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.folder-empty__text {
+	max-width: 100%;
+	margin: 0;
+	font-size: 12.5px;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.folder-empty__path {
+	font-family: inherit;
+	overflow-wrap: anywhere;
+	color: rgba(220, 226, 240, 0.8);
+}
+
+.folder-empty__action {
+	all: unset;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	margin-top: 6px;
+	padding: 8px 14px;
+	border-radius: 8px;
+	font-size: 13px;
+	cursor: pointer;
+	background: rgba(255, 255, 255, 0.06);
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+	transition: background-color 120ms ease;
+}
+
+.folder-empty__action:hover {
+	background: rgba(255, 255, 255, 0.11);
+}
+
+.folder-empty__action:focus-visible {
+	outline: 2px solid rgba(120, 170, 255, 0.9);
+	outline-offset: 1px;
+}
+
+.folder-empty__key {
+	padding: 1px 6px;
+	border-radius: 4px;
+	font-family: inherit;
+	font-size: 11px;
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(220, 226, 240, 0.6);
+}

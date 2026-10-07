@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultTerminalSettings } from '../terminalSettings.ts';
 import {
+	defaultTerminalSettings,
+	normalizeTerminalSettings,
+} from '../terminalSettings.ts';
+import {
+	DEFAULT_FOLDERS_TREE_WIDTH,
 	getProjectTabColor,
+	isProjectFoldersTreeOpenOnDevice,
 	isProjectSidebarOpenOnDevice,
+	projectFoldersTreeWidthOnDevice,
 	projectSidebarPatch,
 	projectSidebarVisibilityKey,
 	projectTabColorHue,
 	projectTabHueDistance,
 	sidebarActiveGroupOnDevice,
+	withProjectFoldersTreeVisibility,
+	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './projectTabModel.ts';
@@ -51,6 +59,51 @@ test('sidebar visibility is device-local per server and project', () => {
 		null,
 		'Sidebar visibility and selected group must not produce a canonical workspace patch.',
 	);
+});
+
+test('the Folders tree is open by default and device-local per server and project', () => {
+	const fresh = defaultTerminalSettings.sidebar;
+	assert.equal(isProjectFoldersTreeOpenOnDevice(fresh, 'server-a', 'project-a'), true);
+	assert.equal(
+		projectFoldersTreeWidthOnDevice(fresh, 'server-a', 'project-a'),
+		DEFAULT_FOLDERS_TREE_WIDTH,
+	);
+
+	const hidden = withProjectFoldersTreeVisibility(fresh, 'server-a', 'project-a', false);
+	assert.equal(isProjectFoldersTreeOpenOnDevice(hidden, 'server-a', 'project-a'), false);
+	assert.equal(isProjectFoldersTreeOpenOnDevice(hidden, 'server-a', 'project-b'), true);
+	assert.equal(isProjectFoldersTreeOpenOnDevice(hidden, 'server-b', 'project-a'), true);
+	// The two columns are toggled independently.
+	assert.equal(isProjectSidebarOpenOnDevice(hidden, 'server-a', 'project-a'), false);
+	const sidebarOpen = withProjectSidebarVisibility(hidden, 'server-a', 'project-a', true);
+	assert.equal(isProjectFoldersTreeOpenOnDevice(sidebarOpen, 'server-a', 'project-a'), false);
+
+	const resized = withProjectFoldersTreeWidth(hidden, 'server-a', 'project-a', 301.6);
+	assert.equal(projectFoldersTreeWidthOnDevice(resized, 'server-a', 'project-a'), 302);
+	assert.equal(
+		projectFoldersTreeWidthOnDevice(resized, 'server-a', 'project-b'),
+		DEFAULT_FOLDERS_TREE_WIDTH,
+	);
+	assert.equal(isProjectFoldersTreeOpenOnDevice(resized, 'server-a', 'project-a'), false);
+});
+
+test('stored Folders tree preferences are normalised and unknown shapes dropped', () => {
+	const normalized = normalizeTerminalSettings({
+		sidebar: {
+			projectFoldersVisibility: { 'server-a:project-a': false, 'server-a:bad': 'no' },
+			projectFoldersWidth: {
+				'server-a:project-a': 300,
+				'server-a:tiny': 4,
+				'server-a:bad': 'wide',
+			},
+		},
+	}).sidebar;
+	assert.deepEqual(normalized.projectFoldersVisibility, { 'server-a:project-a': false });
+	assert.deepEqual(normalized.projectFoldersWidth, {
+		'server-a:project-a': 300,
+		'server-a:tiny': 120,
+	});
+	assert.deepEqual(normalizeTerminalSettings({}).sidebar.projectFoldersVisibility, {});
 });
 
 

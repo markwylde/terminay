@@ -16,6 +16,7 @@ import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { useLongPress } from '../hooks/useLongPress';
 import type {
 	CompactSwitcherConnectionGroup,
+	CompactSwitcherFolderGroup,
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
 } from './compactSwitcherModel.ts';
@@ -26,6 +27,12 @@ export type CompactSwitcherProps = Readonly<{
 	/** The row for the panel in front, so the list says where you already are. */
 	activePanelKey?: string;
 	groups: readonly CompactSwitcherConnectionGroup[];
+	/** Choosing a folder heading shows that folder, with or without panels.
+	 * At this width it is the only way to an empty one. */
+	onActivateFolder?: (
+		group: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => void;
 	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
 	onAddConnection: () => void;
 	onClosePanel: (row: CompactSwitcherPanelRow) => void;
@@ -166,6 +173,7 @@ function CompactSwitcherProjectHeading({
 export function CompactSwitcher({
 	activePanelKey,
 	groups,
+	onActivateFolder,
 	onActivatePanel,
 	onAddConnection,
 	onClosePanel,
@@ -316,7 +324,44 @@ export function CompactSwitcher({
 												<Plus size={14} aria-hidden="true" />
 											</button>
 										</div>
-										{project.panels.length === 0 ? (
+										{/* A project with only its General folder reads as it always
+										    has. With more, each folder heads its own panels, so a
+										    terminal in any folder is reachable from here. */}
+										{project.folders.length > 1 ? (
+											project.folders.map((folder) => (
+												<div
+													className="compact-switcher__folder-group"
+													key={folder.key}
+												>
+													<button
+														type="button"
+														className="compact-switcher__folder"
+														onClick={() => onActivateFolder?.(project, folder)}
+														aria-label={`Folder ${folder.name} in ${project.title}`}
+													>
+														<span className="compact-switcher__folder-name">
+															{folder.name}
+														</span>
+														{folder.panels.length === 0 ? (
+															<span className="compact-switcher__folder-empty">
+																No panels
+															</span>
+														) : null}
+													</button>
+													{folder.panels.map((panel) => (
+														<CompactSwitcherPanel
+															key={panel.key}
+															isActive={panel.key === activePanelKey}
+															onActivate={() => onActivatePanel(panel)}
+															onClose={() => onClosePanel(panel)}
+															onEdit={() => onEditPanel(panel)}
+															projectColor={project.color}
+															panel={panel}
+														/>
+													))}
+												</div>
+											))
+										) : project.panels.length === 0 ? (
 											<p className="compact-switcher__none">No panels</p>
 										) : (
 											project.panels.map((panel) => (

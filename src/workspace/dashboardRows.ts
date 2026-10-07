@@ -79,6 +79,8 @@ export type DashboardPanelRow = {
 	agents: readonly DashboardAgent[];
 	color: string;
 	emoji: string;
+	/** The folder that holds the panel, when the inventory knows it. */
+	folderId?: string;
 	isAgentStatus: boolean;
 	kind: 'panel';
 	panelId: string;
@@ -326,6 +328,7 @@ export function buildDashboardGroups(
 				projectId: project.id,
 				status: dashboardStatusFor(entry.status),
 				title: entry.title,
+				...(entry.folderId === undefined ? {} : { folderId: entry.folderId }),
 				...(entry.sessionId === undefined
 					? {}
 					: { sessionId: entry.sessionId }),

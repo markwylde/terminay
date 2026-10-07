@@ -22,8 +22,8 @@ type LifecycleOptions = {
 	markTerminalActivityViewed: (sessionId: string) => void;
 	movingTerminalSessionIdsRef: MutableRefObject<Set<string>>;
 	panelSessionMapRef: MutableRefObject<Map<string, string>>;
-	/** Scopes this device's remembered tab to the project it belongs to. */
-	projectId: string;
+	/** Where this device remembers the tab in front: one layout, one memory. */
+	activeSessionMemoryKey: string;
 	publishWorkspaceInventory: () => void;
 	setFocusedSessionId: Dispatch<SetStateAction<string | null>>;
 	setIsDockviewReady: Dispatch<SetStateAction<boolean>>;
@@ -115,7 +115,7 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 				// panel Dockview-active. Tab click, xterm click, and typing ack.
 				// This device's own choice, kept on this device so a reconnect
 				// restores the tab this user was on rather than another device's.
-				rememberActiveSession(latest.projectId, sessionId);
+				rememberActiveSession(latest.activeSessionMemoryKey, sessionId);
 			}
 		});
 

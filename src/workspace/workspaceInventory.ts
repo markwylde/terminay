@@ -86,6 +86,9 @@ export type WorkspaceInventoryEntry = {
 	agentUnread?: boolean;
 	color: string;
 	emoji: string;
+	/** The folder of the project that holds the panel. Set by the folder's own
+	 * workspace; absent on an inventory that predates folders. */
+	folderId?: string;
 	/**
 	 * True when this panel's own appearance settings hide its raw-output
 	 * activity indicator. The dashboard still shows the canonical status; the

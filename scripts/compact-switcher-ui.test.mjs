@@ -151,6 +151,8 @@ const groups = [
 				badge: { count: 2, state: 'recent' },
 				color: '#7c5cff',
 				emoji: '',
+				// Only its General folder, which is not worth a heading.
+				folders: [],
 				key: 'local:p1',
 				projectId: 'p1',
 				serverId: 'local',
@@ -216,6 +218,73 @@ test('the switcher groups terminals under their project and connection', () => {
 	assert.ok(project < terminal);
 	assert.match(markup, /role="dialog"/);
 	assert.match(markup, /aria-label="Switch terminal"/);
+});
+
+test('a project with several folders lists each folder with its terminals beneath it', () => {
+	const [connection] = groups;
+	const [project] = connection.projects;
+	const [server, claude] = project.panels;
+	const folder = (folderId, name, panels) => ({
+		folderId,
+		key: `local:folder:${folderId}`,
+		name,
+		panels,
+	});
+	const markup = switcher({
+		groups: [
+			{
+				...connection,
+				projects: [
+					{
+						...project,
+						folders: [
+							folder('general', 'General', [server]),
+							folder('release', 'release-notes', [claude]),
+							folder('idle', 'one-window', []),
+						],
+					},
+				],
+			},
+		],
+	});
+	const order = ['>General<', '>server<', '>release-notes<', '>claude<', '>one-window<'].map(
+		(text) => markup.indexOf(text),
+	);
+	assert.ok(order.every((index) => index >= 0), 'every folder and terminal is listed');
+	assert.deepEqual(order, [...order].sort((left, right) => left - right));
+	assert.equal(markup.match(/class="compact-switcher__folder"/g).length, 3);
+	// A folder with nothing in it says so on its own heading.
+	assert.equal(markup.match(/compact-switcher__folder-empty/g).length, 1);
+	assert.match(markup, /aria-label="Folder release-notes in Paged"/);
+	// Each terminal is listed once, under its folder.
+	assert.equal(markup.match(/>claude</g).length, 1);
+});
+
+test('a project with only its General folder shows no folder heading', () => {
+	const [connection] = groups;
+	const [project] = connection.projects;
+	const markup = switcher({
+		groups: [
+			{
+				...connection,
+				projects: [
+					{
+						...project,
+						folders: [
+							{
+								folderId: 'general',
+								key: 'local:folder:general',
+								name: 'General',
+								panels: project.panels,
+							},
+						],
+					},
+				],
+			},
+		],
+	});
+	assert.doesNotMatch(markup, /compact-switcher__folder/);
+	assert.match(markup, />server</);
 });
 
 test('a row carries its preview line, and a row without one carries none', () => {

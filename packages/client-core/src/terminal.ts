@@ -76,6 +76,10 @@ export interface TerminalClientCreateRequest {
 	readonly profileId?: string;
 	/** Authoritative panel identity used by the server cwd policy. */
 	readonly activePanelId?: string;
+	/** The folder of the project the terminal is created in. Absent means the
+	 * project's General folder. A folder is named by id only; the server
+	 * decides the directory a linked folder starts a terminal in. */
+	readonly folderId?: string;
 	readonly cwd?: string;
 	readonly cols?: number;
 	readonly rows?: number;
@@ -385,6 +389,7 @@ export class TerminayTerminalClient {
 		for (const [name, value] of [
 			['profileId', request.profileId],
 			['activePanelId', request.activePanelId],
+			['folderId', request.folderId],
 		] as const) {
 			if (
 				value !== undefined &&
@@ -411,6 +416,9 @@ export class TerminayTerminalClient {
 				...(request.activePanelId === undefined
 					? {}
 					: { activePanelId: request.activePanelId }),
+				...(request.folderId === undefined
+					? {}
+					: { folderId: request.folderId }),
 				...(request.cwd === undefined ? {} : { cwd: request.cwd }),
 				...(dimensions === undefined ? {} : dimensions),
 			},

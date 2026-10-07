@@ -313,22 +313,41 @@ const MAX_CONTENT_STREAM_BYTES = 128 * 1024 * 1024;
 /** Feature facade for the first server-owned file-viewer query. More file
  * operations can be added without exposing transport or host details to UI. */
 export class FileViewerClient {
-  constructor(private readonly transport: QueryCommandTransport) {}
+  constructor(private readonly transport: QueryCommandTransport, private readonly folderId?: string) {}
+
+  /** The same client with every project-scoped request naming one folder of
+   * the project. The server resolves that folder's root itself; a path is
+   * never sent to choose it. Without a folder the project root is used. */
+  forFolder(folderId: string | undefined): FileViewerClient {
+    if (folderId === this.folderId) return this;
+    return new FileViewerClient(this.transport, folderId === undefined ? undefined : boundedPath(folderId, "folder id"));
+  }
+
+  private scope(projectId: string | undefined): { readonly projectId: string; readonly folderId?: string } {
+    return { projectId: requiredProjectId(projectId), ...(this.folderId === undefined ? {} : { folderId: this.folderId }) };
+  }
+
+  /** Some host-served operations resolve against the project root only.
+   * Answering one of them for a folder would read another checkout's file of
+   * the same name, so a folder-scoped client refuses instead. */
+  private requireProjectRootScope(operation: string): void {
+    if (this.folderId !== undefined) throw new TypeError(`${operation} is not available for a linked folder`);
+  }
 
   async getCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerCapabilities> {
     // The server names a preview kind added after the original set only to a
     // client that says it renders it; a server that predates the option ignores it.
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId), options: { acceptPreviewKinds: [...ACCEPTED_PREVIEW_KINDS] } };
+    const payload = { path: boundedPath(path, "file path"), ...this.scope(projectId), options: { acceptPreviewKinds: [...ACCEPTED_PREVIEW_KINDS] } };
     return validateCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.capabilities, payload, options));
   }
 
   async listFolder(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileCatalogPage> {
-    const payload = { path: boundedPath(path, "folder path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "folder path"), ...this.scope(projectId) };
     return validateCatalogPage(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.list, payload, options));
   }
 
   async createDirectory(path: string, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "folder path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "folder path"), ...this.scope(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.createDirectory, payload, options);
   }
 
@@ -337,7 +356,7 @@ export class FileViewerClient {
     const payload = {
       path: boundedPath(path, "file path"),
       bytesBase64: bytesToBase64(bytes),
-      projectId: requiredProjectId(projectId),
+      ...this.scope(projectId),
     };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.createFile, payload, options);
   }
@@ -346,27 +365,27 @@ export class FileViewerClient {
     if (typeof query !== "string" || query.length === 0 || query.length > 256 || query.includes("\0")) throw new TypeError("file search query is invalid");
     const limit = options.limit ?? 60;
     if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1_000) throw new RangeError("file search limit is invalid");
-    const payload = { path: boundedPath(path, "folder path"), query, options: { limit }, projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "folder path"), query, options: { limit }, ...this.scope(projectId) };
     return validateCatalogSearchPage(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.search, payload, options));
   }
 
   async renameEntry(path: string, destination: string, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "file path"), destination: boundedPath(destination, "destination path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), destination: boundedPath(destination, "destination path"), ...this.scope(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.rename, payload, options);
   }
 
   async deleteEntry(path: string, recursive = false, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "file path"), recursive, projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), recursive, ...this.scope(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.delete, payload, options);
   }
 
   async getContentCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentCapabilities> {
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), ...this.scope(projectId) };
     return validateContentCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentCapabilities, payload, options));
   }
 
   async readContentRange(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", MAX_FILE_CONTENT_RANGE_BYTES), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", MAX_FILE_CONTENT_RANGE_BYTES), ...this.scope(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody !== "function") throw new TypeError("canonical file range transport does not support binary query results");
     const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.contentRange, payload, options);
@@ -376,14 +395,14 @@ export class FileViewerClient {
   }
 
   async readContentText(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly text: string; readonly invalidEncoding: boolean }> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), ...this.scope(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentText, payload, options);
     if (!isRecord(value) || typeof value.text !== "string" || typeof value.invalidEncoding !== "boolean") throw new TypeError("file content text response is invalid");
     return Object.freeze({ ...validateContentRange(value), text: value.text, invalidEncoding: value.invalidEncoding });
   }
 
   async readContentHex(path: string, offset: number, length: number, bytesPerRow = 16, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly bytesPerRow: number; readonly rows: readonly FileViewerHexRow[] }> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), bytesPerRow: boundedPositiveUInt(bytesPerRow, "bytes per row", 64), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), bytesPerRow: boundedPositiveUInt(bytesPerRow, "bytes per row", 64), ...this.scope(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentHex, payload, options);
     if (!isRecord(value) || !safeUInt(value.bytesPerRow) || !Array.isArray(value.rows) || value.rows.length > 16_384) throw new TypeError("file content HEX response is invalid");
     const rows = value.rows.map((row) => {
@@ -394,7 +413,7 @@ export class FileViewerClient {
   }
 
   async readContentPreview(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly decodedImagePixelLimit: number }> {
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), ...this.scope(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentPreview, payload, options);
     if (!isRecord(value) || !safeUInt(value.decodedImagePixelLimit)) throw new TypeError("file content preview response is invalid");
     return Object.freeze({ ...validateContentRange(value, 16 * 1024 * 1024), decodedImagePixelLimit: value.decodedImagePixelLimit });
@@ -435,7 +454,7 @@ export class FileViewerClient {
   }
 
   async openFile(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerSessionIdentity> {
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), ...this.scope(projectId) };
     return validateSessionIdentity(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.open, payload, options));
   }
 
@@ -462,7 +481,7 @@ export class FileViewerClient {
   }
 
   async getFolderMarkdownTasks(path: string, projectId?: string, taskOptions: FolderMarkdownTaskOptions = {}, options: QueryOptions = {}): Promise<FolderMarkdownTaskAggregation> {
-    const payload = { path: boundedPath(path, "folder path"), options: validateFolderMarkdownTaskOptions(taskOptions), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "folder path"), options: validateFolderMarkdownTaskOptions(taskOptions), ...this.scope(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody === "function") {
       const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.folderTasks, payload, options);
@@ -473,6 +492,7 @@ export class FileViewerClient {
 
   async getGitDiff(path: string, projectId?: string, options: QueryOptions = {}): Promise<JsonValue> {
     if (typeof path !== "string" || path.length === 0 || path.includes("\0")) throw new TypeError("file path is invalid");
+    this.requireProjectRootScope("file Git diff");
     const payload = { path, projectId: requiredProjectId(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody === "function") {
@@ -483,6 +503,7 @@ export class FileViewerClient {
   }
 
   async getMutationRevision(path: string, projectId?: string, options: QueryOptions = {}): Promise<{ readonly ino: number; readonly mtimeMs: number; readonly size: number }> {
+    this.requireProjectRootScope("file mutation revision");
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) }, options);
     if (!isRecord(value) || !Number.isSafeInteger(value.ino) || (value.ino as number) < 0 || typeof value.mtimeMs !== "number" || !Number.isFinite(value.mtimeMs) || !Number.isSafeInteger(value.size) || (value.size as number) < 0) throw new TypeError("file mutation revision response is invalid");
     return Object.freeze({ ino: value.ino as number, mtimeMs: value.mtimeMs, size: value.size as number });
@@ -495,7 +516,7 @@ export class FileViewerClient {
 
   /** Read server-indexed metadata within an exact project scope. */
   async getServerTextMetadata(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileTextMetadata> {
-    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
+    const payload = { path: boundedPath(path, "file path"), ...this.scope(projectId) };
     return validateTextMetadata(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.textMetadata, payload, options));
   }
 
@@ -515,7 +536,7 @@ export class FileViewerClient {
       path: boundedPath(path, "file path"),
       startLine: boundedUInt(startLine, "start line"),
       lineCount: boundedPositiveUInt(lineCount, "line count", 512),
-      projectId: requiredProjectId(projectId),
+      ...this.scope(projectId),
     };
     return validateTextWindow(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.textLines, payload, options), true);
   }

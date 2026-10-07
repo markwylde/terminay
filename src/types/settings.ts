@@ -76,6 +76,12 @@ export type SidebarSettings = {
 	projectVisibility: Record<string, boolean>;
 	/** Device-local selected sidebar group, indexed by server and project id. */
 	projectActiveGroup: Record<string, SidebarGroupId>;
+	/** Device-local open/closed preference for the Folders tree, indexed by
+	 * server and project id. Absent means open. */
+	projectFoldersVisibility: Record<string, boolean>;
+	/** Device-local Folders tree width in pixels, indexed by server and project
+	 * id. Absent means the default width. */
+	projectFoldersWidth: Record<string, number>;
 };
 
 export type FileViewerSettings = {

@@ -1009,6 +1009,7 @@
 .terminal-tab-close,
 .project-tab-add,
 .project-tab-sidebar-toggle,
+.project-tab-folders-toggle,
 .project-tab-home,
 .terminay-add-tab-button {
   all: unset;
@@ -1073,7 +1074,10 @@
   opacity: 0.35;
 }
 
-.project-tab-sidebar-toggle {
+/* The Folders tree toggle at the leading end and the sidebar toggle at the
+   trailing end are the same control for two columns. */
+.project-tab-sidebar-toggle,
+.project-tab-folders-toggle {
   height: 100%;
   aspect-ratio: 1;
   padding: 0;
@@ -1083,24 +1087,39 @@
   -webkit-app-region: no-drag;
 }
 
-.project-tab-sidebar-toggle:hover:not(:disabled) {
+.project-tab-sidebar-toggle:hover:not(:disabled),
+.project-tab-folders-toggle:hover:not(:disabled) {
   color: #dce2f0;
   background: rgba(255, 255, 255, 0.08);
 }
 
-.project-tab-sidebar-toggle--active {
+.project-tab-sidebar-toggle--active,
+.project-tab-folders-toggle--active {
   color: #ffffff;
   background: transparent;
   box-shadow: none;
 }
 
-.project-tab-sidebar-toggle--active:hover:not(:disabled) {
+.project-tab-sidebar-toggle--active:hover:not(:disabled),
+.project-tab-folders-toggle--active:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.project-tab-sidebar-toggle:disabled {
+.project-tab-sidebar-toggle:disabled,
+.project-tab-folders-toggle:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* The sidebar toggle closes the bar on the side its sidebar is on. It is inset
+   like its leading twin, so it keeps its own corners rather than taking the
+   window corner the bar's last control otherwise gets. */
+.project-tab-sidebar-toggle-box--trailing {
+  padding: 5px 4px;
+}
+
+.project-tabbar > .project-tab-sidebar-toggle-box--trailing > button {
+  border-radius: 4px;
 }
 
 .project-tab-home {
@@ -2075,6 +2094,7 @@ body.project-tabbar-reordering .project-tabbar {
 .terminal-tab-close svg,
 .project-tab-add svg,
 .project-tab-sidebar-toggle svg,
+.project-tab-folders-toggle svg,
 .terminay-add-tab-button svg {
   display: block;
   stroke: currentColor;
@@ -4522,6 +4542,41 @@ body.project-tabbar-reordering .project-tabbar {
   margin: 10px;
   color: rgba(220, 226, 240, 0.45);
   font-size: 13px;
+}
+
+/* A folder heading sits between its project and its panels: quieter than
+   the project, and one line however long the folder's name is. */
+.compact-switcher__folder {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px 2px 18px;
+  color: rgba(220, 226, 240, 0.7);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compact-switcher__folder:focus-visible {
+  outline: 1px solid rgba(87, 183, 255, 0.7);
+  outline-offset: -1px;
+}
+
+.compact-switcher__folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-switcher__folder-empty {
+  flex: none;
+  color: rgba(220, 226, 240, 0.4);
+  font-weight: 400;
 }
 
 .compact-switcher__connection-name {

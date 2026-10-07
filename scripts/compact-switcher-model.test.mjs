@@ -232,3 +232,104 @@ test('clearing the filter restores the full list', () => {
 	const all = buildCompactSwitcherGroups({ sources: twoServers });
 	assert.deepEqual(filterCompactSwitcherGroups(all, '   '), all);
 });
+
+/** Paged with General holding the server, a linked folder holding the build
+ * and a file, and an empty linked folder. */
+const withFolders = () =>
+	buildCompactSwitcherGroups({
+		foldersByProject: {
+			'local:p1': [
+				{ id: 'general', name: 'General' },
+				{ id: 'release', name: 'release-notes' },
+				{ id: 'idle', name: 'one-window' },
+			],
+		},
+		sources: [
+			source('local', 'Local', [paged, dotfiles], {
+				p1: [
+					{ ...terminal('panel-a', 'server', 's-a'), folderId: 'general' },
+					{ ...terminal('panel-b', 'build', 's-b'), folderId: 'release' },
+					panel({
+						folderId: 'release',
+						kind: 'file',
+						panelId: 'file-1',
+						title: 'README.md',
+					}),
+				],
+				p2: [terminal('panel-c', 'zsh', 's-c', 'p2')],
+			}),
+		],
+	});
+
+test('each project lists its folders, each folder its panels', () => {
+	const [project, unfoldered] = withFolders()[0].projects;
+	assert.deepEqual(
+		project.folders.map((folder) => [
+			folder.name,
+			folder.panels.map((row) => row.title),
+		]),
+		[
+			['General', ['server']],
+			['release-notes', ['build', 'README.md']],
+			['one-window', []],
+		],
+	);
+	// The flat list is still every panel, for the surfaces that read it.
+	assert.deepEqual(
+		project.panels.map((row) => row.title),
+		['server', 'build', 'README.md'],
+	);
+	assert.equal(project.folders[1].panels[0].folderId, 'release');
+	assert.equal(new Set(project.folders.map((folder) => folder.key)).size, 3);
+	// A project whose folders this window does not know has none to list.
+	assert.deepEqual(unfoldered.folders, []);
+	assert.deepEqual(
+		unfoldered.panels.map((row) => row.title),
+		['zsh'],
+	);
+});
+
+test('a panel in an unknown folder stays reachable under the first', () => {
+	const groups = buildCompactSwitcherGroups({
+		foldersByProject: { 'local:p1': [{ id: 'general', name: 'General' }] },
+		sources: [
+			source('local', 'Local', [paged], {
+				p1: [
+					terminal('panel-a', 'server', 's-a'),
+					{ ...terminal('panel-b', 'build', 's-b'), folderId: 'gone' },
+				],
+			}),
+		],
+	});
+	assert.deepEqual(
+		groups[0].projects[0].folders[0].panels.map((row) => row.title),
+		['server', 'build'],
+	);
+});
+
+test('filtering narrows folders with their panels', () => {
+	const byPanel = filterCompactSwitcherGroups(withFolders(), 'readme');
+	const [project] = byPanel[0].projects;
+	assert.deepEqual(
+		project.folders.map((folder) => folder.name),
+		['release-notes'],
+	);
+	assert.deepEqual(
+		project.panels.map((row) => row.title),
+		['README.md'],
+	);
+
+	// A folder's name keeps the folder whole, as a project's keeps the project.
+	const byFolder = filterCompactSwitcherGroups(withFolders(), 'release-n');
+	assert.deepEqual(
+		byFolder[0].projects[0].panels.map((row) => row.title),
+		['build', 'README.md'],
+	);
+	// An empty folder is still found by its name.
+	const empty = filterCompactSwitcherGroups(withFolders(), 'one-window');
+	assert.deepEqual(
+		empty[0].projects[0].folders.map((folder) => folder.name),
+		['one-window'],
+	);
+	assert.deepEqual(empty[0].projects[0].panels, []);
+});
