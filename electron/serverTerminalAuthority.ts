@@ -440,6 +440,7 @@ export class ServerTerminalAuthority {
 	private readonly workspaceCommandTestRecords:
 		| ServerWorkspaceTestCommandRecord[]
 		| undefined;
+	private projectCreationTestRefusals = 0;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -1135,6 +1136,22 @@ export class ServerTerminalAuthority {
 	 * workspace capability from this hook: it can only reset and read its own
 	 * redacted observation buffer through the main-process test IPC seam.
 	 */
+	/**
+	 * Test-only: the server closes every embedded renderer connection, as it
+	 * does when it reaps one. The window is told nothing by this hook; what it
+	 * learns, it learns from its byte endpoint.
+	 */
+	async closeRendererConnectionsForTest(): Promise<number> {
+		const connections = [...this.rendererConnectionsByOwner.values()];
+		await Promise.all(connections.map((connection) => connection.close()));
+		return connections.length;
+	}
+
+	/** Test-only: the server refuses this many of the next project creations. */
+	refuseProjectCreationsForTest(count: number): void {
+		this.projectCreationTestRefusals = count;
+	}
+
 	resetWorkspaceCommandTestRecords(): void {
 		this.workspaceCommandTestRecords?.splice(0);
 	}
@@ -1168,6 +1185,13 @@ export class ServerTerminalAuthority {
 			this.workspaceCommandTestRecords?.push(
 				workspaceCommandTestRecord(envelope.command),
 			);
+			if (
+				envelope.command.type === 'project.create' &&
+				this.projectCreationTestRefusals > 0
+			) {
+				this.projectCreationTestRefusals -= 1;
+				throw new Error('The server refused this project for the test.');
+			}
 			return apply(envelope);
 		};
 	}

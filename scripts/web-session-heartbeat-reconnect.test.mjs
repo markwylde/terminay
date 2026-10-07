@@ -186,3 +186,69 @@ test('the web workspace probes liveness and no longer infers it from traffic', a
 		assert.doesNotMatch(source, /stallClass|SilenceWatch|shouldRecoverFromSilence/u);
 	}
 });
+
+/** A probe that is only ever settled by its own deadline. */
+const unanswered = (signal) =>
+	new Promise((_resolve, reject) => {
+		signal.addEventListener('abort', () => reject(new Error('no answer')), {
+			once: true,
+		});
+	});
+
+function suspendableHeartbeat(clock, ping, lost) {
+	return createSessionHeartbeat({
+		ping,
+		onLost: (snapshot) => lost.push(snapshot),
+		intervalMs: 100,
+		now: () => clock.now,
+		setTimeout: (callback, delayMs) => clock.setTimeout(callback, delayMs),
+		clearTimeout: (handle) => clock.clearTimeout(handle),
+	});
+}
+
+test('a probe whose deadline came due while the document was frozen is not a miss', async () => {
+	const clock = createClock();
+	const lost = [];
+	let probes = 0;
+	// The transport is healthy throughout; only the first probe is caught by
+	// the freeze, so nothing reads its answer before its deadline.
+	const heartbeat = suspendableHeartbeat(
+		clock,
+		(signal) => {
+			probes += 1;
+			return probes === 1 ? unanswered(signal) : Promise.resolve();
+		},
+		lost,
+	);
+	heartbeat.start();
+	await clock.advance(100);
+	assert.equal(probes, 1, 'a probe is outstanding when the lid closes');
+
+	// Ten minutes pass in one step: the deadline's timer fires on thaw.
+	await clock.advance(600_000);
+
+	assert.equal(heartbeat.snapshot().missed, 0, 'sleep is not a missed probe');
+	assert.equal(probes, 2, 'liveness is proven again immediately on thaw');
+	for (let beat = 0; beat < 4; beat += 1) await clock.advance(100);
+	assert.deepEqual(lost, [], 'an answering connection is not replaced');
+	heartbeat.stop();
+});
+
+test('a transport that died during a freeze is retired by the probes that follow', async () => {
+	const clock = createClock();
+	const lost = [];
+	const heartbeat = suspendableHeartbeat(clock, unanswered, lost);
+	heartbeat.start();
+	await clock.advance(100);
+	await clock.advance(600_000);
+	assert.deepEqual(lost, [], 'the frozen probe alone retires nothing');
+
+	// Each probe from here runs its full deadline while the document is awake.
+	await clock.advance(100);
+	assert.deepEqual(lost, [], 'one on-time miss is not yet a failure');
+	await clock.advance(100);
+	await clock.advance(100);
+	assert.equal(lost.length, 1, 'the miss limit of on-time probes retires it');
+	assert.equal(lost[0].missed, 2);
+	heartbeat.stop();
+});

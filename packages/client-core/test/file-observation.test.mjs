@@ -40,3 +40,21 @@ test("file observation facade rejects retargeted and unbounded server DTOs", asy
   });
   await assert.rejects(() => client.startWatch("project-a", ""), /identity mismatch/u);
 });
+
+test("stopping a watch on a lost connection settles quietly through a feature transport", async () => {
+  const { ClientDisconnectedError, TerminayClientFacade } = await import("../dist/index.js");
+  // The workspace reaches the server through this facade, which wraps what the
+  // transport threw in an operation error. A watch outlived by its connection
+  // has nothing left to stop, so that is not a failure to report.
+  const lost = new FileObservationClient(new TerminayClientFacade({
+    async command() { throw new ClientDisconnectedError(); },
+    async query() { throw new ClientDisconnectedError(); },
+  }));
+  await lost.stopWatch("watch-1");
+
+  const refused = new FileObservationClient(new TerminayClientFacade({
+    async command() { throw new Error("watch is not owned by this client"); },
+    async query() { return null; },
+  }));
+  await assert.rejects(refused.stopWatch("watch-1"), /not owned by this client/u);
+});
