@@ -12,6 +12,10 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 - **WHEN** a user presses the Command Bar control on a compact workspace with a project in front
 - **THEN** the Command Bar opens over that project, and no other menu opens
 
+#### Scenario: No project in front
+- **WHEN** Home is selected on a compact workspace and the window holds no project
+- **THEN** the Command Bar control is present and opens the Command Bar
+
 #### Scenario: Command Bar on Home
 - **WHEN** a user presses the Command Bar control on a compact workspace while Home is selected
 - **THEN** the Command Bar opens over Home

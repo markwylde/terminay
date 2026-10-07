@@ -88,7 +88,11 @@ Desktop Settings SHALL expose a **Diagnostics** category whose Performance loggi
 
 ### Requirement: Command Bar contents
 
-The Command Bar SHALL search built-in commands and saved macros. Built-ins SHALL honour the active panel and project requirement and SHALL display user-configured shortcuts. Commands that act on the workspace view rather than a panel, including **Show Dashboard**, SHALL remain available when no panel or project is active.
+The Command Bar SHALL search built-in commands, saved macros, and places. Built-ins SHALL honour the active panel and project requirement and SHALL display user-configured shortcuts. Commands that act on the workspace view rather than a panel, including **Show Dashboard**, SHALL remain available when no panel or project is active.
+
+Places SHALL be Home's sections and every project, tab, and agent of every attached connection, and every automation of every connection that serves automations. Place matching SHALL be case-insensitive substring matching over names, SHALL rank a match at the start of a name or word above one elsewhere, and SHALL return nothing for an empty search, so that the Command Bar opens showing commands and macros alone. Results SHALL be grouped, with commands and macros first and then places by kind — sections, projects, tabs, agents, automations — each kind bounded. Choosing a place SHALL go to it: a section opens as a Home tab, a project or tab is activated as a dashboard row is, an agent as a dashboard agent is, and an automation opens in its Home tab. With more than one connection attached, a place SHALL name the server it belongs to.
+
+The Command Bar SHALL open whichever view is selected, including Home and a window that holds no project. A command that requires a project SHALL be left out of the results when no project is in front: while Home is selected, and when the window holds no project.
 
 #### Scenario: Searching the Command Bar
 
@@ -104,6 +108,31 @@ The Command Bar SHALL search built-in commands and saved macros. Built-ins SHALL
 
 - **WHEN** a user runs **Show Dashboard** with no active panel
 - **THEN** it runs rather than being withheld
+
+#### Scenario: Finding a tab in another project
+
+- **WHEN** a user types part of a tab's title into the Command Bar and chooses that tab
+- **THEN** the Command Bar closes, that tab's project is selected, and the tab is focused
+
+#### Scenario: Finding an automation
+
+- **WHEN** a user types part of an automation's name into the Command Bar while a project is in front and chooses it
+- **THEN** Home is selected and that automation's tab is in front
+
+#### Scenario: Opening with nothing typed
+
+- **WHEN** a user opens the Command Bar and has typed nothing
+- **THEN** commands and macros are listed and no places are
+
+#### Scenario: Opening on Home
+
+- **WHEN** a user presses the Command Bar shortcut while Home is selected
+- **THEN** the Command Bar opens over Home, lists view-scoped commands, and lists no command that requires a project
+
+#### Scenario: No project in the window
+
+- **WHEN** a user opens the Command Bar in a window that holds no project
+- **THEN** it opens, lists view-scoped commands and places, and lists no command that requires a project
 
 ### Requirement: Semantic secondary-route presentation
 
@@ -411,3 +440,51 @@ incompatible SHALL show that connection's state instead of settings.
 
 - **WHEN** a user hides the status bar on one device
 - **THEN** other devices connected to the same server keep their own status bar setting
+
+### Requirement: Open Command Bar command reach
+
+**Open Command Bar** SHALL be reachable without a keyboard on every host. It SHALL appear in the Desktop application menu and in the browser host's in-page menu, and SHALL be rebindable in the shortcut settings surface like every other command, with a default accelerator of `CmdOrCtrl+L`. On a host with no keyboard it SHALL additionally be reachable from a workspace chrome control, because it is the only route to the commands and macros the compact chrome draws no control for.
+
+#### Scenario: Browser host in-page menu
+- **WHEN** a user opens the browser host's View menu
+- **THEN** **Open Command Bar** is listed there and invoking it opens the Command Bar
+
+#### Scenario: Desktop native menu
+- **WHEN** a user opens the Desktop application menu
+- **THEN** **Open Command Bar** is listed there with its configured accelerator
+
+#### Scenario: A host with no keyboard
+- **WHEN** a workspace is presented on a host that cannot send `CmdOrCtrl+L`
+- **THEN** a chrome control opens the Command Bar without any keystroke
+
+### Requirement: Editing commands
+
+Tab editing and project editing SHALL be first-class application commands. **Edit Active Tab** SHALL open the editor for the terminal, file, or folder tab in front, and **Edit Active Project** SHALL open the editor for the project in front. Both SHALL be searchable in the Command Bar, SHALL appear in the Desktop application menu and in the browser host's in-page menu, and SHALL be rebindable in the shortcut settings surface like every other command, with no default accelerator. Each SHALL open the same editor its direct gesture opens, in the current host's auxiliary-route presentation, so an editor is never reachable by gesture alone.
+
+#### Scenario: Editing the tab in front
+- **WHEN** a user invokes **Edit Active Tab** with a tab in front
+- **THEN** that tab's editor opens, the same editor a double-click or long-press on it opens
+
+#### Scenario: Editing the project in front
+- **WHEN** a user invokes **Edit Active Project** with a project in front
+- **THEN** that project's editor opens, the same editor a long press on its switcher heading opens
+
+#### Scenario: Nothing in front
+- **WHEN** a user invokes **Edit Active Tab** with no tab in front
+- **THEN** no editor opens and the workspace reports that a tab must be open first
+
+#### Scenario: Searchable in the Command Bar
+- **WHEN** a user searches the Command Bar for either command
+- **THEN** it is returned with its user-configured shortcut shown
+
+### Requirement: In-page menu commands do not depend on a binding
+
+A host that draws its application menu in page SHALL invoke a command by naming it, not by synthesising the keystroke its accelerator would produce. A command that ships with no default binding SHALL therefore be invocable from that menu, and SHALL reach the same dispatch the Desktop native menu and the accelerator reach.
+
+#### Scenario: An unbound command in the in-page menu
+- **WHEN** a user selects an in-page menu entry for a command that has no accelerator bound
+- **THEN** the command runs
+
+#### Scenario: One dispatch for every route
+- **WHEN** a command is invoked from the in-page menu, the native menu, or its accelerator
+- **THEN** all three reach the same command dispatch

@@ -8,7 +8,7 @@ Terminay ships its official extensions — Codex, Claude Code, Grok, OpenCode, o
 
 ### Requirement: Public API boundary for built-in extensions
 
-Terminay's official extensions SHALL live as independently publishable npm packages under the repository's top-level `extensions/` directory. Codex, Claude Code, Grok, OpenCode, omp, and TypeScript language SHALL use only the public `@terminay/extension-api`, and SHALL NOT import Server Core, Electron, renderer code, or private workspace modules. A repository boundary check SHALL fail when a built-in extension imports a private Terminay package or reaches a private source path. Public Node.js APIs and declared npm dependencies SHALL be valid extension implementation dependencies.
+Terminay's official extensions SHALL live as independently publishable npm packages under the repository's top-level `extensions/` directory. The built-in agents extension and the TypeScript language extension SHALL use only the public `@terminay/extension-api`. They SHALL NOT import Server Core, Electron, renderer code, or private workspace modules. A repository boundary check SHALL fail when a built-in extension imports a private Terminay package or reaches a private source path. Public Node.js APIs and declared npm dependencies, native ones included, SHALL be valid extension implementation dependencies.
 
 #### Scenario: Private import introduced
 
@@ -36,7 +36,7 @@ Built-in status SHALL describe distribution, not a more privileged runtime tier.
 
 ### Requirement: Package identity and repository participation
 
-Each directory below `extensions/` SHALL be one npm package with its own `package.json`, manifest, source, tests, README, licence, build output policy, and public-package conformance checks. `extensions/agent-codex` SHALL publish `terminay-agent-codex`; `extensions/agent-claude-code` SHALL publish `terminay-agent-claude-code`; `extensions/agent-grok` SHALL publish `terminay-agent-grok`; `extensions/agent-omp` SHALL publish `terminay-agent-omp`; and `extensions/language-typescript` SHALL publish `terminay-language-typescript` under the extension id `com.terminay.language.typescript`. The directories SHALL participate in the repository's npm workspace graph while remaining packable and testable as ordinary public npm projects. Their runtime dependency on `@terminay/extension-api` SHALL follow the public peer and development dependency convention. Published packages SHALL contain no workspace-relative imports or undeclared files and SHALL pass conformance against their packed tarball.
+Each directory below `extensions/` SHALL be one npm package with its own `package.json`, manifest, source, tests, README, licence, build output policy, and public-package conformance checks. `extensions/builtin-agents` SHALL publish `terminay-builtin-agents` under the extension id `com.terminay.builtin-agents`. `extensions/language-typescript` SHALL publish `terminay-language-typescript` under the extension id `com.terminay.language.typescript`. The directories SHALL participate in the repository's npm workspace graph while remaining packable and testable as ordinary public npm projects. Their runtime dependency on `@terminay/extension-api` SHALL follow the public peer and development dependency convention. Published packages SHALL contain no workspace-relative imports or undeclared files and SHALL pass conformance against their packed tarball.
 
 #### Scenario: Packing a built-in package
 
@@ -48,6 +48,11 @@ Each directory below `extensions/` SHALL be one npm package with its own `packag
 - **WHEN** the repository workspace graph is resolved
 - **THEN** each `extensions/` package participates while remaining independently packable and testable
 
+#### Scenario: Built-in agents package identity
+
+- **WHEN** the built-in agents extension is resolved
+- **THEN** `extensions/builtin-agents` publishes `terminay-builtin-agents` under the extension id `com.terminay.builtin-agents`
+
 #### Scenario: TypeScript language package identity
 
 - **WHEN** the TypeScript language extension is resolved
@@ -55,20 +60,28 @@ Each directory below `extensions/` SHALL be one npm package with its own `packag
 
 ### Requirement: Agent extension package documentation
 
-The package README for every agent extension SHALL document the supported CLI and provider versions; foreground-process recognition and exact terminal-binding evidence; provider-owned files and bounded fields it reads; canonical lifecycle, model, title, tool, wait, and subagent mappings; privacy exclusions and information that never crosses the extension host; unsupported provider behaviour and fallback behaviour; platform assumptions; and fixture, compatibility, and real-CLI verification commands.
+The README of the built-in agents extension SHALL document:
+
+- the harnesses it reports and the pinned `@markwylde/all-your-agents` version
+- that version's capability matrix and stated limitations
+- the per-harness switches
+- the bounded snapshot fields that cross the extension boundary, and the privacy exclusions
+- the MCP install targets and the configuration file each one changes
+- platform assumptions, including the optional native process-watch dependency
+- its test commands
 
 #### Scenario: Reviewing an agent package README
 
-- **WHEN** a reader opens an agent extension's README
-- **THEN** it documents supported CLI and provider versions, foreground-process recognition and terminal-binding evidence, provider-owned files and bounded fields, canonical lifecycle/model/title/tool/wait/subagent mappings, privacy exclusions, unsupported and fallback behaviour, platform assumptions, and verification commands
+- **WHEN** a reader opens the built-in agents extension's README
+- **THEN** it documents the harnesses, pinned library version and capability matrix, per-harness switches, snapshot fields and privacy exclusions, MCP install targets and their files, platform assumptions, and test commands
 
 ### Requirement: Agent packages as reference implementations
 
-The five agent packages SHALL be the reference implementations for third-party agent integration. Their tests and source SHALL use only the installed public SDK surface.
+The built-in agents extension SHALL be the reference implementation for a session source and for MCP install targets. Its tests and source SHALL use only the installed public SDK surface.
 
 #### Scenario: Agent package tests
 
-- **WHEN** an agent package's tests and source are built
+- **WHEN** the built-in agents package's tests and source are built
 - **THEN** they compile and run against only the installed public SDK surface
 
 ### Requirement: Release artifact inventory
@@ -87,7 +100,15 @@ The release build SHALL pack each built-in extension and its production dependen
 
 ### Requirement: Identical artifacts across distributions
 
-The same inventory format and package bytes SHALL be used by the Electron and standalone Terminay Server archives, `terminay-language-typescript` included. Release assembly SHALL fail when a built-in is missing, stale, non-conformant, contains an unapproved native or lifecycle requirement, differs between server distributions, or imports a private API. No build SHALL silently fetch a built-in extension from npm.
+The same inventory format and package bytes SHALL be used by the Electron and standalone Terminay Server archives, for every built-in. Release assembly SHALL fail when a built-in:
+
+- is missing, stale, or non-conformant
+- requires an install lifecycle script
+- carries a native module with no prebuilt binary for one of the supported distribution targets
+- differs between server distributions
+- imports a private API
+
+No build SHALL silently fetch a built-in extension from npm.
 
 #### Scenario: Distribution drift
 
@@ -96,8 +117,13 @@ The same inventory format and package bytes SHALL be used by the Electron and st
 
 #### Scenario: Non-conformant or stale built-in
 
-- **WHEN** a built-in is missing, stale, non-conformant, carries an unapproved native or lifecycle requirement, or imports a private API
+- **WHEN** a built-in is missing, stale, non-conformant, requires an install lifecycle script, or imports a private API
 - **THEN** release assembly fails
+
+#### Scenario: Native dependency for the target
+
+- **WHEN** a built-in's production closure includes a native module with prebuilt binaries for every supported distribution target
+- **THEN** release assembly accepts it, records it in the inventory, and ships the same bytes in every distribution
 
 #### Scenario: No implicit npm fetch
 
@@ -115,12 +141,12 @@ Built-ins SHALL use the normal immutable extension-slot format, public manifest 
 
 ### Requirement: First-run materialization
 
-On first start, the server SHALL materialize the release's verified artifacts into server-owned slots and SHALL record their origin as `built-in`. Materialization SHALL be idempotent and crash-safe. A clean Electron or standalone-server installation SHALL expose all six built-ins, `terminay-language-typescript` among them, without npm or network access.
+On first start, the server SHALL materialize the release's verified artifacts into server-owned slots and SHALL record their origin as `built-in`. Materialization SHALL be idempotent and crash-safe. A clean Electron or standalone-server installation SHALL expose both built-ins, `terminay-builtin-agents` and `terminay-language-typescript`, without npm or network access.
 
 #### Scenario: Clean installation
 
 - **WHEN** a clean Electron or standalone server starts for the first time
-- **THEN** all six built-ins, including the TypeScript language extension, are materialized from verified release artifacts without npm or network access
+- **THEN** the built-in agents and TypeScript language extensions are materialized from verified release artifacts without npm or network access
 
 #### Scenario: Interrupted materialization
 
@@ -196,26 +222,26 @@ An incompatible or failed built-in SHALL be represented like any other failed ex
 
 ### Requirement: Re-evaluation when an agent host becomes available
 
-When a newly reconciled agent host becomes available, Terminay SHALL re-evaluate the last host-observed foreground executable for every live terminal. A newly matching provider SHALL be admitted without restarting the terminal, and a non-matching terminal SHALL remain on generic activity.
+When a session source becomes available — a newly reconciled or re-enabled host, or a harness switched on — it SHALL report every session live at that moment. Terminay SHALL bind each one to the terminal whose process tree owns it without restarting any terminal. Terminals owning no reported session SHALL remain on generic activity.
 
 #### Scenario: New agent host activates
 
-- **WHEN** a newly reconciled agent host becomes available
-- **THEN** each live terminal's last host-observed foreground executable is re-evaluated
+- **WHEN** a session source becomes available while an agent already runs in a Terminay terminal
+- **THEN** that session is reported and bound to its terminal without restarting the terminal
 
 #### Scenario: Newly matching provider
 
-- **WHEN** re-evaluation finds a matching provider for a live terminal
-- **THEN** the provider is admitted without restarting the terminal
+- **WHEN** a harness is switched on while its CLI already runs in a Terminay terminal
+- **THEN** its session is reported and bound to that terminal without restarting the terminal
 
 #### Scenario: No match
 
-- **WHEN** re-evaluation finds no matching provider
-- **THEN** the terminal remains on generic activity
+- **WHEN** a terminal owns no reported session
+- **THEN** it remains on generic activity
 
 ### Requirement: Built-in extension acceptance outcomes
 
-Installing or removing an npm override SHALL preserve a verified bundled rollback floor and the explicit enablement choice. Every built-in package SHALL pack, test, and typecheck using only `@terminay/extension-api` and its declared npm dependencies. Agent packages SHALL be disableable independently without removing the Agents pane or breaking generic terminal activity.
+Installing or removing an npm override SHALL preserve a verified bundled rollback floor and the explicit enablement choice. Every built-in package SHALL pack, test, and typecheck using only `@terminay/extension-api` and its declared npm dependencies. Switching off one harness, or disabling the agents extension, SHALL NOT remove the Agents pane or break generic terminal activity.
 
 #### Scenario: Override lifecycle
 
@@ -229,12 +255,21 @@ Installing or removing an npm override SHALL preserve a verified bundled rollbac
 
 #### Scenario: Independent agent disablement
 
-- **WHEN** one agent package is disabled
+- **WHEN** one harness is switched off
 - **THEN** the Agents pane remains and generic terminal activity continues
 
 ### Requirement: Packaged runtime activation of built-in agent extensions
 
-A packaged Electron application and a packaged standalone Terminay Server SHALL activate every staged built-in extension from their own packaged resource root rather than from a development staging directory or repository source. A packaged runtime SHALL admit an agent terminal and reduce that provider's canonical lifecycle through the packaged extension host. The packaged lifecycle matrix SHALL cover offline first run, restart, persisted disablement, a compatible npm override, rollback and removal to the bundled floor, and corrupted-artifact failure isolation. Packaging SHALL regenerate stale staged artifacts rather than accepting a stale staging directory.
+A packaged Electron application and a packaged standalone Terminay Server SHALL activate every staged built-in extension from their own packaged resource root, not from a development staging directory or repository source. A packaged runtime SHALL receive session snapshots from the packaged built-in agents extension, including its native process-watch dependency where the platform provides one, and SHALL reduce them in the agent store. The packaged lifecycle matrix SHALL cover:
+
+- offline first run
+- restart
+- persisted disablement
+- a compatible npm override
+- rollback and removal to the bundled floor
+- corrupted-artifact failure isolation
+
+Packaging SHALL regenerate stale staged artifacts rather than accept a stale staging directory.
 
 #### Scenario: Packaged resource root activation
 
@@ -243,8 +278,8 @@ A packaged Electron application and a packaged standalone Terminay Server SHALL 
 
 #### Scenario: Agent admission in a packaged runtime
 
-- **WHEN** an agent CLI runs in a terminal of a packaged runtime
-- **THEN** the packaged extension host admits it and its canonical provider lifecycle is reduced in the agent store
+- **WHEN** a fixture agent session is live on the machine of a packaged runtime
+- **THEN** the packaged built-in agents extension reports it and it is reduced in the agent store
 
 #### Scenario: Stale staged artifacts
 
@@ -277,7 +312,7 @@ Built-in extension artifacts SHALL be verified on the declared supported distrib
 
 ### Requirement: Development staging and admission of built-in extensions
 
-The development launch path SHALL stage the packed built-in artifacts before Electron starts, SHALL use the selected development resource root rather than an installed-app resource root for staging and discovery, and SHALL recover when the development artifact directory is absent. A development run SHALL be able to admit a real agent CLI in the selected project's terminal, publish its canonical root, later children, and live title changes, and render them in the Agents sidebar. A stale installed or failed extension record for a built-in id SHALL NOT mask a newly materialized bundled floor. Ordinary startup failures SHALL remain visible as startup failures and SHALL NOT be classified as canonical persisted-workspace recovery.
+The development launch path SHALL stage the packed built-in artifacts before Electron starts. It SHALL use the selected development resource root, not an installed-app resource root, for staging and discovery, and SHALL recover when the development artifact directory is absent. A development run SHALL show a real agent CLI running in the selected project's terminal in the Agents sidebar with its root, subagents, and live title changes. A stale installed or failed extension record for a built-in id SHALL NOT mask a newly materialized bundled floor. Ordinary startup failures SHALL remain visible as startup failures and SHALL NOT be classified as canonical persisted-workspace recovery.
 
 #### Scenario: Development pre-stage
 
@@ -287,7 +322,7 @@ The development launch path SHALL stage the packed built-in artifacts before Ele
 #### Scenario: Development agent admission
 
 - **WHEN** a supported agent CLI runs in a development run's selected terminal
-- **THEN** its canonical root, later child sessions, and live title changes appear in the Agents sidebar
+- **THEN** its root, subagents, and live title changes appear in the Agents sidebar
 
 #### Scenario: Stale failed record
 
@@ -301,35 +336,36 @@ The development launch path SHALL stage the packed built-in artifacts before Ele
 
 ### Requirement: Agent extension composition with the server host
 
-Agent extensions SHALL contribute agent providers only. At runtime they SHALL be
-composed with the server host that owns a terminal, and that host SHALL supply
-native observation for every terminal. Admission SHALL expose only the
-observation the provider declared it uses.
+The built-in agents extension SHALL contribute one session source and the MCP install targets for the agent clients it knows. At runtime its session source SHALL be composed with the server host that owns the project and terminal state. That host SHALL perform all project scoping and terminal binding.
 
 #### Scenario: Agent composed with the server host
 
-- **WHEN** an agent provider is admitted for a terminal
-- **THEN** it is composed with the server host that owns that terminal and
-  receives native observation
+- **WHEN** the built-in agents extension activates
+- **THEN** its session source publishes to the server host that owns project and terminal state, and that host alone scopes and binds sessions
 
 #### Scenario: Provider contributes only an agent provider
 
-- **WHEN** an agent extension's manifest is validated
-- **THEN** it contributes agent providers and no other provider kind
+- **WHEN** the built-in agents extension's manifest is validated
+- **THEN** it contributes a session source and MCP install targets and no other kind
 
 ### Requirement: Disabling an agent extension is scoped to that extension
 
-Disabling an agent extension SHALL immediately stop its new admissions and bounded observers. Existing canonical entries for that provider SHALL be retired and the terminal SHALL return to generic activity fallback. Disabling one agent extension SHALL NOT implicitly disable unrelated agent packages.
+Disabling the built-in agents extension SHALL stop its session source immediately, retire every entry it published, and return affected terminals to generic activity fallback. It SHALL also make its MCP install targets unavailable. Switching off one harness SHALL retire only that harness's entries and stop reporting it, leaving the other harnesses unchanged. Disabling one extension SHALL NOT disable another.
 
 #### Scenario: Agent extension disabled
 
-- **WHEN** a user disables an agent extension
-- **THEN** new admissions and bounded observers stop immediately, existing canonical entries for that provider are retired, and affected terminals return to generic activity fallback
+- **WHEN** a user disables the built-in agents extension
+- **THEN** its source stops, its entries are retired, affected terminals return to generic activity, and its MCP install targets become unavailable
+
+#### Scenario: One harness switched off
+
+- **WHEN** a user switches off the Grok harness
+- **THEN** Grok entries are retired and no longer reported, and Claude Code, Codex, and oh-my-pi entries are unchanged
 
 #### Scenario: Unrelated packages stay enabled
 
-- **WHEN** a user disables one agent extension
-- **THEN** unrelated agent packages remain enabled
+- **WHEN** a user disables the built-in agents extension
+- **THEN** the TypeScript language extension and every other extension remain enabled
 
 ### Requirement: TypeScript language extension serves the project's TypeScript
 
