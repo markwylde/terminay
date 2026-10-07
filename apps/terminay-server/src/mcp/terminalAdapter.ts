@@ -512,10 +512,13 @@ async function openTerminal(
 						session.status === 'running',
 				).length,
 	});
-	// The caller's panel anchors cwd inheritance only inside its own project.
-	const activePanelId =
+	// The caller's panel anchors cwd inheritance and the folder only inside its
+	// own project. A terminal opened in another project, which only workspace
+	// reach allows, goes to that project's General folder. The folder is never
+	// an input: it is where the calling terminal already is.
+	const caller =
 		projectId === context.projectId
-			? await callerPanelId(options.workspace, context)
+			? await callerPanel(options.workspace, context)
 			: undefined;
 	// The launch resolver reads the target project's canonical kind, so the
 	// new terminal's MCP reach follows where it opens (ADR-0030).
@@ -524,7 +527,9 @@ async function openTerminal(
 		cols: 80,
 		rows: 24,
 		...(params.cwd === undefined ? {} : { explicitCwd: params.cwd }),
-		...(activePanelId === undefined ? {} : { activePanelId }),
+		...(caller === undefined
+			? {}
+			: { activePanelId: caller.id, folderId: caller.folderId }),
 	});
 	const handle = await options.terminal.createResolvedSession(launch);
 	// Record the opener before the panel appears, so the terminal is shown
@@ -537,6 +542,7 @@ async function openTerminal(
 			handle.snapshot(),
 			params.name,
 			context,
+			caller?.folderId,
 		);
 	} catch (error) {
 		await options.terminal.kill(handle.snapshot()).catch(() => undefined);
@@ -573,10 +579,10 @@ async function recordOpener(
 	}
 }
 
-async function callerPanelId(
+async function callerPanel(
 	workspace: WorkspaceRepositoryType | undefined,
 	context: ControlRequestContext,
-): Promise<string | undefined> {
+): Promise<Extract<WorkspacePanel, { type: 'terminal' }> | undefined> {
 	if (workspace === undefined) return undefined;
 	const state = await workspace.load();
 	return Object.values(state.panels).find(
@@ -584,7 +590,7 @@ async function callerPanelId(
 			panel.type === 'terminal' &&
 			panel.projectId === context.projectId &&
 			panel.sessionId === context.terminalSessionId,
-	)?.id;
+	);
 }
 
 async function reconcileOpenedTerminal(
@@ -592,6 +598,7 @@ async function reconcileOpenedTerminal(
 	session: TerminalSessionSnapshot,
 	requestedName: string | undefined,
 	context: ControlRequestContext,
+	folderId: string | undefined,
 ): Promise<void> {
 	if (workspace === undefined) return;
 	const state = await workspace.load();
@@ -605,6 +612,7 @@ async function reconcileOpenedTerminal(
 			type: 'terminal.createPanel',
 			sessionId: session.sessionId,
 			projectId: session.projectId,
+			...(folderId === undefined ? {} : { folderId }),
 			panelId: `p:${session.sessionId}`.slice(0, 128),
 			title: requestedName ?? `Terminal ${panelCount + 1}`,
 			cwd: session.cwd,

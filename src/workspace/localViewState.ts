@@ -90,6 +90,68 @@ export function forgetActiveSession(projectId: string): void {
 }
 
 /**
+ * Which folder of a project this device was last showing.
+ *
+ * Folders and what they hold are shared; which one a device looks at is not,
+ * exactly as with the selected terminal. The value is a hint: a folder that has
+ * since been deleted, or a device with no memory, shows General.
+ */
+const SELECTED_FOLDER_STORAGE_KEY = 'terminay.view.selected-folder.v1';
+
+function readSelectedFolders(): Record<string, string> {
+	try {
+		const raw = globalThis.localStorage?.getItem(SELECTED_FOLDER_STORAGE_KEY);
+		if (raw === null || raw === undefined) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+			return {};
+		return Object.fromEntries(
+			Object.entries(parsed).filter(
+				(entry): entry is [string, string] => typeof entry[1] === 'string',
+			),
+		);
+	} catch {
+		return {};
+	}
+}
+
+function writeSelectedFolders(value: Record<string, string>): void {
+	try {
+		const entries = Object.entries(value).slice(-MAX_REMEMBERED_PROJECTS);
+		globalThis.localStorage?.setItem(
+			SELECTED_FOLDER_STORAGE_KEY,
+			JSON.stringify(Object.fromEntries(entries)),
+		);
+	} catch {
+		/* A device that cannot remember shows General. */
+	}
+}
+
+export function rememberSelectedFolder(
+	projectId: string,
+	folderId: string,
+): void {
+	if (projectId.length === 0 || folderId.length === 0) return;
+	const all = readSelectedFolders();
+	if (all[projectId] === folderId) return;
+	delete all[projectId];
+	all[projectId] = folderId;
+	writeSelectedFolders(all);
+}
+
+export function recallSelectedFolder(projectId: string): string | undefined {
+	if (projectId.length === 0) return undefined;
+	return readSelectedFolders()[projectId];
+}
+
+export function forgetSelectedFolder(projectId: string): void {
+	const all = readSelectedFolders();
+	if (!(projectId in all)) return;
+	delete all[projectId];
+	writeSelectedFolders(all);
+}
+
+/**
  * Whether this device was last showing the Home dashboard rather than a
  * project.
  *

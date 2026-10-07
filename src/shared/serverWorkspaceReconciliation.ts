@@ -1,6 +1,8 @@
 export type ServerWorkspacePanel = Readonly<{
 	id: string;
 	projectId: string;
+	/** The folder of the panel's project that holds it. */
+	folderId: string;
 	type: 'terminal' | 'file' | 'folder';
 	title?: string;
 	emoji?: string;
@@ -12,6 +14,24 @@ export type ServerWorkspacePanel = Readonly<{
 	path?: string;
 	/** A terminal's server-owned note. Absent means the terminal has none. */
 	note?: string;
+}>;
+
+/** A group of a project's panels with its own layout. `general` is the one
+ * every project has; `linked` stands for one Git worktree; `plain` is a group
+ * the user made. A folder carries no authority. */
+export type ServerWorkspaceFolder = Readonly<{
+	id: string;
+	projectId: string;
+	name: string;
+	kind: 'general' | 'plain' | 'linked';
+	/** Present exactly when the kind is `linked`. Written only by the server. */
+	worktree?: Readonly<{ repositoryId: string; path: string }>;
+	panelIds: readonly string[];
+	activePanelId?: string;
+	/** The panel whose terminal created this folder's worktree. */
+	createdByPanelId?: string;
+	/** An unanswered offer to move a panel into this folder. */
+	captureOffer?: Readonly<{ panelId: string }>;
 }>;
 
 export type ServerWorkspaceProject = Readonly<{
@@ -27,6 +47,9 @@ export type ServerWorkspaceProject = Readonly<{
 	color?: string;
 	icon?: string;
 	viewId: string;
+	/** The project's folders in order. The first is always General. */
+	folderIds: readonly string[];
+	/** Every panel of the project, in folder order. */
 	panelIds: readonly string[];
 	activePanelId?: string;
 	defaultShellProfileId?: string;
@@ -65,6 +88,7 @@ export type ServerWorkspaceSnapshot = Readonly<{
 	viewOrder: readonly string[];
 	views: Readonly<Record<string, ServerWorkspaceView>>;
 	projects: Readonly<Record<string, ServerWorkspaceProject>>;
+	folders: Readonly<Record<string, ServerWorkspaceFolder>>;
 	panels: Readonly<Record<string, ServerWorkspacePanel>>;
 	terminalSessions: Readonly<
 		Record<
@@ -161,11 +185,12 @@ export function parseServerWorkspaceSnapshot(
 		viewOrder,
 		views,
 		projects,
+		folders,
 		panels,
 		terminalSessions,
 	} = value;
 	if (
-		schemaVersion !== 5 ||
+		schemaVersion !== 6 ||
 		serverId !== expectedServerId ||
 		typeof revision !== 'number' ||
 		!Number.isSafeInteger(revision) ||
@@ -175,6 +200,7 @@ export function parseServerWorkspaceSnapshot(
 		!isStringArray(viewOrder) ||
 		!isRecord(views) ||
 		!isRecord(projects) ||
+		!isRecord(folders) ||
 		!isRecord(panels) ||
 		!isRecord(terminalSessions)
 	)
@@ -251,12 +277,54 @@ export function parseServerWorkspaceSnapshot(
 			!project.panelIds.includes(project.activePanelId)
 		)
 			throw new Error('The server returned an invalid active panel.');
+		if (
+			!isStringArray(project.folderIds) ||
+			new Set(project.folderIds).size !== project.folderIds.length ||
+			snapshot.folders[project.folderIds[0] ?? '']?.kind !== 'general' ||
+			project.folderIds.some(
+				(folderId) =>
+					snapshot.folders[folderId]?.id !== folderId ||
+					snapshot.folders[folderId]?.projectId !== project.id,
+			)
+		)
+			throw new Error(
+				'The server returned invalid workspace folder references.',
+			);
+	}
+	for (const [id, folder] of Object.entries(snapshot.folders)) {
+		if (
+			folder.id !== id ||
+			typeof folder.name !== 'string' ||
+			!['general', 'plain', 'linked'].includes(folder.kind) ||
+			snapshot.projects[folder.projectId]?.folderIds.includes(id) !== true ||
+			(folder.kind === 'linked') !==
+				(isRecord(folder.worktree) &&
+					typeof folder.worktree.repositoryId === 'string' &&
+					typeof folder.worktree.path === 'string') ||
+			!isStringArray(folder.panelIds) ||
+			new Set(folder.panelIds).size !== folder.panelIds.length ||
+			folder.panelIds.some(
+				(panelId) => snapshot.panels[panelId]?.folderId !== id,
+			) ||
+			(folder.activePanelId !== undefined &&
+				!folder.panelIds.includes(folder.activePanelId)) ||
+			(folder.createdByPanelId !== undefined &&
+				snapshot.panels[folder.createdByPanelId]?.projectId !==
+					folder.projectId) ||
+			(folder.captureOffer !== undefined &&
+				(!isRecord(folder.captureOffer) ||
+					snapshot.panels[folder.captureOffer.panelId]?.projectId !==
+						folder.projectId))
+		)
+			throw new Error('The server returned an invalid workspace folder.');
 	}
 	for (const [id, panel] of Object.entries(snapshot.panels)) {
 		if (
 			panel.id !== id ||
 			!['terminal', 'file', 'folder'].includes(panel.type) ||
 			snapshot.projects[panel.projectId] === undefined ||
+			snapshot.folders[panel.folderId]?.projectId !== panel.projectId ||
+			snapshot.folders[panel.folderId]?.panelIds.includes(id) !== true ||
 			(panel.title !== undefined && typeof panel.title !== 'string') ||
 			(panel.emoji !== undefined && typeof panel.emoji !== 'string') ||
 			(panel.color !== undefined && typeof panel.color !== 'string') ||
