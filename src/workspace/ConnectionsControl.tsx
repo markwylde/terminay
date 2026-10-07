@@ -1,36 +1,36 @@
 /**
  * The header's connections control.
  *
- * This used to be a server *switcher*: one window, one server, and picking a
- * different one replaced everything. A window now holds several connections at
- * once, so the control lists what is attached with its status and
- * compatibility, attaches a remembered profile, and detaches one.
- *
- * Detaching removes that server's tabs from this window's composition and
- * closes nothing on the server: its terminals keep running, and re-attaching
- * finds them where they were.
+ * A window shows one server. Where the host remembers servers, this lists
+ * them with Local first and marks the one the window is showing; choosing
+ * another switches the window to it, and each other server can also be opened
+ * in a window of its own. Nothing on the server being left is stopped: its
+ * terminals keep running, and returning finds them where they were.
  */
 
-import { Plug, Unplug } from 'lucide-react';
+import { AppWindow } from 'lucide-react';
 import type { WorkspaceConnection } from '../shared/connections/connectionRegistry';
 import type { ConnectionProfileSummary } from '../shared/connections/hostConnections';
 
 export type ConnectionsControlProps = Readonly<{
-	connections: readonly WorkspaceConnection[];
-	profiles: readonly ConnectionProfileSummary[];
-	supportsAttach: boolean;
-	onAttach: (profileId: string) => void;
-	onDetach: (profileId: string) => void;
-	/** Choosing a connection brings that server's workspace to the front. */
-	onSelect?: (serverId: string) => void;
-	/** The server the window is working in: the checked row. */
-	activeServerId?: string;
-	/** Falls back to the old single-connection label when this host has no
-	 * `connections` capability at all. */
+	/** The window's own connection, for the status beside its row. */
+	connection?: WorkspaceConnection;
+	/** The servers the host remembers, Local first. Empty where the host does
+	 * not list any, as in a browser session. */
+	servers: readonly ConnectionProfileSummary[];
+	/** The profile the window is showing. */
+	currentProfileId?: string;
+	/** Absent where this host cannot switch a window's server. */
+	onSwitch?: (profileId: string) => void;
+	onOpenWindow?: (profileId: string) => void;
+	/** The server a switch is in progress to. */
+	switchingProfileId?: string;
+	/** Why the last switch did not happen. */
+	switchError?: string;
 	currentServerLabel: string;
 }>;
 
-/** What the control says about one connection, and whether it can be used. */
+/** What the control says about the window's connection. */
 export function describeConnection(connection: WorkspaceConnection): Readonly<{
 	tone: 'ready' | 'pending' | 'failed' | 'incompatible';
 	summary: string;
@@ -71,118 +71,138 @@ export function describeConnection(connection: WorkspaceConnection): Readonly<{
 	}
 }
 
-/** A profile this window could attach: remembered, and not already attached. */
-export function attachableProfiles(
-	profiles: readonly ConnectionProfileSummary[],
-	connections: readonly WorkspaceConnection[],
-): readonly ConnectionProfileSummary[] {
-	const attached = new Set(
-		connections.map((connection) => connection.profileId),
-	);
+/** One row of the switcher: a remembered server and how it stands. */
+export type ServerRow = Readonly<{
+	profileId: string;
+	label: string;
+	isCurrent: boolean;
+	isSwitching: boolean;
+}>;
+
+/** The servers to list, with Local first and the window's own marked. */
+export function serverRows(
+	servers: readonly ConnectionProfileSummary[],
+	currentProfileId: string | undefined,
+	switchingProfileId?: string,
+): readonly ServerRow[] {
+	const rows = servers.map((server) => ({
+		profileId: server.id,
+		label: server.label,
+		isLocal: server.isLocal === true,
+		isCurrent: server.id === currentProfileId,
+		isSwitching: server.id === switchingProfileId,
+	}));
+	rows.sort((left, right) => Number(right.isLocal) - Number(left.isLocal));
 	return Object.freeze(
-		profiles.filter(
-			(profile) => !attached.has(profile.id) && profile.attached !== true,
+		rows.map(({ profileId, label, isCurrent, isSwitching }) =>
+			Object.freeze({ profileId, label, isCurrent, isSwitching }),
 		),
 	);
 }
 
 export function ConnectionsControl({
-	activeServerId,
-	connections,
+	connection,
+	currentProfileId,
 	currentServerLabel,
-	onAttach,
-	onDetach,
-	onSelect,
-	profiles,
-	supportsAttach,
+	onOpenWindow,
+	onSwitch,
+	servers,
+	switchError,
+	switchingProfileId,
 }: ConnectionsControlProps) {
-	if (connections.length === 0) {
+	const described =
+		connection === undefined ? undefined : describeConnection(connection);
+	const rows = serverRows(servers, currentProfileId, switchingProfileId);
+	// A host that lists no servers shows the one this window is on.
+	if (rows.length === 0 || onSwitch === undefined) {
 		return (
-			<div className="remote-access-menu__connection remote-access-menu__connection--compact">
-				<span className="remote-access-menu__connection-device">
-					{currentServerLabel}
-				</span>
+			<div
+				className={`remote-access-menu__connection-group${described === undefined ? '' : ` remote-access-menu__connection--${described.tone}`}`}
+				data-connection-phase={connection?.phase}
+			>
+				<div className="remote-access-menu__connection remote-access-menu__connection--compact">
+					<span className="remote-access-menu__connection-device">
+						{connection?.label ?? currentServerLabel}
+					</span>
+					{described === undefined ? null : (
+						<span
+							className={`remote-access-menu__meta${described.tone === 'ready' ? ' remote-access-menu__meta--live' : ''}`}
+						>
+							{described.summary}
+						</span>
+					)}
+				</div>
+				{described?.detail === undefined ? null : (
+					<p className="remote-access-menu__diagnostic">{described.detail}</p>
+				)}
 			</div>
 		);
 	}
-	const attachable = attachableProfiles(profiles, connections);
+	const busy = switchingProfileId !== undefined;
 	return (
 		<>
-			{connections.map((connection) => {
-				const described = describeConnection(connection);
-				const isCurrent =
-					connection.serverId !== undefined &&
-					connection.serverId === activeServerId;
-				return (
-					<div
-						key={connection.profileId}
-						className={`remote-access-menu__connection-group remote-access-menu__connection--${described.tone}`}
-						data-connection-profile-id={connection.profileId}
-						data-connection-phase={connection.phase}
-					>
-						{/* One ordinary menu row, like every other row in this menu:
-						    the server's own label on the left, how it is doing on the
-						    right. The row is named by the label alone, so the status
-						    text stays secondary rather than becoming part of the name. */}
+			{rows.map((row) => (
+				<div
+					key={row.profileId}
+					className={`remote-access-menu__connection-group remote-access-menu__server${row.isCurrent && described !== undefined ? ` remote-access-menu__connection--${described.tone}` : ''}`}
+					data-connection-profile-id={row.profileId}
+					{...(row.isCurrent && connection !== undefined
+						? { 'data-connection-phase': connection.phase }
+						: {})}
+				>
+					<div className="remote-access-menu__server-row">
+						{/* Named by the label alone, so the status text stays secondary
+						    rather than becoming part of the name. */}
 						<button
 							type="button"
-							className={`remote-access-menu__item${isCurrent ? ' remote-access-menu__item--current' : ''}`}
+							className={`remote-access-menu__item${row.isCurrent ? ' remote-access-menu__item--current' : ''}`}
 							role="menuitemradio"
-							aria-checked={isCurrent}
-							aria-label={connection.label}
-							disabled={connection.context === undefined}
+							aria-checked={row.isCurrent}
+							aria-label={row.label}
+							disabled={busy}
 							onClick={() => {
-								if (connection.serverId !== undefined)
-									onSelect?.(connection.serverId);
+								if (!row.isCurrent) onSwitch(row.profileId);
 							}}
 						>
 							<span className="remote-access-menu__connection-device">
-								{connection.label}
+								{row.label}
 							</span>
-							<span
-								className={`remote-access-menu__meta${described.tone === 'ready' ? ' remote-access-menu__meta--live' : ''}`}
-								aria-hidden="true"
-							>
-								{described.summary}
-							</span>
+							{row.isSwitching ? (
+								<span className="remote-access-menu__meta" aria-hidden="true">
+									Connecting…
+								</span>
+							) : row.isCurrent && described !== undefined ? (
+								<span
+									className={`remote-access-menu__meta${described.tone === 'ready' ? ' remote-access-menu__meta--live' : ''}`}
+									aria-hidden="true"
+								>
+									{described.summary}
+								</span>
+							) : null}
 						</button>
-						{described.detail === undefined ? null : (
-							<p className="remote-access-menu__diagnostic">
-								{described.detail}
-							</p>
-						)}
-						{connection.role === 'attached' ? (
+						{row.isCurrent || onOpenWindow === undefined ? null : (
 							<button
 								type="button"
-								className="remote-access-menu__item"
-								onClick={() => onDetach(connection.profileId)}
-								aria-label={`Detach ${connection.label}`}
+								className="remote-access-menu__server-window"
+								aria-label={`Open ${row.label} in new window`}
+								title="Open in new window"
+								disabled={busy}
+								onClick={() => onOpenWindow(row.profileId)}
 							>
-								<Unplug size={12} aria-hidden="true" />
-								<span>Detach</span>
+								<AppWindow size={13} aria-hidden="true" />
 							</button>
-						) : null}
+						)}
 					</div>
-				);
-			})}
-			{supportsAttach && attachable.length > 0 ? (
-				<div className="remote-access-menu__section">
-					<div className="remote-access-menu__section-label">Attach</div>
-					{attachable.map((profile) => (
-						<button
-							key={profile.id}
-							type="button"
-							className="remote-access-menu__item"
-							onClick={() => onAttach(profile.id)}
-							aria-label={`Attach ${profile.label}`}
-						>
-							<Plug size={12} aria-hidden="true" />
-							<span>{profile.label}</span>
-							<span className="remote-access-menu__meta">{profile.status}</span>
-						</button>
-					))}
+					{row.isCurrent && described?.detail !== undefined ? (
+						<p className="remote-access-menu__diagnostic">{described.detail}</p>
+					) : null}
 				</div>
-			) : null}
+			))}
+			{switchError === undefined ? null : (
+				<p className="remote-access-menu__diagnostic" role="alert">
+					{switchError}
+				</p>
+			)}
 		</>
 	);
 }

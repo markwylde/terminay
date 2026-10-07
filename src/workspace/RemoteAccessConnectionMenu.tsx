@@ -3,7 +3,8 @@ import {
 	groupLiveConnectionsByDevice,
 	liveWindowsLabel,
 } from '../shared/liveConnectionsByDevice';
-import { type RefObject, useEffect } from 'react';
+import { type RefObject, useEffect, useState } from 'react';
+import { friendlyPairingActionError } from '../shared/pairingActionError';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { ConnectionsControl } from './ConnectionsControl';
@@ -37,15 +38,26 @@ export function RemoteAccessConnectionMenu(props: {
 }) {
 	const { status } = props;
 	const {
-		activeServerId,
-		attach,
 		connections,
-		detach,
+		currentProfileId,
+		openServerWindow,
 		profiles,
 		refreshProfiles,
-		setActiveServerId,
-		supportsAttach,
+		selectServer,
 	} = useConnections();
+	const [switchingProfileId, setSwitchingProfileId] = useState<string>();
+	const [switchError, setSwitchError] = useState<string>();
+	// A successful switch replaces this document, so only a failure, or opening
+	// another window, ever comes back here.
+	const act = (profileId: string, action: (id: string) => Promise<void>) => {
+		setSwitchError(undefined);
+		setSwitchingProfileId(profileId);
+		void action(profileId)
+			.catch((cause: unknown) =>
+				setSwitchError(friendlyPairingActionError(cause)),
+			)
+			.finally(() => setSwitchingProfileId(undefined));
+	};
 	// Remembered connections change outside this window: pairing runs in the
 	// Remote Control window. Ask the host again whenever the menu opens so a
 	// server saved since the last look is listed.
@@ -53,6 +65,9 @@ export function RemoteAccessConnectionMenu(props: {
 	useEffect(() => {
 		if (isOpen) refreshProfiles();
 	}, [isOpen, refreshProfiles]);
+	useEffect(() => {
+		if (!isOpen) setSwitchError(undefined);
+	}, [isOpen]);
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
 	const isExposed = Boolean(status?.isRunning);
 	const connectionCount = status?.connections.length ?? 0;
@@ -118,25 +133,31 @@ export function RemoteAccessConnectionMenu(props: {
 							</button>
 						</div>
 						{connections.length > 0 ? (
-							// A window holds several connections at once, so this lists
-							// what is attached rather than offering a switch between them.
+							// A window shows one server: this lists the servers it could
+							// show and switches between them.
 							<ConnectionsControl
-								{...(activeServerId === undefined ? {} : { activeServerId })}
-								connections={connections}
+								{...(connections[0] === undefined
+									? {}
+									: { connection: connections[0] })}
+								{...(currentProfileId === undefined ? {} : { currentProfileId })}
 								currentServerLabel={props.currentServerLabel}
-								onAttach={attach}
-								onDetach={(profileId) => void detach(profileId)}
-								// Choosing a row is the same act as activating one of that
-								// server's tabs: the window starts working in it.
-								onSelect={(serverId) => {
-									if (props.onSelectServer === undefined) {
-										setActiveServerId(serverId);
-										return;
-									}
-									props.onSelectServer(serverId);
-								}}
-								profiles={profiles}
-								supportsAttach={supportsAttach}
+								{...(selectServer === undefined
+									? {}
+									: {
+											onSwitch: (profileId: string) =>
+												act(profileId, selectServer),
+										})}
+								{...(openServerWindow === undefined
+									? {}
+									: {
+											onOpenWindow: (profileId: string) =>
+												act(profileId, openServerWindow),
+										})}
+								servers={profiles}
+								{...(switchError === undefined ? {} : { switchError })}
+								{...(switchingProfileId === undefined
+									? {}
+									: { switchingProfileId })}
 							/>
 						) : switcherEntries.length ? (
 							switcherEntries.map((entry) => (

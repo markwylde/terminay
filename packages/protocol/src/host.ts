@@ -380,6 +380,16 @@ export type TerminayHostAction =
 			profileId: string;
 	  }>
 	| Readonly<{
+			/** Show a remembered server, or Local, in the requesting window. */
+			type: 'connections.select';
+			profileId: string;
+	  }>
+	| Readonly<{
+			/** Open a new window on a remembered server, or on Local. */
+			type: 'connections.open-window';
+			profileId: string;
+	  }>
+	| Readonly<{
 			type: 'connections.composition.write';
 			composition: TerminayWorkspaceComposition;
 	  }>;
@@ -1345,6 +1355,22 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				type: 'connections.forget',
 				profileId: identifier(action.profileId, 'connection profile id', ID),
 			});
+		case 'connections.select':
+			exactKeys(action, ['type', 'profileId'], 'connections select action');
+			return Object.freeze({
+				type: 'connections.select',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+			});
+		case 'connections.open-window':
+			exactKeys(
+				action,
+				['type', 'profileId'],
+				'connections open window action',
+			);
+			return Object.freeze({
+				type: 'connections.open-window',
+				profileId: identifier(action.profileId, 'connection profile id', ID),
+			});
 		case 'connections.composition.write':
 			exactKeys(
 				action,
@@ -1454,6 +1480,8 @@ export function requiredTerminayHostCapability(
 		case 'connections.detach':
 		case 'connections.rename':
 		case 'connections.forget':
+		case 'connections.select':
+		case 'connections.open-window':
 		case 'connections.composition.write':
 			return 'connections';
 	}
