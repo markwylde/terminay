@@ -12,7 +12,7 @@ import {
 export const ACTIVITY_OPERATIONS = Object.freeze({
   snapshot: "activity.snapshot",
   delta: "activity.delta",
-  closePreflight: "activity.closePreflight",
+  closePreflight: "activity.close-preflight",
   acknowledge: "activity.acknowledge",
   event: "activity",
 } as const);

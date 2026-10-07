@@ -81,7 +81,7 @@ test("activity client close preflight queries the exact project and session", as
   const client = new ActivityClient({
     query: async (operation, payload) => {
       queries.push({ operation, payload });
-      if (operation === "activity.closePreflight") {
+      if (operation === "activity.close-preflight") {
         return {
           observation: "limited",
           runningSessionIds: [],
@@ -96,7 +96,7 @@ test("activity client close preflight queries the exact project and session", as
   const result = await client.closePreflight({ projectId: "project-a", sessionId: "session-a" });
   assert.equal(result.observation, "limited");
   assert.deepEqual(queries, [{
-    operation: "activity.closePreflight",
+    operation: "activity.close-preflight",
     payload: { projectId: "project-a", sessionId: "session-a" },
   }]);
 });

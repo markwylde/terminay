@@ -1,4 +1,5 @@
 export * from './adapter.js';
+export * from './boundedChunkQueue.js';
 export * from './clipboardImage.js';
 export * from './commandSubmission.js';
 export * from './consumers.js';
