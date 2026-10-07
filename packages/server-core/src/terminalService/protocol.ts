@@ -78,6 +78,12 @@ export interface TerminalOperationRegistryOptions {
 		request: CommandRequest,
 		projectId: string,
 	) => void;
+	/** Remember, until `onSessionCreated` reads it, which folder of its project
+	 * a terminal about to be spawned belongs in. `undefined` forgets it. */
+	readonly placeSession?: (
+		sessionId: string,
+		folderId: string | undefined,
+	) => void;
 	/** Whether a project's terminals are withheld from this connection (for
 	 * example the automation space for a client without `automations.v1`).
 	 * A hidden project's sessions are never listed, attached, or controlled. */
@@ -94,6 +100,24 @@ export interface TerminalOperationRegistryOptions {
 	readonly retainsExitedSession?: (identity: TerminalIdentity) => boolean;
 	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
 	readonly clipboardScratchDirectory?: string;
+}
+
+/** Spawn a resolved terminal, telling the host first which folder its panel
+ * belongs in. A spawn that fails leaves no placement behind. */
+async function createPlacedSession(
+	options: TerminalOperationRegistryOptions,
+	launch: Parameters<TerminalService['createResolvedSession']>[0],
+	folderId: string | undefined,
+): ReturnType<TerminalService['createResolvedSession']> {
+	if (folderId === undefined)
+		return options.service.createResolvedSession(launch);
+	options.placeSession?.(launch.identity.sessionId, folderId);
+	try {
+		return await options.service.createResolvedSession(launch);
+	} catch (error) {
+		options.placeSession?.(launch.identity.sessionId, undefined);
+		throw error;
+	}
 }
 
 export interface TerminalOperationRegistry {
@@ -484,6 +508,7 @@ export function createTerminalOperationRegistry(
 		}
 		const profileId = optionalId(payload.profileId, 'shell profile id');
 		const activePanelId = optionalId(payload.activePanelId, 'active panel id');
+		const folderId = optionalId(payload.folderId, 'folder id');
 		const cols =
 			payload.cols === undefined ? 80 : positiveDimension(payload.cols, 'cols');
 		const rows =
@@ -505,7 +530,8 @@ export function createTerminalOperationRegistry(
 						cols,
 						rows,
 					})
-				: await options.service.createResolvedSession(
+				: await createPlacedSession(
+						options,
 						await options.launchResolver.resolve({
 							identity: options.service.allocateIdentity(projectId),
 							...(profileId === undefined
@@ -513,9 +539,11 @@ export function createTerminalOperationRegistry(
 								: { explicitProfileId: profileId }),
 							...(cwd === undefined ? {} : { explicitCwd: cwd }),
 							...(activePanelId === undefined ? {} : { activePanelId }),
+							...(folderId === undefined ? {} : { folderId }),
 							cols,
 							rows,
 						}),
+						folderId,
 					);
 		const snapshot = session.snapshot();
 		reserveInitialPresentation(
