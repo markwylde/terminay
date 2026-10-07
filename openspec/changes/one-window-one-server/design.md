@@ -79,7 +79,9 @@ A torn-off window is opened on the source window's server. A project tab may be 
 
 ### 9. Several windows on one server
 
-Two windows may show the same remote server, as a torn-off window already does. Each is its own connection under the same device key. How the server treats a second live connection from one device (`remote-access`: "One live connection per device") is not established for this case and is the first thing the apply phase verifies; see Open Questions.
+Two windows may show the same remote server, and a window on a remote server opens its Settings, Macros, Recordings, and Remote Control as native windows exactly as a Local window does. Each native window is its own connection: a server holds one live connection per client window of a device (ADR-0048, change `one-connection-per-window`), and Desktop presents a window id per native window. A torn-off window is a further window of the same device.
+
+A device may hold eight live windows on one server. A ninth is refused with a stated reason, which Desktop shows in place of opening the window.
 
 ### 10. Add connection reads a provider list
 
@@ -108,7 +110,7 @@ On a compact workspace the connection control and the breadcrumb open one switch
 ## Risks / Trade-offs
 
 - [A person loses sight of an agent waiting on another server] → accepted by the owner for now. Two windows show two servers. A host-readable activity summary is recorded as an open item in the new ADR.
-- [Two windows on one remote server may fight over one device connection] → verified first in apply (task 2.1). If the server replaces the older connection, **Open in new window** focuses an existing window on that server instead of opening a second, and tear-off of a remote window is resolved the same way.
+- [A person opens more windows on one server than it allows] → the server refuses the ninth window of a device with a reason, and Desktop shows it.
 - [A window starts on an unreachable server] → the connection menu stays usable in the failure state, and Local is one choice away.
 - [The `terminay.com` manager may still offer attach] → harmless to this bundle, and removing it there is a follow-up.
 - [Stale composition files on disk] → ignored, never read; they hold no secrets.
@@ -127,6 +129,5 @@ A person upgrading keeps every saved server and credential. A window that had se
 
 ## Open Questions
 
-- How does a server treat two live connections under one device key? (Decision 9; resolved by task 2.1.)
 - Should the Desktop File menu gain **New Window** on the current server, now that windows are the way to see two things at once?
 - ADR-0018 is revisited: its many-connections-per-window decisions are replaced and its bundle and compatibility decisions kept. The adr step records the superseding ADR.

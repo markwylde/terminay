@@ -99,13 +99,11 @@ What changes:
   must stay usable in them so a person can leave for another server.
 - Two servers are seen side by side in two windows, not in one.
 - Activity on a server is invisible until a window shows that server.
-- Several windows may show the same server. Each is its own connection under
-  the same device key, as torn-off windows already were.
+- Several windows may show the same server. Each is its own connection,
+  which ADR-0048 makes possible for a remote server.
 - The `connections` host capability shrinks to listing, renaming, and
   forgetting remembered profiles, switching, and opening a window.
 
 ## Open items
 
-- Confirm how a server treats two live connections from one device key, which
-  two windows on one remote server produce.
 - A host-readable activity summary for servers no window is showing.
