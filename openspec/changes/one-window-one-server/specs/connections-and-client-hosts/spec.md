@@ -275,7 +275,7 @@ Desktop SHALL store non-secret profiles locally and credentials through OS-backe
 
 ### Requirement: A native window is bound to one server
 
-A native window SHALL be bound to exactly one server connection, and its title and security scope SHALL make that server clear. Multiple windows MAY show the same server with different logical workspace views, and other windows MAY simultaneously show other servers. A window's server SHALL change only through an explicit action by the person — choosing a server in the connection menu, or adding one — and SHALL NEVER change as a side effect of a connection failure or of another window's actions. Native window identity and server logical-view identity SHALL remain separate bindings, so focus or close does not mutate a logical view without a typed server command.
+A native window SHALL be bound to exactly one server connection, and its title and security scope SHALL make that server clear. Several windows MAY show Local, each with a different logical workspace view, and other windows MAY simultaneously show other servers. At most one window SHALL show a given remote server, because a server holds one live connection for each device. A window's server SHALL change only through an explicit action by the person — choosing a server in the connection menu, or adding one — and SHALL NEVER change as a side effect of a connection failure or of another window's actions. Native window identity and server logical-view identity SHALL remain separate bindings, so focus or close does not mutate a logical view without a typed server command.
 
 #### Scenario: Four windows across four servers
 
@@ -333,7 +333,7 @@ A **server connection** SHALL be an authenticated relationship with one stable T
 
 ### Requirement: Switching a Desktop window's server
 
-Switching a Desktop window to another remembered server SHALL be a source-bound host action that names the profile by id and carries no origin or credential. Electron SHALL open the authenticated transport, and SHALL replace the window's document with that server's workspace only once the transport is ready; until then the window SHALL keep showing the server it was on with the attempt's progress, and a failed attempt SHALL leave it there with the reason shown. A window SHALL hold one server's transport at a time. Switching SHALL be refused for a profile the host does not remember.
+Switching a Desktop window to another remembered server SHALL be a source-bound host action that names the profile by id and carries no origin or credential. Electron SHALL open the authenticated transport, and SHALL replace the window's document with that server's workspace only once the transport is ready; until then the window SHALL keep showing the server it was on with the attempt's progress, and a failed attempt SHALL leave it there with the reason shown. A window SHALL hold one server's transport at a time. When another window already shows the chosen remote server, Desktop SHALL bring that window to the front and SHALL leave the current window as it was. Switching SHALL be refused for a profile the host does not remember.
 
 #### Scenario: A successful switch
 
@@ -345,6 +345,11 @@ Switching a Desktop window to another remembered server SHALL be a source-bound 
 - **WHEN** the chosen server does not answer
 - **THEN** the window stays on the server it was showing and the menu shows why the switch failed
 
+#### Scenario: Another window already shows the server
+
+- **WHEN** the user chooses a remote server that another window is showing
+- **THEN** that window comes to the front and the current window stays on its server
+
 #### Scenario: Returning to Local
 
 - **WHEN** the user chooses **Local** in a window showing a remote server
@@ -352,7 +357,12 @@ Switching a Desktop window to another remembered server SHALL be a source-bound 
 
 ### Requirement: Opening a server in a new window
 
-Each server in the Desktop connection menu other than the window's own SHALL offer **Open in new window**, which SHALL open a new native window bound to that server and SHALL leave the current window unchanged. A new window SHALL be sandboxed and bound exactly as a window switched to that server is.
+Each server in the Desktop connection menu other than the window's own SHALL offer **Open in new window**, which SHALL open a new native window bound to that server and SHALL leave the current window unchanged. A new window SHALL be sandboxed and bound exactly as a window switched to that server is. When a window already shows that remote server, the action SHALL bring that window to the front and SHALL open no second window.
+
+#### Scenario: The server is already open
+
+- **WHEN** the user chooses **Open in new window** for a remote server that another window is showing
+- **THEN** that window comes to the front and no new window opens
 
 #### Scenario: Two servers side by side
 
