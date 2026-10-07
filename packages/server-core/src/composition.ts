@@ -281,6 +281,13 @@ export interface ServerCoreCompositionOptions
 	readonly ai?: AiService;
 	/** Optional server-owned Git protocol authority. */
 	readonly git?: ServerGitAdapter;
+	/** The stream Git in Terminay's terminals reports its commands to. A host
+	 * that supplies one has every terminal it launches carry Git's Trace2
+	 * variables (ADR-0052). */
+	readonly gitCommands?: Pick<
+		import('./worktreeCapture.js').GitCommandStream,
+		'environmentFor' | 'release'
+	>;
 	/** Resolves a folder of a project to the root its operations run in. A host
 	 * that supplies one lets a terminal created in a linked folder start in that
 	 * folder's worktree (ADR-0050). */
@@ -518,9 +525,21 @@ export function createServerCoreComposition(
 					...(options.terminalLaunchEnvironment === undefined
 						? {}
 						: { defaultEnvironment: options.terminalLaunchEnvironment }),
-					...(options.terminalLaunchEnvironmentFor === undefined
+					...(options.terminalLaunchEnvironmentFor === undefined &&
+					options.gitCommands === undefined
 						? {}
-						: { environmentFor: options.terminalLaunchEnvironmentFor }),
+						: {
+								// Git's own tracing variables are added last, and only when
+								// the terminal's environment does not already name a target
+								// of the user's (ADR-0052).
+								environmentFor: (intent, placement) => ({
+									...options.terminalLaunchEnvironmentFor?.(intent, placement),
+									...options.gitCommands?.environmentFor(
+										intent.identity.sessionId,
+										options.terminalLaunchEnvironment ?? process.env,
+									),
+								}),
+							}),
 					...(options.terminalEnvironmentCaseInsensitive === undefined
 						? {}
 						: {
@@ -638,6 +657,8 @@ export function createServerCoreComposition(
 				});
 	terminal.onEvent((event) => {
 		if (event.type !== 'exit') return;
+		// An ended terminal's Git no longer reports; its token is forgotten.
+		options.gitCommands?.release(event.sessionId);
 		workspaceOperations?.applyHostCommand(
 			`terminal-exit:${event.sessionId}`.slice(0, 128),
 			{

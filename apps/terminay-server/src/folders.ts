@@ -41,6 +41,11 @@ export interface StandaloneFoldersOptions {
 		command: WorkspaceCommand,
 	) => WorkspaceApplyResult | undefined;
 	readonly onError?: (projectId: string, error: unknown) => void;
+	/** Who created a worktree that appeared, and what to do about it. */
+	readonly capture?: Pick<
+		ConstructorParameters<typeof FolderReconciler>[0],
+		'creatorOf' | 'onWorktreeAppeared'
+	>;
 }
 
 export interface StandaloneFolders {
@@ -97,6 +102,7 @@ export function createStandaloneFolders(
 		},
 		canonicalRoot: (root) => realpath(root).catch(() => null),
 		...(options.onError === undefined ? {} : { onError: options.onError }),
+		...options.capture,
 	});
 	const reconcile = (projectId: string): void => {
 		void reconciler.reconcile(projectId);

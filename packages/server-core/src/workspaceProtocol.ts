@@ -43,6 +43,10 @@ export const WORKSPACE_EVENT = 'workspace.changed';
  * automation space is never reported. */
 export const PROJECT_OPENED_EVENT = 'project.opened';
 export const PROJECT_CLOSED_EVENT = 'project.closed';
+/** The server moved a terminal into the folder of a worktree it created. The
+ * payload names the project, the folder, the panel, and the folder it left, so
+ * a client can offer to put it back. */
+export const FOLDER_TERMINAL_CAPTURED_EVENT = 'folder.terminal-captured';
 
 export interface ProjectLifecycleEventPayload {
 	readonly serverId: string;
@@ -955,7 +959,11 @@ export function projectLifecycleEventProjector(
 	event: OrderedEvent,
 	client: AuthenticatedClient | undefined,
 ): OrderedEvent | undefined {
-	if (event.event !== PROJECT_OPENED_EVENT && event.event !== PROJECT_CLOSED_EVENT)
+	if (
+		event.event !== PROJECT_OPENED_EVENT &&
+		event.event !== PROJECT_CLOSED_EVENT &&
+		event.event !== FOLDER_TERMINAL_CAPTURED_EVENT
+	)
 		return event;
 	const claims = client?.claims as unknown;
 	const claimed =

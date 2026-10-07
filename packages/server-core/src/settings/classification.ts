@@ -20,6 +20,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	ignoreBracketedPasteMode: 'server',
 	keepTerminalsAfterQuit: 'server',
 	macros: 'server',
+	moveTerminalsIntoNewWorktreeFolders: 'server',
 	recording: 'server',
 	remoteAccess: 'server',
 	rightClickSelectsWord: 'server',

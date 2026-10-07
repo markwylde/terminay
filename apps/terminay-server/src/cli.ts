@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
 	mkdirSync,
 	readFileSync,
@@ -20,6 +20,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
@@ -44,6 +45,8 @@ import {
 	createServerAiProviderAdapters,
 	createWorkspaceAiTargetAuthority,
 	createServerCoreComposition,
+	createWorktreeCaptureHost,
+	FOLDER_TERMINAL_CAPTURED_EVENT,
 	DocumentationCatalog,
 	FileCatalog,
 	FileContentStreamService,
@@ -717,11 +720,38 @@ async function createServerComposition(
 	let composition: ServerCoreComposition;
 	// One linked folder per worktree of each project's repository, driven by
 	// the Git service's own events.
+	// Which terminal created a worktree: Git in each terminal reports its own
+	// commands to this socket (ADR-0052). The path is short on purpose; Unix
+	// socket paths are capped near 104 bytes.
+	const worktreeCapture = createWorktreeCaptureHost({
+		socketPath: join(
+			tmpdir(),
+			`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
+		),
+		workspace: () => workspace.state,
+		apply: (commandId, command) => {
+			const applied = composition.workspaceOperations?.applyHostCommand(
+				commandId,
+				command,
+			);
+			if (applied === undefined)
+				throw new Error('workspace host commands are unavailable');
+			return applied;
+		},
+		moveAutomatically: () =>
+			settings.settings.moveTerminalsIntoNewWorktreeFolders !== false,
+		sessions: () => composition.terminal.listSessions(),
+		onCaptured: (captured) => {
+			eventJournal.append(FOLDER_TERMINAL_CAPTURED_EVENT, { ...captured });
+		},
+	});
+	await worktreeCapture.start();
 	const folders = createStandaloneFolders({
 		workspace,
 		git: gitService,
 		applyHostCommand: (commandId, command) =>
 			composition.workspaceOperations?.applyHostCommand(commandId, command),
+		capture: worktreeCapture.reconcilerHooks,
 		onError: (projectId, error) => {
 			process.stderr.write(
 				`[terminay-server] folder reconciliation for ${projectId} failed: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -1026,6 +1056,7 @@ async function createServerComposition(
 		extensions,
 		git,
 		folderRoots: folders.roots,
+		gitCommands: worktreeCapture.gitCommands,
 		ai,
 		serviceLifecycle: {
 			start: async () => {
@@ -1035,6 +1066,9 @@ async function createServerComposition(
 					'default',
 					await realpath(options.projectRoot).catch(() => options.projectRoot),
 				);
+			},
+			stop: () => {
+				worktreeCapture.close();
 			},
 		},
 		automations: { repository: automations, runLog: automationRuns },
