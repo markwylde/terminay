@@ -77,16 +77,9 @@ Forgetting a remembered server (introduced by `pairing-install-instructions-and-
 
 A torn-off window is opened on the source window's server. A project tab may be dropped only on a native window showing the same server; the drag preview state main already publishes carries the source server identity, and a window on another server does not present itself as a target.
 
-### 9. One window per remote server
+### 9. Several windows on one server
 
-A server holds at most one live connection per device, and a second connection from the same device replaces the first (`HostedLivePeerRegistry`; `remote-access`, "One live connection per device"). Desktop enrols one device key per server, so two windows on one remote server would take the connection from each other in turn. The evidence is in `openspec/adr/evidence/one-live-connection-per-device-and-desktop-windows.md`.
-
-So a remote server is shown by at most one Desktop window. Main keeps the window that shows each remote profile; choosing that server from another window, or **Open in new window** for it, focuses the existing window. A project cannot be torn out of a window showing a remote server. Local is unaffected: its windows connect over private in-process ports and several may show it.
-
-**Boundary:** device identity is the server's unit of authentication and revocation (ADR-0013). This decision works within it rather than giving each window its own identity.
-
-- *Alternative: a device identity per window.* Rejected: every new window would need pairing and approval, and revoking "this computer" would mean revoking several devices.
-- *Alternative: one transport shared between windows in main.* Rejected for now: it is a multiplexing layer in the privileged process for a case the product does not yet need.
+Two windows may show the same remote server, as a torn-off window already does. Each is its own connection under the same device key. How the server treats a second live connection from one device (`remote-access`: "One live connection per device") is not established for this case and is the first thing the apply phase verifies; see Open Questions.
 
 ### 10. Add connection reads a provider list
 
@@ -115,7 +108,7 @@ On a compact workspace the connection control and the breadcrumb open one switch
 ## Risks / Trade-offs
 
 - [A person loses sight of an agent waiting on another server] → accepted by the owner for now. Two windows show two servers. A host-readable activity summary is recorded as an open item in the new ADR.
-- [A remote server cannot be shown in two windows, and its projects cannot be torn off] → accepted: decision 9. Two views of one remote server would need a shared transport or a per-window identity.
+- [Two windows on one remote server may fight over one device connection] → verified first in apply (task 2.1). If the server replaces the older connection, **Open in new window** focuses an existing window on that server instead of opening a second, and tear-off of a remote window is resolved the same way.
 - [A window starts on an unreachable server] → the connection menu stays usable in the failure state, and Local is one choice away.
 - [The `terminay.com` manager may still offer attach] → harmless to this bundle, and removing it there is a follow-up.
 - [Stale composition files on disk] → ignored, never read; they hold no secrets.
@@ -134,5 +127,6 @@ A person upgrading keeps every saved server and credential. A window that had se
 
 ## Open Questions
 
+- How does a server treat two live connections under one device key? (Decision 9; resolved by task 2.1.)
 - Should the Desktop File menu gain **New Window** on the current server, now that windows are the way to see two things at once?
 - ADR-0018 is revisited: its many-connections-per-window decisions are replaced and its bundle and compatibility decisions kept. The adr step records the superseding ADR.

@@ -6,10 +6,10 @@
 
 ## 2. Switching in the host
 
-- [x] 2.1 Establish how a server treats two live connections under one device key. It replaces the older one, so a remote server is shown by at most one window. Verified by `openspec/adr/evidence/one-live-connection-per-device-and-desktop-windows.md`, from the server's `HostedLivePeerRegistry` and the `remote-access` contract.
+- [ ] 2.1 Establish how a server treats two live connections under one device key, by opening two Desktop windows on one standalone server. Record the result in `openspec/adr/evidence/` and, if the older connection is replaced, make **Open in new window** and remote tear-off focus the existing window instead. Verified by the evidence file and an E2E for whichever behaviour results.
 - [ ] 2.2 Add `connections.select` and `connections.open-window` to the protocol as closed, capability-gated actions naming a profile id. Verified by `packages/protocol/test/host.test.mjs`.
 - [ ] 2.3 Implement switching in Electron main: resolve the remembered profile, open its transport or the Local session, and remount the requesting window only once ready; a failure leaves the window as it was and rejects with a reason. Keep the ordering in a module apart from Electron. Verified by unit tests of that module for success, unreachable server, forgotten profile, and return to Local.
-- [ ] 2.4 Implement opening a window on a remembered server, and focus the existing window when one already shows that remote server, for both switching and opening. Verified by an Electron E2E through `npm run test:e2e` that ends with one window on Local and one on a standalone server, and that choosing the server again from the Local window focuses the other.
+- [ ] 2.4 Implement opening a window on a remembered server. Verified by an Electron E2E through `npm run test:e2e` that ends with one window on Local and one on a standalone server.
 - [ ] 2.5 Persist each window's server and workspace view beside its geometry, reopen it there, and fall back to Local for a forgotten profile. Verified by an Electron E2E that restarts Desktop on a remote server and by a unit test of the fallback.
 
 ## 3. The connection menu
@@ -31,7 +31,7 @@
 - [ ] 5.3 Remove the server dimension from the tab strip, overflow switcher, compact switcher, Command Bar, Home overview, dashboard List/Board/Projects, Notifications, and the Agents pane. Verified by their model tests with the two-server cases deleted, and by an E2E asserting no server label appears on any of them.
 - [ ] 5.4 Remove `ServerSelector` and the server selects from Settings, Extensions, Macros, Recordings, Shell profiles, and Automations; auxiliary windows present the server of the window that opened them. Verified by component tests and by an E2E opening each from a window on a remote server.
 - [ ] 5.5 Remove the server chooser from the new-project control. Verified by the project-bar component test and E2E.
-- [ ] 5.6 Keep tear-off and cross-window project drags for windows showing Local, and offer neither in a window showing a remote server. Verified by Electron E2E for both.
+- [ ] 5.6 Open torn-off windows on the source window's server and refuse a project drop on a window showing another server. Verified by Electron E2E for both.
 - [ ] 5.7 Remove the attached-connection surface from `apps/terminay-web/src/framedConnectionHost.ts` and `src/web/sessionTransportHost.ts`. Verified by `apps/terminay-web` tests and `scripts/session-transport-host-contract.test.mjs`.
 - [ ] 5.8 Delete or rewrite the tests that exist only for attach and composition (`multi-connection-workspace`, `project-tab-composition`, `cross-server-rows`, the attach cases of `connections-control`, `desktop-window-connections`, `connection-registry`, and `packages/client-core` connections and compatibility tests). Verified by `npm run test:ci` passing with no skipped test left behind.
 
