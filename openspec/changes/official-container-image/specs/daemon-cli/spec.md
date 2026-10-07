@@ -58,7 +58,7 @@ When no install record exists, `daemon qr-code`, `daemon pairing-url`, `daemon a
 
 ### Requirement: Documented local-container flow
 
-The operations runbook SHALL document running Terminay Server from the official image as the container path, with one run command for each of: Terminay Desktop on the same machine or network, which needs no address and no published UDP port; browsers and phones, which need the public host and the pinned UDP range published; and a Linux host using host networking, which needs neither. Each SHALL be followed by the single exec command that pairs a device.
+The operations runbook SHALL document running Terminay Server from the official image as the container path, with one run command for each of: Terminay Desktop on the same machine or network, which needs no address and no published UDP port; browsers and phones, which need the public host and the pinned UDP range published; and a Linux host using host networking, which needs neither. Each run command SHALL mount a named volume at the data root and another at the image user's home directory, so that neither the server's identity nor a person's projects are lost when the container is recreated. Each SHALL be followed by the single exec command that pairs a device.
 
 The runbook SHALL explain why the cases differ: that WebRTC media uses UDP in addition to HTTPS signaling; that a container on macOS or Windows runs inside a VM whose private address a client cannot route to, and host networking does not change that; that Desktop offers its real addresses so the server can open the path outbound; and that browsers conceal their local addresses, so the server must be given an address they can reach. It SHALL state that a loopback direct origin carries signaling only. It SHALL state that Terminay operates no media relay and SHALL direct an operator whose network defeats direct connectivity to an overlay network such as Tailscale.
 
@@ -68,6 +68,12 @@ The guide SHALL cover connect-then-disconnect symptoms as well as ICE remaining 
 
 - **WHEN** an operator wants to connect Desktop to a server in a local container
 - **THEN** the runbook gives a run command for the official image that names no address and publishes no UDP port, and the exec command that pairs
+
+#### Scenario: A container is recreated
+
+- **WHEN** an operator removes a container started from a documented run command and starts another with the same command
+- **THEN** paired devices reconnect without pairing again
+- **AND** the files in the terminal user's home directory are still there
 
 #### Scenario: An operator wants browser or phone access
 

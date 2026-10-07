@@ -61,6 +61,13 @@ test('server Dockerfile assembles the self-contained server and runs as a non-ro
 	assert.match(dockerfile, /org\.opencontainers\.image\.revision/u);
 	assert.match(dockerfile, /^FROM debian:bookworm-slim AS runtime/m);
 	assert.match(dockerfile, /^USER terminay$/m);
+	// The server's account is unprivileged; sudo is how its terminals reach root.
+	assert.match(
+		dockerfile,
+		/apt-get install --yes --no-install-recommends [^\n]*\bsudo\b/u,
+	);
+	assert.match(dockerfile, /terminay ALL=\(ALL:ALL\) NOPASSWD:ALL/u);
+	assert.match(dockerfile, /chmod 0440 \/etc\/sudoers\.d\/terminay/u);
 	assert.match(dockerfile, /^VOLUME \["\/var\/lib\/terminay"\]$/m);
 	assert.match(dockerfile, /^STOPSIGNAL SIGTERM$/m);
 	assert.match(dockerfile, /^HEALTHCHECK /m);

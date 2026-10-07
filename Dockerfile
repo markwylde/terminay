@@ -112,10 +112,18 @@ RUN --mount=type=cache,id=terminay-apt-cache-bookworm,target=/var/cache/apt,shar
   --mount=type=cache,id=terminay-apt-lists-bookworm,target=/var/lib/apt/lists,sharing=locked \
   rm -f /etc/apt/apt.conf.d/docker-clean \
   && apt-get update \
-  && apt-get install --yes --no-install-recommends git ca-certificates curl \
+  && apt-get install --yes --no-install-recommends git ca-certificates curl sudo \
   && groupadd --system --gid 10001 terminay \
   && useradd --system --uid 10001 --gid terminay --create-home --home-dir /home/terminay --shell /bin/bash terminay \
   && install --directory --owner=terminay --group=terminay --mode=0700 /var/lib/terminay
+
+# The server and its terminals run as `terminay`, and a terminal's user installs
+# packages, so that account may become root through passwordless sudo. The
+# server itself never uses it: `no-new-privileges` or dropped capabilities
+# switch it off and leave the server running.
+RUN printf 'terminay ALL=(ALL:ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/terminay \
+  && chmod 0440 /etc/sudoers.d/terminay \
+  && visudo --check --quiet --file=/etc/sudoers.d/terminay
 
 COPY --from=build /out/terminay /opt/terminay
 COPY --from=build /out/terminay-cli /opt/terminay-cli

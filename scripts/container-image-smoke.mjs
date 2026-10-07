@@ -167,6 +167,9 @@ async function bare() {
 		/container/iu.test(refused.stdout + refused.stderr),
 		`\`daemon upgrade\` did not point at the container runtime:\n${refused.stdout}${refused.stderr}`,
 	);
+	// The same flags are how an operator withholds root from the terminals.
+	const denied = run([engine, 'exec', first, 'sudo', '--non-interactive', 'true'], { allowFailure: true });
+	assert(denied.status !== 0, 'sudo reached root in a container run with no new privileges');
 
 	const store = deviceStore('bare');
 	const paired = await device({
@@ -222,6 +225,9 @@ async function advertised() {
 		status.includes(`${host}:${ice}`),
 		`status does not report the advertised address ${host}:${ice}:\n${status}`,
 	);
+	// A terminal's user can install packages: sudo asks for no password.
+	const root = run([engine, 'exec', server, 'sudo', '--non-interactive', 'id', '--user']).stdout.trim();
+	assert(root === '0', `sudo did not reach root for the image's user: ${root}`);
 	const url = pairingUrl(server);
 	assert(
 		new URL(url).origin === `https://${host}:${signaling}`,

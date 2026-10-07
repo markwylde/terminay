@@ -160,7 +160,7 @@ The reachability model — gathered candidates, an operator-supplied or client-d
 - [The arm64 image is built under emulation and now builds the UI and assembles the archive] → the release build is slower. It affects tagged releases only; a native arm64 runner is the remedy if it becomes a problem.
 - [The image has no init process, so orphaned grandchildren of terminals are not reaped] → `docker run --init` adds one; the image does not ship one because it would be a second process manager to reason about.
 - [Docker Hub is a new publication target with a new credential] → the credential is a release secret on the mirror only; a pull request never publishes.
-- [Unprivileged image user cannot `apt install` in a terminal] → documented with a derived-image example. Open question below.
+- [Passwordless `sudo` makes every paired device root inside the container] → accepted. A paired device already runs arbitrary commands as the account that owns the data root, so the authority boundary — pairing and host approval — is unchanged; what widens is the container's own filesystem, which is disposable. The container runtime still bounds it, and `--security-opt no-new-privileges` or `--cap-drop=ALL` withholds root while the server runs unchanged. The server process itself stays unprivileged.
 - [`agent source com.terminay.builtin-agents/agents failed to start: extension host stopped` appears at startup in a container] → task 7.1 diagnoses it; a fix belongs to `builtin-agents-extension` unless the cause is the image.
 
 ## Migration Plan
@@ -174,7 +174,6 @@ Rollback is the previous image tag. Data roots are forward-compatible: the persi
 
 ## Open Questions
 
-- Should the image's terminal user be able to become root (passwordless `sudo`) for a demo container, or stay strictly unprivileged with a documented derived image? This design assumes unprivileged.
 - Should a public host given as a name be resolved on the server to produce an advertised candidate for browsers?
 - Should `ghcr.io/<owner>/terminay-server` keep being published, or be retired once `markwylde/terminay` is established? This design keeps both.
 - Should the WebRTC runtime multiplex every peer on one UDP port, removing the pinned-range budget and the installer's two-peer cap? That is a change under ADR-0006.
