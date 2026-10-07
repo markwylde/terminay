@@ -150,3 +150,46 @@ test('status bar file sizes stay short', () => {
 	assert.equal(formatStatusBarFileSize(150 * 1024 * 1024), '150 MB');
 	assert.equal(formatStatusBarFileSize(Number.NaN), '');
 });
+
+test('an HTML file opens in Preview with Text beside it', () => {
+	for (const name of ['index.html', 'page.htm', 'doc.xhtml']) {
+		const capabilities = detectFileCapabilities(
+			file(name, { previewKind: 'html', preferredMode: 'preview' }),
+		);
+		assert.equal(capabilities.previewKind, 'html', name);
+		assert.deepEqual(capabilities.primaryModes.slice(0, 2), ['preview', 'text'], name);
+		assert.equal(capabilities.defaultMode, 'preview', name);
+		assert.deepEqual(capabilities.secondaryModes, ['hex'], name);
+	}
+});
+
+test('an HTML extension does not make a page preview the server did not publish', () => {
+	const capabilities = detectFileCapabilities(file('index.html'));
+	assert.equal(capabilities.previewKind, 'text');
+	assert.equal(capabilities.defaultMode, 'text');
+	assert.deepEqual(capabilities.primaryModes.slice(0, 2), ['text', 'preview']);
+});
+
+test('an HTML file with no server snapshot is recognised by its extension', () => {
+	for (const name of ['index.html', 'page.htm', 'doc.xhtml']) {
+		const { viewerCapabilities: _dropped, ...local } = file(name);
+		const capabilities = detectFileCapabilities(local);
+		assert.equal(capabilities.previewKind, 'html', name);
+		assert.equal(capabilities.defaultMode, 'preview', name);
+	}
+});
+
+test('a host without the sandbox has no page preview and opens the file in Text', () => {
+	const page = file('index.html', { previewKind: 'html', preferredMode: 'preview' });
+	const capabilities = detectFileCapabilities(page, { pagePreview: false });
+	assert.equal(capabilities.canPreview, false);
+	assert.equal(capabilities.defaultMode, 'text');
+	assert.equal(resolveFileViewerMode(capabilities, 'preview'), 'text');
+	assert.equal(capabilities.primaryModes.includes('preview'), false);
+	// Only a page needs the sandbox: Markdown is unaffected.
+	const markdown = detectFileCapabilities(
+		file('README.md', { previewKind: 'markdown', preferredMode: 'preview' }),
+		{ pagePreview: false },
+	);
+	assert.equal(markdown.canPreview, true);
+});
