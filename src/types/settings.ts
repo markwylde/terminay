@@ -182,6 +182,9 @@ export type TerminalSettings = {
 	autoCloseTerminalOnExitZero: boolean;
 	/** Server setting: how long terminals keep running after Terminay quits. */
 	keepTerminalsAfterQuit: '1m' | '5m' | '30m' | '2h' | 'untilRestart';
+	/** Server setting: a terminal that creates a Git worktree moves into that
+	 * worktree's folder. Off, the folder offers the move instead. */
+	moveTerminalsIntoNewWorktreeFolders: boolean;
 	/** Device setting: which Terminay Desktop release channel this machine follows. */
 	updateChannel: 'stable' | 'beta';
 	convertEol: boolean;

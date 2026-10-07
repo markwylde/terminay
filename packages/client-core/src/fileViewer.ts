@@ -327,13 +327,6 @@ export class FileViewerClient {
     return { projectId: requiredProjectId(projectId), ...(this.folderId === undefined ? {} : { folderId: this.folderId }) };
   }
 
-  /** Some host-served operations resolve against the project root only.
-   * Answering one of them for a folder would read another checkout's file of
-   * the same name, so a folder-scoped client refuses instead. */
-  private requireProjectRootScope(operation: string): void {
-    if (this.folderId !== undefined) throw new TypeError(`${operation} is not available for a linked folder`);
-  }
-
   async getCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerCapabilities> {
     // The server names a preview kind added after the original set only to a
     // client that says it renders it; a server that predates the option ignores it.
@@ -492,8 +485,7 @@ export class FileViewerClient {
 
   async getGitDiff(path: string, projectId?: string, options: QueryOptions = {}): Promise<JsonValue> {
     if (typeof path !== "string" || path.length === 0 || path.includes("\0")) throw new TypeError("file path is invalid");
-    this.requireProjectRootScope("file Git diff");
-    const payload = { path, projectId: requiredProjectId(projectId) };
+    const payload = { path, ...this.scope(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody === "function") {
       const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.gitDiff, payload, options);
@@ -503,8 +495,7 @@ export class FileViewerClient {
   }
 
   async getMutationRevision(path: string, projectId?: string, options: QueryOptions = {}): Promise<{ readonly ino: number; readonly mtimeMs: number; readonly size: number }> {
-    this.requireProjectRootScope("file mutation revision");
-    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) }, options);
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), ...this.scope(projectId) }, options);
     if (!isRecord(value) || !Number.isSafeInteger(value.ino) || (value.ino as number) < 0 || typeof value.mtimeMs !== "number" || !Number.isFinite(value.mtimeMs) || !Number.isSafeInteger(value.size) || (value.size as number) < 0) throw new TypeError("file mutation revision response is invalid");
     return Object.freeze({ ino: value.ino as number, mtimeMs: value.mtimeMs, size: value.size as number });
   }
@@ -542,7 +533,9 @@ export class FileViewerClient {
   }
 
   async saveSparseFile(request: FileSparseSaveRequest, options: CommandOptions = {}): Promise<void> {
-    const payload = validateSparseSaveRequest(request);
+    // The caller's path is sent as it always was. A folder-scoped client also
+    // names its folder, and the server resolves that folder's root itself.
+    const payload = { ...validateSparseSaveRequest(request), ...(this.folderId === undefined ? {} : { folderId: this.folderId }) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.saveSparse, payload, options);
   }
 
@@ -862,7 +855,7 @@ function validateCatalogSearchPage(value: JsonValue): FileCatalogSearchPage {
   return Object.freeze({ root: value.root, query: value.query, results: Object.freeze(results), scannedEntries: value.scannedEntries, truncated: value.truncated });
 }
 
-function validateSparseSaveRequest(request: FileSparseSaveRequest): JsonValue {
+function validateSparseSaveRequest(request: FileSparseSaveRequest): { readonly [key: string]: JsonValue } {
   const path = boundedPath(request.path, "file path");
   const projectRoot = boundedPath(request.projectRoot, "project root");
   if (!Array.isArray(request.edits) || request.edits.length > 4096) throw new RangeError("file edits are invalid");

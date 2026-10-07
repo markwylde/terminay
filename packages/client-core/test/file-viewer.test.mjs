@@ -460,13 +460,53 @@ test("a folder-scoped FileViewerClient names its folder and never a root", async
   assert.throws(() => project.forFolder(""), /folder id is invalid/);
 });
 
-test("a folder-scoped FileViewerClient refuses operations the host resolves against the project root", async () => {
-  let transportCalls = 0;
-  const folder = new FileViewerClient({
-    async query() { transportCalls += 1; return {}; },
-    async command() { transportCalls += 1; return null; },
-  }).forFolder("folder-wt");
-  await assert.rejects(() => folder.getGitDiff("a.txt", "project-a"), /not available for a linked folder/);
-  await assert.rejects(() => folder.getMutationRevision("a.txt", "project-a"), /not available for a linked folder/);
-  assert.equal(transportCalls, 0);
+test("a folder-scoped FileViewerClient names its folder for a diff, a revision and a sparse save", async () => {
+  const sparseSave = {
+    edits: [{ dataBase64: "QQ==", start: 0, end: 1 }],
+    expectedIno: 7,
+    expectedMtimeMs: 12.5,
+    expectedSize: 4,
+    path: "/worktrees/feature/a.txt",
+    projectRoot: "/worktrees/feature",
+  };
+  const record = () => {
+    const calls = [];
+    return {
+      calls,
+      transport: {
+        async query(operation, payload) {
+          calls.push({ operation, payload });
+          return operation === "file.mutation-revision" ? { ino: 7, mtimeMs: 12.5, size: 4 } : {};
+        },
+        async command(operation, payload) { calls.push({ operation, payload }); return null; },
+      },
+    };
+  };
+
+  const linked = record();
+  const folder = new FileViewerClient(linked.transport).forFolder("folder-wt");
+  await folder.getGitDiff("a.txt", "project-a");
+  assert.deepEqual(await folder.getMutationRevision("a.txt", "project-a"), { ino: 7, mtimeMs: 12.5, size: 4 });
+  await folder.saveSparseFile(sparseSave);
+  assert.deepEqual(linked.calls.map(({ operation, payload }) => [operation, payload.folderId]), [
+    ["file.get-git-diff", "folder-wt"],
+    ["file.mutation-revision", "folder-wt"],
+    ["file.save-sparse", "folder-wt"],
+  ]);
+  assert.deepEqual(linked.calls[0].payload, { path: "a.txt", projectId: "project-a", folderId: "folder-wt" });
+  assert.deepEqual(linked.calls[1].payload, { path: "a.txt", projectId: "project-a", folderId: "folder-wt" });
+  // The path the caller sent is sent unchanged; the folder id rides beside it.
+  assert.deepEqual(linked.calls[2].payload, { ...sparseSave, folderId: "folder-wt" });
+
+  // Without a folder nothing about these three requests changes.
+  const rooted = record();
+  const project = new FileViewerClient(rooted.transport);
+  await project.getGitDiff("a.txt", "project-a");
+  await project.getMutationRevision("a.txt", "project-a");
+  await project.saveSparseFile(sparseSave);
+  assert.deepEqual(rooted.calls.map(({ payload }) => payload), [
+    { path: "a.txt", projectId: "project-a" },
+    { path: "a.txt", projectId: "project-a" },
+    sparseSave,
+  ]);
 });

@@ -29,9 +29,17 @@ const { assertWorktreePulled } = await bundleModule(
 	'src/workspace/useFileExplorerController.ts',
 	'file-explorer-controller.cjs',
 );
-const { WorktreesPanel, buildWorktreeContextMenuItems } = await bundleModule(
-	'src/components/git-panel/WorktreesPanel.tsx',
-	'worktrees-panel.cjs',
+const { ChangesPane } = await bundleModule(
+	'src/components/git-panel/ChangesPane.tsx',
+	'changes-pane.cjs',
+);
+const { folderChanges } = await bundleModule(
+	'src/workspace/folderWorktree.ts',
+	'folder-worktree.cjs',
+);
+const { folderMenuEntries } = await bundleModule(
+	'src/workspace/folderMenuModel.ts',
+	'folder-menu-model.cjs',
 );
 
 test.after(async () => {
@@ -69,24 +77,21 @@ function makeStatus(worktrees) {
 	};
 }
 
-function renderPanel(props) {
+function renderChanges(worktree, props = {}) {
 	return renderToStaticMarkup(
-		React.createElement(WorktreesPanel, {
+		React.createElement(ChangesPane, {
+			changes: folderChanges(
+				{ kind: 'general' },
+				'/workspace/repo',
+				makeStatus([worktree]),
+			),
 			viewMode: 'list',
-			onDeleteWorktree: () => {},
-			onDeletePath: () => {},
+			onDelete: () => {},
 			onNewFile: () => {},
 			onNewFolder: () => {},
 			onOpenEntry: () => {},
 			onOpenFolder: () => {},
-			onOpenPushMenu: () => {},
-			onOpenTerminal: () => {},
-			onOpenTerminalAtPath: () => {},
-			onPullFromOrigin: () => {},
-			onRenameWorktree: () => {},
-			onRenamePath: () => {},
-			onRevealWorktree: () => {},
-			onSwitchProjectRoot: () => {},
+			onRename: () => {},
 			...props,
 		}),
 	);
@@ -117,63 +122,52 @@ test('a pull the server did not apply is reported with its message', () => {
 
 test('a worktree being pulled shows that its pull is running', () => {
 	const worktree = makeWorktree();
-	const idle = renderPanel({ status: makeStatus([worktree]) });
+	const idle = renderChanges(worktree);
 	assert.doesNotMatch(idle, /pulling…/);
+	assert.match(idle, /aria-busy="false"/);
 
-	const pulling = renderPanel({
-		status: makeStatus([worktree]),
-		pullingWorktreePaths: new Set([worktree.path]),
-	});
-	assert.match(pulling, /worktrees-panel__pulling/);
+	const pulling = renderChanges(worktree, { isPulling: true });
+	assert.match(pulling, /changes-pane__activity/);
 	assert.match(pulling, /pulling…/);
 	assert.match(pulling, /aria-busy="true"/);
 });
 
 test('a worktree that is already pulling cannot start a second pull', () => {
-	const worktree = makeWorktree();
-	const options = {
-		onDeleteWorktree: () => {},
-		onOpenTerminal: () => {},
-		onPullFromOrigin: () => {},
-		onRenameWorktree: () => {},
-		onRevealWorktree: () => {},
-		onSwitchProjectRoot: () => {},
-		rootPath: '/workspace/repo',
-		worktree,
+	const input = {
+		kind: 'general',
+		isGitProject: true,
+		worktree: makeWorktree(),
+		canReveal: true,
 	};
-
-	const idle = buildWorktreeContextMenuItems(options).find(
+	const idle = folderMenuEntries(input).find(
 		(item) => item.label === 'Pull from origin',
 	);
 	assert.ok(idle);
 	assert.equal(idle.disabled, false);
 
-	const pulling = buildWorktreeContextMenuItems({
-		...options,
-		isPulling: true,
-	}).find((item) => item.label === 'Pulling from origin…');
+	const pulling = folderMenuEntries({ ...input, isPulling: true }).find(
+		(item) => item.label === 'Pulling from origin…',
+	);
 	assert.ok(pulling);
 	assert.equal(pulling.disabled, true);
 });
 
 test('Reveal in OS is offered only when the server can reveal for this client', () => {
-	const options = {
-		onDeleteWorktree: () => {},
-		onOpenTerminal: () => {},
-		onPullFromOrigin: () => {},
-		onRenameWorktree: () => {},
-		onSwitchProjectRoot: () => {},
-		rootPath: '/workspace/repo',
+	const input = {
+		kind: 'general',
+		isGitProject: true,
 		worktree: makeWorktree(),
 	};
-	const labels = (items) => items.map((item) => item.label);
+	const labels = (entries) => entries.map((entry) => entry.label);
 
 	assert.ok(
-		!labels(buildWorktreeContextMenuItems(options)).includes('Reveal in OS'),
+		!labels(folderMenuEntries({ ...input, canReveal: false })).includes(
+			'Reveal in OS',
+		),
 	);
 	assert.ok(
-		labels(
-			buildWorktreeContextMenuItems({ ...options, onRevealWorktree: () => {} }),
-		).includes('Reveal in OS'),
+		labels(folderMenuEntries({ ...input, canReveal: true })).includes(
+			'Reveal in OS',
+		),
 	);
 });

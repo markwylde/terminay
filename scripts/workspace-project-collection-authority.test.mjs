@@ -77,5 +77,5 @@ test('canonical project root reaches browser explorer and Git consumers', () => 
   assert.match(app, /rootPath=\{project\.rootFolder\}/u)
   assert.match(app, /projectRoot=\{project\.rootFolder\}/u)
   assert.match(app, /gitClient: terminalClientContext\?\.gitClient/u)
-  assert.match(app, /<WorktreesPanel/u)
+  assert.match(app, /<ChangesPane/u)
 })
