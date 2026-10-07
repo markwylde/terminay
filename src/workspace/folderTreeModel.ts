@@ -27,9 +27,28 @@ export type FolderTreePanelFacts = {
 export type FolderTreeWorktree = {
 	path: string;
 	branch: string | null;
-	pullRequest?: { number: number; state: string; title: string; url?: string };
+	pullRequest?: {
+		number: number;
+		state: string;
+		title: string;
+		url?: string;
+		mergeable?: boolean;
+	};
 	checks?: { failed: number; pending: number; passed: number; skipped: number };
+	/** How the worktree stands against the default branch. */
+	change?: FolderTreeChange;
 };
+
+/**
+ * What a linked folder's row says about its worktree's work: missing from
+ * disk, the size of its change, changed with no measured size, or clean.
+ * Clean means nothing the default branch lacks and no working-tree delta.
+ */
+export type FolderTreeChange =
+	| { kind: 'missing' }
+	| { kind: 'delta'; additions: number; deletions: number }
+	| { kind: 'changed' }
+	| { kind: 'clean' };
 
 export type FolderTreeTerminalRow = {
 	panelId: string;
@@ -52,6 +71,8 @@ export type FolderTreeFolderRow = {
 	branch?: string;
 	pullRequest?: FolderTreeWorktree['pullRequest'];
 	checks?: FolderTreeWorktree['checks'];
+	/** A linked folder's worktree against the default branch. */
+	change?: FolderTreeChange;
 	terminals: readonly FolderTreeTerminalRow[];
 	/** True when the folder holds no panel of any kind. */
 	isEmpty: boolean;
@@ -139,6 +160,9 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			...(folder.kind !== 'linked' || worktree?.checks === undefined
 				? {}
 				: { checks: worktree.checks }),
+			...(folder.kind !== 'linked' || worktree?.change === undefined
+				? {}
+				: { change: worktree.change }),
 			terminals,
 			isEmpty: folder.panelIds.length === 0,
 			...(offered === undefined

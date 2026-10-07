@@ -310,21 +310,26 @@ export class FolderReconciler {
  * project root sits in, which General stands for. That is the deepest worktree
  * containing the root, so a project opened on a subdirectory of a checkout, or
  * on a linked worktree, is handled the same way.
+ *
+ * A worktree Git still registers but whose directory is gone keeps its folder:
+ * the registration is still a worktree of the repository, and its folder is
+ * the only place it can be deleted from. Nothing can be read or launched in
+ * it, because the root resolver fails closed for it. A bare entry has no
+ * working tree to stand for and gets no folder.
  */
 export function worktreesNeedingFolders(
 	worktrees: readonly ListedWorktree[],
 	canonicalProjectRoot: string,
 ): ListedWorktree[] {
-	const usable = worktrees.filter(
-		(worktree) => worktree.isBare !== true && worktree.isPrunable !== true,
-	);
+	const foldered = worktrees.filter((worktree) => worktree.isBare !== true);
 	const contains = (worktree: ListedWorktree) =>
 		canonicalProjectRoot === worktree.path ||
 		canonicalProjectRoot.startsWith(
 			worktree.path.endsWith(sep) ? worktree.path : `${worktree.path}${sep}`,
 		);
-	const home = usable
-		.filter(contains)
+	// General stands for a checkout that exists.
+	const home = foldered
+		.filter((worktree) => worktree.isPrunable !== true && contains(worktree))
 		.sort((a, b) => b.path.length - a.path.length)[0];
-	return usable.filter((worktree) => worktree !== home);
+	return foldered.filter((worktree) => worktree !== home);
 }

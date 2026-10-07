@@ -9,7 +9,7 @@ import {
 	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview';
 import { DockviewReact } from 'dockview';
 import {
 	CircleStop,
@@ -26,7 +26,6 @@ import {
 	Mic,
 	Play,
 	Plug,
-	MoreHorizontal,
 	PanelBottom,
 	RefreshCw,
 	Trash2,
@@ -94,6 +93,7 @@ import {
 } from './components/folders/EmptyFolderPlaceholder';
 import { FolderCaptureNotices } from './components/folders/FolderCaptureNotices';
 import { FoldersColumn } from './components/folders/FoldersColumn';
+import { WorktreeSignInDialog } from './components/git-panel/WorktreeSignInDialog';
 import { ChangesPane } from './components/git-panel/ChangesPane';
 import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { McpInstallModal } from './components/McpInstallModal';
@@ -675,6 +675,12 @@ type ProjectWorkspaceProps = {
 		sourceProjectId: string,
 		panelId: string,
 		targetProjectId: string,
+	) => void;
+	/** Move a terminal to another folder of this project. */
+	onMoveTerminalToFolder: (
+		projectId: string,
+		panelId: string,
+		targetFolderId: string,
 	) => void;
 	onPopoutProject: (projectId: string) => Promise<void>;
 	/** A terminal tab of this project started being dragged, or a drag ended. */
@@ -1375,6 +1381,7 @@ const ProjectWorkspace = forwardRef<
 			onEditProject,
 			onFoldersTreeWidthCommit,
 			onSelectFolder,
+			onMoveTerminalToFolder,
 			onMoveTerminalToProject,
 			onPopoutProject,
 			onTerminalTabDrag,
@@ -2714,7 +2721,8 @@ const ProjectWorkspace = forwardRef<
 			handlePullWorktreeFromOrigin,
 			handleRename,
 			handleRenameWorktree,
-			handleRevealWorktree,
+			handleLoadWorktreeChecks,
+			handleRevealFolder,
 			loadingPaths,
 			pullingWorktreePaths,
 			refreshFileExplorerTree,
@@ -2755,7 +2763,8 @@ const ProjectWorkspace = forwardRef<
 			isActive: isRenderingStatusBar,
 			isDockviewReady,
 		});
-		const [gitPaneMenuPosition, setGitPaneMenuPosition] = useState<{
+		// The Folders column's own menu: what is done to the folders as a list.
+		const [foldersMenuPosition, setFoldersMenuPosition] = useState<{
 			x: number;
 			y: number;
 		} | null>(null);
@@ -4839,6 +4848,38 @@ const ProjectWorkspace = forwardRef<
 				worktreePanelStatus,
 			],
 		);
+		// A panel's menu offers the other folders of its project. They are named
+		// by a key, so a new projection with the same folders changes no tab.
+		const foldersForMoveKey = useMemo(() => {
+			const projected = workspaceSnapshot?.projects[project.id];
+			if (projected === undefined || workspaceSnapshot === null) return '[]';
+			return JSON.stringify(
+				projected.folderIds.flatMap((folderId) => {
+					const candidate = workspaceSnapshot.folders[folderId];
+					return candidate === undefined || folderId === folder.id
+						? []
+						: [{ id: folderId, name: candidate.name }];
+				}),
+			);
+		}, [folder.id, project.id, workspaceSnapshot]);
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (api === null || !isDockviewReady) return;
+			const foldersForMove = JSON.parse(foldersForMoveKey) as {
+				id: string;
+				name: string;
+			}[];
+			const offer = (panel: IDockviewPanel) =>
+				panel.api.updateParameters({
+					foldersForMove,
+					onMoveToFolder: (targetFolderId: string) =>
+						onMoveTerminalToFolder(project.id, panel.id, targetFolderId),
+				});
+			for (const panel of api.panels) offer(panel);
+			// A panel that arrives later is offered the same folders.
+			const added = api.onDidAddPanel(offer);
+			return () => added.dispose();
+		}, [foldersForMoveKey, isDockviewReady, onMoveTerminalToFolder, project.id]);
 		const [newFolderDialog, setNewFolderDialog] =
 			useState<FileExplorerNameDialogState | null>(null);
 		const newFolderModal = useDraggableModal(newFolderDialog !== null);
@@ -4897,7 +4938,7 @@ const ProjectWorkspace = forwardRef<
 			onPullFromOrigin: handlePullWorktreeFromOrigin,
 			onRenameWorktree: handleRenameWorktree,
 			onDeleteWorktree: handleDeleteWorktree,
-			onRevealWorktree: handleRevealWorktree,
+			onRevealFolder: handleRevealFolder,
 			onOpenShell: (folderId) => onOpenShellInFolder(project.id, folderId),
 			onClosePanel: (folderId, panelId) =>
 				onCloseFolderPanel(project.id, folderId, panelId),
@@ -5068,23 +5109,6 @@ const ProjectWorkspace = forwardRef<
 						changes.kind === 'worktree'
 							? changes.worktree.entries.length
 							: undefined,
-					// A folder outside a repository is offered no Git action.
-					actions: isGitProject(worktreePanelStatus) ? (
-						<button
-							type="button"
-							className={`sidebar-pane__action-button${gitPaneMenuPosition ? ' sidebar-pane__action-button--active' : ''}`}
-							onClick={(event) => {
-								const rect = event.currentTarget.getBoundingClientRect();
-								setGitPaneMenuPosition({ x: rect.left, y: rect.bottom + 4 });
-							}}
-							aria-label="Changes actions"
-							aria-haspopup="menu"
-							aria-expanded={gitPaneMenuPosition !== null}
-							title="Changes actions"
-						>
-							<MoreHorizontal size={14} aria-hidden="true" />
-						</button>
-					) : undefined,
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
@@ -5109,14 +5133,6 @@ const ProjectWorkspace = forwardRef<
 								onOpenFolder={openFolder}
 								onOpenTerminal={handleOpenTerminalAt}
 								onRename={handleRename}
-								// One prompt for the window, asked by the workspace on
-								// screen; every folder of a project hears of the same one.
-								{...(isActive && worktreePanelStatus?.signIn !== undefined
-									? {
-											signIn: worktreePanelStatus.signIn,
-											onRespondSignIn: handleRespondWorktreeSignIn,
-										}
-									: {})}
 							/>
 						),
 				},
@@ -5298,6 +5314,10 @@ const ProjectWorkspace = forwardRef<
 								folders={folderTreeRows}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
 								footer={captureNoticesElement('column')}
+								isMenuOpen={foldersMenuPosition !== null}
+								onOpenMenu={setFoldersMenuPosition}
+								onOpenLink={(url) => void openExternalUrl(url)}
+								onLoadChecks={handleLoadWorktreeChecks}
 								onAnswerOffer={(folderId, answer) =>
 									onAnswerFolderOffer(project.id, folderId, answer)
 								}
@@ -5380,22 +5400,6 @@ const ProjectWorkspace = forwardRef<
 									/>
 								</div>
 
-								{gitPaneMenuPosition ? (
-									<ContextMenu
-										x={gitPaneMenuPosition.x}
-										y={gitPaneMenuPosition.y}
-										onClose={() => setGitPaneMenuPosition(null)}
-										items={[
-											{
-												label: 'Delete all clean worktrees',
-												icon: <Trash2 size={14} aria-hidden="true" />,
-												danger: true,
-												disabled: cleanWorktreeDeleteCount === 0,
-												onClick: () => void handleDeleteCleanWorktrees(),
-											},
-										]}
-									/>
-								) : null}
 							</div>
 						) : null
 					}
@@ -5598,6 +5602,45 @@ const ProjectWorkspace = forwardRef<
 					/>
 				) : null}
 				{folderMenuElement}
+				{/* A forge an extension recognised asks to be signed in to. The
+				    pull requests and checks it would bring are shown on the Folders
+				    tree, so the question does not wait for the sidebar to be open.
+				    One prompt for the window, asked by the workspace on screen;
+				    every folder of a project hears of the same one. */}
+				{isActive && worktreePanelStatus?.signIn !== undefined ? (
+					<WorktreeSignInDialog
+						key={worktreePanelStatus.signIn.origin}
+						prompt={worktreePanelStatus.signIn}
+						onRespond={handleRespondWorktreeSignIn}
+					/>
+				) : null}
+				{foldersMenuPosition ? (
+					<ContextMenu
+						x={foldersMenuPosition.x}
+						y={foldersMenuPosition.y}
+						onClose={() => setFoldersMenuPosition(null)}
+						items={[
+							{
+								label: 'New folder',
+								icon: <FolderPlus size={14} aria-hidden="true" />,
+								onClick: requestNewFolder,
+							},
+							// A project outside a repository has no worktrees to sweep.
+							...(isGitProject(worktreePanelStatus)
+								? [
+										{ separator: true, label: '', onClick: () => {} },
+										{
+											label: 'Delete all clean worktrees',
+											icon: <Trash2 size={14} aria-hidden="true" />,
+											danger: true,
+											disabled: cleanWorktreeDeleteCount === 0,
+											onClick: () => void handleDeleteCleanWorktrees(),
+										},
+									]
+								: []),
+						]}
+					/>
+				) : null}
 				{/* Opened from a folder's menu, so it is drawn whether or not the
 				    sidebar is. */}
 				{gitPushMenuPosition ? (
@@ -9485,6 +9528,7 @@ function App({
 							isStatusBarVisible={isStatusBarVisible}
 							statusBarSlot={statusBarSlot}
 							onEditProject={openEditProjectWindow}
+							onMoveTerminalToFolder={moveTerminalToFolder}
 							onMoveTerminalToProject={moveTerminalToProject}
 							onPopoutProject={popoutProject}
 							onTerminalTabDrag={reportTerminalTabDrag}

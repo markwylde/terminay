@@ -86,6 +86,18 @@ test("TerminayGitClient leaves reveal to the server host", async () => {
   assert.equal(fake.calls.length, 1);
 });
 
+test("TerminayGitClient reveals a folder by its ids and never sends a path", async () => {
+  const fake = transport();
+  const client = new TerminayGitClient(fake, { capabilities: {} });
+  await client.revealFolder({ projectId: "project-a", folderId: "folder-general", path: "/etc" });
+  assert.deepEqual(fake.calls.map(([kind, operation]) => [kind, operation]), [["command", "git.folder.reveal"]]);
+  assert.deepEqual(fake.calls[0][2], { projectId: "project-a", folderId: "folder-general" });
+  assert.throws(() => client.revealFolder({ projectId: "project-a", folderId: "../outside" }), /folderId/);
+  assert.throws(() => client.revealFolder({ projectId: "project-a", folderId: "/tmp/somewhere" }), /folderId/);
+  assert.throws(() => client.revealFolder({ projectId: "project-a" }), /folderId/);
+  assert.equal(fake.calls.length, 1);
+});
+
 test("TerminayGitClient rejects path-like and unsafe reviewed values before transport", async () => {
   const fake = transport();
   const client = new TerminayGitClient(fake, { capabilities: { clipboard: true } });

@@ -52,12 +52,17 @@ export function createServerTerminalSettingsClient(
 			return effectiveSettings(lastServerState) as T;
 		},
 		async update<T>(settings: JsonValue) {
+			// What belongs to this device is handed to the host before anything
+			// is asked of the server, in the same turn as the interaction. A
+			// column hidden a moment before the window reloads or closes is then
+			// still hidden afterwards, whatever the server round trip takes.
+			const selectedDeviceSettings = selectConnectionHostSettings(settings);
+			const deviceWrite = updateDeviceTerminalSettings(selectedDeviceSettings);
+			if (!hasNativeSettingsHost())
+				writeConnectionHostSettings(selectedDeviceSettings);
 			const current = serverSettings(await client.get<JsonValue>());
 			const serverUpdate = selectServerSettings(settings, current);
-			const selectedDeviceSettings = selectConnectionHostSettings(settings);
-			connectionHostSettings =
-				(await updateDeviceTerminalSettings(selectedDeviceSettings)) ??
-				selectedDeviceSettings;
+			connectionHostSettings = (await deviceWrite) ?? selectedDeviceSettings;
 			if (!hasNativeSettingsHost())
 				writeConnectionHostSettings(connectionHostSettings);
 			lastServerState = await client.update<JsonValue>(serverUpdate);

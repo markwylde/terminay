@@ -1,12 +1,8 @@
 import { GitBranch } from 'lucide-react';
 import type { JSX } from 'react';
-import type { GitChangeEntry, WorktreeSignInPrompt } from '../../types/terminay';
+import type { GitChangeEntry } from '../../types/terminay';
 import type { FolderChanges } from '../../workspace/folderWorktree';
 import { GitPanel } from './GitPanel';
-import {
-	type WorktreeSignInChoice,
-	WorktreeSignInDialog,
-} from './WorktreeSignInDialog';
 import './gitPanel.css';
 
 export type ChangesPaneProps = {
@@ -22,12 +18,6 @@ export type ChangesPaneProps = {
 	onOpenFolder: (path: string) => void;
 	onOpenTerminal?: (path: string) => void;
 	onRename: (path: string) => void;
-	/** A forge sign-in an extension asked for, and the user's answer to it. */
-	signIn?: WorktreeSignInPrompt;
-	onRespondSignIn?: (
-		choice: WorktreeSignInChoice,
-		token?: string,
-	) => Promise<void>;
 };
 
 /**
@@ -38,17 +28,9 @@ export type ChangesPaneProps = {
  * told so and offered nothing to do.
  */
 export function ChangesPane(props: ChangesPaneProps): JSX.Element {
-	const { changes, signIn, onRespondSignIn } = props;
 	return (
-		<div className="changes-pane" data-changes-state={changes.kind}>
+		<div className="changes-pane" data-changes-state={props.changes.kind}>
 			<ChangesBody {...props} />
-			{signIn && onRespondSignIn ? (
-				<WorktreeSignInDialog
-					key={signIn.origin}
-					prompt={signIn}
-					onRespond={onRespondSignIn}
-				/>
-			) : null}
 		</div>
 	);
 }
