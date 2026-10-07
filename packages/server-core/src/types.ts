@@ -153,6 +153,12 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	/** Inbound silence a heartbeat client may show before the server reaps it.
 	 * Applies only to clients advertising `connection.heartbeat`. */
 	readonly heartbeatTimeoutMs?: number;
+	/** How late the silence deadline may fire before the lateness is read as
+	 * the server itself having been suspended. Defaults to the smaller of 5s
+	 * and half the deadline. */
+	readonly heartbeatSuspendToleranceMs?: number;
+	/** Wall clock the silence deadline is measured against. */
+	readonly heartbeatNow?: () => number;
 	readonly defaultQueryScope?: AuthScope;
 	readonly defaultCommandScope?: AuthScope;
 	/** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh

@@ -1,3 +1,7 @@
+import {
+	createRampSchedule,
+	type RampScheduleOptions,
+} from '../activity/rampSchedule.js';
 import type {
 	PtyDataListener,
 	PtyExitListener,
@@ -36,6 +40,9 @@ export interface NodePtyForegroundPollingOptions {
 	/** Injectable only so adapter tests do not need wall-clock timers. */
 	readonly setInterval?: (callback: () => void, delayMs: number) => unknown;
 	readonly clearInterval?: (timer: unknown) => void;
+	/** The shared ramp that spaces output-driven samples (ADR-0028). Injectable
+	 * only so adapter tests do not need wall-clock timers. */
+	readonly outputRamp?: RampScheduleOptions;
 }
 
 export interface NodePtyFactoryOptions {
@@ -139,11 +146,12 @@ export function createNodePtyFactory(
 				| { readonly exitCode: number; readonly signal?: number }
 				| undefined;
 			const childData = child.onData((data) => {
-				// Output is an authoritative indication that the PTY advanced. Refresh
-				// the foreground projection at the same host boundary so a delayed or
-				// starved interval cannot leave destructive-close protection stale.
+				// Output is an authoritative indication that the PTY advanced. Tell
+				// the foreground observer at the same host boundary, so output after
+				// quiet refreshes the projection without waiting for a delayed or
+				// starved interval. Sustained output is spaced by the shared ramp.
 				// The interval remains necessary for silent foreground processes.
-				void foreground.poll();
+				foreground.noteOutput();
 				if (dataListeners.size === 0) {
 					pendingData.push(data);
 					return;
@@ -241,6 +249,7 @@ export interface ForegroundPolling {
 	readonly intervalMs: number;
 	readonly setInterval: (callback: () => void, delayMs: number) => unknown;
 	readonly clearInterval: (timer: unknown) => void;
+	readonly outputRamp?: RampScheduleOptions;
 }
 
 /** @internal Shared with the session-holder PTY adapter. */
@@ -260,7 +269,14 @@ export function createForegroundPolling(
 		options?.clearInterval ??
 		((timer: unknown) =>
 			globalThis.clearInterval(timer as ReturnType<typeof setInterval>));
-	return { intervalMs, setInterval: setTimer, clearInterval: clearTimer };
+	return {
+		intervalMs,
+		setInterval: setTimer,
+		clearInterval: clearTimer,
+		...(options?.outputRamp === undefined
+			? {}
+			: { outputRamp: options.outputRamp }),
+	};
 }
 
 interface FreshObservationWaiter {
@@ -281,6 +297,9 @@ export function createForegroundObserver(
 ): {
 	readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe;
 	readonly poll: (signal?: AbortSignal) => Promise<void>;
+	/** PTY output arrived. It is evidence that the foreground may have changed,
+	 * not a unit of work: samples it causes are spaced by the shared ramp. */
+	readonly noteOutput: () => void;
 	readonly observeFresh: (signal?: AbortSignal) => Promise<void>;
 	readonly dispose: () => void;
 } {
@@ -451,6 +470,18 @@ export function createForegroundObserver(
 			});
 		});
 	};
+	// Output is an observed event, so the sample that follows it runs behind the
+	// shared ramp (ADR-0028 decision 5): at once after a quiet period, then no
+	// more often than the ramp allows however fast the terminal prints. A fresh
+	// observation for destructive close never comes through here.
+	const outputRamp = createRampSchedule(
+		() => requestSample(),
+		polling.outputRamp,
+	);
+	const noteOutput = (): void => {
+		if (disposed || listeners.size === 0) return;
+		outputRamp.request();
+	};
 	const start = (): void => {
 		if (!disposed && timer === undefined)
 			timer = polling.setInterval(() => {
@@ -460,6 +491,7 @@ export function createForegroundObserver(
 
 	return {
 		poll,
+		noteOutput,
 		observeFresh,
 		subscribe(listener: NodePtyForegroundListener): Unsubscribe {
 			if (typeof listener !== 'function')
@@ -480,6 +512,7 @@ export function createForegroundObserver(
 				rejectWaiter(waiter, new Error('foreground observation disposed'));
 			}
 			listeners.clear();
+			outputRamp.dispose();
 			stop();
 		},
 	};

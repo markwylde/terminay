@@ -58,6 +58,13 @@ export interface PreparedProjectRootUpdate {
 	readonly commit: () => Promise<void> | void;
 }
 
+/** A live terminal following its panel from one project to another. */
+export interface TerminalSessionRehome {
+	readonly sessionId: string;
+	readonly sourceProjectId: string;
+	readonly targetProjectId: string;
+}
+
 export interface WorkspaceOperationRegistryOptions {
 	/**
 	 * The server's default project folder. A `project.create` that names no
@@ -82,6 +89,13 @@ export interface WorkspaceOperationRegistryOptions {
 	 * with it. A project move is not a close and does not call this.
 	 */
 	readonly releaseProject?: (projectId: string) => Promise<void> | void;
+	/**
+	 * Runs when a `panel.move` of a terminal panel has committed and before the
+	 * new revision is published, so the terminal already answers to its target
+	 * project when any client sees the move. It must not throw: the workspace
+	 * commit is the only point at which a move can fail.
+	 */
+	readonly rehomeTerminalSession?: (move: TerminalSessionRehome) => void;
 	readonly eventJournal?: OrderedEventJournalLike;
 	readonly shellProfileExists?: (
 		profileId: string,
@@ -210,12 +224,14 @@ export function createWorkspaceOperationRegistry(
 		operations: { queries, commands, policies },
 		applyHostCommand: (commandId, command, expectedRevision) => {
 			const lifecycle = observeProjectLifecycle(workspace, command);
+			const rehome = terminalSessionRehomedBy(workspace.state, command);
 			const applied = workspace.apply({
 				commandId,
 				command,
 				...(expectedRevision === undefined ? {} : { expectedRevision }),
 			});
 			if (applied.ok) {
+				if (rehome !== undefined) options.rehomeTerminalSession?.(rehome);
 				publishWorkspaceChange(
 					options.eventJournal,
 					workspace,
@@ -560,6 +576,7 @@ async function applyCommand(
 			await options.closeProjectTerminalSessions?.(sessionIdsToClose);
 	}
 	const lifecycle = observeProjectLifecycle(workspace, command);
+	const rehome = terminalSessionRehomedBy(workspace.state, command);
 	const applied = workspace.apply({
 		commandId: request.envelope.commandId,
 		expectedRevision: request.envelope.expectedRevision,
@@ -575,6 +592,7 @@ async function applyCommand(
 		});
 	if (command.type === 'project.close')
 		await options.releaseProject?.(command.projectId);
+	if (rehome !== undefined) options.rehomeTerminalSession?.(rehome);
 	publishWorkspaceChange(
 		options.eventJournal,
 		workspace,
@@ -605,6 +623,26 @@ function terminalSessionIdsClosedBy(
 		return panel?.type === 'terminal' ? [panel.sessionId] : [];
 	}
 	return [];
+}
+
+/**
+ * The terminal a `panel.move` is about to carry to another project, read
+ * before the command is applied. A move within one project, of a panel that
+ * is not a terminal, or replayed after it already committed carries none.
+ */
+function terminalSessionRehomedBy(
+	state: WorkspaceState,
+	command: WorkspaceCommand,
+): TerminalSessionRehome | undefined {
+	if (command.type !== 'panel.move') return undefined;
+	const panel = state.panels[command.panelId];
+	if (panel?.type !== 'terminal' || panel.projectId === command.targetProjectId)
+		return undefined;
+	return {
+		sessionId: panel.sessionId,
+		sourceProjectId: panel.projectId,
+		targetProjectId: command.targetProjectId,
+	};
 }
 
 function enforceProjectClaim(
