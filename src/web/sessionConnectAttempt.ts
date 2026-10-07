@@ -340,6 +340,9 @@ export function createRecoveryLoop(
 export const SESSION_HEARTBEAT_INTERVAL_MS = 10_000;
 /** Two consecutive missed responses retire the generation. */
 export const SESSION_HEARTBEAT_MISS_LIMIT = 2;
+/** Upper bound on how late a probe deadline may fire before the lateness is
+ * read as this document having been suspended. */
+export const SESSION_HEARTBEAT_MAX_SUSPEND_TOLERANCE_MS = 5_000;
 
 export type SessionHeartbeatSnapshot = Readonly<{
 	sent: number;
@@ -368,6 +371,7 @@ export function createSessionHeartbeat(
 		onSample?: (snapshot: SessionHeartbeatSnapshot) => void;
 		intervalMs?: number;
 		missLimit?: number;
+		suspendToleranceMs?: number;
 		now?: () => number;
 		setTimeout?: (callback: () => void, delayMs: number) => unknown;
 		clearTimeout?: (handle: unknown) => void;
@@ -380,6 +384,9 @@ export function createSessionHeartbeat(
 }> {
 	const intervalMs = options.intervalMs ?? SESSION_HEARTBEAT_INTERVAL_MS;
 	const missLimit = options.missLimit ?? SESSION_HEARTBEAT_MISS_LIMIT;
+	const suspendToleranceMs =
+		options.suspendToleranceMs ??
+		Math.min(SESSION_HEARTBEAT_MAX_SUSPEND_TOLERANCE_MS, intervalMs / 2);
 	const now = options.now ?? Date.now;
 	const setTimer =
 		options.setTimeout ??
@@ -404,13 +411,20 @@ export function createSessionHeartbeat(
 		// The interval doubles as the response deadline: a probe that has not
 		// answered by the time the next one is due has already missed.
 		const controller = new AbortController();
-		const deadline = setTimer(() => controller.abort(), intervalMs);
+		// A deadline that fires late came due while this document was frozen or
+		// the machine asleep. The answer had no chance to be read in that time,
+		// so the probe says nothing about the transport.
+		let suspended = false;
+		const deadline = setTimer(() => {
+			suspended = now() - startedAt - intervalMs > suspendToleranceMs;
+			controller.abort();
+		}, intervalMs);
 		try {
 			await options.ping(controller.signal);
 			missed = 0;
 			lastRoundTripMs = now() - startedAt;
 		} catch {
-			missed += 1;
+			if (!suspended) missed += 1;
 		} finally {
 			clearTimer(deadline);
 		}
@@ -419,6 +433,11 @@ export function createSessionHeartbeat(
 		if (missed >= missLimit) {
 			lost = true;
 			options.onLost(snapshot());
+			return;
+		}
+		if (suspended) {
+			// Ask again now rather than an interval after waking.
+			void beat();
 			return;
 		}
 		timer = setTimer(() => void beat(), intervalMs);
