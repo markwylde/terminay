@@ -1,9 +1,9 @@
 ## 1. Server: one live peer per window
 
-- [ ] 1.1 Accept an optional, validated `windowId` on `application-auth`, and treat its absence as the empty window id. Verified by unit tests of the parser for a valid id, an absent one, an over-long one, and one with characters outside the id pattern.
-- [ ] 1.2 Key `HostedLivePeerRegistry` by device and window, replace only the same window's peer, and keep the per-device ordering of cleanup before attach. Verified by `apps/terminay-server/test/hosted-pairing-host-liveness.test.mjs`: a second window stays beside the first, a reconnect replaces only its own window, a window id used by another device closes nothing, and two connections with no window id still replace each other.
-- [ ] 1.3 Refuse a ninth live window of a device with a typed error, without closing any live peer, and do not count a reconnect of an existing window. Verified by unit tests at the bound.
-- [ ] 1.4 Close every live peer of a device, in both pairing hosts, when the device is revoked. Verified by a test that revokes a device with windows on the hosted and the direct host and finds none left, and other devices untouched.
+- [x] 1.1 Accept an optional, validated `windowId` on `application-auth`, and treat its absence as the empty window id. Verified by unit tests of the parser for a valid id, an absent one, an over-long one, and one with characters outside the id pattern.
+- [x] 1.2 Key `HostedLivePeerRegistry` by device and window, replace only the same window's peer, and keep the per-device ordering of cleanup before attach. Verified by `apps/terminay-server/test/hosted-pairing-host-liveness.test.mjs`: a second window stays beside the first, a reconnect replaces only its own window, a window id used by another device closes nothing, and two connections with no window id still replace each other.
+- [x] 1.3 Refuse a ninth live window of a device with a typed error, without closing any live peer, and do not count a reconnect of an existing window. Verified by unit tests at the bound.
+- [x] 1.4 Close every live peer of a device, in both pairing hosts, when the device is revoked. Verified by a test that revokes a device with windows on the hosted and the direct host and finds none left, and other devices untouched.
 
 ## 2. Server-core: each window is its own client
 
