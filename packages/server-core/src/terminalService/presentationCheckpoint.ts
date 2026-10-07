@@ -175,7 +175,7 @@ interface TailRecord {
 }
 
 interface MutableSession {
-	readonly identity: TerminalIdentity;
+	identity: TerminalIdentity;
 	readonly terminal: HeadlessTerminal;
 	readonly serializer: TerminalSerializeAddon;
 	/** Keeps UTF-8 code points intact when PTY callbacks split their bytes. */
@@ -574,6 +574,28 @@ export class TerminalPresentationCheckpointAuthority {
 		session.pins.clear();
 		session.terminal.dispose();
 		session.serializer.dispose();
+	}
+
+	/**
+	 * Carry a terminal's canonical emulator to the identity it was moved to.
+	 *
+	 * The emulator is the terminal's own scrollback and goes with it. Pins are
+	 * one-use credentials bound to the retired identity and end with it.
+	 */
+	rehomeSession(retired: TerminalIdentity, identity: TerminalIdentity): void {
+		validateIdentity(identity);
+		const session = this.sessions.get(sessionKey(retired));
+		if (session === undefined) return;
+		if (this.sessions.has(sessionKey(identity)))
+			throw error(
+				'checkpoint_invalid',
+				'terminal checkpoint session already exists for that identity',
+			);
+		this.sessions.delete(sessionKey(retired));
+		session.pins.clear();
+		session.pinnedBytes = 0;
+		session.identity = Object.freeze({ ...identity });
+		this.sessions.set(sessionKey(identity), session);
 	}
 
 	close(): void {

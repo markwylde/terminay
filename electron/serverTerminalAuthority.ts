@@ -119,6 +119,7 @@ import {
 	type WorkspaceCommand,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
@@ -279,6 +280,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
+	/** A terminal's panel was moved to another project and the terminal has
+	 * been re-homed with it. Anything the host issued for the terminal under
+	 * its old project, such as an MCP capability, ends here. */
+	readonly onTerminalRehomed?: (move: TerminalSessionRehome) => void;
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
@@ -927,6 +932,7 @@ export class ServerTerminalAuthority {
 				prepareProjectRootUpdate: (projectId, root) =>
 					this.prepareProjectRootUpdate(projectId, root),
 				releaseProject: (projectId) => this.releaseProject(projectId),
+				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
 			agents: this.agents,
@@ -1456,6 +1462,26 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+	}
+
+	/**
+	 * Follow a terminal to the project its panel was moved to. The composition
+	 * has already re-homed the terminal itself; this is the embedded host's own
+	 * bookkeeping, plus whatever the host issued under the old project.
+	 */
+	private rehomeTerminalSession(move: TerminalSessionRehome): void {
+		this.consumers.detachSession({
+			serverId: this.service.serverId,
+			projectId: move.sourceProjectId,
+			sessionId: move.sessionId,
+		});
+		const session = this.sessions.get(move.sessionId);
+		if (session !== undefined)
+			this.sessions.set(move.sessionId, {
+				...session,
+				projectId: move.targetProjectId,
+			});
+		this.options.onTerminalRehomed?.(move);
 	}
 
 	/**
