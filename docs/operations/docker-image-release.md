@@ -33,7 +33,8 @@ reaches that job, so `latest` does not move.
 The image is the standalone, non-root Terminay Server: the same self-contained
 tree the release archives carry — pinned Node runtime, compiled server, native
 `node-pty`, workspace UI, built-in extensions, and the selected WebRTC runtime —
-with the `terminay` command on the `PATH`. How to run it is in
+with the `terminay` command on the `PATH`, and passwordless `sudo` for the
+terminals' account. How to run it is in
 [Running in a container](./standalone-server.md#running-in-a-container).
 
 The Rolling Main Prerelease workflow publishes a beta image the same way: its

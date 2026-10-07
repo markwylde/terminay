@@ -119,7 +119,9 @@ Use the official image. It runs the server in the foreground, carries this
 CLI, and needs neither systemd nor `sudo`:
 
 ```bash
-docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay
+docker run -d --name terminay \
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
+  markwylde/terminay
 docker exec -it terminay terminay daemon qr-code
 ```
 
@@ -134,7 +136,8 @@ it at — on macOS and Windows the container runs inside a virtual machine, and
 address once and publish the ports:
 
 ```bash
-docker run -d --name terminay -v terminay-data:/var/lib/terminay \
+docker run -d --name terminay \
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
   -p 8443:8443 -p 51000-51015:51000-51015/udp \
   -e TERMINAY_PUBLIC_HOST=192.168.1.20 \
   markwylde/terminay
