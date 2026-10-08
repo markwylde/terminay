@@ -422,7 +422,7 @@ test('forget removes the credential before the profile, and never touches Local 
 			},
 		],
 	});
-	await assert.rejects(primary.result, /Close the window/u);
+	await assert.rejects(primary.result, /Switch that window to another server/u);
 	assert.deepEqual([...primary.profiles.keys()], ['remote:a', 'remote:b']);
 
 	// Forgetting something already gone is not an error and changes nothing.

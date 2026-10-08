@@ -2,27 +2,27 @@
 
 - [x] 1.1 Archive each unarchived change whose deltas carry multi-server wording and whose work is merged. Eleven archived; `pairing-install-instructions-and-beta-image` and `terminals-survive-restart` left open with their multi-server wording corrected in place. Verified by `openspec validate --all` passing.
 - [x] 1.2 Write the second pass of deltas against the main specs as they stand after 1.1. Verified by `openspec validate one-window-one-server` and by a search of the change's added and modified requirement text finding no attached connection, Attach, Detach, composition, primary connection, or server selector.
-- [ ] 1.3 Owner review of the reworded requirements, in particular the ones flagged in the pull request. Verified by the pull request being approved.
+- [x] 1.3 Owner review of the reworded requirements, in particular the ones flagged in the pull request. Verified by the pull request being approved.
 
 ## 2. Switching in the host
 
 - [x] 2.1 Establish how a server treats two live connections under one device key. It held one per device and replaced the older; `one-connection-per-window` changed that to one per client window, so several windows may show one remote server. Verified by that change's real-WebRTC tests of two and three windows of one device.
-- [ ] 2.2 Add `connections.select` and `connections.open-window` to the protocol as closed, capability-gated actions naming a profile id. Verified by `packages/protocol/test/host.test.mjs`.
-- [ ] 2.3 Implement switching in Electron main: resolve the remembered profile, open its transport or the Local session, and remount the requesting window only once ready; a failure leaves the window as it was and rejects with a reason. Keep the ordering in a module apart from Electron. Verified by unit tests of that module for success, unreachable server, forgotten profile, and return to Local.
+- [x] 2.2 Add `connections.select` and `connections.open-window` to the protocol as closed, capability-gated actions naming a profile id. Verified by `packages/protocol/test/host.test.mjs`.
+- [x] 2.3 Implement switching in Electron main: resolve the remembered profile, open its transport or the Local session, and remount the requesting window only once ready; a failure leaves the window as it was and rejects with a reason. Keep the ordering in a module apart from Electron. Verified by unit tests of that module for success, unreachable server, forgotten profile, and return to Local.
 - [ ] 2.4 Implement opening a window on a remembered server. Verified by an Electron E2E through `npm run test:e2e` that ends with one window on Local and one on a standalone server.
 - [ ] 2.5 Persist each window's server and workspace view beside its geometry, reopen it there, and fall back to Local for a forgotten profile. Verified by an Electron E2E that restarts Desktop on a remote server and by a unit test of the fallback.
 
 ## 3. The connection menu
 
-- [ ] 3.1 Make the Desktop connection menu list Local and every saved server, mark the window's server, switch on choosing a row, and offer **Open in new window** on the others; show a switch in progress and a failed switch's reason. Verified by component tests and by the E2E in 3.4.
+- [x] 3.1 Make the Desktop connection menu list Local and every saved server, mark the window's server, switch on choosing a row, and offer **Open in new window** on the others; show a switch in progress and a failed switch's reason. Verified by component tests and by the E2E in 3.4.
 - [ ] 3.2 Keep the connection menu usable while the window's server is offline, reconnecting, unauthenticated, or incompatible. Verified by an Electron E2E that stops a standalone server and switches the window back to Local.
 - [ ] 3.3 List the remembered servers in the compact switcher on Desktop and switch from it. Verified by a compact-width E2E.
 - [ ] 3.4 Electron E2E for the journey: pair a standalone server, land on it, switch to Local, switch back, and find the remote server's terminal still running. Verified by the suite passing in pull-request CI.
 
 ## 4. Pairing
 
-- [ ] 4.1 Target the workspace window that opened Remote Control when pairing succeeds, leave Remote Control as Remote Control, and leave the workspace window alone when the first connection fails or that window has closed. Verified by unit tests of the pairing attempt sequence and by the E2E in 3.4.
-- [ ] 4.2 Update the forget refusal to name switching the window away. Verified by `scripts/desktop-window-connections.test.mjs` or its successor.
+- [x] 4.1 Target the workspace window that opened Remote Control when pairing succeeds, leave Remote Control as Remote Control, and leave the workspace window alone when the first connection fails or that window has closed. Verified by unit tests of the pairing attempt sequence and by the E2E in 3.4.
+- [x] 4.2 Update the forget refusal to name switching the window away. Verified by `scripts/desktop-window-connections.test.mjs` or its successor.
 
 ## 5. Removing the multi-server window
 

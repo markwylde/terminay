@@ -29,7 +29,7 @@ export async function forgetRememberedConnection<
 	if (profile === undefined) return false;
 	if (windows.some((window) => window.primaryProfileId === profileId))
 		throw new Error(
-			'Close the window that is connected to this server before forgetting it.',
+			'A window is showing this server. Switch that window to another server, then forget it.',
 		);
 	for (const window of windows) await window.detach(profileId);
 	// The credential goes first: a profile that is still listed can be

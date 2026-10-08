@@ -42,6 +42,18 @@ export type CompactSwitcherProps = Readonly<{
 	onNewTerminalHere?: () => void;
 	onQueryChange: (query: string) => void;
 	query: string;
+	/** The servers this window could show, Local first, where the host can
+	 * switch between them. At this width the header's connection menu is not
+	 * drawn, so switching lives here. */
+	servers?: readonly CompactSwitcherServer[];
+	onSwitchServer?: (profileId: string) => void;
+}>;
+
+export type CompactSwitcherServer = Readonly<{
+	profileId: string;
+	label: string;
+	isCurrent: boolean;
+	isSwitching: boolean;
 }>;
 
 /**
@@ -165,7 +177,9 @@ export function CompactSwitcher({
 	onNewTerminal,
 	onNewTerminalHere,
 	onQueryChange,
+	onSwitchServer,
 	query,
+	servers = [],
 }: CompactSwitcherProps) {
 	const searchRef = useRef<HTMLInputElement>(null);
 	// The switcher opens to be read, not typed into: nearly every use is a tap
@@ -323,6 +337,36 @@ export function CompactSwitcher({
 						))
 					)}
 				</div>
+				{servers.length > 1 && onSwitchServer !== undefined ? (
+					<div
+						className="compact-switcher__servers"
+						role="radiogroup"
+						aria-label="Servers"
+					>
+						<div className="compact-switcher__servers-label">Servers</div>
+						{servers.map((server) => (
+							// biome-ignore lint/a11y/useSemanticElements: a row of a touch list; a native radio cannot carry the trailing status.
+							<button
+								key={server.profileId}
+								type="button"
+								role="radio"
+								aria-checked={server.isCurrent}
+								aria-label={server.label}
+								className="compact-switcher__server"
+								onClick={() => {
+									if (!server.isCurrent) onSwitchServer(server.profileId);
+								}}
+							>
+								<span>{server.label}</span>
+								{server.isSwitching ? (
+									<span className="compact-switcher__server-meta">
+										Connecting…
+									</span>
+								) : null}
+							</button>
+						))}
+					</div>
+				) : null}
 				<div className="compact-switcher__actions">
 					{onNewTerminalHere === undefined ? null : (
 						<button type="button" onClick={onNewTerminalHere}>

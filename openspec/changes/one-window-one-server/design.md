@@ -57,9 +57,12 @@ Switching back to Local re-prepares the embedded server's session for that windo
 
 ### 4. The window remembers its server
 
-Desktop persists, per window and beside its geometry, the profile id the window shows and its workspace view. `DesktopWindowCompositionStore` and `window-composition.v1.json` are removed; the file is left on disk and ignored. At startup a window reopens on its remembered server. If that server cannot be reached the window shows the connection state with the connection menu usable, so the person is never stuck outside Local. A remembered profile that has since been forgotten falls back to Local.
+Desktop records the profile id its workspace window last showed in `window-server.v1.json`, written when that window switches. `DesktopWindowCompositionStore` and `window-composition.v1.json` are removed; the old file is left on disk and ignored.
 
-- *Alternative: always start on Local.* Rejected: a person who works on one remote server would switch on every launch.
+At startup the window opens on Local, as it always has, and main then switches it to the remembered server by the same path the connection menu uses. A window cannot be created on a remote server until that server's transport is open, so starting on the remote server directly would hold the whole application behind a network round-trip, and behind a timeout when the server is down. Opening on Local first means the application is usable at once and is never stuck outside Local. A remembered profile that has since been forgotten, or that does not answer, leaves the window on Local.
+
+- *Alternative: create the startup window on the remembered server.* Rejected: no window until the server answers or times out.
+- *Alternative: always stay on Local.* Rejected: a person who works on one remote server would switch on every launch.
 
 ### 5. Failure and incompatibility are window states
 

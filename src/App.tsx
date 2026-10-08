@@ -206,6 +206,7 @@ import {
 } from './workspace/terminalNoteSync';
 import { CompactChromeRow } from './workspace/CompactChromeRow';
 import { CompactSwitcher } from './workspace/CompactSwitcher';
+import { serverRows } from './workspace/ConnectionsControl';
 import type {
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
@@ -5413,7 +5414,22 @@ function App({
 		tabOrder: rememberedTabOrder,
 		setTabOrder,
 		setActiveServerId,
+		currentProfileId: windowProfileId,
+		selectServer: switchWindowServer,
 	} = useConnections();
+	// At phone width the header's connection menu is not drawn, so the compact
+	// switcher lists the servers and switches between them.
+	const [compactSwitchingProfileId, setCompactSwitchingProfileId] =
+		useState<string>();
+	const compactSwitcherServers = useMemo(
+		() =>
+			serverRows(
+				connectionProfiles,
+				windowProfileId,
+				compactSwitchingProfileId,
+			),
+		[compactSwitchingProfileId, connectionProfiles, windowProfileId],
+	);
 	// The window works in one server at a time: the one whose tab is active.
 	// Every surface below reads its client from here, so switching tabs across
 	// servers rebinds the whole workspace to the server that owns what is
@@ -8126,6 +8142,27 @@ function App({
 						);
 					}}
 					onDismiss={closeCompactSwitcher}
+					{...(switchWindowServer === undefined
+						? {}
+						: {
+								servers: compactSwitcherServers,
+								onSwitchServer: (profileId: string) => {
+									setConnectionSwitcherError(null);
+									setCompactSwitchingProfileId(profileId);
+									// A switch that succeeds replaces this document; only a
+									// failure comes back here.
+									void switchWindowServer(profileId)
+										.catch((cause: unknown) => {
+											closeCompactSwitcher();
+											setConnectionSwitcherError(
+												cause instanceof Error
+													? cause.message
+													: 'Terminay could not switch to that server.',
+											);
+										})
+										.finally(() => setCompactSwitchingProfileId(undefined));
+								},
+							})}
 					onEditProject={(group) => {
 						closeCompactSwitcher();
 						void openEditComposedTab(

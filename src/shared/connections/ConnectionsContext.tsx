@@ -55,6 +55,13 @@ export type ConnectionsContextValue = Readonly<{
 	 * nothing on it. */
 	renameProfile?: (profileId: string, label: string) => Promise<void>;
 	forgetProfile?: (profileId: string) => Promise<void>;
+	/** The profile this window is showing, where the host says. */
+	currentProfileId?: string;
+	/** Show another remembered server in this window. Present only where the
+	 * host can. */
+	selectServer?: (profileId: string) => Promise<void>;
+	/** Open a remembered server in a window of its own. */
+	openServerWindow?: (profileId: string) => Promise<void>;
 	/** The window's remembered tab order across every attached server. A hint
 	 * validated against what exists, never an instruction. */
 	tabOrder: readonly CompositionTabHandle[];
@@ -228,6 +235,15 @@ export function ConnectionsProvider({
 				refreshProfiles,
 				attach,
 				detach,
+				...(host?.currentProfileId === undefined
+					? {}
+					: { currentProfileId: host.currentProfileId }),
+				...(host?.selectProfile === undefined
+					? {}
+					: { selectServer: host.selectProfile }),
+				...(host?.openProfileWindow === undefined
+					? {}
+					: { openServerWindow: host.openProfileWindow }),
 				...(renameProfile === undefined ? {} : { renameProfile }),
 				...(forgetProfile === undefined ? {} : { forgetProfile }),
 				tabOrder,

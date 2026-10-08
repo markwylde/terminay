@@ -165,6 +165,7 @@ import {
 	DesktopWindowConnections,
 } from './desktopWindowConnections';
 import { forgetRememberedConnection } from './forgetRememberedConnection';
+import { pairingTargetWindow, switchWindowServer } from './windowServerSwitch';
 import {
 	createProfileConnectQueue,
 	DesktopWindowIds,
@@ -1005,6 +1006,153 @@ const windowConnectionsByWebContents = new Map<
 	number,
 	DesktopWindowConnections
 >();
+
+/** How main shows a server in one window. Each window registers its own. */
+type WindowServerController = Readonly<{
+	window: BrowserWindow;
+	isAuxiliary: boolean;
+	/** True for a window that is not a torn-off workspace view. */
+	isMainWorkspace: boolean;
+	currentProfileId: () => string;
+	mountRemote: (
+		profile: RememberedRemoteConnection,
+		remote: Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>,
+	) => Promise<void>;
+	mountLocal: () => Promise<void>;
+}>;
+
+const windowServerControllers = new Map<number, WindowServerController>();
+
+function windowServerMemoryPath(): string {
+	return path.join(app.getPath('userData'), 'window-server.v1.json');
+}
+
+/** Which server the workspace window last showed. Device-local presentation
+ * state: a profile id and nothing else. */
+function rememberWindowServer(profileId: string): void {
+	try {
+		const destination = windowServerMemoryPath();
+		mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+		const temporary = `${destination}.${randomUUID()}.tmp`;
+		writeFileSync(temporary, JSON.stringify({ profileId }), {
+			encoding: 'utf8',
+			mode: 0o600,
+			flag: 'wx',
+		});
+		renameSync(temporary, destination);
+	} catch {
+		// Where the window reopens is a convenience; failing to record it must
+		// not fail the switch that just happened.
+	}
+}
+
+function readRememberedWindowServer(): string | undefined {
+	try {
+		const raw = JSON.parse(readFileSync(windowServerMemoryPath(), 'utf8')) as
+			| Record<string, unknown>
+			| undefined;
+		return typeof raw?.profileId === 'string' ? raw.profileId : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Show a remembered server, or Local, in one window. The window keeps its
+ * current server until the next one's transport is open.
+ */
+async function switchWindowToServer(
+	requestingWebContentsId: number,
+	profileId: string,
+	options?: Readonly<{ keepAuxiliary?: BrowserWindow }>,
+): Promise<void> {
+	const requesting = windowServerControllers.get(requestingWebContentsId);
+	// A choice made in an auxiliary window is about its workspace window.
+	const parent = requesting?.isAuxiliary
+		? requesting.window.getParentWindow()
+		: null;
+	const controller =
+		requesting?.isAuxiliary && parent !== null && !parent.isDestroyed()
+			? windowServerControllers.get(parent.webContents.id)
+			: requesting;
+	if (
+		controller === undefined ||
+		controller.isAuxiliary ||
+		controller.window.isDestroyed()
+	)
+		throw new Error('There is no workspace window to show that server in.');
+	const targetId = controller.window.webContents.id;
+	loadRememberedRemoteConnections();
+	const outcome = await switchWindowServer({
+		profileId,
+		currentProfileId: controller.currentProfileId(),
+		localProfileId: embeddedLocalProfileId,
+		isRemembered: (id) => rememberedRemoteConnections.has(id),
+		connectRemote: (id) => {
+			const profile = rememberedRemoteConnections.get(id);
+			if (profile === undefined)
+				throw new Error('That server is no longer saved on this computer.');
+			return prepareCanonicalDesktopRemoteConnection(
+				profile,
+				desktopWindowIds.for(targetId),
+			);
+		},
+		mountRemote: (id, remote) => {
+			const profile = rememberedRemoteConnections.get(id);
+			if (profile === undefined)
+				throw new Error('That server is no longer saved on this computer.');
+			return controller.mountRemote(profile, remote);
+		},
+		discardRemote: (remote) =>
+			remote.transport.close({ code: 'normal' }).then(() => undefined),
+		mountLocal: controller.mountLocal,
+		// Settings, Macros and the like present the server of the window they
+		// were opened from, so they go when that window shows another.
+		beforeMount: () => {
+			for (const child of controller.window.getChildWindows())
+				if (child !== options?.keepAuxiliary && !child.isDestroyed())
+					child.close();
+		},
+	});
+	if (outcome === 'switched' && controller.isMainWorkspace)
+		rememberWindowServer(profileId);
+}
+
+/** Open a new window showing a remembered server, or Local. */
+async function openServerInNewWindow(profileId: string): Promise<void> {
+	let opened: BrowserWindow | null;
+	if (profileId === embeddedLocalProfileId) {
+		opened = createWindow();
+	} else {
+		loadRememberedRemoteConnections();
+		const profile = rememberedRemoteConnections.get(profileId);
+		if (profile === undefined)
+			throw new Error('That server is no longer saved on this computer.');
+		// The window does not exist yet; it adopts this id once it does.
+		const windowId = desktopWindowIds.mint();
+		const lanes = await openDesktopRemoteLanes(profile, windowId);
+		try {
+			opened = createWindow({
+				serverUiLaunch: await prepareCanonicalRemoteLaunch(profile, lanes),
+				serverUiTransport: lanes.transport,
+			});
+		} catch (error) {
+			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+			throw error;
+		}
+		if (opened !== null) {
+			desktopWindowIds.adopt(opened.webContents.id, windowId);
+			remoteProfileBindingsByWebContents.set(opened.webContents.id, profile.id);
+		}
+	}
+	if (opened === null) throw new Error('Desktop is closing.');
+	const window = opened;
+	window.once('ready-to-show', () => {
+		if (window.isDestroyed()) return;
+		window.show();
+		window.focus();
+	});
+}
 
 /** Every window lists the same remembered set, so each is told when it changes. */
 function publishRememberedRemoteConnections(): void {
@@ -4636,6 +4784,7 @@ function createWindow(options?: {
 		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
 		desktopWindowIds.release(windowWebContentsId);
+		windowServerControllers.delete(windowWebContentsId);
 		launchRecoveryWebContents.delete(windowWebContentsId);
 		deferredCanonicalLaunches.delete(windowWebContentsId);
 	});
@@ -4696,11 +4845,14 @@ function createWindow(options?: {
 		attemptId: string,
 	) => Promise<void>;
 	let cancelDesktopPairing: (attemptId: string) => void;
+	// The server this window shows. It changes only when a launch is mounted.
+	let boundProfileId: string = embeddedLocalProfileId;
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
 	): Promise<void> => {
 		if (window.isDestroyed()) return;
+		boundProfileId = launch.context.profileId;
 		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
 		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 		const entryUrl = pathToFileURL(
@@ -4923,6 +5075,12 @@ function createWindow(options?: {
 					case 'connections.detach':
 						await connections.detach(action.profileId);
 						return;
+					case 'connections.select':
+						await switchWindowToServer(windowWebContentsId, action.profileId);
+						return;
+					case 'connections.open-window':
+						await openServerInNewWindow(action.profileId);
+						return;
 					case 'connections.rename':
 						renameRememberedRemoteConnection(action.profileId, action.label);
 						return;
@@ -5040,24 +5198,34 @@ function createWindow(options?: {
 						hooks.abort,
 					),
 				rememberProfile: rememberRemoteConnection,
-				connect: (profile, hooks) =>
-					prepareCanonicalDesktopRemoteConnection(
+				connect: async (profile, hooks) => {
+					// The server is shown in the workspace window, so the connection
+					// is that window's. With no workspace window left there is
+					// nothing to connect for: the server is saved and that is all.
+					const target = pairingTarget();
+					if (target === undefined) return undefined;
+					return prepareCanonicalDesktopRemoteConnection(
 						profile,
-						desktopWindowIds.for(windowWebContentsId),
+						desktopWindowIds.for(target.window.webContents.id),
 						hooks.onConnectionFailure,
 						hooks.onConnectionStatus,
-					),
-				mount: async (profile, remote) => {
-					releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
-					releaseLocalServerUiSessionSafely(windowWebContentsId);
-					remoteProfileBindingsByWebContents.set(
-						windowWebContentsId,
-						profile.id,
 					);
-					await mountCanonicalLaunch(remote.launch, remote.transport);
 				},
-				onLoadFailed: () => {
-					remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+				mount: async (profile, remote) => {
+					if (remote === undefined) return;
+					const target = pairingTarget();
+					if (target === undefined) {
+						await remote.transport
+							.close({ code: 'normal' })
+							.catch(() => undefined);
+						return;
+					}
+					// Remote Control stays Remote Control; the workspace window's
+					// other auxiliary windows presented the server it is leaving.
+					for (const child of target.window.getChildWindows())
+						if (child !== window && !child.isDestroyed()) child.close();
+					await target.mountRemote(profile, remote);
+					if (target.isMainWorkspace) rememberWindowServer(profile.id);
 				},
 				emitApproval: (approval) =>
 					sendPairingEvent({
@@ -5072,6 +5240,45 @@ function createWindow(options?: {
 		} finally {
 			desktopPairingAttempts.end(attemptId, abort);
 		}
+	};
+	const serverController: WindowServerController = {
+		window,
+		isAuxiliary: options?.auxiliary !== undefined,
+		isMainWorkspace:
+			options?.auxiliary === undefined && options?.workspaceViewId === undefined,
+		currentProfileId: () => boundProfileId,
+		mountRemote: async (profile, remote) => {
+			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
+			releaseLocalServerUiSessionSafely(windowWebContentsId);
+			remoteProfileBindingsByWebContents.set(windowWebContentsId, profile.id);
+			try {
+				await mountCanonicalLaunch(remote.launch, remote.transport);
+			} catch (error) {
+				remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+				throw error;
+			}
+		},
+		mountLocal: async () => {
+			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
+			remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+			await mountCanonicalLaunch(
+				await localServerUiSession.prepare(windowWebContentsId),
+			);
+		},
+	};
+	windowServerControllers.set(windowWebContentsId, serverController);
+	const pairingTarget = (): WindowServerController | undefined => {
+		const parent = window.getParentWindow();
+		const target = pairingTargetWindow({
+			pairingWindow: window,
+			pairingWindowIsAuxiliary: options?.auxiliary !== undefined,
+			parentWindow: parent === null || parent.isDestroyed() ? undefined : parent,
+		});
+		if (target === undefined || target.isDestroyed()) return undefined;
+		const controller = windowServerControllers.get(target.webContents.id);
+		return controller === undefined || controller.isAuxiliary
+			? undefined
+			: controller;
 	};
 	const launchCanonical = async (): Promise<void> => {
 		const launch = await (options?.serverUiLaunch === undefined
@@ -6418,6 +6625,15 @@ async function completeDesktopStartup(): Promise<void> {
 	desktopStartupTimeline.begin('ui-handoff');
 	stopStartupPhasePainting();
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
+	// The window opens on Local, which is always there, and then returns to
+	// the server it last showed once that server answers. One that does not
+	// answer, or was forgotten, leaves the window on Local.
+	const lastServer = readRememberedWindowServer();
+	if (lastServer !== undefined && lastServer !== embeddedLocalProfileId)
+		void switchWindowToServer(
+			embeddedStartupWindow.webContents.id,
+			lastServer,
+		).catch(() => undefined);
 	desktopStartupTimeline.end('ui-handoff');
 	// Hosted signaling is a network round-trip, so it never delays the window.
 	void exposeOnStartup(
