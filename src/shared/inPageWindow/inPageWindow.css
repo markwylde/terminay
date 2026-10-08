@@ -1,0 +1,286 @@
+/* The one frame every in-page window and dialog is drawn in. The frame is
+   placed with left/top and the blurred backdrop is its sibling, so neither
+   becomes the containing block of a fixed dialog nested inside a window. */
+
+.in-page-window-layer {
+	--in-page-window-border: #2a3542;
+	--in-page-window-radius: 10px;
+	--in-page-window-surface: #0d1014;
+	--in-page-window-titlebar: #11161d;
+	--in-page-window-text: #dce2f0;
+	--in-page-window-muted: #94a3b8;
+	--in-page-window-shadow: 0 24px 90px rgba(0, 0, 0, 0.55);
+	--in-page-window-titlebar-height: 36px;
+
+	position: fixed;
+	inset: 0;
+	display: grid;
+	/* Definite tracks, so a tall window is held to the viewport and scrolls. */
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+	place-items: center;
+	padding: 24px;
+	animation: in-page-window-appear 120ms ease-out;
+}
+
+.in-page-window-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(3, 5, 9, 0.7);
+	backdrop-filter: blur(7px);
+}
+
+/* A dialog over a window dims it a little; it does not black the page out. */
+.in-page-window-layer:not([data-in-page-window-depth="0"])
+	> .in-page-window-backdrop {
+	background: rgba(3, 5, 9, 0.45);
+	backdrop-filter: none;
+}
+
+.in-page-window {
+	position: relative;
+	display: flex;
+	min-width: 0;
+	max-width: 100%;
+	max-height: 100%;
+	color: var(--in-page-window-text);
+	outline: none;
+}
+
+.in-page-window[data-placed],
+.in-page-window[data-resizable] {
+	position: absolute;
+	max-width: none;
+	max-height: none;
+}
+
+.in-page-window__chrome {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--in-page-window-border);
+	border-radius: var(--in-page-window-radius);
+	background: var(--in-page-window-surface);
+	box-shadow: var(--in-page-window-shadow);
+}
+
+.in-page-window__titlebar {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 12px;
+	height: var(--in-page-window-titlebar-height);
+	padding: 0 4px 0 14px;
+	border-bottom: 1px solid var(--in-page-window-border);
+	background: var(--in-page-window-titlebar);
+	cursor: default;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.in-page-window__icon {
+	display: grid;
+	flex: 0 0 auto;
+	place-items: center;
+	margin-right: -4px;
+	color: var(--in-page-window-muted);
+}
+
+.in-page-window__title {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	color: var(--in-page-window-text);
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.in-page-window__controls {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 2px;
+}
+
+.in-page-window__control {
+	display: grid;
+	width: 28px;
+	height: 28px;
+	min-height: 0;
+	place-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--in-page-window-muted);
+	cursor: pointer;
+}
+
+.in-page-window__control:disabled {
+	cursor: default;
+	opacity: 0.4;
+}
+
+.in-page-window__control:not(:disabled):hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: #fff;
+}
+
+.in-page-window__control[data-in-page-window-control="close"]:not(:disabled):hover {
+	background: #c42b3a;
+}
+
+.in-page-window__control:focus-visible {
+	outline: 2px solid #5b9dff;
+	outline-offset: -2px;
+}
+
+.in-page-window__body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+	overflow: auto;
+}
+
+/* Content keeps its own height and the body scrolls; on a phone it also
+   stretches to fill. A resizable window's content fills it and scrolls itself. */
+.in-page-window__body > * {
+	flex: 0 0 auto;
+}
+
+.in-page-window[data-compact] .in-page-window__body > :last-child {
+	flex: 1 0 auto;
+}
+
+.in-page-window[data-resizable] .in-page-window__body > :last-child {
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+/* The title bar names the window; its content does not name it again. */
+.in-page-window__body .settings-brand > h1,
+.in-page-window__body .recordings-header h1,
+.in-page-window__body .edit-window-header h1,
+.in-page-window__body .perf-header h1 {
+	display: none;
+}
+
+/* A dialog that was drawn as its own box is now only the window's content. */
+.in-page-window__body > .project-edit-modal,
+.in-page-window__body > .remote-pairing-modal {
+	width: auto;
+	max-height: none;
+	overflow: visible;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.in-page-window__body > .project-edit-modal > :first-child {
+	margin-top: 16px;
+}
+
+/* Maximised and compact windows are the viewport. */
+.in-page-window[data-maximized],
+.in-page-window[data-compact] {
+	position: absolute;
+	inset: 0;
+	width: auto;
+	height: auto;
+	max-width: none;
+	max-height: none;
+}
+
+.in-page-window[data-maximized] .in-page-window__chrome,
+.in-page-window[data-compact] .in-page-window__chrome {
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.in-page-window[data-compact] .in-page-window__titlebar {
+	height: calc(44px + env(safe-area-inset-top, 0px));
+	padding-top: env(safe-area-inset-top, 0px);
+}
+
+.in-page-window[data-compact] .in-page-window__control {
+	width: 40px;
+	height: 40px;
+}
+
+/* A framed workspace already sits below the status bar. */
+html.is-framed .in-page-window[data-compact] .in-page-window__titlebar {
+	height: 44px;
+	padding-top: 0;
+}
+
+/* Resize handles sit outside the content box, so they never cover content. */
+.in-page-window__resize {
+	position: absolute;
+	touch-action: none;
+}
+
+.in-page-window__resize--n,
+.in-page-window__resize--s {
+	right: 8px;
+	left: 8px;
+	height: 6px;
+	cursor: ns-resize;
+}
+
+.in-page-window__resize--e,
+.in-page-window__resize--w {
+	top: 8px;
+	bottom: 8px;
+	width: 6px;
+	cursor: ew-resize;
+}
+
+.in-page-window__resize--n { top: -3px; }
+.in-page-window__resize--s { bottom: -3px; }
+.in-page-window__resize--e { right: -3px; }
+.in-page-window__resize--w { left: -3px; }
+
+.in-page-window__resize--ne,
+.in-page-window__resize--nw,
+.in-page-window__resize--se,
+.in-page-window__resize--sw {
+	width: 12px;
+	height: 12px;
+}
+
+.in-page-window__resize--ne { top: -4px; right: -4px; cursor: nesw-resize; }
+.in-page-window__resize--nw { top: -4px; left: -4px; cursor: nwse-resize; }
+.in-page-window__resize--se { right: -4px; bottom: -4px; cursor: nwse-resize; }
+.in-page-window__resize--sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+
+/* While a window is being moved or resized nothing in it selects or scrolls. */
+.in-page-window-layer[data-gesturing] {
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.in-page-window-layer[data-gesturing] .in-page-window__body {
+	pointer-events: none;
+}
+
+@keyframes in-page-window-appear {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.in-page-window-layer {
+		animation: none;
+	}
+}

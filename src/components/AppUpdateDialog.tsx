@@ -1,10 +1,11 @@
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import type { JSX, MouseEvent } from 'react';
-import { useEffect, useId, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { releaseNoteLinkTarget, renderReleaseNotesHtml } from '../appUpdateNotes';
 import { openExternalUrl } from '../host/nativeActions';
 import type { AppUpdateStatus } from '../types/terminay';
+import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
 import './appUpdateDialog.css';
 
 export interface AppUpdateDialogProps {
@@ -33,8 +34,6 @@ export function AppUpdateDialog({
 	onClose,
 	onInstall,
 }: AppUpdateDialogProps): JSX.Element | null {
-	const titleId = useId();
-	const pointerStartedOnBackdropRef = useRef(false);
 	const isReady = status.state === 'ready';
 	const notes = useMemo(
 		() =>
@@ -45,18 +44,6 @@ export function AppUpdateDialog({
 		[status.releaseNotes],
 	);
 
-	useEffect(() => {
-		if (!open) return;
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				onClose();
-			}
-		};
-		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [open, onClose]);
-
 	if (!open) return null;
 
 	const releaseUrl = status.releaseUrl;
@@ -65,49 +52,19 @@ export function AppUpdateDialog({
 	// Portalled out of the title bar so its window-drag regions cannot sit
 	// over the dialog.
 	return createPortal(
-		<div
-			className="project-edit-modal-backdrop"
-			onMouseDown={(event) => {
-				pointerStartedOnBackdropRef.current =
-					event.target === event.currentTarget;
-			}}
-			onMouseUp={(event) => {
-				const shouldClose =
-					pointerStartedOnBackdropRef.current &&
-					event.target === event.currentTarget;
-				pointerStartedOnBackdropRef.current = false;
-				if (shouldClose) onClose();
-			}}
+		<InPageWindow
+			icon={
+				<Sparkles size={14} className="app-update-dialog__title-icon" />
+			}
+			kind={{ resizable: false, width: 560 }}
+			name="app-update"
+			title={`What's new in ${status.latestVersion ?? 'Terminay'}${isBeta ? ' (beta)' : ''}`}
+			onClose={onClose}
 		>
 			<div
 				className="project-edit-modal project-edit-modal--wide app-update-dialog"
-				onClick={(event) => event.stopPropagation()}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby={titleId}
 				data-terminay-app-update-dialog="true"
 			>
-				<div className="project-edit-modal-titlebar">
-					<h2 id={titleId} className="project-edit-modal-title">
-						<Sparkles
-							size={14}
-							aria-hidden="true"
-							className="app-update-dialog__title-icon"
-						/>
-						What's new in {status.latestVersion ?? 'Terminay'}
-						{isBeta ? ' (beta)' : ''}
-					</h2>
-					<button
-						type="button"
-						className="project-edit-modal-close"
-						onClick={onClose}
-						aria-label="Close What's new"
-						title="Close"
-					>
-						<X size={12} aria-hidden="true" />
-					</button>
-				</div>
-
 				<p className="app-update-dialog__summary">
 					{isReady
 						? `Version ${status.latestVersion} has been downloaded. You're on ${status.currentVersion}. Restart to install it now, or it installs the next time you quit Terminay.`
@@ -177,7 +134,7 @@ export function AppUpdateDialog({
 					) : null}
 				</div>
 			</div>
-		</div>,
+		</InPageWindow>,
 		document.body,
 	);
 }

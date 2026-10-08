@@ -79,3 +79,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0050](./0050-a-project-reaches-its-repositorys-worktrees-through-server-resolved-folder-roots.md) | A project reaches its repository's worktrees through folder roots the server resolves | accepted | 2026-10-08 |
 | [0051](./0051-terminay-observes-agents-and-does-not-instrument-them.md) | Terminay observes agents and does not instrument them, except where the owner has approved it | accepted | 2026-10-08 |
 | [0052](./0052-terminals-report-git-commands-to-the-server-through-git-trace2.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing | accepted | 2026-10-08 |
+| [0053](./0053-in-page-windows-share-one-modal-frame.md) | Every in-page window is presented through one modal frame, with geometry kept on the device | accepted | 2026-10-08 |

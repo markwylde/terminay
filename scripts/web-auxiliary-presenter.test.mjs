@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [webWorkspace, webWorkspaceCss, sharedEditTab, sharedWorkspace, app, projectEditor, serverHtml] = await Promise.all([
+const [webWorkspace, webWorkspaceCss, inPageWindow, inPageWindowCss, sharedEditTab, sharedWorkspace, app, projectEditor, serverHtml] = await Promise.all([
 	readFile('src/web/ConnectedWebRendererWorkspace.tsx', 'utf8'),
 	readFile('src/web/connectedRendererWorkspace.css', 'utf8'),
+	readFile('src/shared/inPageWindow/InPageWindow.tsx', 'utf8'),
+	readFile('src/shared/inPageWindow/inPageWindow.css', 'utf8'),
 	readFile('src/shared/SharedEditTabRouteBody.tsx', 'utf8'),
 	readFile('src/shared/ConnectedRendererWorkspace.tsx', 'utf8'),
 	readFile('src/App.tsx', 'utf8'),
@@ -25,8 +27,8 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	for (const label of ['File', 'Edit', 'View', 'Help']) {
 		assert.match(webWorkspace, new RegExp(`${label}`, 'u'));
 	}
-	assert.match(webWorkspace, /data-connected-web-auxiliary-route=\{route\.kind\}/u);
-	assert.match(webWorkspace, /route\.kind === 'edit-tab' \? null : \(/u);
+	assert.match(webWorkspace, /<InPageWindow\b[\s\S]*name=\{route\.kind\}/u);
+	assert.match(inPageWindow, /data-connected-web-auxiliary-route=\{name\}/u);
 	assert.match(webWorkspace, /<SettingsWindow/u);
 	assert.match(webWorkspace, /initialSectionId=\{route\.sectionId\}/u);
 	assert.match(webWorkspace, /remoteAccessStatusClient=\{remoteAccessStatusClient\}/u);
@@ -38,9 +40,27 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	assert.match(webWorkspace, /target\?\.isConnected/u);
 	assert.doesNotMatch(webWorkspace, /getWindow:/u);
 	assert.match(sharedEditTab, /components\/editTabWindow\.css/u);
-	assert.match(webWorkspaceCss, /connected-web-auxiliary-dialog--edit-tab/u);
-	assert.match(webWorkspaceCss, /connected-web-auxiliary-dialog--settings[\s\S]*width:\s*min\(1480px,\s*100%\)/u);
-	assert.match(webWorkspaceCss, /connected-web-auxiliary-dialog--settings \.settings-content[\s\S]*max-width:\s*none/u);
+	assert.match(webWorkspace, /settings: \{ width: 1480, height: 820 \}/u);
+	assert.match(webWorkspaceCss, /\[data-in-page-window="settings"\] \.settings-content[\s\S]*max-width:\s*none/u);
+});
+
+test('every in-page window is drawn by the one shared frame', () => {
+	// One title bar and one close control, owned by the frame.
+	assert.match(inPageWindow, /role="dialog"/u);
+	assert.match(inPageWindow, /aria-modal="true"/u);
+	assert.match(inPageWindow, /aria-labelledby=\{titleId\}/u);
+	assert.match(inPageWindow, /aria-label="Close"/u);
+	assert.match(inPageWindow, /setPointerCapture/u);
+	// A busy window has one close path, and it is shut.
+	assert.match(inPageWindow, /if \(!busy\) onClose\(\)/u);
+	assert.match(inPageWindow, /disabled=\{busy\}/u);
+	// A transform or a backdrop filter on the frame would trap nested dialogs.
+	const frameRule = inPageWindowCss.match(/\n\.in-page-window \{[^}]*\}/u)?.[0] ?? '';
+	assert.doesNotMatch(frameRule, /transform|filter|contain/u);
+	assert.match(inPageWindowCss, /prefers-reduced-motion: reduce[\s\S]*animation: none/u);
+	assert.doesNotMatch(webWorkspace, /ConnectedBrowserAuxiliaryDialog|ConnectedBrowserAboutDialog/u);
+	assert.doesNotMatch(webWorkspaceCss, /connected-web-auxiliary-dialog|connected-web-about-dialog/u);
+	assert.match(webWorkspace, /sandbox="allow-popups allow-popups-to-escape-sandbox"/u);
 });
 
 test('browser auxiliary presenter does not fabricate Electron preload globals', () => {

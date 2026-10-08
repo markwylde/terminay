@@ -4,11 +4,6 @@
   color: #4db5ff;
 }
 
-.project-edit-modal-title:has(.mcp-install-title-icon) {
-  display: inline-flex;
-  align-items: center;
-}
-
 .mcp-install-description {
   margin: 0;
   color: rgba(214, 227, 240, 0.68);

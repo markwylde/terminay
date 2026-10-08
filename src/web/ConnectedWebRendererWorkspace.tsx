@@ -29,6 +29,11 @@ import {
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
 import { aboutWindowDocumentHtml } from '../shared/aboutWindowDocument';
+import type { WindowSize } from '../shared/inPageWindow/geometry';
+import {
+	InPageWindow,
+	type InPageWindowKind,
+} from '../shared/inPageWindow/InPageWindow';
 import {
 	type AuxiliaryRouteRequest,
 	type AuxiliaryRouteRequestHandler,
@@ -564,15 +569,16 @@ export function ConnectedWebRendererWorkspace({
 				
 			</TerminalSettingsClientProvider>
 			{auxiliaryRoute === null ? null : (
-				<ConnectedBrowserAuxiliaryDialog
+				<ConnectedBrowserAuxiliaryWindow
+					key={auxiliaryRoute.kind}
 					route={auxiliaryRoute}
 					onClose={cancelAuxiliaryRoute}
 				>
 					{auxiliaryContent(auxiliaryRoute)}
-				</ConnectedBrowserAuxiliaryDialog>
+				</ConnectedBrowserAuxiliaryWindow>
 			)}
 			{aboutOpen ? (
-				<ConnectedBrowserAboutDialog onClose={() => setAboutOpen(false)} />
+				<ConnectedBrowserAboutWindow onClose={() => setAboutOpen(false)} />
 			) : null}
 		</div>
 	);
@@ -1049,7 +1055,28 @@ function ConnectedBrowserMenuBar({
 	);
 }
 
-function ConnectedBrowserAuxiliaryDialog({
+/** Default sizes for the resizable management windows. */
+const auxiliaryWindowSizes: Readonly<
+	Record<Exclude<AuxiliaryRouteRequest['kind'], 'edit-tab'>, WindowSize>
+> = Object.freeze({
+	settings: { width: 1480, height: 820 },
+	macros: { width: 1240, height: 820 },
+	recordings: { width: 1240, height: 820 },
+	'remote-control': { width: 1240, height: 820 },
+	'performance-log': { width: 1180, height: 820 },
+});
+
+function auxiliaryWindowKind(route: AuxiliaryRouteRequest): InPageWindowKind {
+	return route.kind === 'edit-tab'
+		? { resizable: false, width: 680 }
+		: {
+				resizable: true,
+				id: route.kind,
+				defaultSize: auxiliaryWindowSizes[route.kind],
+			};
+}
+
+function ConnectedBrowserAuxiliaryWindow({
 	children,
 	onClose,
 	route,
@@ -1058,53 +1085,23 @@ function ConnectedBrowserAuxiliaryDialog({
 	onClose: () => void;
 	route: AuxiliaryRouteRequest;
 }>) {
-	const closeButtonRef = useRef<HTMLButtonElement>(null);
-	const title = getAuxiliaryRouteTitle(route);
-
-	useEffect(() => {
-		closeButtonRef.current?.focus();
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') onClose();
-		};
-		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [onClose]);
-
 	return (
-		<div
-			className="connected-web-auxiliary-backdrop"
-			role="presentation"
-			onMouseDown={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
+		<InPageWindow
+			kind={auxiliaryWindowKind(route)}
+			name={route.kind}
+			title={getAuxiliaryRouteTitle(route)}
+			onClose={onClose}
 		>
-			<section
-				aria-label={title}
-				aria-modal="true"
-				className={`connected-web-auxiliary-dialog connected-web-auxiliary-dialog--${route.kind}`}
-				data-connected-web-auxiliary-route={route.kind}
-				role="dialog"
-			>
-				{route.kind === 'edit-tab' ? null : (
-					<header className="connected-web-auxiliary-dialog__header">
-						<h2>{title}</h2>
-						<button ref={closeButtonRef} type="button" onClick={onClose}>
-							Close
-						</button>
-					</header>
-				)}
-				<div className="connected-web-auxiliary-dialog__body">{children}</div>
-			</section>
-		</div>
+			{children}
+		</InPageWindow>
 	);
 }
 
 /** The Desktop About document, framed. The frame runs no script and may only
  * open its links in a new tab; it can never navigate this page. */
-function ConnectedBrowserAboutDialog({
+function ConnectedBrowserAboutWindow({
 	onClose,
 }: Readonly<{ onClose: () => void }>) {
-	const closeButtonRef = useRef<HTMLButtonElement>(null);
 	const aboutDocument = useMemo(
 		() =>
 			aboutWindowDocumentHtml({
@@ -1117,62 +1114,27 @@ function ConnectedBrowserAboutDialog({
 		[],
 	);
 
-	useEffect(() => {
-		const returnFocus = window.document.activeElement;
-		closeButtonRef.current?.focus();
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') onClose();
-		};
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-			if (returnFocus instanceof HTMLElement && returnFocus.isConnected) {
-				returnFocus.focus();
-			}
-		};
-	}, [onClose]);
-
 	return (
-		<div
-			className="connected-web-auxiliary-backdrop"
-			role="presentation"
-			onMouseDown={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
+		<InPageWindow
+			kind={{ resizable: false, width: 440 }}
+			name="about"
+			title="About Terminay"
+			onClose={onClose}
 		>
-			<section
-				aria-label="About Terminay"
-				aria-modal="true"
-				className="connected-web-about-dialog"
-				data-connected-web-auxiliary-route="about"
-				role="dialog"
-			>
-				<iframe
-					className="connected-web-about-dialog__frame"
-					sandbox="allow-popups allow-popups-to-escape-sandbox"
-					srcDoc={aboutDocument}
-					title="About Terminay"
-				/>
-				<button
-					ref={closeButtonRef}
-					aria-label="Close"
-					className="connected-web-about-dialog__close"
-					type="button"
-					onClick={onClose}
-				>
-					×
-				</button>
-			</section>
-		</div>
+			<iframe
+				className="connected-web-about-frame"
+				sandbox="allow-popups allow-popups-to-escape-sandbox"
+				srcDoc={aboutDocument}
+				title="About Terminay"
+			/>
+		</InPageWindow>
 	);
 }
 
 function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 	switch (route.kind) {
 		case 'settings':
-			return route.sectionId === undefined
-				? 'Settings'
-				: `Settings: ${route.sectionId}`;
+			return 'Settings';
 		case 'macros':
 			return 'Macros';
 		case 'recordings':

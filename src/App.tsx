@@ -6586,7 +6586,6 @@ function App({
 		},
 		[refreshConnectionSwitcherEntries, setIsRemoteMenuOpen],
 	);
-	const pairingModal = useDraggableModal(isPairingModalOpen);
 	const [appUpdateStatus, setAppUpdateStatus] =
 		useState<AppUpdateStatus | null>(null);
 	const [isAppUpdateDialogOpen, setIsAppUpdateDialogOpen] = useState(false);
@@ -9606,16 +9605,11 @@ function App({
 
 			{isPairingModalOpen ? (
 				<RemotePairingModal
-					dialogRef={(element) => {
-						pairingModal.modalRef.current = element;
-					}}
-					dialogStyle={pairingModal.modalStyle}
 					expiresAt={selectedPairingExpiresAt}
 					busy={busyPairingApprovalId !== null}
 					onApprove={(approvalId) => void approvePairingDevice(approvalId)}
 					onClose={closePairingModal}
 					onDeny={(approvalId) => void denyPairingDevice(approvalId)}
-					onTitleMouseDown={pairingModal.handleTitlebarPointerDown}
 					pairingUrl={selectedPairingUrl}
 					pendingApproval={pendingPairingApproval}
 					qrCodeDataUrl={visiblePairingQrCodeDataUrl}
