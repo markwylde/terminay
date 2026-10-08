@@ -30,6 +30,7 @@ import {
 	type FolderTreeFolderRow,
 	type FolderTreeTerminalRow,
 	folderOrderAfterMove,
+	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
 import {
@@ -46,6 +47,12 @@ import {
 import './foldersTree.css';
 
 type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
+
+/**
+ * How long a rename input takes focus back after it opens. The click that
+ * opened it also activated the terminal, which focuses itself a frame later.
+ */
+const RENAME_FOCUS_SETTLE_MS = 400;
 
 /** How long a dropped order is shown while the server has not answered. */
 const PENDING_ORDER_MS = 3_000;
@@ -86,6 +93,11 @@ export type FoldersTreeProps = {
 		anchor: { x: number; y: number },
 	) => void;
 	/**
+	 * Saves the name typed into a terminal's row. Absent where a row only
+	 * lists.
+	 */
+	onRenameTerminal?: (folderId: string, panelId: string, title: string) => void;
+	/**
 	 * Opens a pull request or a check in the browser. Absent where a card only
 	 * reports, such as in a peek: the number and the count are then plain text.
 	 */
@@ -117,6 +129,7 @@ export function FoldersTree({
 	onDropTerminal,
 	onTerminalDrag,
 	onTerminalMenu,
+	onRenameTerminal,
 	onOpenLink,
 	onLoadChecks,
 	variant = 'tree',
@@ -331,6 +344,12 @@ export function FoldersTree({
 								: {
 										onMenu: (anchor: { x: number; y: number }) =>
 											onTerminalMenu(folder.id, terminal.panelId, anchor),
+									})}
+							{...(onRenameTerminal === undefined
+								? {}
+								: {
+										onRename: (title: string) =>
+											onRenameTerminal(folder.id, terminal.panelId, title),
 									})}
 							{...(onTerminalDrag === undefined
 								? {}
@@ -761,15 +780,36 @@ function TerminalRow({
 	terminal,
 	onSelect,
 	onMenu,
+	onRename,
 	onDragStart,
 	onDragEnd,
 }: Readonly<{
 	terminal: FolderTreeTerminalRow;
 	onSelect: () => void;
 	onMenu?: (anchor: { x: number; y: number }) => void;
+	onRename?: (title: string) => void;
 	onDragStart?: () => void;
 	onDragEnd?: () => void;
 }>) {
+	// The name being typed over the title, or null while the row only shows it.
+	const [draft, setDraft] = useState<string | null>(null);
+	const isRenaming = draft !== null && onRename !== undefined;
+	const inputRef = useRef<HTMLInputElement>(null);
+	const renameStartedAtRef = useRef(0);
+	useLayoutEffect(() => {
+		if (!isRenaming) return;
+		renameStartedAtRef.current = performance.now();
+		inputRef.current?.focus();
+		inputRef.current?.select();
+	}, [isRenaming]);
+	const endRename = (save: boolean) => {
+		// Enter and Escape remove the input, which may then report a blur.
+		if (draft === null) return;
+		setDraft(null);
+		if (!save) return;
+		const title = terminalRenameTitle(terminal.title, draft);
+		if (title !== null) onRename?.(title);
+	};
 	return (
 		<div
 			className={`folders-tree__row folders-tree__row--terminal${terminal.isActive ? ' folders-tree__row--active' : ''}`}
@@ -777,9 +817,17 @@ function TerminalRow({
 			aria-selected={terminal.isActive}
 			tabIndex={0}
 			data-folder-terminal-session={terminal.sessionId}
-			draggable={onDragStart !== undefined}
-			onClick={onSelect}
+			draggable={onDragStart !== undefined && !isRenaming}
+			onClick={(event) => {
+				// The second click of a double-click is the rename, not another
+				// activation.
+				if (onRename !== undefined && event.detail > 1) return;
+				onSelect();
+			}}
 			onKeyDown={activateOnKey(onSelect)}
+			{...(onRename === undefined
+				? {}
+				: { onDoubleClick: () => setDraft(terminal.title) })}
 			{...(onMenu === undefined
 				? {}
 				: {
@@ -813,9 +861,45 @@ function TerminalRow({
 				showIdle
 				className="folders-tree__status"
 			/>
-			<span className="folders-tree__name" title={terminal.title}>
-				{terminal.title}
-			</span>
+			{isRenaming ? (
+				<input
+					ref={inputRef}
+					type="text"
+					className="folders-tree__rename"
+					aria-label={`Rename ${terminal.title}`}
+					value={draft}
+					spellCheck={false}
+					onChange={(event) => setDraft(event.target.value)}
+					// What happens in the input edits the name: the row is not
+					// selected, dragged, or given its menu by it.
+					onClick={(event) => event.stopPropagation()}
+					onDoubleClick={(event) => event.stopPropagation()}
+					onContextMenu={(event) => event.stopPropagation()}
+					onKeyDown={(event) => {
+						event.stopPropagation();
+						if (event.key !== 'Enter' && event.key !== 'Escape') return;
+						event.preventDefault();
+						endRename(event.key === 'Enter');
+						// Back to the terminal that was named.
+						onSelect();
+					}}
+					onBlur={(event) => {
+						if (
+							performance.now() - renameStartedAtRef.current <
+							RENAME_FOCUS_SETTLE_MS
+						) {
+							const input = event.currentTarget;
+							window.requestAnimationFrame(() => input.focus());
+							return;
+						}
+						endRename(true);
+					}}
+				/>
+			) : (
+				<span className="folders-tree__name" title={terminal.title}>
+					{terminal.title}
+				</span>
+			)}
 			{terminal.createdWorktree === undefined ? null : (
 				<span
 					className="folders-tree__tag"
