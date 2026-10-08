@@ -80,7 +80,7 @@ const message = [
     ? `The previous release tag is ${releaseContext.previousTag}.`
     : 'There is no previous release tag.',
   'Do not include features, fixes, or dependency updates from earlier releases.',
-  'Write the markdown changelog body to RELEASE.md with no extra text.',
+  'Reply with the raw markdown changelog body only: no extra text, and never wrapped in a code block.',
   '',
   'Allowed release context:',
   '',
