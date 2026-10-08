@@ -167,6 +167,11 @@ import {
 import { forgetRememberedConnection } from './forgetRememberedConnection';
 import { pairingTargetWindow, switchWindowServer } from './windowServerSwitch';
 import {
+	chooseWindowView,
+	type WindowViewKey,
+	workspaceWindowTitle,
+} from './windowWorkspaceView';
+import {
 	createProfileConnectQueue,
 	DesktopWindowIds,
 } from './remote/desktopWindowIdentity';
@@ -1014,6 +1019,8 @@ type WindowServerController = Readonly<{
 	/** True for a window that is not a torn-off workspace view. */
 	isMainWorkspace: boolean;
 	currentProfileId: () => string;
+	/** What the window is presenting, once it has mounted a workspace. */
+	currentViewKey: () => WindowViewKey | undefined;
 	mountRemote: (
 		profile: RememberedRemoteConnection,
 		remote: Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>,
@@ -1436,12 +1443,20 @@ function getRunningTerminalCount(): number {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
 	return authority.list().filter((session) => {
-		const activity = authority.activity.get({
-			serverId: session.serverId,
-			projectId: session.projectId,
-			sessionId: session.id,
-		});
-		return activity?.foregroundBusy === true;
+		// A session can be listed while its activity is not registered, and
+		// asking then throws. This runs while the application is quitting,
+		// where an uncaught error aborts the process instead of quitting it.
+		try {
+			return (
+				authority.activity.get({
+					serverId: session.serverId,
+					projectId: session.projectId,
+					sessionId: session.id,
+				})?.foregroundBusy === true
+			);
+		} catch {
+			return false;
+		}
 	}).length;
 }
 
@@ -4789,11 +4804,17 @@ function createWindow(options?: {
 		deferredCanonicalLaunches.delete(windowWebContentsId);
 	});
 
-	window.on('page-title-updated', (event) => {
+	window.on('page-title-updated', (event, title) => {
+		// The page does not set the title. A workspace window is titled by its
+		// server, which the host knows, followed by what the page says it holds.
 		event.preventDefault();
-		if (!window.isDestroyed()) {
-			window.setTitle('Terminay');
+		if (window.isDestroyed()) return;
+		if (options?.auxiliary !== undefined) {
+			window.setTitle(options.auxiliary.title);
+			return;
 		}
+		pageTitleDetail = title;
+		applyWindowTitle();
 	});
 
 	window.webContents.setWindowOpenHandler(({ url }) => {
@@ -4846,13 +4867,55 @@ function createWindow(options?: {
 	) => Promise<void>;
 	let cancelDesktopPairing: (attemptId: string) => void;
 	// The server this window shows. It changes only when a launch is mounted.
-	let boundProfileId: string = embeddedLocalProfileId;
+	let boundProfileId: string =
+		options?.serverUiLaunch?.context.profileId ?? embeddedLocalProfileId;
+	// The view it presents there, and the server a torn-off view belongs to.
+	let boundViewKey: WindowViewKey | undefined;
+	let tornOffProfileId: string | undefined;
+	// What the page last asked the title to say about its contents.
+	let pageTitleDetail = '';
+	const applyWindowTitle = () => {
+		if (window.isDestroyed() || options?.auxiliary !== undefined) return;
+		window.setTitle(
+			workspaceWindowTitle(
+				boundProfileId === embeddedLocalProfileId
+					? 'Local'
+					: (rememberedRemoteConnections.get(boundProfileId)?.label ??
+							'Terminay'),
+				pageTitleDetail,
+			),
+		);
+	};
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
 	): Promise<void> => {
 		if (window.isDestroyed()) return;
 		boundProfileId = launch.context.profileId;
+		tornOffProfileId ??= launch.context.profileId;
+		// A project is in one window. The first window on a server presents its
+		// default view; a further one presents a view of its own.
+		const view =
+			options?.auxiliary !== undefined
+				? Object.freeze({ ownView: false, viewId: undefined })
+				: chooseWindowView({
+						...(options?.workspaceViewId !== undefined &&
+						launch.context.profileId === tornOffProfileId
+							? { tornOffViewId: options.workspaceViewId }
+							: {}),
+						othersOnServer: [...windowServerControllers.values()]
+							.filter(
+								(other) =>
+									other.window !== window &&
+									!other.isAuxiliary &&
+									other.currentProfileId() === launch.context.profileId,
+							)
+							.map((other) => other.currentViewKey())
+							.filter((key): key is WindowViewKey => key !== undefined),
+					});
+		boundViewKey = view.viewId ?? 'default';
+		pageTitleDetail = '';
+		applyWindowTitle();
 		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
 		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 		const entryUrl = pathToFileURL(
@@ -4870,8 +4933,21 @@ function createWindow(options?: {
 		// second workspace presentation instead of translating it into a hash:
 		// the server bundle's route shell (and not only App's workspace picker)
 		// then mounts the intended view before the source presentation closes.
-		if (options?.workspaceViewId) {
-			entryUrl.searchParams.set('view', options.workspaceViewId);
+		if (options?.auxiliary === undefined) {
+			if (view.viewId !== undefined) {
+				entryUrl.searchParams.set('view', view.viewId);
+				// The window creates this view if the server does not have it yet.
+				if (view.ownView) entryUrl.searchParams.set('ownView', '1');
+				workspaceViewByWebContents.set(windowWebContentsId, view.viewId);
+			} else {
+				const localDefault =
+					launch.context.profileId === embeddedLocalProfileId
+						? serverTerminalAuthority?.workspace.state.viewOrder[0]
+						: undefined;
+				if (localDefault === undefined)
+					workspaceViewByWebContents.delete(windowWebContentsId);
+				else workspaceViewByWebContents.set(windowWebContentsId, localDefault);
+			}
 		}
 		void windowConnectionsByWebContents.get(windowWebContentsId)?.dispose();
 		const compositionKey = desktopWindowCompositionKey(
@@ -5247,6 +5323,7 @@ function createWindow(options?: {
 		isMainWorkspace:
 			options?.auxiliary === undefined && options?.workspaceViewId === undefined,
 		currentProfileId: () => boundProfileId,
+		currentViewKey: () => boundViewKey,
 		mountRemote: async (profile, remote) => {
 			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
 			releaseLocalServerUiSessionSafely(windowWebContentsId);
