@@ -148,10 +148,9 @@ const groups = [
 	{
 		projects: [
 			{
-				badge: { count: 2, state: 'recent' },
 				color: '#7c5cff',
 				emoji: '',
-				// Only its General folder, which is not worth a heading.
+				// A project whose folders this window does not know.
 				folders: [],
 				key: 'local:p1',
 				projectId: 'p1',
@@ -181,6 +180,7 @@ const groups = [
 						title: 'claude',
 					},
 				],
+				summary: { attention: 0, working: 1, done: 0, idle: 1 },
 				title: 'Paged',
 			},
 		],
@@ -203,6 +203,7 @@ const switcher = (overrides) =>
 			onEditPanel: noop,
 			onNewProject: noop,
 			onNewTerminal: noop,
+			onNewTerminalInFolder: noop,
 			onQueryChange: noop,
 			query: '',
 			...overrides,
@@ -253,14 +254,26 @@ test('a project with several folders lists each folder with its terminals beneat
 	assert.ok(order.every((index) => index >= 0), 'every folder and terminal is listed');
 	assert.deepEqual(order, [...order].sort((left, right) => left - right));
 	assert.equal(markup.match(/class="compact-switcher__folder"/g).length, 3);
-	// A folder with nothing in it says so on its own heading.
-	assert.equal(markup.match(/compact-switcher__folder-empty/g).length, 1);
+	// A folder with nothing in it is its label and nothing else.
+	assert.doesNotMatch(markup, /No panels/);
+	assert.match(
+		markup,
+		/>one-window<\/span><span class="compact-switcher__folder-rule"[^>]*><\/span><\/button><button[^>]*aria-label="New terminal in one-window of Paged"[^>]*>(?:(?!<button)[\s\S])*<\/button><\/div><\/div>/,
+		'nothing follows an empty folder line inside its group',
+	);
 	assert.match(markup, /aria-label="Folder release-notes in Paged"/);
+	// Each folder creates in itself, so the header has no control of its own.
+	for (const name of ['General', 'release-notes', 'one-window'])
+		assert.match(
+			markup,
+			new RegExp(`aria-label="New terminal in ${name} of Paged"`),
+		);
+	assert.doesNotMatch(markup, /aria-label="New terminal in Paged"/);
 	// Each terminal is listed once, under its folder.
 	assert.equal(markup.match(/>claude</g).length, 1);
 });
 
-test('a project with only its General folder shows no folder heading', () => {
+test('a project with only its General folder still labels it', () => {
 	const [connection] = groups;
 	const [project] = connection.projects;
 	const markup = switcher({
@@ -283,8 +296,54 @@ test('a project with only its General folder shows no folder heading', () => {
 			},
 		],
 	});
-	assert.doesNotMatch(markup, /compact-switcher__folder/);
-	assert.match(markup, />server</);
+	assert.equal(markup.match(/class="compact-switcher__folder"/g).length, 1);
+	assert.ok(markup.indexOf('>General<') < markup.indexOf('>server<'));
+	assert.match(markup, /aria-label="New terminal in General of Paged"/);
+});
+
+test('everything of a project sits inside its own card and no other', () => {
+	const [connection] = groups;
+	const [project] = connection.projects;
+	const other = {
+		...project,
+		color: '#4fd08a',
+		folders: [
+			{
+				folderId: 'g2',
+				key: 'local:folder:g2',
+				name: 'scratch',
+				panels: [
+					{
+						...project.panels[0],
+						key: 'local:panel-z',
+						panelId: 'panel-z',
+						projectId: 'p2',
+						title: 'zsh',
+					},
+				],
+			},
+		],
+		key: 'local:p2',
+		projectId: 'p2',
+		title: 'dotfiles',
+	};
+	const markup = switcher({
+		groups: [{ ...connection, projects: [project, other] }],
+	});
+	const cards = markup.split('class="compact-switcher__card"').slice(1);
+	assert.equal(cards.length, 2);
+	const [first, second] = cards;
+	assert.match(first, /data-compact-switcher-card="local:p1"/);
+	assert.match(first, />server</);
+	assert.match(first, />claude</);
+	assert.doesNotMatch(first, />zsh<|>scratch</);
+	assert.match(second, /data-compact-switcher-card="local:p2"/);
+	assert.match(second, />scratch</);
+	assert.match(second, />zsh</);
+	assert.doesNotMatch(second, />server<|>claude</);
+	// The card carries the colour once; nothing inside repeats it.
+	assert.match(first, /--compact-switcher-project:#7c5cff/);
+	assert.match(second, /--compact-switcher-project:#4fd08a/);
 });
 
 test('a row carries its preview line, and a row without one carries none', () => {
@@ -316,17 +375,79 @@ test('row state uses the shared activity vocabulary', () => {
 	assert.match(markup, /agent-status-indicator--idle/);
 });
 
-test('the project heading carries its activity dot', () => {
+test('the project header summarises its terminals and carries no dot', () => {
 	const markup = switcher({});
-	assert.match(markup, /project-tab-activity-dot--recent/);
+	assert.match(markup, /data-compact-switcher-summary="local:p1"/);
+	assert.match(markup, /aria-label="1 working, 1 idle"/);
+	assert.match(
+		markup,
+		/compact-switcher__summary-group--working">1 working<\/span><span class="compact-switcher__summary-group"> · 1 idle</,
+	);
+	assert.doesNotMatch(markup, /project-tab-activity-dot/);
+	// The header still carries what editing and closing address.
+	assert.match(markup, /data-compact-switcher-project="local:p1"/);
+	const header = markup.slice(
+		markup.indexOf('class="compact-switcher__project"'),
+		markup.indexOf('class="compact-switcher__row"'),
+	);
+	const order = [
+		'compact-switcher__project-swatch',
+		'compact-switcher__project-name',
+		'compact-switcher__summary',
+		'aria-label="Close Paged"',
+	].map((marker) => header.indexOf(marker));
+	assert.ok(order.every((index) => index >= 0));
+	assert.deepEqual(order, [...order].sort((left, right) => left - right));
 });
 
+test('a project with no terminal shows no summary', () => {
+	const [connection] = groups;
+	const [project] = connection.projects;
+	const markup = switcher({
+		groups: [
+			{
+				...connection,
+				projects: [
+					{
+						...project,
+						summary: { attention: 0, working: 0, done: 0, idle: 0 },
+					},
+				],
+			},
+		],
+	});
+	assert.doesNotMatch(markup, /compact-switcher__summary/);
+});
+
+const front = { color: '#7c5cff', folderName: 'General', projectTitle: 'Paged' };
+
 test('every create action survives the collapse', () => {
-	const markup = switcher({ onNewTerminalHere: noop });
+	const markup = switcher({ front, onNewTerminalHere: noop });
+	// A project whose folders are not listed creates from its header.
 	assert.match(markup, /aria-label="New terminal in Paged"/);
-	assert.match(markup, />New terminal</);
-	assert.match(markup, />New project</);
-	assert.match(markup, />Add connection</);
+	// The bar says where its terminal will land, in words and for AT.
+	assert.match(
+		markup,
+		/compact-switcher__create-label">Terminal<span class="compact-switcher__create-where"> in Paged › General<\/span>/,
+	);
+	assert.match(markup, /aria-label="New terminal in General of Paged"/);
+	assert.match(markup, /data-compact-switcher-new-terminal="true"/);
+	assert.match(markup, /compact-switcher__create-icon"[^>]*aria-label="New project"/);
+	assert.match(
+		markup,
+		/compact-switcher__create-icon"[^>]*aria-label="Add connection"/,
+	);
+});
+
+test('the create bar names only the project when its folders are unknown', () => {
+	const markup = switcher({
+		front: { color: '#7c5cff', projectTitle: 'Paged' },
+		onNewTerminalHere: noop,
+	});
+	assert.match(
+		markup,
+		/compact-switcher__create-where"> in Paged<\/span>/,
+	);
 });
 
 test('a connection heading carries its rule', () => {
@@ -334,17 +455,34 @@ test('a connection heading carries its rule', () => {
 	assert.match(markup, /compact-switcher__connection-rule/);
 });
 
-test('New terminal is absent when no project is in front', () => {
+test('with no project in front New project is the wide control', () => {
 	const markup = switcher({});
-	assert.doesNotMatch(markup, />New terminal</);
-	assert.match(markup, />New project</);
+	assert.doesNotMatch(markup, /data-compact-switcher-new-terminal/);
+	assert.match(
+		markup,
+		/class="compact-switcher__create-main"[^>]*>(?:(?!<\/button>)[\s\S])*>New project</,
+	);
+	// New project is offered once, and Add connection sits beside it.
+	assert.equal(markup.match(/New project/g).length, 1);
+	assert.match(
+		markup,
+		/compact-switcher__create-icon"[^>]*aria-label="Add connection"/,
+	);
 });
 
-test('a filter that matches nothing says so and keeps its actions', () => {
-	const markup = switcher({ groups: [], query: 'nothing-here' });
+test('a filter that matches nothing says so and keeps its create bar', () => {
+	const markup = switcher({
+		front,
+		groups: [],
+		onNewTerminalHere: noop,
+		query: 'nothing-here',
+	});
 	assert.match(markup, /Nothing matches/);
-	assert.match(markup, />New project</);
-	assert.match(markup, />Add connection</);
+	assert.match(markup, /data-compact-switcher-new-terminal="true"/);
+	// The front project is filtered out of the list and still named here.
+	assert.match(markup, /in Paged › General/);
+	assert.match(markup, /aria-label="New project"/);
+	assert.match(markup, /aria-label="Add connection"/);
 });
 
 test('the filter starts collapsed and takes no focus', () => {

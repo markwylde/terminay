@@ -17,7 +17,6 @@
  */
 
 import { compositionTabKey } from '../shared/connections/composition.ts';
-import type { ActivityCountBadge } from './activityCountBadge.ts';
 import type { DashboardServerSource } from './crossServerRows.ts';
 import type { DashboardStatus } from './dashboardRows.ts';
 import { buildDashboardGroups } from './dashboardRows.ts';
@@ -50,8 +49,23 @@ export type CompactSwitcherFolderGroup = Readonly<{
 	panels: readonly CompactSwitcherPanelRow[];
 }>;
 
+/**
+ * How many of a project's terminals are in each state, most urgent first.
+ *
+ * Counted from the state each terminal row presents, so a header can never say
+ * something its own rows do not. `waiting` and `blocked` are one group because
+ * they ask the same thing of a user.
+ */
+export type CompactSwitcherStatusSummary = Readonly<{
+	attention: number;
+	working: number;
+	done: number;
+	idle: number;
+}>;
+
+export type CompactSwitcherStatusGroup = keyof CompactSwitcherStatusSummary;
+
 export type CompactSwitcherProjectGroup = Readonly<{
-	badge?: ActivityCountBadge;
 	color: string;
 	emoji: string;
 	/**
@@ -65,6 +79,8 @@ export type CompactSwitcherProjectGroup = Readonly<{
 	panels: readonly CompactSwitcherPanelRow[];
 	projectId: string;
 	serverId: string;
+	/** Every terminal of the project, whatever a filter has narrowed the rows to. */
+	summary: CompactSwitcherStatusSummary;
 	title: string;
 }>;
 
@@ -81,9 +97,8 @@ export type CompactSwitcherFolderSource = Readonly<{
 }>;
 
 export type CompactSwitcherInput = Readonly<{
-	activityBadgesByProject?: Readonly<Record<string, ActivityCountBadge>>;
-	/** Each project's folders in order, keyed like the badges: by server and
-	 * project. The first is the General folder. */
+	/** Each project's folders in order, keyed by server and project. The first
+	 * is the General folder. */
 	foldersByProject?: Readonly<
 		Record<string, readonly CompactSwitcherFolderSource[]>
 	>;
@@ -114,10 +129,64 @@ export function previewLineFromOutput(
 	return undefined;
 }
 
+export function summariseCompactSwitcherStates(
+	panels: readonly Pick<CompactSwitcherPanelRow, 'panelKind' | 'state'>[],
+): CompactSwitcherStatusSummary {
+	const summary = { attention: 0, working: 0, done: 0, idle: 0 };
+	for (const panel of panels) {
+		// A file or a folder panel has no activity to report.
+		if (panel.panelKind !== 'terminal') continue;
+		if (panel.state === 'waiting' || panel.state === 'blocked')
+			summary.attention += 1;
+		else summary[panel.state] += 1;
+	}
+	return Object.freeze(summary);
+}
+
+const STATUS_GROUP_ORDER: readonly CompactSwitcherStatusGroup[] = [
+	'attention',
+	'working',
+	'done',
+	'idle',
+];
+
+/** How many groups a header has room for beside a project's name. */
+export const COMPACT_SWITCHER_SUMMARY_MAX_GROUPS = 2;
+
+const statusGroupText = (group: CompactSwitcherStatusGroup, count: number) => {
+	if (group !== 'attention') return `${count} ${group}`;
+	return count === 1 ? '1 needs you' : `${count} need you`;
+};
+
+/**
+ * A summary as a header shows it and as it is read out.
+ *
+ * The header has room for the two most urgent groups; the accessible text
+ * names every one, so nothing is known only to a sighted user. A project with
+ * no terminal has nothing to say and says nothing.
+ */
+export function formatCompactSwitcherSummary(
+	summary: CompactSwitcherStatusSummary,
+): Readonly<{
+	accessible: string;
+	groups: readonly Readonly<{
+		group: CompactSwitcherStatusGroup;
+		text: string;
+	}>[];
+}> {
+	const all = STATUS_GROUP_ORDER.filter((group) => summary[group] > 0).map(
+		(group) =>
+			Object.freeze({ group, text: statusGroupText(group, summary[group]) }),
+	);
+	return Object.freeze({
+		accessible: all.map((entry) => entry.text).join(', '),
+		groups: Object.freeze(all.slice(0, COMPACT_SWITCHER_SUMMARY_MAX_GROUPS)),
+	});
+}
+
 export function buildCompactSwitcherGroups(
 	input: CompactSwitcherInput,
 ): readonly CompactSwitcherConnectionGroup[] {
-	const badges = input.activityBadgesByProject ?? {};
 	return Object.freeze(
 		input.sources.map((source) => {
 			const groups = buildDashboardGroups(
@@ -132,7 +201,6 @@ export function buildCompactSwitcherGroups(
 							source.serverId,
 							group.project.projectId,
 						);
-						const badge = badges[key];
 						const panels = Object.freeze(
 							group.panels.map((panel) =>
 								Object.freeze({
@@ -172,8 +240,8 @@ export function buildCompactSwitcherGroups(
 							projectId: group.project.projectId,
 							serverId: source.serverId,
 							panels,
+							summary: summariseCompactSwitcherStates(panels),
 							title: group.project.title,
-							...(badge === undefined || badge.count <= 0 ? {} : { badge }),
 						});
 					}),
 				),

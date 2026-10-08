@@ -1139,6 +1139,121 @@ test('at phone width there is no Folders column and the switcher lists the folde
 	expect(await activeTerminalSessionId(mainWindow)).toBe(alphaSession);
 });
 
+test('at phone width a folder label creates a terminal in that folder, from the project in front and from another project', async ({
+	createWorkspace,
+	electronApp,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-phone-create', ['alpha']);
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	const firstProject = await mainWindow
+		.locator('.app-shell')
+		.getAttribute('data-terminay-active-project-id');
+	const generalSession = await activeTerminalSessionId(mainWindow);
+
+	const nativeWindow = await electronApp.browserWindow(mainWindow);
+	const phone = () =>
+		nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+		});
+	const wide = () =>
+		nativeWindow.evaluate((window) => {
+			window.setBounds({ x: 40, y: 40, width: 1280, height: 800 });
+		});
+	const switcher = mainWindow.getByRole('dialog', { name: 'Switch terminal' });
+	const openSwitcher = async () => {
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		await expect(switcher).toBeVisible();
+	};
+	// The second project made below opens on the same repository and so has
+	// an alpha of its own; every folder here is the first project's.
+	const card = switcher.locator('.compact-switcher__card').filter({
+		has: mainWindow.locator(
+			`.compact-switcher__terminal[data-project-id="${firstProject}"]`,
+		),
+	});
+	const groupOf = (folder: string) =>
+		card.locator('.compact-switcher__folder-group').filter({
+			has: mainWindow.locator(
+				`.compact-switcher__folder-name:text-is(${JSON.stringify(folder)})`,
+			),
+		});
+	const create = switcher.locator('[data-compact-switcher-new-terminal]');
+
+	await phone();
+	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await openSwitcher();
+	// General is in front, and the create bar says so.
+	await expect(create).toHaveText(/ › General$/);
+	// alpha is empty: its label line and nothing beneath it.
+	await expect(
+		groupOf('alpha').locator('[data-compact-switcher-terminal]'),
+	).toHaveCount(0);
+	await expect(switcher.getByText('No panels')).toHaveCount(0);
+
+	// The control on alpha's label creates in alpha, not in the folder in front.
+	await groupOf('alpha')
+		.getByRole('button', { name: /^New terminal in alpha of / })
+		.click();
+	await expect(switcher).toHaveCount(0);
+	await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-folder-kind',
+		'linked',
+	);
+	await expect
+		.poll(() => activeTerminalSessionId(mainWindow))
+		.not.toBe(generalSession);
+	const alphaSession = await activeTerminalSessionId(mainWindow);
+
+	await openSwitcher();
+	const alphaRows = groupOf('alpha').locator('[data-compact-switcher-terminal]');
+	await expect(alphaRows).toHaveCount(1);
+	await expect(alphaRows).toHaveAttribute('aria-current', 'true');
+	await expect(
+		groupOf('General').locator('[data-compact-switcher-terminal]'),
+	).toHaveCount(1);
+	// The bar follows the folder that is now in front.
+	await expect(create).toHaveText(/ › alpha$/);
+	await mainWindow.keyboard.press('Escape');
+	await expect(switcher).toHaveCount(0);
+
+	// From another project: put General back in front here, then leave.
+	await wide();
+	await expect(foldersColumn(mainWindow)).toBeVisible();
+	await selectFolder(mainWindow, 'General');
+	await mainWindow.getByLabel('Create project').click();
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await phone();
+	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await openSwitcher();
+	await groupOf('alpha')
+		.getByRole('button', { name: /^New terminal in alpha of / })
+		.click();
+	await expect(switcher).toHaveCount(0);
+	await expect
+		.poll(() =>
+			mainWindow
+				.locator('.app-shell')
+				.getAttribute('data-terminay-active-project-id'),
+		)
+		.toBe(firstProject);
+	await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-folder-kind',
+		'linked',
+	);
+	await expect
+		.poll(async () => {
+			const shown = await activeTerminalSessionId(mainWindow);
+			return shown !== generalSession && shown !== alphaSession;
+		})
+		.toBe(true);
+	await openSwitcher();
+	await expect(alphaRows).toHaveCount(2);
+	await expect(alphaRows.last()).toHaveAttribute('aria-current', 'true');
+});
+
 test('activating a dashboard row for a terminal in an unselected folder shows its folder and focuses it', async ({
 	appHarness,
 	createWorkspace,

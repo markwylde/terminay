@@ -501,7 +501,11 @@ test.describe('compact chrome', () => {
 		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 		const switcher = switcherOf(mainWindow);
 		await expect(switcher).toBeVisible();
-		await switcher.getByRole('button', { name: 'New terminal', exact: true }).click();
+		// The bar says where the terminal will land before it is pressed.
+		const create = switcher.locator('[data-compact-switcher-new-terminal]');
+		await expect(create).toHaveText(/^Terminal in .+ › General$/);
+		await expect(create).toHaveAccessibleName(/^New terminal in General of .+/);
+		await create.click();
 		await expect(switcher).toHaveCount(0);
 
 		// The terminal on screen is the one just created, not the one the user
@@ -540,7 +544,7 @@ test.describe('compact chrome', () => {
 		const switcher = switcherOf(mainWindow);
 		await expect(switcher).toBeVisible();
 		await switcher
-			.locator('.compact-switcher__group')
+			.locator('.compact-switcher__card')
 			.filter({
 				has: mainWindow.locator(
 					`.compact-switcher__terminal[data-project-id="${firstProject}"]`,
@@ -560,5 +564,196 @@ test.describe('compact chrome', () => {
 				);
 			})
 			.toBe(true);
+	});
+
+	test('with the dashboard in front New project is the wide create control', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		// Nothing offers a terminal "here" when here is not a project.
+		await expect(
+			switcher.locator('[data-compact-switcher-new-terminal]'),
+		).toHaveCount(0);
+		await expect(switcher.locator('.compact-switcher__create-main')).toHaveText(
+			'New project',
+		);
+		await expect(
+			switcher.getByRole('button', { name: 'Add connection' }),
+		).toBeVisible();
+	});
+
+	test('a project is one card, and its small controls are still thumb-sized', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, { ...PHONE, width: 320 });
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		const card = switcher.locator('.compact-switcher__card').first();
+		// Header, folder label, and row all sit inside the card.
+		await expect(card.locator('[data-compact-switcher-project]')).toHaveCount(1);
+		await expect(card.locator('.compact-switcher__folder-name')).toHaveText([
+			'General',
+		]);
+		await expect(card.locator('[data-compact-switcher-terminal]')).toHaveCount(
+			1,
+		);
+		await expect(switcher.getByText('No panels')).toHaveCount(0);
+
+		for (const control of [
+			card.locator('.compact-switcher__project .compact-switcher__close'),
+			card.locator('.compact-switcher__row .compact-switcher__close'),
+			card.locator('.compact-switcher__folder-line .compact-switcher__add'),
+		]) {
+			const box = await control.boundingBox();
+			if (!box) throw new Error('Expected a switcher control');
+			expect(box.width).toBeGreaterThanOrEqual(28);
+			expect(box.height).toBeGreaterThanOrEqual(28);
+		}
+
+		// The edge of a card is an edge even for a project coloured black.
+		const colours = await card.evaluate((element) => {
+			(element as HTMLElement).style.setProperty(
+				'--compact-switcher-project',
+				'#000000',
+			);
+			const sheet = element.closest('.compact-switcher');
+			if (!sheet) throw new Error('Expected the switcher sheet');
+			return {
+				border: getComputedStyle(element).borderTopColor,
+				sheet: getComputedStyle(sheet).backgroundColor,
+			};
+		});
+		expect(colours.border).not.toBe(colours.sheet);
+		expect(colours.border).not.toBe('rgba(0, 0, 0, 0)');
+
+		// A press in the middle of the folder's small control still creates.
+		const add = card.locator('.compact-switcher__folder-line .compact-switcher__add');
+		const box = await add.boundingBox();
+		if (!box) throw new Error('Expected the folder new-terminal control');
+		await mainWindow.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+		await expect(switcher).toHaveCount(0);
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+	});
+
+	test('a project header counts what its rows show', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		const idleSession = await activeSessionId(mainWindow);
+		await appHarness.sendAppCommand('new-terminal');
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+		await expect.poll(() => activeSessionId(mainWindow)).not.toBe(idleSession);
+		const agentSession = await activeSessionId(mainWindow);
+		if (!agentSession) throw new Error('Expected the new terminal session');
+
+		// A live agent session owned by the second terminal's own shell.
+		const publish = async (fields: Record<string, unknown>) => {
+			const accepted = await mainWindow.evaluate(
+				async ({ sessionId, extra }) => {
+					const seam = window.terminayAgentStatusTest;
+					if (!seam) throw new Error('Agent status test seam is unavailable');
+					const pid = await seam.terminalShellPid(sessionId);
+					if (pid === null) throw new Error('Terminal shell pid is unavailable');
+					return await seam.publishSessions({
+						sourceId: 'com.terminay.e2e/agents',
+						harnesses: [{ id: 'codex', displayName: 'Codex' }],
+						publication: {
+							upserts: [
+								{
+									harness: 'codex',
+									pid,
+									cwd: '/tmp',
+									id: 'codex-e2e-switcher-summary',
+									title: 'Summarise the switcher',
+									...extra,
+								},
+							],
+						},
+					});
+				},
+				{ sessionId: agentSession, extra: fields },
+			);
+			if (!accepted) throw new Error('Agent session publication was not accepted');
+		};
+		await publish({ status: 'running' });
+
+		await resize(mainWindow, electronApp, PHONE);
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+		const card = switcher.locator('.compact-switcher__card').first();
+		const summary = card.locator('[data-compact-switcher-summary]');
+		await expect(summary).toHaveText('1 working · 1 idle');
+		await expect(summary).toHaveAttribute('aria-label', '1 working, 1 idle');
+		await expect(card.locator('.project-tab-activity-dot')).toHaveCount(0);
+
+		// What the header says is what its rows show, state for state.
+		const fromRows = () =>
+			card.evaluate((element) => {
+				const counts = { attention: 0, working: 0, done: 0, idle: 0 };
+				for (const row of element.querySelectorAll(
+					'[data-compact-switcher-terminal]',
+				)) {
+					const state =
+						row
+							.querySelector('.agent-status-indicator')
+							?.getAttribute('data-agent-state') ?? 'idle';
+					if (state === 'waiting' || state === 'blocked') counts.attention += 1;
+					else counts[state as 'working' | 'done' | 'idle'] += 1;
+				}
+				const word = (group: string, count: number) =>
+					group !== 'attention'
+						? `${count} ${group}`
+						: count === 1
+							? '1 needs you'
+							: `${count} need you`;
+				return Object.entries(counts)
+					.filter(([, count]) => count > 0)
+					.slice(0, 2)
+					.map(([group, count]) => word(group, count))
+					.join(' · ');
+			});
+		expect(await fromRows()).toBe('1 working · 1 idle');
+
+		// The leading group is drawn in the colour its row's indicator uses.
+		const colours = await card.evaluate((element) => {
+			const lead = element.querySelector('.compact-switcher__summary-group');
+			const indicator = element.querySelector(
+				'.agent-status-indicator[data-agent-state="working"]',
+			);
+			if (!lead || !indicator) throw new Error('Expected a working row');
+			return {
+				indicator: getComputedStyle(indicator).color,
+				lead: getComputedStyle(lead).color,
+			};
+		});
+		expect(colours.lead).toBe(colours.indicator);
+
+		// The agent finishes while its terminal is in front, so the finish is
+		// already seen: the row goes quiet and the header follows it.
+		await publish({
+			status: 'idle',
+			lastTurn: 'completed',
+			lastTurnEndedAt: Date.now(),
+		});
+		await expect(
+			card.locator('.agent-status-indicator[data-agent-state="working"]'),
+		).toHaveCount(0);
+		await expect.poll(fromRows).not.toContain('working');
+		await expect.poll(async () => (await summary.innerText()).trim()).toBe(
+			await fromRows(),
+		);
 	});
 });

@@ -6,6 +6,7 @@ import {
 	COMPACT_SWITCHER_PREVIEW_MAX_LENGTH,
 	compactSwitcherIsEmpty,
 	filterCompactSwitcherGroups,
+	formatCompactSwitcherSummary,
 	previewLineFromOutput,
 } from '../src/workspace/compactSwitcherModel.ts';
 
@@ -135,16 +136,98 @@ test('filtering by file title keeps only that row', () => {
 	);
 });
 
-test('a project badge rides its group and hides at zero', () => {
-	const groups = buildCompactSwitcherGroups({
-		activityBadgesByProject: {
-			'local:p1': { count: 2, state: 'recent' },
-			'local:p2': { count: 0, state: 'unviewed' },
-		},
-		sources: [twoServers[0]],
+const withStates = (states, extra = []) =>
+	buildCompactSwitcherGroups({
+		sources: [
+			source('local', 'Local', [paged], {
+				p1: [
+					...states.map((status, index) => ({
+						...terminal(`panel-${index}`, `t${index}`, `s-${index}`),
+						status,
+					})),
+					...extra,
+				],
+			}),
+		],
+	})[0].projects[0];
+
+test('a project summary counts its terminals by the state their rows present', () => {
+	const project = withStates(['working', 'working', 'idle']);
+	assert.deepEqual(project.summary, {
+		attention: 0,
+		working: 2,
+		done: 0,
+		idle: 1,
 	});
-	assert.deepEqual(groups[0].projects[0].badge, { count: 2, state: 'recent' });
-	assert.equal(groups[0].projects[1].badge, undefined);
+	const shown = formatCompactSwitcherSummary(project.summary);
+	assert.deepEqual(
+		shown.groups.map((entry) => entry.text),
+		['2 working', '1 idle'],
+	);
+	assert.equal(shown.groups[0].group, 'working');
+});
+
+test('waiting and blocked are one group, and it leads', () => {
+	const one = formatCompactSwitcherSummary(
+		withStates(['idle', 'working', 'waiting', 'idle', 'idle']).summary,
+	);
+	// Two groups fit beside a name; every group is still read out.
+	assert.deepEqual(
+		one.groups.map((entry) => entry.text),
+		['1 needs you', '1 working'],
+	);
+	assert.equal(one.accessible, '1 needs you, 1 working, 3 idle');
+	const two = formatCompactSwitcherSummary(
+		withStates(['waiting', 'blocked', 'done']).summary,
+	);
+	assert.deepEqual(
+		two.groups.map((entry) => entry.text),
+		['2 need you', '1 done'],
+	);
+});
+
+test('a project with no terminal has no summary to show', () => {
+	const project = withStates([], [
+		panel({ kind: 'file', panelId: 'panel-f', status: 'working', title: 'a.md' }),
+	]);
+	// A file panel is not activity, whatever status it was handed.
+	assert.deepEqual(project.summary, {
+		attention: 0,
+		working: 0,
+		done: 0,
+		idle: 0,
+	});
+	const shown = formatCompactSwitcherSummary(project.summary);
+	assert.deepEqual(shown.groups, []);
+	assert.equal(shown.accessible, '');
+});
+
+test('a summary counts only its own server project', () => {
+	const sources = [
+		source('local', 'Local', [paged], {
+			p1: [{ ...terminal('panel-a', 'server', 's-a'), status: 'working' }],
+		}),
+		source('remote', 'Remote', [paged], {
+			p1: [terminal('panel-d', 'deploy', 's-d')],
+		}),
+	];
+	const groups = buildCompactSwitcherGroups({ sources });
+	assert.equal(groups[0].projects[0].summary.working, 1);
+	assert.equal(groups[1].projects[0].summary.working, 0);
+	assert.equal(groups[1].projects[0].summary.idle, 1);
+});
+
+test('a filter narrows the rows and leaves the summary describing the project', () => {
+	const project = withStates(['working', 'idle']);
+	const [filtered] = filterCompactSwitcherGroups(
+		[{ projects: [project], serverId: 'local', serverLabel: 'Local' }],
+		't1',
+	)[0].projects;
+	assert.deepEqual(
+		filtered.panels.map((row) => row.title),
+		['t1'],
+	);
+	assert.deepEqual(filtered.summary, project.summary);
 });
 
 test('preview comes from the window buffer, and is absent without one', () => {
