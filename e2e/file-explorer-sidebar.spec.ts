@@ -396,7 +396,8 @@ test('selecting a linked folder opens a file from its worktree without changing 
     seed: { files: { 'README.md': 'main worktree\n' } },
   })
   const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-linked' })
-  const linkedName = basename(linkedWorktree.rootDir)
+  // A linked folder is named by its worktree's branch.
+  const linkedName = 'cross-worktree-file-open'
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
   await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
@@ -535,7 +536,8 @@ test('a directory of a linked folder is deleted from Changes without changing th
     seed: { files: { 'README.md': 'main worktree\n' } },
   })
   const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-delete-linked' })
-  const linkedName = basename(linkedWorktree.rootDir)
+  // A linked folder is named by its worktree's branch.
+  const linkedName = 'cross-worktree-folder-delete'
   const dialogs = await appHarness.dialogs()
 
   await rm(linkedWorktree.rootDir, { recursive: true, force: true })
@@ -609,10 +611,11 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   await openFileExplorer(mainWindow)
 
   // The worktree is a linked folder; deleting it is that folder's action.
-  const linked = folderRow(mainWindow, linkedName)
+  // It is named by its branch.
+  const linked = folderRow(mainWindow, 'delete-sibling-worktree')
   await expect(linked).toBeVisible({ timeout: 6000 })
 
-  await openFolderMenu(mainWindow, linkedName)
+  await openFolderMenu(mainWindow, 'delete-sibling-worktree')
   await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
   await dialogs.queueConfirm(true)
   await contextMenuItem(mainWindow, 'Delete worktree').click()
@@ -712,11 +715,12 @@ test('the Folders menu deletes every clean worktree and leaves changed ones alon
   await git(['config', 'user.email', 'terminay@example.com'])
   await git(['add', '.'])
   await git(['commit', '-m', 'initial'])
-  for (const [branch, worktree] of [
+  const worktreeBranches = [
     ['sweep-clean-one', cleanOne],
     ['sweep-clean-two', cleanTwo],
     ['sweep-dirty', dirty],
-  ] as const) {
+  ] as const
+  for (const [branch, worktree] of worktreeBranches) {
     await rm(worktree.rootDir, { recursive: true, force: true })
     await git(['worktree', 'add', '-b', branch, worktree.rootDir])
   }
@@ -728,7 +732,9 @@ test('the Folders menu deletes every clean worktree and leaves changed ones alon
   await openFileExplorer(mainWindow)
 
   // Every worktree is a linked folder, and its row says whether it is clean.
-  const group = (worktree: { rootDir: string }) => folderGroup(mainWindow, basename(worktree.rootDir))
+  // Each is named by its branch.
+  const group = (worktree: { rootDir: string }) =>
+    folderGroup(mainWindow, worktreeBranches.find(([, candidate]) => candidate === worktree)?.[0] ?? '')
   const clean = (worktree: { rootDir: string }) => group(worktree).locator('[data-change="clean"]')
   await expect(clean(cleanOne)).toBeVisible({ timeout: 6000 })
   await expect(clean(cleanTwo)).toBeVisible()
@@ -1003,7 +1009,11 @@ test('Files, Changes, and the Folders tree refresh after setting project root fr
   )
   // Every other worktree of the repository gains its folder without a
   // restart: here, the main checkout the project is no longer rooted at.
-  await expect(folderRow(mainWindow, basename(mainRepo.rootDir))).toBeVisible({ timeout: 6000 })
+  // It is named by the branch it is on.
+  const { stdout: mainBranch } = await execFileAsync('git', ['branch', '--show-current'], {
+    cwd: mainRepo.rootDir,
+  })
+  await expect(folderRow(mainWindow, mainBranch.trim())).toBeVisible({ timeout: 6000 })
 })
 
 test('Changes pane refreshes after keyboard sidebar open and keyboard root update', async ({

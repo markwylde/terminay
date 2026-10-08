@@ -52,9 +52,10 @@ type Repository = {
 };
 
 /**
- * A repository with one commit on `main`, and one worktree per name on a
- * branch `feat/<name>`. Worktrees sit beside the checkout, so a folder is
- * named exactly after its worktree's directory.
+ * A repository with one commit on `main`, and one worktree per name: on a
+ * branch of that name, in a directory `<name>-tree` beside the checkout. A
+ * linked folder is named by its branch, so a folder here is called `<name>`
+ * and never by its directory.
  */
 async function repository(
 	createWorkspace: (options?: WorkspaceOptions) => Promise<FixtureWorkspace>,
@@ -72,10 +73,10 @@ async function repository(
 			'worktree',
 			'add',
 			'-b',
-			`feat/${directory}`,
-			join(base, directory),
+			directory,
+			join(base, `${directory}-tree`),
 		);
-	return { root, worktree: (directory) => join(base, directory) };
+	return { root, worktree: (directory) => join(base, `${directory}-tree`) };
 }
 
 /** An entry of the Files pane of the folder on screen. Every folder a device
@@ -127,6 +128,18 @@ const newTerminalRow = (page: Page, folder: string): Locator =>
 		name: `New terminal in ${folder}`,
 		exact: true,
 	});
+
+/** The colour a dirty checkout's branch is drawn in. */
+const ACCENT = 'rgb(226, 164, 95)';
+
+/** What a card says its checkout's branch with: General's branch line, and a
+ * linked folder's own name. */
+const CHECKOUT_NAME =
+	'.folders-tree__branch, .folders-tree__label > .folders-tree__name';
+
+/** The tooltip of a linked folder's details, wherever it is drawn. */
+const detailsTooltip = (page: Page): Locator =>
+	page.locator('.folders-tree-details');
 
 /** The lines of a folder's card that only a Git checkout has. */
 const gitLines = (page: Page, folder: string): Locator =>
@@ -247,8 +260,14 @@ test('a repository project shows General and a linked folder per worktree with i
 	const branchOf = (folder: string) =>
 		folderRow(mainWindow, folder).locator('.folders-tree__branch');
 	await expect(branchOf('General')).toHaveText('main');
-	await expect(branchOf('alpha')).toHaveText('feat/alpha');
-	await expect(branchOf('beta')).toHaveText('feat/beta');
+	// A linked folder is named by its branch and says it once: no branch
+	// line of its own, and its directory is nowhere on the card.
+	for (const linked of ['alpha', 'beta']) {
+		await expect(branchOf(linked)).toHaveCount(0);
+		await expect(folderRow(mainWindow, linked)).not.toContainText(
+			`${linked}-tree`,
+		);
+	}
 	// The project's first terminal is in General; a worktree nobody has
 	// opened a terminal in says so.
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
@@ -320,7 +339,7 @@ test('selecting a linked folder shows its worktree in Files and Changes, General
 	await expect(fileItem(mainWindow, 'only-in-main.txt')).toHaveCount(0);
 	await expect(
 		changesPane(mainWindow).locator('.changes-pane__branch-name'),
-	).toHaveText('feat/alpha', { timeout: 6000 });
+	).toHaveText('alpha', { timeout: 6000 });
 	await expect(changed('only-in-alpha.txt')).toBeVisible();
 	await expect(changed('only-in-main.txt')).toHaveCount(0);
 	expect(await projectRootOnScreen(mainWindow)).toBe(root);
@@ -535,10 +554,10 @@ test('folder context menus offer what each kind of folder can do, and Open shell
 		return labels;
 	};
 
+	// A linked folder has no name of its own to change.
 	expect(await menuOf('alpha')).toEqual([
 		'Commit & push with AI…',
 		'Pull from origin',
-		'Rename folder',
 		'Rename worktree',
 		'Delete worktree',
 		'Copy path',
@@ -882,14 +901,11 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 		repo.worktree('outside'),
 	);
 
-	await expect(folderRow(mainWindow, 'outside')).toBeVisible({
+	await expect(folderRow(mainWindow, 'feat/outside')).toBeVisible({
 		timeout: 15_000,
 	});
-	await expect(
-		folderRow(mainWindow, 'outside').locator('.folders-tree__branch'),
-	).toHaveText('feat/outside');
-	await expect(folderTerminals(mainWindow, 'outside')).toHaveCount(0);
-	await expect(newTerminalRow(mainWindow, 'outside')).toBeVisible();
+	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(0);
+	await expect(newTerminalRow(mainWindow, 'feat/outside')).toBeVisible();
 	// No terminal moved, nothing is offered, and nothing is announced.
 	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
 		1,
@@ -898,25 +914,25 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 		/folders-tree__row--selected/,
 	);
 	await expect(
-		folderGroup(mainWindow, 'outside').locator('.folders-tree__offer'),
+		folderGroup(mainWindow, 'feat/outside').locator('.folders-tree__offer'),
 	).toHaveCount(0);
 	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 	await mainWindow.waitForTimeout(1_500);
-	await expect(folderTerminals(mainWindow, 'outside')).toHaveCount(0);
+	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(0);
 
 	// A terminal in the worktree's folder, with something still to say.
-	await selectFolder(mainWindow, 'outside');
+	await selectFolder(mainWindow, 'feat/outside');
 	const sessionId = await newTerminalHere(
 		mainWindow,
 		appHarness.sendAppCommand,
-		'outside',
+		'feat/outside',
 	);
 	await run(mainWindow, "cd / && printf 'before-%s\\n' removal");
 	await expect(terminalOutput(mainWindow)).toContainText('before-removal');
 
 	await git(repo.root, 'worktree', 'remove', '--force', repo.worktree('outside'));
 
-	await expect(folderRow(mainWindow, 'outside')).toHaveCount(0, {
+	await expect(folderRow(mainWindow, 'feat/outside')).toHaveCount(0, {
 		timeout: 15_000,
 	});
 	await expect(folderNames(mainWindow)).toHaveText(['General']);
@@ -1053,11 +1069,8 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 		'.folders-tree__row--folder .folders-tree__text > .folders-tree__name',
 	);
 	await expect(peekFolders).toHaveText(['General', 'alpha']);
-	// Each folder's branch line is there where it has one.
-	await expect(peek.locator('.folders-tree__branch')).toHaveText([
-		'main',
-		'feat/alpha',
-	]);
+	// General's branch line is there; a linked folder's name is its branch.
+	await expect(peek.locator('.folders-tree__branch')).toHaveText(['main']);
 	await expect(
 		peek.locator(`[data-folder-terminal-session="${generalSession}"]`),
 	).toBeVisible();
@@ -1409,9 +1422,6 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 	await openFileExplorer(mainWindow);
 	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
 	await expect(folderRow(mainWindow, 'gamma')).toBeVisible();
-	await expect(
-		folderRow(mainWindow, 'alpha').locator('.folders-tree__branch'),
-	).toHaveText('feat/alpha');
 
 	await selectFolder(mainWindow, 'alpha');
 	const moved = await newTerminalHere(
@@ -1431,15 +1441,15 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 		repo.worktree('alpha-moved'),
 	);
 
-	await expect(folderRow(mainWindow, 'alpha-moved')).toBeVisible({
-		timeout: 15_000,
-	});
-	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0);
-	await expect(terminalRowIn(mainWindow, 'alpha-moved', moved)).toHaveCount(1);
+	// The folder is named by its branch, so its card reads as it did; what it
+	// stands for is the new directory.
+	await expect(folderRow(mainWindow, 'alpha')).toHaveAttribute(
+		'aria-description',
+		`Branch alpha. Worktree alpha-moved-tree. Location ${repo.worktree('alpha-moved')}.`,
+		{ timeout: 15_000 },
+	);
+	await expect(terminalRowIn(mainWindow, 'alpha', moved)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
-	await expect(
-		folderRow(mainWindow, 'alpha-moved').locator('.folders-tree__branch'),
-	).toHaveText('feat/alpha');
 	// The same terminal, and the folder now reads the new directory.
 	await terminalRowOf(mainWindow, moved).click();
 	await expect(terminalPanelForSession(mainWindow, moved)).toBeVisible();
@@ -1526,13 +1536,12 @@ test('a folder card colours its branch only when its checkout is dirty, keeps it
 
 	const branchColour = (folder: string) =>
 		header(folder)
-			.locator('.folders-tree__branch')
+			.locator(CHECKOUT_NAME)
 			.evaluate((element) => getComputedStyle(element).color);
-	const ordinary = await branchColour('General');
-	for (const clean of ['gamma', 'delta'])
-		expect(await branchColour(clean)).toBe(ordinary);
+	for (const clean of ['General', 'gamma', 'delta'])
+		expect(await branchColour(clean)).not.toBe(ACCENT);
 	for (const dirty of ['alpha', 'beta'])
-		expect(await branchColour(dirty)).not.toBe(ordinary);
+		expect(await branchColour(dirty)).toBe(ACCENT);
 
 	// A dirty worktree says how much and that nobody has asked for it to be
 	// merged. A clean checkout has no facts line at all.
@@ -1640,13 +1649,13 @@ test('a pushed branch is not dirty and still shows the commits the default branc
 		await git(repo.worktree(worktree), 'add', '.');
 		await git(repo.worktree(worktree), 'commit', '-m', 'work');
 	}
-	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'feat/alpha');
+	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'alpha');
 	await setProjectRoot(mainWindow, repo.root);
 
 	const header = (folder: string) => folderRow(mainWindow, folder);
 	const branchColour = (folder: string) =>
 		header(folder)
-			.locator('.folders-tree__branch')
+			.locator(CHECKOUT_NAME)
 			.evaluate((element) => getComputedStyle(element).color);
 	const mark = (folder: string) =>
 		header(folder).locator('.folders-tree__unmerged');
@@ -1656,9 +1665,9 @@ test('a pushed branch is not dirty and still shows the commits the default branc
 	await expect(header('alpha')).toHaveAttribute('data-change', 'clean', {
 		timeout: 15_000,
 	});
-	const ordinary = await branchColour('General');
-	expect(await branchColour('alpha')).toBe(ordinary);
-	expect(await branchColour('beta')).not.toBe(ordinary);
+	expect(await branchColour('General')).not.toBe(ACCENT);
+	expect(await branchColour('alpha')).not.toBe(ACCENT);
+	expect(await branchColour('beta')).toBe(ACCENT);
 
 	// Pushed or not, each is one commit the default branch lacks, and General
 	// is none.
@@ -1681,11 +1690,11 @@ test('a pushed branch is not dirty and still shows the commits the default branc
 	await expect(facts('beta')).toContainText('no PR');
 
 	// The push is what changes the card; nothing is refreshed by hand.
-	await git(repo.worktree('beta'), 'push', '-u', 'origin', 'feat/beta');
+	await git(repo.worktree('beta'), 'push', '-u', 'origin', 'beta');
 	await expect(header('beta')).toHaveAttribute('data-change', 'clean', {
 		timeout: 15_000,
 	});
-	expect(await branchColour('beta')).toBe(ordinary);
+	expect(await branchColour('beta')).not.toBe(ACCENT);
 	await expect(mark('beta')).toHaveText('↑1');
 
 	// An uncommitted edit is work on this machine again.
@@ -1698,7 +1707,7 @@ test('a pushed branch is not dirty and still shows the commits the default branc
 		timeout: 15_000,
 	});
 	await expect(facts('alpha')).toContainText('+1');
-	expect(await branchColour('alpha')).not.toBe(ordinary);
+	expect(await branchColour('alpha')).toBe(ACCENT);
 });
 
 test('New terminal on a folder card creates a terminal in that folder, selects the folder, and focuses the terminal', async ({
@@ -1905,4 +1914,159 @@ test("a terminal's row in the Folders tree opens the menu its tab opens, for the
 	await menu.getByText('Close', { exact: true }).click();
 	await expect(terminalRowOf(mainWindow, serverSession)).toHaveCount(0);
 	await expect(terminalRowOf(mainWindow, generalSession)).toHaveCount(1);
+});
+
+test('a worktree is named by its branch on one line, by its directory when detached, and by both when its branch is shared; resting on it shows its branch, directory, and location', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-label', ['alpha']);
+	// A worktree on no branch, one forced onto the root checkout's branch, and
+	// one deep enough that its path is wider than the tooltip.
+	const detached = repo.worktree('bisect');
+	const shared = repo.worktree('hotfix');
+	const deep = join(
+		repo.root,
+		'..',
+		'a-directory-with-a-long-name-of-its-own',
+		'and-another-one-beneath-it-just-as-long',
+		'deep-tree',
+	);
+	await git(repo.root, 'worktree', 'add', '--detach', detached);
+	await git(repo.root, 'worktree', 'add', '--force', shared, 'main');
+	await mkdir(join(deep, '..'), { recursive: true });
+	await git(repo.root, 'worktree', 'add', '-b', 'deep', deep);
+	await setProjectRoot(mainWindow, repo.root);
+
+	// One line each: the branch, the directory, or the branch then the
+	// directory. General keeps its title with its branch beneath.
+	await expect(folderNames(mainWindow)).toHaveText(
+		['General', 'deep', 'alpha', 'bisect-tree', 'main hotfix-tree'],
+		{ timeout: 15_000 },
+	);
+	const alpha = folderRow(mainWindow, 'alpha');
+	await expect(alpha.locator('.folders-tree__branch')).toHaveCount(0);
+	await expect(alpha).not.toContainText('alpha-tree');
+	await expect(alpha.locator('.folders-tree__title svg.lucide-git-branch')).toHaveCount(1);
+	await expect(alpha.locator('svg.lucide-folder')).toHaveCount(0);
+	const general = folderRow(mainWindow, 'General');
+	await expect(general.locator('svg.lucide-folder')).toHaveCount(1);
+	await expect(general.locator('.folders-tree__branch')).toHaveText('main');
+	// Only the worktree sharing a branch says its directory, and says it apart
+	// from the branch.
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__label-suffix'),
+	).toHaveText(['hotfix-tree']);
+
+	// The card follows its worktree's branch, and stays where it was.
+	await git(repo.worktree('alpha'), 'switch', '-c', 'renamed');
+	await expect(folderNames(mainWindow)).toHaveText(
+		['General', 'deep', 'renamed', 'bisect-tree', 'main hotfix-tree'],
+		{ timeout: 15_000 },
+	);
+
+	const tooltip = detailsTooltip(mainWindow);
+	const title = (folder: string) =>
+		folderRow(mainWindow, folder).locator('.folders-tree__title');
+	const away = async () => {
+		await mainWindow.mouse.move(900, 500);
+		await expect(tooltip).toHaveCount(0);
+	};
+
+	// Passing over a card shows nothing, however long ago it was.
+	await title('deep').hover();
+	await mainWindow.waitForTimeout(400);
+	await expect(tooltip).toHaveCount(0);
+	await away();
+	await mainWindow.waitForTimeout(1_200);
+	await expect(tooltip).toHaveCount(0);
+
+	// Resting on it does, after a second and not before.
+	await title('deep').hover();
+	await mainWindow.waitForTimeout(700);
+	await expect(tooltip).toHaveCount(0);
+	await expect(tooltip).toBeVisible({ timeout: 2_000 });
+	await expect(tooltip.locator('dt')).toHaveText([
+		'Branch',
+		'Worktree',
+		'Location',
+	]);
+	await expect(tooltip.locator('dd')).toHaveText([
+		'deep',
+		'deep-tree',
+		await realpath(deep),
+	]);
+	// Three lines, one beneath another, inside the window.
+	const lines = await tooltip
+		.locator('dd')
+		.evaluateAll((values) =>
+			values.map((value) => {
+				const box = value.getBoundingClientRect();
+				return { top: Math.round(box.top), height: Math.round(box.height) };
+			}),
+		);
+	expect(new Set(lines.map((line) => line.top)).size).toBe(3);
+	expect(new Set(lines.map((line) => line.height)).size).toBe(1);
+	const fits = await tooltip.evaluate((element) => {
+		const box = element.getBoundingClientRect();
+		return (
+			box.left >= 0 &&
+			box.top >= 0 &&
+			box.right <= window.innerWidth &&
+			box.bottom <= window.innerHeight
+		);
+	});
+	expect(fits).toBe(true);
+	// The location is wider than its line: its end is shown and its start is
+	// what gives way.
+	const location = await tooltip
+		.locator('.folders-tree-details__location')
+		.evaluate((line) => {
+			const text = line.querySelector('bdi');
+			if (text === null) throw new Error('the location has no text');
+			const outer = line.getBoundingClientRect();
+			const inner = text.getBoundingClientRect();
+			return {
+				overflows: line.scrollWidth > line.clientWidth,
+				startHidden: inner.left < outer.left - 1,
+				endShown: inner.right <= outer.right + 1,
+			};
+		});
+	expect(location).toEqual({ overflows: true, startHidden: true, endShown: true });
+	// It is never between the pointer and a control.
+	expect(
+		await tooltip.evaluate((element) => getComputedStyle(element).pointerEvents),
+	).toBe('none');
+	await away();
+
+	// A detached worktree says where it is detached.
+	await title('bisect-tree').hover();
+	await expect(tooltip).toBeVisible({ timeout: 2_500 });
+	await expect(tooltip.locator('dd').first()).toHaveText(
+		/^detached at [0-9a-f]{8}$/,
+	);
+	await expect(tooltip.locator('dd').nth(1)).toHaveText('bisect-tree');
+	// Opening the menu takes the details away.
+	await folderRow(mainWindow, 'bisect-tree')
+		.getByRole('button', { name: 'Actions for bisect-tree' })
+		.click();
+	await expect(mainWindow.locator('.context-menu')).toBeVisible();
+	await expect(tooltip).toHaveCount(0);
+	await mainWindow.keyboard.press('Escape');
+	await expect(mainWindow.locator('.context-menu')).toHaveCount(0);
+	await away();
+
+	// General and its branch have no details to show.
+	await title('General').hover();
+	await mainWindow.waitForTimeout(1_500);
+	await expect(tooltip).toHaveCount(0);
+	await away();
+
+	// From the keyboard: focus resting on a card shows them, Escape closes.
+	await mainWindow.keyboard.press('Shift');
+	await folderRow(mainWindow, 'renamed').focus();
+	await expect(tooltip).toBeVisible({ timeout: 2_500 });
+	await expect(tooltip.locator('dd').first()).toHaveText('renamed');
+	await mainWindow.keyboard.press('Escape');
+	await expect(tooltip).toHaveCount(0);
 });

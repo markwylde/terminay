@@ -26,7 +26,11 @@ export type FolderTreePanelFacts = {
 /** The slice of a listed worktree the tree presents. */
 export type FolderTreeWorktree = {
 	path: string;
+	/** Branch name, or a short detached-HEAD label, or null when unknown. */
 	branch: string | null;
+	/** True when the worktree is on no branch. */
+	isDetached?: boolean;
+	head?: string | null;
 	pullRequest?: {
 		number: number;
 		state: string;
@@ -63,6 +67,19 @@ export function isChangeDirty(change: FolderTreeChange | undefined): boolean {
 	return change?.kind === 'delta' || change?.kind === 'changed';
 }
 
+/**
+ * What names a linked folder: the branch of its worktree. `suffix` is the
+ * worktree's directory, present only when another checkout is on that branch.
+ */
+export type FolderLabel = { text: string; suffix?: string };
+
+/** What a linked folder's details tooltip says about its worktree. */
+export type FolderTreeDetails = {
+	branch: string;
+	worktree: string;
+	location: string;
+};
+
 export type FolderTreeTerminalRow = {
 	panelId: string;
 	sessionId: string;
@@ -75,7 +92,11 @@ export type FolderTreeTerminalRow = {
 
 export type FolderTreeFolderRow = {
 	id: string;
+	/** A linked folder's is its label as plain text. */
 	name: string;
+	/** Present for a linked folder, which is named by it and has no title. */
+	label?: FolderLabel;
+	details?: FolderTreeDetails;
 	kind: ServerWorkspaceFolder['kind'];
 	isSelected: boolean;
 	/** The worktree a linked folder stands for. Absent for General and plain. */
@@ -165,9 +186,23 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			folder.captureOffer === undefined
 				? undefined
 				: input.panels[folder.captureOffer.panelId];
+		const label =
+			folder.kind !== 'linked' || folder.worktree === undefined
+				? undefined
+				: linkedFolderLabel(folder.worktree.path, input.worktrees);
 		return {
 			id: folder.id,
-			name: folder.name,
+			name: label === undefined ? folder.name : folderLabelText(label),
+			...(label === undefined || folder.worktree === undefined
+				? {}
+				: {
+						label,
+						details: {
+							branch: detailsBranch(worktree),
+							worktree: baseName(folder.worktree.path),
+							location: folder.worktree.path,
+						},
+					}),
 			kind: folder.kind,
 			isSelected: folder.id === selectedFolderId,
 			...(folder.worktree === undefined
@@ -194,6 +229,62 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 				: { offer: { panelId: offered.id, title: titleOf(offered) } }),
 		};
 	});
+}
+
+/**
+ * A linked folder's label: its worktree's branch. A worktree on no branch, or
+ * one the listing does not hold, is named by its directory. Where another
+ * checkout of the repository is on the same branch, which Git allows only when
+ * forced, the directory follows the branch so the two can be told apart.
+ */
+export function linkedFolderLabel(
+	worktreePath: string,
+	worktrees: readonly FolderTreeWorktree[] | undefined,
+): FolderLabel {
+	const directory = baseName(worktreePath);
+	const worktree = worktrees?.find((listed) => listed.path === worktreePath);
+	if (
+		worktree === undefined ||
+		worktree.isDetached === true ||
+		!worktree.branch
+	)
+		return { text: directory };
+	const isShared = (worktrees ?? []).some(
+		(other) =>
+			other !== worktree &&
+			other.isDetached !== true &&
+			other.branch === worktree.branch,
+	);
+	return isShared
+		? { text: worktree.branch, suffix: directory }
+		: { text: worktree.branch };
+}
+
+/** A label where it cannot be drawn in two colours. */
+export function folderLabelText(label: FolderLabel): string {
+	return label.suffix === undefined
+		? label.text
+		: `${label.text} (${label.suffix})`;
+}
+
+/** What names a folder wherever the workspace names one: a linked folder's
+ * label, and any other folder's own name. */
+export function folderDisplayName(
+	folder: Pick<ServerWorkspaceFolder, 'name' | 'kind' | 'worktree'>,
+	worktrees: readonly FolderTreeWorktree[] | undefined,
+): string {
+	return folder.kind !== 'linked' || folder.worktree === undefined
+		? folder.name
+		: folderLabelText(linkedFolderLabel(folder.worktree.path, worktrees));
+}
+
+function detailsBranch(worktree: FolderTreeWorktree | undefined): string {
+	if (worktree === undefined) return 'unknown';
+	if (worktree.isDetached === true)
+		return worktree.head
+			? `detached at ${worktree.head.slice(0, 8)}`
+			: 'detached';
+	return worktree.branch ?? 'unknown';
 }
 
 /** The folder a device shows for a project: the one it remembers if that still

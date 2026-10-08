@@ -19,6 +19,7 @@ import type { GitWorktreeStatus, WorktreePanelStatus } from '../types/terminay';
 import { dashboardStatusFor } from './dashboardRows.ts';
 import {
 	buildFolderTree,
+	folderDisplayName,
 	type FolderTreeChange,
 	type FolderTreeUnmerged,
 	type FolderTreeFolderRow,
@@ -70,6 +71,8 @@ export function folderTreeWorktrees(
 	return status.worktrees.map((worktree) => ({
 		path: worktree.path,
 		branch: worktree.branch,
+		isDetached: worktree.isDetached,
+		head: worktree.head,
 		change: worktreeChange(worktree),
 		...unmergedOf(worktree),
 		...(worktree.properties?.pullRequest === undefined
@@ -146,6 +149,15 @@ function unmergedOf(
 ): { unmerged?: FolderTreeUnmerged } {
 	const unmerged = worktreeUnmerged(worktree);
 	return unmerged === undefined ? {} : { unmerged };
+}
+
+/** A folder's name as every surface outside the tree says it, read from the
+ * same listing the tree reads. */
+export function folderNameFromStatus(
+	folder: Pick<ServerWorkspaceFolder, 'name' | 'kind' | 'worktree'>,
+	status: WorktreePanelStatus | null | undefined,
+): string {
+	return folderDisplayName(folder, folderTreeWorktrees(status));
 }
 
 export type ProjectFolderTreeInput = {

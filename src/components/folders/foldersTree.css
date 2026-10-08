@@ -194,11 +194,80 @@
 
 /* Commits the default branch lacks. Muted whether or not the branch is dirty,
    and never the part that gives way to a long branch name. */
-.folders-tree__branch > .folders-tree__unmerged {
+.folders-tree__branch > .folders-tree__unmerged,
+.folders-tree__label > .folders-tree__unmerged {
 	flex: none;
 	overflow: visible;
 	color: rgba(220, 226, 240, 0.55);
 	font-variant-numeric: tabular-nums;
+}
+
+/* A linked folder is named by its branch: its title line is its branch line.
+   The name gives way to the mark after it, and takes the accent when dirty. */
+.folders-tree__label {
+	align-items: baseline;
+	gap: 4px;
+}
+
+.folders-tree__label > .folders-tree__unmerged {
+	font-size: 11.5px;
+	font-weight: 400;
+}
+
+.folders-tree__title--dirty .folders-tree__icon,
+.folders-tree__row--folder .folders-tree__title--dirty .folders-tree__name {
+	color: #e2a45f;
+}
+
+/* The worktree's directory, shown only when another checkout is on the same
+   branch. Muted whether or not the checkout is dirty. */
+.folders-tree__row--folder .folders-tree__name .folders-tree__label-suffix {
+	color: rgba(220, 226, 240, 0.55);
+	font-weight: 400;
+}
+
+/* A linked folder's worktree in three lines, shown after a rest on its card.
+   Fixed in the window so the column cannot clip it, and never in the way of
+   the pointer. */
+.folders-tree-details {
+	position: fixed;
+	z-index: 9000;
+	max-width: min(360px, calc(100vw - 16px));
+	padding: 7px 10px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 6px;
+	background: #1b1f2a;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+	color: #dce2f0;
+	font-size: 11.5px;
+	line-height: 1.5;
+	pointer-events: none;
+}
+
+.folders-tree-details__lines {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	column-gap: 10px;
+	margin: 0;
+}
+
+.folders-tree-details__lines > dt {
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.folders-tree-details__lines > dd {
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Laid out right to left so a path too long for the line loses its start, not
+   its end. The path itself is isolated and still reads left to right. */
+.folders-tree-details__lines > .folders-tree-details__location {
+	direction: rtl;
+	text-align: left;
 }
 
 /* Change size, pull request, and checks: one line of chips that never wraps

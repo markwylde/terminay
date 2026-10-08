@@ -32,6 +32,11 @@ import {
 } from '../../workspace/folderTreeModel';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
 import {
+	FolderDetailsTooltip,
+	folderDetailsDescription,
+	useFolderDetailsTooltip,
+} from './FolderDetailsTooltip';
+import {
 	checksAccessibleName,
 	checksChip,
 	checksTone,
@@ -457,8 +462,9 @@ function gripOf(tree: HTMLElement | null, folderId: string) {
 
 /**
  * The head of a folder's card: its title, its branch, and its facts, each on a
- * line of its own. Pressing anywhere on it that is not a control selects the
- * folder.
+ * line of its own. A linked folder is named by its branch, so its title line
+ * is its branch line and it has no other. Pressing anywhere on the head that
+ * is not a control selects the folder.
  */
 function FolderHeader({
 	folder,
@@ -506,6 +512,27 @@ function FolderHeader({
 		act();
 	};
 	const pullRequestUrl = pullRequest?.url;
+	const { label, details } = folder;
+	const tooltip = useFolderDetailsTooltip(details !== undefined);
+	const unmergedElement =
+		unmerged === undefined ? null : (
+			<span
+				className="folders-tree__unmerged"
+				role="img"
+				aria-label={unmerged.label}
+				title={unmerged.label}
+			>
+				{unmerged.text}
+			</span>
+		);
+	// Opening the menu ends the rest that would show the details beside it.
+	const openMenu =
+		onMenu === undefined
+			? undefined
+			: (event: MouseEvent) => {
+					tooltip.end();
+					onMenu(event);
+				};
 	return (
 		<div
 			className={`folders-tree__row folders-tree__row--folder${folder.isSelected ? ' folders-tree__row--selected' : ''}${isSelectedAlone ? ' folders-tree__row--selected-alone' : ''}`}
@@ -514,11 +541,37 @@ function FolderHeader({
 			aria-expanded="true"
 			tabIndex={0}
 			{...(change === undefined ? {} : { 'data-change': change.kind })}
+			{...(details === undefined
+				? {}
+				: { 'aria-description': folderDetailsDescription(details) })}
 			onClick={onSelect}
-			onContextMenu={onMenu}
+			onContextMenu={openMenu}
 			onKeyDown={activateOnKey(onSelect)}
+			onPointerDownCapture={tooltip.end}
+			onFocus={(event) => {
+				if (
+					event.target === event.currentTarget &&
+					event.currentTarget.matches(':focus-visible')
+				)
+					tooltip.rest();
+			}}
+			onBlur={tooltip.end}
 		>
-			<span className="folders-tree__title">
+			{details === undefined || tooltip.anchor === null ? null : (
+				<FolderDetailsTooltip details={details} anchor={tooltip.anchor} />
+			)}
+			<span
+				ref={tooltip.anchorRef}
+				className={`folders-tree__title${label !== undefined && folder.isDirty ? ' folders-tree__title--dirty' : ''}`}
+				onPointerOver={(event) => {
+					if (event.pointerType !== 'mouse') return;
+					// A control on the line says what it does itself.
+					if ((event.target as Element).closest('button') === null)
+						tooltip.rest();
+					else tooltip.end();
+				}}
+				onPointerLeave={tooltip.end}
+			>
 				{onGripPointerDown === undefined ? null : (
 					<button
 						type="button"
@@ -532,39 +585,58 @@ function FolderHeader({
 						<GripVertical size={12} aria-hidden="true" />
 					</button>
 				)}
-				<Folder className="folders-tree__icon" size={15} aria-hidden="true" />
-				<span className="folders-tree__text">
-					<span className="folders-tree__name" title={folder.name}>
-						{folder.name}
-					</span>
-				</span>
-				{onMenu === undefined ? null : (
+				{label === undefined ? (
+					<>
+						<Folder
+							className="folders-tree__icon"
+							size={15}
+							aria-hidden="true"
+						/>
+						<span className="folders-tree__text">
+							<span className="folders-tree__name" title={folder.name}>
+								{folder.name}
+							</span>
+						</span>
+					</>
+				) : (
+					<>
+						<GitBranch
+							className="folders-tree__icon"
+							size={15}
+							aria-hidden="true"
+						/>
+						<span className="folders-tree__text folders-tree__label">
+							<span className="folders-tree__name">
+								{label.text}
+								{label.suffix === undefined ? null : (
+									<span className="folders-tree__label-suffix">
+										{' '}
+										{label.suffix}
+									</span>
+								)}
+							</span>
+							{unmergedElement}
+						</span>
+					</>
+				)}
+				{openMenu === undefined ? null : (
 					<button
 						type="button"
 						className="folders-tree__menu"
 						aria-label={`Actions for ${folder.name}`}
-						onClick={onMenu}
+						onClick={openMenu}
 					>
 						<EllipsisVertical size={14} aria-hidden="true" />
 					</button>
 				)}
 			</span>
-			{folder.branch === undefined ? null : (
+			{label !== undefined || folder.branch === undefined ? null : (
 				<span
 					className={`folders-tree__branch${folder.isDirty ? ' folders-tree__branch--dirty' : ''}`}
 				>
 					<GitBranch size={12} aria-hidden="true" />
 					<span title={folder.branch}>{folder.branch}</span>
-					{unmerged === undefined ? null : (
-						<span
-							className="folders-tree__unmerged"
-							role="img"
-							aria-label={unmerged.label}
-							title={unmerged.label}
-						>
-							{unmerged.text}
-						</span>
-					)}
+					{unmergedElement}
 				</span>
 			)}
 			{hasFacts ? (

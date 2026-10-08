@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	buildFolderTree,
+	folderDisplayName,
 	folderIdOfPanel,
+	folderLabelText,
 	isChangeDirty,
+	linkedFolderLabel,
 	resolveSelectedFolderId,
 } from '../src/workspace/folderTreeModel.ts';
 
@@ -43,7 +46,9 @@ const byId = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
 
 test('folders are listed in order with their terminals, and only terminals', () => {
 	const rows = buildFolderTree(workspace());
-	assert.deepEqual(rows.map((row) => row.name), ['General', 'Releases', 'one-project-one-window', 'Servers']);
+	// A linked folder is named by its worktree's branch, whatever name the
+	// server holds for it; General and a plain folder keep their own.
+	assert.deepEqual(rows.map((row) => row.name), ['General', 'fix/release-notes', 'feat/one-project-one-window', 'Servers']);
 	const tree = byId(rows);
 	assert.deepEqual(tree.general.terminals.map((row) => row.title), ['npm run dev', 'one project, one window']);
 	// The file panel is in the folder but is not a terminal row.
@@ -67,6 +72,79 @@ test('a linked folder shows its branch, pull request and checks; General shows t
 	assert.equal(tree.window.branch, 'feat/one-project-one-window');
 	assert.equal(tree.window.pullRequest, undefined);
 	assert.equal(tree.servers.branch, undefined);
+});
+
+test('a linked folder is labelled by its branch, by its directory when it has none, and by both when the branch is shared', () => {
+	const worktrees = [
+		{ path: '/repo', branch: 'main' },
+		{ path: '/repo/.worktrees/reorder-rows', branch: 'feat/reorder-rows' },
+		{ path: '/repo/.worktrees/bisect-crash', branch: '(detached)', isDetached: true, head: '16be2864aa' },
+		{ path: '/repo/.worktrees/hotfix-copy', branch: 'main' },
+		{ path: '/repo/.worktrees/pair-a', branch: 'feat/pair' },
+		{ path: '/repo/.worktrees/pair-b', branch: 'feat/pair' },
+		{ path: '/repo/.worktrees/also-detached', branch: '(detached)', isDetached: true, head: '16be2864aa' },
+	];
+	const label = (path) => linkedFolderLabel(path, worktrees);
+	assert.deepEqual(label('/repo/.worktrees/reorder-rows'), { text: 'feat/reorder-rows' });
+	// No branch to name it by: the directory does.
+	assert.deepEqual(label('/repo/.worktrees/bisect-crash'), { text: 'bisect-crash' });
+	// Not in the listing, or no listing at all.
+	assert.deepEqual(label('/repo/.worktrees/unlisted'), { text: 'unlisted' });
+	assert.deepEqual(linkedFolderLabel('/repo/.worktrees/reorder-rows', undefined), { text: 'reorder-rows' });
+	// Forced onto the root checkout's branch, and two linked worktrees on one.
+	assert.deepEqual(label('/repo/.worktrees/hotfix-copy'), { text: 'main', suffix: 'hotfix-copy' });
+	assert.deepEqual(label('/repo/.worktrees/pair-a'), { text: 'feat/pair', suffix: 'pair-a' });
+	assert.deepEqual(label('/repo/.worktrees/pair-b'), { text: 'feat/pair', suffix: 'pair-b' });
+	// Two detached worktrees share a detached label, not a branch.
+	assert.deepEqual(label('/repo/.worktrees/also-detached'), { text: 'also-detached' });
+
+	assert.equal(folderLabelText({ text: 'main', suffix: 'hotfix-copy' }), 'main (hotfix-copy)');
+	assert.equal(folderLabelText({ text: 'feat/reorder-rows' }), 'feat/reorder-rows');
+
+	const folder = (kind, name, path) => ({ kind, name, ...(path === undefined ? {} : { worktree: { repositoryId: 'repo', path } }) });
+	assert.equal(folderDisplayName(folder('linked', 'renamed by a user', '/repo/.worktrees/reorder-rows'), worktrees), 'feat/reorder-rows');
+	assert.equal(folderDisplayName(folder('linked', 'hotfix-copy', '/repo/.worktrees/hotfix-copy'), worktrees), 'main (hotfix-copy)');
+	assert.equal(folderDisplayName(folder('plain', 'Servers'), worktrees), 'Servers');
+	assert.equal(folderDisplayName(folder('general', 'General'), worktrees), 'General');
+});
+
+test('a linked row carries its label and what its details say; General and a plain folder carry neither', () => {
+	const tree = byId(buildFolderTree(workspace()));
+	assert.deepEqual(tree.releases.label, { text: 'fix/release-notes' });
+	assert.deepEqual(tree.releases.details, {
+		branch: 'fix/release-notes',
+		worktree: 'release-notes',
+		location: '/repo/.worktrees/release-notes',
+	});
+	assert.equal(tree.general.label, undefined);
+	assert.equal(tree.general.details, undefined);
+	assert.equal(tree.servers.label, undefined);
+	assert.equal(tree.servers.details, undefined);
+
+	const detached = byId(
+		buildFolderTree(
+			workspace({
+				input: {
+					worktrees: [
+						{ path: '/repo', branch: 'main' },
+						{ path: '/repo/.worktrees/release-notes', branch: '(detached)', isDetached: true, head: '16be2864aabbccdd' },
+						{ path: '/repo/.worktrees/one-project-one-window', branch: 'main' },
+					],
+				},
+			}),
+		),
+	);
+	assert.equal(detached.releases.name, 'release-notes');
+	assert.equal(detached.releases.details.branch, 'detached at 16be2864');
+	// On the root checkout's branch: the directory tells it from General.
+	assert.deepEqual(detached.window.label, { text: 'main', suffix: 'one-project-one-window' });
+	assert.equal(detached.window.name, 'main (one-project-one-window)');
+	assert.equal(detached.general.name, 'General');
+
+	// Before any listing arrives a linked folder is named by its directory.
+	const unlisted = byId(buildFolderTree(workspace({ input: { worktrees: undefined } })));
+	assert.equal(unlisted.window.name, 'one-project-one-window');
+	assert.equal(unlisted.window.details.branch, 'unknown');
 });
 
 test('a project that is not a repository shows no branch on any folder', () => {
