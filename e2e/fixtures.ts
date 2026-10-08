@@ -71,6 +71,7 @@ const desktopAppReadyTimeoutMs = 15_000;
 
 const FAILURE_DIAGNOSTIC_EVENTS = 200;
 const FAILURE_DIAGNOSTIC_LINE = 600;
+const FAILURE_TERMINAL_ROWS = 15;
 
 /**
  * Say what the application recorded when a test fails. A timed-out locator
@@ -90,6 +91,27 @@ async function printFailureDiagnostics(
 			.allTextContents()
 			.catch(() => []);
 		for (const banner of banners) lines.push(`error banner: ${banner}`);
+		// What the terminal on screen last showed: whether a typed command ran.
+		const rows = await page
+			.locator(
+				'.project-workspace--active .terminal-panel:visible .xterm-rows > div',
+			)
+			.allTextContents()
+			.catch(() => []);
+		const shown = rows.map((row) => row.trimEnd()).filter((row) => row !== '');
+		for (const row of shown.slice(-FAILURE_TERMINAL_ROWS))
+			lines.push(`terminal: ${row}`.slice(0, FAILURE_DIAGNOSTIC_LINE));
+		const focused = await page
+			.evaluate(() => {
+				const element = document.activeElement;
+				return element === null
+					? 'nothing'
+					: `${element.tagName.toLowerCase()}.${element.className}`;
+			})
+			.catch(() => 'unknown');
+		lines.push(
+			`focus: ${focused}; window focused: ${await page.evaluate(() => document.hasFocus()).catch(() => 'unknown')}`,
+		);
 	}
 	const directory = path.join(userDataDir, 'logs');
 	const files = (await readdir(directory).catch(() => []))
