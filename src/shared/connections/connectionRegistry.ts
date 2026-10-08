@@ -320,7 +320,9 @@ class ConnectionEntry {
 			this.compatibility = compatibility;
 			this.serverId = hello?.serverId;
 			this.hello = hello;
-			this.publishProfileStatus(compatibility);
+			this.publishProfileStatus(
+				compatibilityToConnectionStatus(compatibility),
+			);
 			// A server this bundle cannot speak to stays attached and inert. It
 			// gets no feature clients, so nothing can send it an operation.
 			if (compatibility.state === 'incompatible' || hello === undefined) {
@@ -333,10 +335,30 @@ class ConnectionEntry {
 				this.changed();
 				return;
 			}
-			const context = await (this.options.createContext ??
-				defaultCreateContext)(client, hello, {
-				onTransportClosed: () => this.recoverFromClose(generation),
-			});
+			let context: WorkspaceConnectionContext;
+			try {
+				context = await (this.options.createContext ??
+					defaultCreateContext)(client, hello, {
+					onTransportClosed: () => this.recoverFromClose(generation),
+				});
+			} catch (cause) {
+				// A workspace from another release passes the hello and fails here.
+				// It is the same answer on every attempt, so it is recorded as an
+				// incompatible server rather than retried behind a spinner.
+				if (stale() || !isWorkspaceSchemaIncompatible(cause)) throw cause;
+				await client.close().catch(() => undefined);
+				if (this.client === client) this.client = undefined;
+				this.phase = 'incompatible';
+				this.error = cause.message;
+				this.clearContext();
+				// The hello's verdict was about the protocol, and no longer the
+				// whole story; the error names the side to update.
+				this.compatibility = undefined;
+				this.publishProfileStatus('incompatible');
+				this.loop.gate.finish({ generation });
+				this.changed();
+				return;
+			}
 			if (stale()) {
 				await client.close().catch(() => undefined);
 				if (this.client === client) this.client = undefined;
@@ -374,15 +396,12 @@ class ConnectionEntry {
 	/** A degraded server is still usable and stays connected; only one this
 	 * bundle cannot talk to at all is recorded incompatible. */
 	private publishProfileStatus(
-		compatibility: Parameters<typeof compatibilityToConnectionStatus>[0],
+		status: ReturnType<typeof compatibilityToConnectionStatus>,
 	): void {
 		const store = this.options.profileStore;
 		const profile = store?.get(this.profileId);
 		if (store === undefined || profile === undefined) return;
-		store.remember({
-			...profile,
-			status: compatibilityToConnectionStatus(compatibility),
-		});
+		store.remember({ ...profile, status });
 	}
 
 	private isCurrent(generation: number): boolean {
@@ -394,6 +413,15 @@ class ConnectionEntry {
 		if (!this.loop.gate.shouldRecoverFromClose({ generation })) return;
 		this.start(true);
 	}
+}
+
+/** Matched by its code, not its class: the error is thrown from the lazily
+ * loaded feature tree this module deliberately does not import. */
+function isWorkspaceSchemaIncompatible(cause: unknown): cause is Error {
+	return (
+		cause instanceof Error &&
+		(cause as { code?: unknown }).code === 'workspace_schema_incompatible'
+	);
 }
 
 function defaultCreateClient(options: TerminayClientOptions): TerminayClient {

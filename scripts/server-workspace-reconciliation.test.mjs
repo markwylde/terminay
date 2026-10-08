@@ -317,7 +317,10 @@ test('a snapshot is accepted only with valid folders', () => {
 		return () => parseServerWorkspaceSnapshot(candidate, 'server-a');
 	};
 	// The schema before folders is not readable by this client.
-	assert.throws(broken((state) => { state.schemaVersion = 5; }), /incompatible workspace snapshot/);
+	assert.throws(broken((state) => { state.schemaVersion = 5; }), (error) =>
+		error.code === 'workspace_schema_incompatible' && error.upgrade === 'server' && /Update the server/.test(error.message));
+	assert.throws(broken((state) => { state.schemaVersion = 7; }), (error) =>
+		error.code === 'workspace_schema_incompatible' && error.upgrade === 'client' && /Update Terminay/.test(error.message));
 	assert.throws(broken((state) => { delete state.folders; }), /incompatible workspace snapshot/);
 	assert.throws(broken((state, general) => { state.folders[general].kind = 'plain'; }), /invalid workspace folder references/);
 	assert.throws(broken((state) => { state.projects['project-a'].folderIds = []; }), /invalid workspace folder references/);

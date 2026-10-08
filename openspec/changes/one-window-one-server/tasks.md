@@ -15,7 +15,7 @@
 ## 3. The connection menu
 
 - [x] 3.1 Make the Desktop connection menu list Local and every saved server, mark the window's server, switch on choosing a row, and offer **Open in new window** on the others; show a switch in progress and a failed switch's reason. Verified by component tests and by the E2E in 3.4.
-- [ ] 3.2 Keep the connection menu usable while the window's server is offline, reconnecting, unauthenticated, or incompatible. Verified by an Electron E2E that stops a standalone server and switches the window back to Local.
+- [x] 3.2 Keep switching servers available while the window's server is offline, reconnecting, unauthenticated, or incompatible, including from the connection state that replaces the workspace; record a server on another release's workspace format as incompatible instead of retrying it. Verified by `scripts/connection-state-servers.test.mjs`, `scripts/connection-registry.test.mjs`, and the Electron E2E in `e2e/desktop-loopback-standalone-pairing.spec.ts` that stops a standalone server and switches the window back to Local.
 - [ ] 3.3 List the remembered servers in the compact switcher on Desktop and switch from it. Verified by a compact-width E2E.
 - [ ] 3.4 Electron E2E for the journey: pair a standalone server, land on it, switch to Local, switch back, and find the remote server's terminal still running. Verified by the suite passing in pull-request CI.
 
