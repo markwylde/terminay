@@ -39,7 +39,7 @@ const { worktreeChange, folderTreeWorktrees } = await bundleModule(
 	'src/workspace/folderTreeSources.ts',
 	'folder-tree-sources.cjs',
 );
-const { folderOrderAfterMove } = await bundleModule(
+const { folderOrderAfterMove, terminalRenameTitle } = await bundleModule(
 	'src/workspace/folderTreeModel.ts',
 	'folder-tree-model.cjs',
 );
@@ -361,6 +361,15 @@ test('a moved folder never goes above General, and General is never the one move
 	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 1), ids);
 	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), ids);
 	assert.deepEqual(folderOrderAfterMove(ids, 'missing', 2), ids);
+});
+
+test("a rename typed into a terminal's row saves the trimmed name, and nothing for a blank or unchanged one", () => {
+	assert.equal(terminalRenameTitle('Terminal 1', 'api server'), 'api server');
+	assert.equal(terminalRenameTitle('Terminal 1', '  logs  '), 'logs');
+	assert.equal(terminalRenameTitle('Terminal 1', ''), null);
+	assert.equal(terminalRenameTitle('Terminal 1', '   '), null);
+	assert.equal(terminalRenameTitle('Terminal 1', 'Terminal 1'), null);
+	assert.equal(terminalRenameTitle('Terminal 1', ' Terminal 1 '), null);
 });
 
 test('the selected folder is tinted only when none of its terminals is the active one', () => {

@@ -1906,3 +1906,85 @@ test("a terminal's row in the Folders tree opens the menu its tab opens, for the
 	await expect(terminalRowOf(mainWindow, serverSession)).toHaveCount(0);
 	await expect(terminalRowOf(mainWindow, generalSession)).toHaveCount(1);
 });
+
+test("double-clicking a terminal's row renames it in place: Enter and leaving the input save, Escape and a blank name do not", async ({
+	appHarness,
+	mainWindow,
+}) => {
+	const firstSession = await activeTerminalSessionId(mainWindow);
+	await newTerminalHere(mainWindow, appHarness.sendAppCommand, 'General');
+	const row = terminalRowOf(mainWindow, firstSession);
+	const name = row.locator('.folders-tree__name');
+	const input = row.locator('.folders-tree__rename');
+	const tabs = mainWindow.locator(
+		'.project-workspace--active .terminal-tab-content',
+	);
+	const original = (await name.textContent()) ?? '';
+	expect(original.length).toBeGreaterThan(0);
+	const rowHeight = (await row.boundingBox())?.height;
+
+	// The row of a terminal that is not the one in front: the double-click
+	// also activates it, and the input still keeps focus.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await expect(input).toHaveValue(original);
+	expect(
+		await input.evaluate((element: HTMLInputElement) =>
+			element.value.slice(
+				element.selectionStart ?? 0,
+				element.selectionEnd ?? 0,
+			),
+		),
+	).toBe(original);
+	expect((await row.boundingBox())?.height).toBe(rowHeight);
+	await expect(row).toHaveAttribute('draggable', 'false');
+	// Outliving the moment the activated terminal takes focus.
+	await mainWindow.waitForTimeout(500);
+	await expect(input).toBeFocused();
+
+	// Typing replaces the selected name, and a space does not activate the row.
+	await mainWindow.keyboard.type('api server');
+	await expect(input).toHaveValue('api server');
+	await mainWindow.keyboard.press('Enter');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+	await expect(tabs.filter({ hasText: 'api server' })).toHaveCount(1);
+	await expect(
+		terminalPanelForSession(mainWindow, firstSession).locator(
+			'.xterm-helper-textarea',
+		),
+	).toBeFocused();
+
+	// Escape leaves the name.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.keyboard.type('thrown away');
+	await mainWindow.keyboard.press('Escape');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+
+	// So does a blank name.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await input.fill('   ');
+	await mainWindow.keyboard.press('Enter');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+
+	// Leaving the input saves what was typed.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
+	await input.fill('logs');
+	await folderRow(mainWindow, 'General').click();
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('logs');
+	await expect(tabs.filter({ hasText: 'logs' })).toHaveCount(1);
+
+	// The server holds the name: it is there after a reload.
+	await mainWindow.reload();
+	await expect(
+		terminalRowOf(mainWindow, firstSession).locator('.folders-tree__name'),
+	).toHaveText('logs', { timeout: 15_000 });
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});

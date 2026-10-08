@@ -63,6 +63,18 @@ export function isChangeDirty(change: FolderTreeChange | undefined): boolean {
 	return change?.kind === 'delta' || change?.kind === 'changed';
 }
 
+/**
+ * The title a rename typed into a terminal's row saves, or null when it saves
+ * nothing: a blank name, or the one the terminal already has.
+ */
+export function terminalRenameTitle(
+	current: string,
+	typed: string,
+): string | null {
+	const title = typed.trim();
+	return title.length === 0 || title === current ? null : title;
+}
+
 export type FolderTreeTerminalRow = {
 	panelId: string;
 	sessionId: string;
