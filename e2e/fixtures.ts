@@ -110,6 +110,14 @@ async function printFailureDiagnostics(
 					severity?: string;
 					timestamp?: string;
 				};
+				// Per-frame port tracing and Electron's development notice are
+				// recorded as warnings and would bury everything else.
+				if (
+					/terminay-port-diagnostic|Electron Security Warning/u.test(
+						event.message ?? '',
+					)
+				)
+					continue;
 				if (
 					event.severity !== 'warning' &&
 					event.severity !== 'error' &&

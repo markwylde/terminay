@@ -340,6 +340,11 @@ export function useFileExplorerController({
 	);
 	const refreshTimersRef = useRef<Map<string, number>>(new Map());
 	const unavailableWatchFallbacksRef = useRef<Set<string>>(new Set());
+	/** Directories whose watch was lost and is owed one more start. */
+	const lostWatchPathsRef = useRef<Set<string>>(new Set());
+	/** Directories whose watch has already been given that second start. */
+	const retriedWatchPathsRef = useRef<Set<string>>(new Set());
+	const [watchGeneration, setWatchGeneration] = useState(0);
 	const loadVersionsRef = useRef<Map<string, number>>(new Map());
 	const directoryLoadsRef = useRef<Map<string, Promise<void>>>(new Map());
 	const gitRefreshRequestIdRef = useRef(0);
@@ -428,6 +433,8 @@ export function useFileExplorerController({
 								size: entry.size,
 							})),
 						}));
+						if (lostWatchPathsRef.current.delete(dirPath))
+							setWatchGeneration((generation) => generation + 1);
 						onOperationSucceeded('Explorer');
 					} catch (error) {
 						if (
@@ -929,6 +936,8 @@ export function useFileExplorerController({
 			window.clearTimeout(timer);
 		refreshTimersRef.current.clear();
 		unavailableWatchFallbacksRef.current.clear();
+		lostWatchPathsRef.current.clear();
+		retriedWatchPathsRef.current.clear();
 		setDirectoryChildren({});
 		setDirectoryErrors({});
 		setDeletingWorktreePaths(new Set());
@@ -1037,6 +1046,16 @@ export function useFileExplorerController({
 		if (expandedWatchPaths.length === 0) return;
 		let disposed = false;
 		const cleanups: Array<() => void> = [];
+		// A watch that could not start, or that stopped observing, is started
+		// once more when its directory next loads. A worktree that is being
+		// moved or recreated is briefly not there to watch; without this its
+		// folder would show whatever it held at that moment for good. Once, so
+		// a directory that cannot be watched at all is not asked again.
+		const markWatchLost = (path: string) => {
+			if (retriedWatchPathsRef.current.has(path)) return;
+			retriedWatchPathsRef.current.add(path);
+			lostWatchPathsRef.current.add(path);
+		};
 		void Promise.all(
 			expandedWatchPaths.map(async (path) => {
 				try {
@@ -1050,15 +1069,24 @@ export function useFileExplorerController({
 					}
 					const unsubscribe = await fileObservationClient.subscribeWatch(
 						handle,
-						() => scheduleDirectoryRefresh(path),
+						(event) => {
+							if (event.kind === 'unavailable') markWatchLost(path);
+							scheduleDirectoryRefresh(path);
+						},
 						() => scheduleDirectoryRefresh(path),
 					);
 					cleanups.push(() => {
 						unsubscribe();
 						void fileObservationClient.stopWatch(handle.subscriptionId);
 					});
+					// A watch started again after one was lost: whatever changed
+					// while nothing was watching is read now that something is.
+					if (retriedWatchPathsRef.current.has(path))
+						scheduleDirectoryRefresh(path);
 				} catch {
-					if (!disposed && !unavailableWatchFallbacksRef.current.has(path)) {
+					if (disposed) return;
+					markWatchLost(path);
+					if (!unavailableWatchFallbacksRef.current.has(path)) {
 						unavailableWatchFallbacksRef.current.add(path);
 						scheduleDirectoryRefresh(path);
 					}
@@ -1077,6 +1105,7 @@ export function useFileExplorerController({
 		project.isFileExplorerOpen,
 		project.rootFolder,
 		scheduleDirectoryRefresh,
+		watchGeneration,
 	]);
 	const cleanWorktreesToDelete = useMemo(() => {
 		const busy = new Set([...deletingWorktreePaths, ...pullingWorktreePaths]);
