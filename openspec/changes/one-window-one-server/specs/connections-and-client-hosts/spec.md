@@ -256,7 +256,7 @@ A window SHALL run exactly one workspace UI bundle, and that bundle SHALL be the
 
 ### Requirement: Desktop persists profiles and each window's server
 
-Desktop SHALL store non-secret profiles locally and credentials through OS-backed secure storage where available. A Desktop connection created from a pairing URL SHALL enrol a protected device key and save only the stable session origin as switchable profile metadata; one-time URLs SHALL never be stored or reused. A profile record SHALL contain only its stable server identity, exact session origin, display metadata, timestamps, and a diagnostic status; pairing fragments, device keys, terminal data, and filesystem paths SHALL NOT be profile fields. Desktop SHALL also persist which server each window shows, and the workspace view chosen on it, as device-local presentation state alongside window geometry, and SHALL NOT send it to any server.
+Desktop SHALL store non-secret profiles locally and credentials through OS-backed secure storage where available. A Desktop connection created from a pairing URL SHALL enrol a protected device key and save only the stable session origin as switchable profile metadata; one-time URLs SHALL never be stored or reused. A profile record SHALL contain only its stable server identity, exact session origin, display metadata, timestamps, and a diagnostic status; pairing fragments, device keys, terminal data, and filesystem paths SHALL NOT be profile fields. Desktop SHALL also persist which server its workspace window last showed, as device-local presentation state holding a profile id and nothing else, and SHALL NOT send it to any server. On starting, Desktop SHALL open that window on Local and SHALL then switch it to the remembered server once that server's transport is ready; a server that cannot be reached, or that has been forgotten, SHALL leave the window on Local.
 
 #### Scenario: Pairing URL is not persisted
 
@@ -270,8 +270,13 @@ Desktop SHALL store non-secret profiles locally and credentials through OS-backe
 
 #### Scenario: A window reopens on its server
 
-- **WHEN** Desktop restarts after a window was showing a remote server
-- **THEN** that window reopens bound to the same server
+- **WHEN** Desktop restarts after its workspace window was showing a remote server that is reachable
+- **THEN** the window opens on Local and then shows that server
+
+#### Scenario: The remembered server cannot be reached
+
+- **WHEN** Desktop restarts and the server its workspace window last showed does not answer
+- **THEN** the window stays on Local
 
 ### Requirement: A native window is bound to one server
 

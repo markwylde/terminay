@@ -66,6 +66,13 @@ export interface WorkspaceConnectionHost {
 	 * credential and metadata and revokes nothing on the server. */
 	renameProfile?(profileId: string, label: string): Promise<void>;
 	forgetProfile?(profileId: string): Promise<void>;
+	/** The profile this window is showing, where the host says. */
+	readonly currentProfileId?: string;
+	/** Present where the host can show another remembered server in this
+	 * window, or open one in a window of its own. The host does the work: this
+	 * names a profile and nothing else. */
+	selectProfile?(profileId: string): Promise<void>;
+	openProfileWindow?(profileId: string): Promise<void>;
 }
 
 export const NO_ATTACHED_CONNECTIONS: WorkspaceConnectionHost = Object.freeze({
@@ -159,8 +166,18 @@ export function createDesktopConnectionHost(
 				() => undefined,
 			);
 		},
+		currentProfileId: context.profileId,
 		...(supportsAttach
 			? {
+					selectProfile: async (profileId: string) => {
+						await requestAction({ type: 'connections.select', profileId });
+					},
+					openProfileWindow: async (profileId: string) => {
+						await requestAction({
+							type: 'connections.open-window',
+							profileId,
+						});
+					},
 					renameProfile: async (profileId: string, label: string) => {
 						await requestAction({
 							type: 'connections.rename',
@@ -195,9 +212,9 @@ export function createDesktopConnectionHost(
 					},
 				}
 			: {}),
-		// The host hands the restored composition back in the bootstrap context,
-		// beside window geometry. There is nothing further to ask it for.
-		readComposition: async () => context.composition,
+		// A window shows one server, so there is no set of other servers to
+		// restore into it.
+		readComposition: async () => undefined,
 		writeComposition: async (composition) => {
 			if (!supportsAttach) return;
 			await requestAction({
