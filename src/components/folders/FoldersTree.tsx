@@ -70,6 +70,15 @@ export type FoldersTreeProps = {
 	/** A terminal row started being dragged, or its drag ended. */
 	onTerminalDrag?: (drag: { folderId: string; panelId: string } | null) => void;
 	/**
+	 * Opens a terminal's menu at a point: the one its tab opens. Absent where a
+	 * row only lists, such as in a peek.
+	 */
+	onTerminalMenu?: (
+		folderId: string,
+		panelId: string,
+		anchor: { x: number; y: number },
+	) => void;
+	/**
 	 * Opens a pull request or a check in the browser. Absent where a card only
 	 * reports, such as in a peek: the number and the count are then plain text.
 	 */
@@ -100,6 +109,7 @@ export function FoldersTree({
 	acceptsTerminalDrop = false,
 	onDropTerminal,
 	onTerminalDrag,
+	onTerminalMenu,
 	onOpenLink,
 	onLoadChecks,
 	variant = 'tree',
@@ -336,7 +346,7 @@ export function FoldersTree({
 						{...(onReorderFolders === undefined
 							? {}
 							: folder.kind === 'general'
-								? { keepsGripRoom: true }
+								? {}
 								: {
 										onGripPointerDown: (event: ReactPointerEvent) =>
 											startGripDrag(folder.id, event),
@@ -361,6 +371,12 @@ export function FoldersTree({
 							key={terminal.panelId}
 							terminal={terminal}
 							onSelect={() => onSelectTerminal(folder.id, terminal.panelId)}
+							{...(onTerminalMenu === undefined
+								? {}
+								: {
+										onMenu: (anchor: { x: number; y: number }) =>
+											onTerminalMenu(folder.id, terminal.panelId, anchor),
+									})}
 							{...(onTerminalDrag === undefined
 								? {}
 								: {
@@ -449,13 +465,10 @@ function FolderHeader({
 	onMenu,
 	onGripPointerDown,
 	onGripKeyDown,
-	keepsGripRoom = false,
 	onOpenLink,
 	checksOpen,
 	onToggleChecks,
 }: Readonly<{
-	/** True for the one folder with no grip in a tree whose others have one. */
-	keepsGripRoom?: boolean;
 	folder: FolderTreeFolderRow;
 	onSelect: () => void;
 	onMenu?: (event: MouseEvent) => void;
@@ -503,12 +516,7 @@ function FolderHeader({
 			onKeyDown={activateOnKey(onSelect)}
 		>
 			<span className="folders-tree__title">
-				{onGripPointerDown === undefined ? (
-					// General keeps the grip's room so every title starts in line.
-					keepsGripRoom ? (
-						<span className="folders-tree__grip-room" aria-hidden="true" />
-					) : null
-				) : (
+				{onGripPointerDown === undefined ? null : (
 					<button
 						type="button"
 						className="folders-tree__grip"
@@ -664,11 +672,13 @@ function ChecksChip({
 function TerminalRow({
 	terminal,
 	onSelect,
+	onMenu,
 	onDragStart,
 	onDragEnd,
 }: Readonly<{
 	terminal: FolderTreeTerminalRow;
 	onSelect: () => void;
+	onMenu?: (anchor: { x: number; y: number }) => void;
 	onDragStart?: () => void;
 	onDragEnd?: () => void;
 }>) {
@@ -682,6 +692,22 @@ function TerminalRow({
 			draggable={onDragStart !== undefined}
 			onClick={onSelect}
 			onKeyDown={activateOnKey(onSelect)}
+			{...(onMenu === undefined
+				? {}
+				: {
+						onContextMenu: (event: MouseEvent) => {
+							event.preventDefault();
+							event.stopPropagation();
+							// The menu key reports no pointer: the menu opens on the row.
+							const rect = event.currentTarget.getBoundingClientRect();
+							const fromPointer = event.clientX !== 0 || event.clientY !== 0;
+							onMenu(
+								fromPointer
+									? { x: event.clientX, y: event.clientY }
+									: { x: rect.left + 16, y: rect.bottom },
+							);
+						},
+					})}
 			onDragStart={(event) => {
 				event.dataTransfer.effectAllowed = 'move';
 				// A drag with no data never starts in some engines. The type is

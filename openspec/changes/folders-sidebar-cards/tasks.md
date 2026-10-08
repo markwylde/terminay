@@ -12,6 +12,8 @@
 - [x] 2.4 Make the card the terminal drop target in place of the old folder group, with its drop highlight. Verified by the existing test "a terminal dragged into a new plain folder is still there after a reload, and its tab menu moves it back" in `e2e/linked-folders.spec.ts` passing.
 - [x] 2.5 Render the peek (`variant="peek"`) with the same card, branch line and facts line and without the grip, menu button and New terminal row. Verified by `scripts/project-tab-peek-model.test.mjs` passing and by the existing peek end-to-end test finding folders, branches and terminals and no `New terminal` text.
 
+- [x] 2.6 Give each terminal row the context menu of its terminal's tab, by asking the tab to open its own menu at the pointer (`src/workspace/terminalTabMenu.ts`), showing the terminal first when its folder has no tabs drawn. Verified by an end-to-end test in `e2e/linked-folders.spec.ts` that the row's menu lists exactly what the tab's menu lists, that it differs from the folder's menu, and that Close from the row of a terminal in another folder closes that terminal and no other.
+
 ## 3. New terminal row
 
 - [x] 3.1 Add `onNewTerminal(folderId)` to `FoldersTree`, render a New terminal row as the last row of every card when it is given, after any offer, and remove the "No terminals yet" row. Wire it in `src/App.tsx` to select the folder and run the ordinary new-terminal path, as the compact switcher's folder label does. Verified by `scripts/folders-tree-row.test.mjs` finding the row on an empty and a non-empty folder and no placeholder text.

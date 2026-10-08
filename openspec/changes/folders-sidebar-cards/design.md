@@ -60,7 +60,7 @@ This crosses no boundary: the renderer names a folder id, and the server resolve
 
 ### 5. Reordering uses pointer events on the grip and the existing command
 
-The grip is a button at the left of the title line. A pointer drag that starts on it moves the card among its siblings as a local preview; on release the renderer sends `folder.reorder` with the previewed order and keeps showing it until the server's order arrives, which is the previewed one once the command commits. If the server refuses, or has not answered after three seconds, the tree goes back to the order the server holds. The drag listens for the pointer on the window rather than capturing it on the grip, because reordering moves the card in the document and a moved element loses its capture. Arrow up and arrow down on the focused grip send the same command for a one-place move. General renders no grip, and the preview never places a card above it.
+The grip is a button at the left of the title line. A pointer drag that starts on it moves the card among its siblings as a local preview; on release the renderer sends `folder.reorder` with the previewed order and keeps showing it until the server's order arrives, which is the previewed one once the command commits. If the server refuses, or has not answered after three seconds, the tree goes back to the order the server holds. The drag listens for the pointer on the window rather than capturing it on the grip, because reordering moves the card in the document and a moved element loses its capture. Arrow up and arrow down on the focused grip send the same command for a one-place move. General renders no grip and keeps no room for one, so its title starts at the card's left edge; the preview never places a card above it.
 
 Pointer events are used rather than HTML drag and drop because terminal rows already use HTML drag and drop to move a terminal onto a folder, and the folder cards are that drag's drop targets. A second HTML drag source in the same list would have to be told apart from the first in every `dragover`. A pointer drag never enters that path.
 
@@ -84,7 +84,15 @@ The class `folders-tree__row--selected` stays on the selected folder's title lin
 
 `variant="peek"` renders the same card, branch line and facts line, and omits the grip, the menu button and the New terminal row. The peek's requirement in `workspace-and-project-tabs` (folders in order, each folder's branch line, each folder's terminals) is unchanged by this.
 
-### 9. Deltas are written against `project-folders` before it is in the main specs
+### 9. A terminal row opens its tab's menu rather than a second menu
+
+The tab's context menu lives in `TerminalTab`: the tab holds the menu's state, and several of its actions report from the tab's own element. A row in the tree therefore does not build a menu. `src/workspace/terminalTabMenu.ts` finds the terminal's tab by its `data-panel-id` and dispatches a `contextmenu` event on it at the pointer's position, so the tab opens its own menu where the user pressed. The two can never offer different items.
+
+A folder this device has not shown has no tabs drawn. For a terminal in such a folder the row first shows the terminal, the way selecting its row does, and opens the menu once the tab exists. A terminal in a folder the device has already shown gets its menu without the selection changing.
+
+The alternative was to lift the menu's items and state out of `TerminalTab` into a shared hook. That is the better shape if a third surface ever wants the menu, and it is a larger change to a component every panel uses; it is left until then. No boundary is crossed: the menu's actions are the ones the tab already performs.
+
+### 10. Deltas are written against `project-folders` before it is in the main specs
 
 The deltas modify three requirements and add two, under the names `linked-folders` gives them. They are full replacements, so they fold in cleanly once `linked-folders` has archived and created `openspec/specs/project-folders/spec.md`. This change must archive after `linked-folders`. The `compact-switcher-project-cards` change set the same precedent for requirements it shares with unarchived changes.
 

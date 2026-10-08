@@ -10,6 +10,7 @@ The column has little width and a great deal of height. This change spends heigh
 - The facts row never wraps. When the column is narrow the chips shorten their labels (`PR #360` becomes `#360`, `23 running` becomes the count beside its indicator) instead of moving to a second line.
 - A branch is drawn in the accent colour only when its checkout is dirty, meaning it holds changes the default branch does not have. A clean checkout's branch is drawn in the ordinary text colour. The same rule applies to General, which now shows its change size chip when the project root checkout is dirty.
 - A dirty linked folder with no pull request says `no PR`.
+- A terminal's row in the tree opens the same context menu as its tab.
 - Every folder card ends with a **New terminal** row that creates a terminal in that folder. It replaces the "No terminals yet" placeholder row.
 - The selected folder's card carries no border or stripe. The active terminal's row is what is highlighted. When the selected folder has no active terminal row, its title row is tinted so the selection is still visible.
 - Folders are reordered by dragging the grip at the left of a folder's title, or from the keyboard with the grip focused. General has no grip and stays first.

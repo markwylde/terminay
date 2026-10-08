@@ -271,6 +271,7 @@ import {
 } from './workspace/folderCapture';
 import { folderChanges, isGitProject } from './workspace/folderWorktree';
 import { ProjectTabPeek } from './workspace/ProjectTabPeek';
+import { openTerminalTabMenuOnceDrawn } from './workspace/terminalTabMenu';
 import { useFolderCaptureEvents } from './workspace/useFolderCaptureEvents';
 import { useFolderMenuController } from './workspace/useFolderMenuController';
 import {
@@ -5350,6 +5351,11 @@ const ProjectWorkspace = forwardRef<
 								}
 								onSelectTerminal={(folderId, panelId) =>
 									onActivateFolderPanel(project.id, folderId, panelId)
+								}
+								onTerminalMenu={(folderId, panelId, anchor) =>
+									openTerminalTabMenuOnceDrawn(panelId, anchor, () =>
+										onActivateFolderPanel(project.id, folderId, panelId),
+									)
 								}
 								onTerminalDrag={(drag) =>
 									reportTerminalTabDrag(

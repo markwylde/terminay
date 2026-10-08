@@ -1778,3 +1778,47 @@ test('folders are reordered by dragging a grip or with the arrow keys, and nothi
 	);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
+
+test("a terminal's row in the Folders tree opens the menu its tab opens, for the terminal on screen and for one in another folder", async ({
+	appHarness,
+	mainWindow,
+}) => {
+	const menu = mainWindow.locator('.context-menu');
+	const generalSession = await activeTerminalSessionId(mainWindow);
+	await mainWindow
+		.locator('.project-workspace--active .terminal-tab-content--active')
+		.click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	const fromTab = await contextMenuLabels(mainWindow);
+	expect(fromTab).toContain('Close');
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+
+	await terminalRowOf(mainWindow, generalSession).click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	expect(await contextMenuLabels(mainWindow)).toEqual(fromTab);
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+	// A terminal's menu is not its folder's menu.
+	await openFolderMenu(mainWindow, 'General');
+	expect(await contextMenuLabels(mainWindow)).not.toEqual(fromTab);
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+
+	// A terminal in a folder that is not the one on screen.
+	await createPlainFolder(mainWindow, 'Servers');
+	await selectFolder(mainWindow, 'Servers');
+	const serverSession = await newTerminalHere(
+		mainWindow,
+		appHarness.sendAppCommand,
+		'Servers',
+	);
+	await selectFolder(mainWindow, 'General');
+	await terminalRowOf(mainWindow, serverSession).click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	expect(await contextMenuLabels(mainWindow)).toContain('Close');
+	// It is that terminal's menu: Close closes that terminal and no other.
+	await menu.getByText('Close', { exact: true }).click();
+	await expect(terminalRowOf(mainWindow, serverSession)).toHaveCount(0);
+	await expect(terminalRowOf(mainWindow, generalSession)).toHaveCount(1);
+});

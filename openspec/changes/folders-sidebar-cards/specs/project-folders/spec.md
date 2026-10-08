@@ -2,7 +2,7 @@
 
 ### Requirement: The Folders tree
 
-A project SHALL present a Folders tree in a column to the left of its panel area. The tree SHALL list the project's folders in order, each as a card. A card SHALL hold, in this order: a title line with the folder's icon, name, and menu button; a branch line when the folder has a checkout to name; a facts line when the folder has facts to show; then that folder's terminals in panel order, each with its status indicator and title; then a New terminal row. Every line and row SHALL be a single unwrapped line, and a name, branch, or title too long for the column SHALL be truncated with an ellipsis. The folder that holds the focused panel SHALL be exposed as selected, and the focused terminal's row SHALL be highlighted as active. A selected folder's card SHALL NOT be outlined or striped; when the selected folder has no active terminal row, its title line SHALL be tinted so that the selection is visible. The tree SHALL offer New folder. The column's header SHALL use the project chrome so the colour band continues across the tree, the panel tab strip, and the sidebar.
+A project SHALL present a Folders tree in a column to the left of its panel area. The tree SHALL list the project's folders in order, each as a card. A card SHALL hold, in this order: a title line with the folder's icon, name, and menu button; a branch line when the folder has a checkout to name; a facts line when the folder has facts to show; then that folder's terminals in panel order, each with its status indicator and title; then a New terminal row. Every line and row SHALL be a single unwrapped line, and a name, branch, or title too long for the column SHALL be truncated with an ellipsis. The folder that holds the focused panel SHALL be exposed as selected, and the focused terminal's row SHALL be highlighted as active. A terminal's row SHALL offer the same context menu as that terminal's tab, acting on that terminal, whichever folder is selected. A selected folder's card SHALL NOT be outlined or striped; when the selected folder has no active terminal row, its title line SHALL be tinted so that the selection is visible. The tree SHALL offer New folder. The column's header SHALL use the project chrome so the colour band continues across the tree, the panel tab strip, and the sidebar.
 
 #### Scenario: Reading the tree
 
@@ -13,6 +13,16 @@ A project SHALL present a Folders tree in a column to the left of its panel area
 
 - **WHEN** a user selects a terminal row in another folder
 - **THEN** that folder becomes the selected folder, its layout is presented, that terminal is focused, and its row is the one highlighted
+
+#### Scenario: A terminal row's menu
+
+- **WHEN** a user opens the context menu on a terminal's row
+- **THEN** it offers what the context menu of that terminal's tab offers, and choosing Close closes that terminal
+
+#### Scenario: A terminal row's menu in another folder
+
+- **WHEN** a user opens the context menu on the row of a terminal in a folder that is not the selected one
+- **THEN** the menu is that terminal's, and acts on it
 
 #### Scenario: Selecting a folder
 
