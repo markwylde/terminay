@@ -1,6 +1,7 @@
 import { basename, sep } from 'node:path';
 import type { ListedWorktree } from './folderRoots.js';
 import {
+	generalFolderId,
 	isAutomationSpace,
 	type WorkspaceApplyResult,
 	type WorkspaceCommand,
@@ -322,7 +323,7 @@ export class FolderReconciler {
 	private removeFolder(projectId: string, folderId: string): void {
 		const state = this.options.workspace();
 		const folder = state.folders[folderId];
-		const general = state.projects[projectId]?.folderIds[0];
+		const general = generalFolderId(state, projectId);
 		if (folder === undefined || general === undefined) return;
 		for (const panelId of folder.panelIds)
 			if (

@@ -94,11 +94,12 @@ export type CompactSwitcherConnectionGroup = Readonly<{
 export type CompactSwitcherFolderSource = Readonly<{
 	id: string;
 	name: string;
+	/** True for the project's General folder, wherever it is in the order. */
+	isGeneral?: boolean;
 }>;
 
 export type CompactSwitcherInput = Readonly<{
-	/** Each project's folders in order, keyed by server and project. The first
-	 * is the General folder. */
+	/** Each project's folders in order, keyed by server and project. */
 	foldersByProject?: Readonly<
 		Record<string, readonly CompactSwitcherFolderSource[]>
 	>;
@@ -257,22 +258,22 @@ export function buildCompactSwitcherGroups(
  *
  * Every folder is listed, with or without panels, so a terminal in any folder
  * is reachable and an empty folder is still somewhere to open one. A panel
- * whose folder is unknown, or is not among the project's, is shown under the
- * first folder rather than dropped: a row that cannot be reached is worse than
- * one under the wrong heading.
+ * whose folder is unknown, or is not among the project's, is shown under
+ * General rather than dropped: a row that cannot be reached is worse than one
+ * under the wrong heading.
  */
 function groupPanelsByFolder(
 	serverId: string,
 	folders: readonly CompactSwitcherFolderSource[],
 	panels: readonly CompactSwitcherPanelRow[],
 ): readonly CompactSwitcherFolderGroup[] {
-	const first = folders[0];
-	if (first === undefined) return Object.freeze([]);
+	const fallback = folders.find((folder) => folder.isGeneral) ?? folders[0];
+	if (fallback === undefined) return Object.freeze([]);
 	const known = new Set(folders.map((folder) => folder.id));
 	const folderOf = (panel: CompactSwitcherPanelRow) =>
 		panel.folderId !== undefined && known.has(panel.folderId)
 			? panel.folderId
-			: first.id;
+			: fallback.id;
 	return Object.freeze(
 		folders.map((folder) =>
 			Object.freeze({

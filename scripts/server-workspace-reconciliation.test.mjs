@@ -331,6 +331,25 @@ test('a snapshot is accepted only with valid folders', () => {
 	assert.throws(broken((state, general) => { state.folders[general].captureOffer = { panelId: 'panel-missing' }; }), /invalid workspace folder/);
 });
 
+test('General is accepted anywhere in a project\'s folder order, and exactly one is required', () => {
+	const withSide = (mutate = () => {}) => {
+		const state = structuredClone(snapshot());
+		const project = state.projects['project-a'];
+		const general = project.folderIds[0];
+		state.folders['folder-side'] = { id: 'folder-side', projectId: 'project-a', name: 'Side', kind: 'plain', panelIds: [] };
+		project.folderIds = ['folder-side', general];
+		mutate(state, general);
+		return state;
+	};
+	const parsed = parseServerWorkspaceSnapshot(withSide(), 'server-a');
+	const order = parsed.projects['project-a'].folderIds;
+	assert.deepEqual(order.map((id) => parsed.folders[id].kind), ['plain', 'general']);
+	assert.equal(parsed.panels['panel-a'].folderId, order[1]);
+	// None, and two.
+	assert.throws(() => parseServerWorkspaceSnapshot(withSide((state, general) => { state.folders[general].kind = 'plain'; }), 'server-a'), /invalid workspace folder references/);
+	assert.throws(() => parseServerWorkspaceSnapshot(withSide((state) => { state.folders['folder-side'].kind = 'general'; }), 'server-a'), /invalid workspace folder references/);
+});
+
 test('a linked folder carries its worktree and the panels it holds', () => {
 	const state = structuredClone(snapshot({ panelIds: ['panel-a', 'panel-b'] }));
 	const project = state.projects['project-a'];
