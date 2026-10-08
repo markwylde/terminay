@@ -8,6 +8,11 @@
  * exists only while there is a tab.
  */
 
+import {
+	type ResizeEdges,
+	rectAfterResize as sharedRectAfterResize,
+} from '../../shared/inPageWindow/geometry.ts';
+
 /** A pane narrower than this is treated as a phone. */
 export const NARROW_PANE_WIDTH = 560;
 export const WINDOW_MAX_WIDTH = 440;
@@ -209,11 +214,7 @@ export function tabOffsetAfterDrag(
 	return clamp(startOffset + deltaX, WINDOW_EDGE, paneWidth - tabWidth - WINDOW_EDGE);
 }
 
-/** Which edges of a window a resize moves: -1 the left or top, 1 the right or bottom. */
-export interface ResizeEdges {
-	readonly x: -1 | 0 | 1;
-	readonly y: -1 | 0 | 1;
-}
+export type { ResizeEdges } from '../../shared/inPageWindow/geometry.ts';
 
 /**
  * The rectangle a resize produces. The edge that is not being dragged stays
@@ -227,19 +228,8 @@ export function rectAfterResize(
 	deltaY: number,
 	headerHeight: number,
 ): WindowRect {
-	const minHeight = headerHeight + MIN_BODY_HEIGHT;
-	const right = start.x + start.width;
-	const bottom = start.y + start.height;
-	let { x, y, width, height } = start;
-	if (edges.x === 1) width = Math.max(WINDOW_MIN_WIDTH, start.width + deltaX);
-	if (edges.x === -1) {
-		width = clamp(start.width - deltaX, WINDOW_MIN_WIDTH, right);
-		x = right - width;
-	}
-	if (edges.y === 1) height = Math.max(minHeight, start.height + deltaY);
-	if (edges.y === -1) {
-		height = clamp(start.height - deltaY, minHeight, bottom);
-		y = bottom - height;
-	}
-	return { x, y, width, height };
+	return sharedRectAfterResize(start, edges, deltaX, deltaY, {
+		minWidth: WINDOW_MIN_WIDTH,
+		minHeight: headerHeight + MIN_BODY_HEIGHT,
+	});
 }

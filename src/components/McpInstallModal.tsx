@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { Check, Plug, X } from 'lucide-react';
+import { Check, Plug } from 'lucide-react';
 import type {
 	McpAgentId,
 	McpAgentInstallState,
 	McpInstallStatus,
 } from '../types/terminay';
+import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
 import './mcpInstallModal.css';
 import type { McpInstallClient } from '../services/serverApplicationFeatureClients';
 
@@ -20,7 +21,6 @@ export function McpInstallModal({
 	open,
 	onClose,
 }: McpInstallModalProps): JSX.Element | null {
-	const titleId = useId();
 	const [status, setStatus] = useState<McpInstallStatus | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -28,7 +28,6 @@ export function McpInstallModal({
 	const [rowErrors, setRowErrors] = useState<Partial<Record<McpAgentId, string>>>(
 		{},
 	);
-	const pointerStartedOnBackdropRef = useRef(false);
 
 	const refreshStatus = useCallback(async () => {
 		setIsLoading(true);
@@ -87,24 +86,6 @@ export function McpInstallModal({
 			isMounted = false;
 		};
 	}, [client, open]);
-
-	useEffect(() => {
-		if (!open) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				onClose();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [open, onClose]);
 
 	const runAction = useCallback(
 		async (agent: McpAgentId, installed: boolean) => {
@@ -166,45 +147,14 @@ export function McpInstallModal({
 	}
 
 	return (
-		<div
-			className="project-edit-modal-backdrop"
-			onMouseDown={(event) => {
-				pointerStartedOnBackdropRef.current =
-					event.target === event.currentTarget;
-			}}
-			onMouseUp={(event) => {
-				const shouldClose =
-					pointerStartedOnBackdropRef.current &&
-					event.target === event.currentTarget;
-				pointerStartedOnBackdropRef.current = false;
-				if (shouldClose) {
-					onClose();
-				}
-			}}
+		<InPageWindow
+			icon={<Plug size={14} className="mcp-install-title-icon" />}
+			kind={{ resizable: false, width: 560 }}
+			name="mcp-install"
+			title="Install Terminay MCP"
+			onClose={onClose}
 		>
-			<div
-				className="project-edit-modal project-edit-modal--wide mcp-install-modal"
-				onClick={(event) => event.stopPropagation()}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby={titleId}
-			>
-				<div className="project-edit-modal-titlebar">
-					<h2 id={titleId} className="project-edit-modal-title">
-						<Plug size={14} aria-hidden="true" className="mcp-install-title-icon" />
-						Install Terminay MCP
-					</h2>
-					<button
-						type="button"
-						className="project-edit-modal-close"
-						onClick={onClose}
-						aria-label="Close Install Terminay MCP"
-						title="Close"
-					>
-						<X size={12} aria-hidden="true" />
-					</button>
-				</div>
-
+			<div className="project-edit-modal project-edit-modal--wide mcp-install-modal">
 				<p className="mcp-install-description">
 					Let coding agents running in a Terminay terminal control the tabs in
 					this window.
@@ -226,14 +176,8 @@ export function McpInstallModal({
 						onAction={(agent) => void runAction(agent.id, agent.installed)}
 					/>
 				) : null}
-
-				<div className="project-edit-actions">
-					<button type="button" onClick={onClose}>
-						Close
-					</button>
-				</div>
 			</div>
-		</div>
+		</InPageWindow>
 	);
 }
 
