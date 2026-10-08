@@ -2,8 +2,14 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { Page } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import {
+	holdTornOffProjectTab,
+	setCursorScreenPoint,
+	tabBarScreenPoints,
+} from './support/project-tab-drag';
+import { submitTerminalCommand } from './support/terminal';
 
 type StandaloneServer = Readonly<{
 	pairingUrl: string;
@@ -367,6 +373,195 @@ test('a window switched to Local does not show the projects another Local window
 		// And the first window keeps what it had.
 		expect(await projectIds(mainWindow)).toEqual(localProjects);
 	} finally {
+		await server.stop();
+	}
+});
+
+test('a project tab dropped on a window showing another server stays where it was', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// One window on Local, one on the server, each with its own project.
+		await switchTo(mainWindow, 'Local');
+		const remote = await appHarness.openChildWindow(async () => {
+			const menu = await openConnectionMenu(mainWindow);
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await expectShowing(remote, serverHost);
+		// The menus those checks opened would cover the tab strips.
+		await mainWindow.keyboard.press('Escape');
+		await remote.keyboard.press('Escape');
+		const localProjects = await projectIds(mainWindow);
+		const remoteProjects = await projectIds(remote);
+		expect(localProjects.length).toBeGreaterThan(0);
+		expect(remoteProjects.length).toBeGreaterThan(0);
+
+		const local = await tabBarScreenPoints(electronApp, mainWindow);
+		// The windows open on top of one another; the Local bar must be the
+		// only bar under the pointer.
+		await (await electronApp.browserWindow(remote)).evaluate(
+			(window, position) => window.setPosition(position.x, position.y),
+			{ x: local.onBar.x - 200, y: local.onBar.y + 200 },
+		);
+		await holdTornOffProjectTab(
+			electronApp,
+			remote,
+			remote.locator('.project-tab[role="tab"]').first(),
+		);
+
+		// Held over the Local window's bar: it is not a place this tab can go.
+		await setCursorScreenPoint(electronApp, local.onBar);
+		await mainWindow.waitForTimeout(500);
+		await expect
+			.soft(mainWindow.locator('.project-tab--drop-placeholder'))
+			.toHaveCount(0);
+
+		// Released there: the drag is abandoned and nothing moves.
+		await remote.mouse.up();
+		await mainWindow.waitForTimeout(2_000);
+		expect(remote.isClosed(), 'the source window closed').toBe(false);
+		expect(await projectIds(remote)).toEqual(remoteProjects);
+		expect(await projectIds(mainWindow)).toEqual(localProjects);
+		await expect(remote.locator('.project-tab--torn-off')).toHaveCount(0);
+		await expect(
+			mainWindow.locator('.project-tab--drop-placeholder'),
+		).toHaveCount(0);
+
+		// The project is still the server's, in a window that still shows it.
+		await remote.reload();
+		await expectShowing(remote, serverHost);
+		expect(await projectIds(remote)).toEqual(remoteProjects);
+	} finally {
+		await server.stop();
+	}
+});
+
+for (const closed of ['opened', 'switched'] as const) {
+test(`closing the ${closed} one of two windows on a server leaves the other connected`, async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(300_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// Two windows on the one server, each holding a project of its own.
+		await switchTo(mainWindow, 'Local');
+		const first = await appHarness.openChildWindow(async () => {
+			const menu = await openConnectionMenu(mainWindow);
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await expectShowing(first, serverHost);
+		await switchTo(mainWindow, serverHost);
+		await mainWindow.keyboard.press('Escape');
+		await first.keyboard.press('Escape');
+		for (const window of [first, mainWindow]) {
+			if ((await projectIds(window)).length > 0) continue;
+			await window.getByLabel('Create project').click();
+			await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
+			await expect(window.locator('[data-pending-project-id]')).toHaveCount(0);
+		}
+		const [closing, kept] =
+			closed === 'opened' ? [first, mainWindow] : [mainWindow, first];
+		const rows = kept.locator(
+			'.project-workspace--active .terminal-panel:visible .xterm-rows',
+		);
+		await submitTerminalCommand(kept, 'echo before-$((40+2))');
+		await expect(rows).toContainText('before-42', { timeout: 15_000 });
+
+		const closingNativeWindow = await electronApp.browserWindow(closing);
+		await closingNativeWindow.evaluate((window) => window.close());
+		await expect.poll(() => closing.isClosed(), { timeout: 15_000 }).toBe(true);
+
+		// The window left behind never loses its connection, and its terminal
+		// still answers.
+		const reconnecting = kept.locator('.session-workspace__reconnecting');
+		for (let elapsed = 0; elapsed < 45_000; elapsed += 250) {
+			expect(await reconnecting.count()).toBe(0);
+			await kept.waitForTimeout(250);
+		}
+		await submitTerminalCommand(kept, 'echo after-$((40+2))');
+		await expect(rows).toContainText('after-42', { timeout: 15_000 });
+		await expectShowing(kept, serverHost);
+		await expect(
+			connectionMenu(kept)
+				.locator('[data-connection-phase="ready"]')
+				.filter({ hasText: serverHost }),
+		).toContainText('Connected');
+	} finally {
+		await server.stop();
+	}
+});
+}
+
+test('a browser shows the projects of every Desktop window on its server', async ({
+	appHarness,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(300_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	const browser = await chromium.launch();
+	let restarted: StandaloneServer | undefined;
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// Two Desktop windows on the one server, each holding a project.
+		await switchTo(mainWindow, 'Local');
+		const second = await appHarness.openChildWindow(async () => {
+			const menu = await openConnectionMenu(mainWindow);
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await expectShowing(second, serverHost);
+		await switchTo(mainWindow, serverHost);
+		await mainWindow.keyboard.press('Escape');
+		await second.keyboard.press('Escape');
+		for (const window of [second, mainWindow]) {
+			if ((await projectIds(window)).length > 0) continue;
+			await window.getByLabel('Create project').click();
+			await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
+			await expect(window.locator('[data-pending-project-id]')).toHaveCount(0);
+		}
+		const desktopProjects = [
+			...(await projectIds(mainWindow)),
+			...(await projectIds(second)),
+		].sort();
+		expect(desktopProjects).toHaveLength(2);
+
+		// A browser has one window, so it holds every project of the server.
+		const page = await browser.newPage({
+			viewport: { width: 1400, height: 900 },
+		});
+		// A pairing link is used once, so the browser pairs with the one the
+		// server advertises when it next starts on the same data.
+		await server.stop();
+		restarted = await startStandaloneServer(tempDir);
+		await page.goto(restarted.pairingUrl);
+		await page
+			.locator('.project-tabbar')
+			.waitFor({ state: 'visible', timeout: 60_000 });
+		await expect(async () => {
+			expect((await projectIds(page)).sort()).toEqual(desktopProjects);
+		}).toPass({ timeout: 20_000 });
+	} finally {
+		await browser.close();
+		await restarted?.stop();
 		await server.stop();
 	}
 });

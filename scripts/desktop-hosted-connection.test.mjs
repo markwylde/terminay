@@ -413,7 +413,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		return opened;
 	};
 	await openWindow('w-main');
-	await openWindow('w-settings');
+	const settingsWindow = await openWindow('w-settings');
 	assert.equal(connections.length, 3);
 	assert.deepEqual(
 		connections.map((entry) => entry.closed),
@@ -422,7 +422,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	);
 
 	// A window reconnecting replaces its own connection and no other.
-	await openWindow('w-main');
+	const mainWindow = await openWindow('w-main');
 	const startedAt = Date.now();
 	while (!connections[1].closed) {
 		if (Date.now() - startedAt > 30_000)
@@ -433,6 +433,25 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		connections.map((entry) => entry.closed),
 		[false, true, false, false],
 	);
+	// A window closing ends its own connection and no other: the windows
+	// left open stay connected and can still send.
+	await mainWindow.transport.close({ code: 'normal' });
+	const closedAt = Date.now();
+	while (!connections[3].closed) {
+		if (Date.now() - closedAt > 30_000)
+			throw new Error("the closed window's connection was not released");
+		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+	}
+	while (Date.now() - closedAt < 20_000) {
+		assert.deepEqual(
+			connections.map((entry) => entry.closed),
+			[false, true, false, true],
+			'closing one window disconnected another',
+		);
+		await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+	}
+	await settingsWindow.transport.send(new Uint8Array([1]));
+	assert.deepEqual(failures, []);
 	// Which window it is never passes through the relay.
 	assert.equal(
 		relay.state.frames.some(
