@@ -16,6 +16,24 @@ npm ci
 npm run dev
 ```
 
+A build run from source keeps its state in its own `Terminay Development`
+data directory, so it never reads or changes an installed Terminay's. Nothing
+has to be set for that. To run a second development build beside the first, or
+to start from empty state, give it a data directory of its own:
+
+```bash
+TERMINAY_USER_DATA_DIR=/path/to/any/directory npm run dev
+```
+
+The directory can be at any path, however long.
+
+In a fresh checkout or worktree, build the workspaces once before the first
+`npm run dev`:
+
+```bash
+npx turbo run build:dev-desktop
+```
+
 ## Check
 
 ```bash

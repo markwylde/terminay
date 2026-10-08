@@ -1,13 +1,17 @@
 import type { BrowserWindow, Event, WebContents } from 'electron';
 
-function boundedLaunchError(error: unknown): string {
+/** Enough for a general failure. A message that has to name paths asks for
+ * more. */
+const DEFAULT_MESSAGE_LIMIT = 320;
+
+function boundedLaunchError(error: unknown, limit: number): string {
 	const message = error instanceof Error ? error.message : String(error);
 	return Array.from(message, (character) => {
 		const code = character.codePointAt(0) ?? 0;
 		return code < 32 || code === 127 ? ' ' : character;
 	})
 		.join('')
-		.slice(0, 320);
+		.slice(0, limit);
 }
 
 function launchRecoveryDocument(message: string): string {
@@ -41,6 +45,9 @@ export async function showCanonicalLaunchRecovery(
 	options: Readonly<{
 		window: BrowserWindow;
 		error: unknown;
+		/** How much of the message is shown. A few hundred characters unless
+		 * the message has to carry paths. */
+		messageLimit?: number;
 		retry: () => Promise<void>;
 		onDiagnostic: (message: string) => Promise<void> | void;
 		onRecoveryState: (active: boolean) => void;
@@ -51,7 +58,10 @@ export async function showCanonicalLaunchRecovery(
 	// failure can race native destruction, where reading `window.webContents`
 	// again is itself an Electron exception.
 	const targetWebContents = options.window.webContents;
-	const message = boundedLaunchError(options.error);
+	const message = boundedLaunchError(
+		options.error,
+		options.messageLimit ?? DEFAULT_MESSAGE_LIMIT,
+	);
 	// Diagnostics are evidence, never a prerequisite for a usable recovery
 	// document. In particular, a full or unavailable diagnostics volume must not
 	// turn a caught bootstrap failure back into an unhandled main-process
