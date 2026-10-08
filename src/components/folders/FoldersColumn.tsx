@@ -1,4 +1,4 @@
-import { MoreHorizontal } from 'lucide-react';
+import { EllipsisVertical } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { FoldersTree, type FoldersTreeProps } from './FoldersTree';
 import './foldersTree.css';
@@ -39,7 +39,7 @@ export function FoldersColumn({
 							onOpenMenu({ x: rect.left, y: rect.bottom + 4 });
 						}}
 					>
-						<MoreHorizontal size={14} aria-hidden="true" />
+						<EllipsisVertical size={14} aria-hidden="true" />
 					</button>
 				)}
 			</div>
