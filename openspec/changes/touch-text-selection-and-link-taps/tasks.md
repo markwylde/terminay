@@ -53,12 +53,12 @@
 
 - [x] 4.0 Register `scripts/terminal-touch-selection-and-links.test.mjs` in
       `smoke` so CI runs it. Verified by the script appearing in the command.
-- [ ] 4.1 Run `npx openspec validate touch-text-selection-and-link-taps --strict`.
+- [x] 4.1 Run `npx openspec validate touch-text-selection-and-link-taps --strict`.
       Verified by the command reporting the change valid.
-- [ ] 4.2 Run `npm run lint`, `npm run typecheck`, and the touched unit suites.
+- [x] 4.2 Run `npm run lint`, `npm run typecheck`, and the touched unit suites.
       Verified by all commands exiting zero.
 - [ ] 4.3 Confirm on a real touch device: pan still scrolls, pans a pager, and
       arrows through shell history; hold selects; tap opens a link; the toggle
       off restores today's behaviour exactly.
-- [ ] 4.4 Open the pull request with the change branch and confirm CI is green.
+- [x] 4.4 Open the pull request with the change branch and confirm CI is green.
       Verified by the PR checks passing.

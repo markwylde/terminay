@@ -23,4 +23,4 @@
 
 - [x] 5.1 Run `openspec validate left-column-agents-pane --strict`, `npm run lint`, `npx tsc --noEmit -p .`, and `npm run test:linked-folders`. Verified by all four exiting zero.
 - [ ] 5.2 Before archiving, check that `linked-folders` and `one-window-one-server` have archived; rebase the `Sidebar group tab bar` delta onto the folded text, and move the `Agents pane presentation` delta onto "Agents pane shows the current project's agents" if that rename has landed. Verified by `openspec validate --all` passing and a read-through showing one statement of where the Agents pane is.
-- [ ] 5.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 5.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.

@@ -69,7 +69,7 @@ Terminay Server SHALL own the MCP stdio entry point, local control endpoint, cap
 
 ### Requirement: Local-only control endpoint
 
-The control endpoint SHALL be local to the server machine. It SHALL NOT use WebRTC, remote-device credentials, browser storage, or the hosted signalling service. It SHALL use a user-only Unix domain socket or the platform-equivalent local IPC transport and SHALL never listen on a TCP interface.
+The control endpoint SHALL be local to the server machine. It SHALL NOT use WebRTC, remote-device credentials, browser storage, or the hosted signalling service. It SHALL use a user-only Unix domain socket or the platform-equivalent local IPC transport and SHALL never listen on a TCP interface. A Unix domain socket SHALL be readable and writable by its owner only, and the directory that holds it SHALL be accessible to its owner only.
 
 #### Scenario: Endpoint transport
 
@@ -80,6 +80,11 @@ The control endpoint SHALL be local to the server machine. It SHALL NOT use WebR
 
 - **WHEN** a request attempts to reach the control endpoint using remote-device credentials or the hosted signalling service
 - **THEN** it is not served
+
+#### Scenario: Socket and directory permissions
+
+- **WHEN** the control endpoint is listening on a Unix domain socket
+- **THEN** the socket grants access to its owner only and so does the directory that holds it
 
 ### Requirement: Registration management surface
 
@@ -329,7 +334,7 @@ The server SHALL dispatch validated operations through an explicit operation-to-
 
 ### Requirement: Project-implicit tool surface
 
-Terminay SHALL expose the following project-implicit tools: `get_mcp_capabilities` reporting the globally available MCP operations for the bound host; `list_terminals` listing terminal panels in scope with opaque handles, display names, state, and active status; `read_terminal` reading either a bounded lossless raw-output range or a bounded current terminal-presentation snapshot; `search_terminal` searching a bounded current text presentation snapshot and returning bounded matching visual-row context; `get_terminal_status` returning canonical activity, attention, cwd, and last-exit information; `write_terminal` writing exact validated text to one live terminal; `run_command` writing one command and submitting it once, using bracketed paste for multiline input; `open_terminal` creating a terminal in the same project with an optional display name and policy-valid cwd; `close_terminal` closing one terminal through normal terminal lifecycle rules; `focus_terminal` making one terminal active in the logical workspace view without stealing focus in an unrelated client; `rename_terminal` changing one terminal's display title; `split_terminal` creating a split relative to one terminal; `wait_for_idle` waiting for bounded canonical terminal inactivity; `wait_for_command` waiting for the next structured command completion and returning bounded exit information; and `wait_for_attention` waiting for the next canonical needs-attention signal.
+Terminay SHALL expose the following project-implicit tools: `get_mcp_capabilities` reporting the globally available MCP operations for the bound host; `list_terminals` listing terminal panels in scope with opaque handles, display names, state, and active status; `read_terminal` reading either a bounded lossless raw-output range or a bounded current terminal-presentation snapshot; `search_terminal` searching a bounded current text presentation snapshot and returning bounded matching visual-row context; `get_terminal_status` returning canonical activity, attention, cwd, and last-exit information; `write_terminal` writing exact validated text to one live terminal; `run_command` writing one command and submitting it once as a paste followed by Enter, framed with bracketed paste only when the foreground program has enabled it; `open_terminal` creating a terminal in the same project with an optional display name and policy-valid cwd; `close_terminal` closing one terminal through normal terminal lifecycle rules; `focus_terminal` making one terminal active in the logical workspace view without stealing focus in an unrelated client; `rename_terminal` changing one terminal's display title; `split_terminal` creating a split relative to one terminal; `wait_for_idle` waiting for bounded canonical terminal inactivity; `wait_for_command` waiting for the next structured command completion and returning bounded exit information; and `wait_for_attention` waiting for the next canonical needs-attention signal.
 
 #### Scenario: Listing terminals
 
@@ -343,8 +348,18 @@ Terminay SHALL expose the following project-implicit tools: `get_mcp_capabilitie
 
 #### Scenario: Running a multiline command
 
-- **WHEN** an agent calls `run_command` with multiline input
+- **WHEN** an agent calls `run_command` with multiline input and the foreground program has enabled bracketed paste
 - **THEN** the command is written once using bracketed paste and submitted once
+
+#### Scenario: Running a command where bracketed paste is off
+
+- **WHEN** an agent calls `run_command` and the foreground program has not enabled bracketed paste
+- **THEN** the command is written without bracketed-paste markers, each line break is sent as a carriage return, and the command is submitted with a final carriage return
+
+#### Scenario: Leading assignment in a shell without bracketed paste
+
+- **WHEN** an agent calls `run_command` with `X=1 sh -c 'echo $X'` in a shell that has not enabled bracketed paste
+- **THEN** the shell reads the assignment as an assignment and prints `1`
 
 ### Requirement: Names are not identities
 
@@ -525,17 +540,22 @@ Writes SHALL target an exact immutable terminal session, SHALL fail after exit o
 
 ### Requirement: run_command response contract
 
-`run_command` SHALL return `{ terminal, command_id, from, submitted_bytes, submitted: true }`. `command_id` SHALL uniquely identify the accepted MCP submission and SHALL NOT be a shell command identity, an activity event, or an exit status. `from` SHALL be the terminal's raw `output_position` captured immediately before the write is accepted and SHALL be a lower bound for observing output after submission rather than proof that bytes in a later raw range were produced by that command, because prompts, background jobs, and other writers can interleave. `submitted_bytes` SHALL be the exact number of PTY input bytes written, including the bracketed-paste wrapper and submission carriage return when used.
+`run_command` SHALL return `{ terminal, command_id, from, submitted_bytes, submitted: true, bracketed }`. `command_id` SHALL uniquely identify the accepted MCP submission and SHALL NOT be a shell command identity, an activity event, or an exit status. `from` SHALL be the terminal's raw `output_position` captured immediately before the write is accepted and SHALL be a lower bound for observing output after submission rather than proof that bytes in a later raw range were produced by that command, because prompts, background jobs, and other writers can interleave. `submitted_bytes` SHALL be the exact number of PTY input bytes written, including the bracketed-paste wrapper when used and the submission carriage return. `bracketed` SHALL be `true` exactly when the command was framed with bracketed-paste markers, which SHALL happen only when the terminal's canonical emulator reports that the foreground program has enabled bracketed paste; when that state is unknown the command SHALL be sent unframed.
 
 #### Scenario: Command submitted
 
 - **WHEN** `run_command` accepts a submission
-- **THEN** it returns `command_id`, the pre-write `output_position` as `from`, the exact `submitted_bytes` including wrapper and carriage return, and `submitted: true`
+- **THEN** it returns `command_id`, the pre-write `output_position` as `from`, the exact `submitted_bytes` including any wrapper and the carriage return, `submitted: true`, and `bracketed`
 
 #### Scenario: Interleaved output after submission
 
 - **WHEN** a caller reads raw output from `from`
 - **THEN** `from` is only a lower bound and the range may include prompts, background jobs, and other writers' output
+
+#### Scenario: Bracketed paste state unknown
+
+- **WHEN** `run_command` targets a terminal whose canonical emulator is unavailable
+- **THEN** the command is sent without bracketed-paste markers and `bracketed` is `false`
 
 ### Requirement: Wait tool semantics
 
@@ -591,12 +611,22 @@ Desktop and standalone-server adapters SHALL share required response fields and 
 
 ### Requirement: MCP security and privacy boundaries
 
-MCP SHALL expose terminal control and automation management only; filesystem, Git, settings, secrets, recordings, extension administration, remote administration, and arbitrary native-window management SHALL remain outside the tool surface. Every request SHALL revalidate its capability against canonical terminal and project state and SHALL be evaluated against the MCP permission policy before it is dispatched. Output, parameters, errors, candidate lists, and waits SHALL be bounded to resist memory and context exhaustion. The server SHALL NOT infer authority from current UI focus or renderer ownership. Installing the MCP entry SHALL NOT enable provider hooks or disclose provider journals. Journal records used for agent status SHALL never be routed through MCP and MCP calls SHALL never synthesize agent-status lifecycle events.
+Terminay's own MCP tools SHALL expose terminal control, automation management, and the calling terminal's app windows only; filesystem, Git, settings, secrets, recordings, extension administration, remote administration, and arbitrary native-window management SHALL remain outside Terminay's own tool surface. The single file read in that surface is the stdio adapter reading the document an agent names for `show_window`: it is performed by the adapter and never by the Terminay Server, its contents are shown to the user in a window, and they SHALL NEVER be returned to the agent. The surface MAY additionally carry the tools of MCP servers the user has connected in Settings; such a tool SHALL be named with its entry's prefix, SHALL be run by that server and never by Terminay, and SHALL NOT gain any Terminay authority. Every request SHALL revalidate its capability against canonical terminal and project state and SHALL be evaluated against the MCP permission policy before it is dispatched. Output, parameters, errors, candidate lists, and waits SHALL be bounded to resist memory and context exhaustion. The server SHALL NOT infer authority from current UI focus or renderer ownership. Installing the MCP entry SHALL NOT enable provider hooks or disclose provider journals. Journal records used for agent status SHALL never be routed through MCP and MCP calls SHALL never synthesize agent-status lifecycle events.
 
 #### Scenario: Filesystem tool requested
 
-- **WHEN** an agent seeks filesystem, Git, settings, secret, recording, extension-management, or remote-administration access through MCP
-- **THEN** no such tool exists in the surface
+- **WHEN** an agent seeks filesystem, Git, settings, secret, recording, extension-management, or remote-administration access through Terminay's own tools
+- **THEN** no such Terminay tool exists in the surface
+
+#### Scenario: Agent names a file it wants to read
+
+- **WHEN** an agent calls `show_window` with `html_file` naming a file that is not an HTML document, such as a private key
+- **THEN** the file's text is shown to the user in a window, and neither the tool result nor any later tool result carries it to the agent
+
+#### Scenario: Connected server offers a file tool
+
+- **WHEN** a server the user connected offers a tool that reads files
+- **THEN** it is listed under that entry's prefix, runs in that server, and holds no Terminay capability
 
 #### Scenario: Authority from UI focus
 
@@ -663,7 +693,7 @@ Registrations SHALL install and uninstall independently while preserving unrelat
 
 ### Requirement: MCP non-goals
 
-MCP SHALL NOT provide provider hooks of any kind, agent lifecycle detection, Agents sidebar population, or terminal agent-status inference. It SHALL NOT provide cross-project or cross-server terminal control, a public or remotely discoverable network MCP endpoint, or filesystem, Git, settings, recording, secret, extension-management, or remote-access tools. It SHALL NOT establish trust based on terminal title, process name, cwd, active UI focus, or renderer state.
+MCP SHALL NOT provide provider hooks of any kind, agent lifecycle detection, Agents sidebar population, or terminal agent-status inference. It SHALL NOT provide cross-project or cross-server terminal control, a public or remotely discoverable network MCP endpoint, or Terminay-implemented filesystem, Git, settings, recording, secret, extension-management, or remote-access tools. It SHALL NOT read or modify an agent CLI's own MCP server configuration beyond Terminay's own registration entry. It SHALL NOT establish trust based on terminal title, process name, cwd, active UI focus, or renderer state.
 
 #### Scenario: Remote discovery attempted
 
@@ -674,6 +704,11 @@ MCP SHALL NOT provide provider hooks of any kind, agent lifecycle detection, Age
 
 - **WHEN** a request presents a matching terminal title, process name, or cwd instead of a valid capability
 - **THEN** no trust is established
+
+#### Scenario: Agent's other MCP servers
+
+- **WHEN** an agent CLI has other MCP servers configured
+- **THEN** Terminay does not read, list, or change them
 
 ### Requirement: MCP eligibility on the server
 
@@ -773,3 +808,130 @@ Automations are server-wide, so these tools SHALL address every automation on th
 
 - **WHEN** a project-scope caller calls `run_automation` for a write-text automation naming a terminal handle outside its project
 - **THEN** the request is refused and nothing runs
+
+### Requirement: App window tools
+
+Terminay SHALL expose three tools that act on the calling terminal's app windows. `show_window` SHALL take a title of at most 80 characters and an HTML document of at most 512 KiB, open an agent-authored window in the calling terminal, and return the new window's opaque handle; given the handle of an existing agent-authored window of the calling terminal, it SHALL replace that window's title and content in place and restore it. `close_window` SHALL close one window of the calling terminal by handle. `list_windows` SHALL return the calling terminal's windows with handle, title, source, and open or minimised state. A window handle SHALL be valid only for the terminal that owns the window. The tools' descriptions SHALL tell the agent that the HTML may use inline and `https` resources and may send a message back through the provided script interface.
+
+#### Scenario: Hello world
+
+- **WHEN** an agent calls `show_window` with the title "Hello" and an HTML document containing a heading
+- **THEN** a window titled "Hello" opens in the calling terminal showing the heading, and the call returns its handle
+
+#### Scenario: Updating a window
+
+- **WHEN** an agent calls `show_window` with the handle of a window it opened and new HTML
+- **THEN** the same window shows the new content and no second window is created
+
+#### Scenario: Document too large
+
+- **WHEN** an agent calls `show_window` with an HTML document over 512 KiB
+- **THEN** the call fails with a bounded error and no window is created
+
+#### Scenario: Handle from another terminal
+
+- **WHEN** an agent calls `close_window` with a handle that belongs to another terminal
+- **THEN** the call fails as not found and no window closes
+
+#### Scenario: Listing windows
+
+- **WHEN** an agent calls `list_windows` in a terminal with one agent-authored window and one MCP App window
+- **THEN** it receives both, each with its handle, title, source, and state
+
+### Requirement: show_window loads a document from a file and carries data
+
+`show_window` SHALL take its HTML document either inline as `html` or as `html_file`, the absolute path of a file, and SHALL refuse a call that gives both or neither. For `html_file` the stdio adapter SHALL read the file itself, in the agent's own process tree and with the agent's own filesystem authority, and SHALL send its contents as the document; the path SHALL NEVER be sent to, or opened by, the Terminay Server. The adapter SHALL read only a regular file of at most 512 KiB that is valid UTF-8, and SHALL otherwise fail the call with a bounded error that names the reason and not the file's contents. The contents of the file SHALL NEVER appear in the tool's result.
+
+`show_window` SHALL also take an optional `data`, a JSON value of at most 64 KiB when serialised, stored on the window record for the view to read. Replacing a window's content SHALL replace its data. The tool's description SHALL tell the agent that a saved document with `data` avoids writing the document out again, and how the document reads the data.
+
+#### Scenario: A saved questionnaire
+
+- **WHEN** an agent calls `show_window` with a title, `html_file` naming a saved questionnaire document, and `data` holding three questions
+- **THEN** a window opens showing that document with those three questions, and the call returns its handle without the document's contents
+
+#### Scenario: Both html and html_file
+
+- **WHEN** an agent calls `show_window` with both `html` and `html_file`
+- **THEN** the call fails with a bounded error and no window is created
+
+#### Scenario: File missing
+
+- **WHEN** an agent calls `show_window` with an `html_file` that does not exist
+- **THEN** the call fails with a not-found error and no window is created
+
+#### Scenario: Not a regular file
+
+- **WHEN** an agent calls `show_window` with an `html_file` that names a directory, a device, or a named pipe
+- **THEN** the call fails with a bounded error, nothing is read from it, and no window is created
+
+#### Scenario: File too large
+
+- **WHEN** an agent calls `show_window` with an `html_file` over 512 KiB
+- **THEN** the call fails with a bounded error and no window is created
+
+#### Scenario: Data too large
+
+- **WHEN** an agent calls `show_window` with `data` over 64 KiB
+- **THEN** the call fails with a bounded error and no window is created
+
+#### Scenario: The server never sees the path
+
+- **WHEN** an agent calls `show_window` with `html_file`
+- **THEN** the request the adapter sends to the Terminay Server carries the document and no path
+
+### Requirement: Control endpoint socket placement
+
+The control endpoint's Unix domain socket SHALL be placed inside the server's data directory whenever the socket's path there is within the platform's limit for a Unix socket path. When it is not, the socket SHALL be placed in a runtime directory outside the data directory: a directory whose name is derived from the data directory's path, inside the user's runtime directory where the platform provides one and the system temporary directory otherwise. The same data directory SHALL always resolve to the same socket path, so that a terminal launched before a restart can still reach the endpoint after it.
+
+A runtime directory SHALL be used only when it is a directory, is not a symbolic link, is owned by the user the server runs as, and grants no access to any other user. The server SHALL create it with those properties when it does not exist. The server SHALL NOT use, repair, or replace a path that exists and fails any of those conditions.
+
+The platform limit SHALL be measured in bytes of the encoded path, not characters.
+
+#### Scenario: Data directory at an ordinary path
+
+- **WHEN** the socket's path inside the data directory is within the platform limit
+- **THEN** the socket is created inside the data directory and no runtime directory is created
+
+#### Scenario: Data directory at a long path
+
+- **WHEN** the socket's path inside the data directory exceeds the platform limit
+- **THEN** the server starts, the socket is created in an owner-only runtime directory outside the data directory, and a terminal launched by that server reaches the endpoint
+
+#### Scenario: Same data directory, same address
+
+- **WHEN** a server whose socket is in a runtime directory is stopped and started again with the same data directory
+- **THEN** the socket is at the same path as before
+
+#### Scenario: Two data directories
+
+- **WHEN** two servers run with different data directories whose socket paths both exceed the limit
+- **THEN** each uses its own runtime directory and neither listens on the other's socket
+
+#### Scenario: Runtime directory prepared by someone else
+
+- **WHEN** the runtime directory's path already exists and is a symbolic link, is not a directory, is owned by another user, or grants access to another user
+- **THEN** the server does not listen there and does not change that path
+
+#### Scenario: Non-ASCII data directory
+
+- **WHEN** the data directory's path contains multi-byte characters and its socket path is within the limit in characters but over it in bytes
+- **THEN** the socket is placed in a runtime directory
+
+### Requirement: Reporting a control endpoint that cannot be placed
+
+When the control endpoint's socket cannot be placed, because the data directory's path is too long and no runtime directory is usable, Desktop SHALL say so in its launch recovery state in place of the general failure message. The message SHALL state that the data directory's path is too long for a local socket, SHALL give the data directory's path, the length of the socket path, and the limit, and SHALL state that a shorter data directory resolves it. When a runtime directory was refused, the message SHALL name that directory and the reason. The failure SHALL also be recorded in Desktop diagnostics. The message SHALL NOT include a capability token.
+
+#### Scenario: No usable placement
+
+- **WHEN** Desktop starts with a data directory whose socket path is too long and the runtime directory's path is also over the limit
+- **THEN** the launch recovery state says the data directory's path is too long for a local socket, gives the path and the limit, and says to use a shorter data directory
+
+#### Scenario: Runtime directory refused
+
+- **WHEN** Desktop starts with a data directory whose socket path is too long and the runtime directory exists but is owned by another user
+- **THEN** the launch recovery state names that directory and says it is not owned by the current user, and Desktop does not listen there
+
+#### Scenario: Recorded for support
+
+- **WHEN** the control endpoint cannot be placed
+- **THEN** Desktop diagnostics hold a record of the failure with the paths and lengths involved and no capability token
