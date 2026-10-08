@@ -836,6 +836,9 @@ export class GitService {
 			let lineAdditions: number | null = null;
 			let lineDeletions: number | null = null;
 			let hasCommittedChanges: boolean | null = null;
+			let hasUnpushedCommits: boolean | null = null;
+			let unpushedLineAdditions: number | null = null;
+			let unpushedLineDeletions: number | null = null;
 			let discoveryState: GitDiscoveryState = 'ready';
 			const mutating = this.mutatingWorktreeIds.has(id);
 			// A worktree skipped mid-mutation has not been measured.
@@ -879,11 +882,15 @@ export class GitService {
 						record.path,
 						defaultBranch,
 						target.signal,
+						branch,
 					);
 					aheadOfDefaultBranchCount = delta.aheadCount;
 					lineAdditions = delta.additions;
 					lineDeletions = delta.deletions;
 					hasCommittedChanges = delta.hasCommittedChanges;
+					hasUnpushedCommits = delta.hasUnpushedCommits;
+					unpushedLineAdditions = delta.unpushedAdditions;
+					unpushedLineDeletions = delta.unpushedDeletions;
 				} else {
 					state = 'unknown';
 					discoveryState = 'command-error';
@@ -913,6 +920,9 @@ export class GitService {
 				lineAdditions,
 				lineDeletions,
 				hasCommittedChanges,
+				hasUnpushedCommits,
+				unpushedLineAdditions,
+				unpushedLineDeletions,
 				entries,
 				...(error === undefined ? {} : { error }),
 			} satisfies GitWorktreeSummary;
@@ -2343,11 +2353,17 @@ export class GitService {
 		cwd: string,
 		defaultBranch: string | null,
 		signal?: AbortSignal,
+		/** The worktree's branch as its status header gave it. Without it the
+		 * unpushed measurement is skipped and reported as unknown. */
+		branch?: GitBranchStatus,
 	): Promise<{
 		readonly aheadCount: number | null;
 		readonly additions: number | null;
 		readonly deletions: number | null;
 		readonly hasCommittedChanges: boolean | null;
+		readonly hasUnpushedCommits: boolean | null;
+		readonly unpushedAdditions: number | null;
+		readonly unpushedDeletions: number | null;
 	}> {
 		const ahead =
 			defaultBranch === null
@@ -2367,12 +2383,27 @@ export class GitService {
 			['diff', '--numstat', 'HEAD'],
 			signal,
 		);
+		const unpushed =
+			branch === undefined
+				? { hasCommits: null, delta: null }
+				: await this.unpushedCommits(cwd, branch, branchDelta, signal);
+		const unpushedMeasured = unpushed.delta !== null && workingDelta !== null;
+		const pushState = {
+			hasUnpushedCommits: unpushed.hasCommits,
+			unpushedAdditions: unpushedMeasured
+				? unpushed.delta.additions + workingDelta.additions
+				: null,
+			unpushedDeletions: unpushedMeasured
+				? unpushed.delta.deletions + workingDelta.deletions
+				: null,
+		};
 		if (branchDelta === null && workingDelta === null) {
 			return {
 				aheadCount,
 				additions: null,
 				deletions: null,
 				hasCommittedChanges: null,
+				...pushState,
 			};
 		}
 		return {
@@ -2380,7 +2411,55 @@ export class GitService {
 			additions: (branchDelta?.additions ?? 0) + (workingDelta?.additions ?? 0),
 			deletions: (branchDelta?.deletions ?? 0) + (workingDelta?.deletions ?? 0),
 			hasCommittedChanges: branchDelta?.hasChanges ?? null,
+			...pushState,
 		};
+	}
+
+	/**
+	 * The commits of a checkout that are on no remote, and their size. Under a
+	 * live upstream those are the commits the upstream lacks, which the status
+	 * header already counted. With no upstream, or one that is gone, they are
+	 * the commits no remote-tracking branch holds; a branch whose tree is
+	 * already on the default branch has none, so a squash-merged worktree does
+	 * not turn unpushed when its remote branch is deleted.
+	 */
+	private async unpushedCommits(
+		cwd: string,
+		branch: GitBranchStatus,
+		branchDelta: NumstatDelta | null,
+		signal?: AbortSignal,
+	): Promise<{
+		readonly hasCommits: boolean | null;
+		readonly delta: NumstatDelta | null;
+	}> {
+		const none = {
+			hasCommits: false,
+			delta: { additions: 0, deletions: 0, hasChanges: false },
+		};
+		if (branch.upstreamState === 'configured') {
+			if ((branch.ahead ?? 0) === 0) return none;
+			return {
+				hasCommits: true,
+				delta: await this.numstat(
+					cwd,
+					['diff', '--numstat', '@{upstream}...HEAD'],
+					signal,
+				),
+			};
+		}
+		if (branchDelta?.hasChanges === false) return none;
+		const unpushed = await this.runGit(
+			['rev-list', '--count', 'HEAD', '--not', '--remotes'],
+			cwd,
+			signal,
+		);
+		const count =
+			unpushed.exitCode === 0 && !unpushed.truncated
+				? parseNonNegativeInteger(unpushed.stdout)
+				: null;
+		if (count === null) return { hasCommits: null, delta: null };
+		if (count === 0) return none;
+		return { hasCommits: true, delta: branchDelta };
 	}
 
 	private async committedDelta(
@@ -3079,6 +3158,12 @@ export class GitService {
 					fields.push('lineAdditions');
 				if (was.lineDeletions !== after.lineDeletions)
 					fields.push('lineDeletions');
+				if (
+					was.hasUnpushedCommits !== after.hasUnpushedCommits ||
+					was.unpushedLineAdditions !== after.unpushedLineAdditions ||
+					was.unpushedLineDeletions !== after.unpushedLineDeletions
+				)
+					fields.push('unpushed');
 				if (was.entries.length !== after.entries.length)
 					fields.push('changedFiles');
 			}

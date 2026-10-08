@@ -244,6 +244,11 @@ export interface GitWorktreeSummary {
 	readonly lineAdditions: number | null;
 	readonly lineDeletions: number | null;
 	readonly hasCommittedChanges: boolean | null;
+	/** Commits that are on no remote. Null when it could not be measured. */
+	readonly hasUnpushedCommits: boolean | null;
+	/** Size of the unpushed commits and the tracked working-tree delta. */
+	readonly unpushedLineAdditions: number | null;
+	readonly unpushedLineDeletions: number | null;
 	readonly entries: readonly GitStatusEntry[];
 	readonly error?: GitErrorInfo;
 }
