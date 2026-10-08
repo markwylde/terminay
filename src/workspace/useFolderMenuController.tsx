@@ -12,6 +12,7 @@ import {
 	panelsHeldByFolder,
 } from './folderDeleteFlow';
 import { type FolderMenuActionId, folderMenuEntries } from './folderMenuModel';
+import { folderNameFromStatus } from './folderTreeSources';
 import {
 	folderDirectory,
 	isGitProject,
@@ -207,7 +208,10 @@ export function useFolderMenuController(options: Options) {
 					ask: (panelCount) =>
 						new Promise<FolderPanelsAnswer>((resolve) =>
 							setPanelsQuestion({
-								folderName: folder.name,
+								folderName: folderNameFromStatus(
+									folder,
+									latest.current.worktreeStatus,
+								),
 								deletesWorktree: folder.kind === 'linked',
 								panelCount,
 								resolve,
