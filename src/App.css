@@ -4537,27 +4537,39 @@ body.project-tabbar-reordering .project-tabbar {
   padding: 0 8px;
 }
 
-.compact-switcher__empty,
-.compact-switcher__none {
+.compact-switcher__empty {
   margin: 10px;
   color: rgba(220, 226, 240, 0.45);
   font-size: 13px;
 }
 
-/* A folder heading sits between its project and its panels: quieter than
-   the project, and one line however long the folder's name is. */
+/* A folder is one ruled line inside its project's card: a label, a hairline
+   to the trailing edge, and its own new-terminal control. An empty folder is
+   that line and nothing more. */
+.compact-switcher__folder-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 2px 0 3px;
+}
+
 .compact-switcher__folder {
   all: unset;
   box-sizing: border-box;
+  flex: 1 1 auto;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  padding: 6px 8px 2px 18px;
-  color: rgba(220, 226, 240, 0.7);
-  font-size: 12px;
-  font-weight: 600;
+  height: 100%;
+  padding: 0 4px 0 9px;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.6);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
@@ -4567,16 +4579,26 @@ body.project-tabbar-reordering .project-tabbar {
 }
 
 .compact-switcher__folder-name {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.compact-switcher__folder-empty {
-  flex: none;
-  color: rgba(220, 226, 240, 0.4);
-  font-weight: 400;
+.compact-switcher__folder-rule {
+  flex: 1 1 12px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* The line is 20px so a run of folders stays thin; the control on it is not.
+   It overhangs the line by 4px above and below and sits over its neighbours,
+   so the thumb gets a 28px target without the list paying for one. */
+.compact-switcher__folder-line .compact-switcher__add {
+  position: relative;
+  z-index: 1;
+  margin: -4px 0;
 }
 
 .compact-switcher__connection-name {
@@ -4587,7 +4609,7 @@ body.project-tabbar-reordering .project-tabbar {
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 10px 8px 4px;
+  padding: 4px 8px 6px;
   background: #14171e;
   color: rgba(220, 226, 240, 0.42);
   font-size: 11px;
@@ -4611,17 +4633,35 @@ body.project-tabbar-reordering .project-tabbar {
   background: #4fd08a;
 }
 
-.compact-switcher__group + .compact-switcher__group {
-  margin-top: 4px;
+/* A project is a card. Its border and its header take the project's colour,
+   which is what says "everything in here belongs to this project" — nothing
+   inside is indented to say it again. The colour is mixed toward the sheet's
+   ink first so the edge of a very dark project is still an edge. */
+.compact-switcher__card {
+  --compact-switcher-edge: color-mix(
+    in srgb,
+    var(--compact-switcher-project, #8a93a6) 72%,
+    #dce2f0
+  );
+  overflow: hidden;
+  padding-bottom: 3px;
+  border: 1px solid color-mix(in srgb, var(--compact-switcher-edge) 34%, transparent);
+  border-radius: 9px;
+}
+
+.compact-switcher__card + .compact-switcher__card {
+  margin-top: 6px;
 }
 
 .compact-switcher__project {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 3px;
+  gap: 2px;
+  min-height: 30px;
+  padding: 0 2px 0 4px;
+  background: color-mix(in srgb, var(--compact-switcher-edge) 13%, transparent);
   color: #dce2f0;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
 }
 
@@ -4635,14 +4675,10 @@ body.project-tabbar-reordering .project-tabbar {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 24px;
-  padding: 0 4px;
+  min-height: 30px;
+  padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
-}
-
-.compact-switcher__project-button:hover {
-  background: rgba(255, 255, 255, 0.05);
 }
 
 .compact-switcher__project-button:focus-visible {
@@ -4654,9 +4690,12 @@ body.project-tabbar-reordering .project-tabbar {
   flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: 3px;
+  background: var(--compact-switcher-project, #8a93a6);
 }
 
+/* The name gives way before the summary does: a clipped name is still
+   recognisable, a clipped count is not a count. */
 .compact-switcher__project-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -4665,9 +4704,34 @@ body.project-tabbar-reordering .project-tabbar {
   white-space: nowrap;
 }
 
+.compact-switcher__summary {
+  flex: none;
+  color: rgba(220, 226, 240, 0.6);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: pre;
+}
+
+/* The leading group takes the colour its rows' indicators use for that state;
+   these are the values in AgentStatusIndicator.css. Idle stays neutral. */
+.compact-switcher__summary-group--attention {
+  color: #ee6258;
+}
+
+.compact-switcher__summary-group--working {
+  color: #e8b931;
+}
+
+.compact-switcher__summary-group--done {
+  color: #45c874;
+}
+
+/* Quiet until wanted: a close on every row must not out-shout the names. The
+   glyph is small and dim, the target is not. */
 .compact-switcher__add,
 .compact-switcher__close {
   all: unset;
+  box-sizing: border-box;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -4675,8 +4739,12 @@ body.project-tabbar-reordering .project-tabbar {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  color: rgba(220, 226, 240, 0.5);
+  color: rgba(220, 226, 240, 0.38);
   cursor: pointer;
+}
+
+.compact-switcher__add {
+  color: rgba(220, 226, 240, 0.6);
 }
 
 .compact-switcher__add:hover,
@@ -4689,30 +4757,22 @@ body.project-tabbar-reordering .project-tabbar {
   display: flex;
   align-items: center;
   gap: 2px;
-  width: calc(100% - 10px);
-  margin-left: 10px;
+  padding: 0 2px 0 3px;
 }
 
-.compact-switcher__row + .compact-switcher__row {
-  margin-top: 1px;
-}
-
-/* A thumb-sized target: the switcher exists because 30px tabs are not. */
-/* The rail is what makes a run of terminals read as belonging to the project
-   above them, so it is continuous: rows sit flush against each other and only
-   the active one lifts out as a chip. */
+/* A thumb-sized target: the switcher exists because 30px tabs are not. A row
+   with a preview is two tight lines; one without is a single line. */
 .compact-switcher__terminal {
   all: unset;
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 38px;
-  padding: 4px 10px;
-  border-radius: 0 9px 9px 0;
-  border-left: 2px solid rgba(255, 255, 255, 0.07);
+  min-height: 32px;
+  padding: 2px 9px;
+  border-radius: 7px;
   cursor: pointer;
 }
 
@@ -4722,8 +4782,6 @@ body.project-tabbar-reordering .project-tabbar {
 
 .compact-switcher__terminal[aria-current='true'] {
   background: var(--terminal-tab-active, #4b3d96);
-  border-left-color: transparent !important;
-  border-radius: 9px;
 }
 
 .compact-switcher__terminal[aria-current='true']
@@ -4734,7 +4792,7 @@ body.project-tabbar-reordering .project-tabbar {
 .compact-switcher__terminal:focus-visible,
 .compact-switcher__add:focus-visible,
 .compact-switcher__close:focus-visible,
-.compact-switcher__actions button:focus-visible {
+.compact-switcher__create button:focus-visible {
   outline: 2px solid var(--accent, #4db5ff);
   outline-offset: -2px;
 }
@@ -4749,7 +4807,6 @@ body.project-tabbar-reordering .project-tabbar {
 .compact-switcher__terminal-text {
   display: flex;
   flex-direction: column;
-  gap: 1px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -4759,8 +4816,9 @@ body.project-tabbar-reordering .project-tabbar {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #dce2f0;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 17px;
 }
 
 .compact-switcher__terminal-preview {
@@ -4769,37 +4827,81 @@ body.project-tabbar-reordering .project-tabbar {
   white-space: nowrap;
   color: rgba(220, 226, 240, 0.4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 14px;
 }
 
-.compact-switcher__actions {
+/* One wide control that names where it creates, and the two rarer creates as
+   glyphs beside it. */
+.compact-switcher__create {
   flex: none;
   display: flex;
-  gap: 8px;
-  margin-top: 6px;
-  padding: 8px 12px 2px;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 7px 8px 2px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.compact-switcher__actions button {
+.compact-switcher__create-main {
   all: unset;
+  box-sizing: border-box;
   flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 10px 8px;
+  height: 36px;
+  padding: 0 11px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   color: #dce2f0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  text-align: center;
   cursor: pointer;
 }
 
-.compact-switcher__actions button:hover {
-  background: rgba(255, 255, 255, 0.11);
+.compact-switcher__create-main--terminal {
+  background: color-mix(
+    in srgb,
+    var(--compact-switcher-project, #7c5cff) 32%,
+    rgba(255, 255, 255, 0.04)
+  );
+}
+
+.compact-switcher__create-main svg {
+  flex: none;
+}
+
+.compact-switcher__create-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.compact-switcher__create-where {
+  color: rgba(220, 226, 240, 0.66);
+  font-weight: 400;
+}
+
+.compact-switcher__create-icon {
+  all: unset;
+  box-sizing: border-box;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 36px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(220, 226, 240, 0.7);
+  cursor: pointer;
+}
+
+.compact-switcher__create-main:hover,
+.compact-switcher__create-icon:hover {
+  filter: brightness(1.25);
 }
 
 /* WebKit refuses a programmatic clipboard read without a live user activation,

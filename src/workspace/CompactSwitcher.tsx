@@ -10,7 +10,8 @@
  * switcher never resizes a terminal and dismissing it never costs a relayout.
  */
 
-import { Plus, Search, X } from 'lucide-react';
+import { FolderPlus, Plus, Search, Server, X } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { useLongPress } from '../hooks/useLongPress';
@@ -20,12 +21,18 @@ import type {
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
 } from './compactSwitcherModel.ts';
-import { compactSwitcherIsEmpty } from './compactSwitcherModel.ts';
-import { ProjectTabActivityDot } from './ProjectTabActivityDot';
+import {
+	compactSwitcherIsEmpty,
+	formatCompactSwitcherSummary,
+} from './compactSwitcherModel.ts';
 
 export type CompactSwitcherProps = Readonly<{
 	/** The row for the panel in front, so the list says where you already are. */
 	activePanelKey?: string;
+	/** Where the create bar's terminal will land: the project in front and the
+	 * folder this device has selected in it. Passed in, not read from `groups`,
+	 * because a filter can narrow the project in front out of the list. */
+	front?: CompactSwitcherFront;
 	groups: readonly CompactSwitcherConnectionGroup[];
 	/** Choosing a folder heading shows that folder, with or without panels.
 	 * At this width it is the only way to an empty one. */
@@ -44,7 +51,13 @@ export type CompactSwitcherProps = Readonly<{
 	/** Long-pressing a panel row edits it, the gesture its hidden tab held. */
 	onEditPanel: (row: CompactSwitcherPanelRow) => void;
 	onNewProject: () => void;
+	/** Creates in a project whose folders this window does not list. */
 	onNewTerminal: (group: CompactSwitcherProjectGroup) => void;
+	/** Creates in the folder whose label carried the control. */
+	onNewTerminalInFolder: (
+		group: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => void;
 	/** Creates in the project in front; absent when no project is active. */
 	onNewTerminalHere?: () => void;
 	onQueryChange: (query: string) => void;
@@ -54,6 +67,13 @@ export type CompactSwitcherProps = Readonly<{
 	 * drawn, so switching lives here. */
 	servers?: readonly CompactSwitcherServer[];
 	onSwitchServer?: (profileId: string) => void;
+}>;
+
+export type CompactSwitcherFront = Readonly<{
+	color: string;
+	/** Absent when this window does not know the project's folders. */
+	folderName?: string;
+	projectTitle: string;
 }>;
 
 export type CompactSwitcherServer = Readonly<{
@@ -78,14 +98,12 @@ function CompactSwitcherPanel({
 	onActivate,
 	onClose,
 	onEdit,
-	projectColor,
 	panel,
 }: Readonly<{
 	isActive: boolean;
 	onActivate: () => void;
 	onClose: () => void;
 	onEdit: () => void;
-	projectColor: string;
 	panel: CompactSwitcherPanelRow;
 }>) {
 	const longPress = useLongPress(onEdit);
@@ -101,7 +119,6 @@ function CompactSwitcherPanel({
 				onContextMenu={longPress.onContextMenu}
 				onClick={longPress.bindClick(onActivate)}
 				aria-current={isActive}
-				style={{ borderLeftColor: projectColor }}
 				data-compact-switcher-panel={panel.key}
 				data-compact-switcher-terminal={
 					panel.panelKind === 'terminal' ? panel.key : undefined
@@ -132,9 +149,46 @@ function CompactSwitcherPanel({
 				aria-label={`Close ${panel.title}`}
 				title={`Close ${panel.title}`}
 			>
-				<X size={14} aria-hidden="true" />
+				<X size={13} aria-hidden="true" />
 			</button>
 		</div>
+	);
+}
+
+/**
+ * A project's terminals in words.
+ *
+ * It stands where an activity dot would: a second dot beside the colour swatch
+ * read as a pair, and a count in words says more than a colour. Only the
+ * leading group takes its state's colour, so the eye lands on what is most
+ * urgent.
+ */
+function CompactSwitcherSummary({
+	project,
+}: Readonly<{ project: CompactSwitcherProjectGroup }>) {
+	const summary = formatCompactSwitcherSummary(project.summary);
+	if (summary.groups.length === 0) return null;
+	return (
+		<span
+			className="compact-switcher__summary"
+			role="img"
+			aria-label={summary.accessible}
+			data-compact-switcher-summary={project.key}
+		>
+			{summary.groups.map((entry, index) => (
+				<span
+					key={entry.group}
+					className={`compact-switcher__summary-group${
+						index === 0
+							? ` compact-switcher__summary-group--${entry.group}`
+							: ''
+					}`}
+				>
+					{index === 0 ? '' : ' · '}
+					{entry.text}
+				</span>
+			))}
+		</span>
 	);
 }
 
@@ -159,19 +213,16 @@ function CompactSwitcherProjectHeading({
 			onClick={longPress.bindClick(() => {})}
 			title="Long-press to edit project"
 		>
-			<span
-				className="compact-switcher__project-swatch"
-				style={{ background: project.color }}
-				aria-hidden="true"
-			/>
-			<ProjectTabActivityDot badge={project.badge} />
+			<span className="compact-switcher__project-swatch" aria-hidden="true" />
 			<span className="compact-switcher__project-name">{project.title}</span>
+			<CompactSwitcherSummary project={project} />
 		</button>
 	);
 }
 
 export function CompactSwitcher({
 	activePanelKey,
+	front,
 	groups,
 	onActivateFolder,
 	onActivatePanel,
@@ -184,6 +235,7 @@ export function CompactSwitcher({
 	onNewProject,
 	onNewTerminal,
 	onNewTerminalHere,
+	onNewTerminalInFolder,
 	onQueryChange,
 	onSwitchServer,
 	query,
@@ -298,86 +350,105 @@ export function CompactSwitcher({
 										aria-hidden="true"
 									/>
 								</h2>
-								{connection.projects.map((project) => (
-									<div className="compact-switcher__group" key={project.key}>
-										<div className="compact-switcher__project">
-											<CompactSwitcherProjectHeading
-												onEdit={() => onEditProject(project)}
-												project={project}
+								{connection.projects.map((project) => {
+									const rows = (panels: readonly CompactSwitcherPanelRow[]) =>
+										panels.map((panel) => (
+											<CompactSwitcherPanel
+												key={panel.key}
+												isActive={panel.key === activePanelKey}
+												onActivate={() => onActivatePanel(panel)}
+												onClose={() => onClosePanel(panel)}
+												onEdit={() => onEditPanel(panel)}
+												panel={panel}
 											/>
-											<button
-												type="button"
-												className="compact-switcher__close"
-												onClick={() => onCloseProject(project)}
-												aria-label={`Close ${project.title}`}
-												title={`Close ${project.title}`}
-											>
-												<X size={14} aria-hidden="true" />
-											</button>
-											<button
-												type="button"
-												className="compact-switcher__add"
-												onClick={() => onNewTerminal(project)}
-												aria-label={`New terminal in ${project.title}`}
-												title={`New terminal in ${project.title}`}
-											>
-												<Plus size={14} aria-hidden="true" />
-											</button>
-										</div>
-										{/* A project with only its General folder reads as it always
-										    has. With more, each folder heads its own panels, so a
-										    terminal in any folder is reachable from here. */}
-										{project.folders.length > 1 ? (
-											project.folders.map((folder) => (
-												<div
-													className="compact-switcher__folder-group"
-													key={folder.key}
+										));
+									return (
+										// The card is what says "these belong to this project":
+										// its border and header take the project's colour, and
+										// nothing inside it is indented.
+										<div
+											className="compact-switcher__card"
+											key={project.key}
+											data-compact-switcher-card={project.key}
+											style={
+												{
+													'--compact-switcher-project': project.color,
+												} as CSSProperties
+											}
+										>
+											<div className="compact-switcher__project">
+												<CompactSwitcherProjectHeading
+													onEdit={() => onEditProject(project)}
+													project={project}
+												/>
+												<button
+													type="button"
+													className="compact-switcher__close"
+													onClick={() => onCloseProject(project)}
+													aria-label={`Close ${project.title}`}
+													title={`Close ${project.title}`}
 												>
+													<X size={13} aria-hidden="true" />
+												</button>
+												{/* A folder's own control says where a terminal lands.
+												    Only a project whose folders are not listed needs
+												    one on its header. */}
+												{project.folders.length === 0 ? (
 													<button
 														type="button"
-														className="compact-switcher__folder"
-														onClick={() => onActivateFolder?.(project, folder)}
-														aria-label={`Folder ${folder.name} in ${project.title}`}
+														className="compact-switcher__add"
+														onClick={() => onNewTerminal(project)}
+														aria-label={`New terminal in ${project.title}`}
+														title={`New terminal in ${project.title}`}
 													>
-														<span className="compact-switcher__folder-name">
-															{folder.name}
-														</span>
-														{folder.panels.length === 0 ? (
-															<span className="compact-switcher__folder-empty">
-																No panels
-															</span>
-														) : null}
+														<Plus size={13} aria-hidden="true" />
 													</button>
-													{folder.panels.map((panel) => (
-														<CompactSwitcherPanel
-															key={panel.key}
-															isActive={panel.key === activePanelKey}
-															onActivate={() => onActivatePanel(panel)}
-															onClose={() => onClosePanel(panel)}
-															onEdit={() => onEditPanel(panel)}
-															projectColor={project.color}
-															panel={panel}
-														/>
+												) : null}
+											</div>
+											{project.folders.length === 0
+												? rows(project.panels)
+												: project.folders.map((folder) => (
+														<div
+															className="compact-switcher__folder-group"
+															key={folder.key}
+														>
+															<div className="compact-switcher__folder-line">
+																<button
+																	type="button"
+																	className="compact-switcher__folder"
+																	data-compact-switcher-folder={folder.key}
+																	onClick={() =>
+																		onActivateFolder?.(project, folder)
+																	}
+																	aria-label={`Folder ${folder.name} in ${project.title}`}
+																>
+																	<span className="compact-switcher__folder-name">
+																		{folder.name}
+																	</span>
+																	<span
+																		className="compact-switcher__folder-rule"
+																		aria-hidden="true"
+																	/>
+																</button>
+																<button
+																	type="button"
+																	className="compact-switcher__add"
+																	data-compact-switcher-folder-add={folder.key}
+																	onClick={() =>
+																		onNewTerminalInFolder(project, folder)
+																	}
+																	aria-label={`New terminal in ${folder.name} of ${project.title}`}
+																	title={`New terminal in ${folder.name}`}
+																>
+																	<Plus size={13} aria-hidden="true" />
+																</button>
+															</div>
+															{rows(folder.panels)}
+														</div>
 													))}
-												</div>
-											))
-										) : project.panels.length === 0 ? (
-											<p className="compact-switcher__none">No panels</p>
-										) : (
-											project.panels.map((panel) => (
-												<CompactSwitcherPanel
-													key={panel.key}
-													isActive={panel.key === activePanelKey}
-													onActivate={() => onActivatePanel(panel)}
-													onClose={() => onClosePanel(panel)}
-													onEdit={() => onEditPanel(panel)}
-													projectColor={project.color}
-													panel={panel}
-												/>
-											))
-										)}
-									</div>
-								))}
+										</div>
+									);
+								})}
 							</section>
 						))
 					)}
@@ -412,17 +483,74 @@ export function CompactSwitcher({
 						))}
 					</div>
 				) : null}
-				<div className="compact-switcher__actions">
-					{onNewTerminalHere === undefined ? null : (
-						<button type="button" onClick={onNewTerminalHere}>
-							New terminal
+				{/* One wide control that says where it creates, because "new
+				    terminal" is what this bar is nearly always pressed for. */}
+				<div className="compact-switcher__create">
+					{onNewTerminalHere === undefined ? (
+						<button
+							type="button"
+							className="compact-switcher__create-main"
+							onClick={onNewProject}
+						>
+							<Plus size={14} aria-hidden="true" />
+							<span className="compact-switcher__create-label">
+								New project
+							</span>
 						</button>
+					) : (
+						<>
+							<button
+								type="button"
+								className="compact-switcher__create-main compact-switcher__create-main--terminal"
+								data-compact-switcher-new-terminal="true"
+								onClick={onNewTerminalHere}
+								aria-label={
+									front === undefined
+										? 'New terminal'
+										: front.folderName === undefined
+											? `New terminal in ${front.projectTitle}`
+											: `New terminal in ${front.folderName} of ${front.projectTitle}`
+								}
+								style={
+									front === undefined
+										? undefined
+										: ({
+												'--compact-switcher-project': front.color,
+											} as CSSProperties)
+								}
+							>
+								<Plus size={14} aria-hidden="true" />
+								<span className="compact-switcher__create-label">
+									{front === undefined ? 'New terminal' : 'Terminal'}
+									{front === undefined ? null : (
+										<span className="compact-switcher__create-where">
+											{` in ${front.projectTitle}`}
+											{front.folderName === undefined
+												? ''
+												: ` › ${front.folderName}`}
+										</span>
+									)}
+								</span>
+							</button>
+							<button
+								type="button"
+								className="compact-switcher__create-icon"
+								onClick={onNewProject}
+								aria-label="New project"
+								title="New project"
+							>
+								<FolderPlus size={16} aria-hidden="true" />
+							</button>
+						</>
 					)}
-					<button type="button" onClick={onNewProject}>
-						New project
-					</button>
-					<button type="button" onClick={onAddConnection}>
-						Add connection
+					<button
+						type="button"
+						className="compact-switcher__create-icon"
+						onClick={onAddConnection}
+						aria-label="Add connection"
+						title="Add connection"
+					>
+						<Server size={16} aria-hidden="true" />
 					</button>
 				</div>
 			</div>
