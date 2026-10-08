@@ -1,3 +1,4 @@
+import { Reorder, useDragControls, useReducedMotion } from 'framer-motion';
 import {
 	CircleCheck,
 	CircleDashed,
@@ -14,12 +15,12 @@ import {
 	type KeyboardEvent,
 	type MouseEvent,
 	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
 	useEffect,
 	useLayoutEffect,
 	useRef,
 	useState,
 } from 'react';
-import { flushSync } from 'react-dom';
 import type {
 	WorktreeCheckState,
 	WorktreeProperties,
@@ -48,6 +49,11 @@ type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
 
 /** How long a dropped order is shown while the server has not answered. */
 const PENDING_ORDER_MS = 3_000;
+/** How the other cards slide to open the place a moved card takes. */
+const SLIDE = { duration: 0.18, ease: [0.2, 0, 0, 1] } as const;
+/** No slide, and no settling, where the device asks for reduced motion. */
+const NO_SLIDE = { duration: 0 } as const;
+const NO_SETTLE = { bounceStiffness: 1_000_000, bounceDamping: 10_000_000 };
 
 export type FoldersTreeProps = {
 	folders: readonly FolderTreeFolderRow[];
@@ -141,7 +147,13 @@ export function FoldersTree({
 	} | null>(null);
 	const previewRef = useRef(preview);
 	previewRef.current = preview;
-	const endDragRef = useRef<(() => void) | null>(null);
+	// A drag can end before the order it last asked for has been drawn, so
+	// what is in the hand is written where the drag's end reads it at once.
+	const showPreview = (next: typeof preview) => {
+		previewRef.current = next;
+		setPreview(next);
+	};
+	const reduceMotion = useReducedMotion() === true;
 	/** The folder whose grip keeps focus across a keyboard move. */
 	const refocusGripRef = useRef<string | null>(null);
 
@@ -165,7 +177,6 @@ export function FoldersTree({
 		}, PENDING_ORDER_MS);
 		return () => window.clearTimeout(timer);
 	}, [preview]);
-	useEffect(() => () => endDragRef.current?.(), []);
 
 	// Kept on the grip that was moved from the keyboard until the server's
 	// order has arrived: each redraw in between moves the card in the document,
@@ -198,71 +209,17 @@ export function FoldersTree({
 		});
 	};
 
-	const startGripDrag = (folderId: string, event: ReactPointerEvent) => {
-		if (onReorderFolders === undefined || event.button !== 0) return;
-		// The grip's press is the grip's: it neither selects the folder nor
-		// starts the drag that moves a terminal.
-		event.preventDefault();
-		event.stopPropagation();
-		endDragRef.current?.();
-		setPreview({ order: serverOrder, draggingId: folderId });
-		const onMove = (move: PointerEvent) => {
-			const current = previewRef.current;
-			if (current === null) return;
-			const index = current.order.indexOf(folderId);
-			const midpoint = (id: string | undefined) => {
-				const rect =
-					id === undefined
-						? undefined
-						: cardOf(treeRef.current, id)?.getBoundingClientRect();
-				return rect === undefined ? undefined : rect.top + rect.height / 2;
-			};
-			const above = midpoint(current.order[index - 1]);
-			const below = midpoint(current.order[index + 1]);
-			const target =
-				above !== undefined && move.clientY < above
-					? index - 1
-					: below !== undefined && move.clientY > below
-						? index + 1
-						: index;
-			const order = folderOrderAfterMove(current.order, folderId, target);
-			if (order.join('\n') === current.order.join('\n')) return;
-			// Drawn before the next move is read: where the cards are is what
-			// that move is measured against.
-			flushSync(() => setPreview({ order, draggingId: folderId }));
-		};
-		const end = () => {
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			window.removeEventListener('pointercancel', onCancel);
-			endDragRef.current = null;
-		};
-		const onUp = () => {
-			end();
-			// Letting go over the card is not a press on it: the click that
-			// follows a drag would otherwise select the folder that was moved.
-			const swallow = (click: Event) => {
-				click.stopPropagation();
-				click.preventDefault();
-			};
-			window.addEventListener('click', swallow, { capture: true, once: true });
-			window.setTimeout(
-				() => window.removeEventListener('click', swallow, true),
-				0,
-			);
-			commitOrder(previewRef.current?.order ?? serverOrder);
-		};
-		const onCancel = () => {
-			end();
-			setPreview(null);
-		};
-		// Listened for on the window: reordering moves the card in the
-		// document, and a moved element loses the pointer it had captured.
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-		window.addEventListener('pointercancel', onCancel);
-		endDragRef.current = end;
+	const startCardDrag = (folderId: string) =>
+		showPreview({
+			order: previewRef.current?.order ?? serverOrder,
+			draggingId: folderId,
+		});
+	const moveCardInHand = (order: string[]) => {
+		const draggingId = previewRef.current?.draggingId;
+		if (draggingId !== undefined) showPreview({ order, draggingId });
 	};
+	const endCardDrag = () =>
+		commitOrder(previewRef.current?.order ?? serverOrder);
 
 	const moveWithKey = (folderId: string, event: KeyboardEvent) => {
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
@@ -321,21 +278,21 @@ export function FoldersTree({
 		previewed !== undefined && previewed.length === folders.length
 			? previewed
 			: folders;
+	const reorderable = onReorderFolders !== undefined;
 
-	return (
-		<div
-			ref={treeRef}
-			className={`folders-tree folders-tree--${variant}`}
-			role="tree"
-			aria-label="Folders"
+	const cards = shown.map((folder) => (
+		<FolderCard
+			key={folder.id}
+			folderId={folder.id}
+			className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}`}
+			dropHandlers={dropHandlers(folder.id)}
+			reorderable={reorderable}
+			reduceMotion={reduceMotion}
+			onDragStart={() => startCardDrag(folder.id)}
+			onDragEnd={endCardDrag}
 		>
-			{shown.map((folder) => (
-				<div
-					key={folder.id}
-					className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}`}
-					data-folder-id={folder.id}
-					{...dropHandlers(folder.id)}
-				>
+			{(onGripPointerDown) => (
+				<>
 					<FolderHeader
 						folder={folder}
 						onSelect={() => onSelectFolder(folder.id)}
@@ -344,16 +301,13 @@ export function FoldersTree({
 								? undefined
 								: (event) => openMenu(folder.id, event)
 						}
-						{...(onReorderFolders === undefined
+						{...(onGripPointerDown === undefined
 							? {}
-							: folder.kind === 'general'
-								? {}
-								: {
-										onGripPointerDown: (event: ReactPointerEvent) =>
-											startGripDrag(folder.id, event),
-										onGripKeyDown: (event: KeyboardEvent) =>
-											moveWithKey(folder.id, event),
-									})}
+							: {
+									onGripPointerDown,
+									onGripKeyDown: (event: KeyboardEvent) =>
+										moveWithKey(folder.id, event),
+								})}
 						onOpenLink={onOpenLink}
 						checksOpen={openChecks.has(folder.id)}
 						onToggleChecks={() => toggleChecks(folder.id)}
@@ -424,20 +378,142 @@ export function FoldersTree({
 							<span>New terminal</span>
 						</button>
 					)}
-				</div>
-			))}
-			{onCreateFolder === undefined ? null : (
-				<button
-					type="button"
-					className="folders-tree__new"
-					onClick={onCreateFolder}
-				>
-					<Plus size={14} aria-hidden="true" />
-					<span>New folder</span>
-				</button>
+				</>
 			)}
-		</div>
+		</FolderCard>
+	));
+	const newFolder =
+		onCreateFolder === undefined ? null : (
+			<button
+				type="button"
+				className="folders-tree__new"
+				onClick={onCreateFolder}
+			>
+				<Plus size={14} aria-hidden="true" />
+				<span>New folder</span>
+			</button>
+		);
+	const treeProps = {
+		ref: treeRef,
+		className: `folders-tree folders-tree--${variant}`,
+		role: 'tree',
+		'aria-label': 'Folders',
+	};
+
+	if (!reorderable)
+		return (
+			<div {...treeProps}>
+				{cards}
+				{newFolder}
+			</div>
+		);
+	return (
+		<Reorder.Group
+			as="div"
+			axis="y"
+			values={shown.map((folder) => folder.id)}
+			onReorder={moveCardInHand}
+			{...treeProps}
+		>
+			{cards}
+			{newFolder}
+		</Reorder.Group>
 	);
+}
+
+/**
+ * One folder's card. Where folders are reordered it is carried by its grip:
+ * up and down only, lifted above the others, which slide to make room for it,
+ * and it settles into the place it is let go over.
+ */
+function FolderCard({
+	folderId,
+	className,
+	dropHandlers,
+	reorderable,
+	reduceMotion,
+	onDragStart,
+	onDragEnd,
+	children,
+}: Readonly<{
+	folderId: string;
+	className: string;
+	dropHandlers: {
+		onDragOver?: (event: DragEvent) => void;
+		onDragLeave?: (event: DragEvent) => void;
+		onDrop?: (event: DragEvent) => void;
+	};
+	reorderable: boolean;
+	reduceMotion: boolean;
+	onDragStart: () => void;
+	onDragEnd: () => void;
+	/** Given the grip's press where the card is reordered, and nothing where it is not. */
+	children: (
+		onGripPointerDown: ((event: ReactPointerEvent) => void) | undefined,
+	) => ReactNode;
+}>) {
+	const controls = useDragControls();
+	if (!reorderable)
+		return (
+			<div className={className} data-folder-id={folderId} {...dropHandlers}>
+				{children(undefined)}
+			</div>
+		);
+	return (
+		<Reorder.Item
+			as="div"
+			value={folderId}
+			className={className}
+			data-folder-id={folderId}
+			// Only the grip starts a reorder: a press elsewhere on the card
+			// selects the folder, and a terminal row starts its own drag.
+			dragListener={false}
+			dragControls={controls}
+			dragMomentum={false}
+			layout="position"
+			transition={{ layout: reduceMotion ? NO_SLIDE : SLIDE }}
+			{...(reduceMotion
+				? { dragTransition: NO_SETTLE }
+				: { whileDrag: { scale: 1.02 } })}
+			onDragStart={onDragStart}
+			onDragEnd={onDragEnd}
+			{...dropHandlers}
+		>
+			{children((event) => {
+				if (event.button !== 0) return;
+				// The grip's press is the grip's: it neither selects the folder nor
+				// starts the drag that moves a terminal.
+				event.preventDefault();
+				event.stopPropagation();
+				swallowClickAfterRelease();
+				controls.start(event);
+			})}
+		</Reorder.Item>
+	);
+}
+
+/**
+ * Letting go of a grip over a card is not a press on that card: the click
+ * that follows a drag would otherwise select the folder the pointer ended on.
+ * Armed at the press, because the drag reports its end a frame after the
+ * release, and the click has been and gone by then.
+ */
+function swallowClickAfterRelease() {
+	const swallow = (click: Event) => {
+		click.stopPropagation();
+		click.preventDefault();
+	};
+	const release = () => {
+		window.removeEventListener('pointerup', release, true);
+		window.removeEventListener('pointercancel', release, true);
+		window.addEventListener('click', swallow, { capture: true, once: true });
+		window.setTimeout(
+			() => window.removeEventListener('click', swallow, true),
+			0,
+		);
+	};
+	window.addEventListener('pointerup', release, true);
+	window.addEventListener('pointercancel', release, true);
 }
 
 function cardOf(tree: HTMLElement | null, folderId: string) {
@@ -473,7 +549,7 @@ function FolderHeader({
 	folder: FolderTreeFolderRow;
 	onSelect: () => void;
 	onMenu?: (event: MouseEvent) => void;
-	/** Absent for a folder that is not reordered: General, and any in a peek. */
+	/** Absent where folders are not reordered, such as in a peek. */
 	onGripPointerDown?: (event: ReactPointerEvent) => void;
 	onGripKeyDown?: (event: KeyboardEvent) => void;
 	onOpenLink?: (url: string) => void;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OrderedEventJournal, WorkspaceStore, createInitialWorkspace, createWorkspaceOperationRegistry, migrateWorkspaceState, validateWorkspace, WORKSPACE_OPERATIONS, WORKSPACE_SCHEMA_VERSION } from "../dist/index.js";
+import { OrderedEventJournal, WorkspaceStore, createInitialWorkspace, createWorkspaceOperationRegistry, generalFolderId, migrateWorkspaceState, validateWorkspace, WORKSPACE_OPERATIONS, WORKSPACE_SCHEMA_VERSION } from "../dist/index.js";
 
 const LINK = { repositoryId: "repo-1", path: "/project-a/.worktrees/feature" };
 
@@ -44,7 +44,7 @@ async function client(registry, command, claims) {
 async function rejectsWith(promise, pattern) {
   await assert.rejects(promise, (error) => pattern.test(error.message));
 }
-const general = (workspace, projectId) => workspace.state.projects[projectId].folderIds[0];
+const general = (workspace, projectId) => generalFolderId(workspace.state, projectId);
 /** The id of the folder a `folder.create` just made. */
 function created(workspace, applied) {
   return applied.event.changedIds.find((id) => workspace.state.folders[id] !== undefined);
@@ -65,13 +65,44 @@ test("a new project has one General folder and new panels land in it", () => {
   assert.notEqual(general(workspace, "project-b"), folder.id);
 });
 
-test("General cannot be renamed, reordered away from first, or deleted", () => {
+test("General cannot be renamed or deleted", () => {
   const { workspace, registry } = fixture();
   const generalId = general(workspace, "project-a");
-  const plain = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Servers" }));
   refused(registry, { type: "folder.rename", folderId: generalId, name: "Main" }, /General folder cannot be renamed/);
   refused(registry, { type: "folder.delete", folderId: generalId }, /General folder cannot be deleted/);
-  refused(registry, { type: "folder.reorder", projectId: "project-a", folderIds: [plain, generalId] }, /General folder stays first/);
+});
+
+test("General is found by its kind wherever it is in the order, and takes any place in it", () => {
+  const { workspace, registry } = fixture();
+  const generalId = workspace.state.projects["project-a"].folderIds[0];
+  assert.equal(workspace.state.folders[generalId].kind, "general");
+  const servers = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Servers" }));
+  const notes = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Notes" }));
+  for (const folderIds of [[servers, generalId, notes], [servers, notes, generalId], [generalId, servers, notes], [notes, servers, generalId]]) {
+    host(registry, { type: "folder.reorder", projectId: "project-a", folderIds });
+    assert.deepEqual(workspace.state.projects["project-a"].folderIds, folderIds);
+    assert.equal(generalFolderId(workspace.state, "project-a"), generalId);
+  }
+  assert.equal(generalFolderId(workspace.state, "no-such-project"), undefined);
+  validateWorkspace(workspace.state);
+  // General is last. A panel that names no folder still lands in it.
+  host(registry, { type: "terminal.createPanel", projectId: "project-a", sessionId: "session-c", panelId: "panel-c", title: "three", createdAt: 4 });
+  host(registry, { type: "panel.create", panel: { id: "panel-notes", projectId: "project-a", type: "file", path: "NOTES.md", createdAt: 5 } });
+  assert.equal(workspace.state.panels["panel-c"].folderId, generalId);
+  assert.equal(workspace.state.panels["panel-notes"].folderId, generalId);
+  assert.deepEqual(workspace.state.folders[notes].panelIds, []);
+});
+
+test("a reorder that is not exactly the project's folders is refused", () => {
+  const { workspace, registry } = fixture();
+  const generalId = general(workspace, "project-a");
+  const servers = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Servers" }));
+  const foreign = general(workspace, "project-b");
+  const boundary = /folder reorder crosses project boundary/;
+  refused(registry, { type: "folder.reorder", projectId: "project-a", folderIds: [servers] }, boundary);
+  refused(registry, { type: "folder.reorder", projectId: "project-a", folderIds: [servers, servers] }, boundary);
+  refused(registry, { type: "folder.reorder", projectId: "project-a", folderIds: [servers, foreign] }, boundary);
+  refused(registry, { type: "folder.reorder", projectId: "project-a", folderIds: [servers, generalId, foreign] }, boundary);
 });
 
 test("a plain folder can be created, renamed, reordered, and deleted once empty", () => {

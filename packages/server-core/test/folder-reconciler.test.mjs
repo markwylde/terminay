@@ -34,7 +34,7 @@ function fixture({ root = "/repo" } = {}) {
   });
   const folders = () => workspace.state.projects["project-a"].folderIds.map((id) => workspace.state.folders[id]);
   const linked = () => folders().filter((folder) => folder.kind === "linked");
-  return { workspace, reconciler, git, appeared, errors, host, folders, linked, general: () => folders()[0] };
+  return { workspace, reconciler, git, appeared, errors, host, folders, linked, general: () => folders().find((folder) => folder.kind === "general") };
 }
 
 test("every worktree but the project root's checkout gets one linked folder, named after its directory", async () => {
@@ -79,6 +79,20 @@ test("a worktree that disappears has its terminals moved to General, in order an
   assert.deepEqual(linked(), []);
   assert.deepEqual(general().panelIds, ["panel-a", "panel-b", "panel-c", "panel-d"]);
   assert.deepEqual(workspace.state.terminalSessions, sessions);
+});
+
+test("a worktree that disappears has its terminals moved to General when General is last in the order", async () => {
+  const { workspace, reconciler, git, host, linked, general } = fixture();
+  git.worktrees = [MAIN, row("/repo/.worktrees/feature"), row("/repo/.worktrees/other")];
+  await reconciler.reconcile("project-a");
+  const [feature, other] = linked().map((folder) => folder.id);
+  host({ type: "folder.reorder", projectId: "project-a", folderIds: [other, feature, general().id] });
+  host({ type: "terminal.createPanel", projectId: "project-a", folderId: feature, sessionId: "session-c", panelId: "panel-c", createdAt: 3 });
+  git.worktrees = [MAIN, row("/repo/.worktrees/other")];
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(linked().map((folder) => folder.id), [other]);
+  assert.deepEqual(general().panelIds, ["panel-a", "panel-b", "panel-c"]);
+  assert.deepEqual(workspace.state.folders[other].panelIds, []);
 });
 
 test("a renamed folder stays linked, a bare entry gets no folder, and a registration whose directory is gone keeps one", async () => {

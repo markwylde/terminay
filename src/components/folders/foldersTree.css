@@ -43,9 +43,13 @@
 	background: rgba(87, 183, 255, 0.08);
 }
 
+/* A card that is being carried, or is settling, is drawn over the others. */
+.folders-tree--tree .folders-tree__folder {
+	position: relative;
+}
+
 /* The card in the hand while its grip is dragged. */
 .folders-tree__folder--dragging {
-	position: relative;
 	z-index: 1;
 	border-color: rgba(220, 226, 240, 0.45);
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
@@ -116,7 +120,7 @@
 	min-width: 0;
 }
 
-/* Dragged to reorder the folders. General has none: it stays first. */
+/* Dragged to reorder the folders. */
 .folders-tree__grip {
 	all: unset;
 	flex: none;

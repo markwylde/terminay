@@ -247,6 +247,7 @@ import {
 	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
+import { generalFolderIdOf } from './workspace/folderTreeModel';
 import {
 	activeSessionMemoryKey,
 	commandFolderId,
@@ -6973,19 +6974,36 @@ function App({
 	// rarely changes. Keying on the order keeps the merged inventory, and
 	// everything derived from it, from being rebuilt for an unrelated change.
 	const folderOrderKey = JSON.stringify(
-		projects.map((project) => [
-			project.id,
-			workspaceSnapshot?.projects[project.id]?.folderIds ?? null,
-		]),
+		projects.map((project) => {
+			const projected = workspaceSnapshot?.projects[project.id];
+			return [
+				project.id,
+				projected?.folderIds ?? null,
+				projected === undefined
+					? null
+					: (generalFolderIdOf(projected, workspaceSnapshot?.folders ?? {}) ??
+						null),
+			];
+		}),
 	);
 	const inventoryByProject = useMemo(() => {
 		const folderOrder = new Map(
-			JSON.parse(folderOrderKey) as [string, string[] | null][],
+			(
+				JSON.parse(folderOrderKey) as [
+					string,
+					string[] | null,
+					string | null,
+				][]
+			).map(([projectId, folderIds, generalId]) => [
+				projectId,
+				{ folderIds, generalId },
+			]),
 		);
 		return mergeProjectInventories(
 			inventoryByFolder,
-			(projectId) => folderOrder.get(projectId) ?? undefined,
+			(projectId) => folderOrder.get(projectId)?.folderIds ?? undefined,
 			rememberedFolderId,
+			(projectId) => folderOrder.get(projectId)?.generalId ?? undefined,
 		);
 		// `selectedFolders` is what `rememberedFolderId` reads.
 	}, [folderOrderKey, inventoryByFolder, rememberedFolderId, selectedFolders]);
@@ -8106,7 +8124,13 @@ function App({
 					const folder = snapshot.folders[folderId];
 					return folder === undefined
 						? []
-						: [{ id: folder.id, name: folder.name }];
+						: [
+								{
+									id: folder.id,
+									name: folder.name,
+									...(folder.kind === 'general' ? { isGeneral: true } : {}),
+								},
+							];
 				}),
 			]);
 		}),
@@ -8116,7 +8140,7 @@ function App({
 			Object.fromEntries(
 				JSON.parse(compactSwitcherFolderKey) as [
 					string,
-					{ id: string; name: string }[],
+					{ id: string; name: string; isGeneral?: boolean }[],
 				][],
 			),
 		[compactSwitcherFolderKey],
