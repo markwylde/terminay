@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -65,10 +66,14 @@ import {
 	ControlCapabilityStore,
 	ControlEndpointError,
 	type ControlOperation,
+	ControlSocketPlacementError,
+	type ControlSocketPlacement,
 	type ControlPermissionGate,
 	type ControlRequestContext,
 	createControlEndpoint,
 	createMcpPermissionGate,
+	placeControlSocket,
+	resolveControlSocketPlacement,
 	createTerminalControlAdapter,
 	type LocalControlEndpoint,
 	type McpApprovalDescription,
@@ -2879,15 +2884,47 @@ function getTerminalControlEnv(capability?: {
 	readonly token: string;
 }): Record<string, string | undefined> {
 	if (capability === undefined) return {};
+	// A terminal can be launched before the endpoint is listening, so the
+	// address is worked out here the same way the endpoint works it out. With
+	// nowhere for the socket to go there is no address to give; startup reports
+	// that when it reaches the endpoint.
+	let placement: ControlSocketPlacement;
+	try {
+		placement = resolveMcpControlSocketPlacement();
+	} catch {
+		return {};
+	}
 	return {
-		[CONTROL_SOCKET_ENV]: getMcpControlSocketPath(),
+		[CONTROL_SOCKET_ENV]: placement.path,
 		[CONTROL_TOKEN_ENV]: capability.token,
 	};
 }
 
-function getMcpControlSocketPath(): string {
-	if (process.platform === 'win32') return '\\\\.\\pipe\\terminay-control';
-	return path.join(app.getPath('userData'), 'terminay-mcp-control.sock');
+function mcpControlSocketPlacementOptions() {
+	return {
+		dataDirectory: app.getPath('userData'),
+		platform: process.platform,
+		temporaryDirectory: os.tmpdir(),
+		...(process.env.XDG_RUNTIME_DIR
+			? { runtimeDirectory: process.env.XDG_RUNTIME_DIR }
+			: {}),
+	};
+}
+
+let mcpControlSocketPlacement: ControlSocketPlacement | null = null;
+
+/**
+ * Where the control socket is (ADR-0054): in the data directory when its path
+ * fits a Unix socket, and otherwise in a runtime directory named for the data
+ * directory, so the address is the same after a relaunch. Deciding it reads
+ * nothing from disk; whether a runtime directory may be used is checked when
+ * the endpoint starts.
+ */
+function resolveMcpControlSocketPlacement(): ControlSocketPlacement {
+	mcpControlSocketPlacement ??= resolveControlSocketPlacement(
+		mcpControlSocketPlacementOptions(),
+	);
+	return mcpControlSocketPlacement;
 }
 
 /** Whether this Desktop keeps its terminals in a session holder (ADR-0035). */
@@ -3004,8 +3041,14 @@ function applyMcpSetting(settings: Record<string, unknown>): void {
 
 async function startMcpControlEndpoint(): Promise<void> {
 	if (mcpControlEndpoint !== null) return;
+	// Throws when the socket has nowhere to go, or when the runtime directory
+	// it would go in is not the user's own; startup then says so.
+	const placement = await placeControlSocket(
+		mcpControlSocketPlacementOptions(),
+	);
 	const endpoint = createControlEndpoint({
-		socketPath: getMcpControlSocketPath(),
+		socketPath: placement.path,
+		tightenParentDirectory: placement.location !== 'runtime-directory',
 		capabilities: mcpCapabilities,
 		dispatch: createTerminalControlAdapter({
 			adapter: createDesktopMcpTerminalAdapter(),
@@ -6764,11 +6807,20 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 		return;
 	}
 	const windowWebContentsId = window.webContents.id;
+	// A cause the user can act on is said in full. It names paths, so it is
+	// given more room than the general message.
+	const placementFailure =
+		error instanceof ControlSocketPlacementError ? error : undefined;
+	// The recovery state records the message it shows, which for this cause
+	// carries the paths, the lengths, and the reason.
 	await showCanonicalLaunchRecovery({
 		window,
-		error: new Error(
-			'Terminay could not finish starting. Relaunch to retry. Technical details were recorded in Terminay diagnostics.',
-		),
+		error:
+			placementFailure ??
+			new Error(
+				'Terminay could not finish starting. Relaunch to retry. Technical details were recorded in Terminay diagnostics.',
+			),
+		...(placementFailure === undefined ? {} : { messageLimit: 2_000 }),
 		retry: async () => {
 			// A failed main-process composition may have partially initialized native
 			// services. Relaunching is the bounded recovery boundary; it avoids

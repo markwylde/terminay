@@ -80,3 +80,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0051](./0051-terminay-observes-agents-and-does-not-instrument-them.md) | Terminay observes agents and does not instrument them, except where the owner has approved it | accepted | 2026-10-08 |
 | [0052](./0052-terminals-report-git-commands-to-the-server-through-git-trace2.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing | accepted | 2026-10-08 |
 | [0053](./0053-in-page-windows-share-one-modal-frame.md) | Every in-page window is presented through one modal frame, with geometry kept on the device | accepted | 2026-10-08 |
+| [0054](./0054-a-local-socket-that-does-not-fit-the-data-directory-lives-in-an-owner-only-runtime-directory.md) | A local socket that does not fit in the data directory lives in an owner-only runtime directory named for it | accepted | 2026-10-09 |
