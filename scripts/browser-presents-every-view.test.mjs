@@ -36,6 +36,11 @@ const { defaultTerminalSettings } = await bundle(
 	'terminal-settings.cjs',
 );
 
+const { projectReorderInOwnView } = await bundle(
+	'src/shared/serverWorkspaceReconciliation.ts',
+	'server-workspace-reconciliation.cjs',
+);
+
 test.after(() => rm(testDirectory, { force: true, recursive: true }));
 
 const project = (id, viewId) => ({
@@ -131,5 +136,46 @@ test('a browser presents the projects of every view of its server', () => {
 	assert.deepEqual(
 		presentedProjectIds({ workspaceViewId: null, presentsEveryView: true }),
 		['project-1', 'project-2', 'project-3'],
+	);
+});
+
+// One strip holds several views in a browser. Dragging a tab along it reorders
+// the project inside the view that holds it and never moves it to another.
+test('a project reordered in a strip of several views stays in its own view', () => {
+	const twoInDefault = {
+		...snapshot,
+		views: {
+			...snapshot.views,
+			'view-default': {
+				...snapshot.views['view-default'],
+				projectIds: ['project-1', 'project-4'],
+			},
+		},
+		projects: {
+			...snapshot.projects,
+			'project-4': project('project-4', 'view-default'),
+		},
+	};
+	// project-4 dragged to the front: first of its own view's two projects.
+	assert.deepEqual(
+		projectReorderInOwnView(
+			twoInDefault,
+			['project-4', 'project-1', 'project-2', 'project-3'],
+			'project-4',
+		),
+		{ targetViewId: 'view-default', index: 0 },
+	);
+	// project-2 dragged past another view's tabs: its own view is unchanged.
+	assert.equal(
+		projectReorderInOwnView(
+			twoInDefault,
+			['project-2', 'project-1', 'project-4', 'project-3'],
+			'project-2',
+		),
+		null,
+	);
+	assert.equal(
+		projectReorderInOwnView(twoInDefault, ['project-1'], 'project-9'),
+		null,
 	);
 });
