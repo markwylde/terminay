@@ -170,6 +170,31 @@ export function reconcileServerWorkspaceSelection(
 	return { viewId: view.id, projectId: project.id, panelId: panel?.id ?? null };
 }
 
+/** The one workspace snapshot shape this bundle reads. */
+export const WORKSPACE_SCHEMA_VERSION = 6;
+
+/**
+ * The server answered in a workspace shape from another release. The hello
+ * does not carry the snapshot's schema, so this is where a version mismatch
+ * first shows; asking again gets the same answer until one side is updated.
+ */
+export class WorkspaceSchemaIncompatibleError extends Error {
+	readonly code = 'workspace_schema_incompatible';
+	readonly upgrade: 'server' | 'client';
+
+	constructor(serverSchemaVersion: number) {
+		const upgrade =
+			serverSchemaVersion < WORKSPACE_SCHEMA_VERSION ? 'server' : 'client';
+		super(
+			upgrade === 'server'
+				? `This server keeps its workspace in an older format (${serverSchemaVersion}); this Terminay needs ${WORKSPACE_SCHEMA_VERSION}. Update the server.`
+				: `This server keeps its workspace in a newer format (${serverSchemaVersion}); this Terminay reads ${WORKSPACE_SCHEMA_VERSION}. Update Terminay.`,
+		);
+		this.name = 'WorkspaceSchemaIncompatibleError';
+		this.upgrade = upgrade;
+	}
+}
+
 export function parseServerWorkspaceSnapshot(
 	value: unknown,
 	expectedServerId: string,
@@ -177,6 +202,11 @@ export function parseServerWorkspaceSnapshot(
 ): ServerWorkspaceSnapshot {
 	if (!isRecord(value))
 		throw new Error('The server returned an incompatible workspace snapshot.');
+	if (
+		typeof value.schemaVersion === 'number' &&
+		value.schemaVersion !== WORKSPACE_SCHEMA_VERSION
+	)
+		throw new WorkspaceSchemaIncompatibleError(value.schemaVersion);
 	const {
 		schemaVersion,
 		serverId,
@@ -190,7 +220,7 @@ export function parseServerWorkspaceSnapshot(
 		terminalSessions,
 	} = value;
 	if (
-		schemaVersion !== 6 ||
+		schemaVersion !== WORKSPACE_SCHEMA_VERSION ||
 		serverId !== expectedServerId ||
 		typeof revision !== 'number' ||
 		!Number.isSafeInteger(revision) ||
