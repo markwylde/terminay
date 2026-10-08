@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEmbeddedBootstrap, createLocalUiServer, createServerRemoteExposure, FileDataRootLease } from "../dist/index.js";
+import { createEmbeddedBootstrap, createLocalUiServer, createServerRemoteExposure, DataRootInUseError, describeDataRootInUse, FileDataRootLease } from "../dist/index.js";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { deriveUiBundleId } from "@terminay/server-core";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -318,7 +320,14 @@ test("file data-root lease prevents a second authority and releases atomically",
     const lock = await stat(join(root, ".terminay-server.lock"));
     assert.equal(lock.mode & 0o777, 0o600);
     assert.match(await readFile(join(root, ".terminay-server.lock"), "utf8"), /"pid"/);
-    await assert.rejects(second.acquire(root), /data root is already in use/);
+    await assert.rejects(second.acquire(root), (error) => {
+      assert.ok(error instanceof DataRootInUseError);
+      assert.match(error.message, /data root is already in use/);
+      assert.equal(error.lockPath, join(error.dataRoot, ".terminay-server.lock"));
+      assert.equal(error.owner.pid, process.pid);
+      assert.match(error.owner.startedAt, /^\d{4}-\d{2}-\d{2}T/);
+      return true;
+    });
     await first.release(root);
     await second.acquire(root);
     await second.release(root);
@@ -373,3 +382,57 @@ async function reserveLoopbackPort() {
   await new Promise((resolve, reject) => listener.close((error) => error === undefined ? resolve() : reject(error)));
   return port;
 }
+
+test("a locked data root tells the operator what happened and how to clear it", () => {
+  const error = new DataRootInUseError(
+    "/var/lib/terminay",
+    "/var/lib/terminay/.terminay-server.lock",
+    { pid: 7, startedAt: "2026-10-08T16:02:11.000Z" },
+  );
+  const container = describeDataRootInUse(error, { container: true });
+  assert.match(container, /^Terminay server did not start: its data root is locked\./);
+  assert.match(container, /Left by: +a server started at 2026-10-08T16:02:11\.000Z/);
+  assert.match(container, /never removed automatically/);
+  assert.match(container, /docker ps --filter volume=<your-volume>/);
+  assert.match(
+    container,
+    /docker run --rm -v <your-volume>:\/var\/lib\/terminay --entrypoint rm <this-image> \/var\/lib\/terminay\/\.terminay-server\.lock/,
+  );
+  // A process id from inside another container means nothing to the operator.
+  assert.doesNotMatch(container, /ps -p/);
+
+  const host = describeDataRootInUse(error, { container: false });
+  assert.match(host, /ps -p 7/);
+  assert.match(host, /rm \/var\/lib\/terminay\/\.terminay-server\.lock/);
+  assert.doesNotMatch(host, /docker/);
+
+  // A lock nobody can read still gets a remedy.
+  const unreadable = describeDataRootInUse(
+    new DataRootInUseError("/data", "/data/.terminay-server.lock", {}),
+    { container: false },
+  );
+  assert.match(unreadable, /Left by: +an earlier server/);
+  assert.match(unreadable, /rm \/data\/\.terminay-server\.lock/);
+});
+
+test("the server exits on a locked data root with the remedy and no stack trace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-locked-root-"));
+  try {
+    const lockPath = join(root, ".terminay-server.lock");
+    await writeFile(lockPath, `${JSON.stringify({ pid: 1, startedAt: "2026-10-08T16:02:11.000Z" })}\n`);
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "--data-root", root, "--project-root", root],
+      { encoding: "utf8", env: { ...process.env, TERMINAY_MANAGED_BY: "container" }, timeout: 20_000 },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^Terminay server did not start: its data root is locked\./);
+    assert.match(result.stderr, /--entrypoint rm <this-image> /);
+    assert.ok(result.stderr.includes(lockPath));
+    assert.doesNotMatch(result.stderr, /\n {4}at /);
+    // The refusal leaves the lock exactly as it found it.
+    assert.match(await readFile(lockPath, "utf8"), /"pid":1/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
