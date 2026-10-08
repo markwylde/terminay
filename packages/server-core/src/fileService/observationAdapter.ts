@@ -31,6 +31,8 @@ export const FILE_OBSERVATION_OPERATIONS = Object.freeze({
 } as const);
 
 export interface FileObservationHost {
+	/** Begin observing. A returned promise settles once the host is observing,
+	 * or rejects when it cannot: a watch start is answered only then. */
 	watch(input: {
 		readonly projectId: string;
 		readonly resource: string;
@@ -80,6 +82,10 @@ interface WatchState {
 	readonly clientId: string;
 	readonly controller: AbortController;
 	readonly consumersByConnection: Map<string, number>;
+	/** Settles once the host is observing, or has said that it cannot. A
+	 * start is answered only then, so whatever a client reads after the answer
+	 * was read with the watch already in place. */
+	armed: Promise<void>;
 }
 interface SizeJob {
 	readonly projectId: string;
@@ -188,7 +194,7 @@ export class ServerFileObservationAdapter {
 		resource: string,
 		host: FileObservationHost,
 		folderId?: string,
-	): JsonValue {
+	): Promise<JsonValue> {
 		const folder: { readonly folderId?: string } =
 			folderId === undefined ? {} : { folderId };
 		const subscription = this.watches.subscribe({
@@ -200,13 +206,13 @@ export class ServerFileObservationAdapter {
 		const existing = this.watchStates.get(subscription.subscriptionId);
 		if (existing !== undefined) {
 			addConsumer(existing, request.context.connectionId);
-			return {
+			return existing.armed.then(() => ({
 				subscriptionId: subscription.subscriptionId,
 				projectId,
 				...folder,
 				resource,
 				cursor: this.watches.sequence,
-			};
+			}));
 		}
 		const controller = new AbortController();
 		const state: WatchState = {
@@ -214,9 +220,11 @@ export class ServerFileObservationAdapter {
 			clientId: request.context.clientId,
 			controller,
 			consumersByConnection: new Map([[request.context.connectionId, 1]]),
+			armed: Promise.resolve(),
 		};
 		this.watchStates.set(subscription.subscriptionId, state);
-		void Promise.resolve(
+		state.armed = Promise.resolve()
+			.then(() =>
 			host.watch({
 				projectId,
 				resource,
@@ -273,13 +281,13 @@ export class ServerFileObservationAdapter {
 				}
 			}
 		});
-		return {
+		return state.armed.then(() => ({
 			subscriptionId: subscription.subscriptionId,
 			projectId,
 			...folder,
 			resource,
 			cursor: this.watches.sequence,
-		};
+		}));
 	}
 
 	private async read(request: QueryRequest): Promise<JsonValue> {
