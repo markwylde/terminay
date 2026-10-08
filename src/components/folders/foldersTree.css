@@ -130,12 +130,6 @@
 	touch-action: none;
 }
 
-/* The width a grip takes in the title line, for the folder that has none. */
-.folders-tree__grip-room {
-	flex: none;
-	width: 9px;
-}
-
 .folders-tree__grip:hover,
 .folders-tree__grip:focus-visible,
 .folders-tree__folder--dragging .folders-tree__grip {
