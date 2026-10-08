@@ -31,7 +31,7 @@ the server's matching UI bundle and MUST NOT load extension code.
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support session sources, MCP install targets, and language servers. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, language servers, and worktree insights. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -47,6 +47,11 @@ The public API SHALL support session sources, MCP install targets, and language 
 #### Scenario: Session source contribution
 
 - **WHEN** a package declares a session source or MCP install target contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Worktree insight contribution
+
+- **WHEN** a package declares a worktree insight contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
 ### Requirement: Server-wide installation scope
@@ -207,7 +212,7 @@ One npm package SHALL contribute one immutable extension identity. Its `package.
 
 ### Requirement: Contribution arrays
 
-`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, and `contributes.languageServers` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
+`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, and `contributes.worktreeInsights` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
 
 #### Scenario: Agent-only package
 
@@ -222,6 +227,12 @@ One npm package SHALL contribute one immutable extension identity. Its `package.
 #### Scenario: Language-server-only package
 
 - **WHEN** a package contributes one or more language servers and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Worktree-insight-only package
+
+- **WHEN** a package contributes one or more worktree insight sources and nothing
+  else
 - **THEN** it passes contribution validation
 
 ### Requirement: Identity separation and namespacing
@@ -541,7 +552,15 @@ observed.
 
 ### Requirement: A failed host is restarted under supervision
 
-A host whose child exits unexpectedly SHALL be restarted automatically when its computed restart backoff expires, without requiring a server or application restart. Backoff SHALL grow with consecutive failures up to the maximum, and restart attempts SHALL stop once the extension is quarantined. A restart SHALL re-publish the extension's contributions. Its session sources SHALL report their full live set again.
+A host whose child exits unexpectedly SHALL be restarted automatically when its
+computed restart backoff expires, without requiring a server or application
+restart. Backoff SHALL grow with consecutive failures up to the maximum, and
+restart attempts SHALL stop once the extension is quarantined. A restart SHALL
+re-publish the extension's contributions. Its session sources SHALL report
+their full live set again. A child that exits after the host reports running but
+before its contributions are published SHALL be supervised on the same terms:
+the host keeps its failed state and its scheduled restart, and the manager
+SHALL NOT convert that failure into a deliberate stop.
 
 #### Scenario: Host crashes once during a session
 
@@ -549,6 +568,14 @@ A host whose child exits unexpectedly SHALL be restarted automatically when its 
   running
 - **THEN** the host is restarted after its backoff expires and its
   contributions become available again
+
+#### Scenario: Host crashes before its contributions are published
+
+- **WHEN** an extension host child exits after the host reports running and
+  before the manager publishes its contributions
+- **THEN** the activation fails, the host stays failed with its restart
+  scheduled, and the restart brings the host back and publishes its
+  contributions
 
 #### Scenario: Repeated crashes
 
@@ -1326,3 +1353,71 @@ The host SHALL supply the MCP server command only when the server can run the MC
 
 - **WHEN** the server cannot run the Terminay MCP adapter
 - **THEN** every install target is reported unavailable and no extension call is made
+
+### Requirement: Worktree observation permission
+
+A worktree insight source SHALL declare the `worktree-observation` permission.
+The permission SHALL authorize receiving host-issued repository contexts and
+publishing worktree properties and sign-in requests for them, and MUST NOT grant
+client authority, workspace navigation, or direct canonical-store mutation.
+
+#### Scenario: Missing permission
+
+- **WHEN** an extension registers a worktree insight source without declaring
+  `worktree-observation`
+- **THEN** the registration is refused
+
+### Requirement: Host-issued repository context
+
+For each open project whose root is a Git repository, Terminay SHALL issue each
+registered worktree insight source a repository context containing the
+repository root, its remotes with names and URLs, its worktrees with an
+opaque worktree id, path, branch, upstream, and head commit, and whether a
+client has the project active. Terminay SHALL re-issue the context when the
+worktree set, any worktree's branch, upstream, or head, or the project's
+activity changes, and SHALL cancel the context when the project closes, the
+extension is disabled, or its host fails. Terminay SHALL accept worktree
+properties only for worktree ids in a context it has issued and not cancelled.
+
+#### Scenario: Project opened
+
+- **WHEN** a project whose root is a Git repository is opened
+- **THEN** each registered worktree insight source receives its repository
+  context
+
+#### Scenario: Branch pushed
+
+- **WHEN** a push updates a worktree's upstream ref
+- **THEN** the repository context is re-issued with the new upstream and head
+
+#### Scenario: Publication for an unissued worktree
+
+- **WHEN** an extension publishes properties for a worktree id outside any
+  context issued to it
+- **THEN** the publication is rejected
+
+#### Scenario: Project closed
+
+- **WHEN** the last client closes a project
+- **THEN** its repository context's cancellation signal fires
+
+### Requirement: Sign-in requests and per-origin credentials
+
+A worktree insight source SHALL be able to request sign-in for an HTTPS origin,
+supplying a provider name and an optional guarded token-page link, and SHALL be
+able to resolve the credential stored for that origin through the scoped vault
+broker. Vault bindings for sign-in SHALL be owned by the extension and the
+origin; an extension MUST NOT resolve a binding owned by another extension. An
+extension SHALL be able to report that a stored credential was rejected, which
+removes the binding and permits a new sign-in request.
+
+#### Scenario: Resolving an own-origin credential
+
+- **WHEN** an extension resolves the credential it holds for an origin
+- **THEN** it receives a transient copy through the scoped vault broker
+
+#### Scenario: Rejected credential
+
+- **WHEN** an extension reports that the stored credential for an origin was
+  rejected by that origin
+- **THEN** the binding is removed and a new sign-in prompt may be shown

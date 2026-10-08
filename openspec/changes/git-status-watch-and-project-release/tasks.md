@@ -125,8 +125,8 @@
 - [x] 5.2 `npm run lint` and `npm run typecheck:workspaces` pass (lint's 18
   warnings are all in files this change does not touch).
 - [x] 5.3 `npm run smoke` passes.
-- [ ] 5.4 `npm run test:e2e` passes in Docker.
+- [x] 5.4 `npm run test:e2e` passes in Docker.
 - [x] 5.5 `npx openspec validate --all` reports every item valid (49/49).
-- [ ] 5.6 Every pull-request status on the head commit is `success` or
+- [x] 5.6 Every pull-request status on the head commit is `success` or
   `skipped`, read back from Gitea's
   `/repos/markwylde/terminay/commits/<head>/statuses`.
