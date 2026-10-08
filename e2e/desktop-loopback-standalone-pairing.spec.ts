@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 
 type StandaloneServer = Readonly<{
@@ -194,6 +195,150 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 				timeout: 2_000,
 			});
 		}).toPass({ timeout: 45_000 });
+	} finally {
+		await server.stop();
+	}
+});
+
+/** Pair a standalone server from Remote Control and wait until the workspace
+ * window is showing it. */
+async function pairAndLand(
+	appHarness: { openChildWindow: (action: () => Promise<void>) => Promise<Page> },
+	mainWindow: Page,
+	server: { pairingUrl: string },
+) {
+	const serverHost = new URL(server.pairingUrl).host;
+	const manager = await appHarness.openChildWindow(async () => {
+		await mainWindow.getByRole('button', { name: /Open connection menu/ }).click();
+		await mainWindow.getByRole('button', { name: 'Manage connections' }).click();
+	});
+	await manager.getByRole('button', { name: 'Add connection…' }).click();
+	await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
+	await manager
+		.getByRole('button', { name: 'Continue pairing', exact: true })
+		.click();
+	await expectShowing(mainWindow, serverHost);
+	return serverHost;
+}
+
+function connectionMenu(window: Page) {
+	return window
+		.locator('[role="menu"][aria-label="Connection menu"]:visible')
+		.first();
+}
+
+async function openConnectionMenu(window: Page) {
+	await window.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const menu = connectionMenu(window);
+	if (!(await menu.isVisible().catch(() => false)))
+		await window.getByRole('button', { name: /Open connection menu/ }).click();
+	await expect(menu).toBeVisible();
+	return menu;
+}
+
+/** Wait until a window's connection menu marks this server as the one shown. */
+async function expectShowing(window: Page, label: string) {
+	await expect(async () => {
+		const menu = await openConnectionMenu(window);
+		await expect(
+			menu.getByRole('menuitemradio', { name: label, exact: true }),
+		).toHaveAttribute('aria-checked', 'true', { timeout: 2_000 });
+	}).toPass({ timeout: 45_000 });
+}
+
+async function switchTo(window: Page, label: string) {
+	const menu = await openConnectionMenu(window);
+	await menu.getByRole('menuitemradio', { name: label, exact: true }).click();
+	await expectShowing(window, label);
+}
+
+/** The projects a window's tab strip shows, by identity. */
+async function projectIds(window: Page): Promise<string[]> {
+	await window.locator('.project-tabbar').waitFor({ state: 'visible' });
+	return window
+		.locator('.project-tab[role="tab"]')
+		.evaluateAll((tabs) =>
+			tabs
+				.map((tab) => tab.getAttribute('data-project-id'))
+				.filter((id): id is string => id !== null),
+		);
+}
+
+/** No project is in both windows. */
+async function expectNoSharedProject(first: Page, second: Page) {
+	await expect(async () => {
+		const [left, right] = await Promise.all([
+			projectIds(first),
+			projectIds(second),
+		]);
+		expect(
+			left.filter((id) => right.includes(id)),
+			`both windows show the same project: ${JSON.stringify({ left, right })}`,
+		).toEqual([]);
+	}).toPass({ timeout: 15_000 });
+}
+
+test('a server opened in a second window does not show the projects the first window is showing', async ({
+	appHarness,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// The workspace window shows the server and its project.
+		expect((await projectIds(mainWindow)).length).toBeGreaterThan(0);
+
+		// Leave for Local, open the server in a window of its own, and come
+		// back: two windows now show the one server.
+		await switchTo(mainWindow, 'Local');
+		const second = await appHarness.openChildWindow(async () => {
+			const menu = await openConnectionMenu(mainWindow);
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await expectShowing(second, serverHost);
+		await switchTo(mainWindow, serverHost);
+
+		// A project is in one window. Two windows on a server never both show it.
+		await expectNoSharedProject(mainWindow, second);
+	} finally {
+		await server.stop();
+	}
+});
+
+test('a window switched to Local does not show the projects another Local window is showing', async ({
+	appHarness,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const localProjects = await projectIds(mainWindow);
+	expect(localProjects.length).toBeGreaterThan(0);
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// One window on Local, one on the server.
+		await switchTo(mainWindow, 'Local');
+		const second = await appHarness.openChildWindow(async () => {
+			const menu = await openConnectionMenu(mainWindow);
+			await menu
+				.getByRole('button', { name: `Open ${serverHost} in new window` })
+				.click();
+		});
+		await expectShowing(second, serverHost);
+		expect(await projectIds(mainWindow)).toEqual(localProjects);
+
+		// The second window switches to Local, which the first is already
+		// showing. It must not duplicate the first window's project tabs.
+		await switchTo(second, 'Local');
+		await expectNoSharedProject(mainWindow, second);
+		// And the first window keeps what it had.
+		expect(await projectIds(mainWindow)).toEqual(localProjects);
 	} finally {
 		await server.stop();
 	}

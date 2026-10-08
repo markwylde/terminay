@@ -202,9 +202,16 @@ init system, no privilege, and no added capability, and it carries the
 `terminay` command, so pairing is one more line:
 
 ```bash
-docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay
+docker run -d --name terminay \
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
+  markwylde/terminay
 docker exec -it terminay terminay daemon qr-code
 ```
+
+The two volumes are what outlives the container. `/var/lib/terminay` is the
+data root: the host key and the paired devices, so a new container on the same
+volume is the same server. `/home/terminay` is where terminals start, and
+holds projects, shell history, and agent logins.
 
 `daemon qr-code` shows the pairing links and waits; when a device opens one it
 shows the device name and match code and asks for approval. `daemon approvals`,
@@ -213,10 +220,27 @@ through `docker exec`. `daemon install`, `upgrade`, `start`, `stop`, and
 `uninstall` refuse inside the image: the container runtime manages the server,
 so an upgrade is a newer image and a recreated container.
 
+The server and every terminal it opens run as the unprivileged `terminay`
+account, not as root. That account has passwordless `sudo`, so a terminal can
+install what a project needs:
+
+```bash
+sudo apt update && sudo apt install -y build-essential
+```
+
+Packages installed this way live in the container's own filesystem, outside
+both volumes, and are gone when the container is recreated, which is also how
+an upgrade happens. Build an image `FROM markwylde/terminay` for tools that
+should persist.
+
+Anyone who pairs a device can therefore become root inside the container. To
+withhold that, run it with `--security-opt no-new-privileges` or
+`--cap-drop=ALL`: `sudo` then refuses, and the server runs exactly as before.
+
 Which ports and settings a container needs depends on what connects to it.
 
 **Terminay Desktop, on the same machine or the same network.** Nothing more.
-The two lines above are the whole setup: open the hosted link in Desktop. To
+The two commands above are the whole setup: open the hosted link in Desktop. To
 use the direct link as well, publish the signaling port with `-p 8443:8443`.
 No address is named and no UDP port is published.
 
@@ -224,7 +248,8 @@ No address is named and no UDP port is published.
 and publish the signaling port and the pinned UDP range:
 
 ```bash
-docker run -d --name terminay -v terminay-data:/var/lib/terminay \
+docker run -d --name terminay \
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
   -p 8443:8443 -p 51000-51015:51000-51015/udp \
   -e TERMINAY_PUBLIC_HOST=192.168.1.20 \
   markwylde/terminay
@@ -238,7 +263,8 @@ interfaces, so it needs no address and no published port:
 
 ```bash
 docker run -d --name terminay --network host \
-  -v terminay-data:/var/lib/terminay markwylde/terminay
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
+  markwylde/terminay
 ```
 
 This applies to Linux only. On macOS and Windows the container runs inside a

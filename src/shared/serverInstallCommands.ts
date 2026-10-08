@@ -8,7 +8,10 @@
 
 const IMAGE = 'markwylde/terminay';
 const CONTAINER = 'terminay';
-const VOLUME = 'terminay-data:/var/lib/terminay';
+// The data root is the server's identity; the home directory is the person's
+// projects and shell. Both outlive the container.
+const VOLUMES =
+	'-v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay';
 
 const STABLE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const BETA = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-beta\.[1-9]\d*$/u;
@@ -52,7 +55,7 @@ export function serverInstallCommands(
 		channel,
 		image,
 		docker: Object.freeze({
-			start: `docker run -d --name ${CONTAINER} -v ${VOLUME} ${image}`,
+			start: `docker run -d --name ${CONTAINER} ${VOLUMES} ${image}`,
 			pair: `docker exec -it ${CONTAINER} terminay daemon qr-code`,
 		}),
 		linux: Object.freeze({
@@ -64,7 +67,7 @@ export function serverInstallCommands(
 					: 'sudo npx terminay daemon install',
 			pair: 'sudo npx terminay daemon qr-code',
 		}),
-		dockerPublic: `docker run -d --name ${CONTAINER} -v ${VOLUME} -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=${PUBLIC_HOST_PLACEHOLDER} ${image}`,
-		dockerHostNetwork: `docker run -d --name ${CONTAINER} --network host -v ${VOLUME} ${image}`,
+		dockerPublic: `docker run -d --name ${CONTAINER} ${VOLUMES} -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=${PUBLIC_HOST_PLACEHOLDER} ${image}`,
+		dockerHostNetwork: `docker run -d --name ${CONTAINER} --network host ${VOLUMES} ${image}`,
 	});
 }

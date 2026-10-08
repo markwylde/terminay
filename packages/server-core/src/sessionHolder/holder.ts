@@ -12,6 +12,7 @@ import type {
 	NodePtyModuleLike,
 	NodePtyProcessLike,
 } from '../terminalService/nodePty.js';
+import { writeHolderCloseRecord } from './closeRecord.js';
 import {
 	isHolderSessionId,
 	sessionHolderDirectory,
@@ -22,6 +23,8 @@ import {
 import {
 	encodeHolderFrame,
 	type HolderClientMessage,
+	type HolderCloseNotice,
+	type HolderCloseReason,
 	type HolderExitRecord,
 	HolderFrameDecoder,
 	type HolderServerMessage,
@@ -79,6 +82,11 @@ export type SessionHolderCloseReason =
 	| 'end-all'
 	| 'signal'
 	| 'first-attach-timeout';
+
+export interface SessionHolderCloseDetail {
+	/** The signal that asked for a `signal` close. */
+	readonly signal?: string;
+}
 
 export interface SessionHolderRecordFile {
 	readonly generation: string;
@@ -149,6 +157,10 @@ export class SessionHolder {
 	private attached: Socket | undefined;
 	private limitMs: number | null;
 	private limitTimer: unknown;
+	private readonly startedAt: number;
+	private attachCount = 0;
+	private lastAttachAt: number | null = null;
+	private lastDetachAt: number | null = null;
 	private draining = false;
 	private flowPaused = false;
 	private closing: Promise<void> | undefined;
@@ -167,6 +179,7 @@ export class SessionHolder {
 			options.firstAttachTimeoutMs ?? HOLDER_FIRST_ATTACH_TIMEOUT_MS;
 		this.now = options.now ?? (() => Date.now());
 		this.timers = options.timers ?? defaultTimers;
+		this.startedAt = this.now();
 		this.onClosed = options.onClosed;
 		this.socketPath = sessionHolderSocketPath(
 			options.dataRoot,
@@ -227,11 +240,17 @@ export class SessionHolder {
 	 * Save tails, end every live session, and release the socket. `end-all`
 	 * saves nothing: the server is removing those panels.
 	 */
-	close(reason: SessionHolderCloseReason): Promise<void> {
+	close(
+		reason: SessionHolderCloseReason,
+		detail: SessionHolderCloseDetail = {},
+	): Promise<void> {
 		if (this.closing !== undefined) return this.closing;
+		// Taken before anything is ended: it describes what the close found.
+		const at = this.now();
+		const notice = this.closeNotice(reason, at, detail);
 		this.closing = (async () => {
 			this.clearLimitTimer();
-			const at = this.now();
+			this.announceClose(notice);
 			if (reason !== 'end-all') this.saveTails(at);
 			else
 				for (const sessionId of this.sessions.keys())
@@ -260,6 +279,60 @@ export class SessionHolder {
 		return this.closing;
 	}
 
+	/**
+	 * Leave word that an uncaught error is about to end this process. Nothing is
+	 * closed or caught here: the holder dies exactly as it would have.
+	 */
+	recordCrash(error: unknown): void {
+		const text =
+			error instanceof Error ? (error.stack ?? error.message) : String(error);
+		this.writeCloseRecord({
+			...this.closeNotice('crash', this.now()),
+			error: text,
+		});
+	}
+
+	private closeNotice(
+		reason: HolderCloseReason,
+		at: number,
+		detail: SessionHolderCloseDetail = {},
+	): HolderCloseNotice {
+		const liveSessions = this.liveCount();
+		return {
+			reason,
+			...(detail.signal === undefined ? {} : { signal: detail.signal }),
+			pid: process.pid,
+			startedAt: this.startedAt,
+			closedAt: at,
+			liveSessions,
+			endedSessions: this.sessions.size - liveSessions,
+			attached: this.attached !== undefined,
+			draining: this.draining,
+			limitMs: this.limitMs,
+			attachCount: this.attachCount,
+			lastAttachAt: this.lastAttachAt,
+			lastDetachAt: this.lastDetachAt,
+		};
+	}
+
+	/**
+	 * Say why this holder is closing, before its sessions are ended. The record
+	 * is for the case nobody is attached to hear the notice. `end-all` leaves
+	 * none: the server asked for it and is removing everything the holder kept.
+	 */
+	private announceClose(notice: HolderCloseNotice): void {
+		if (notice.reason !== 'end-all') this.writeCloseRecord(notice);
+		this.send({ type: 'closing', ...notice });
+	}
+
+	private writeCloseRecord(notice: HolderCloseNotice): void {
+		try {
+			writeHolderCloseRecord(this.dataRoot, this.generation, notice);
+		} catch {
+			// Best effort, like a tail: failing to explain a close cannot stop it.
+		}
+	}
+
 	private writeRecord(): void {
 		const record: SessionHolderRecordFile = {
 			generation: this.generation,
@@ -268,7 +341,7 @@ export class SessionHolder {
 			versions: this.versions,
 			credential: this.credential,
 			socketPath: this.socketPath,
-			startedAt: this.now(),
+			startedAt: this.startedAt,
 		};
 		const target = sessionHolderRecordPath(this.dataRoot, this.generation);
 		const temporary = `${target}.tmp`;
@@ -353,6 +426,8 @@ export class SessionHolder {
 		}
 		this.pending.delete(socket);
 		this.attached = socket;
+		this.attachCount += 1;
+		this.lastAttachAt = this.now();
 		this.clearLimitTimer();
 		reply({
 			type: 'welcome',
@@ -593,6 +668,7 @@ export class SessionHolder {
 	 * paused PTY, and start the unattached limit. */
 	private detached(): void {
 		this.attached = undefined;
+		this.lastDetachAt = this.now();
 		this.flowPaused = false;
 		for (const session of this.sessions.values()) {
 			session.streaming = false;

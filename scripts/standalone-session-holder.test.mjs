@@ -102,6 +102,12 @@ async function startServer(dataRoot) {
 	assert.equal(JSON.parse(stdout.slice(0, stdout.indexOf('\n'))).ready, true);
 	return {
 		child,
+		/** Session-holder reports this server has written to its service log. */
+		holderReports: () =>
+			stderr
+				.split('\n')
+				.filter((line) => line.startsWith('[terminay-server] session holder '))
+				.map((line) => JSON.parse(line.slice('[terminay-server] session holder '.length))),
 		async stop() {
 			child.kill('SIGTERM');
 			const result = await exited;
@@ -145,6 +151,12 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 	assert.equal(before[0].status, 'running');
 	// The shell is the holder's child, not the server's.
 	assert.equal(childrenOf(server.child.pid).includes(shellPid), false);
+	// The service log says a holder was started, and names it by process.
+	const identity = { pid: holder.pid, startedAt: holder.startedAt };
+	assert.deepEqual(
+		server.holderReports().filter((report) => report.kind === 'launched').map((report) => report.holder),
+		[identity],
+	);
 
 	// Stop the way systemd stops a unit.
 	await server.stop();
@@ -156,6 +168,29 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 	server = await startServer(dataRoot);
 	await delay(300);
 	assert.deepEqual(readHolderRecords(dataRoot).map((record) => record.pid), [holder.pid]);
+	// The restart is in the log as an attach to the same holder, same build,
+	// with its one live session, and nothing was launched or drained.
+	const [attached, ...others] = server
+		.holderReports()
+		.filter((report) => ['attached', 'launched', 'drained', 'closed'].includes(report.kind));
+	assert.deepEqual(others, []);
+	assert.deepEqual(
+		{ ...attached, buildId: undefined, limitMs: undefined },
+		{
+			kind: 'attached',
+			holder: identity,
+			buildId: undefined,
+			sameBuild: true,
+			draining: false,
+			liveSessions: 1,
+			endedSessions: 0,
+			limitMs: undefined,
+		},
+	);
+	// A report never names the session or where anything lives.
+	const logged = JSON.stringify(server.holderReports());
+	assert.equal(logged.includes(before[0].id), false);
+	assert.equal(logged.includes(dataRoot), false);
 	assert.deepEqual(childrenOf(holder.pid), [shellPid], 'a replacement shell was started');
 	const after = terminalSessions(dataRoot);
 	assert.deepEqual(after.map((session) => [session.id, session.status]), [[before[0].id, 'running']]);
