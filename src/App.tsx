@@ -3190,6 +3190,26 @@ const ProjectWorkspace = forwardRef<
 			settings.activityIndicators.showFinishedTabs,
 		]);
 
+		const renameTerminal = useCallback(
+			(panelId: string, title: string) => {
+				// The server's panel record is the title. A terminal in a folder
+				// that is not on screen has no tab here to follow it.
+				terminalClientContext?.workspaceSnapshotStore
+					?.updatePanel({ panelId, patch: { title } })
+					.catch((error: unknown) =>
+						setErrorText(
+							`Unable to rename the terminal: ${error instanceof Error ? error.message : String(error)}`,
+						),
+					);
+				const panel = dockviewApiRef.current?.getPanel(panelId);
+				if (!panel) return;
+				panel.api.setTitle(title);
+				setTerminalTitleRevision((revision) => revision + 1);
+				requestFrameOrTimeout(publishWorkspaceInventory);
+			},
+			[publishWorkspaceInventory, terminalClientContext],
+		);
+
 		const openTerminalEditWindow = useCallback(
 			async (panelId: string) => {
 				const api = dockviewApiRef.current;
@@ -5356,6 +5376,9 @@ const ProjectWorkspace = forwardRef<
 									openTerminalTabMenuOnceDrawn(panelId, anchor, () =>
 										onActivateFolderPanel(project.id, folderId, panelId),
 									)
+								}
+								onRenameTerminal={(_folderId, panelId, title) =>
+									renameTerminal(panelId, title)
 								}
 								onTerminalDrag={(drag) =>
 									reportTerminalTabDrag(
