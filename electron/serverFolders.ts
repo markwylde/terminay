@@ -100,6 +100,7 @@ export class ServerFolders {
 					id: worktree.id,
 					repositoryId: worktree.repositoryId,
 					path: worktree.path,
+					branch: worktree.branch,
 					isBare: worktree.isBare,
 					isPrunable: worktree.isPrunable,
 				})),

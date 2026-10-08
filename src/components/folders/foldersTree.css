@@ -9,6 +9,15 @@
 	user-select: none;
 }
 
+.folders-tree::-webkit-scrollbar {
+	width: 6px;
+}
+
+.folders-tree::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.1);
+	border-radius: 10px;
+}
+
 .folders-tree__folder {
 	display: flex;
 	flex-direction: column;
