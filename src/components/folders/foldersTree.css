@@ -171,6 +171,22 @@
 	flex: 1 1 auto;
 }
 
+/* A terminal's name while it is being typed: on the row's own line, so the
+   row keeps its height. */
+.folders-tree__rename {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 20px;
+	margin: 0 -5px;
+	padding: 0 4px;
+	border: 1px solid var(--project-color, #57b7ff);
+	border-radius: 3px;
+	background: var(--terminal-panel-surface, #12161c);
+	color: #fff;
+	font: inherit;
+	outline: none;
+}
+
 /* The branch is the ordinary text colour. Only a checkout holding work the
    default branch lacks takes the accent. */
 .folders-tree__branch {
