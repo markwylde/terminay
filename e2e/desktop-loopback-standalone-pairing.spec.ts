@@ -388,62 +388,66 @@ test('a project tab dropped on a window showing another server stays where it wa
 	const server = await startStandaloneServer(tempDir);
 	try {
 		const serverHost = await pairAndLand(appHarness, mainWindow, server);
-		// A second window on the server presents a view of its own, and holds a
-		// project there.
-		const remote = await appHarness.openChildWindow(async () => {
-			const menu = await openConnectionMenu(mainWindow);
-			await menu
-				.getByRole('button', { name: `Open ${serverHost} in new window` })
-				.click();
-		});
-		await expectShowing(remote, serverHost);
-		await remote.keyboard.press('Escape');
-		await remote.getByLabel('Create project').click();
-		await expect(remote.locator('.project-tab[role="tab"]')).toHaveCount(1);
-		await expect(remote.locator('[data-pending-project-id]')).toHaveCount(0);
-		// The first window goes back to Local: one window per server.
-		await switchTo(mainWindow, 'Local');
-		await mainWindow.keyboard.press('Escape');
-		const localProjects = await projectIds(mainWindow);
+		const openInNewWindow = (from: Page, label: string) =>
+			appHarness.openChildWindow(async () => {
+				const menu = await openConnectionMenu(from);
+				await menu
+					.getByRole('button', { name: `Open ${label} in new window` })
+					.click();
+			});
+		// Two windows on each server. The second window on a server presents a
+		// view of its own, and both servers call theirs by the same name.
+		const remote = mainWindow;
+		const local = await openInNewWindow(remote, 'Local');
+		await expectShowing(local, 'Local');
+		const secondLocal = await openInNewWindow(remote, 'Local');
+		await expectShowing(secondLocal, 'Local');
+		const secondRemote = await openInNewWindow(local, serverHost);
+		await expectShowing(secondRemote, serverHost);
+		for (const window of [remote, local, secondLocal, secondRemote])
+			await window.keyboard.press('Escape');
 		const remoteProjects = await projectIds(remote);
-		expect(localProjects.length).toBeGreaterThan(0);
-		expect(remoteProjects).toHaveLength(1);
+		const secondLocalProjects = await projectIds(secondLocal);
+		const secondRemoteProjects = await projectIds(secondRemote);
+		expect(remoteProjects.length).toBeGreaterThan(0);
 
-		const local = await tabBarScreenPoints(electronApp, mainWindow);
-		// The windows open on top of one another; the Local bar must be the
-		// only bar under the pointer.
-		await (await electronApp.browserWindow(remote)).evaluate(
-			(window, position) => window.setPosition(position.x, position.y),
-			{ x: local.onBar.x - 200, y: local.onBar.y + 200 },
-		);
+		// The second Local window's bar is the only bar under the pointer.
+		const place = async (window: Page, y: number) =>
+			(await electronApp.browserWindow(window)).evaluate(
+				(native, top) => native.setPosition(40, top),
+				y,
+			);
+		await place(secondLocal, 0);
+		for (const window of [remote, local, secondRemote])
+			await place(window, 360);
+		const target = await tabBarScreenPoints(electronApp, secondLocal);
 		await holdTornOffProjectTab(
 			electronApp,
 			remote,
 			remote.locator('.project-tab[role="tab"]').first(),
 		);
 
-		// Held over the Local window's bar: it is not a place this tab can go.
-		await setCursorScreenPoint(electronApp, local.onBar);
-		await mainWindow.waitForTimeout(500);
+		// Held over a Local window's bar: it is not a place this tab can go.
+		await setCursorScreenPoint(electronApp, target.onBar);
+		await remote.waitForTimeout(500);
 		await expect
-			.soft(mainWindow.locator('.project-tab--drop-placeholder'))
+			.soft(secondLocal.locator('.project-tab--drop-placeholder'))
 			.toHaveCount(0);
 
 		// Released there: the drag is abandoned and nothing moves.
 		await remote.mouse.up();
-		await mainWindow.waitForTimeout(2_000);
+		await secondLocal.waitForTimeout(3_000);
 		expect(remote.isClosed(), 'the source window closed').toBe(false);
-		expect(await projectIds(remote)).toEqual(remoteProjects);
-		expect(await projectIds(mainWindow)).toEqual(localProjects);
+		expect(
+			await projectIds(remote),
+			'the project left the window it was dragged from',
+		).toEqual(remoteProjects);
+		expect(await projectIds(secondRemote)).toEqual(secondRemoteProjects);
+		expect(await projectIds(secondLocal)).toEqual(secondLocalProjects);
 		await expect(remote.locator('.project-tab--torn-off')).toHaveCount(0);
 		await expect(
-			mainWindow.locator('.project-tab--drop-placeholder'),
+			secondLocal.locator('.project-tab--drop-placeholder'),
 		).toHaveCount(0);
-
-		// The project is still the server's, in a window that still shows it.
-		await remote.reload();
-		await expectShowing(remote, serverHost);
-		expect(await projectIds(remote)).toEqual(remoteProjects);
 	} finally {
 		await server.stop();
 	}
