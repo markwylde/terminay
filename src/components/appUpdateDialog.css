@@ -4,11 +4,6 @@
   color: #ffcc57;
 }
 
-.project-edit-modal-title:has(.app-update-dialog__title-icon) {
-  display: inline-flex;
-  align-items: center;
-}
-
 .app-update-dialog__summary {
   margin: 0;
   color: rgba(214, 227, 240, 0.68);

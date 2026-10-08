@@ -105,7 +105,7 @@
 .connected-web-renderer-workspace
 	> :not(
 		.connected-web-menubar,
-		.connected-web-auxiliary-backdrop,
+		.in-page-window-layer,
 		.connected-web-connection-backdrop
 	) {
 	min-height: 0;
@@ -226,7 +226,6 @@ html.is-framed .responsive-workspace-shell {
 	outline: none;
 }
 
-.connected-web-auxiliary-backdrop,
 .connected-web-connection-backdrop {
 	position: fixed;
 	inset: 0;
@@ -238,7 +237,6 @@ html.is-framed .responsive-workspace-shell {
 	backdrop-filter: blur(7px);
 }
 
-.connected-web-auxiliary-dialog,
 .connected-web-connection-dialog {
 	width: min(720px, 100%);
 	max-height: calc(100dvh - 48px);
@@ -275,77 +273,6 @@ html.is-framed .responsive-workspace-shell {
 		sans-serif;
 }
 
-.connected-web-auxiliary-dialog {
-	width: min(1180px, 100%);
-	height: min(820px, calc(100dvh - 48px));
-	display: flex;
-	flex-direction: column;
-	padding: 0;
-	overflow: hidden;
-}
-
-.connected-web-about-dialog {
-	position: relative;
-	width: min(440px, 100%);
-	height: min(500px, calc(100dvh - 48px));
-	overflow: hidden;
-	border: 1px solid #2a3542;
-	border-radius: 12px;
-	background: #0d1117;
-	box-shadow: 0 24px 90px rgba(0, 0, 0, 0.55);
-}
-
-.connected-web-about-dialog__frame {
-	display: block;
-	width: 100%;
-	height: 100%;
-	border: 0;
-}
-
-.connected-web-about-dialog__close {
-	position: absolute;
-	top: 10px;
-	right: 10px;
-	width: 28px;
-	height: 28px;
-	display: grid;
-	place-items: center;
-	padding: 0;
-	border: 1px solid rgba(255, 255, 255, 0.08);
-	border-radius: 8px;
-	background: rgba(13, 17, 23, 0.6);
-	color: #8b98a9;
-	font-size: 18px;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.connected-web-about-dialog__close:hover {
-	color: #e6edf3;
-	background: rgba(255, 255, 255, 0.07);
-}
-
-.connected-web-about-dialog__close:focus-visible {
-	outline: 2px solid #578cdb;
-	outline-offset: 2px;
-}
-
-.connected-web-auxiliary-dialog--settings {
-	width: min(1480px, 100%);
-}
-
-.connected-web-auxiliary-dialog--edit-tab {
-	width: min(680px, 100%);
-	height: auto;
-}
-
-.connected-web-auxiliary-dialog--recordings,
-.connected-web-auxiliary-dialog--macros,
-.connected-web-auxiliary-dialog--remote-control {
-	width: min(1240px, 100%);
-}
-
-.connected-web-auxiliary-dialog__header,
 .connected-web-connection-dialog > header {
 	display: flex;
 	align-items: flex-start;
@@ -405,38 +332,19 @@ html.is-framed .responsive-workspace-shell {
 	background: transparent;
 }
 
-.connected-web-auxiliary-dialog__header {
-	flex: 0 0 auto;
-	margin: 0;
-	padding: 12px 14px;
-	border-bottom: 1px solid #26313d;
+/* The About document fills its window; the window gives it a height. */
+.connected-web-about-frame {
+	display: block;
+	width: 100%;
+	height: 464px;
+	border: 0;
 }
 
-.connected-web-auxiliary-dialog__body {
-	min-height: 0;
-	flex: 1;
-	overflow: auto;
-}
-
-.connected-web-auxiliary-dialog__body .settings-shell,
-.connected-web-auxiliary-dialog__body .recordings-window,
-.connected-web-auxiliary-dialog__body .edit-window-shell {
-	height: 100%;
-	min-height: 0;
-}
-
-.connected-web-auxiliary-dialog--edit-tab
-	.connected-web-auxiliary-dialog__body {
-	overflow: visible;
-}
-
-.connected-web-auxiliary-dialog--edit-tab .edit-window-shell {
+.in-page-window[data-in-page-window="edit-tab"] .edit-window-shell {
 	height: auto;
-	max-height: calc(100dvh - 112px);
-	overflow: auto;
 }
 
-.connected-web-auxiliary-dialog--settings .settings-content {
+.in-page-window[data-in-page-window="settings"] .settings-content {
 	max-width: none;
 	margin: 0;
 }
@@ -508,10 +416,6 @@ html.is-framed .responsive-workspace-shell {
 }
 
 .connected-web-recordings-detail dd {
-	margin: 0;
-}
-
-.connected-web-auxiliary-dialog__header h2 {
 	margin: 0;
 }
 

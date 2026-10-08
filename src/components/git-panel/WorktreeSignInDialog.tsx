@@ -1,7 +1,8 @@
-import { KeyRound, X } from 'lucide-react';
-import { type JSX, useEffect, useId, useState } from 'react';
+import { KeyRound } from 'lucide-react';
+import { type JSX, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { openExternalUrl } from '../../host/nativeActions';
+import { InPageWindow } from '../../shared/inPageWindow/InPageWindow';
 import type { WorktreeSignInPrompt } from '../../types/terminay';
 
 export type WorktreeSignInChoice = 'accept' | 'later' | 'never';
@@ -20,7 +21,6 @@ export function WorktreeSignInDialog({
 	prompt,
 	onRespond,
 }: WorktreeSignInDialogProps): JSX.Element {
-	const titleId = useId();
 	const tokenId = useId();
 	const [step, setStep] = useState<'ask' | 'token'>('ask');
 	const [token, setToken] = useState('');
@@ -39,42 +39,19 @@ export function WorktreeSignInDialog({
 		}
 	};
 
-	useEffect(() => {
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape' && !busy) {
-				event.preventDefault();
-				void respond('later');
-			}
-		};
-		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
-	});
-
 	return createPortal(
-		<div className="project-edit-modal-backdrop">
+		<InPageWindow
+			busy={busy}
+			icon={<KeyRound size={14} />}
+			kind={{ resizable: false, width: 420 }}
+			name="worktree-sign-in"
+			title={`${prompt.provider} detected`}
+			onClose={() => void respond('later')}
+		>
 			<div
 				className="project-edit-modal worktree-sign-in-dialog"
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby={titleId}
 				data-terminay-worktree-sign-in="true"
 			>
-				<div className="project-edit-modal-titlebar">
-					<h2 id={titleId} className="project-edit-modal-title">
-						<KeyRound size={14} aria-hidden="true" />
-						{prompt.provider} detected
-					</h2>
-					<button
-						type="button"
-						className="project-edit-modal-close"
-						disabled={busy}
-						onClick={() => void respond('later')}
-						aria-label="Close, ask again later"
-						title="Close"
-					>
-						<X size={12} aria-hidden="true" />
-					</button>
-				</div>
 				{step === 'ask' ? (
 					<p className="worktree-sign-in-dialog__text">
 						We have detected this project is a {prompt.provider} project ({host}
@@ -174,7 +151,7 @@ export function WorktreeSignInDialog({
 					)}
 				</div>
 			</div>
-		</div>,
+		</InPageWindow>,
 		document.body,
 	);
 }

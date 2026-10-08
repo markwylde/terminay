@@ -1,12 +1,10 @@
 import {
-	type CSSProperties,
-	type MouseEvent,
 	type ReactNode,
 	useEffect,
-	useRef,
 	useState,
 } from 'react';
 import { writeClipboardText } from '../host/nativeActions';
+import { InPageWindow } from './inPageWindow/InPageWindow';
 import './RemotePairingModal.css';
 
 export type PendingPairingApproval = Readonly<{
@@ -18,13 +16,10 @@ export type PendingPairingApproval = Readonly<{
 
 export function RemotePairingModal({
 	busy = false,
-	dialogRef,
-	dialogStyle,
 	expiresAt,
 	onApprove,
 	onClose,
 	onDeny,
-	onTitleMouseDown,
 	pairingUrl,
 	pendingApproval = null,
 	qrCodeDataUrl,
@@ -32,13 +27,10 @@ export function RemotePairingModal({
 	success = false,
 }: Readonly<{
 	busy?: boolean;
-	dialogRef?: (element: HTMLDivElement | null) => void;
-	dialogStyle?: CSSProperties;
 	expiresAt?: string | null;
 	onApprove?: (approvalId: string) => void;
 	onClose: () => void;
 	onDeny?: (approvalId: string) => void;
-	onTitleMouseDown?: (event: MouseEvent<HTMLDivElement>) => void;
 	pairingUrl?: string | null;
 	/** A device asked to pair: its name and code replace the QR until decided. */
 	pendingApproval?: PendingPairingApproval | null;
@@ -48,7 +40,6 @@ export function RemotePairingModal({
 }>) {
 	const [copied, setCopied] = useState(false);
 	const [generatedQr, setGeneratedQr] = useState<string | null>(null);
-	const pointerStartedOnBackdropRef = useRef(false);
 	useEffect(() => {
 		let active = true;
 		if (qrCodeDataUrl || !pairingUrl) {
@@ -208,64 +199,13 @@ export function RemotePairingModal({
 	}
 
 	return (
-		<div
-			className="remote-pairing-modal-backdrop"
-			onMouseDown={(event) => {
-				pointerStartedOnBackdropRef.current =
-					event.target === event.currentTarget;
-			}}
-			onMouseUp={(event) => {
-				const shouldClose =
-					pointerStartedOnBackdropRef.current &&
-					event.target === event.currentTarget;
-				pointerStartedOnBackdropRef.current = false;
-				if (shouldClose) onClose();
-			}}
+		<InPageWindow
+			kind={{ resizable: false, width: 560 }}
+			name="remote-pairing"
+			title="Pair Device"
+			onClose={onClose}
 		>
-			<div
-				className="remote-pairing-modal"
-				ref={dialogRef}
-				style={dialogStyle}
-				onClick={(event) => event.stopPropagation()}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="pair-device-modal-title"
-			>
-				<div
-					className="remote-pairing-modal__titlebar"
-					onMouseDown={onTitleMouseDown}
-				>
-					<h2
-						id="pair-device-modal-title"
-						className="remote-pairing-modal__title"
-					>
-						Pair Device
-					</h2>
-					<button
-						type="button"
-						className="remote-pairing-modal__close"
-						onClick={onClose}
-						aria-label="Close Pair Device"
-						title="Close Pair Device"
-					>
-						<svg
-							aria-hidden="true"
-							width="12"
-							height="12"
-							viewBox="0 0 12 12"
-							fill="none"
-							xmlns="http://www.w3.org/2000/svg"
-						>
-							<path
-								d="M9 3L3 9M3 3L9 9"
-								stroke="currentColor"
-								strokeWidth="1.8"
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							/>
-						</svg>
-					</button>
-				</div>
+			<div className="remote-pairing-modal">
 				<div className="remote-pairing-modal__container">
 					<p className="remote-pairing-modal__copy">
 						{success
@@ -275,6 +215,6 @@ export function RemotePairingModal({
 					{body}
 				</div>
 			</div>
-		</div>
+		</InPageWindow>
 	);
 }

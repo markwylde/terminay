@@ -42,7 +42,7 @@ test('auxiliary route controller keeps settings in the canonical presenter', asy
 	assert.match(sharedWorkspace, /auxiliaryRoutes\?: AuxiliaryRouteController/u);
 	assert.match(webWorkspace, /createAuxiliaryRouteController\(/u);
 	assert.doesNotMatch(webWorkspace, /getWindow:/u);
-	assert.match(webWorkspace, /data-connected-web-auxiliary-route/u);
+	assert.match(webWorkspace, /<InPageWindow\b/u);
 	assert.doesNotMatch(webWorkspace, /nativeWindows:\s*true/u);
 	assert.doesNotMatch(webWorkspace, /window\.terminay(?:SettingsWindowHost|RecordingsHost|ProjectEditHost|TerminalEditHost)/u);
 	assert.match(webWorkspace, /SharedEditTabRouteBody/u);
