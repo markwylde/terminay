@@ -39,6 +39,10 @@ const { worktreeChange, folderTreeWorktrees } = await bundleModule(
 	'src/workspace/folderTreeSources.ts',
 	'folder-tree-sources.cjs',
 );
+const { folderOrderAfterMove } = await bundleModule(
+	'src/workspace/folderTreeModel.ts',
+	'folder-tree-model.cjs',
+);
 const presentation = await bundleModule(
 	'src/components/folders/worktreePropertyPresentation.ts',
 	'worktree-property-presentation.cjs',
@@ -66,6 +70,7 @@ const linked = (extra = {}) => ({
 	name: 'one-project-one-window',
 	kind: 'linked',
 	isSelected: false,
+	isDirty: false,
 	worktreePath: '/repo/.worktrees/one-project-one-window',
 	branch: 'feat/one-project-one-window',
 	terminals: [],
@@ -132,10 +137,66 @@ test('check items list failures first, and passes fill what room is left', () =>
 	assert.equal(hidden, 3);
 });
 
-test('a linked folder row links its pull request and opens its checks, on one unwrapped line', () => {
+const general = (extra = {}) => ({
+	id: 'folder-general',
+	name: 'General',
+	kind: 'general',
+	isSelected: false,
+	isDirty: false,
+	branch: 'main',
+	terminals: [],
+	isEmpty: true,
+	...extra,
+});
+
+const terminalRow = (extra = {}) => ({
+	panelId: 'panel-1',
+	sessionId: 'session-1',
+	title: 'Terminal 2',
+	status: 'idle',
+	isActive: false,
+	...extra,
+});
+
+test('the chips say the pull request with its state unless open, and the checks as a count and a word', () => {
+	assert.deepEqual(presentation.pullRequestChip({ number: 350, state: 'open' }), {
+		prefix: 'PR',
+		number: '#350',
+	});
+	assert.deepEqual(presentation.pullRequestChip({ number: 351, state: 'draft' }), {
+		prefix: 'PR',
+		number: '#351',
+		state: 'draft',
+	});
+	assert.equal(
+		presentation.pullRequestChip({ number: 352, state: 'merged' }).state,
+		'merged',
+	);
+	assert.deepEqual(presentation.checksChip(checks), { count: 2, word: 'failed' });
+	assert.deepEqual(presentation.checksChip({ ...checks, failed: 0 }), {
+		count: 2,
+		word: 'running',
+	});
+	assert.deepEqual(
+		presentation.checksChip({ ...checks, failed: 0, pending: 0 }),
+		{ count: 12, word: 'passed' },
+	);
+	// Only a linked folder with work in it and no pull request says so.
+	const noPr = presentation.showsNoPullRequest;
+	assert.equal(noPr({ kind: 'linked', isDirty: true }), true);
+	assert.equal(noPr({ kind: 'linked', isDirty: false }), false);
+	assert.equal(noPr({ kind: 'general', isDirty: true }), false);
+	assert.equal(
+		noPr({ kind: 'linked', isDirty: true, pullRequest: { number: 1 } }),
+		false,
+	);
+});
+
+test('a linked folder card has a title line, a branch line, and a facts line, in that order', () => {
 	const markup = render(
 		[
 			linked({
+				isDirty: true,
 				pullRequest: {
 					number: 350,
 					state: 'open',
@@ -148,26 +209,135 @@ test('a linked folder row links its pull request and opens its checks, on one un
 		],
 		{ onOpenLink: () => {}, onFolderMenu: () => {} },
 	);
+	const title = markup.indexOf('class="folders-tree__title"');
+	const branch = markup.indexOf('class="folders-tree__branch folders-tree__branch--dirty"');
+	const facts = markup.indexOf('class="folders-tree__facts"');
+	assert.ok(title !== -1 && title < branch && branch < facts, markup);
 	assert.match(
 		markup,
-		/<button type="button" class="folders-tree__pr folders-tree__pr--link folders-tree__pr--open" aria-label="Pull request #350, open: One project, one window\. Open in browser"[^>]*>#350<\/button>/,
+		/<button type="button" class="folders-tree__chip folders-tree__pr folders-tree__pr--open folders-tree__pr--link" aria-label="Pull request #350, open: One project, one window\. Open in browser"[^>]*><span class="folders-tree__chip-extra">PR<\/span><span>#350<\/span><\/button>/,
 	);
 	assert.match(
 		markup,
-		/<button type="button" class="folders-tree__checks folders-tree__checks--link folders-tree__checks--passed" aria-label="Checks: 0 failed, 26 passed, 0 pending\. Show checks" aria-expanded="false"[^>]*>26<\/button>/,
+		/<button type="button" class="folders-tree__chip folders-tree__checks folders-tree__checks--passed folders-tree__checks--link" aria-label="Checks: 0 failed, 26 passed, 0 pending\. Show checks" aria-expanded="false"[^>]*>.*?<span>26<\/span><span class="folders-tree__chip-extra">passed<\/span><\/button>/,
 	);
 	assert.match(markup, /folders-tree__delta--additions">\+1\.2k</);
 	assert.match(markup, /folders-tree__delta--deletions">−7</);
-	// The branch, the change, the pull request, and the checks share one line
-	// beneath the name: one meta row, and nothing else added to the folder row.
-	assert.equal(markup.match(/class="folders-tree__meta"/g)?.length, 1);
+	assert.match(markup, /class="folders-tree__row folders-tree__row--folder"[^>]*data-change="delta"/);
+	// One facts line, and the checks are not listed until they are opened.
+	assert.equal(markup.match(/class="folders-tree__facts"/g)?.length, 1);
 	assert.equal(markup.match(/folders-tree__checks-list/g), null);
+	assert.equal(markup.includes('no PR'), false);
 });
 
-test('a row that only reports, as in a peek, shows the same facts with nothing to press', () => {
+test('a branch takes the accent only when its checkout is dirty, and a dirty linked folder with no pull request says so', () => {
+	const dirty = render([linked({ isDirty: true, change: { kind: 'changed' } })]);
+	assert.match(dirty, /folders-tree__branch folders-tree__branch--dirty"/);
+	assert.match(dirty, /folders-tree__change--changed">changed</);
+	assert.match(dirty, /folders-tree__chip--quiet">no PR</);
+
+	const clean = render([linked({ change: { kind: 'clean' } })]);
+	assert.match(clean, /class="folders-tree__branch"/);
+	assert.equal(clean.includes('folders-tree__branch--dirty'), false);
+	// Clean draws no chip and no facts line; the header still says which it is.
+	assert.equal(clean.includes('folders-tree__facts'), false);
+	assert.match(clean, /data-change="clean"/);
+	assert.equal(clean.includes('>clean<'), false);
+
+	const merged = render([
+		linked({
+			change: { kind: 'clean' },
+			pullRequest: { number: 352, state: 'merged', title: 'Banner' },
+		}),
+	]);
+	assert.match(
+		merged,
+		/folders-tree__pr--merged"[^>]*><span class="folders-tree__chip-extra">PR<\/span><span>#352<\/span><span>merged<\/span>/,
+	);
+	assert.equal(merged.includes('folders-tree__branch--dirty'), false);
+
+	// General is measured like any other checkout, and never asked for a pull request.
+	const root = render([
+		general({ isDirty: true, change: { kind: 'delta', additions: 4, deletions: 1 } }),
+	]);
+	assert.match(root, /folders-tree__branch folders-tree__branch--dirty"/);
+	assert.match(root, /folders-tree__delta--additions">\+4</);
+	assert.equal(root.includes('no PR'), false);
+
+	const plain = render([
+		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
+	]);
+	assert.equal(plain.includes('folders-tree__branch'), false);
+	assert.equal(plain.includes('folders-tree__facts'), false);
+});
+
+test('every card ends with New terminal where one can be made, and an empty folder shows no placeholder', () => {
+	const markup = render(
+		[general(), linked({ terminals: [terminalRow()], isEmpty: false })],
+		{ onNewTerminal: () => {} },
+	);
+	assert.equal(markup.match(/class="folders-tree__new-terminal"/g)?.length, 2);
+	assert.match(markup, /aria-label="New terminal in General"/);
+	assert.match(markup, /aria-label="New terminal in one-project-one-window"/);
+	assert.equal(markup.includes('No terminals yet'), false);
+	// The row is the last thing in its card.
+	assert.match(markup, /<span>New terminal<\/span><\/button><\/div>/);
+	// Without a way to make one there is no row.
+	assert.equal(render([general()]).includes('New terminal'), false);
+});
+
+test('every folder but General has a grip where folders can be reordered, and a peek has none', () => {
+	const folders = [
+		general(),
+		linked(),
+		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
+	];
+	const markup = render(folders, { onReorderFolders: () => {} });
+	assert.equal(markup.match(/class="folders-tree__grip"/g)?.length, 2);
+	assert.match(markup, /aria-label="Reorder one-project-one-window"/);
+	assert.match(markup, /aria-label="Reorder Servers"/);
+	assert.equal(markup.includes('aria-label="Reorder General"'), false);
+	assert.equal(render(folders, { variant: 'peek' }).includes('folders-tree__grip'), false);
+	assert.equal(render(folders).includes('folders-tree__grip'), false);
+});
+
+test('a moved folder never goes above General, and General is never the one moved', () => {
+	const ids = ['general', 'alpha', 'beta', 'gamma'];
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 1), ['general', 'gamma', 'alpha', 'beta']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 0), ['general', 'gamma', 'alpha', 'beta']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', -5), ['general', 'gamma', 'alpha', 'beta']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 2), ['general', 'beta', 'alpha', 'gamma']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 99), ['general', 'beta', 'gamma', 'alpha']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 1), ids);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), ids);
+	assert.deepEqual(folderOrderAfterMove(ids, 'missing', 2), ids);
+});
+
+test('the selected folder is tinted only when none of its terminals is the active one', () => {
+	const withActive = render([
+		linked({
+			isSelected: true,
+			isEmpty: false,
+			terminals: [terminalRow({ isActive: true })],
+		}),
+	]);
+	assert.match(withActive, /folders-tree__row--folder folders-tree__row--selected"/);
+	assert.equal(withActive.includes('folders-tree__row--selected-alone'), false);
+	assert.match(withActive, /folders-tree__row--terminal folders-tree__row--active"/);
+
+	const alone = render([linked({ isSelected: true })]);
+	assert.match(
+		alone,
+		/folders-tree__row--folder folders-tree__row--selected folders-tree__row--selected-alone"/,
+	);
+	assert.equal(alone.includes('folders-tree__row--active'), false);
+});
+
+test('a card that only reports, as in a peek, shows the same facts with nothing to press', () => {
 	const markup = render(
 		[
 			linked({
+				isDirty: true,
 				pullRequest: {
 					number: 350,
 					state: 'draft',
@@ -175,16 +345,17 @@ test('a row that only reports, as in a peek, shows the same facts with nothing t
 					url: 'https://git.example.net/pulls/350',
 				},
 				checks: { failed: 1, pending: 2, passed: 3, skipped: 0 },
-				change: { kind: 'clean' },
+				change: { kind: 'changed' },
 			}),
 		],
 		{ variant: 'peek' },
 	);
 	assert.equal(markup.includes('<button'), false);
-	assert.match(markup, /folders-tree__pr folders-tree__pr--draft"[^>]*>#350</);
+	assert.match(markup, /folders-tree__pr folders-tree__pr--draft"[^>]*>.*?<span>#350<\/span><span>draft<\/span>/);
 	// Failures are the number shown when there are any.
-	assert.match(markup, /folders-tree__checks--failed"[^>]*>1</);
-	assert.match(markup, /data-change="clean">clean</);
+	assert.match(markup, /folders-tree__checks--failed"[^>]*>.*?<span>1<\/span>/);
+	assert.match(markup, /folders-tree__branch--dirty/);
+	assert.equal(markup.includes('New terminal'), false);
 });
 
 test('a worktree is clean only with nothing unmerged and no delta; a missing one is missing', () => {
@@ -245,13 +416,14 @@ test('the forge sign-in prompt is asked by the workspace, once, wherever the sid
 	);
 });
 
-test('a plain folder and General show no change, pull request, or checks', () => {
+test('a plain folder and a clean General show no facts line: General its branch alone, a plain folder nothing', () => {
 	const markup = render([
 		{
 			id: 'general',
 			name: 'General',
 			kind: 'general',
 			isSelected: true,
+			isDirty: false,
 			branch: 'main',
 			terminals: [],
 			isEmpty: true,
@@ -261,11 +433,13 @@ test('a plain folder and General show no change, pull request, or checks', () =>
 			name: 'Servers',
 			kind: 'plain',
 			isSelected: false,
+			isDirty: false,
 			terminals: [],
 			isEmpty: true,
 		},
 	]);
 	assert.equal(markup.includes('folders-tree__change'), false);
 	assert.equal(markup.includes('folders-tree__pr'), false);
-	assert.equal(markup.match(/class="folders-tree__meta"/g)?.length, 1);
+	assert.equal(markup.includes('folders-tree__facts'), false);
+	assert.equal(markup.match(/class="folders-tree__branch"/g)?.length, 1);
 });

@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-	captureNoticeText,
 	FOLDER_TERMINAL_CAPTURED_EVENT,
 	FRONT_PANEL_GRACE_MS,
 	parseFolderTerminalCapture,
 	recordFrontPanel,
 	wasLookingAt,
-	withCaptureNotice,
-	withoutCaptureNotice,
 } from '../src/workspace/folderCapture.ts';
 
 const capture = {
@@ -46,30 +43,6 @@ test('anything that is not a capture is ignored', () => {
 		{ ...capture, fromFolderId: capture.folderId },
 	])
 		assert.equal(parseFolderTerminalCapture(payload), undefined);
-});
-
-test('the notice names the terminal', () => {
-	assert.equal(
-		captureNoticeText('claude: linked folders'),
-		'Moved claude: linked folders into the folder for its new worktree.',
-	);
-});
-
-test('notices are added, replaced for the same terminal, and dismissed one at a time', () => {
-	const first = { ...capture, id: 1, title: 'one' };
-	const other = { ...capture, id: 2, title: 'two', panelId: 'p:2' };
-	const again = { ...capture, id: 3, title: 'one', folderId: 'folder-wt-2' };
-	let notices = withCaptureNotice([], first);
-	notices = withCaptureNotice(notices, other);
-	assert.deepEqual(notices.map((notice) => notice.id), [1, 2]);
-	notices = withCaptureNotice(notices, again);
-	assert.deepEqual(notices.map((notice) => notice.id), [2, 3]);
-	assert.deepEqual(
-		withoutCaptureNotice(notices, 2).map((notice) => notice.id),
-		[3],
-	);
-	// Dismissing one that has already gone changes nothing.
-	assert.equal(withoutCaptureNotice(notices, 99), notices);
 });
 
 test('the device with the terminal in front was looking at it', () => {

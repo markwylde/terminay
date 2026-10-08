@@ -2,11 +2,10 @@
  * What a device does when the server moves a terminal into the folder of a
  * worktree that terminal created.
  *
- * The move itself arrives as an ordinary workspace change. The journal event
- * handled here says why it happened and where the terminal came from, which
- * is what lets a device offer to put it back. Two things follow from it: every
- * device showing the project says what happened, with Undo, and the device
- * that was looking at the terminal keeps looking at it.
+ * The move itself arrives as an ordinary workspace change, and the Folders
+ * tree shows it like any other. The journal event handled here says why it
+ * happened, and one thing follows from it: the device that was looking at the
+ * terminal keeps looking at it.
  *
  * Everything here is pure. The event is input from the server and is parsed
  * before anything reads it.
@@ -20,7 +19,7 @@ export type FolderTerminalCapture = {
 	/** The worktree's folder, where the terminal is now. */
 	folderId: string;
 	panelId: string;
-	/** The folder the terminal left, where Undo returns it. */
+	/** The folder the terminal left. */
 	fromFolderId: string;
 };
 
@@ -54,42 +53,6 @@ export function parseFolderTerminalCapture(
 	)
 		return undefined;
 	return { projectId, folderId, panelId, fromFolderId };
-}
-
-/** How long a capture notice stays before it dismisses itself. */
-export const CAPTURE_NOTICE_DISMISS_MS = 15_000;
-
-export function captureNoticeText(terminalTitle: string): string {
-	return `Moved ${terminalTitle} into the folder for its new worktree.`;
-}
-
-export type CaptureNotice = FolderTerminalCapture & {
-	/** Unique on this device, for dismissing one notice among several. */
-	id: number;
-	/** The terminal's title when it was moved. */
-	title: string;
-};
-
-/**
- * Add a notice. A terminal has one place, so a later capture of the same
- * panel replaces what was said about the earlier one.
- */
-export function withCaptureNotice(
-	notices: readonly CaptureNotice[],
-	notice: CaptureNotice,
-): CaptureNotice[] {
-	return [
-		...notices.filter((existing) => existing.panelId !== notice.panelId),
-		notice,
-	];
-}
-
-export function withoutCaptureNotice(
-	notices: readonly CaptureNotice[],
-	noticeId: number,
-): readonly CaptureNotice[] {
-	const next = notices.filter((notice) => notice.id !== noticeId);
-	return next.length === notices.length ? notices : next;
 }
 
 /** The panel in front of the window: the focused panel of the folder on

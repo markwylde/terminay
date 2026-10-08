@@ -121,6 +121,85 @@ const terminalRowIn = (page: Page, folder: string, sessionId: string): Locator =
 		`[data-folder-terminal-session="${sessionId}"]`,
 	);
 
+/** The last row of a folder's card: a terminal in that folder. */
+const newTerminalRow = (page: Page, folder: string): Locator =>
+	folderGroup(page, folder).getByRole('button', {
+		name: `New terminal in ${folder}`,
+		exact: true,
+	});
+
+/** The lines of a folder's card that only a Git checkout has. */
+const gitLines = (page: Page, folder: string): Locator =>
+	folderRow(page, folder).locator(
+		'.folders-tree__branch, .folders-tree__facts',
+	);
+
+/** Anything on screen saying that a terminal was moved into a worktree's
+ * folder. The tree shows such a move and nothing says it. */
+const movedAnnouncement = (page: Page): Locator =>
+	page.getByText(/into the folder for its new worktree/);
+
+/**
+ * Drag a terminal's tree row onto a folder's card. Chromium can drop a
+ * synthetic drag while the renderer is busy, so each attempt is one whole
+ * gesture and the outcome is for the caller to assert strictly afterwards.
+ */
+async function dragTerminalToFolder(
+	page: Page,
+	sessionId: string,
+	folder: string,
+): Promise<void> {
+	let moved = false;
+	for (let attempt = 0; attempt < 4 && !moved; attempt += 1) {
+		await terminalRowOf(page, sessionId).dragTo(folderRow(page, folder));
+		moved = await terminalRowIn(page, folder, sessionId)
+			.waitFor({ state: 'visible', timeout: 3_000 })
+			.then(
+				() => true,
+				() => false,
+			);
+	}
+}
+
+/** Drag the Folders column's separator until the column is `width` wide. */
+async function setFoldersWidth(page: Page, width: number): Promise<number> {
+	const column = foldersColumn(page);
+	const separator = page.locator(
+		'.project-workspace--active .workspace-split-layout__folders-separator',
+	);
+	const box = await column.boundingBox();
+	const handle = await separator.boundingBox();
+	if (box === null || handle === null)
+		throw new Error('The Folders column is not on screen.');
+	const y = handle.y + handle.height / 2;
+	await page.mouse.move(handle.x + handle.width / 2, y);
+	await page.mouse.down();
+	await page.mouse.move(box.x + width, y, { steps: 6 });
+	await page.mouse.up();
+	await expect
+		.poll(async () =>
+			Math.abs(((await column.boundingBox())?.width ?? 0) - width),
+		)
+		.toBeLessThan(8);
+	return (await column.boundingBox())?.width ?? 0;
+}
+
+/** Press a folder's grip and let it go over a point on the page. */
+async function dragGripTo(
+	page: Page,
+	folder: string,
+	to: { x: number; y: number },
+): Promise<void> {
+	const grip = await folderRow(page, folder)
+		.locator('.folders-tree__grip')
+		.boundingBox();
+	if (grip === null) throw new Error(`${folder} has no grip.`);
+	await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(to.x, to.y, { steps: 12 });
+	await page.mouse.up();
+}
+
 const placeholder = (page: Page): Locator =>
 	activeFolderWorkspace(page).locator('[data-terminay-folder-empty="true"]');
 
@@ -173,9 +252,8 @@ test('a repository project shows General and a linked folder per worktree with i
 	// The project's first terminal is in General; a worktree nobody has
 	// opened a terminal in says so.
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
-	await expect(folderGroup(mainWindow, 'alpha')).toContainText(
-		'No terminals yet',
-	);
+	await expect(folderTerminals(mainWindow, 'alpha')).toHaveCount(0);
+	await expect(newTerminalRow(mainWindow, 'alpha')).toBeVisible();
 
 	await appHarness.sendAppCommand('new-project');
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
@@ -185,18 +263,14 @@ test('a repository project shows General and a linked folder per worktree with i
 	await openFileExplorer(mainWindow);
 	await expect(fileItem(mainWindow, 'notes.txt')).toBeVisible();
 	await expect(folderNames(mainWindow)).toHaveText(['General']);
-	// No branch line, and nothing Git-shaped anywhere on the row.
-	await expect(
-		folderRow(mainWindow, 'General').locator('.folders-tree__meta'),
-	).toHaveCount(0);
+	// No branch line, and nothing Git-shaped anywhere on the card.
+	await expect(gitLines(mainWindow, 'General')).toHaveCount(0);
 	await expect(
 		changesPane(mainWindow).locator('.git-panel__message'),
 	).toHaveText('This folder is not in a Git repository', { timeout: 6000 });
 	// A listing has arrived by now, so the absence of a branch is not a wait.
 	await expect(folderNames(mainWindow)).toHaveText(['General']);
-	await expect(
-		folderRow(mainWindow, 'General').locator('.folders-tree__meta'),
-	).toHaveCount(0);
+	await expect(gitLines(mainWindow, 'General')).toHaveCount(0);
 });
 
 test('selecting a linked folder shows its worktree in Files and Changes, General shows the project root, and the root never changes', async ({
@@ -366,9 +440,7 @@ test('closing the last panel leaves the project open with a placeholder whose Ne
 		/folders-tree__row--selected/,
 	);
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(0);
-	await expect(folderGroup(mainWindow, 'General')).toContainText(
-		'No terminals yet',
-	);
+	await expect(newTerminalRow(mainWindow, 'General')).toBeVisible();
 	await openFileExplorer(mainWindow);
 
 	await placeholder(mainWindow)
@@ -393,25 +465,10 @@ test('a terminal dragged into a new plain folder is still there after a reload, 
 
 	await createPlainFolder(mainWindow, 'Servers');
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'Servers']);
-	await expect(folderGroup(mainWindow, 'Servers')).toContainText(
-		'No terminals yet',
-	);
+	await expect(folderTerminals(mainWindow, 'Servers')).toHaveCount(0);
+	await expect(newTerminalRow(mainWindow, 'Servers')).toBeVisible();
 
-	// Drag the terminal's tree row onto the folder's row. Chromium can drop a
-	// synthetic drag while the renderer is busy, so each attempt is one whole
-	// gesture and the outcome is asserted strictly afterwards.
-	const row = terminalRowOf(mainWindow, sessionId);
-	const target = folderRow(mainWindow, 'Servers');
-	let moved = false;
-	for (let attempt = 0; attempt < 4 && !moved; attempt += 1) {
-		await row.dragTo(target);
-		moved = await terminalRowIn(mainWindow, 'Servers', sessionId)
-			.waitFor({ state: 'visible', timeout: 3_000 })
-			.then(
-				() => true,
-				() => false,
-			);
-	}
+	await dragTerminalToFolder(mainWindow, sessionId, 'Servers');
 	await expect(terminalRowIn(mainWindow, 'Servers', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(0);
 	// The device that asked for the move is shown the folder and the terminal.
@@ -709,7 +766,7 @@ test('deleting a worktree whose folder holds a terminal asks about the terminal 
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('a terminal that runs git worktree add is moved into the new folder with Undo, and is offered the move when the setting is off', async ({
+test('a terminal that runs git worktree add is moved into the new folder with nothing announced, stays in General once dragged back, and is offered the move when the setting is off', async ({
 	appHarness,
 	createWorkspace,
 	mainWindow,
@@ -743,18 +800,20 @@ test('a terminal that runs git worktree add is moved into the new folder with Un
 	);
 	await expect(terminalPanelForSession(mainWindow, sessionId)).toBeVisible();
 	expect(await activeTerminalSessionId(mainWindow)).toBe(sessionId);
-	const notice = mainWindow.locator('.folder-capture-notice:visible');
-	await expect(notice).toHaveCount(1);
-	await expect(notice).toContainText('into the folder for its new worktree');
+	// The tree is what shows the move. Nothing announces it.
+	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
+	await mainWindow.waitForTimeout(1_000);
+	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 
-	// Undo: back in General, and it stays there.
-	await notice.getByRole('button', { name: 'Undo' }).click();
+	// Dragged back onto General, it is in General, and it stays there: the
+	// terminal goes on running Git and is not moved again.
+	await dragTerminalToFolder(mainWindow, sessionId, 'General');
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'cap-one')).toHaveCount(0);
-	await expect(folderGroup(mainWindow, 'cap-one')).toContainText(
-		'No terminals yet',
-	);
-	await expect(notice).toHaveCount(0);
+	await expect(newTerminalRow(mainWindow, 'cap-one')).toBeVisible();
+	await expect(terminalPanelForSession(mainWindow, sessionId)).toBeVisible();
+	await run(mainWindow, "git status --short && printf 'still-%s\\n' here");
+	await expect(terminalOutput(mainWindow)).toContainText('still-here');
 	await mainWindow.waitForTimeout(2_000);
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'cap-one')).toHaveCount(0);
@@ -793,9 +852,7 @@ test('a terminal that runs git worktree add is moved into the new folder with Un
 	await expect(folderRow(mainWindow, 'General')).toHaveClass(
 		/folders-tree__row--selected/,
 	);
-	await expect(mainWindow.locator('.folder-capture-notice:visible')).toHaveCount(
-		0,
-	);
+	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 
 	await offered.getByRole('button', { name: 'Move it here' }).click();
 	await expect(terminalRowIn(mainWindow, 'cap-two', sessionId)).toHaveCount(1);
@@ -831,9 +888,8 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 	await expect(
 		folderRow(mainWindow, 'outside').locator('.folders-tree__branch'),
 	).toHaveText('feat/outside');
-	await expect(folderGroup(mainWindow, 'outside')).toContainText(
-		'No terminals yet',
-	);
+	await expect(folderTerminals(mainWindow, 'outside')).toHaveCount(0);
+	await expect(newTerminalRow(mainWindow, 'outside')).toBeVisible();
 	// No terminal moved, nothing is offered, and nothing is announced.
 	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
 		1,
@@ -844,9 +900,7 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 	await expect(
 		folderGroup(mainWindow, 'outside').locator('.folders-tree__offer'),
 	).toHaveCount(0);
-	await expect(mainWindow.locator('.folder-capture-notice:visible')).toHaveCount(
-		0,
-	);
+	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 	await mainWindow.waitForTimeout(1_500);
 	await expect(folderTerminals(mainWindow, 'outside')).toHaveCount(0);
 
@@ -1409,7 +1463,7 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 	await rm(repo.worktree('gamma'), { recursive: true, force: true });
 
 	await expect(
-		folderRow(mainWindow, 'gamma').locator('.folders-tree__meta'),
+		folderRow(mainWindow, 'gamma').locator('.folders-tree__facts'),
 	).toContainText('missing', { timeout: 15_000 });
 	await expect(terminalRowIn(mainWindow, 'gamma', stranded)).toHaveCount(1);
 	await expect(filesPane(mainWindow)).toContainText(
@@ -1437,4 +1491,334 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 		terminalPanelForSession(mainWindow, stranded).locator('.xterm-rows'),
 	).toContainText('after-prune');
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('a folder card colours its branch only when its checkout is dirty, keeps its facts on one line at any width, and tints a selected folder that has no active terminal', async ({
+	createWorkspace,
+	mainWindow,
+}, testInfo) => {
+	const repo = await repository(createWorkspace, 'lf-cards', [
+		'alpha',
+		'beta',
+		'gamma',
+		'delta',
+	]);
+	// alpha and beta hold work that main does not; gamma and delta hold none.
+	for (const dirty of ['alpha', 'beta']) {
+		await writeFile(
+			join(repo.worktree(dirty), 'work.txt'),
+			'one\ntwo\n',
+			'utf8',
+		);
+		await git(repo.worktree(dirty), 'add', '.');
+		await git(repo.worktree(dirty), 'commit', '-m', 'work');
+	}
+	await setProjectRoot(mainWindow, repo.root);
+	const header = (folder: string) => folderRow(mainWindow, folder);
+	for (const dirty of ['alpha', 'beta'])
+		await expect(header(dirty)).toHaveAttribute('data-change', 'delta', {
+			timeout: 15_000,
+		});
+	for (const clean of ['gamma', 'delta'])
+		await expect(header(clean)).toHaveAttribute('data-change', 'clean', {
+			timeout: 15_000,
+		});
+
+	const branchColour = (folder: string) =>
+		header(folder)
+			.locator('.folders-tree__branch')
+			.evaluate((element) => getComputedStyle(element).color);
+	const ordinary = await branchColour('General');
+	for (const clean of ['gamma', 'delta'])
+		expect(await branchColour(clean)).toBe(ordinary);
+	for (const dirty of ['alpha', 'beta'])
+		expect(await branchColour(dirty)).not.toBe(ordinary);
+
+	// A dirty worktree says how much and that nobody has asked for it to be
+	// merged. A clean checkout has no facts line at all.
+	const facts = header('alpha').locator('.folders-tree__facts');
+	for (const dirty of ['alpha', 'beta']) {
+		const line = header(dirty).locator('.folders-tree__facts');
+		await expect(line).toContainText('+2');
+		await expect(line).toContainText('no PR');
+	}
+	for (const clean of ['General', 'gamma', 'delta'])
+		await expect(header(clean).locator('.folders-tree__facts')).toHaveCount(0);
+
+	// This harness has no forge, so nothing publishes a pull request or checks
+	// for a worktree. The two chips are added with the markup the card draws
+	// for them (pinned by scripts/folders-tree-row.test.mjs), which is enough
+	// to exercise what is under test here: the line's layout at each width.
+	// alpha stands for a worktree with a pull request, so its `no PR` is put
+	// out of sight; beta is left as the one without.
+	await facts.evaluate((line) => {
+		const none = line.querySelector<HTMLElement>('.folders-tree__chip--quiet');
+		if (none !== null) none.style.display = 'none';
+		const chip = (className: string, html: string) => {
+			const element = document.createElement('span');
+			element.className = `folders-tree__chip ${className}`;
+			element.innerHTML = html;
+			line.append(element);
+		};
+		chip(
+			'folders-tree__pr folders-tree__pr--open',
+			'<span class="folders-tree__chip-extra">PR</span><span>#350</span>',
+		);
+		chip(
+			'folders-tree__checks folders-tree__checks--pending',
+			'<span>23</span><span class="folders-tree__chip-extra">running</span>',
+		);
+	});
+	for (const target of [340, 268, 220]) {
+		// The chips say everything from 300px up, and less below it.
+		const wide = target >= 300;
+		const width = await setFoldersWidth(mainWindow, target);
+		const tops = await facts
+			.locator('.folders-tree__chip')
+			.evaluateAll((chips) =>
+				chips
+					.filter((chip) => chip.getClientRects().length > 0)
+					.map((chip) => Math.round(chip.getBoundingClientRect().top)),
+			);
+		expect(tops).toHaveLength(3);
+		expect(new Set(tops).size, `one line at ${width}px`).toBe(1);
+		const extras = facts.locator('.folders-tree__chip-extra');
+		await expect(extras).toHaveCount(2);
+		for (const extra of await extras.all())
+			if (wide) await expect(extra).toBeVisible();
+			else await expect(extra).toBeHidden();
+		await testInfo.attach(`folders-column-${Math.round(width)}px.png`, {
+			body: await foldersColumn(mainWindow).screenshot(),
+			contentType: 'image/png',
+		});
+	}
+
+	// General holds the focused terminal: its row is what is highlighted, and
+	// no card is marked.
+	const activeRows = foldersColumn(mainWindow).locator(
+		'.folders-tree__row--active',
+	);
+	const tinted = foldersColumn(mainWindow).locator(
+		'.folders-tree__row--selected-alone',
+	);
+	await expect(activeRows).toHaveCount(1);
+	await expect(tinted).toHaveCount(0);
+	// An empty folder has no row to highlight, so its title is tinted instead.
+	await selectFolder(mainWindow, 'beta');
+	await expect(header('beta')).toHaveClass(/folders-tree__row--selected-alone/);
+	await expect(activeRows).toHaveCount(0);
+	const background = (folder: string) =>
+		header(folder).evaluate(
+			(element) => getComputedStyle(element).backgroundColor,
+		);
+	expect(await background('beta')).not.toBe(await background('alpha'));
+	await selectFolder(mainWindow, 'General');
+	await expect(tinted).toHaveCount(0);
+	await expect(activeRows).toHaveCount(1);
+});
+
+test('New terminal on a folder card creates a terminal in that folder, selects the folder, and focuses the terminal', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-card-new', ['alpha']);
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	const generalSession = await activeTerminalSessionId(mainWindow);
+	// Every card ends with the row, whether or not it holds a terminal.
+	await expect(newTerminalRow(mainWindow, 'General')).toBeVisible();
+	await expect(newTerminalRow(mainWindow, 'alpha')).toBeVisible();
+
+	// An empty linked folder: the terminal starts in its worktree.
+	await newTerminalRow(mainWindow, 'alpha').click();
+	await expect(folderTerminals(mainWindow, 'alpha')).toHaveCount(1, {
+		timeout: 10_000,
+	});
+	await expect(folderRow(mainWindow, 'alpha')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect
+		.poll(() => activeTerminalSessionId(mainWindow))
+		.not.toBe(generalSession);
+	const first = await activeTerminalSessionId(mainWindow);
+	await expect(terminalRowIn(mainWindow, 'alpha', first)).toHaveClass(
+		/folders-tree__row--active/,
+	);
+	await expectTerminalIn(mainWindow, repo.worktree('alpha'), 'card-new');
+
+	// A folder that is not the one on screen and already holds a terminal.
+	await selectFolder(mainWindow, 'General');
+	expect(await activeTerminalSessionId(mainWindow)).toBe(generalSession);
+	await newTerminalRow(mainWindow, 'alpha').click();
+	await expect(folderTerminals(mainWindow, 'alpha')).toHaveCount(2, {
+		timeout: 10_000,
+	});
+	await expect(folderRow(mainWindow, 'alpha')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect
+		.poll(async () => {
+			const sessionId = await activeTerminalSessionId(mainWindow);
+			return sessionId !== first && sessionId !== generalSession;
+		})
+		.toBe(true);
+	const second = await activeTerminalSessionId(mainWindow);
+	await expect(terminalRowIn(mainWindow, 'alpha', second)).toHaveClass(
+		/folders-tree__row--active/,
+	);
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
+	// The row is still the last thing in the card.
+	await expect(
+		folderGroup(mainWindow, 'alpha').locator(':scope > *').last(),
+	).toHaveClass(/folders-tree__new-terminal/);
+});
+
+test('folders are reordered by dragging a grip or with the arrow keys, and nothing goes above General', async ({
+	mainWindow,
+}) => {
+	for (const name of ['alpha', 'beta', 'gamma'])
+		await createPlainFolder(mainWindow, name);
+	await selectFolder(mainWindow, 'General');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'alpha',
+		'beta',
+		'gamma',
+	]);
+	const grip = (folder: string) =>
+		folderRow(mainWindow, folder).locator('.folders-tree__grip');
+	await expect(grip('General')).toHaveCount(0);
+	await expect(grip('gamma')).toHaveCount(1);
+	const pointIn = async (folder: string, fromTop: number) => {
+		const box = await folderRow(mainWindow, folder).boundingBox();
+		if (box === null) throw new Error(`${folder} is not on screen.`);
+		return { x: box.x + box.width / 2, y: box.y + fromTop };
+	};
+
+	// The last folder, dropped over the top of the one above it.
+	await dragGripTo(mainWindow, 'gamma', await pointIn('beta', 2));
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'alpha',
+		'gamma',
+		'beta',
+	]);
+	// What is shown once the drop's own preview has lapsed is the order the
+	// server holds, and it is what a reload reads back.
+	await mainWindow.waitForTimeout(3_500);
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'alpha',
+		'gamma',
+		'beta',
+	]);
+	// Pressing a grip is not selecting a folder.
+	await expect(folderRow(mainWindow, 'General')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect(folderRow(mainWindow, 'gamma')).not.toHaveClass(
+		/folders-tree__row--selected/,
+	);
+
+	// Dropped over General itself, it lands directly beneath it.
+	await dragGripTo(mainWindow, 'gamma', await pointIn('General', 1));
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'gamma',
+		'alpha',
+		'beta',
+	]);
+	await mainWindow.waitForTimeout(3_500);
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'gamma',
+		'alpha',
+		'beta',
+	]);
+
+	// From the keyboard: one place for each press, the grip keeps focus, and
+	// the place beneath General is as far up as a folder goes.
+	await grip('beta').focus();
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'gamma',
+		'beta',
+		'alpha',
+	]);
+	await expect(grip('beta')).toBeFocused();
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'beta',
+		'gamma',
+		'alpha',
+	]);
+	await expect(grip('beta')).toBeFocused();
+	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.waitForTimeout(500);
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'beta',
+		'gamma',
+		'alpha',
+	]);
+	await mainWindow.keyboard.press('ArrowDown');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'gamma',
+		'beta',
+		'alpha',
+	]);
+
+	await mainWindow.reload();
+	await expect(folderNames(mainWindow)).toHaveText(
+		['General', 'gamma', 'beta', 'alpha'],
+		{ timeout: 15_000 },
+	);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test("a terminal's row in the Folders tree opens the menu its tab opens, for the terminal on screen and for one in another folder", async ({
+	appHarness,
+	mainWindow,
+}) => {
+	const menu = mainWindow.locator('.context-menu');
+	const generalSession = await activeTerminalSessionId(mainWindow);
+	await mainWindow
+		.locator('.project-workspace--active .terminal-tab-content--active')
+		.click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	const fromTab = await contextMenuLabels(mainWindow);
+	expect(fromTab).toContain('Close');
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+
+	await terminalRowOf(mainWindow, generalSession).click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	expect(await contextMenuLabels(mainWindow)).toEqual(fromTab);
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+	// A terminal's menu is not its folder's menu.
+	await openFolderMenu(mainWindow, 'General');
+	expect(await contextMenuLabels(mainWindow)).not.toEqual(fromTab);
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+
+	// A terminal in a folder that is not the one on screen.
+	await createPlainFolder(mainWindow, 'Servers');
+	await selectFolder(mainWindow, 'Servers');
+	const serverSession = await newTerminalHere(
+		mainWindow,
+		appHarness.sendAppCommand,
+		'Servers',
+	);
+	await selectFolder(mainWindow, 'General');
+	await terminalRowOf(mainWindow, serverSession).click({ button: 'right' });
+	await expect(menu).toBeVisible();
+	expect(await contextMenuLabels(mainWindow)).toContain('Close');
+	// It is that terminal's menu: Close closes that terminal and no other.
+	await menu.getByText('Close', { exact: true }).click();
+	await expect(terminalRowOf(mainWindow, serverSession)).toHaveCount(0);
+	await expect(terminalRowOf(mainWindow, generalSession)).toHaveCount(1);
 });

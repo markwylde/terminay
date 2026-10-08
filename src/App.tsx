@@ -91,7 +91,6 @@ import {
 	type EmptyFolderDescription,
 	EmptyFolderPlaceholder,
 } from './components/folders/EmptyFolderPlaceholder';
-import { FolderCaptureNotices } from './components/folders/FolderCaptureNotices';
 import { FoldersColumn } from './components/folders/FoldersColumn';
 import { WorktreeSignInDialog } from './components/git-panel/WorktreeSignInDialog';
 import { ChangesPane } from './components/git-panel/ChangesPane';
@@ -265,16 +264,14 @@ import {
 	buildProjectFolderTree,
 } from './workspace/folderTreeSources';
 import {
-	type CaptureNotice,
 	type FolderTerminalCapture,
 	type FrontPanelHistory,
 	recordFrontPanel,
 	wasLookingAt,
-	withCaptureNotice,
-	withoutCaptureNotice,
 } from './workspace/folderCapture';
 import { folderChanges, isGitProject } from './workspace/folderWorktree';
 import { ProjectTabPeek } from './workspace/ProjectTabPeek';
+import { openTerminalTabMenuOnceDrawn } from './workspace/terminalTabMenu';
 import { useFolderCaptureEvents } from './workspace/useFolderCaptureEvents';
 import { useFolderMenuController } from './workspace/useFolderMenuController';
 import {
@@ -724,17 +721,14 @@ type ProjectWorkspaceProps = {
 	) => void;
 	/** Create a terminal in a folder of this project, starting in its root. */
 	onOpenShellInFolder: (projectId: string, folderId: string) => void;
+	/** Create a terminal in a folder of this project as New terminal does. */
+	onNewTerminalInFolder: (projectId: string, folderId: string) => void;
 	/** Close a panel of another folder's workspace the ordinary way. */
 	onCloseFolderPanel: (
 		projectId: string,
 		folderId: string,
 		panelId: string,
 	) => Promise<void>;
-	/** Terminals the server moved into a new worktree's folder, not yet
-	 * dismissed on this device. */
-	captureNotices: readonly CaptureNotice[];
-	onUndoCapture: (notice: CaptureNotice) => void;
-	onDismissCaptureNotice: (noticeId: number) => void;
 	onCommitProjectSidebar: (
 		projectId: string,
 		patch: Partial<
@@ -1085,7 +1079,6 @@ const MacroFileFieldInput = forwardRef<
 MacroFileFieldInput.displayName = 'MacroFileFieldInput';
 
 const NO_TERMINAL_DROP_TARGETS: readonly string[] = Object.freeze([]);
-const NO_CAPTURE_NOTICES: readonly CaptureNotice[] = Object.freeze([]);
 const NO_WORKSPACE_FOLDERS: Readonly<Record<string, ServerWorkspaceFolder>> =
 	Object.freeze({});
 const NO_INVENTORY: readonly WorkspaceInventoryEntry[] = Object.freeze([]);
@@ -1363,7 +1356,6 @@ const ProjectWorkspace = forwardRef<
 			acceptsFolderTerminalDrop,
 			agentStatusSnapshot,
 			auxiliaryRoutes,
-			captureNotices,
 			folder,
 			foldersTreeWidth,
 			isActive,
@@ -1375,10 +1367,9 @@ const ProjectWorkspace = forwardRef<
 			onAddProject,
 			onAnswerFolderOffer,
 			onCloseFolderPanel,
-			onDismissCaptureNotice,
 			onDropTerminalOnFolder,
+			onNewTerminalInFolder,
 			onOpenShellInFolder,
-			onUndoCapture,
 			onEditProject,
 			onFoldersTreeWidthCommit,
 			onSelectFolder,
@@ -4967,17 +4958,23 @@ const ProjectWorkspace = forwardRef<
 			onError: setErrorText,
 		});
 		const folderNameModal = useDraggableModal(folderNameDialog !== null);
-		// Shown by the workspace on screen, for whichever folder the terminal
-		// landed in: the notice is the project's, not one folder's.
-		const captureNoticesElement = (
-			placement: 'column' | 'banner' | 'banner-when-narrow',
-		) => (
-			<FolderCaptureNotices
-				notices={isActive ? captureNotices : NO_CAPTURE_NOTICES}
-				onUndo={onUndoCapture}
-				onDismiss={onDismissCaptureNotice}
-				placement={placement}
-			/>
+		// The order is the server's. The tree shows what it asked for until the
+		// server answers, and goes back to the server's order if it refuses.
+		const reorderFolders = useCallback(
+			async (folderIds: string[]) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				try {
+					if (store === undefined)
+						throw new Error('The selected server workspace is not ready.');
+					await store.reorderFolders({ projectId: project.id, folderIds });
+				} catch (error) {
+					setErrorText(
+						`Unable to reorder the folders: ${error instanceof Error ? error.message : String(error)}`,
+					);
+					throw error;
+				}
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
 		);
 		// What the panel area says while this folder holds no panels.
 		const newTerminalShortcutLabel = getCommandShortcutLabel(
@@ -5299,12 +5296,6 @@ const ProjectWorkspace = forwardRef<
 						</button>
 					</div>
 				) : null}
-				{/* With the Folders column hidden there is no foot of the tree to
-				    say it in, so it is said where the project says everything else.
-				    A column that is open is still not drawn at narrow widths. */}
-				{captureNoticesElement(
-					isFoldersTreeOpen ? 'banner-when-narrow' : 'banner',
-				)}
 				{isRenderingStatusBar && focusedFileStatus !== null
 					? createPortal(
 							<FocusedFileSummary
@@ -5339,7 +5330,6 @@ const ProjectWorkspace = forwardRef<
 							<FoldersColumn
 								folders={folderTreeRows}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
-								footer={captureNoticesElement('column')}
 								isMenuOpen={foldersMenuPosition !== null}
 								onOpenMenu={setFoldersMenuPosition}
 								onOpenLink={(url) => void openExternalUrl(url)}
@@ -5348,6 +5338,10 @@ const ProjectWorkspace = forwardRef<
 									onAnswerFolderOffer(project.id, folderId, answer)
 								}
 								onCreateFolder={requestNewFolder}
+								onNewTerminal={(folderId) =>
+									onNewTerminalInFolder(project.id, folderId)
+								}
+								onReorderFolders={reorderFolders}
 								onFolderMenu={openFolderMenu}
 								onDropTerminal={(folderId) =>
 									onDropTerminalOnFolder(project.id, folderId)
@@ -5357,6 +5351,11 @@ const ProjectWorkspace = forwardRef<
 								}
 								onSelectTerminal={(folderId, panelId) =>
 									onActivateFolderPanel(project.id, folderId, panelId)
+								}
+								onTerminalMenu={(folderId, panelId, anchor) =>
+									openTerminalTabMenuOnceDrawn(panelId, anchor, () =>
+										onActivateFolderPanel(project.id, folderId, panelId),
+									)
 								}
 								onTerminalDrag={(drag) =>
 									reportTerminalTabDrag(
@@ -7558,21 +7557,24 @@ function App({
 		[commandWorkspace, terminalClientContext?.workspaceSnapshotStore],
 	);
 	/**
-	 * Create a terminal in a folder, starting in that folder's root.
+	 * Bring a folder forward and act on its workspace once it is ready.
 	 *
-	 * The folder comes to the front first. Its own workspace creates the
-	 * terminal, naming the folder by id, and a folder with no panels has no
-	 * workspace until it is the one selected.
+	 * A folder's own workspace creates its terminals, naming the folder by id,
+	 * and a folder with no panels has no workspace until it is the one selected.
 	 */
-	const openShellInFolder = useCallback(
-		(projectId: string, folderId: string) => {
+	const runInFolderWorkspace = useCallback(
+		(
+			projectId: string,
+			folderId: string,
+			act: (workspace: ProjectWorkspaceHandle) => void,
+		) => {
 			selectFolder(projectId, folderId);
 			activateProjectRef.current(projectId);
 			const startedAt = performance.now();
 			const dispatch = () => {
 				const workspace = workspaceRefs.current.get(projectId, folderId);
 				if (workspace?.isReady() === true) {
-					void workspace.openShellAtFolderRoot();
+					act(workspace);
 					return;
 				}
 				if (performance.now() - startedAt >= 2_000) {
@@ -7587,6 +7589,23 @@ function App({
 		},
 		[commandWorkspace, selectFolder],
 	);
+	/** Create a terminal in a folder, starting in that folder's root. */
+	const openShellInFolder = useCallback(
+		(projectId: string, folderId: string) =>
+			runInFolderWorkspace(projectId, folderId, (workspace) => {
+				void workspace.openShellAtFolderRoot();
+			}),
+		[runInFolderWorkspace],
+	);
+	/** New terminal, in a folder chosen from the tree instead of the one on
+	 * screen: the folder comes forward and its own new-terminal command runs. */
+	const newTerminalInFolder = useCallback(
+		(projectId: string, folderId: string) =>
+			runInFolderWorkspace(projectId, folderId, (workspace) => {
+				void workspace.executeCommand('new-terminal');
+			}),
+		[runInFolderWorkspace],
+	);
 	/** Close a panel through its own workspace, as closing its tab does. */
 	const closeFolderPanel = useCallback(
 		async (projectId: string, folderId: string, panelId: string) => {
@@ -7599,14 +7618,6 @@ function App({
 		},
 		[workspaceOfPanel],
 	);
-	/**
-	 * Terminals the server moved into the folder of a worktree they created,
-	 * each said once with an offer to put it back.
-	 */
-	const [captureNotices, setCaptureNotices] = useState<
-		readonly CaptureNotice[]
-	>([]);
-	const captureNoticeIdRef = useRef(0);
 	// The panel in front of this window, and the one it replaced: a capture
 	// can be heard of just after the terminal has left the folder on screen.
 	const frontPanelHistoryRef = useRef<FrontPanelHistory>({});
@@ -7631,23 +7642,15 @@ function App({
 				!projectsRef.current.some((project) => project.id === capture.projectId)
 			)
 				return;
-			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
-			const title =
-				inventoryByProjectRef.current[capture.projectId]?.find(
-					(entry) => entry.panelId === capture.panelId,
-				)?.title ??
-				snapshot?.panels[capture.panelId]?.title ??
-				'Terminal';
-			captureNoticeIdRef.current += 1;
-			const notice = { ...capture, id: captureNoticeIdRef.current, title };
-			setCaptureNotices((current) => withCaptureNotice(current, notice));
 			// The device that was looking at the terminal goes on looking at it.
-			// Every other device only hears that it moved.
+			// On every other device the tree alone shows that it moved.
 			if (
 				!wasLookingAt(frontPanelHistoryRef.current, capture, performance.now())
 			)
 				return;
-			const sessionId = snapshot?.panels[capture.panelId]?.sessionId;
+			const sessionId =
+				workspaceSnapshotStoreRef.current?.snapshot?.panels[capture.panelId]
+					?.sessionId;
 			const hasArrived =
 				sessionId !== undefined &&
 				workspaceRefs.current
@@ -7677,24 +7680,6 @@ function App({
 		terminalClientContext?.applicationClient,
 		handleTerminalCaptured,
 	);
-	const dismissCaptureNotice = useCallback(
-		(noticeId: number) =>
-			setCaptureNotices((current) => withoutCaptureNotice(current, noticeId)),
-		[],
-	);
-	/** Put a captured terminal back in the folder it came from. */
-	const undoCapture = useCallback(
-		(notice: CaptureNotice) => {
-			dismissCaptureNotice(notice.id);
-			moveTerminalToFolder(
-				notice.projectId,
-				notice.panelId,
-				notice.fromFolderId,
-			);
-		},
-		[dismissCaptureNotice, moveTerminalToFolder],
-	);
-
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
 			// The dashboard belongs to the workspace view, not to a project, so it
@@ -9607,12 +9592,8 @@ function App({
 							onDropTerminalOnFolder={dropTerminalOnFolder}
 							onAnswerFolderOffer={answerFolderOffer}
 							onOpenShellInFolder={openShellInFolder}
+							onNewTerminalInFolder={newTerminalInFolder}
 							onCloseFolderPanel={closeFolderPanel}
-							captureNotices={captureNotices.filter(
-								(notice) => notice.projectId === project.id,
-							)}
-							onUndoCapture={undoCapture}
-							onDismissCaptureNotice={dismissCaptureNotice}
 							isCompactChrome={isCompactChrome}
 							sharedTerminalContextReaders={sharedTerminalContextReadersRef}
 							isMac={isMac}
