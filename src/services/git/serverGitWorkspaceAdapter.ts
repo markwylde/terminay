@@ -141,6 +141,18 @@ function toWorktree(
 			value.hasCommittedChanges,
 			'committed-change state',
 		) ?? false,
+		hasUnpushedCommits: nullableBoolean(
+			value.hasUnpushedCommits,
+			'unpushed-commit state',
+		) ?? false,
+		unpushedLineAdditions: nullableNonNegativeInteger(
+			value.unpushedLineAdditions,
+			'unpushed line additions',
+		),
+		unpushedLineDeletions: nullableNonNegativeInteger(
+			value.unpushedLineDeletions,
+			'unpushed line deletions',
+		),
 		isCurrent: path === repositoryRoot,
 		isMain: boolean(value.isMain, 'main worktree state'),
 		isBare: boolean(value.isBare, 'bare worktree state'),

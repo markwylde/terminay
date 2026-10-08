@@ -1617,6 +1617,90 @@ test('a folder card colours its branch only when its checkout is dirty, keeps it
 	await expect(activeRows).toHaveCount(1);
 });
 
+test('a pushed branch is not dirty and still shows the commits the default branch lacks, and a push from a shell clears a dirty card', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-pushed', [
+		'alpha',
+		'beta',
+	]);
+	const remote = join(repo.root, '..', 'remote.git');
+	await git(repo.root, 'init', '--bare', '-b', 'main', remote);
+	await git(repo.root, 'remote', 'add', 'origin', remote);
+	await git(repo.root, 'push', '-u', 'origin', 'main');
+	// Both hold a commit main does not; only alpha's is on the remote. The
+	// contents differ so the two commits are not one and the same object.
+	for (const worktree of ['alpha', 'beta']) {
+		await writeFile(
+			join(repo.worktree(worktree), 'work.txt'),
+			`${worktree}\ntwo\n`,
+			'utf8',
+		);
+		await git(repo.worktree(worktree), 'add', '.');
+		await git(repo.worktree(worktree), 'commit', '-m', 'work');
+	}
+	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'feat/alpha');
+	await setProjectRoot(mainWindow, repo.root);
+
+	const header = (folder: string) => folderRow(mainWindow, folder);
+	const branchColour = (folder: string) =>
+		header(folder)
+			.locator('.folders-tree__branch')
+			.evaluate((element) => getComputedStyle(element).color);
+	const mark = (folder: string) =>
+		header(folder).locator('.folders-tree__unmerged');
+	await expect(header('beta')).toHaveAttribute('data-change', 'delta', {
+		timeout: 15_000,
+	});
+	await expect(header('alpha')).toHaveAttribute('data-change', 'clean', {
+		timeout: 15_000,
+	});
+	const ordinary = await branchColour('General');
+	expect(await branchColour('alpha')).toBe(ordinary);
+	expect(await branchColour('beta')).not.toBe(ordinary);
+
+	// Pushed or not, each is one commit the default branch lacks, and General
+	// is none.
+	for (const unmerged of ['alpha', 'beta']) {
+		await expect(mark(unmerged)).toHaveText('↑1');
+		await expect(mark(unmerged)).toHaveAttribute(
+			'aria-label',
+			'1 commit not on the default branch',
+		);
+	}
+	await expect(mark('General')).toHaveCount(0);
+
+	// Nothing of alpha's is unpushed, so it has no change size; nobody has
+	// asked for it to be merged, so it still says so.
+	const facts = (folder: string) =>
+		header(folder).locator('.folders-tree__facts');
+	await expect(facts('alpha').locator('.folders-tree__change')).toHaveCount(0);
+	await expect(facts('alpha')).toContainText('no PR');
+	await expect(facts('beta')).toContainText('+2');
+	await expect(facts('beta')).toContainText('no PR');
+
+	// The push is what changes the card; nothing is refreshed by hand.
+	await git(repo.worktree('beta'), 'push', '-u', 'origin', 'feat/beta');
+	await expect(header('beta')).toHaveAttribute('data-change', 'clean', {
+		timeout: 15_000,
+	});
+	expect(await branchColour('beta')).toBe(ordinary);
+	await expect(mark('beta')).toHaveText('↑1');
+
+	// An uncommitted edit is work on this machine again.
+	await writeFile(
+		join(repo.worktree('alpha'), 'work.txt'),
+		'alpha\ntwo\nthree\n',
+		'utf8',
+	);
+	await expect(header('alpha')).toHaveAttribute('data-change', 'delta', {
+		timeout: 15_000,
+	});
+	await expect(facts('alpha')).toContainText('+1');
+	expect(await branchColour('alpha')).not.toBe(ordinary);
+});
+
 test('New terminal on a folder card creates a terminal in that folder, selects the folder, and focuses the terminal', async ({
 	createWorkspace,
 	mainWindow,

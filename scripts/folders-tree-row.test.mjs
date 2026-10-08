@@ -190,6 +190,56 @@ test('the chips say the pull request with its state unless open, and the checks 
 		noPr({ kind: 'linked', isDirty: true, pullRequest: { number: 1 } }),
 		false,
 	);
+	// Pushed and not merged is still work nobody has asked to merge.
+	assert.equal(
+		noPr({ kind: 'linked', isDirty: false, unmerged: { commits: 2 } }),
+		true,
+	);
+	assert.equal(
+		noPr({ kind: 'general', isDirty: false, unmerged: { commits: 2 } }),
+		false,
+	);
+	assert.deepEqual(presentation.unmergedMark({ commits: 4 }), {
+		text: '↑4',
+		label: '4 commits not on the default branch',
+	});
+	assert.deepEqual(presentation.unmergedMark({ commits: 1 }), {
+		text: '↑1',
+		label: '1 commit not on the default branch',
+	});
+	assert.deepEqual(presentation.unmergedMark({ commits: null }), {
+		text: '↑',
+		label: 'Commits not on the default branch',
+	});
+});
+
+test('an unmerged branch ends with its mark whether or not the checkout is dirty, and a merged one has none', () => {
+	const pushed = render([
+		linked({ change: { kind: 'clean' }, unmerged: { commits: 4 } }),
+	]);
+	assert.match(pushed, /class="folders-tree__branch"/);
+	assert.equal(pushed.includes('folders-tree__branch--dirty'), false);
+	assert.match(
+		pushed,
+		/<span title="feat\/one-project-one-window">feat\/one-project-one-window<\/span><span class="folders-tree__unmerged" role="img" aria-label="4 commits not on the default branch" title="4 commits not on the default branch">↑4<\/span>/,
+	);
+	// Nothing unpushed, so no change size; pushed with no pull request says so.
+	assert.equal(pushed.includes('folders-tree__change'), false);
+	assert.match(pushed, /folders-tree__chip--quiet">no PR</);
+
+	const local = render([
+		linked({
+			isDirty: true,
+			change: { kind: 'delta', additions: 12, deletions: 3 },
+			unmerged: { commits: 5 },
+		}),
+	]);
+	assert.match(local, /folders-tree__branch folders-tree__branch--dirty"/);
+	assert.match(local, /folders-tree__unmerged"[^>]*>↑5</);
+	assert.match(local, /folders-tree__delta--additions">\+12</);
+
+	const merged = render([linked({ change: { kind: 'clean' } })]);
+	assert.equal(merged.includes('folders-tree__unmerged'), false);
 });
 
 test('a linked folder card has a title line, a branch line, and a facts line, in that order', () => {
@@ -358,24 +408,38 @@ test('a card that only reports, as in a peek, shows the same facts with nothing 
 	assert.equal(markup.includes('New terminal'), false);
 });
 
-test('a worktree is clean only with nothing unmerged and no delta; a missing one is missing', () => {
+test('a worktree is clean only with nothing unpushed and no working-tree entry; a missing one is missing', () => {
 	const worktree = {
 		isPrunable: false,
 		isDirtyBranch: false,
+		aheadOfMainCount: 0,
+		hasUnpushedCommits: false,
 		entries: [],
 		lineAdditions: 0,
 		lineDeletions: 0,
+		unpushedLineAdditions: 0,
+		unpushedLineDeletions: 0,
 	};
 	assert.deepEqual(worktreeChange(worktree), { kind: 'clean' });
-	assert.deepEqual(worktreeChange({ ...worktree, lineAdditions: 3 }), {
+	assert.deepEqual(worktreeChange({ ...worktree, unpushedLineAdditions: 3 }), {
 		kind: 'delta',
 		additions: 3,
 		deletions: 0,
 	});
-	// Committed work the default branch lacks, with no measured size.
-	assert.deepEqual(worktreeChange({ ...worktree, isDirtyBranch: true }), {
+	// Unpushed commits with no measured size.
+	assert.deepEqual(worktreeChange({ ...worktree, hasUnpushedCommits: true }), {
 		kind: 'changed',
 	});
+	// Pushed work the default branch lacks is not a change on this machine.
+	assert.deepEqual(
+		worktreeChange({
+			...worktree,
+			isDirtyBranch: true,
+			lineAdditions: 247,
+			lineDeletions: 13,
+		}),
+		{ kind: 'clean' },
+	);
 	assert.deepEqual(worktreeChange({ ...worktree, entries: [{}] }), {
 		kind: 'changed',
 	});

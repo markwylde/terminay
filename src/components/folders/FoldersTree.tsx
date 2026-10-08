@@ -39,6 +39,7 @@ import {
 	pullRequestChip,
 	pullRequestTitle,
 	showsNoPullRequest,
+	unmergedMark,
 	shownCheckItems,
 } from './worktreePropertyPresentation';
 import './foldersTree.css';
@@ -487,6 +488,8 @@ function FolderHeader({
 	const changeChip =
 		change === undefined || change.kind === 'clean' ? undefined : change;
 	const noPullRequest = showsNoPullRequest(folder);
+	const unmerged =
+		folder.unmerged === undefined ? undefined : unmergedMark(folder.unmerged);
 	const hasFacts =
 		changeChip !== undefined ||
 		pullRequest !== undefined ||
@@ -549,10 +552,19 @@ function FolderHeader({
 			{folder.branch === undefined ? null : (
 				<span
 					className={`folders-tree__branch${folder.isDirty ? ' folders-tree__branch--dirty' : ''}`}
-					title={folder.branch}
 				>
 					<GitBranch size={12} aria-hidden="true" />
-					<span>{folder.branch}</span>
+					<span title={folder.branch}>{folder.branch}</span>
+					{unmerged === undefined ? null : (
+						<span
+							className="folders-tree__unmerged"
+							role="img"
+							aria-label={unmerged.label}
+							title={unmerged.label}
+						>
+							{unmerged.text}
+						</span>
+					)}
 				</span>
 			)}
 			{hasFacts ? (
@@ -745,8 +757,8 @@ function formatCount(value: number): string {
 	return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`;
 }
 
-/** A checkout's work against the default branch, in a few characters. A clean
- * checkout has no chip; its header says so through `data-change`. */
+/** A checkout's unpushed work, in a few characters. A clean checkout has no
+ * chip; its header says so through `data-change`. */
 function FolderChange({
 	change,
 }: Readonly<{ change: Exclude<FolderTreeChange, { kind: 'clean' }> }>) {
@@ -754,7 +766,7 @@ function FolderChange({
 		return (
 			<span
 				className="folders-tree__chip folders-tree__change"
-				title={`+${change.additions} −${change.deletions} against the default branch`}
+				title={`+${change.additions} −${change.deletions} not pushed`}
 			>
 				<span className="folders-tree__delta folders-tree__delta--additions">
 					+{formatCount(change.additions)}

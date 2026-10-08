@@ -4,6 +4,7 @@ import {
 	activePanelIdFromInventory,
 	buildProjectFolderTree,
 	folderTreeWorktrees,
+	worktreeUnmerged,
 	panelFactsFromInventory,
 } from '../src/workspace/folderTreeSources.ts';
 
@@ -32,6 +33,9 @@ const worktree = (path, branch, properties) => ({
 	lineDeletions: 0,
 	lastChangedAt: null,
 	isDirtyBranch: false,
+	hasUnpushedCommits: false,
+	unpushedLineAdditions: 0,
+	unpushedLineDeletions: 0,
 	isCurrent: false,
 	isMain: false,
 	isBare: false,
@@ -92,6 +96,48 @@ test('worktrees carry their branch, change, pull request, and checks', () => {
 		pullRequest: { number: 350, state: 'open', title: 'One', url: 'https://example.test/350' },
 		checks: { failed: 0, pending: 1, passed: 26, skipped: 2 },
 	});
+});
+
+test('a pushed branch the default branch lacks is unmerged and not changed; unpushed work is changed', () => {
+	const pushed = {
+		...worktree('/repo/.worktrees/one', 'feat/one'),
+		isDirtyBranch: true,
+		aheadOfMainCount: 4,
+		// The whole branch against the default branch is not what is unpushed.
+		lineAdditions: 247,
+		lineDeletions: 13,
+	};
+	const [shown] = folderTreeWorktrees(gitStatus([pushed]));
+	assert.deepEqual(shown.change, { kind: 'clean' });
+	assert.deepEqual(shown.unmerged, { commits: 4 });
+
+	const [local] = folderTreeWorktrees(
+		gitStatus([
+			{
+				...pushed,
+				aheadOfMainCount: 5,
+				hasUnpushedCommits: true,
+				unpushedLineAdditions: 12,
+				unpushedLineDeletions: 3,
+			},
+		]),
+	);
+	assert.deepEqual(local.change, { kind: 'delta', additions: 12, deletions: 3 });
+	assert.deepEqual(local.unmerged, { commits: 5 });
+
+	// Unmerged with no count, and nothing unmerged at all.
+	assert.deepEqual(
+		worktreeUnmerged({ isPrunable: false, isDirtyBranch: true, aheadOfMainCount: null }),
+		{ commits: null },
+	);
+	assert.equal(
+		worktreeUnmerged({ isPrunable: false, isDirtyBranch: false, aheadOfMainCount: 2 }),
+		undefined,
+	);
+	assert.equal(
+		worktreeUnmerged({ isPrunable: true, isDirtyBranch: true, aheadOfMainCount: 2 }),
+		undefined,
+	);
 });
 
 test('no repository, no Git, or no listing yet means no worktrees at all', () => {

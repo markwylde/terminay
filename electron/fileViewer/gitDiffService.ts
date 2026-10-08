@@ -325,13 +325,19 @@ export class GitDiffService {
             this.getLastChangedAt(worktree.path, entries),
           ])
 
+          const isDirtyBranch =
+            lineDelta.hasCommittedChanges ?? (aheadOfMainCount !== null && aheadOfMainCount > 0)
           return {
             ...worktree,
             aheadOfMainCount,
             branch: resolvedBranch,
             entries,
-            isDirtyBranch:
-              lineDelta.hasCommittedChanges ?? (aheadOfMainCount !== null && aheadOfMainCount > 0),
+            isDirtyBranch,
+            // This listing does not measure against a remote; it reports all
+            // unmerged work as unpushed, which never understates it.
+            hasUnpushedCommits: isDirtyBranch,
+            unpushedLineAdditions: lineDelta.additions,
+            unpushedLineDeletions: lineDelta.deletions,
             lastChangedAt,
             lineAdditions: lineDelta.additions,
             lineDeletions: lineDelta.deletions,
@@ -779,6 +785,9 @@ function parseWorktreeList(output: string, currentRepoRoot: string): GitWorktree
         lastChangedAt: null,
         isCurrent: resolvedPath === normalizedCurrentRepoRoot,
         isDirtyBranch: false,
+        hasUnpushedCommits: false,
+        unpushedLineAdditions: null,
+        unpushedLineDeletions: null,
         isMain: sectionIndex === 0,
         isBare,
         isDetached,
