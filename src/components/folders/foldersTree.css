@@ -1,7 +1,11 @@
+/* The tree is a size container so the facts can shorten where it is narrow
+   without anything measuring it. */
 .folders-tree {
+	container: folders-tree / inline-size;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	padding-block: 2px;
 	overflow-y: auto;
 	font-size: 13px;
 	line-height: 1.4;
@@ -18,19 +22,33 @@
 	border-radius: 10px;
 }
 
+/* A folder is a card: its title, branch, and facts, then its terminals. */
 .folders-tree__folder {
 	display: flex;
+	flex: none;
 	flex-direction: column;
-	border-top: 1px solid rgba(255, 255, 255, 0.06);
+	margin: 6px;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 5px;
+	background: rgba(255, 255, 255, 0.035);
 }
 
-.folders-tree__folder:first-child {
-	border-top: 0;
+.folders-tree__folder + .folders-tree__folder {
+	margin-top: 0;
 }
 
 .folders-tree__folder--drop-target {
-	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.7);
+	border-color: rgba(87, 183, 255, 0.7);
 	background: rgba(87, 183, 255, 0.08);
+}
+
+/* The card in the hand while its grip is dragged. */
+.folders-tree__folder--dragging {
+	position: relative;
+	z-index: 1;
+	border-color: rgba(220, 226, 240, 0.45);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
 /* Every row is one line. A long name is cut with an ellipsis, never wrapped. */
@@ -52,38 +70,84 @@
 	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.6);
 }
 
+/* The head of the card: three lines, each its own. */
 .folders-tree__row--folder {
-	align-items: flex-start;
-	padding: 7px 6px 6px 12px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 5px;
+	padding: 8px 10px;
 }
 
-.folders-tree__row--selected {
-	background: color-mix(in srgb, var(--project-color, #57b7ff) 14%, transparent);
-	box-shadow: inset 2px 0 0 var(--project-color, #57b7ff);
+.folders-tree__row--folder:not(:last-child) {
+	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* The selected folder's card is not marked: the active terminal's row is what
+   says where the user is. Only a selected folder with no such row is tinted. */
+.folders-tree__row--selected-alone,
+.folders-tree__row--selected-alone:hover {
+	background: color-mix(
+		in srgb,
+		var(--project-color, #57b7ff) 12%,
+		transparent
+	);
 }
 
 .folders-tree__row--terminal {
-	height: 26px;
-	padding: 0 10px 0 30px;
+	height: 28px;
+	padding: 0 10px 0 12px;
 	color: rgba(220, 226, 240, 0.8);
 }
 
-.folders-tree__row--active {
-	background: color-mix(in srgb, var(--project-color, #57b7ff) 22%, transparent);
-	box-shadow: inset 2px 0 0 var(--project-color, #57b7ff);
+.folders-tree__row--active,
+.folders-tree__row--active:hover {
+	background: color-mix(
+		in srgb,
+		var(--project-color, #57b7ff) 22%,
+		transparent
+	);
 	color: #fff;
+}
+
+.folders-tree__title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+}
+
+/* Dragged to reorder the folders. General has none: it stays first. */
+.folders-tree__grip {
+	all: unset;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	margin: -4px -2px -4px -5px;
+	padding: 4px 2px;
+	border-radius: 3px;
+	color: rgba(220, 226, 240, 0.3);
+	cursor: grab;
+	touch-action: none;
+}
+
+.folders-tree__grip:hover,
+.folders-tree__grip:focus-visible,
+.folders-tree__folder--dragging .folders-tree__grip {
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.folders-tree__folder--dragging .folders-tree__grip {
+	cursor: grabbing;
 }
 
 .folders-tree__icon {
 	flex: none;
-	margin-top: 2px;
 	color: rgba(220, 226, 240, 0.7);
 }
 
 .folders-tree__text {
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
 	flex: 1 1 auto;
 	min-width: 0;
 }
@@ -103,59 +167,80 @@
 	flex: 1 1 auto;
 }
 
-.folders-tree__meta {
+/* The branch is the ordinary text colour. Only a checkout holding work the
+   default branch lacks takes the accent. */
+.folders-tree__branch {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 4px;
 	min-width: 0;
-	font-size: 11px;
-	font-variant-numeric: tabular-nums;
+	font-size: 11.5px;
+	color: #dce2f0;
 }
 
-.folders-tree__branch {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	flex: 0 1 auto;
-	min-width: 0;
+.folders-tree__branch--dirty {
 	color: #e2a45f;
 }
 
+.folders-tree__branch > svg {
+	flex: none;
+}
+
 .folders-tree__branch > span {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
-.folders-tree__pr,
-.folders-tree__checks {
-	flex: none;
-	font-weight: 600;
-}
-
-/* Change size, pull request, and checks sit together at the row's far end, so
-   a long branch name is what gives way. */
+/* Change size, pull request, and checks: one line of chips that never wraps
+   and never shrinks a chip. Where the tree is narrow the chips say less. */
 .folders-tree__facts {
-	display: inline-flex;
+	display: flex;
+	flex-wrap: nowrap;
 	align-items: center;
-	gap: 8px;
-	flex: none;
-	margin-left: auto;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: var(--folders-tree-chip-size, 9px);
+	font-variant-numeric: tabular-nums;
+	line-height: 1.5;
 }
 
-/* The pull request opens in the browser and the checks open their list. They
-   are buttons inside the row, declared before the tones so a tone still
-   colours them. */
+.folders-tree__chip {
+	appearance: none;
+	box-sizing: border-box;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 5px;
+	margin: 0;
+	padding: 1px 6px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.22);
+	color: rgba(220, 226, 240, 0.62);
+	font: inherit;
+	white-space: nowrap;
+}
+
+.folders-tree__chip > svg {
+	flex: none;
+}
+
+.folders-tree__chip--quiet {
+	color: rgba(220, 226, 240, 0.4);
+}
+
+@container folders-tree (max-width: 300px) {
+	.folders-tree__chip-extra {
+		display: none;
+	}
+}
+
+/* The pull request opens in the browser and the checks open their list. */
 .folders-tree__pr--link,
 .folders-tree__checks--link {
-	appearance: none;
-	margin: 0;
-	padding: 0 2px;
-	border: 0;
-	border-radius: 4px;
-	background: none;
-	color: inherit;
-	font: inherit;
-	font-weight: 600;
 	cursor: pointer;
 }
 
@@ -170,24 +255,9 @@
 	outline: 1px solid rgba(87, 183, 255, 0.5);
 }
 
-.folders-tree__change {
-	display: inline-flex;
-	gap: 4px;
-	flex: none;
-	font-weight: 500;
-}
-
-.folders-tree__change--clean {
-	color: rgba(220, 226, 240, 0.34);
-}
-
 .folders-tree__change--changed,
 .folders-tree__change--missing {
 	color: #f14c4c;
-}
-
-.folders-tree__delta {
-	font-weight: 600;
 }
 
 .folders-tree__delta--additions {
@@ -198,14 +268,15 @@
 	color: #f14c4c;
 }
 
-/* The checks of one folder, beneath its row. One check to a line. */
+/* The checks of one folder, beneath its facts. One check to a line. */
 .folders-tree__checks-list {
 	margin: 0;
 	list-style: none;
 	display: flex;
 	flex-direction: column;
 	gap: 1px;
-	padding: 2px 10px 6px 30px;
+	padding: 4px 6px 6px 8px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 	font-size: 11px;
 	color: rgba(220, 226, 240, 0.72);
 }
@@ -272,18 +343,8 @@
 	color: rgba(220, 226, 240, 0.4);
 }
 
-.folders-tree__pr--open,
 .folders-tree__checks--passed {
 	color: #73c991;
-}
-
-.folders-tree__pr--draft,
-.folders-tree__pr--closed {
-	color: rgba(220, 226, 240, 0.5);
-}
-
-.folders-tree__pr--merged {
-	color: #b180d7;
 }
 
 .folders-tree__checks--failed {
@@ -294,10 +355,6 @@
 	color: #cca700;
 }
 
-.folders-tree__checks::before {
-	content: "\25EF\00A0";
-}
-
 .folders-tree__menu {
 	all: unset;
 	flex: none;
@@ -306,6 +363,7 @@
 	justify-content: center;
 	width: 20px;
 	height: 20px;
+	margin: -2px -4px -2px 0;
 	border-radius: 4px;
 	color: rgba(220, 226, 240, 0.45);
 }
@@ -334,24 +392,16 @@
 	color: #e2a45f;
 }
 
-.folders-tree__empty {
-	height: 24px;
-	padding: 0 10px 0 30px;
-	display: flex;
-	align-items: center;
-	font-style: italic;
-	color: rgba(220, 226, 240, 0.4);
-}
-
 .folders-tree__offer {
 	display: flex;
 	flex-direction: column;
 	gap: 7px;
-	margin: 2px 8px 8px 28px;
+	margin: 6px 8px;
 	padding: 8px 10px;
 	border: 1px dashed rgba(226, 164, 95, 0.6);
 	border-radius: 7px;
 	font-size: 11.5px;
+	white-space: normal;
 	color: rgba(220, 226, 240, 0.7);
 }
 
@@ -384,14 +434,38 @@
 	color: #fff;
 }
 
+/* The last row of every card: a terminal in this folder. */
+.folders-tree__new-terminal {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	padding: 0 10px 0 12px;
+	white-space: nowrap;
+	color: rgba(220, 226, 240, 0.4);
+	cursor: pointer;
+}
+
+.folders-tree__new-terminal > svg {
+	flex: none;
+}
+
+.folders-tree__new-terminal:hover,
+.folders-tree__new-terminal:focus-visible {
+	color: #dce2f0;
+	background: rgba(255, 255, 255, 0.05);
+}
+
 .folders-tree__new {
 	all: unset;
 	display: flex;
+	flex: none;
 	align-items: center;
 	gap: 8px;
 	height: 28px;
 	padding: 0 12px;
-	margin-top: 4px;
 	color: rgba(220, 226, 240, 0.5);
 }
 
@@ -401,13 +475,10 @@
 	background: rgba(255, 255, 255, 0.05);
 }
 
-/* The peek under a project tab is the same tree without the column around it. */
+/* The peek under a project tab is the same cards without the column around
+   them, and without the grip, the menu, or the New terminal row. */
 .folders-tree--peek {
 	max-height: min(60vh, 520px);
-}
-
-.folders-tree--peek .folders-tree__row--folder {
-	padding-left: 10px;
 }
 
 /* --- The tree as a project's left column ---------------------------------- */
@@ -478,116 +549,6 @@
 
 .folders-column__body > .folders-tree {
 	flex: 1 1 auto;
-}
-
-/* --- A terminal was moved into its new worktree's folder ------------------- */
-
-.folder-capture-notices {
-	display: flex;
-	flex-direction: column;
-	flex: 0 0 auto;
-	font-size: 12px;
-	color: #dce2f0;
-}
-
-/* At the foot of the Folders column. */
-.folder-capture-notices--column {
-	gap: 6px;
-	padding: 8px;
-	border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.folder-capture-notice {
-	display: flex;
-	flex-direction: column;
-	gap: 7px;
-	padding: 8px 10px;
-	border-radius: 7px;
-	background: rgba(255, 255, 255, 0.07);
-	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-
-.folder-capture-notice__text {
-	min-width: 0;
-	overflow-wrap: anywhere;
-	color: rgba(220, 226, 240, 0.85);
-}
-
-.folder-capture-notice__actions {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.folder-capture-notice__undo {
-	all: unset;
-	padding: 3px 9px;
-	border-radius: 5px;
-	font-weight: 600;
-	cursor: pointer;
-	background: color-mix(in srgb, var(--project-color, #57b7ff) 60%, #0d1014);
-	color: #fff;
-}
-
-.folder-capture-notice__dismiss {
-	all: unset;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 20px;
-	height: 20px;
-	margin-left: auto;
-	border-radius: 4px;
-	cursor: pointer;
-	color: rgba(220, 226, 240, 0.6);
-}
-
-.folder-capture-notice__undo:hover,
-.folder-capture-notice__dismiss:hover {
-	filter: brightness(1.15);
-}
-
-.folder-capture-notice__undo:focus-visible,
-.folder-capture-notice__dismiss:focus-visible {
-	outline: 2px solid rgba(120, 170, 255, 0.9);
-	outline-offset: 1px;
-}
-
-/* Across the top of the project, where its error banner goes, when the
- * Folders column is hidden. */
-.folder-capture-notices--banner {
-	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-	background: rgba(255, 255, 255, 0.04);
-}
-
-.folder-capture-notices--banner .folder-capture-notice {
-	flex-direction: row;
-	align-items: center;
-	gap: 10px;
-	padding: 6px 12px;
-	border-radius: 0;
-	background: transparent;
-	box-shadow: none;
-}
-
-.folder-capture-notices--banner .folder-capture-notice__text {
-	flex: 1 1 auto;
-}
-
-.folder-capture-notices--banner .folder-capture-notice__dismiss {
-	margin-left: 0;
-}
-
-/* The Folders column is open but not drawn below the narrow layout
- * breakpoint (`NARROW_LAYOUT_MEDIA_QUERY`), so the banner stands in there. */
-.folder-capture-notices--when-narrow {
-	display: none;
-}
-
-@media (max-width: 720px) {
-	.folder-capture-notices--when-narrow {
-		display: flex;
-	}
 }
 
 /* --- Deleting a folder that still holds panels ----------------------------- */

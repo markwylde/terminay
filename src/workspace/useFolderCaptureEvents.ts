@@ -13,7 +13,8 @@ import {
  * This is the journal event beside it, subscribed to the way the workspace
  * projection subscribes to its own: on the connection's client, by name. A
  * transport that cannot subscribe, or a server that never sends the event,
- * leaves the workspace exactly as it would be without the notice.
+ * leaves the terminal moved all the same: only the device that was looking at
+ * it is not taken along.
  */
 export function useFolderCaptureEvents(
 	applicationClient: TerminayClient | undefined,
@@ -39,7 +40,7 @@ export function useFolderCaptureEvents(
 				if (disposed) stop();
 				else unsubscribe = stop;
 			})
-			// The notice is a courtesy; the move is already on screen without it.
+			// Following the terminal is a courtesy; the move is on screen without it.
 			.catch(() => undefined);
 		return () => {
 			disposed = true;
