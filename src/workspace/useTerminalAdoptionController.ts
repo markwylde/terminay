@@ -31,6 +31,8 @@ type ProjectIdentity = {
 };
 
 type UseTerminalAdoptionControllerOptions = {
+	/** Where this device remembers the tab in front of this layout. */
+	activeSessionMemoryKey: string;
 	apiRef: MutableRefObject<DockviewApi | null>;
 	cancelMacroRun: (runId: string) => void;
 	clearFinishedMacroRuns: (sessionId: string) => void;
@@ -65,6 +67,7 @@ type UseTerminalAdoptionControllerOptions = {
 };
 
 export function useTerminalAdoptionController({
+	activeSessionMemoryKey,
 	apiRef,
 	cancelMacroRun,
 	clearFinishedMacroRuns,
@@ -137,7 +140,9 @@ export function useTerminalAdoptionController({
 			// Dockview activates a newly added panel unless told otherwise, so
 			// declining to call setActive() below is not enough on its own.
 			if (rememberedSessionRef.current === null)
-				rememberedSessionRef.current = recallActiveSession(project.id);
+				rememberedSessionRef.current = recallActiveSession(
+					activeSessionMemoryKey,
+				);
 			const rememberedSessionId = rememberedSessionRef.current ?? undefined;
 			const activatePanel = shouldActivateAdoptedTerminal({
 				requestedLocally: activate,
@@ -227,6 +232,7 @@ export function useTerminalAdoptionController({
 			return true;
 		},
 		[
+			activeSessionMemoryKey,
 			apiRef,
 			cancelMacroRun,
 			clearFinishedMacroRuns,

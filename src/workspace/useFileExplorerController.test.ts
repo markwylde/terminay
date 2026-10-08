@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TerminayGitClient } from '@terminay/client-core';
-import type { GitWorktreeStatus } from '../types/terminay';
 import {
 	assertWorktreeRemoved,
 	beginDirectoryLoad,
 	isCurrentDirectoryLoad,
 	loadGitWorkspaceFromServer,
-	openTerminalAtWorktree,
 } from './useFileExplorerController';
 
 test('worktree removal accepts only a confirmed server removal', () => {
@@ -62,17 +60,4 @@ test('Git workspace refresh uses only the server projection', async () => {
 
 	assert.equal(projection.worktrees.repoRoot, null);
 	assert.deepEqual(projection.worktrees.worktrees, []);
-});
-
-test('opening a worktree terminal preserves its directory path', () => {
-	const calls: Array<[string, boolean | undefined]> = [];
-	const worktree = {
-		path: '/workspace/repo-feature',
-	} as GitWorktreeStatus;
-
-	openTerminalAtWorktree(worktree, (path, isDirectory) => {
-		calls.push([path, isDirectory]);
-	});
-
-	assert.deepEqual(calls, [['/workspace/repo-feature', true]]);
 });

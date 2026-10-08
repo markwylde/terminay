@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
 	mkdirSync,
 	readFileSync,
@@ -20,6 +20,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
@@ -44,6 +45,8 @@ import {
 	createServerAiProviderAdapters,
 	createWorkspaceAiTargetAuthority,
 	createServerCoreComposition,
+	createWorktreeCaptureHost,
+	FOLDER_TERMINAL_CAPTURED_EVENT,
 	DocumentationCatalog,
 	FileCatalog,
 	FileContentStreamService,
@@ -92,6 +95,11 @@ import {
 	parseServerCliOptions,
 	type ServerCliOptions,
 } from './cliOptions.js';
+import {
+	createFolderFileScope,
+	createStandaloneFolders,
+	type StandaloneFolders,
+} from './folders.js';
 import { createStandaloneVaultComposition } from './headlessVault.js';
 import {
 	createLocalUiServer,
@@ -710,11 +718,54 @@ async function createServerComposition(
 			);
 		},
 	});
+	let composition: ServerCoreComposition;
+	// One linked folder per worktree of each project's repository, driven by
+	// the Git service's own events.
+	// Which terminal created a worktree: Git in each terminal reports its own
+	// commands to this socket (ADR-0052). The path is short on purpose; Unix
+	// socket paths are capped near 104 bytes.
+	const worktreeCapture = createWorktreeCaptureHost({
+		socketPath: join(
+			tmpdir(),
+			`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
+		),
+		workspace: () => workspace.state,
+		apply: (commandId, command) => {
+			const applied = composition.workspaceOperations?.applyHostCommand(
+				commandId,
+				command,
+			);
+			if (applied === undefined)
+				throw new Error('workspace host commands are unavailable');
+			return applied;
+		},
+		moveAutomatically: () =>
+			settings.settings.moveTerminalsIntoNewWorktreeFolders !== false,
+		sessions: () => composition.terminal.listSessions(),
+		onCaptured: (captured) => {
+			eventJournal.append(FOLDER_TERMINAL_CAPTURED_EVENT, { ...captured });
+		},
+	});
+	await worktreeCapture.start();
+	const folders = createStandaloneFolders({
+		workspace,
+		git: gitService,
+		applyHostCommand: (commandId, command) =>
+			composition.workspaceOperations?.applyHostCommand(commandId, command),
+		capture: worktreeCapture.reconcilerHooks,
+		onError: (projectId, error) => {
+			process.stderr.write(
+				`[terminay-server] folder reconciliation for ${projectId} failed: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+		},
+	});
 	const files = createDefaultProjectFileServices(
 		options.serverId,
 		options.projectRoot,
 		eventJournal,
 		gitService,
+		workspace,
+		folders,
 	);
 	const settings = createStandaloneSettingsRepository(options.dataRoot);
 	await settings.load();
@@ -806,6 +857,8 @@ async function createServerComposition(
 		resolveProjectRoot: (projectId) =>
 			workspace.state.projects[projectId]?.root ?? null,
 		insights: worktreeInsights,
+		// A worktree renamed or moved through Terminay keeps its folder.
+		onWorktreeMove: folders.onWorktreeMove,
 	});
 	const parakeetRuntime = new ParakeetRuntime({
 		rootDirectory: join(options.dataRoot, 'dictation', 'parakeet'),
@@ -816,7 +869,6 @@ async function createServerComposition(
 	);
 	const openAiProvider = new OpenAiDictationProvider();
 	const openAiSecretId = 'dictation-openai-api-key';
-	let composition: ServerCoreComposition;
 	const ai = new AiService({
 		serverId: options.serverId,
 		authority: {
@@ -949,6 +1001,8 @@ async function createServerComposition(
 					commit: () => {
 						prepared.commit();
 						agentScope.setProject(projectId, prepared.canonicalRoot);
+						// Preparing bound the project to Git at its new root.
+						folders.projectBound(projectId);
 					},
 				});
 			},
@@ -957,6 +1011,7 @@ async function createServerComposition(
 			releaseProject: (projectId) => {
 				files.releaseProject(projectId);
 				agentScope.removeProject(projectId);
+				folders.releaseProject(projectId);
 			},
 		},
 		// What a restored workspace contains is server policy; this supplies only
@@ -1002,14 +1057,20 @@ async function createServerComposition(
 		recordings,
 		extensions,
 		git,
+		folderRoots: folders.roots,
+		gitCommands: worktreeCapture.gitCommands,
 		ai,
 		serviceLifecycle: {
 			start: async () => {
 				await gitService.bindProject('default', options.projectRoot);
+				folders.projectBound('default');
 				agentScope.setProject(
 					'default',
 					await realpath(options.projectRoot).catch(() => options.projectRoot),
 				);
+			},
+			stop: () => {
+				worktreeCapture.close();
 			},
 		},
 		automations: { repository: automations, runLog: automationRuns },
@@ -1214,6 +1275,8 @@ function createDefaultProjectFileServices(
 	projectRoot: string,
 	eventJournal: InstanceType<typeof OrderedEventJournal>,
 	gitService: GitService,
+	workspace: Parameters<typeof createFolderFileScope>[0]['workspace'],
+	folders: Pick<StandaloneFolders, 'roots'>,
 ): {
 	/** The canonical per-project resolvers, shared with language sessions. */
 	readonly projects: ReadonlyMap<
@@ -1352,19 +1415,48 @@ function createDefaultProjectFileServices(
 		serverId,
 		projects: mdxRuntimeProjects,
 	});
+	// Files, content, the catalog, and observations follow a request's folder.
+	// Documentation, the MDX runtime, and language sessions stay on the project.
+	const folderScope = createFolderFileScope({
+		roots: folders.roots,
+		workspace,
+		storage,
+		projectContext: (projectId) => {
+			const session = sessionProjects.get(projectId);
+			const projectContent = contentProjects.get(projectId);
+			const projectCatalog = catalogProjects.get(projectId);
+			if (
+				session === undefined ||
+				projectContent === undefined ||
+				projectCatalog === undefined
+			)
+				return undefined;
+			return {
+				...session,
+				content: projectContent.content,
+				catalog: projectCatalog.catalog,
+				host: observationHost,
+			};
+		},
+		observationHost: (projects) =>
+			createStandaloneFileObservationHost(projects, storage),
+	});
 	return {
 		projects: sessionProjects,
 		session: new ServerFileAdapter({
 			serverId,
 			projects: sessionProjects,
+			folderScope: folderScope.resolve,
 		}),
 		content: new ServerFileContentAdapter({
 			serverId,
 			projects: contentProjects,
+			folderScope: folderScope.resolve,
 		}),
 		catalog: new ServerFileCatalogAdapter({
 			serverId,
 			projects: catalogProjects,
+			folderScope: folderScope.resolve,
 		}),
 		documentation: new ServerDocumentationCatalogAdapter({
 			serverId,
@@ -1374,6 +1466,7 @@ function createDefaultProjectFileServices(
 		observations: new ServerFileObservationAdapter({
 			serverId,
 			host: observationHost,
+			folderScope: folderScope.resolve,
 			eventJournal,
 		}),
 		releaseProject: (projectId) => {
@@ -1383,6 +1476,7 @@ function createDefaultProjectFileServices(
 			catalogProjects.delete(projectId);
 			documentationProjects.delete(projectId);
 			mdxRuntimeProjects.delete(projectId);
+			folderScope.releaseProject(projectId);
 		},
 		prepareProjectRootUpdate: async (projectId, root) => {
 			const nextResolver = new CanonicalProjectPathResolver(root, storage);

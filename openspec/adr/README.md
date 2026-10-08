@@ -75,3 +75,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0046](./0046-window-attachments-are-an-unbounded-streamed-scratch-write.md) | Window message attachments are a streamed scratch write with no size limit, and Terminay does not remove them | accepted | 2026-10-07 |
 | [0047](./0047-a-window-is-one-server-running-the-host-bundle.md) | A window is bound to one server; Desktop runs its packaged bundle for it, with compatibility negotiated by the protocol | accepted, supersedes 0018 | 2026-10-07 |
 | [0048](./0048-a-connection-belongs-to-a-window-and-authority-to-a-device.md) | A live connection belongs to a client window; authority belongs to the device | accepted | 2026-10-07 |
+| [0049](./0049-a-folder-groups-panels-and-is-not-an-identity-boundary.md) | A folder groups a project's panels and is not an identity boundary | accepted | 2026-10-08 |
+| [0050](./0050-a-project-reaches-its-repositorys-worktrees-through-server-resolved-folder-roots.md) | A project reaches its repository's worktrees through folder roots the server resolves | accepted | 2026-10-08 |
+| [0051](./0051-terminay-observes-agents-and-does-not-instrument-them.md) | Terminay observes agents and does not instrument them, except where the owner has approved it | accepted | 2026-10-08 |
+| [0052](./0052-terminals-report-git-commands-to-the-server-through-git-trace2.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing | accepted | 2026-10-08 |

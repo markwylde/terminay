@@ -42,10 +42,21 @@ export interface FileObservationTransport extends QueryCommandTransport {
 
 /** Project-scoped client facade for canonical file-system observations. */
 export class FileObservationClient {
-  constructor(private readonly transport: FileObservationTransport) {}
+  constructor(private readonly transport: FileObservationTransport, private readonly folderId?: string) {}
+
+  /** The same client with every watch and folder-size request naming one
+   * folder of the project, whose root the server resolves itself. */
+  forFolder(folderId: string | undefined): FileObservationClient {
+    if (folderId === this.folderId) return this;
+    return new FileObservationClient(this.transport, folderId === undefined ? undefined : id(folderId, "folderId"));
+  }
+
+  private scope(projectId: string): { readonly projectId: string; readonly folderId?: string } {
+    return { projectId, ...(this.folderId === undefined ? {} : { folderId: this.folderId }) };
+  }
 
   async startWatch(projectId: string, resource: string): Promise<FileWatchHandle> {
-    return watchHandle(await this.transport.command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId, resource }), projectId, resource);
+    return watchHandle(await this.transport.command(FILE_OBSERVATION_OPERATIONS.watchStart, { ...this.scope(projectId), resource }), projectId, resource);
   }
   async readWatch(handle: Pick<FileWatchHandle, "subscriptionId" | "projectId">): Promise<FileWatchBatch> {
     const value = record(await this.transport.query(FILE_OBSERVATION_OPERATIONS.watchRead, { subscriptionId: id(handle.subscriptionId, "subscriptionId") }), "watch batch");
@@ -74,7 +85,7 @@ export class FileObservationClient {
     }, onResync);
   }
   async startFolderSize(projectId: string, resource: string): Promise<FolderSizeHandle> {
-    const value = record(await this.transport.command(FILE_OBSERVATION_OPERATIONS.folderSizeStart, { projectId, resource }), "folder-size handle");
+    const value = record(await this.transport.command(FILE_OBSERVATION_OPERATIONS.folderSizeStart, { ...this.scope(projectId), resource }), "folder-size handle");
     const result = Object.freeze({ jobId: id(value.jobId, "jobId"), projectId: id(value.projectId, "projectId"), resource: path(value.resource) });
     if (result.projectId !== projectId || result.resource !== resource) throw new TypeError("folder-size handle identity mismatch");
     return result;

@@ -27,6 +27,8 @@ import type { WorkspaceInventoryPanelKind } from './workspaceInventory.ts';
 export const COMPACT_SWITCHER_PREVIEW_MAX_LENGTH = 120;
 
 export type CompactSwitcherPanelRow = Readonly<{
+	/** The folder that holds the panel, when this window knows it. */
+	folderId?: string;
 	isAgentStatus: boolean;
 	key: string;
 	panelId: string;
@@ -40,11 +42,26 @@ export type CompactSwitcherPanelRow = Readonly<{
 	title: string;
 }>;
 
+/** One folder of a project and the panels it holds. */
+export type CompactSwitcherFolderGroup = Readonly<{
+	folderId: string;
+	key: string;
+	name: string;
+	panels: readonly CompactSwitcherPanelRow[];
+}>;
+
 export type CompactSwitcherProjectGroup = Readonly<{
 	badge?: ActivityCountBadge;
 	color: string;
 	emoji: string;
+	/**
+	 * The project's folders in order, each with its panels. Empty for a project
+	 * whose folders this window does not know, such as one on a connection it
+	 * is not working in; `panels` is then the whole list.
+	 */
+	folders: readonly CompactSwitcherFolderGroup[];
 	key: string;
+	/** Every panel of the project, in folder order. */
 	panels: readonly CompactSwitcherPanelRow[];
 	projectId: string;
 	serverId: string;
@@ -57,8 +74,19 @@ export type CompactSwitcherConnectionGroup = Readonly<{
 	serverLabel: string;
 }>;
 
+/** A folder as the switcher names it. */
+export type CompactSwitcherFolderSource = Readonly<{
+	id: string;
+	name: string;
+}>;
+
 export type CompactSwitcherInput = Readonly<{
 	activityBadgesByProject?: Readonly<Record<string, ActivityCountBadge>>;
+	/** Each project's folders in order, keyed like the badges: by server and
+	 * project. The first is the General folder. */
+	foldersByProject?: Readonly<
+		Record<string, readonly CompactSwitcherFolderSource[]>
+	>;
 	/** Resolves this window's rendered buffer for a session, when it holds one. */
 	previewForSession?: (sessionId: string) => string | undefined;
 	sources: readonly DashboardServerSource[];
@@ -105,36 +133,45 @@ export function buildCompactSwitcherGroups(
 							group.project.projectId,
 						);
 						const badge = badges[key];
+						const panels = Object.freeze(
+							group.panels.map((panel) =>
+								Object.freeze({
+									...(panel.folderId === undefined
+										? {}
+										: { folderId: panel.folderId }),
+									isAgentStatus: panel.isAgentStatus,
+									key: compositionTabKey(source.serverId, panel.panelId),
+									panelId: panel.panelId,
+									panelKind: panel.panelKind,
+									projectId: panel.projectId,
+									serverId: source.serverId,
+									state: panel.status,
+									title: panel.title,
+									...(panel.sessionId === undefined
+										? {}
+										: { sessionId: panel.sessionId }),
+									...(() => {
+										if (panel.sessionId === undefined) return {};
+										const preview = previewLineFromOutput(
+											input.previewForSession?.(panel.sessionId),
+										);
+										return preview === undefined ? {} : { preview };
+									})(),
+								}),
+							),
+						);
 						return Object.freeze({
 							color: group.project.color,
 							emoji: group.project.emoji,
+							folders: groupPanelsByFolder(
+								source.serverId,
+								input.foldersByProject?.[key] ?? [],
+								panels,
+							),
 							key,
 							projectId: group.project.projectId,
 							serverId: source.serverId,
-							panels: Object.freeze(
-								group.panels.map((panel) =>
-									Object.freeze({
-										isAgentStatus: panel.isAgentStatus,
-										key: compositionTabKey(source.serverId, panel.panelId),
-										panelId: panel.panelId,
-										panelKind: panel.panelKind,
-										projectId: panel.projectId,
-										serverId: source.serverId,
-										state: panel.status,
-										title: panel.title,
-										...(panel.sessionId === undefined
-											? {}
-											: { sessionId: panel.sessionId }),
-										...(() => {
-											if (panel.sessionId === undefined) return {};
-											const preview = previewLineFromOutput(
-												input.previewForSession?.(panel.sessionId),
-											);
-											return preview === undefined ? {} : { preview };
-										})(),
-									}),
-								),
-							),
+							panels,
 							title: group.project.title,
 							...(badge === undefined || badge.count <= 0 ? {} : { badge }),
 						});
@@ -144,6 +181,41 @@ export function buildCompactSwitcherGroups(
 				serverLabel: source.serverLabel,
 			});
 		}),
+	);
+}
+
+/**
+ * A project's panels under the folders that hold them.
+ *
+ * Every folder is listed, with or without panels, so a terminal in any folder
+ * is reachable and an empty folder is still somewhere to open one. A panel
+ * whose folder is unknown, or is not among the project's, is shown under the
+ * first folder rather than dropped: a row that cannot be reached is worse than
+ * one under the wrong heading.
+ */
+function groupPanelsByFolder(
+	serverId: string,
+	folders: readonly CompactSwitcherFolderSource[],
+	panels: readonly CompactSwitcherPanelRow[],
+): readonly CompactSwitcherFolderGroup[] {
+	const first = folders[0];
+	if (first === undefined) return Object.freeze([]);
+	const known = new Set(folders.map((folder) => folder.id));
+	const folderOf = (panel: CompactSwitcherPanelRow) =>
+		panel.folderId !== undefined && known.has(panel.folderId)
+			? panel.folderId
+			: first.id;
+	return Object.freeze(
+		folders.map((folder) =>
+			Object.freeze({
+				folderId: folder.id,
+				key: compositionTabKey(serverId, `folder:${folder.id}`),
+				name: folder.name,
+				panels: Object.freeze(
+					panels.filter((panel) => folderOf(panel) === folder.id),
+				),
+			}),
+		),
 	);
 }
 
@@ -172,12 +244,28 @@ export function filterCompactSwitcherGroups(
 				projects.push(project);
 				continue;
 			}
-			const panels = project.panels.filter((panel) =>
-				matches(panel.title, needle),
-			);
-			if (panels.length > 0)
+			// A folder's name asks for that folder, as a project's does for the
+			// project; otherwise a folder stays only for the panels that match.
+			const folders = project.folders.flatMap((folder) => {
+				if (matches(folder.name, needle)) return [folder];
+				const kept = folder.panels.filter((panel) =>
+					matches(panel.title, needle),
+				);
+				return kept.length === 0
+					? []
+					: [Object.freeze({ ...folder, panels: Object.freeze(kept) })];
+			});
+			const panels =
+				project.folders.length === 0
+					? project.panels.filter((panel) => matches(panel.title, needle))
+					: folders.flatMap((folder) => folder.panels);
+			if (panels.length > 0 || folders.length > 0)
 				projects.push(
-					Object.freeze({ ...project, panels: Object.freeze(panels) }),
+					Object.freeze({
+						...project,
+						folders: Object.freeze(folders),
+						panels: Object.freeze(panels),
+					}),
 				);
 		}
 		if (projects.length > 0)

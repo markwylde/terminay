@@ -1,12 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  FolderRootError,
   TerminalLaunchResolver,
   TerminalService,
   TerminalServiceError,
 } from "../dist/index.js";
 
+const GENERAL = { "project-a": "folder-a", "project-b": "folder-b" };
+
 function workspace(overrides = {}) {
+  // Every panel belongs to a folder; tests that do not care get General.
+  const panels = Object.fromEntries(Object.entries(overrides.panels ?? {}).map(([id, panel]) => [id, { folderId: GENERAL[panel.projectId], ...panel }]));
+  const general = (projectId) => ({ id: GENERAL[projectId], projectId, name: "General", kind: "general", panelIds: [], layout: { kind: "stack", panelIds: [] } });
   return {
     schemaVersion: 1,
     serverId: "server-a",
@@ -15,10 +21,11 @@ function workspace(overrides = {}) {
     viewOrder: ["view-a"],
     views: { "view-a": { id: "view-a", serverId: "server-a", name: "Workspace", projectIds: ["project-a", "project-b"] } },
     projects: {
-      "project-a": { id: "project-a", serverId: "server-a", viewId: "view-a", root: "/project", rootOrigin: "explicit", name: "Project", panelIds: [], layout: { kind: "stack", panelIds: [] }, ...overrides.project },
-      "project-b": { id: "project-b", serverId: "server-a", viewId: "view-a", root: "/other", rootOrigin: "explicit", name: "Other", panelIds: [], layout: { kind: "stack", panelIds: [] } },
+      "project-a": { id: "project-a", serverId: "server-a", viewId: "view-a", root: "/project", rootOrigin: "explicit", name: "Project", folderIds: ["folder-a", ...Object.keys(overrides.folders ?? {})], panelIds: [], layout: { kind: "stack", panelIds: [] }, ...overrides.project },
+      "project-b": { id: "project-b", serverId: "server-a", viewId: "view-a", root: "/other", rootOrigin: "explicit", name: "Other", folderIds: ["folder-b"], panelIds: [], layout: { kind: "stack", panelIds: [] } },
     },
-    panels: overrides.panels ?? {},
+    folders: { "folder-a": general("project-a"), "folder-b": general("project-b"), ...overrides.folders },
+    panels,
     terminalSessions: {},
   };
 }
@@ -70,12 +77,13 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor, folderWorktreeRoot, available } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
     workspaceSnapshot: () => state,
-    pathAuthority: paths(),
+    pathAuthority: paths(available),
+    folderWorktreeRoot,
     defaultEnvironment: defaultEnvironment ?? { BASE: "host", REMOVE: "host", TERMINAY_SERVER: "trusted", TERM: "dumb", COLORTERM: "false" },
     observeTerminalCwd: observe,
     now: () => 123,
@@ -257,4 +265,55 @@ test("resolved spawn failure leaves no session and exposes no provider output", 
   const launch = await resolver().resolve(intent());
   await assert.rejects(service.createResolvedSession(launch), (error) => error instanceof TerminalServiceError && error.code === "spawn_failed" && !error.message.includes("provider secret"));
   assert.equal(service.size, 0);
+});
+
+const LINKED = { "folder-wt": { id: "folder-wt", projectId: "project-a", name: "feature", kind: "linked", worktree: { repositoryId: "repo", path: "/worktree" }, panelIds: [], layout: { kind: "stack", panelIds: [] } } };
+const DIRECTORIES = ["/project", "/other", "/home", "/live", "/worktree", "/worktree/src", "/"];
+/** The host's answer for a folder: a linked folder's worktree, else null. */
+const worktreeRoot = async (_projectId, folderId) => (folderId === "folder-wt" ? "/worktree" : null);
+
+test("a terminal created in a linked folder starts in that folder's worktree", async () => {
+  const state = workspace({ folders: LINKED });
+  const make = (overrides, options = {}) => resolver({ state, folderWorktreeRoot: worktreeRoot, available: DIRECTORIES, ...options }).resolve(intent(overrides));
+  assert.equal((await make({ folderId: "folder-wt" })).cwd, "/worktree");
+  // General, and a request that names no folder, still start at the project root.
+  assert.equal((await make({ folderId: "folder-a" })).cwd, "/project");
+  assert.equal((await make({})).cwd, "/project");
+  // The Project folder policy means the folder's root too.
+  assert.equal((await make({ folderId: "folder-wt" }, { catalogue: { cwdPolicy: "project" } })).cwd, "/worktree");
+  assert.equal((await make({ folderId: "folder-wt" }, { catalogue: { cwdPolicy: "home" } })).cwd, "/home");
+  // An explicit directory from an authorized action still wins.
+  assert.equal((await make({ folderId: "folder-wt", explicitCwd: "/live" })).cwd, "/live");
+});
+
+test("a directory is inherited only from a panel of the folder the terminal is created in", async () => {
+  const inWorktree = { id: "panel-wt", projectId: "project-a", folderId: "folder-wt", type: "terminal", sessionId: "s-wt", cwd: "/worktree/src", createdAt: 1 };
+  const inGeneral = { id: "panel-g", projectId: "project-a", type: "terminal", sessionId: "s-g", cwd: "/live", createdAt: 2 };
+  const state = workspace({ folders: LINKED, panels: { "panel-wt": inWorktree, "panel-g": inGeneral } });
+  const observe = async (sessionId) => (sessionId === "s-wt" ? "/worktree/src" : "/live");
+  const make = (overrides) => resolver({ state, observe, folderWorktreeRoot: worktreeRoot, available: DIRECTORIES }).resolve(intent(overrides));
+  assert.equal((await make({ folderId: "folder-wt", activePanelId: "panel-wt" })).cwd, "/worktree/src");
+  // The device's last active panel is in General: its directory is not inherited.
+  assert.equal((await make({ folderId: "folder-wt", activePanelId: "panel-g" })).cwd, "/worktree");
+  assert.equal((await make({ folderId: "folder-a", activePanelId: "panel-wt" })).cwd, "/project");
+  assert.equal((await make({ activePanelId: "panel-g" })).cwd, "/live");
+});
+
+test("a folder of another project is refused, and a missing worktree falls back to the project root", async () => {
+  const state = workspace({ folders: LINKED });
+  const forbidden = (error) => error instanceof TerminalServiceError && error.code === "forbidden";
+  await assert.rejects(resolver({ state, folderWorktreeRoot: worktreeRoot }).resolve(intent({ folderId: "folder-b" })), forbidden);
+  await assert.rejects(resolver({ state, folderWorktreeRoot: worktreeRoot }).resolve(intent({ folderId: "folder-missing" })), forbidden);
+
+  for (const code of ["folder_worktree_unregistered", "folder_root_unavailable"]) {
+    const gone = async () => { throw new FolderRootError(code, "gone"); };
+    assert.equal((await resolver({ state, folderWorktreeRoot: gone, available: DIRECTORIES }).resolve(intent({ folderId: "folder-wt" }))).cwd, "/project");
+  }
+  // The worktree is registered but its directory cannot be entered.
+  assert.equal((await resolver({ state, folderWorktreeRoot: worktreeRoot }).resolve(intent({ folderId: "folder-wt" }))).cwd, "/project");
+  // Any other failure is not swallowed.
+  const broken = async () => { throw new Error("listing exploded"); };
+  await assert.rejects(resolver({ state, folderWorktreeRoot: broken }).resolve(intent({ folderId: "folder-wt" })), /listing exploded/);
+  // A host that does not resolve folders starts everything at the project root.
+  assert.equal((await resolver({ state }).resolve(intent({ folderId: "folder-wt" }))).cwd, "/project");
 });

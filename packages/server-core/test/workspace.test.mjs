@@ -59,7 +59,7 @@ test("project sidebar state is independently durable, bounded, and migrates with
   assert.equal(store.apply({ commandId: "invalid-sidebar", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: { sidebarPanelOrder: ["explorer"] } } }).ok, false);
   assert.equal(store.state.revision, beforeInvalid);
 
-  const previousVersion = { ...store.state, schemaVersion: WORKSPACE_SCHEMA_VERSION - 1 };
+  const previousVersion = { ...store.state, schemaVersion: WORKSPACE_SCHEMA_VERSION - 2 };
   assert.throws(() => migrateWorkspaceState(previousVersion, "server-a"), /unsupported workspace schema/);
 });
 
@@ -203,12 +203,12 @@ test("v0 workspace snapshots migrate idempotently without terminal content", () 
   validateWorkspace(migrated);
 });
 
-test("a previous-version snapshot is refused rather than migrated", () => {
+test("a snapshot older than the last migratable version is refused rather than migrated", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const viewId = store.state.viewOrder[0];
   store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } });
   store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", projectId: "project-a", sessionId: "session-a", panelId: "panel-a", createdAt: 1 } });
-  for (const schemaVersion of [1, 2, 3, WORKSPACE_SCHEMA_VERSION - 1])
+  for (const schemaVersion of [1, 2, 3, 4])
     assert.throws(() => migrateWorkspaceState({ ...store.state, schemaVersion }, "fallback"), /unsupported workspace schema/);
 });
 

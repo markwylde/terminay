@@ -9,7 +9,7 @@ import {
 	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview';
 import { DockviewReact } from 'dockview';
 import {
 	CircleStop,
@@ -26,7 +26,6 @@ import {
 	Mic,
 	Play,
 	Plug,
-	MoreHorizontal,
 	PanelBottom,
 	RefreshCw,
 	Trash2,
@@ -85,8 +84,17 @@ import {
 } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { resolveOpenPresentation } from './components/file-viewer/openFilePresentation';
+import { presentationForFolder } from './components/file-viewer/projectRootFileServices';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
-import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
+import {
+	EmptyFolderContext,
+	type EmptyFolderDescription,
+	EmptyFolderPlaceholder,
+} from './components/folders/EmptyFolderPlaceholder';
+import { FolderCaptureNotices } from './components/folders/FolderCaptureNotices';
+import { FoldersColumn } from './components/folders/FoldersColumn';
+import { WorktreeSignInDialog } from './components/git-panel/WorktreeSignInDialog';
+import { ChangesPane } from './components/git-panel/ChangesPane';
 import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { McpInstallModal } from './components/McpInstallModal';
 import { SidebarGroupTabs } from './components/sidebar/SidebarGroupTabs';
@@ -168,6 +176,7 @@ import { recordBoundedRendererRender } from './shared/renderLoopGuard';
 import {
 	hasTerminalPresentation,
 	isReservedWorkspaceProject,
+	type ServerWorkspaceFolder,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
 import { WorkspaceSplitLayout } from './shared/WorkspaceSplitLayout';
@@ -183,7 +192,11 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type { SidebarGroupId, SidebarPanelId } from './types/settings';
+import type {
+	SidebarGroupId,
+	SidebarPanelId,
+	SidebarSettings,
+} from './types/settings';
 import type {
 	AiTabMetadataTarget,
 	AppCommand,
@@ -192,6 +205,7 @@ import type {
 	QuickPushAction,
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
+	WorktreePanelStatus,
 } from './types/terminay';
 import {
 	confirmTerminalClose,
@@ -224,10 +238,44 @@ import {
 import { useCompactChrome } from './workspace/useCompactChrome';
 import {
 	createProjectTab,
+	isProjectFoldersTreeOpenOnDevice,
 	type ProjectTab,
+	projectFoldersTreeWidthOnDevice,
+	projectSidebarVisibilityKey,
+	withProjectFoldersTreeVisibility,
+	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
+import {
+	activeSessionMemoryKey,
+	commandFolderId,
+	type FolderInventories,
+	FolderWorkspaceRegistry,
+	folderIdOfInventoryPanel,
+	folderOfSession,
+	foldersToMount,
+	folderWorkspaceKey,
+	mergeProjectInventories,
+	withFolderInventory,
+} from './workspace/folderWorkspaces';
+import {
+	activePanelIdFromInventory,
+	buildProjectFolderTree,
+} from './workspace/folderTreeSources';
+import {
+	type CaptureNotice,
+	type FolderTerminalCapture,
+	type FrontPanelHistory,
+	recordFrontPanel,
+	wasLookingAt,
+	withCaptureNotice,
+	withoutCaptureNotice,
+} from './workspace/folderCapture';
+import { folderChanges, isGitProject } from './workspace/folderWorktree';
+import { ProjectTabPeek } from './workspace/ProjectTabPeek';
+import { useFolderCaptureEvents } from './workspace/useFolderCaptureEvents';
+import { useFolderMenuController } from './workspace/useFolderMenuController';
 import {
 	composeProjectTabs,
 	type ComposedProjectTab,
@@ -353,7 +401,9 @@ import {
 import { buildHomeOverview } from './workspace/homeOverviewModel';
 import {
 	recallHomeSidebarVisible,
+	recallSelectedFolder,
 	rememberHomeSidebarVisible,
+	rememberSelectedFolder,
 } from './workspace/localViewState';
 import {
 	type DashboardActivation,
@@ -555,7 +605,15 @@ type ProjectWorkspaceHandle = {
 		cwd?: string,
 		terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
 	) => boolean;
-	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
+	/**
+	 * `canHandOver` says whether the workspace that now owns a panel can take
+	 * its presentation. A panel that has left this folder is let go only once
+	 * it can, so a terminal is never without a workspace presenting it.
+	 */
+	reconcileServerPanels: (
+		panels: readonly ServerWorkspacePanel[],
+		canHandOver?: (panel: ServerWorkspacePanel) => boolean,
+	) => void;
 	activatePanel: (panelId: string) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	/** Acknowledge a terminal exactly as selecting its tab does, without selecting it. */
@@ -570,6 +628,8 @@ type ProjectWorkspaceHandle = {
 	 */
 	exportProjectForMove: () => MovedProject | null;
 	focusActiveTerminal: () => void;
+	/** True once this workspace's panel host exists and can be given a panel. */
+	isReady: () => boolean;
 	/** True when the given terminal session lives in this workspace's project. */
 	ownsControlSession: (sessionId: string) => boolean;
 	/** The session behind one of this workspace's terminal panels, if any. */
@@ -578,6 +638,16 @@ type ProjectWorkspaceHandle = {
 	terminalPanelForSession: (sessionId: string) => string | undefined;
 	/** Show a failure in this project's own error banner. */
 	reportError: (message: string) => void;
+	/**
+	 * Close one of this workspace's panels as closing its tab does: with close
+	 * protection for a busy terminal and a save for an unsaved document. It
+	 * resolves once the panel has closed or the user has kept it.
+	 */
+	requestClosePanel: (panelId: string) => Promise<void>;
+	/** Create a terminal in this workspace's folder, starting in its root. */
+	openShellAtFolderRoot: () => Promise<void>;
+	/** The repository's worktree listing as this workspace last read it. */
+	worktreeStatus: () => WorktreePanelStatus | null;
 	/** Handle an MCP control request scoped to a terminal in this project. */
 	handleControlRequest: (
 		op: string,
@@ -600,23 +670,70 @@ type ProjectWorkspaceProps = {
 	isStatusBarVisible: boolean;
 	/** Where the active project renders its focused-terminal summary. */
 	statusBarSlot: HTMLElement | null;
-	onCloseProject: (
-		projectId: string,
-		options?: { skipConfirmation?: boolean },
-	) => void;
 	onEditProject: (projectId: string) => Promise<void>;
 	onMoveTerminalToProject: (
 		sourceProjectId: string,
 		panelId: string,
 		targetProjectId: string,
 	) => void;
+	/** Move a terminal to another folder of this project. */
+	onMoveTerminalToFolder: (
+		projectId: string,
+		panelId: string,
+		targetFolderId: string,
+	) => void;
 	onPopoutProject: (projectId: string) => Promise<void>;
 	/** A terminal tab of this project started being dragged, or a drag ended. */
 	onTerminalTabDrag?: (projectId: string, drag: TerminalTabDrag | null) => void;
 	onWorkspaceInventoryChange: (
 		projectId: string,
+		folderId: string,
 		entries: WorkspaceInventoryEntry[],
 	) => void;
+	/**
+	 * The folder this workspace presents. A workspace is exactly one folder
+	 * scope: its panel area, its Files pane, and its new-terminal action all
+	 * mean this folder, and it presents no panel of any other.
+	 */
+	folder: ServerWorkspaceFolder;
+	/** Every panel of the project, whichever folder holds it: what the Folders
+	 * tree and the Agents pane show beyond this workspace's own panels. */
+	projectInventory: readonly WorkspaceInventoryEntry[];
+	/** Device-local; the same for every folder of the project. */
+	isFoldersTreeOpen: boolean;
+	foldersTreeWidth: number;
+	onFoldersTreeWidthCommit: (projectId: string, width: number) => void;
+	/** True while a terminal of this project is being dragged. */
+	acceptsFolderTerminalDrop: boolean;
+	onSelectFolder: (projectId: string, folderId: string) => void;
+	/** Select a folder of this project and bring one of its panels to the front. */
+	onActivateFolderPanel: (
+		projectId: string,
+		folderId: string,
+		panelId: string,
+	) => void;
+	/** The terminal being dragged was released on a folder of this project. */
+	onDropTerminalOnFolder: (projectId: string, folderId: string) => void;
+	/** Accept or decline a folder's offer to take the terminal that created
+	 * its worktree. The device that accepts follows the terminal there. */
+	onAnswerFolderOffer: (
+		projectId: string,
+		folderId: string,
+		answer: 'accept' | 'decline',
+	) => void;
+	/** Create a terminal in a folder of this project, starting in its root. */
+	onOpenShellInFolder: (projectId: string, folderId: string) => void;
+	/** Close a panel of another folder's workspace the ordinary way. */
+	onCloseFolderPanel: (
+		projectId: string,
+		folderId: string,
+		panelId: string,
+	) => Promise<void>;
+	/** Terminals the server moved into a new worktree's folder, not yet
+	 * dismissed on this device. */
+	captureNotices: readonly CaptureNotice[];
+	onUndoCapture: (notice: CaptureNotice) => void;
+	onDismissCaptureNotice: (noticeId: number) => void;
 	onCommitProjectSidebar: (
 		projectId: string,
 		patch: Partial<
@@ -967,6 +1084,11 @@ const MacroFileFieldInput = forwardRef<
 MacroFileFieldInput.displayName = 'MacroFileFieldInput';
 
 const NO_TERMINAL_DROP_TARGETS: readonly string[] = Object.freeze([]);
+const NO_CAPTURE_NOTICES: readonly CaptureNotice[] = Object.freeze([]);
+const NO_WORKSPACE_FOLDERS: Readonly<Record<string, ServerWorkspaceFolder>> =
+	Object.freeze({});
+const NO_INVENTORY: readonly WorkspaceInventoryEntry[] = Object.freeze([]);
+const NO_MOUNTED_FOLDERS: ReadonlySet<string> = new Set();
 
 function useDraggableModal(isOpen: boolean) {
 	const modalRef = useRef<HTMLElement | null>(null);
@@ -1237,15 +1359,29 @@ const ProjectWorkspace = forwardRef<
 >(
 	(
 		{
+			acceptsFolderTerminalDrop,
 			agentStatusSnapshot,
 			auxiliaryRoutes,
+			captureNotices,
+			folder,
+			foldersTreeWidth,
 			isActive,
 			isCompactChrome = false,
+			isFoldersTreeOpen,
 			isMac,
 			macros,
+			onActivateFolderPanel,
 			onAddProject,
-			onCloseProject,
+			onAnswerFolderOffer,
+			onCloseFolderPanel,
+			onDismissCaptureNotice,
+			onDropTerminalOnFolder,
+			onOpenShellInFolder,
+			onUndoCapture,
 			onEditProject,
+			onFoldersTreeWidthCommit,
+			onSelectFolder,
+			onMoveTerminalToFolder,
 			onMoveTerminalToProject,
 			onPopoutProject,
 			onTerminalTabDrag,
@@ -1259,20 +1395,40 @@ const ProjectWorkspace = forwardRef<
 			onUpdateProject,
 			popoutUrl,
 			project,
+			projectInventory,
 			projects,
 			sharedTerminalContextReaders,
 			terminalClientContext,
 		},
 		ref,
 	) => {
-		const [pendingGitFolderOpen, setPendingGitFolderOpen] = useState<{
-			path: string;
-			worktreeRoot: string;
-		} | null>(null);
+		// One count per workspace: a project's folders render together, and
+		// sharing a key would read that as one workspace rendering in a loop.
 		recordBoundedRendererRender(
-			`project-workspace:${project.id}`,
+			`project-workspace:${project.id}:${folder.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
+		const workspaceSnapshot =
+			terminalClientContext?.workspaceSnapshotStore?.snapshot ?? null;
+		// The folder as the server knows it. A project no projection describes
+		// yet is shown through a stand-in, which is never named to the server.
+		const projectedFolderId =
+			workspaceSnapshot?.folders[folder.id]?.projectId === project.id
+				? folder.id
+				: undefined;
+		// Only a linked folder has a root of its own. The server resolves it
+		// from the folder id; the path here is for showing and for making the
+		// paths this workspace sends relative to it.
+		const linkedFolderId =
+			projectedFolderId !== undefined &&
+			folder.kind === 'linked' &&
+			folder.worktree !== undefined
+				? projectedFolderId
+				: undefined;
+		const linkedFolderRoot =
+			linkedFolderId === undefined ? undefined : folder.worktree?.path;
+		/** What this workspace's file and folder panels are rooted at. */
+		const folderRootPath = linkedFolderRoot ?? project.rootFolder;
 		const featureAvailability = useMemo(
 			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
 			[
@@ -1285,10 +1441,9 @@ const ProjectWorkspace = forwardRef<
 			featureAvailability.state === 'available'
 				? featureAvailability.authority
 				: undefined;
-		const explorerProjectRoot = featureProjectRoot(
-			featureAvailability,
-			project.rootFolder,
-		);
+		const explorerProjectRoot =
+			linkedFolderRoot ??
+			featureProjectRoot(featureAvailability, project.rootFolder);
 		const explorerProject = useMemo(
 			() =>
 				explorerProjectRoot === project.rootFolder
@@ -1296,17 +1451,46 @@ const ProjectWorkspace = forwardRef<
 					: { ...project, rootFolder: explorerProjectRoot },
 			[explorerProjectRoot, project],
 		);
+		// Everything a file or folder panel of a linked folder reads goes through
+		// clients that name the folder, so it reads that folder's worktree. Any
+		// other folder uses the connection's clients unchanged.
 		const terminalPanelClientContext =
 			useMemo<TerminalPanelClientContextValue | null>(
 				() =>
 					terminalClientContext === undefined
 						? null
 						: composeProjectTerminalClientContext(
-								terminalClientContext,
+								linkedFolderId === undefined
+									? terminalClientContext
+									: {
+											...terminalClientContext,
+											...(terminalClientContext.fileViewerClient === undefined
+												? {}
+												: {
+														fileViewerClient:
+															terminalClientContext.fileViewerClient.forFolder(
+																linkedFolderId,
+															),
+													}),
+											...(terminalClientContext.fileObservationClient ===
+											undefined
+												? {}
+												: {
+														fileObservationClient:
+															terminalClientContext.fileObservationClient.forFolder(
+																linkedFolderId,
+															),
+													}),
+											// Documentation, MDX, and language intelligence
+											// are still bound to the project root; a file
+											// panel that knows it is in a linked folder
+											// leaves them alone.
+											linkedFolderId,
+										},
 								project.id,
-								project.rootFolder,
+								folderRootPath,
 							),
-				[project.id, project.rootFolder, terminalClientContext],
+				[folderRootPath, linkedFolderId, project.id, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
 		// Agent status is a selected-server projection, not a project-scoped
@@ -1346,7 +1530,17 @@ const ProjectWorkspace = forwardRef<
 		}, [terminalClientContext?.applicationClient]);
 		const { settings, error: settingsError } =
 			useTerminalSettings(serverSettingsClient);
-		const serverFileViewerClient = featureAuthority?.fileViewerClient;
+		// The macro launcher searches the project, so it keeps the project's
+		// client; the Files pane follows the folder.
+		const projectFileViewerClient = featureAuthority?.fileViewerClient;
+		const serverFileViewerClient = useMemo(
+			() => projectFileViewerClient?.forFolder(linkedFolderId),
+			[linkedFolderId, projectFileViewerClient],
+		);
+		const explorerFileObservationClient = useMemo(
+			() => featureAuthority?.fileObservationClient?.forFolder(linkedFolderId),
+			[featureAuthority?.fileObservationClient, linkedFolderId],
+		);
 		const activeSidebarGroup = resolveVisibleSidebarGroup(
 			project.sidebarActiveGroup,
 			settings.agentIntegration.enabled,
@@ -1621,6 +1815,14 @@ const ProjectWorkspace = forwardRef<
 					terminalTitlesBySession.set(sessionId, title.trim());
 				}
 			}
+			// Agents are the project's, not one folder's: a terminal in another
+			// folder is still one of this project's terminals.
+			for (const entry of projectInventory) {
+				if (entry.sessionId === undefined) continue;
+				terminalSessionIds.add(entry.sessionId);
+				if (!terminalTitlesBySession.has(entry.sessionId))
+					terminalTitlesBySession.set(entry.sessionId, entry.title);
+			}
 			const priority: Record<AgentState, number> = {
 				blocked: 0,
 				waiting: 1,
@@ -1658,6 +1860,7 @@ const ProjectWorkspace = forwardRef<
 			focusedSessionId,
 			isDockviewReady,
 			project.id,
+			projectInventory,
 			settings.agentIntegration.enabled,
 			terminalTitleRevision,
 		]);
@@ -1856,6 +2059,8 @@ const ProjectWorkspace = forwardRef<
 					}
 				}
 
+				// Each entry names its folder, so a project's merged inventory can
+				// still say where every panel is.
 				return buildProjectInventoryEntries({
 					agentIntegrationEnabled: settings.agentIntegration.enabled,
 					panels,
@@ -1865,8 +2070,9 @@ const ProjectWorkspace = forwardRef<
 						id: project.id,
 						title: project.title,
 					},
-				});
+				}).map((entry) => ({ ...entry, folderId: folder.id }));
 			}, [
+				folder.id,
 				project.color,
 				project.emoji,
 				project.id,
@@ -1875,8 +2081,13 @@ const ProjectWorkspace = forwardRef<
 			]);
 
 		const publishWorkspaceInventory = useCallback(() => {
-			onWorkspaceInventoryChange(project.id, getWorkspaceInventoryItems());
+			onWorkspaceInventoryChange(
+				project.id,
+				folder.id,
+				getWorkspaceInventoryItems(),
+			);
 		}, [
+			folder.id,
 			getWorkspaceInventoryItems,
 			onWorkspaceInventoryChange,
 			project.id,
@@ -2217,12 +2428,29 @@ const ProjectWorkspace = forwardRef<
 		const activateAgentTerminal = useCallback(
 			(terminalSessionId: string) => {
 				const panel = getPanelForSession(terminalSessionId);
-				if (!panel) {
+				if (panel) {
+					activateTerminal(panel.id, terminalSessionId);
 					return;
 				}
-				activateTerminal(panel.id, terminalSessionId);
+				// The agent's terminal is in another folder of this project: go
+				// to that folder first, then to the terminal.
+				const elsewhere = projectInventory.find(
+					(entry) => entry.sessionId === terminalSessionId,
+				);
+				if (elsewhere?.folderId !== undefined)
+					onActivateFolderPanel(
+						project.id,
+						elsewhere.folderId,
+						elsewhere.panelId,
+					);
 			},
-			[activateTerminal, getPanelForSession],
+			[
+				activateTerminal,
+				getPanelForSession,
+				onActivateFolderPanel,
+				project.id,
+				projectInventory,
+			],
 		);
 
 		const syncPanelFocusState = useCallback(() => {
@@ -2254,10 +2482,13 @@ const ProjectWorkspace = forwardRef<
 				if (existingPanelId) {
 					const existingPanel = api.getPanel(existingPanelId);
 					if (existingPanel) {
-						const presentation = resolveOpenPresentation(
-							filePath,
-							options,
-							existingPanel.params?.presentation ?? 'file-viewer',
+						const presentation = presentationForFolder(
+							resolveOpenPresentation(
+								filePath,
+								options,
+								existingPanel.params?.presentation ?? 'file-viewer',
+							),
+							linkedFolderId,
 						);
 						if (
 							existingPanel.params?.presentation === 'documentation' &&
@@ -2317,13 +2548,16 @@ const ProjectWorkspace = forwardRef<
 					params: {
 						color: project.color,
 						filePath,
-						presentation: resolveOpenPresentation(filePath, options),
+						presentation: presentationForFolder(
+							resolveOpenPresentation(filePath, options),
+							linkedFolderId,
+						),
 						initialMode: options?.initialMode,
 						inheritsProjectColor: true,
 						isFocused: false,
 						preferredEngine: 'auto',
 						projectColor: project.color,
-						projectRoot: project.rootFolder,
+						projectRoot: folderRootPath,
 					},
 					position: api.activePanel
 						? {
@@ -2339,9 +2573,12 @@ const ProjectWorkspace = forwardRef<
 				panel.api.setActive();
 				syncPanelFocusState();
 			},
-			[project.color, project.rootFolder, syncPanelFocusState],
+			[folderRootPath, linkedFolderId, project.color, syncPanelFocusState],
 		);
 		useEffect(() => {
+			// A link is followed where it was clicked. Every folder of the project
+			// hears this, and only the one on screen can have been clicked in.
+			if (!isActive) return;
 			const openDocumentationLink = (event: Event) => {
 				const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
 				if (
@@ -2363,7 +2600,7 @@ const ProjectWorkspace = forwardRef<
 					'terminay-documentation-open',
 					openDocumentationLink,
 				);
-		}, [openFile]);
+		}, [isActive, openFile]);
 
 		const handleOpenTerminalAt = useCallback(
 			async (path: string, isDirectory = false) => {
@@ -2403,6 +2640,9 @@ const ProjectWorkspace = forwardRef<
 						await terminalPanelClientContext.client.create({
 							cwd,
 							projectId: project.id,
+							...(projectedFolderId === undefined
+								? {}
+								: { folderId: projectedFolderId }),
 						})
 					).sessionId;
 					suppressInitialTerminalActivity(sessionId);
@@ -2450,6 +2690,7 @@ const ProjectWorkspace = forwardRef<
 				fileViewerClient,
 				getPanelForSession,
 				project.id,
+				projectedFolderId,
 				publishWorkspaceInventory,
 				hydrateRecordingStateForSession,
 				settings.recording.recordNewTerminals,
@@ -2473,17 +2714,15 @@ const ProjectWorkspace = forwardRef<
 			handleDelete,
 			handleDeleteCleanWorktrees,
 			handleDeleteWorktree,
-			handleLoadWorktreeChecks,
 			handleRespondWorktreeSignIn,
 			handleNewFile,
 			handleNewFolder,
 			handleOpenGitEntry,
-			handleOpenTerminalAtWorktree,
 			handlePullWorktreeFromOrigin,
 			handleRename,
 			handleRenameWorktree,
-			handleRevealWorktree,
-			handleSwitchProjectRootToWorktree,
+			handleLoadWorktreeChecks,
+			handleRevealFolder,
 			loadingPaths,
 			pullingWorktreePaths,
 			refreshFileExplorerTree,
@@ -2492,18 +2731,23 @@ const ProjectWorkspace = forwardRef<
 			toggleDirectory,
 			worktreePanelStatus,
 		} = useFileExplorerController({
-			fileObservationClient: featureAuthority?.fileObservationClient,
+			fileObservationClient: explorerFileObservationClient,
 			fileViewerClient,
 			gitClient: featureAuthority?.gitClient,
 			isServerFileViewer: true,
 			onOpenFile: openFile,
-			onOpenTerminalAt: handleOpenTerminalAt,
 			onOperationError: reportFeatureFailure,
 			onOperationSucceeded: clearFeatureFailure,
 			onSetError: setErrorText,
-			onUpdateProject,
 			project: explorerProject,
 		});
+		const worktreePanelStatusRef = useRef(worktreePanelStatus);
+		worktreePanelStatusRef.current = worktreePanelStatus;
+		// The one worktree this folder stands for: what Changes reports.
+		const changes = useMemo(
+			() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
+			[folder, project.rootFolder, worktreePanelStatus],
+		);
 		const isRenderingStatusBar =
 			isActive && isStatusBarVisible && statusBarSlot !== null;
 		const focusedTerminalStatus = useFocusedTerminalStatus({
@@ -2519,7 +2763,8 @@ const ProjectWorkspace = forwardRef<
 			isActive: isRenderingStatusBar,
 			isDockviewReady,
 		});
-		const [gitPaneMenuPosition, setGitPaneMenuPosition] = useState<{
+		// The Folders column's own menu: what is done to the folders as a list.
+		const [foldersMenuPosition, setFoldersMenuPosition] = useState<{
 			x: number;
 			y: number;
 		} | null>(null);
@@ -2573,7 +2818,7 @@ const ProjectWorkspace = forwardRef<
 						onCopyRelativePath: handleCopyRelativePath,
 						projectColor: project.color,
 						projectId: project.id,
-						projectRootPath: project.rootFolder,
+						projectRootPath: folderRootPath,
 					},
 					position: api.activePanel
 						? {
@@ -2597,33 +2842,12 @@ const ProjectWorkspace = forwardRef<
 				handleNewFolder,
 				handleOpenTerminalAt,
 				handleRename,
+				folderRootPath,
 				project.color,
-				project.rootFolder,
+				project.id,
 				syncPanelFocusState,
 			],
 		);
-		const handleOpenGitFolder = useCallback(
-			(folderPath: string, worktreeRoot: string) => {
-				if (worktreeRoot !== project.rootFolder) {
-					setPendingGitFolderOpen({ path: folderPath, worktreeRoot });
-					onUpdateProject(project.id, { rootFolder: worktreeRoot });
-					return;
-				}
-				openFolder(folderPath);
-			},
-			[onUpdateProject, openFolder, project.id, project.rootFolder],
-		);
-		useEffect(() => {
-			if (
-				pendingGitFolderOpen === null ||
-				project.rootFolder !== pendingGitFolderOpen.worktreeRoot
-			) {
-				return;
-			}
-			openFolder(pendingGitFolderOpen.path);
-			setPendingGitFolderOpen(null);
-		}, [openFolder, pendingGitFolderOpen, project.rootFolder]);
-
 		const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
 			const sessionId = getActiveSessionId();
 			if (!sessionId) {
@@ -3235,6 +3459,9 @@ const ProjectWorkspace = forwardRef<
 							serverAgentStatusClient?.mergeSessionScope([session.sessionId]);
 							return session;
 						},
+			...(projectedFolderId === undefined
+				? {}
+				: { folderId: projectedFolderId }),
 			hydrateRecording: hydrateRecordingStateForSession,
 			onError: setErrorText,
 			projectId: project.id,
@@ -3343,8 +3570,10 @@ const ProjectWorkspace = forwardRef<
 			[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
 		);
 
+		const folderSessionMemoryKey = activeSessionMemoryKey(project.id, folder);
 		const { acceptMovedTerminal, acceptServerTerminal } =
 			useTerminalAdoptionController({
+				activeSessionMemoryKey: folderSessionMemoryKey,
 				apiRef: dockviewApiRef,
 				cancelMacroRun,
 				clearFinishedMacroRuns: clearFinishedMacroRunsForSession,
@@ -3373,7 +3602,10 @@ const ProjectWorkspace = forwardRef<
 			});
 
 		const reconcileServerPanels = useCallback(
-			(panels: readonly ServerWorkspacePanel[]) => {
+			(
+				panels: readonly ServerWorkspacePanel[],
+				canHandOver?: (panel: ServerWorkspacePanel) => boolean,
+			) => {
 				const api = dockviewApiRef.current;
 				if (!api) return;
 				const canonicalById = new Map(panels.map((panel) => [panel.id, panel]));
@@ -3398,6 +3630,19 @@ const ProjectWorkspace = forwardRef<
 					// presents it. Letting go of it here closes nothing: the panel
 					// and its session stay live under the project that owns them.
 					if (canonical.projectId !== project.id) {
+						movingTerminalSessionIdsRef.current.add(sessionId);
+						api.removePanel(panel);
+						continue;
+					}
+					// Likewise for another folder of this project, which changes
+					// nothing about the terminal but where it is shown. It is kept
+					// here until that folder's workspace can show it, so it is never
+					// shown by neither.
+					if (
+						projectedFolderId !== undefined &&
+						canonical.folderId !== projectedFolderId
+					) {
+						if (canHandOver?.(canonical) === false) continue;
 						movingTerminalSessionIdsRef.current.add(sessionId);
 						api.removePanel(panel);
 						continue;
@@ -3436,7 +3681,12 @@ const ProjectWorkspace = forwardRef<
 					});
 				}
 			},
-			[project.id, publishWorkspaceInventory, terminalNoteSync],
+			[
+				project.id,
+				projectedFolderId,
+				publishWorkspaceInventory,
+				terminalNoteSync,
+			],
 		);
 
 		const filteredMacros = useMemo(() => {
@@ -3774,10 +4024,6 @@ const ProjectWorkspace = forwardRef<
 						return;
 					}
 				}
-				if (api.panels.length === 1) {
-					onCloseProject(project.id, { skipConfirmation: true });
-					return;
-				}
 				if (
 					workspaceStore !== undefined &&
 					canonicalPanel?.projectId === project.id
@@ -3809,7 +4055,6 @@ const ProjectWorkspace = forwardRef<
 				panel.api.close();
 			},
 			[
-				onCloseProject,
 				project.id,
 				serverActivityClient,
 				terminalClientContext?.workspaceSnapshotStore,
@@ -4050,6 +4295,7 @@ const ProjectWorkspace = forwardRef<
 				exportTerminalForMove,
 				exportProjectForMove,
 				focusActiveTerminal,
+				isReady: () => dockviewApiRef.current !== null,
 				ownsControlSession,
 				terminalSessionForPanel: (panelId: string) =>
 					panelSessionMapRef.current.get(panelId),
@@ -4058,9 +4304,17 @@ const ProjectWorkspace = forwardRef<
 						([, mapped]) => mapped === sessionId,
 					)?.[0],
 				reportError: setErrorText,
+				requestClosePanel,
+				openShellAtFolderRoot: async () => {
+					setErrorText(null);
+					await addTerminal({ atFolderRoot: true });
+				},
+				worktreeStatus: () => worktreePanelStatusRef.current,
 				handleControlRequest,
 			}),
 			[
+				addTerminal,
+				requestClosePanel,
 				acceptMovedTerminal,
 				acceptServerTerminal,
 				reconcileServerPanels,
@@ -4106,6 +4360,9 @@ const ProjectWorkspace = forwardRef<
 				const store = terminalClientContext?.workspaceSnapshotStore;
 				const panel = store?.snapshot?.panels[panelId];
 				if (store === undefined || panel?.projectId !== project.id) return;
+				// A panel the server has placed in another folder is that folder's.
+				// Whatever removed it from this layout, it is not being closed.
+				if (panel.folderId !== projectedFolderId) return;
 				void store.closePanel(panelId).catch((error: unknown) => {
 					const message =
 						error instanceof Error
@@ -4114,13 +4371,21 @@ const ProjectWorkspace = forwardRef<
 					setErrorText(message);
 				});
 			},
-			[project.id, terminalClientContext?.workspaceSnapshotStore],
+			[
+				project.id,
+				projectedFolderId,
+				terminalClientContext?.workspaceSnapshotStore,
+			],
 		);
 
 		const commitServerPanelOrder = useCallback(
 			(panelIds: readonly string[]) => {
 				const store = terminalClientContext?.workspaceSnapshotStore;
-				const canonicalIds = store?.snapshot?.projects[project.id]?.panelIds;
+				// A reorder is of this folder's own panels and of no other's.
+				const canonicalIds =
+					projectedFolderId === undefined
+						? undefined
+						: store?.snapshot?.folders[projectedFolderId]?.panelIds;
 				if (
 					store === undefined ||
 					canonicalIds === undefined ||
@@ -4130,7 +4395,13 @@ const ProjectWorkspace = forwardRef<
 				)
 					return;
 				void store
-					.reorderPanels({ projectId: project.id, panelIds })
+					.reorderPanels({
+						projectId: project.id,
+						...(projectedFolderId === undefined
+							? {}
+							: { folderId: projectedFolderId }),
+						panelIds,
+					})
 					.catch((error: unknown) => {
 						setErrorText(
 							error instanceof Error
@@ -4139,7 +4410,11 @@ const ProjectWorkspace = forwardRef<
 						);
 					});
 			},
-			[project.id, terminalClientContext?.workspaceSnapshotStore],
+			[
+				project.id,
+				projectedFolderId,
+				terminalClientContext?.workspaceSnapshotStore,
+			],
 		);
 
 		const handleDockviewReady = useDockviewPanelLifecycle({
@@ -4156,7 +4431,7 @@ const ProjectWorkspace = forwardRef<
 			markTerminalActivityViewed,
 			movingTerminalSessionIdsRef,
 			panelSessionMapRef,
-			projectId: project.id,
+			activeSessionMemoryKey: folderSessionMemoryKey,
 			publishWorkspaceInventory,
 			setFocusedSessionId,
 			setIsDockviewReady,
@@ -4165,6 +4440,8 @@ const ProjectWorkspace = forwardRef<
 		});
 
 		useEffect(() => {
+			// As with a documentation link: opened in the folder on screen.
+			if (!isActive) return;
 			const onOpenFileEvent = (event: Event) => {
 				const customEvent = event as CustomEvent<{
 					initialMode?: FileViewerMode;
@@ -4183,7 +4460,7 @@ const ProjectWorkspace = forwardRef<
 			return () => {
 				window.removeEventListener('terminay-open-file', onOpenFileEvent);
 			};
-		}, [openFile]);
+		}, [isActive, openFile]);
 
 		useEffect(() => {
 			const handlePointerDown = (event: PointerEvent) => {
@@ -4363,14 +4640,14 @@ const ProjectWorkspace = forwardRef<
 
 		useEffect(() => {
 			return () => {
-				onWorkspaceInventoryChange(project.id, []);
+				onWorkspaceInventoryChange(project.id, folder.id, []);
 				for (const timer of terminalActivityTimersRef.current.values()) {
 					window.clearTimeout(timer);
 				}
 				terminalActivityTimersRef.current.clear();
 				terminalActivityStoreRef.current.clear();
 			};
-		}, [onWorkspaceInventoryChange, project.id]);
+		}, [folder.id, onWorkspaceInventoryChange, project.id]);
 
 		useEffect(() => {
 			const onTerminalExit = (event: Event) => {
@@ -4506,7 +4783,13 @@ const ProjectWorkspace = forwardRef<
 			return () => {
 				window.cancelAnimationFrame(frame);
 			};
-		}, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen]);
+		}, [
+			foldersTreeWidth,
+			isActive,
+			isFoldersTreeOpen,
+			project.fileExplorerWidth,
+			project.isFileExplorerOpen,
+		]);
 
 		useCommandBarNavigation({
 			inputRef: macroLauncherInputRef,
@@ -4541,11 +4824,169 @@ const ProjectWorkspace = forwardRef<
 			};
 		}, [closeMacroParameterModal, macroToRun]);
 
+		// The Folders tree is drawn by the workspace on screen. It reads the
+		// projection, the project's whole inventory, and the worktree listing
+		// the Changes pane already keeps; a workspace behind another builds nothing.
+		const folderTreeRows = useMemo(
+			() =>
+				!isActive || workspaceSnapshot === null
+					? []
+					: buildProjectFolderTree({
+							project: workspaceSnapshot.projects[project.id],
+							folders: workspaceSnapshot.folders,
+							panels: workspaceSnapshot.panels,
+							selectedFolderId: folder.id,
+							inventory: projectInventory,
+							worktreeStatus: worktreePanelStatus,
+						}),
+			[
+				folder.id,
+				isActive,
+				project.id,
+				projectInventory,
+				workspaceSnapshot,
+				worktreePanelStatus,
+			],
+		);
+		// A panel's menu offers the other folders of its project. They are named
+		// by a key, so a new projection with the same folders changes no tab.
+		const foldersForMoveKey = useMemo(() => {
+			const projected = workspaceSnapshot?.projects[project.id];
+			if (projected === undefined || workspaceSnapshot === null) return '[]';
+			return JSON.stringify(
+				projected.folderIds.flatMap((folderId) => {
+					const candidate = workspaceSnapshot.folders[folderId];
+					return candidate === undefined || folderId === folder.id
+						? []
+						: [{ id: folderId, name: candidate.name }];
+				}),
+			);
+		}, [folder.id, project.id, workspaceSnapshot]);
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (api === null || !isDockviewReady) return;
+			const foldersForMove = JSON.parse(foldersForMoveKey) as {
+				id: string;
+				name: string;
+			}[];
+			const offer = (panel: IDockviewPanel) =>
+				panel.api.updateParameters({
+					foldersForMove,
+					onMoveToFolder: (targetFolderId: string) =>
+						onMoveTerminalToFolder(project.id, panel.id, targetFolderId),
+				});
+			for (const panel of api.panels) offer(panel);
+			// A panel that arrives later is offered the same folders.
+			const added = api.onDidAddPanel(offer);
+			return () => added.dispose();
+		}, [foldersForMoveKey, isDockviewReady, onMoveTerminalToFolder, project.id]);
+		const [newFolderDialog, setNewFolderDialog] =
+			useState<FileExplorerNameDialogState | null>(null);
+		const newFolderModal = useDraggableModal(newFolderDialog !== null);
+		const newFolderDialogIdRef = useRef(0);
+		const cancelNewFolderDialog = useCallback(
+			() => setNewFolderDialog(null),
+			[],
+		);
+		const requestNewFolder = useCallback(() => {
+			newFolderDialogIdRef.current += 1;
+			setNewFolderDialog({
+				id: newFolderDialogIdRef.current,
+				label: 'Folder name',
+				// The modal reports through its own submit and cancel handlers.
+				resolve: () => undefined,
+				submitLabel: 'Create',
+				title: 'New Folder',
+			});
+		}, []);
+		const submitNewFolderDialog = useCallback(
+			(name: string) => {
+				setNewFolderDialog(null);
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined) {
+					setErrorText('The selected server workspace is not ready.');
+					return;
+				}
+				// The folder is shown once the server has created it.
+				void store
+					.createFolder({ projectId: project.id, name })
+					.catch((error: unknown) => {
+						setErrorText(
+							`Unable to create the folder: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					});
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+		// The folder menu runs each worktree action on the worktree of whichever
+		// folder was right-clicked, which need not be the one on screen.
+		const {
+			cancelFolderNameDialog,
+			folderMenuElement,
+			folderNameDialog,
+			openFolderMenu,
+			submitFolderNameDialog,
+		} = useFolderMenuController({
+			project: { id: project.id, rootFolder: project.rootFolder },
+			snapshot: workspaceSnapshot,
+			store: terminalClientContext?.workspaceSnapshotStore,
+			projectInventory,
+			worktreeStatus: worktreePanelStatus,
+			deletingWorktreePaths,
+			pullingWorktreePaths,
+			onCommitAndPush: handleOpenWorktreePushMenu,
+			onPullFromOrigin: handlePullWorktreeFromOrigin,
+			onRenameWorktree: handleRenameWorktree,
+			onDeleteWorktree: handleDeleteWorktree,
+			onRevealFolder: handleRevealFolder,
+			onOpenShell: (folderId) => onOpenShellInFolder(project.id, folderId),
+			onClosePanel: (folderId, panelId) =>
+				onCloseFolderPanel(project.id, folderId, panelId),
+			onError: setErrorText,
+		});
+		const folderNameModal = useDraggableModal(folderNameDialog !== null);
+		// Shown by the workspace on screen, for whichever folder the terminal
+		// landed in: the notice is the project's, not one folder's.
+		const captureNoticesElement = (
+			placement: 'column' | 'banner' | 'banner-when-narrow',
+		) => (
+			<FolderCaptureNotices
+				notices={isActive ? captureNotices : NO_CAPTURE_NOTICES}
+				onUndo={onUndoCapture}
+				onDismiss={onDismissCaptureNotice}
+				placement={placement}
+			/>
+		);
+		// What the panel area says while this folder holds no panels.
+		const newTerminalShortcutLabel = getCommandShortcutLabel(
+			settings.keyboardShortcuts,
+			'new-terminal',
+			isMac,
+		);
+		const emptyFolderDescription = useMemo<EmptyFolderDescription>(
+			() => ({
+				name: folder.name,
+				...(linkedFolderRoot === undefined
+					? {}
+					: { worktreePath: linkedFolderRoot }),
+				onNewTerminal: () => {
+					setErrorText(null);
+					void addTerminal({});
+				},
+				...(newTerminalShortcutLabel
+					? { newTerminalShortcutLabel }
+					: {}),
+			}),
+			[addTerminal, folder.name, linkedFolderRoot, newTerminalShortcutLabel],
+		);
+
 		const sidebarPanelItemsById: Record<SidebarPanelId, SidebarPanelStackItem> =
 			{
 				explorer: {
 					id: 'explorer',
-					title: 'Files',
+					// Named when the root shown is a folder's worktree, not the project's.
+					title:
+						linkedFolderId === undefined ? 'Files' : `Files — ${folder.name}`,
 					height: project.sidebarExplorerHeight,
 					collapsed: project.isExplorerPaneCollapsed,
 					onToggleCollapsed: () => {
@@ -4562,9 +5003,9 @@ const ProjectWorkspace = forwardRef<
 								refreshFileExplorerTree();
 								// The user asked: measure Git rather than trust the
 								// server's cached listing.
-								if (project.rootFolder)
+								if (folderRootPath)
 									void refreshGitStatusesForRoot(
-										project.rootFolder,
+										folderRootPath,
 										true,
 										undefined,
 										'refresh',
@@ -4652,7 +5093,10 @@ const ProjectWorkspace = forwardRef<
 				},
 				git: {
 					id: 'git',
-					title: 'Git',
+					// The pane keeps the id it has always been stored under, so its
+					// place, height, and collapse state carry over. What it shows
+					// is the changes of this folder's worktree and of no other.
+					title: 'Changes',
 					height: project.sidebarGitHeight,
 					collapsed: project.isGitPaneCollapsed,
 					onToggleCollapsed: () => {
@@ -4661,51 +5105,34 @@ const ProjectWorkspace = forwardRef<
 							isGitPaneCollapsed: next,
 						});
 					},
-					count: worktreePanelStatus?.worktrees.length,
-					actions: (
-						<button
-							type="button"
-							className={`sidebar-pane__action-button${gitPaneMenuPosition ? ' sidebar-pane__action-button--active' : ''}`}
-							onClick={(event) => {
-								const rect = event.currentTarget.getBoundingClientRect();
-								setGitPaneMenuPosition({ x: rect.left, y: rect.bottom + 4 });
-							}}
-							aria-label="Git actions"
-							aria-haspopup="menu"
-							aria-expanded={gitPaneMenuPosition !== null}
-							title="Git actions"
-						>
-							<MoreHorizontal size={14} aria-hidden="true" />
-						</button>
-					),
+					count:
+						changes.kind === 'worktree'
+							? changes.worktree.entries.length
+							: undefined,
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
 						) : (
-							<WorktreesPanel
-								activePushMenuWorktreePath={
-									gitPushMenuPosition?.target?.worktreePath ?? null
-								}
-								deletingWorktreePaths={deletingWorktreePaths}
-								pullingWorktreePaths={pullingWorktreePaths}
-								status={worktreePanelStatus}
+							<ChangesPane
+								changes={changes}
 								viewMode={settings.sidebar.gitPanelViewMode}
-								onDeletePath={handleDelete}
+								isDeleting={
+									changes.kind === 'worktree' &&
+									deletingWorktreePaths.has(changes.worktree.path)
+								}
+								isPulling={
+									changes.kind === 'worktree' &&
+									pullingWorktreePaths.has(changes.worktree.path)
+								}
+								onDelete={handleDelete}
 								onNewFile={handleNewFile}
 								onNewFolder={handleNewFolder}
-								onDeleteWorktree={handleDeleteWorktree}
 								onOpenEntry={handleOpenGitEntry}
-								onOpenFolder={handleOpenGitFolder}
-								onOpenPushMenu={handleOpenWorktreePushMenu}
-								onOpenTerminal={handleOpenTerminalAtWorktree}
-								onOpenTerminalAtPath={handleOpenTerminalAt}
-								onPullFromOrigin={handlePullWorktreeFromOrigin}
-								onRenameWorktree={handleRenameWorktree}
-								onRenamePath={handleRename}
-								onRevealWorktree={handleRevealWorktree}
-								onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-								onLoadWorktreeChecks={handleLoadWorktreeChecks}
-								onRespondSignIn={handleRespondWorktreeSignIn}
+								// Every row is in this folder's own worktree, so a
+								// changed directory opens as a panel of this folder.
+								onOpenFolder={openFolder}
+								onOpenTerminal={handleOpenTerminalAt}
+								onRename={handleRename}
 							/>
 						),
 				},
@@ -4818,6 +5245,8 @@ const ProjectWorkspace = forwardRef<
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
 				data-terminay-project-id={project.id}
+				data-terminay-folder-id={folder.id}
+				data-terminay-folder-kind={folder.kind}
 				data-terminay-git-client={
 					featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
 				}
@@ -4844,6 +5273,12 @@ const ProjectWorkspace = forwardRef<
 						</button>
 					</div>
 				) : null}
+				{/* With the Folders column hidden there is no foot of the tree to
+				    say it in, so it is said where the project says everything else.
+				    A column that is open is still not drawn at narrow widths. */}
+				{captureNoticesElement(
+					isFoldersTreeOpen ? 'banner-when-narrow' : 'banner',
+				)}
 				{isRenderingStatusBar && focusedFileStatus !== null
 					? createPortal(
 							<FocusedFileSummary
@@ -4864,6 +5299,49 @@ const ProjectWorkspace = forwardRef<
 
 				<WorkspaceSplitLayout
 					className="project-workspace-body"
+					navigationSide="trailing"
+					isFoldersVisible={isFoldersTreeOpen}
+					foldersWidth={foldersTreeWidth}
+					onFoldersWidthCommit={(width) =>
+						onFoldersTreeWidthCommit(project.id, width)
+					}
+					// A workspace behind another keeps the column's width without
+					// drawing the tree, so its terminals are not resized when it
+					// comes to the front.
+					folders={
+						isActive ? (
+							<FoldersColumn
+								folders={folderTreeRows}
+								acceptsTerminalDrop={acceptsFolderTerminalDrop}
+								footer={captureNoticesElement('column')}
+								isMenuOpen={foldersMenuPosition !== null}
+								onOpenMenu={setFoldersMenuPosition}
+								onOpenLink={(url) => void openExternalUrl(url)}
+								onLoadChecks={handleLoadWorktreeChecks}
+								onAnswerOffer={(folderId, answer) =>
+									onAnswerFolderOffer(project.id, folderId, answer)
+								}
+								onCreateFolder={requestNewFolder}
+								onFolderMenu={openFolderMenu}
+								onDropTerminal={(folderId) =>
+									onDropTerminalOnFolder(project.id, folderId)
+								}
+								onSelectFolder={(folderId) =>
+									onSelectFolder(project.id, folderId)
+								}
+								onSelectTerminal={(folderId, panelId) =>
+									onActivateFolderPanel(project.id, folderId, panelId)
+								}
+								onTerminalDrag={(drag) =>
+									reportTerminalTabDrag(
+										drag === null ? null : { panelId: drag.panelId },
+									)
+								}
+							/>
+						) : (
+							<div className="folders-column" />
+						)
+					}
 					isNavigationVisible={project.isFileExplorerOpen}
 					onNavigationDismiss={() => {
 						onUpdateProject(project.id, { isFileExplorerOpen: false });
@@ -4922,33 +5400,6 @@ const ProjectWorkspace = forwardRef<
 									/>
 								</div>
 
-								{gitPaneMenuPosition ? (
-									<ContextMenu
-										x={gitPaneMenuPosition.x}
-										y={gitPaneMenuPosition.y}
-										onClose={() => setGitPaneMenuPosition(null)}
-										items={[
-											{
-												label: 'Delete all clean worktrees',
-												icon: <Trash2 size={14} aria-hidden="true" />,
-												danger: true,
-												disabled: cleanWorktreeDeleteCount === 0,
-												onClick: () => void handleDeleteCleanWorktrees(),
-											},
-										]}
-									/>
-								) : null}
-								{gitPushMenuPosition ? (
-									<ContextMenu
-										x={gitPushMenuPosition.x}
-										y={gitPushMenuPosition.y}
-										onClose={closeGitPushMenu}
-										items={buildGitPushMenuItems({
-											target: gitPushMenuPosition.target,
-											onLaunchAgent: launchGitPushAgent,
-										})}
-									/>
-								) : null}
 							</div>
 						) : null
 					}
@@ -4963,9 +5414,11 @@ const ProjectWorkspace = forwardRef<
 								value={terminalPanelClientContext}
 							>
 								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
+									<EmptyFolderContext.Provider value={emptyFolderDescription}>
 									<DockviewReact
 										components={dockviewComponents}
 										tabComponents={dockviewTabComponents}
+										watermarkComponent={EmptyFolderPlaceholder}
 										popoutUrl={popoutUrl}
 										onReady={(event) => {
 											handleDockviewReady(event);
@@ -4979,6 +5432,7 @@ const ProjectWorkspace = forwardRef<
 										}}
 										floatingGroupBounds="boundedWithinViewport"
 									/>
+									</EmptyFolderContext.Provider>
 								</FilePanelSaveRegistryProvider>
 							</TerminalPanelClientContext.Provider>
 						</div>
@@ -5130,6 +5584,77 @@ const ProjectWorkspace = forwardRef<
 					/>
 				) : null}
 
+				{newFolderDialog ? (
+					<FileExplorerNameModal
+						dialog={newFolderDialog}
+						modal={newFolderModal}
+						onCancel={cancelNewFolderDialog}
+						onSubmit={submitNewFolderDialog}
+					/>
+				) : null}
+
+				{folderNameDialog ? (
+					<FileExplorerNameModal
+						dialog={folderNameDialog}
+						modal={folderNameModal}
+						onCancel={cancelFolderNameDialog}
+						onSubmit={submitFolderNameDialog}
+					/>
+				) : null}
+				{folderMenuElement}
+				{/* A forge an extension recognised asks to be signed in to. The
+				    pull requests and checks it would bring are shown on the Folders
+				    tree, so the question does not wait for the sidebar to be open.
+				    One prompt for the window, asked by the workspace on screen;
+				    every folder of a project hears of the same one. */}
+				{isActive && worktreePanelStatus?.signIn !== undefined ? (
+					<WorktreeSignInDialog
+						key={worktreePanelStatus.signIn.origin}
+						prompt={worktreePanelStatus.signIn}
+						onRespond={handleRespondWorktreeSignIn}
+					/>
+				) : null}
+				{foldersMenuPosition ? (
+					<ContextMenu
+						x={foldersMenuPosition.x}
+						y={foldersMenuPosition.y}
+						onClose={() => setFoldersMenuPosition(null)}
+						items={[
+							{
+								label: 'New folder',
+								icon: <FolderPlus size={14} aria-hidden="true" />,
+								onClick: requestNewFolder,
+							},
+							// A project outside a repository has no worktrees to sweep.
+							...(isGitProject(worktreePanelStatus)
+								? [
+										{ separator: true, label: '', onClick: () => {} },
+										{
+											label: 'Delete all clean worktrees',
+											icon: <Trash2 size={14} aria-hidden="true" />,
+											danger: true,
+											disabled: cleanWorktreeDeleteCount === 0,
+											onClick: () => void handleDeleteCleanWorktrees(),
+										},
+									]
+								: []),
+						]}
+					/>
+				) : null}
+				{/* Opened from a folder's menu, so it is drawn whether or not the
+				    sidebar is. */}
+				{gitPushMenuPosition ? (
+					<ContextMenu
+						x={gitPushMenuPosition.x}
+						y={gitPushMenuPosition.y}
+						onClose={closeGitPushMenu}
+						items={buildGitPushMenuItems({
+							target: gitPushMenuPosition.target,
+							onLaunchAgent: launchGitPushAgent,
+						})}
+					/>
+				) : null}
+
 				{macroToRun ? (
 					<ModalBackdrop onClose={closeMacroParameterModal}>
 						<form
@@ -5226,7 +5751,7 @@ const ProjectWorkspace = forwardRef<
 													</select>
 												) : field.type === 'file' ? (
 													<MacroFileFieldInput
-														fileViewerClient={serverFileViewerClient}
+														fileViewerClient={projectFileViewerClient}
 														id={fieldInputId}
 														projectId={project.id}
 														projectRoot={project.rootFolder}
@@ -5584,6 +6109,88 @@ function App({
 		},
 		[currentServerId, settingsClient],
 	);
+	/**
+	 * The Folders tree's open state and width, per server and project, on this
+	 * device. They are kept with the sidebar's device preferences and are
+	 * independent of the sidebar's own visibility. What this window has changed
+	 * is shown at once from here rather than after the settings round trip.
+	 */
+	const [foldersTreeChanges, setFoldersTreeChanges] = useState<
+		Readonly<{
+			visibility: Readonly<Record<string, boolean>>;
+			width: Readonly<Record<string, number>>;
+		}>
+	>({ visibility: {}, width: {} });
+	const persistFoldersTree = useCallback(
+		(update: (sidebar: SidebarSettings) => SidebarSettings) => {
+			const nextSettings = {
+				...settingsRef.current,
+				sidebar: update(settingsRef.current.sidebar),
+			};
+			settingsRef.current = nextSettings;
+			void settingsClient
+				.update<typeof nextSettings>(nextSettings as unknown as JsonValue)
+				.then((updated) => {
+					settingsRef.current = updated;
+				})
+				.catch(() => {
+					// The local presentation already reflects the interaction. A later
+					// device-settings update or reload reconciles a failed persistence.
+				});
+		},
+		[settingsClient],
+	);
+	const isFoldersTreeOpenFor = (projectId: string): boolean =>
+		foldersTreeChanges.visibility[
+			projectSidebarVisibilityKey(currentServerId, projectId)
+		] ??
+		isProjectFoldersTreeOpenOnDevice(
+			settings.sidebar,
+			currentServerId,
+			projectId,
+		);
+	const foldersTreeWidthFor = (projectId: string): number =>
+		foldersTreeChanges.width[
+			projectSidebarVisibilityKey(currentServerId, projectId)
+		] ??
+		projectFoldersTreeWidthOnDevice(settings.sidebar, currentServerId, projectId);
+	const setFoldersTreeOpen = useCallback(
+		(projectId: string, isOpen: boolean) => {
+			const key = projectSidebarVisibilityKey(currentServerId, projectId);
+			setFoldersTreeChanges((current) => ({
+				...current,
+				visibility: { ...current.visibility, [key]: isOpen },
+			}));
+			persistFoldersTree((sidebar) =>
+				withProjectFoldersTreeVisibility(
+					sidebar,
+					currentServerId,
+					projectId,
+					isOpen,
+				),
+			);
+		},
+		[currentServerId, persistFoldersTree],
+	);
+	const commitFoldersTreeWidth = useCallback(
+		(projectId: string, width: number) => {
+			const key = projectSidebarVisibilityKey(currentServerId, projectId);
+			const rounded = Math.round(width);
+			setFoldersTreeChanges((current) => ({
+				...current,
+				width: { ...current.width, [key]: rounded },
+			}));
+			persistFoldersTree((sidebar) =>
+				withProjectFoldersTreeWidth(
+					sidebar,
+					currentServerId,
+					projectId,
+					rounded,
+				),
+			);
+		},
+		[currentServerId, persistFoldersTree],
+	);
 	const connectionFeatureError = useMemo(() => {
 		const failed =
 			macroSettingsError === null
@@ -5599,15 +6206,56 @@ function App({
 		);
 		return `${failure.title}. ${failure.detail}`;
 	}, [currentServerId, macroSettingsError, terminalSettingsError]);
+	// One workspace per folder of each project, found by project and folder.
 	const workspaceRefs = useRef(
-		new Map<string, ProjectWorkspaceHandle | null>(),
+		new FolderWorkspaceRegistry<ProjectWorkspaceHandle>(),
 	);
 	/**
 	 * Terminal moves this device asked the server for and has not yet seen in a
-	 * confirmed projection, by session id, with the project each is headed to.
+	 * confirmed projection, by session id, with the project each is headed to
+	 * and, for a move between folders, the folder.
 	 * It decides one thing: whether this device follows the terminal there.
 	 */
-	const pendingTerminalMovesRef = useRef(new Map<string, string>());
+	const pendingTerminalMovesRef = useRef(
+		new Map<string, Readonly<{ projectId: string; folderId?: string }>>(),
+	);
+	/**
+	 * The folder each project shows on this device. Which folder is in front is
+	 * this device's own business, exactly as the tab in front is: it is kept
+	 * here and in local storage, and never sent to the server. A project with
+	 * no answer shows General.
+	 */
+	const [selectedFolders, setSelectedFolders] = useState<
+		Readonly<Record<string, string>>
+	>({});
+	const selectedFoldersRef = useRef(selectedFolders);
+	const recalledFoldersRef = useRef(new Map<string, string | undefined>());
+	const rememberedFolderId = useCallback(
+		(projectId: string): string | undefined => {
+			const selected = selectedFoldersRef.current[projectId];
+			if (selected !== undefined) return selected;
+			// Read from storage once per project; what this window selects
+			// afterwards is in the map above.
+			if (!recalledFoldersRef.current.has(projectId))
+				recalledFoldersRef.current.set(
+					projectId,
+					recallSelectedFolder(projectId),
+				);
+			return recalledFoldersRef.current.get(projectId);
+		},
+		[],
+	);
+	const selectFolder = useCallback((projectId: string, folderId: string) => {
+		if (selectedFoldersRef.current[projectId] === folderId) return;
+		// The ref is what a callback run after this one reads; the state is what
+		// makes the selection render.
+		selectedFoldersRef.current = {
+			...selectedFoldersRef.current,
+			[projectId]: folderId,
+		};
+		setSelectedFolders(selectedFoldersRef.current);
+		rememberSelectedFolder(projectId, folderId);
+	}, []);
 	const draggingProjectIdRef = useRef<string | null>(null);
 	const heldActiveProjectIdRef = useRef<string | null>(null);
 	const projectCreationInFlightRef = useRef(false);
@@ -5623,6 +6271,19 @@ function App({
 	);
 	const workspaceSnapshot =
 		terminalClientContext?.workspaceSnapshotStore?.snapshot;
+	// A folder can appear, empty, or go without any project tab changing, so
+	// the window renders for every projection, not only those that move a tab.
+	const [, setWorkspaceRevision] = useState(-1);
+	useEffect(() => {
+		const store = terminalClientContext?.workspaceSnapshotStore;
+		if (store === undefined) return;
+		const unsubscribe = store.subscribe((snapshot) =>
+			setWorkspaceRevision(snapshot.revision),
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, [terminalClientContext?.workspaceSnapshotStore]);
 	const boundWorkspaceViewId =
 		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
 	const {
@@ -6276,9 +6937,32 @@ function App({
 		terminalClientContext?.workspaceSnapshotStore,
 	]);
 	createServerProjectRef.current = createServerProject;
-	const [inventoryByProject, setInventoryByProject] = useState<
-		Record<string, WorkspaceInventoryEntry[]>
-	>({});
+	// Each folder's workspace publishes its own panels. The dashboard, the
+	// switcher, and the badges read a project as one list, so the folders'
+	// inventories are merged per project, in folder order, below.
+	const [inventoryByFolder, setInventoryByFolder] = useState<FolderInventories>(
+		{},
+	);
+	// A projection is a new object every revision; the folder order within it
+	// rarely changes. Keying on the order keeps the merged inventory, and
+	// everything derived from it, from being rebuilt for an unrelated change.
+	const folderOrderKey = JSON.stringify(
+		projects.map((project) => [
+			project.id,
+			workspaceSnapshot?.projects[project.id]?.folderIds ?? null,
+		]),
+	);
+	const inventoryByProject = useMemo(() => {
+		const folderOrder = new Map(
+			JSON.parse(folderOrderKey) as [string, string[] | null][],
+		);
+		return mergeProjectInventories(
+			inventoryByFolder,
+			(projectId) => folderOrder.get(projectId) ?? undefined,
+			rememberedFolderId,
+		);
+		// `selectedFolders` is what `rememberedFolderId` reads.
+	}, [folderOrderKey, inventoryByFolder, rememberedFolderId, selectedFolders]);
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
 		useState<AgentStatusSnapshot>(EMPTY_AGENT_STATUS_SNAPSHOT);
 
@@ -6340,35 +7024,50 @@ function App({
 			const snapshot = store.snapshot;
 			if (snapshot === null) return;
 			let pendingPresentations = 0;
+			const panelBySessionId = new Map(
+				Object.values(snapshot.panels).flatMap((panel) =>
+					panel.type === 'terminal' && panel.sessionId !== undefined
+						? [[panel.sessionId, panel] as const]
+						: [],
+				),
+			);
 			for (const session of Object.values(snapshot.terminalSessions)) {
 				// The automation space's terminals are the Automations section's to
 				// render; no project workspace will ever present them.
 				if (isReservedWorkspaceProject(snapshot.projects[session.projectId]))
 					continue;
-				const workspace = workspaceRefs.current.get(session.projectId);
-				if (workspace == null) {
+				const panel = panelBySessionId.get(session.id);
+				if (panel === undefined) {
+					pendingPresentations += 1;
+					continue;
+				}
+				// A terminal is presented by the workspace of the folder the server
+				// places it in. A folder that has just gained its first panel has
+				// no workspace until the next render; the pass is retried.
+				const workspace = workspaceRefs.current.get(
+					session.projectId,
+					panel.folderId,
+				);
+				if (workspace === undefined || !workspace.isReady()) {
 					pendingPresentations += 1;
 					continue;
 				}
 				if (workspace.ownsControlSession(session.id)) {
 					continue;
 				}
-				const panel = Object.values(snapshot.panels).find(
-					(candidate) => candidate.sessionId === session.id,
-				);
-				if (panel === undefined) {
-					pendingPresentations += 1;
-					continue;
-				}
-				// Another project here still presents a terminal the server has
-				// moved. Hand the same presentation over, so the terminal is shown
-				// once and keeps what is local to its tab.
+				// Another project, or another folder of this one, still presents a
+				// terminal the server has moved. Hand the same presentation over,
+				// so the terminal is shown once and keeps what is local to its tab.
+				const pendingMove = pendingTerminalMovesRef.current.get(session.id);
 				const requestedHere =
-					pendingTerminalMovesRef.current.get(session.id) === session.projectId;
+					pendingMove !== undefined &&
+					pendingMove.projectId === session.projectId &&
+					(pendingMove.folderId === undefined ||
+						pendingMove.folderId === panel.folderId);
 				pendingTerminalMovesRef.current.delete(session.id);
 				let relocated: MovedTerminalTab | null = null;
-				for (const presenter of workspaceRefs.current.values()) {
-					if (presenter == null || presenter === workspace) continue;
+				for (const presenter of workspaceRefs.current.all()) {
+					if (presenter === workspace) continue;
 					const presentedPanelId = presenter.terminalPanelForSession(
 						session.id,
 					);
@@ -6376,8 +7075,12 @@ function App({
 					relocated = presenter.exportTerminalForMove(presentedPanelId);
 					break;
 				}
-				// Only the device that asked for the move follows the terminal.
-				if (requestedHere) activateProjectRef.current(session.projectId);
+				// Only the device that asked for the move follows the terminal: to
+				// its project, and to the folder it is now in.
+				if (requestedHere) {
+					selectFolder(session.projectId, panel.folderId);
+					activateProjectRef.current(session.projectId);
+				}
 				const accepted =
 					relocated === null
 						? workspace.acceptServerTerminal(
@@ -6408,9 +7111,13 @@ function App({
 			// local workspace without changing its canonical project ownership.
 			// Reconcile against global panel existence so those presentations survive;
 			// a real close removes the canonical panel from this complete list.
-			for (const workspace of workspaceRefs.current.values()) {
-				if (workspace == null) continue;
-				workspace.reconcileServerPanels(canonicalTerminalPanels);
+			// A panel that has changed folder is let go by its old workspace only
+			// once the new folder's workspace exists to show it.
+			const canHandOver = (panel: ServerWorkspacePanel) =>
+				workspaceRefs.current.get(panel.projectId, panel.folderId)?.isReady() ===
+				true;
+			for (const workspace of workspaceRefs.current.all()) {
+				workspace.reconcileServerPanels(canonicalTerminalPanels, canHandOver);
 			}
 			if (
 				pendingPresentations > 0 &&
@@ -6450,7 +7157,7 @@ function App({
 			unsubscribe();
 			cancelPendingPass();
 		};
-	}, [terminalClientContext?.workspaceSnapshotStore]);
+	}, [selectFolder, terminalClientContext?.workspaceSnapshotStore]);
 
 	useEffect(() => {
 		const store = terminalClientContext?.workspaceSnapshotStore;
@@ -6502,10 +7209,89 @@ function App({
 		],
 	);
 
-	const focusProjectTerminal = useCallback(
-		(projectId: string) =>
-			workspaceRefs.current.get(projectId)?.focusActiveTerminal(),
+	const workspaceSnapshotStoreRef = useRef(
+		terminalClientContext?.workspaceSnapshotStore,
+	);
+	workspaceSnapshotStoreRef.current =
+		terminalClientContext?.workspaceSnapshotStore;
+	const inventoryByProjectRef = useRef(inventoryByProject);
+	inventoryByProjectRef.current = inventoryByProject;
+	/**
+	 * The workspace that answers a project-level command, such as the
+	 * new-terminal shortcut: the one for the folder this device has selected.
+	 */
+	const commandWorkspace = useCallback(
+		(projectId: string): ProjectWorkspaceHandle | undefined => {
+			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
+			return workspaceRefs.current.get(
+				projectId,
+				commandFolderId(
+					snapshot?.projects[projectId],
+					snapshot?.folders ?? NO_WORKSPACE_FOLDERS,
+					rememberedFolderId(projectId),
+				),
+			);
+		},
+		[rememberedFolderId],
+	);
+	/**
+	 * The folder that holds a panel. The projection knows every terminal; a
+	 * file or folder opened on this device is known only to the inventory.
+	 */
+	const folderIdOfPanel = useCallback(
+		(projectId: string, panelId: string): string | undefined => {
+			const panel = workspaceSnapshotStoreRef.current?.snapshot?.panels[panelId];
+			return panel?.projectId === projectId
+				? panel.folderId
+				: folderIdOfInventoryPanel(
+						inventoryByProjectRef.current[projectId],
+						panelId,
+					);
+		},
 		[],
+	);
+	/** The workspace presenting a panel: its folder's, whichever is selected. */
+	const workspaceOfPanel = useCallback(
+		(projectId: string, panelId: string): ProjectWorkspaceHandle | undefined =>
+			workspaceRefs.current.get(projectId, folderIdOfPanel(projectId, panelId)) ??
+			workspaceRefs.current
+				.ofProject(projectId)
+				.find(
+					(workspace) => workspace.terminalSessionForPanel(panelId) !== undefined,
+				),
+		[folderIdOfPanel],
+	);
+	/**
+	 * Bring a panel to the front from anywhere: select its folder, show its
+	 * project, then activate it. Every route that activates a panel from
+	 * outside its folder goes through here, so none can focus a panel behind
+	 * the folder on screen.
+	 */
+	const activatePanelInProject = useCallback(
+		(projectId: string, panelId: string, knownFolderId?: string) => {
+			const folderId = knownFolderId ?? folderIdOfPanel(projectId, panelId);
+			if (folderId !== undefined) selectFolder(projectId, folderId);
+			activateProjectRef.current(projectId);
+			window.requestAnimationFrame(() => {
+				const workspace =
+					workspaceRefs.current.get(projectId, folderId) ??
+					workspaceOfPanel(projectId, panelId);
+				if (workspace === undefined) return;
+				const sessionId = workspace.terminalSessionForPanel(panelId);
+				if (sessionId === undefined) workspace.activatePanel(panelId);
+				else workspace.activateTerminal(panelId, sessionId);
+			});
+		},
+		[folderIdOfPanel, selectFolder, workspaceOfPanel],
+	);
+	const activateFolderPanel = useCallback(
+		(projectId: string, folderId: string, panelId: string) =>
+			activatePanelInProject(projectId, panelId, folderId),
+		[activatePanelInProject],
+	);
+	const focusProjectTerminal = useCallback(
+		(projectId: string) => commandWorkspace(projectId)?.focusActiveTerminal(),
+		[commandWorkspace],
 	);
 	const openEditProjectWindow = useProjectEditor({
 		applicationClient: terminalClientContext?.applicationClient,
@@ -6522,9 +7308,13 @@ function App({
 				return;
 			}
 
-			const sourceWorkspace = workspaceRefs.current.get(sourceProjectId);
-			const targetWorkspace = workspaceRefs.current.get(targetProjectId);
-			if (!sourceWorkspace || !targetWorkspace) {
+			// The target shows the terminal in its General folder, whose workspace
+			// exists once it holds a panel; the project only has to be here.
+			const sourceWorkspace = workspaceOfPanel(sourceProjectId, panelId);
+			if (
+				!sourceWorkspace ||
+				!projectsRef.current.some((project) => project.id === targetProjectId)
+			) {
 				return;
 			}
 
@@ -6547,25 +7337,83 @@ function App({
 			// The server moves the terminal. Nothing changes here until it has:
 			// reconciliation relocates the tab once the move is the confirmed
 			// projection, and a refused move leaves the tab exactly where it is.
-			pendingTerminalMovesRef.current.set(sessionId, targetProjectId);
+			const pendingMove = { projectId: targetProjectId };
+			pendingTerminalMovesRef.current.set(sessionId, pendingMove);
 			void store
 				.movePanel({ panelId: canonicalPanel.id, targetProjectId })
 				.catch((error: unknown) => {
-					if (pendingTerminalMovesRef.current.get(sessionId) === targetProjectId)
+					if (pendingTerminalMovesRef.current.get(sessionId) === pendingMove)
 						pendingTerminalMovesRef.current.delete(sessionId);
-					sourceWorkspace.reportError(
+					(commandWorkspace(sourceProjectId) ?? sourceWorkspace).reportError(
 						error instanceof Error
 							? error.message
 							: 'Unable to move this terminal to that project.',
 					);
 				});
 		},
-		[terminalClientContext?.workspaceSnapshotStore],
+		[
+			commandWorkspace,
+			projectsRef,
+			terminalClientContext?.workspaceSnapshotStore,
+			workspaceOfPanel,
+		],
 	);
 	/**
-	 * The terminal tab being dragged toward the project bar, if any.
+	 * Move a terminal to another folder of its own project.
 	 *
-	 * A drop on a project tab only names the target. The move itself waits for
+	 * As with a move between projects, the server makes the move and nothing
+	 * changes here until it has. Unlike one, nothing about the terminal changes
+	 * but where it is shown: its session, scrollback, and process are untouched.
+	 */
+	const moveTerminalToFolder = useCallback(
+		(projectId: string, panelId: string, targetFolderId: string) => {
+			const sourceWorkspace = workspaceOfPanel(projectId, panelId);
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			const sessionId = sourceWorkspace?.terminalSessionForPanel(panelId);
+			const canonicalPanel =
+				sessionId === undefined || store?.snapshot == null
+					? undefined
+					: folderOfSession(store.snapshot.panels, sessionId);
+			if (
+				sourceWorkspace === undefined ||
+				store === undefined ||
+				sessionId === undefined ||
+				canonicalPanel === undefined ||
+				canonicalPanel.projectId !== projectId ||
+				canonicalPanel.folderId === targetFolderId
+			) {
+				return;
+			}
+			const pendingMove = { projectId, folderId: targetFolderId };
+			pendingTerminalMovesRef.current.set(sessionId, pendingMove);
+			void store
+				.movePanelToFolder({
+					panelId: canonicalPanel.id,
+					folderId: targetFolderId,
+				})
+				.catch((error: unknown) => {
+					if (pendingTerminalMovesRef.current.get(sessionId) === pendingMove)
+						pendingTerminalMovesRef.current.delete(sessionId);
+					// Refused: the terminal stays where it is, and the folder on screen
+					// says why.
+					(commandWorkspace(projectId) ?? sourceWorkspace).reportError(
+						error instanceof Error
+							? error.message
+							: 'Unable to move this terminal to that folder.',
+					);
+				});
+		},
+		[
+			commandWorkspace,
+			terminalClientContext?.workspaceSnapshotStore,
+			workspaceOfPanel,
+		],
+	);
+	/**
+	 * The terminal being dragged toward the project bar or a folder, if any:
+	 * a panel tab, or a row of the Folders tree.
+	 *
+	 * A drop on a project tab or a folder row only names the target. The move itself waits for
 	 * the drag to end: moving the terminal removes the very tab being dragged,
 	 * and a drag whose source has left the document never reports its end to
 	 * the window, which would strand Dockview's drag bookkeeping.
@@ -6576,29 +7424,51 @@ function App({
 	} | null>(null);
 	const terminalTabDragRef = useRef<typeof terminalTabDrag>(null);
 	const terminalDropTargetProjectIdRef = useRef<string | null>(null);
+	const terminalDropTargetFolderIdRef = useRef<string | null>(null);
 	const reportTerminalTabDrag = useCallback(
 		(sourceProjectId: string, drag: TerminalTabDrag | null) => {
 			if (drag !== null) {
 				const started = { panelId: drag.panelId, sourceProjectId };
 				terminalDropTargetProjectIdRef.current = null;
+				terminalDropTargetFolderIdRef.current = null;
 				terminalTabDragRef.current = started;
 				setTerminalTabDrag(started);
 				return;
 			}
 			const ended = terminalTabDragRef.current;
 			const targetProjectId = terminalDropTargetProjectIdRef.current;
+			const targetFolderId = terminalDropTargetFolderIdRef.current;
 			terminalTabDragRef.current = null;
 			terminalDropTargetProjectIdRef.current = null;
+			terminalDropTargetFolderIdRef.current = null;
 			setTerminalTabDrag(null);
-			if (ended !== null && targetProjectId !== null) {
+			if (ended === null) return;
+			if (targetProjectId !== null) {
 				moveTerminalToProject(
 					ended.sourceProjectId,
 					ended.panelId,
 					targetProjectId,
 				);
+			} else if (targetFolderId !== null) {
+				moveTerminalToFolder(
+					ended.sourceProjectId,
+					ended.panelId,
+					targetFolderId,
+				);
 			}
 		},
-		[moveTerminalToProject],
+		[moveTerminalToFolder, moveTerminalToProject],
+	);
+	/** A folder takes a terminal only from its own project. Like a project tab,
+	 * it names the target and leaves the move to the end of the drag. */
+	const dropTerminalOnFolder = useCallback(
+		(projectId: string, folderId: string) => {
+			if (terminalTabDragRef.current?.sourceProjectId !== projectId) return;
+			terminalDropTargetProjectIdRef.current = null;
+			terminalDropTargetFolderIdRef.current = folderId;
+			setTerminalTabDrag(null);
+		},
+		[],
 	);
 
 	const toggleActiveProjectExplorer = useCallback(() => {
@@ -6623,6 +7493,186 @@ function App({
 		updateProject,
 	]);
 
+	const toggleActiveProjectFolders = () => {
+		const project = projectsRef.current.find(
+			(candidate) => candidate.id === activeProjectId,
+		);
+		if (project === undefined) return;
+		setFoldersTreeOpen(project.id, !isFoldersTreeOpenFor(project.id));
+	};
+	/**
+	 * Answer a folder's offer to take the terminal that created its worktree.
+	 * Accepting is a move this device asked for, so it follows the terminal to
+	 * its folder once the server has made the move, as with any other.
+	 */
+	const answerFolderOffer = useCallback(
+		(projectId: string, folderId: string, answer: 'accept' | 'decline') => {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			if (store === undefined) return;
+			const offeredPanelId =
+				store.snapshot?.folders[folderId]?.captureOffer?.panelId;
+			const sessionId =
+				offeredPanelId === undefined
+					? undefined
+					: store.snapshot?.panels[offeredPanelId]?.sessionId;
+			const pendingMove = { projectId, folderId };
+			if (answer === 'accept' && sessionId !== undefined)
+				pendingTerminalMovesRef.current.set(sessionId, pendingMove);
+			void store
+				.answerFolderOffer(folderId, answer)
+				.catch((error: unknown) => {
+					if (
+						sessionId !== undefined &&
+						pendingTerminalMovesRef.current.get(sessionId) === pendingMove
+					)
+						pendingTerminalMovesRef.current.delete(sessionId);
+					commandWorkspace(projectId)?.reportError(
+						error instanceof Error
+							? error.message
+							: 'Unable to answer that offer.',
+					);
+				});
+		},
+		[commandWorkspace, terminalClientContext?.workspaceSnapshotStore],
+	);
+	/**
+	 * Create a terminal in a folder, starting in that folder's root.
+	 *
+	 * The folder comes to the front first. Its own workspace creates the
+	 * terminal, naming the folder by id, and a folder with no panels has no
+	 * workspace until it is the one selected.
+	 */
+	const openShellInFolder = useCallback(
+		(projectId: string, folderId: string) => {
+			selectFolder(projectId, folderId);
+			activateProjectRef.current(projectId);
+			const startedAt = performance.now();
+			const dispatch = () => {
+				const workspace = workspaceRefs.current.get(projectId, folderId);
+				if (workspace?.isReady() === true) {
+					void workspace.openShellAtFolderRoot();
+					return;
+				}
+				if (performance.now() - startedAt >= 2_000) {
+					commandWorkspace(projectId)?.reportError(
+						'That folder is not ready for a new terminal.',
+					);
+					return;
+				}
+				window.requestAnimationFrame(dispatch);
+			};
+			dispatch();
+		},
+		[commandWorkspace, selectFolder],
+	);
+	/** Close a panel through its own workspace, as closing its tab does. */
+	const closeFolderPanel = useCallback(
+		async (projectId: string, folderId: string, panelId: string) => {
+			const workspace =
+				workspaceRefs.current.get(projectId, folderId) ??
+				workspaceOfPanel(projectId, panelId);
+			if (workspace === undefined)
+				throw new Error('That panel is not open on this device.');
+			await workspace.requestClosePanel(panelId);
+		},
+		[workspaceOfPanel],
+	);
+	/**
+	 * Terminals the server moved into the folder of a worktree they created,
+	 * each said once with an offer to put it back.
+	 */
+	const [captureNotices, setCaptureNotices] = useState<
+		readonly CaptureNotice[]
+	>([]);
+	const captureNoticeIdRef = useRef(0);
+	// The panel in front of this window, and the one it replaced: a capture
+	// can be heard of just after the terminal has left the folder on screen.
+	const frontPanelHistoryRef = useRef<FrontPanelHistory>({});
+	useEffect(() => {
+		const panelId =
+			isHomeSelected || !activeProjectId
+				? undefined
+				: activePanelIdFromInventory(
+						inventoryByProject[activeProjectId] ?? NO_INVENTORY,
+					);
+		frontPanelHistoryRef.current = recordFrontPanel(
+			frontPanelHistoryRef.current,
+			panelId === undefined || !activeProjectId
+				? undefined
+				: { projectId: activeProjectId, panelId },
+			performance.now(),
+		);
+	}, [activeProjectId, inventoryByProject, isHomeSelected]);
+	const handleTerminalCaptured = useCallback(
+		(capture: FolderTerminalCapture) => {
+			if (
+				!projectsRef.current.some((project) => project.id === capture.projectId)
+			)
+				return;
+			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
+			const title =
+				inventoryByProjectRef.current[capture.projectId]?.find(
+					(entry) => entry.panelId === capture.panelId,
+				)?.title ??
+				snapshot?.panels[capture.panelId]?.title ??
+				'Terminal';
+			captureNoticeIdRef.current += 1;
+			const notice = { ...capture, id: captureNoticeIdRef.current, title };
+			setCaptureNotices((current) => withCaptureNotice(current, notice));
+			// The device that was looking at the terminal goes on looking at it.
+			// Every other device only hears that it moved.
+			if (
+				!wasLookingAt(frontPanelHistoryRef.current, capture, performance.now())
+			)
+				return;
+			const sessionId = snapshot?.panels[capture.panelId]?.sessionId;
+			const hasArrived =
+				sessionId !== undefined &&
+				workspaceRefs.current
+					.get(capture.projectId, capture.folderId)
+					?.terminalPanelForSession(sessionId) !== undefined;
+			if (hasArrived) {
+				activatePanelInProject(
+					capture.projectId,
+					capture.panelId,
+					capture.folderId,
+				);
+				return;
+			}
+			// The move is not on screen yet. Following it is what reconciliation
+			// already does for a move this device is waiting on: it brings the
+			// folder forward and hands the tab over focused.
+			if (sessionId !== undefined)
+				pendingTerminalMovesRef.current.set(sessionId, {
+					projectId: capture.projectId,
+					folderId: capture.folderId,
+				});
+			selectFolder(capture.projectId, capture.folderId);
+		},
+		[activatePanelInProject, projectsRef, selectFolder],
+	);
+	useFolderCaptureEvents(
+		terminalClientContext?.applicationClient,
+		handleTerminalCaptured,
+	);
+	const dismissCaptureNotice = useCallback(
+		(noticeId: number) =>
+			setCaptureNotices((current) => withoutCaptureNotice(current, noticeId)),
+		[],
+	);
+	/** Put a captured terminal back in the folder it came from. */
+	const undoCapture = useCallback(
+		(notice: CaptureNotice) => {
+			dismissCaptureNotice(notice.id);
+			moveTerminalToFolder(
+				notice.projectId,
+				notice.panelId,
+				notice.fromFolderId,
+			);
+		},
+		[dismissCaptureNotice, moveTerminalToFolder],
+	);
+
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
 			// The dashboard belongs to the workspace view, not to a project, so it
@@ -6646,7 +7696,7 @@ function App({
 			// workspace view's own.
 			if (
 				command === 'open-command-bar' &&
-				(isHomeSelected || !workspaceRefs.current.get(activeProjectId))
+				(isHomeSelected || !commandWorkspace(activeProjectId))
 			) {
 				setIsViewCommandBarOpen(true);
 				return Promise.resolve();
@@ -6673,13 +7723,14 @@ function App({
 				return auxiliaryRouteController.openPerformanceLog();
 			}
 			return (
-				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
+				commandWorkspace(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
 			);
 		},
 		[
 			activeProjectId,
 			auxiliaryRouteController,
+			commandWorkspace,
 			isHomeSelected,
 			selectHome,
 			toggleHomeSidebar,
@@ -6688,23 +7739,10 @@ function App({
 	);
 
 	const updateWorkspaceInventory = useCallback(
-		(projectId: string, entries: WorkspaceInventoryEntry[]) => {
-			setInventoryByProject((current) => {
-				if (entries.length === 0) {
-					if (!(projectId in current)) {
-						return current;
-					}
-
-					const { [projectId]: _removed, ...next } = current;
-					void _removed;
-					return next;
-				}
-
-				return {
-					...current,
-					[projectId]: entries,
-				};
-			});
+		(projectId: string, folderId: string, entries: WorkspaceInventoryEntry[]) => {
+			setInventoryByFolder((current) =>
+				withFolderInventory(current, projectId, folderId, entries),
+			);
 		},
 		[],
 	);
@@ -7038,15 +8076,43 @@ function App({
 	const applyDashboardActivation = useCallback(
 		(activation: DashboardActivation) => {
 			if (activation.kind === 'stale') return;
-			activateProject(activation.projectId);
-			if (activation.kind === 'project') return;
-			window.requestAnimationFrame(() => {
-				workspaceRefs.current
-					.get(activation.projectId)
-					?.activateTerminal(activation.panelId, activation.sessionId);
-			});
+			if (activation.kind === 'project') {
+				activateProject(activation.projectId);
+				return;
+			}
+			activatePanelInProject(activation.projectId, activation.panelId);
 		},
-		[activateProject],
+		[activatePanelInProject, activateProject],
+	);
+	// At phone width there is no Folders column; the switcher lists each
+	// project's folders instead. Named from every attached server's own
+	// projection, and keyed like the badges, by server and project.
+	const compactSwitcherFolderKey = JSON.stringify(
+		// Only the compact layout draws the switcher.
+		(isCompactChrome ? connections : []).flatMap((connection) => {
+			const snapshot = connection.context?.workspaceSnapshotStore?.snapshot;
+			const serverId = connection.serverId ?? connection.context?.serverId;
+			if (snapshot == null || serverId === undefined) return [];
+			return Object.values(snapshot.projects).map((project) => [
+				compositionTabKey(serverId, project.id),
+				project.folderIds.flatMap((folderId) => {
+					const folder = snapshot.folders[folderId];
+					return folder === undefined
+						? []
+						: [{ id: folder.id, name: folder.name }];
+				}),
+			]);
+		}),
+	);
+	const compactSwitcherFolders = useMemo(
+		() =>
+			Object.fromEntries(
+				JSON.parse(compactSwitcherFolderKey) as [
+					string,
+					{ id: string; name: string }[],
+				][],
+			),
+		[compactSwitcherFolderKey],
 	);
 	/**
 	 * The compact switcher's list. Built from the same sources the dashboard
@@ -7057,13 +8123,14 @@ function App({
 		() =>
 			buildCompactSwitcherGroups({
 				activityBadgesByProject,
+				foldersByProject: compactSwitcherFolders,
 				previewForSession: (sessionId) =>
 					sharedTerminalContextReadersRef.current
 						.get(sessionId)
 						?.().recentOutput,
 				sources: dashboardSources,
 			}),
-		[activityBadgesByProject, dashboardSources],
+		[activityBadgesByProject, compactSwitcherFolders, dashboardSources],
 	);
 	const compactSwitcherFilteredGroups = useMemo(
 		() =>
@@ -7126,12 +8193,13 @@ function App({
 				title: row.title,
 				...(row.sessionId === undefined ? {} : { sessionId: row.sessionId }),
 			});
-			if (row.panelKind === 'terminal') return;
-			window.requestAnimationFrame(() => {
-				workspaceRefs.current.get(row.projectId)?.activatePanel(row.panelId);
-			});
+			if (row.panelKind === 'terminal' || row.serverId !== currentServerId)
+				return;
+			// A file or folder panel has no session for the dashboard path to
+			// activate, so it is brought to the front by its panel id.
+			activatePanelInProject(row.projectId, row.panelId, row.folderId);
 		},
-		[activateDashboardRow],
+		[activateDashboardRow, activatePanelInProject, currentServerId],
 	);
 	/**
 	 * Editing a panel from the switcher names the panel rather than relying
@@ -7190,7 +8258,7 @@ function App({
 	const createTerminalInProject = useCallback((projectId: string) => {
 		const startedAt = performance.now();
 		const dispatch = () => {
-			const workspace = workspaceRefs.current.get(projectId);
+			const workspace = commandWorkspace(projectId);
 			if (workspace) {
 				void workspace.executeCommand('new-terminal');
 				return;
@@ -7199,7 +8267,7 @@ function App({
 			window.requestAnimationFrame(dispatch);
 		};
 		dispatch();
-	}, []);
+	}, [commandWorkspace]);
 	/**
 	 * Creating in a project the window is not working in means going to its
 	 * server first; the intent is held until that binding lands, the same way a
@@ -7346,25 +8414,19 @@ function App({
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
 			setIsActivityMenuOpen(false);
-			activateProject(item.projectId);
-			window.requestAnimationFrame(() => {
-				workspaceRefs.current
-					.get(item.projectId)
-					?.activateTerminal(item.panelId, item.sessionId);
-			});
+			activatePanelInProject(item.projectId, item.panelId);
 		},
-		[activateProject],
+		[activatePanelInProject],
 	);
 
 	// Dismissing is the acknowledgement selecting the tab would report, routed
 	// to the workspace that owns the terminal; nothing is selected or activated.
 	const dismissNotification = useCallback(
 		(item: TerminalActivityOverviewItem) => {
-			workspaceRefs.current
-				.get(item.projectId)
-				?.acknowledgeTerminal(item.sessionId);
+			const workspace = workspaceOfPanel(item.projectId, item.panelId);
+			workspace?.acknowledgeTerminal(item.sessionId);
 		},
-		[],
+		[workspaceOfPanel],
 	);
 	const dismissAllNotifications = useCallback(() => {
 		for (const item of terminalActivityItems.notifications)
@@ -7605,6 +8667,34 @@ function App({
 	// A project workspace owns the keyboard while it is on screen. When none is —
 	// the dashboard is showing, or this view holds no projects — the workspace
 	// view answers for the commands that are its own rather than a project's.
+	// A project is presented by one workspace per folder: the folder this
+	// device has selected, and every folder that holds a panel. An empty folder
+	// nobody is looking at has none, so a repository with dozens of worktrees
+	// costs what its open folders cost.
+	const mountedFoldersRef = useRef(new Map<string, ReadonlySet<string>>());
+	const nextMountedFolders = new Map<string, ReadonlySet<string>>();
+	const projectFolderWorkspaces = projects.map((project) => {
+		const canonical = workspaceSnapshot?.projects[project.id];
+		const folders = workspaceSnapshot?.folders ?? NO_WORKSPACE_FOLDERS;
+		const remembered = rememberedFolderId(project.id);
+		const mounted = foldersToMount({
+			projectId: project.id,
+			project: canonical,
+			folders,
+			rememberedFolderId: remembered,
+			mounted: mountedFoldersRef.current.get(project.id) ?? NO_MOUNTED_FOLDERS,
+			holdsLocalPanels: (folderId) =>
+				(inventoryByFolder[project.id]?.[folderId]?.length ?? 0) > 0,
+		});
+		nextMountedFolders.set(project.id, new Set(mounted.map(({ id }) => id)));
+		return {
+			project,
+			folders: mounted,
+			selectedFolderId: commandFolderId(canonical, folders, remembered),
+		};
+	});
+	mountedFoldersRef.current = nextMountedFolders;
+
 	const hasActiveProjectWorkspace =
 		!isHomeSelected &&
 		projects.some((project) => project.id === activeProjectId);
@@ -7737,6 +8827,54 @@ function App({
 			return;
 		}
 		activateProject(target.projectId);
+	};
+	/**
+	 * The Folders tree a tab's peek shows: the one that project's own Folders
+	 * column draws, from the same projection, inventory, and worktree listing.
+	 * A tab of another attached server reads that server's projection, which
+	 * names its folders and terminals; their status and branches are known only
+	 * to the server the window is working in.
+	 */
+	const peekFoldersOf = (handle: string) => {
+		const target = resolveTabHandle(handle);
+		const isOwn = target.serverId === currentServerId;
+		const snapshot = isOwn
+			? workspaceSnapshot
+			: byServerId.get(target.serverId)?.context?.workspaceSnapshotStore
+					?.snapshot;
+		const project = snapshot?.projects[target.projectId];
+		if (snapshot == null || project === undefined) return null;
+		return buildProjectFolderTree({
+			project,
+			folders: snapshot.folders,
+			panels: snapshot.panels,
+			selectedFolderId: isOwn ? rememberedFolderId(target.projectId) : undefined,
+			inventory: isOwn
+				? (inventoryByProject[target.projectId] ?? NO_INVENTORY)
+				: NO_INVENTORY,
+			worktreeStatus: isOwn
+				? commandWorkspace(target.projectId)?.worktreeStatus()
+				: undefined,
+		});
+	};
+	const choosePeekFolder = (handle: string, folderId: string) => {
+		const target = resolveTabHandle(handle);
+		setFailedCreationSelectedOver(null);
+		// A folder on another server is reached by going there; which folder is
+		// in front is then that visit's own choice.
+		if (activateAnotherServer(target.serverId, target.projectId)) return;
+		selectFolder(target.projectId, folderId);
+		activateProject(target.projectId);
+	};
+	const choosePeekTerminal = (
+		handle: string,
+		folderId: string,
+		panelId: string,
+	) => {
+		const target = resolveTabHandle(handle);
+		setFailedCreationSelectedOver(null);
+		if (activateAnotherServer(target.serverId, target.projectId)) return;
+		activatePanelInProject(target.projectId, panelId, folderId);
 	};
 	/** A handle that belongs to the server the window is currently working in,
 	 * or nothing: an operation on another server's tab has to go there first. */
@@ -7990,14 +9128,22 @@ function App({
 					/>
 				) : (
 					<>
+				{/* The leading toggle answers for the column on the leading side: a
+				    project's Folders tree, or Home's own sidebar while Home is shown. */}
 				<div className="project-tab-sidebar-toggle-box">
 					<button
 						type="button"
-						className={`project-tab-sidebar-toggle${(isHomeSelected ? isHomeSidebarVisible : activeProject?.isFileExplorerOpen) ? ' project-tab-sidebar-toggle--active' : ''}`}
-						onClick={toggleActiveProjectExplorer}
+						className={
+							isHomeSelected
+								? `project-tab-sidebar-toggle${isHomeSidebarVisible ? ' project-tab-sidebar-toggle--active' : ''}`
+								: `project-tab-folders-toggle${activeProject && isFoldersTreeOpenFor(activeProject.id) ? ' project-tab-folders-toggle--active' : ''}`
+						}
+						onClick={
+							isHomeSelected ? toggleHomeSidebar : toggleActiveProjectFolders
+						}
 						disabled={!isHomeSelected && !activeProject}
-						aria-label="Toggle file explorer"
-						title="Toggle file explorer"
+						aria-label={isHomeSelected ? 'Toggle file explorer' : 'Toggle folders'}
+						title={isHomeSelected ? 'Toggle file explorer' : 'Toggle folders'}
 					>
 						<svg
 							aria-hidden="true"
@@ -8065,6 +9211,13 @@ function App({
 					}
 					onCreateProject={() => void createServerProject()}
 					projects={displayedProjects}
+				/>
+				<ProjectTabPeek
+					activeTabId={isHomeSelected ? null : displayedActiveHandle}
+					isDragging={draggingProjectId !== null || terminalTabDrag !== null}
+					foldersOf={peekFoldersOf}
+					onChooseFolder={choosePeekFolder}
+					onChooseTerminal={choosePeekTerminal}
 				/>
 				<div className="project-tab-add-box">
 					<button
@@ -8160,6 +9313,36 @@ function App({
 						tone={remoteButtonTone}
 					/>
 				</div>
+				{/* A project's sidebar is on the trailing side, and so is its toggle.
+				    Home has one column, toggled from the leading end. */}
+				{isHomeSelected ? null : (
+					<div className="project-tab-sidebar-toggle-box project-tab-sidebar-toggle-box--trailing">
+						<button
+							type="button"
+							className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
+							onClick={toggleActiveProjectExplorer}
+							disabled={!activeProject}
+							aria-label="Toggle file explorer"
+							title="Toggle file explorer"
+						>
+							<svg
+								aria-hidden="true"
+								width="14"
+								height="14"
+								viewBox="0 0 14 14"
+								fill="none"
+								xmlns="http://www.w3.org/2000/svg"
+							>
+								<path
+									d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+									stroke="currentColor"
+									strokeWidth="1.4"
+								/>
+								<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+							</svg>
+						</button>
+					</div>
+				)}
 					</>
 				)}
 			</header>
@@ -8225,6 +9408,14 @@ function App({
 					onNewTerminal={(group) => {
 						closeCompactSwitcher();
 						void createCompactSwitcherTerminal(group);
+					}}
+					onActivateFolder={(group, folder) => {
+						closeCompactSwitcher();
+						// A folder on another server is reached by going there; which
+						// folder is in front is then that visit's own choice.
+						if (activateAnotherServer(group.serverId, group.projectId)) return;
+						selectFolder(group.projectId, folder.folderId);
+						activateProject(group.projectId);
 					}}
 					{...(isHomeSelected || activeProjectId === undefined
 						? {}
@@ -8334,19 +9525,43 @@ function App({
 						searchPlaces={searchViewPlaces}
 					/>
 					<MissedRunsNotice automations={serverAutomations} />
-					{projects.map((project) => (
+					{projectFolderWorkspaces.flatMap(
+						({ project, folders, selectedFolderId }) =>
+							folders.map((folder) => (
 						<ProjectWorkspace
-							key={project.id}
+							key={folderWorkspaceKey(project.id, folder.id)}
 							ref={(instance) => {
-								workspaceRefs.current.set(project.id, instance);
+								workspaceRefs.current.set(project.id, folder.id, instance);
 							}}
 							agentStatusSnapshot={agentStatusSnapshot}
 							auxiliaryRoutes={auxiliaryRouteController}
+							folder={folder}
+							// On screen only as the selected folder of the project in front.
+							// Every other workspace keeps its terminals running behind it.
 							isActive={
 								!isHomeSelected &&
 								!isPendingProjectFailure &&
-								project.id === activeProjectId
+								project.id === activeProjectId &&
+								folder.id === selectedFolderId
 							}
+							projectInventory={inventoryByProject[project.id] ?? NO_INVENTORY}
+							isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
+							foldersTreeWidth={foldersTreeWidthFor(project.id)}
+							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
+							acceptsFolderTerminalDrop={
+								terminalTabDrag?.sourceProjectId === project.id
+							}
+							onSelectFolder={selectFolder}
+							onActivateFolderPanel={activateFolderPanel}
+							onDropTerminalOnFolder={dropTerminalOnFolder}
+							onAnswerFolderOffer={answerFolderOffer}
+							onOpenShellInFolder={openShellInFolder}
+							onCloseFolderPanel={closeFolderPanel}
+							captureNotices={captureNotices.filter(
+								(notice) => notice.projectId === project.id,
+							)}
+							onUndoCapture={undoCapture}
+							onDismissCaptureNotice={dismissCaptureNotice}
 							isCompactChrome={isCompactChrome}
 							sharedTerminalContextReaders={sharedTerminalContextReadersRef}
 							isMac={isMac}
@@ -8357,8 +9572,8 @@ function App({
 							onToggleStatusBar={toggleStatusBar}
 							isStatusBarVisible={isStatusBarVisible}
 							statusBarSlot={statusBarSlot}
-							onCloseProject={closeProject}
 							onEditProject={openEditProjectWindow}
+							onMoveTerminalToFolder={moveTerminalToFolder}
 							onMoveTerminalToProject={moveTerminalToProject}
 							onPopoutProject={popoutProject}
 							onTerminalTabDrag={reportTerminalTabDrag}
@@ -8371,7 +9586,8 @@ function App({
 							terminalClientContext={terminalClientContext}
 							adoptedTerminals={adoptedTerminalsByProject[project.id]}
 						/>
-					))}
+							)),
+					)}
 				<AppWindowHost />
 				</McpApprovalsContext.Provider>
 			</div>

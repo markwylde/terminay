@@ -204,3 +204,43 @@ test("workspace facade sends a bounded terminal note and rejects an invalid one 
   await assert.rejects(workspace.updatePanel({ panelId: "panel-a", patch: { note: "a\0b" } }), /panel note is invalid/);
   assert.equal(calls.length, 3);
 });
+
+test("workspace facade sends folder commands and rejects unbounded ones before transport", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({
+    async query() { throw new Error("not reached"); },
+    async command(operation, payload) { calls.push([operation, payload]); return { result: { revision: 1 } }; },
+  });
+  await workspace.createFolder({ projectId: "project-a", name: "Servers" });
+  await workspace.renameFolder({ folderId: "folder:r3", name: "Dev servers" });
+  await workspace.reorderFolders({ projectId: "project-a", folderIds: ["folder:r1", "folder:r3"] });
+  await workspace.movePanelToFolder({ panelId: "panel-a", folderId: "folder:r3", index: 0 });
+  await workspace.reorderPanels({ projectId: "project-a", folderId: "folder:r3", panelIds: ["panel-a"] });
+  await workspace.createPanel({ panel: { id: "panel-file", projectId: "project-a", folderId: "folder:r3", type: "file", path: "README.md", createdAt: 1 } });
+  await workspace.answerFolderOffer("folder:r3", "accept");
+  await workspace.answerFolderOffer("folder:r3", "decline");
+  await workspace.deleteFolder("folder:r3");
+  assert.deepEqual(calls.map(([operation]) => operation), Array(9).fill("workspace.command"));
+  assert.deepEqual(calls.map(([, payload]) => payload.command), [
+    { type: "folder.create", projectId: "project-a", name: "Servers" },
+    { type: "folder.rename", folderId: "folder:r3", name: "Dev servers" },
+    { type: "folder.reorder", projectId: "project-a", folderIds: ["folder:r1", "folder:r3"] },
+    { type: "panel.moveToFolder", panelId: "panel-a", folderId: "folder:r3", index: 0 },
+    { type: "panel.reorder", projectId: "project-a", folderId: "folder:r3", panelIds: ["panel-a"] },
+    { type: "panel.create", panel: { id: "panel-file", projectId: "project-a", folderId: "folder:r3", type: "file", path: "README.md", createdAt: 1 } },
+    { type: "folder.offer.accept", folderId: "folder:r3" },
+    { type: "folder.offer.decline", folderId: "folder:r3" },
+    { type: "folder.delete", folderId: "folder:r3" },
+  ]);
+
+  await assert.rejects(workspace.createFolder({ projectId: "project-a", name: "  " }), /folder create request is invalid/);
+  await assert.rejects(workspace.createFolder({ projectId: "project-a", name: "x".repeat(257) }), /folder create request is invalid/);
+  await assert.rejects(workspace.renameFolder({ folderId: "bad id", name: "x" }), /folder rename request is invalid/);
+  await assert.rejects(workspace.reorderFolders({ projectId: "project-a", folderIds: ["folder:r1", "folder:r1"] }), /folder reorder ids are invalid/);
+  await assert.rejects(workspace.movePanelToFolder({ panelId: "panel-a", folderId: "bad id" }), /panel folder move request is invalid/);
+  await assert.rejects(workspace.movePanelToFolder({ panelId: "panel-a", folderId: "folder:r3", index: -1 }), /panel folder move request is invalid/);
+  await assert.rejects(workspace.reorderPanels({ projectId: "project-a", folderId: "bad id", panelIds: ["panel-a"] }), /panel reorder ids are invalid/);
+  await assert.rejects(workspace.answerFolderOffer("folder:r3", "maybe"), /folder offer answer is invalid/);
+  await assert.rejects(workspace.deleteFolder("bad id"), /folder delete id is invalid/);
+  assert.equal(calls.length, 9);
+});

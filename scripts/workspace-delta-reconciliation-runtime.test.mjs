@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import { withGeneralFolders } from './support/workspaceFolders.mjs'
 
 globalThis.window = Object.assign(globalThis, {
 	__terminayRendererDiagnostic() {},
@@ -16,8 +17,8 @@ test.after(async () => { await rm(outputDirectory, { recursive: true, force: tru
 
 function state(revision, panelIds = ['panel-a']) {
 	const sidebar = { fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false, isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true, expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200, sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220, sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'] }
-	return {
-		schemaVersion: 5,
+	return withGeneralFolders({
+		schemaVersion: 6,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
@@ -26,7 +27,7 @@ function state(revision, panelIds = ['panel-a']) {
 		projects: { 'project-a': { id: 'project-a', serverId: 'server-a', viewId: 'view-a', name: 'A', root: '/workspace/a', rootOrigin: 'explicit', sidebar, panelIds, activePanelId: panelIds.at(-1) } },
 		panels: Object.fromEntries(panelIds.map((id) => [id, { id, projectId: 'project-a', type: 'terminal', sessionId: `session-${id}` }])),
 		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a', status: 'running' }])),
-	}
+	})
 }
 
 function delta(fromRevision, revision, panelIds = ['panel-a'], events = []) {

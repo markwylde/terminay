@@ -172,6 +172,12 @@ interface DirtyClaim {
 	readonly ids: ReadonlySet<GitWorktreeId>;
 	/** Whether the cache could be trusted when the measurement began. */
 	readonly trusted: boolean;
+	/**
+	 * True when something observed said every worktree is stale, such as the
+	 * default branch moving. `all` is also true when there is merely no cached
+	 * listing, which says nothing about any one worktree having changed.
+	 */
+	readonly stale: boolean;
 }
 
 interface Discovery {
@@ -755,8 +761,14 @@ export class GitService {
 			!newlyWatched
 				? claim.ids
 				: undefined;
+		// A caller naming one worktree narrows a listing only while nothing has
+		// said the others are stale. When something has, such as the default
+		// branch moving under every worktree's delta, the claim is not narrowed:
+		// that caller would take the claim, carry the others forward unmeasured,
+		// and leave nobody owing them a measurement.
 		const scopeTo =
 			watchedScope === undefined &&
+			!(observed !== undefined && claim?.stale === true) &&
 			!origin.fresh &&
 			!newlyWatched &&
 			target.worktreeId !== undefined &&
@@ -964,6 +976,18 @@ export class GitService {
 			}
 			return listing;
 		}
+		// A worktree that left the listing has no status of its own left to
+		// publish, so nothing above announced that it went. Say so to every
+		// project of the repository, or whatever a host keeps per worktree would
+		// only learn of the removal on some later, unrelated change.
+		if (
+			previous !== undefined &&
+			[...previous.keys()].some((id) => !measured.has(id))
+		)
+			for (const projectId of publishTo) {
+				const binding = this.getBinding(projectId);
+				if (binding !== undefined) this.publishUnattributedChange(binding);
+			}
 		this.lastWorktreeSummaries.set(discovery.repositoryId ?? '', measured);
 		if (observed !== undefined) {
 			for (const id of remeasure) observed.dirty.add(id);
@@ -3129,6 +3153,7 @@ export class GitService {
 			all: observation.dirtyAll || observation.listing === undefined,
 			ids: new Set(observation.dirty),
 			trusted: this.observationTrusted(observation),
+			stale: observation.dirtyAll,
 		};
 		observation.dirtyAll = false;
 		observation.dirty.clear();

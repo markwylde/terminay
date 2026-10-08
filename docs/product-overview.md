@@ -30,12 +30,19 @@ and a VPS sit side by side in one tab strip.
   device-local presentation state persisted by the host; servers never see it
   and never talk to each other.
 - A **project** is a user-facing workspace with a root on its server's
-  filesystem, a name, colour, icon, sidebar state, and one or more docked
-  panels. Nothing else decides where it executes.
+  filesystem, a name, colour, icon, sidebar state, and an ordered list of
+  folders. Nothing else decides where it executes.
+- A **folder** groups a project's panels and has its own panel layout. Every
+  project has a General folder, where new terminals land. Every worktree of the
+  project's Git repository has a linked folder, which shows its branch, pull
+  request, and checks; a terminal created there starts in that worktree, and
+  the Files and Changes panes follow the selected folder. A folder carries no
+  authority: moving a panel between folders changes nothing about what it may
+  do.
 - A **panel** is a terminal, file, or folder surface. Panels can be split,
-  reordered, and moved freely between the projects of one server without losing
-  their identity. The only boundary a panel cannot cross is a server, and that
-  boundary is a connection.
+  reordered, moved between the folders of a project, and moved freely between
+  the projects of one server without losing their identity. The only boundary a
+  panel cannot cross is a server, and that boundary is a connection.
 - A **terminal session** is server-owned and backed by the server's native
   terminal runtime. Its immutable session id, not its title or current
   directory, is the boundary used by activity, agents, MCP, recording, and

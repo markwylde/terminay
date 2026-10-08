@@ -9,6 +9,12 @@ import type {
 	QueryRequest,
 } from '../types.js';
 import {
+	type FolderScopeResolver,
+	folderIdField,
+	resolveFolderScope,
+} from './folderScope.js';
+import { FileServiceError } from './types.js';
+import {
 	type FileWatchEvent,
 	type FileWatchEventInput,
 	FileWatchRegistry,
@@ -47,9 +53,20 @@ export interface FileObservationHost {
 	}>;
 }
 
+/** The host that observes one folder's root. It receives the same
+ * root-relative resources the project's host does. */
+export interface FileObservationFolderContext {
+	readonly projectId: string;
+	readonly host: FileObservationHost;
+}
+
 export interface FileObservationAdapterOptions {
 	readonly serverId: string;
 	readonly host: FileObservationHost;
+	/** The observation host for one folder of a project, resolved by the server
+	 * when a watch or folder-size job starts (ADR-0050). Absent means requests
+	 * may not name a folder. */
+	readonly folderScope?: FolderScopeResolver<FileObservationFolderContext>;
 	readonly eventJournal: OrderedEventJournalLike;
 	readonly maxWatches?: number;
 	readonly maxFolderSizeJobs?: number;
@@ -153,13 +170,31 @@ export class ServerFileObservationAdapter {
 		this.watches.close();
 	}
 
-	private startWatch(request: CommandRequest): JsonValue {
+	private startWatch(request: CommandRequest): JsonValue | Promise<JsonValue> {
 		const payload = objectPayload(request.envelope.payload);
 		const projectId = this.project(request, payload.projectId);
 		const resource = relativeResource(payload.resource);
+		const { folderId } = folderIdField(payload.folderId);
+		if (folderId === undefined)
+			return this.watch(request, projectId, resource, this.options.host);
+		return this.folderHost(request, projectId, folderId).then((host) =>
+			this.watch(request, projectId, resource, host, folderId),
+		);
+	}
+
+	private watch(
+		request: CommandRequest,
+		projectId: string,
+		resource: string,
+		host: FileObservationHost,
+		folderId?: string,
+	): JsonValue {
+		const folder: { readonly folderId?: string } =
+			folderId === undefined ? {} : { folderId };
 		const subscription = this.watches.subscribe({
 			clientId: request.context.clientId,
 			projectId,
+			...folder,
 			resource,
 		});
 		const existing = this.watchStates.get(subscription.subscriptionId);
@@ -168,6 +203,7 @@ export class ServerFileObservationAdapter {
 			return {
 				subscriptionId: subscription.subscriptionId,
 				projectId,
+				...folder,
 				resource,
 				cursor: this.watches.sequence,
 			};
@@ -181,13 +217,17 @@ export class ServerFileObservationAdapter {
 		};
 		this.watchStates.set(subscription.subscriptionId, state);
 		void Promise.resolve(
-			this.options.host.watch({
+			host.watch({
 				projectId,
 				resource,
 				signal: controller.signal,
 				publish: (event) => {
 					if (controller.signal.aborted) return;
-					const result = this.watches.publish({ ...event, projectId });
+					const result = this.watches.publish({
+						...event,
+						projectId,
+						...folder,
+					});
 					if (!result.accepted || result.sequence === undefined) return;
 					for (const matched of result.subscriptions) {
 						this.options.eventJournal.append(
@@ -196,6 +236,7 @@ export class ServerFileObservationAdapter {
 								subscriptionId: matched.subscriptionId,
 								clientId: matched.clientId,
 								projectId,
+								...folder,
 								resource: event.resource,
 								kind: event.kind,
 								sequence: result.sequence,
@@ -211,6 +252,7 @@ export class ServerFileObservationAdapter {
 			if (controller.signal.aborted) return;
 			const result = this.watches.publish({
 				projectId,
+				...folder,
 				resource,
 				kind: 'unavailable',
 			});
@@ -222,6 +264,7 @@ export class ServerFileObservationAdapter {
 							subscriptionId: matched.subscriptionId,
 							clientId: matched.clientId,
 							projectId,
+							...folder,
 							resource,
 							kind: 'unavailable',
 							sequence: result.sequence,
@@ -233,6 +276,7 @@ export class ServerFileObservationAdapter {
 		return {
 			subscriptionId: subscription.subscriptionId,
 			projectId,
+			...folder,
 			resource,
 			cursor: this.watches.sequence,
 		};
@@ -258,12 +302,34 @@ export class ServerFileObservationAdapter {
 		return null;
 	}
 
-	private startFolderSize(request: CommandRequest): JsonValue {
+	private startFolderSize(
+		request: CommandRequest,
+	): JsonValue | Promise<JsonValue> {
 		if (this.jobs.size >= this.maxFolderSizeJobs)
 			throw new Error('folder-size job limit reached');
 		const payload = objectPayload(request.envelope.payload);
 		const projectId = this.project(request, payload.projectId);
 		const resource = relativeResource(payload.resource);
+		const { folderId } = folderIdField(payload.folderId);
+		if (folderId === undefined)
+			return this.folderSize(request, projectId, resource, this.options.host);
+		return this.folderHost(request, projectId, folderId).then((host) => {
+			// Other jobs may have started while the folder was being resolved.
+			if (this.jobs.size >= this.maxFolderSizeJobs)
+				throw new Error('folder-size job limit reached');
+			return this.folderSize(request, projectId, resource, host, folderId);
+		});
+	}
+
+	private folderSize(
+		request: CommandRequest,
+		projectId: string,
+		resource: string,
+		host: FileObservationHost,
+		folderId?: string,
+	): JsonValue {
+		const folder: { readonly folderId?: string } =
+			folderId === undefined ? {} : { folderId };
 		const jobId = `size-${(++this.jobSequence).toString(36)}`;
 		const controller = new AbortController();
 		const job = {
@@ -287,6 +353,7 @@ export class ServerFileObservationAdapter {
 					jobId,
 					clientId: request.context.clientId,
 					projectId,
+					...folder,
 					resource,
 					phase,
 					...(value === undefined ? {} : counters(value)),
@@ -295,7 +362,7 @@ export class ServerFileObservationAdapter {
 		};
 		void Promise.resolve()
 			.then(() =>
-				this.options.host.calculateFolderSize({
+				host.calculateFolderSize({
 					projectId,
 					resource,
 					signal: controller.signal,
@@ -311,7 +378,7 @@ export class ServerFileObservationAdapter {
 			.finally(() => {
 				this.jobs.delete(jobId);
 			});
-		return { jobId, projectId, resource };
+		return { jobId, projectId, ...folder, resource };
 	}
 
 	private cancelFolderSize(request: CommandRequest): JsonValue {
@@ -344,6 +411,33 @@ export class ServerFileObservationAdapter {
 			);
 		return projectId;
 	}
+
+	/** The caller has already authorized the project. The folder only chooses
+	 * which of the project's roots is observed; a failed resolution never falls
+	 * back to the project's own host. */
+	private async folderHost(
+		request: CommandRequest,
+		projectId: string,
+		folderId: string,
+	): Promise<FileObservationHost> {
+		const context = await resolveFolderScope(
+			this.options.folderScope,
+			projectId,
+			folderId,
+			request.context.signal,
+		);
+		if (
+			typeof context?.host?.watch !== 'function' ||
+			typeof context.host.calculateFolderSize !== 'function'
+		)
+			throw new FileServiceError('path_escape', 'project is not authorized');
+		// The connection may have closed while the folder was being resolved;
+		// nothing would then release what this request is about to start.
+		if (request.context.signal?.aborted === true)
+			throw new Error('file observation request was cancelled');
+		return context.host;
+	}
+
 	private requireWatch(id: string, clientId: string): WatchState {
 		const state = this.watchStates.get(id);
 		if (state === undefined || state.clientId !== clientId)

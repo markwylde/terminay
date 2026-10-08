@@ -85,6 +85,10 @@ class MigratingWorkspaceStateBackend implements WorkspaceStateBackend {
 		return this.backend.commit(state);
 	}
 
+	async preserveBeforeUpgrade(fromSchemaVersion: number): Promise<void> {
+		await this.backend.preserveBeforeUpgrade?.(fromSchemaVersion);
+	}
+
 	commitSync(state: WorkspaceState): void {
 		if (this.backend.commitSync === undefined)
 			throw new Error('embedded workspace backend lacks an atomic commit');
@@ -108,6 +112,10 @@ class FaultingWorkspaceStateBackend implements WorkspaceStateBackend {
 		if (this.fault === 'uncommittable')
 			throw new Error('injected commit failure');
 		await this.backend.commit(state);
+	}
+
+	async preserveBeforeUpgrade(fromSchemaVersion: number): Promise<void> {
+		await this.backend.preserveBeforeUpgrade?.(fromSchemaVersion);
 	}
 
 	commitSync(state: WorkspaceState): void {

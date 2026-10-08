@@ -22,6 +22,9 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
+	// On: a terminal that creates a worktree is moved into that worktree's
+	// folder. Off: the folder offers the move instead.
+	moveTerminalsIntoNewWorktreeFolders: true,
 	keepTerminalsAfterQuit: '5m',
 	convertEol: true,
 	dictation: {

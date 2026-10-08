@@ -59,7 +59,7 @@ test('hovering a terminal tab over a project tab does not activate it', () => {
 test('the drop moves through the one existing move path', () => {
 	// The server performs the move, and only one function asks it to.
 	assert.equal(app.split('.movePanel(').length - 1, 1)
-	const move = between(app, 'const moveTerminalToProject = useCallback(', '[terminalClientContext?.workspaceSnapshotStore]')
+	const move = between(app, 'const moveTerminalToProject = useCallback(', 'const moveTerminalToFolder = useCallback(')
 	assert.match(move, /\.movePanel\(\{ panelId: canonicalPanel\.id, targetProjectId \}\)/)
 	// The move function itself rearranges nothing: a tab changes project only
 	// when reconciliation places it where the confirmed projection says.
@@ -67,10 +67,11 @@ test('the drop moves through the one existing move path', () => {
 	assert.equal(move.includes('acceptMovedTerminal('), false)
 	assert.equal(move.includes('activateProject('), false)
 	// A refused move forgets that this device asked for it and says why, in
-	// the project the terminal is still in.
+	// the project the terminal is still in: on the folder that is on screen,
+	// since the terminal's own folder may be behind it.
 	assert.match(
 		move,
-		/\.catch\(\(error: unknown\) => \{[\s\S]*?pendingTerminalMovesRef\.current\.delete\(sessionId\);[\s\S]*?sourceWorkspace\.reportError\(/,
+		/\.catch\(\(error: unknown\) => \{[\s\S]*?pendingTerminalMovesRef\.current\.delete\(sessionId\);[\s\S]*?\(commandWorkspace\(sourceProjectId\) \?\? sourceWorkspace\)\.reportError\(/,
 	)
 	assert.equal(app.split('.exportTerminalForMove(').length - 1, 1)
 	assert.equal(app.split('.acceptMovedTerminal(').length - 1, 1)
@@ -78,10 +79,52 @@ test('the drop moves through the one existing move path', () => {
 	assert.ok(reconcile.includes('.exportTerminalForMove('))
 	assert.ok(reconcile.includes('.acceptMovedTerminal('))
 	assert.match(
-		between(app, 'const reportTerminalTabDrag = useCallback(\n\t\t(sourceProjectId', '[moveTerminalToProject]'),
+		between(app, 'const reportTerminalTabDrag = useCallback(\n\t\t(sourceProjectId', '[moveTerminalToFolder, moveTerminalToProject]'),
 		/moveTerminalToProject\(\s*ended\.sourceProjectId,\s*ended\.panelId,\s*targetProjectId,\s*\)/,
 	)
 	assert.match(app, /projectTabAcceptsTerminalDrop\(from, displayedProjects, candidate\)/)
+})
+
+test('a drop on a folder moves through the one folder move path', () => {
+	// As with a project: the server makes the move, and one function asks.
+	assert.equal(app.split('.movePanelToFolder(').length - 1, 1)
+	const move = between(app, 'const moveTerminalToFolder = useCallback(', 'The terminal being dragged toward')
+	assert.match(move, /\.movePanelToFolder\(\{\s*panelId: canonicalPanel\.id,\s*folderId: targetFolderId,\s*\}\)/)
+	// A folder is named by id and nothing else: no path picks its root.
+	assert.equal(/worktree|rootFolder|\.path\b/.test(move), false)
+	// Nothing is rearranged, selected, or closed until the move is confirmed.
+	for (const forbidden of ['exportTerminalForMove(', 'acceptMovedTerminal(', 'selectFolder(', 'activateProject(', 'closePanel('])
+		assert.equal(move.includes(forbidden), false, forbidden)
+	assert.match(move, /canonicalPanel\.folderId === targetFolderId/)
+	assert.match(
+		move,
+		/\.catch\(\(error: unknown\) => \{[\s\S]*?pendingTerminalMovesRef\.current\.delete\(sessionId\);[\s\S]*?\.reportError\(/,
+	)
+	// The drop names the folder; the move waits for the drag to end, exactly
+	// as a drop on a project tab does.
+	const drop = between(app, 'const dropTerminalOnFolder = useCallback(', 'const toggleActiveProjectExplorer')
+	assert.match(drop, /terminalTabDragRef\.current\?\.sourceProjectId !== projectId\) return;/)
+	assert.match(drop, /terminalDropTargetFolderIdRef\.current = folderId;/)
+	assert.equal(drop.includes('moveTerminalToFolder('), false)
+	assert.match(
+		between(app, 'const reportTerminalTabDrag = useCallback(\n\t\t(sourceProjectId', '[moveTerminalToFolder, moveTerminalToProject]'),
+		/moveTerminalToFolder\(\s*ended\.sourceProjectId,\s*ended\.panelId,\s*targetFolderId,\s*\)/,
+	)
+	// Only the device that asked follows the terminal, to its folder.
+	const reconcile = between(app, 'const runPass = () => {', 'const schedulePass = () => {')
+	assert.match(reconcile, /if \(requestedHere\) \{\s*selectFolder\(session\.projectId, panel\.folderId\);/)
+})
+
+test('a panel that has changed folder is let go, never closed', () => {
+	const reconcile = between(app, 'const reconcileServerPanels = useCallback(', 'const filteredMacros')
+	const folderBranch = between(reconcile, 'canonical.folderId !== projectedFolderId', 'if (canonical.title')
+	// The moving flag is what keeps the removal from closing the terminal.
+	assert.match(folderBranch, /movingTerminalSessionIdsRef\.current\.add\(sessionId\);\s*api\.removePanel\(panel\);/)
+	// It is kept until the folder it now belongs to can show it.
+	assert.match(folderBranch, /if \(canHandOver\?\.\(canonical\) === false\) continue;/)
+	// And a removal by any other route closes nothing that is another folder's.
+	const close = between(app, 'const closeServerPanel = useCallback(', 'const commitServerPanelOrder')
+	assert.match(close, /if \(panel\.folderId !== projectedFolderId\) return;[\s\S]*store\s*\.closePanel\(panelId\)/)
 })
 
 test('only a terminal tab dragged in the main window is reported', () => {

@@ -378,7 +378,7 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 		{ key: 'changes', title: 'Changes', entries: changes },
 	].filter((group) => group.entries.length > 0);
 
-	// A single group's header would just duplicate the "Git" pane header above,
+	// A single group's header would just duplicate the "Changes" pane header above,
 	// so only label sections when there is more than one.
 	const showGroupHeaders = groups.length > 1;
 

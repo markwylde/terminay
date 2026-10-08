@@ -16,7 +16,7 @@ import {
 	toContainedProjectRelativePath,
 } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
-import { parseWorktreeProperties } from '../services/git/worktreeProperties.ts';
+import { parseWorktreeProperties } from '../services/git/worktreeProperties';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
 	FileExplorerEntry,
@@ -42,11 +42,6 @@ import {
 	type GitPaneSyncTrigger,
 	isFreshGitPaneSync,
 } from './gitPaneSyncLog';
-import {
-	gitFilesystemActionWorktreeRoot,
-	rootFolderToRestoreAfter,
-	sameFilesystemPath,
-} from './gitFilesystemScope';
 
 const WATCH_REFRESH_DELAY_MS = 120;
 
@@ -86,7 +81,6 @@ type Options = {
 	gitClient?: TerminayGitClient;
 	isServerFileViewer: boolean;
 	onOpenFile: OpenFile;
-	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown;
 	onOperationError: (
 		feature: 'Explorer' | 'Git',
 		error: unknown,
@@ -94,7 +88,11 @@ type Options = {
 	) => string;
 	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 	onSetError: (message: string | null) => void;
-	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
+	/**
+	 * The project as this explorer shows it: `rootFolder` is the root of the
+	 * folder on screen, which for a linked folder is its worktree. Nothing here
+	 * changes the project's root; a folder's root is the server's to resolve.
+	 */
 	project: ProjectTab;
 };
 
@@ -104,64 +102,10 @@ function joinPath(dirPath: string, name: string): string {
 		: `${dirPath}/${name}`;
 }
 
-function parentPath(path: string): string {
-	const trimmed = path.replace(/[\\/]+$/, '');
-	const slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-	if (slash <= 0) return slash === 0 ? trimmed.slice(0, 1) : '';
-	return trimmed.slice(0, slash);
-}
-
 
 function explorerMayLoad(project: ProjectTab): boolean {
 	return project.creationStatus !== 'loading';
 }
-
-export function openTerminalAtWorktree(
-	worktree: GitWorktreeStatus,
-	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown,
-): void {
-	void onOpenTerminalAt(worktree.path, true);
-}
-
-type PendingGitFilesystemActionKind =
-	| {
-			readonly kind: 'open-entry';
-			readonly entry: GitChangeEntry;
-			readonly worktreeRoot: string;
-	  }
-	| {
-			readonly kind: 'delete';
-			readonly path: string;
-			readonly worktreeRoot: string;
-	  }
-	| {
-			readonly kind: 'rename';
-			readonly oldPath: string;
-			readonly nextPath: string;
-			readonly parentPath: string;
-			readonly worktreeRoot: string;
-	  }
-	| {
-			readonly kind: 'create-file';
-			readonly path: string;
-			readonly dirPath: string;
-			readonly worktreeRoot: string;
-	  }
-	| {
-			readonly kind: 'create-folder';
-			readonly path: string;
-			readonly dirPath: string;
-			readonly worktreeRoot: string;
-	  };
-
-/** A filesystem mutation is authorized against the project root, so a path in
- * another worktree can only be reached by pointing the project at that
- * worktree first. `restoreRootFolder` records where the user actually was, so
- * the borrowed root is handed back once the mutation settles. */
-type PendingGitFilesystemAction = PendingGitFilesystemActionKind & {
-	readonly restoreRootFolder: string;
-};
-
 
 export function assertWorktreeRemoved(result: unknown): void {
 	if (
@@ -359,11 +303,9 @@ export function useFileExplorerController({
 	gitClient,
 	isServerFileViewer,
 	onOpenFile,
-	onOpenTerminalAt,
 	onOperationError,
 	onOperationSucceeded,
 	onSetError,
-	onUpdateProject,
 	project,
 }: Options) {
 	const [directoryChildren, setDirectoryChildren] = useState<
@@ -387,8 +329,6 @@ export function useFileExplorerController({
 		() => new Set(),
 	);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
-	const [pendingGitFilesystemAction, setPendingGitFilesystemAction] =
-		useState<PendingGitFilesystemAction | null>(null);
 	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
 		useState<FileExplorerNameDialogState | null>(null);
 	const referencesRef = useRef<ReadonlyMap<string, GitWorktreeReference>>(
@@ -419,26 +359,6 @@ export function useFileExplorerController({
 		[isServerFileViewer, project.rootFolder],
 	);
 	const clientProjectId = isServerFileViewer ? project.id : undefined;
-	const queueOwningWorktreeAction = useCallback(
-		(
-			path: string,
-			createAction: (worktreeRoot: string) => PendingGitFilesystemActionKind,
-		): boolean => {
-			const worktreeRoot = gitFilesystemActionWorktreeRoot(
-				path,
-				project.rootFolder,
-				worktreePanelStatus?.worktrees,
-			);
-			if (worktreeRoot === undefined) return false;
-			setPendingGitFilesystemAction({
-				...createAction(worktreeRoot),
-				restoreRootFolder: project.rootFolder,
-			});
-			onUpdateProject(project.id, { rootFolder: worktreeRoot });
-			return true;
-		},
-		[onUpdateProject, project.id, project.rootFolder, worktreePanelStatus],
-	);
 
 	const requestFileExplorerName = useCallback(
 		(options: FileExplorerNameDialogOptions) =>
@@ -778,38 +698,18 @@ export function useFileExplorerController({
 			if (!next || next === name) return;
 			const parent = oldPath.substring(0, oldPath.length - name.length);
 			const nextPath = `${parent}${next}`;
-			if (
-				queueOwningWorktreeAction(oldPath, (worktreeRoot) => ({
-					kind: 'rename',
-					oldPath,
-					nextPath,
-					parentPath: parent,
-					worktreeRoot,
-				}))
-			) {
-				return;
-			}
 			await renameEntryAtPath(oldPath, nextPath, parent);
 		},
-		[queueOwningWorktreeAction, renameEntryAtPath, requestFileExplorerName],
+		[renameEntryAtPath, requestFileExplorerName],
 	);
 
 	const handleDelete = useCallback(
 		async (path: string) => {
 			const name = path.split(/[/\\]/).pop() || '';
 			if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
-			if (
-				queueOwningWorktreeAction(path, (worktreeRoot) => ({
-					kind: 'delete',
-					path,
-					worktreeRoot,
-				}))
-			) {
-				return;
-			}
 			await deleteEntryAtPath(path);
 		},
-		[deleteEntryAtPath, queueOwningWorktreeAction],
+		[deleteEntryAtPath],
 	);
 
 	const handleNewFile = useCallback(
@@ -821,19 +721,9 @@ export function useFileExplorerController({
 			});
 			if (!name) return;
 			const path = joinPath(dirPath, name);
-			if (
-				queueOwningWorktreeAction(dirPath, (worktreeRoot) => ({
-					kind: 'create-file',
-					path,
-					dirPath,
-					worktreeRoot,
-				}))
-			) {
-				return;
-			}
 			await createFileAtPath(path, dirPath);
 		},
-		[createFileAtPath, queueOwningWorktreeAction, requestFileExplorerName],
+		[createFileAtPath, requestFileExplorerName],
 	);
 
 	const handleNewFolder = useCallback(
@@ -845,23 +735,9 @@ export function useFileExplorerController({
 			});
 			if (!name) return;
 			const path = joinPath(dirPath, name);
-			if (
-				queueOwningWorktreeAction(dirPath, (worktreeRoot) => ({
-					kind: 'create-folder',
-					path,
-					dirPath,
-					worktreeRoot,
-				}))
-			) {
-				return;
-			}
 			await createDirectoryAtPath(path, dirPath);
 		},
-		[
-			createDirectoryAtPath,
-			queueOwningWorktreeAction,
-			requestFileExplorerName,
-		],
+		[createDirectoryAtPath, requestFileExplorerName],
 	);
 
 	const handleCopyPath = useCallback((path: string) => {
@@ -875,14 +751,6 @@ export function useFileExplorerController({
 		[project.rootFolder],
 	);
 
-	const handleSwitchProjectRootToWorktree = useCallback(
-		(worktree: GitWorktreeStatus) => {
-			onUpdateProject(project.id, { rootFolder: worktree.path });
-			setExpandedPaths({ [worktree.path]: true });
-			onSetError(null);
-		},
-		[onSetError, onUpdateProject, project.id],
-	);
 	const handleRenameWorktree = useCallback(
 		async (worktree: GitWorktreeStatus) => {
 			const name = await requestFileExplorerName({
@@ -892,33 +760,21 @@ export function useFileExplorerController({
 				title: 'Rename Worktree',
 			});
 			if (!name || name === worktree.name) return;
-			const parent = parentPath(worktree.path);
-			const nextPath = joinPath(parent, name);
 			try {
 				const reference = referencesRef.current.get(worktree.path);
 				if (gitClient === undefined || reference === undefined) {
 					throw new Error('Git worktree controls are unavailable.');
 				}
+				// The linked folder follows its renamed worktree through the
+				// server's own link, and the listing that names the new path
+				// arrives as a Git status change. Nothing is repointed from here.
 				await gitClient.move(reference, name, worktree.head);
-				if (project.rootFolder === worktree.path) {
-					onUpdateProject(project.id, { rootFolder: nextPath });
-					setExpandedPaths({ [nextPath]: true });
-				}
-				void loadDirectory(parent || project.rootFolder);
+				onSetError(null);
 			} catch (error) {
 				onOperationError('Git', error);
 			}
 		},
-		[
-			gitClient,
-			loadDirectory,
-			onSetError,
-			onOperationError,
-			onUpdateProject,
-			project.id,
-			project.rootFolder,
-			requestFileExplorerName,
-		],
+		[gitClient, onSetError, onOperationError, requestFileExplorerName],
 	);
 	const handleDeleteWorktree = useCallback(
 		async (worktree: GitWorktreeStatus) => {
@@ -1010,82 +866,54 @@ export function useFileExplorerController({
 		},
 		[gitClient, onOperationError],
 	);
-	const handleOpenTerminalAtWorktree = useCallback(
-		(worktree: GitWorktreeStatus) =>
-			openTerminalAtWorktree(worktree, onOpenTerminalAt),
-		[onOpenTerminalAt],
+	// A folder is shown by id: the server decides which directory it is, so
+	// this works for a plain folder and for a project outside any repository.
+	const handleRevealFolder = useCallback(
+		(folderId: string) => {
+			if (gitClient === undefined) return;
+			gitClient
+				.revealFolder({ projectId: project.id, folderId })
+				.catch((error: unknown) => {
+					console.error('[terminay] folder reveal failed', error);
+					onOperationError('Explorer', error);
+				});
+		},
+		[gitClient, onOperationError, project.id],
 	);
+	/** Every check of one worktree; a listing carries only the counts. */
+	const listedWorktreesRef = useRef(worktreePanelStatus?.worktrees);
+	listedWorktreesRef.current = worktreePanelStatus?.worktrees;
+	const handleLoadWorktreeChecks = useCallback(
+		async (worktreePath: string) => {
+			const worktree = listedWorktreesRef.current?.find(
+				(candidate) => candidate.path === worktreePath,
+			);
+			if (worktree === undefined) return undefined;
+			if (gitClient === undefined || worktree.worktreeId === undefined)
+				return worktree.properties?.checks;
+			const result = await gitClient.worktreeProperties({
+				projectId: project.id,
+				worktreeId: worktree.worktreeId,
+			});
+			const properties =
+				typeof result === 'object' && result !== null && !Array.isArray(result)
+					? parseWorktreeProperties(result.properties)
+					: undefined;
+			return properties?.checks ?? worktree.properties?.checks;
+		},
+		[gitClient, project.id],
+	);
+	// The Changes pane lists the worktree of the folder on screen, which is
+	// this explorer's own root, so a change is opened as a file of this folder.
 	const handleOpenGitEntry = useCallback(
 		(entry: GitChangeEntry) => {
-			if (
-				queueOwningWorktreeAction(entry.path, (worktreeRoot) => ({
-					kind: 'open-entry',
-					entry,
-					worktreeRoot,
-				}))
-			) {
-				return;
-			}
 			void onOpenFile(
 				entry.path,
 				entry.state === 'untracked' ? undefined : { initialMode: 'diff' },
 			);
 		},
-		[onOpenFile, queueOwningWorktreeAction],
+		[onOpenFile],
 	);
-
-	useEffect(() => {
-		if (
-			pendingGitFilesystemAction === null ||
-			!sameFilesystemPath(
-				project.rootFolder,
-				pendingGitFilesystemAction.worktreeRoot,
-			)
-		) {
-			return;
-		}
-		const action = pendingGitFilesystemAction;
-		setPendingGitFilesystemAction(null);
-		if (action.kind === 'open-entry') {
-			void onOpenFile(
-				action.entry.path,
-				action.entry.state === 'untracked'
-					? undefined
-					: { initialMode: 'diff' },
-			);
-			return;
-		}
-		const completed =
-			action.kind === 'delete'
-				? deleteEntryAtPath(action.path)
-				: action.kind === 'rename'
-					? renameEntryAtPath(
-							action.oldPath,
-							action.nextPath,
-							action.parentPath,
-						)
-					: action.kind === 'create-file'
-						? createFileAtPath(action.path, action.dirPath)
-						: createDirectoryAtPath(action.path, action.dirPath);
-		// The worktree root was borrowed only to authorize this mutation. Hand it
-		// back once the mutation settles so the sidebar stays on the project the
-		// user chose, whether or not the mutation succeeded.
-		const restoreRootFolder = rootFolderToRestoreAfter(action);
-		if (restoreRootFolder === null) return;
-		void completed.finally(() => {
-			onUpdateProject(project.id, { rootFolder: restoreRootFolder });
-		});
-	}, [
-		createDirectoryAtPath,
-		createFileAtPath,
-		deleteEntryAtPath,
-		onOpenFile,
-		onUpdateProject,
-		pendingGitFilesystemAction,
-		project.id,
-		project.rootFolder,
-		renameEntryAtPath,
-	]);
 
 	useEffect(
 		() => () => {
@@ -1327,22 +1155,6 @@ export function useFileExplorerController({
 		refreshGitStatusesForRoot,
 	]);
 
-	const handleLoadWorktreeChecks = useCallback(
-		async (worktree: GitWorktreeStatus) => {
-			if (gitClient === undefined || worktree.worktreeId === undefined)
-				return worktree.properties?.checks;
-			const result = await gitClient.worktreeProperties({
-				projectId: project.id,
-				worktreeId: worktree.worktreeId,
-			});
-			const properties =
-				typeof result === 'object' && result !== null && !Array.isArray(result)
-					? parseWorktreeProperties(result.properties)
-					: undefined;
-			return properties?.checks ?? worktree.properties?.checks;
-		},
-		[gitClient, project.id],
-	);
 	const handleRespondWorktreeSignIn = useCallback(
 		async (choice: GitSignInChoice, token?: string) => {
 			const prompt = worktreePanelStatus?.signIn;
@@ -1379,17 +1191,16 @@ export function useFileExplorerController({
 		handleDelete,
 		handleDeleteCleanWorktrees,
 		handleDeleteWorktree,
-		handleLoadWorktreeChecks,
 		handleRespondWorktreeSignIn,
 		handleNewFile,
 		handleNewFolder,
 		handleOpenGitEntry,
-		handleOpenTerminalAtWorktree,
 		handlePullWorktreeFromOrigin,
 		handleRename,
 		handleRenameWorktree,
+		handleLoadWorktreeChecks,
+		handleRevealFolder,
 		handleRevealWorktree,
-		handleSwitchProjectRootToWorktree,
 		loadDirectory,
 		loadingPaths,
 		pullingWorktreePaths,

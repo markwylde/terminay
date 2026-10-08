@@ -65,6 +65,7 @@ export type {
 	FileMutationResult,
 	FileMutationSuccess,
 	FileObservationAdapterOptions,
+	FileObservationFolderContext,
 	FileObservationHost,
 	FileOpenRequest,
 	FileOpenResult,
@@ -94,6 +95,8 @@ export type {
 	FileWatchState,
 	FileWatchSubscription,
 	FileWatchSubscriptionOptions,
+	FolderScopeCacheOptions,
+	FolderScopeResolver,
 	MarkdownTaskAggregationOptions,
 	MarkdownTaskAggregationResult,
 	MarkdownTaskDirectory,
@@ -117,6 +120,7 @@ export {
 	FILE_CONTENT_OPERATIONS,
 	FILE_OBSERVATION_OPERATIONS,
 	FILE_OPERATIONS,
+	FolderScopeCache,
 	FileCatalog,
 	FileContentError,
 	FileContentStreamService,
@@ -162,8 +166,11 @@ export * from './terminalService/index.js';
 export * from './types.js';
 export * from './uiBundle/index.js';
 export * from './automationSpaceVisibility.js';
+export * from './folderReconciler.js';
+export * from './folderRoots.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';
 export * from './workspaceRecovery.js';
 export * from './workspaceRepository.js';
+export * from './worktreeCapture.js';

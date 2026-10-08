@@ -75,17 +75,16 @@ test('activation requires an exact panel and immutable session match', () => {
 	assert.deepEqual(terminal.counts(), { active: 1, closed: 0 });
 });
 
-test('closing the final panel delegates to project ownership', () => {
+test('closing the final panel closes that panel and nothing else', () => {
 	const terminal = panel('terminal', 'session-1');
-	let closeProjectCount = 0;
 	commands.closeActiveDockviewPanel({
 		api: { activePanel: terminal, panels: [terminal] },
-		onCloseLastPanel: () => {
-			closeProjectCount += 1;
-		},
 	});
-	assert.equal(closeProjectCount, 1);
-	assert.deepEqual(terminal.counts(), { active: 0, closed: 0 });
+	// The project is not closed with its last panel: its folder stays, empty.
+	assert.deepEqual(terminal.counts(), { active: 0, closed: 1 });
+	// With no panel in front there is nothing to close.
+	commands.closeActiveDockviewPanel({ api: { panels: [] } });
+	commands.closeActiveDockviewPanel({ api: null });
 });
 
 test('active panel save reports errors and refreshes only after success', async () => {

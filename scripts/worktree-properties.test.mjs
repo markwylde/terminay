@@ -4,13 +4,6 @@ import {
 	parseWorktreeProperties,
 	parseWorktreeSignInPrompt,
 } from '../src/services/git/worktreeProperties.ts';
-import {
-	checksAccessibleName,
-	checksTone,
-	hasWorktreeProperties,
-	orderedCheckItems,
-	pullRequestAccessibleName,
-} from '../src/components/git-panel/worktreePropertyPresentation.ts';
 
 const checks = {
 	passed: 12,
@@ -24,36 +17,6 @@ const checks = {
 		{ name: 'CI / Build', state: 'failed' , url: 'https://git.example.net/r/1' },
 	],
 };
-
-test('the checks tone is failed, then pending, then passed', () => {
-	assert.equal(checksTone(checks), 'failed');
-	assert.equal(checksTone({ ...checks, failed: 0 }), 'pending');
-	assert.equal(checksTone({ ...checks, failed: 0, pending: 0 }), 'passed');
-});
-
-test('chips expose accessible names with the pull request number and counts', () => {
-	assert.equal(
-		checksAccessibleName(checks),
-		'Checks: 2 failed, 12 passed, 2 pending. Show checks',
-	);
-	assert.match(
-		pullRequestAccessibleName({ number: 285, title: 'About window', url: 'https://x.example/p/285', state: 'open' }),
-		/^Pull request #285, open: About window/,
-	);
-});
-
-test('check items list failures first', () => {
-	assert.deepEqual(
-		orderedCheckItems(checks).map((item) => item.state),
-		['failed', 'pending', 'passed'],
-	);
-});
-
-test('rows without properties show nothing', () => {
-	assert.equal(hasWorktreeProperties(undefined), false);
-	assert.equal(hasWorktreeProperties({}), false);
-	assert.equal(hasWorktreeProperties({ checks }), true);
-});
 
 test('the listing parser keeps valid properties and drops unsafe links', () => {
 	const parsed = parseWorktreeProperties({

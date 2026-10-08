@@ -2,6 +2,11 @@ import type { AuthScope, JsonValue } from '@terminay/protocol';
 import { scopeAllows } from '../auth.js';
 import type { CommandRequest, QueryRequest } from '../types.js';
 import { FileSession } from './fileSession.js';
+import {
+	type FolderScopeResolver,
+	folderIdField,
+	resolveFolderScope,
+} from './folderScope.js';
 import { CanonicalProjectPathResolver } from './pathResolver.js';
 import type {
 	FileMutationResult,
@@ -54,6 +59,10 @@ export interface FileAdapterOptions {
 		authorization: FileAuthorization,
 		projectId: string,
 	) => boolean;
+	/** The resolver and storage for one folder of a project, resolved by the
+	 * server for one operation (ADR-0050). Absent means files may not be opened
+	 * in a folder. */
+	readonly folderScope?: FolderScopeResolver<FileProjectContext>;
 	readonly generateSessionId?: (
 		projectId: string,
 		canonicalPath: string,
@@ -63,13 +72,18 @@ export interface FileAdapterOptions {
 export interface FileOpenRequest {
 	readonly authorization: FileAuthorization;
 	readonly projectId?: string;
-	/** Project-relative path only; absolute paths are never accepted. */
+	/** A folder of the project whose root the path is relative to. */
+	readonly folderId?: string;
+	/** Relative to the project or folder root; absolute paths are never accepted. */
 	readonly path: string;
 }
 
 export interface FileOpenResult {
 	readonly serverId: string;
 	readonly projectId: string;
+	/** Present when the session is bound to a folder's root, which is then the
+	 * root `relativePath` is relative to. */
+	readonly folderId?: string;
 	readonly sessionId: string;
 	readonly relativePath: string;
 	readonly metadata: FileSessionMetadata;
@@ -124,6 +138,9 @@ interface SessionRecord {
 	readonly sessionId: string;
 	readonly serverId: string;
 	readonly projectId: string;
+	/** The folder the session was opened in. Its root is resolved again for
+	 * every later operation; the client never re-sends it. */
+	readonly folderId?: string;
 	readonly relativePath: string;
 	readonly canonicalPath: string;
 	readonly context: FileProjectContext;
@@ -183,7 +200,12 @@ export class ServerFileAdapter {
 			'read',
 		);
 		const relativePath = normalizeRelative(request.path);
-		const context = this.project(projectId);
+		// The project is authorized above. A folder only chooses which of the
+		// project's roots the file is opened in; the server resolves it.
+		const context =
+			request.folderId === undefined
+				? this.project(projectId)
+				: await this.folder(projectId, request.folderId);
 		const canonicalPath = await context.resolver.resolve(relativePath, {
 			requireFile: true,
 		});
@@ -193,7 +215,12 @@ export class ServerFileAdapter {
 			const existing = this.sessions.get(existingId);
 			if (existing !== undefined) {
 				this.requireSession(authorization, existing, existing.sessionId);
-				await this.assertCanonical(existing);
+				// A session already open in this same folder is checked against the
+				// root just resolved, so one open never resolves a folder twice.
+				await this.assertCanonical(
+					existing,
+					existing.folderId === request.folderId ? context : undefined,
+				);
 				return this.openResult(existing);
 			}
 			this.sessionsByPath.delete(pathKey);
@@ -227,6 +254,7 @@ export class ServerFileAdapter {
 			sessionId,
 			serverId: this.serverId,
 			projectId,
+			...(request.folderId === undefined ? {} : { folderId: request.folderId }),
 			relativePath,
 			canonicalPath,
 			context,
@@ -366,7 +394,8 @@ export class ServerFileAdapter {
 	}
 
 	private project(projectId: string): FileProjectContext {
-		const project =
+		return this.usable(
+			projectId,
 			typeof (this.options.projects as ReadonlyMap<string, FileProjectContext>)
 				.get === 'function'
 				? (
@@ -376,7 +405,24 @@ export class ServerFileAdapter {
 						this.options.projects as Readonly<
 							Record<string, FileProjectContext>
 						>
-					)[projectId];
+					)[projectId],
+		);
+	}
+
+	private async folder(
+		projectId: string,
+		folderId: string,
+	): Promise<FileProjectContext> {
+		return this.usable(
+			projectId,
+			await resolveFolderScope(this.options.folderScope, projectId, folderId),
+		);
+	}
+
+	private usable(
+		projectId: string,
+		project: FileProjectContext | undefined,
+	): FileProjectContext {
 		if (project === undefined || project.projectId !== projectId)
 			throw new FileServiceError('path_escape', 'project is not authorized');
 		if (!(project.resolver instanceof CanonicalProjectPathResolver))
@@ -475,11 +521,20 @@ export class ServerFileAdapter {
 			);
 	}
 
-	private async assertCanonical(record: SessionRecord): Promise<void> {
-		const canonical = await record.context.resolver.resolve(
-			record.relativePath,
-			{ requireFile: true },
-		);
+	private async assertCanonical(
+		record: SessionRecord,
+		resolved?: FileProjectContext,
+	): Promise<void> {
+		// A folder's root is confirmed for every operation, not remembered from
+		// open (ADR-0050): a worktree removed or replaced since then fails here
+		// instead of being written through the session's stale resolver.
+		const context =
+			record.folderId === undefined
+				? record.context
+				: (resolved ?? (await this.folder(record.projectId, record.folderId)));
+		const canonical = await context.resolver.resolve(record.relativePath, {
+			requireFile: true,
+		});
 		if (canonical !== record.canonicalPath)
 			throw new FileServiceError(
 				'revision_conflict',
@@ -492,6 +547,7 @@ export class ServerFileAdapter {
 		return Object.freeze({
 			serverId: record.serverId,
 			projectId: record.projectId,
+			...(record.folderId === undefined ? {} : { folderId: record.folderId }),
 			sessionId: record.sessionId,
 			relativePath: record.relativePath,
 			metadata: Object.freeze(record.session.metadata()),
@@ -525,6 +581,7 @@ export class ServerFileAdapter {
 			...(optionalString(payload.projectId) === undefined
 				? {}
 				: { projectId: optionalString(payload.projectId) }),
+			...folderIdField(payload.folderId),
 		};
 	}
 
