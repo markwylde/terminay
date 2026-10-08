@@ -101,6 +101,28 @@ async function printFailureDiagnostics(
 		const shown = rows.map((row) => row.trimEnd()).filter((row) => row !== '');
 		for (const row of shown.slice(-FAILURE_TERMINAL_ROWS))
 			lines.push(`terminal: ${row}`.slice(0, FAILURE_DIAGNOSTIC_LINE));
+		// What each sidebar pane of the folder on screen says.
+		const panes = await page
+			.locator('.project-workspace--active .sidebar-pane')
+			.evaluateAll((elements) =>
+				elements.map((element) =>
+					(element as HTMLElement).innerText.replace(/\s+/gu, ' ').trim(),
+				),
+			)
+			.catch(() => []);
+		for (const pane of panes)
+			lines.push(`pane: ${pane}`.slice(0, FAILURE_DIAGNOSTIC_LINE));
+		const workspace = await page
+			.locator('.project-workspace--active')
+			.first()
+			.evaluate((element) => ({
+				folder: element.getAttribute('data-terminay-folder-id'),
+				kind: element.getAttribute('data-terminay-folder-kind'),
+				root: element.getAttribute('data-terminay-project-root'),
+			}))
+			.catch(() => null);
+		if (workspace !== null)
+			lines.push(`workspace: ${JSON.stringify(workspace)}`);
 		const focused = await page
 			.evaluate(() => {
 				const element = document.activeElement;
