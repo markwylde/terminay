@@ -47,7 +47,9 @@ export async function runSessionHolderProcess(
 	});
 	// Logout and shutdown arrive as SIGTERM: save tails, then end sessions.
 	for (const signal of ['SIGTERM', 'SIGINT'] as const)
-		process.on(signal, () => void holder.close('signal'));
+		process.on(signal, () => void holder.close('signal', { signal }));
+	// Observed, not handled: the process still dies of the error.
+	process.on('uncaughtExceptionMonitor', (error) => holder.recordCrash(error));
 	// A holder has no terminal of its own to hang up on.
 	process.on('SIGHUP', () => undefined);
 }
