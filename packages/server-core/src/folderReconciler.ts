@@ -68,6 +68,9 @@ export class FolderReconciler {
 	private readonly suspended = new Map<string, number>();
 	/** The worktree ids each project's last pass saw. */
 	private readonly known = new Map<string, ReadonlySet<string>>();
+	/** The branch each worktree was on at a project's last pass, by link. It is
+	 * what tells a worktree that moved from one that was removed. */
+	private readonly branches = new Map<string, ReadonlyMap<string, string>>();
 	private serial = 0;
 
 	constructor(private readonly options: FolderReconcilerOptions) {}
@@ -116,6 +119,7 @@ export class FolderReconciler {
 	/** Forget a project that was closed or released. */
 	release(projectId: string): void {
 		this.known.delete(projectId);
+		this.branches.delete(projectId);
 		this.settled.delete(projectId);
 		this.again.delete(projectId);
 		this.suspended.delete(projectId);
@@ -215,9 +219,48 @@ export class FolderReconciler {
 		);
 		const want = new Set(wanted.map(key));
 
+		// A branch is checked out in one worktree at a time. A folder whose
+		// worktree is gone while its branch turns up at a new path is that same
+		// worktree, moved outside Terminay, and keeps its panels.
+		const lastBranches = this.branches.get(projectId);
+		this.branches.set(
+			projectId,
+			new Map(
+				listing.worktrees.flatMap((worktree) =>
+					typeof worktree.branch === 'string'
+						? [[key(worktree), worktree.branch] as const]
+						: [],
+				),
+			),
+		);
 		for (const folder of linked) {
 			if (folder.worktree === undefined || want.has(key(folder.worktree)))
 				continue;
+			const from = folder.worktree;
+			const branch = lastBranches?.get(key(from));
+			const moved =
+				branch === undefined
+					? undefined
+					: wanted.find(
+							(worktree) =>
+								worktree.repositoryId === from.repositoryId &&
+								worktree.branch === branch &&
+								!have.has(key(worktree)),
+						);
+			if (
+				moved !== undefined &&
+				this.relink(projectId, from.repositoryId, from.path, moved.path)
+			) {
+				have.add(key(moved));
+				// A folder still named after its worktree's directory follows it.
+				if (folder.name === (basename(from.path) || from.path))
+					this.apply({
+						type: 'folder.rename',
+						folderId: folder.id,
+						name: basename(moved.path) || moved.path,
+					});
+				continue;
+			}
 			this.removeFolder(projectId, folder.id);
 		}
 		const announce = this.settled.has(projectId);

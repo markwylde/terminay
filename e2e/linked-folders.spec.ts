@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
@@ -1186,4 +1186,137 @@ test('activating a dashboard row for a terminal in an unselected folder shows it
 			'.xterm-helper-textarea',
 		),
 	).toBeFocused();
+});
+
+test('a folder cannot be given a name the project already uses', async ({
+	mainWindow,
+}) => {
+	await createPlainFolder(mainWindow, 'Servers');
+	const banner = mainWindow.locator('.error-banner');
+	const attempt = async (name: string): Promise<void> => {
+		await foldersColumn(mainWindow)
+			.getByRole('button', { name: 'New folder' })
+			.click();
+		const dialog = mainWindow.getByRole('dialog');
+		await dialog.getByRole('textbox', { name: 'Folder name' }).fill(name);
+		await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+		await expect(banner).toContainText('already has a folder named');
+		await banner.getByRole('button', { name: 'Dismiss error' }).click();
+		await expect(banner).toHaveCount(0);
+		await expect(folderNames(mainWindow)).toHaveText(['General', 'Servers']);
+	};
+
+	// Letter case does not make a name different, and General is taken.
+	await attempt('servers');
+	await attempt('General');
+
+	await createPlainFolder(mainWindow, 'Notes');
+	await openFolderMenu(mainWindow, 'Notes');
+	await contextMenuItem(mainWindow, 'Rename folder').click();
+	const dialog = mainWindow.getByRole('dialog');
+	await dialog.getByRole('textbox', { name: 'Folder name' }).fill('Servers');
+	await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+	await expect(banner).toContainText('already has a folder named');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'Servers',
+		'Notes',
+	]);
+});
+
+test('a worktree moved from a shell keeps its folder and terminal, and one whose directory is deleted says so without an error', async ({
+	appHarness,
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-underneath', [
+		'alpha',
+		'gamma',
+	]);
+	await setProjectRoot(mainWindow, repo.root);
+	await openFileExplorer(mainWindow);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await expect(folderRow(mainWindow, 'gamma')).toBeVisible();
+	await expect(
+		folderRow(mainWindow, 'alpha').locator('.folders-tree__branch'),
+	).toHaveText('feat/alpha');
+
+	await selectFolder(mainWindow, 'alpha');
+	const moved = await newTerminalHere(
+		mainWindow,
+		appHarness.sendAppCommand,
+		'alpha',
+	);
+	await run(mainWindow, "cd / && printf 'before-%s\\n' the-move");
+	await expect(terminalOutput(mainWindow)).toContainText('before-the-move');
+
+	// Git run by the test process, as a shell outside the app would.
+	await git(
+		repo.root,
+		'worktree',
+		'move',
+		repo.worktree('alpha'),
+		repo.worktree('alpha-moved'),
+	);
+
+	await expect(folderRow(mainWindow, 'alpha-moved')).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0);
+	await expect(terminalRowIn(mainWindow, 'alpha-moved', moved)).toHaveCount(1);
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
+	await expect(
+		folderRow(mainWindow, 'alpha-moved').locator('.folders-tree__branch'),
+	).toHaveText('feat/alpha');
+	// The same terminal, and the folder now reads the new directory.
+	await terminalRowOf(mainWindow, moved).click();
+	await expect(terminalPanelForSession(mainWindow, moved)).toBeVisible();
+	await expect(terminalOutput(mainWindow)).toContainText('before-the-move');
+	await writeFile(
+		join(repo.worktree('alpha-moved'), 'after-move.txt'),
+		'moved\n',
+		'utf8',
+	);
+	await expect(fileItem(mainWindow, 'after-move.txt')).toBeVisible({
+		timeout: 10_000,
+	});
+
+	// A directory deleted from under its folder, with Git none the wiser.
+	await selectFolder(mainWindow, 'gamma');
+	const stranded = await newTerminalHere(
+		mainWindow,
+		appHarness.sendAppCommand,
+		'gamma',
+	);
+	await rm(repo.worktree('gamma'), { recursive: true, force: true });
+
+	await expect(
+		folderRow(mainWindow, 'gamma').locator('.folders-tree__meta'),
+	).toContainText('missing', { timeout: 15_000 });
+	await expect(terminalRowIn(mainWindow, 'gamma', stranded)).toHaveCount(1);
+	await expect(filesPane(mainWindow)).toContainText(
+		"This worktree's directory is missing.",
+	);
+	await expect(changesPane(mainWindow)).toContainText(
+		'Working tree is missing',
+	);
+	await mainWindow.waitForTimeout(1_500);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+
+	// Git forgets it, and the terminal is in General, still running.
+	await git(repo.root, 'worktree', 'prune');
+	await expect(folderRow(mainWindow, 'gamma')).toHaveCount(0, {
+		timeout: 15_000,
+	});
+	await expect(terminalRowIn(mainWindow, 'General', stranded)).toHaveCount(1);
+	await terminalRowOf(mainWindow, stranded).click();
+	await typeInVisibleTerminal(
+		mainWindow,
+		"cd / && printf 'after-%s\\n' prune\n",
+		stranded,
+	);
+	await expect(
+		terminalPanelForSession(mainWindow, stranded).locator('.xterm-rows'),
+	).toContainText('after-prune');
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
