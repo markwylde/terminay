@@ -14,6 +14,11 @@ import {
 	type FileCatalogSizeOptions,
 } from './catalog.js';
 import type { MarkdownTaskAggregationOptions } from './tasks.js';
+import {
+	type FolderScopeResolver,
+	folderIdField,
+	resolveFolderScope,
+} from './folderScope.js';
 import { FileServiceError } from './types.js';
 
 const PROTOCOL_TASK_LIMITS = Object.freeze({
@@ -58,6 +63,9 @@ export interface FileCatalogAdapterOptions {
 		authorization: FileCatalogAuthorization,
 		projectId: string,
 	) => boolean;
+	/** The catalog for one folder of a project, resolved by the server for this
+	 * one operation (ADR-0050). Absent means requests may not name a folder. */
+	readonly folderScope?: FolderScopeResolver<FileCatalogProjectContext>;
 	/** Metadata-only host observation. Never receives a project id or path. */
 	readonly onOperationFailure?: (failure: FileCatalogOperationFailure) => void;
 }
@@ -70,6 +78,8 @@ export interface FileCatalogOperationFailure {
 export interface FileCatalogRequest {
 	readonly authorization: FileCatalogAuthorization;
 	readonly projectId?: string;
+	/** A folder of the project whose root the operation is contained in. */
+	readonly folderId?: string;
 	readonly path?: string;
 	readonly signal?: AbortSignal;
 }
@@ -100,7 +110,7 @@ export class ServerFileCatalogAdapter {
 	async list(
 		request: FileCatalogRequest & { readonly options?: FileCatalogListOptions },
 	): Promise<JsonValue> {
-		const catalog = this.authorizedCatalog(request, 'read');
+		const catalog = await this.authorizedCatalog(request, 'read');
 		return asJson(
 			await catalog.list(
 				request.path ?? '.',
@@ -115,7 +125,7 @@ export class ServerFileCatalogAdapter {
 			readonly options?: FileCatalogSearchOptions;
 		},
 	): Promise<JsonValue> {
-		const catalog = this.authorizedCatalog(request, 'read');
+		const catalog = await this.authorizedCatalog(request, 'read');
 		return asJson(
 			await catalog.search(
 				request.path ?? '.',
@@ -128,7 +138,7 @@ export class ServerFileCatalogAdapter {
 	async size(
 		request: FileCatalogRequest & { readonly options?: FileCatalogSizeOptions },
 	): Promise<JsonValue> {
-		const catalog = this.authorizedCatalog(request, 'read');
+		const catalog = await this.authorizedCatalog(request, 'read');
 		return asJson(
 			await catalog.size(
 				request.path ?? '.',
@@ -142,7 +152,7 @@ export class ServerFileCatalogAdapter {
 			readonly options?: FileCatalogPreviewOptions;
 		},
 	): Promise<JsonValue> {
-		const catalog = this.authorizedCatalog(request, 'read');
+		const catalog = await this.authorizedCatalog(request, 'read');
 		return asJson(
 			await catalog.previewMetadata(
 				requiredPath(request.path),
@@ -156,7 +166,7 @@ export class ServerFileCatalogAdapter {
 			readonly options?: MarkdownTaskAggregationOptions;
 		},
 	): Promise<BinaryQueryHandlerResult> {
-		const catalog = this.authorizedCatalog(request, 'read');
+		const catalog = await this.authorizedCatalog(request, 'read');
 		const { tree: _tree, ...result } = await catalog.aggregateMarkdownTasks(
 			request.path ?? '.',
 			withSignal(compactTaskOptions(request.options), request.signal),
@@ -167,7 +177,7 @@ export class ServerFileCatalogAdapter {
 	async createFile(
 		request: FileCatalogRequest & { readonly bytes: Uint8Array },
 	): Promise<null> {
-		const catalog = this.authorizedCatalog(request, 'write');
+		const catalog = await this.authorizedCatalog(request, 'write');
 		const bytes = new Uint8Array(request.bytes.byteLength);
 		bytes.set(request.bytes);
 		await catalog.createFile(requiredPath(request.path), bytes, request.signal);
@@ -175,7 +185,7 @@ export class ServerFileCatalogAdapter {
 	}
 
 	async createDirectory(request: FileCatalogRequest): Promise<null> {
-		const catalog = this.authorizedCatalog(request, 'write');
+		const catalog = await this.authorizedCatalog(request, 'write');
 		await catalog.createDirectory(requiredPath(request.path), request.signal);
 		return null;
 	}
@@ -183,7 +193,7 @@ export class ServerFileCatalogAdapter {
 	async rename(
 		request: FileCatalogRequest & { readonly destination: string },
 	): Promise<null> {
-		const catalog = this.authorizedCatalog(request, 'write');
+		const catalog = await this.authorizedCatalog(request, 'write');
 		await catalog.rename(
 			requiredPath(request.path),
 			requiredPath(request.destination),
@@ -195,7 +205,7 @@ export class ServerFileCatalogAdapter {
 	async delete(
 		request: FileCatalogRequest & { readonly recursive?: boolean },
 	): Promise<null> {
-		const catalog = this.authorizedCatalog(request, 'write');
+		const catalog = await this.authorizedCatalog(request, 'write');
 		await catalog.delete(requiredPath(request.path), {
 			recursive: request.recursive === true,
 			signal: request.signal,
@@ -287,10 +297,10 @@ export class ServerFileCatalogAdapter {
 		}
 	}
 
-	private authorizedCatalog(
+	private async authorizedCatalog(
 		request: FileCatalogRequest,
 		required: AuthScope,
-	): FileCatalog {
+	): Promise<FileCatalog> {
 		const projectId = request.projectId ?? request.authorization.projectId;
 		if (projectId === undefined)
 			throw new FileServiceError(
@@ -329,10 +339,22 @@ export class ServerFileCatalogAdapter {
 				'path_escape',
 				'file is outside the authorized project',
 			);
+		// The project is authorized above. A folder only chooses which of the
+		// project's roots the operation runs in; the server resolves it.
 		const project =
-			typeof (
-				this.options.projects as ReadonlyMap<string, FileCatalogProjectContext>
-			).get === 'function'
+			request.folderId !== undefined
+				? await resolveFolderScope(
+						this.options.folderScope,
+						projectId,
+						request.folderId,
+						request.signal,
+					)
+				: typeof (
+							this.options.projects as ReadonlyMap<
+								string,
+								FileCatalogProjectContext
+							>
+						).get === 'function'
 				? (
 						this.options.projects as ReadonlyMap<
 							string,
@@ -384,6 +406,7 @@ export class ServerFileCatalogAdapter {
 			...(optionalProject(payload.projectId) === undefined
 				? {}
 				: { projectId: optionalProject(payload.projectId) }),
+			...folderIdField(payload.folderId),
 			path: requiredPath(
 				typeof payload.path === 'string' ? payload.path : undefined,
 			),
@@ -407,6 +430,7 @@ export class ServerFileCatalogAdapter {
 			...(optionalProject(payload.projectId) === undefined
 				? {}
 				: { projectId: optionalProject(payload.projectId) }),
+			...folderIdField(payload.folderId),
 			path,
 			signal: request.context.signal,
 			...(options === undefined ? {} : { options }),

@@ -3,6 +3,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
+	type RefObject,
 	useEffect,
 	useId,
 	useRef,
@@ -15,6 +16,11 @@ const defaultNavigationWidth = 352;
 const maximumNavigationWidthRatio = 0.8;
 const maximumPersistedNavigationWidth = 2_000;
 const navigationResizeStep = 16;
+const minimumFoldersWidth = 160;
+const defaultFoldersWidth = 232;
+/** The folders column is a list of names beside the panels, never the main
+ * surface, so it may take at most half of the layout. */
+const maximumFoldersWidthRatio = 0.5;
 
 /** Must match `@media (max-width: 720px)` in WorkspaceSplitLayout.css. */
 export const NARROW_LAYOUT_MEDIA_QUERY = '(max-width: 720px)';
@@ -38,6 +44,246 @@ function getVisibleFocusableElements(root: HTMLElement): HTMLElement[] {
 	].filter((element) => element.offsetParent !== null);
 }
 
+type TrackResizeOptions = {
+	rootRef: RefObject<HTMLDivElement | null>;
+	/** The custom property on the layout root that sizes this track. */
+	cssVariable: string;
+	/** 1 when the track sits on the leading side, so it grows as its separator
+	 * moves toward the trailing edge; -1 for a track on the trailing side. */
+	direction: 1 | -1;
+	controlledWidth: number | undefined;
+	defaultWidth: number;
+	minimumWidth: number;
+	maximumWidth: number;
+	/** Called once for a completed width change; never for a pointer preview. */
+	onCommit: (width: number) => void;
+};
+
+/**
+ * One resizable track of the layout and the separator that sizes it.
+ *
+ * A pointer drag previews through the track's CSS variable only, and reaches
+ * the owner once, when it completes. The navigation and the folders column are
+ * two instances of this, so neither can drift from the other's gesture rules.
+ */
+function useTrackResize({
+	rootRef,
+	cssVariable,
+	direction,
+	controlledWidth,
+	defaultWidth,
+	minimumWidth,
+	maximumWidth,
+	onCommit,
+}: TrackResizeOptions) {
+	const [uncontrolledWidth, setUncontrolledWidth] = useState(defaultWidth);
+	// A local width is the presentation authority while a resize is active and
+	// until a completed controlled update has reached this component. React may
+	// render for an unrelated workspace snapshot during that interval; rendering
+	// the canonical prop in that pass would visibly fight the pointer.
+	const [localWidth, setLocalWidth] = useState<number | null>(null);
+	const dragStateRef = useRef<{
+		pointerId: number;
+		separator: HTMLElement;
+		root: HTMLElement;
+		startWidth: number;
+		startX: number;
+		latestWidth: number;
+		removeListeners: () => void;
+	} | null>(null);
+	const clampWidth = (width: number) =>
+		Math.min(maximumWidth, Math.max(minimumWidth, width));
+	const resolvedWidth = clampWidth(controlledWidth ?? uncontrolledWidth);
+	const canonicalWidthRef = useRef(resolvedWidth);
+	const clampWidthRef = useRef(clampWidth);
+	canonicalWidthRef.current = resolvedWidth;
+	clampWidthRef.current = clampWidth;
+	const renderedWidth =
+		dragStateRef.current?.latestWidth ?? localWidth ?? resolvedWidth;
+
+	function applyWidth(width: number) {
+		rootRef.current?.style.setProperty(
+			cssVariable,
+			`${clampWidthRef.current(width)}px`,
+		);
+	}
+
+	function commitWidth(width: number) {
+		const nextWidth = clampWidth(width);
+		if (controlledWidth === undefined) setUncontrolledWidth(nextWidth);
+		setLocalWidth(nextWidth);
+		applyWidth(nextWidth);
+		// Live pointer movement intentionally updates only the inline
+		// presentation variable; canonical owners receive one value here.
+		onCommit(nextWidth);
+	}
+
+	function handleKeyDown(event: KeyboardEvent<HTMLHRElement>) {
+		switch (event.key) {
+			// The arrow moves the separator, so which way grows the track
+			// depends on the side the track is on.
+			case 'ArrowLeft':
+				event.preventDefault();
+				commitWidth(renderedWidth - direction * navigationResizeStep);
+				break;
+			case 'ArrowRight':
+				event.preventDefault();
+				commitWidth(renderedWidth + direction * navigationResizeStep);
+				break;
+			case 'Home':
+				event.preventDefault();
+				commitWidth(minimumWidth);
+				break;
+			case 'End':
+				event.preventDefault();
+				commitWidth(maximumWidth);
+				break;
+		}
+	}
+
+	function stopResize() {
+		const state = dragStateRef.current;
+		if (state === null) return;
+		dragStateRef.current = null;
+		state.removeListeners();
+		if (state.separator.hasPointerCapture(state.pointerId)) {
+			state.separator.releasePointerCapture(state.pointerId);
+		}
+		commitWidth(state.latestWidth);
+	}
+
+	function cancelResize() {
+		const state = dragStateRef.current;
+		if (state === null) return;
+		dragStateRef.current = null;
+		state.removeListeners();
+		if (state.separator.hasPointerCapture(state.pointerId)) {
+			state.separator.releasePointerCapture(state.pointerId);
+		}
+		// Pointer cancellation abandons the transient CSS preview and restores the
+		// latest canonical width without producing a workspace mutation. The
+		// canonical prop might have changed while the pointer was held.
+		setLocalWidth(null);
+		applyWidth(canonicalWidthRef.current);
+	}
+
+	function previewResize(pointerId: number, clientX: number) {
+		const state = dragStateRef.current;
+		if (state === null || pointerId !== state.pointerId) return;
+		state.latestWidth = clampWidthRef.current(
+			state.startWidth + direction * (clientX - state.startX),
+		);
+		setLocalWidth(state.latestWidth);
+		state.root.style.setProperty(cssVariable, `${state.latestWidth}px`);
+	}
+
+	function completeResize(pointerId: number) {
+		const state = dragStateRef.current;
+		if (state === null || pointerId !== state.pointerId) return;
+		stopResize();
+	}
+
+	function handlePointerDown(event: ReactPointerEvent<HTMLHRElement>) {
+		if (event.button !== 0) return;
+		const root = rootRef.current;
+		if (root === null) return;
+		event.preventDefault();
+		event.currentTarget.setPointerCapture(event.pointerId);
+		const ownerWindow = event.currentTarget.ownerDocument.defaultView;
+		const handleWindowPointerMove = (windowEvent: PointerEvent) => {
+			windowEvent.preventDefault();
+			previewResize(windowEvent.pointerId, windowEvent.clientX);
+		};
+		const handleWindowPointerEnd = (windowEvent: PointerEvent) => {
+			windowEvent.preventDefault();
+			if (windowEvent.type === 'pointercancel') {
+				if (dragStateRef.current?.pointerId === windowEvent.pointerId) {
+					cancelResize();
+				}
+			} else {
+				completeResize(windowEvent.pointerId);
+			}
+		};
+		const handleWindowBlur = () => cancelResize();
+		const removeListeners = () => {
+			ownerWindow?.removeEventListener('pointermove', handleWindowPointerMove);
+			ownerWindow?.removeEventListener('pointerup', handleWindowPointerEnd);
+			ownerWindow?.removeEventListener('pointercancel', handleWindowPointerEnd);
+			ownerWindow?.removeEventListener('blur', handleWindowBlur);
+		};
+		dragStateRef.current = {
+			pointerId: event.pointerId,
+			separator: event.currentTarget,
+			root,
+			startWidth: renderedWidth,
+			startX: event.clientX,
+			latestWidth: renderedWidth,
+			removeListeners,
+		};
+		// Losing pointer capture does not end the gesture. The handle is 6px wide
+		// and travels with the preview, so a quick pointer leaves it and Chromium
+		// fires lostpointercapture while the button is still held; cancelling there
+		// is the snap-back. The window listeners keep the drag, and pointer-up
+		// still commits it.
+		ownerWindow?.addEventListener('pointermove', handleWindowPointerMove);
+		ownerWindow?.addEventListener('pointerup', handleWindowPointerEnd);
+		ownerWindow?.addEventListener('pointercancel', handleWindowPointerEnd);
+		ownerWindow?.addEventListener('blur', handleWindowBlur);
+		setLocalWidth(renderedWidth);
+		applyWidth(renderedWidth);
+	}
+
+	function handlePointerUp(event: ReactPointerEvent<HTMLHRElement>) {
+		if (dragStateRef.current?.pointerId !== event.pointerId) return;
+		event.preventDefault();
+		completeResize(event.pointerId);
+	}
+
+	function handlePointerCancel(event: ReactPointerEvent<HTMLHRElement>) {
+		if (dragStateRef.current?.pointerId !== event.pointerId) return;
+		event.preventDefault();
+		cancelResize();
+	}
+
+	useEffect(() => {
+		if (
+			dragStateRef.current !== null ||
+			localWidth === null ||
+			Math.abs(localWidth - resolvedWidth) > 0.5
+		) {
+			return;
+		}
+		// The controlled/uncontrolled authority has caught up with a completed
+		// interaction, so future canonical updates can render normally.
+		setLocalWidth(null);
+	}, [localWidth, resolvedWidth]);
+
+	useEffect(() => {
+		return () => {
+			const state = dragStateRef.current;
+			if (state === null) return;
+			state.removeListeners();
+			dragStateRef.current = null;
+		};
+	}, []);
+
+	return {
+		renderedWidth,
+		separatorProps: {
+			tabIndex: 0,
+			'aria-orientation': 'vertical' as const,
+			'aria-valuemin': minimumWidth,
+			'aria-valuemax': maximumWidth,
+			'aria-valuenow': renderedWidth,
+			'aria-valuetext': `${renderedWidth} pixels`,
+			onKeyDown: handleKeyDown,
+			onPointerDown: handlePointerDown,
+			onPointerUp: handlePointerUp,
+			onPointerCancel: handlePointerCancel,
+		},
+	};
+}
+
 export interface WorkspaceSplitLayoutProps {
 	/** Host-owned navigational controls, such as a sidebar or workspace selector. */
 	readonly navigation: ReactNode;
@@ -45,6 +291,13 @@ export interface WorkspaceSplitLayoutProps {
 	readonly content: ReactNode;
 	/** Keep the content mounted while a host temporarily hides its navigation. */
 	readonly isNavigationVisible?: boolean;
+	/**
+	 * Which side of the content the navigation sits on at or above the narrow
+	 * breakpoint. A project's sidebar is trailing, with its folders leading;
+	 * a host with one column of navigation keeps it leading. Below the
+	 * breakpoint the navigation is the same drawer either way.
+	 */
+	readonly navigationSide?: 'leading' | 'trailing';
 	readonly className?: string;
 	/** Controlled production width. Supplying this keeps the grid track and the
 	 * rendered sidebar on one authority instead of leaving an empty grid gutter. */
@@ -56,6 +309,17 @@ export interface WorkspaceSplitLayoutProps {
 	readonly onNavigationWidthCommit?: (width: number) => void;
 	/** Called when a narrow-layout drawer is dismissed via Escape or the scrim. */
 	readonly onNavigationDismiss?: () => void;
+	/**
+	 * A second, leading column beside the content, with its own separator on
+	 * the edge that faces the content. It is laid out for a trailing
+	 * navigation, and is not rendered below the narrow breakpoint, where a
+	 * host reaches the same things another way.
+	 */
+	readonly folders?: ReactNode;
+	readonly isFoldersVisible?: boolean;
+	readonly foldersWidth?: number;
+	/** Called once for a completed width change; never for a pointer preview. */
+	readonly onFoldersWidthCommit?: (width: number) => void;
 }
 
 /**
@@ -68,22 +332,19 @@ export function WorkspaceSplitLayout({
 	content,
 	className,
 	isNavigationVisible = true,
+	navigationSide = 'leading',
 	navigationWidth: controlledNavigationWidth,
 	maximumNavigationWidth: controlledMaximumNavigationWidth,
 	onNavigationWidthChange,
 	onNavigationWidthCommit,
 	onNavigationDismiss,
+	folders,
+	isFoldersVisible = true,
+	foldersWidth: controlledFoldersWidth,
+	onFoldersWidthCommit,
 }: WorkspaceSplitLayoutProps) {
 	const navigationId = useId();
-	const [uncontrolledNavigationWidth, setUncontrolledNavigationWidth] =
-		useState(defaultNavigationWidth);
-	// A local width is the presentation authority while a resize is active and
-	// until a completed controlled update has reached this component. React may
-	// render for an unrelated workspace snapshot during that interval; rendering
-	// the canonical prop in that pass would visibly fight the pointer.
-	const [localNavigationWidth, setLocalNavigationWidth] = useState<
-		number | null
-	>(null);
+	const foldersId = useId();
 	const [rootWidth, setRootWidth] = useState<number | null>(
 		getInitialRootWidth,
 	);
@@ -94,17 +355,11 @@ export function WorkspaceSplitLayout({
 	const onNavigationDismissRef = useRef(onNavigationDismiss);
 	onNavigationDismissRef.current = onNavigationDismiss;
 	const isDrawerOpen = isNarrowLayout && isNavigationVisible;
-	const dragStateRef = useRef<{
-		pointerId: number;
-		separator: HTMLElement;
-		root: HTMLElement;
-		startWidth: number;
-		startX: number;
-		latestWidth: number;
-		removeListeners: () => void;
-	} | null>(null);
-	const navigationWidth =
-		controlledNavigationWidth ?? uncontrolledNavigationWidth;
+	const showsFolders =
+		folders !== undefined &&
+		folders !== null &&
+		isFoldersVisible &&
+		!isNarrowLayout;
 	const responsiveMaximumNavigationWidth = Math.max(
 		minimumNavigationWidth,
 		Math.floor(
@@ -118,176 +373,39 @@ export function WorkspaceSplitLayout({
 			controlledMaximumNavigationWidth ?? responsiveMaximumNavigationWidth,
 		),
 	);
-	const clampNavigationWidth = (width: number) =>
-		Math.min(
-			resolvedMaximumNavigationWidth,
-			Math.max(minimumNavigationWidth, width),
-		);
-	const resolvedNavigationWidth = clampNavigationWidth(navigationWidth);
-	const canonicalNavigationWidthRef = useRef(resolvedNavigationWidth);
-	const clampNavigationWidthRef = useRef(clampNavigationWidth);
-	canonicalNavigationWidthRef.current = resolvedNavigationWidth;
-	clampNavigationWidthRef.current = clampNavigationWidth;
-	const activePreviewNavigationWidth = dragStateRef.current?.latestWidth;
-	const renderedNavigationWidth =
-		activePreviewNavigationWidth ??
-		localNavigationWidth ??
-		resolvedNavigationWidth;
-
-	function applyNavigationWidth(width: number) {
-		rootRef.current?.style.setProperty(
-			'--workspace-navigation-width',
-			`${clampNavigationWidthRef.current(width)}px`,
-		);
-	}
-
-	function resizeNavigation(width: number) {
-		const nextWidth = clampNavigationWidth(width);
-		if (controlledNavigationWidth === undefined)
-			setUncontrolledNavigationWidth(nextWidth);
-		return nextWidth;
-	}
-
-	function commitNavigationWidth(width: number) {
-		const nextWidth = resizeNavigation(width);
-		setLocalNavigationWidth(nextWidth);
-		applyNavigationWidth(nextWidth);
-		// `onNavigationWidthChange` is retained as the legacy committed-value
-		// callback. Live pointer movement intentionally updates only the inline
-		// presentation variable; canonical owners receive one value here.
-		onNavigationWidthChange?.(nextWidth);
-		onNavigationWidthCommit?.(nextWidth);
-	}
-
-	function handleSeparatorKeyDown(event: KeyboardEvent<HTMLHRElement>) {
-		switch (event.key) {
-			case 'ArrowLeft':
-				event.preventDefault();
-				commitNavigationWidth(renderedNavigationWidth - navigationResizeStep);
-				break;
-			case 'ArrowRight':
-				event.preventDefault();
-				commitNavigationWidth(renderedNavigationWidth + navigationResizeStep);
-				break;
-			case 'Home':
-				event.preventDefault();
-				commitNavigationWidth(minimumNavigationWidth);
-				break;
-			case 'End':
-				event.preventDefault();
-				commitNavigationWidth(resolvedMaximumNavigationWidth);
-				break;
-		}
-	}
-
-	function stopNavigationResize() {
-		const state = dragStateRef.current;
-		if (state === null) return;
-		dragStateRef.current = null;
-		state.removeListeners();
-		if (state.separator.hasPointerCapture(state.pointerId)) {
-			state.separator.releasePointerCapture(state.pointerId);
-		}
-		commitNavigationWidth(state.latestWidth);
-	}
-
-	function cancelNavigationResize() {
-		const state = dragStateRef.current;
-		if (state === null) return;
-		dragStateRef.current = null;
-		state.removeListeners();
-		if (state.separator.hasPointerCapture(state.pointerId)) {
-			state.separator.releasePointerCapture(state.pointerId);
-		}
-		// Pointer cancellation abandons the transient CSS preview and restores the
-		// latest canonical width without producing a workspace mutation. The
-		// canonical prop might have changed while the pointer was held.
-		setLocalNavigationWidth(null);
-		applyNavigationWidth(canonicalNavigationWidthRef.current);
-	}
-
-	function previewNavigationResize(pointerId: number, clientX: number) {
-		const state = dragStateRef.current;
-		if (state === null || pointerId !== state.pointerId) return;
-		state.latestWidth = clampNavigationWidthRef.current(
-			state.startWidth + clientX - state.startX,
-		);
-		setLocalNavigationWidth(state.latestWidth);
-		state.root.style.setProperty(
-			'--workspace-navigation-width',
-			`${state.latestWidth}px`,
-		);
-	}
-
-	function completeNavigationResize(pointerId: number) {
-		const state = dragStateRef.current;
-		if (state === null || pointerId !== state.pointerId) return;
-		stopNavigationResize();
-	}
-
-	function handleSeparatorPointerDown(event: ReactPointerEvent<HTMLHRElement>) {
-		if (event.button !== 0) return;
-		const root = rootRef.current;
-		if (root === null) return;
-		event.preventDefault();
-		event.currentTarget.setPointerCapture(event.pointerId);
-		const ownerWindow = event.currentTarget.ownerDocument.defaultView;
-		const handleWindowPointerMove = (windowEvent: PointerEvent) => {
-			windowEvent.preventDefault();
-			previewNavigationResize(windowEvent.pointerId, windowEvent.clientX);
-		};
-		const handleWindowPointerEnd = (windowEvent: PointerEvent) => {
-			windowEvent.preventDefault();
-			if (windowEvent.type === 'pointercancel') {
-				if (dragStateRef.current?.pointerId === windowEvent.pointerId) {
-					cancelNavigationResize();
-				}
-			} else {
-				completeNavigationResize(windowEvent.pointerId);
-			}
-		};
-		const handleWindowBlur = () => cancelNavigationResize();
-		const removeListeners = () => {
-			ownerWindow?.removeEventListener('pointermove', handleWindowPointerMove);
-			ownerWindow?.removeEventListener('pointerup', handleWindowPointerEnd);
-			ownerWindow?.removeEventListener('pointercancel', handleWindowPointerEnd);
-			ownerWindow?.removeEventListener('blur', handleWindowBlur);
-		};
-		dragStateRef.current = {
-			pointerId: event.pointerId,
-			separator: event.currentTarget,
-			root,
-			startWidth: renderedNavigationWidth,
-			startX: event.clientX,
-			latestWidth: renderedNavigationWidth,
-			removeListeners,
-		};
-		// Losing pointer capture does not end the gesture. The handle is 6px wide
-		// and travels with the preview, so a quick pointer leaves it and Chromium
-		// fires lostpointercapture while the button is still held; cancelling there
-		// is the snap-back. The window listeners keep the drag, and pointer-up
-		// still commits it.
-		ownerWindow?.addEventListener('pointermove', handleWindowPointerMove);
-		ownerWindow?.addEventListener('pointerup', handleWindowPointerEnd);
-		ownerWindow?.addEventListener('pointercancel', handleWindowPointerEnd);
-		ownerWindow?.addEventListener('blur', handleWindowBlur);
-		setLocalNavigationWidth(renderedNavigationWidth);
-		applyNavigationWidth(renderedNavigationWidth);
-	}
-
-	function handleSeparatorPointerEnd(event: ReactPointerEvent<HTMLHRElement>) {
-		if (dragStateRef.current?.pointerId !== event.pointerId) return;
-		event.preventDefault();
-		completeNavigationResize(event.pointerId);
-	}
-
-	function handleSeparatorPointerCancel(
-		event: ReactPointerEvent<HTMLHRElement>,
-	) {
-		if (dragStateRef.current?.pointerId !== event.pointerId) return;
-		event.preventDefault();
-		cancelNavigationResize();
-	}
+	const navigationTrack = useTrackResize({
+		rootRef,
+		cssVariable: '--workspace-navigation-width',
+		direction: navigationSide === 'trailing' ? -1 : 1,
+		controlledWidth: controlledNavigationWidth,
+		defaultWidth: defaultNavigationWidth,
+		minimumWidth: minimumNavigationWidth,
+		maximumWidth: resolvedMaximumNavigationWidth,
+		onCommit: (width) => {
+			// `onNavigationWidthChange` is retained as the legacy committed-value
+			// callback.
+			onNavigationWidthChange?.(width);
+			onNavigationWidthCommit?.(width);
+		},
+	});
+	const foldersTrack = useTrackResize({
+		rootRef,
+		cssVariable: '--workspace-folders-width',
+		direction: 1,
+		controlledWidth: controlledFoldersWidth,
+		defaultWidth: defaultFoldersWidth,
+		minimumWidth: minimumFoldersWidth,
+		maximumWidth: Math.max(
+			minimumFoldersWidth,
+			Math.min(
+				maximumPersistedNavigationWidth,
+				Math.floor(
+					(rootWidth ?? defaultFoldersWidth * 2) * maximumFoldersWidthRatio,
+				),
+			),
+		),
+		onCommit: (width) => onFoldersWidthCommit?.(width),
+	});
 
 	useEffect(() => {
 		const root = rootRef.current;
@@ -381,28 +499,6 @@ export function WorkspaceSplitLayout({
 		};
 	}, [isDrawerOpen]);
 
-	useEffect(() => {
-		if (
-			dragStateRef.current !== null ||
-			localNavigationWidth === null ||
-			Math.abs(localNavigationWidth - resolvedNavigationWidth) > 0.5
-		) {
-			return;
-		}
-		// The controlled/uncontrolled authority has caught up with a completed
-		// interaction, so future canonical updates can render normally.
-		setLocalNavigationWidth(null);
-	}, [localNavigationWidth, resolvedNavigationWidth]);
-
-	useEffect(() => {
-		return () => {
-			const state = dragStateRef.current;
-			if (state === null) return;
-			state.removeListeners();
-			dragStateRef.current = null;
-		};
-	}, []);
-
 	return (
 		<div
 			ref={rootRef}
@@ -411,14 +507,39 @@ export function WorkspaceSplitLayout({
 				.join(' ')}
 			data-shared-ui="workspace-split-layout"
 			data-navigation-visible={isNavigationVisible ? 'true' : 'false'}
+			data-navigation-side={navigationSide}
+			data-folders-visible={showsFolders ? 'true' : 'false'}
 			data-narrow-layout={isNarrowLayout ? 'true' : 'false'}
 			data-navigation-drawer={isDrawerOpen ? 'true' : 'false'}
 			style={
 				{
-					'--workspace-navigation-width': `${renderedNavigationWidth}px`,
+					'--workspace-navigation-width': `${navigationTrack.renderedWidth}px`,
+					...(showsFolders
+						? { '--workspace-folders-width': `${foldersTrack.renderedWidth}px` }
+						: {}),
 				} as CSSProperties
 			}
 		>
+			{showsFolders ? (
+				<>
+					<aside
+						id={foldersId}
+						className="workspace-split-layout__folders"
+						aria-label="Workspace folders"
+						data-shared-ui="workspace-folders"
+					>
+						{folders}
+					</aside>
+					{/* Its own class, not the navigation separator's: a host that
+					    looks for "the" separator means the sidebar's. */}
+					<hr
+						className="workspace-split-layout__folders-separator"
+						aria-label="Resize workspace folders"
+						aria-controls={foldersId}
+						{...foldersTrack.separatorProps}
+					/>
+				</>
+			) : null}
 			<aside
 				ref={navigationRef}
 				id={navigationId}
@@ -440,18 +561,9 @@ export function WorkspaceSplitLayout({
 			) : null}
 			<hr
 				className="workspace-split-layout__separator"
-				tabIndex={0}
 				aria-label="Resize workspace navigation"
 				aria-controls={navigationId}
-				aria-orientation="vertical"
-				aria-valuemin={minimumNavigationWidth}
-				aria-valuemax={resolvedMaximumNavigationWidth}
-				aria-valuenow={renderedNavigationWidth}
-				aria-valuetext={`${renderedNavigationWidth} pixels`}
-				onKeyDown={handleSeparatorKeyDown}
-				onPointerDown={handleSeparatorPointerDown}
-				onPointerUp={handleSeparatorPointerEnd}
-				onPointerCancel={handleSeparatorPointerCancel}
+				{...navigationTrack.separatorProps}
 			/>
 			<section
 				className="workspace-split-layout__content"

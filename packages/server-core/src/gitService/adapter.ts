@@ -30,6 +30,7 @@ export const GIT_OPERATIONS = Object.freeze({
 	switchProject: 'git.worktree.switch-project',
 	renamePresentation: 'git.worktree.rename',
 	reveal: 'git.worktree.reveal',
+	revealFolder: 'git.folder.reveal',
 	copy: 'git.worktree.copy',
 	pull: 'git.worktree.pull',
 	removeWorktree: 'git.worktree.remove',
@@ -101,6 +102,15 @@ export interface GitRenamePresentationRequest extends GitWorktreeRef {
 export interface GitRevealRequest extends GitWorktreeRef {
 	readonly userGesture?: boolean;
 }
+/**
+ * Show a folder of a project in the host's file manager. The request names the
+ * folder; the host resolves its root. No path crosses the protocol.
+ */
+export interface GitFolderRevealRequest {
+	readonly authorization: GitAuthorization;
+	readonly projectId?: string;
+	readonly folderId: string;
+}
 export interface GitCopyRequest extends GitWorktreeRef {
 	readonly userGesture?: boolean;
 }
@@ -133,6 +143,13 @@ export interface GitWorktreeActionHandlers {
 		request: GitRevealRequest,
 	) => JsonValue | Promise<JsonValue>;
 	readonly copy?: (request: GitCopyRequest) => JsonValue | Promise<JsonValue>;
+	/**
+	 * Reveal the root of a folder, which need not be in a repository. The host
+	 * turns the folder id into a root; a failure to do so rejects.
+	 */
+	readonly revealFolder?: (
+		request: GitFolderRevealRequest & { readonly projectId: string },
+	) => JsonValue | Promise<JsonValue>;
 }
 
 export interface GitProtocolAdapterOptions {
@@ -153,6 +170,16 @@ export interface GitProtocolAdapterOptions {
 	) => Promise<string | null | undefined> | string | null | undefined;
 	/** Extension-published worktree properties and forge sign-in prompts. */
 	readonly insights?: GitWorktreeInsights;
+	/**
+	 * Called before Terminay moves or renames a worktree, with the path it is
+	 * moving from. The function it returns is called when the move has finished,
+	 * with the new path, or null when nothing moved.
+	 */
+	readonly onWorktreeMove?: (move: {
+		readonly projectId: string;
+		readonly repositoryId: string;
+		readonly fromPath: string | null;
+	}) => (toPath: string | null) => void;
 }
 
 export interface GitOperationHandlers {
@@ -185,6 +212,7 @@ export class ServerGitAdapter {
 	private readonly actions: GitWorktreeActionHandlers;
 	private readonly hostCapabilities: ReadonlySet<GitHostCapability>;
 	private readonly resolveProjectRoot: GitProtocolAdapterOptions['resolveProjectRoot'];
+	private readonly onWorktreeMove: GitProtocolAdapterOptions['onWorktreeMove'];
 	private readonly canRevealOnHost: GitProtocolAdapterOptions['canRevealOnHost'];
 	private readonly proposalProjects = new Map<string, string>();
 	private readonly insights: GitWorktreeInsights | undefined;
@@ -202,6 +230,7 @@ export class ServerGitAdapter {
 		this.resolveProjectRoot = options.resolveProjectRoot;
 		this.canRevealOnHost = options.canRevealOnHost;
 		this.insights = options.insights;
+		this.onWorktreeMove = options.onWorktreeMove;
 		this.hostCapabilities = new Set(
 			options.hostCapabilities ?? inferHostCapabilities(this.actions),
 		);
@@ -241,7 +270,17 @@ export class ServerGitAdapter {
 		return boundGitQueryResult({
 			...(this.withInsights(result) as Record<string, JsonValue>),
 			revealAvailable: this.revealAvailable(request.authorization),
+			folderRevealAvailable: this.folderRevealAvailable(request.authorization),
 		});
+	}
+
+	/** As `revealAvailable`, for a folder named by id, in or out of a repository. */
+	private folderRevealAvailable(authorization: GitAuthorization): boolean {
+		return (
+			this.actions.revealFolder !== undefined &&
+			this.hostCapabilities.has('nativeWindows') &&
+			(this.canRevealOnHost?.(authorization) ?? true)
+		);
 	}
 
 	/** Reveal is offered only where the host can act and the client is there. */
@@ -450,6 +489,37 @@ export class ServerGitAdapter {
 			'nativeWindows',
 		);
 	}
+	/**
+	 * Reveal a folder's root on the server host. The project is authorized
+	 * here; that the folder belongs to it is the host resolver's check.
+	 */
+	async revealFolder(request: GitFolderRevealRequest): Promise<JsonValue> {
+		this.requireScope(request.authorization, 'write');
+		const projectId = this.requireProject(
+			request.authorization,
+			request.projectId,
+		);
+		const handler = this.actions.revealFolder;
+		if (handler === undefined || !this.hostCapabilities.has('nativeWindows'))
+			throw new GitServiceError(
+				'invalid-operation',
+				'reveal folder is unavailable in this server host',
+			);
+		if (this.canRevealOnHost?.(request.authorization) === false)
+			throw new GitServiceError(
+				'invalid-operation',
+				'reveal folder is available only from the server host',
+			);
+		// The handler is given ids and nothing a client could have used to name
+		// a directory.
+		return sanitizeHostResult(
+			await handler({
+				authorization: request.authorization,
+				projectId,
+				folderId: request.folderId,
+			}),
+		);
+	}
 	copy(request: GitCopyRequest): Promise<JsonValue> {
 		return this.action(
 			'copy worktree',
@@ -525,7 +595,41 @@ export class ServerGitAdapter {
 			request.authorization,
 			request.projectId,
 		);
-		return (await this.git.moveWorktree({
+		// Tell the host a worktree is about to move, and where from, so that what
+		// it keeps per worktree can follow the move instead of seeing one worktree
+		// vanish and another appear.
+		const fromPath =
+			this.onWorktreeMove === undefined
+				? null
+				: await this.git
+						.worktrees(projectId)
+						.then(
+							(listing) =>
+								listing.worktrees.find(
+									(worktree) => worktree.id === request.worktreeId,
+								)?.path ?? null,
+						)
+						.catch(() => null);
+		const moved = this.onWorktreeMove?.({
+			projectId,
+			repositoryId: request.repositoryId,
+			fromPath,
+		});
+		let toPath: string | null = null;
+		try {
+			const result = await this.moveWorktreeRequest(projectId, request);
+			if (result.applied) toPath = result.path;
+			return result as unknown as JsonValue;
+		} finally {
+			moved?.(toPath);
+		}
+	}
+
+	private async moveWorktreeRequest(
+		projectId: string,
+		request: GitMoveRequest,
+	): Promise<import('./types.js').GitWorktreeMoveResult> {
+		return this.git.moveWorktree({
 			projectId,
 			repositoryId: request.repositoryId,
 			worktreeId: request.worktreeId,
@@ -534,7 +638,7 @@ export class ServerGitAdapter {
 				? {}
 				: { expectedHead: request.expectedHead }),
 			...(request.signal === undefined ? {} : { signal: request.signal }),
-		})) as unknown as JsonValue;
+		});
 	}
 
 	async proposeQuickPush(
@@ -640,6 +744,8 @@ export class ServerGitAdapter {
 					this.renamePresentation(this.renameRequest(request)),
 				[GIT_OPERATIONS.reveal]: (request) =>
 					this.reveal(this.refActionRequest(request, 'reveal')),
+				[GIT_OPERATIONS.revealFolder]: (request) =>
+					this.revealFolder(this.folderRevealRequest(request)),
 				[GIT_OPERATIONS.copy]: (request) =>
 					this.copy(this.refActionRequest(request, 'copy')),
 				[GIT_OPERATIONS.pull]: (request) =>
@@ -806,6 +912,17 @@ export class ServerGitAdapter {
 			GitSwitchProjectRequest &
 			GitRevealRequest &
 			GitCopyRequest;
+	}
+
+	private folderRevealRequest(request: CommandRequest): GitFolderRevealRequest {
+		const payload = objectPayload(request);
+		const authorization = this.authorization(request);
+		const projectId = stringValue(payload.projectId) ?? authorization.projectId;
+		return {
+			authorization,
+			projectId: requiredId(projectId, 'projectId'),
+			folderId: requiredId(payload.folderId, 'folderId'),
+		};
 	}
 
 	private renameRequest(request: CommandRequest): GitRenamePresentationRequest {
@@ -998,7 +1115,8 @@ function inferHostCapabilities(
 	if (
 		actions.openTerminal !== undefined ||
 		actions.switchProject !== undefined ||
-		actions.reveal !== undefined
+		actions.reveal !== undefined ||
+		actions.revealFolder !== undefined
 	)
 		capabilities.push('nativeWindows');
 	if (actions.copy !== undefined) capabilities.push('clipboard');

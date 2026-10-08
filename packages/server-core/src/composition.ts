@@ -281,6 +281,20 @@ export interface ServerCoreCompositionOptions
 	readonly ai?: AiService;
 	/** Optional server-owned Git protocol authority. */
 	readonly git?: ServerGitAdapter;
+	/** The stream Git in Terminay's terminals reports its commands to. A host
+	 * that supplies one has every terminal it launches carry Git's Trace2
+	 * variables (ADR-0052). */
+	readonly gitCommands?: Pick<
+		import('./worktreeCapture.js').GitCommandStream,
+		'environmentFor' | 'release'
+	>;
+	/** Resolves a folder of a project to the root its operations run in. A host
+	 * that supplies one lets a terminal created in a linked folder start in that
+	 * folder's worktree (ADR-0050). */
+	readonly folderRoots?: Pick<
+		import('./folderRoots.js').FolderRootResolver,
+		'resolve'
+	>;
 	/** Optional server-owned recording protocol authority. */
 	readonly recordings?: RecordingAdapter;
 	/** Optional durable server settings authority. No settings capability is
@@ -327,6 +341,7 @@ export interface ServerCoreCompositionOptions
 			observe(
 				listener: (event: {
 					readonly projectId: string;
+					readonly folderId?: string;
 					readonly resource: string;
 					readonly kind: string;
 				}) => void,
@@ -493,15 +508,38 @@ export function createServerCoreComposition(
 							? null
 							: (await terminal.currentCwd(session)).cwd;
 					},
+					...(options.folderRoots === undefined
+						? {}
+						: {
+								folderWorktreeRoot: async (projectId, folderId) => {
+									const resolved = await options.folderRoots?.resolve(
+										projectId,
+										folderId,
+									);
+									return resolved?.worktree === true ? resolved.root : null;
+								},
+							}),
 					...(options.terminalLaunchPathAuthority === undefined
 						? {}
 						: { pathAuthority: options.terminalLaunchPathAuthority }),
 					...(options.terminalLaunchEnvironment === undefined
 						? {}
 						: { defaultEnvironment: options.terminalLaunchEnvironment }),
-					...(options.terminalLaunchEnvironmentFor === undefined
+					...(options.terminalLaunchEnvironmentFor === undefined &&
+					options.gitCommands === undefined
 						? {}
-						: { environmentFor: options.terminalLaunchEnvironmentFor }),
+						: {
+								// Git's own tracing variables are added last, and only when
+								// the terminal's environment does not already name a target
+								// of the user's (ADR-0052).
+								environmentFor: (intent, placement) => ({
+									...options.terminalLaunchEnvironmentFor?.(intent, placement),
+									...options.gitCommands?.environmentFor(
+										intent.identity.sessionId,
+										options.terminalLaunchEnvironment ?? process.env,
+									),
+								}),
+							}),
 					...(options.terminalEnvironmentCaseInsensitive === undefined
 						? {}
 						: {
@@ -523,6 +561,8 @@ export function createServerCoreComposition(
 			'terminalProfiles and workspace are required for production terminal composition',
 		);
 	}
+	/** Which folder a terminal that is being spawned belongs in. */
+	const sessionFolders = new Map<string, string>();
 	const unsubscribeGitEvents =
 		typeof options.git?.subscribeEvents === 'function'
 			? options.git.subscribeEvents((event) => {
@@ -617,6 +657,8 @@ export function createServerCoreComposition(
 				});
 	terminal.onEvent((event) => {
 		if (event.type !== 'exit') return;
+		// An ended terminal's Git no longer reports; its token is forgotten.
+		options.gitCommands?.release(event.sessionId);
 		workspaceOperations?.applyHostCommand(
 			`terminal-exit:${event.sessionId}`.slice(0, 128),
 			{
@@ -982,12 +1024,27 @@ export function createServerCoreComposition(
 		...(options.workspace === undefined
 			? {}
 			: {
+					placeSession: (sessionId: string, folderId: string | undefined) => {
+						if (folderId === undefined) sessionFolders.delete(sessionId);
+						else sessionFolders.set(sessionId, folderId);
+					},
 					onSessionCreated: (
 						session: import('./terminalService/types.js').TerminalSessionSnapshot,
 					): void => {
+						// Read and drop the placement in one step, so the map only ever
+						// holds terminals that are being spawned right now.
+						const placedFolderId = sessionFolders.get(session.sessionId);
+						sessionFolders.delete(session.sessionId);
 						const workspace = options.workspace;
 						if (workspace === undefined) return;
 						let state = workspace.state;
+						// A folder deleted while the terminal was spawning falls back to
+						// General instead of failing the creation.
+						const folderId =
+							placedFolderId !== undefined &&
+							state.folders[placedFolderId]?.projectId === session.projectId
+								? placedFolderId
+								: undefined;
 						if (state.projects[session.projectId] === undefined) {
 							const viewId = state.viewOrder[0];
 							if (viewId === undefined)
@@ -1019,6 +1076,7 @@ export function createServerCoreComposition(
 									type: 'terminal.createPanel',
 									sessionId: session.sessionId,
 									projectId: session.projectId,
+									...(folderId === undefined ? {} : { folderId }),
 									panelId: `p:${session.sessionId}`.slice(0, 128),
 									title: `Terminal ${panelCount + 1}`,
 									cwd: session.cwd,
@@ -1052,6 +1110,7 @@ export function createServerCoreComposition(
 									panel: {
 										id: `p:${session.sessionId}`.slice(0, 128),
 										projectId: session.projectId,
+										...(folderId === undefined ? {} : { folderId }),
 										type: 'terminal',
 										sessionId: session.sessionId,
 										title: `Terminal ${panelCount + 1}`,
@@ -1880,6 +1939,9 @@ function composeLanguageService(
 	});
 	const unwatch = language.watch?.observe((event) => {
 		if (event.resource.length === 0) return;
+		// Language sessions are bound to the project root. A change in a folder's
+		// root names a path relative to that root, not to theirs.
+		if (event.folderId !== undefined) return;
 		sessions.notifyWatchedFiles(event.projectId, [
 			{
 				path: event.resource,

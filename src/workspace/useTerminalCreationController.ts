@@ -7,6 +7,12 @@ type SplitDirection = Extract<Direction, 'below' | 'right'>;
 
 export type AddTerminalOptions = {
 	cwd?: string | null;
+	/**
+	 * Start in the folder's own root, not wherever the tab in front happens to
+	 * be. The request then names no directory and no panel to inherit one
+	 * from, so the server falls back to the root of the folder it names.
+	 */
+	atFolderRoot?: boolean;
 	profileId?: string;
 	direction?: SplitDirection;
 	groupId?: string;
@@ -54,10 +60,14 @@ type UseTerminalCreationControllerOptions = {
 		| ((request: {
 				activePanelId?: string;
 				cwd?: string;
+				folderId?: string;
 				profileId?: string;
 				projectId: string;
 		  }) => Promise<{ sessionId: string }>)
 		| null;
+	/** The folder a new terminal is created in. Absent means the project's
+	 * General folder. Named by id only: the server decides the directory. */
+	folderId?: string;
 	hydrateRecording: (sessionId: string) => void;
 	onError: (message: string | null) => void;
 	projectId: string;
@@ -124,6 +134,7 @@ async function activateCreatedTerminalPresentation(
 export function useTerminalCreationController({
 	apiRef,
 	createSession,
+	folderId,
 	hydrateRecording,
 	onError,
 	projectId,
@@ -158,10 +169,13 @@ export function useTerminalCreationController({
 
 				const { sessionId } = await createSession({
 					projectId,
-					...(activePanel === undefined
+					...(folderId === undefined ? {} : { folderId }),
+					...(activePanel === undefined || options?.atFolderRoot === true
 						? {}
 						: { activePanelId: activePanel.id }),
-					...(typeof options?.cwd === 'string' && options.cwd.length > 0
+					...(typeof options?.cwd === 'string' &&
+					options.cwd.length > 0 &&
+					options.atFolderRoot !== true
 						? { cwd: options.cwd }
 						: {}),
 					...(options?.profileId === undefined
@@ -225,6 +239,7 @@ export function useTerminalCreationController({
 		[
 			apiRef,
 			createSession,
+			folderId,
 			hydrateRecording,
 			onError,
 			projectId,

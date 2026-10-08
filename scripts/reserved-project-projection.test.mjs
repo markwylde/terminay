@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { withGeneralFolders } from './support/workspaceFolders.mjs'
 
 // The automation terminal space (ADR-0030) is a reserved project kind. It
 // reaches capable clients in the workspace projection, and every project list
@@ -54,8 +55,8 @@ function project(id, extra = {}) {
 }
 
 function snapshotWithSpace({ listSpace = false } = {}) {
-	return {
-		schemaVersion: 5,
+	return withGeneralFolders({
+		schemaVersion: 6,
 		serverId: 'server-a',
 		revision: 4,
 		cursor: '4',
@@ -81,7 +82,7 @@ function snapshotWithSpace({ listSpace = false } = {}) {
 		terminalSessions: {
 			'session-auto': { id: 'session-auto', serverId: 'server-a', projectId: SPACE, status: 'running' },
 		},
-	};
+	});
 }
 
 test('a capable client accepts the automation space and keeps its kind, panels, and terminals', () => {
@@ -122,8 +123,10 @@ test('selection reconciliation never selects the automation space', () => {
 	const onlySpace = snapshotWithSpace();
 	onlySpace.views['view-a'].projectIds = [];
 	delete onlySpace.views['view-a'].activeProjectId;
-	delete onlySpace.projects['project-a'];
-	delete onlySpace.projects['project-b'];
+	for (const projectId of ['project-a', 'project-b']) {
+		for (const folderId of onlySpace.projects[projectId].folderIds) delete onlySpace.folders[folderId];
+		delete onlySpace.projects[projectId];
+	}
 	assert.deepEqual(
 		reconcileServerWorkspaceSelection(parseServerWorkspaceSnapshot(onlySpace, 'server-a'), {
 			viewId: 'view-a', projectId: SPACE, panelId: 'panel-auto',

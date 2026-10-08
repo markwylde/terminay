@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { changesPane, folderRow } from './support/folders'
 import { submitTerminalCommand } from './support/terminal'
 import { fileExplorerItem, setProjectRoot } from './support/ui'
 
@@ -53,18 +54,20 @@ test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay 
 
     await mainWindow.keyboard.press(`${modifier}+O`)
 
-    const gitPane = mainWindow
-      .locator('.project-workspace--active .sidebar-pane')
-      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
-    await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+    const changes = changesPane(mainWindow)
+    const notARepository = changes
+      .locator('.git-panel__message')
+      .filter({ hasText: 'This folder is not in a Git repository' })
+    await expect(notARepository).toBeVisible({ timeout: 6000 })
 
     await mainWindow.keyboard.press(`${modifier}+R`)
 
     await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute('data-terminay-project-root', expectedRoot)
     await expect(fileExplorerItem(mainWindow, 'src')).toBeVisible()
-    const worktree = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'terminay' }).first()
-    await expect(worktree).toBeVisible({ timeout: 6000 })
-    await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
+    // Changes reports the root checkout, and General names its branch.
+    await expect(changes.locator('.changes-pane__branch-name')).toBeVisible({ timeout: 6000 })
+    await expect(notARepository).toHaveCount(0)
+    await expect(folderRow(mainWindow, 'General').locator('.folders-tree__branch')).toBeVisible()
   } finally {
     await rm(nonRepo, { recursive: true, force: true })
   }

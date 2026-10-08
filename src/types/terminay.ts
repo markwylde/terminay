@@ -394,6 +394,9 @@ export type WorktreePanelStatus = {
 	worktrees: GitWorktreeStatus[];
 	/** The server shows worktrees in this machine's file manager for us. */
 	revealAvailable?: boolean;
+	/** The server shows a folder named by id in this machine's file manager,
+	 * whether or not the project is in a repository. */
+	folderRevealAvailable?: boolean;
 	signIn?: WorktreeSignInPrompt;
 };
 

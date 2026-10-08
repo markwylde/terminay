@@ -58,7 +58,9 @@ test('browser and Desktop share the host-neutral production workspace split layo
 	assert.match(splitLayout, /controlledNavigationWidth/u);
 	assert.match(splitLayout, /maximumNavigationWidthRatio\s*=\s*0\.8/u);
 	assert.match(splitLayout, /rootWidth/u);
-	assert.match(splitLayout, /previewNavigationResize/u);
+	// The navigation and the folders column are sized by one resize routine.
+	assert.match(splitLayout, /previewResize/u);
+	assert.equal(splitLayout.split('useTrackResize({').length - 1, 3);
 	assert.match(splitLayout, /dragStateRef/u);
 	assert.doesNotMatch(splitLayout, /setDragNavigationWidth/u);
 	assert.match(splitStyle, /\.workspace-split-layout/u);
@@ -75,9 +77,12 @@ test('browser and Desktop share the host-neutral production workspace split layo
 		splitStyle,
 		/left:\s*var\(--workspace-navigation-width,\s*22rem\)/u,
 	);
-	assert.match(splitLayout, /onPointerDown=\{handleSeparatorPointerDown\}/u);
-	assert.match(splitLayout, /onPointerUp=\{handleSeparatorPointerEnd\}/u);
-	assert.match(splitLayout, /commitNavigationWidth\(state\.latestWidth\)/u);
+	assert.match(splitLayout, /onPointerDown: handlePointerDown,/u);
+	assert.match(splitLayout, /onPointerUp: handlePointerUp,/u);
+	assert.match(splitLayout, /commitWidth\(state\.latestWidth\)/u);
+	// A project puts its sidebar on the trailing side with its folders leading.
+	assert.match(app, /navigationSide="trailing"/u);
+	assert.match(app, /folders=\{/u);
 	assert.doesNotMatch(
 		splitStyle,
 		/grid-template-columns:\s*clamp\([^;]*--workspace-navigation-width/u,

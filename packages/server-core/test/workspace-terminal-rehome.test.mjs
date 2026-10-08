@@ -44,7 +44,8 @@ test("a terminal panel move names the moved session among its changed ids", () =
   const events = [];
   workspace.subscribe((event) => events.push(event));
   assert.equal(workspace.apply({ commandId: "move", command: MOVE }).ok, true);
-  assert.deepEqual([...events.at(-1).changedIds].sort(), ["panel-a", "project-a", "project-b", "session-a"]);
+  const folders = ["project-a", "project-b"].map((id) => workspace.state.projects[id].folderIds[0]);
+  assert.deepEqual([...events.at(-1).changedIds].sort(), [...folders, "panel-a", "project-a", "project-b", "session-a"].sort());
 });
 
 test("a client panel move re-homes the terminal after the commit and before the revision is published", async () => {

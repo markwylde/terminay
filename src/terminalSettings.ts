@@ -49,6 +49,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'terminayMcp',
 	'ignoreBracketedPasteMode',
 	'keepTerminalsAfterQuit',
+	'moveTerminalsIntoNewWorktreeFolders',
 	'recording',
 	'remoteAccess',
 	'rightClickSelectsWord',
@@ -430,6 +431,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	autoCloseTerminalOnExitZero: false,
 	keepTerminalsAfterQuit: '5m',
+	moveTerminalsIntoNewWorktreeFolders: true,
 	updateChannel: 'stable',
 	convertEol: true,
 	cursorBlink: true,
@@ -498,6 +500,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 		panelOrder: [...SIDEBAR_PANEL_IDS],
 		projectVisibility: {},
 		projectActiveGroup: {},
+		projectFoldersVisibility: {},
+		projectFoldersWidth: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -674,13 +678,13 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'ai',
 		title: 'Git Push Agent',
 		description:
-			'Choose the AI agent launched from the Git sidebar push menu to commit, push, and open pull requests for you.',
+			"Choose the AI agent launched from a folder's Commit & push with AI menu to commit, push, and open pull requests for you.",
 		fields: [
 			makeField({
 				key: 'gitPushAgent.provider',
 				label: 'Push with AI agent',
 				description:
-					'Agent launched in a new terminal tab when you use the push menu in the Git sidebar.',
+					'Agent launched in a new terminal tab when you choose Commit & push with AI on a folder.',
 				sectionId: 'git-push-agent',
 				categoryId: 'ai',
 				input: 'select',
@@ -1203,6 +1207,23 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'session',
 				],
 			}),
+			makeField({
+				key: 'moveTerminalsIntoNewWorktreeFolders',
+				label: 'Move terminals into new worktree folders',
+				description:
+					"When a terminal creates a Git worktree, move it into that worktree's folder. When off, the folder offers the move instead.",
+				sectionId: 'shell-lifecycle',
+				categoryId: 'shell',
+				input: 'boolean',
+				keywords: [
+					'worktree',
+					'folder',
+					'git',
+					'move terminal',
+					'capture',
+					'agent',
+				],
+			}),
 		],
 	},
 	{
@@ -1261,11 +1282,11 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'files',
 		title: 'Sidebar',
 		description:
-			'Default layout for Files, Git, and Documentation panes in the project sidebar groups.',
+			'Default layout for Files, Changes, and Documentation panes in the project sidebar groups.',
 		fields: [
 			makeField({
 				key: 'sidebar.gitPanelViewMode',
-				label: 'Git changes view',
+				label: 'Changes view',
 				description: 'Show changed files as a nested tree or a flat list.',
 				sectionId: 'sidebar',
 				categoryId: 'files',
@@ -1292,9 +1313,9 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			}),
 			makeField({
 				key: 'sidebar.defaultGitState',
-				label: 'Default Git state',
+				label: 'Default Changes state',
 				description:
-					'Whether the Git pane starts expanded or collapsed in new projects.',
+					'Whether the Changes pane starts expanded or collapsed in new projects.',
 				sectionId: 'sidebar',
 				categoryId: 'files',
 				input: 'select',
@@ -1367,9 +1388,9 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			}),
 			makeField({
 				key: 'sidebar.defaultGitPaneHeight',
-				label: 'Default Git pane height',
+				label: 'Default Changes pane height',
 				description:
-					'Initial height in pixels of the Git pane in new projects.',
+					'Initial height in pixels of the Changes pane in new projects.',
 				sectionId: 'sidebar',
 				categoryId: 'files',
 				input: 'number',
@@ -2346,6 +2367,20 @@ function normalizeProjectSidebarVisibility(value: unknown): Record<string, boole
 	return Object.fromEntries(entries.slice(-256));
 }
 
+function normalizeProjectFoldersWidth(value: unknown): Record<string, number> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const entries = Object.entries(value).flatMap(([key, width]) =>
+		typeof width === 'number' &&
+		Number.isFinite(width) &&
+		key.length > 0 &&
+		key.length <= 512
+			? ([[key, Math.min(2_000, Math.max(120, Math.round(width)))]] as const)
+			: [],
+	);
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeProjectSidebarActiveGroup(
 	value: unknown,
 ): Record<string, SidebarGroupId> {
@@ -2622,6 +2657,10 @@ export function normalizeTerminalSettings(
 		).includes(input.keepTerminalsAfterQuit as never)
 			? (input.keepTerminalsAfterQuit as TerminalSettings['keepTerminalsAfterQuit'])
 			: defaultTerminalSettings.keepTerminalsAfterQuit,
+		moveTerminalsIntoNewWorktreeFolders:
+			typeof input.moveTerminalsIntoNewWorktreeFolders === 'boolean'
+				? input.moveTerminalsIntoNewWorktreeFolders
+				: defaultTerminalSettings.moveTerminalsIntoNewWorktreeFolders,
 		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
 		convertEol:
 			typeof input.convertEol === 'boolean'
@@ -2947,6 +2986,12 @@ export function normalizeTerminalSettings(
 			),
 			projectActiveGroup: normalizeProjectSidebarActiveGroup(
 				sidebarInput.projectActiveGroup,
+			),
+			projectFoldersVisibility: normalizeProjectSidebarVisibility(
+				sidebarInput.projectFoldersVisibility,
+			),
+			projectFoldersWidth: normalizeProjectFoldersWidth(
+				sidebarInput.projectFoldersWidth,
 			),
 		},
 		theme: {

@@ -2,7 +2,7 @@
  * Home's shell: its sidebar, beside whatever Home is showing.
  *
  * Home is not a project, so its sidebar holds no Explorer, Documentation,
- * Agents, or Git panes. It lists Home's three sections and opens each as a
+ * Agents, or Changes panes. It lists Home's three sections and opens each as a
  * tab. It reuses the project sidebar's geometry — the same split layout, width
  * separator, and narrow-layout drawer — so it inherits the drawer's focus and
  * dismissal rules rather than defining its own.

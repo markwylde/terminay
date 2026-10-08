@@ -13,10 +13,12 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import {
 	basename,
 	dirname,
 	isAbsolute,
+	join,
 	relative,
 	resolve,
 	sep,
@@ -76,7 +78,10 @@ import {
 	ServerFileCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
-import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
+import {
+	type FileObservationHost,
+	ServerFileObservationAdapter,
+} from '../packages/server-core/src/fileService/observationAdapter';
 import {
 	createSessionHolderPtyFactory,
 	type SessionHolderLaunchRequest,
@@ -97,6 +102,8 @@ import {
 	ServerMdxRuntimeAdapter,
 } from '../packages/server-core/src/mdxRuntime/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import { FOLDER_TERMINAL_CAPTURED_EVENT } from '../packages/server-core/src/workspaceProtocol';
+import { createWorktreeCaptureHost } from '../packages/server-core/src/worktreeCapture';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
@@ -127,6 +134,7 @@ import {
 } from '../packages/server-core/src/workspace';
 import type { TerminalSessionRehome } from '../packages/server-core/src/workspaceProtocol';
 import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
+import { ServerFolders } from './serverFolders';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -440,6 +448,11 @@ export class ServerTerminalAuthority {
 	>();
 	private readonly fileSessionProjects = new Map<string, FileProjectContext>();
 	private readonly fileProjectRoots = new Map<string, string>();
+	/** Folder roots, folder-scoped file services, and the worktree reconciler. */
+	private readonly folders: ServerFolders;
+	private readonly worktreeCapture: ReturnType<
+		typeof createWorktreeCaptureHost
+	>;
 	private readonly agentScope: ProjectAgentScope;
 	/** Starts extension session sources and receives their publications. */
 	readonly agentSources: SessionSourceSupervisor;
@@ -535,9 +548,67 @@ export class ServerTerminalAuthority {
 			onProjectChanged: (projectId, worktreeId) =>
 				git.announceWorktreeChange(projectId, worktreeId),
 		});
+		const projectFileObservationHost = fileObservationHostForRoot((projectId) =>
+			this.fileProjectRoots.get(projectId),
+		);
+		// Which terminal created a worktree: Git in each terminal reports its own
+		// commands to this socket (ADR-0052). The path is short on purpose; Unix
+		// socket paths are capped near 104 bytes.
+		const worktreeCapture = createWorktreeCaptureHost({
+			socketPath: join(
+				tmpdir(),
+				`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
+			),
+			workspace: () => this.workspace.state,
+			apply: (commandId, command) => {
+				const applied = this.composition.workspaceOperations?.applyHostCommand(
+					commandId,
+					command,
+				);
+				if (applied === undefined)
+					throw new Error('workspace operation registry is unavailable');
+				return applied;
+			},
+			moveAutomatically: () =>
+				options.settings?.settings.moveTerminalsIntoNewWorktreeFolders !==
+				false,
+			sessions: () => this.service.listSessions(),
+			onCaptured: (captured) => {
+				this.eventJournal.append(FOLDER_TERMINAL_CAPTURED_EVENT, {
+					...captured,
+				});
+			},
+		});
+		this.worktreeCapture = worktreeCapture;
+		// Until the socket is listening, launched terminals simply do not report,
+		// and capture falls back to the process lookup.
+		void worktreeCapture.start();
+		const folders = new ServerFolders({
+			workspace: () => this.workspace.state,
+			git,
+			capture: worktreeCapture.reconcilerHooks,
+			applyHostCommand: (commandId, command) =>
+				this.composition.workspaceOperations?.applyHostCommand(
+					commandId,
+					command,
+				),
+			storage: nodeFileCatalogStorage,
+			observationHost: (root) => fileObservationHostForRoot(() => root),
+			projects: {
+				catalog: (projectId) => this.fileCatalogProjects.get(projectId),
+				content: (projectId) => this.fileContentProjects.get(projectId),
+				session: (projectId) => this.fileSessionProjects.get(projectId),
+				observation: (projectId) =>
+					this.fileProjectRoots.has(projectId)
+						? { projectId, host: projectFileObservationHost }
+						: undefined,
+			},
+		});
+		this.folders = folders;
 		const gitAdapter = new ServerGitAdapter({
 			serverId: options.serverId,
 			git: this.git,
+			onWorktreeMove: folders.onWorktreeMove,
 			resolveProjectRoot: (projectId) =>
 				this.workspace.state.projects[projectId]?.root ?? null,
 			insights: this.worktreeInsights,
@@ -562,6 +633,21 @@ export class ServerTerminalAuthority {
 								await revealPath(worktree.path);
 								return { revealed: true };
 							},
+							// A folder is named by id and need not be in a repository:
+							// its root is whatever the resolver says it is now.
+							revealFolder: async (request) => {
+								const revealPath = options.revealPathOnHost;
+								if (revealPath === undefined)
+									throw new Error('The folder cannot be shown on this host.');
+								const resolved = await folders.roots.resolve(
+									request.projectId,
+									request.folderId,
+								);
+								if (!resolved.root)
+									throw new Error('The folder has no directory to show.');
+								await revealPath(resolved.root);
+								return { revealed: true };
+							},
 						},
 						// Only the reveal action is wired; terminals and project
 						// switching stay with the renderer.
@@ -574,6 +660,7 @@ export class ServerTerminalAuthority {
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
 			projects: this.fileCatalogProjects,
+			folderScope: folders.catalog.resolve,
 			onOperationFailure: (failure) =>
 				options.onFileOperationFailure?.(failure),
 		});
@@ -588,10 +675,12 @@ export class ServerTerminalAuthority {
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
 			projects: this.fileContentProjects,
+			folderScope: folders.content.resolve,
 		});
 		const fileSessionAdapter = new ServerFileAdapter({
 			serverId: options.serverId,
 			projects: this.fileSessionProjects,
+			folderScope: folders.session.resolve,
 		});
 		const eventJournal = new OrderedEventJournal();
 		this.eventJournal = eventJournal;
@@ -633,82 +722,8 @@ export class ServerTerminalAuthority {
 		const fileObservations = new ServerFileObservationAdapter({
 			serverId: options.serverId,
 			eventJournal,
-			host: {
-				watch: async ({ projectId, resource, signal, publish }) => {
-					const root = this.fileProjectRoots.get(projectId);
-					if (root === undefined)
-						throw new Error('file observation project is unavailable');
-					const target = resolve(root, resource);
-					const targetStats = await stat(target);
-					const watchedDirectory = targetStats.isDirectory()
-						? target
-						: dirname(target);
-					const watchedName = targetStats.isDirectory()
-						? null
-						: basename(target);
-					const watcher = watchFileSystem(
-						watchedDirectory,
-						{ persistent: false },
-						(eventType, entryName) => {
-							if (
-								watchedName !== null &&
-								entryName !== null &&
-								String(entryName) !== watchedName
-							)
-								return;
-							publish({
-								resource,
-								kind: eventType === 'rename' ? 'renamed' : 'changed',
-								...(entryName === null
-									? {}
-									: { relatedResource: String(entryName) }),
-							});
-						},
-					);
-					let unavailablePublished = false;
-					const publishUnavailable = () => {
-						if (signal.aborted || unavailablePublished) return;
-						unavailablePublished = true;
-						publish({ resource, kind: 'unavailable' });
-					};
-					watcher.once('error', publishUnavailable);
-					watcher.once('close', publishUnavailable);
-					signal.addEventListener('abort', () => watcher.close(), {
-						once: true,
-					});
-				},
-				calculateFolderSize: async ({
-					projectId,
-					resource,
-					signal,
-					progress,
-				}) => {
-					const root = this.fileProjectRoots.get(projectId);
-					if (root === undefined)
-						throw new Error('folder-size project is unavailable');
-					let bytes = 0;
-					let files = 0;
-					let directories = 0;
-					const visit = async (directory: string): Promise<void> => {
-						if (signal.aborted) throw signal.reason;
-						directories += 1;
-						for (const entry of await readdir(directory, {
-							withFileTypes: true,
-						})) {
-							if (signal.aborted) throw signal.reason;
-							const path = resolve(directory, entry.name);
-							if (entry.isDirectory()) await visit(path);
-							else if (entry.isFile()) {
-								files += 1;
-								bytes += (await stat(path)).size;
-							}
-							progress({ bytes, files, directories });
-						}
-					};
-					await visit(resolve(root, resource));
-					return { bytes, files, directories };
-				},
-			},
+			host: projectFileObservationHost,
+			folderScope: folders.observation.resolve,
 		});
 		const fileCatalogOperations = fileCatalogAdapter.operations();
 		const documentationCatalogOperations =
@@ -783,6 +798,7 @@ export class ServerTerminalAuthority {
 			this.worktreeInsights.attach(extensionManagement.hosts);
 		}
 		this.workspace.subscribe(() => this.worktreeInsights.refreshActivity());
+		this.workspace.subscribe(() => folders.workspaceChanged());
 		const mcpRouter =
 			mcpInstall === undefined
 				? undefined
@@ -1040,6 +1056,8 @@ export class ServerTerminalAuthority {
 				scope: this.agentScope,
 			},
 			git: gitAdapter,
+			folderRoots: folders.roots,
+			gitCommands: worktreeCapture.gitCommands,
 			eventJournal,
 			...(extensionManagement === undefined
 				? {}
@@ -1353,19 +1371,35 @@ export class ServerTerminalAuthority {
 		const payload = protocolPayload(request.envelope.payload);
 		const requestedPath = protocolString(payload.path, 'file path');
 		const projectId = protocolString(payload.projectId, 'project id');
-		const context = this.fileSessionProjects.get(projectId);
-		const root = this.fileProjectRoots.get(projectId);
-		if (context === undefined || root === undefined)
-			throw new Error('file diff project is unavailable');
+		const scope = await this.fileRequestScope(
+			projectId,
+			payload.folderId,
+			'file diff project is unavailable',
+		);
 		const canonicalPath = isAbsolute(requestedPath)
 			? await realpath(requestedPath)
-			: await context.resolver.resolve(requestedPath, { requireFile: true });
-		const project = this.projectForPath(canonicalPath);
-		if (project.projectId !== projectId)
+			: await scope.resolver.resolve(requestedPath, { requireFile: true });
+		// In a folder the file must lie in that folder's root; otherwise in the
+		// root of the project the request names.
+		const project =
+			scope.folder === undefined
+				? this.projectForPath(canonicalPath)
+				: { projectId, root: scope.root };
+		if (
+			project.projectId !== projectId ||
+			(canonicalPath !== project.root &&
+				!canonicalPath.startsWith(`${project.root}${sep}`))
+		)
 			throw new Error('file diff target is outside the connected project');
 		const relativePath = relative(project.root, canonicalPath);
 		const result = await this.git.diff(
-			{ projectId: project.projectId, path: relativePath },
+			{
+				projectId: project.projectId,
+				path: relativePath,
+				...(scope.folder?.worktreeId === undefined
+					? {}
+					: { worktreeId: scope.folder.worktreeId }),
+			},
 			request.context.signal,
 		);
 		writePortDiagnostic({
@@ -1402,10 +1436,12 @@ export class ServerTerminalAuthority {
 		const payload = protocolPayload(request.envelope.payload);
 		const projectId = protocolString(payload.projectId, 'project id');
 		const path = protocolString(payload.path, 'file path');
-		const context = this.fileSessionProjects.get(projectId);
-		if (context === undefined)
-			throw new Error('file mutation project is unavailable');
-		const canonicalPath = await context.resolver.resolve(path, {
+		const scope = await this.fileRequestScope(
+			projectId,
+			payload.folderId,
+			'file mutation project is unavailable',
+		);
+		const canonicalPath = await scope.resolver.resolve(path, {
 			requireFile: true,
 		});
 		const value = await stat(canonicalPath);
@@ -1438,11 +1474,71 @@ export class ServerTerminalAuthority {
 		const path = protocolString(payload.path, 'file path');
 		const projectRoot = protocolString(payload.projectRoot, 'project root');
 		const canonicalRoot = await realpath(projectRoot);
-		const project = this.projectForPath(await realpath(path));
-		if (project.root !== canonicalRoot)
-			throw new Error('sparse file target is outside the connected project');
+		const canonicalPath = await realpath(path);
+		if (payload.folderId === undefined) {
+			const project = this.projectForPath(canonicalPath);
+			if (project.root !== canonicalRoot)
+				throw new Error('sparse file target is outside the connected project');
+		} else {
+			// The root the client names is checked against the one the server
+			// resolves for the folder; it never decides where the save may land.
+			const folderId = protocolString(payload.folderId, 'folder id');
+			const folder = this.workspace.state.folders[folderId];
+			if (folder === undefined)
+				throw new Error('sparse file target is outside the connected project');
+			const scope = await this.fileRequestScope(
+				folder.projectId,
+				folderId,
+				'sparse file project is unavailable',
+			);
+			if (
+				scope.root !== canonicalRoot ||
+				!canonicalPath.startsWith(`${scope.root}${sep}`)
+			)
+				throw new Error('sparse file target is outside the connected project');
+		}
 		await save(payload as unknown as FileViewerSparseFileSaveRequest);
 		return null;
+	}
+
+	/**
+	 * The resolver and canonical root one file request runs in: the project's
+	 * own, or a folder's when the request names one. A folder's root is resolved
+	 * by the server for this request alone (ADR-0050).
+	 */
+	private async fileRequestScope(
+		projectId: string,
+		folderId: unknown,
+		unavailable: string,
+	): Promise<{
+		readonly resolver: CanonicalProjectPathResolver;
+		readonly root: string;
+		/** Present when the request named a folder. */
+		readonly folder?: { readonly worktreeId?: string };
+	}> {
+		if (folderId === undefined) {
+			const context = this.fileSessionProjects.get(projectId);
+			const root = this.fileProjectRoots.get(projectId);
+			if (context === undefined || root === undefined)
+				throw new Error(unavailable);
+			return { resolver: context.resolver, root };
+		}
+		const context = await this.folders.session.resolve(
+			projectId,
+			protocolString(folderId, 'folder id'),
+		);
+		const root = await context.resolver.root();
+		// Git addresses a worktree by its own id, found from the same listing
+		// the folder's root was confirmed against.
+		const listing = await this.git.worktrees(projectId);
+		const worktreeId = listing.worktrees.find(
+			(worktree) => worktree.path === root,
+		)?.id;
+		return {
+			resolver: context.resolver,
+			root,
+			folder: worktreeId === undefined ? {} : { worktreeId },
+		};
 	}
 
 	private projectForPath(path: string): { projectId: string; root: string } {
@@ -1504,6 +1600,7 @@ export class ServerTerminalAuthority {
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		});
 		await this.git.bindProject(projectId, root);
+		this.folders.projectBound(projectId);
 	}
 
 	/**
@@ -1539,6 +1636,7 @@ export class ServerTerminalAuthority {
 		this.fileContentProjects.delete(projectId);
 		this.fileSessionProjects.delete(projectId);
 		this.fileProjectRoots.delete(projectId);
+		this.folders.projectReleased(projectId);
 		this.agentScope.removeProject(projectId);
 	}
 
@@ -1594,6 +1692,7 @@ export class ServerTerminalAuthority {
 				this.fileContentProjects.set(projectId, contentContext);
 				this.fileSessionProjects.set(projectId, sessionContext);
 				await this.git.bindProject(projectId, canonicalRoot);
+				this.folders.projectBound(projectId);
 			},
 		});
 	}
@@ -1664,6 +1763,9 @@ export class ServerTerminalAuthority {
 			readonly projectId: string;
 			readonly profileId?: string;
 			readonly activePanelId?: string;
+			/** The folder of the project the terminal is created in. Absent means
+			 * the project's General folder. */
+			readonly folderId?: string;
 			readonly projectRootOrigin?: 'explicit' | 'server-default';
 		},
 	): Promise<ServerTerminalAuthoritySession> {
@@ -1713,6 +1815,9 @@ export class ServerTerminalAuthority {
 							...(options.activePanelId === undefined
 								? {}
 								: { activePanelId: options.activePanelId }),
+							...(options.folderId === undefined
+								? {}
+								: { folderId: options.folderId }),
 							cols: options.cols,
 							rows: options.rows,
 						});
@@ -1733,12 +1838,21 @@ export class ServerTerminalAuthority {
 		if (!this.buffers.has(handle.sessionId))
 			this.buffers.set(handle.sessionId, this.createRecentOutput());
 		if (this.workspace.state.terminalSessions[handle.sessionId] === undefined) {
+			// A folder deleted while the terminal was spawning falls back to
+			// General instead of failing the creation.
+			const folderId =
+				options.folderId !== undefined &&
+				this.workspace.state.folders[options.folderId]?.projectId ===
+					handle.projectId
+					? options.folderId
+					: undefined;
 			const registered = this.composition.workspaceOperations?.applyHostCommand(
 				`authority:terminal:${handle.sessionId}`.slice(0, 128),
 				{
 					type: 'terminal.createPanel',
 					sessionId: handle.sessionId,
 					projectId: handle.projectId,
+					...(folderId === undefined ? {} : { folderId }),
 					panelId: `p:${handle.sessionId}`.slice(0, 128),
 					title: this.nextTerminalPanelTitle(handle.projectId),
 					cwd: handle.snapshot().cwd,
@@ -2046,6 +2160,8 @@ export class ServerTerminalAuthority {
 		this.shutdownPromise = (async () => {
 			await this.composition.shutdown();
 		})().finally(() => {
+			this.folders.dispose();
+			this.worktreeCapture.close();
 			this.serviceEventsUnsubscribe?.();
 			this.serviceEventsUnsubscribe = undefined;
 		});
@@ -2348,6 +2464,84 @@ function protocolString(value: unknown, label: string): string {
 	)
 		throw new TypeError(`${label} is invalid`);
 	return value;
+}
+
+/**
+ * Watches and sizes paths under one root. A project and a linked folder differ
+ * only in which root that is, so both are observed through this.
+ */
+function fileObservationHostForRoot(
+	rootOf: (projectId: string) => string | undefined,
+): FileObservationHost {
+	return {
+		watch: async ({ projectId, resource, signal, publish }) => {
+			const root = rootOf(projectId);
+			if (root === undefined)
+				throw new Error('file observation project is unavailable');
+			const target = resolve(root, resource);
+			const targetStats = await stat(target);
+			const watchedDirectory = targetStats.isDirectory()
+				? target
+				: dirname(target);
+			const watchedName = targetStats.isDirectory() ? null : basename(target);
+			const watcher = watchFileSystem(
+				watchedDirectory,
+				{ persistent: false },
+				(eventType, entryName) => {
+					if (
+						watchedName !== null &&
+						entryName !== null &&
+						String(entryName) !== watchedName
+					)
+						return;
+					publish({
+						resource,
+						kind: eventType === 'rename' ? 'renamed' : 'changed',
+						...(entryName === null
+							? {}
+							: { relatedResource: String(entryName) }),
+					});
+				},
+			);
+			let unavailablePublished = false;
+			const publishUnavailable = () => {
+				if (signal.aborted || unavailablePublished) return;
+				unavailablePublished = true;
+				publish({ resource, kind: 'unavailable' });
+			};
+			watcher.once('error', publishUnavailable);
+			watcher.once('close', publishUnavailable);
+			signal.addEventListener('abort', () => watcher.close(), {
+				once: true,
+			});
+		},
+		calculateFolderSize: async ({ projectId, resource, signal, progress }) => {
+			const root = rootOf(projectId);
+			if (root === undefined)
+				throw new Error('folder-size project is unavailable');
+			let bytes = 0;
+			let files = 0;
+			let directories = 0;
+			const visit = async (directory: string): Promise<void> => {
+				if (signal.aborted) throw signal.reason;
+				directories += 1;
+				for (const entry of await readdir(directory, {
+					withFileTypes: true,
+				})) {
+					if (signal.aborted) throw signal.reason;
+					const path = resolve(directory, entry.name);
+					if (entry.isDirectory()) await visit(path);
+					else if (entry.isFile()) {
+						files += 1;
+						bytes += (await stat(path)).size;
+					}
+					progress({ bytes, files, directories });
+				}
+			};
+			await visit(resolve(root, resource));
+			return { bytes, files, directories };
+		},
+	};
 }
 
 const nodeFileCatalogStorage: FileCatalogStorage & FileSessionStorage = {

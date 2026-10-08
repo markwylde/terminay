@@ -219,264 +219,49 @@
 	color: #e2a03f;
 }
 
-.worktrees-panel {
+/* --- The Changes pane: one worktree's branch, then its changes ------------- */
+
+.changes-pane {
 	display: flex;
 	flex-direction: column;
-	flex: 1;
 	min-height: 0;
 	width: 100%;
-	overflow-y: auto;
-	background: transparent;
-	color: #ffffff;
-	font-size: 13px;
-	padding: 4px 0;
 }
 
-.worktrees-panel::-webkit-scrollbar {
-	width: 10px;
-}
-
-.worktrees-panel::-webkit-scrollbar-thumb {
-	background: rgba(255, 255, 255, 0.12);
-	border-radius: 6px;
-	border: 2px solid transparent;
-	background-clip: padding-box;
-}
-
-.worktrees-panel::-webkit-scrollbar-thumb:hover {
-	background: rgba(255, 255, 255, 0.2);
-	background-clip: padding-box;
-}
-
-.worktrees-panel__worktree {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-}
-
-.worktrees-panel__worktree + .worktrees-panel__worktree {
-	border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.worktrees-panel__worktree--deleting {
-	opacity: 0.52;
-}
-
-.worktrees-panel__worktree-header {
-	box-sizing: border-box;
-	min-height: 48px;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 4px 8px 4px 12px;
-	color: #ffffff;
-	cursor: pointer;
-	font-size: 13px;
-	user-select: none;
-}
-
-.worktrees-panel__worktree-toggle {
-	all: unset;
-	box-sizing: border-box;
-	flex: 1 1 auto;
-	min-width: 0;
-	min-height: 40px;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	cursor: pointer;
-}
-
-.worktrees-panel__worktree-toggle:hover {
-	background: transparent;
-	filter: none;
-}
-
-.worktrees-panel__worktree-toggle:focus-visible,
-.worktrees-panel__row-menu:focus-visible {
-	background: rgba(255, 255, 255, 0.08);
-	outline: 1px solid rgba(87, 183, 255, 0.5);
-	outline-offset: -1px;
-}
-
-.worktrees-panel__worktree-header--dirty .worktrees-panel__worktree-name {
-	color: #e2c08d;
-}
-
-.worktrees-panel__worktree-header--current .worktrees-panel__worktree-name {
-	font-weight: 700;
-	text-decoration: underline;
-	text-underline-offset: 3px;
-}
-
-.worktrees-panel__worktree-icon {
-	flex-shrink: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	color: rgba(220, 226, 240, 0.3);
-}
-
-.worktrees-panel__worktree-icon--dirty {
-	color: #e2c08d;
-}
-
-.worktrees-panel__worktree-icon--current {
-	color: rgba(220, 226, 240, 0.9);
-}
-
-.worktrees-panel__worktree-icon--current.worktrees-panel__worktree-icon--dirty {
-	color: #e2c08d;
-}
-
-.worktrees-panel__worktree-name {
-	min-width: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.worktrees-panel__worktree-name {
-	flex: 1 1 auto;
-}
-
-.worktrees-panel__worktree-name {
-	color: rgba(220, 226, 240, 0.9);
-	font-size: 13px;
-	line-height: 18px;
-}
-
-.worktrees-panel__pill {
-	flex: 0 1 auto;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	min-width: 0;
-	height: 18px;
-	padding: 0 6px;
-	border-radius: 9px;
-	background: rgba(255, 255, 255, 0.08);
-	color: rgba(220, 226, 240, 0.58);
-	font-size: 10px;
-	font-weight: 600;
-	line-height: 1;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.worktrees-panel__pill {
-	color: #57b7ff;
-}
-
-.worktrees-panel__row-menu {
-	all: unset;
-	box-sizing: border-box;
+/* The pane's own body scrolls; the changes list is as tall as its rows. */
+.changes-pane .git-panel {
 	flex: 0 0 auto;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 22px;
-	height: 22px;
-	border-radius: 5px;
-	color: rgba(220, 226, 240, 0.5);
-	cursor: pointer;
-	transition:
-		background 100ms ease,
-		color 100ms ease;
-}
-
-.worktrees-panel__row-menu:hover,
-.worktrees-panel__row-menu--active {
-	background: rgba(87, 183, 255, 0.12);
-	color: #57b7ff;
-}
-
-.worktrees-panel__row-menu:disabled {
-	background: transparent;
-	color: rgba(220, 226, 240, 0.24);
-	cursor: default;
-}
-
-.worktrees-panel__delta {
-	flex: 0 0 auto;
-	font-variant-numeric: tabular-nums;
-	font-weight: 600;
-}
-
-.worktrees-panel__delta--additions {
-	color: #73c991;
-}
-
-.worktrees-panel__delta--deletions {
-	color: #f14c4c;
-}
-
-.worktrees-panel__clean {
-	flex: 0 0 auto;
-	color: rgba(220, 226, 240, 0.5);
-	font-weight: 600;
-}
-
-.worktrees-panel__changed {
-	flex: 0 0 auto;
-	color: #f14c4c;
-	font-weight: 600;
-}
-
-.worktrees-panel__deleting {
-	flex: 0 0 auto;
-	color: rgba(220, 226, 240, 0.72);
-	font-style: italic;
-	font-weight: 600;
-}
-
-.worktrees-panel__pulling {
-	flex: 0 0 auto;
-	color: rgba(220, 226, 240, 0.72);
-	font-style: italic;
-	font-weight: 600;
-	animation: worktrees-panel-pulling-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes worktrees-panel-pulling-pulse {
-	0%,
-	100% {
-		opacity: 0.55;
-	}
-	50% {
-		opacity: 1;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.worktrees-panel__pulling {
-		animation: none;
-	}
-}
-
-.worktrees-panel__changes {
-	position: relative;
-	display: flex;
-	flex-direction: column;
-	min-height: 0;
-	margin-left: 18px;
-	padding-left: 4px;
-	border-left: 1px solid rgba(220, 226, 240, 0.08);
-}
-
-.worktrees-panel__changes .git-panel {
-	flex: 0 0 auto;
-	min-height: 0;
 	overflow: visible;
-	background: transparent;
-	padding: 0 0 6px;
+	padding-top: 0;
 }
 
-.worktrees-panel__changes .git-panel__message {
-	padding-left: 20px;
+.changes-pane__branch {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 6px 12px 4px;
+	color: rgba(220, 226, 240, 0.55);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+}
+
+.changes-pane__branch > svg {
+	flex: none;
+}
+
+.changes-pane__branch-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.changes-pane__activity {
+	flex: none;
+	margin-left: auto;
+	font-style: italic;
+	color: rgba(220, 226, 240, 0.72);
 }
 
 .worktree-sign-in-dialog__text,
@@ -528,209 +313,3 @@
 	background: #2563eb;
 }
 
-/* Two-line rows: name and actions, then change size, PR, and checks in
- * fixed slots so they line up from row to row. */
-.worktrees-panel--table {
-	--worktree-metrics: 1fr;
-}
-
-.worktrees-panel--table.worktrees-panel--forge-columns {
-	--worktree-metrics: 84px 52px minmax(0, 1fr);
-}
-
-.worktrees-panel--table .worktrees-panel__worktree-header {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 22px;
-	align-items: center;
-	column-gap: 6px;
-	row-gap: 1px;
-	min-height: 0;
-	padding: 5px 6px 6px 12px;
-}
-
-.worktrees-panel--table .worktrees-panel__worktree-toggle {
-	min-height: 22px;
-	gap: 5px;
-}
-
-.worktrees-panel--table .worktrees-panel__worktree-name {
-	font-weight: 600;
-}
-
-.worktrees-panel__metrics {
-	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: var(--worktree-metrics);
-	align-items: center;
-	column-gap: 8px;
-	min-height: 18px;
-	padding-left: 42px;
-	cursor: pointer;
-}
-
-.worktrees-panel__cell {
-	display: flex;
-	justify-content: flex-start;
-	gap: 6px;
-	align-items: center;
-	min-width: 0;
-	font-size: 10.5px;
-	font-variant-numeric: tabular-nums;
-}
-
-.worktrees-panel__cell--delta {
-	white-space: nowrap;
-	font-size: 11px;
-}
-
-.worktrees-panel__cell--delta .worktrees-panel__clean,
-.worktrees-panel__cell--delta .worktrees-panel__changed,
-.worktrees-panel__cell--delta .worktrees-panel__deleting,
-.worktrees-panel__cell--delta .worktrees-panel__pulling {
-	font-weight: 500;
-}
-
-.worktrees-panel__cell--delta .worktrees-panel__clean {
-	color: rgba(220, 226, 240, 0.34);
-}
-
-.worktrees-panel__pr,
-.worktrees-panel__ci {
-	all: unset;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	border-radius: 4px;
-	padding: 1px 2px;
-	font-size: 11px;
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.worktrees-panel__pr:hover,
-.worktrees-panel__ci:hover {
-	background: rgba(255, 255, 255, 0.08);
-}
-
-.worktrees-panel__pr:focus-visible,
-.worktrees-panel__ci:focus-visible,
-.worktrees-panel__summary-link:focus-visible {
-	outline: 1px solid rgba(87, 183, 255, 0.5);
-}
-
-.worktrees-panel__pr--open {
-	color: #73c991;
-}
-
-.worktrees-panel__pr--draft,
-.worktrees-panel__pr--closed {
-	color: rgba(220, 226, 240, 0.5);
-}
-
-.worktrees-panel__pr--merged {
-	color: #b180d7;
-}
-
-.worktrees-panel__ci--failed,
-.worktrees-panel__check-icon--failed {
-	color: #f14c4c;
-}
-
-.worktrees-panel__ci--pending,
-.worktrees-panel__check-icon--pending {
-	color: #cca700;
-}
-
-.worktrees-panel__ci--passed,
-.worktrees-panel__check-icon--passed {
-	color: #73c991;
-}
-
-.worktrees-panel__check-icon--skipped {
-	color: rgba(220, 226, 240, 0.4);
-}
-
-.worktrees-panel__ring {
-	flex: 0 0 auto;
-}
-
-.worktrees-panel__ring-track,
-.worktrees-panel__ring-segment {
-	fill: none;
-	stroke-width: 2.4;
-}
-
-.worktrees-panel__ring-track {
-	stroke: rgba(255, 255, 255, 0.1);
-}
-
-.worktrees-panel__ring-segment--failed {
-	stroke: #f14c4c;
-}
-
-.worktrees-panel__ring-segment--pending {
-	stroke: #cca700;
-}
-
-.worktrees-panel__ring-segment--passed {
-	stroke: #73c991;
-}
-
-.worktrees-panel__detail {
-	background: rgba(255, 255, 255, 0.02);
-	border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.worktrees-panel__summary {
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-	padding: 4px 12px 8px 54px;
-	color: rgba(220, 226, 240, 0.72);
-	font-size: 11px;
-}
-
-.worktrees-panel__summary-line {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	padding: 2px 0;
-}
-
-.worktrees-panel__summary-line > svg {
-	flex: 0 0 auto;
-}
-
-.worktrees-panel__summary-line > span {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.worktrees-panel__summary-link {
-	all: unset;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	padding: 2px 4px;
-	margin: 0 -4px;
-	border-radius: 4px;
-	cursor: pointer;
-}
-
-.worktrees-panel__summary-link:hover {
-	background: rgba(255, 255, 255, 0.06);
-	color: #ffffff;
-}
-
-.worktrees-panel__summary-branch {
-	color: rgba(220, 226, 240, 0.4);
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	font-size: 10.5px;
-}
-
-.worktrees-panel__summary-more {
-	color: rgba(220, 226, 240, 0.4);
-}

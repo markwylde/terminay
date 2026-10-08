@@ -337,13 +337,14 @@ function successfulRendererClient(overrides = {}) {
       if (operation === 'workspace.snapshot') {
         return {
           result: {
-				schemaVersion: 5,
+				schemaVersion: 6,
             serverId: 'desktop-local',
             revision: 0,
             cursor: '0',
             viewOrder: [],
             views: {},
             projects: {},
+            folders: {},
             panels: {},
             terminalSessions: {},
           },

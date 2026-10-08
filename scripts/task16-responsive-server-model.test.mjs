@@ -11,7 +11,7 @@ const [app, webMount, sharedMount] = await Promise.all([
 ]);
 
 test('responsive server workspace renders Git from the connected server client', () => {
-	assert.match(app, /<WorktreesPanel/u);
+	assert.match(app, /<ChangesPane/u);
 	assert.match(app, /terminalClientContext\?\.gitClient/u);
 	assert.match(webMount, /<ConnectedRendererWorkspace/u);
 	assert.match(sharedMount, /<App/u);

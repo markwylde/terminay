@@ -183,6 +183,12 @@ export interface TerminalPanelClientContextValue {
 	readonly serverId: string;
 	readonly projectId: string;
 	readonly projectRoot?: string;
+	/**
+	 * Set when these panels belong to a linked folder, whose root is a worktree
+	 * and not the project root. Services still bound to the project root are
+	 * withheld from such a panel; see `projectRootFileServices`.
+	 */
+	readonly linkedFolderId?: string;
 	readonly clientId: string;
 	/** Host-owned display metadata for the authenticated current server. */
 	readonly connectionLabel?: string;

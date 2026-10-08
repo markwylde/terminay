@@ -18,6 +18,7 @@
 }
 
 .workspace-split-layout__navigation,
+.workspace-split-layout__folders,
 .workspace-split-layout__content {
 	box-sizing: border-box;
 	min-width: 0;
@@ -31,6 +32,7 @@
 	background: var(--terminal-panel-surface, var(--tab-bg-active, #0d1014));
 }
 
+.workspace-split-layout__folders-separator,
 .workspace-split-layout__separator {
 	box-sizing: border-box;
 	position: absolute;
@@ -51,7 +53,8 @@
 	-webkit-user-select: none;
 }
 
-.workspace-split-layout__separator::before {
+.workspace-split-layout__separator::before,
+.workspace-split-layout__folders-separator::before {
 	content: "";
 	position: absolute;
 	inset-block: 0;
@@ -68,26 +71,31 @@
 	transition-delay: 0ms;
 }
 
-.workspace-split-layout__separator:hover::before {
+.workspace-split-layout__separator:hover::before,
+.workspace-split-layout__folders-separator:hover::before {
 	width: 4px;
 	background: var(--workspace-split-layout-separator-active-line, #ffffff);
 	transition-delay: 100ms;
 }
 
 .workspace-split-layout__separator:active::before,
-.workspace-split-layout__separator:focus-visible::before {
+.workspace-split-layout__separator:focus-visible::before,
+.workspace-split-layout__folders-separator:active::before,
+.workspace-split-layout__folders-separator:focus-visible::before {
 	width: 4px;
 	background: var(--workspace-split-layout-separator-active-line, #ffffff);
 	transition-delay: 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.workspace-split-layout__separator:hover::before {
+	.workspace-split-layout__separator:hover::before,
+	.workspace-split-layout__folders-separator:hover::before {
 		transition-delay: 0ms;
 	}
 }
 
-.workspace-split-layout__separator:focus-visible {
+.workspace-split-layout__separator:focus-visible,
+.workspace-split-layout__folders-separator:focus-visible {
 	outline: none;
 }
 
@@ -122,6 +130,76 @@
 	grid-column: 1;
 }
 
+/* --- A trailing navigation, with an optional leading folders column -------
+ *
+ * Folders | content | navigation. Each column has its separator on the edge
+ * that faces the content, so the navigation's is measured from the trailing
+ * edge. These apply only above the narrow breakpoint: below it the navigation
+ * is the same drawer whichever side it is on, and there is no folders column.
+ */
+@media (min-width: 721px) {
+	.workspace-split-layout[data-navigation-side="trailing"] {
+		grid-template-columns:
+			minmax(0, 1fr)
+			var(--workspace-navigation-width, 22rem);
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"]
+		.workspace-split-layout__navigation {
+		grid-column: 2;
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"]
+		.workspace-split-layout__content {
+		grid-column: 1;
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"]
+		.workspace-split-layout__separator {
+		left: auto;
+		right: var(--workspace-navigation-width, 22rem);
+		transform: translateX(3px);
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"][data-navigation-visible="false"] {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"][data-folders-visible="true"] {
+		grid-template-columns:
+			var(--workspace-folders-width, 14.5rem)
+			minmax(0, 1fr)
+			var(--workspace-navigation-width, 22rem);
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"][data-folders-visible="true"]
+		.workspace-split-layout__content {
+		grid-column: 2;
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"][data-folders-visible="true"]
+		.workspace-split-layout__navigation {
+		grid-column: 3;
+	}
+
+	.workspace-split-layout[data-navigation-side="trailing"][data-folders-visible="true"][data-navigation-visible="false"] {
+		grid-template-columns:
+			var(--workspace-folders-width, 14.5rem)
+			minmax(0, 1fr);
+	}
+}
+
+.workspace-split-layout__folders {
+	grid-column: 1;
+	grid-row: 1;
+	overflow: hidden;
+	background: var(--terminal-panel-surface, var(--tab-bg-active, #0d1014));
+}
+
+.workspace-split-layout__folders-separator {
+	left: var(--workspace-folders-width, 14.5rem);
+}
+
 .workspace-split-layout__scrim {
 	display: none;
 	appearance: none;
@@ -141,7 +219,9 @@
 		grid-template-rows: minmax(0, 1fr);
 	}
 
-	.workspace-split-layout__separator {
+	.workspace-split-layout__separator,
+	.workspace-split-layout__folders,
+	.workspace-split-layout__folders-separator {
 		display: none;
 	}
 

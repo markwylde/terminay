@@ -422,3 +422,91 @@ test("FileViewerClient accepts folder Markdown task aggregation in a binary quer
     payload: { path: "specs", projectId: "project-a", options: {} },
   }]);
 });
+
+test("a folder-scoped FileViewerClient names its folder and never a root", async () => {
+  const calls = [];
+  const transport = {
+    async query(operation, payload) {
+      calls.push({ operation, payload });
+      if (operation === "files.list") return { root: ".", offset: 0, truncated: false, entries: [] };
+      throw new Error(`unanswered query ${operation}`);
+    },
+    async command(operation, payload) { calls.push({ operation, payload }); return null; },
+  };
+  const project = new FileViewerClient(transport);
+  const folder = project.forFolder("folder-wt");
+  await project.listFolder(".", "project-a");
+  await folder.listFolder(".", "project-a");
+  await folder.createDirectory("src", "project-a");
+  await folder.renameEntry("a.txt", "b.txt", "project-a");
+  await folder.deleteEntry("b.txt", false, "project-a");
+  // The reply is not modelled here; only what was asked matters.
+  await folder.openFile("a.txt", "project-a").catch(() => undefined);
+  await folder.readContentText("a.txt", 0, 16, "project-a").catch(() => undefined);
+  assert.deepEqual(calls.map(({ operation, payload }) => [operation, payload.folderId]), [
+    ["files.list", undefined],
+    ["files.list", "folder-wt"],
+    ["files.create-directory", "folder-wt"],
+    ["files.rename", "folder-wt"],
+    ["files.delete", "folder-wt"],
+    ["files.open", "folder-wt"],
+    ["files.content-text", "folder-wt"],
+  ]);
+  assert.equal("folderId" in calls[0].payload, false);
+  assert.equal(calls.every(({ payload }) => payload.projectId === "project-a"), true);
+  assert.equal(calls.some(({ payload }) => "root" in payload || "projectRoot" in payload), false);
+  assert.equal(project.forFolder(undefined), project);
+  assert.equal(folder.forFolder("folder-wt"), folder);
+  assert.throws(() => project.forFolder(""), /folder id is invalid/);
+});
+
+test("a folder-scoped FileViewerClient names its folder for a diff, a revision and a sparse save", async () => {
+  const sparseSave = {
+    edits: [{ dataBase64: "QQ==", start: 0, end: 1 }],
+    expectedIno: 7,
+    expectedMtimeMs: 12.5,
+    expectedSize: 4,
+    path: "/worktrees/feature/a.txt",
+    projectRoot: "/worktrees/feature",
+  };
+  const record = () => {
+    const calls = [];
+    return {
+      calls,
+      transport: {
+        async query(operation, payload) {
+          calls.push({ operation, payload });
+          return operation === "file.mutation-revision" ? { ino: 7, mtimeMs: 12.5, size: 4 } : {};
+        },
+        async command(operation, payload) { calls.push({ operation, payload }); return null; },
+      },
+    };
+  };
+
+  const linked = record();
+  const folder = new FileViewerClient(linked.transport).forFolder("folder-wt");
+  await folder.getGitDiff("a.txt", "project-a");
+  assert.deepEqual(await folder.getMutationRevision("a.txt", "project-a"), { ino: 7, mtimeMs: 12.5, size: 4 });
+  await folder.saveSparseFile(sparseSave);
+  assert.deepEqual(linked.calls.map(({ operation, payload }) => [operation, payload.folderId]), [
+    ["file.get-git-diff", "folder-wt"],
+    ["file.mutation-revision", "folder-wt"],
+    ["file.save-sparse", "folder-wt"],
+  ]);
+  assert.deepEqual(linked.calls[0].payload, { path: "a.txt", projectId: "project-a", folderId: "folder-wt" });
+  assert.deepEqual(linked.calls[1].payload, { path: "a.txt", projectId: "project-a", folderId: "folder-wt" });
+  // The path the caller sent is sent unchanged; the folder id rides beside it.
+  assert.deepEqual(linked.calls[2].payload, { ...sparseSave, folderId: "folder-wt" });
+
+  // Without a folder nothing about these three requests changes.
+  const rooted = record();
+  const project = new FileViewerClient(rooted.transport);
+  await project.getGitDiff("a.txt", "project-a");
+  await project.getMutationRevision("a.txt", "project-a");
+  await project.saveSparseFile(sparseSave);
+  assert.deepEqual(rooted.calls.map(({ payload }) => payload), [
+    { path: "a.txt", projectId: "project-a" },
+    { path: "a.txt", projectId: "project-a" },
+    sparseSave,
+  ]);
+});

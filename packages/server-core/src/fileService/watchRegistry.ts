@@ -14,11 +14,15 @@ export type FileWatchEventKind =
 export interface FileWatchKey {
 	readonly serverId: string;
 	readonly projectId: string;
+	/** Set when `resource` is relative to a folder's root instead of the
+	 * project's. The same relative path in two roots is two different files. */
+	readonly folderId?: string;
 	readonly resource: string;
 }
 
 export interface FileWatchEventInput {
 	readonly projectId: string;
+	readonly folderId?: string;
 	readonly resource: string;
 	readonly kind: Exclude<FileWatchEventKind, 'resync'>;
 	readonly relatedResource?: string;
@@ -37,6 +41,7 @@ export interface FileWatchEvent extends FileWatchKey {
 export interface FileWatchSubscriptionOptions {
 	readonly clientId: string;
 	readonly projectId: string;
+	readonly folderId?: string;
 	readonly resource: string;
 	readonly signal?: AbortSignal;
 	/** Start after this sequence. New subscriptions default to the current
@@ -165,6 +170,7 @@ export class FileWatchRegistry {
 	subscribe(options: FileWatchSubscriptionOptions): FileWatchSubscription {
 		const clientId = validIdentity(options.clientId, 'clientId');
 		const projectId = validIdentity(options.projectId, 'projectId');
+		const folderId = optionalIdentity(options.folderId, 'folderId');
 		const resource = validResource(options.resource, this.maxResourceLength);
 		const afterSequence = options.afterSequence ?? this.sequenceValue;
 		if (
@@ -175,7 +181,13 @@ export class FileWatchRegistry {
 			throw new RangeError('afterSequence is invalid');
 		throwIfAborted(options.signal);
 
-		const key = subscriptionKey(this.serverId, projectId, resource, clientId);
+		const key = subscriptionKey(
+			this.serverId,
+			projectId,
+			resource,
+			clientId,
+			folderId,
+		);
 		const existingId = this.subscriptionsByKey.get(key);
 		if (existingId !== undefined) {
 			const existing = this.subscriptions.get(existingId);
@@ -190,7 +202,12 @@ export class FileWatchRegistry {
 		const subscriptionId = `watch-${(++this.subscriptionSequence).toString(36)}`;
 		const subscription: FileWatchSubscription = Object.freeze({
 			subscriptionId,
-			key: Object.freeze({ serverId: this.serverId, projectId, resource }),
+			key: Object.freeze({
+				serverId: this.serverId,
+				projectId,
+				...(folderId === undefined ? {} : { folderId }),
+				resource,
+			}),
 			clientId,
 		});
 		const replay = this.replay(afterSequence, subscription.key);
@@ -225,6 +242,7 @@ export class FileWatchRegistry {
 				state.key.projectId,
 				state.key.resource,
 				state.subscription.clientId,
+				state.key.folderId,
 			),
 		);
 		return true;
@@ -234,6 +252,7 @@ export class FileWatchRegistry {
 	 * sequence is allocated, which keeps all clients on the same cursor. */
 	publish(input: FileWatchEventInput): FileWatchPublishResult {
 		const projectId = validIdentity(input.projectId, 'projectId');
+		const folderId = optionalIdentity(input.folderId, 'folderId');
 		const resource = validResource(input.resource, this.maxResourceLength);
 		if (!EVENT_KINDS.includes(input.kind))
 			throw new TypeError('file watch event kind is invalid');
@@ -255,6 +274,7 @@ export class FileWatchRegistry {
 			relatedResource ?? null,
 			revision ?? null,
 			metadata ?? null,
+			folderId ?? null,
 		]);
 		if (this.recentFingerprints.has(fingerprint))
 			return {
@@ -270,6 +290,7 @@ export class FileWatchRegistry {
 		const event: FileWatchEvent = Object.freeze({
 			serverId: this.serverId,
 			projectId,
+			...(folderId === undefined ? {} : { folderId }),
 			resource,
 			sequence: this.sequenceValue,
 			kind: input.kind,
@@ -285,6 +306,7 @@ export class FileWatchRegistry {
 		for (const state of this.subscriptions.values()) {
 			if (
 				state.key.projectId !== projectId ||
+				state.key.folderId !== folderId ||
 				!resourceMatches(state.key.resource, resource)
 			)
 				continue;
@@ -374,6 +396,7 @@ export class FileWatchRegistry {
 			(event) =>
 				event.sequence > afterSequence &&
 				event.projectId === key.projectId &&
+				event.folderId === key.folderId &&
 				resourceMatches(key.resource, event.resource),
 		);
 		if (events.length > this.maxQueueEvents)
@@ -407,8 +430,10 @@ function subscriptionKey(
 	projectId: string,
 	resource: string,
 	clientId: string,
+	folderId: string | undefined,
 ): string {
-	return `${serverId}\u0000${projectId}\u0000${resource}\u0000${clientId}`;
+	const key = `${serverId}\u0000${projectId}\u0000${resource}\u0000${clientId}`;
+	return folderId === undefined ? key : `${key}\u0000${folderId}`;
 }
 
 function resyncEvent(
@@ -419,6 +444,7 @@ function resyncEvent(
 	return Object.freeze({
 		serverId,
 		projectId: key.projectId,
+		...(key.folderId === undefined ? {} : { folderId: key.folderId }),
 		resource: key.resource,
 		sequence,
 		kind: 'resync',
@@ -440,6 +466,13 @@ function validIdentity(value: string, name: string): string {
 	if (typeof value !== 'string' || !IDENTITY_PATTERN.test(value))
 		throw new TypeError(`${name} is invalid`);
 	return value;
+}
+
+function optionalIdentity(
+	value: string | undefined,
+	name: string,
+): string | undefined {
+	return value === undefined ? undefined : validIdentity(value, name);
 }
 
 function validResource(value: string, maxLength: number): string {

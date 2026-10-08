@@ -18,6 +18,7 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
   switchProject: "git.worktree.switch-project",
   renamePresentation: "git.worktree.rename",
   reveal: "git.worktree.reveal",
+  revealFolder: "git.folder.reveal",
   copy: "git.worktree.copy",
   pull: "git.worktree.pull",
   remove: "git.worktree.remove",
@@ -119,6 +120,14 @@ export class TerminayGitClient {
   /** The server host reveals; listings say whether this client may ask. */
   reveal(reference: GitWorktreeReference, options: CommandOptions = {}): Promise<JsonValue> {
     return this.action(GIT_CLIENT_OPERATIONS.reveal, reference, options);
+  }
+
+  /**
+   * Show a folder of a project in the server host's file manager. Only ids are
+   * sent: the server decides which directory the folder is.
+   */
+  revealFolder(request: { readonly projectId: string; readonly folderId: string }, options: CommandOptions = {}): Promise<JsonValue> {
+    return this.transport.command(GIT_CLIENT_OPERATIONS.revealFolder, { projectId: boundedId(request.projectId, "projectId"), folderId: boundedId(request.folderId, "folderId") }, options);
   }
 
   copy(reference: GitWorktreeReference, options: CommandOptions = {}): Promise<JsonValue> {

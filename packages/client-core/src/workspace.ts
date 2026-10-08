@@ -37,6 +37,9 @@ export interface PanelActivationRequest {
 }
 export interface PanelReorderRequest {
 	readonly projectId: string;
+	/** The folder whose panels are reordered. Absent means the one folder that
+	 * holds every listed panel. */
+	readonly folderId?: string;
 	readonly panelIds: readonly string[];
 }
 export interface PanelSplitRequest {
@@ -95,6 +98,8 @@ export interface PanelCreateRequest {
 	readonly panel: Readonly<{
 		id: string;
 		projectId: string;
+		/** Absent means the project's General folder. */
+		folderId?: string;
 		type: 'file' | 'folder';
 		path: string;
 		createdAt: number;
@@ -106,6 +111,26 @@ export interface PanelMoveRequest {
 	readonly panelId: string;
 	readonly targetProjectId: string;
 	readonly index?: number;
+}
+/** Moves a panel between folders of one project. Unlike a move between
+ * projects it changes no terminal identity. */
+export interface PanelFolderMoveRequest {
+	readonly panelId: string;
+	readonly folderId: string;
+	readonly index?: number;
+}
+export interface FolderCreateRequest {
+	readonly projectId: string;
+	readonly name: string;
+}
+export interface FolderRenameRequest {
+	readonly folderId: string;
+	readonly name: string;
+}
+export interface FolderReorderRequest {
+	readonly projectId: string;
+	/** Every folder of the project, with General still first. */
+	readonly folderIds: readonly string[];
 }
 export interface WorkspaceViewCreateRequest {
 	readonly viewId: string;
@@ -209,7 +234,8 @@ export class WorkspaceClient {
 			!isBoundedId(request.projectId) ||
 			request.panelIds.length === 0 ||
 			request.panelIds.some((panelId) => !isBoundedId(panelId)) ||
-			new Set(request.panelIds).size !== request.panelIds.length
+			new Set(request.panelIds).size !== request.panelIds.length ||
+			(request.folderId !== undefined && !isBoundedId(request.folderId))
 		)
 			throw new TypeError('panel reorder ids are invalid');
 		await this.client.command(
@@ -218,6 +244,9 @@ export class WorkspaceClient {
 				command: {
 					type: 'panel.reorder',
 					projectId: request.projectId,
+					...(request.folderId === undefined
+						? {}
+						: { folderId: request.folderId }),
 					panelIds: [...request.panelIds],
 				},
 			},
@@ -314,6 +343,7 @@ export class WorkspaceClient {
 		if (
 			!isBoundedId(panel.id) ||
 			!isBoundedId(panel.projectId) ||
+			(panel.folderId !== undefined && !isBoundedId(panel.folderId)) ||
 			(panel.type !== 'file' && panel.type !== 'folder') ||
 			!boundedPath(panel.path) ||
 			!Number.isSafeInteger(panel.createdAt) ||
@@ -342,6 +372,125 @@ export class WorkspaceClient {
 		await this.client.command(
 			'workspace.command',
 			{ command: { type: 'panel.move', ...request } },
+			options,
+		);
+	}
+
+	async movePanelToFolder(
+		request: PanelFolderMoveRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (
+			!isBoundedId(request.panelId) ||
+			!isBoundedId(request.folderId) ||
+			(request.index !== undefined &&
+				(!Number.isSafeInteger(request.index) || request.index < 0))
+		)
+			throw new TypeError('panel folder move request is invalid');
+		await this.client.command(
+			'workspace.command',
+			{
+				command: {
+					type: 'panel.moveToFolder',
+					panelId: request.panelId,
+					folderId: request.folderId,
+					...(request.index === undefined ? {} : { index: request.index }),
+				},
+			},
+			options,
+		);
+	}
+
+	/** Create a plain folder. The server issues its id; read it from the next
+	 * workspace projection. Only the server creates a linked folder. */
+	async createFolder(
+		request: FolderCreateRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(request.projectId) || !boundedFolderName(request.name))
+			throw new TypeError('folder create request is invalid');
+		await this.client.command(
+			'workspace.command',
+			{
+				command: {
+					type: 'folder.create',
+					projectId: request.projectId,
+					name: request.name,
+				},
+			},
+			options,
+		);
+	}
+
+	async renameFolder(
+		request: FolderRenameRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(request.folderId) || !boundedFolderName(request.name))
+			throw new TypeError('folder rename request is invalid');
+		await this.client.command(
+			'workspace.command',
+			{
+				command: {
+					type: 'folder.rename',
+					folderId: request.folderId,
+					name: request.name,
+				},
+			},
+			options,
+		);
+	}
+
+	async reorderFolders(
+		request: FolderReorderRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (
+			!isBoundedId(request.projectId) ||
+			request.folderIds.length === 0 ||
+			request.folderIds.some((folderId) => !isBoundedId(folderId)) ||
+			new Set(request.folderIds).size !== request.folderIds.length
+		)
+			throw new TypeError('folder reorder ids are invalid');
+		await this.client.command(
+			'workspace.command',
+			{
+				command: {
+					type: 'folder.reorder',
+					projectId: request.projectId,
+					folderIds: [...request.folderIds],
+				},
+			},
+			options,
+		);
+	}
+
+	/** Delete an empty plain folder. The server refuses General, a folder that
+	 * still holds panels, and a linked folder. */
+	async deleteFolder(
+		folderId: string,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(folderId))
+			throw new TypeError('folder delete id is invalid');
+		await this.client.command(
+			'workspace.command',
+			{ command: { type: 'folder.delete', folderId } },
+			options,
+		);
+	}
+
+	/** Answer a folder's offer to take the terminal that created its worktree. */
+	async answerFolderOffer(
+		folderId: string,
+		answer: 'accept' | 'decline',
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(folderId) || (answer !== 'accept' && answer !== 'decline'))
+			throw new TypeError('folder offer answer is invalid');
+		await this.client.command(
+			'workspace.command',
+			{ command: { type: `folder.offer.${answer}`, folderId } },
 			options,
 		);
 	}
@@ -718,6 +867,10 @@ function boundedPath(value: unknown): value is string {
 	);
 }
 
+/** The server stores a folder name of at most 256 characters. */
+function boundedFolderName(value: unknown): value is string {
+	return boundedLabel(value) && value.length <= 256;
+}
 function boundedLabel(value: unknown): value is string {
 	return (
 		typeof value === 'string' &&

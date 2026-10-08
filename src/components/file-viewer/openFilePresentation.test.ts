@@ -11,7 +11,11 @@ test('openFile finds the canonical panel by path and switches presentation', asy
 	const source = await readFile(new URL('../../App.tsx', import.meta.url), 'utf8');
 	assert.match(source, /filePathPanelMapRef\.current\.get\(filePath\)/);
 	assert.match(source, /resolveOpenPresentation\(\s*filePath,\s*options,\s*existingPanel\.params\?\.presentation/);
-	assert.match(source, /presentation: resolveOpenPresentation\(filePath, options\)/);
+	// What the file type asks for is then held to what the folder may show.
+	assert.match(
+		source,
+		/presentation: presentationForFolder\(\s*resolveOpenPresentation\(filePath, options\),\s*linkedFolderId,\s*\)/,
+	);
 	assert.match(source, /existingPanel\.api\.setActive\(\)/);
 	assert.match(source, /presentation: 'documentation'/);
 	assert.match(source, /terminay-documentation-open/);

@@ -13,3 +13,5 @@ export * from './tasks.js';
 export * from './textIndex.js';
 export * from './types.js';
 export * from './watchRegistry.js';
+export * from './folderScope.js';
+export * from './folderScopeCache.js';
