@@ -56,6 +56,21 @@ The image SHALL run the server, its terminals, and the bundled CLI as one unpriv
 - **WHEN** the image runs with all capabilities dropped, no new privileges, and a read-only root filesystem with a writable data volume and temporary directory
 - **THEN** the server reaches readiness and a paired device opens a terminal
 
+### Requirement: Root for the terminal user
+
+The image SHALL carry `sudo` and SHALL let its unprivileged account run any command as root through it without a password, so that a terminal can install operating-system packages. The server and the bundled CLI SHALL NOT depend on `sudo`. A container run with no new privileges or with all capabilities dropped SHALL withhold root from that account, and the server SHALL run unchanged.
+
+#### Scenario: A terminal installs a package
+
+- **WHEN** a terminal in a container started from the image with no security options runs `sudo apt update`
+- **THEN** the command runs as root without asking for a password
+
+#### Scenario: The operator withholds root
+
+- **WHEN** the image runs with no new privileges
+- **THEN** `sudo` fails for the image's account
+- **AND** the server reaches readiness
+
 ### Requirement: Identity survives container recreation
 
 The server identity, host key, paired devices, and hosted session origin SHALL be read from the data root. The image SHALL NOT derive the server identity from the container's hostname: the identity is chosen once, on the first start against an empty data root, and a later container with a different hostname started against the same data root SHALL report the same identity. The container's hostname SHALL be used only as the host name shown in pairing links and connection labels.

@@ -11,7 +11,7 @@ test('a stable client names the image at its own release', () => {
 	assert.equal(commands.image, 'markwylde/terminay:5.13.0');
 	assert.equal(
 		commands.docker.start,
-		'docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay:5.13.0',
+		'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0',
 	);
 	assert.equal(
 		commands.docker.pair,
@@ -59,11 +59,11 @@ test('the further options carry the same image', () => {
 	const commands = serverInstallCommands({ version: '5.13.0-beta.214' });
 	assert.equal(
 		commands.dockerPublic,
-		"docker run -d --name terminay -v terminay-data:/var/lib/terminay -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=<this machine's address> markwylde/terminay:5.13.0-beta.214",
+		"docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=<this machine's address> markwylde/terminay:5.13.0-beta.214",
 	);
 	assert.equal(
 		commands.dockerHostNetwork,
-		'docker run -d --name terminay --network host -v terminay-data:/var/lib/terminay markwylde/terminay:5.13.0-beta.214',
+		'docker run -d --name terminay --network host -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-beta.214',
 	);
 });
 

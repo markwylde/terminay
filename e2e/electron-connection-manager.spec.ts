@@ -33,7 +33,7 @@ test('Electron opens Remote Control as a full auxiliary window', async ({
 	});
 	await expect(
 		guide.getByText(
-			'docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay',
+			'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay',
 			{ exact: true },
 		),
 	).toBeVisible();
