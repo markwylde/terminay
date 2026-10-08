@@ -269,6 +269,7 @@ import {
 import {
 	activePanelIdFromInventory,
 	buildProjectFolderTree,
+	folderNameFromStatus,
 } from './workspace/folderTreeSources';
 import {
 	type FolderTerminalCapture,
@@ -4910,10 +4911,15 @@ const ProjectWorkspace = forwardRef<
 					const candidate = workspaceSnapshot.folders[folderId];
 					return candidate === undefined || folderId === folder.id
 						? []
-						: [{ id: folderId, name: candidate.name }];
+						: [
+								{
+									id: folderId,
+									name: folderNameFromStatus(candidate, worktreePanelStatus),
+								},
+							];
 				}),
 			);
-		}, [folder.id, project.id, workspaceSnapshot]);
+		}, [folder.id, project.id, workspaceSnapshot, worktreePanelStatus]);
 		useEffect(() => {
 			const api = dockviewApiRef.current;
 			if (api === null || !isDockviewReady) return;
@@ -5021,9 +5027,10 @@ const ProjectWorkspace = forwardRef<
 			'new-terminal',
 			isMac,
 		);
+		const folderName = folderNameFromStatus(folder, worktreePanelStatus);
 		const emptyFolderDescription = useMemo<EmptyFolderDescription>(
 			() => ({
-				name: folder.name,
+				name: folderName,
 				...(linkedFolderRoot === undefined
 					? {}
 					: { worktreePath: linkedFolderRoot }),
@@ -5035,7 +5042,7 @@ const ProjectWorkspace = forwardRef<
 					? { newTerminalShortcutLabel }
 					: {}),
 			}),
-			[addTerminal, folder.name, linkedFolderRoot, newTerminalShortcutLabel],
+			[addTerminal, folderName, linkedFolderRoot, newTerminalShortcutLabel],
 		);
 
 		// One Agents pane, drawn by the left column or by the narrow drawer.
@@ -5084,7 +5091,7 @@ const ProjectWorkspace = forwardRef<
 					id: 'explorer',
 					// Named when the root shown is a folder's worktree, not the project's.
 					title:
-						linkedFolderId === undefined ? 'Files' : `Files — ${folder.name}`,
+						linkedFolderId === undefined ? 'Files' : `Files — ${folderName}`,
 					height: project.sidebarExplorerHeight,
 					collapsed: project.isExplorerPaneCollapsed,
 					onToggleCollapsed: () => {
@@ -8200,21 +8207,30 @@ function App({
 			const snapshot = connection.context?.workspaceSnapshotStore?.snapshot;
 			const serverId = connection.serverId ?? connection.context?.serverId;
 			if (snapshot == null || serverId === undefined) return [];
-			return Object.values(snapshot.projects).map((project) => [
-				compositionTabKey(serverId, project.id),
-				project.folderIds.flatMap((folderId) => {
-					const folder = snapshot.folders[folderId];
-					return folder === undefined
-						? []
-						: [
-								{
-									id: folder.id,
-									name: folder.name,
-									...(folder.kind === 'general' ? { isGeneral: true } : {}),
-								},
-							];
-				}),
-			]);
+			return Object.values(snapshot.projects).map((project) => {
+				// A worktree listing is held only for a project this window has
+				// open on its own server; elsewhere a linked folder is named by
+				// its worktree's directory.
+				const worktreeStatus =
+					serverId === currentServerId
+						? commandWorkspace(project.id)?.worktreeStatus()
+						: undefined;
+				return [
+					compositionTabKey(serverId, project.id),
+					project.folderIds.flatMap((folderId) => {
+						const folder = snapshot.folders[folderId];
+						return folder === undefined
+							? []
+							: [
+									{
+										id: folder.id,
+										name: folderNameFromStatus(folder, worktreeStatus),
+										...(folder.kind === 'general' ? { isGeneral: true } : {}),
+									},
+								];
+					}),
+				];
+			});
 		}),
 	);
 	const compactSwitcherFolders = useMemo(
@@ -8870,10 +8886,17 @@ function App({
 			: projectFolderWorkspaces.find(
 					({ project }) => project.id === activeProject.id,
 				)?.selectedFolderId;
-	const compactSwitcherFrontFolderName =
+	const compactSwitcherFrontFolder =
 		compactSwitcherFrontFolderId === undefined
 			? undefined
-			: workspaceSnapshot?.folders[compactSwitcherFrontFolderId]?.name;
+			: workspaceSnapshot?.folders[compactSwitcherFrontFolderId];
+	const compactSwitcherFrontFolderName =
+		compactSwitcherFrontFolder === undefined || activeProject === null
+			? undefined
+			: folderNameFromStatus(
+					compactSwitcherFrontFolder,
+					commandWorkspace(activeProject.id)?.worktreeStatus(),
+				);
 	const displayedActiveProjectId =
 		isPendingProjectFailure && failedProjectCreation !== null
 			? failedProjectCreation.tab.id

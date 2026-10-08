@@ -102,7 +102,9 @@ export function folderMenuEntries(input: FolderMenuInput): FolderMenuEntry[] {
 			},
 		);
 	}
-	if (kind !== 'general')
+	// A linked folder is named by its worktree's branch and has no name of its
+	// own to change; General's is fixed.
+	if (kind === 'plain')
 		entries.push({ id: 'rename-folder', label: 'Rename folder', disabled: busy });
 	if (kind === 'linked') {
 		// The checkout at the project root and the main worktree are never a

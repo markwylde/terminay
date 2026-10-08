@@ -26,11 +26,10 @@ const linked = {
 	canReveal: true,
 };
 
-test('a linked folder offers the worktree actions, both renames, and Delete worktree', () => {
+test('a linked folder offers the worktree actions, Rename worktree, and Delete worktree, and no Rename folder', () => {
 	assert.deepEqual(labels(linked), [
 		'Commit & push with AI…',
 		'Pull from origin',
-		'Rename folder',
 		'Rename worktree',
 		'Delete worktree',
 		'Copy path',
@@ -130,11 +129,11 @@ test('the other Git actions keep the worktree action rules', () => {
 		assert.equal(of({ isPrunable: true }, id), true, id);
 });
 
-test('a linked folder whose worktree is not listed can still be renamed, and nothing else', () => {
+test('a linked folder whose worktree is not listed offers nothing to run', () => {
 	const unlisted = { ...linked, worktree: undefined };
 	for (const item of folderMenuEntries(unlisted)) {
 		if (item.separator === true) continue;
-		assert.equal(item.disabled, item.id !== 'rename-folder', item.label);
+		assert.equal(item.disabled, true, item.label);
 	}
 });
 

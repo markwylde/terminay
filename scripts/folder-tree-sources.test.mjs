@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	activePanelIdFromInventory,
 	buildProjectFolderTree,
+	folderNameFromStatus,
 	folderTreeWorktrees,
 	worktreeUnmerged,
 	panelFactsFromInventory,
@@ -87,15 +88,33 @@ test('worktrees carry their branch, change, pull request, and checks', () => {
 	assert.deepEqual(worktrees[0], {
 		path: '/repo',
 		branch: 'main',
+		isDetached: false,
+		head: 'abc',
 		change: { kind: 'clean' },
 	});
 	assert.deepEqual(worktrees[1], {
 		path: '/repo/.worktrees/one',
 		branch: 'feat/one',
+		isDetached: false,
+		head: 'abc',
 		change: { kind: 'clean' },
 		pullRequest: { number: 350, state: 'open', title: 'One', url: 'https://example.test/350' },
 		checks: { failed: 0, pending: 1, passed: 26, skipped: 2 },
 	});
+});
+
+test('a folder is named from the listing: a linked one by its branch, or its directory when detached or unlisted', () => {
+	const linkedFolder = (path) => ({ kind: 'linked', name: 'a name nobody sees', worktree: { repositoryId: 'repo', path } });
+	const status = gitStatus([
+		worktree('/repo', 'main'),
+		worktree('/repo/.worktrees/one', 'feat/one'),
+		{ ...worktree('/repo/.worktrees/bisect', '(detached)'), isDetached: true },
+	]);
+	assert.equal(folderNameFromStatus(linkedFolder('/repo/.worktrees/one'), status), 'feat/one');
+	assert.equal(folderNameFromStatus(linkedFolder('/repo/.worktrees/bisect'), status), 'bisect');
+	assert.equal(folderNameFromStatus(linkedFolder('/repo/.worktrees/one'), null), 'one');
+	assert.equal(folderNameFromStatus({ kind: 'plain', name: 'Servers' }, status), 'Servers');
+	assert.equal(folderNameFromStatus({ kind: 'general', name: 'General' }, status), 'General');
 });
 
 test('a pushed branch the default branch lacks is unmerged and not changed; unpushed work is changed', () => {
