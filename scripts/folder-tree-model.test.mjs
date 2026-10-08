@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	buildFolderTree,
 	folderIdOfPanel,
+	isChangeDirty,
 	resolveSelectedFolderId,
 } from '../src/workspace/folderTreeModel.ts';
 
@@ -139,4 +140,39 @@ test('the folder of a panel is read from the projection', () => {
 	const { panels } = workspace();
 	assert.equal(folderIdOfPanel(panels, 'release'), 'releases');
 	assert.equal(folderIdOfPanel(panels, 'missing'), undefined);
+});
+
+test('General carries the change of the root checkout, and never a pull request or checks', () => {
+	const input = workspace();
+	input.worktrees[0] = {
+		...input.worktrees[0],
+		change: { kind: 'delta', additions: 12, deletions: 3 },
+		pullRequest: { number: 9, state: 'open', title: 'Root' },
+		checks: { failed: 0, pending: 1, passed: 0, skipped: 0 },
+	};
+	const tree = byId(buildFolderTree(input));
+	assert.deepEqual(tree.general.change, { kind: 'delta', additions: 12, deletions: 3 });
+	assert.equal(tree.general.isDirty, true);
+	assert.equal(tree.general.pullRequest, undefined);
+	assert.equal(tree.general.checks, undefined);
+	// A plain folder has no checkout to measure.
+	assert.equal(tree.servers.change, undefined);
+	assert.equal(tree.servers.isDirty, false);
+});
+
+test('a checkout is dirty with a measured or unmeasured change, and not when clean, missing, or unknown', () => {
+	assert.equal(isChangeDirty({ kind: 'delta', additions: 1, deletions: 0 }), true);
+	assert.equal(isChangeDirty({ kind: 'changed' }), true);
+	assert.equal(isChangeDirty({ kind: 'clean' }), false);
+	assert.equal(isChangeDirty({ kind: 'missing' }), false);
+	assert.equal(isChangeDirty(undefined), false);
+	const withChange = (change) => {
+		const input = workspace();
+		input.worktrees[1] = { ...input.worktrees[1], change };
+		return byId(buildFolderTree(input)).releases.isDirty;
+	};
+	assert.equal(withChange({ kind: 'changed' }), true);
+	assert.equal(withChange({ kind: 'clean' }), false);
+	assert.equal(withChange({ kind: 'missing' }), false);
+	assert.equal(withChange(undefined), false);
 });
