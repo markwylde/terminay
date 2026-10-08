@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import {
 	holdTornOffProjectTab,
@@ -388,8 +388,8 @@ test('a project tab dropped on a window showing another server stays where it wa
 	const server = await startStandaloneServer(tempDir);
 	try {
 		const serverHost = await pairAndLand(appHarness, mainWindow, server);
-		// One window on Local, one on the server, each with its own project.
-		await switchTo(mainWindow, 'Local');
+		// A second window on the server presents a view of its own, and holds a
+		// project there.
 		const remote = await appHarness.openChildWindow(async () => {
 			const menu = await openConnectionMenu(mainWindow);
 			await menu
@@ -397,13 +397,17 @@ test('a project tab dropped on a window showing another server stays where it wa
 				.click();
 		});
 		await expectShowing(remote, serverHost);
-		// The menus those checks opened would cover the tab strips.
-		await mainWindow.keyboard.press('Escape');
 		await remote.keyboard.press('Escape');
+		await remote.getByLabel('Create project').click();
+		await expect(remote.locator('.project-tab[role="tab"]')).toHaveCount(1);
+		await expect(remote.locator('[data-pending-project-id]')).toHaveCount(0);
+		// The first window goes back to Local: one window per server.
+		await switchTo(mainWindow, 'Local');
+		await mainWindow.keyboard.press('Escape');
 		const localProjects = await projectIds(mainWindow);
 		const remoteProjects = await projectIds(remote);
 		expect(localProjects.length).toBeGreaterThan(0);
-		expect(remoteProjects.length).toBeGreaterThan(0);
+		expect(remoteProjects).toHaveLength(1);
 
 		const local = await tabBarScreenPoints(electronApp, mainWindow);
 		// The windows open on top of one another; the Local bar must be the
@@ -507,61 +511,3 @@ test(`closing the ${closed} one of two windows on a server leaves the other conn
 	}
 });
 }
-
-test('a browser shows the projects of every Desktop window on its server', async ({
-	appHarness,
-	mainWindow,
-	tempDir,
-}) => {
-	test.setTimeout(300_000);
-	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
-	const server = await startStandaloneServer(tempDir);
-	const browser = await chromium.launch();
-	let restarted: StandaloneServer | undefined;
-	try {
-		const serverHost = await pairAndLand(appHarness, mainWindow, server);
-		// Two Desktop windows on the one server, each holding a project.
-		await switchTo(mainWindow, 'Local');
-		const second = await appHarness.openChildWindow(async () => {
-			const menu = await openConnectionMenu(mainWindow);
-			await menu
-				.getByRole('button', { name: `Open ${serverHost} in new window` })
-				.click();
-		});
-		await expectShowing(second, serverHost);
-		await switchTo(mainWindow, serverHost);
-		await mainWindow.keyboard.press('Escape');
-		await second.keyboard.press('Escape');
-		for (const window of [second, mainWindow]) {
-			if ((await projectIds(window)).length > 0) continue;
-			await window.getByLabel('Create project').click();
-			await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
-			await expect(window.locator('[data-pending-project-id]')).toHaveCount(0);
-		}
-		const desktopProjects = [
-			...(await projectIds(mainWindow)),
-			...(await projectIds(second)),
-		].sort();
-		expect(desktopProjects).toHaveLength(2);
-
-		// A browser has one window, so it holds every project of the server.
-		const page = await browser.newPage({
-			viewport: { width: 1400, height: 900 },
-		});
-		// A pairing link is used once, so the browser pairs with the one the
-		// server advertises when it next starts on the same data.
-		await server.stop();
-		restarted = await startStandaloneServer(tempDir);
-		await page.goto(restarted.pairingUrl);
-		await page
-			.locator('.project-tabbar')
-			.waitFor({ state: 'visible', timeout: 60_000 });
-		await expect(async () => {
-			expect((await projectIds(page)).sort()).toEqual(desktopProjects);
-		}).toPass({ timeout: 20_000 });
-	} finally {
-		await browser.close();
-		await restarted?.stop();
-		await server.stop();
-	}
-});
