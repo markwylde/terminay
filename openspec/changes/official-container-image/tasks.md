@@ -31,6 +31,7 @@
 - [x] 5.4 Image smoke test, public host: publish the pinned UDP range and connect a device on an isolated network with derivation off. Verified by the same script and job.
 - [x] 5.5 Recreate-container test: remove the container, start a new one on the same volume, reconnect the paired device without pairing. Verified by the same script and job.
 - [x] 5.6 Publish `markwylde/terminay` on Docker Hub beside GHCR from one build in `.github/workflows/server-image.yml`, on release tags only, with `latest` naming the release; update `scripts/ghcr-image.test.mjs`. Verified by the workflow contract test. The published digests can only be compared after the first release.
+- [x] 5.8 Install `sudo` in the runtime stage with a validated `NOPASSWD` rule for the `terminay` account, so a terminal can run `sudo apt update`. Verified by `scripts/ghcr-image.test.mjs`, and by the image smoke test: `sudo` reaches root in the `advertised` case and is refused under the `bare` case's hardened flags.
 - [ ] 5.7 Add the Docker Hub credential (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) as release secrets on the mirror. Documented in `docs/operations/release-credential-bootstrap.md`; the secrets themselves are the owner's to create. Verified by a successful publish from a release tag.
 
 ## 6. Checks the measurement did not cover
@@ -49,6 +50,8 @@
 - [x] 8.2 Update `docs/operations/docker-image-release.md` for both image names and the release-only `latest` rule, and `apps/terminay-cli/README.md` for the image and `--public-host`. Verified by `scripts/ghcr-image.test.mjs`.
 - [x] 8.3 Add the ADR-0034 row to `openspec/adr/README.md`. Verified by the index listing it.
 - [ ] 8.4 Update the installation page on `terminay.com` with the image quick start. It lives in another repository. Verified by the published page showing the two-command flow.
+- [x] 8.6 Mount a named volume at `/home/terminay` in every documented run command — the runbook, the CLI README, and the commands Add connection shows (`src/shared/serverInstallCommands.ts`) — so a recreated container keeps the person's home directory. Verified by `src/shared/serverInstallCommands.test.ts` and by writing a file through one container and reading it from a second on the same volume.
+- [x] 8.5 Document the terminal user's `sudo`, what persists across container recreation, and how to withhold root, in the container section of `docs/operations/standalone-server.md`. Verified by reading the `Root for the terminal user` scenarios against the section.
 
 ## 9. Close out
 

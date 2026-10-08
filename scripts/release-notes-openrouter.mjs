@@ -24,7 +24,7 @@ export async function requestReleaseNotes({
 				'X-Title': 'Terminay release notes',
 			},
 			body: JSON.stringify({
-				model: 'anthropic/claude-haiku-4.5',
+				model: 'anthropic/claude-haiku-5.5',
 				temperature: 0.2,
 				max_tokens: 2_500,
 				messages: [
