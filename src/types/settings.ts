@@ -61,6 +61,19 @@ export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
 export const SIDEBAR_GROUP_IDS = ['explorer', 'documentation', 'agents'] as const;
 export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 
+/** The panes of a project's left column, in their default order. */
+export const FOLDERS_COLUMN_PANE_IDS = ['folders', 'agents'] as const;
+export type FoldersColumnPaneId = (typeof FOLDERS_COLUMN_PANE_IDS)[number];
+
+/** How one device stacks a project's left column. */
+export type FoldersColumnLayout = {
+	order: FoldersColumnPaneId[];
+	foldersHeight: number;
+	agentsHeight: number;
+	isFoldersCollapsed: boolean;
+	isAgentsCollapsed: boolean;
+};
+
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
 	defaultExplorerState: SidebarPaneState;
@@ -82,6 +95,9 @@ export type SidebarSettings = {
 	/** Device-local Folders tree width in pixels, indexed by server and project
 	 * id. Absent means the default width. */
 	projectFoldersWidth: Record<string, number>;
+	/** Device-local pane stack of the left column (order, heights, collapse),
+	 * indexed by server and project id. Absent means the default stack. */
+	projectFoldersColumnLayout: Record<string, FoldersColumnLayout>;
 };
 
 export type FileViewerSettings = {
