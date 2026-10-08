@@ -12,8 +12,10 @@ Rules:
 - Do not include front matter, metadata, or a leading `---`.
 - Do not attempt to publish a release.
 - You may use read-only commands to inspect files and git history if available.
-- Write the markdown changelog body to `RELEASE.md`.
-- Do not output any extra text.
+- Your entire reply is saved verbatim as the release body and rendered as markdown by GitHub. Reply with the raw markdown changelog body and nothing else.
+- Do not wrap the reply in a code block. No leading or trailing ``` or ```markdown fence, and no indented block: a fenced reply renders as literal monospace text instead of formatted headings and lists.
+- The first character of the reply must be the first character of the intro sentence.
+- Do not output any extra text, such as a preamble, a closing remark, or a file name.
 - Start with a short, polished intro sentence.
 - Use 3-4 top-level sections with `##` headings.
 - Every top-level section must include at least one `###` subheading.
