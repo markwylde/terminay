@@ -16,11 +16,11 @@ import type {
 	ServerWorkspaceProject,
 } from '../shared/serverWorkspaceReconciliation.ts';
 import type { GitWorktreeStatus, WorktreePanelStatus } from '../types/terminay';
-import { isWorktreeShownClean } from './cleanWorktreeSweep.ts';
 import { dashboardStatusFor } from './dashboardRows.ts';
 import {
 	buildFolderTree,
 	type FolderTreeChange,
+	type FolderTreeUnmerged,
 	type FolderTreeFolderRow,
 	type FolderTreePanelFacts,
 	type FolderTreeWorktree,
@@ -71,6 +71,7 @@ export function folderTreeWorktrees(
 		path: worktree.path,
 		branch: worktree.branch,
 		change: worktreeChange(worktree),
+		...unmergedOf(worktree),
 		...(worktree.properties?.pullRequest === undefined
 			? {}
 			: {
@@ -98,26 +99,53 @@ export function folderTreeWorktrees(
 }
 
 /**
- * What a row says about a worktree's work. A registration with no working tree
- * is missing, not clean. Otherwise the measured size of the change is shown
- * when there is one, and `clean` only under the one definition of it.
+ * What a row says about the work a worktree holds that is nowhere but this
+ * machine: uncommitted or untracked changes, and commits on no remote. A
+ * registration with no working tree is missing, not clean. Otherwise the
+ * measured size of that work is shown when there is one. Work that is pushed
+ * and not yet on the default branch is not this; see `worktreeUnmerged`.
  */
 export function worktreeChange(
 	worktree: Pick<
 		GitWorktreeStatus,
 		| 'isPrunable'
-		| 'isDirtyBranch'
+		| 'hasUnpushedCommits'
 		| 'entries'
-		| 'lineAdditions'
-		| 'lineDeletions'
+		| 'unpushedLineAdditions'
+		| 'unpushedLineDeletions'
 	>,
 ): FolderTreeChange {
 	if (worktree.isPrunable) return { kind: 'missing' };
-	const additions = worktree.lineAdditions ?? 0;
-	const deletions = worktree.lineDeletions ?? 0;
+	const additions = worktree.unpushedLineAdditions ?? 0;
+	const deletions = worktree.unpushedLineDeletions ?? 0;
 	if (additions > 0 || deletions > 0)
 		return { kind: 'delta', additions, deletions };
-	return isWorktreeShownClean(worktree) ? { kind: 'clean' } : { kind: 'changed' };
+	return worktree.hasUnpushedCommits || worktree.entries.length > 0
+		? { kind: 'changed' }
+		: { kind: 'clean' };
+}
+
+/**
+ * The commits a worktree's branch holds whose effect the default branch does
+ * not have, pushed or not. Undefined when there are none; a null count is an
+ * unmerged branch whose commits were not counted.
+ */
+export function worktreeUnmerged(
+	worktree: Pick<
+		GitWorktreeStatus,
+		'isPrunable' | 'isDirtyBranch' | 'aheadOfMainCount'
+	>,
+): FolderTreeUnmerged | undefined {
+	if (worktree.isPrunable || !worktree.isDirtyBranch) return undefined;
+	const commits = worktree.aheadOfMainCount ?? 0;
+	return { commits: commits > 0 ? commits : null };
+}
+
+function unmergedOf(
+	worktree: Parameters<typeof worktreeUnmerged>[0],
+): { unmerged?: FolderTreeUnmerged } {
+	const unmerged = worktreeUnmerged(worktree);
+	return unmerged === undefined ? {} : { unmerged };
 }
 
 export type ProjectFolderTreeInput = {

@@ -176,3 +176,16 @@ test('a checkout is dirty with a measured or unmeasured change, and not when cle
 	assert.equal(withChange({ kind: 'missing' }), false);
 	assert.equal(withChange(undefined), false);
 });
+
+test('a folder is unmerged when its worktree is, whether or not it is dirty', () => {
+	const input = workspace();
+	input.worktrees[1] = {
+		...input.worktrees[1],
+		change: { kind: 'clean' },
+		unmerged: { commits: 4 },
+	};
+	const tree = byId(buildFolderTree(input));
+	assert.deepEqual(tree.releases.unmerged, { commits: 4 });
+	assert.equal(tree.releases.isDirty, false);
+	assert.equal(tree.general.unmerged, undefined);
+});

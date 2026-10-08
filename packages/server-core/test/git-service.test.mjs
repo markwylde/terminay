@@ -133,6 +133,92 @@ test("GitService reports effective worktree changes against the default branch",
   }
 });
 
+test("GitService reports a worktree's unpushed work apart from what the default branch lacks", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-worktree-unpushed-"));
+  const project = join(root, "project");
+  const remote = join(root, "remote.git");
+  const feature = join(root, "feature");
+  try {
+    await mkdir(project);
+    await git(["init", "-b", "main"], project);
+    await git(["config", "user.email", "test@example.invalid"], project);
+    await git(["config", "user.name", "Terminay Test"], project);
+    await writeFile(join(project, "shared.txt"), "base\n");
+    await git(["add", "shared.txt"], project);
+    await git(["commit", "-m", "initial"], project);
+    await git(["init", "--bare", "-b", "main", remote], root);
+    await git(["remote", "add", "origin", remote], project);
+    await git(["push", "-u", "origin", "main"], project);
+    await git(["worktree", "add", feature, "-b", "feature"], project);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project", project);
+    const list = async () => {
+      const result = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+      return {
+        main: result.worktrees.find((worktree) => worktree.isMain),
+        feature: result.worktrees.find((worktree) => !worktree.isMain),
+      };
+    };
+    const unpushed = (worktree) => ({
+      commits: worktree.hasUnpushedCommits,
+      additions: worktree.unpushedLineAdditions,
+      deletions: worktree.unpushedLineDeletions,
+    });
+
+    // A new worktree with no commits of its own has no upstream and nothing to push.
+    assert.deepEqual(unpushed((await list()).feature), { commits: false, additions: 0, deletions: 0 });
+
+    // A commit on a branch that was never pushed.
+    await writeFile(join(feature, "feature.txt"), "one\ntwo\n");
+    await git(["add", "feature.txt"], feature);
+    await git(["commit", "-m", "feature change"], feature);
+    assert.deepEqual(unpushed((await list()).feature), { commits: true, additions: 2, deletions: 0 });
+
+    // Pushed: still work the default branch lacks, and nothing unpushed.
+    await git(["push", "-u", "origin", "feature"], feature);
+    const pushed = (await list()).feature;
+    assert.deepEqual(unpushed(pushed), { commits: false, additions: 0, deletions: 0 });
+    assert.equal(pushed.hasCommittedChanges, true);
+    assert.equal(pushed.aheadOfDefaultBranchCount, 1);
+    assert.equal(pushed.lineAdditions, 2);
+
+    // One commit ahead of the upstream, and an uncommitted change to a tracked file.
+    await writeFile(join(feature, "more.txt"), "three\nfour\nfive\n");
+    await git(["add", "more.txt"], feature);
+    await git(["commit", "-m", "more"], feature);
+    await writeFile(join(feature, "shared.txt"), "base\nedited\n");
+    const ahead = (await list()).feature;
+    assert.deepEqual(unpushed(ahead), { commits: true, additions: 4, deletions: 0 });
+    assert.equal(ahead.aheadOfDefaultBranchCount, 2);
+    assert.equal(ahead.lineAdditions, 6);
+
+    // Uncommitted work alone is unpushed work with no unpushed commit.
+    await git(["push"], feature);
+    assert.deepEqual(unpushed((await list()).feature), { commits: false, additions: 1, deletions: 0 });
+    await git(["checkout", "--", "shared.txt"], feature);
+
+    // Squash-merged, then the remote branch is deleted: the commits are on no
+    // remote, and their effect is on the default branch.
+    await writeFile(join(project, "feature.txt"), "one\ntwo\n");
+    await writeFile(join(project, "more.txt"), "three\nfour\nfive\n");
+    await git(["add", "feature.txt", "more.txt"], project);
+    await git(["commit", "-m", "squash feature"], project);
+    await git(["push", "origin", "--delete", "feature"], feature);
+    const merged = await list();
+    assert.equal(merged.feature.hasCommittedChanges, false);
+    assert.deepEqual(unpushed(merged.feature), { commits: false, additions: 0, deletions: 0 });
+
+    // The default branch checkout is ahead of its own upstream by the squash.
+    assert.deepEqual(unpushed(merged.main), { commits: true, additions: 5, deletions: 0 });
+    await git(["push"], project);
+    assert.deepEqual(unpushed((await list()).main), { commits: false, additions: 0, deletions: 0 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitService publishes bounded progress and status revisions to subscribers", async () => {
   const { GitService } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-events-"));
