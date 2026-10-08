@@ -19,6 +19,7 @@ export * from './mcp/appWindowTools.js';
 export * from './mcp/appWindowAdapter.js';
 export * from './mcp/connectedServers.js';
 export * from './mcp/controlEndpoint.js';
+export * from './mcp/controlSocketPlacement.js';
 export * from './mcp/dispatcher.js';
 export * from './mcp/permissionGate.js';
 export * from './mcp/stdio.js';

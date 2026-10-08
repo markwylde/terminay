@@ -327,6 +327,13 @@ export interface ControlEndpointLimits {
 export interface ControlEndpointOptions extends Partial<ControlEndpointLimits> {
 	/** Absolute Unix socket path, or a Windows named-pipe path. */
 	readonly socketPath: string;
+	/**
+	 * Whether the socket's directory is closed to other users before listening.
+	 * On by default, for a socket inside a data directory. Off for a runtime
+	 * directory (ADR-0054), which was already required to be closed and is
+	 * refused, never repaired, when it is not.
+	 */
+	readonly tightenParentDirectory?: boolean;
 	readonly capabilities?: ControlCapabilityResolver;
 	readonly resolveCapability?: ControlCapabilityResolver['resolve'];
 	readonly dispatch: ControlDispatcher;
@@ -1436,7 +1443,12 @@ export function createControlEndpoint(
 			await mkdir(parent, { recursive: true, mode: 0o700 });
 			// Never change permissions on a filesystem root. Applications should
 			// normally provide a private data directory, which is tightened here.
-			if (parent !== '/' && parent !== '.') await chmod(parent, 0o700);
+			if (
+				options.tightenParentDirectory !== false &&
+				parent !== '/' &&
+				parent !== '.'
+			)
+				await chmod(parent, 0o700);
 			await removeStaleSocket(options.socketPath);
 		}
 		const nextServer = createServer(onConnection);
