@@ -179,7 +179,10 @@ import {
 	type ServerWorkspaceFolder,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
-import { WorkspaceSplitLayout } from './shared/WorkspaceSplitLayout';
+import {
+	useNarrowLayout,
+	WorkspaceSplitLayout,
+} from './shared/WorkspaceSplitLayout';
 import {
 	type TerminalActivityEvaluation,
 	TerminalActivityStore,
@@ -193,6 +196,7 @@ import type {
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
+	FoldersColumnLayout,
 	SidebarGroupId,
 	SidebarPanelId,
 	SidebarSettings,
@@ -240,8 +244,10 @@ import {
 	createProjectTab,
 	isProjectFoldersTreeOpenOnDevice,
 	type ProjectTab,
+	projectFoldersColumnLayoutOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarVisibilityKey,
+	withProjectFoldersColumnLayout,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
@@ -701,6 +707,11 @@ type ProjectWorkspaceProps = {
 	isFoldersTreeOpen: boolean;
 	foldersTreeWidth: number;
 	onFoldersTreeWidthCommit: (projectId: string, width: number) => void;
+	foldersColumnLayout: FoldersColumnLayout;
+	onFoldersColumnLayoutChange: (
+		projectId: string,
+		layout: FoldersColumnLayout,
+	) => void;
 	/** True while a terminal of this project is being dragged. */
 	acceptsFolderTerminalDrop: boolean;
 	onSelectFolder: (projectId: string, folderId: string) => void;
@@ -1357,6 +1368,7 @@ const ProjectWorkspace = forwardRef<
 			agentStatusSnapshot,
 			auxiliaryRoutes,
 			folder,
+			foldersColumnLayout,
 			foldersTreeWidth,
 			isActive,
 			isCompactChrome = false,
@@ -1371,6 +1383,7 @@ const ProjectWorkspace = forwardRef<
 			onNewTerminalInFolder,
 			onOpenShellInFolder,
 			onEditProject,
+			onFoldersColumnLayoutChange,
 			onFoldersTreeWidthCommit,
 			onSelectFolder,
 			onMoveTerminalToFolder,
@@ -1533,9 +1546,14 @@ const ProjectWorkspace = forwardRef<
 			() => featureAuthority?.fileObservationClient?.forFolder(linkedFolderId),
 			[featureAuthority?.fileObservationClient, linkedFolderId],
 		);
+		// Agents live in the left column. A narrow layout has no left column,
+		// so there the drawer offers them as a group of its own.
+		const isNarrowLayout = useNarrowLayout();
+		const isAgentsGroupOffered =
+			settings.agentIntegration.enabled && isNarrowLayout;
 		const activeSidebarGroup = resolveVisibleSidebarGroup(
 			project.sidebarActiveGroup,
-			settings.agentIntegration.enabled,
+			isAgentsGroupOffered,
 		);
 		const isDocumentationGroupVisible =
 			project.isFileExplorerOpen && activeSidebarGroup === 'documentation';
@@ -4999,6 +5017,46 @@ const ProjectWorkspace = forwardRef<
 			[addTerminal, folder.name, linkedFolderRoot, newTerminalShortcutLabel],
 		);
 
+		// One Agents pane, drawn by the left column or by the narrow drawer.
+		const agentsPaneContent =
+			featureAvailability.state === 'unavailable' ? (
+				<FeatureUnavailableState reason={featureAvailability.reason} />
+			) : (
+				<AgentsSidebar
+					projectId={project.id}
+					agents={projectAgentItems}
+					expandedEntryIds={project.expandedAgentEntryIds}
+					onToggleEntryExpanded={(entryId) => {
+						const expanded =
+							project.expandedAgentEntryIds.includes(entryId);
+						onUpdateProject(project.id, {
+							expandedAgentEntryIds: expanded
+								? project.expandedAgentEntryIds.filter(
+										(candidate) => candidate !== entryId,
+									)
+								: [...project.expandedAgentEntryIds, entryId],
+						});
+					}}
+					onActivateTerminal={activateAgentTerminal}
+					onAcknowledgeEntry={(entryId) => {
+						const entry = agentStatusSnapshot.entries[entryId];
+						if (
+							entry !== undefined &&
+							!entry.external &&
+							entry.activationTerminalSessionId !== null
+						) {
+							void serverAgentStatusClient
+								?.acknowledge({
+									projectId: project.id,
+									sessionId: entry.activationTerminalSessionId,
+									entryId,
+								})
+								.catch((error) => reportFeatureFailure('Agents', error));
+						}
+					}}
+				/>
+			);
+
 		const sidebarPanelItemsById: Record<SidebarPanelId, SidebarPanelStackItem> =
 			{
 				explorer: {
@@ -5075,44 +5133,7 @@ const ProjectWorkspace = forwardRef<
 						});
 					},
 					count: projectAgentItems.length,
-					children:
-						featureAvailability.state === 'unavailable' ? (
-							<FeatureUnavailableState reason={featureAvailability.reason} />
-						) : (
-							<AgentsSidebar
-								projectId={project.id}
-								agents={projectAgentItems}
-								expandedEntryIds={project.expandedAgentEntryIds}
-								onToggleEntryExpanded={(entryId) => {
-									const expanded =
-										project.expandedAgentEntryIds.includes(entryId);
-									onUpdateProject(project.id, {
-										expandedAgentEntryIds: expanded
-											? project.expandedAgentEntryIds.filter(
-													(candidate) => candidate !== entryId,
-												)
-											: [...project.expandedAgentEntryIds, entryId],
-									});
-								}}
-								onActivateTerminal={activateAgentTerminal}
-								onAcknowledgeEntry={(entryId) => {
-									const entry = agentStatusSnapshot.entries[entryId];
-									if (
-										entry !== undefined &&
-										!entry.external &&
-										entry.activationTerminalSessionId !== null
-									) {
-										void serverAgentStatusClient
-											?.acknowledge({
-												projectId: project.id,
-												sessionId: entry.activationTerminalSessionId,
-												entryId,
-											})
-											.catch((error) => reportFeatureFailure('Agents', error));
-									}
-								}}
-							/>
-						),
+					children: agentsPaneContent,
 				},
 				git: {
 					id: 'git',
@@ -5216,13 +5237,11 @@ const ProjectWorkspace = forwardRef<
 				},
 			};
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
-			(id) => settings.agentIntegration.enabled || id !== 'agents',
+			(id) => isAgentsGroupOffered || id !== 'agents',
 		);
 		const visibleSidebarGroups = (
 			['explorer', 'documentation', 'agents'] as const
-		).filter(
-			(groupId) => settings.agentIntegration.enabled || groupId !== 'agents',
-		);
+		).filter((groupId) => isAgentsGroupOffered || groupId !== 'agents');
 		const groupedSidebarPanelIds = panelsInSidebarGroup(
 			activeSidebarGroup,
 			visibleSidebarPanelIds,
@@ -5329,6 +5348,18 @@ const ProjectWorkspace = forwardRef<
 						isActive ? (
 							<FoldersColumn
 								folders={folderTreeRows}
+								layout={foldersColumnLayout}
+								onLayoutChange={(layout) =>
+									onFoldersColumnLayoutChange(project.id, layout)
+								}
+								agents={
+									settings.agentIntegration.enabled
+										? {
+												count: projectAgentItems.length,
+												children: agentsPaneContent,
+											}
+										: undefined
+								}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
 								isMenuOpen={foldersMenuPosition !== null}
 								onOpenMenu={setFoldersMenuPosition}
@@ -6144,8 +6175,9 @@ function App({
 		Readonly<{
 			visibility: Readonly<Record<string, boolean>>;
 			width: Readonly<Record<string, number>>;
+			layout: Readonly<Record<string, FoldersColumnLayout>>;
 		}>
-	>({ visibility: {}, width: {} });
+	>({ visibility: {}, width: {}, layout: {} });
 	const persistFoldersTree = useCallback(
 		(update: (sidebar: SidebarSettings) => SidebarSettings) => {
 			const nextSettings = {
@@ -6179,6 +6211,33 @@ function App({
 			projectSidebarVisibilityKey(currentServerId, projectId)
 		] ??
 		projectFoldersTreeWidthOnDevice(settings.sidebar, currentServerId, projectId);
+	const foldersColumnLayoutFor = (projectId: string): FoldersColumnLayout =>
+		foldersTreeChanges.layout[
+			projectSidebarVisibilityKey(currentServerId, projectId)
+		] ??
+		projectFoldersColumnLayoutOnDevice(
+			settings.sidebar,
+			currentServerId,
+			projectId,
+		);
+	const commitFoldersColumnLayout = useCallback(
+		(projectId: string, layout: FoldersColumnLayout) => {
+			const key = projectSidebarVisibilityKey(currentServerId, projectId);
+			setFoldersTreeChanges((current) => ({
+				...current,
+				layout: { ...current.layout, [key]: layout },
+			}));
+			persistFoldersTree((sidebar) =>
+				withProjectFoldersColumnLayout(
+					sidebar,
+					currentServerId,
+					projectId,
+					layout,
+				),
+			);
+		},
+		[currentServerId, persistFoldersTree],
+	);
 	const setFoldersTreeOpen = useCallback(
 		(projectId: string, isOpen: boolean) => {
 			const key = projectSidebarVisibilityKey(currentServerId, projectId);
@@ -9584,6 +9643,8 @@ function App({
 							isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
 							foldersTreeWidth={foldersTreeWidthFor(project.id)}
 							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
+							foldersColumnLayout={foldersColumnLayoutFor(project.id)}
+							onFoldersColumnLayoutChange={commitFoldersColumnLayout}
 							acceptsFolderTerminalDrop={
 								terminalTabDrag?.sourceProjectId === project.id
 							}

@@ -9,12 +9,14 @@ import {
 	getProjectTabColor,
 	isProjectFoldersTreeOpenOnDevice,
 	isProjectSidebarOpenOnDevice,
+	projectFoldersColumnLayoutOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarPatch,
 	projectSidebarVisibilityKey,
 	projectTabColorHue,
 	projectTabHueDistance,
 	sidebarActiveGroupOnDevice,
+	withProjectFoldersColumnLayout,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
@@ -85,6 +87,86 @@ test('the Folders tree is open by default and device-local per server and projec
 		DEFAULT_FOLDERS_TREE_WIDTH,
 	);
 	assert.equal(isProjectFoldersTreeOpenOnDevice(resized, 'server-a', 'project-a'), false);
+});
+
+test('the left column stack is device-local per server and project', () => {
+	const sidebar = {
+		...defaultTerminalSettings.sidebar,
+		defaultAgentsPaneHeight: 260,
+	};
+	assert.deepEqual(
+		projectFoldersColumnLayoutOnDevice(sidebar, 'server-a', 'project-a'),
+		{
+			order: ['folders', 'agents'],
+			foldersHeight: 320,
+			agentsHeight: 260,
+			isFoldersCollapsed: false,
+			isAgentsCollapsed: false,
+		},
+	);
+
+	const arranged = withProjectFoldersColumnLayout(sidebar, 'server-a', 'project-a', {
+		order: ['agents', 'folders'],
+		foldersHeight: 411.6,
+		agentsHeight: 180,
+		isFoldersCollapsed: false,
+		isAgentsCollapsed: true,
+	});
+	assert.deepEqual(
+		projectFoldersColumnLayoutOnDevice(arranged, 'server-a', 'project-a'),
+		{
+			order: ['agents', 'folders'],
+			foldersHeight: 412,
+			agentsHeight: 180,
+			isFoldersCollapsed: false,
+			isAgentsCollapsed: true,
+		},
+	);
+	assert.deepEqual(
+		projectFoldersColumnLayoutOnDevice(arranged, 'server-a', 'project-b').order,
+		['folders', 'agents'],
+	);
+	assert.deepEqual(
+		projectFoldersColumnLayoutOnDevice(arranged, 'server-b', 'project-a').order,
+		['folders', 'agents'],
+	);
+});
+
+test('a stored left column stack always names both panes at bounded heights', () => {
+	const normalized = normalizeTerminalSettings({
+		sidebar: {
+			projectFoldersColumnLayout: {
+				'server-a:reordered': { order: ['agents', 'folders'] },
+				'server-a:partial': { order: ['agents'], foldersHeight: 4 },
+				'server-a:unknown': {
+					order: ['git', 'agents', 'agents', 'folders'],
+					agentsHeight: 9_000,
+					isAgentsCollapsed: 'yes',
+				},
+				'server-a:bad': 'tall',
+			},
+		},
+	}).sidebar.projectFoldersColumnLayout;
+	assert.deepEqual(Object.keys(normalized), [
+		'server-a:reordered',
+		'server-a:partial',
+		'server-a:unknown',
+	]);
+	assert.deepEqual(normalized['server-a:reordered']?.order, ['agents', 'folders']);
+	assert.deepEqual(normalized['server-a:partial'], {
+		order: ['agents', 'folders'],
+		foldersHeight: 30,
+		agentsHeight: 200,
+		isFoldersCollapsed: false,
+		isAgentsCollapsed: false,
+	});
+	assert.deepEqual(normalized['server-a:unknown']?.order, ['agents', 'folders']);
+	assert.equal(normalized['server-a:unknown']?.agentsHeight, 2_000);
+	assert.equal(normalized['server-a:unknown']?.isAgentsCollapsed, false);
+	assert.deepEqual(
+		normalizeTerminalSettings({}).sidebar.projectFoldersColumnLayout,
+		{},
+	);
 });
 
 test('stored Folders tree preferences are normalised and unknown shapes dropped', () => {

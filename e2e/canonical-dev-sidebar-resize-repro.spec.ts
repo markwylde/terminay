@@ -39,7 +39,7 @@ type ReleaseSample = Readonly<{
 
 function activeSidebar(page: Page): Locator {
 	return page.locator(
-		'.project-workspace--active [data-sidebar-panel-stack], .project-workspace--active .sidebar-panel-stack',
+		'.project-workspace--active .file-explorer-sidebar [data-sidebar-panel-stack], .project-workspace--active .file-explorer-sidebar .sidebar-panel-stack',
 	);
 }
 

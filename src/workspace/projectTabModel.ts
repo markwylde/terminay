@@ -1,5 +1,13 @@
-import { defaultTerminalSettings } from '../terminalSettings.ts';
-import type { SidebarGroupId, SidebarPanelId, SidebarSettings } from '../types/settings';
+import {
+	defaultTerminalSettings,
+	normalizeFoldersColumnLayout,
+} from '../terminalSettings.ts';
+import type {
+	FoldersColumnLayout,
+	SidebarGroupId,
+	SidebarPanelId,
+	SidebarSettings,
+} from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 export function projectTabIsBusy(
@@ -181,6 +189,39 @@ export function projectFoldersTreeWidthOnDevice(
 			projectSidebarVisibilityKey(serverId, projectId)
 		] ?? DEFAULT_FOLDERS_TREE_WIDTH
 	);
+}
+
+/** The left column's pane stack on a device that has not arranged it. */
+export function projectFoldersColumnLayoutOnDevice(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+): FoldersColumnLayout {
+	return (
+		sidebarSettings.projectFoldersColumnLayout[
+			projectSidebarVisibilityKey(serverId, projectId)
+		] ??
+		normalizeFoldersColumnLayout(
+			undefined,
+			sidebarSettings.defaultAgentsPaneHeight,
+		)
+	);
+}
+
+export function withProjectFoldersColumnLayout(
+	sidebarSettings: SidebarSettings,
+	serverId: string,
+	projectId: string,
+	layout: FoldersColumnLayout,
+): SidebarSettings {
+	return {
+		...sidebarSettings,
+		projectFoldersColumnLayout: {
+			...sidebarSettings.projectFoldersColumnLayout,
+			[projectSidebarVisibilityKey(serverId, projectId)]:
+				normalizeFoldersColumnLayout(layout),
+		},
+	};
 }
 
 export function withProjectFoldersTreeWidth(

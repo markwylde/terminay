@@ -5,6 +5,9 @@ import {
 	normalizeAccelerator,
 } from './keyboardShortcuts.ts';
 import {
+	FOLDERS_COLUMN_PANE_IDS,
+	type FoldersColumnLayout,
+	type FoldersColumnPaneId,
 	SIDEBAR_GROUP_IDS,
 	SIDEBAR_PANEL_IDS,
 	type SidebarGroupId,
@@ -502,6 +505,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		projectActiveGroup: {},
 		projectFoldersVisibility: {},
 		projectFoldersWidth: {},
+		projectFoldersColumnLayout: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -2381,6 +2385,63 @@ function normalizeProjectFoldersWidth(value: unknown): Record<string, number> {
 	return Object.fromEntries(entries.slice(-256));
 }
 
+const DEFAULT_FOLDERS_PANE_HEIGHT = 320;
+
+/** One device's left-column stack, with anything missing or malformed replaced
+ * by its default, so a stored layout can never hide a pane or lose one. */
+export function normalizeFoldersColumnLayout(
+	value: unknown,
+	defaultAgentsHeight: number = defaultTerminalSettings.sidebar
+		.defaultAgentsPaneHeight,
+): FoldersColumnLayout {
+	const input =
+		typeof value === 'object' && value !== null && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: {};
+	const height = (candidate: unknown, fallback: number): number =>
+		typeof candidate === 'number' && Number.isFinite(candidate)
+			? Math.min(2_000, Math.max(30, Math.round(candidate)))
+			: fallback;
+	const stored: readonly unknown[] = Array.isArray(input.order)
+		? input.order
+		: [];
+	return {
+		order: [...FOLDERS_COLUMN_PANE_IDS].sort(
+			(a, b) => rankIn(stored, a) - rankIn(stored, b),
+		),
+		foldersHeight: height(input.foldersHeight, DEFAULT_FOLDERS_PANE_HEIGHT),
+		agentsHeight: height(input.agentsHeight, defaultAgentsHeight),
+		isFoldersCollapsed: input.isFoldersCollapsed === true,
+		isAgentsCollapsed: input.isAgentsCollapsed === true,
+	};
+}
+
+/** Where a pane sits in a stored order; panes the order omits keep their
+ * default place after the ones it names. */
+function rankIn(order: readonly unknown[], id: FoldersColumnPaneId): number {
+	const index = order.indexOf(id);
+	return index < 0
+		? order.length + FOLDERS_COLUMN_PANE_IDS.indexOf(id)
+		: index;
+}
+
+function normalizeProjectFoldersColumnLayout(
+	value: unknown,
+): Record<string, FoldersColumnLayout> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const entries = Object.entries(value).flatMap(([key, layout]) =>
+		typeof layout === 'object' &&
+		layout !== null &&
+		!Array.isArray(layout) &&
+		key.length > 0 &&
+		key.length <= 512
+			? ([[key, normalizeFoldersColumnLayout(layout)]] as const)
+			: [],
+	);
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeProjectSidebarActiveGroup(
 	value: unknown,
 ): Record<string, SidebarGroupId> {
@@ -2992,6 +3053,9 @@ export function normalizeTerminalSettings(
 			),
 			projectFoldersWidth: normalizeProjectFoldersWidth(
 				sidebarInput.projectFoldersWidth,
+			),
+			projectFoldersColumnLayout: normalizeProjectFoldersColumnLayout(
+				sidebarInput.projectFoldersColumnLayout,
 			),
 		},
 		theme: {
