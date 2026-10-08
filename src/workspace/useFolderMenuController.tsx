@@ -12,6 +12,7 @@ import {
 	panelsHeldByFolder,
 } from './folderDeleteFlow';
 import { type FolderMenuActionId, folderMenuEntries } from './folderMenuModel';
+import { generalFolderIdOf } from './folderTreeModel';
 import {
 	folderDirectory,
 	isGitProject,
@@ -169,8 +170,15 @@ export function useFolderMenuController(options: Options) {
 				starting.onError('The selected server workspace is not ready.');
 				return;
 			}
+			const startingProject =
+				starting.snapshot?.projects[starting.project.id];
 			const generalFolderId =
-				starting.snapshot?.projects[starting.project.id]?.folderIds[0];
+				startingProject === undefined
+					? undefined
+					: generalFolderIdOf(
+							startingProject,
+							starting.snapshot?.folders ?? {},
+						);
 			const held = () =>
 				panelsHeldByFolder(
 					folderId,

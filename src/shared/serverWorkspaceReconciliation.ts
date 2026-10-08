@@ -47,7 +47,7 @@ export type ServerWorkspaceProject = Readonly<{
 	color?: string;
 	icon?: string;
 	viewId: string;
-	/** The project's folders in order. The first is always General. */
+	/** The project's folders in order. Exactly one of them is General. */
 	folderIds: readonly string[];
 	/** Every panel of the project, in folder order. */
 	panelIds: readonly string[];
@@ -358,7 +358,9 @@ export function parseServerWorkspaceSnapshot(
 		if (
 			!isStringArray(project.folderIds) ||
 			new Set(project.folderIds).size !== project.folderIds.length ||
-			snapshot.folders[project.folderIds[0] ?? '']?.kind !== 'general' ||
+			project.folderIds.filter(
+				(folderId) => snapshot.folders[folderId]?.kind === 'general',
+			).length !== 1 ||
 			project.folderIds.some(
 				(folderId) =>
 					snapshot.folders[folderId]?.id !== folderId ||

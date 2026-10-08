@@ -61,7 +61,7 @@ function fixture(options = {}) {
       envelope: { commandId: `create-${++serial}`, operation: "terminal.create", payload: { projectId: "project-a", cols: 80, rows: 24, ...payload } },
     });
   const panelOf = (sessionId) => Object.values(workspace.state.panels).find((panel) => panel.type === "terminal" && panel.sessionId === sessionId);
-  return { composition, workspace, pty, create, panelOf, linked, plain, general: workspace.state.projects["project-a"].folderIds[0] };
+  return { composition, workspace, pty, create, panelOf, host, linked, plain, general: workspace.state.projects["project-a"].folderIds[0] };
 }
 
 test("a terminal created in a folder lands in that folder and starts in its root", async () => {
@@ -80,6 +80,19 @@ test("a terminal created in a folder lands in that folder and starts in its root
     const inGeneral = unwrap(await create({}));
     assert.equal(panelOf(inGeneral.sessionId).folderId, general);
     assert.equal(pty.processes.at(-1).options.cwd, "/project");
+  } finally {
+    await composition.shutdown?.();
+  }
+});
+
+test("a terminal created with no folder launches in General when General is last in the order", async () => {
+  const { composition, workspace, pty, create, panelOf, host, linked, plain, general } = fixture();
+  try {
+    host({ type: "folder.reorder", projectId: "project-a", folderIds: [linked, plain, general] });
+    const made = unwrap(await create({}));
+    assert.equal(panelOf(made.sessionId).folderId, general);
+    assert.equal(pty.processes.at(-1).options.cwd, "/project");
+    assert.deepEqual(workspace.state.folders[linked].panelIds, []);
   } finally {
     await composition.shutdown?.();
   }

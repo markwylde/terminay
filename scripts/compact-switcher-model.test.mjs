@@ -390,6 +390,36 @@ test('a panel in an unknown folder stays reachable under the first', () => {
 	);
 });
 
+test('a panel in an unknown folder is listed under General wherever General is in the order', () => {
+	const groups = buildCompactSwitcherGroups({
+		foldersByProject: {
+			'local:p1': [
+				{ id: 'release', name: 'release-notes' },
+				{ id: 'general', name: 'General', isGeneral: true },
+			],
+		},
+		sources: [
+			source('local', 'Local', [paged], {
+				p1: [
+					terminal('panel-a', 'server', 's-a'),
+					{ ...terminal('panel-b', 'build', 's-b'), folderId: 'gone' },
+					{ ...terminal('panel-c', 'notes', 's-c'), folderId: 'release' },
+				],
+			}),
+		],
+	});
+	assert.deepEqual(
+		groups[0].projects[0].folders.map((folder) => [
+			folder.name,
+			folder.panels.map((row) => row.title),
+		]),
+		[
+			['release-notes', ['notes']],
+			['General', ['server', 'build']],
+		],
+	);
+});
+
 test('filtering narrows folders with their panels', () => {
 	const byPanel = filterCompactSwitcherGroups(withFolders(), 'readme');
 	const [project] = byPanel[0].projects;

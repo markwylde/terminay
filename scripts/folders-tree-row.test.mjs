@@ -336,30 +336,32 @@ test('every card ends with New terminal where one can be made, and an empty fold
 	assert.equal(render([general()]).includes('New terminal'), false);
 });
 
-test('every folder but General has a grip where folders can be reordered, and a peek has none', () => {
+test('every folder has a grip where folders can be reordered, General included, and a peek has none', () => {
 	const folders = [
 		general(),
 		linked(),
 		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
 	];
 	const markup = render(folders, { onReorderFolders: () => {} });
-	assert.equal(markup.match(/class="folders-tree__grip"/g)?.length, 2);
+	assert.equal(markup.match(/class="folders-tree__grip"/g)?.length, 3);
 	assert.match(markup, /aria-label="Reorder one-project-one-window"/);
 	assert.match(markup, /aria-label="Reorder Servers"/);
-	assert.equal(markup.includes('aria-label="Reorder General"'), false);
+	assert.match(markup, /aria-label="Reorder General"/);
 	assert.equal(render(folders, { variant: 'peek' }).includes('folders-tree__grip'), false);
 	assert.equal(render(folders).includes('folders-tree__grip'), false);
 });
 
-test('a moved folder never goes above General, and General is never the one moved', () => {
+test('any folder moves to any place, General included, and a place past either end is that end', () => {
 	const ids = ['general', 'alpha', 'beta', 'gamma'];
 	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 1), ['general', 'gamma', 'alpha', 'beta']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 0), ['general', 'gamma', 'alpha', 'beta']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', -5), ['general', 'gamma', 'alpha', 'beta']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 0), ['gamma', 'general', 'alpha', 'beta']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', -5), ['gamma', 'general', 'alpha', 'beta']);
 	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 2), ['general', 'beta', 'alpha', 'gamma']);
 	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 99), ['general', 'beta', 'gamma', 'alpha']);
 	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 1), ids);
-	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), ids);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), ['alpha', 'beta', 'gamma', 'general']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', 1), ['alpha', 'general', 'beta', 'gamma']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', -1), ids);
 	assert.deepEqual(folderOrderAfterMove(ids, 'missing', 2), ids);
 });
 
