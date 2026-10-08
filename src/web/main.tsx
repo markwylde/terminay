@@ -43,6 +43,7 @@ import {
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
+import { ConnectionStateServers } from './ConnectionStateServers';
 import {
 	acquireDesktopServerBootstrap,
 	type DesktopByteBridge,
@@ -405,6 +406,11 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 							Retry connection
 						</button>
 					)}
+				{/* A server that cannot be shown must still be one the window can
+				 * leave. A first attempt that is merely slow offers nothing yet. */}
+				{(phase === 'ready' || error !== undefined) && (
+					<ConnectionStateServers host={connectionHost} />
+				)}
 			</section>
 		</main>
 	);

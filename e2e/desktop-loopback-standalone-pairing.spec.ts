@@ -278,6 +278,33 @@ async function expectNoSharedProject(first: Page, second: Page) {
 	}).toPass({ timeout: 15_000 });
 }
 
+test('a window whose server stops answering can still switch back to Local', async ({
+	appHarness,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		await pairAndLand(appHarness, mainWindow, server);
+		await server.stop();
+
+		// The window stays bound to the server it cannot reach, and the
+		// connection state it shows in place of the workspace leads out.
+		const others = mainWindow.getByRole('navigation', {
+			name: 'Other servers',
+		});
+		await expect(
+			mainWindow.getByRole('button', { name: 'Retry connection' }),
+		).toBeVisible({ timeout: 90_000 });
+		await others.getByRole('button', { name: 'Switch to Local' }).click();
+		await expectShowing(mainWindow, 'Local');
+	} finally {
+		await server.stop();
+	}
+});
+
 test('a server opened in a second window does not show the projects the first window is showing', async ({
 	appHarness,
 	mainWindow,
