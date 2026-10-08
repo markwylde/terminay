@@ -78,7 +78,7 @@ Folders are only known for projects on the window's server, so a folder `+` neve
 
 ### 6. Thinner rows without losing the thumb target
 
-Rows drop from a 38px minimum with 13.5/11px type to a 35px two-line row with tighter line heights (13px/17px title, 10.5px/14px preview) and 2px vertical padding; a row with no preview is 32px. The saving comes from the header (30px), the folder line (~20px), removed "No panels" rows, and the footer, not from shrinking rows below a comfortable tap height.
+Rows drop from a 38px minimum with 13.5/11px type to a 36px floor that holds two tighter lines (13px/17px title, 10.5px/14px preview) with 2px vertical padding. The floor stays at 36px, with or without a preview, because that is the tappable minimum the breakpoint tests guard. The saving comes from the header (30px), the folder line (~20px), removed "No panels" rows, and the footer, not from shrinking rows below a comfortable tap height.
 
 Small controls keep a large hit area: the row `×`, header `×`, and folder `+` are drawn at 14px glyphs in dim ink but their buttons are at least 28px wide and as tall as their line, and the folder `+` extends its hit area vertically with padding so it is not a 20px target.
 
