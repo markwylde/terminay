@@ -203,6 +203,32 @@ test('a server missing a required capability is attached and inert', async () =>
 	await registry.dispose()
 })
 
+test('a workspace from another release is incompatible, not retried', async () => {
+	let contexts = 0
+	const { registry, clients } = registryFor([hello('server-old')], {
+		createContext: async () => {
+			contexts += 1
+			throw Object.assign(
+				new Error('This server keeps its workspace in an older format (5); this Terminay needs 6. Update the server.'),
+				{ code: 'workspace_schema_incompatible' },
+			)
+		},
+	})
+	registry.startPrimary('remote')
+	const snapshot = await settled(
+		registry,
+		(current) => current.primary?.phase === 'incompatible',
+	)
+	assert.match(snapshot.primary.error, /Update the server/)
+	assert.equal(snapshot.primary.context, undefined)
+	assert.equal(clients.made[0].closed, true)
+	// The same answer comes back every time, so nothing asks again on its own.
+	await new Promise((resolve) => setTimeout(resolve, 30))
+	assert.equal(contexts, 1)
+	assert.equal(registry.snapshot.primary.phase, 'incompatible')
+	await registry.dispose()
+})
+
 test('a server missing an optional capability is degraded, not refused', async () => {
 	const { registry } = registryFor([
 		hello('server-a', [

@@ -35,7 +35,7 @@ Reloading a native window SHALL preserve the exact server it is bound to. Deskto
 
 ### Requirement: Connection failure behaviour
 
-A failed connection SHALL be a state of the whole window: the window stays bound to its server and presents that server's connection state in place of a usable workspace. Offline, reconnecting, unauthenticated, and incompatible states SHALL each be shown, SHALL preserve the profile and device identity, and SHALL offer Retry through that server's session origin reconnect operation. Connection errors SHALL remain visible and terminal input SHALL remain disabled until the new client, subscriptions, workspace, and mounted terminal attachments have hydrated successfully. While a Desktop window's server is unavailable, the connection menu SHALL stay usable so the person can switch the window to another server. Missing or revoked device identity SHALL request a fresh pairing URL for that server. If the host shell cannot safely load the workspace bundle, it SHALL show a typed diagnostic and leave the window unopened.
+A failed connection SHALL be a state of the whole window: the window stays bound to its server and presents that server's connection state in place of a usable workspace. Offline, reconnecting, unauthenticated, and incompatible states SHALL each be shown, SHALL preserve the profile and device identity, and SHALL offer Retry through that server's session origin reconnect operation. Connection errors SHALL remain visible and terminal input SHALL remain disabled until the new client, subscriptions, workspace, and mounted terminal attachments have hydrated successfully. While a Desktop window's server is unavailable, the window SHALL still offer switching to every other remembered server: from the connection menu while the workspace is shown, and from the connection state itself once that state replaces the workspace. A server whose workspace format this Terminay cannot read SHALL be presented as incompatible, naming the side to update, and SHALL NOT be retried automatically. Missing or revoked device identity SHALL request a fresh pairing URL for that server. If the host shell cannot safely load the workspace bundle, it SHALL show a typed diagnostic and leave the window unopened.
 
 #### Scenario: Failure does not rebind the window
 
@@ -49,8 +49,13 @@ A failed connection SHALL be a state of the whole window: the window stays bound
 
 #### Scenario: Leaving an unreachable server
 
-- **WHEN** a Desktop window's server is offline
-- **THEN** the person can open the connection menu and switch the window to Local
+- **WHEN** a Desktop window's server is offline and the window shows its connection state in place of the workspace
+- **THEN** that state lists the other remembered servers with **Local** first, and choosing **Local** switches the window to it
+
+#### Scenario: A server on another release's workspace format
+
+- **WHEN** a server answers the hello but returns a workspace in a format this Terminay does not read
+- **THEN** the window shows that the server or Terminay needs updating, stops retrying on its own, and still offers the switch to Local
 
 #### Scenario: Unsafe bundle leaves the connection unopened
 
