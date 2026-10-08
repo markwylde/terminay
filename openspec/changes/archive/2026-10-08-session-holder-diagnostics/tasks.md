@@ -1,0 +1,31 @@
+## 1. Holder states why it closes
+
+- [x] 1.1 Track start, last-attach, and last-detach times and the attach count in `holder.ts`, and build one close payload (reason, signal name, live and ended session counts, attached, limit in force, times). Verified by: `packages/server-core/test/session-holder-close-record.test.mjs` asserting the whole payload for a `limit` close and the reasons for `empty`, `end-all`, and `first-attach-timeout`, using injected timers and clock.
+- [x] 1.2 Add the `closing` holder-to-server message to `protocol.ts` and send it from `close()` before sessions are ended when a server is attached. Verified by: the round-trip and rejection cases for `parseHolderCloseNotice`, and "an attached server is told the reason before the connection goes" in the same file.
+- [x] 1.3 Write the close record synchronously in `close()` before ending sessions, owner-only, under a name the holder-record scan in `factory.ts` skips; add the path helper to `paths.ts`; write none for `end-all`. Verified by: the `limit` case reading the record with mode 0600 and `readHolderRecords` returning nothing for it, and the `end-all` case leaving the directory empty.
+- [x] 1.4 Pass the signal name through `process.ts` for `SIGTERM` and `SIGINT`, and register `uncaughtExceptionMonitor` to write a `crash` close record without catching. Verified by: `session-holder-observation.test.mjs` sending `SIGTERM` to a real holder process and reading `signal: "SIGTERM"` from its record, and the `recordCrash` case showing the record written while the holder keeps serving.
+
+## 2. Server-side reports
+
+- [x] 2.1 Define and export `SessionHolderObservationReport` from `server-core` and add `onObservation` to `SessionHolderPtyFactoryOptions`, called inside try/catch. Verified by: `npm run typecheck --workspace @terminay/server-core`, and the test whose throwing observer does not fail a spawn.
+- [x] 2.2 Report from `start()`: holder attached (pid, start time, build id, same-build, draining, live and ended counts, limit), dead record removed, incompatible holder signalled, live holder that refused this server, and holder drained with its cause. Verified by: `session-holder-observation.test.mjs` cases for a same-build holder, an other-build holder (and an already-draining one), a dead record, a version refusal, and a busy holder.
+- [x] 2.3 Report holder launched (with duration), launch failed (with error), and limit set. Verified by: tests for a successful launch, a launch that throws, a launch that times out, and `setLimit`.
+- [x] 2.4 Report connection closed from `track()`, with whether this server closed it (`detach`, `endAll`), whether a `closing` notice preceded it, and the live session count; report the holder close from the notice and delete that holder's close record once the connection has closed. Verified by: tests for server detach, `endAll`, a holder signalled while attached, and a holder killed outright, each asserting `requested` and `announced`.
+- [x] 2.5 Read close records at the end of `start()`, report each as closed with `late: true`, delete it, and drop all but the newest eight unreported. Verified by: a test that closes a real holder unattached, starts a new factory, sees one late report, and sees none from a third; a test that eleven records yield the newest eight.
+- [x] 2.6 Report held session ends with exit code, signal, whether this server requested the end, and ended-unattached on adopt; map session ids to per-factory ordinals; produce no per-session report for sessions lost to a holder's connection closing. Verified by: tests for `end(sessionId)`, an external SIGHUP to the shell, a server-sent kill, adoption of a session that ended unattached, and a signalled holder with three sessions producing no per-session report; every test asserts no report names a session id, the data root, a generation, or a credential.
+
+## 3. Desktop records the reports
+
+- [x] 3.1 Add the `local-server.session-holder.*` event names to `electron/diagnostics/core.ts`. Verified by: `scripts/local-desktop-diagnostics-session-holder.test.mjs` asserting the declared names and the reported kinds are the same set, and `scripts/local-desktop-diagnostics-core.test.mjs` still passing.
+- [x] 3.2 Add `electron/diagnostics/sessionHolderObservation.ts` mapping each report to an event with process-local holder and session diagnostic ids and the severities in design decision 6. Verified by: `scripts/local-desktop-diagnostics-session-holder.test.mjs` covering every report kind and close reason, the warning severities, the per-launch holder id, and a closed list of field names.
+- [x] 3.3 Add `onSessionHolderObservation` to `ServerTerminalAuthority` options, pass it to the factory, and record it from `electron/main.ts` on the lifecycle channel. Verified by: `npx tsc --noEmit -p tsconfig.json` passing, the wiring assertions in the same test file, and `scripts/local-desktop-diagnostics-boundaries.test.mjs` still passing.
+
+## 4. Standalone server
+
+- [x] 4.1 Pass an observer to the server's `createSessionHolderPtyFactory` call in `apps/terminay-server/src/cli.ts` that writes each report to the service log as one line; the one-shot `end-sessions` command passes none. Verified by: `npm run test:session-holder-standalone`, whose restart test reads a `launched` line on first start and an `attached`, same-build, one-live-session line on restart, naming neither the session nor the data root.
+
+## 5. Close-out
+
+- [x] 5.1 Cover the Desktop path without reading a developer's real log folder: a packaged Desktop outside test mode writes diagnostics to the user's own Logs directory, so the packaged holder test is left alone and the Desktop route is covered by 3.2 and 3.3 while the same reports are exercised end to end against real processes by 4.1. Verified by: those tests passing.
+- [x] 5.2 Run `npm run lint`, `npm run typecheck:workspaces`, `npm run check:boundaries`, the `@terminay/server-core` tests, and the `scripts/local-desktop-diagnostics-*.test.mjs` tests. Verified by: lint reporting no error and nothing in a touched file, 26 of 26 typecheck tasks, 1142 of 1142 server-core tests, and every diagnostics test passing.
+- [x] 5.3 Run `openspec validate --all`. Verified by: exit code 0.

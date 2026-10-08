@@ -57,6 +57,7 @@ import {
 	MacroRepository,
 	MdxRuntime,
 	type NodePtyModuleLike,
+	type SessionHolderObservationReport,
 	OpenAiDictationProvider,
 	OrderedEventJournal,
 	openCanonicalWorkspace,
@@ -974,6 +975,7 @@ async function createServerComposition(
 							),
 						// The configured limit replaces this once settings have loaded.
 						limitMs: backgroundTerminalLimitMs(undefined),
+						onObservation: logSessionHolderObservation,
 						resolveCwd: resolveTerminalProcessCwd,
 					}),
 				}
@@ -2186,6 +2188,18 @@ function resolveWebRtcRuntimeRoot(
 }
 
 /** Whether this server keeps its terminals in a session holder (ADR-0035). */
+/**
+ * The service log is this server's own; reports name a holder by process id
+ * and start time and carry no session id, path, or credential.
+ */
+function logSessionHolderObservation(
+	report: SessionHolderObservationReport,
+): void {
+	process.stderr.write(
+		`[terminay-server] session holder ${JSON.stringify(report)}\n`,
+	);
+}
+
 function sessionHolderEnabled(options: ServerCliOptions): boolean {
 	return isSessionHolderEnabled({
 		dataRoot: options.dataRoot,

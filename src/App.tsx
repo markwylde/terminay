@@ -5837,6 +5837,13 @@ const requestedWorkspaceViewId =
 	new URLSearchParams(window.location.search).get('view') ??
 	new URLSearchParams(window.location.hash.slice(1)).get('view');
 
+/** Set by the host for a window that presents a view of its own on a server
+ * another window is already showing: the window creates the view if the
+ * server does not have it, and stays open while it is empty. */
+const requestedOwnWorkspaceView =
+	requestedWorkspaceViewId !== null &&
+	new URLSearchParams(window.location.search).get('ownView') === '1';
+
 export type AppProps = {
 	auxiliaryRoutes?: AuxiliaryRouteController;
 	hostPresentation?: Readonly<{
@@ -6316,12 +6323,50 @@ function App({
 		// Home when its last project closes. A popped-out view's window does not.
 		stayOpenWhenEmpty:
 			requestedWorkspaceViewId === null ||
+			requestedOwnWorkspaceView ||
 			requestedWorkspaceViewId === workspaceSnapshot?.viewOrder[0],
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
 	const activateProjectRef = useRef(activateProject);
 	activateProjectRef.current = activateProject;
+	// A window with a view of its own makes that view on the server the first
+	// time it is needed. It starts with no projects; they are dragged in.
+	const ownViewRequestedRef = useRef(false);
+	const ownViewStore = terminalClientContext?.workspaceSnapshotStore;
+	const ownViewMissing =
+		requestedOwnWorkspaceView &&
+		requestedWorkspaceViewId !== null &&
+		workspaceSnapshot !== null &&
+		workspaceSnapshot !== undefined &&
+		workspaceSnapshot.views[requestedWorkspaceViewId] === undefined;
+	useEffect(() => {
+		if (
+			!ownViewMissing ||
+			ownViewStore === undefined ||
+			requestedWorkspaceViewId === null ||
+			ownViewRequestedRef.current
+		)
+			return;
+		ownViewRequestedRef.current = true;
+		void ownViewStore
+			.createView({ viewId: requestedWorkspaceViewId, name: 'Window' })
+			.catch(() => {
+				// Another window may have made it first; if it is still missing
+				// the next snapshot asks again.
+				ownViewRequestedRef.current = false;
+			});
+	}, [ownViewMissing, ownViewStore]);
+	// The host titles the window by its server and adds what the page says it
+	// holds: the projects in this window.
+	// A window with no projects is showing Home.
+	const windowTitleDetail =
+		projects.map((project) => project.title).join(', ') || 'Home';
+	const hostTitlesWindow = hostPresentation?.nativeWindowControls === true;
+	useEffect(() => {
+		// A browser tab keeps the page's own title.
+		if (hostTitlesWindow) document.title = windowTitleDetail;
+	}, [hostTitlesWindow, windowTitleDetail]);
 	const [pendingProjectCreation, setPendingProjectCreation] =
 		useState<PendingProjectCreation | null>(null);
 	// A failed creation is a tab like any other: shown while it is the one
