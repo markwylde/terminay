@@ -86,7 +86,7 @@ test('Add connection shows how to start a server that matches the client', async
 	await expect(docker).toBeChecked();
 	await expect(linux).not.toBeChecked();
 	const startDocker =
-		'docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay:5.13.0-beta.214';
+		'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-beta.214';
 	await expect(guide.getByText(startDocker, { exact: true })).toBeVisible();
 	await expect(
 		guide.getByText('docker exec -it terminay terminay daemon qr-code', {
@@ -174,7 +174,7 @@ test('a development build and an absent version name the untagged image', async 
 		await page.getByRole('button', { name: 'Add connection…' }).click();
 		await expect(
 			page.getByText(
-				'docker run -d --name terminay -v terminay-data:/var/lib/terminay markwylde/terminay',
+				'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay',
 				{ exact: true },
 			),
 		).toBeVisible();

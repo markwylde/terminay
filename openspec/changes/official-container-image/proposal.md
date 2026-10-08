@@ -6,6 +6,7 @@ Running Terminay Server in a container today means choosing between a systemd-in
 
 - Publish an official image, `markwylde/terminay`, that runs the standalone server in the foreground with hosted and direct exposure on, so `docker run -d --name terminaydemo markwylde/terminay` yields a server a device can pair with.
 - Ship the `terminay` CLI in the image so `docker exec -it terminaydemo terminay daemon qr-code` shows pairing links and approves devices, with no systemd, no `sudo`, and no install record.
+- Run the server and its terminals as an unprivileged account that has passwordless `sudo`, so a terminal can install packages without the server running as root.
 - Add one public-host setting (`--public-host` / `TERMINAY_PUBLIC_HOST`) that derives both the direct origin and the advertised ICE address, so the host address is given once.
 - Let the ICE port range be pinned without an advertised address, so published UDP ports are meaningful even when the server does not know its reachable address.
 - In direct mode, the client offers itself a candidate at the host it signalled through, on the server's pinned ports, so a server reachable only through a forwarded address needs no advertised address for Desktop.
