@@ -19,7 +19,10 @@ import {
 	projectRootOnScreen,
 	selectFolder,
 } from './support/folders';
-import { typeInVisibleTerminal } from './support/terminal-input';
+import {
+	runShellCommand,
+	typeInVisibleTerminal,
+} from './support/terminal-input';
 import {
 	activeTerminalSessionId,
 	terminalPanelForSession,
@@ -86,7 +89,7 @@ const terminalOutput = (page: Page): Locator =>
 	page.locator('.project-workspace--active .terminal-panel:visible .xterm-rows');
 
 async function run(page: Page, command: string): Promise<void> {
-	await typeInVisibleTerminal(page, `${command}\n`);
+	await runShellCommand(page, command);
 }
 
 /**
