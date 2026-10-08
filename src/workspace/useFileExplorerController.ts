@@ -1057,6 +1057,14 @@ export function useFileExplorerController({
 						unsubscribe();
 						void fileObservationClient.stopWatch(handle.subscriptionId);
 					});
+					// The directory was listed while this watch was still being
+					// started, and whatever changed in between reached nobody. Read
+					// it once more now that the watch is in place: after any listing
+					// already under way, which may itself predate the watch.
+					const underWay = directoryLoadsRef.current.get(path);
+					void (underWay ?? Promise.resolve()).then(() => {
+						if (!disposed) void loadDirectory(path);
+					});
 				} catch {
 					if (!disposed && !unavailableWatchFallbacksRef.current.has(path)) {
 						unavailableWatchFallbacksRef.current.add(path);

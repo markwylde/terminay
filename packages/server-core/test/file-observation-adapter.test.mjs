@@ -124,3 +124,41 @@ test("file observation event projector isolates exact client and project", () =>
   assert.equal(createFileObservationEventProjector(event, { clientId: "client-a", authScope: "read", claims: { projectId: "project-b" } }), undefined);
   assert.equal(createFileObservationEventProjector(event, { clientId: "client-a", authScope: "read", claims: { projectId: "project-a" } }), event);
 });
+
+test("a watch start is answered only once the host is observing", async () => {
+  const journal = new OrderedEventJournal();
+  let observing;
+  const host = {
+    watch() { return new Promise((resolve) => { observing = resolve; }); },
+    async calculateFolderSize() { return { bytes: 0, files: 0, directories: 0 }; },
+  };
+  const adapter = new ServerFileObservationAdapter({ serverId: "server-a", host, eventJournal: journal });
+  const start = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.watchStart];
+  let answered = false;
+  const first = Promise.resolve(start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" })))
+    .then((handle) => { answered = true; return handle; });
+  // A second consumer of the same watch waits on the same arming.
+  let sharedAnswered = false;
+  const shared = Promise.resolve(start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" })))
+    .then((handle) => { sharedAnswered = true; return handle; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(answered, false, "answered before the host was observing");
+  assert.equal(sharedAnswered, false);
+  observing();
+  assert.equal((await shared).subscriptionId, (await first).subscriptionId);
+  adapter.close();
+});
+
+test("a watch the host cannot start is still answered, and reported unavailable", async () => {
+  const journal = new OrderedEventJournal();
+  const host = {
+    async watch() { throw new Error("no such directory"); },
+    async calculateFolderSize() { return { bytes: 0, files: 0, directories: 0 }; },
+  };
+  const adapter = new ServerFileObservationAdapter({ serverId: "server-a", host, eventJournal: journal });
+  const start = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.watchStart];
+  const handle = await start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" }));
+  assert.equal(journal.replay(0).events[0].payload.kind, "unavailable");
+  assert.equal(journal.replay(0).events[0].payload.subscriptionId, handle.subscriptionId);
+  adapter.close();
+});

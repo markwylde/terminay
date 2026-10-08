@@ -2757,6 +2757,19 @@ const ProjectWorkspace = forwardRef<
 		const isWorktreeMissing =
 			changes.kind === 'worktree' && changes.worktree.isPrunable === true;
 		worktreeMissingRef.current = isWorktreeMissing;
+		// The directory can vanish, and a listing fail for it, before Git has
+		// reported the worktree missing. That failure is the same news the Files
+		// pane now gives, so it is withdrawn rather than left standing beside it.
+		useEffect(() => {
+			if (!isWorktreeMissing) return;
+			const failure = featureFailureRef.current;
+			if (failure?.feature !== 'Explorer') return;
+			setErrorText((current) => {
+				if (current !== failure.message) return current;
+				featureFailureRef.current = null;
+				return null;
+			});
+		}, [isWorktreeMissing]);
 		const isRenderingStatusBar =
 			isActive && isStatusBarVisible && statusBarSlot !== null;
 		const focusedTerminalStatus = useFocusedTerminalStatus({

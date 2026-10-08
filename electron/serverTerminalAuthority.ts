@@ -548,8 +548,9 @@ export class ServerTerminalAuthority {
 			onProjectChanged: (projectId, worktreeId) =>
 				git.announceWorktreeChange(projectId, worktreeId),
 		});
-		const projectFileObservationHost = fileObservationHostForRoot((projectId) =>
-			this.fileProjectRoots.get(projectId),
+		const projectFileObservationHost = fileObservationHostForRoot(
+			(projectId) => this.fileProjectRoots.get(projectId),
+			(failure) => options.onFileOperationFailure?.(failure),
 		);
 		// Which terminal created a worktree: Git in each terminal reports its own
 		// commands to this socket (ADR-0052). The path is short on purpose; Unix
@@ -593,7 +594,11 @@ export class ServerTerminalAuthority {
 					command,
 				),
 			storage: nodeFileCatalogStorage,
-			observationHost: (root) => fileObservationHostForRoot(() => root),
+			observationHost: (root) =>
+				fileObservationHostForRoot(
+					() => root,
+					(failure) => options.onFileOperationFailure?.(failure),
+				),
 			projects: {
 				catalog: (projectId) => this.fileCatalogProjects.get(projectId),
 				content: (projectId) => this.fileContentProjects.get(projectId),
@@ -2472,14 +2477,28 @@ function protocolString(value: unknown, label: string): string {
  */
 function fileObservationHostForRoot(
 	rootOf: (projectId: string) => string | undefined,
+	/** Told when a watch could not start or stopped observing, so a directory
+	 * nobody is watching is on record rather than a silent gap. */
+	onWatchLost?: (failure: ServerFileOperationFailure) => void,
 ): FileObservationHost {
+	const lost = (operation: string, error?: unknown) =>
+		onWatchLost?.({
+			operation,
+			code:
+				(error as { code?: unknown } | undefined)?.code === 'ENOENT'
+					? 'path_missing'
+					: 'internal',
+		});
 	return {
 		watch: async ({ projectId, resource, signal, publish }) => {
 			const root = rootOf(projectId);
 			if (root === undefined)
 				throw new Error('file observation project is unavailable');
 			const target = resolve(root, resource);
-			const targetStats = await stat(target);
+			const targetStats = await stat(target).catch((error: unknown) => {
+				lost('files.watch.start', error);
+				throw error;
+			});
 			const watchedDirectory = targetStats.isDirectory()
 				? target
 				: dirname(target);
@@ -2507,6 +2526,7 @@ function fileObservationHostForRoot(
 			const publishUnavailable = () => {
 				if (signal.aborted || unavailablePublished) return;
 				unavailablePublished = true;
+				lost('files.watch');
 				publish({ resource, kind: 'unavailable' });
 			};
 			watcher.once('error', publishUnavailable);
