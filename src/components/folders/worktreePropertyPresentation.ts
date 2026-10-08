@@ -31,6 +31,58 @@ export function checksHeadline(checks: CheckCounts): number {
 	return checks.failed || checks.pending || checks.passed;
 }
 
+const CHECKS_TONE_WORDS: Readonly<Record<ChecksTone, string>> = {
+	failed: 'failed',
+	pending: 'running',
+	passed: 'passed',
+};
+
+/** What the checks chip counts: `23 running`. The word is dropped where the
+ * tree is narrow, so the count has to stand without it. */
+export function checksChip(checks: CheckCounts): {
+	count: number;
+	word: string;
+} {
+	return {
+		count: checksHeadline(checks),
+		word: CHECKS_TONE_WORDS[checksTone(checks)],
+	};
+}
+
+/**
+ * The pull request chip: `PR #350`, with the state after it unless the pull
+ * request is open. The prefix is dropped where the tree is narrow; the number
+ * and the state never are.
+ */
+export function pullRequestChip(
+	pullRequest: Pick<PullRequest, 'number' | 'state'>,
+): {
+	prefix: string;
+	number: string;
+	state?: string;
+} {
+	return {
+		prefix: 'PR',
+		number: `#${pullRequest.number}`,
+		...(pullRequest.state === 'open'
+			? {}
+			: { state: pullRequestStateLabel(pullRequest) }),
+	};
+}
+
+/** A linked folder with work in it and no pull request says so. */
+export function showsNoPullRequest(folder: {
+	kind: string;
+	isDirty: boolean;
+	pullRequest?: unknown;
+}): boolean {
+	return (
+		folder.kind === 'linked' &&
+		folder.isDirty &&
+		folder.pullRequest === undefined
+	);
+}
+
 export function checksAccessibleName(checks: CheckCounts): string {
 	const parts = [
 		`${checks.failed} failed`,
@@ -48,7 +100,9 @@ const PULL_REQUEST_STATE_LABELS: Readonly<Record<string, string>> = {
 	closed: 'closed',
 };
 
-function pullRequestStateLabel(pullRequest: PullRequest): string {
+function pullRequestStateLabel(
+	pullRequest: Pick<PullRequest, 'state'>,
+): string {
 	return PULL_REQUEST_STATE_LABELS[pullRequest.state] ?? pullRequest.state;
 }
 

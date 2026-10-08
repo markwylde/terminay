@@ -930,7 +930,7 @@ test('Changes pane reports when the folder is not in a git repository', async ({
   )
   // No Git action is offered where there is no repository.
   await expect(changesPane(mainWindow).locator('.sidebar-pane__action-button')).toHaveCount(0)
-  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__meta')).toHaveCount(0)
+  await expect(folderRow(mainWindow, 'General').locator('.folders-tree__branch, .folders-tree__facts')).toHaveCount(0)
 })
 
 test('Files, Changes, and the Folders tree refresh after setting project root from terminal cwd', async ({

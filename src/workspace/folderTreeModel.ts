@@ -50,6 +50,12 @@ export type FolderTreeChange =
 	| { kind: 'changed' }
 	| { kind: 'clean' };
 
+/** Dirty is work the default branch lacks, measured or not. A clean checkout,
+ * a worktree missing from disk, and one nothing is known about are not. */
+export function isChangeDirty(change: FolderTreeChange | undefined): boolean {
+	return change?.kind === 'delta' || change?.kind === 'changed';
+}
+
 export type FolderTreeTerminalRow = {
 	panelId: string;
 	sessionId: string;
@@ -71,8 +77,11 @@ export type FolderTreeFolderRow = {
 	branch?: string;
 	pullRequest?: FolderTreeWorktree['pullRequest'];
 	checks?: FolderTreeWorktree['checks'];
-	/** A linked folder's worktree against the default branch. */
+	/** The folder's checkout against the default branch. Absent for a plain
+	 * folder and where nothing has been measured. */
 	change?: FolderTreeChange;
+	/** True when the checkout holds changes the default branch does not have. */
+	isDirty: boolean;
 	terminals: readonly FolderTreeTerminalRow[];
 	/** True when the folder holds no panel of any kind. */
 	isEmpty: boolean;
@@ -135,7 +144,8 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 				sessionId: panel.sessionId,
 				title: titleOf(panel),
 				status: input.panelFacts?.(panelId)?.status ?? 'idle',
-				isActive: folder.id === selectedFolderId && panelId === input.activePanelId,
+				isActive:
+					folder.id === selectedFolderId && panelId === input.activePanelId,
 				...(created === undefined || created.id === folder.id
 					? {}
 					: { createdWorktree: baseName(created.worktree?.path ?? '') }),
@@ -160,9 +170,10 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			...(folder.kind !== 'linked' || worktree?.checks === undefined
 				? {}
 				: { checks: worktree.checks }),
-			...(folder.kind !== 'linked' || worktree?.change === undefined
-				? {}
-				: { change: worktree.change }),
+			// General's checkout is measured like any other; a plain folder has
+			// no checkout, so `worktree` is undefined for it.
+			...(worktree?.change === undefined ? {} : { change: worktree.change }),
+			isDirty: isChangeDirty(worktree?.change),
 			terminals,
 			isEmpty: folder.panelIds.length === 0,
 			...(offered === undefined
@@ -186,6 +197,23 @@ export function resolveSelectedFolderId(
 	)
 		return remembered;
 	return project.folderIds[0];
+}
+
+/**
+ * The folder order after one folder is moved to a place in it. General is
+ * first and stays first: it is never the folder moved, and nothing is placed
+ * above it. The server holds the same rule and is the one that enforces it.
+ */
+export function folderOrderAfterMove(
+	folderIds: readonly string[],
+	folderId: string,
+	toIndex: number,
+): string[] {
+	const from = folderIds.indexOf(folderId);
+	if (from <= 0) return [...folderIds];
+	const order = folderIds.filter((id) => id !== folderId);
+	order.splice(Math.max(1, Math.min(order.length, toIndex)), 0, folderId);
+	return order;
 }
 
 /** The folder that holds a panel, for selecting it before the panel is focused. */
