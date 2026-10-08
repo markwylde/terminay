@@ -1,5 +1,12 @@
 import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	stat,
+} from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -61,6 +68,71 @@ type ElectronFixtures = {
 };
 
 const desktopAppReadyTimeoutMs = 15_000;
+
+const FAILURE_DIAGNOSTIC_EVENTS = 200;
+const FAILURE_DIAGNOSTIC_LINE = 600;
+
+/**
+ * Say what the application recorded when a test fails. A timed-out locator
+ * says only that something never appeared; the error banner's own words and
+ * the server's Git, folder, and failure events say why. They go to standard
+ * output so a continuous-integration log carries them without its artifacts.
+ */
+async function printFailureDiagnostics(
+	electronApp: ElectronApplication,
+	userDataDir: string,
+): Promise<void> {
+	const lines: string[] = [];
+	for (const page of electronApp.windows()) {
+		if (page.isClosed()) continue;
+		const banners = await page
+			.locator('.error-banner__message')
+			.allTextContents()
+			.catch(() => []);
+		for (const banner of banners) lines.push(`error banner: ${banner}`);
+	}
+	const directory = path.join(userDataDir, 'logs');
+	const files = (await readdir(directory).catch(() => []))
+		.filter((name) => name.endsWith('.jsonl'))
+		.sort();
+	const events: string[] = [];
+	for (const file of files) {
+		const text = await readFile(path.join(directory, file), 'utf8').catch(
+			() => '',
+		);
+		for (const line of text.split('\n')) {
+			if (line.length === 0) continue;
+			try {
+				const event = JSON.parse(line) as {
+					event?: string;
+					fields?: unknown;
+					message?: string;
+					severity?: string;
+					timestamp?: string;
+				};
+				if (
+					event.severity !== 'warning' &&
+					event.severity !== 'error' &&
+					!/git|folder|worktree|watch/u.test(event.event ?? '')
+				)
+					continue;
+				events.push(
+					`${event.timestamp ?? ''} ${event.severity ?? ''} ${event.event ?? ''} ${event.message ?? ''} ${JSON.stringify(event.fields ?? {})}`.slice(
+						0,
+						FAILURE_DIAGNOSTIC_LINE,
+					),
+				);
+			} catch {
+				// A line still being written is not an event yet.
+			}
+		}
+	}
+	lines.push(...events.slice(-FAILURE_DIAGNOSTIC_EVENTS));
+	if (lines.length === 0) return;
+	console.log(
+		`\n[failure diagnostics]\n${lines.join('\n')}\n[end failure diagnostics]`,
+	);
+}
 
 /** Claude Code home the agent runtime spec's fixture driver writes into. */
 export function agentFixtureClaudeHome(tempDir: string): string {
@@ -333,6 +405,8 @@ export const test = base.extend<ElectronFixtures>({
 		try {
 			await use(launched.electronApp);
 		} finally {
+			if (testInfo.status !== testInfo.expectedStatus)
+				await printFailureDiagnostics(launched.electronApp, userDataDir);
 			await launched.close();
 		}
 	},
