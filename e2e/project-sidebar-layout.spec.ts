@@ -20,11 +20,23 @@ type WorkspaceTestApi = Readonly<{
 }>;
 
 function activeSidebar(page: Page): Locator {
-	return page.locator('.project-workspace--active [data-sidebar-panel-stack]');
+	return page.locator(
+		'.project-workspace--active .file-explorer-sidebar [data-sidebar-panel-stack]',
+	);
 }
 
 function sidebarPane(page: Page, id: string): Locator {
 	return activeSidebar(page).locator(`[data-sidebar-pane-id="${id}"]`);
+}
+
+function leftColumn(page: Page): Locator {
+	return page.locator(
+		'.project-workspace--active [data-terminay-folders-column="true"]',
+	);
+}
+
+function leftColumnPane(page: Page, id: string): Locator {
+	return leftColumn(page).locator(`[data-sidebar-pane-id="${id}"]`);
 }
 
 function sidebarTitle(page: Page, id: string): Locator {
@@ -92,7 +104,7 @@ async function resetCommandRecords(page: Page): Promise<void> {
 
 const EXPLORER_GROUP_IDS = ['explorer', 'git'] as const;
 
-test('sidebar groups switch Explorer, Documentation, and Agents stacks', async ({
+test('sidebar groups switch Explorer and Documentation stacks, and Agents is in the left column', async ({
 	mainWindow,
 }) => {
 	await openFileExplorer(mainWindow);
@@ -114,10 +126,10 @@ test('sidebar groups switch Explorer, Documentation, and Agents stacks', async (
 	await expect(sidebarPane(mainWindow, 'git')).toHaveCount(0);
 	await expect(sidebarPane(mainWindow, 'agents')).toHaveCount(0);
 
-	await selectSidebarGroup(mainWindow, 'agents');
-	await expect(sidebarPane(mainWindow, 'agents')).toBeVisible();
-	await expect(sidebarPane(mainWindow, 'explorer')).toHaveCount(0);
-	await expect(sidebarPane(mainWindow, 'documentation')).toHaveCount(0);
+	await expect(tablist.getByRole('tab')).toHaveCount(2);
+	await expect(tablist.getByRole('tab', { name: 'Agents' })).toHaveCount(0);
+	await expect(leftColumnPane(mainWindow, 'folders')).toBeVisible();
+	await expect(leftColumnPane(mainWindow, 'agents')).toBeVisible();
 
 	await selectSidebarGroup(mainWindow, 'explorer');
 	await expect(sidebarPane(mainWindow, 'explorer')).toBeVisible();
@@ -1087,3 +1099,84 @@ async function pageMouseDragPreview(
 	await page.mouse.move(x + deltaX / 2, y);
 	await page.mouse.move(x + deltaX, y);
 }
+
+test('the left column stacks Folders and Agents as collapsible, resizable, reorderable panes under an untitled band', async ({
+	mainWindow,
+}) => {
+	const column = leftColumn(mainWindow);
+	const folders = leftColumnPane(mainWindow, 'folders');
+	const agents = leftColumnPane(mainWindow, 'agents');
+	await expect(folders).toBeVisible();
+	await expect(agents).toBeVisible();
+
+	// The band keeps its chrome and its menu, and says nothing.
+	const band = column.locator('.folders-column__header');
+	await expect(band).toBeVisible();
+	expect((await band.innerText()).trim()).toBe('');
+	await expect(
+		band.getByRole('button', { name: 'Folders actions' }),
+	).toBeVisible();
+	const tabStrip = mainWindow
+		.locator('.project-workspace--active')
+		.getByRole('tablist', { name: 'Sidebar' });
+	await openFileExplorer(mainWindow);
+	expect(
+		await band.evaluate((element) => getComputedStyle(element).backgroundColor),
+	).toBe(
+		await tabStrip.evaluate(
+			(element) => getComputedStyle(element).backgroundColor,
+		),
+	);
+
+	const top = async (pane: Locator) => (await pane.boundingBox())?.y ?? -1;
+	const height = async (pane: Locator) =>
+		(await pane.boundingBox())?.height ?? -1;
+	expect(await top(folders)).toBeLessThan(await top(agents));
+
+	// Collapse: the pane keeps its title and gives its body away.
+	const agentsHeightBefore = await height(agents);
+	await folders.locator('.sidebar-pane__header').click();
+	await expect(folders).toHaveClass(/sidebar-pane--collapsed/);
+	await expect(folders.locator('[data-sidebar-pane-title]')).toBeVisible();
+	await expect
+		.poll(() => height(agents))
+		.toBeGreaterThan(agentsHeightBefore);
+	await folders.locator('.sidebar-pane__header').click();
+	await expect(folders).not.toHaveClass(/sidebar-pane--collapsed/);
+
+	// Resize from the keyboard: the boundary moves and both titles stay.
+	const separator = column.locator('[data-sidebar-resize-handle="agents"]');
+	await expect(separator).toHaveAttribute('aria-orientation', 'horizontal');
+	const foldersHeightBefore = await height(folders);
+	await separator.focus();
+	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect.poll(() => height(folders)).toBeLessThan(foldersHeightBefore);
+	const resizedFoldersHeight = await height(folders);
+
+	// Reorder from the keyboard: Agents moves above Folders.
+	await agents.getByRole('button', { name: 'Reorder Agents panel' }).focus();
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect.poll(async () => (await top(agents)) < (await top(folders))).toBe(
+		true,
+	);
+
+	// The arrangement is this device's, and survives a reload.
+	await mainWindow.reload();
+	await expect(leftColumnPane(mainWindow, 'agents')).toBeVisible();
+	await expect
+		.poll(
+			async () =>
+				(await top(leftColumnPane(mainWindow, 'agents'))) <
+				(await top(leftColumnPane(mainWindow, 'folders'))),
+		)
+		.toBe(true);
+	await expect
+		.poll(async () =>
+			Math.abs(
+				(await height(leftColumnPane(mainWindow, 'folders'))) -
+					resizedFoldersHeight,
+			),
+		)
+		.toBeLessThanOrEqual(2);
+});

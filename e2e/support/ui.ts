@@ -64,17 +64,33 @@ export async function openFileExplorer(page: Page): Promise<void> {
   await expect(sidebar).toBeVisible()
 }
 
+/** The left column's Agents pane, expanded. */
+export async function openAgentsPane(page: Page): Promise<Locator> {
+  const pane = page.locator(
+    '.project-workspace--active [data-terminay-folders-column="true"] [data-sidebar-pane-id="agents"]',
+  )
+  await expect(pane).toBeVisible()
+  if (
+    await pane.evaluate((element) =>
+      element.classList.contains('sidebar-pane--collapsed'),
+    )
+  ) {
+    await pane.locator('.sidebar-pane__header').click()
+  }
+  return pane
+}
+
 export async function selectSidebarGroup(
   page: Page,
   group: 'explorer' | 'documentation' | 'agents',
 ): Promise<void> {
+  // A wide layout keeps Agents in the left column, not in a sidebar group.
+  if (group === 'agents') {
+    await openAgentsPane(page)
+    return
+  }
   await openFileExplorer(page)
-  const label =
-    group === 'explorer'
-      ? 'Explorer'
-      : group === 'documentation'
-        ? 'Documentation'
-        : 'Agents'
+  const label = group === 'explorer' ? 'Explorer' : 'Documentation'
   const tab = page
     .locator('.project-workspace--active')
     .getByRole('tab', { name: label })

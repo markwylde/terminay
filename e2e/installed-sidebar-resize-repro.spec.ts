@@ -37,7 +37,9 @@ function pane(page: import('@playwright/test').Page, id: string) {
 
 async function gitBoundary(page: import('@playwright/test').Page) {
 	return await page.evaluate(() => {
-		const stack = document.querySelector<HTMLElement>('.sidebar-panel-stack');
+		const stack = document.querySelector<HTMLElement>(
+			'.file-explorer-sidebar .sidebar-panel-stack',
+		);
 		const header = document.querySelector<HTMLElement>(
 			'[data-sidebar-panel-id="git"] .sidebar-pane__header',
 		);
@@ -103,7 +105,7 @@ test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', as
 	});
 	try {
 		const page = await app.firstWindow();
-		await page.waitForSelector('.sidebar-panel-stack');
+		await page.waitForSelector('.file-explorer-sidebar .sidebar-panel-stack');
 		await app.evaluate(({ BrowserWindow }) => {
 			const window =
 				BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];

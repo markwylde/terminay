@@ -245,7 +245,8 @@ test('every project is merged in its own folder order with its own selected fold
 		merged['project-new'].map((item) => [item.panelId, item.folderId, item.isActivePanel]),
 		[['first', 'general', true]],
 	);
-	// Nothing remembered, or a folder that is gone, means the first folder.
+	// Nothing remembered, or a folder that is gone, means the first folder
+	// where General is not named.
 	for (const remembered of [{}, { 'project-a': 'deleted' }])
 		assert.deepEqual(
 			merge(remembered)['project-a']
@@ -253,6 +254,28 @@ test('every project is merged in its own folder order with its own selected fold
 				.map((item) => item.panelId),
 			['dev'],
 		);
+	// Where General is named it is the default, wherever it is in the order.
+	const generalLast = (remembered) =>
+		mergeProjectInventories(
+			inventories,
+			(projectId) => (projectId === 'project-a' ? ['busy', 'general'] : undefined),
+			(projectId) => remembered[projectId],
+			(projectId) => (projectId === 'project-a' ? 'general' : undefined),
+		);
+	for (const remembered of [{}, { 'project-a': 'deleted' }])
+		assert.deepEqual(
+			generalLast(remembered)['project-a'].map((item) => [item.panelId, item.isActivePanel === true]),
+			[
+				['agent', false],
+				['dev', true],
+			],
+		);
+	assert.deepEqual(
+		generalLast({ 'project-a': 'busy' })['project-a']
+			.filter((item) => item.isActivePanel === true)
+			.map((item) => item.panelId),
+		['agent'],
+	);
 });
 
 test('the registry finds a workspace by project and folder, and forgets it on unmount', () => {

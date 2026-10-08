@@ -197,19 +197,35 @@ async function setFoldersWidth(page: Page, width: number): Promise<number> {
 	return (await column.boundingBox())?.width ?? 0;
 }
 
-/** Press a folder's grip and let it go over a point on the page. */
+/**
+ * Press a folder's grip, carry it to a point on the page, and let it go there.
+ * The pointer is moved a step at a time, as a hand moves it: which way a card
+ * is going is read from how the pointer has been travelling. `whileHeld` runs
+ * part of the way there, with the card still in the hand.
+ */
 async function dragGripTo(
 	page: Page,
 	folder: string,
 	to: { x: number; y: number },
+	whileHeld?: (pointer: { x: number; y: number }) => Promise<void>,
 ): Promise<void> {
 	const grip = await folderRow(page, folder)
 		.locator('.folders-tree__grip')
 		.boundingBox();
 	if (grip === null) throw new Error(`${folder} has no grip.`);
-	await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+	const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+	await page.mouse.move(from.x, from.y);
 	await page.mouse.down();
-	await page.mouse.move(to.x, to.y, { steps: 12 });
+	const steps = 16;
+	for (let step = 1; step <= steps; step += 1) {
+		const pointer = {
+			x: from.x + ((to.x - from.x) * step) / steps,
+			y: from.y + ((to.y - from.y) * step) / steps,
+		};
+		await page.mouse.move(pointer.x, pointer.y);
+		await page.waitForTimeout(20);
+		if (step === 6) await whileHeld?.(pointer);
+	}
 	await page.mouse.up();
 }
 
@@ -1766,7 +1782,8 @@ test('New terminal on a folder card creates a terminal in that folder, selects t
 	).toHaveClass(/folders-tree__new-terminal/);
 });
 
-test('folders are reordered by dragging a grip or with the arrow keys, and nothing goes above General', async ({
+test('every folder is reordered by dragging its grip or with the arrow keys, General included, and the card follows the pointer up and down only', async ({
+	appHarness,
 	mainWindow,
 }) => {
 	for (const name of ['alpha', 'beta', 'gamma'])
@@ -1780,31 +1797,27 @@ test('folders are reordered by dragging a grip or with the arrow keys, and nothi
 	]);
 	const grip = (folder: string) =>
 		folderRow(mainWindow, folder).locator('.folders-tree__grip');
-	await expect(grip('General')).toHaveCount(0);
-	await expect(grip('gamma')).toHaveCount(1);
-	const pointIn = async (folder: string, fromTop: number) => {
-		const box = await folderRow(mainWindow, folder).boundingBox();
+	for (const name of ['General', 'alpha', 'beta', 'gamma'])
+		await expect(grip(name)).toHaveCount(1);
+	const cardBox = async (folder: string) => {
+		const box = await folderGroup(mainWindow, folder).boundingBox();
 		if (box === null) throw new Error(`${folder} is not on screen.`);
+		return box;
+	};
+	const pointIn = async (folder: string, fromTop: number) => {
+		const box = await cardBox(folder);
 		return { x: box.x + box.width / 2, y: box.y + fromTop };
+	};
+	/** The order shown is the order held: it outlasts the drop's own preview. */
+	const expectOrder = async (names: string[]) => {
+		await expect(folderNames(mainWindow)).toHaveText(names);
+		await mainWindow.waitForTimeout(3_500);
+		await expect(folderNames(mainWindow)).toHaveText(names);
 	};
 
 	// The last folder, dropped over the top of the one above it.
 	await dragGripTo(mainWindow, 'gamma', await pointIn('beta', 2));
-	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
-		'alpha',
-		'gamma',
-		'beta',
-	]);
-	// What is shown once the drop's own preview has lapsed is the order the
-	// server holds, and it is what a reload reads back.
-	await mainWindow.waitForTimeout(3_500);
-	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
-		'alpha',
-		'gamma',
-		'beta',
-	]);
+	await expectOrder(['General', 'alpha', 'gamma', 'beta']);
 	// Pressing a grip is not selecting a folder.
 	await expect(folderRow(mainWindow, 'General')).toHaveClass(
 		/folders-tree__row--selected/,
@@ -1813,62 +1826,213 @@ test('folders are reordered by dragging a grip or with the arrow keys, and nothi
 		/folders-tree__row--selected/,
 	);
 
-	// Dropped over General itself, it lands directly beneath it.
+	// Dropped over the top of General, it goes above it.
 	await dragGripTo(mainWindow, 'gamma', await pointIn('General', 1));
-	await expect(folderNames(mainWindow)).toHaveText([
+	await expectOrder(['gamma', 'General', 'alpha', 'beta']);
+
+	// General is carried like any other card. The pointer goes down and well
+	// to the right; the card goes down with it and not sideways.
+	const before = await cardBox('General');
+	const last = await cardBox('beta');
+	let held: { dx: number; dy: number; pointerDy: number } | undefined;
+	const pressedAt = await grip('General').boundingBox();
+	if (pressedAt === null) throw new Error('General has no grip.');
+	await dragGripTo(
+		mainWindow,
 		'General',
+		{ x: before.x + before.width / 2 + 160, y: last.y + last.height - 2 },
+		async (pointer) => {
+			const now = await cardBox('General');
+			held = {
+				dx: now.x + now.width / 2 - (before.x + before.width / 2),
+				dy: now.y + now.height / 2 - (before.y + before.height / 2),
+				pointerDy: pointer.y - (pressedAt.y + pressedAt.height / 2),
+			};
+		},
+	);
+	if (held === undefined) throw new Error('The card was never read in the hand.');
+	expect(Math.abs(held.dx)).toBeLessThan(1.5);
+	expect(held.pointerDy).toBeGreaterThan(20);
+	expect(Math.abs(held.dy - held.pointerDy)).toBeLessThan(6);
+	await expectOrder(['gamma', 'alpha', 'beta', 'General']);
+	await expect(folderRow(mainWindow, 'General')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+
+	// A press that does not start on a grip carries nothing.
+	const name = await folderRow(mainWindow, 'alpha')
+		.locator('.folders-tree__name')
+		.boundingBox();
+	if (name === null) throw new Error('alpha is not on screen.');
+	await mainWindow.mouse.move(name.x + 4, name.y + name.height / 2);
+	await mainWindow.mouse.down();
+	for (let step = 1; step <= 8; step += 1) {
+		await mainWindow.mouse.move(name.x + 4, name.y + step * 20);
+		await mainWindow.waitForTimeout(20);
+	}
+	await mainWindow.mouse.up();
+	await expect(folderNames(mainWindow)).toHaveText([
 		'gamma',
 		'alpha',
 		'beta',
-	]);
-	await mainWindow.waitForTimeout(3_500);
-	await expect(folderNames(mainWindow)).toHaveText([
 		'General',
-		'gamma',
-		'alpha',
-		'beta',
 	]);
+	await selectFolder(mainWindow, 'General');
 
 	// From the keyboard: one place for each press, the grip keeps focus, and
-	// the place beneath General is as far up as a folder goes.
+	// either end of the order is as far as a folder goes.
 	await grip('beta').focus();
 	await mainWindow.keyboard.press('ArrowUp');
 	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
 		'gamma',
 		'beta',
 		'alpha',
+		'General',
 	]);
 	await expect(grip('beta')).toBeFocused();
 	await mainWindow.keyboard.press('ArrowUp');
 	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
 		'beta',
 		'gamma',
 		'alpha',
+		'General',
 	]);
 	await expect(grip('beta')).toBeFocused();
 	await mainWindow.keyboard.press('ArrowUp');
 	await mainWindow.waitForTimeout(500);
 	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
 		'beta',
 		'gamma',
 		'alpha',
+		'General',
 	]);
+	await expect(grip('beta')).toBeFocused();
+	await grip('General').focus();
 	await mainWindow.keyboard.press('ArrowDown');
+	await mainWindow.waitForTimeout(500);
 	await expect(folderNames(mainWindow)).toHaveText([
-		'General',
-		'gamma',
 		'beta',
+		'gamma',
+		'alpha',
+		'General',
+	]);
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect(folderNames(mainWindow)).toHaveText([
+		'beta',
+		'gamma',
+		'General',
 		'alpha',
 	]);
+	await expect(grip('General')).toBeFocused();
 
+	// The order is the server's: a reload reads it back, General is still the
+	// folder shown, and a new terminal still lands in it.
 	await mainWindow.reload();
 	await expect(folderNames(mainWindow)).toHaveText(
-		['General', 'gamma', 'beta', 'alpha'],
+		['beta', 'gamma', 'General', 'alpha'],
 		{ timeout: 15_000 },
 	);
+	await expect(folderRow(mainWindow, 'General')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await newTerminalHere(mainWindow, appHarness.sendAppCommand, 'General');
+	await expect(folderTerminals(mainWindow, 'beta')).toHaveCount(0);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('a short card is carried past a tall one in both directions', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await createPlainFolder(mainWindow, 'solo');
+	await selectFolder(mainWindow, 'General');
+	await newTerminalHere(mainWindow, appHarness.sendAppCommand, 'General');
+	await newTerminalHere(mainWindow, appHarness.sendAppCommand, 'General');
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(3);
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'solo']);
+	const cardBox = async (folder: string) => {
+		const box = await folderGroup(mainWindow, folder).boundingBox();
+		if (box === null) throw new Error(`${folder} is not on screen.`);
+		return box;
+	};
+	const tall = await cardBox('General');
+	expect(tall.height).toBeGreaterThan((await cardBox('solo')).height * 1.5);
+
+	await dragGripTo(mainWindow, 'solo', {
+		x: tall.x + tall.width / 2,
+		y: tall.y + 1,
+	});
+	await expect(folderNames(mainWindow)).toHaveText(['solo', 'General']);
+	await mainWindow.waitForTimeout(3_500);
+	await expect(folderNames(mainWindow)).toHaveText(['solo', 'General']);
+
+	const below = await cardBox('General');
+	await dragGripTo(mainWindow, 'solo', {
+		x: below.x + below.width / 2,
+		y: below.y + below.height - 2,
+	});
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'solo']);
+	await mainWindow.waitForTimeout(3_500);
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'solo']);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('cards slide to their new places, and take them at once where the device asks for reduced motion', async ({
+	mainWindow,
+}) => {
+	for (const name of ['alpha', 'beta']) await createPlainFolder(mainWindow, name);
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
+	const grip = (folder: string) =>
+		folderRow(mainWindow, folder).locator('.folders-tree__grip');
+	/**
+	 * Move a folder one place from the keyboard and read where the card it
+	 * passes is drawn: two frames after the key, and once everything is still.
+	 */
+	const moveAndWatch = async (folder: string, key: string, passed: string) => {
+		await grip(folder).focus();
+		await mainWindow.keyboard.press(key);
+		const top = () =>
+			folderGroup(mainWindow, passed).evaluate(
+				(card) =>
+					new Promise<number>((resolve) =>
+						requestAnimationFrame(() =>
+							requestAnimationFrame(() =>
+								resolve(card.getBoundingClientRect().top),
+							),
+						),
+					),
+			);
+		const early = await top();
+		await mainWindow.waitForTimeout(600);
+		return { early, settled: await top() };
+	};
+
+	// With motion, the passed card is still on its way two frames in.
+	const sliding = await moveAndWatch('beta', 'ArrowUp', 'alpha');
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'beta', 'alpha']);
+	expect(Math.abs(sliding.early - sliding.settled)).toBeGreaterThan(2);
+
+	// The preference is read when the tree is first shown.
+	await mainWindow.emulateMedia({ reducedMotion: 'reduce' });
+	await mainWindow.reload();
+	await expect(folderNames(mainWindow)).toHaveText(
+		['General', 'beta', 'alpha'],
+		{ timeout: 15_000 },
+	);
+	const still = await moveAndWatch('alpha', 'ArrowUp', 'beta');
+	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
+	expect(Math.abs(still.early - still.settled)).toBeLessThan(0.5);
+
+	// Carried by its grip, it ends where it would without the preference.
+	const general = await folderGroup(mainWindow, 'General').boundingBox();
+	if (general === null) throw new Error('General is not on screen.');
+	await dragGripTo(mainWindow, 'beta', {
+		x: general.x + general.width / 2,
+		y: general.y + 1,
+	});
+	await expect(folderNames(mainWindow)).toHaveText(['beta', 'General', 'alpha']);
+	await mainWindow.waitForTimeout(3_500);
+	await expect(folderNames(mainWindow)).toHaveText(['beta', 'General', 'alpha']);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -2069,4 +2233,86 @@ test('a worktree is named by its branch on one line, by its directory when detac
 	await expect(tooltip.locator('dd').first()).toHaveText('renamed');
 	await mainWindow.keyboard.press('Escape');
 	await expect(tooltip).toHaveCount(0);
+});
+
+test("double-clicking a terminal's row renames it in place: Enter and leaving the input save, Escape and a blank name do not", async ({
+	appHarness,
+	mainWindow,
+}) => {
+	const firstSession = await activeTerminalSessionId(mainWindow);
+	await newTerminalHere(mainWindow, appHarness.sendAppCommand, 'General');
+	const row = terminalRowOf(mainWindow, firstSession);
+	const name = row.locator('.folders-tree__name');
+	const input = row.locator('.folders-tree__rename');
+	const tabs = mainWindow.locator(
+		'.project-workspace--active .terminal-tab-content',
+	);
+	const original = (await name.textContent()) ?? '';
+	expect(original.length).toBeGreaterThan(0);
+	const rowHeight = (await row.boundingBox())?.height;
+
+	// The row of a terminal that is not the one in front: the double-click
+	// also activates it, and the input still keeps focus.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await expect(input).toHaveValue(original);
+	expect(
+		await input.evaluate((element: HTMLInputElement) =>
+			element.value.slice(
+				element.selectionStart ?? 0,
+				element.selectionEnd ?? 0,
+			),
+		),
+	).toBe(original);
+	expect((await row.boundingBox())?.height).toBe(rowHeight);
+	await expect(row).toHaveAttribute('draggable', 'false');
+	// Outliving the moment the activated terminal takes focus.
+	await mainWindow.waitForTimeout(500);
+	await expect(input).toBeFocused();
+
+	// Typing replaces the selected name, and a space does not activate the row.
+	await mainWindow.keyboard.type('api server');
+	await expect(input).toHaveValue('api server');
+	await mainWindow.keyboard.press('Enter');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+	await expect(tabs.filter({ hasText: 'api server' })).toHaveCount(1);
+	await expect(
+		terminalPanelForSession(mainWindow, firstSession).locator(
+			'.xterm-helper-textarea',
+		),
+	).toBeFocused();
+
+	// Escape leaves the name.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.keyboard.type('thrown away');
+	await mainWindow.keyboard.press('Escape');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+
+	// So does a blank name.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await input.fill('   ');
+	await mainWindow.keyboard.press('Enter');
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('api server');
+
+	// Leaving the input saves what was typed.
+	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
+	await input.fill('logs');
+	await folderRow(mainWindow, 'General').click();
+	await expect(input).toHaveCount(0);
+	await expect(name).toHaveText('logs');
+	await expect(tabs.filter({ hasText: 'logs' })).toHaveCount(1);
+
+	// The server holds the name: it is there after a reload.
+	await mainWindow.reload();
+	await expect(
+		terminalRowOf(mainWindow, firstSession).locator('.folders-tree__name'),
+	).toHaveText('logs', { timeout: 15_000 });
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
