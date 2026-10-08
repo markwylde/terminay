@@ -177,7 +177,7 @@ Live xterm surfaces SHALL use the WebGL renderer when the host provides WebGL2 s
 
 ### Requirement: Touch input and software keyboard accessory
 
-On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
+On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible and the keyboard focus is inside the terminal's panel, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. While the keyboard is visible for anything outside the panel, such as a text field in an app window, the accessory row SHALL NOT be shown. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
 
 #### Scenario: Touching the terminal on iOS
 
@@ -229,6 +229,12 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 
 - **WHEN** a modifier is one-shot or locked and the user dismisses the keyboard from the accessory row
 - **THEN** every modifier is released
+
+#### Scenario: Keyboard raised by a field in an app window
+
+- **WHEN** the user taps a text field inside an app window and the software keyboard appears
+- **THEN** the terminal's accessory row is not shown
+- **AND** it is shown again when the user taps the terminal
 
 ### Requirement: File drop behaviour
 
@@ -290,12 +296,28 @@ PTY output SHALL fan out in Terminay Server to authorized clients and to recordi
 
 ### Requirement: Terminal link and input safety
 
-Terminal content SHALL be treated as untrusted text. Modifier-clicking a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
+Terminal content SHALL be treated as untrusted text. Modifier-clicking a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. A touch tap on a link SHALL NOT open it; it SHALL show a link menu with **Copy Text**, which copies the link's visible text, **Copy Link**, which copies its URL, and **Open Link**, which opens it as a modifier-click does. On iOS and Android the menu SHALL also offer **Open in Browser**, which hands a credential-free HTTP or HTTPS URL to the platform browser app through its URL scheme so it opens outside an installed web app. A tap on a link SHALL NOT focus the terminal. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
 
 #### Scenario: Modifier-clicking a link
 
 - **WHEN** a user modifier-clicks a detected `http://` or `https://` terminal link, including an OSC-8 hyperlink
 - **THEN** that credential-free URL opens in the system browser
+
+#### Scenario: Tapping a link on touch
+
+- **WHEN** a user taps a terminal link on a touch device
+- **THEN** the link is not opened and the terminal is not focused
+- **AND** a menu offers Copy Text, Copy Link, and Open Link
+
+#### Scenario: Copying an OSC-8 hyperlink's text
+
+- **WHEN** a user taps an OSC-8 hyperlink and chooses Copy Text
+- **THEN** the clipboard receives the text shown in the terminal, not the URL
+
+#### Scenario: Opening in the platform browser
+
+- **WHEN** a user on iOS or Android taps an `https://` link and chooses Open in Browser
+- **THEN** the URL is opened through the platform browser's URL scheme rather than an in-app sheet
 
 #### Scenario: Unsafe link
 
@@ -821,3 +843,22 @@ A terminal SHALL change project only when the server commits a `panel.move` of i
 
 - **WHEN** terminals are listed or observed for the source project and for the target project after a move
 - **THEN** the moved terminal appears under the target project and not under the source project
+
+### Requirement: Server-owned terminal note
+
+A terminal's note SHALL be part of the server-owned terminal panel. Adding, editing, or removing a note SHALL be a canonical server mutation, bounded in length by the server, and SHALL reach every authorized connected client. A client SHALL present the note from server workspace state. Editing a note SHALL advance the terminal's metadata revision.
+
+#### Scenario: Note shared between clients
+
+- **WHEN** a user edits a terminal's note on one client
+- **THEN** every other authorized client presenting that terminal shows the same note
+
+#### Scenario: Note survives a fresh client
+
+- **WHEN** a client reloads or reconnects after a note was edited
+- **THEN** it shows the note from server state
+
+#### Scenario: Oversized note rejected
+
+- **WHEN** a client submits a note longer than the server's note limit
+- **THEN** the server rejects the mutation and the existing note is unchanged

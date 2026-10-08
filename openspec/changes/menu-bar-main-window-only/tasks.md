@@ -20,4 +20,4 @@
 - [ ] 4.2 Manual check on Windows or Linux: the main window shows the menu bar, and Settings, Macros, Recordings, the edit-tab window and a terminal pop-out show none. Verified by screenshots.
 - [ ] 4.3 Manual check: change a keyboard shortcut in Settings while it is open. Settings still has no bar and the main window's menu shows the new accelerator. Verified by screenshot.
 - [ ] 4.4 Manual check: in a terminal pop-out, `Ctrl+Shift+C` copies the selection, and `Ctrl+,` or another configured shortcut still works in a secondary window. Verified by pasting the copied text elsewhere.
-- [ ] 4.5 `openspec validate menu-bar-main-window-only` passes, then the Gitea PR's commit statuses are all `success` or `skipped`. Verified by `tea` / API status readback.
+- [x] 4.5 `openspec validate menu-bar-main-window-only` passes, then the Gitea PR's commit statuses are all `success` or `skipped`. Verified by `tea` / API status readback.

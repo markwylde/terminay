@@ -33,4 +33,4 @@
 
 - [x] 7.1 Run `openspec validate worktree-folder-single-line --strict`, `npm run lint`, and `npx tsc --noEmit -p .`. Verified by all three exiting zero.
 - [ ] 7.2 Before archiving, check that `linked-folders`, `folders-sidebar-cards`, and `folders-dirty-means-unpushed` have archived and that `openspec/specs/project-folders/spec.md` holds the four requirements this change modifies; rebase the delta onto them if their text moved, and onto `folders-sidebar-reorder-all-rows` if it landed first. Verified by `openspec validate --all` passing and a read-through of the folded spec showing no requirement that still gives a linked folder a name and a branch line.
-- [ ] 7.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 7.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.

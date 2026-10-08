@@ -21,4 +21,4 @@
 - [x] 4.2 Run `npm run test:e2e` for the affected suites. Verified by them passing.
 - [ ] 4.3 Check the macOS Dock by eye in a development run: the badge appears with a notification, tracks dismissal, and disappears at zero and on quit. Verified by a screenshot of the Dock tile showing the count.
 - [x] 4.4 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 4.5 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+- [x] 4.5 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.

@@ -20,4 +20,4 @@
 
 - [x] 4.1 Run `openspec validate folders-dirty-means-unpushed --strict`, `npm run lint`, and `npx tsc --noEmit -p .`. Verified by all three exiting zero.
 - [ ] 4.2 Before archiving, check that `linked-folders` and `folders-sidebar-cards` have archived and that `openspec/specs/project-folders/spec.md` has a requirement named "Linked folder presentation"; rebase this change's delta onto it if its text moved. Verified by `openspec validate --all` passing and a read-through of the folded requirement showing one definition of dirty.
-- [ ] 4.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 4.3 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.

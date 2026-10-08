@@ -62,7 +62,7 @@ Double-clicking a file SHALL open it and double-clicking a directory SHALL expan
 
 ### Requirement: Presentation selection for Markdown and MDX
 
-Opening a Markdown or MDX path from Documentation SHALL select the Documentation presentation on that canonical panel; opening it from Explorer SHALL select the requested general File Viewer presentation. The two surfaces SHALL NOT create competing file sessions or drafts.
+The presentation of a Markdown (`.md`) or MDX (`.mdx`) file panel SHALL be chosen by the file type and the requested mode, never by which surface made the request. Every request SHALL either name a presentation, name a File Viewer mode, or name neither. A request that names a presentation SHALL use it. A request that names a File Viewer mode (Preview, Tasks, Text, HEX, or Diff) SHALL use the File Viewer presentation in that mode. When a new panel is opened by a request that names neither, a Markdown or MDX file SHALL use the Documentation presentation and any other file SHALL use the File Viewer presentation. When a request that names neither targets a file that already has a panel, the panel SHALL be focused and keep its current presentation. Both presentations SHALL share one canonical panel, file session, and draft; they SHALL NOT create competing file sessions or drafts.
 
 #### Scenario: Opened from Documentation
 
@@ -71,9 +71,34 @@ Opening a Markdown or MDX path from Documentation SHALL select the Documentation
 
 #### Scenario: Opened from Explorer
 
-- **WHEN** a user opens the same Markdown file from Explorer
-- **THEN** the panel uses the general File Viewer presentation
+- **WHEN** a user opens a Markdown or MDX file that has no panel from Explorer
+- **THEN** a panel opens in the Documentation presentation
+
+#### Scenario: Opened from a Folder tab or by drag
+
+- **WHEN** a user opens a Markdown or MDX file that has no panel from a Folder tab, or drags it onto the tab area
+- **THEN** a panel opens in the Documentation presentation
+
+#### Scenario: Opened from a Markdown preview link
+
+- **WHEN** a user follows a project-relative link to a Markdown or MDX file from a rendered Markdown preview
+- **THEN** the linked file opens in the Documentation presentation
+
+#### Scenario: Non-Markdown file from Explorer
+
+- **WHEN** a user opens a file that is neither Markdown nor MDX from Explorer
+- **THEN** a panel opens in the File Viewer presentation
+
+#### Scenario: A File Viewer mode is requested
+
+- **WHEN** a Markdown or MDX file is opened with a requested File Viewer mode, such as Diff from Git changes, Text from go-to-definition, or Tasks from a task card
+- **THEN** the canonical panel uses the File Viewer presentation in that mode
 - **AND** no second file session or draft is created
+
+#### Scenario: Reopening a panel without a requested mode
+
+- **WHEN** a Markdown file already open in the File Viewer presentation is opened again from Explorer
+- **THEN** the existing panel is focused and stays in the File Viewer presentation
 
 ### Requirement: Panel workspace operations
 
@@ -101,12 +126,12 @@ The server SHALL validate the path against the exact project and the final canon
 
 ### Requirement: View modes
 
-The file viewer SHALL provide Preview, Text, HEX, and Diff modes. Preview SHALL be the default. Text and HEX SHALL be editable; Preview and Diff SHALL be read-only. Switching modes SHALL NOT discard a draft. The mode switcher SHALL remain visible when Terminay falls back to another mode and SHALL explain why a requested mode is unavailable.
+The file viewer SHALL provide Preview, Text, HEX, and Diff modes, and Tasks for Markdown. Text and HEX SHALL be editable; Preview, Tasks, and Diff SHALL be read-only. Switching modes SHALL NOT discard a draft. When a requested mode is unavailable, Terminay SHALL show the file's default view, SHALL keep the view switcher visible, and SHALL explain why the requested mode is unavailable.
 
 #### Scenario: Default mode
 
-- **WHEN** a file panel opens
-- **THEN** Preview is the selected mode
+- **WHEN** a file panel opens without a requested view
+- **THEN** the selected mode is the default view for the file's type
 
 #### Scenario: Switching modes with unsaved edits
 
@@ -116,7 +141,13 @@ The file viewer SHALL provide Preview, Text, HEX, and Diff modes. Preview SHALL 
 #### Scenario: Requested mode unavailable
 
 - **WHEN** a requested mode is unavailable for the file
-- **THEN** Terminay falls back to another mode, keeps the mode switcher visible, and explains why the requested mode is unavailable
+- **THEN** Terminay shows the file's default view, keeps the view switcher visible, and explains why the requested mode is unavailable
+
+#### Scenario: Diff requested for a text file with nothing to compare
+
+- **WHEN** a text file is opened for its diff and no diff is available
+- **THEN** the file opens in Text
+- **AND** HEX is not shown
 
 #### Scenario: Read-only modes
 
@@ -640,3 +671,81 @@ Text mode SHALL present the server's language intelligence for the open file. `l
 
 - **WHEN** the user follows a definition result that names another project file
 - **THEN** that file opens through the ordinary file-viewer open path
+
+### Requirement: Switching a Markdown file panel into Documentation
+
+The File Viewer toolbar SHALL offer an accessible **Open as document** action for Markdown and MDX files, and for no other file. The action SHALL switch the same canonical panel to the Documentation presentation. The panel SHALL keep its server-owned file session, draft, and dirty state.
+
+#### Scenario: Switching to the document view
+
+- **WHEN** a user activates Open as document on a Markdown file panel in the File Viewer presentation
+- **THEN** the same panel shows the Documentation presentation with its existing draft
+
+#### Scenario: Not offered for other files
+
+- **WHEN** a File Viewer panel shows a file that is neither Markdown nor MDX
+- **THEN** the toolbar offers no Open as document action
+
+### Requirement: Default view by file type
+
+A file panel SHALL open in the view that suits the file's server-published classification, unless the open request names a view or a custom extension default applies. Text, including text recognised only by its content, SHALL open in Text. Markdown, images, and PDFs with a safe preview SHALL open in Preview. Binary data with no safe preview SHALL open in HEX. A custom extension default that names a view the file cannot show SHALL give way to the file's default view.
+
+#### Scenario: Source file
+
+- **WHEN** a user opens a TypeScript file
+- **THEN** Text is the selected view
+
+#### Scenario: Text with no recognised extension
+
+- **WHEN** a user opens a file named `Dockerfile` whose content is valid text
+- **THEN** Text is the selected view
+
+#### Scenario: Image
+
+- **WHEN** a user opens a PNG image
+- **THEN** Preview is the selected view
+
+#### Scenario: Unrecognised binary data
+
+- **WHEN** a user opens a file whose content is binary and has no safe preview
+- **THEN** HEX is the selected view
+
+### Requirement: View switcher follows file type
+
+The view switcher SHALL list as tabs only the views that can show the file, ordered with the default view's family first: Text, Preview, Diff for text; Preview, Tasks, Text, Diff for Markdown; Preview, HEX for a previewable image or PDF; HEX for other binary data. A view that can show the file but is not listed as a tab SHALL be reachable from a More views menu beside the tabs; HEX is such a view for every text file. A view chosen from that menu SHALL appear as a tab for as long as it is selected. Diff SHALL remain listed for a text file with nothing to compare, disabled, with the reason available from the tab. Views that cannot show the file SHALL NOT be listed.
+
+#### Scenario: Text file tabs
+
+- **WHEN** a source file with a safe preview is open
+- **THEN** the switcher lists Text, Preview, and Diff
+- **AND** HEX is offered from the More views menu
+
+#### Scenario: Choosing HEX for a text file
+
+- **WHEN** a user chooses HEX from the More views menu
+- **THEN** HEX is shown and appears as the selected tab
+- **AND** returning to Text removes the HEX tab
+
+#### Scenario: Image tabs
+
+- **WHEN** a PNG image is open
+- **THEN** the switcher lists Preview and HEX only
+
+#### Scenario: Nothing to compare
+
+- **WHEN** a text file that Git does not track is open
+- **THEN** Diff is listed, cannot be selected, and gives its reason
+
+### Requirement: File panel chrome
+
+A file panel SHALL carry no status bar of its own and SHALL NOT display the name of its text engine. Unsaved state SHALL be shown on the panel's tab. Text and Preview SHALL present the same file on the same surface colour with the same syntax palette and the same type size and line height.
+
+#### Scenario: No in-panel status bar
+
+- **WHEN** a file panel is open
+- **THEN** the panel shows its view switcher and its content and no path, size, engine, or sync strip beneath them
+
+#### Scenario: Switching between Preview and Text
+
+- **WHEN** a user switches a source file between Preview and Text
+- **THEN** the background, token colours, and text size are the same in both
