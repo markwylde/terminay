@@ -87,12 +87,17 @@ Which folder is selected in a project SHALL be local to each device, like the ac
 
 ### Requirement: Plain folders
 
-A user SHALL be able to create a plain folder with a name, rename it, move it in the folder order after General, and delete it. Deleting an empty plain folder SHALL remove it at once.
+A user SHALL be able to create a plain folder with a name, rename it, move it in the folder order after General, and delete it. Deleting an empty plain folder SHALL remove it at once. The server SHALL refuse a name a user gives a folder when another folder of the project already has it, comparing without regard to letter case. A linked folder SHALL take its worktree directory's name whatever else has that name.
 
 #### Scenario: Creating a folder
 
 - **WHEN** a user chooses New folder and names it
 - **THEN** an empty plain folder with that name is added to the end of the project's folders on every connected device
+
+#### Scenario: A name already in use
+
+- **WHEN** a user names a new folder General, or renames a folder to the name of another folder of the project
+- **THEN** the server refuses, no folder is created or renamed, and the user is told the name is taken
 
 #### Scenario: Deleting an empty folder
 
@@ -189,6 +194,16 @@ In a project whose root is inside a Git repository, every worktree of that repos
 
 - **WHEN** a worktree whose folder holds a running terminal is removed from a shell with `git worktree remove`
 - **THEN** the terminal is in General, still running, and the linked folder is gone
+
+#### Scenario: Worktree moved outside Terminay
+
+- **WHEN** a worktree whose folder holds a running terminal is moved from a shell with `git worktree move`
+- **THEN** the same folder is linked to the worktree's new path with the terminal still in it, and a folder that was still named after the old directory is named after the new one
+
+#### Scenario: Worktree directory deleted
+
+- **WHEN** the directory of a worktree is deleted while Git still registers the worktree
+- **THEN** its folder remains with its terminals, is marked missing, its Files and Changes panes say the directory is missing without reporting an error, and Delete worktree removes Git's record
 
 ### Requirement: Linked folder presentation
 

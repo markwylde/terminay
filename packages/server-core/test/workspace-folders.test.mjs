@@ -288,3 +288,21 @@ test("folders made after a migration never reuse a migrated folder's id", () => 
   assert.equal(after.length, before.size + 5);
   assert.equal(new Set(after).size, after.length);
 });
+
+test("a named folder cannot take a name the project already uses, while a worktree's folder is named after its directory regardless", () => {
+  const { workspace, registry } = fixture();
+  const servers = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Servers" }));
+  refused(registry, { type: "folder.create", projectId: "project-a", name: "Servers" }, /already has a folder named Servers/);
+  refused(registry, { type: "folder.create", projectId: "project-a", name: " servers " }, /already has a folder named/);
+  refused(registry, { type: "folder.create", projectId: "project-a", name: "General" }, /already has a folder named General/);
+  const notes = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Notes" }));
+  refused(registry, { type: "folder.rename", folderId: notes, name: "servers" }, /already has a folder named/);
+  refused(registry, { type: "folder.rename", folderId: notes, name: "General" }, /already has a folder named/);
+  // Changing only the letter case of its own name is not a clash.
+  host(registry, { type: "folder.rename", folderId: servers, name: "SERVERS" });
+  assert.equal(workspace.state.folders[servers].name, "SERVERS");
+  // A worktree whose directory shares a name still gets its folder.
+  const linked = created(workspace, host(registry, { type: "folder.create", projectId: "project-a", name: "Notes", worktree: { repositoryId: "repo", path: "/repo/.worktrees/Notes" } }));
+  assert.equal(workspace.state.folders[linked].kind, "linked");
+  assert.equal(workspace.state.folders[linked].name, "Notes");
+});

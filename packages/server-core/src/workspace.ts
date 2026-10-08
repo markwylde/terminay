@@ -1989,10 +1989,14 @@ export class WorkspaceStore {
 					)
 						throw new Error('panel is outside project');
 				}
+				// A worktree's folder is named after its directory, whatever else
+				// is called that. A folder someone names must be told apart.
+				const name = boundedName(command.name);
+				if (link === undefined) requireUnusedFolderName(state, project, name);
 				const folder: WorkspaceFolder = {
 					id: issuedFolderId(state),
 					projectId: project.id,
-					name: boundedName(command.name),
+					name,
 					kind: link === undefined ? 'plain' : 'linked',
 					...(link === undefined ? {} : { worktree: link }),
 					panelIds: [],
@@ -2013,10 +2017,14 @@ export class WorkspaceStore {
 				const folder = requireFolder(state, command.folderId);
 				if (folder.kind === 'general')
 					throw new Error('the General folder cannot be renamed');
-				state.folders[folder.id] = {
-					...folder,
-					name: boundedName(command.name),
-				};
+				const name = boundedName(command.name);
+				requireUnusedFolderName(
+					state,
+					requireProject(state, folder.projectId),
+					name,
+					folder.id,
+				);
+				state.folders[folder.id] = { ...folder, name };
 				changed.push(folder.id);
 				break;
 			}
@@ -2493,6 +2501,20 @@ function boundedName(value: string): string {
 	)
 		throw new Error('name is invalid');
 	return value.trim();
+}
+/** Folder names in one project differ by more than letter case. */
+function requireUnusedFolderName(
+	state: WorkspaceState,
+	project: WorkspaceProject,
+	name: string,
+	exceptFolderId?: string,
+): void {
+	const wanted = name.toLowerCase();
+	for (const folderId of project.folderIds) {
+		if (folderId === exceptFolderId) continue;
+		if (state.folders[folderId]?.name.toLowerCase() === wanted)
+			throw new Error(`this project already has a folder named ${name}`);
+	}
 }
 function boundedPath(value: string): string {
 	if (
