@@ -286,3 +286,49 @@ test("a worktree that appears later records the panel that created it; one alrea
   await reconciler.reconcile("project-a");
   assert.equal(folderFor("/repo/.worktrees/third").kind, "linked");
 });
+
+test("a worktree moved outside Terminay keeps its folder, its terminals, and a name the user gave it", async () => {
+  const { reconciler, git, host, linked, general, appeared } = fixture();
+  git.worktrees = [MAIN, row("/wt/alpha", { branch: "feat/alpha" }), row("/wt/beta", { branch: "feat/beta" })];
+  await reconciler.reconcile("project-a");
+  const [alpha, beta] = linked().map((folder) => folder.id);
+  host({ type: "terminal.createPanel", projectId: "project-a", folderId: alpha, sessionId: "session-c", panelId: "panel-c", createdAt: 3 });
+  host({ type: "folder.rename", folderId: beta, name: "Payments" });
+  host({ type: "terminal.createPanel", projectId: "project-a", folderId: beta, sessionId: "session-d", panelId: "panel-d", createdAt: 4 });
+
+  // git worktree move, twice: each branch is now somewhere else.
+  git.worktrees = [MAIN, row("/wt/alpha-moved", { branch: "feat/alpha" }), row("/elsewhere/beta-2", { branch: "feat/beta" })];
+  await reconciler.reconcile("project-a");
+
+  assert.deepEqual(linked().map((folder) => [folder.id, folder.name, folder.worktree.path, folder.panelIds]), [
+    [alpha, "alpha-moved", "/wt/alpha-moved", ["panel-c"]],
+    [beta, "Payments", "/elsewhere/beta-2", ["panel-d"]],
+  ]);
+  assert.deepEqual(general().panelIds, ["panel-a", "panel-b"]);
+  // The same worktree somewhere else did not "appear".
+  assert.deepEqual(appeared, []);
+});
+
+test("a worktree removed while another appears on a different branch is a removal and an arrival", async () => {
+  const { reconciler, git, host, linked, general, appeared } = fixture();
+  git.worktrees = [MAIN, row("/wt/alpha", { branch: "feat/alpha" })];
+  await reconciler.reconcile("project-a");
+  const alpha = linked()[0].id;
+  host({ type: "terminal.createPanel", projectId: "project-a", folderId: alpha, sessionId: "session-c", panelId: "panel-c", createdAt: 3 });
+
+  git.worktrees = [MAIN, row("/wt/other", { branch: "feat/other" })];
+  await reconciler.reconcile("project-a");
+
+  assert.equal(linked().length, 1);
+  assert.notEqual(linked()[0].id, alpha);
+  assert.deepEqual(linked()[0].panelIds, []);
+  assert.deepEqual(general().panelIds, ["panel-a", "panel-b", "panel-c"]);
+  assert.equal(appeared.length, 1);
+
+  // A detached worktree has no branch to follow, so a move of one is a removal.
+  git.worktrees = [MAIN, row("/wt/detached", { branch: null })];
+  await reconciler.reconcile("project-a");
+  git.worktrees = [MAIN, row("/wt/detached-moved", { branch: null })];
+  await reconciler.reconcile("project-a");
+  assert.deepEqual(linked().map((folder) => folder.name), ["detached-moved"]);
+});

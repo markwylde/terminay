@@ -1705,12 +1705,17 @@ const ProjectWorkspace = forwardRef<
 		);
 		const connectionReconnectingRef = useRef(connectionReconnecting);
 		connectionReconnectingRef.current = connectionReconnecting;
+		// A folder whose worktree directory is gone has nothing to list. Its
+		// Files pane says so, and a listing that failed for that reason is not
+		// reported a second time as an error.
+		const worktreeMissingRef = useRef(false);
 		const reportFeatureFailure = useCallback(
 			(
 				feature: 'Explorer' | 'Agents' | 'Git' | 'Settings',
 				error: unknown,
 				source: 'action' | 'refresh' = 'action',
 			) => {
+				if (feature === 'Explorer' && worktreeMissingRef.current) return '';
 				if (featureAvailability.state === 'unavailable') {
 					setErrorText(featureAvailability.reason);
 					return featureAvailability.reason;
@@ -2748,6 +2753,9 @@ const ProjectWorkspace = forwardRef<
 			() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
 			[folder, project.rootFolder, worktreePanelStatus],
 		);
+		const isWorktreeMissing =
+			changes.kind === 'worktree' && changes.worktree.isPrunable === true;
+		worktreeMissingRef.current = isWorktreeMissing;
 		const isRenderingStatusBar =
 			isActive && isStatusBarVisible && statusBarSlot !== null;
 		const focusedTerminalStatus = useFocusedTerminalStatus({
@@ -5020,6 +5028,10 @@ const ProjectWorkspace = forwardRef<
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : isWorktreeMissing ? (
+							<div className="git-panel__message">
+								This worktree&apos;s directory is missing.
+							</div>
 						) : (
 							<FileExplorerTree
 								directoryChildren={directoryChildren}

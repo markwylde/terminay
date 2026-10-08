@@ -38,6 +38,8 @@ export interface ListedWorktree {
 	readonly id?: string;
 	readonly repositoryId: string;
 	readonly path: string;
+	/** The branch checked out there, when the caller has it. */
+	readonly branch?: string | null;
 	readonly isBare?: boolean;
 	readonly isPrunable?: boolean;
 }
