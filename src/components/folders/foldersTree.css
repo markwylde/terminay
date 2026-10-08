@@ -537,17 +537,6 @@
 	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
 }
 
-.folders-column__title {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 78%, transparent);
-}
-
 .folders-column__menu {
 	all: unset;
 	flex: none;
@@ -576,7 +565,14 @@
 	overflow: hidden;
 }
 
-.folders-column__body > .folders-tree {
+/* The tree scrolls itself, so its pane body must not scroll around it. */
+.folders-column__pane > .sidebar-pane__body {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.folders-column__pane > .sidebar-pane__body > .folders-tree {
 	flex: 1 1 auto;
 }
 
