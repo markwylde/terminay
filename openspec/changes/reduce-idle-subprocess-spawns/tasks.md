@@ -80,10 +80,10 @@
 
 - [x] 7.1 `npm run test:ci --workspace @terminay/server-core` passes.
 - [x] 7.2 `npm run lint` and `npm run typecheck:workspaces` pass.
-- [ ] 7.3 `npm run smoke` passes.
-- [ ] 7.4 `npm run test:e2e` passes in Docker.
+- [x] 7.3 `npm run smoke` passes.
+- [x] 7.4 `npm run test:e2e` passes in Docker.
 - [x] 7.5 `npx openspec validate --all` reports every item valid.
-- [ ] 7.6 Every pull-request status on the head commit is `success` or
+- [x] 7.6 Every pull-request status on the head commit is `success` or
   `skipped`, read back from
   `/repos/markwylde/terminay/commits/<head>/statuses` on Gitea. `.github/` has
   no `pull_request` trigger and is not the gate.

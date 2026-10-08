@@ -37,5 +37,5 @@
 ## 6. Specs and delivery
 
 - [ ] 6.1 Before archiving, check whether `one-window-one-server` or `linked-folders` has archived and, if so, rewrite this change's deltas onto their requirement names as design decision 7 describes. Verified by `openspec validate --all` passing and a read-through of the folded main specs showing no duplicated or orphaned switcher requirement.
-- [ ] 6.2 Run `openspec validate compact-switcher-project-cards --strict`, `npm run lint`, `npm run test:linked-folders`, and `node --test scripts/compact-switcher-ui.test.mjs`. Verified by all four exiting zero.
-- [ ] 6.3 Open the pull request on `origin` (Gitea) with `tea`, and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 6.2 Run `openspec validate compact-switcher-project-cards --strict`, `npm run lint`, `npm run test:linked-folders`, and `node --test scripts/compact-switcher-ui.test.mjs`. Verified by all four exiting zero.
+- [x] 6.3 Open the pull request on `origin` (Gitea) with `tea`, and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.

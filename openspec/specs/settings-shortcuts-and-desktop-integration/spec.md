@@ -236,12 +236,36 @@ Closing Terminay SHALL proceed immediately when every terminal is at its shell p
 
 ### Requirement: Update availability checks
 
-The app SHALL periodically check the GitHub release endpoint and surface available updates without downloading or installing software implicitly.
+The desktop host SHALL check for a newer release of its selected update
+channel when it starts and at least once an hour afterwards. When a build can
+install updates in place, it SHALL download a newer release in the background
+and surface it only once the download is complete and verified. When it cannot,
+it SHALL surface that a newer release exists and link to its release page, and
+download nothing. A failed check or download SHALL be reported without
+disrupting the workspace, and SHALL be retried at the next check.
 
 #### Scenario: Update available
 
-- **WHEN** the periodic check finds a newer release
-- **THEN** the update is surfaced without downloading or installing it implicitly
+- **WHEN** a packaged macOS build, or a Linux build running from a writable
+  AppImage, finds a newer release on its channel
+- **THEN** the release is downloaded in the background without prompting
+- **AND** the title-bar update action appears only after the download has been
+  verified
+
+#### Scenario: Update available on a build that cannot install in place
+
+- **WHEN** an unpackaged build, or a Linux build that is not a writable
+  AppImage, finds a newer release
+- **THEN** the title-bar update action names the new version and opens its
+  release page
+- **AND** nothing is downloaded
+
+#### Scenario: Check fails
+
+- **WHEN** the release feed or a download is unreachable or malformed
+- **THEN** no update action is shown for that attempt and the workspace is
+  unaffected
+- **AND** the next scheduled check tries again
 
 ### Requirement: Settings classification by authority
 
@@ -488,3 +512,279 @@ A host that draws its application menu in page SHALL invoke a command by naming 
 #### Scenario: One dispatch for every route
 - **WHEN** a command is invoked from the in-page menu, the native menu, or its accelerator
 - **THEN** all three reach the same command dispatch
+
+### Requirement: Verified in-place update installation
+
+A downloaded update SHALL be installed only after its SHA-512 digest matches
+the digest in the channel's published update metadata. On macOS, the update
+SHALL be installed only if its code signature satisfies the designated
+requirement of the running application. Update metadata and payloads SHALL be
+fetched over HTTPS from the project's GitHub releases only.
+
+The title-bar action for a downloaded update SHALL read **Restart to update**
+and name the version. Choosing it SHALL quit Terminay through the normal quit
+path, install the update, and relaunch. A downloaded update that has not been
+installed SHALL be installed when the user next quits Terminay.
+
+#### Scenario: Restart to update
+
+- **WHEN** the user chooses Restart to update
+- **THEN** Terminay quits through its normal quit path, including any
+  confirmation that path requires
+- **AND** relaunches as the downloaded version
+
+#### Scenario: Update installed on quit
+
+- **WHEN** an update has been downloaded and the user quits Terminay without
+  choosing Restart to update
+- **THEN** the update is installed and the next launch runs the new version
+
+#### Scenario: Digest mismatch
+
+- **WHEN** a downloaded payload does not match the published SHA-512 digest
+- **THEN** it is discarded, no update action is shown, and it is never
+  installed
+
+### Requirement: Release notes for an available update
+
+When an update is available, the user SHALL be able to open a **What's new**
+dialog from the update action. On the stable channel, the dialog SHALL list the
+release notes of every stable release newer than the installed version, up to
+and including the available one, newest first, each headed by its version and
+linking to its release page. On the beta channel, it SHALL show the notes
+published with the available beta build. Release notes SHALL be rendered from
+Markdown into sanitized HTML with no script, no inline event handlers, no
+remote resource loads, and links that open in the system browser.
+
+#### Scenario: Several releases behind
+
+- **WHEN** the installed version is two stable releases behind the available
+  one
+- **THEN** What's new shows both releases' notes, newest first
+
+#### Scenario: Notes cannot be fetched
+
+- **WHEN** the release notes cannot be retrieved
+- **THEN** the dialog says so and links to the release page, and the update
+  can still be installed
+
+### Requirement: Update channel setting
+
+Update channel SHALL be a device setting with the values **Stable** (the
+default) and **Beta**. Stable follows tagged releases. Beta follows the rolling
+`main` prerelease, whose versions are the next stable version with a `beta`
+prerelease component. Changing the channel SHALL take effect at the next check,
+which starts immediately. Changing channel SHALL NOT install a lower version
+than the one running; the installation stays where it is until its new channel
+publishes something newer.
+
+#### Scenario: Opt in to beta
+
+- **WHEN** the user selects the Beta update channel
+- **THEN** an update check against the rolling `main` prerelease starts
+  immediately
+
+#### Scenario: Return to stable from a newer beta
+
+- **WHEN** a Beta installation running a version newer than the latest stable
+  release switches to Stable
+- **THEN** no update is offered until a stable release newer than the running
+  version is published
+
+### Requirement: Manual update check
+
+The desktop Help menu SHALL offer **Check for Updates…**. Choosing it SHALL
+check the selected update channel immediately, regardless of when the last
+check ran, and SHALL report the outcome in a native dialog once the check
+settles. A manual check SHALL follow the same download, verification, and
+installation rules as a scheduled check, and SHALL NOT install anything by
+itself. The title-bar update action SHALL reflect the result of a manual check
+as soon as it settles. Only the native menu SHALL be able to bypass the
+scheduled pacing; a renderer SHALL NOT.
+
+#### Scenario: Nothing newer
+
+- **WHEN** the user chooses Check for Updates… and the channel has nothing newer
+  than the running version
+- **THEN** a dialog says Terminay is up to date and names the running version
+  and channel
+
+#### Scenario: Newer release found shortly after a scheduled check
+
+- **WHEN** a scheduled check ran a minute ago and the user chooses Check for
+  Updates… after a newer release was published
+- **THEN** the release feed is checked again immediately
+- **AND** a dialog names the newer version and says it is downloading
+- **AND** the title-bar update action appears once the download is verified,
+  without waiting for the next scheduled check
+
+#### Scenario: Update already downloaded
+
+- **WHEN** the user chooses Check for Updates… and a downloaded update is
+  waiting and nothing newer exists
+- **THEN** a dialog names that version and says it is ready to install
+
+#### Scenario: Check fails
+
+- **WHEN** the release feed is unreachable during a manual check
+- **THEN** a dialog says the check failed and gives the reason
+- **AND** the workspace is unaffected
+
+#### Scenario: Check already running
+
+- **WHEN** the user chooses Check for Updates… while a check is in flight
+- **THEN** no second check starts and the dialog reports the running check's
+  outcome
+
+### Requirement: Beta channel follows stable releases
+
+On the Beta update channel, an update check SHALL consider both the rolling
+`main` prerelease and the latest stable release, and SHALL offer whichever has
+the higher version by semantic-version precedence, provided it is newer than
+the running version. A stable release offered on the Beta channel SHALL be
+downloaded, verified, and installed exactly as it is on the Stable channel; its
+What's new SHALL list the stable release notes newer than the installed version,
+and its release link SHALL open the tagged release page. Offering a stable
+release SHALL NOT change the update channel setting. When only one of the two
+sources can be read, the check SHALL proceed with that source; the check fails
+only when neither can be read.
+
+#### Scenario: Stable release newer than the latest beta
+
+- **WHEN** a Beta installation runs 5.8.0-beta.14, the rolling prerelease is
+  5.8.0-beta.15, and the latest stable release is 5.8.0
+- **THEN** 5.8.0 is offered
+- **AND** What's new shows the stable release notes and links to the 5.8.0
+  release page
+
+#### Scenario: Beta newer than the latest stable release
+
+- **WHEN** the rolling prerelease is 5.9.0-beta.3 and the latest stable release
+  is 5.8.0
+- **THEN** 5.9.0-beta.3 is offered with the notes published with that beta build
+
+#### Scenario: Beta resumes after a stable release
+
+- **WHEN** a Beta installation running stable 5.8.0 checks after `main`
+  publishes 5.9.0-beta.1
+- **THEN** 5.9.0-beta.1 is offered
+- **AND** the update channel setting is still Beta
+
+#### Scenario: Neither source is newer
+
+- **WHEN** both the rolling prerelease and the latest stable release are at or
+  below the running version
+- **THEN** no update is offered and nothing is downloaded
+
+#### Scenario: One source unreachable
+
+- **WHEN** the stable release metadata cannot be read and the rolling
+  prerelease is newer than the running version
+- **THEN** the rolling prerelease is offered
+- **AND** the check is not reported as failed
+
+#### Scenario: Both sources unreachable
+
+- **WHEN** neither source can be read
+- **THEN** the check is reported as failed without disrupting the workspace and
+  is retried at the next check
+
+### Requirement: About window
+
+Desktop SHALL offer **About Terminay**, in the application menu on macOS and in
+the Help menu on Windows and Linux. It SHALL open a Terminay About window, not
+the native About panel. The window SHALL show the Terminay logo, name, and
+running version, and a restrained abstract artwork in the loading-indicator
+colours that stops moving when the system asks for reduced motion. It SHALL say
+Terminay is made by Mark Wylde and is open source under the GNU AGPL, version 3.0
+or later. It SHALL link to terminay.com, to the source repository at
+github.com/markwylde/terminay, and to the licence. The window SHALL run no
+script and have no preload. It SHALL open only those links, in the default
+browser, and SHALL NOT navigate itself. Only one About window SHALL be open at a
+time.
+
+#### Scenario: Opening About
+
+- **WHEN** the user chooses About Terminay
+- **THEN** the Terminay About window opens showing the running version, the
+  author, the AGPL licence, and links to terminay.com and the GitHub repository
+
+#### Scenario: Following a link
+
+- **WHEN** the user clicks the terminay.com, repository, or licence link
+- **THEN** it opens in the default browser and the About window stays as it was
+
+#### Scenario: Unexpected navigation
+
+- **WHEN** the About window is asked to open or navigate to any other URL
+- **THEN** nothing opens and the window does not navigate
+
+#### Scenario: About already open
+
+- **WHEN** the user chooses About Terminay while the About window is open
+- **THEN** the open window is focused and no second window opens
+
+#### Scenario: Reduced motion
+
+- **WHEN** the system asks for reduced motion
+- **THEN** the artwork is shown without movement
+
+### Requirement: Browser About
+
+A browser host's in-page Help menu SHALL offer **About Terminay**. It SHALL open
+a dialog over the workspace showing the same About document as the Desktop
+window, with the running version of the served UI. The document SHALL run no
+script, SHALL open its links only in a new browser tab, and SHALL NOT navigate
+the workspace page. Escape, the close control, or a click outside the dialog
+SHALL close it.
+
+#### Scenario: Opening About in a browser
+
+- **WHEN** the user chooses Help, About Terminay in a browser
+- **THEN** the About dialog opens showing the version, the author, the AGPL
+  licence, and links to terminay.com and the GitHub repository, and Settings
+  does not open
+
+#### Scenario: Following a link in a browser
+
+- **WHEN** the user clicks a link in the browser About dialog
+- **THEN** it opens in a new tab and the workspace page stays as it was
+
+### Requirement: Change-driven desktop settings reads
+
+Terminay Desktop SHALL serve its device-local settings from a cached parsed
+value and SHALL refresh that value from change notification rather than by
+re-reading the backing files on each access. A write issued by Desktop itself
+SHALL invalidate the cache as part of that write, so a read taken immediately
+afterwards observes the written value without waiting for a notification. When
+no change notification is active for those files, Desktop SHALL read them on
+every access rather than serve a value it cannot know to be current. A cached
+value SHALL be indistinguishable from a fresh read: the same settings, the same
+defaults when a file is absent or malformed.
+
+#### Scenario: Repeated reads while nothing changes
+
+- **WHEN** Desktop reads its device-local settings repeatedly and no settings
+  file has changed
+- **THEN** the settings are served from the cached value
+- **AND** the backing files are not re-read for each access
+
+#### Scenario: Settings file edited outside the app
+
+- **WHEN** a device-local settings file is changed by something other than
+  Desktop
+- **THEN** the change notification invalidates the cache
+- **AND** the next read observes the changed settings
+
+#### Scenario: Desktop writes its own settings
+
+- **WHEN** Desktop writes device-local settings
+- **THEN** the cache is invalidated as part of that write
+- **AND** a read taken immediately afterwards observes the written settings
+
+#### Scenario: No change notification available
+
+- **WHEN** change notification for the settings files cannot be established or
+  has failed
+- **THEN** Desktop reads the settings files on every access
+- **AND** no cached value is served

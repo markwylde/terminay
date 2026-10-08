@@ -39,5 +39,5 @@
 ## 8. Close out
 
 - [x] 8.1 Remove the one-window-per-remote-server and no-remote-tear-off limits from `one-window-one-server`. Verified by `openspec validate --all` on that branch.
-- [ ] 8.2 `openspec validate --all` passes. Verified by its output.
-- [ ] 8.3 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.
+- [x] 8.2 `openspec validate --all` passes. Verified by its output.
+- [x] 8.3 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.

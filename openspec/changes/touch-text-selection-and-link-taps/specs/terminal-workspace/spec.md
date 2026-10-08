@@ -2,7 +2,7 @@
 
 ### Requirement: Touch input and software keyboard accessory
 
-On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for the remainder of a gesture that has entered text selection. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
+On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for the remainder of a gesture that has entered text selection. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible and the keyboard focus is inside the terminal's panel, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. While the keyboard is visible for anything outside the panel, such as a text field in an app window, the accessory row SHALL NOT be shown. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
 
 #### Scenario: Touching the terminal on iOS
 
@@ -36,6 +36,7 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 
 - **WHEN** the software keyboard is visible and the user activates an accessory control
 - **THEN** its bytes are sent through the terminal panel's normal input boundary
+- **AND** the accessory implements no scrolling or gesture translation
 
 #### Scenario: One tap modifies the next input only
 
@@ -54,35 +55,52 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 - **WHEN** a modifier is one-shot or locked and the user dismisses the keyboard from the accessory row
 - **THEN** every modifier is released
 
+#### Scenario: Keyboard raised by a field in an app window
+
+- **WHEN** the user taps a text field inside an app window and the software keyboard appears
+- **THEN** the terminal's accessory row is not shown
+- **AND** it is shown again when the user taps the terminal
+
 ### Requirement: Terminal link and input safety
 
-Terminal content SHALL be treated as untrusted text. Activating a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. A pointer device SHALL require a modifier click to activate a link. A touch SHALL activate a link with a tap, since a touch device has no modifier key to hold, whatever the foreground program is doing, and that tap SHALL NOT reach the program as a button report it never saw pressed. A browser client SHALL open an external URL and write the clipboard within the user activation that requested it. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
+Terminal content SHALL be treated as untrusted text. Modifier-clicking a detected or OSC-8 HTTP or HTTPS link SHALL open that credential-free URL in the system browser; other schemes and URLs with credentials SHALL be rejected. A pointer device SHALL require a modifier click to open a link. A touch tap on a link SHALL NOT open it; it SHALL show a link menu with **Copy Text**, which copies the link's visible text, **Copy Link**, which copies its URL, and **Open Link**, which opens it as a modifier-click does. On iOS and Android the menu SHALL also offer **Open in Browser**, which hands a credential-free HTTP or HTTPS URL to the platform browser app through its URL scheme so it opens outside an installed web app. A tap on a link SHALL NOT focus the terminal, and SHALL be recognised whatever the foreground program is doing without reaching that program as a button report it never saw pressed. A browser client SHALL open an external URL and write the clipboard within the user activation that requested it. Paste and external drop behaviour SHALL remain user initiated. Screen-reader and reduced-motion settings SHALL be honoured. Secrets typed in a terminal SHALL NOT be collected by default; recording has its own explicit policy.
 
 #### Scenario: Modifier-clicking a link
 
 - **WHEN** a user modifier-clicks a detected `http://` or `https://` terminal link, including an OSC-8 hyperlink
-- **THEN** the credential-free URL is opened in the system browser
+- **THEN** that credential-free URL opens in the system browser
 
 #### Scenario: Clicking a link without a modifier
 
 - **WHEN** a user clicks a terminal link with a pointer device and holds no modifier
 - **THEN** the link is not opened
 
-#### Scenario: Tapping a link
+#### Scenario: Tapping a link on touch
 
-- **WHEN** a user taps a detected or OSC-8 `http://` or `https://` terminal link on a touch device
-- **THEN** the credential-free URL is opened in the system browser
+- **WHEN** a user taps a terminal link on a touch device
+- **THEN** the link is not opened and the terminal is not focused
+- **AND** a menu offers Copy Text, Copy Link, and Open Link
 
-#### Scenario: Tapping a link inside a mouse tracking program
+#### Scenario: Copying an OSC-8 hyperlink's text
 
-- **WHEN** a user taps a terminal link while the foreground program is in mouse tracking mode
-- **THEN** the credential-free URL is opened in the system browser
-- **AND** no button report the program never saw pressed is sent
+- **WHEN** a user taps an OSC-8 hyperlink and chooses Copy Text
+- **THEN** the clipboard receives the text shown in the terminal, not the URL
+
+#### Scenario: Opening in the platform browser
+
+- **WHEN** a user on iOS or Android taps an `https://` link and chooses Open in Browser
+- **THEN** the URL is opened through the platform browser's URL scheme rather than an in-app sheet
 
 #### Scenario: Unsafe link
 
 - **WHEN** a terminal link uses another scheme or contains credentials
-- **THEN** it is rejected and nothing is opened
+- **THEN** opening it is rejected
+
+#### Scenario: Tapping a link inside a mouse tracking program
+
+- **WHEN** a user taps a terminal link while the foreground program is in mouse tracking mode
+- **THEN** the link menu is shown
+- **AND** no button report the program never saw pressed is sent
 
 #### Scenario: Opening a link from a browser client
 
