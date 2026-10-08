@@ -3,11 +3,13 @@ import type { SessionHolderRecordFile } from './holder.js';
 import {
 	encodeHolderFrame,
 	type HolderClientMessage,
+	type HolderCloseNotice,
 	type HolderExitRecord,
 	HolderFrameDecoder,
 	type HolderServerMessage,
 	type HolderSessionRecord,
 	type HolderSpawnRequest,
+	parseHolderCloseNotice,
 	SESSION_HOLDER_MAX_PAYLOAD_BYTES,
 	SESSION_HOLDER_PROTOCOL_VERSIONS,
 } from './protocol.js';
@@ -78,6 +80,10 @@ export class SessionHolderClient {
 	private readonly requests = new Map<number, PendingRequest>();
 	private readonly streams = new Map<string, StreamState>();
 	private readonly closeListeners = new Set<() => void>();
+	private readonly closingListeners = new Set<
+		(notice: HolderCloseNotice) => void
+	>();
+	private closeNoticeValue: HolderCloseNotice | undefined;
 	private nextRequestId = 1;
 	private drainingValue: boolean;
 	private closedValue = false;
@@ -178,6 +184,17 @@ export class SessionHolderClient {
 	onClose(listener: () => void): () => void {
 		this.closeListeners.add(listener);
 		return () => this.closeListeners.delete(listener);
+	}
+
+	/** What the holder said about closing, once it has said it. */
+	get closeNotice(): HolderCloseNotice | undefined {
+		return this.closeNoticeValue;
+	}
+
+	/** Hear the holder say it is closing, before the connection goes. */
+	onClosing(listener: (notice: HolderCloseNotice) => void): () => void {
+		this.closingListeners.add(listener);
+		return () => this.closingListeners.delete(listener);
 	}
 
 	list(): Promise<readonly HolderSessionRecord[]> {
@@ -423,6 +440,19 @@ export class SessionHolderClient {
 					return;
 				}
 				for (const listener of [...state.exitListeners]) listener(exit);
+				return;
+			}
+			case 'closing': {
+				const notice = parseHolderCloseNotice(message);
+				if (notice === undefined || this.closeNoticeValue !== undefined) return;
+				this.closeNoticeValue = notice;
+				for (const listener of [...this.closingListeners]) {
+					try {
+						listener(notice);
+					} catch {
+						/* an observer cannot disturb the connection */
+					}
+				}
 				return;
 			}
 			default:
