@@ -237,10 +237,10 @@ test('the project dot leads the title on tabs and switcher rows', async () => {
 		menu,
 		/<ProjectTabActivityDot badge=\{badge\} \/>\s*<span className="project-switcher-menu__title">/,
 	);
-	assert.match(
-		compact,
-		/<ProjectTabActivityDot badge=\{project\.badge\} \/>\s*<span className="compact-switcher__project-name">/,
-	);
+	// A compact switcher header says it in words instead: a second dot beside
+	// its colour swatch read as a pair.
+	assert.doesNotMatch(compact, /ProjectTabActivityDot/);
+	assert.match(compact, /<CompactSwitcherSummary project=\{project\} \/>/);
 });
 
 test('dismissal is the acknowledgement tab selection reports, without selecting', async () => {
