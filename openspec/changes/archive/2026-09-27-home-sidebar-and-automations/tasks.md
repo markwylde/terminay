@@ -215,6 +215,6 @@
 - [x] 10.2 Run `openspec validate --all`, `npm run lint`,
       `npm run typecheck:workspaces`, `npm run test:workspaces`, and
       `npm run test:boundaries`. Verified by all reporting clean.
-- [ ] 10.3 Open the pull request on Gitea with `tea`, then read back every
+- [x] 10.3 Open the pull request on Gitea with `tea`, then read back every
       commit status on the head SHA and confirm each is `success` or `skipped`
       before calling it green. Verified by the status listing itself.

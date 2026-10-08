@@ -92,5 +92,5 @@
       Verified by the command reporting the change valid.
 - [x] 6.4 Run `npm run lint`, `npm run typecheck`, and the touched unit suites.
       Verified by all commands exiting zero.
-- [ ] 6.5 Open the pull request with the change branch and confirm CI is green.
+- [x] 6.5 Open the pull request with the change branch and confirm CI is green.
       Verified by the PR checks passing.

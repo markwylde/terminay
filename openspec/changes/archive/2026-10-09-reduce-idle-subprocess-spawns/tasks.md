@@ -49,7 +49,7 @@
 - [x] 4.3 On re-enable, resume observation for terminals that are still alive
   without restarting them. Verified by a test that disables then re-enables and
   asserts the live terminal is observed again.
-- [ ] 4.4 Confirm the disabled idle cost is zero spawns per second, measured
+- [x] 4.4 Confirm the disabled idle cost is zero spawns per second, measured
   from the process table.
 
 ## 5. Stop spawning per topology sample
@@ -69,7 +69,7 @@
   120 ms events costing at most 11 refreshes rather than ~83; one shared `ps`
   per sampling round instead of one per terminal; no observation scheduled while
   integration is off. Verified by the four new test files.
-- [ ] 6.2 Re-measure spawns per idle second and endpoint-security CPU end to
+- [x] 6.2 Re-measure spawns per idle second and endpoint-security CPU end to
   end. **Deliberately not claimed here.** The 7.30/s baseline came from a
   machine running five worktrees and several live Claude Code sessions; that
   workload cannot be reproduced on the build machine, so an end-to-end figure

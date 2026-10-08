@@ -4,13 +4,13 @@
 - [x] 1.2 Tag rules: a release tag publishes `X.Y.Z`, `X.Y`, `latest`; a dispatched beta version publishes that version and `beta`; no `v` prefix; `latest` never from a beta and `beta` never from a release. Verified by the contract test asserting each rule's condition.
 - [x] 1.3 Build `amd64` and `arm64` on native runners, push by digest, and join them in a manifest job that applies the tags only when both succeeded. Verified by the contract test (no QEMU step, two native runners, one manifest job that needs both).
 - [x] 1.4 Stamp the planned version through `OCI_VERSION` and `TERMINAY_CHANNEL`. Verified by the contract test.
-- [ ] 1.5 Confirm on the first published beta that `docker buildx imagetools inspect` lists both platforms and that the server in the image reports the beta version. Verified by recording both outputs in the pull request.
+- [x] 1.5 Confirm on the first published beta that `docker buildx imagetools inspect` lists both platforms and that the server in the image reports the beta version. Verified by recording both outputs in the pull request.
 
 ## 2. Prerelease publishes a beta image
 
 - [x] 2.1 Add a final job to `main-prerelease.yml` that dispatches `server-image.yml` on the default branch with the beta version and its commit, after the prerelease assets are published, holding `contents: read` and `actions: write` only. Verified by the contract test.
 - [x] 2.2 Replace "server image publication is versioned-release-only" in `scripts/provider-portable-ci.test.mjs` with the rule in design decision 7, and gate `scripts/ghcr-image.test.mjs` in `npm run smoke`. Verified by `npm run test:ci`.
-- [ ] 2.3 Confirm on the first beta that `markwylde/terminay:<beta version>` and the GHCR tag share one digest, `beta` points at it, and `latest` did not move. Verified by recording the three `imagetools inspect` results in the pull request.
+- [x] 2.3 Confirm on the first beta that `markwylde/terminay:<beta version>` and the GHCR tag share one digest, `beta` points at it, and `latest` did not move. Verified by recording the three `imagetools inspect` results in the pull request.
 
 ## 3. Install commands
 
@@ -40,4 +40,4 @@
 ## 7. Close out
 
 - [x] 7.1 `openspec validate --all` passes. Verified by its output.
-- [ ] 7.2 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.
+- [x] 7.2 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.

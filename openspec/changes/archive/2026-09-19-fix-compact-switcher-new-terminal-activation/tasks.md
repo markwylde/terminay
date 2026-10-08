@@ -14,4 +14,4 @@
 - [x] 3.1 Run `npm run test:e2e -- e2e/compact-chrome-switcher.spec.ts`. Verified by: every test in the file passes, including 1.1 and 2.3.
 - [x] 3.2 Run lint, typecheck and unit tests. Verified by: all exit 0.
 - [x] 3.3 Run `openspec validate --all`. Verified by: exit 0.
-- [ ] 3.4 Open a pull request on the canonical remote with `tea` and read back the commit statuses. Verified by: every status is `success` or `skipped`.
+- [x] 3.4 Open a pull request on the canonical remote with `tea` and read back the commit statuses. Verified by: every status is `success` or `skipped`.

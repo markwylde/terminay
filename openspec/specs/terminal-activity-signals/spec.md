@@ -184,6 +184,8 @@ The canonical activity snapshot SHALL expose a `foregroundBusy` boolean that is 
 
 Foreground-process observation SHALL be exact-session, bounded derived state. Each session SHALL own its observation work with at most one sample executing and one latest requested sample pending. Continued output SHALL replace obsolete pending work and SHALL NOT require a terminal to become silent before the current state can settle. A slow, unavailable, or capability-limited observation SHALL be an explicit limited state for that session and SHALL NOT delay activity, commands, workspace mutations, or close protection for another session. Activity snapshots SHALL return the latest committed projection and SHALL NOT wait for live host observation.
 
+Output SHALL be evidence that the foreground may have changed, and SHALL NOT be a unit of observation work. Output that follows a quiet period SHALL refresh the session's foreground projection without waiting for a timer. While output continues, output-driven host samples for a session SHALL be spaced by the shared damping ramp that fronts all change-driven work: no sooner than 1 s after the previous one, widening while output continues and returning to its floor after a quiet period, however many output events arrive and however quickly a sample completes. Output that arrives inside a ramp interval SHALL collapse into exactly one further sample when that interval ends, whether or not more output follows. This pacing SHALL NOT apply to a fresh observation requested for destructive close protection.
+
 #### Scenario: Continuously outputting terminal
 
 - **WHEN** a terminal produces continuous output
@@ -198,6 +200,26 @@ Foreground-process observation SHALL be exact-session, bounded derived state. Ea
 
 - **WHEN** a client reads an activity snapshot
 - **THEN** it receives the latest committed projection without waiting for live host observation
+
+#### Scenario: Output after a quiet period
+
+- **WHEN** a terminal that has been quiet for at least the current ramp interval produces output
+- **THEN** a host sample for that session begins at once, without waiting for a timer
+
+#### Scenario: Repainting terminal
+
+- **WHEN** a terminal produces hundreds of output events a second and each host sample completes immediately
+- **THEN** the session begins one output-driven host sample at once and no more than one per ramp interval after it
+
+#### Scenario: Output stops inside a ramp interval
+
+- **WHEN** a terminal's last output arrives inside the ramp interval that followed its most recent output-driven host sample
+- **THEN** exactly one further host sample begins when that interval ends, and the settled projection reflects the state after the last output
+
+#### Scenario: Close requested while output is being paced
+
+- **WHEN** destructive close protection requests a fresh observation for a session whose output-driven sampling is inside a ramp interval
+- **THEN** the fresh sample begins immediately and is not delayed by the ramp
 
 ### Requirement: Destructive close protection
 
@@ -396,7 +418,7 @@ Clients SHALL render ordered activity events and report scoped focus and input a
 
 ### Requirement: Activity protocol surface
 
-The protocol SHALL expose the projection as `activity.snapshot` and `activity.delta`, SHALL emit canonical `activity` events on the normal ordered event journal, and SHALL accept `activity.acknowledge` only with the exact immutable `projectId` and `sessionId`. Destructive close protection SHALL use `activity.closePreflight` with that same exact project identity and, for a terminal close, the exact session identity. The preflight SHALL return a bounded fresh observation for only those sessions; `activity.snapshot` and `activity.delta` SHALL remain committed projection reads and SHALL never wait for live host inspection. This is the client boundary used by both browser and Desktop hosts, and no `terminal:activity` IPC message is part of the server contract.
+The protocol SHALL expose the projection as `activity.snapshot` and `activity.delta`, SHALL emit canonical `activity` events on the normal ordered event journal, and SHALL accept `activity.acknowledge` only with the exact immutable `projectId` and `sessionId`. Destructive close protection SHALL use `activity.close-preflight` with that same exact project identity and, for a terminal close, the exact session identity. The preflight SHALL return a bounded fresh observation for only those sessions; `activity.snapshot` and `activity.delta` SHALL remain committed projection reads and SHALL never wait for live host inspection. Every activity operation name SHALL be a valid wire operation name, so that a client can encode the request and the server receives it. This is the client boundary used by both browser and Desktop hosts, and no `terminal:activity` IPC message is part of the server contract.
 
 #### Scenario: Acknowledge with mismatched ids
 
@@ -405,8 +427,13 @@ The protocol SHALL expose the projection as `activity.snapshot` and `activity.de
 
 #### Scenario: Close preflight
 
-- **WHEN** a client calls `activity.closePreflight` for a terminal close
+- **WHEN** a client calls `activity.close-preflight` for a terminal close
 - **THEN** it names the exact project and session identity and receives a bounded fresh observation for only those sessions
+
+#### Scenario: Close preflight over a real connection
+
+- **WHEN** a connected client sends `activity.close-preflight` for a running terminal whose committed projection still shows the shell in the foreground
+- **THEN** the request is encoded and delivered, the server takes a fresh host observation for that session, and the result reflects that observation rather than the committed projection
 
 #### Scenario: Desktop host activity
 

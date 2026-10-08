@@ -28,9 +28,9 @@
 ## 5. Existing tests and validation
 
 - [x] 5.1 Update locators and expectations in `e2e/project-tabs.spec.ts`, `e2e/terminal-signals.spec.ts`, and `e2e/terminal.spec.ts` from count badges and pills to the dot and the Notifications count. Verified by `npm run test:e2e` passing.
-- [ ] 5.2 Run lint, typecheck, and unit tests. Verified by each command exiting zero.
+- [x] 5.2 Run lint, typecheck, and unit tests. Verified by each command exiting zero.
 - [x] 5.3 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 5.4 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+- [x] 5.4 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
 
 ## 6. Stale interaction acknowledgement
 

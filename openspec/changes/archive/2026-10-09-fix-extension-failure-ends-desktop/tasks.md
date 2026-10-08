@@ -20,4 +20,4 @@
 ## 5. Checks
 
 - [x] 5.1 Run `openspec validate --all`, `npm run lint`, `npm run test:desktop-diagnostics`, and the server-core extension tests. Verified clean.
-- [ ] 5.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`.
+- [x] 5.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`.

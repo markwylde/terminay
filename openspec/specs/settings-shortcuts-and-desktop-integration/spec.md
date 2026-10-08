@@ -788,3 +788,77 @@ defaults when a file is absent or malformed.
   has failed
 - **THEN** Desktop reads the settings files on every access
 - **AND** no cached value is served
+
+### Requirement: Native menu bar only on project windows
+
+On Windows and Linux, Terminay Desktop SHALL attach the native application menu bar only to project-host workspace windows. Every other Desktop window SHALL have no native menu bar. That includes auxiliary settings, macros, recordings and edit windows, terminal pop-out windows, and transient helper windows. This SHALL hold for the whole life of each window, including after the application menu is rebuilt because settings or keyboard shortcuts changed. A window with no menu bar SHALL still dispatch configured application keyboard shortcuts and the terminal copy accelerator. On macOS, the single global application menu SHALL be unchanged.
+
+#### Scenario: Project window shows the menu bar
+
+- **WHEN** a project-host workspace window opens on Windows or Linux
+- **THEN** it shows the native File, Terminal, Edit, View, Window and Help menu bar
+
+#### Scenario: Settings window has no menu bar
+
+- **WHEN** the Settings auxiliary window opens on Windows or Linux
+- **THEN** it has no native menu bar
+
+#### Scenario: Other secondary windows have no menu bar
+
+- **WHEN** a macros, recordings, edit-tab or terminal pop-out window opens on Windows or Linux
+- **THEN** it has no native menu bar
+
+#### Scenario: Menu rebuild does not re-attach the bar
+
+- **WHEN** a keyboard shortcut or other setting changes while a secondary window is open on Windows or Linux, and the application menu is rebuilt
+- **THEN** project-host windows show the rebuilt menu bar and the secondary window still has no menu bar
+
+#### Scenario: Shortcuts in a window without a menu bar
+
+- **WHEN** a configured application shortcut or `Ctrl+Shift+C` is pressed in a secondary window on Windows or Linux
+- **THEN** the command or terminal copy is dispatched as it is in a project-host window
+
+#### Scenario: macOS global menu
+
+- **WHEN** any Terminay window is focused on macOS
+- **THEN** the single global application menu is shown as before
+
+### Requirement: Application icon notification badge
+
+Terminay Desktop SHALL show the Notifications count on its application icon: on the macOS Dock tile, and on Linux through the launcher count that the desktop's launcher or taskbar reads for the application's desktop entry. The badge SHALL equal the sum, over every open native workspace window, of the number that window's header Notifications control shows, and SHALL follow that number whenever it changes. At zero the icon SHALL carry no badge. A window that closes or reloads SHALL stop contributing until it reports again. Quitting Terminay SHALL leave no badge behind.
+
+Each native window SHALL report only a count for itself, through the closed Desktop host action bound to that window. The host SHALL accept only a non-negative integer within its documented bound and SHALL reject anything else without changing the badge. The report SHALL carry no terminal, project, or server detail.
+
+On a Linux desktop that offers no launcher count, and on any platform without an application icon badge, the icon SHALL remain unbadged and nothing else SHALL change. Browser and installed web clients SHALL NOT report a count.
+
+#### Scenario: Notifications arrive while Terminay is in the background
+- **WHEN** three terminals need attention or have finished unviewed and Terminay is not the frontmost application
+- **THEN** the application icon shows 3
+
+#### Scenario: A notification is dismissed
+- **WHEN** the icon shows 3 and one notification is dismissed or its terminal is viewed
+- **THEN** the icon shows 2, matching the header
+
+#### Scenario: The last notification clears
+- **WHEN** the header Notifications count reaches zero in every window
+- **THEN** the application icon carries no badge
+
+#### Scenario: Notifications in two windows
+- **WHEN** one native window's header shows 2 and another's shows 1
+- **THEN** the application icon shows 3
+
+#### Scenario: A window with notifications closes
+- **WHEN** a native window whose header shows 2 is closed while another window's header shows 1
+- **THEN** the application icon shows 1
+
+#### Scenario: Invalid count
+- **WHEN** a window reports a count that is negative, fractional, non-numeric, or above the bound
+- **THEN** the report is rejected and the badge is unchanged
+
+#### Scenario: Linux desktop without a launcher count
+- **WHEN** Terminay runs on a Linux desktop whose launcher does not implement a launcher count
+- **THEN** the icon is unbadged and Terminay otherwise behaves the same
+
+#### Scenario: Terminay quits with notifications outstanding
+- **WHEN** Terminay quits while the icon shows a count
+- **THEN** the icon carries no badge afterwards

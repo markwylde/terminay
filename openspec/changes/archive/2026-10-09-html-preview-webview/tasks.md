@@ -44,4 +44,4 @@
 
 - [x] 7.1 Run `npm run test:ci` and `npm run test:e2e`. Verified by both exiting zero.
 - [x] 7.2 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 7.3 Open the pull request on `origin` with `tea` and read back the commit statuses. Verified by every status on the head SHA being `success` or `skipped`.
+- [x] 7.3 Open the pull request on `origin` with `tea` and read back the commit statuses. Verified by every status on the head SHA being `success` or `skipped`.
