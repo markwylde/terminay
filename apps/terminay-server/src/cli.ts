@@ -106,6 +106,8 @@ import {
 	createServerHealthServer,
 	createServerRemoteExposure,
 	createStandaloneServer,
+	DataRootInUseError,
+	describeDataRootInUse,
 	FileDataRootLease,
 	type LocalUiServer,
 	resolveStandaloneServerIdentity,
@@ -187,7 +189,19 @@ else if (options.command === 'mcp') {
 	const standaloneLease =
 		options.command === 'start' ? new FileDataRootLease() : undefined;
 	if (standaloneLease !== undefined) {
-		await standaloneLease.acquire(options.dataRoot);
+		try {
+			await standaloneLease.acquire(options.dataRoot);
+		} catch (error) {
+			if (!(error instanceof DataRootInUseError)) throw error;
+			// An operator's mistake to fix, not a crash to debug: say what to do
+			// and leave the stack trace out of the container log.
+			process.stderr.write(
+				describeDataRootInUse(error, {
+					container: process.env.TERMINAY_MANAGED_BY === 'container',
+				}),
+			);
+			process.exit(1);
+		}
 		try {
 			options = await resolveStandaloneServerIdentity(options);
 		} catch (error) {
