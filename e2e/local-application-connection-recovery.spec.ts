@@ -85,7 +85,7 @@ test('a Local connection the server closes is noticed by the window without wait
 	const sidebar = mainWindow.locator('.file-explorer-sidebar');
 	if (!(await sidebar.isVisible()))
 		await mainWindow.getByLabel('Toggle file explorer').click();
-	await expect(mainWindow.locator('.sidebar-pane').first()).toBeVisible();
+	await expect(sidebar.locator('.sidebar-pane').first()).toBeVisible();
 
 	// The window now learns of the close while requests are still being made,
 	// so every caller has to treat a lost connection as an outcome, not throw

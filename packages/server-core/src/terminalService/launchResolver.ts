@@ -11,10 +11,11 @@ import {
 	SYSTEM_SHELL_PROFILE_ID,
 	shellStartupModeFamily,
 } from '../shellProfiles/index.js';
-import type {
-	WorkspacePanel,
-	WorkspaceProjectKind,
-	WorkspaceState,
+import {
+	generalFolderId,
+	type WorkspacePanel,
+	type WorkspaceProjectKind,
+	type WorkspaceState,
 } from '../workspace.js';
 import { FolderRootError } from '../folderRoots.js';
 import { TerminalServiceError } from './errors.js';
@@ -301,7 +302,8 @@ export class TerminalLaunchResolver {
 				'invalid_identity',
 				'terminal project is unavailable',
 			);
-		const folderId = requestedFolderId ?? project.folderIds[0];
+		const folderId =
+			requestedFolderId ?? generalFolderId(workspace, projectId);
 		if (requestedFolderId !== undefined) {
 			const folder = workspace.folders[requestedFolderId];
 			if (folder === undefined || folder.projectId !== projectId)

@@ -206,11 +206,16 @@ export function withFolderInventory(
  * `folderOrder` is the project's folders as the projection lists them; a
  * project it does not describe is merged in the order its workspaces
  * published. A project with nothing to show has no entry.
+ *
+ * The folder a device shows when it remembers none is General, which
+ * `generalFolderId` names; a project it does not name falls back to the first
+ * folder listed.
  */
 export function mergeProjectInventories(
 	inventories: FolderInventories,
 	folderOrder: (projectId: string) => readonly string[] | undefined,
 	rememberedFolderId: (projectId: string) => string | undefined,
+	generalFolderId: (projectId: string) => string | undefined = () => undefined,
 ): Record<string, WorkspaceInventoryEntry[]> {
 	const merged: Record<string, WorkspaceInventoryEntry[]> = {};
 	for (const [projectId, byFolder] of Object.entries(inventories)) {
@@ -221,7 +226,7 @@ export function mergeProjectInventories(
 			(folderId) => byFolder[folderId],
 			remembered !== undefined && folderIds.includes(remembered)
 				? remembered
-				: folderIds[0],
+				: (generalFolderId(projectId) ?? folderIds[0]),
 		);
 		if (entries.length > 0) merged[projectId] = entries;
 	}

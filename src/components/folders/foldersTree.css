@@ -43,9 +43,13 @@
 	background: rgba(87, 183, 255, 0.08);
 }
 
+/* A card that is being carried, or is settling, is drawn over the others. */
+.folders-tree--tree .folders-tree__folder {
+	position: relative;
+}
+
 /* The card in the hand while its grip is dragged. */
 .folders-tree__folder--dragging {
-	position: relative;
 	z-index: 1;
 	border-color: rgba(220, 226, 240, 0.45);
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
@@ -116,7 +120,7 @@
 	min-width: 0;
 }
 
-/* Dragged to reorder the folders. General has none: it stays first. */
+/* Dragged to reorder the folders. */
 .folders-tree__grip {
 	all: unset;
 	flex: none;
@@ -165,6 +169,22 @@
 
 .folders-tree__row--terminal .folders-tree__name {
 	flex: 1 1 auto;
+}
+
+/* A terminal's name while it is being typed: on the row's own line, so the
+   row keeps its height. */
+.folders-tree__rename {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 20px;
+	margin: 0 -5px;
+	padding: 0 4px;
+	border: 1px solid var(--project-color, #57b7ff);
+	border-radius: 3px;
+	background: var(--terminal-panel-surface, #12161c);
+	color: #fff;
+	font: inherit;
+	outline: none;
 }
 
 /* The branch is the ordinary text colour. Only a checkout holding work the
@@ -586,17 +606,6 @@
 	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
 }
 
-.folders-column__title {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: color-mix(in srgb, var(--tab-text-selected, #ffffff) 78%, transparent);
-}
-
 .folders-column__menu {
 	all: unset;
 	flex: none;
@@ -625,7 +634,14 @@
 	overflow: hidden;
 }
 
-.folders-column__body > .folders-tree {
+/* The tree scrolls itself, so its pane body must not scroll around it. */
+.folders-column__pane > .sidebar-pane__body {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.folders-column__pane > .sidebar-pane__body > .folders-tree {
 	flex: 1 1 auto;
 }
 

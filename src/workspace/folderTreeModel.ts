@@ -80,6 +80,18 @@ export type FolderTreeDetails = {
 	location: string;
 };
 
+/**
+ * The title a rename typed into a terminal's row saves, or null when it saves
+ * nothing: a blank name, or the one the terminal already has.
+ */
+export function terminalRenameTitle(
+	current: string,
+	typed: string,
+): string | null {
+	const title = typed.trim();
+	return title.length === 0 || title === current ? null : title;
+}
+
 export type FolderTreeTerminalRow = {
 	panelId: string;
 	sessionId: string;
@@ -287,6 +299,16 @@ function detailsBranch(worktree: FolderTreeWorktree | undefined): string {
 	return worktree.branch ?? 'unknown';
 }
 
+/** A project's General folder, wherever it is in the project's order. */
+export function generalFolderIdOf(
+	project: Pick<ServerWorkspaceProject, 'folderIds'>,
+	folders: Readonly<Record<string, Pick<ServerWorkspaceFolder, 'kind'>>>,
+): string | undefined {
+	return project.folderIds.find(
+		(folderId) => folders[folderId]?.kind === 'general',
+	);
+}
+
 /** The folder a device shows for a project: the one it remembers if that still
  * exists, otherwise General. */
 export function resolveSelectedFolderId(
@@ -300,23 +322,21 @@ export function resolveSelectedFolderId(
 		folders[remembered] !== undefined
 	)
 		return remembered;
-	return project.folderIds[0];
+	return generalFolderIdOf(project, folders);
 }
 
 /**
- * The folder order after one folder is moved to a place in it. General is
- * first and stays first: it is never the folder moved, and nothing is placed
- * above it. The server holds the same rule and is the one that enforces it.
+ * The folder order after one folder is moved to a place in it. Any folder may
+ * take any place; a place beyond either end is the nearest end.
  */
 export function folderOrderAfterMove(
 	folderIds: readonly string[],
 	folderId: string,
 	toIndex: number,
 ): string[] {
-	const from = folderIds.indexOf(folderId);
-	if (from <= 0) return [...folderIds];
+	if (!folderIds.includes(folderId)) return [...folderIds];
 	const order = folderIds.filter((id) => id !== folderId);
-	order.splice(Math.max(1, Math.min(order.length, toIndex)), 0, folderId);
+	order.splice(Math.max(0, Math.min(order.length, toIndex)), 0, folderId);
 	return order;
 }
 

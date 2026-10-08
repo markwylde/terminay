@@ -38,6 +38,20 @@ function getInitialNarrowLayout(): boolean {
 		: window.matchMedia(NARROW_LAYOUT_MEDIA_QUERY).matches;
 }
 
+/** Whether the workspace is drawn narrow, where it has no folders column. */
+export function useNarrowLayout(): boolean {
+	const [isNarrowLayout, setIsNarrowLayout] = useState(getInitialNarrowLayout);
+	useEffect(() => {
+		if (typeof window === 'undefined') return;
+		const media = window.matchMedia(NARROW_LAYOUT_MEDIA_QUERY);
+		const update = () => setIsNarrowLayout(media.matches);
+		update();
+		media.addEventListener('change', update);
+		return () => media.removeEventListener('change', update);
+	}, []);
+	return isNarrowLayout;
+}
+
 function getVisibleFocusableElements(root: HTMLElement): HTMLElement[] {
 	return [
 		...root.querySelectorAll<HTMLElement>(drawerFocusableSelector),
