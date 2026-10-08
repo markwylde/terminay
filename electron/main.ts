@@ -180,6 +180,7 @@ import {
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
 import { gitObservationDiagnosticEvent } from './diagnostics/gitObservation';
+import { createSessionHolderDiagnostics } from './diagnostics/sessionHolderObservation';
 import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
 import { DesktopPerformanceLogging } from './diagnostics/performance';
 import { DesktopRuntimeMetrics } from './diagnostics/runtimeMetrics';
@@ -1831,6 +1832,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// E2E-only: a smaller retained replay window so a suite can outrun it during
 	// a real Local transport loss. Inert without the E2E marker.
 	const replayBytesOverride = embeddedTerminalReplayBytesOverride(process.env);
+	const sessionHolderDiagnosticEvent = createSessionHolderDiagnostics();
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
@@ -2123,6 +2125,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		onGitObservation: (report) => {
 			void desktopDiagnostics.record(gitObservationDiagnosticEvent(report), {
+				channel: 'lifecycle',
+			});
+		},
+		onSessionHolderObservation: (report) => {
+			void desktopDiagnostics.record(sessionHolderDiagnosticEvent(report), {
 				channel: 'lifecycle',
 			});
 		},

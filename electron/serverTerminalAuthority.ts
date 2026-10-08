@@ -85,6 +85,7 @@ import {
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import type { GitObservationReport } from '../packages/server-core/src/gitService/types';
+import type { SessionHolderObservationReport } from '../packages/server-core/src/sessionHolder/observation';
 import {
 	fileWorktreePromptPreferences,
 	serverVaultWorktreeCredentials,
@@ -317,6 +318,11 @@ export interface ServerTerminalAuthorityOptions {
 	/** Metadata-only observer for Git watches, measurements, and cache
 	 *  mismatches. Reports carry process-local ids, never a path or a ref. */
 	readonly onGitObservation?: (report: GitObservationReport) => void;
+	/** Metadata-only observer for session-holder lifecycle and held sessions
+	 *  ending. Reports carry no session id, path, credential, or output. */
+	readonly onSessionHolderObservation?: (
+		report: SessionHolderObservationReport,
+	) => void;
 	/** Host-only observer for input that server-core has already accepted. */
 	readonly onAcceptedWrite?: ServerTerminalHostObserver<ServerTerminalAcceptedWrite>;
 	/** Host-only observer for resize that server-core has already accepted. */
@@ -956,6 +962,8 @@ export class ServerTerminalAuthority {
 						buildId: options.sessionHolder.buildId,
 						launch: options.sessionHolder.launch,
 						limitMs: options.sessionHolder.limitMs,
+						onObservation: (report) =>
+							options.onSessionHolderObservation?.(report),
 						resolveCwd: resolveTerminalProcessCwd,
 						resolveForegroundProcess: resolveTerminalForegroundProcess,
 					});
