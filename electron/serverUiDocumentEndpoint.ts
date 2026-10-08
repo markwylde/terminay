@@ -132,10 +132,13 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	let documentReady = false;
 	let transportReady = false;
 	let hasAttachedDocument = false;
+	let failedReconnects = 0;
+	let reconnectRetry: ReturnType<typeof setTimeout> | undefined;
 
 	const closeConnection = () => {
 		if (connectionClosed) return;
 		connectionClosed = true;
+		clearTimeout(reconnectRetry);
 		lifecycle.close();
 		if (activeRemoteEndpoints.get(senderId) === closeConnection)
 			activeRemoteEndpoints.delete(senderId);
@@ -263,6 +266,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 			return;
 		}
 		if (reconnecting !== undefined) return;
+		clearTimeout(reconnectRetry);
+		reconnectRetry = undefined;
 		reconnecting = (async () => {
 			try {
 				// A new remote server connection is a new protocol connection. Make
@@ -277,6 +282,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					await closeDesktopDocumentTransport(transport);
 					return;
 				}
+				failedReconnects = 0;
 				startTransport();
 			} catch (error) {
 				reportDiagnostic(
@@ -284,12 +290,25 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					'remote-reconnect',
 					boundedMessage(error),
 				);
-				// A server may be briefly unavailable while it restarts. Keep this
-				// Desktop-owned endpoint dormant so the next real document boundary
-				// can make one fresh, credential-protected reconnect attempt. Retrying
-				// here would spin against an unavailable server; closing would discard
-				// the only main-process owner able to reconnect after a reload.
+				// A server may be briefly unavailable while it restarts, and one
+				// failed attempt must not leave the window waiting on a reconnect
+				// nobody is making. Try again after a growing pause so an
+				// unavailable server is not spun against; closing would discard the
+				// only main-process owner able to reconnect. A server that refused
+				// the window outright is not asked again.
 				transportReady = false;
+				if (!connectionClosed && !refusesReconnect(error)) {
+					const delay =
+						RECONNECT_RETRY_DELAYS_MS[
+							Math.min(failedReconnects, RECONNECT_RETRY_DELAYS_MS.length - 1)
+						];
+					failedReconnects += 1;
+					reconnectRetry = setTimeout(() => {
+						reconnectRetry = undefined;
+						recoverConnection(false);
+					}, delay);
+					reconnectRetry.unref?.();
+				}
 			} finally {
 				reconnecting = undefined;
 			}
@@ -380,6 +399,19 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 		},
 	};
 	return owner;
+}
+
+/** Pauses between reconnect attempts after one fails; the last one repeats. */
+const RECONNECT_RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 15_000, 30_000];
+
+/** A server that already holds every window this device may open says so
+ * with a stated reason; asking again would only repeat the refusal. */
+function refusesReconnect(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		(error as { code?: unknown }).code === 'window-limit'
+	);
 }
 
 function boundedMessage(error: unknown): string {

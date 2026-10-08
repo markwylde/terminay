@@ -18,6 +18,7 @@ import {
 	projectDragPreviewWidth,
 } from '../projectTabDrag';
 import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
+import { projectReorderInOwnView } from '../shared/serverWorkspaceReconciliation';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import {
 	subscribeWorkspaceDragState,
@@ -187,21 +188,11 @@ export function useProjectTabTransfer({
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			if (project === undefined) return;
 			const persistReorder = async () => {
-				if (nextIndex < 0) return;
-				const current =
-					workspaceSnapshotStore.snapshot?.views[workspaceViewId]
-						?.projectIds ?? [];
-				if (
-					current.length === nextIds.length &&
-					current.every((id, position) => id === nextIds[position])
-				) {
-					return;
-				}
-				await workspaceSnapshotStore.moveProject({
-					index: nextIndex,
-					projectId,
-					targetViewId: workspaceViewId,
-				});
+				const snapshot = workspaceSnapshotStore.snapshot;
+				if (nextIndex < 0 || snapshot === null) return;
+				const reorder = projectReorderInOwnView(snapshot, nextIds, projectId);
+				if (reorder === null) return;
+				await workspaceSnapshotStore.moveProject({ ...reorder, projectId });
 			};
 			if (decision.action === 'reorder') {
 				await persistReorder();
