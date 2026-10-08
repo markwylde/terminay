@@ -6,7 +6,10 @@ import {
 	useState,
 } from 'react';
 import { closeHostPresentation } from '../host/nativeActions';
-import { presentableViewProjects } from '../shared/serverWorkspaceReconciliation';
+import {
+	presentableViewProjects,
+	presentedProjects,
+} from '../shared/serverWorkspaceReconciliation';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
@@ -133,6 +136,7 @@ export function useProjectCollection<TTerminal>({
 	holdActiveProjectIdRef,
 	sidebarSettings,
 	stayOpenWhenEmpty = false,
+	presentsEveryView = false,
 	workspaceSnapshotStore,
 	workspaceViewId,
 }: {
@@ -164,6 +168,9 @@ export function useProjectCollection<TTerminal>({
 	 * projects, so closing its last one closes it.
 	 */
 	stayOpenWhenEmpty?: boolean;
+	/** True for a presentation with one window, a browser: it holds the
+	 * projects of every view of its server rather than one view's. */
+	presentsEveryView?: boolean;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
 }) {
@@ -185,7 +192,11 @@ export function useProjectCollection<TTerminal>({
 	const initialServerProjects =
 		initialServerSnapshot == null
 			? []
-			: presentableViewProjects(initialServerSnapshot, initialServerView);
+			: presentedProjects(
+					initialServerSnapshot,
+					initialViewId,
+					presentsEveryView,
+				);
 	const [projects, setProjects] = useState<ProjectTab[]>(() => {
 		if (isAdoptWindow) return [];
 		if (hasServerWorkspace && initialServerSnapshot === null) return [];
@@ -332,8 +343,11 @@ export function useProjectCollection<TTerminal>({
 		if (workspaceSnapshotStore === undefined) return;
 		return workspaceSnapshotStore.subscribe((snapshot) => {
 			const viewId = workspaceViewId ?? snapshot.viewOrder[0];
-			const view = viewId === undefined ? undefined : snapshot.views[viewId];
-			const orderedServerProjects = presentableViewProjects(snapshot, view);
+			const orderedServerProjects = presentedProjects(
+				snapshot,
+				viewId,
+				presentsEveryView,
+			);
 			setProjects((current) => {
 				const currentById = new Map(
 					current.map((project) => [project.id, project]),
@@ -410,6 +424,7 @@ export function useProjectCollection<TTerminal>({
 		});
 	}, [
 		holdActiveProjectIdRef,
+		presentsEveryView,
 		projectColorScope,
 		sidebarVisibilityScope,
 		workspaceSnapshotStore,
