@@ -46,5 +46,5 @@
 - [x] 8.1 Run `openspec validate --all`, `tsc --noEmit`, `npm run lint`, and the `node --test` suites of the smoke gate. Verified by: all pass locally (the two packaged-artifact tests need `build:app` first and are left to CI).
 - [x] 8.2 Run the Electron e2e suites that visit Home through `npm run test:e2e` (Docker): `home-sidebar`, `home-tabs`, `automations-ui`, `workspace-dashboard`, `project-tabs`, `compact-chrome-switcher`, `app`. Verified by: they pass locally; the full sharded suite is CI's.
 - [x] 8.3 Drive the real app: create a draft, leave to a project and return, split an automation beside its run, relaunch, search from the Command Bar, narrow to phone width. Verified by: a screenshot walk-through taken from the app running in the e2e container was reviewed.
-- [ ] 8.4 Open the pull request on `origin` (Gitea) with `tea`. Verified by: every commit status on the head SHA reads `success` or `skipped`.
-- [ ] 8.5 Archive after `compact-unified-switcher` and `compact-command-bar-entry`. Verified by: `openspec validate --all` passes and the main specs carry this change's requirement text.
+- [x] 8.4 Open the pull request on `origin` (Gitea) with `tea`. Verified by: every commit status on the head SHA reads `success` or `skipped`.
+- [x] 8.5 Archive after `compact-unified-switcher` and `compact-command-bar-entry`. Verified by: `openspec validate --all` passes and the main specs carry this change's requirement text.

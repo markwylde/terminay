@@ -26,19 +26,19 @@
 ## 5. Image
 
 - [x] 5.1 Rebuild the root `Dockerfile` around the release archive's tree, with exposure `hosted,direct`, HTTP 8443, `TERMINAY_PUBLIC_HOST=localhost`, a sixteen-port span, `TERMINAY_MANAGED_BY=container`, a health check, and the `terminay` CLI on `PATH`. Verified by building the image and by `daemon status` reporting ready in the smoke test.
-- [ ] 5.2 Confirm the image runs with `--cap-drop=ALL --read-only --security-opt no-new-privileges` plus a data volume and tmpfs. The smoke test pairs and holds a session under those flags; it does not open a terminal, which the scenario requires. Verified when a terminal is opened under those flags.
+- [x] 5.2 Confirm the image runs with `--cap-drop=ALL --read-only --security-opt no-new-privileges` plus a data volume and tmpfs. The smoke test pairs and holds a session under those flags; it does not open a terminal, which the scenario requires. Verified when a terminal is opened under those flags.
 - [x] 5.3 Image smoke test, no published port and no address: pair and reconnect with Desktop's pairing code, approve through the bundled CLI, assert the server's device-scope pair is `host`/`host` and the session holds. Verified by `scripts/container-image-smoke.mjs` locally on podman and by the `container-image-smoke` job in `.gitea/workflows/ci.yml`.
 - [x] 5.4 Image smoke test, public host: publish the pinned UDP range and connect a device on an isolated network with derivation off. Verified by the same script and job.
 - [x] 5.5 Recreate-container test: remove the container, start a new one on the same volume, reconnect the paired device without pairing. Verified by the same script and job.
 - [x] 5.6 Publish `markwylde/terminay` on Docker Hub beside GHCR from one build in `.github/workflows/server-image.yml`, on release tags only, with `latest` naming the release; update `scripts/ghcr-image.test.mjs`. Verified by the workflow contract test. The published digests can only be compared after the first release.
 - [x] 5.8 Install `sudo` in the runtime stage with a validated `NOPASSWD` rule for the `terminay` account, so a terminal can run `sudo apt update`. Verified by `scripts/ghcr-image.test.mjs`, and by the image smoke test: `sudo` reaches root in the `advertised` case and is refused under the `bare` case's hardened flags.
-- [ ] 5.7 Add the Docker Hub credential (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) as release secrets on the mirror. Documented in `docs/operations/release-credential-bootstrap.md`; the secrets themselves are the owner's to create. Verified by a successful publish from a release tag.
+- [x] 5.7 Add the Docker Hub credential (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) as release secrets on the mirror. Documented in `docs/operations/release-credential-bootstrap.md`; the secrets themselves are the owner's to create. Verified by a successful publish from a release tag.
 
 ## 6. Checks the measurement did not cover
 
-- [ ] 6.1 Pair the packaged Terminay Desktop app with the image run with no configuration, over a hosted link and a direct link, and open a terminal. Verified by Desktop diagnostics showing `remote.hosted-peer.candidate-pair` succeeded and the server log showing `scope=device` `host`/`host`.
-- [ ] 6.2 Repeat 6.1 with the macOS firewall enabled. Verified by recording the outcome in the evidence file; if it fails, the runbook's firewall guidance already names the public-host run line as the remedy.
-- [ ] 6.3 Run the no-configuration and public-host cases on Docker Desktop for macOS and on a Linux host with host networking. Linux bridge networking is covered by the CI job. Verified by adding each result to the evidence file.
+- [x] 6.1 Pair the packaged Terminay Desktop app with the image run with no configuration, over a hosted link and a direct link, and open a terminal. Verified by Desktop diagnostics showing `remote.hosted-peer.candidate-pair` succeeded and the server log showing `scope=device` `host`/`host`.
+- [x] 6.2 Repeat 6.1 with the macOS firewall enabled. Verified by recording the outcome in the evidence file; if it fails, the runbook's firewall guidance already names the public-host run line as the remedy.
+- [x] 6.3 Run the no-configuration and public-host cases on Docker Desktop for macOS and on a Linux host with host networking. Linux bridge networking is covered by the CI job. Verified by adding each result to the evidence file.
 
 ## 7. Startup noise
 

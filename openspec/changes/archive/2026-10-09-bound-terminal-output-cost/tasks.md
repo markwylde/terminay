@@ -110,8 +110,8 @@
   assertions against `electron/main.ts` that already fail on `main` and are
   unrelated to this change. Verified by the test path appearing in the `smoke`
   script and passing when run.
-- [ ] 6.3 Run `npm run lint`, `npm run typecheck:workspaces`,
+- [x] 6.3 Run `npm run lint`, `npm run typecheck:workspaces`,
   `npm run test:workspaces`, and `npm run test:e2e`. Verified by all passing.
 - [x] 6.4 `openspec validate --all`. Verified by a clean result.
-- [ ] 6.5 Open the pull request on `origin` with `tea` and read back every
+- [x] 6.5 Open the pull request on `origin` with `tea` and read back every
   commit status on the head SHA. Verified by each being `success` or `skipped`.

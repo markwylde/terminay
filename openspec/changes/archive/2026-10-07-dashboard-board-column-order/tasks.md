@@ -11,4 +11,4 @@
 ## 3. Close out
 
 - [x] 3.1 Validate the change (verified: `openspec validate dashboard-board-column-order` passes).
-- [ ] 3.2 Archive only after both prerequisite changes are archived (verified: `openspec archive dashboard-board-column-order` applies its MODIFIED requirements without a missing-requirement error).
+- [x] 3.2 Archive only after both prerequisite changes are archived (verified: `openspec archive dashboard-board-column-order` applies its MODIFIED requirements without a missing-requirement error).

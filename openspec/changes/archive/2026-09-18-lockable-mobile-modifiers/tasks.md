@@ -10,4 +10,4 @@
 ## 3. Checks
 
 - [x] 3.1 Run `openspec validate --all`, Biome on the changed files, `npx tsc --noEmit`, and the mobile keyboard test. Verified by each reporting clean, apart from type errors already present on `main`.
-- [ ] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
+- [x] 3.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.

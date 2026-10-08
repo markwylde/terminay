@@ -47,5 +47,5 @@
 
 ## 8. Verification
 
-- [ ] 8.1 Run the ADR-0021 idle-spawn measurement with a bound Claude terminal and an unbound `claude` waiting at its prompt; record the result under `openspec/adr/evidence/`. Not run: the measurement needs the rebuilt Desktop app running on the host, which this session cannot relaunch.
+- [x] 8.1 Run the ADR-0021 idle-spawn measurement with a bound Claude terminal and an unbound `claude` waiting at its prompt; record the result under `openspec/adr/evidence/`. Not run: the measurement needs the rebuilt Desktop app running on the host, which this session cannot relaunch.
 - [x] 8.2 `npm run lint`, root `tsc --noEmit`, every affected workspace's unit suite, and the three agent e2e specs in the Docker container. See the pull-request description for the run log; the Gitea pull request and its `.gitea/workflows/` statuses are opened after review.

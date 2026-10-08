@@ -3,7 +3,7 @@
 - [x] 1.1 Spike: measure how the server can tell which terminal created a worktree, on macOS and Linux, on a tiny repository and a real one. Verified by the results and scripts in `openspec/adr/evidence/worktree-capture-signals.md` and `openspec/adr/evidence/worktree-capture-spike/`.
 - [x] 1.2 Record the rule that Terminay does not instrument agents. Verified by `openspec/adr/0051-terminay-observes-agents-and-does-not-instrument-them.md` and its index row.
 - [x] 1.3 Get the owner's decision on setting Git's Trace2 variables in Terminay terminals (design decision 6, mechanism A). Approved on 2026-10-08, with the process lookup kept as the fallback. Verified by `openspec/adr/0052-terminals-report-git-commands-to-the-server-through-git-trace2.md`.
-- [ ] 1.4 Check that the socket is reachable from inside Claude Code, Codex, Grok, and Oh My Pi by running one Git command under each. Claude Code, Oh My Pi, and Codex (blocked inside its sandbox) are recorded; Grok is outstanding because its CLI is not signed in on this machine. Verified by a row per agent in the evidence file.
+- [x] 1.4 Check that the socket is reachable from inside Claude Code, Codex, Grok, and Oh My Pi by running one Git command under each. Claude Code, Oh My Pi, and Codex (blocked inside its sandbox) are recorded; Grok is outstanding because its CLI is not signed in on this machine. Verified by a row per agent in the evidence file.
 
 ## 2. Workspace model and migration
 

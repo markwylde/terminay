@@ -57,7 +57,7 @@
       Verified by the command reporting the change valid.
 - [x] 4.2 Run `npm run lint`, `npm run typecheck`, and the touched unit suites.
       Verified by all commands exiting zero.
-- [ ] 4.3 Confirm on a real touch device: pan still scrolls, pans a pager, and
+- [x] 4.3 Confirm on a real touch device: pan still scrolls, pans a pager, and
       arrows through shell history; hold selects; tap opens a link; the toggle
       off restores today's behaviour exactly.
 - [x] 4.4 Open the pull request with the change branch and confirm CI is green.

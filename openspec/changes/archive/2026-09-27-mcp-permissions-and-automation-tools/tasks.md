@@ -44,4 +44,4 @@
 
 - [x] 6.1 Update the `mcp-server` spec Purpose at archive to mention automation management, and update `docs/product-overview.md`'s MCP description. Verify: `openspec validate --all` passes.
 - [x] 6.2 Run `npm run test:ci` (lint, unit, workspace, and release-evidence suites) and the new and automation e2e specs in the container. Verify: all pass locally.
-- [ ] 6.3 Open the Gitea PR with `tea` and read back every commit status on the head SHA. Verify: every status is `success` or `skipped`.
+- [x] 6.3 Open the Gitea PR with `tea` and read back every commit status on the head SHA. Verify: every status is `success` or `skipped`.

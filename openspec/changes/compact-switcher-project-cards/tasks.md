@@ -32,7 +32,7 @@
 - [x] 5.3 Add e2e tests that a folder label's `+` creates in that folder for (a) another folder of the project in front and (b) a folder of a background project, each asserting the created terminal's folder and that it is the terminal on screen. Verified by `npm run test:e2e`.
 - [x] 5.4 Add an e2e test that with the dashboard selected the create bar has no new-terminal control and New project is the wide control. Verified by `npm run test:e2e`.
 - [x] 5.5 Add an e2e test that a project header shows `2 working · 1 idle` style text matching its rows and updates when a `done` terminal is viewed. Verified by `npm run test:e2e`.
-- [ ] 5.6 Capture the sheet at 390px and 320px wide with the fixture from the original screenshot (two projects, four folders, three terminals) and compare against Variant 2; confirm the sheet is shorter than before the change. Verified by attaching both screenshots and the before/after sheet heights to the pull request.
+- [x] 5.6 Capture the sheet at 390px and 320px wide with the fixture from the original screenshot (two projects, four folders, three terminals) and compare against Variant 2; confirm the sheet is shorter than before the change. Verified by attaching both screenshots and the before/after sheet heights to the pull request.
 
 ## 6. Specs and delivery
 

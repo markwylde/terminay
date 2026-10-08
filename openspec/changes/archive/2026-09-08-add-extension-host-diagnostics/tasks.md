@@ -36,4 +36,4 @@
 - [x] 6.1 Run `npm run test:agents`, `npm run test:desktop-diagnostics`, and the server-core workspace tests. Verified by all three passing.
 - [x] 6.2 Run `npm run lint` and `npm run typecheck:workspaces`. Verified by both passing clean.
 - [x] 6.3 Run `npm run test:boundaries` to confirm no Electron import entered server-core. Verified by it passing.
-- [ ] 6.4 Build and run the desktop app, force an extension child to throw, and confirm the Diagnostics folder contains the failure record with its stack, followed by a restart record. Verified by reading the produced log segment.
+- [x] 6.4 Build and run the desktop app, force an extension child to throw, and confirm the Diagnostics folder contains the failure record with its stack, followed by a restart record. Verified by reading the produced log segment.

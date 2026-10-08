@@ -30,4 +30,4 @@
 - [x] 5.1 Run `npm run lint`, `npm run typecheck:workspaces`, and the documentation unit tests. Verified by each command exiting 0.
 - [x] 5.2 Run `npm run test:e2e` for the Documentation specs. Verified by the run passing.
 - [x] 5.3 Run `openspec validate --all`. Verified by it reporting clean.
-- [ ] 5.4 Open the app against this repository and confirm by inspection that selecting the Documentation group expands the pane, shows the spinner and stop control, and settles to the refresh button with the full document count.
+- [x] 5.4 Open the app against this repository and confirm by inspection that selecting the Documentation group expands the pane, shows the spinner and stop control, and settles to the refresh button with the full document count.

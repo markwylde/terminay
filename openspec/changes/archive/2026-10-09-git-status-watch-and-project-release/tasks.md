@@ -114,7 +114,7 @@
   Verified by `openspec/adr/evidence/git-watch-idle-spawns.md`: 0 spawns idle
   and 0 after close. One run recorded 8 idle spawns, all traced to real index
   rewrites by the installed pre-fix app.
-- [ ] 4.3 Packaged app on the reporting machine (ten projects, five terminals
+- [x] 4.3 Packaged app on the reporting machine (ten projects, five terminals
   each): count `git` children from the process table while idle and after
   closing everything. This needs the reporting machine and a build of this
   branch.

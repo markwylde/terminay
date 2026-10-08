@@ -45,6 +45,6 @@
 
 ## 8. Close out
 
-- [ ] 8.1 `openspec validate --all` passes. Verified by its output.
+- [x] 8.1 `openspec validate --all` passes. Verified by its output.
 - [ ] 8.2 Open the pull request on `origin` and read back every commit status. Verified by each being `success` or `skipped`.
 - [ ] 8.3 Note in the pull request whether the `terminay.com` manager still offers attach, as a follow-up there. Verified by the note.

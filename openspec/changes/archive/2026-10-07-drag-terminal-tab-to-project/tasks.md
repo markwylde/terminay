@@ -27,4 +27,4 @@
 ## 6. Checks and delivery
 
 - [x] 6.1 Run `openspec validate --all`, `npm run lint`, `npm run typecheck:workspaces`, and the touched `node --test` suites. Verified by all four reporting clean.
-- [ ] 6.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
+- [x] 6.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.

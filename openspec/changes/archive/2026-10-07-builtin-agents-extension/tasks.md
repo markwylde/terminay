@@ -110,5 +110,5 @@
   - Verified by `openspec list` no longer showing them, and `openspec validate --all` passing.
 - [x] 9.3 Resolve the library licence: Terminay is relicensed to AGPL-3.0-or-later, matching `@markwylde/all-your-agents`. The extension SDK stays MIT.
   - Verified by the root, CLI, and built-in extension `package.json` licence fields.
-- [ ] 9.4 Open the pull request on Gitea with `tea`, and read back every commit status on the head SHA.
+- [x] 9.4 Open the pull request on Gitea with `tea`, and read back every commit status on the head SHA.
   - Verified by all statuses being `success` or `skipped`.

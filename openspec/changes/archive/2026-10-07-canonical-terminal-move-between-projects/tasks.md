@@ -51,4 +51,4 @@
 ## 8. Checks and delivery
 
 - [x] 8.1 Run `openspec validate --all`, `npm run lint`, `npm run typecheck:workspaces`, `npm run test:workspaces`, and `npm run test:server-terminal-runtime`. Verified by the first four reporting clean. `test:server-terminal-runtime` reports 23 passed and 2 failed; both failures are source-shape assertions in `scripts/task9-embedded-agent-authority.test.mjs` about `waitForInactivity` and the test MCP bridge in `electron/main.ts`, which fail identically on the base commit and are not touched by this change.
-- [ ] 8.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.
+- [x] 8.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped`. Verified by the status listing itself.

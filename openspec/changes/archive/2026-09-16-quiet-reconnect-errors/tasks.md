@@ -14,4 +14,4 @@
 ## 4. Checks
 
 - [x] 4.1 Run `openspec validate --all`, `npm run lint`, `npx tsc --noEmit`, `node --test scripts/git-banner-reconnect-recovery.test.mjs`, and `npx tsx --test src/shared/featureQueryAuthority.test.ts`. Verified by all five reporting clean.
-- [ ] 4.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped` before calling it green. Verified by the status listing itself.
+- [x] 4.2 Open the pull request on Gitea with `tea`, then read back every commit status on the head SHA and confirm each is `success` or `skipped` before calling it green. Verified by the status listing itself.
