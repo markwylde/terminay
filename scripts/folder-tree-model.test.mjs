@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	buildFolderTree,
 	folderIdOfPanel,
+	generalFolderIdOf,
 	isChangeDirty,
 	resolveSelectedFolderId,
 } from '../src/workspace/folderTreeModel.ts';
@@ -112,6 +113,29 @@ test('a device with no remembered folder, or a folder that is gone, shows Genera
 	// A folder of another project is never selected here.
 	assert.equal(resolveSelectedFolderId(project, { ...folders, foreign: { id: 'foreign' } }, 'foreign'), 'general');
 	assert.equal(byId(buildFolderTree(workspace({ input: { selectedFolderId: 'folder-deleted' } }))).general.isSelected, true);
+});
+
+test('General is found by its kind, and is still what a device shows by default, wherever it is in the order', () => {
+	const { project, folders } = workspace();
+	for (const folderIds of [
+		['general', 'releases', 'window', 'servers'],
+		['releases', 'general', 'window', 'servers'],
+		['releases', 'window', 'servers', 'general'],
+	]) {
+		const moved = { ...project, folderIds };
+		assert.equal(generalFolderIdOf(moved, folders), 'general');
+		assert.equal(resolveSelectedFolderId(moved, folders, undefined), 'general');
+		assert.equal(resolveSelectedFolderId(moved, folders, 'folder-deleted'), 'general');
+		assert.equal(resolveSelectedFolderId(moved, folders, 'servers'), 'servers');
+		const input = workspace();
+		input.project = moved;
+		const rows = buildFolderTree(input);
+		assert.deepEqual(rows.map((row) => row.id), folderIds);
+		assert.deepEqual(rows.filter((row) => row.isSelected).map((row) => row.id), ['general']);
+		// General stands for the project root's checkout in any place.
+		assert.equal(byId(rows).general.branch, 'main');
+	}
+	assert.equal(generalFolderIdOf({ folderIds: ['servers'] }, folders), undefined);
 });
 
 test('a terminal that created a worktree is tagged until it is in that folder, and an offer names it', () => {

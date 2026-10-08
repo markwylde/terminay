@@ -129,7 +129,7 @@ export interface FolderRenameRequest {
 }
 export interface FolderReorderRequest {
 	readonly projectId: string;
-	/** Every folder of the project, with General still first. */
+	/** Every folder of the project, each once, in the order asked for. */
 	readonly folderIds: readonly string[];
 }
 export interface WorkspaceViewCreateRequest {

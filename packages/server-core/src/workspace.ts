@@ -230,7 +230,7 @@ export interface WorkspaceProject {
 	readonly icon?: string;
 	readonly defaultShellProfileId?: ProtocolId;
 	readonly sidebar: WorkspaceSidebarState;
-	/** The project's folders in order. The first is always General. */
+	/** The project's folders in order. Exactly one of them is General. */
 	readonly folderIds: readonly ProtocolId[];
 	/** Derived by the server from the folders: every panel of the project, in
 	 * folder order. No command sets it directly. */
@@ -962,7 +962,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 	}
 }
 
-/** Every project has exactly one General folder and it comes first; every
+/** Every project has exactly one General folder, anywhere in its order; every
  * folder a project lists is its own; and the project's panel list is exactly
  * its folders' panels in folder order. */
 function validateProjectFolders(
@@ -977,11 +977,8 @@ function validateProjectFolders(
 		)
 	)
 		throw new TypeError('project/folder ownership mismatch');
-	if (
-		folders[0]?.kind !== 'general' ||
-		folders.filter((folder) => folder?.kind === 'general').length !== 1
-	)
-		throw new TypeError('project must have one General folder, first');
+	if (folders.filter((folder) => folder?.kind === 'general').length !== 1)
+		throw new TypeError('project must have one General folder');
 	const derived = folders.flatMap((folder) => folder?.panelIds ?? []);
 	if (
 		derived.length !== project.panelIds.length ||
@@ -1296,7 +1293,10 @@ function folderForNewPanel(
 	project: WorkspaceProject,
 	folderId: ProtocolId | undefined,
 ): WorkspaceFolder {
-	const folder = requireFolder(state, folderId ?? project.folderIds[0] ?? '');
+	const folder = requireFolder(
+		state,
+		folderId ?? generalFolderId(state, project.id) ?? '',
+	);
 	if (folder.projectId !== project.id)
 		throw new Error('folder is outside project');
 	return folder;
@@ -2036,8 +2036,6 @@ export class WorkspaceStore {
 					command.folderIds.some((id) => !project.folderIds.includes(id))
 				)
 					throw new Error('folder reorder crosses project boundary');
-				if (command.folderIds[0] !== project.folderIds[0])
-					throw new Error('the General folder stays first');
 				state.projects[project.id] = {
 					...project,
 					folderIds: [...command.folderIds],
@@ -2157,7 +2155,7 @@ export class WorkspaceStore {
 				const folderId =
 					command.folderId ??
 					state.panels[command.panelIds[0] ?? '']?.folderId ??
-					project.folderIds[0];
+					generalFolderId(state, project.id);
 				const folder = requireFolder(state, folderId ?? '');
 				if (folder.projectId !== project.id)
 					throw new Error('folder is outside project');
@@ -2563,6 +2561,15 @@ function requireView(state: WorkspaceState, id: ProtocolId): WorkspaceView {
 	const value = state.views[id];
 	if (value === undefined) throw new Error('view not found');
 	return value;
+}
+/** The project's General folder, wherever it is in the project's order. */
+export function generalFolderId(
+	state: WorkspaceState,
+	projectId: ProtocolId,
+): ProtocolId | undefined {
+	return state.projects[projectId]?.folderIds.find(
+		(folderId) => state.folders[folderId]?.kind === 'general',
+	);
 }
 function requireProject(
 	state: WorkspaceState,
