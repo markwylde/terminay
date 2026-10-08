@@ -8131,7 +8131,6 @@ function App({
 	const compactSwitcherGroups = useMemo(
 		() =>
 			buildCompactSwitcherGroups({
-				activityBadgesByProject,
 				foldersByProject: compactSwitcherFolders,
 				previewForSession: (sessionId) =>
 					sharedTerminalContextReadersRef.current
@@ -8139,7 +8138,7 @@ function App({
 						?.().recentOutput,
 				sources: dashboardSources,
 			}),
-		[activityBadgesByProject, compactSwitcherFolders, dashboardSources],
+		[compactSwitcherFolders, dashboardSources],
 	);
 	const compactSwitcherFilteredGroups = useMemo(
 		() =>
@@ -8759,6 +8758,18 @@ function App({
 	const activeProject = isPendingProjectFailure
 		? null
 		: (projects.find((project) => project.id === activeProjectId) ?? null);
+	// Where the compact switcher's create bar will put a terminal: the project in
+	// front and the folder this device shows in it.
+	const compactSwitcherFrontFolderId =
+		activeProject === null
+			? undefined
+			: projectFolderWorkspaces.find(
+					({ project }) => project.id === activeProject.id,
+				)?.selectedFolderId;
+	const compactSwitcherFrontFolderName =
+		compactSwitcherFrontFolderId === undefined
+			? undefined
+			: workspaceSnapshot?.folders[compactSwitcherFrontFolderId]?.name;
 	const displayedActiveProjectId =
 		isPendingProjectFailure && failedProjectCreation !== null
 			? failedProjectCreation.tab.id
@@ -9418,6 +9429,13 @@ function App({
 						closeCompactSwitcher();
 						void createCompactSwitcherTerminal(group);
 					}}
+					onNewTerminalInFolder={(group, folder) => {
+						closeCompactSwitcher();
+						// The project's new-terminal command creates in the folder this
+						// device has selected, so selecting first is what places it.
+						selectFolder(group.projectId, folder.folderId);
+						void createCompactSwitcherTerminal(group);
+					}}
 					onActivateFolder={(group, folder) => {
 						closeCompactSwitcher();
 						// A folder on another server is reached by going there; which
@@ -9433,6 +9451,17 @@ function App({
 									closeCompactSwitcher();
 									createTerminalInProject(activeProjectId);
 								},
+								...(activeProject === null
+									? {}
+									: {
+											front: {
+												color: activeProject.color,
+												projectTitle: activeProject.title,
+												...(compactSwitcherFrontFolderName === undefined
+													? {}
+													: { folderName: compactSwitcherFrontFolderName }),
+											},
+										}),
 							})}
 					onQueryChange={setCompactSwitcherQuery}
 					query={compactSwitcherQuery}
