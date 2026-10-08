@@ -342,7 +342,13 @@ export type GitWorktreeStatus = {
 	lineAdditions: number | null;
 	lineDeletions: number | null;
 	lastChangedAt: string | null;
+	/** True when the branch holds committed work the default branch lacks. */
 	isDirtyBranch: boolean;
+	/** True when the branch holds commits that are on no remote. */
+	hasUnpushedCommits: boolean;
+	/** Size of the unpushed commits and the tracked working-tree delta. */
+	unpushedLineAdditions: number | null;
+	unpushedLineDeletions: number | null;
 	isCurrent: boolean;
 	isMain: boolean;
 	isBare: boolean;

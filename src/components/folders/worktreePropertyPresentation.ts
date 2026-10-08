@@ -70,17 +70,32 @@ export function pullRequestChip(
 	};
 }
 
-/** A linked folder with work in it and no pull request says so. */
+/** A linked folder with work in it and no pull request says so, whether that
+ * work is still on this machine or pushed and not yet merged. */
 export function showsNoPullRequest(folder: {
 	kind: string;
 	isDirty: boolean;
+	unmerged?: unknown;
 	pullRequest?: unknown;
 }): boolean {
 	return (
 		folder.kind === 'linked' &&
-		folder.isDirty &&
+		(folder.isDirty || folder.unmerged !== undefined) &&
 		folder.pullRequest === undefined
 	);
+}
+
+/** The mark after an unmerged branch's name, and what it means in words. */
+export function unmergedMark(unmerged: { commits: number | null }): {
+	text: string;
+	label: string;
+} {
+	if (unmerged.commits === null)
+		return { text: '↑', label: 'Commits not on the default branch' };
+	return {
+		text: `↑${unmerged.commits}`,
+		label: `${unmerged.commits} commit${unmerged.commits === 1 ? '' : 's'} not on the default branch`,
+	};
 }
 
 export function checksAccessibleName(checks: CheckCounts): string {

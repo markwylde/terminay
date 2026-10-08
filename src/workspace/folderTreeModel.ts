@@ -35,14 +35,20 @@ export type FolderTreeWorktree = {
 		mergeable?: boolean;
 	};
 	checks?: { failed: number; pending: number; passed: number; skipped: number };
-	/** How the worktree stands against the default branch. */
+	/** The work the worktree holds that is nowhere but this machine. */
 	change?: FolderTreeChange;
+	/** Present when the branch holds commits the default branch lacks. */
+	unmerged?: FolderTreeUnmerged;
 };
 
+/** Commits whose effect the default branch does not have, pushed or not. A
+ * null count is an unmerged branch whose commits were not counted. */
+export type FolderTreeUnmerged = { commits: number | null };
+
 /**
- * What a linked folder's row says about its worktree's work: missing from
- * disk, the size of its change, changed with no measured size, or clean.
- * Clean means nothing the default branch lacks and no working-tree delta.
+ * What a linked folder's row says about its worktree's unpushed work: missing
+ * from disk, the size of that work, changed with no measured size, or clean.
+ * Clean means nothing uncommitted, nothing untracked, and no unpushed commit.
  */
 export type FolderTreeChange =
 	| { kind: 'missing' }
@@ -50,8 +56,9 @@ export type FolderTreeChange =
 	| { kind: 'changed' }
 	| { kind: 'clean' };
 
-/** Dirty is work the default branch lacks, measured or not. A clean checkout,
- * a worktree missing from disk, and one nothing is known about are not. */
+/** Dirty is work that exists only on this machine, measured or not. A clean
+ * checkout, a worktree missing from disk, and one nothing is known about are
+ * not. */
 export function isChangeDirty(change: FolderTreeChange | undefined): boolean {
 	return change?.kind === 'delta' || change?.kind === 'changed';
 }
@@ -77,11 +84,14 @@ export type FolderTreeFolderRow = {
 	branch?: string;
 	pullRequest?: FolderTreeWorktree['pullRequest'];
 	checks?: FolderTreeWorktree['checks'];
-	/** The folder's checkout against the default branch. Absent for a plain
-	 * folder and where nothing has been measured. */
+	/** The folder's unpushed work. Absent for a plain folder and where nothing
+	 * has been measured. */
 	change?: FolderTreeChange;
-	/** True when the checkout holds changes the default branch does not have. */
+	/** True when the checkout holds work that exists only on this machine. */
 	isDirty: boolean;
+	/** Present when the checkout's branch holds commits the default branch
+	 * lacks, pushed or not. */
+	unmerged?: FolderTreeUnmerged;
 	terminals: readonly FolderTreeTerminalRow[];
 	/** True when the folder holds no panel of any kind. */
 	isEmpty: boolean;
@@ -174,6 +184,9 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			// no checkout, so `worktree` is undefined for it.
 			...(worktree?.change === undefined ? {} : { change: worktree.change }),
 			isDirty: isChangeDirty(worktree?.change),
+			...(worktree?.unmerged === undefined
+				? {}
+				: { unmerged: worktree.unmerged }),
 			terminals,
 			isEmpty: folder.panelIds.length === 0,
 			...(offered === undefined

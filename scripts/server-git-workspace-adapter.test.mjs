@@ -52,6 +52,9 @@ test('canonical Git list maps opaque references and presentation state', async (
           lineAdditions: 4,
           lineDeletions: 1,
           hasCommittedChanges: true,
+          hasUnpushedCommits: true,
+          unpushedLineAdditions: 3,
+          unpushedLineDeletions: 0,
           entries: [{
             path: 'src/new.ts',
             previousPath: null,
@@ -78,6 +81,9 @@ test('canonical Git list maps opaque references and presentation state', async (
   assert.equal(projection.worktrees.worktrees[0].aheadOfMainCount, 2)
   assert.equal(projection.worktrees.worktrees[0].lineAdditions, 4)
   assert.equal(projection.worktrees.worktrees[0].lineDeletions, 1)
+  assert.equal(projection.worktrees.worktrees[0].hasUnpushedCommits, true)
+  assert.equal(projection.worktrees.worktrees[0].unpushedLineAdditions, 3)
+  assert.equal(projection.worktrees.worktrees[0].unpushedLineDeletions, 0)
   assert.equal(projection.worktrees.worktrees[0].entries[0].state, 'untracked')
 })
 
