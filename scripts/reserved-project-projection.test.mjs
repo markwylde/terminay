@@ -139,9 +139,18 @@ test('the project collection and view selection derive projects only through the
 	// useProjectCollection is the project choke point: the tab bar, switcher,
 	// inventory, and Tabs section all read the `projects` it produces.
 	const collection = await readFile('src/workspace/useProjectCollection.ts', 'utf8');
-	assert.match(collection, /presentableViewProjects\(initialServerSnapshot, initialServerView\)/);
-	assert.match(collection, /presentableViewProjects\(snapshot, view\)/);
+	// It derives them through presentedProjects, which reaches a view's
+	// projects only through the reserved-kind filter.
+	assert.match(collection, /presentedProjects\(\s*initialServerSnapshot,/);
+	assert.match(collection, /presentedProjects\(\s*snapshot,/);
 	assert.doesNotMatch(collection, /projectIds\s*\.map\(\s*\(projectId\) => [a-zA-Z?.]*projects\[projectId\]/);
+	const reconciliation = await readFile('src/shared/serverWorkspaceReconciliation.ts', 'utf8');
+	const presented = reconciliation.slice(
+		reconciliation.indexOf('export function presentedProjects'),
+		reconciliation.indexOf('export function projectReorderInOwnView'),
+	);
+	assert.equal(presented.match(/presentableViewProjects\(/g)?.length, 2);
+	assert.doesNotMatch(presented, /snapshot\.projects\[/);
 	const selection = await readFile('src/shared/useWorkspaceSelectionController.ts', 'utf8');
 	assert.match(selection, /presentableViewProjects\(snapshot, view\)/);
 });

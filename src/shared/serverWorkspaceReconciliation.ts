@@ -138,6 +138,54 @@ export function presentableViewProjects(
 }
 
 /**
+ * The projects a presentation holds. A Desktop window presents one view. A
+ * browser has one window, so it holds the projects of every view of its
+ * server, in view order.
+ */
+export function presentedProjects(
+	snapshot: Pick<ServerWorkspaceSnapshot, 'projects' | 'views' | 'viewOrder'>,
+	viewId: string | null | undefined,
+	presentsEveryView: boolean,
+): readonly ServerWorkspaceProject[] {
+	if (!presentsEveryView)
+		return presentableViewProjects(
+			snapshot,
+			viewId == null ? undefined : snapshot.views[viewId],
+		);
+	return snapshot.viewOrder.flatMap((id) =>
+		presentableViewProjects(snapshot, snapshot.views[id]),
+	);
+}
+
+/**
+ * Where a project dropped at a new place in a presentation's strip now sits
+ * in its own view, or null when its view's order is unchanged. A project is
+ * reordered within the view that holds it, so a strip holding several views
+ * never moves one between them.
+ */
+export function projectReorderInOwnView(
+	snapshot: Pick<ServerWorkspaceSnapshot, 'projects' | 'views'>,
+	presentedProjectIds: readonly string[],
+	projectId: string,
+): Readonly<{ targetViewId: string; index: number }> | null {
+	const targetViewId = snapshot.projects[projectId]?.viewId;
+	const current =
+		targetViewId === undefined
+			? undefined
+			: snapshot.views[targetViewId]?.projectIds;
+	if (targetViewId === undefined || current === undefined) return null;
+	const next = presentedProjectIds.filter((id) => current.includes(id));
+	const index = next.indexOf(projectId);
+	if (
+		index < 0 ||
+		(current.length === next.length &&
+			current.every((id, position) => id === next[position]))
+	)
+		return null;
+	return { targetViewId, index };
+}
+
+/**
  * Keep presentation selection constrained to the latest authenticated server
  * snapshot. A still-valid local project or panel is preserved when another
  * client changes snapshot active ids. A closed/moved panel therefore cannot

@@ -230,7 +230,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	skip: runtimeStaged
 		? false
 		: `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`,
-	timeout: 180_000,
+	timeout: 300_000,
 }, async (t) => {
 	const relay = await startHostedLoopbackRelay();
 	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
@@ -244,11 +244,19 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	const hostKey = createHostedHostKey();
 	const connections = [];
 	const host = await startHostedPairingHost({
-		acceptApplication: () => {
+		// The application answers every frame with the same frame, so a window
+		// can prove its connection still carries traffic both ways.
+		acceptApplication: (transport) => {
 			const connection = {
 				connectionId: `connection-${connections.length + 1}`,
 				closed: false,
-				start: async () => undefined,
+				start: async () => {
+					await transport.open();
+					void (async () => {
+						for await (const frame of transport.incoming)
+							await transport.send(frame);
+					})().catch(() => undefined);
+				},
 				close: async () => {
 					connection.closed = true;
 				},
@@ -413,7 +421,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		return opened;
 	};
 	await openWindow('w-main');
-	await openWindow('w-settings');
+	const settingsWindow = await openWindow('w-settings');
 	assert.equal(connections.length, 3);
 	assert.deepEqual(
 		connections.map((entry) => entry.closed),
@@ -422,7 +430,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	);
 
 	// A window reconnecting replaces its own connection and no other.
-	await openWindow('w-main');
+	const mainWindow = await openWindow('w-main');
 	const startedAt = Date.now();
 	while (!connections[1].closed) {
 		if (Date.now() - startedAt > 30_000)
@@ -433,6 +441,41 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		connections.map((entry) => entry.closed),
 		[false, true, false, false],
 	);
+	// A window closing ends its own connection and no other: the window left
+	// open keeps carrying traffic both ways for as long as it stays open.
+	await settingsWindow.transport.open();
+	const answers = settingsWindow.transport.incoming[Symbol.asyncIterator]();
+	const roundTrip = async (value) => {
+		await settingsWindow.transport.send(Uint8Array.of(value));
+		const answer = await Promise.race([
+			answers.next(),
+			new Promise((_, reject) =>
+				setTimeout(
+					() => reject(new Error('the open window stopped answering')),
+					10_000,
+				),
+			),
+		]);
+		assert.deepEqual([...(answer.value ?? [])], [value]);
+	};
+	await roundTrip(1);
+	await mainWindow.transport.close({ code: 'normal' });
+	const closedAt = Date.now();
+	while (!connections[3].closed) {
+		if (Date.now() - closedAt > 30_000)
+			throw new Error("the closed window's connection was not released");
+		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+	}
+	for (let value = 2; Date.now() - closedAt < 60_000; value += 1) {
+		await roundTrip(value % 250);
+		assert.deepEqual(
+			connections.map((entry) => entry.closed),
+			[false, true, false, true],
+			'closing one window disconnected another',
+		);
+		await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+	}
+	assert.deepEqual(failures, []);
 	// Which window it is never passes through the relay.
 	assert.equal(
 		relay.state.frames.some(

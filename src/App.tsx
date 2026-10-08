@@ -176,6 +176,7 @@ import { recordBoundedRendererRender } from './shared/renderLoopGuard';
 import {
 	hasTerminalPresentation,
 	isReservedWorkspaceProject,
+	projectReorderInOwnView,
 	type ServerWorkspaceFolder,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
@@ -6337,6 +6338,8 @@ function App({
 			requestedWorkspaceViewId === null ||
 			requestedOwnWorkspaceView ||
 			requestedWorkspaceViewId === workspaceSnapshot?.viewOrder[0],
+		// Only Desktop has several windows; a browser holds every view's projects.
+		presentsEveryView: !hasNativeWindowControls,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
@@ -7198,20 +7201,15 @@ function App({
 				(project) => project.id === movedId,
 			);
 			if (index < 0) return;
-			const current =
-				store.snapshot?.views[boundWorkspaceViewId]?.projectIds ?? [];
-			const next = projectsRef.current.map((project) => project.id);
-			if (
-				current.length === next.length &&
-				current.every((id, position) => id === next[position])
-			) {
-				return;
-			}
-			void store.moveProject({
-				index,
-				projectId: movedId,
-				targetViewId: boundWorkspaceViewId,
-			});
+			const snapshot = store.snapshot;
+			if (snapshot === null) return;
+			const reorder = projectReorderInOwnView(
+				snapshot,
+				projectsRef.current.map((project) => project.id),
+				movedId,
+			);
+			if (reorder === null) return;
+			void store.moveProject({ ...reorder, projectId: movedId });
 		},
 		[
 			boundWorkspaceViewId,
