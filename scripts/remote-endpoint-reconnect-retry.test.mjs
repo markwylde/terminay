@@ -113,6 +113,7 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 	const replacement = lane();
 	let attempts = 0;
 	const diagnostics = [];
+	let asking;
 	const unbind = bindRemoteServerUiDocumentEndpoint({
 		sender,
 		launch: {
@@ -136,6 +137,11 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 		);
 
 		first.lose();
+		// The document keeps asking for a live endpoint, as its recovery does.
+		asking = setInterval(
+			() => ipcMain.emit('server-ui-host:replace-byte-endpoint', { sender }),
+			250,
+		);
 		await until(
 			() => attempts === 1,
 			5_000,
@@ -154,6 +160,7 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 			'the reconnected lane was never handed to the document',
 		);
 	} finally {
+		clearInterval(asking);
 		unbind();
 		for (const endpoint of endpoints) endpoint.close();
 	}

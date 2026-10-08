@@ -6047,10 +6047,23 @@ function beginCanonicalProjectDrag(
 }
 
 /** The window, other than the drag's source, whose project bar is at the
- * point and which presents a workspace view a project can move into. */
+ * point and which presents a workspace view a project can move into. A
+ * project stays on its server, so a window showing another server is never
+ * one: view ids are only unique within a server. */
 function projectDropWindowAt(point: { x: number; y: number }): number | null {
 	const hit = findAppWindowTabBarAtPoint(point);
 	if (hit === null || hit === projectDragSourceWebContentsId) return null;
+	const sourceProfileId =
+		projectDragSourceWebContentsId === null
+			? undefined
+			: windowServerControllers
+					.get(projectDragSourceWebContentsId)
+					?.currentProfileId();
+	if (
+		sourceProfileId === undefined ||
+		windowServerControllers.get(hit)?.currentProfileId() !== sourceProfileId
+	)
+		return null;
 	return workspaceViewByWebContents.has(hit) ? hit : null;
 }
 
