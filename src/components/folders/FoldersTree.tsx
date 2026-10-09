@@ -302,7 +302,7 @@ export function FoldersTree({
 		<FolderCard
 			key={folder.id}
 			folderId={folder.id}
-			className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}`}
+			className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}${folder.isDeleting ? ' folders-tree__folder--deleting' : ''}`}
 			dropHandlers={dropHandlers(folder.id)}
 			reorderable={reorderable}
 			reduceMotion={reduceMotion}
@@ -591,11 +591,14 @@ function FolderHeader({
 	const noPullRequest = showsNoPullRequest(folder);
 	const unmerged =
 		folder.unmerged === undefined ? undefined : unmergedMark(folder.unmerged);
+	const { isDeleting } = folder;
+	// A worktree on its way out says so in place of what was measured of it.
 	const hasFacts =
-		changeChip !== undefined ||
-		pullRequest !== undefined ||
-		noPullRequest ||
-		checkCount > 0;
+		!isDeleting &&
+		(changeChip !== undefined ||
+			pullRequest !== undefined ||
+			noPullRequest ||
+			checkCount > 0);
 	// The active terminal's row is what shows where the user is. A selected
 	// folder with no such row is tinted instead, so the selection is not lost.
 	const isSelectedAlone =
@@ -634,6 +637,7 @@ function FolderHeader({
 			role="treeitem"
 			aria-selected={folder.isSelected}
 			aria-expanded="true"
+			{...(isDeleting ? { 'aria-busy': true } : {})}
 			tabIndex={0}
 			{...(change === undefined ? {} : { 'data-change': change.kind })}
 			{...(details === undefined
@@ -734,6 +738,11 @@ function FolderHeader({
 					{unmergedElement}
 				</span>
 			)}
+			{isDeleting ? (
+				<span className="folders-tree__deleting" role="status">
+					Deleting…
+				</span>
+			) : null}
 			{hasFacts ? (
 				<span className="folders-tree__facts">
 					{changeChip === undefined ? null : (

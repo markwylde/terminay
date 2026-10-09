@@ -4891,8 +4891,10 @@ const ProjectWorkspace = forwardRef<
 							selectedFolderId: folder.id,
 							inventory: projectInventory,
 							worktreeStatus: worktreePanelStatus,
+							deletingWorktreePaths,
 						}),
 			[
+				deletingWorktreePaths,
 				folder.id,
 				isActive,
 				project.id,

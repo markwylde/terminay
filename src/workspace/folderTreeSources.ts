@@ -168,6 +168,8 @@ export type ProjectFolderTreeInput = {
 	/** The whole project's inventory, every folder's panels included. */
 	inventory: readonly WorkspaceInventoryEntry[];
 	worktreeStatus: WorktreePanelStatus | null | undefined;
+	/** The worktrees this device is removing. */
+	deletingWorktreePaths?: ReadonlySet<string>;
 };
 
 /** A project's Folders tree from the sources above. Empty while no projection
@@ -188,5 +190,8 @@ export function buildProjectFolderTree(
 			: { selectedFolderId: input.selectedFolderId }),
 		...(activePanelId === undefined ? {} : { activePanelId }),
 		...(worktrees === undefined ? {} : { worktrees }),
+		...(input.deletingWorktreePaths === undefined
+			? {}
+			: { deletingWorktreePaths: input.deletingWorktreePaths }),
 	});
 }
