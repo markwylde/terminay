@@ -24,4 +24,10 @@ RUN --mount=type=secret,id=turbo_token,required=false,uid=1000,gid=1000,mode=040
 # no shard starts a fixture against a cold cache.
 RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs
 
+# A tab shows the title its program sets. Debian's ~/.bashrc writes
+# `user@host: dir` into the title at every prompt, which would name every tab
+# after the container. The suite's shells keep the same prompt without it, so
+# a tab's title is whatever the test under way gave it.
+RUN printf '%s\n' "PS1='\\u@\\h:\\w\\\$ '" >> /home/node/.bashrc
+
 ENTRYPOINT ["sh", "scripts/support/e2e-container-entrypoint.sh"]

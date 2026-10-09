@@ -4,7 +4,12 @@ export type ServerWorkspacePanel = Readonly<{
 	/** The folder of the panel's project that holds it. */
 	folderId: string;
 	type: 'terminal' | 'file' | 'folder';
+	/** What the panel displays. For a terminal the server resolves it from the
+	 * three sources below: named, else program, else default. */
 	title?: string;
+	defaultTitle?: string;
+	namedTitle?: string;
+	programTitle?: string;
 	emoji?: string;
 	color?: string;
 	inheritsProjectColor?: boolean;

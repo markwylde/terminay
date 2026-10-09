@@ -199,9 +199,11 @@ test.describe('AI tab metadata command bar actions', () => {
     await expect(title).toHaveText('Generating...')
 
     // The indication is this client's presentation only: the editor still
-    // offers the terminal's real title.
+    // offers the terminal's real title, which nobody has named.
     const editWindow = await openTerminalEditWindow(mainWindow)
-    await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue('Terminal 1')
+    const nameField = editWindow.getByRole('textbox', { name: 'Name', exact: true })
+    await expect(nameField).toHaveValue('')
+    await expect(nameField).toHaveAttribute('placeholder', 'Terminal 1')
     await cancelEditWindow(editWindow)
 
     await setAiMock(mainWindow)
@@ -218,7 +220,7 @@ test.describe('AI tab metadata command bar actions', () => {
     await expect(title).toHaveText('Generating...')
 
     const editWindow = await openTerminalEditWindow(mainWindow)
-    await editWindow.getByPlaceholder('Terminal name').fill('Mine')
+    await editWindow.getByRole('textbox', { name: 'Name', exact: true }).fill('Mine')
     await submitEditWindow(editWindow)
 
     await setAiMock(mainWindow)

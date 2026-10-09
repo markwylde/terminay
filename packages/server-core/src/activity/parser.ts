@@ -168,6 +168,10 @@ function decodeOsc(payload: string): TerminalActivitySignal | null {
 	const separator = payload.indexOf(';');
 	const identifier = separator < 0 ? payload : payload.slice(0, separator);
 	const body = separator < 0 ? '' : payload.slice(separator + 1);
+	// OSC 0 sets icon name and title, OSC 2 the title alone. OSC 1 names only
+	// the icon and is not a title.
+	if (identifier === '0' || identifier === '2')
+		return { kind: 'title', title: body };
 	if (identifier === '9') return decodeOsc9(body);
 	if (identifier === '133' || identifier === '633') return decodeCommand(body);
 	if (identifier === '777') return decodeOsc777(body);

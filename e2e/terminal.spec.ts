@@ -407,7 +407,7 @@ test.describe('terminal behavior', () => {
 		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
 		).toBeVisible();
-		await mainWindow.getByPlaceholder('Terminal name').fill('Move Me');
+		await mainWindow.getByRole('textbox', { name: 'Name', exact: true }).fill('Move Me');
 		await submitEditWindow(mainWindow);
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
@@ -951,7 +951,7 @@ test.describe('terminal behavior', () => {
 		).toBeVisible();
 		await expect(terminalTabs).toHaveCount(initialTabCount);
 
-		await editWindow.getByPlaceholder('Terminal name').fill('Build Shell');
+		await editWindow.getByRole('textbox', { name: 'Name', exact: true }).fill('Build Shell');
 		const iconInput = editWindow.getByLabel('Tab icon');
 		await iconInput.fill('ZZ');
 		await expect(iconInput).toHaveValue('Z');
@@ -972,7 +972,7 @@ test.describe('terminal behavior', () => {
 		mainWindow,
 	}) => {
 		const editWindow = await openTerminalEditWindow(mainWindow);
-		const titleInput = editWindow.getByPlaceholder('Terminal name');
+		const titleInput = editWindow.getByRole('textbox', { name: 'Name', exact: true });
 
 		await expect(
 			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
@@ -1010,7 +1010,7 @@ test.describe('terminal behavior', () => {
 	}) => {
 		const firstProjectEditWindow = await openTerminalEditWindow(mainWindow);
 		await firstProjectEditWindow
-			.getByPlaceholder('Terminal name')
+			.getByRole('textbox', { name: 'Name', exact: true })
 			.fill('Wrong Project Shell');
 		await submitEditWindow(firstProjectEditWindow);
 
@@ -1036,9 +1036,14 @@ test.describe('terminal behavior', () => {
 		await expect(
 			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
 		).toBeVisible();
-		await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue(
-			'Terminal 1',
-		);
+		// Nobody has named this terminal: the field is empty and offers the
+		// title the tab shows.
+		const nameField = editWindow.getByRole('textbox', {
+			name: 'Name',
+			exact: true,
+		});
+		await expect(nameField).toHaveValue('');
+		await expect(nameField).toHaveAttribute('placeholder', 'Terminal 1');
 		await mainWindow.waitForTimeout(500);
 		await expect
 			.poll(async () =>

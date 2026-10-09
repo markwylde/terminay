@@ -342,6 +342,10 @@ import {
 	type MovedProject,
 	type MovedTerminalTab,
 } from './workspace/terminalTransferOrchestration';
+import {
+	terminalTitleDraft,
+	terminalTitleSubmission,
+} from './workspace/terminalTitleEdit';
 import { useDictationController } from './workspace/useDictationController';
 import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
 import { shouldAutoExpandDocumentationPane } from './workspace/documentationAutoExpand';
@@ -3243,6 +3247,12 @@ const ProjectWorkspace = forwardRef<
 				}
 
 				const sessionId = panel.params?.sessionId ?? null;
+				const titleDraft = terminalTitleDraft(
+					terminalClientContext?.workspaceSnapshotStore?.snapshot?.panels[
+						panelId
+					],
+					panel.title ?? 'Tab',
+				);
 
 				try {
 					const result = await auxiliaryRoutes.editTerminalTab({
@@ -3257,17 +3267,20 @@ const ProjectWorkspace = forwardRef<
 								panel.params?.inheritsProjectColor ??
 								panel.params?.color === project.color,
 							projectColor: project.color,
-							title: panel.title ?? 'Tab',
+							...titleDraft,
 						},
 					});
 					if (!result) {
 						return;
 					}
 
-					const nextTitle =
-						result.title.trim().length > 0
-							? result.title.trim()
-							: (panel.title ?? 'Tab');
+					// An empty name returns the tab to its automatic title.
+					const { patchTitle, shownTitle: nextTitle } =
+						terminalTitleSubmission(
+							titleDraft,
+							result.title,
+							panel.title ?? 'Tab',
+						);
 					const nextEmoji = result.emoji.trim();
 					const nextColor = result.color;
 					const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
@@ -3275,7 +3288,7 @@ const ProjectWorkspace = forwardRef<
 						await workspaceStore.updatePanel({
 							panelId,
 							patch: {
-								title: nextTitle,
+								title: patchTitle,
 								emoji: nextEmoji,
 								color: nextColor,
 								inheritsProjectColor: result.inheritsProjectColor,
