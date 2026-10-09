@@ -107,7 +107,9 @@ import {
 	createServerRemoteExposure,
 	createStandaloneServer,
 	DataRootInUseError,
+	DataRootLockUnavailableError,
 	describeDataRootInUse,
+	describeDataRootLockUnavailable,
 	FileDataRootLease,
 	type LocalUiServer,
 	resolveStandaloneServerIdentity,
@@ -192,14 +194,17 @@ else if (options.command === 'mcp') {
 		try {
 			await standaloneLease.acquire(options.dataRoot);
 		} catch (error) {
-			if (!(error instanceof DataRootInUseError)) throw error;
 			// An operator's mistake to fix, not a crash to debug: say what to do
 			// and leave the stack trace out of the container log.
-			process.stderr.write(
-				describeDataRootInUse(error, {
-					container: process.env.TERMINAY_MANAGED_BY === 'container',
-				}),
-			);
+			if (error instanceof DataRootInUseError) {
+				process.stderr.write(
+					describeDataRootInUse(error, {
+						container: process.env.TERMINAY_MANAGED_BY === 'container',
+					}),
+				);
+			} else if (error instanceof DataRootLockUnavailableError) {
+				process.stderr.write(describeDataRootLockUnavailable(error));
+			} else throw error;
 			process.exit(1);
 		}
 		try {
