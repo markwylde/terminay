@@ -84,11 +84,21 @@ export interface TerminalPanel extends PanelBase {
 	readonly type: 'terminal';
 	readonly sessionId: ProtocolId;
 	readonly cwd?: string;
+	/** `Terminal N`, assigned by the server at creation. A terminal's `title`
+	 * is what it displays, resolved by the server: the named title, else the
+	 * program title, else this. */
+	readonly defaultTitle?: string;
+	/** A name a person gave the terminal: the tab editor, AI, or MCP. */
+	readonly namedTitle?: string;
+	/** A title the running program set with `OSC 0` / `OSC 2`. Sanitised
+	 * display text from untrusted output; it carries no authority (ADR-0056). */
+	readonly programTitle?: string;
 	/** Absent means the terminal has no note; an empty string is a present,
 	 * empty note. */
 	readonly note?: string;
-	/** Advances whenever the title or note changes. Server-assigned; a client
-	 * patch can never set it. Absent means 0. */
+	/** Advances whenever the named title or note changes; a program title
+	 * never advances it. Server-assigned; a client patch can never set it.
+	 * Absent means 0. */
 	readonly metadataRevision?: number;
 }
 export interface FilePanel extends PanelBase {
@@ -371,6 +381,15 @@ export function canonicalizeWorkspaceState(
 				type: 'terminal',
 				sessionId: panel.sessionId,
 				...(panel.cwd === undefined ? {} : { cwd: panel.cwd }),
+				...(panel.defaultTitle === undefined
+					? {}
+					: { defaultTitle: panel.defaultTitle }),
+				...(panel.namedTitle === undefined
+					? {}
+					: { namedTitle: panel.namedTitle }),
+				...(panel.programTitle === undefined
+					? {}
+					: { programTitle: panel.programTitle }),
 				...(panel.note === undefined ? {} : { note: panel.note }),
 				...(panel.metadataRevision === undefined
 					? {}
@@ -602,6 +621,15 @@ export type WorkspaceCommand =
 			readonly index?: number;
 	  }
 	| { readonly type: 'panel.close'; readonly panelId: ProtocolId }
+	| {
+			/** Host-owned: the title a terminal's program set, already sanitised.
+			 * `null` means the program has none. Never a client command. */
+			readonly type: 'panel.programTitle.set';
+			readonly panelId: ProtocolId;
+			readonly title: string | null;
+	  }
+	/** Host-owned: forget every terminal's program title. */
+	| { readonly type: 'panel.programTitles.clear' }
 	| {
 			readonly type: 'terminal.create';
 			readonly sessionId: ProtocolId;
@@ -939,6 +967,14 @@ export function validateWorkspace(state: WorkspaceState): void {
 			throw new TypeError('terminal panel/session ownership mismatch');
 		if (panel.type === 'terminal') {
 			if (panel.note !== undefined) assertPanelNote(panel.note);
+			for (const source of [
+				panel.defaultTitle,
+				panel.namedTitle,
+				panel.programTitle,
+			])
+				if (source !== undefined) boundedName(source);
+			if (panel.defaultTitle !== undefined && panel.title !== shownTitle(panel))
+				throw new TypeError('terminal panel title is not its resolved title');
 			if (
 				panel.metadataRevision !== undefined &&
 				(!Number.isSafeInteger(panel.metadataRevision) ||
@@ -1086,7 +1122,9 @@ export function migrateWorkspaceState(
 	let value = input as Record<string, unknown>;
 	if (value.schemaVersion === 5) value = migrateSchema5To6(value);
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
-		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
+		return adoptTerminalTitleSources(
+			canonicalizeWorkspaceState(value as unknown as WorkspaceState),
+		);
 	}
 	if (value.schemaVersion !== 0)
 		throw new Error('unsupported workspace schema');
@@ -1141,6 +1179,126 @@ export function migrateWorkspaceState(
 	}
 	validateWorkspace(result);
 	return result;
+}
+
+const DEFAULT_TERMINAL_TITLE = /^Terminal \d+$/u;
+
+interface TerminalTitleSources {
+	readonly defaultTitle: string;
+	readonly namedTitle?: string;
+	readonly programTitle?: string;
+}
+
+/** What a terminal displays: a person's name for it, else the program's, else
+ * its default name. */
+function shownTitle(sources: {
+	readonly defaultTitle?: string;
+	readonly namedTitle?: string;
+	readonly programTitle?: string;
+}): string | undefined {
+	return sources.namedTitle ?? sources.programTitle ?? sources.defaultTitle;
+}
+
+function nextDefaultTerminalTitle(
+	state: WorkspaceState,
+	projectId: ProtocolId,
+	exceptPanelId?: ProtocolId,
+): string {
+	const others = Object.values(state.panels).filter(
+		(panel) =>
+			panel.projectId === projectId &&
+			panel.type === 'terminal' &&
+			panel.id !== exceptPanelId,
+	).length;
+	return `Terminal ${others + 1}`;
+}
+
+/** A terminal's title sources. A panel stored before they existed has only
+ * `title`: a `Terminal N` there is its default name, anything else is a name
+ * someone gave it. */
+function terminalTitleSources(
+	state: WorkspaceState,
+	panel: TerminalPanel,
+): TerminalTitleSources {
+	if (panel.defaultTitle !== undefined)
+		return {
+			defaultTitle: panel.defaultTitle,
+			...(panel.namedTitle === undefined
+				? {}
+				: { namedTitle: panel.namedTitle }),
+			...(panel.programTitle === undefined
+				? {}
+				: { programTitle: panel.programTitle }),
+		};
+	const title = panel.title?.trim();
+	if (title !== undefined && DEFAULT_TERMINAL_TITLE.test(title))
+		return { defaultTitle: title };
+	const defaultTitle = nextDefaultTerminalTitle(
+		state,
+		panel.projectId,
+		panel.id,
+	);
+	return title === undefined || title.length === 0
+		? { defaultTitle }
+		: { defaultTitle, namedTitle: title.slice(0, 256).trim() };
+}
+
+/** The title a terminal is created with: a `Terminal N` or no title at all is
+ * its default name, anything else is a name it was asked to carry. */
+function terminalTitlesAtCreation(
+	state: WorkspaceState,
+	projectId: ProtocolId,
+	title: string | undefined,
+): TerminalTitleSources {
+	if (title === undefined)
+		return { defaultTitle: nextDefaultTerminalTitle(state, projectId) };
+	const name = boundedName(title);
+	return DEFAULT_TERMINAL_TITLE.test(name)
+		? { defaultTitle: name }
+		: {
+				defaultTitle: nextDefaultTerminalTitle(state, projectId),
+				namedTitle: name,
+			};
+}
+
+function withTitleSources(
+	panel: TerminalPanel,
+	sources: TerminalTitleSources,
+): TerminalPanel {
+	const {
+		title: _title,
+		defaultTitle: _defaultTitle,
+		namedTitle: _namedTitle,
+		programTitle: _programTitle,
+		...rest
+	} = panel;
+	return {
+		...rest,
+		title: shownTitle(sources) ?? sources.defaultTitle,
+		defaultTitle: sources.defaultTitle,
+		...(sources.namedTitle === undefined
+			? {}
+			: { namedTitle: sources.namedTitle }),
+		...(sources.programTitle === undefined
+			? {}
+			: { programTitle: sources.programTitle }),
+	};
+}
+
+/** Give every terminal panel its title sources. Idempotent, and it leaves
+ * `title` as it was, so an older server reading the result sees no change. */
+function adoptTerminalTitleSources(state: WorkspaceState): WorkspaceState {
+	const panels: Record<string, WorkspacePanel> = {};
+	let adopted = false;
+	for (const [id, panel] of Object.entries(state.panels)) {
+		if (panel.type !== 'terminal' || panel.defaultTitle !== undefined) {
+			panels[id] = panel;
+			continue;
+		}
+		panels[id] = withTitleSources(panel, terminalTitleSources(state, panel));
+		adopted = true;
+	}
+	return adopted ? { ...state, panels } : state;
 }
 
 function validateLayout(node: LayoutNode, panelIds: Set<string>): void {
@@ -1498,6 +1656,12 @@ export class WorkspaceStore {
 			state: clone(next),
 		};
 		this.outcomes.set(envelope.commandId, result);
+		// Each outcome holds a whole state. A command id is replayed only while
+		// its event is still in the history, so older outcomes are let go.
+		for (const commandId of this.outcomes.keys()) {
+			if (this.outcomes.size <= this.maxHistory) break;
+			this.outcomes.delete(commandId);
+		}
 		for (const listener of this.listeners) {
 			try {
 				listener(event);
@@ -1960,10 +2124,18 @@ export class WorkspaceStore {
 						throw new Error('terminal session is outside project');
 				}
 				const folder = folderForNewPanel(state, project, panel.folderId);
-				state.panels[panel.id] = {
+				const created = {
 					...clone(panel),
 					folderId: folder.id,
 				} as WorkspacePanel;
+				// Whatever title sources the input names, the server assigns them.
+				state.panels[panel.id] =
+					created.type === 'terminal'
+						? withTitleSources(
+								created,
+								terminalTitlesAtCreation(state, project.id, panel.title),
+							)
+						: created;
 				state.folders[folder.id] = withFolderPanels(
 					folder,
 					[...folder.panelIds, panel.id],
@@ -2127,8 +2299,14 @@ export class WorkspaceStore {
 					throw new Error('panel ownership/type is immutable');
 				if ('metadataRevision' in patch)
 					throw new Error('panel metadata revision is server-assigned');
+				if (
+					'defaultTitle' in patch ||
+					'namedTitle' in patch ||
+					'programTitle' in patch
+				)
+					throw new Error('panel title sources are server-assigned');
 				const { note, ...rest } = patch;
-				const next = {
+				let next = {
 					...panel,
 					...(rest as Partial<WorkspacePanel>),
 				} as WorkspacePanel & { note?: string; metadataRevision?: number };
@@ -2141,13 +2319,57 @@ export class WorkspaceStore {
 						next.note = note;
 					}
 				}
-				if (
-					panel.type === 'terminal' &&
-					(next.title !== panel.title || next.note !== panel.note)
-				)
-					next.metadataRevision = (panel.metadataRevision ?? 0) + 1;
+				if (panel.type === 'terminal') {
+					// A patched title is a name someone gave the terminal; an empty
+					// one takes that name away again.
+					const sources = terminalTitleSources(state, panel);
+					const { namedTitle: _named, ...unnamed } = sources;
+					const title = patch.title;
+					const renamed: TerminalTitleSources = !('title' in patch)
+						? sources
+						: title === null ||
+								(typeof title === 'string' && title.trim().length === 0)
+							? unnamed
+							: { ...unnamed, namedTitle: boundedName(title as string) };
+					next = withTitleSources(next as TerminalPanel, renamed);
+					if (
+						renamed.namedTitle !== sources.namedTitle ||
+						next.note !== panel.note
+					)
+						next.metadataRevision = (panel.metadataRevision ?? 0) + 1;
+				}
 				state.panels[panel.id] = next;
 				changed.push(panel.id);
+				break;
+			}
+			case 'panel.programTitle.set': {
+				const panel = requirePanel(state, command.panelId);
+				if (panel.type !== 'terminal')
+					throw new Error('only a terminal panel has a program title');
+				const { programTitle: _program, ...rest } = terminalTitleSources(
+					state,
+					panel,
+				);
+				state.panels[panel.id] = withTitleSources(
+					panel,
+					command.title === null
+						? rest
+						: { ...rest, programTitle: boundedName(command.title) },
+				);
+				changed.push(panel.id);
+				break;
+			}
+			case 'panel.programTitles.clear': {
+				for (const panel of Object.values(state.panels)) {
+					if (panel.type !== 'terminal' || panel.programTitle === undefined)
+						continue;
+					const { programTitle: _program, ...rest } = terminalTitleSources(
+						state,
+						panel,
+					);
+					state.panels[panel.id] = withTitleSources(panel, rest);
+					changed.push(panel.id);
+				}
 				break;
 			}
 			case 'panel.reorder': {
@@ -2316,18 +2538,20 @@ export class WorkspaceStore {
 						? {}
 						: { launch: validateLaunchMetadata(command.launch) }),
 				};
-				const panel: TerminalPanel = {
-					id: command.panelId,
-					projectId: project.id,
-					folderId: folder.id,
-					type: 'terminal',
-					sessionId: command.sessionId,
-					title: boundedName(command.title ?? 'Terminal'),
-					createdAt,
-					...(command.cwd === undefined
-						? {}
-						: { cwd: boundedPath(command.cwd) }),
-				};
+				const panel = withTitleSources(
+					{
+						id: command.panelId,
+						projectId: project.id,
+						folderId: folder.id,
+						type: 'terminal',
+						sessionId: command.sessionId,
+						createdAt,
+						...(command.cwd === undefined
+							? {}
+							: { cwd: boundedPath(command.cwd) }),
+					},
+					terminalTitlesAtCreation(state, project.id, command.title),
+				);
 				state.panels[panel.id] = panel;
 				state.folders[folder.id] = withFolderPanels(
 					folder,

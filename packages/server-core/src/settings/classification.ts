@@ -21,6 +21,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	keepTerminalsAfterQuit: 'server',
 	macros: 'server',
 	moveTerminalsIntoNewWorktreeFolders: 'server',
+	programSetTabTitles: 'server',
 	recording: 'server',
 	remoteAccess: 'server',
 	rightClickSelectsWord: 'server',

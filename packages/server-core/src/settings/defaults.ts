@@ -26,6 +26,9 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	// folder. Off: the folder offers the move instead.
 	moveTerminalsIntoNewWorktreeFolders: true,
 	keepTerminalsAfterQuit: '5m',
+	// On: a program names its tab with OSC 0 / OSC 2. A name a person gave
+	// the tab always wins.
+	programSetTabTitles: true,
 	convertEol: true,
 	dictation: {
 		enabled: true,

@@ -201,6 +201,9 @@ export type TerminalSettings = {
 	/** Server setting: a terminal that creates a Git worktree moves into that
 	 * worktree's folder. Off, the folder offers the move instead. */
 	moveTerminalsIntoNewWorktreeFolders: boolean;
+	/** Server setting: a program names its tab with OSC 0 / OSC 2. A name a
+	 * person gave the tab always wins. */
+	programSetTabTitles: boolean;
 	/** Device setting: which Terminay Desktop release channel this machine follows. */
 	updateChannel: 'stable' | 'beta';
 	convertEol: boolean;
