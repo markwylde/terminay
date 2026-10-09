@@ -292,6 +292,17 @@
 
 /* Change size, pull request, and checks: one line of chips that never wraps
    and never shrinks a chip. Where the tree is narrow the chips say less. */
+/* A worktree being removed: said beneath its label until it is gone. */
+.folders-tree__deleting {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	font-style: italic;
+	color: rgba(220, 226, 240, 0.72);
+}
+
 .folders-tree__facts {
 	display: flex;
 	flex-wrap: nowrap;

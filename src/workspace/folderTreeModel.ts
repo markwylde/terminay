@@ -122,6 +122,8 @@ export type FolderTreeFolderRow = {
 	change?: FolderTreeChange;
 	/** True when the checkout holds work that exists only on this machine. */
 	isDirty: boolean;
+	/** True while this device is removing the folder's worktree. */
+	isDeleting: boolean;
 	/** Present when the checkout's branch holds commits the default branch
 	 * lacks, pushed or not. */
 	unmerged?: FolderTreeUnmerged;
@@ -142,6 +144,8 @@ export type FolderTreeInput = {
 	/** The repository's worktrees, or undefined when the root is not a
 	 * repository or the listing has not arrived. */
 	worktrees?: readonly FolderTreeWorktree[];
+	/** The worktrees this device is removing and has not heard the end of. */
+	deletingWorktreePaths?: ReadonlySet<string>;
 };
 
 const DEFAULT_TERMINAL_TITLE = 'Terminal';
@@ -231,6 +235,11 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			// no checkout, so `worktree` is undefined for it.
 			...(worktree?.change === undefined ? {} : { change: worktree.change }),
 			isDirty: isChangeDirty(worktree?.change),
+			// Only a linked folder's worktree can be removed.
+			isDeleting:
+				folder.kind === 'linked' &&
+				folder.worktree !== undefined &&
+				input.deletingWorktreePaths?.has(folder.worktree.path) === true,
 			...(worktree?.unmerged === undefined
 				? {}
 				: { unmerged: worktree.unmerged }),
