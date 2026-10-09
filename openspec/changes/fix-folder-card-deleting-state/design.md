@@ -46,6 +46,13 @@ change size, pull request, and checks of a worktree being removed are no longer
 something to act on, and a card that keeps its height does not make the cards
 below it jump when a removal starts and ends.
 
+**The whole card is dimmed, not only its head.** The card is drawn at 40%
+opacity while its worktree is being removed: label, line, terminal rows, and
+the New terminal row alike. Everything in the card goes with the worktree, so
+all of it reads as going. The card stays interactive; the menu already disables
+what cannot be done to a worktree mid-removal, and a terminal in the folder is
+still the user's until the server closes or moves it.
+
 **No boundary is crossed.** The renderer reads state it already holds and sends
 nothing new. Removal stays server-owned and identity-bound; the card's line is
 presentation only and no authority is derived from it.

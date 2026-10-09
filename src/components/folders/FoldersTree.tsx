@@ -302,7 +302,7 @@ export function FoldersTree({
 		<FolderCard
 			key={folder.id}
 			folderId={folder.id}
-			className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}`}
+			className={`folders-tree__folder${dropTargetId === folder.id ? ' folders-tree__folder--drop-target' : ''}${preview?.draggingId === folder.id ? ' folders-tree__folder--dragging' : ''}${folder.isDeleting ? ' folders-tree__folder--deleting' : ''}`}
 			dropHandlers={dropHandlers(folder.id)}
 			reorderable={reorderable}
 			reduceMotion={reduceMotion}
