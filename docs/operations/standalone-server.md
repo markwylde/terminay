@@ -385,20 +385,23 @@ empty volume, and does not follow the container's hostname. The hostname is
 only the name shown in pairing links; set it with `--hostname`, since a
 container's default hostname is its id.
 
-Only one server may use a data volume at a time. The server writes
-`.terminay-server.lock` into it on start and removes it on a graceful stop, so
-stop the container with `docker stop`. A container that is killed, or removed
-with `docker rm -f`, leaves the lock behind, and the next start exits with
-`Terminay server did not start: its data root is locked` and the steps to
-recover. The server never removes the lock itself, because two servers on one
-volume would corrupt it. Check that no other container uses the volume, then
-remove the lock and start again:
+Only one server may use a data volume at a time. A running server holds an
+operating-system lock on `.terminay-server.lock.sqlite` in the volume. The lock
+ends when the server process does, however it stops, so a container that is
+killed or removed with `docker rm -f` leaves nothing to clear and the next
+start proceeds. A paused container still holds it. A second container started
+on a volume that is in use exits with `Terminay server did not start: another
+server is using its data root`; find the container that holds it, and use it
+or stop it:
 
 ```sh
 docker ps --filter volume=terminay-data
-docker run --rm -v terminay-data:/var/lib/terminay --entrypoint rm \
-  markwylde/terminay /var/lib/terminay/.terminay-server.lock
 ```
+
+`.terminay-server.lock` records which server holds the volume, for that
+message. Removing either file does nothing useful and is never needed. Keep the
+volume on a local filesystem: the lock is only as reliable as the filesystem's
+file locking, and the server does not start on one that cannot provide it.
 
 The server, its terminals, and the `terminay` command all run as the
 unprivileged `terminay` account, with `/home/terminay` as the first project
