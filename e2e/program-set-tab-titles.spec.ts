@@ -95,8 +95,9 @@ test('turning the setting off drops program titles and ignores new ones', async 
 	);
 	await expect(panel).toContainText('title-was-sent');
 	await expect(title).toHaveText('Terminal 1');
-	// The sequence is consumed, never drawn.
-	await expect(panel).not.toContainText(']2;ignored');
+	// The sequence is consumed, never drawn: the title's text appears once, in
+	// the command as it was typed, and nowhere in that command's output.
+	expect((await panel.innerText()).split('ignored')).toHaveLength(2);
 
 	// A name still works while program titles are off.
 	await renameActiveTab(mainWindow, 'api');
