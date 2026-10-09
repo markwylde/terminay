@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEmbeddedBootstrap, createLocalUiServer, createServerRemoteExposure, DataRootInUseError, describeDataRootInUse, FileDataRootLease } from "../dist/index.js";
-import { spawnSync } from "node:child_process";
+import { createEmbeddedBootstrap, createLocalUiServer, createServerRemoteExposure, DataRootInUseError, DataRootLockUnavailableError, describeDataRootInUse, describeDataRootLockUnavailable, FileDataRootLease } from "../dist/index.js";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { deriveUiBundleId } from "@terminay/server-core";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -311,30 +312,66 @@ test("embedded bootstrap rejects a non-loopback origin before claiming it", asyn
   assert.equal(bootstrap.phase, "failed");
 });
 
-test("file data-root lease prevents a second authority and releases atomically", async () => {
+test("file data-root lease prevents a second authority and frees the root on release", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-data-root-"));
+  const lockPath = join(root, ".terminay-server.lock.sqlite");
+  const ownerPath = join(root, ".terminay-server.lock");
   const first = new FileDataRootLease();
   const second = new FileDataRootLease();
   try {
+    // A record left by a killed server decides nothing.
+    await writeFile(ownerPath, `${JSON.stringify({ pid: 1, startedAt: "2026-10-08T16:53:38.850Z" })}\n`);
     await first.acquire(root);
-    const lock = await stat(join(root, ".terminay-server.lock"));
-    assert.equal(lock.mode & 0o777, 0o600);
-    assert.match(await readFile(join(root, ".terminay-server.lock"), "utf8"), /"pid"/);
+    assert.equal((await stat(lockPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(ownerPath)).mode & 0o777, 0o600);
+    const record = await readFile(ownerPath, "utf8");
+    assert.equal(JSON.parse(record).pid, process.pid);
     await assert.rejects(second.acquire(root), (error) => {
       assert.ok(error instanceof DataRootInUseError);
       assert.match(error.message, /data root is already in use/);
-      assert.equal(error.lockPath, join(error.dataRoot, ".terminay-server.lock"));
+      assert.equal(error.lockPath, join(error.dataRoot, ".terminay-server.lock.sqlite"));
       assert.equal(error.owner.pid, process.pid);
       assert.match(error.owner.startedAt, /^\d{4}-\d{2}-\d{2}T/);
       return true;
     });
+    // The refusal leaves the holder's record as it found it.
+    assert.equal(await readFile(ownerPath, "utf8"), record);
     await first.release(root);
+    await assert.rejects(stat(ownerPath), { code: "ENOENT" });
+    // The lock file is kept: removing it would let two processes lock two inodes.
+    assert.equal((await stat(lockPath)).size, 0);
     await second.acquire(root);
     await second.release(root);
-    await assert.rejects(stat(join(root, ".terminay-server.lock")), { code: "ENOENT" });
   } finally {
     await first.release(root);
     await second.release(root);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a data root that cannot be locked is refused rather than used unlocked", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-unlockable-root-"));
+  const lease = new FileDataRootLease();
+  try {
+    await mkdir(join(root, ".terminay-server.lock.sqlite"));
+    await assert.rejects(lease.acquire(root), (error) => {
+      assert.ok(error instanceof DataRootLockUnavailableError);
+      const text = describeDataRootLockUnavailable(error);
+      assert.match(text, /^Terminay server did not start: its data root could not be locked\./);
+      assert.ok(text.includes(join(root, ".terminay-server.lock.sqlite")));
+      return true;
+    });
+    await assert.rejects(stat(join(root, ".terminay-server.lock")), { code: "ENOENT" });
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "--data-root", root, "--project-root", root],
+      { encoding: "utf8", timeout: 20_000 },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^Terminay server did not start: its data root could not be locked\./);
+    assert.doesNotMatch(result.stderr, /\n {4}at /);
+  } finally {
+    await lease.release(root);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -383,56 +420,97 @@ async function reserveLoopbackPort() {
   return port;
 }
 
-test("a locked data root tells the operator what happened and how to clear it", () => {
+test("a held data root tells the operator that a server is running on it", () => {
   const error = new DataRootInUseError(
     "/var/lib/terminay",
-    "/var/lib/terminay/.terminay-server.lock",
+    "/var/lib/terminay/.terminay-server.lock.sqlite",
     { pid: 7, startedAt: "2026-10-08T16:02:11.000Z" },
   );
   const container = describeDataRootInUse(error, { container: true });
-  assert.match(container, /^Terminay server did not start: its data root is locked\./);
-  assert.match(container, /Left by: +a server started at 2026-10-08T16:02:11\.000Z/);
-  assert.match(container, /never removed automatically/);
+  assert.match(container, /^Terminay server did not start: another server is using its data root\./);
+  assert.match(container, /Lock file: +\/var\/lib\/terminay\/\.terminay-server\.lock\.sqlite/);
+  assert.match(container, /Held by: +a server started at 2026-10-08T16:02:11\.000Z/);
+  assert.match(container, /ends the moment that server does/);
   assert.match(container, /docker ps --filter volume=<your-volume>/);
-  assert.match(
-    container,
-    /docker run --rm -v <your-volume>:\/var\/lib\/terminay --entrypoint rm <this-image> \/var\/lib\/terminay\/\.terminay-server\.lock/,
-  );
+  assert.match(container, /A paused container still holds the lock/);
   // A process id from inside another container means nothing to the operator.
   assert.doesNotMatch(container, /ps -p/);
+  // Nothing is left behind to remove, so nothing says to remove it.
+  assert.doesNotMatch(container, /\brm\b/);
 
   const host = describeDataRootInUse(error, { container: false });
   assert.match(host, /ps -p 7/);
-  assert.match(host, /rm \/var\/lib\/terminay\/\.terminay-server\.lock/);
-  assert.doesNotMatch(host, /docker/);
+  assert.doesNotMatch(host, /docker|\brm\b/);
 
-  // A lock nobody can read still gets a remedy.
-  const unreadable = describeDataRootInUse(
-    new DataRootInUseError("/data", "/data/.terminay-server.lock", {}),
+  // A holder that recorded nothing is still explained.
+  const unrecorded = describeDataRootInUse(
+    new DataRootInUseError("/data", "/data/.terminay-server.lock.sqlite", {}),
     { container: false },
   );
-  assert.match(unreadable, /Left by: +an earlier server/);
-  assert.match(unreadable, /rm \/data\/\.terminay-server\.lock/);
+  assert.match(unrecorded, /Held by: +a running server/);
+  assert.doesNotMatch(unrecorded, /ps -p/);
 });
 
-test("the server exits on a locked data root with the remedy and no stack trace", async () => {
-  const root = await mkdtemp(join(tmpdir(), "terminay-locked-root-"));
+/** A separate process that takes the data root and holds it until it is killed. */
+async function holdDataRoot(root) {
+  const holder = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { FileDataRootLease } from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};
+       await new FileDataRootLease().acquire(process.argv[1]);
+       process.stdout.write("held\\n");
+       setInterval(() => undefined, 1 << 30);`,
+      root,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  await once(holder.stdout, "data");
+  return holder;
+}
+
+test("the server exits on a held data root with the remedy and no stack trace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-held-root-"));
+  const holder = await holdDataRoot(root);
   try {
-    const lockPath = join(root, ".terminay-server.lock");
-    await writeFile(lockPath, `${JSON.stringify({ pid: 1, startedAt: "2026-10-08T16:02:11.000Z" })}\n`);
+    const ownerPath = join(root, ".terminay-server.lock");
+    const record = await readFile(ownerPath, "utf8");
     const result = spawnSync(
       process.execPath,
       [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "--data-root", root, "--project-root", root],
       { encoding: "utf8", env: { ...process.env, TERMINAY_MANAGED_BY: "container" }, timeout: 20_000 },
     );
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /^Terminay server did not start: its data root is locked\./);
-    assert.match(result.stderr, /--entrypoint rm <this-image> /);
-    assert.ok(result.stderr.includes(lockPath));
+    assert.match(result.stderr, /^Terminay server did not start: another server is using its data root\./);
+    assert.match(result.stderr, /docker ps --filter volume=<your-volume>/);
+    assert.ok(result.stderr.includes(join(root, ".terminay-server.lock.sqlite")));
     assert.doesNotMatch(result.stderr, /\n {4}at /);
-    // The refusal leaves the lock exactly as it found it.
-    assert.match(await readFile(lockPath, "utf8"), /"pid":1/);
+    // The refusal leaves the holder's record exactly as it found it.
+    assert.equal(await readFile(ownerPath, "utf8"), record);
+    assert.equal(JSON.parse(record).pid, holder.pid);
   } finally {
+    holder.kill("SIGKILL");
+    await once(holder, "exit");
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a killed holder frees its data root with nothing to clear", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-killed-root-"));
+  const holder = await holdDataRoot(root);
+  const lease = new FileDataRootLease();
+  try {
+    await assert.rejects(lease.acquire(root), DataRootInUseError);
+    holder.kill("SIGKILL");
+    await once(holder, "exit");
+    // The dead holder's record is still there, and does not matter.
+    assert.equal(JSON.parse(await readFile(join(root, ".terminay-server.lock"), "utf8")).pid, holder.pid);
+    await lease.acquire(root);
+    assert.equal(JSON.parse(await readFile(join(root, ".terminay-server.lock"), "utf8")).pid, process.pid);
+  } finally {
+    if (holder.exitCode === null && holder.signalCode === null) holder.kill("SIGKILL");
+    await lease.release(root);
     await rm(root, { recursive: true, force: true });
   }
 });
