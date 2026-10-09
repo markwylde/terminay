@@ -33,6 +33,6 @@ verifications below name the suites that exist.
 
 ## 6. End to end and specs
 
-- [ ] 6.1 Add `e2e/program-set-tab-titles.spec.ts`: a program names its tab; a rename wins over a later sequence; clearing the name returns the program title; a program clearing its title returns `Terminal N`; the title survives a reload; turning the setting off drops and ignores program titles. Verified by `npm run test:e2e` passing.
-- [ ] 6.2 Run `openspec validate --all`, `npm run lint`, and the unit suites. Verified by all three exiting zero.
-- [ ] 6.3 Open the pull request on `origin` with `tea` and read back the commit statuses. Verified by every status being `success` or `skipped`.
+- [x] 6.1 Add `e2e/program-set-tab-titles.spec.ts`: a program names its tab; a rename wins over a later sequence; clearing the name returns the program title; a program clearing its title returns `Terminal N`; the title survives a reload; turning the setting off drops and ignores program titles. Verified by `npm run test:e2e` passing.
+- [x] 6.2 Run `openspec validate --all`, `npm run lint`, and the unit suites. Verified by all three exiting zero.
+- [x] 6.3 Open the pull request on `origin` with `tea` and read back the commit statuses. Verified by every status being `success` or `skipped`.
