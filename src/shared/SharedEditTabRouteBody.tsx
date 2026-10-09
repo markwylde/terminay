@@ -72,7 +72,8 @@ export function SharedEditTabRouteBody({ state, onCancel, onSubmit }: SharedEdit
 
   const previewColor = state.kind === 'terminal' && inheritsProjectColor ? projectColor : color
   const hueValue = useMemo(() => hexToHue(previewColor), [previewColor])
-  const previewTitle = title.trim() || (state.kind === 'project' ? 'Untitled Project' : 'Untitled Tab')
+  const automaticTitle = state.kind === 'terminal' ? state.draft.automaticTitle : undefined
+  const previewTitle = title.trim() || (state.kind === 'project' ? 'Untitled Project' : automaticTitle ?? 'Untitled Tab')
   const previewEmoji = emoji.trim()
   const heading = state.kind === 'project' ? 'Edit Project Tab' : 'Edit Terminal Tab'
   const disabled = isSaving
@@ -97,7 +98,7 @@ export function SharedEditTabRouteBody({ state, onCancel, onSubmit }: SharedEdit
   return <div className="edit-window-shell" data-shared-route-body="edit-tab">
     <form className="edit-window-card" onSubmit={save} onKeyDown={saveOnEnter}>
       <header className="edit-window-header"><div className="edit-window-header-content"><h1>{heading}</h1><p>Customize your tab appearance and settings.</p></div></header>
-      <label className="edit-window-field"><span>Name</span><input ref={titleInputRef} type="text" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={state.kind === 'project' ? 'Project name' : 'Terminal name'} disabled={disabled} /></label>
+      <label className="edit-window-field"><span>Name</span><input ref={titleInputRef} type="text" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={state.kind === 'project' ? 'Project name' : automaticTitle ?? 'Terminal name'} disabled={disabled} /></label>
       <div className="edit-window-row">
         <label className="edit-window-field edit-window-field--icon"><span>Icon</span><input type="text" inputMode="text" value={emoji} onChange={(event) => setEmoji(takeSingleEditTabCharacter(event.target.value))} aria-label="Tab icon" disabled={disabled} /></label>
         <div className="edit-window-field edit-window-field--grow">

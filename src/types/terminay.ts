@@ -628,7 +628,11 @@ export type TerminalEditWindowDraft = {
 	emoji: string;
 	inheritsProjectColor: boolean;
 	projectColor: string;
+	/** The name someone gave the tab; empty when it has none. */
 	title: string;
+	/** What the tab shows with no name: its program's title, else its default
+	 * name. Shown as the name field's placeholder. */
+	automaticTitle?: string;
 };
 
 export type TerminalEditWindowResult = TerminalEditWindowDraft;

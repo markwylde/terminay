@@ -168,6 +168,7 @@ export * from './uiBundle/index.js';
 export * from './automationSpaceVisibility.js';
 export * from './folderReconciler.js';
 export * from './folderRoots.js';
+export * from './programTitles.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';

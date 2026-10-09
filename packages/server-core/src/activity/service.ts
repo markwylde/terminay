@@ -29,6 +29,12 @@ export interface TerminalActivityServiceOptions {
 	readonly clearTimeout?: (handle: unknown) => void;
 }
 
+/** Receives each `OSC 0` / `OSC 2` title a session's output carries, raw. */
+export type ProgramTitleListener = (
+	identity: ActivitySessionIdentity,
+	title: string,
+) => void;
+
 export class TerminalActivityServiceError extends Error {
 	readonly code:
 		| 'invalid_identity'
@@ -71,6 +77,7 @@ export class TerminalActivityService {
 	private deadlineTimer: unknown;
 	private deadlineAt: number | null = null;
 	private stopped = false;
+	private programTitleListener: ProgramTitleListener | undefined;
 
 	constructor(private readonly options: TerminalActivityServiceOptions) {
 		assertId(options.serverId, 'server id');
@@ -90,6 +97,12 @@ export class TerminalActivityService {
 			...options.reducer,
 			now: this.now,
 		});
+	}
+
+	/** A title is not activity and never reaches the reducer. Composition binds
+	 * the one consumer once the workspace exists. */
+	setProgramTitleListener(listener: ProgramTitleListener | undefined): void {
+		this.programTitleListener = listener;
 	}
 
 	get serverId(): string {
@@ -130,6 +143,10 @@ export class TerminalActivityService {
 		const signals = state.parser.push(bytes);
 		const events: ActivityEvent[] = [];
 		for (const signal of signals) {
+			if (signal.kind === 'title') {
+				this.programTitleListener?.(identity, signal.title);
+				continue;
+			}
 			const event = this.reducer.applySignal(identity.sessionId, signal, {
 				projectId: identity.projectId,
 				now: this.now(),
