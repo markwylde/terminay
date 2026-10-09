@@ -75,7 +75,7 @@ async function arrangeProjects(page: Page): Promise<string> {
 		.last()
 		.click({ button: 'right' });
 	await contextMenuItem(page, 'Open Settings').click();
-	await page.getByPlaceholder('Terminal name').fill(MOVED_TITLE);
+	await page.getByRole('textbox', { name: 'Name', exact: true }).fill(MOVED_TITLE);
 	await submitEditWindow(page);
 	await expect(
 		page

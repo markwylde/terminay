@@ -140,6 +140,7 @@ import type { SessionHolderPtyFactory } from './sessionHolder/factory.js';
 import { isHolderSessionId } from './sessionHolder/paths.js';
 import { reattachHeldSessions } from './sessionHolder/reattach.js';
 import { backgroundTerminalLimitMs } from './settings/backgroundTerminals.js';
+import { bindProgramTitles } from './programTitles.js';
 import { WorkspaceStore } from './workspace.js';
 import {
 	restoreWorkspaceOnStartup,
@@ -1419,6 +1420,7 @@ export function createServerCoreComposition(
 					);
 				}
 				mcpApprovals?.setPolicies(storedMcpPermissions());
+				programTitles?.reconcile();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
 				// Every service the restore needs is now up, and a host's way of
@@ -1487,6 +1489,22 @@ export function createServerCoreComposition(
 			? undefined
 			: releaseClosedHeldSessions(options.workspace, options.sessionHolder);
 	let unsubscribeBackgroundLimit: (() => void) | undefined;
+	// Programs name their terminals (ADR-0056). The setting is read on every
+	// title, so turning it off needs no restart.
+	const programTitles =
+		options.activity === undefined || workspaceOperations === undefined
+			? undefined
+			: bindProgramTitles({
+					activity: options.activity,
+					workspace: () => workspaceOperations.workspace.state,
+					apply: workspaceOperations.applyHostCommand,
+					enabled: () =>
+						options.settings?.settings.programSetTabTitles !== false,
+				});
+	const unsubscribeProgramTitles =
+		programTitles === undefined
+			? undefined
+			: options.settings?.onChange(() => programTitles.reconcile());
 	const endAllTerminalSessions = async (): Promise<void> => {
 		await startPromise?.catch(() => undefined);
 		unsubscribeHeldSessionRelease?.();
@@ -1538,6 +1556,8 @@ export function createServerCoreComposition(
 			await attempt(() => options.sessionHolder?.detach());
 			await attempt(() => unsubscribeHeldSessionRelease?.());
 			await attempt(() => unsubscribeBackgroundLimit?.());
+			await attempt(() => unsubscribeProgramTitles?.());
+			await attempt(() => programTitles?.dispose());
 			await attempt(() => presentationCheckpoints?.close());
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());

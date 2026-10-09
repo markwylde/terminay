@@ -5,6 +5,7 @@ export * from './agentTypes.js';
 export * from './inactivityHold.js';
 export * from './parser.js';
 export * from './processAncestry.js';
+export * from './programTitle.js';
 export * from './projectAgentScope.js';
 export * from './protocol.js';
 export * from './rampSchedule.js';

@@ -53,6 +53,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'ignoreBracketedPasteMode',
 	'keepTerminalsAfterQuit',
 	'moveTerminalsIntoNewWorktreeFolders',
+	'programSetTabTitles',
 	'recording',
 	'remoteAccess',
 	'rightClickSelectsWord',
@@ -435,6 +436,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	autoCloseTerminalOnExitZero: false,
 	keepTerminalsAfterQuit: '5m',
 	moveTerminalsIntoNewWorktreeFolders: true,
+	programSetTabTitles: true,
 	updateChannel: 'stable',
 	convertEol: true,
 	cursorBlink: true,
@@ -1226,6 +1228,23 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'move terminal',
 					'capture',
 					'agent',
+				],
+			}),
+			makeField({
+				key: 'programSetTabTitles',
+				label: 'Let programs set tab titles',
+				description:
+					'A program running in a terminal can name its tab. A name you give a tab always wins. When off, tabs show your name or Terminal N.',
+				sectionId: 'shell-lifecycle',
+				categoryId: 'shell',
+				input: 'boolean',
+				keywords: [
+					'title',
+					'tab name',
+					'rename',
+					'osc',
+					'escape sequence',
+					'window title',
 				],
 			}),
 		],
@@ -2722,6 +2741,10 @@ export function normalizeTerminalSettings(
 			typeof input.moveTerminalsIntoNewWorktreeFolders === 'boolean'
 				? input.moveTerminalsIntoNewWorktreeFolders
 				: defaultTerminalSettings.moveTerminalsIntoNewWorktreeFolders,
+		programSetTabTitles:
+			typeof input.programSetTabTitles === 'boolean'
+				? input.programSetTabTitles
+				: defaultTerminalSettings.programSetTabTitles,
 		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
 		convertEol:
 			typeof input.convertEol === 'boolean'

@@ -33,6 +33,9 @@ export type TerminalActivitySignal =
 			readonly body?: string;
 	  }
 	| { readonly kind: 'bell' }
+	/** `OSC 0` / `OSC 2`. The text is untrusted and unsanitised here; an empty
+	 * string asks for the title to be cleared. Never reaches the reducer. */
+	| { readonly kind: 'title'; readonly title: string }
 	| { readonly kind: 'foreground'; readonly observation: 'limited' }
 	| {
 			readonly kind: 'foreground';
