@@ -291,3 +291,22 @@ test('a folder is unmerged when its worktree is, whether or not it is dirty', ()
 	assert.equal(tree.releases.isDirty, false);
 	assert.equal(tree.general.unmerged, undefined);
 });
+
+test('a linked folder is deleting while its worktree is being removed, and no other folder is', () => {
+	const none = byId(buildFolderTree(workspace()));
+	assert.equal(none.releases.isDeleting, false);
+	const tree = byId(
+		buildFolderTree(
+			workspace({
+				input: {
+					// The root checkout is never removed, whatever the set says.
+					deletingWorktreePaths: new Set(['/repo/.worktrees/release-notes', '/repo']),
+				},
+			}),
+		),
+	);
+	assert.equal(tree.releases.isDeleting, true);
+	assert.equal(tree.window.isDeleting, false);
+	assert.equal(tree.general.isDeleting, false);
+	assert.equal(tree.servers.isDeleting, false);
+});

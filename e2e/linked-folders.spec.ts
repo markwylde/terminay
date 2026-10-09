@@ -801,6 +801,69 @@ test('deleting a worktree whose folder holds a terminal asks about the terminal 
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
+test('a worktree being deleted says Deleting… on its card until it is gone', async ({
+	appHarness,
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-deleting-card', [
+		'alpha',
+		'beta',
+	]);
+	const dialogs = await appHarness.dialogs();
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__deleting'),
+	).toHaveCount(0);
+
+	// A small worktree is removed faster than a look at the card can be timed,
+	// so every card that says it is being deleted is written down as it does.
+	await mainWindow.evaluate(() => {
+		const seen: string[] = [];
+		(window as unknown as { __deletingCards: string[] }).__deletingCards = seen;
+		const record = () => {
+			for (const line of document.querySelectorAll('.folders-tree__deleting')) {
+				const row = line.closest('.folders-tree__row--folder');
+				const name = row?.querySelector('.folders-tree__name')?.textContent;
+				const card = line.closest('.folders-tree__folder');
+				const opacity = card === null ? '' : getComputedStyle(card).opacity;
+				seen.push(
+					`${name}|${line.textContent}|${row?.getAttribute('aria-busy')}|${opacity}`,
+				);
+			}
+		};
+		new MutationObserver(record).observe(document.body, {
+			childList: true,
+			subtree: true,
+		});
+	});
+
+	await dialogs.queueConfirm(true);
+	await openFolderMenu(mainWindow, 'alpha');
+	await contextMenuItem(mainWindow, 'Delete worktree').click();
+	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0, {
+		timeout: 10_000,
+	});
+
+	const seen = await mainWindow.evaluate(
+		() => (window as unknown as { __deletingCards: string[] }).__deletingCards,
+	);
+	// Only the worktree that was deleted said so, with its whole card dimmed,
+	// and nothing says so now.
+	expect(new Set(seen)).toEqual(new Set(['alpha|Deleting…|true|0.4']));
+	await expect(folderGroup(mainWindow, 'beta')).toHaveCSS('opacity', '1');
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__deleting'),
+	).toHaveCount(0);
+	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
+	expect(
+		await git(repo.root, 'worktree', 'list', '--porcelain'),
+	).not.toContain(repo.worktree('alpha'));
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
 test('a terminal that runs git worktree add is moved into the new folder with nothing announced, stays in General once dragged back, and is offered the move when the setting is off', async ({
 	appHarness,
 	createWorkspace,
