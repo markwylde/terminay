@@ -827,8 +827,10 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 			for (const line of document.querySelectorAll('.folders-tree__deleting')) {
 				const row = line.closest('.folders-tree__row--folder');
 				const name = row?.querySelector('.folders-tree__name')?.textContent;
+				const card = line.closest('.folders-tree__folder');
+				const opacity = card === null ? '' : getComputedStyle(card).opacity;
 				seen.push(
-					`${name}|${line.textContent}|${row?.getAttribute('aria-busy')}`,
+					`${name}|${line.textContent}|${row?.getAttribute('aria-busy')}|${opacity}`,
 				);
 			}
 		};
@@ -848,8 +850,10 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 	const seen = await mainWindow.evaluate(
 		() => (window as unknown as { __deletingCards: string[] }).__deletingCards,
 	);
-	// Only the worktree that was deleted said so, and nothing says so now.
-	expect(new Set(seen)).toEqual(new Set(['alpha|Deleting…|true']));
+	// Only the worktree that was deleted said so, with its whole card dimmed,
+	// and nothing says so now.
+	expect(new Set(seen)).toEqual(new Set(['alpha|Deleting…|true|0.4']));
+	await expect(folderGroup(mainWindow, 'beta')).toHaveCSS('opacity', '1');
 	await expect(
 		foldersColumn(mainWindow).locator('.folders-tree__deleting'),
 	).toHaveCount(0);

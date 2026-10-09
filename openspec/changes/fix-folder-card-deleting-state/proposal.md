@@ -18,6 +18,8 @@ in the Changes pane of the folder on screen. Only the card stopped saying it.
 - A linked folder's card shows `Deleting…` on a line beneath its label from the
   moment its worktree's removal is confirmed until that removal settles, for a
   single deletion and for each target of a bulk deletion.
+- The whole card is dimmed to 40% opacity for as long as the line is shown, so
+  a folder on its way out reads as such at a glance and then disappears.
 - That line stands in place of the card's facts line, and the card's row is
   marked busy for assistive technology.
 

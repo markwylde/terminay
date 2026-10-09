@@ -8,10 +8,11 @@
 
 - [x] 2.1 Add a failing test to `scripts/folders-tree-row.test.mjs`: a deleting linked folder renders `Deleting…` after its label with `aria-busy` on its row and no facts line; the same folder not deleting renders its facts line and neither of the others. Verified by the test failing before the change.
 - [x] 2.2 Draw the line in `FolderHeader` and style it in `foldersTree.css`. Verified by 2.1 passing and `npm run test:linked-folders` exiting zero.
+- [x] 2.3 Dim the whole card of a deleting folder to 40% opacity with a `folders-tree__folder--deleting` class. Verified by `scripts/folders-tree-row.test.mjs` asserting the class on the card and its absence otherwise.
 
 ## 3. End to end
 
-- [x] 3.1 Add a test to `e2e/linked-folders.spec.ts` that deletes one of two worktrees and records every card that says it is being deleted: only the deleted worktree's card does, marked busy, and no card says so once it is gone. Verified by `npm run test:e2e -- e2e/linked-folders.spec.ts -g "Deleting…"` passing.
+- [x] 3.1 Add a test to `e2e/linked-folders.spec.ts` that deletes one of two worktrees and records every card that says it is being deleted: only the deleted worktree's card does, marked busy and at 40% opacity, the other card stays at full opacity, and no card says so once it is gone. Verified by `npm run test:e2e -- e2e/linked-folders.spec.ts -g "Deleting…"` passing.
 
 ## 4. Specs and delivery
 

@@ -681,6 +681,11 @@ test('a worktree being deleted says so beneath its label, in place of its facts'
 		markup,
 		/class="folders-tree__row folders-tree__row--folder"[^>]*aria-busy="true"/,
 	);
+	// The whole card is dimmed, not only its head.
+	assert.match(
+		markup,
+		/class="folders-tree__folder folders-tree__folder--deleting"/,
+	);
 	// The label stays, and comes before the line that says it is going.
 	assert.ok(
 		markup.indexOf('feat/one-project-one-window') <
@@ -690,6 +695,7 @@ test('a worktree being deleted says so beneath its label, in place of its facts'
 
 	const idle = render([linked({ ...facts, isDeleting: false })]);
 	assert.equal(idle.includes('folders-tree__deleting'), false);
+	assert.equal(idle.includes('folders-tree__folder--deleting'), false);
 	assert.equal(idle.includes('aria-busy'), false);
 	assert.match(idle, /class="folders-tree__facts"/);
 });
