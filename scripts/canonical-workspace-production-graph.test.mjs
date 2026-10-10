@@ -238,7 +238,7 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	const awaitRuntime = readiness.indexOf('await embeddedRuntimeReady');
 	const ready = readiness.indexOf("event: 'local-server.ready'");
 	const launch = readiness.indexOf(
-		'await launchDeferredCanonicalWindow(embeddedStartupWindow)',
+		'await openStartupWindow(embeddedStartupWindow)',
 	);
 	assert.ok(awaitRuntime >= 0 && awaitRuntime < ready && ready < launch);
 });
