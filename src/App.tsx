@@ -3764,23 +3764,22 @@ const ProjectWorkspace = forwardRef<
 					if (noteAction === 'adopt') terminalNoteSync.edit(panelId, localNote);
 					else if (noteAction === 'apply')
 						panel.api.updateParameters({ terminalNote: canonical.note });
-					panel.api.updateParameters({
-						...(canonical.emoji === undefined
-							? {}
-							: { emoji: canonical.emoji }),
-						...(canonical.color === undefined
-							? {}
-							: { color: canonical.color }),
-						...(canonical.inheritsProjectColor === undefined
-							? {}
-							: { inheritsProjectColor: canonical.inheritsProjectColor }),
-						...(canonical.activityIndicatorsEnabled === undefined
-							? {}
-							: {
-									activityIndicatorsEnabled:
-										canonical.activityIndicatorsEnabled,
-								}),
-					});
+					// Dockview re-renders a panel and its tab on every parameter
+					// update, changed or not, and this runs for every panel at every
+					// workspace revision: only what differs is handed over.
+					const appearance: Record<string, unknown> = {};
+					for (const key of [
+						'emoji',
+						'color',
+						'inheritsProjectColor',
+						'activityIndicatorsEnabled',
+					] as const) {
+						const value = canonical[key];
+						if (value !== undefined && panel.params?.[key] !== value)
+							appearance[key] = value;
+					}
+					if (Object.keys(appearance).length > 0)
+						panel.api.updateParameters(appearance);
 				}
 			},
 			[

@@ -1654,10 +1654,9 @@ function releaseClosedHeldSessions(
 	workspace: WorkspaceStore,
 	holder: SessionHolderPtyFactory,
 ): () => void {
-	return workspace.subscribe((event) => {
-		for (const id of event.changedIds) {
+	return workspace.subscribe((_event, record) => {
+		for (const id of record.removed.terminalSessions ?? []) {
 			if (!isHolderSessionId(id)) continue;
-			if (workspace.state.terminalSessions[id] !== undefined) continue;
 			void holder.end(id).catch(() => undefined);
 		}
 	});
