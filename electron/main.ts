@@ -285,8 +285,6 @@ import {
 } from './workspacePersistence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
-const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
 /**
  * Leaves room for the project tab bar, sidebar group tabs, the active group's
  * pane titles, and a usable workspace body. The flat sidebar solver treats
@@ -2047,23 +2045,6 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 							authorization,
 							signal,
 						}),
-					resolveSecret: (_candidate, secretId) => {
-						if (
-							secretId === DICTATION_OPENAI_SECRET_ID ||
-							!safeStorage.isEncryptionAvailable()
-						)
-							throw new Error('Macro secret is unavailable.');
-						const secret = readSecrets().find(
-							(candidate) => candidate.id === secretId,
-						);
-						if (secret === undefined)
-							throw new Error('Macro secret is unavailable.');
-						return new TextEncoder().encode(
-							safeStorage.decryptString(
-								Buffer.from(secret.encryptedValue, 'base64'),
-							),
-						);
-					},
 				};
 			},
 		},
@@ -2649,10 +2630,6 @@ function getMacrosPath(): string {
 	return path.join(app.getPath('userData'), 'macros.json');
 }
 
-function getSecretsPath(): string {
-	return path.join(app.getPath('userData'), 'secrets.json');
-}
-
 function invalidateTerminalSettingsCache(): void {
 	cachedTerminalSettings = undefined;
 }
@@ -2865,30 +2842,6 @@ function readMacros(): MacroDefinition[] {
 	} catch {
 		return defaultMacros;
 	}
-}
-
-type SecretRecord = {
-	id: string;
-	name: string;
-	encryptedValue: string;
-};
-
-function readSecrets(): SecretRecord[] {
-	const secretsPath = getSecretsPath();
-	try {
-		if (!existsSync(secretsPath)) {
-			return [];
-		}
-		const content = readFileSync(secretsPath, 'utf8');
-		return JSON.parse(content);
-	} catch {
-		return [];
-	}
-}
-
-function writeSecrets(secrets: SecretRecord[]): void {
-	mkdirSync(path.dirname(getSecretsPath()), { recursive: true });
-	writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2));
 }
 
 function resolveNodePtyRoot(): string {
@@ -6557,60 +6510,6 @@ if (process.env.TERMINAY_TEST === '1') {
 		},
 	);
 }
-
-ipcMain.handle('secrets:get', (event) => {
-	assertTrustedAppSender(event);
-	const secrets = readSecrets();
-	return secrets
-		.filter(
-			(secret) =>
-				secret.id !== DICTATION_OPENAI_SECRET_ID &&
-				secret.name !== DICTATION_OPENAI_SECRET_NAME,
-		)
-		.map((s) => ({ id: s.id, name: s.name }));
-});
-
-ipcMain.handle('secrets:save', (event, { name, value }) => {
-	assertTrustedAppSender(event);
-	if (!safeStorage.isEncryptionAvailable()) {
-		throw new Error('Encryption is not available on this system.');
-	}
-	const secrets = readSecrets();
-	const id = randomUUID();
-	const encryptedValue = safeStorage.encryptString(value).toString('base64');
-	const record: SecretRecord = { id, name, encryptedValue };
-	secrets.push(record);
-	writeSecrets(secrets);
-	return { id, name };
-});
-
-ipcMain.handle('secrets:delete', (event, id) => {
-	assertTrustedAppSender(event);
-	const secrets = readSecrets();
-	const index = secrets.findIndex((s) => s.id === id);
-	if (index !== -1) {
-		secrets.splice(index, 1);
-		writeSecrets(secrets);
-	}
-});
-
-ipcMain.handle('secrets:get-decrypted', (event, id) => {
-	assertTrustedAppSender(event);
-	if (id === DICTATION_OPENAI_SECRET_ID) {
-		throw new Error('Secret not found.');
-	}
-	if (!safeStorage.isEncryptionAvailable()) {
-		throw new Error('Encryption is not available on this system.');
-	}
-	const secrets = readSecrets();
-	const secret = secrets.find((s) => s.id === id);
-	if (!secret) {
-		throw new Error('Secret not found.');
-	}
-	return safeStorage.decryptString(
-		Buffer.from(secret.encryptedValue, 'base64'),
-	);
-});
 
 app.on('browser-window-created', (_event, window) => {
 	// Windows are menu-less by default; createWindow opts project hosts back in.

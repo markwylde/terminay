@@ -13,7 +13,6 @@ type MacroRunController = {
 type MacroRunControllerOptions = {
 	focusActiveTerminal: () => void;
 	getActiveSessionId: () => string | null;
-	getDecryptedSecret: (secretId: string) => Promise<string>;
 	sendInput: (sessionId: string, data: string) => void;
 	setErrorText: (message: string | null) => void;
 	waitForInactivity: (
@@ -82,8 +81,8 @@ function describeStep(step: MacroDefinition['steps'][number]): string {
 			return `Type: ${step.content.replace(/\s+/g, ' ').trim() || '(empty)'}`.slice(0, 96);
 		case 'key':
 			return `Press ${step.key}`;
-		case 'secret':
-			return 'Insert secret';
+		case 'unsupported':
+			return 'Step that cannot run';
 		case 'wait_time':
 			return `Wait ${formatDurationSeconds(step.durationSeconds)}s`;
 		case 'wait_inactivity':
@@ -297,6 +296,14 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 				options.setErrorText('No active terminal is available to receive the macro.');
 				return;
 			}
+			// The server rejects such a macro before writing anything; saying so
+			// here spares the round trip and names what to fix.
+			if (macro.steps.some((step) => step.type === 'unsupported')) {
+				options.setErrorText(
+					`"${macro.title}" contains a step Terminay cannot run. Open Macros and remove it.`,
+				);
+				return;
+			}
 			options.setErrorText(null);
 			if (
 				options.serverMacroClient !== undefined &&
@@ -363,15 +370,6 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 							if (input !== null) options.sendInput(sessionId, input);
 							break;
 						}
-						case 'secret':
-							try {
-								const secret = await options.getDecryptedSecret(step.secretId);
-								throwIfAborted(abortController.signal);
-								options.sendInput(sessionId, secret);
-							} catch (error) {
-								if (error instanceof Error && error.name === 'AbortError') throw error;
-							}
-							break;
 						case 'wait_time':
 							await waitForDelay(
 								renderMacroDurationMs(step.durationSeconds, values),

@@ -4,7 +4,6 @@ export type MacroErrorCode =
 	| 'conflict'
 	| 'limit'
 	| 'unauthorized_target'
-	| 'secret_unavailable'
 	| 'canceled'
 	| 'unsupported_step'
 	| 'execution_failed';

@@ -111,10 +111,19 @@ export function createMacroOperationRegistry(
 					'invalid_macro',
 					'macro replacement payload is invalid',
 				);
+			if (
+				payload.categories !== undefined &&
+				!Array.isArray(payload.categories)
+			)
+				throw macroError(
+					'invalid_macro',
+					'macro category payload is invalid',
+				);
 			return options.repository.replace(
 				payload.macros,
 				request.envelope.expectedRevision,
 				request.envelope.commandId,
+				payload.categories,
 			);
 		});
 	}
@@ -334,15 +343,13 @@ function toProtocolError(error: unknown): unknown {
 					? 'forbidden'
 					: error.code === 'limit'
 						? 'resource'
-						: error.code === 'secret_unavailable'
-							? 'unavailable'
-							: error.code === 'canceled'
-								? 'cancelled'
-								: error.code === 'invalid_macro'
+						: error.code === 'canceled'
+							? 'cancelled'
+							: error.code === 'invalid_macro'
+								? 'validation'
+								: error.code === 'unsupported_step'
 									? 'validation'
-									: error.code === 'unsupported_step'
-										? 'validation'
-										: 'internal';
+									: 'internal';
 	return protocolError(
 		code,
 		error.message,

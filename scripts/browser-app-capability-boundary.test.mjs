@@ -60,17 +60,12 @@ test('browser composition omits native host authority instead of fabricating pre
 	);
 });
 
-test('browser-only adapters fail closed for unavailable secret operations', () => {
-	for (const operation of [
-		'getDecryptedSecret',
-		'saveSecret',
-		'deleteSecret',
-	]) {
-		assert.match(browserAdapters, new RegExp(
-			`async ${operation}\\(\\) \\{[\\s\\S]*?throw new MacroSettingsUnavailableError\\(`,
-			'u',
-		));
-	}
+test('the browser macro adapter is the shared server client and offers no secret operation', () => {
+	assert.match(browserAdapters, /createServerMacroSettingsClient\(/u);
+	assert.doesNotMatch(
+		browserAdapters,
+		/getSecrets|getDecryptedSecret|saveSecret|deleteSecret/u,
+	);
 	assert.doesNotMatch(browserAdapters, /window\.terminay|electron|ipcRenderer/u);
 });
 

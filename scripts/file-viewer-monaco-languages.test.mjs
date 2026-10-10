@@ -59,6 +59,6 @@ test('React files highlight as their base language', () => {
 test('every Monaco consumer goes through the runtime module', () => {
 	assert.doesNotMatch(textViewer, /from 'monaco-editor'/u);
 	assert.match(textViewer, /from '\.\.\/monacoRuntime'/u);
-	assert.match(macros, /import '\.\/file-viewer\/monacoRuntime'/u);
-	assert.doesNotMatch(macros, /from 'monaco-editor'/u);
+	// The Macros window edits a macro in plain text areas and loads no Monaco.
+	assert.doesNotMatch(macros, /monaco/iu);
 });

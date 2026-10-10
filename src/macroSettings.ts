@@ -18,6 +18,7 @@ export const defaultMacros: MacroDefinition[] = [
     id: 'update-os',
     title: 'Update OS',
     description: 'Example of a multi-step macro that updates the system.',
+    category: '',
     template: 'sudo apt-get update\nsudo apt-get upgrade -y',
     submitMode: 'type-and-submit',
     steps: [
@@ -33,6 +34,7 @@ export const defaultMacros: MacroDefinition[] = [
     id: 'create-pull-request',
     title: 'Create a pull request',
     description: 'Ask the agent to branch, commit, push, and open a pull request.',
+    category: '',
     template:
       'Create a branch and commit all the unstaged changes into that branch, then push it and create a pull request. Use gh for GitHub remotes, tea for Gitea remotes, or provide the remote URL if neither CLI applies.',
     submitMode: 'type-only',
@@ -49,6 +51,7 @@ export const defaultMacros: MacroDefinition[] = [
     id: 'say-hello',
     title: 'Say hello to person',
     description: 'Example macro showing how placeholders become form inputs.',
+    category: '',
     template: 'Say hello to {{Name of person}} with a {{Emoji}} emoji',
     submitMode: 'type-only',
     steps: [
@@ -197,15 +200,18 @@ function normalizeField(input: unknown, index: number): MacroFieldDefinition {
 
 function normalizeStepType(value: unknown): MacroStepType {
   switch (value) {
+    case 'type':
     case 'key':
-    case 'secret':
     case 'wait_time':
     case 'wait_inactivity':
     case 'select_line':
     case 'paste':
       return value
-    default:
+    case undefined:
       return 'type'
+    default:
+      // Kept and shown as unsupported rather than rewritten into text or dropped.
+      return 'unsupported'
   }
 }
 
@@ -219,8 +225,12 @@ function normalizeStep(input: unknown, index: number): MacroStep {
       return { id, type, content: normalizeString(record.content) }
     case 'key':
       return { id, type, key: normalizeString(record.key, 'Enter') }
-    case 'secret':
-      return { id, type, secretId: normalizeString(record.secretId) }
+    case 'unsupported':
+      return {
+        id,
+        type,
+        sourceType: (record.type === 'unsupported' ? normalizeString(record.sourceType, 'unsupported') : normalizeString(record.type, 'unsupported')).slice(0, 32),
+      }
     case 'wait_time':
       return { id, type, durationSeconds: normalizeDurationSeconds(record, '1') }
     case 'wait_inactivity':
@@ -567,8 +577,8 @@ function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submit
             return step.content
           case 'key':
             return `[key:${step.key}]`
-          case 'secret':
-            return `[secret:${step.secretId}]`
+          case 'unsupported':
+            return `[unsupported:${step.sourceType}]`
           case 'wait_time':
             return `[wait:${step.durationSeconds}s]`
           case 'wait_inactivity':
@@ -613,6 +623,7 @@ function normalizeMacro(input: unknown, index: number): MacroDefinition {
     id: normalizeString(record.id).trim() || `macro-${index + 1}`,
     title: normalizeString(record.title).trim() || `Macro ${index + 1}`,
     description: normalizeString(record.description),
+    category: normalizeString(record.category).trim(),
     ...deriveLegacyTemplate(steps),
     steps,
     fields: mergeFieldsWithSteps(steps, explicitFields),
