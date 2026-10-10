@@ -49,6 +49,87 @@ export async function switchWindowServer<Remote>(
 }
 
 /**
+ * Open the startup window on the server it last showed.
+ *
+ * The window holds its loading state until that server's transport is open and
+ * then mounts it directly, so Local is never shown on the way to another
+ * server. Local is what the window opens on when nothing else was remembered,
+ * when the remembered server was forgotten or does not answer, and when the
+ * person asks for it rather than wait.
+ */
+export async function openStartupWindowServer<Remote>(
+	options: Readonly<{
+		/** The profile the workspace window last showed, when one was recorded. */
+		rememberedProfileId: string | undefined;
+		localProfileId: string;
+		isRemembered: (profileId: string) => boolean;
+		connectRemote: (profileId: string) => Promise<Remote>;
+		mountRemote: (profileId: string, remote: Remote) => Promise<void>;
+		discardRemote: (remote: Remote) => Promise<void>;
+		mountLocal: () => Promise<void>;
+		/** Settles when the person chooses Local instead of waiting. */
+		localRequested: Promise<void>;
+		/** How long the server may take before Local is offered. */
+		offerLocalAfterMs: number;
+		/** Offer Local on the loading state. */
+		offerLocal: () => void;
+		/** Runs once, before the loading state is replaced by a workspace. */
+		beforeMount?: () => void;
+	}>,
+): Promise<'remote' | 'local' | 'local-requested'> {
+	let mounting = false;
+	const beforeMount = () => {
+		if (mounting) return;
+		mounting = true;
+		options.beforeMount?.();
+	};
+	const openLocal = async <Outcome extends 'local' | 'local-requested'>(
+		outcome: Outcome,
+	): Promise<Outcome> => {
+		beforeMount();
+		await options.mountLocal();
+		return outcome;
+	};
+	const profileId = options.rememberedProfileId;
+	if (
+		profileId === undefined ||
+		profileId === options.localProfileId ||
+		!options.isRemembered(profileId)
+	)
+		return openLocal('local');
+	const connecting = Promise.resolve().then(() =>
+		options.connectRemote(profileId),
+	);
+	const offer = setTimeout(options.offerLocal, options.offerLocalAfterMs);
+	let first: Readonly<{ remote: Remote }> | 'local-requested';
+	try {
+		first = await Promise.race([
+			connecting.then((remote) => ({ remote })),
+			options.localRequested.then(() => 'local-requested' as const),
+		]);
+	} catch {
+		return openLocal('local');
+	} finally {
+		clearTimeout(offer);
+	}
+	if (first === 'local-requested') {
+		// The attempt is abandoned, not awaited: whatever it opens is closed.
+		void connecting
+			.then((remote) => options.discardRemote(remote))
+			.catch(() => undefined);
+		return openLocal('local-requested');
+	}
+	try {
+		beforeMount();
+		await options.mountRemote(profileId, first.remote);
+		return 'remote';
+	} catch {
+		await options.discardRemote(first.remote).catch(() => undefined);
+		return openLocal('local');
+	}
+}
+
+/**
  * Which window, if any, a newly paired server should be shown in.
  *
  * Pairing happens in Remote Control, an auxiliary window. The server is shown

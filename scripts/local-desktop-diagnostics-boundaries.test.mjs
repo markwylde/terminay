@@ -85,7 +85,7 @@ test('startup phase lines are revealed by style, never by navigation', () => {
 	// The handoff and the bootstrap-failure path both stop revealing.
 	assert.match(
 		main,
-		/stopStartupPhasePainting\(\);\s*await launchDeferredCanonicalWindow/u,
+		/beforeMount: \(\) => \{[^}]*stopStartupPhasePainting\(\);/u,
 	);
 	assert.match(
 		main,
@@ -157,7 +157,7 @@ test('embedded vault unlock occurs after recovery setup and before Local rendere
 	const unlock = main.indexOf('await embeddedVault.unlock', ready);
 	const localReady = main.indexOf("event: 'local-server.ready'", ready);
 	const launch = main.indexOf(
-		'await launchDeferredCanonicalWindow(embeddedStartupWindow)',
+		'await openStartupWindow(embeddedStartupWindow)',
 		ready,
 	);
 	assert.ok(ready > 0);

@@ -164,10 +164,19 @@ test('main opens and closes every startup phase exactly once, in order', async (
 	// and the begin/endStartupPhase helpers that also repaint the phase line.
 	const pattern =
 		/(?:(begin|end)StartupPhase\('([a-z-]+)'\)|desktopStartupTimeline\.(begin|end)\('([a-z-]+)'\))/gu;
-	const calls = [...main.matchAll(pattern)].map((match) => ({
+	const everyCall = [...main.matchAll(pattern)].map((match) => ({
 		action: match[1] ?? match[3],
 		id: match[2] ?? match[4],
 	}));
+	// A sub-phase runs inside a top-level phase, so it is not part of the
+	// top-level order; it only has to be closed as often as it is opened.
+	const calls = everyCall.filter((call) => STARTUP_PHASE_IDS.includes(call.id));
+	for (const id of new Set(everyCall.map((call) => call.id))) {
+		const count = (action) =>
+			everyCall.filter((call) => call.id === id && call.action === action)
+				.length;
+		assert.equal(count('begin'), count('end'), `${id} is not closed`);
+	}
 
 	const begun = calls.filter((call) => call.action === 'begin');
 	const ended = calls.filter((call) => call.action === 'end');
