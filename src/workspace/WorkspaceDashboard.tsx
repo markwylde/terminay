@@ -8,6 +8,7 @@ import {
 	TerminalSquare,
 	X,
 } from 'lucide-react';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import {
 	type CSSProperties,
 	type ReactNode,
@@ -329,7 +330,7 @@ function PanelRow({
 			/>
 			<span className="workspace-dashboard__title">
 				{row.emoji ? `${row.emoji} ` : ''}
-				{agent?.name ?? row.title}
+				{agent?.name ?? <PanelRowTitle row={row} />}
 				{agent?.unread ? (
 					<span
 						aria-label="Unread result"
@@ -443,7 +444,7 @@ function PanelCard({
 				/>
 				<span className="workspace-dashboard__card-name">
 					{row.emoji ? `${row.emoji} ` : ''}
-					{row.title}
+					<PanelRowTitle row={row} />
 				</span>
 			</span>
 			{showProject ? (
@@ -1063,5 +1064,14 @@ function DashboardBody({
 				),
 			)}
 		</div>
+	);
+}
+
+/** A panel row's name. A terminal's follows the terminal's title. */
+function PanelRowTitle({ row }: { row: DashboardPanelRow }) {
+	return row.panelKind === 'terminal' ? (
+		<LiveTerminalTitle panelId={row.panelId} fallback={row.title} />
+	) : (
+		row.title
 	);
 }

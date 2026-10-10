@@ -802,8 +802,18 @@ export class ServerTerminalAuthority {
 			this.agentSources.attach(extensionManagement.hosts);
 			this.worktreeInsights.attach(extensionManagement.hosts);
 		}
-		this.workspace.subscribe(() => this.worktreeInsights.refreshActivity());
-		this.workspace.subscribe(() => folders.workspaceChanged());
+		// Each acts only on a commit that names what it depends on (ADR-0059):
+		// which project a view shows, and which folders exist.
+		this.workspace.subscribe((_event, record) => {
+			if (
+				record.changed.views !== undefined ||
+				record.removed.views !== undefined ||
+				record.changed.projects !== undefined ||
+				record.removed.projects !== undefined
+			)
+				this.worktreeInsights.refreshActivity();
+			if (record.removed.folders !== undefined) folders.workspaceChanged();
+		});
 		const mcpRouter =
 			mcpInstall === undefined
 				? undefined

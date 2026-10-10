@@ -1,12 +1,22 @@
 import { WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
-	parseServerWorkspaceDelta,
 	type ServerWorkspaceSnapshot,
 } from './serverWorkspaceReconciliation'
 import { recordBootstrapDiagnostic } from './rendererDiagnostics'
+import {
+	advanceByWorkspaceDelta,
+	applyWorkspaceChangeRecords,
+	shareUnchangedWorkspaceObjects,
+	type WorkspaceProjectionChange,
+} from './workspaceProjection'
 
-export type WorkspaceSnapshotListener = (snapshot: ServerWorkspaceSnapshot) => void
+/** Told of each projection the store confirms, and of the one before it. An
+ * object the change left alone is the same object in both (ADR-0059). */
+export type WorkspaceSnapshotListener = (
+	snapshot: ServerWorkspaceSnapshot,
+	change: WorkspaceProjectionChange,
+) => void
 export type WorkspaceReconciliationStatus = Readonly<{
 	state: 'current' | 'stale' | 'failed'
 	error?: Error
@@ -27,6 +37,9 @@ export class WorkspaceSnapshotStore {
 	private unsubscribeEvents: (() => Promise<void>) | undefined
 	private refreshPromise: Promise<ServerWorkspaceSnapshot> | null = null
 	private refreshAgain = false
+	/** The newest revision a change event has named while a refresh was in
+	 * flight. The refresh fetches again only if its answer stops short of it. */
+	private awaitedRevision = 0
 	private forceSnapshot = false
 	private publishing = false
 	private closed = false
@@ -45,8 +58,36 @@ export class WorkspaceSnapshotStore {
 
 	subscribe(listener: WorkspaceSnapshotListener): () => void {
 		this.listeners.add(listener)
-		if (this.known !== null) listener(this.known)
+		if (this.known !== null) listener(this.known, { previous: null })
 		return () => this.listeners.delete(listener)
+	}
+
+	/**
+	 * Observe one part of the projection. The listener is called when what
+	 * `select` returns is no longer the value it returned before, and not
+	 * otherwise: a change to another project, panel, or session is not heard.
+	 * `select` must return a value held by the projection (or a primitive),
+	 * never one it builds, or every projection would look like a change.
+	 */
+	subscribeSelection<T>(
+		select: (snapshot: ServerWorkspaceSnapshot | null) => T,
+		listener: (selected: T) => void,
+	): () => void {
+		let selected = select(this.known)
+		return this.subscribeAny(() => {
+			const next = select(this.known)
+			if (Object.is(next, selected)) return
+			selected = next
+			listener(next)
+		})
+	}
+
+	/** Called on every confirmed projection, without the replay `subscribe`
+	 * gives a new listener. The shape `useSyncExternalStore` subscribes with. */
+	subscribeAny(listener: () => void): () => void {
+		const heard: WorkspaceSnapshotListener = () => listener()
+		this.listeners.add(heard)
+		return () => this.listeners.delete(heard)
 	}
 
 	subscribeStatus(listener: WorkspaceStatusListener): () => void {
@@ -72,7 +113,8 @@ export class WorkspaceSnapshotStore {
 				const payload = event.payload
 				if (!isWorkspaceChange(payload, this.options.serverId)) return
 				if (this.known !== null && payload.revision <= this.known.revision) return
-				void this.refresh().catch((error) => this.reportBackgroundFailure(error))
+				if (this.advanceByRecord(payload)) return
+				void this.refreshTo(payload.revision).catch((error) => this.reportBackgroundFailure(error))
 			})
 			const removeResync = subscription.onResync(() => {
 				this.forceSnapshot = true
@@ -108,12 +150,23 @@ export class WorkspaceSnapshotStore {
 		}
 	}
 
+	/**
+	 * Reach at least `revision`, which a change event named. A refresh already
+	 * in flight usually answers with it, so the event only records how far the
+	 * projection has to get; a second fetch is made if that answer falls short.
+	 */
+	private refreshTo(revision: number): Promise<ServerWorkspaceSnapshot> {
+		if (this.refreshPromise === null) return this.refresh()
+		this.awaitedRevision = Math.max(this.awaitedRevision, revision)
+		return this.refreshPromise
+	}
+
 	private async refreshUntilSettled(): Promise<ServerWorkspaceSnapshot> {
 		let snapshot: ServerWorkspaceSnapshot | null = null
 		do {
 			this.refreshAgain = false
 			snapshot = await this.fetchAndPublish()
-		} while (this.refreshAgain && !this.closed)
+		} while ((this.refreshAgain || this.awaitedRevision > snapshot.revision) && !this.closed)
 		return snapshot
 	}
 
@@ -155,6 +208,37 @@ export class WorkspaceSnapshotStore {
 		})
 	}
 
+	/**
+	 * Advance by the change record a `workspace.changed` event carries, without
+	 * asking the server anything. This is the ordinary path. It is declined,
+	 * and the caller asks for a delta, when the event carries no record, when
+	 * the record does not start from the revision held (a change was missed),
+	 * when a refresh is already deciding the next projection, or when the
+	 * record does not yield a valid projection. Nothing is changed when it is
+	 * declined.
+	 */
+	private advanceByRecord(payload: { readonly record?: unknown }): boolean {
+		const previous = this.known
+		if (
+			payload.record === undefined ||
+			previous === null ||
+			this.refreshPromise !== null ||
+			this.forceSnapshot ||
+			this.publishing
+		)
+			return false
+		let snapshot: ServerWorkspaceSnapshot
+		try {
+			snapshot = applyWorkspaceChangeRecords(previous, [payload.record], this.options.serverId)
+		} catch {
+			recordBootstrapDiagnostic('workspace.record.declined')
+			return false
+		}
+		recordBootstrapDiagnostic('workspace.record.applied')
+		this.publish(snapshot, previous)
+		return true
+	}
+
 	private async fetchAndPublish(): Promise<ServerWorkspaceSnapshot> {
 		const previous = this.known
 		let snapshot: ServerWorkspaceSnapshot
@@ -162,19 +246,25 @@ export class WorkspaceSnapshotStore {
 			this.forceSnapshot = false
 			const value = await this.workspace.snapshot()
 			recordBootstrapDiagnostic('workspace.snapshot.received')
-			snapshot = parseServerWorkspaceSnapshot(value, this.options.serverId, previous)
+			snapshot = shareUnchangedWorkspaceObjects(
+				previous,
+				parseServerWorkspaceSnapshot(value, this.options.serverId, previous),
+			)
 		} else {
 			try {
 				const value = await this.workspace.delta(previous.revision, previous.cursor)
 				recordBootstrapDiagnostic('workspace.delta.received')
-				snapshot = parseServerWorkspaceDelta(value, this.options.serverId, previous).state
+				snapshot = advanceByWorkspaceDelta(previous, value, this.options.serverId)
 			} catch (error) {
 				this.markStatus({ state: 'stale', error: asError(error) })
 				recordBootstrapDiagnostic('workspace.delta.invalid')
 				try {
 					const recovery = await this.workspace.snapshot()
 					recordBootstrapDiagnostic('workspace.snapshot.recovery.received')
-					snapshot = parseServerWorkspaceSnapshot(recovery, this.options.serverId, previous)
+					snapshot = shareUnchangedWorkspaceObjects(
+						previous,
+						parseServerWorkspaceSnapshot(recovery, this.options.serverId, previous),
+					)
 				} catch (recoveryError) {
 					this.markStatus({ state: 'failed', error: asError(recoveryError) })
 					recordBootstrapDiagnostic('workspace.snapshot.recovery.failed')
@@ -183,6 +273,13 @@ export class WorkspaceSnapshotStore {
 			}
 		}
 		if (this.closed) throw new Error('workspace snapshot store is closed')
+		// No record is applied while a fetch is in flight, so the projection
+		// held is still the one this fetch started from.
+		this.publish(snapshot, previous)
+		return snapshot
+	}
+
+	private publish(snapshot: ServerWorkspaceSnapshot, previous: ServerWorkspaceSnapshot | null): void {
 		recordBootstrapDiagnostic('workspace.snapshot.normalized')
 		this.known = snapshot
 		this.markStatus({ state: 'current' })
@@ -191,12 +288,11 @@ export class WorkspaceSnapshotStore {
 		recordBootstrapDiagnostic('workspace.listeners.publish', this.listeners.size)
 		this.publishing = true
 		try {
-			for (const listener of [...this.listeners]) listener(snapshot)
+			for (const listener of [...this.listeners]) listener(snapshot, { previous })
 			recordBootstrapDiagnostic('workspace.listeners.complete', this.listeners.size)
 		} finally {
 			this.publishing = false
 		}
-		return snapshot
 	}
 
 	private markStatus(status: WorkspaceReconciliationStatus): void {
@@ -334,7 +430,7 @@ function asError(error: unknown): Error {
 	return error instanceof Error ? error : new Error('Workspace reconciliation failed.', { cause: error })
 }
 
-function isWorkspaceChange(value: unknown, serverId: string): value is { readonly serverId: string; readonly revision: number; readonly cursor: string } {
+function isWorkspaceChange(value: unknown, serverId: string): value is { readonly serverId: string; readonly revision: number; readonly cursor: string; readonly record?: unknown } {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 		&& (value as { serverId?: unknown }).serverId === serverId
 		&& Number.isSafeInteger((value as { revision?: unknown }).revision)

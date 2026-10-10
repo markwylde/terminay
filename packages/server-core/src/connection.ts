@@ -932,12 +932,25 @@ export class ServerConnection implements ServerConnectionLike {
 	}
 }
 
-function projectionDeliveryKey(event: OrderedEvent): string {
+/**
+ * What a pending subscription event may be replaced by. Events that are the
+ * current state of one entity share a key per entity, so on a congested
+ * connection a newer value stands in for the one still waiting; every other
+ * event is ordered and keeps a key of its own.
+ */
+export function projectionDeliveryKey(event: OrderedEvent): string {
 	if (event.event === 'agent') return 'agent:snapshot';
 	if (event.event === 'activity') {
 		const payload = objectPayload(event.payload);
 		if (typeof payload.sessionId === 'string')
 			return `activity:${payload.sessionId}`;
+	}
+	// A terminal's displayed title is current state: a newer one stands in
+	// for one still waiting to be sent.
+	if (event.event === 'terminal-titles') {
+		const payload = objectPayload(event.payload);
+		if (typeof payload.panelId === 'string')
+			return `terminal-titles:${payload.panelId}`;
 	}
 	return `${event.event}:revision:${event.revision}`;
 }

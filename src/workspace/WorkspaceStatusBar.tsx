@@ -1,6 +1,7 @@
 import type { DockviewApi, IDockviewPanel } from 'dockview';
 import { Folder, GitBranch, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useRef, useState } from 'react';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import {
 	firstChangedSegmentIndex,
 	findContainingWorktree,
@@ -71,6 +72,8 @@ export function WorkspaceStatusBar({
 
 export type FocusedTerminalStatus = {
 	sessionId: string;
+	panelId: string;
+	/** The title the bar was built with; the text shown follows the terminal. */
 	title: string;
 	layout: StatusBarLayoutCell[];
 	/** Null until the server has observed the live working directory. */
@@ -204,7 +207,9 @@ export function FocusedTerminalSummary({
 		<>
 			<span className="workspace-status-bar__tab">
 				<LayoutMiniature cells={status.layout} />
-				<span className="workspace-status-bar__tab-title">{status.title}</span>
+				<span className="workspace-status-bar__tab-title">
+					<LiveTerminalTitle panelId={status.panelId} fallback={status.title} />
+				</span>
 			</span>
 			{status.cwd === null ? null : (
 				<PathBreadcrumb identity={status.sessionId} path={status.cwd} />
@@ -266,20 +271,19 @@ type UseFocusedTerminalStatusOptions = {
 	isDockviewReady: boolean;
 	isActive: boolean;
 	focusedSessionId: string | null;
-	/** Bumped whenever a panel title may have changed. */
-	titleRevision: number;
 	getCwd: (sessionId: string) => Promise<string | null>;
 };
 
 function readLayout(api: DockviewApi, isFocusedPanel: (panel: IDockviewPanel) => boolean): {
+	panelId: string;
 	title: string;
 	layout: StatusBarLayoutCell[];
 } | null {
-	let title: string | null = null;
+	let focused: { panelId: string; title: string } | null = null;
 	const rects = api.groups.map((group) => {
 		const holdsFocus = group.panels.some((panel) => {
 			const matches = isFocusedPanel(panel);
-			if (matches) title = panel.title ?? panel.id;
+			if (matches) focused = { panelId: panel.id, title: panel.title ?? panel.id };
 			return matches;
 		});
 		const rect = group.element.getBoundingClientRect();
@@ -291,8 +295,11 @@ function readLayout(api: DockviewApi, isFocusedPanel: (panel: IDockviewPanel) =>
 			isFocused: holdsFocus,
 		};
 	});
-	if (title === null) return null;
-	return { title, layout: statusBarLayoutCells(rects) };
+	if (focused === null) return null;
+	return {
+		...(focused as { panelId: string; title: string }),
+		layout: statusBarLayoutCells(rects),
+	};
 }
 
 /** The focused terminal's title, split layout and live working directory.
@@ -304,10 +311,10 @@ export function useFocusedTerminalStatus({
 	getCwd,
 	isActive,
 	isDockviewReady,
-	titleRevision,
 }: UseFocusedTerminalStatusOptions): FocusedTerminalStatus | null {
 	const [layoutState, setLayoutState] = useState<{
 		sessionId: string;
+		panelId: string;
 		title: string;
 		layout: StatusBarLayoutCell[];
 	} | null>(null);
@@ -335,8 +342,13 @@ export function useFocusedTerminalStatus({
 		const next = read === null ? null : { sessionId, ...read };
 		// Dockview reports layout changes for every sash drag and resize; only
 		// re-render the workspace when what the bar shows actually changed.
+		// The title is left out of that comparison. The bar shows the terminal's
+		// title live, and a title is rewritten as often as its program likes:
+		// one that differs is not a reason to render the workspace.
+		const shown = (state: typeof next) =>
+			state === null ? null : JSON.stringify({ ...state, title: '' });
 		setLayoutState((current) =>
-			JSON.stringify(current) === JSON.stringify(next) ? current : next,
+			shown(current) === shown(next) ? current : next,
 		);
 	}, [apiRef]);
 
@@ -377,10 +389,9 @@ export function useFocusedTerminalStatus({
 
 	useEffect(() => {
 		if (!isActive) return;
-		void titleRevision;
 		recomputeLayout();
 		refreshCwd();
-	}, [focusedSessionId, isActive, recomputeLayout, refreshCwd, titleRevision]);
+	}, [focusedSessionId, isActive, recomputeLayout, refreshCwd]);
 
 	useEffect(() => {
 		if (!isActive) return;
@@ -458,7 +469,6 @@ export function useFocusedFileStatus({
 				panel === null || path === null || read === null
 					? null
 					: {
-							panelId: panel.id,
 							...read,
 							path,
 							size:

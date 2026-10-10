@@ -131,7 +131,17 @@ const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a';
 export function TerminalTab(
 	props: IDockviewPanelHeaderProps<TerminalPanelParams>,
 ) {
-	const title = props.api.title;
+	// The tab follows its own title. A terminal's title changes as often as
+	// its program rewrites it, and nothing around the tab is rendered for
+	// that, so the tab cannot wait for a render from above to show it.
+	const [title, setTitle] = useState(props.api.title);
+	useEffect(() => {
+		setTitle(props.api.title);
+		const subscription = props.api.onDidTitleChange((event) =>
+			setTitle(event.title),
+		);
+		return () => subscription.dispose();
+	}, [props.api]);
 	const params = props.params;
 	const {
 		color,

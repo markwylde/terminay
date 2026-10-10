@@ -21,6 +21,7 @@
 
 import { ChevronDown, House, Search, Server } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 
 export type CompactConnectionPresentation = Readonly<{
 	/** Named for assistive technology even though the glyph carries no label. */
@@ -49,6 +50,8 @@ export type CompactChromeRowProps = Readonly<{
 	projectTitle: string;
 	/** Absent when the active project has no terminal in front. */
 	terminalTitle?: string;
+	/** The terminal the title belongs to, so the text can follow it. */
+	terminalPanelId?: string;
 	/** A pending update stays visible here; it is never worth hiding. */
 	updateAction?: ReactNode;
 }>;
@@ -68,6 +71,7 @@ export function CompactChromeRow({
 	projectColor,
 	projectTitle,
 	terminalTitle,
+	terminalPanelId,
 	updateAction,
 }: CompactChromeRowProps) {
 	return (
@@ -153,7 +157,10 @@ export function CompactChromeRow({
 							className="compact-breadcrumb__terminal"
 							data-compact-breadcrumb-segment="terminal"
 						>
-							{terminalTitle}
+							<LiveTerminalTitle
+								panelId={terminalPanelId}
+								fallback={terminalTitle}
+							/>
 						</span>
 					</>
 				)}

@@ -40,6 +40,7 @@ import {
 	CSSProperties,
 	type FormEvent,
 	forwardRef,
+	memo,
 	type MouseEvent,
 	type MutableRefObject,
 	type KeyboardEvent as ReactKeyboardEvent,
@@ -181,6 +182,13 @@ import {
 	type ServerWorkspaceFolder,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
+import {
+	TerminalTitleStoreContext,
+	useWorkspaceProjectSlice,
+	useWorkspaceSelection,
+} from './shared/useWorkspaceProjection';
+import { sameJsonValue } from './shared/workspaceProjection';
+import { changedTerminalAppearance } from './workspace/unchangedPresentation';
 import {
 	WorkspaceSplitLayout,
 } from './shared/WorkspaceSplitLayout';
@@ -1402,7 +1410,16 @@ function unavailableFileViewerClient(reason: string): FileViewerClient {
 	});
 }
 
-const ProjectWorkspace = forwardRef<
+/** A terminal with no macro runs is always given this same list. */
+const NO_MACRO_RUNS: readonly never[] = Object.freeze([]);
+
+/**
+ * One folder of one project. It is memoised, and its props are kept stable
+ * where they are made, so a workspace change that concerns another project
+ * does not render it (ADR-0059). What it reads of the projection it
+ * subscribes to itself, by project.
+ */
+const ProjectWorkspace = memo(forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
 >(
@@ -1462,6 +1479,14 @@ const ProjectWorkspace = forwardRef<
 			`project-workspace:${project.id}:${folder.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
+		// Rendered again when this project, one of its folders, or one of its
+		// panels changes in the projection, and not for any other project's.
+		// The projection itself is then read whole: everything below that takes
+		// it looks only at this project's part.
+		useWorkspaceProjectSlice(
+			terminalClientContext?.workspaceSnapshotStore,
+			project.id,
+		);
 		const workspaceSnapshot =
 			terminalClientContext?.workspaceSnapshotStore?.snapshot ?? null;
 		// The folder as the server knows it. A project no projection describes
@@ -1483,12 +1508,33 @@ const ProjectWorkspace = forwardRef<
 			linkedFolderId === undefined ? undefined : folder.worktree?.path;
 		/** What this workspace's file and folder panels are rooted at. */
 		const folderRootPath = linkedFolderRoot ?? project.rootFolder;
+		// The authority is made of the connection and of what the projection
+		// holds for this project: that it is loaded, whose project it is, and
+		// its root. It is derived again when one of those changes and not when
+		// the workspace revision does: the explorer, its watches, and Git are
+		// keyed on it, and a revision that changed none of them is no reason to
+		// load any of them again (ADR-0059).
+		const projectionStore = terminalClientContext?.workspaceSnapshotStore;
+		const isProjectionLoaded = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot !== null,
+		);
+		const projectedServerId = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.serverId,
+		);
+		const projectedRoot = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.root,
+		);
 		const featureAvailability = useMemo(
 			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
 			[
 				project.id,
 				terminalClientContext,
-				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision,
+				isProjectionLoaded,
+				projectedServerId,
+				projectedRoot,
 			],
 		);
 		const featureAuthority =
@@ -1824,7 +1870,6 @@ const ProjectWorkspace = forwardRef<
 		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
 			null,
 		);
-		const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
 		const [isDockviewReady, setIsDockviewReady] = useState(false);
 		// Dockview treats its component registries as configuration. Keep their
 		// identities stable across ordinary workspace state changes (for example,
@@ -1853,6 +1898,7 @@ const ProjectWorkspace = forwardRef<
 
 			const terminalSessionIds = new Set<string>();
 			const terminalTitlesBySession = new Map<string, string>();
+			const terminalPanelsBySession = new Map<string, string>();
 			const dockviewApi = dockviewApiRef.current;
 			for (const panel of dockviewApi?.panels ?? []) {
 				const sessionId = panel.params?.sessionId;
@@ -1863,6 +1909,7 @@ const ProjectWorkspace = forwardRef<
 				// The index can lag during panel adoption/moves. Keep it in sync
 				// from Dockview's live immutable terminal identity.
 				panelSessionMapRef.current.set(panel.id, sessionId);
+				terminalPanelsBySession.set(sessionId, panel.id);
 				const title =
 					typeof panel.title === 'string' && panel.title.trim().length > 0
 						? panel.title
@@ -1876,6 +1923,8 @@ const ProjectWorkspace = forwardRef<
 			for (const entry of projectInventory) {
 				if (entry.sessionId === undefined) continue;
 				terminalSessionIds.add(entry.sessionId);
+				if (!terminalPanelsBySession.has(entry.sessionId))
+					terminalPanelsBySession.set(entry.sessionId, entry.panelId);
 				if (!terminalTitlesBySession.has(entry.sessionId))
 					terminalTitlesBySession.set(entry.sessionId, entry.title);
 			}
@@ -1910,6 +1959,10 @@ const ProjectWorkspace = forwardRef<
 						entry.activationTerminalSessionId === null
 							? undefined
 							: terminalTitlesBySession.get(entry.activationTerminalSessionId),
+					terminalPanelId:
+						entry.activationTerminalSessionId === null
+							? undefined
+							: terminalPanelsBySession.get(entry.activationTerminalSessionId),
 				}));
 		}, [
 			agentStatusSnapshot,
@@ -1918,7 +1971,6 @@ const ProjectWorkspace = forwardRef<
 			project.id,
 			projectInventory,
 			settings.agentIntegration.enabled,
-			terminalTitleRevision,
 		]);
 
 		useEffect(() => {
@@ -2829,7 +2881,6 @@ const ProjectWorkspace = forwardRef<
 			getCwd: getServerTerminalCwd,
 			isActive: isRenderingStatusBar,
 			isDockviewReady,
-			titleRevision: terminalTitleRevision,
 		});
 		const focusedFileStatus = useFocusedFileStatus({
 			apiRef: dockviewApiRef,
@@ -3159,11 +3210,26 @@ const ProjectWorkspace = forwardRef<
 			}
 		}, []);
 
+		// The handlers a terminal's tab is given close over these. A new token
+		// means every terminal needs them again; the same token means a
+		// terminal that already has them keeps them.
+		const macroTabHandlers = useMemo(
+			() => ({}),
+			[
+				cancelMacroRun,
+				clearFinishedMacroRunsForSession,
+				clearMacroRunForSession,
+				onMoveTerminalToProject,
+				project.id,
+			],
+		);
+		const macroTabHandlersRef = useRef(new Map<string, object>());
 		const syncRunningMacroTabs = useCallback(() => {
 			const api = dockviewApiRef.current;
 			if (!api) {
 				return;
 			}
+			const projectsForMove = getProjectsForTerminalMove();
 
 			for (const [
 				panelId,
@@ -3174,23 +3240,37 @@ const ProjectWorkspace = forwardRef<
 					continue;
 				}
 
-				panel.api.updateParameters({
-					macroRuns: runningMacroRunsBySession[panelSessionId] ?? [],
-					onClearFinishedMacroRuns: () =>
-						clearFinishedMacroRunsForSession(panelSessionId),
-					onClearMacroRun: (runId: string) =>
-						clearMacroRunForSession(panelSessionId, runId),
-					onCancelMacroRun: cancelMacroRun,
-					onMoveToProject: (targetProjectId: string) =>
-						onMoveTerminalToProject(project.id, panelId, targetProjectId),
-					projectsForMove: getProjectsForTerminalMove(),
-				});
+				// Dockview renders a panel and its tab again for every parameter
+				// update, changed or not, and this runs for every terminal each
+				// time any of its inputs is replaced: only what differs is handed
+				// over, and a terminal nothing changed for is left alone.
+				const next: Record<string, unknown> = {};
+				const macroRuns =
+					runningMacroRunsBySession[panelSessionId] ?? NO_MACRO_RUNS;
+				if (panel.params?.macroRuns !== macroRuns) next.macroRuns = macroRuns;
+				if (!sameJsonValue(panel.params?.projectsForMove, projectsForMove))
+					next.projectsForMove = projectsForMove;
+				if (macroTabHandlersRef.current.get(panelId) !== macroTabHandlers) {
+					macroTabHandlersRef.current.set(panelId, macroTabHandlers);
+					next.onClearFinishedMacroRuns = () =>
+						clearFinishedMacroRunsForSession(panelSessionId);
+					next.onClearMacroRun = (runId: string) =>
+						clearMacroRunForSession(panelSessionId, runId);
+					next.onCancelMacroRun = cancelMacroRun;
+					next.onMoveToProject = (targetProjectId: string) =>
+						onMoveTerminalToProject(project.id, panelId, targetProjectId);
+				}
+				if (Object.keys(next).length > 0) panel.api.updateParameters(next);
 			}
+			for (const panelId of macroTabHandlersRef.current.keys())
+				if (!panelSessionMapRef.current.has(panelId))
+					macroTabHandlersRef.current.delete(panelId);
 		}, [
 			cancelMacroRun,
 			clearFinishedMacroRunsForSession,
 			clearMacroRunForSession,
 			getProjectsForTerminalMove,
+			macroTabHandlers,
 			onMoveTerminalToProject,
 			project.id,
 			runningMacroRunsBySession,
@@ -3264,7 +3344,6 @@ const ProjectWorkspace = forwardRef<
 				const panel = dockviewApiRef.current?.getPanel(panelId);
 				if (!panel) return;
 				panel.api.setTitle(title);
-				setTerminalTitleRevision((revision) => revision + 1);
 				requestFrameOrTimeout(publishWorkspaceInventory);
 			},
 			[publishWorkspaceInventory, terminalClientContext],
@@ -3334,7 +3413,6 @@ const ProjectWorkspace = forwardRef<
 					}
 
 					panel.api.setTitle(nextTitle);
-					setTerminalTitleRevision((revision) => revision + 1);
 					panel.api.updateParameters({
 						activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 						emoji: nextEmoji,
@@ -3749,9 +3827,14 @@ const ProjectWorkspace = forwardRef<
 						api.removePanel(panel);
 						continue;
 					}
-					if (canonical.title !== undefined && panel.title !== canonical.title) {
-						panel.api.setTitle(canonical.title);
-						setTerminalTitleRevision((revision) => revision + 1);
+					// What the tab displays is the title the server published for
+					// the terminal, when it publishes one; the workspace's own title
+					// (its name, else its default) otherwise.
+					const displayed =
+						terminalClientContext?.terminalTitleStore?.title(panelId) ??
+						canonical.title;
+					if (displayed !== undefined && panel.title !== displayed) {
+						panel.api.setTitle(displayed);
 						requestFrameOrTimeout(publishWorkspaceInventory);
 					}
 					const localNote = panel.params?.terminalNote;
@@ -3764,29 +3847,19 @@ const ProjectWorkspace = forwardRef<
 					if (noteAction === 'adopt') terminalNoteSync.edit(panelId, localNote);
 					else if (noteAction === 'apply')
 						panel.api.updateParameters({ terminalNote: canonical.note });
-					panel.api.updateParameters({
-						...(canonical.emoji === undefined
-							? {}
-							: { emoji: canonical.emoji }),
-						...(canonical.color === undefined
-							? {}
-							: { color: canonical.color }),
-						...(canonical.inheritsProjectColor === undefined
-							? {}
-							: { inheritsProjectColor: canonical.inheritsProjectColor }),
-						...(canonical.activityIndicatorsEnabled === undefined
-							? {}
-							: {
-									activityIndicatorsEnabled:
-										canonical.activityIndicatorsEnabled,
-								}),
-					});
+					// Dockview re-renders a panel and its tab on every parameter
+					// update, changed or not, and this runs for every panel at every
+					// workspace revision: only what differs is handed over.
+					const appearance = changedTerminalAppearance(panel.params, canonical);
+					if (Object.keys(appearance).length > 0)
+						panel.api.updateParameters(appearance);
 				}
 			},
 			[
 				project.id,
 				projectedFolderId,
 				publishWorkspaceInventory,
+				terminalClientContext?.terminalTitleStore,
 				terminalNoteSync,
 			],
 		);
@@ -4370,7 +4443,7 @@ const ProjectWorkspace = forwardRef<
 			getTerminalCwd: getServerTerminalCwd,
 			projectId: project.id,
 			sendInput: sendTerminalPanelInput,
-			setTerminalTitleRevision,
+			onTerminalTitleSet: publishWorkspaceInventory,
 			state: terminalControlStateRef.current,
 			terminalContextReadersRef,
 			waitForInactivity:
@@ -4433,12 +4506,27 @@ const ProjectWorkspace = forwardRef<
 			],
 		);
 
-		// Every rename path — the edit sheet, an AI title, an MCP rename, and
-		// canonical reconciliation from the server — bumps this revision, so one
-		// effect republishes the inventory for all of them.
 		useEffect(() => {
 			publishWorkspaceInventory();
-		}, [publishWorkspaceInventory, terminalTitleRevision]);
+		}, [publishWorkspaceInventory]);
+
+		// A tab shows the title the server publishes for its terminal
+		// (ADR-0058). That title changes as often as a program rewrites it, so
+		// it is handed straight to the one tab it belongs to: nothing here is
+		// rendered for it, and no list is rebuilt. The lists that name terminals
+		// read the same title themselves, each for its own row.
+		const terminalTitleStore = terminalClientContext?.terminalTitleStore;
+		useEffect(() => {
+			if (terminalTitleStore === undefined) return;
+			return terminalTitleStore.subscribeChanges((panelId) => {
+				const panel = dockviewApiRef.current?.getPanel(panelId);
+				if (panel === undefined || !panelSessionMapRef.current.has(panelId))
+					return;
+				const title = terminalTitleStore.title(panelId);
+				if (title !== undefined && panel.title !== title)
+					panel.api.setTitle(title);
+			});
+		}, [terminalTitleStore]);
 
 		useEffect(() => {
 			focusedSessionIdRef.current = focusedSessionId;
@@ -5969,7 +6057,7 @@ const ProjectWorkspace = forwardRef<
 			</section>
 		);
 	},
-);
+));
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
@@ -6311,6 +6399,18 @@ function App({
 			currentServerId,
 			projectId,
 		);
+	// The same set for a project until its collapsed folders change.
+	const collapsedFolderSets = useRef(
+		new Map<string, { ids: readonly string[]; set: ReadonlySet<string> }>(),
+	);
+	const collapsedFolderSetFor = (projectId: string): ReadonlySet<string> => {
+		const ids = collapsedFoldersFor(projectId);
+		const held = collapsedFolderSets.current.get(projectId);
+		if (held !== undefined && sameJsonValue(held.ids, ids)) return held.set;
+		const set: ReadonlySet<string> = new Set(ids);
+		collapsedFolderSets.current.set(projectId, { ids, set });
+		return set;
+	};
 	const collapsedFoldersFor = (projectId: string): readonly string[] =>
 		foldersTreeChanges.collapsed[
 			projectSidebarVisibilityKey(currentServerId, projectId)
@@ -6416,6 +6516,22 @@ function App({
 	const workspaceRefs = useRef(
 		new FolderWorkspaceRegistry<ProjectWorkspaceHandle>(),
 	);
+	// One ref callback per workspace for as long as it is mounted. A new
+	// function on every render would be a new prop on every render.
+	const workspaceRefCallbacks = useRef(
+		new Map<string, (instance: ProjectWorkspaceHandle | null) => void>(),
+	);
+	const workspaceRefFor = (projectId: string, folderId: string) => {
+		const key = folderWorkspaceKey(projectId, folderId);
+		const held = workspaceRefCallbacks.current.get(key);
+		if (held !== undefined) return held;
+		const callback = (instance: ProjectWorkspaceHandle | null): void => {
+			workspaceRefs.current.set(projectId, folderId, instance);
+			if (instance === null) workspaceRefCallbacks.current.delete(key);
+		};
+		workspaceRefCallbacks.current.set(key, callback);
+		return callback;
+	};
 	/**
 	 * Terminal moves this device asked the server for and has not yet seen in a
 	 * confirmed projection, by session id, with the project each is headed to
@@ -7170,6 +7286,9 @@ function App({
 			];
 		}),
 	);
+	const mergedInventoriesRef = useRef<
+		Record<string, WorkspaceInventoryEntry[]>
+	>({});
 	const inventoryByProject = useMemo(() => {
 		const folderOrder = new Map(
 			(
@@ -7183,12 +7302,25 @@ function App({
 				{ folderIds, generalId },
 			]),
 		);
-		return mergeProjectInventories(
+		const merged = mergeProjectInventories(
 			inventoryByFolder,
 			(projectId) => folderOrder.get(projectId)?.folderIds ?? undefined,
 			rememberedFolderId,
 			(projectId) => folderOrder.get(projectId)?.generalId ?? undefined,
 		);
+		// One folder publishing merges every project again. A project whose
+		// list comes out the same keeps the list it had, so only the project
+		// that published is handed a new one.
+		const held = mergedInventoriesRef.current;
+		let same = Object.keys(held).length === Object.keys(merged).length;
+		for (const [projectId, entries] of Object.entries(merged)) {
+			const before = held[projectId];
+			if (before !== undefined && sameJsonValue(before, entries))
+				merged[projectId] = before;
+			else same = false;
+		}
+		mergedInventoriesRef.current = same ? held : merged;
+		return mergedInventoriesRef.current;
 		// `selectedFolders` is what `rememberedFolderId` reads.
 	}, [folderOrderKey, inventoryByFolder, rememberedFolderId, selectedFolders]);
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
@@ -8610,6 +8742,15 @@ function App({
 			placeServerLabels,
 		],
 	);
+	// A workspace searches when a person types. It is handed one function
+	// for the life of the window, which searches the places as they are then,
+	// so that the places changing is not a reason to render every workspace.
+	const searchPlacesRef = useRef(searchPlaces);
+	searchPlacesRef.current = searchPlaces;
+	const searchPlacesNow = useCallback(
+		(query: string) => searchPlacesRef.current(query),
+		[],
+	);
 	const closeViewCommandBar = useCallback(
 		() => setIsViewCommandBarOpen(false),
 		[],
@@ -9307,6 +9448,9 @@ function App({
 	) : null;
 
 	return (
+		<TerminalTitleStoreContext.Provider
+			value={terminalClientContext?.terminalTitleStore}
+		>
 		<AppWindowsContext.Provider value={serverAppWindows}>
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}`}
@@ -9366,7 +9510,10 @@ function App({
 							: { projectColor: displayedActiveProject.color })}
 						{...(activeCompactTerminal === undefined
 							? {}
-							: { terminalTitle: activeCompactTerminal.title })}
+							: {
+									terminalTitle: activeCompactTerminal.title,
+									terminalPanelId: activeCompactTerminal.panelId,
+								})}
 					/>
 				) : (
 					<>
@@ -9802,9 +9949,7 @@ function App({
 							folders.map((folder) => (
 						<ProjectWorkspace
 							key={folderWorkspaceKey(project.id, folder.id)}
-							ref={(instance) => {
-								workspaceRefs.current.set(project.id, folder.id, instance);
-							}}
+							ref={workspaceRefFor(project.id, folder.id)}
 							agentStatusSnapshot={agentStatusSnapshot}
 							auxiliaryRoutes={auxiliaryRouteController}
 							folder={folder}
@@ -9821,7 +9966,7 @@ function App({
 							foldersTreeWidth={foldersTreeWidthFor(project.id)}
 							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
 							foldersColumnTab={foldersColumnTabFor(project.id)}
-							collapsedFolderIds={new Set(collapsedFoldersFor(project.id))}
+							collapsedFolderIds={collapsedFolderSetFor(project.id)}
 							onToggleFolderCollapsed={toggleFolderCollapsed}
 							onFoldersColumnTabChange={selectFoldersColumnTab}
 							compactAgentsHost={compactAgentsHost}
@@ -9843,7 +9988,7 @@ function App({
 							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
-							searchPlaces={searchPlaces}
+							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}
 							isStatusBarVisible={isStatusBarVisible}
 							statusBarSlot={statusBarSlot}
@@ -9895,6 +10040,7 @@ function App({
 			) : null}
 		</div>
 		</AppWindowsContext.Provider>
+		</TerminalTitleStoreContext.Provider>
 	);
 }
 

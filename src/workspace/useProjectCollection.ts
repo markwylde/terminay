@@ -13,6 +13,7 @@ import {
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
+import { keepIfUnchanged, keepListIfUnchanged } from './unchangedPresentation';
 import { recallHomeSelected, rememberHomeSelected } from './localViewState';
 import {
 	createProjectTab,
@@ -370,7 +371,7 @@ export function useProjectCollection<TTerminal>({
 							projectSidebarState(serverProject.sidebar),
 							pendingSidebarCommitsRef.current.get(serverProject.id),
 						);
-						return {
+						const presented = {
 							...base,
 							...sidebar,
 							isFileExplorerOpen: isProjectSidebarOpenOnDevice(
@@ -396,6 +397,10 @@ export function useProjectCollection<TTerminal>({
 							defaultShellProfileId: serverProject.defaultShellProfileId,
 							emoji: serverProject.icon ?? base.emoji,
 						};
+						// A projection that changed nothing about this project presents
+						// the tab it already presented: the same object, so nothing
+						// keyed on the project runs again (ADR-0059).
+						return keepIfUnchanged(existing, presented);
 					},
 				);
 				const serverById = new Map(
@@ -406,9 +411,12 @@ export function useProjectCollection<TTerminal>({
 					holdProjectOrderRef?.current !== undefined &&
 					current.length === nextFromServer.length &&
 					current.every((project) => serverById.has(project.id));
-				const next = sameMembership
+				const ordered = sameMembership
 					? current.map((project) => serverById.get(project.id) ?? project)
 					: nextFromServer;
+				// And a projection that changed no project presents the list it
+				// already presented.
+				const next = keepListIfUnchanged(current, ordered) as ProjectTab[];
 				projectsRef.current = next;
 				return next;
 			});

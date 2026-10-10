@@ -22,6 +22,7 @@ import {
 	ServerPortTransport,
 	ServerScopedMessagePort,
 } from './serverPortTransport';
+import { TerminalTitleStore } from './TerminalTitleStore';
 import { WorkspaceSnapshotStore } from './WorkspaceSnapshotStore';
 
 const DEFAULT_CONNECTION_TIMEOUT_MS = 15_000;
@@ -167,6 +168,7 @@ export async function createConnectedServerClientContext(
 		'setup timeout',
 	);
 	let workspaceSnapshotStore: WorkspaceSnapshotStore | undefined;
+	let terminalTitleStore: TerminalTitleStore | undefined;
 	try {
 		const featureTransport = new TerminayClientFacade(client);
 		const candidateActivityClient = new ActivityClient({
@@ -210,6 +212,20 @@ export async function createConnectedServerClientContext(
 			serverId: server.serverId,
 		});
 		workspaceSnapshotStore = store;
+		// What each terminal displays is live state the server publishes beside
+		// the workspace (ADR-0058). A title is presentation: a server that does
+		// not publish titles, or a subscription that fails, leaves every tab on
+		// the title the workspace projection holds.
+		const titles = new TerminalTitleStore({
+			client,
+			enabled: server.capabilities.includes(
+				FEATURE_CAPABILITIES.terminalTitles,
+			),
+		});
+		terminalTitleStore = titles;
+		void titles.start().catch((error) => {
+			console.warn('terminal title subscription failed', error);
+		});
 		if (agentStatusClient !== undefined) {
 			store.subscribe((snapshot) => {
 				// Workspace deltas can arrive before a host-created terminal is in the
@@ -276,6 +292,7 @@ export async function createConnectedServerClientContext(
 			if (disposePromise !== undefined) return disposePromise;
 			disposePromise = (async () => {
 				store.close();
+				titles.close();
 				candidateActivityClient.close();
 				candidateAgentStatusClient.close();
 				removeStateListener();
@@ -315,6 +332,7 @@ export async function createConnectedServerClientContext(
 			activityClient,
 			agentStatusClient,
 			workspaceSnapshotStore: store,
+			terminalTitleStore: titles,
 			dispose,
 			fileObservationClient,
 			documentationClient,
@@ -328,6 +346,7 @@ export async function createConnectedServerClientContext(
 		};
 	} catch (error) {
 		workspaceSnapshotStore?.close();
+		terminalTitleStore?.close();
 		await client.close().catch(() => undefined);
 		throw error;
 	}

@@ -86,7 +86,10 @@ import { localTimeZone } from '@terminay/cron';
 import { AutomationScheduler } from './automationService/scheduler.js';
 import { AutomationTriggers } from './automationService/triggers.js';
 import type { RemoteConnectionAdmission } from './remote/transport.js';
-import { projectLifecycleEventProjector } from './workspaceProtocol.js';
+import {
+	createWorkspaceChangeEventProjector,
+	projectLifecycleEventProjector,
+} from './workspaceProtocol.js';
 // --- end automations ---
 import {
 	createMacroOperationRegistry,
@@ -140,7 +143,12 @@ import type { SessionHolderPtyFactory } from './sessionHolder/factory.js';
 import { isHolderSessionId } from './sessionHolder/paths.js';
 import { reattachHeldSessions } from './sessionHolder/reattach.js';
 import { backgroundTerminalLimitMs } from './settings/backgroundTerminals.js';
-import { bindProgramTitles } from './programTitles.js';
+import {
+	bindTerminalTitles,
+	createTerminalTitleOperationRegistry,
+	TerminalTitleService,
+	terminalTitleEventProjector,
+} from './terminalTitles.js';
 import { WorkspaceStore } from './workspace.js';
 import {
 	restoreWorkspaceOnStartup,
@@ -243,6 +251,9 @@ export interface ServerCoreCompositionOptions
 	 * queries and authenticated project.move commands are composed into the
 	 * same server dispatcher as terminal operations. */
 	readonly workspace?: WorkspaceStore;
+	/** The title service a host built itself, when it reads displayed titles
+	 * outside the composition. Without one the composition builds its own. */
+	readonly terminalTitles?: TerminalTitleService;
 	readonly workspaceOperations?: WorkspaceOperationRegistryOptions;
 	/** Optional canonical terminal activity authority exposed through the same
 	 * authenticated protocol and ordered event journal as terminal streams. */
@@ -411,6 +422,8 @@ export interface ServerCoreComposition {
 	readonly agentSessions?: AgentSessionComposition;
 	readonly activityOperations?: ActivityOperationRegistry;
 	readonly agentOperations?: AgentOperationRegistry;
+	/** What each terminal displays (ADR-0058); present with a workspace. */
+	readonly terminalTitles?: TerminalTitleService;
 	readonly terminalOperations: TerminalOperationRegistry;
 	readonly macroOperations?: MacroOperationRegistry;
 	readonly automationOperations?: AutomationOperationRegistry;
@@ -487,6 +500,33 @@ export function createServerCoreComposition(
 	}
 
 	const eventJournal = options.eventJournal ?? new OrderedEventJournal();
+	// Programs name their terminals (ADR-0058). The title a terminal displays
+	// is live state held here; the setting is read on every title, so turning
+	// it off needs no restart.
+	const terminalTitles =
+		options.workspace === undefined
+			? undefined
+			: (options.terminalTitles ??
+				new TerminalTitleService({
+					workspace: options.workspace,
+					enabled: () =>
+						options.settings?.settings.programSetTabTitles !== false,
+				}));
+	const terminalTitleOperations =
+		terminalTitles === undefined
+			? undefined
+			: createTerminalTitleOperationRegistry({
+					service: terminalTitles,
+					eventJournal,
+				});
+	const unbindTerminalTitles =
+		terminalTitles === undefined || options.activity === undefined
+			? undefined
+			: bindTerminalTitles(options.activity, terminalTitles);
+	const unsubscribeTerminalTitleSetting =
+		terminalTitles === undefined
+			? undefined
+			: options.settings?.onChange(() => terminalTitles.reconcile());
 	if (
 		options.terminalProfiles !== undefined &&
 		options.workspace === undefined
@@ -707,6 +747,12 @@ export function createServerCoreComposition(
 					terminal,
 					workspace: options.workspace,
 					workspaceOperations,
+					...(terminalTitles === undefined
+						? {}
+						: {
+								terminalTitle: (sessionId: string) =>
+									terminalTitles.displayedTitleForSession(sessionId),
+							}),
 					resolveLaunch: (intent) => terminalLaunchResolver.resolve(intent),
 					...(options.terminalLaunchPathAuthority === undefined
 						? {}
@@ -954,9 +1000,12 @@ export function createServerCoreComposition(
 								candidate.sessionId === sessionId,
 						);
 						const projectTitle = state?.projects[projectId]?.name;
+						const title =
+							terminalTitles?.displayedTitleForSession(sessionId) ??
+							panel?.title;
 						return {
 							projectId,
-							...(panel?.title === undefined ? {} : { title: panel.title }),
+							...(title === undefined ? {} : { title }),
 							...(projectTitle === undefined ? {} : { projectTitle }),
 							...(session === undefined
 								? {}
@@ -1286,7 +1335,10 @@ export function createServerCoreComposition(
 			),
 			mergeOperationRegistries(
 				mergeOperationRegistries(
-					activityOperations?.operations ?? {},
+					mergeOperationRegistries(
+						activityOperations?.operations ?? {},
+						terminalTitleOperations?.operations ?? {},
+					),
 					agentOperations?.operations ?? {},
 				),
 				mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
@@ -1329,6 +1381,7 @@ export function createServerCoreComposition(
 		...(options.activity === undefined &&
 		options.agents === undefined &&
 		options.fileObservations === undefined &&
+		terminalTitles === undefined &&
 		automationSpace === undefined
 			? {}
 			: {
@@ -1336,12 +1389,18 @@ export function createServerCoreComposition(
 						options.workspace === undefined
 							? undefined
 							: projectLifecycleEventProjector,
+						options.workspace === undefined
+							? undefined
+							: createWorkspaceChangeEventProjector(options.workspace),
 						options.activity === undefined
 							? undefined
 							: createActivityEventProjector(options.activity),
 						options.agents === undefined
 							? undefined
 							: createAgentEventProjector(options.agents),
+						terminalTitles === undefined
+							? undefined
+							: terminalTitleEventProjector,
 						options.fileObservations === undefined
 							? undefined
 							: createFileObservationEventProjector,
@@ -1420,7 +1479,7 @@ export function createServerCoreComposition(
 					);
 				}
 				mcpApprovals?.setPolicies(storedMcpPermissions());
-				programTitles?.reconcile();
+				terminalTitles?.reconcile();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
 				// Every service the restore needs is now up, and a host's way of
@@ -1489,22 +1548,7 @@ export function createServerCoreComposition(
 			? undefined
 			: releaseClosedHeldSessions(options.workspace, options.sessionHolder);
 	let unsubscribeBackgroundLimit: (() => void) | undefined;
-	// Programs name their terminals (ADR-0056). The setting is read on every
-	// title, so turning it off needs no restart.
-	const programTitles =
-		options.activity === undefined || workspaceOperations === undefined
-			? undefined
-			: bindProgramTitles({
-					activity: options.activity,
-					workspace: () => workspaceOperations.workspace.state,
-					apply: workspaceOperations.applyHostCommand,
-					enabled: () =>
-						options.settings?.settings.programSetTabTitles !== false,
-				});
-	const unsubscribeProgramTitles =
-		programTitles === undefined
-			? undefined
-			: options.settings?.onChange(() => programTitles.reconcile());
+
 	const endAllTerminalSessions = async (): Promise<void> => {
 		await startPromise?.catch(() => undefined);
 		unsubscribeHeldSessionRelease?.();
@@ -1556,8 +1600,10 @@ export function createServerCoreComposition(
 			await attempt(() => options.sessionHolder?.detach());
 			await attempt(() => unsubscribeHeldSessionRelease?.());
 			await attempt(() => unsubscribeBackgroundLimit?.());
-			await attempt(() => unsubscribeProgramTitles?.());
-			await attempt(() => programTitles?.dispose());
+			await attempt(() => unsubscribeTerminalTitleSetting?.());
+			await attempt(() => unbindTerminalTitles?.());
+			await attempt(() => terminalTitleOperations?.close());
+			await attempt(() => terminalTitles?.dispose());
 			await attempt(() => presentationCheckpoints?.close());
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());
@@ -1601,6 +1647,7 @@ export function createServerCoreComposition(
 			: { agentSessions: options.agentSessions }),
 		...(activityOperations === undefined ? {} : { activityOperations }),
 		...(agentOperations === undefined ? {} : { agentOperations }),
+		...(terminalTitles === undefined ? {} : { terminalTitles }),
 		terminalOperations,
 		...(terminalLaunchResolver === undefined ? {} : { terminalLaunchResolver }),
 		...(macroOperations === undefined ? {} : { macroOperations }),
@@ -1654,10 +1701,9 @@ function releaseClosedHeldSessions(
 	workspace: WorkspaceStore,
 	holder: SessionHolderPtyFactory,
 ): () => void {
-	return workspace.subscribe((event) => {
-		for (const id of event.changedIds) {
+	return workspace.subscribe((_event, record) => {
+		for (const id of record.removed.terminalSessions ?? []) {
 			if (!isHolderSessionId(id)) continue;
-			if (workspace.state.terminalSessions[id] !== undefined) continue;
 			void holder.end(id).catch(() => undefined);
 		}
 	});
@@ -1862,7 +1908,11 @@ function uniqueCapabilities(
 			FEATURE_CAPABILITIES.terminal,
 			...(options.workspace === undefined
 				? []
-				: [FEATURE_CAPABILITIES.workspace]),
+				: [
+						FEATURE_CAPABILITIES.workspace,
+						FEATURE_CAPABILITIES.workspaceChanges,
+						FEATURE_CAPABILITIES.terminalTitles,
+					]),
 			...(options.activity === undefined && options.agents === undefined
 				? []
 				: [FEATURE_CAPABILITIES.agents]),

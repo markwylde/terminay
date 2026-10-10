@@ -11,6 +11,7 @@
  */
 
 import { FolderPlus, Plus, Search, Server, X } from 'lucide-react';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
@@ -139,7 +140,7 @@ function CompactSwitcherPanel({
 				</span>
 				<span className="compact-switcher__terminal-text">
 					<span className="compact-switcher__terminal-title">
-						{panel.title}
+						<LiveTerminalTitle panelId={panel.panelId} fallback={panel.title} />
 					</span>
 					{panel.preview === undefined ? null : (
 						<span className="compact-switcher__terminal-preview">

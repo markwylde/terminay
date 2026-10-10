@@ -1,10 +1,15 @@
 import {
+	FEATURE_CAPABILITIES,
 	type JsonValue,
 	parseWorkspaceDeltaDto,
+	parseWorkspaceRecordsDeltaDto,
 	parseWorkspaceSnapshotDto,
 	protocolError,
 	WORKSPACE_DELTA_VERSION,
+	WORKSPACE_RECORDS_DELTA_VERSION,
+	type WorkspaceChangeRecordDto,
 	type WorkspaceDeltaDto,
+	type WorkspaceRecordsDeltaDto,
 } from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
@@ -21,9 +26,11 @@ import {
 	canSeeAutomationSpace,
 	isAutomationSpace,
 	type WorkspaceCommand,
+	type WorkspaceCommittedChange,
 	type WorkspaceState,
 	WorkspaceStore,
 	withholdAutomationSpace,
+	workspaceStateDifference,
 } from './workspace.js';
 
 /** Protocol operation names for the server-owned workspace boundary. */
@@ -146,6 +153,8 @@ export function createWorkspaceOperationRegistry(
 					'validation',
 					'workspace cursor does not match revision',
 				);
+			if (speaksChangeRecords(request.context.clientCapabilities))
+				return recordsDelta(workspace, request, revision, cursor);
 			const delta = projectScopedDelta(
 				connectionVisibleDelta(workspace.delta(revision), request),
 				projectClaim(request),
@@ -299,6 +308,149 @@ export function automationSpaceRetainsExitedSession(
 				panel.sessionId === identity.sessionId,
 		);
 	};
+}
+
+/** Whether a connection negotiated change records (ADR-0059). */
+function speaksChangeRecords(
+	capabilities: readonly string[] | undefined,
+): boolean {
+	return capabilities?.includes(FEATURE_CAPABILITIES.workspaceChanges) === true;
+}
+
+/**
+ * What a connection may read of a state, as a function of the state: all of
+ * it less the automation space it did not negotiate, within the project it is
+ * claimed to. `undefined` means the connection reads the state as it is.
+ * The same function scopes a snapshot and both sides of a change, which is
+ * what makes a scoped record exact.
+ */
+function readScopeOf(
+	capabilities: readonly string[] | undefined,
+	claimedProjectId: string | undefined,
+): ((state: WorkspaceState) => WorkspaceState) | undefined {
+	const seesAutomationSpace = canSeeAutomationSpace(capabilities);
+	if (seesAutomationSpace && claimedProjectId === undefined) return undefined;
+	return (state) =>
+		projectScopedState(
+			seesAutomationSpace ? state : withholdAutomationSpace(state),
+			claimedProjectId,
+		);
+}
+
+/**
+ * One commit as a connection may see it. An unscoped connection is given the
+ * commit's own record. A scoped one is given the difference between what it
+ * could read before and after, so an object that entered its scope arrives in
+ * full, one that left is named as removed, and nothing outside it is named at
+ * all, the command's type included.
+ */
+function changeRecordFor(
+	change: WorkspaceCommittedChange,
+	scope: ((state: WorkspaceState) => WorkspaceState) | undefined,
+): WorkspaceChangeRecordDto {
+	if (scope === undefined)
+		return change.record as unknown as WorkspaceChangeRecordDto;
+	const { fromRevision, revision, cursor } = change.record;
+	return {
+		fromRevision,
+		revision,
+		cursor,
+		...workspaceStateDifference(scope(change.previous), scope(change.state)),
+	} as unknown as WorkspaceChangeRecordDto;
+}
+
+function recordsDelta(
+	workspace: WorkspaceStore,
+	request: QueryRequest,
+	revision: number,
+	cursor: string,
+): JsonValue {
+	const delta = workspace.delta(revision);
+	const scope = readScopeOf(
+		request.context.clientCapabilities,
+		projectClaim(request),
+	);
+	const envelope = {
+		deltaVersion: WORKSPACE_RECORDS_DELTA_VERSION,
+		serverId: delta.state.serverId,
+		fromRevision: revision,
+		fromCursor: cursor,
+		revision: delta.state.revision,
+		cursor: delta.state.cursor,
+	};
+	const response: WorkspaceRecordsDeltaDto =
+		delta.changes === undefined
+			? {
+					...envelope,
+					state: (scope === undefined
+						? delta.state
+						: scope(delta.state)) as unknown as WorkspaceDeltaDto['state'],
+				}
+			: {
+					...envelope,
+					records: delta.changes.map((change) =>
+						changeRecordFor(change, scope),
+					),
+				};
+	return parseWorkspaceRecordsDeltaDto(response, {
+		serverId: delta.state.serverId,
+		revision,
+		cursor,
+	}) as unknown as JsonValue;
+}
+
+/**
+ * Attach a commit's change record to its `workspace.changed` event, for a
+ * connection that negotiated change records, immediately before delivery. The
+ * journal holds the event once and small; the record is derived per connection
+ * because what a connection may read is. A commit the store no longer retains
+ * is delivered without one, and the client asks for a delta.
+ */
+export function createWorkspaceChangeEventProjector(
+	workspace: WorkspaceStore,
+): (
+	event: OrderedEvent,
+	client: AuthenticatedClient | undefined,
+	connection?: { readonly clientCapabilities?: readonly string[] },
+) => OrderedEvent | undefined {
+	return (event, client, connection) => {
+		if (event.event !== WORKSPACE_EVENT) return event;
+		const capabilities = connection?.clientCapabilities;
+		if (!speaksChangeRecords(capabilities)) return event;
+		const payload = event.payload;
+		if (
+			typeof payload !== 'object' ||
+			payload === null ||
+			Array.isArray(payload) ||
+			typeof payload.revision !== 'number'
+		)
+			return event;
+		const change = workspace.changeAt(payload.revision);
+		if (change === undefined) return event;
+		try {
+			const record = changeRecordFor(
+				change,
+				readScopeOf(capabilities, claimedProjectOf(client?.claims)),
+			);
+			return {
+				...event,
+				payload: { ...payload, record: record as unknown as JsonValue },
+			};
+		} catch {
+			// A state that cannot be scoped for this connection is fetched, where
+			// the same failure is reported as the query's own error.
+			return event;
+		}
+	};
+}
+
+function claimedProjectOf(claims: unknown): string | undefined {
+	return typeof claims === 'object' &&
+		claims !== null &&
+		!Array.isArray(claims) &&
+		typeof (claims as Record<string, unknown>).projectId === 'string'
+		? ((claims as Record<string, unknown>).projectId as string)
+		: undefined;
 }
 
 /** A connection that did not negotiate `automations.v1` never learns of the
@@ -718,7 +870,6 @@ function commandProjectIds(
 		case 'panel.create':
 			return [command.panel.projectId];
 		case 'panel.update':
-		case 'panel.programTitle.set':
 		case 'panel.close': {
 			const panel = state.panels[command.panelId];
 			return panel === undefined ? [] : [panel.projectId];
@@ -735,7 +886,6 @@ function commandProjectIds(
 			return session === undefined ? [] : [session.projectId];
 		}
 		case 'project.shellProfile.replace':
-		case 'panel.programTitles.clear':
 		case 'view.create':
 		case 'view.rename':
 		case 'view.close':
@@ -871,14 +1021,6 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
 	}
 	if (command.type === 'terminal.markExited') {
 		throw protocolError('forbidden', 'terminal exit marks are host-owned');
-	}
-	// A program title comes from the session's own output, read by the server
-	// (ADR-0056). A client can name a terminal; it cannot speak for its program.
-	if (
-		command.type === 'panel.programTitle.set' ||
-		command.type === 'panel.programTitles.clear'
-	) {
-		throw protocolError('forbidden', 'program titles are host-owned');
 	}
 	// Only the server links a folder to a worktree or records who created one:
 	// both come from its own worktree listing, never from a client (ADR-0050).
