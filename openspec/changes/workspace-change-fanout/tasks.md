@@ -24,9 +24,9 @@
 
 ## 4. Protocol: change records
 
-- [ ] 4.1 Define the change-record DTO, its parser, the second delta version, and the `workspace-changes.v1` and `terminal-titles.v1` capabilities in `packages/protocol`. Verified by parser unit tests for valid, malformed, and oversized records.
-- [ ] 4.2 Carry the scoped change record on `workspace.changed` for connections that negotiated the capability, with the fetch marker where a record cannot be scoped exactly. Verified by server tests for an unscoped connection, a project-scoped connection, and an object entering and leaving a scope.
-- [ ] 4.3 Answer `workspace.delta` with ordered change records for a capable connection, and with a snapshot when history no longer reaches the requested revision. Keep the first delta version for a connection without the capability. Verified by server tests for both versions and for the history boundary.
+- [x] 4.1 Define the change-record DTO, its parser, the second delta version, and the `workspace-changes.v1` and `terminal-titles.v1` capabilities in `packages/protocol`. Verified by parser unit tests for valid, malformed, and oversized records.
+- [x] 4.2 Carry the scoped change record on `workspace.changed` for connections that negotiated the capability, with the fetch marker where a record cannot be scoped exactly. Verified by server tests for an unscoped connection, a project-scoped connection, and an object entering and leaving a scope.
+- [x] 4.3 Answer `workspace.delta` with ordered change records for a capable connection, and with a snapshot when history no longer reaches the requested revision. Keep the first delta version for a connection without the capability. Verified by server tests for both versions and for the history boundary.
 - [ ] 4.4 Add protocol-conformance cases: record applied in order, gap, duplicate, scoped record, fallback to snapshot, and a peer without the capability. Verified by the conformance suite passing against the server.
 
 ## 5. Client store

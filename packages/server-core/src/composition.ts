@@ -86,7 +86,10 @@ import { localTimeZone } from '@terminay/cron';
 import { AutomationScheduler } from './automationService/scheduler.js';
 import { AutomationTriggers } from './automationService/triggers.js';
 import type { RemoteConnectionAdmission } from './remote/transport.js';
-import { projectLifecycleEventProjector } from './workspaceProtocol.js';
+import {
+	createWorkspaceChangeEventProjector,
+	projectLifecycleEventProjector,
+} from './workspaceProtocol.js';
 // --- end automations ---
 import {
 	createMacroOperationRegistry,
@@ -1386,6 +1389,9 @@ export function createServerCoreComposition(
 						options.workspace === undefined
 							? undefined
 							: projectLifecycleEventProjector,
+						options.workspace === undefined
+							? undefined
+							: createWorkspaceChangeEventProjector(options.workspace),
 						options.activity === undefined
 							? undefined
 							: createActivityEventProjector(options.activity),

@@ -701,12 +701,24 @@ export interface WorkspaceSnapshot {
 	readonly state: WorkspaceState;
 	readonly events: readonly WorkspaceEvent[];
 }
-/** The answer to "what happened since revision N": the records, when the
+/**
+ * One retained commit: its record, and the states on either side of it. The
+ * two states share every object the commit left alone, so holding both costs
+ * what the record does. A reader that may see only part of the workspace
+ * derives its own record from them (`workspaceStateDifference`).
+ */
+export interface WorkspaceCommittedChange {
+	readonly record: WorkspaceChangeRecord;
+	readonly previous: WorkspaceState;
+	readonly state: WorkspaceState;
+}
+/** The answer to "what happened since revision N": the commits, when the
  * store still holds them all, and the state they lead to. */
 export interface WorkspaceDelta extends WorkspaceSnapshot {
 	/** Absent when history no longer reaches the requested revision, in which
 	 * case `state` is the only way forward. */
 	readonly records?: readonly WorkspaceChangeRecord[];
+	readonly changes?: readonly WorkspaceCommittedChange[];
 }
 export type WorkspaceApplyResult =
 	| {
@@ -1481,6 +1493,46 @@ function settleCommittedState(
 	};
 }
 
+/**
+ * What differs between two states: every object of `next` whose content is
+ * not that of `previous`, and the id of every object `previous` had that
+ * `next` does not. Objects the two states share are skipped by identity, so
+ * comparing the states on either side of a commit costs what the commit
+ * changed plus one pass over the ids.
+ */
+export function workspaceStateDifference(
+	previous: WorkspaceState,
+	next: WorkspaceState,
+): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
+	const changed: {
+		[K in WorkspaceCollection]?: Record<ProtocolId, WorkspaceCollectionObject>;
+	} = {};
+	const removed: { [K in WorkspaceCollection]?: ProtocolId[] } = {};
+	for (const collection of WORKSPACE_COLLECTIONS) {
+		const before = previous[collection] as Readonly<
+			Record<ProtocolId, WorkspaceCollectionObject>
+		>;
+		const after = next[collection] as Readonly<
+			Record<ProtocolId, WorkspaceCollectionObject>
+		>;
+		if (before === after) continue;
+		for (const [id, object] of Object.entries(after)) {
+			const held = before[id];
+			if (held !== undefined && sameJson(held, object)) continue;
+			(changed[collection] ??= {})[id] = object;
+		}
+		for (const id of Object.keys(before))
+			if (!Object.hasOwn(after, id)) (removed[collection] ??= []).push(id);
+	}
+	return {
+		changed: changed as WorkspaceChangeRecord['changed'],
+		removed,
+		...(sameJson(previous.viewOrder, next.viewOrder)
+			? {}
+			: { viewOrder: next.viewOrder }),
+	};
+}
+
 /** UTF-16 units a change record serialises to: what retaining it costs. */
 function recordBytes(record: WorkspaceChangeRecord): number {
 	return JSON.stringify(record).length;
@@ -1669,9 +1721,8 @@ function syncProject(
 }
 
 /** One commit as the store remembers it. */
-interface CommittedChange {
+interface CommittedChange extends WorkspaceCommittedChange {
 	readonly event: WorkspaceEvent;
-	readonly record: WorkspaceChangeRecord;
 	readonly bytes: number;
 }
 
@@ -1778,13 +1829,24 @@ export class WorkspaceStore {
 			state: this.current,
 			events: since.map((change) => change.event),
 			records: since.map((change) => change.record),
+			changes: since,
 		};
 	}
 
 	/** The change record that produced `revision`, while it is retained. */
 	recordAt(revision: number): WorkspaceChangeRecord | undefined {
-		return this.history.find((change) => change.event.revision === revision)
-			?.record;
+		return this.changeAt(revision)?.record;
+	}
+
+	/** The commit that produced `revision`, while it is retained. */
+	changeAt(revision: number): WorkspaceCommittedChange | undefined {
+		// The newest commit is the one asked for when a change is published.
+		for (let index = this.history.length - 1; index >= 0; index -= 1) {
+			const change = this.history[index];
+			if (change === undefined || change.event.revision < revision) break;
+			if (change.event.revision === revision) return change;
+		}
+		return undefined;
 	}
 
 	/** UTF-16 units of serialised change records currently retained. */
@@ -1821,10 +1883,13 @@ export class WorkspaceStore {
 			changedIds: Object.freeze([...changedIds]),
 		});
 		this.commit?.(next);
+		const previous = this.current;
 		this.current = next;
 		const change: CommittedChange = {
 			event,
 			record,
+			previous,
+			state: next,
 			bytes: recordBytes(record),
 		};
 		this.history.push(change);
