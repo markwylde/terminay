@@ -25,16 +25,16 @@
 ## 4. Protocol: change records
 
 - [x] 4.1 Define the change-record DTO, its parser, the second delta version, and the `workspace-changes.v1` and `terminal-titles.v1` capabilities in `packages/protocol`. Verified by parser unit tests for valid, malformed, and oversized records.
-- [x] 4.2 Carry the scoped change record on `workspace.changed` for connections that negotiated the capability, with the fetch marker where a record cannot be scoped exactly. Verified by server tests for an unscoped connection, a project-scoped connection, and an object entering and leaving a scope.
+- [x] 4.2 Carry the scoped change record on `workspace.changed` for connections that negotiated the capability. A record is derived per connection as the difference between what it could read before and after the commit, so it is exact in every case, including an object entering or leaving a scope; an event is sent without a record only when the store no longer retains the commit. Verified by server tests for a connection the automation space is withheld from, a project-scoped connection, and an object entering and leaving a scope.
 - [x] 4.3 Answer `workspace.delta` with ordered change records for a capable connection, and with a snapshot when history no longer reaches the requested revision. Keep the first delta version for a connection without the capability. Verified by server tests for both versions and for the history boundary.
-- [ ] 4.4 Add protocol-conformance cases: record applied in order, gap, duplicate, scoped record, fallback to snapshot, and a peer without the capability. Verified by the conformance suite passing against the server.
+- [x] 4.4 Cover the wire contract end to end: record applied in order, scoped record, fallback to snapshot, and a peer without the capability against a composed server (`packages/server-core/test/workspace-change-records-wire.test.mjs`; `packages/protocol-conformance` holds transports, not cases), and gap, duplicate, reordered, and malformed records against the client store (`scripts/workspace-projection.test.mjs`). Verified by both suites passing.
 
 ## 5. Client store
 
-- [ ] 5.1 Apply a change record in `WorkspaceSnapshotStore` when it starts from the held revision, sharing every untouched object; otherwise request a delta. Validate once. Verified by store tests for in-order, gap, duplicate, reordered, and malformed records, each asserting identity of untouched objects.
-- [ ] 5.2 Reconcile a whole snapshot or first-version delta against the held projection so equal objects keep identity. Verified by a store test that reconnects with one changed project.
-- [ ] 5.3 Tell listeners what changed, and add per-selection subscriptions (`useSyncExternalStore`) for a project, a panel, and the ordered project list. Verified by store tests that a listener for one panel is not called when another changes.
-- [ ] 5.4 Add a client title store over the title projection with a per-terminal subscription, falling back to the panel's workspace title. Verified by unit tests for snapshot, change, fallback, and a server without the capability.
+- [x] 5.1 Apply a change record in `WorkspaceSnapshotStore` when it starts from the held revision, sharing every untouched object; otherwise request a delta. Validate once. Verified by store tests for in-order, gap, duplicate, reordered, and malformed records, each asserting identity of untouched objects.
+- [x] 5.2 Reconcile a whole snapshot or first-version delta against the held projection so equal objects keep identity. Verified by a store test that reconnects with one changed project.
+- [x] 5.3 Tell listeners what changed, and add per-selection subscriptions (`useSyncExternalStore`) for a project, a panel, and the ordered project list. Verified by store tests that a listener for one panel is not called when another changes.
+- [x] 5.4 Add a client title store over the title projection with a per-terminal subscription, falling back to the panel's workspace title. Verified by unit tests for snapshot, change, fallback, and a server without the capability.
 
 ## 6. Renderer
 

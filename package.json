@@ -68,7 +68,7 @@
 		"test:linked-folders:layout": "node --test scripts/workspace-split-layout-folders.test.mjs",
 		"test:workspaces": "turbo run test:ci --concurrency=1",
 		"test:ci": "npm run smoke && npm run test:workspaces && npm run test:workspace-models && npm run test:release-evidence",
-		"test:workspace-models": "node --test --experimental-strip-types scripts/automations-model.test.mjs",
+		"test:workspace-models": "node --test --experimental-strip-types scripts/automations-model.test.mjs scripts/workspace-projection.test.mjs scripts/terminal-title-store.test.mjs",
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
 		"test:e2e": "sh scripts/run-e2e-container.sh",
