@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	buildFolderTree,
+	folderAttentionState,
 	folderDisplayName,
 	folderIdOfPanel,
 	folderLabelText,
@@ -355,4 +356,15 @@ test('a linked folder is deleting while its worktree is being removed, and no ot
 	assert.equal(tree.window.isDeleting, false);
 	assert.equal(tree.general.isDeleting, false);
 	assert.equal(tree.servers.isDeleting, false);
+});
+
+test('a folder sums its terminals up as the most urgent state among them, and as nothing when all are idle', () => {
+	const row = (status) => ({ kind: 'terminal', panelId: status, sessionId: status, title: status, status, isActive: false });
+	const file = { kind: 'file', panelId: 'f', title: 'notes.txt', isActive: false };
+	assert.equal(folderAttentionState([]), undefined);
+	assert.equal(folderAttentionState([row('idle'), file]), undefined);
+	assert.equal(folderAttentionState([row('idle'), row('done')]), 'done');
+	assert.equal(folderAttentionState([row('done'), row('working')]), 'working');
+	assert.equal(folderAttentionState([row('working'), row('waiting'), row('done')]), 'waiting');
+	assert.equal(folderAttentionState([row('waiting'), row('blocked'), row('working')]), 'blocked');
 });

@@ -3,11 +3,12 @@ import {
 	CircleCheck,
 	CircleDashed,
 	CircleX,
+	ChevronDown,
+	ChevronRight,
 	EllipsisVertical,
 	File,
 	Folder,
 	GitBranch,
-	GripVertical,
 	MinusCircle,
 	Plus,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ import {
 	type FolderTreeChange,
 	type FolderTreeFolderRow,
 	type FolderTreePanelRow,
+	folderAttentionState,
 	folderOrderAfterMove,
 	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
@@ -60,6 +62,13 @@ type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
  */
 const RENAME_FOCUS_SETTLE_MS = 400;
 
+/**
+ * How far a press on a folder's title travels before it is a drag. Short of
+ * it the press is a click, however unsteady the hand: a card is never carried
+ * by accident, and a click is never lost to a twitch.
+ */
+const CARD_DRAG_START_PX = 6;
+
 /** How long a dropped order is shown while the server has not answered. */
 const PENDING_ORDER_MS = 3_000;
 /** How the other cards slide to open the place a moved card takes. */
@@ -72,6 +81,11 @@ export type FoldersTreeProps = {
 	folders: readonly FolderTreeFolderRow[];
 	onSelectFolder: (folderId: string) => void;
 	onSelectPanel: (folderId: string, panelId: string) => void;
+	/** The folders drawn as their title line alone. */
+	collapsedFolderIds?: ReadonlySet<string>;
+	/** Collapses an open folder or opens a collapsed one. Absent where a card
+	 * only lists, such as in a peek: the cards then have no toggle. */
+	onToggleFolderCollapsed?: (folderId: string) => void;
 	/** Absent where folders cannot be created, such as in a peek. */
 	onCreateFolder?: () => void;
 	/** Creates a terminal in a folder. Absent where a card only lists. */
@@ -126,6 +140,8 @@ export function FoldersTree({
 	folders,
 	onSelectFolder,
 	onSelectPanel,
+	collapsedFolderIds,
+	onToggleFolderCollapsed,
 	onCreateFolder,
 	onNewTerminal,
 	onReorderFolders,
@@ -173,7 +189,7 @@ export function FoldersTree({
 		setPreview(next);
 	};
 	const reduceMotion = useReducedMotion() === true;
-	/** The folder whose grip keeps focus across a keyboard move. */
+	/** The folder whose title keeps focus across a keyboard move. */
 	const refocusGripRef = useRef<string | null>(null);
 
 	// The server's order is the order. Whatever was previewed gives way to it
@@ -185,7 +201,7 @@ export function FoldersTree({
 		const folderId = refocusGripRef.current;
 		if (folderId === null) return;
 		refocusGripRef.current = null;
-		gripOf(treeRef.current, folderId)?.focus();
+		headerOf(treeRef.current, folderId)?.focus();
 	}, [serverOrderKey]);
 	// A dropped order the server never answers is not shown for ever.
 	useEffect(() => {
@@ -197,14 +213,14 @@ export function FoldersTree({
 		return () => window.clearTimeout(timer);
 	}, [preview]);
 
-	// Kept on the grip that was moved from the keyboard until the server's
+	// Kept on the title that was moved from the keyboard until the server's
 	// order has arrived: each redraw in between moves the card in the document,
 	// and a moved element loses focus.
 	useLayoutEffect(() => {
 		const folderId = refocusGripRef.current;
 		if (folderId === null) return;
-		const grip = gripOf(treeRef.current, folderId);
-		if (grip !== null && document.activeElement !== grip) grip.focus();
+		const header = headerOf(treeRef.current, folderId);
+		if (header !== null && document.activeElement !== header) header.focus();
 	});
 
 	/** The order last asked of the server and not yet answered. */
@@ -241,6 +257,7 @@ export function FoldersTree({
 		commitOrder(previewRef.current?.order ?? serverOrder);
 
 	const moveWithKey = (folderId: string, event: KeyboardEvent) => {
+		if (event.target !== event.currentTarget || !event.altKey) return;
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
 		event.preventDefault();
 		event.stopPropagation();
@@ -310,28 +327,38 @@ export function FoldersTree({
 			onDragStart={() => startCardDrag(folder.id)}
 			onDragEnd={endCardDrag}
 		>
-			{(onGripPointerDown) => (
+			{(onHandlePointerDown) => {
+				const collapsed = collapsedFolderIds?.has(folder.id) === true;
+				return (
 				<>
 					<FolderHeader
 						folder={folder}
+						collapsed={collapsed}
+						{...(onToggleFolderCollapsed === undefined
+							? {}
+							: {
+									onToggleCollapsed: () =>
+										onToggleFolderCollapsed(folder.id),
+								})}
 						onSelect={() => onSelectFolder(folder.id)}
 						onMenu={
 							onFolderMenu === undefined
 								? undefined
 								: (event) => openMenu(folder.id, event)
 						}
-						{...(onGripPointerDown === undefined
+						{...(onHandlePointerDown === undefined
 							? {}
 							: {
-									onGripPointerDown,
-									onGripKeyDown: (event: KeyboardEvent) =>
+									onHandlePointerDown,
+									onMoveKeyDown: (event: KeyboardEvent) =>
 										moveWithKey(folder.id, event),
 								})}
 						onOpenLink={onOpenLink}
 						checksOpen={openChecks.has(folder.id)}
 						onToggleChecks={() => toggleChecks(folder.id)}
 					/>
-					{openChecks.has(folder.id) &&
+					{!collapsed &&
+					openChecks.has(folder.id) &&
 					folder.checks !== undefined &&
 					onOpenLink !== undefined ? (
 						<FolderChecksList
@@ -340,7 +367,7 @@ export function FoldersTree({
 							onLoadChecks={onLoadChecks}
 						/>
 					) : null}
-					{folder.panels.map((panel) => (
+					{(collapsed ? [] : folder.panels).map((panel) => (
 						<PanelRow
 							key={panel.panelId}
 							panel={panel}
@@ -395,7 +422,7 @@ export function FoldersTree({
 							</span>
 						</div>
 					) : null}
-					{onNewTerminal === undefined ? null : (
+					{onNewTerminal === undefined || collapsed ? null : (
 						<button
 							type="button"
 							className="folders-tree__new-terminal"
@@ -407,7 +434,8 @@ export function FoldersTree({
 						</button>
 					)}
 				</>
-			)}
+				);
+			}}
 		</FolderCard>
 	));
 	const newFolder =
@@ -475,9 +503,9 @@ function FolderCard({
 	reduceMotion: boolean;
 	onDragStart: () => void;
 	onDragEnd: () => void;
-	/** Given the grip's press where the card is reordered, and nothing where it is not. */
+	/** Given the title's press where the card is reordered, and nothing where it is not. */
 	children: (
-		onGripPointerDown: ((event: ReactPointerEvent) => void) | undefined,
+		onHandlePointerDown: ((event: ReactPointerEvent) => void) | undefined,
 	) => ReactNode;
 }>) {
 	const controls = useDragControls();
@@ -493,8 +521,9 @@ function FolderCard({
 			value={folderId}
 			className={className}
 			data-folder-id={folderId}
-			// Only the grip starts a reorder: a press elsewhere on the card
-			// selects the folder, and a terminal row starts its own drag.
+			// Only a press on the title that then travels starts a reorder: a
+			// press that stays put selects the folder, and a terminal row starts
+			// its own drag.
 			dragListener={false}
 			dragControls={controls}
 			dragMomentum={false}
@@ -508,21 +537,39 @@ function FolderCard({
 			{...dropHandlers}
 		>
 			{children((event) => {
-				if (event.button !== 0) return;
-				// The grip's press is the grip's: it neither selects the folder nor
-				// starts the drag that moves a terminal.
-				event.preventDefault();
-				event.stopPropagation();
-				swallowClickAfterRelease();
-				controls.start(event);
+				// A finger on the title scrolls the tree; it does not carry a card.
+				if (event.button !== 0 || event.pointerType === 'touch') return;
+				// A press on a control of the title is that control's.
+				if ((event.target as Element).closest('button, a, input') !== null)
+					return;
+				const from = { x: event.clientX, y: event.clientY };
+				const stop = () => {
+					window.removeEventListener('pointermove', move, true);
+					window.removeEventListener('pointerup', stop, true);
+					window.removeEventListener('pointercancel', stop, true);
+				};
+				const move = (moved: PointerEvent) => {
+					if (
+						Math.hypot(moved.clientX - from.x, moved.clientY - from.y) <
+						CARD_DRAG_START_PX
+					)
+						return;
+					stop();
+					// From here the press is a carry: letting go selects nothing.
+					swallowClickAfterRelease();
+					controls.start(moved);
+				};
+				window.addEventListener('pointermove', move, true);
+				window.addEventListener('pointerup', stop, true);
+				window.addEventListener('pointercancel', stop, true);
 			})}
 		</Reorder.Item>
 	);
 }
 
 /**
- * Letting go of a grip over a card is not a press on that card: the click
- * that follows a drag would otherwise select the folder the pointer ended on.
+ * Letting go of a carried card is not a press on a card: the click that
+ * follows a drag would otherwise select the folder the pointer ended on.
  * Armed at the press, because the drag reports its end a frame after the
  * release, and the click has been and gone by then.
  */
@@ -552,10 +599,11 @@ function cardOf(tree: HTMLElement | null, folderId: string) {
 	);
 }
 
-function gripOf(tree: HTMLElement | null, folderId: string) {
+function headerOf(tree: HTMLElement | null, folderId: string) {
 	return (
-		cardOf(tree, folderId)?.querySelector<HTMLElement>('.folders-tree__grip') ??
-		null
+		cardOf(tree, folderId)?.querySelector<HTMLElement>(
+			'[data-folder-header="true"]',
+		) ?? null
 	);
 }
 
@@ -567,20 +615,26 @@ function gripOf(tree: HTMLElement | null, folderId: string) {
  */
 function FolderHeader({
 	folder,
+	collapsed,
+	onToggleCollapsed,
 	onSelect,
 	onMenu,
-	onGripPointerDown,
-	onGripKeyDown,
+	onHandlePointerDown,
+	onMoveKeyDown,
 	onOpenLink,
 	checksOpen,
 	onToggleChecks,
 }: Readonly<{
 	folder: FolderTreeFolderRow;
+	/** Drawn as its title line alone. */
+	collapsed: boolean;
+	/** Absent where a card only lists, such as in a peek. */
+	onToggleCollapsed?: () => void;
 	onSelect: () => void;
 	onMenu?: (event: MouseEvent) => void;
 	/** Absent where folders are not reordered, such as in a peek. */
-	onGripPointerDown?: (event: ReactPointerEvent) => void;
-	onGripKeyDown?: (event: KeyboardEvent) => void;
+	onHandlePointerDown?: (event: ReactPointerEvent) => void;
+	onMoveKeyDown?: (event: KeyboardEvent) => void;
 	onOpenLink?: (url: string) => void;
 	checksOpen: boolean;
 	onToggleChecks: () => void;
@@ -605,9 +659,12 @@ function FolderHeader({
 			checkCount > 0);
 	// The active terminal's row is what shows where the user is. A selected
 	// folder with no such row is tinted instead, so the selection is not lost.
+	// A collapsed folder shows no rows, so its title carries both.
 	const isSelectedAlone =
 		folder.isSelected &&
-		!folder.panels.some((panel) => panel.isActive);
+		(collapsed || !folder.panels.some((panel) => panel.isActive));
+	// What its hidden terminals are doing, as the one most urgent state.
+	const attention = collapsed ? folderAttentionState(folder.panels) : undefined;
 	// A press on a control in the header is that control's, never the header's.
 	const own = (act: () => void) => (event: MouseEvent) => {
 		event.stopPropagation();
@@ -640,7 +697,9 @@ function FolderHeader({
 			className={`folders-tree__row folders-tree__row--folder${folder.isSelected ? ' folders-tree__row--selected' : ''}${isSelectedAlone ? ' folders-tree__row--selected-alone' : ''}`}
 			role="treeitem"
 			aria-selected={folder.isSelected}
-			aria-expanded="true"
+			aria-expanded={!collapsed}
+			data-folder-header="true"
+			{...(collapsed ? { 'data-folder-collapsed': 'true' } : {})}
 			{...(isDeleting ? { 'aria-busy': true } : {})}
 			tabIndex={0}
 			{...(change === undefined ? {} : { 'data-change': change.kind })}
@@ -649,7 +708,25 @@ function FolderHeader({
 				: { 'aria-description': folderDetailsDescription(details) })}
 			onClick={onSelect}
 			onContextMenu={openMenu}
-			onKeyDown={activateOnKey(onSelect)}
+			onKeyDown={(event) => {
+				activateOnKey(onSelect)(event);
+				// Alt with an arrow carries the folder up or down the list.
+				onMoveKeyDown?.(event);
+				// Left closes the folder and Right opens it, as in any tree.
+				if (
+					onToggleCollapsed === undefined ||
+					event.target !== event.currentTarget ||
+					event.altKey
+				)
+					return;
+				if (
+					(event.key === 'ArrowLeft' && !collapsed) ||
+					(event.key === 'ArrowRight' && collapsed)
+				) {
+					event.preventDefault();
+					onToggleCollapsed();
+				}
+			}}
 			onPointerDownCapture={tooltip.end}
 			onFocus={(event) => {
 				if (
@@ -674,18 +751,27 @@ function FolderHeader({
 					else tooltip.end();
 				}}
 				onPointerLeave={tooltip.end}
+				{...(onHandlePointerDown === undefined
+					? {}
+					: {
+							onPointerDown: onHandlePointerDown,
+							'data-folder-drag-handle': 'true',
+						})}
 			>
-				{onGripPointerDown === undefined ? null : (
+				{onToggleCollapsed === undefined ? null : (
 					<button
 						type="button"
-						className="folders-tree__grip"
-						aria-label={`Reorder ${folder.name}`}
-						title="Drag to reorder"
-						onPointerDown={onGripPointerDown}
-						onKeyDown={onGripKeyDown}
-						onClick={(event) => event.stopPropagation()}
+						className="folders-tree__toggle"
+						aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${folder.name}`}
+						aria-expanded={!collapsed}
+						title={collapsed ? 'Expand' : 'Collapse'}
+						onClick={own(onToggleCollapsed)}
 					>
-						<GripVertical size={12} aria-hidden="true" />
+						{collapsed ? (
+							<ChevronRight size={13} aria-hidden="true" />
+						) : (
+							<ChevronDown size={13} aria-hidden="true" />
+						)}
 					</button>
 				)}
 				{label === undefined ? (
@@ -722,6 +808,12 @@ function FolderHeader({
 						</span>
 					</>
 				)}
+				{attention === undefined ? null : (
+					<AgentStatusIndicator
+						state={attention}
+						className="folders-tree__status folders-tree__attention"
+					/>
+				)}
 				{openMenu === undefined ? null : (
 					<button
 						type="button"
@@ -733,7 +825,7 @@ function FolderHeader({
 					</button>
 				)}
 			</span>
-			{label !== undefined || folder.branch === undefined ? null : (
+			{collapsed || label !== undefined || folder.branch === undefined ? null : (
 				<span
 					className={`folders-tree__branch${folder.isDirty ? ' folders-tree__branch--dirty' : ''}`}
 				>
@@ -747,7 +839,7 @@ function FolderHeader({
 					Deleting…
 				</span>
 			) : null}
-			{hasFacts ? (
+			{hasFacts && !collapsed ? (
 				<span className="folders-tree__facts">
 					{changeChip === undefined ? null : (
 						<FolderChange change={changeChip} />

@@ -14,6 +14,9 @@ The two sides also hold different kinds of thing. The left column is the project
 - The Folders and Agents title rows, their collapse chevrons, their reorder grips, the separator between them, and the count beside the Agents title are gone. The Agents tab icon carries no count badge.
 - The first list is named **Tabs** wherever the column names it: the tab's label and tooltip, and the actions control, which becomes **Tabs actions**. Folders inside the list are still folders.
 - The **Tabs actions** control is shown only while the Tabs tab is selected.
+- Each folder card has a collapse control where its drag grip was. Collapsed, a card is its title line alone, with one status indicator for all of its terminals: the most urgent state among them, or none when they are all idle. Which folders are collapsed is remembered per device and project.
+- A folder card is reordered by dragging its title line, once the press has travelled a few pixels; a press that barely moves is still a click that selects the folder. From the keyboard a folder moves with Alt and the Up or Down arrow, and collapses and opens with Left and Right.
+- Folder cards are drawn without a border.
 - The selected tab is remembered per device and project. Turning agent integration off removes the Agents tab and its icon bar, leaving the Tabs list.
 - **BREAKING** The right sidebar no longer offers an Agents group at any width. It has two groups, Explorer and Documentation.
 - On a compact workspace the switcher offers the same two tabs, **Tabs** and **Agents**: Tabs is the switcher's existing content, Agents lists the agents of the project in front.
@@ -30,7 +33,7 @@ None.
 - `project-sidebar-layout`: the left column is a tabbed column rather than a pane stack; its chrome band holds the tab icons; its selected tab replaces its pane layout as the device preference; the sidebar has two groups at every width.
 - `agent-status-and-sidebar`: where the Agents pane is presented, on a wide layout and on a compact workspace.
 - `workspace-and-project-tabs`: the compact switcher gains Tabs and Agents tabs.
-- `project-folders`: the Folders tree lists every panel of a folder, not only its terminals.
+- `project-folders`: the Folders tree lists every panel of a folder, not only its terminals; a folder collapses to its title line with one status for its terminals; a folder is carried by its title line rather than a grip.
 
 ## Impact
 

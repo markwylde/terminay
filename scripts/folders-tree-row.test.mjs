@@ -367,19 +367,58 @@ test('every card ends with New terminal where one can be made, and an empty fold
 	assert.equal(render([general()]).includes('New terminal'), false);
 });
 
-test('every folder has a grip where folders can be reordered, General included, and a peek has none', () => {
+test('every title is a drag handle where folders can be reordered, General included, and a peek has none', () => {
 	const folders = [
 		general(),
 		linked(),
 		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
 	];
 	const markup = render(folders, { onReorderFolders: () => {} });
-	assert.equal(markup.match(/class="folders-tree__grip"/g)?.length, 3);
-	assert.match(markup, /aria-label="Reorder feat\/one-project-one-window"/);
-	assert.match(markup, /aria-label="Reorder Servers"/);
-	assert.match(markup, /aria-label="Reorder General"/);
-	assert.equal(render(folders, { variant: 'peek' }).includes('folders-tree__grip'), false);
-	assert.equal(render(folders).includes('folders-tree__grip'), false);
+	assert.equal(markup.match(/data-folder-drag-handle="true"/g)?.length, 3);
+	// There is no grip: the title line is what a card is carried by.
+	assert.equal(markup.includes('folders-tree__grip'), false);
+	assert.equal(render(folders, { variant: 'peek' }).includes('data-folder-drag-handle'), false);
+	assert.equal(render(folders).includes('data-folder-drag-handle'), false);
+});
+
+test('a folder has a toggle where it can be collapsed, and collapsed it is its title line and one status', () => {
+	const working = terminalRow({ panelId: 'a', sessionId: 'a', status: 'working' });
+	const waiting = terminalRow({ panelId: 'b', sessionId: 'b', status: 'waiting', title: 'needs you' });
+	const folders = [
+		general({ branch: 'main', isEmpty: false, panels: [working, waiting] }),
+		linked({ isEmpty: false, panels: [terminalRow({ title: 'quiet one' })] }),
+	];
+	const props = { onToggleFolderCollapsed: () => {}, onNewTerminal: () => {} };
+
+	const open = render(folders, props);
+	assert.equal(open.match(/class="folders-tree__toggle"/g)?.length, 2);
+	assert.match(open, /aria-label="Collapse General"/);
+	assert.equal(open.match(/data-folder-header="true"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*data-folder-header="true"/g)?.length, 2);
+	assert.match(open, /class="folders-tree__branch/);
+	assert.match(open, />needs you</);
+	// Open, each terminal says its own state and the title says none.
+	assert.equal(open.includes('folders-tree__attention'), false);
+
+	const closed = render(folders, {
+		...props,
+		collapsedFolderIds: new Set(folders.map((folder) => folder.id)),
+	});
+	assert.match(closed, /aria-label="Expand General"/);
+	assert.equal(closed.match(/data-folder-collapsed="true"/g)?.length, 2);
+	// Everything beneath the title line is gone: the branch, the rows, the
+	// new-terminal row.
+	assert.equal(closed.includes('folders-tree__branch'), false);
+	assert.equal(closed.includes('folders-tree__facts'), false);
+	assert.equal(closed.includes('folders-tree__row--panel'), false);
+	assert.equal(closed.includes('New terminal'), false);
+	// One state for the folder: the most urgent of its terminals. The folder
+	// whose terminals are all idle shows none.
+	const attention = [...closed.matchAll(/<[^>]*folders-tree__attention[^>]*>/g)].map(([tag]) => tag);
+	assert.equal(attention.length, 1);
+	assert.match(attention[0], /data-agent-state="waiting"/);
+
+	// Without a way to collapse there is no toggle, as in a peek.
+	assert.equal(render(folders).includes('folders-tree__toggle'), false);
 });
 
 test('any folder moves to any place, General included, and a place past either end is that end', () => {
@@ -566,7 +605,6 @@ test('a shared branch is followed by the worktree directory, and the names of th
 		/<span class="folders-tree__name">main<span class="folders-tree__label-suffix"> hotfix-copy<\/span><\/span><span class="folders-tree__unmerged"/,
 	);
 	assert.match(markup, /aria-label="Actions for main \(hotfix-copy\)"/);
-	assert.match(markup, /aria-label="Reorder main \(hotfix-copy\)"/);
 	assert.match(markup, /aria-label="New terminal in main \(hotfix-copy\)"/);
 });
 

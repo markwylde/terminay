@@ -245,9 +245,12 @@ import {
 	createProjectTab,
 	isProjectFoldersTreeOpenOnDevice,
 	type ProjectTab,
+	collapsedFoldersAfterToggle,
+	projectCollapsedFoldersOnDevice,
 	projectFoldersColumnTabOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarVisibilityKey,
+	withProjectCollapsedFolders,
 	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
@@ -714,6 +717,9 @@ type ProjectWorkspaceProps = {
 	isFoldersTreeOpen: boolean;
 	foldersTreeWidth: number;
 	onFoldersTreeWidthCommit: (projectId: string, width: number) => void;
+	/** The folders of this project the tree draws collapsed, on this device. */
+	collapsedFolderIds: ReadonlySet<string>;
+	onToggleFolderCollapsed: (projectId: string, folderId: string) => void;
 	foldersColumnTab: FoldersColumnTabId;
 	onFoldersColumnTabChange: (
 		projectId: string,
@@ -1381,6 +1387,8 @@ const ProjectWorkspace = forwardRef<
 			auxiliaryRoutes,
 			folder,
 			foldersColumnTab,
+			collapsedFolderIds,
+			onToggleFolderCollapsed,
 			compactAgentsHost,
 			onCompactAgentActivated,
 			foldersTreeWidth,
@@ -5390,6 +5398,10 @@ const ProjectWorkspace = forwardRef<
 							<FoldersColumn
 								folders={folderTreeRows}
 								idPrefix={`folders-column-${project.id}`}
+								collapsedFolderIds={collapsedFolderIds}
+								onToggleFolderCollapsed={(folderId) =>
+									onToggleFolderCollapsed(project.id, folderId)
+								}
 								selectedTab={foldersColumnTab}
 								onSelectTab={(tabId) =>
 									onFoldersColumnTabChange(project.id, tabId)
@@ -6219,8 +6231,11 @@ function App({
 			visibility: Readonly<Record<string, boolean>>;
 			width: Readonly<Record<string, number>>;
 			tab: Readonly<Record<string, FoldersColumnTabId>>;
+			collapsed: Readonly<Record<string, readonly string[]>>;
 		}>
-	>({ visibility: {}, width: {}, tab: {} });
+	>({ visibility: {}, width: {}, tab: {}, collapsed: {} });
+	const foldersTreeChangesRef = useRef(foldersTreeChanges);
+	foldersTreeChangesRef.current = foldersTreeChanges;
 	const persistFoldersTree = useCallback(
 		(update: (sidebar: SidebarSettings) => SidebarSettings) => {
 			const nextSettings = {
@@ -6263,6 +6278,37 @@ function App({
 			currentServerId,
 			projectId,
 		);
+	const collapsedFoldersFor = (projectId: string): readonly string[] =>
+		foldersTreeChanges.collapsed[
+			projectSidebarVisibilityKey(currentServerId, projectId)
+		] ??
+		projectCollapsedFoldersOnDevice(
+			settings.sidebar,
+			currentServerId,
+			projectId,
+		);
+	const toggleFolderCollapsed = useCallback(
+		(projectId: string, folderId: string) => {
+			const key = projectSidebarVisibilityKey(currentServerId, projectId);
+			const next = collapsedFoldersAfterToggle(
+				foldersTreeChangesRef.current.collapsed[key] ??
+					projectCollapsedFoldersOnDevice(
+						settingsRef.current.sidebar,
+						currentServerId,
+						projectId,
+					),
+				folderId,
+			);
+			setFoldersTreeChanges((current) => ({
+				...current,
+				collapsed: { ...current.collapsed, [key]: next },
+			}));
+			persistFoldersTree((sidebar) =>
+				withProjectCollapsedFolders(sidebar, currentServerId, projectId, next),
+			);
+		},
+		[currentServerId, persistFoldersTree],
+	);
 	const selectFoldersColumnTab = useCallback(
 		(projectId: string, tabId: FoldersColumnTabId) => {
 			const key = projectSidebarVisibilityKey(currentServerId, projectId);
@@ -9742,6 +9788,8 @@ function App({
 							foldersTreeWidth={foldersTreeWidthFor(project.id)}
 							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
 							foldersColumnTab={foldersColumnTabFor(project.id)}
+							collapsedFolderIds={new Set(collapsedFoldersFor(project.id))}
+							onToggleFolderCollapsed={toggleFolderCollapsed}
 							onFoldersColumnTabChange={selectFoldersColumnTab}
 							compactAgentsHost={compactAgentsHost}
 							onCompactAgentActivated={closeCompactSwitcher}
