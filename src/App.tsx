@@ -2117,7 +2117,11 @@ const ProjectWorkspace = forwardRef<
 
 				// Each entry names its folder, so a project's merged inventory can
 				// still say where every panel is.
+				// The panel in front is read off Dockview, not off a tab's own
+				// focus flag: only a terminal announces its focus.
+				const activePanelId = api.activePanel?.id;
 				return buildProjectInventoryEntries({
+					...(activePanelId === undefined ? {} : { activePanelId }),
 					agentIntegrationEnabled: settings.agentIntegration.enabled,
 					panels,
 					project: {

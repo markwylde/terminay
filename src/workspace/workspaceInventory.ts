@@ -115,7 +115,6 @@ export type WorkspaceInventoryEntry = {
 export type InventoryPanelParams = PanelTabAppearance & {
 	filePath?: string;
 	folderPath?: string;
-	isFocused?: boolean;
 	sessionId?: string;
 	/** When `terminalActivityState` last changed, in epoch milliseconds. */
 	terminalActivitySince?: number;
@@ -155,11 +154,13 @@ function defaultPanelTitle(kind: WorkspaceInventoryPanelKind): string {
  * status already resolved.
  */
 export function buildProjectInventoryEntries(options: {
+	/** The panel in front, of whatever kind. */
+	activePanelId?: string;
 	agentIntegrationEnabled: boolean;
 	panels: readonly InventoryPanelSource[];
 	project: InventoryProjectSource;
 }): WorkspaceInventoryEntry[] {
-	const { agentIntegrationEnabled, panels, project } = options;
+	const { activePanelId, agentIntegrationEnabled, panels, project } = options;
 	const entries: WorkspaceInventoryEntry[] = [];
 
 	for (const panel of panels) {
@@ -176,7 +177,7 @@ export function buildProjectInventoryEntries(options: {
 			projectId: project.id,
 			projectTitle: project.title,
 			title: panel.title ?? defaultPanelTitle(kind),
-			...(params?.isFocused === true ? { isActivePanel: true } : {}),
+			...(panel.id === activePanelId ? { isActivePanel: true } : {}),
 			...(sessionId === undefined ? {} : { sessionId }),
 		};
 
