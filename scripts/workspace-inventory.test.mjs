@@ -46,6 +46,29 @@ test('every panel is inventoried with its kind, including idle ones', () => {
 	assert.deepEqual(selectNotableEntries(entries), []);
 });
 
+test('the panel in front is marked whatever its kind, and only it', () => {
+	const panels = [
+		// A terminal keeps its own focus flag while a file is in front.
+		{ id: 'p1', params: { sessionId: 's1', isFocused: true } },
+		{ id: 'p2', params: { filePath: '/repo/server.ts' } },
+		{ id: 'p3', params: { folderPath: '/repo/src' } },
+	];
+	const inFront = (activePanelId) =>
+		buildProjectInventoryEntries({
+			activePanelId,
+			agentIntegrationEnabled: true,
+			panels,
+			project,
+		})
+			.filter((entry) => entry.isActivePanel === true)
+			.map((entry) => entry.panelId);
+
+	assert.deepEqual(inFront('p2'), ['p2']);
+	assert.deepEqual(inFront('p3'), ['p3']);
+	assert.deepEqual(inFront('p1'), ['p1']);
+	assert.deepEqual(inFront(undefined), []);
+});
+
 test('panel order is preserved as given', () => {
 	const entries = build([
 		{ id: 'p3', params: { sessionId: 's3' } },

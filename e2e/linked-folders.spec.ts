@@ -2476,6 +2476,19 @@ test('the tree lists every tab of a folder: terminals, files and folder tabs, in
 		foldersColumn(mainWindow).locator('.folders-tree__row--active'),
 	).toHaveCount(1);
 
+	// Picking a tab in the tab strip moves the highlight to its row.
+	await tabs.filter({ hasText: 'notes.txt' }).click();
+	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
+	await tabs.first().click();
+	await expect(rows('General').first()).toHaveClass(
+		/folders-tree__row--active/,
+	);
+	await tabs.filter({ hasText: 'assets' }).click();
+	await expect(folderTabRow).toHaveClass(/folders-tree__row--active/);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__row--active'),
+	).toHaveCount(1);
+
 	// A file's row goes to the file. Only a terminal is renamed or carried.
 	await fileRow.dblclick();
 	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
