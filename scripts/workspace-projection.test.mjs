@@ -47,10 +47,14 @@ function recordBetween(previous, next, type = 'panel.update') {
 	const changed = {}
 	const removed = {}
 	for (const collection of ['views', 'projects', 'folders', 'panels', 'terminalSessions']) {
-		for (const [id, object] of Object.entries(next[collection]))
-			if (JSON.stringify(previous[collection][id]) !== JSON.stringify(object)) (changed[collection] ??= {})[id] = object
-		for (const id of Object.keys(previous[collection]))
-			if (!(id in next[collection])) (removed[collection] ??= []).push(id)
+		for (const [id, object] of Object.entries(next[collection])) {
+			if (JSON.stringify(previous[collection][id]) === JSON.stringify(object)) continue
+			changed[collection] = { ...changed[collection], [id]: object }
+		}
+		for (const id of Object.keys(previous[collection])) {
+			if (id in next[collection]) continue
+			removed[collection] = [...(removed[collection] ?? []), id]
+		}
 	}
 	return { fromRevision: previous.revision, revision: next.revision, cursor: next.cursor, type, changed, removed }
 }

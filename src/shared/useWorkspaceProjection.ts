@@ -1,4 +1,9 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useSyncExternalStore,
+} from 'react';
 import type { ServerWorkspaceSnapshot } from './serverWorkspaceReconciliation';
 import type { TerminalTitleStore } from './TerminalTitleStore';
 import type { WorkspaceSnapshotStore } from './WorkspaceSnapshotStore';
@@ -48,4 +53,42 @@ export function useTerminalTitle(
 	const read = (): string | undefined =>
 		(panelId === undefined ? undefined : store?.title(panelId)) ?? fallback;
 	return useSyncExternalStore(subscribe, read, read);
+}
+
+/**
+ * The title store of the connection a window presents. Lists that name
+ * terminals (the folders tree, the dashboard, the switcher, the notifications
+ * menu, the status bar) sit far from the connection and read it from here.
+ */
+export const TerminalTitleStoreContext = createContext<
+	TerminalTitleStore | undefined
+>(undefined);
+
+/**
+ * The title a terminal displays now. `fallback` is the title a row was built
+ * with: rows are built when their list changes, and a title changes far more
+ * often than that, so the text is read live and only this caller renders
+ * again when it changes.
+ */
+export function useLiveTerminalTitle(
+	panelId: string | undefined,
+	fallback: string | undefined,
+): string | undefined {
+	return useTerminalTitle(
+		useContext(TerminalTitleStoreContext),
+		panelId,
+		fallback,
+	);
+}
+
+/** A terminal's title as text that follows the terminal. */
+export function LiveTerminalTitle({
+	panelId,
+	fallback,
+}: {
+	panelId: string | undefined;
+	fallback: string;
+}) {
+	// Text only: the caller owns the element around it and its class.
+	return useLiveTerminalTitle(panelId, fallback) ?? fallback;
 }

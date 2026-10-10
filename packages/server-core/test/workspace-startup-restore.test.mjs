@@ -264,7 +264,6 @@ test('a first run whose session already exists seeds nothing', async () => {
 
 test('the active project is seeded before its siblings', async () => {
 	const workspace = seededWorkspace({ secondProject: true });
-	const viewId = workspace.state.viewOrder[0];
 	const result = workspace.apply({
 		commandId: 'select-other',
 		command: { type: 'project.activate', projectId: 'other' },

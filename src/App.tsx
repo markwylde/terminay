@@ -182,6 +182,11 @@ import {
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
 import {
+	TerminalTitleStoreContext,
+	useWorkspaceSelection,
+} from './shared/useWorkspaceProjection';
+import { sameJsonValue } from './shared/workspaceProjection';
+import {
 	WorkspaceSplitLayout,
 } from './shared/WorkspaceSplitLayout';
 import {
@@ -1402,6 +1407,9 @@ function unavailableFileViewerClient(reason: string): FileViewerClient {
 	});
 }
 
+/** A terminal with no macro runs is always given this same list. */
+const NO_MACRO_RUNS: readonly never[] = Object.freeze([]);
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -1483,12 +1491,33 @@ const ProjectWorkspace = forwardRef<
 			linkedFolderId === undefined ? undefined : folder.worktree?.path;
 		/** What this workspace's file and folder panels are rooted at. */
 		const folderRootPath = linkedFolderRoot ?? project.rootFolder;
+		// The authority is made of the connection and of what the projection
+		// holds for this project: that it is loaded, whose project it is, and
+		// its root. It is derived again when one of those changes and not when
+		// the workspace revision does: the explorer, its watches, and Git are
+		// keyed on it, and a revision that changed none of them is no reason to
+		// load any of them again (ADR-0059).
+		const projectionStore = terminalClientContext?.workspaceSnapshotStore;
+		const isProjectionLoaded = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot !== null,
+		);
+		const projectedServerId = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.serverId,
+		);
+		const projectedRoot = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.root,
+		);
 		const featureAvailability = useMemo(
 			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
 			[
 				project.id,
 				terminalClientContext,
-				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision,
+				isProjectionLoaded,
+				projectedServerId,
+				projectedRoot,
 			],
 		);
 		const featureAuthority =
@@ -1824,7 +1853,6 @@ const ProjectWorkspace = forwardRef<
 		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
 			null,
 		);
-		const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
 		const [isDockviewReady, setIsDockviewReady] = useState(false);
 		// Dockview treats its component registries as configuration. Keep their
 		// identities stable across ordinary workspace state changes (for example,
@@ -1853,6 +1881,7 @@ const ProjectWorkspace = forwardRef<
 
 			const terminalSessionIds = new Set<string>();
 			const terminalTitlesBySession = new Map<string, string>();
+			const terminalPanelsBySession = new Map<string, string>();
 			const dockviewApi = dockviewApiRef.current;
 			for (const panel of dockviewApi?.panels ?? []) {
 				const sessionId = panel.params?.sessionId;
@@ -1863,6 +1892,7 @@ const ProjectWorkspace = forwardRef<
 				// The index can lag during panel adoption/moves. Keep it in sync
 				// from Dockview's live immutable terminal identity.
 				panelSessionMapRef.current.set(panel.id, sessionId);
+				terminalPanelsBySession.set(sessionId, panel.id);
 				const title =
 					typeof panel.title === 'string' && panel.title.trim().length > 0
 						? panel.title
@@ -1876,6 +1906,8 @@ const ProjectWorkspace = forwardRef<
 			for (const entry of projectInventory) {
 				if (entry.sessionId === undefined) continue;
 				terminalSessionIds.add(entry.sessionId);
+				if (!terminalPanelsBySession.has(entry.sessionId))
+					terminalPanelsBySession.set(entry.sessionId, entry.panelId);
 				if (!terminalTitlesBySession.has(entry.sessionId))
 					terminalTitlesBySession.set(entry.sessionId, entry.title);
 			}
@@ -1910,6 +1942,10 @@ const ProjectWorkspace = forwardRef<
 						entry.activationTerminalSessionId === null
 							? undefined
 							: terminalTitlesBySession.get(entry.activationTerminalSessionId),
+					terminalPanelId:
+						entry.activationTerminalSessionId === null
+							? undefined
+							: terminalPanelsBySession.get(entry.activationTerminalSessionId),
 				}));
 		}, [
 			agentStatusSnapshot,
@@ -1918,7 +1954,6 @@ const ProjectWorkspace = forwardRef<
 			project.id,
 			projectInventory,
 			settings.agentIntegration.enabled,
-			terminalTitleRevision,
 		]);
 
 		useEffect(() => {
@@ -2829,7 +2864,6 @@ const ProjectWorkspace = forwardRef<
 			getCwd: getServerTerminalCwd,
 			isActive: isRenderingStatusBar,
 			isDockviewReady,
-			titleRevision: terminalTitleRevision,
 		});
 		const focusedFileStatus = useFocusedFileStatus({
 			apiRef: dockviewApiRef,
@@ -3159,11 +3193,26 @@ const ProjectWorkspace = forwardRef<
 			}
 		}, []);
 
+		// The handlers a terminal's tab is given close over these. A new token
+		// means every terminal needs them again; the same token means a
+		// terminal that already has them keeps them.
+		const macroTabHandlers = useMemo(
+			() => ({}),
+			[
+				cancelMacroRun,
+				clearFinishedMacroRunsForSession,
+				clearMacroRunForSession,
+				onMoveTerminalToProject,
+				project.id,
+			],
+		);
+		const macroTabHandlersRef = useRef(new Map<string, object>());
 		const syncRunningMacroTabs = useCallback(() => {
 			const api = dockviewApiRef.current;
 			if (!api) {
 				return;
 			}
+			const projectsForMove = getProjectsForTerminalMove();
 
 			for (const [
 				panelId,
@@ -3174,23 +3223,37 @@ const ProjectWorkspace = forwardRef<
 					continue;
 				}
 
-				panel.api.updateParameters({
-					macroRuns: runningMacroRunsBySession[panelSessionId] ?? [],
-					onClearFinishedMacroRuns: () =>
-						clearFinishedMacroRunsForSession(panelSessionId),
-					onClearMacroRun: (runId: string) =>
-						clearMacroRunForSession(panelSessionId, runId),
-					onCancelMacroRun: cancelMacroRun,
-					onMoveToProject: (targetProjectId: string) =>
-						onMoveTerminalToProject(project.id, panelId, targetProjectId),
-					projectsForMove: getProjectsForTerminalMove(),
-				});
+				// Dockview renders a panel and its tab again for every parameter
+				// update, changed or not, and this runs for every terminal each
+				// time any of its inputs is replaced: only what differs is handed
+				// over, and a terminal nothing changed for is left alone.
+				const next: Record<string, unknown> = {};
+				const macroRuns =
+					runningMacroRunsBySession[panelSessionId] ?? NO_MACRO_RUNS;
+				if (panel.params?.macroRuns !== macroRuns) next.macroRuns = macroRuns;
+				if (!sameJsonValue(panel.params?.projectsForMove, projectsForMove))
+					next.projectsForMove = projectsForMove;
+				if (macroTabHandlersRef.current.get(panelId) !== macroTabHandlers) {
+					macroTabHandlersRef.current.set(panelId, macroTabHandlers);
+					next.onClearFinishedMacroRuns = () =>
+						clearFinishedMacroRunsForSession(panelSessionId);
+					next.onClearMacroRun = (runId: string) =>
+						clearMacroRunForSession(panelSessionId, runId);
+					next.onCancelMacroRun = cancelMacroRun;
+					next.onMoveToProject = (targetProjectId: string) =>
+						onMoveTerminalToProject(project.id, panelId, targetProjectId);
+				}
+				if (Object.keys(next).length > 0) panel.api.updateParameters(next);
 			}
+			for (const panelId of macroTabHandlersRef.current.keys())
+				if (!panelSessionMapRef.current.has(panelId))
+					macroTabHandlersRef.current.delete(panelId);
 		}, [
 			cancelMacroRun,
 			clearFinishedMacroRunsForSession,
 			clearMacroRunForSession,
 			getProjectsForTerminalMove,
+			macroTabHandlers,
 			onMoveTerminalToProject,
 			project.id,
 			runningMacroRunsBySession,
@@ -3264,7 +3327,6 @@ const ProjectWorkspace = forwardRef<
 				const panel = dockviewApiRef.current?.getPanel(panelId);
 				if (!panel) return;
 				panel.api.setTitle(title);
-				setTerminalTitleRevision((revision) => revision + 1);
 				requestFrameOrTimeout(publishWorkspaceInventory);
 			},
 			[publishWorkspaceInventory, terminalClientContext],
@@ -3334,7 +3396,6 @@ const ProjectWorkspace = forwardRef<
 					}
 
 					panel.api.setTitle(nextTitle);
-					setTerminalTitleRevision((revision) => revision + 1);
 					panel.api.updateParameters({
 						activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 						emoji: nextEmoji,
@@ -3749,9 +3810,14 @@ const ProjectWorkspace = forwardRef<
 						api.removePanel(panel);
 						continue;
 					}
-					if (canonical.title !== undefined && panel.title !== canonical.title) {
-						panel.api.setTitle(canonical.title);
-						setTerminalTitleRevision((revision) => revision + 1);
+					// What the tab displays is the title the server published for
+					// the terminal, when it publishes one; the workspace's own title
+					// (its name, else its default) otherwise.
+					const displayed =
+						terminalClientContext?.terminalTitleStore?.title(panelId) ??
+						canonical.title;
+					if (displayed !== undefined && panel.title !== displayed) {
+						panel.api.setTitle(displayed);
 						requestFrameOrTimeout(publishWorkspaceInventory);
 					}
 					const localNote = panel.params?.terminalNote;
@@ -3786,6 +3852,7 @@ const ProjectWorkspace = forwardRef<
 				project.id,
 				projectedFolderId,
 				publishWorkspaceInventory,
+				terminalClientContext?.terminalTitleStore,
 				terminalNoteSync,
 			],
 		);
@@ -4369,7 +4436,7 @@ const ProjectWorkspace = forwardRef<
 			getTerminalCwd: getServerTerminalCwd,
 			projectId: project.id,
 			sendInput: sendTerminalPanelInput,
-			setTerminalTitleRevision,
+			onTerminalTitleSet: publishWorkspaceInventory,
 			state: terminalControlStateRef.current,
 			terminalContextReadersRef,
 			waitForInactivity:
@@ -4432,12 +4499,27 @@ const ProjectWorkspace = forwardRef<
 			],
 		);
 
-		// Every rename path — the edit sheet, an AI title, an MCP rename, and
-		// canonical reconciliation from the server — bumps this revision, so one
-		// effect republishes the inventory for all of them.
 		useEffect(() => {
 			publishWorkspaceInventory();
-		}, [publishWorkspaceInventory, terminalTitleRevision]);
+		}, [publishWorkspaceInventory]);
+
+		// A tab shows the title the server publishes for its terminal
+		// (ADR-0058). That title changes as often as a program rewrites it, so
+		// it is handed straight to the one tab it belongs to: nothing here is
+		// rendered for it, and no list is rebuilt. The lists that name terminals
+		// read the same title themselves, each for its own row.
+		const terminalTitleStore = terminalClientContext?.terminalTitleStore;
+		useEffect(() => {
+			if (terminalTitleStore === undefined) return;
+			return terminalTitleStore.subscribeChanges((panelId) => {
+				const panel = dockviewApiRef.current?.getPanel(panelId);
+				if (panel === undefined || !panelSessionMapRef.current.has(panelId))
+					return;
+				const title = terminalTitleStore.title(panelId);
+				if (title !== undefined && panel.title !== title)
+					panel.api.setTitle(title);
+			});
+		}, [terminalTitleStore]);
 
 		useEffect(() => {
 			focusedSessionIdRef.current = focusedSessionId;
@@ -9306,6 +9388,9 @@ function App({
 	) : null;
 
 	return (
+		<TerminalTitleStoreContext.Provider
+			value={terminalClientContext?.terminalTitleStore}
+		>
 		<AppWindowsContext.Provider value={serverAppWindows}>
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}`}
@@ -9365,7 +9450,10 @@ function App({
 							: { projectColor: displayedActiveProject.color })}
 						{...(activeCompactTerminal === undefined
 							? {}
-							: { terminalTitle: activeCompactTerminal.title })}
+							: {
+									terminalTitle: activeCompactTerminal.title,
+									terminalPanelId: activeCompactTerminal.panelId,
+								})}
 					/>
 				) : (
 					<>
@@ -9894,6 +9982,7 @@ function App({
 			) : null}
 		</div>
 		</AppWindowsContext.Provider>
+		</TerminalTitleStoreContext.Provider>
 	);
 }
 

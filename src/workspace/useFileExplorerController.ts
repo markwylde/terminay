@@ -303,11 +303,30 @@ export function useFileExplorerController({
 	gitClient,
 	isServerFileViewer,
 	onOpenFile,
-	onOperationError,
-	onOperationSucceeded,
+	onOperationError: reportOperationError,
+	onOperationSucceeded: reportOperationSucceeded,
 	onSetError,
 	project,
 }: Options) {
+	// Reporting an outcome is something a load does when it finishes, not
+	// something it depends on. The callbacks are read at that moment, so the
+	// loads, watches, and Git subscription below are keyed on what they load
+	// (the root, the project, the clients) and a parent that hands over new
+	// callbacks does not list the tree or measure Git again.
+	const outcomeReporters = useRef({
+		reportOperationError,
+		reportOperationSucceeded,
+	});
+	outcomeReporters.current = { reportOperationError, reportOperationSucceeded };
+	const onOperationError = useCallback<Options['onOperationError']>(
+		(feature, error, source) =>
+			outcomeReporters.current.reportOperationError(feature, error, source),
+		[],
+	);
+	const onOperationSucceeded = useCallback<Options['onOperationSucceeded']>(
+		(feature) => outcomeReporters.current.reportOperationSucceeded(feature),
+		[],
+	);
 	const [directoryChildren, setDirectoryChildren] = useState<
 		Record<string, FileExplorerEntry[]>
 	>({});

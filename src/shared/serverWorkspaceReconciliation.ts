@@ -4,12 +4,13 @@ export type ServerWorkspacePanel = Readonly<{
 	/** The folder of the panel's project that holds it. */
 	folderId: string;
 	type: 'terminal' | 'file' | 'folder';
-	/** What the panel displays. For a terminal the server resolves it from the
-	 * three sources below: named, else program, else default. */
+	/** The title workspace state holds. For a terminal that is its named
+	 * title, else its default name; what its tab displays may instead be a
+	 * title its program set, which the server publishes live beside the
+	 * workspace (see `TerminalTitleStore`). */
 	title?: string;
 	defaultTitle?: string;
 	namedTitle?: string;
-	programTitle?: string;
 	emoji?: string;
 	color?: string;
 	inheritsProjectColor?: boolean;

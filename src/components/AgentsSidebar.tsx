@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { memo, useMemo } from 'react';
 import { resolveAgentPresentation } from '../agents/agentPresentation';
 import type { AgentStatusEntry } from '../types/agentStatus';
+import { useLiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import './AgentsSidebar.css';
 
@@ -11,6 +12,8 @@ export type AgentsSidebarItem = {
 	model?: string;
 	prompt?: string;
 	terminalTitle?: string;
+	/** The terminal the title belongs to, so the row can follow it. */
+	terminalPanelId?: string;
 };
 
 export type AgentsSidebarProps = {
@@ -91,15 +94,14 @@ function getPresentation(
 	node: AgentTreeNode,
 	siblingIndex: number,
 	parent?: AgentsSidebarItem,
+	terminalTitle: string | undefined = node.item.terminalTitle,
 ) {
 	return resolveAgentPresentation(
 		node.item.entry,
 		{
 			...(node.item.model === undefined ? {} : { model: node.item.model }),
 			...(node.item.prompt === undefined ? {} : { prompt: node.item.prompt }),
-			...(node.item.terminalTitle === undefined
-				? {}
-				: { terminalTitle: node.item.terminalTitle }),
+			...(terminalTitle === undefined ? {} : { terminalTitle }),
 		},
 		{
 			...(parent?.model === undefined ? {} : { parentModel: parent.model }),
@@ -131,10 +133,17 @@ function AgentRow({
 	onAcknowledgeEntry: AgentsSidebarProps['onAcknowledgeEntry'];
 }) {
 	const { entry } = node.item;
+	// An agent is named after its terminal when the terminal has a name worth
+	// using, and a terminal's title changes more often than this list does.
+	const terminalTitle = useLiveTerminalTitle(
+		node.item.terminalPanelId,
+		node.item.terminalTitle,
+	);
 	const { metadata, name, prompt } = getPresentation(
 		node,
 		siblingIndex,
 		parent,
+		terminalTitle,
 	);
 	const childrenExpanded = expandedEntryIds.has(entry.entryId);
 	const childCount = node.children.length;
