@@ -29,7 +29,9 @@
 	flex-direction: column;
 	margin: 6px;
 	overflow: hidden;
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	/* The fill is the card. The border is drawn only to say something: that a
+	   terminal can be dropped here, or that the card is in the hand. */
+	border: 1px solid transparent;
 	border-radius: 5px;
 	background: rgba(255, 255, 255, 0.035);
 }
