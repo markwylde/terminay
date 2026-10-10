@@ -88,6 +88,9 @@ export type SidebarSettings = {
 	/** Device-local selected tab of the left column, indexed by server and
 	 * project id. Absent means Tabs. */
 	projectFoldersColumnTab: Record<string, FoldersColumnTabId>;
+	/** Device-local ids of the folders drawn collapsed in the Folders tree,
+	 * indexed by server and project id. Absent means every folder is open. */
+	projectFoldersCollapsed: Record<string, string[]>;
 };
 
 export type FileViewerSettings = {

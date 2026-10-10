@@ -506,6 +506,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		projectFoldersVisibility: {},
 		projectFoldersWidth: {},
 		projectFoldersColumnTab: {},
+		projectFoldersCollapsed: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -2399,6 +2400,28 @@ function normalizeProjectFoldersColumnTab(
 	return Object.fromEntries(entries.slice(-256));
 }
 
+function normalizeProjectFoldersCollapsed(
+	value: unknown,
+): Record<string, string[]> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return {};
+	const entries = Object.entries(value).flatMap(([key, folderIds]) => {
+		if (!Array.isArray(folderIds) || key.length === 0 || key.length > 512)
+			return [];
+		const ids = [
+			...new Set(
+				folderIds.filter(
+					(id): id is string =>
+						typeof id === 'string' && id.length > 0 && id.length <= 256,
+				),
+			),
+		].slice(0, 256);
+		// A project with nothing collapsed needs no entry.
+		return ids.length === 0 ? [] : ([[key, ids]] as const);
+	});
+	return Object.fromEntries(entries.slice(-256));
+}
+
 function normalizeProjectSidebarActiveGroup(
 	value: unknown,
 ): Record<string, SidebarGroupId> {
@@ -3011,6 +3034,9 @@ export function normalizeTerminalSettings(
 			),
 			projectFoldersColumnTab: normalizeProjectFoldersColumnTab(
 				sidebarInput.projectFoldersColumnTab,
+			),
+			projectFoldersCollapsed: normalizeProjectFoldersCollapsed(
+				sidebarInput.projectFoldersCollapsed,
 			),
 		},
 		theme: {

@@ -80,6 +80,18 @@ Alternative considered: a second list of "other tabs" under each folder's termin
 
 Boundary crossed: none. The tree reads the workspace snapshot the renderer already holds and issues the activate, close, and move commands a tab already issues.
 
+### Collapsing is a device preference, and the grip gives way to it
+
+Which folders are collapsed is `settings.sidebar.projectFoldersCollapsed[server:project]`, a list of folder ids, with the same optimistic local copy the column's width and tab use. It is presentation: collapsing closes no panel and changes nothing the server holds. A stored id that names no folder is harmless and is dropped the next time the list is written.
+
+The collapse control takes the grip's place at the leading end of the title line, where a tree's disclosure is expected, and is a chevron rather than a plus and minus: the card already ends in a plus for New terminal, and the tree in one for New folder, so a plus on the title would read as "add". With the grip gone the title line is the drag handle. `FolderCard` listens for the press and hands it to the reorder only once the pointer has travelled `CARD_DRAG_START_PX` (6px); until then nothing is prevented, so a press that stays put is the click that selects the folder, as it always was. A press on a button of the title line is ignored, and a touch is left to scroll the tree. Keyboard moves go from the grip's bare arrows to Alt with an arrow on the title row, which leaves Left and Right for collapsing, the keys a tree uses for it.
+
+The one status a collapsed folder shows is `folderAttentionState`: the most urgent state among its terminals in the order the dashboard and the activity badge already use, and nothing when all are idle.
+
+Alternative considered: toggle on a click of the title. Rejected; a click on the title selects the folder, and a folder with no panels can be selected no other way.
+
+Boundary crossed: none. One more device setting through the path the renderer already uses.
+
 ### Naming
 
 The column's first tab, its tooltip, and its accessible name are "Tabs"; the actions control is "Tabs actions". The Folders tree keeps `aria-label="Folders"` on its tree role inside the Tabs tab panel, because what it lists are folders. Component and CSS names (`FoldersColumn`, `folders-column`) are internal and stay.
@@ -97,6 +109,7 @@ This change's `project-sidebar-layout` and `agent-status-and-sidebar` deltas are
 - With no count on the Agents icon, new agent activity is not visible from the Tabs tab's band → terminal rows carry their own activity indicators, and notifications cover attention states.
 - A folder this device has not shown since it loaded has no mounted workspace, so its file and folder tabs are in no inventory and the tree lists only its terminals until it is shown → the compact switcher has the same limit, so the two agree; the terminals, which are what run unattended, are always listed.
 - A folder with many open files makes its card long and pushes other folders down → the list scrolls, and it now fills the whole column.
+- A card can no longer be reordered by touch, since a finger on its title scrolls the tree → the left column is a wide-layout surface, where a pointer or the keyboard is at hand; a touch handle can be added if it is missed.
 - Stored pane heights and collapse choices are discarded → they have no meaning in a tabbed column.
 - Tests locate Agents through the stack's title row and the drawer's Agents tab → the shared `selectSidebarGroup(page, 'agents')` helper is repointed once, to the left column's tab.
 

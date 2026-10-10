@@ -9,6 +9,8 @@ import {
 	getProjectTabColor,
 	isProjectFoldersTreeOpenOnDevice,
 	isProjectSidebarOpenOnDevice,
+	collapsedFoldersAfterToggle,
+	projectCollapsedFoldersOnDevice,
 	projectFoldersColumnTabOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarPatch,
@@ -16,6 +18,7 @@ import {
 	projectTabColorHue,
 	projectTabHueDistance,
 	sidebarActiveGroupOnDevice,
+	withProjectCollapsedFolders,
 	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
@@ -368,4 +371,31 @@ test('a user-chosen color off the palette still repels the next project', () => 
 		true,
 		`Expected the next color to avoid ${chosen}, got ${next}.`,
 	);
+});
+
+test('collapsed folders are device-local per server and project, and an empty set keeps no entry', () => {
+	const sidebar = defaultTerminalSettings.sidebar;
+	assert.deepEqual(projectCollapsedFoldersOnDevice(sidebar, 'server-a', 'project-a'), []);
+	assert.deepEqual(collapsedFoldersAfterToggle([], 'one'), ['one']);
+	assert.deepEqual(collapsedFoldersAfterToggle(['one', 'two'], 'one'), ['two']);
+
+	const collapsed = withProjectCollapsedFolders(sidebar, 'server-a', 'project-a', ['one', 'two']);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-a', 'project-a'), ['one', 'two']);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-a', 'project-b'), []);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-b', 'project-a'), []);
+	assert.deepEqual(
+		withProjectCollapsedFolders(collapsed, 'server-a', 'project-a', []).projectFoldersCollapsed,
+		{},
+	);
+
+	const normalized = normalizeTerminalSettings({
+		sidebar: {
+			projectFoldersCollapsed: {
+				'server-a:kept': ['one', 'one', 7, '', 'two'],
+				'server-a:empty': [],
+				'server-a:bad': 'one',
+			},
+		},
+	}).sidebar.projectFoldersCollapsed;
+	assert.deepEqual(normalized, { 'server-a:kept': ['one', 'two'] });
 });

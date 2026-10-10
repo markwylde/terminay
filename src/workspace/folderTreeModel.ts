@@ -129,6 +129,28 @@ export type FolderTreeViewerRow = {
 /** One tab of a folder, of any kind a project can open. */
 export type FolderTreePanelRow = FolderTreeTerminalRow | FolderTreeViewerRow;
 
+/** Most urgent first: the order every surface that sums up activity uses. */
+const ATTENTION_ORDER: readonly AgentState[] = [
+	'blocked',
+	'waiting',
+	'working',
+	'done',
+];
+
+/**
+ * The one state a collapsed folder shows for all of its terminals: the most
+ * urgent among them. Undefined when every terminal is idle, or there is none,
+ * so a quiet folder shows nothing.
+ */
+export function folderAttentionState(
+	panels: readonly FolderTreePanelRow[],
+): AgentState | undefined {
+	const present = new Set(
+		panels.flatMap((row) => (row.kind === 'terminal' ? [row.status] : [])),
+	);
+	return ATTENTION_ORDER.find((state) => present.has(state));
+}
+
 export type FolderTreeFolderRow = {
 	id: string;
 	/** A linked folder's is its label as plain text. */

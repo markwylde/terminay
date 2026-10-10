@@ -125,28 +125,34 @@
 }
 
 /* Dragged to reorder the folders. */
-.folders-tree__grip {
+/* Closes the card to its title line and opens it again. It sits where the
+   eye starts the line, as a tree's disclosure does. */
+.folders-tree__toggle {
 	all: unset;
 	flex: none;
 	display: inline-flex;
 	align-items: center;
-	margin: -4px -2px -4px -5px;
+	margin: -4px -3px -4px -6px;
 	padding: 4px 2px;
 	border-radius: 3px;
-	color: rgba(220, 226, 240, 0.3);
-	cursor: grab;
-	touch-action: none;
+	color: rgba(220, 226, 240, 0.45);
+	cursor: pointer;
 }
 
-.folders-tree__grip:hover,
-.folders-tree__grip:focus-visible,
-.folders-tree__folder--dragging .folders-tree__grip {
+.folders-tree__toggle:hover,
+.folders-tree__toggle:focus-visible {
 	background: rgba(255, 255, 255, 0.1);
 	color: #fff;
 }
 
-.folders-tree__folder--dragging .folders-tree__grip {
+/* The title line is what a card is carried by. */
+.folders-tree__folder--dragging [data-folder-drag-handle] {
 	cursor: grabbing;
+}
+
+/* The one state a collapsed folder shows for the terminals it hides. */
+.folders-tree__attention {
+	margin-inline: 2px;
 }
 
 .folders-tree__icon {
