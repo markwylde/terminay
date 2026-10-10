@@ -29,7 +29,9 @@
 	flex-direction: column;
 	margin: 6px;
 	overflow: hidden;
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	/* The fill is the card, and its rows run to its edges. An outline is drawn
+	   only to say something: that a terminal can be dropped here, or that the
+	   card is in the hand. It takes no room, so nothing is inset to make way. */
 	border-radius: 5px;
 	background: rgba(255, 255, 255, 0.035);
 }
@@ -39,7 +41,8 @@
 }
 
 .folders-tree__folder--drop-target {
-	border-color: rgba(87, 183, 255, 0.7);
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: -1px;
 	background: rgba(87, 183, 255, 0.08);
 }
 
@@ -51,7 +54,8 @@
 /* The card in the hand while its grip is dragged. */
 .folders-tree__folder--dragging {
 	z-index: 1;
-	border-color: rgba(220, 226, 240, 0.45);
+	outline: 1px solid rgba(220, 226, 240, 0.45);
+	outline-offset: -1px;
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
@@ -97,7 +101,7 @@
 	);
 }
 
-.folders-tree__row--terminal {
+.folders-tree__row--panel {
 	height: 28px;
 	padding: 0 10px 0 12px;
 	color: rgba(220, 226, 240, 0.8);
@@ -121,28 +125,34 @@
 }
 
 /* Dragged to reorder the folders. */
-.folders-tree__grip {
+/* Closes the card to its title line and opens it again. It sits where the
+   eye starts the line, as a tree's disclosure does. */
+.folders-tree__toggle {
 	all: unset;
 	flex: none;
 	display: inline-flex;
 	align-items: center;
-	margin: -4px -2px -4px -5px;
+	margin: -4px -3px -4px -6px;
 	padding: 4px 2px;
 	border-radius: 3px;
-	color: rgba(220, 226, 240, 0.3);
-	cursor: grab;
-	touch-action: none;
+	color: rgba(220, 226, 240, 0.45);
+	cursor: pointer;
 }
 
-.folders-tree__grip:hover,
-.folders-tree__grip:focus-visible,
-.folders-tree__folder--dragging .folders-tree__grip {
+.folders-tree__toggle:hover,
+.folders-tree__toggle:focus-visible {
 	background: rgba(255, 255, 255, 0.1);
 	color: #fff;
 }
 
-.folders-tree__folder--dragging .folders-tree__grip {
+/* The title line is what a card is carried by. */
+.folders-tree__folder--dragging [data-folder-drag-handle] {
 	cursor: grabbing;
+}
+
+/* The one state a collapsed folder shows for the terminals it hides. */
+.folders-tree__attention {
+	margin-inline: 2px;
 }
 
 .folders-tree__icon {
@@ -167,7 +177,7 @@
 	color: #fff;
 }
 
-.folders-tree__row--terminal .folders-tree__name {
+.folders-tree__row--panel .folders-tree__name {
 	flex: 1 1 auto;
 }
 
@@ -492,6 +502,16 @@
 	flex: none;
 }
 
+/* A file or folder tab's icon, in the box a terminal's status takes. */
+.folders-tree__kind {
+	display: inline-grid;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	place-items: center;
+	color: rgba(220, 226, 240, 0.55);
+}
+
 .folders-tree__tag {
 	flex: 0 1000 auto;
 	min-width: 40px;
@@ -601,6 +621,31 @@
 	max-height: min(60vh, 520px);
 }
 
+/* --- A card's lines, where it has its collapse control ---------------------
+ *
+ * Every line under the title starts at the card's own leading edge: the
+ * branch, the facts, each tab, and New terminal. Only the title is set in from
+ * it, by the collapse control. The branch sits close under the title as its
+ * quieter second line.
+ */
+.folders-tree--tree .folders-tree__row--folder {
+	gap: 3px;
+	padding-block: 9px;
+}
+
+.folders-tree--tree .folders-tree__branch {
+	color: rgba(220, 226, 240, 0.62);
+}
+
+.folders-tree--tree .folders-tree__branch--dirty {
+	color: #e2a45f;
+}
+
+.folders-tree--tree .folders-tree__facts,
+.folders-tree--tree .folders-tree__deleting {
+	margin-top: 2px;
+}
+
 /* --- The tree as a project's left column ---------------------------------- */
 
 .folders-column {
@@ -623,9 +668,19 @@
 	align-items: center;
 	flex: 0 0 auto;
 	height: var(--panel-tab-strip-height, 34px);
-	padding: 0 12px;
+	padding: 0 12px 0 0;
 	background: var(--project-chrome);
 	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+/* The band is the header's; the tab list inside it draws only its tabs. */
+.folders-column__tabs {
+	align-self: stretch;
+	height: auto;
+	/* The first tab starts where the cards beneath it do. */
+	padding-left: 6px;
+	background: transparent;
+	border-bottom: none;
 }
 
 .folders-column__menu {
@@ -648,22 +703,32 @@
 	color: var(--tab-text-selected, #ffffff);
 }
 
+/* Both lists occupy the same cell, so the one behind keeps its layout and
+ * with it where it was scrolled to. */
 .folders-column__body {
-	display: flex;
+	display: grid;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 	flex: 1 1 auto;
-	flex-direction: column;
 	min-height: 0;
 	overflow: hidden;
 }
 
-/* The tree scrolls itself, so its pane body must not scroll around it. */
-.folders-column__pane > .sidebar-pane__body {
+.folders-column__panel {
+	grid-area: 1 / 1;
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden auto;
 }
 
-.folders-column__pane > .sidebar-pane__body > .folders-tree {
+.folders-column__panel--hidden {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+/* The tree scrolls itself, so its panel must not scroll around it. */
+.folders-column__panel > .folders-tree {
 	flex: 1 1 auto;
 }
 

@@ -1,9 +1,10 @@
 /**
  * The Folders tree's model.
  *
- * One row per folder of a project, holding that folder's terminals. The tree in
- * a project's left column and the peek under a project tab are two renderings
- * of this one model, so they cannot disagree about where a terminal is.
+ * One row per folder of a project, holding every panel that folder has open:
+ * its terminals, files, and folder tabs. The tree in a project's left column
+ * and the peek under a project tab are two renderings of this one model, so
+ * they cannot disagree about where a panel is.
  *
  * It is a pure function of the workspace projection, what is known about each
  * panel, and the Git service's worktree listing. Nothing here decides where a
@@ -21,6 +22,20 @@ import type { AgentState } from '../types/agentStatus';
 export type FolderTreePanelFacts = {
 	status: AgentState;
 	title?: string;
+};
+
+/**
+ * A file or folder tab this device has open. The workspace projection lists a
+ * project's terminals; the tabs beside them are known from the workspace that
+ * draws them, so the tree is told of them here.
+ */
+export type FolderTreeOpenViewer = {
+	panelId: string;
+	folderId: string;
+	kind: 'file' | 'folder';
+	title: string;
+	/** The tab before this one in its folder, when there is one. */
+	afterPanelId?: string;
 };
 
 /** The slice of a listed worktree the tree presents. */
@@ -93,6 +108,7 @@ export function terminalRenameTitle(
 }
 
 export type FolderTreeTerminalRow = {
+	kind: 'terminal';
 	panelId: string;
 	sessionId: string;
 	title: string;
@@ -101,6 +117,39 @@ export type FolderTreeTerminalRow = {
 	/** The worktree this terminal created, when it is not in that folder. */
 	createdWorktree?: string;
 };
+
+/** A panel that is not a terminal: an open file or a folder tab. */
+export type FolderTreeViewerRow = {
+	kind: 'file' | 'folder';
+	panelId: string;
+	title: string;
+	isActive: boolean;
+};
+
+/** One tab of a folder, of any kind a project can open. */
+export type FolderTreePanelRow = FolderTreeTerminalRow | FolderTreeViewerRow;
+
+/** Most urgent first: the order every surface that sums up activity uses. */
+const ATTENTION_ORDER: readonly AgentState[] = [
+	'blocked',
+	'waiting',
+	'working',
+	'done',
+];
+
+/**
+ * The one state a collapsed folder shows for all of its terminals: the most
+ * urgent among them. Undefined when every terminal is idle, or there is none,
+ * so a quiet folder shows nothing.
+ */
+export function folderAttentionState(
+	panels: readonly FolderTreePanelRow[],
+): AgentState | undefined {
+	const present = new Set(
+		panels.flatMap((row) => (row.kind === 'terminal' ? [row.status] : [])),
+	);
+	return ATTENTION_ORDER.find((state) => present.has(state));
+}
 
 export type FolderTreeFolderRow = {
 	id: string;
@@ -127,7 +176,8 @@ export type FolderTreeFolderRow = {
 	/** Present when the checkout's branch holds commits the default branch
 	 * lacks, pushed or not. */
 	unmerged?: FolderTreeUnmerged;
-	terminals: readonly FolderTreeTerminalRow[];
+	/** Every panel the folder holds, in panel order. */
+	panels: readonly FolderTreePanelRow[];
 	/** True when the folder holds no panel of any kind. */
 	isEmpty: boolean;
 	/** An unanswered offer to move a terminal into this folder. */
@@ -141,6 +191,8 @@ export type FolderTreeInput = {
 	selectedFolderId?: string;
 	activePanelId?: string;
 	panelFacts?: (panelId: string) => FolderTreePanelFacts | undefined;
+	/** The file and folder tabs open on this device, in tab order. */
+	openViewers?: readonly FolderTreeOpenViewer[];
 	/** The repository's worktrees, or undefined when the root is not a
 	 * repository or the listing has not arrived. */
 	worktrees?: readonly FolderTreeWorktree[];
@@ -149,6 +201,7 @@ export type FolderTreeInput = {
 };
 
 const DEFAULT_TERMINAL_TITLE = 'Terminal';
+const DEFAULT_VIEWER_TITLE = 'Untitled';
 
 export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 	const folders = input.project.folderIds
@@ -169,10 +222,15 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 	for (const folder of folders)
 		if (folder.createdByPanelId !== undefined && folder.worktree !== undefined)
 			createdBy.set(folder.createdByPanelId, folder);
+	// A row is titled as its tab is: by what the inventory reads off the tab,
+	// else by the projection. A file or folder tab with neither is named by
+	// its path, as its tab would be.
 	const titleOf = (panel: ServerWorkspacePanel) =>
 		input.panelFacts?.(panel.id)?.title ??
 		panel.title ??
-		DEFAULT_TERMINAL_TITLE;
+		(panel.type === 'terminal'
+			? DEFAULT_TERMINAL_TITLE
+			: baseName(panel.path ?? '') || DEFAULT_VIEWER_TITLE);
 
 	return folders.map((folder) => {
 		const worktree =
@@ -181,21 +239,59 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 					? home
 					: undefined
 				: worktreeByPath.get(folder.worktree.path);
-		const terminals: FolderTreeTerminalRow[] = [];
+		const panels: FolderTreePanelRow[] = [];
 		for (const panelId of folder.panelIds) {
 			const panel = input.panels[panelId];
-			if (panel?.type !== 'terminal' || panel.sessionId === undefined) continue;
+			if (panel === undefined) continue;
+			const isActive =
+				folder.id === selectedFolderId && panelId === input.activePanelId;
+			if (panel.type !== 'terminal') {
+				panels.push({
+					kind: panel.type,
+					panelId,
+					title: titleOf(panel),
+					isActive,
+				});
+				continue;
+			}
+			// A terminal with no session yet has nothing to show or activate.
+			if (panel.sessionId === undefined) continue;
 			const created = createdBy.get(panelId);
-			terminals.push({
+			panels.push({
+				kind: 'terminal',
 				panelId,
 				sessionId: panel.sessionId,
 				title: titleOf(panel),
 				status: input.panelFacts?.(panelId)?.status ?? 'idle',
-				isActive:
-					folder.id === selectedFolderId && panelId === input.activePanelId,
+				isActive,
 				...(created === undefined || created.id === folder.id
 					? {}
 					: { createdWorktree: baseName(created.worktree?.path ?? '') }),
+			});
+		}
+		// The tabs the projection does not list, each put after the tab it
+		// follows. The terminals keep the order the server holds them in.
+		const listed = new Set(panels.map((row) => row.panelId));
+		for (const viewer of input.openViewers ?? []) {
+			if (viewer.folderId !== folder.id || listed.has(viewer.panelId)) continue;
+			listed.add(viewer.panelId);
+			const before =
+				viewer.afterPanelId === undefined
+					? -1
+					: panels.findIndex((row) => row.panelId === viewer.afterPanelId);
+			const at =
+				viewer.afterPanelId === undefined
+					? 0
+					: before < 0
+						? panels.length
+						: before + 1;
+			panels.splice(at, 0, {
+				kind: viewer.kind,
+				panelId: viewer.panelId,
+				title: viewer.title,
+				isActive:
+					folder.id === selectedFolderId &&
+					viewer.panelId === input.activePanelId,
 			});
 		}
 		const offered =
@@ -243,8 +339,8 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			...(worktree?.unmerged === undefined
 				? {}
 				: { unmerged: worktree.unmerged }),
-			terminals,
-			isEmpty: folder.panelIds.length === 0,
+			panels,
+			isEmpty: folder.panelIds.length === 0 && panels.length === 0,
 			...(offered === undefined
 				? {}
 				: { offer: { panelId: offered.id, title: titleOf(offered) } }),

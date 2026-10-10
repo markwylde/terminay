@@ -4537,6 +4537,34 @@ body.project-tabbar-reordering .project-tabbar {
   padding: 0 8px;
 }
 
+/* The left column's two tabs, as a segmented row across the sheet. The band
+   colour belongs to a project's chrome, not to a sheet that spans projects. */
+.compact-switcher__tabs {
+  height: 36px;
+  margin: 0 10px 8px;
+  padding: 3px;
+  gap: 3px;
+  border-bottom: none;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.compact-switcher__tabs .sidebar-group-tab {
+  flex: 1 1 0;
+  width: auto;
+  gap: 7px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+
+/* The agents take the room the list had, so the sheet does not jump in height
+   between its two tabs. */
+.compact-switcher__agents {
+  flex: 1 1 auto;
+  min-height: 160px;
+  padding: 0 4px 8px;
+}
+
 .compact-switcher__empty {
   margin: 10px;
   color: rgba(220, 226, 240, 0.45);

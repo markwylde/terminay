@@ -495,6 +495,51 @@ test('the filter starts collapsed and takes no focus', () => {
 	assert.doesNotMatch(markup, /autoFocus|autofocus/);
 });
 
+test('the switcher opens on Tabs', () => {
+	const markup = switcher({
+		agents: React.createElement('div', { className: 'agents-probe' }, 'agent'),
+	});
+	// The left column's two tabs, named, with Tabs the one selected.
+	assert.match(markup, /role="tablist"/);
+	const tabs = [...markup.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map(
+		([tab]) => tab,
+	);
+	assert.deepEqual(
+		tabs.map((tab) => /aria-label="(\w+)"/.exec(tab)?.[1]),
+		['Tabs', 'Agents'],
+	);
+	assert.match(tabs[0], /aria-selected="true"/);
+	assert.match(tabs[1], /aria-selected="false"/);
+	// Tabs is the switcher as it always was: the list, the filter, the create bar.
+	assert.match(markup, />server</);
+	assert.match(markup, /compact-switcher__search-open/);
+	assert.match(markup, /aria-label="Add connection"/);
+	// The agents are behind their tab, not beneath the list.
+	assert.doesNotMatch(markup, /agents-probe/);
+	assert.doesNotMatch(markup, /<input/);
+});
+
+test('no tab bar without agents content', () => {
+	const markup = switcher({});
+	assert.doesNotMatch(markup, /role="tablist"/);
+	assert.doesNotMatch(markup, /role="tab"/);
+	assert.doesNotMatch(markup, /role="tabpanel"/);
+	assert.match(markup, />server</);
+});
+
+test('the switcher is given agents only for a project in front with agents on', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	const wiring = app.slice(
+		app.indexOf('<CompactSwitcher'),
+		app.indexOf('onActivatePanel={(row) => {'),
+	);
+	assert.match(wiring, /settings\.agentIntegration\.enabled/);
+	assert.match(wiring, /!isHomeSelected/);
+	assert.match(wiring, /activeProject !== null/);
+	// A press on an agent's row dismisses the sheet, as a panel row's does.
+	assert.match(app, /onCompactAgentActivated=\{closeCompactSwitcher\}/);
+});
+
 test('a project heading is the long-press target for editing', () => {
 	const markup = switcher({});
 	assert.match(markup, /data-compact-switcher-project="local:p1"/);
