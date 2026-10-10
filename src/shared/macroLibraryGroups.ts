@@ -79,3 +79,30 @@ export function validCategoryName(name: string, categories: readonly string[], r
   )
   return clash ? null : trimmed
 }
+
+/**
+ * Move a category to just before or just after another one. The order of
+ * categories is the order the library and the Command Bar list them in.
+ */
+export function moveCategory(
+  categories: readonly string[],
+  category: string,
+  target: string,
+  position: 'before' | 'after',
+): string[] {
+  if (category === target || !categories.includes(category) || !categories.includes(target)) return [...categories]
+  const rest = categories.filter((name) => name !== category)
+  rest.splice(rest.indexOf(target) + (position === 'after' ? 1 : 0), 0, category)
+  return rest
+}
+
+/** Move a category one place up or down. A move past either end changes nothing. */
+export function stepCategory(categories: readonly string[], category: string, direction: -1 | 1): string[] {
+  const from = categories.indexOf(category)
+  const to = from + direction
+  if (from === -1 || to < 0 || to >= categories.length) return [...categories]
+  const next = [...categories]
+  next.splice(from, 1)
+  next.splice(to, 0, category)
+  return next
+}

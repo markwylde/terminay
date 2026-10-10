@@ -1,5 +1,6 @@
+import { GripVertical, Pencil, Plus, X } from 'lucide-react'
 import { useState, type DragEvent, type KeyboardEvent } from 'react'
-import { groupMacroLibrary, type MacroLibraryEntry } from './macroLibraryGroups'
+import { groupMacroLibrary, moveCategory, stepCategory, type MacroLibraryEntry } from './macroLibraryGroups'
 
 export type SharedMacroListItem = MacroLibraryEntry
 
@@ -26,6 +27,7 @@ export function moveSharedMacro(
 type DropTarget = Readonly<{ beforeMacroId: string } | { category: string }>
 
 const MACRO_DRAG_TYPE = 'application/x-terminay-macro'
+const CATEGORY_DRAG_TYPE = 'application/x-terminay-macro-category'
 
 function MacroLibraryItem({ macro, isActive, isDropTarget, onMove, onSelect, onDragStart, onDragOverItem, onDropOnItem }: Readonly<{
   macro: SharedMacroListItem
@@ -84,6 +86,7 @@ export function SharedMacroLibraryPane({
   onRemoveCategory,
   onRenameCategory,
   onReorder,
+  onReorderCategories,
   onSelect,
 }: Readonly<{
   activeMacroId: string | null
@@ -103,6 +106,8 @@ export function SharedMacroLibraryPane({
   /** Returns false when the name is empty or already taken. */
   onRenameCategory: (category: string, name: string) => boolean
   onReorder: (orderedMacroIds: readonly string[]) => void
+  /** The new category order, which is also the order the Command Bar lists them in. */
+  onReorderCategories: (orderedCategories: readonly string[]) => void
   onSelect: (macroId: string) => void
 }>) {
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -160,6 +165,48 @@ export function SharedMacroLibraryPane({
     onMoveMacro(macroId, target)
   }
 
+  const isCategoryDrag = (event: DragEvent<HTMLElement>) => event.dataTransfer.types.includes(CATEGORY_DRAG_TYPE)
+
+  const onCategoryDragStart = (event: DragEvent<HTMLElement>, category: string) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(CATEGORY_DRAG_TYPE, category)
+  }
+
+  /** A category lands above the group it is dropped on the top half of, and below one it is dropped on the bottom half of. */
+  const categoryDropPosition = (event: DragEvent<HTMLElement>): 'before' | 'after' => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'
+  }
+
+  const onCategoryDragOverGroup = (event: DragEvent<HTMLElement>, category: string) => {
+    if (!isCategoryDrag(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    // Macros without a category are always listed last, so a category can only go above them.
+    setDropTarget(`category-${category === '' ? 'before' : categoryDropPosition(event)}:${category}`)
+  }
+
+  const onCategoryDropOnGroup = (event: DragEvent<HTMLElement>, category: string) => {
+    if (!isCategoryDrag(event)) return
+    event.preventDefault()
+    setDropTarget(null)
+    const dragged = event.dataTransfer.getData(CATEGORY_DRAG_TYPE)
+    if (dragged.length === 0 || dragged === category) return
+    const last = categories[categories.length - 1]
+    const next =
+      category === ''
+        ? last === undefined ? [...categories] : moveCategory(categories, dragged, last, 'after')
+        : moveCategory(categories, dragged, category, categoryDropPosition(event))
+    if (next.some((name, index) => name !== categories[index])) onReorderCategories(next)
+  }
+
+  const onCategoryHandleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, category: string) => {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+    event.preventDefault()
+    const next = stepCategory(categories, category, event.key === 'ArrowUp' ? -1 : 1)
+    if (next.some((name, index) => name !== categories[index])) onReorderCategories(next)
+  }
+
   return (
     <section className="settings-nav-group macro-library" data-shared-route-body="macro-library">
       <div className="settings-sidebar-header">
@@ -180,6 +227,7 @@ export function SharedMacroLibraryPane({
       </div>
       <p id="shared-macro-reorder-help" className="sr-only">
         Drag a macro to reorder it or to move it to another category, or use Alt+Up Arrow and Alt+Down Arrow on a macro.
+        Drag a category by its handle to reorder it, or use Alt+Up Arrow and Alt+Down Arrow on the handle.
       </p>
       <div
         className="settings-nav macro-library-list"
@@ -191,11 +239,26 @@ export function SharedMacroLibraryPane({
         {groups.map((group) => {
           const key = `category:${group.category}`
           const showHeader = canManageCategories || group.category !== ''
+          const isNamed = group.category !== ''
+          const categoryDrop =
+            dropTarget === `category-before:${group.category}`
+              ? ' macro-library-group--drop-before'
+              : dropTarget === `category-after:${group.category}`
+                ? ' macro-library-group--drop-after'
+                : ''
           return (
-            <div key={key} className="macro-library-group" data-macro-category={group.category}>
+            <div
+              key={key}
+              className={`macro-library-group${categoryDrop}`}
+              data-macro-category={group.category}
+              onDragOver={(event) => onCategoryDragOverGroup(event, group.category)}
+              onDrop={(event) => onCategoryDropOnGroup(event, group.category)}
+            >
               {showHeader ? (
                 <div
                   className={`settings-nav-group-title macro-library-category${dropTarget === key ? ' macro-library-category--drop' : ''}`}
+                  draggable={isNamed && renaming !== group.category}
+                  onDragStart={(event) => onCategoryDragStart(event, group.category)}
                   onDragOver={(event) => onDragOverTarget(event, key)}
                   onDrop={(event) => onDropOnTarget(event, { category: group.category })}
                 >
@@ -222,6 +285,21 @@ export function SharedMacroLibraryPane({
                     />
                   ) : (
                     <>
+                      {isNamed ? (
+                        <button
+                          type="button"
+                          className="macro-library-category-handle"
+                          aria-label={`Reorder category ${group.category}`}
+                          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                          aria-describedby="shared-macro-reorder-help"
+                          title="Drag to reorder"
+                          onKeyDown={(event) => onCategoryHandleKeyDown(event, group.category)}
+                        >
+                          <GripVertical size={12} aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <span className="macro-library-category-handle" aria-hidden="true" />
+                      )}
                       <span
                         className="macro-library-category-name"
                         title={group.category === '' ? undefined : 'Double-click to rename'}
@@ -231,14 +309,23 @@ export function SharedMacroLibraryPane({
                       >
                         {group.category === '' ? 'No category' : group.category}
                       </span>
-                      {group.category !== '' ? (
-                        <span className="macro-library-category-actions">
-                          <button type="button" aria-label={`New macro in ${group.category}`} title={`New macro in ${group.category}`} onClick={() => onCreate(group.category)}>+</button>
-                          <button type="button" aria-label={`Rename category ${group.category}`} title="Rename category" onClick={() => startRename(group.category)}>✎</button>
-                          <button type="button" aria-label={`Remove category ${group.category}`} title="Remove category and keep its macros" onClick={() => onRemoveCategory(group.category)}>✕</button>
-                        </span>
-                      ) : null}
-                      <span className="macro-library-category-count">{group.macros.length}</span>
+                      {/* The count and the actions share one cell, so showing the actions never changes the row. */}
+                      <span className="macro-library-category-trailing">
+                        <span className="macro-library-category-count">{group.macros.length}</span>
+                        {isNamed ? (
+                          <span className="macro-library-category-actions">
+                            <button type="button" aria-label={`New macro in ${group.category}`} title={`New macro in ${group.category}`} onClick={() => onCreate(group.category)}>
+                              <Plus size={13} aria-hidden="true" />
+                            </button>
+                            <button type="button" aria-label={`Rename category ${group.category}`} title="Rename category" onClick={() => startRename(group.category)}>
+                              <Pencil size={12} aria-hidden="true" />
+                            </button>
+                            <button type="button" aria-label={`Remove category ${group.category}`} title="Remove category and keep its macros" onClick={() => onRemoveCategory(group.category)}>
+                              <X size={13} aria-hidden="true" />
+                            </button>
+                          </span>
+                        ) : null}
+                      </span>
                     </>
                   )}
                 </div>

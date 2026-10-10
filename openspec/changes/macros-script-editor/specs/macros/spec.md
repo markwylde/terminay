@@ -59,7 +59,7 @@ A macro step whose type is not one the server executes SHALL be preserved in the
 
 ### Requirement: Macro categories
 
-A macro SHALL belong to at most one category. Categories SHALL be an ordered list of unique, non-empty names owned by the selected Terminay Server as part of revisioned macro state, and a category SHALL persist while it holds no macro. The Macros window SHALL let the user create a category, rename it, remove it, assign a macro to a category or to none from the macro's editor, and move a macro into a category by dragging it onto that category. Renaming a category SHALL keep its macros in it. Removing a category SHALL keep its macros and leave them without a category. Dragging a macro onto another macro SHALL place it immediately before that macro and in that macro's category, and macro order SHALL be saved.
+A macro SHALL belong to at most one category. Categories SHALL be an ordered list of unique, non-empty names owned by the selected Terminay Server as part of revisioned macro state, and a category SHALL persist while it holds no macro. The Macros window SHALL let the user create a category, rename it, remove it, assign a macro to a category or to none from the macro's editor, and move a macro into a category by dragging it onto that category. Renaming a category SHALL keep its macros in it. Removing a category SHALL keep its macros and leave them without a category. Dragging a macro onto another macro SHALL place it immediately before that macro and in that macro's category, and macro order SHALL be saved. Each category SHALL offer a drag handle, and dragging a category SHALL move it above the category it is dropped on the upper half of and below the one it is dropped on the lower half of; the handle SHALL also move the category one place with Alt+Arrow Up and Alt+Arrow Down. Category order SHALL be saved, and macros without a category SHALL always be listed after every category.
 
 A macro whose stored category is not in the category list SHALL be treated as having no category. A macro state command that carries no category list SHALL leave the stored category list unchanged.
 
@@ -72,6 +72,16 @@ A macro whose stored category is not in the category list SHALL be treated as ha
 
 - **WHEN** the user drags a macro onto another category in the library
 - **THEN** the macro belongs to that category
+
+#### Scenario: Reordering categories by dragging
+
+- **WHEN** the user drags the third category onto the upper half of the first and saves
+- **THEN** it is the first category in the library after the window is reopened
+
+#### Scenario: Reordering a category from the keyboard
+
+- **WHEN** the user focuses a category's handle and presses Alt+Arrow Up
+- **THEN** the category moves up one place and the handle keeps focus
 
 #### Scenario: Removing a category
 
@@ -90,12 +100,17 @@ A macro whose stored category is not in the category list SHALL be treated as ha
 
 ### Requirement: Macros window library
 
-The Macros window SHALL list the macros of the window's server grouped by category, in category order, followed by the macros that have no category. It SHALL offer a filter that matches a macro's name, description, category, and script text, and while a filter is active it SHALL show only the groups that hold a match. Each macro with unsaved changes SHALL be marked in the list.
+The Macros window SHALL list the macros of the window's server grouped by category, in category order, followed by the macros that have no category. It SHALL offer a filter that matches a macro's name, description, category, and script text, and while a filter is active it SHALL show only the groups that hold a match. Each macro with unsaved changes SHALL be marked in the list. A category's actions and handle SHALL appear when its header is hovered or focused without changing the position or size of any row in the list.
 
 #### Scenario: Filtering by script text
 
 - **WHEN** the user types a word that appears only inside one macro's script
 - **THEN** only that macro and its category are listed
+
+#### Scenario: Hovering a category
+
+- **WHEN** the pointer moves over a category header
+- **THEN** its actions and handle are shown and every header and macro in the list stays where it was
 
 #### Scenario: Unsaved marker
 
@@ -172,6 +187,11 @@ The Command Bar SHALL present saved macros in one group per category, titled wit
 
 - **WHEN** the user opens the Command Bar and macros exist in two categories and in none
 - **THEN** each category is a group in category order, followed by a Macros group holding the uncategorised macros
+
+#### Scenario: Category order changed
+
+- **WHEN** the user reorders the categories in the Macros window and saves
+- **THEN** the Command Bar lists the macro groups in the new order
 
 #### Scenario: Searching
 
