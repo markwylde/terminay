@@ -3,6 +3,7 @@ import test from "node:test";
 import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS } from "@terminay/protocol";
 import {
   ACTIVITY_OPERATIONS,
+  TERMINAL_TITLE_OPERATIONS,
   AGENT_OPERATIONS,
   AI_SERVER_OPERATIONS,
   AgentStatusService,
@@ -125,7 +126,9 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.macros,
         FEATURE_CAPABILITIES.settings,
         FEATURE_CAPABILITIES.terminal,
+        FEATURE_CAPABILITIES.terminalTitles,
         FEATURE_CAPABILITIES.workspace,
+        FEATURE_CAPABILITIES.workspaceChanges,
       ].sort(),
     );
   } finally {
@@ -144,6 +147,7 @@ test("every stable operation name in the protocol surface maps to its own capabi
     [MDX_RUNTIME_OPERATIONS, FEATURE_CAPABILITIES.files],
     [GIT_OPERATIONS, FEATURE_CAPABILITIES.git],
     [ACTIVITY_OPERATIONS, FEATURE_CAPABILITIES.agents],
+    [TERMINAL_TITLE_OPERATIONS, FEATURE_CAPABILITIES.terminalTitles],
     [AGENT_OPERATIONS, FEATURE_CAPABILITIES.agents],
     [SETTINGS_OPERATIONS, FEATURE_CAPABILITIES.settings],
     [SHELL_PROFILE_OPERATIONS, FEATURE_CAPABILITIES.settings],

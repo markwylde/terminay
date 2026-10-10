@@ -85,14 +85,12 @@ export interface TerminalPanel extends PanelBase {
 	readonly sessionId: ProtocolId;
 	readonly cwd?: string;
 	/** `Terminal N`, assigned by the server at creation. A terminal's `title`
-	 * is what it displays, resolved by the server: the named title, else the
-	 * program title, else this. */
+	 * here is the named title, else this. What its tab displays may instead be
+	 * a title its program set, which is live state and not part of this model
+	 * (ADR-0058). */
 	readonly defaultTitle?: string;
 	/** A name a person gave the terminal: the tab editor, AI, or MCP. */
 	readonly namedTitle?: string;
-	/** A title the running program set with `OSC 0` / `OSC 2`. Sanitised
-	 * display text from untrusted output; it carries no authority (ADR-0056). */
-	readonly programTitle?: string;
 	/** Absent means the terminal has no note; an empty string is a present,
 	 * empty note. */
 	readonly note?: string;
@@ -387,9 +385,6 @@ export function canonicalizeWorkspaceState(
 				...(panel.namedTitle === undefined
 					? {}
 					: { namedTitle: panel.namedTitle }),
-				...(panel.programTitle === undefined
-					? {}
-					: { programTitle: panel.programTitle }),
 				...(panel.note === undefined ? {} : { note: panel.note }),
 				...(panel.metadataRevision === undefined
 					? {}
@@ -621,15 +616,6 @@ export type WorkspaceCommand =
 			readonly index?: number;
 	  }
 	| { readonly type: 'panel.close'; readonly panelId: ProtocolId }
-	| {
-			/** Host-owned: the title a terminal's program set, already sanitised.
-			 * `null` means the program has none. Never a client command. */
-			readonly type: 'panel.programTitle.set';
-			readonly panelId: ProtocolId;
-			readonly title: string | null;
-	  }
-	/** Host-owned: forget every terminal's program title. */
-	| { readonly type: 'panel.programTitles.clear' }
 	| {
 			readonly type: 'terminal.create';
 			readonly sessionId: ProtocolId;
@@ -1006,11 +992,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 			throw new TypeError('terminal panel/session ownership mismatch');
 		if (panel.type === 'terminal') {
 			if (panel.note !== undefined) assertPanelNote(panel.note);
-			for (const source of [
-				panel.defaultTitle,
-				panel.namedTitle,
-				panel.programTitle,
-			])
+			for (const source of [panel.defaultTitle, panel.namedTitle])
 				if (source !== undefined) boundedName(source);
 			if (panel.defaultTitle !== undefined && panel.title !== shownTitle(panel))
 				throw new TypeError('terminal panel title is not its resolved title');
@@ -1152,6 +1134,40 @@ function issuedFolderId(state: WorkspaceState): ProtocolId {
  * snapshot may contain only server identity and project roots; it is upgraded
  * without inventing panels or terminal content. A schema 5 snapshot gains
  * folders. */
+/**
+ * A program-set title is live state and is never stored (ADR-0058). A
+ * workspace written while it was a panel field has it dropped here, and the
+ * terminal's stored title goes back to its named title or default name.
+ */
+function forgetStoredProgramTitles(
+	value: Record<string, unknown>,
+): Record<string, unknown> {
+	const panels = value.panels;
+	if (typeof panels !== 'object' || panels === null || Array.isArray(panels))
+		return value;
+	let forgotten = false;
+	const next: Record<string, unknown> = {};
+	for (const [id, panel] of Object.entries(panels)) {
+		if (
+			typeof panel !== 'object' ||
+			panel === null ||
+			!('programTitle' in panel)
+		) {
+			next[id] = panel;
+			continue;
+		}
+		const { programTitle: _programTitle, ...rest } = panel as Record<
+			string,
+			unknown
+		>;
+		const stored =
+			typeof rest.namedTitle === 'string' ? rest.namedTitle : rest.defaultTitle;
+		next[id] = typeof stored === 'string' ? { ...rest, title: stored } : rest;
+		forgotten = true;
+	}
+	return forgotten ? { ...value, panels: next } : value;
+}
+
 export function migrateWorkspaceState(
 	input: unknown,
 	fallbackServerId: ProtocolId,
@@ -1160,6 +1176,7 @@ export function migrateWorkspaceState(
 		throw new TypeError('workspace snapshot must be an object');
 	let value = input as Record<string, unknown>;
 	if (value.schemaVersion === 5) value = migrateSchema5To6(value);
+	value = forgetStoredProgramTitles(value);
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return adoptTerminalTitleSources(
 			canonicalizeWorkspaceState(value as unknown as WorkspaceState),
@@ -1225,17 +1242,16 @@ const DEFAULT_TERMINAL_TITLE = /^Terminal \d+$/u;
 interface TerminalTitleSources {
 	readonly defaultTitle: string;
 	readonly namedTitle?: string;
-	readonly programTitle?: string;
 }
 
-/** What a terminal displays: a person's name for it, else the program's, else
- * its default name. */
+/** The title workspace state holds for a terminal: a person's name for it,
+ * else its default name. A title its program set is resolved over this by
+ * the title service and is never stored here (ADR-0058). */
 function shownTitle(sources: {
 	readonly defaultTitle?: string;
 	readonly namedTitle?: string;
-	readonly programTitle?: string;
 }): string | undefined {
-	return sources.namedTitle ?? sources.programTitle ?? sources.defaultTitle;
+	return sources.namedTitle ?? sources.defaultTitle;
 }
 
 function nextDefaultTerminalTitle(
@@ -1265,9 +1281,6 @@ function terminalTitleSources(
 			...(panel.namedTitle === undefined
 				? {}
 				: { namedTitle: panel.namedTitle }),
-			...(panel.programTitle === undefined
-				? {}
-				: { programTitle: panel.programTitle }),
 		};
 	const title = panel.title?.trim();
 	if (title !== undefined && DEFAULT_TERMINAL_TITLE.test(title))
@@ -1308,9 +1321,10 @@ function withTitleSources(
 		title: _title,
 		defaultTitle: _defaultTitle,
 		namedTitle: _namedTitle,
+		// Never a field of the model (ADR-0058): dropped if an input carries one.
 		programTitle: _programTitle,
 		...rest
-	} = panel;
+	} = panel as TerminalPanel & { readonly programTitle?: unknown };
 	return {
 		...rest,
 		title: shownTitle(sources) ?? sources.defaultTitle,
@@ -1318,9 +1332,6 @@ function withTitleSources(
 		...(sources.namedTitle === undefined
 			? {}
 			: { namedTitle: sources.namedTitle }),
-		...(sources.programTitle === undefined
-			? {}
-			: { programTitle: sources.programTitle }),
 	};
 }
 
@@ -2539,36 +2550,6 @@ export class WorkspaceStore {
 				changed.push(panel.id);
 				break;
 			}
-			case 'panel.programTitle.set': {
-				const panel = requirePanel(state, command.panelId);
-				if (panel.type !== 'terminal')
-					throw new Error('only a terminal panel has a program title');
-				const { programTitle: _program, ...rest } = terminalTitleSources(
-					state,
-					panel,
-				);
-				state.panels[panel.id] = withTitleSources(
-					panel,
-					command.title === null
-						? rest
-						: { ...rest, programTitle: boundedName(command.title) },
-				);
-				changed.push(panel.id);
-				break;
-			}
-			case 'panel.programTitles.clear': {
-				for (const panel of Object.values(state.panels)) {
-					if (panel.type !== 'terminal' || panel.programTitle === undefined)
-						continue;
-					const { programTitle: _program, ...rest } = terminalTitleSources(
-						state,
-						panel,
-					);
-					state.panels[panel.id] = withTitleSources(panel, rest);
-					changed.push(panel.id);
-				}
-				break;
-			}
 			case 'panel.reorder': {
 				const project = requireProject(state, command.projectId);
 				const folderId =
@@ -2786,6 +2767,10 @@ export class WorkspaceStore {
 				changed.push(session.id);
 				break;
 			}
+			default:
+				// A type the reducer does not know changes nothing, and a commit
+				// that changes nothing must not advance the revision for it.
+				throw new Error('unknown workspace command');
 		}
 	}
 }

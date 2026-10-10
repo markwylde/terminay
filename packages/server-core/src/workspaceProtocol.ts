@@ -718,7 +718,6 @@ function commandProjectIds(
 		case 'panel.create':
 			return [command.panel.projectId];
 		case 'panel.update':
-		case 'panel.programTitle.set':
 		case 'panel.close': {
 			const panel = state.panels[command.panelId];
 			return panel === undefined ? [] : [panel.projectId];
@@ -735,7 +734,6 @@ function commandProjectIds(
 			return session === undefined ? [] : [session.projectId];
 		}
 		case 'project.shellProfile.replace':
-		case 'panel.programTitles.clear':
 		case 'view.create':
 		case 'view.rename':
 		case 'view.close':
@@ -871,14 +869,6 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
 	}
 	if (command.type === 'terminal.markExited') {
 		throw protocolError('forbidden', 'terminal exit marks are host-owned');
-	}
-	// A program title comes from the session's own output, read by the server
-	// (ADR-0056). A client can name a terminal; it cannot speak for its program.
-	if (
-		command.type === 'panel.programTitle.set' ||
-		command.type === 'panel.programTitles.clear'
-	) {
-		throw protocolError('forbidden', 'program titles are host-owned');
 	}
 	// Only the server links a folder to a worktree or records who created one:
 	// both come from its own worktree listing, never from a client (ADR-0050).

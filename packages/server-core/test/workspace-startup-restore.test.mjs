@@ -267,7 +267,7 @@ test('the active project is seeded before its siblings', async () => {
 	const viewId = workspace.state.viewOrder[0];
 	const result = workspace.apply({
 		commandId: 'select-other',
-		command: { type: 'view.selectProject', viewId, projectId: 'other' },
+		command: { type: 'project.activate', projectId: 'other' },
 	});
 	assert.equal(result.ok, true, result.ok ? undefined : result.conflict.message);
 	const creator = recordingCreator(workspace);
