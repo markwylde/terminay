@@ -2,8 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import type { ElectronApplication, Page } from '@playwright/test';
+import { expect, launchDesktopApp, test } from './fixtures';
+import { prepareWindow } from './support/app';
 import {
 	holdTornOffProjectTab,
 	setCursorScreenPoint,
@@ -515,3 +516,97 @@ test(`closing the ${closed} one of two windows on a server leaves the other conn
 	}
 });
 }
+
+/** Quit the way the Quit menu item does and wait for the process to go. */
+async function quitDesktop(electronApp: ElectronApplication): Promise<void> {
+	const child = electronApp.process();
+	const exited = new Promise<void>((resolve) => {
+		if (child.exitCode !== null || child.signalCode !== null) resolve();
+		else child.once('exit', () => resolve());
+	});
+	await electronApp
+		.evaluate(({ app, dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 1,
+			});
+			setImmediate(() => app.quit());
+		})
+		.catch(() => undefined);
+	await Promise.race([
+		exited,
+		new Promise<void>((_, reject) =>
+			setTimeout(() => reject(new Error('Desktop did not quit')), 30_000),
+		),
+	]);
+}
+
+/** Record every workspace document a launch loads. The loading document is a
+ * `data:` URL, so anything else is a workspace being mounted. */
+async function recordWorkspaceLoads(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ app, BrowserWindow }) => {
+		const loads: string[] = [];
+		(globalThis as { __workspaceLoads?: string[] }).__workspaceLoads = loads;
+		const watch = (contents: Electron.WebContents) =>
+			contents.on('did-navigate', (_event, url) => {
+				if (!url.startsWith('data:')) loads.push(url);
+			});
+		for (const window of BrowserWindow.getAllWindows())
+			watch(window.webContents);
+		app.on('web-contents-created', (_event, contents) => watch(contents));
+	});
+	return () =>
+		electronApp.evaluate(
+			() =>
+				(globalThis as { __workspaceLoads?: string[] }).__workspaceLoads ?? [],
+		);
+}
+
+test('Desktop reopens straight onto the server its window last showed', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+	userDataDir,
+}, testInfo) => {
+	test.setTimeout(360_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	const launches: Awaited<ReturnType<typeof launchDesktopApp>>[] = [];
+	const relaunch = async () => {
+		const launched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
+		launches.push(launched);
+		const workspaceLoads = await recordWorkspaceLoads(launched.electronApp);
+		const window = await prepareWindow(await launched.electronApp.firstWindow());
+		return { launched, window, workspaceLoads };
+	};
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		await quitDesktop(electronApp);
+
+		// Closed on the server: it opens there, and Local is never mounted on
+		// the way.
+		const onServer = await relaunch();
+		await expectShowing(onServer.window, serverHost);
+		expect(await onServer.workspaceLoads()).toHaveLength(1);
+
+		// Closed on Local: it opens on Local.
+		await switchTo(onServer.window, 'Local');
+		await quitDesktop(onServer.launched.electronApp);
+		const onLocal = await relaunch();
+		await expectShowing(onLocal.window, 'Local');
+		expect(await onLocal.workspaceLoads()).toHaveLength(1);
+
+		// Closed on a server that then stops answering: it opens on Local.
+		await switchTo(onLocal.window, serverHost);
+		await quitDesktop(onLocal.launched.electronApp);
+		await server.stop();
+		const unreachable = await relaunch();
+		await expectShowing(unreachable.window, 'Local');
+		expect(await unreachable.workspaceLoads()).toHaveLength(1);
+	} finally {
+		for (const launched of launches)
+			await launched.close().catch(() => undefined);
+		await server.stop();
+	}
+});

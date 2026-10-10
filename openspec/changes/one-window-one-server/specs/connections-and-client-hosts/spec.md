@@ -261,7 +261,7 @@ A window SHALL run exactly one workspace UI bundle, and that bundle SHALL be the
 
 ### Requirement: Desktop persists profiles and each window's server
 
-Desktop SHALL store non-secret profiles locally and credentials through OS-backed secure storage where available. A Desktop connection created from a pairing URL SHALL enrol a protected device key and save only the stable session origin as switchable profile metadata; one-time URLs SHALL never be stored or reused. A profile record SHALL contain only its stable server identity, exact session origin, display metadata, timestamps, and a diagnostic status; pairing fragments, device keys, terminal data, and filesystem paths SHALL NOT be profile fields. Desktop SHALL also persist which server its workspace window last showed, as device-local presentation state holding a profile id and nothing else, and SHALL NOT send it to any server. On starting, Desktop SHALL open that window on Local and SHALL then switch it to the remembered server once that server's transport is ready; a server that cannot be reached, or that has been forgotten, SHALL leave the window on Local.
+Desktop SHALL store non-secret profiles locally and credentials through OS-backed secure storage where available. A Desktop connection created from a pairing URL SHALL enrol a protected device key and save only the stable session origin as switchable profile metadata; one-time URLs SHALL never be stored or reused. A profile record SHALL contain only its stable server identity, exact session origin, display metadata, timestamps, and a diagnostic status; pairing fragments, device keys, terminal data, and filesystem paths SHALL NOT be profile fields. Desktop SHALL also persist which server its workspace window last showed, as device-local presentation state holding a profile id and nothing else, and SHALL NOT send it to any server. On starting, Desktop SHALL keep that window in its loading state until the remembered server's transport is ready and SHALL then open the window on that server, and SHALL NOT show Local on the way to another server. A remembered server that cannot be reached, or that has been forgotten, SHALL open the window on Local. While the remembered server has not answered within two seconds, the loading state SHALL offer **Switch to Local**; choosing it SHALL abandon the attempt, open the window on Local, and record Local as the server the window last showed.
 
 #### Scenario: Pairing URL is not persisted
 
@@ -276,12 +276,22 @@ Desktop SHALL store non-secret profiles locally and credentials through OS-backe
 #### Scenario: A window reopens on its server
 
 - **WHEN** Desktop restarts after its workspace window was showing a remote server that is reachable
-- **THEN** the window opens on Local and then shows that server
+- **THEN** the window opens on that server without showing Local first
+
+#### Scenario: A window closed on Local reopens on Local
+
+- **WHEN** Desktop restarts after its workspace window was switched back to Local
+- **THEN** the window opens on Local
 
 #### Scenario: The remembered server cannot be reached
 
 - **WHEN** Desktop restarts and the server its workspace window last showed does not answer
-- **THEN** the window stays on Local
+- **THEN** the window opens on Local
+
+#### Scenario: Leaving a slow server for Local
+
+- **WHEN** the remembered server has not answered two seconds into the loading state
+- **THEN** the loading state offers **Switch to Local**, and choosing it opens the window on Local and abandons the attempt
 
 ### Requirement: A native window is bound to one server
 
