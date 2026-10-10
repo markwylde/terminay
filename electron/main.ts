@@ -3152,12 +3152,9 @@ function bindMcpGateway(authority: ServerTerminalAuthority): void {
 		connectedServers.notifyStatusChanged(),
 	);
 	// A project that closes takes its local servers with it.
-	let openProjects = new Set(Object.keys(authority.workspace.state.projects));
-	const stopWorkspace = authority.workspace.subscribe(() => {
-		const next = new Set(Object.keys(authority.workspace.state.projects));
-		for (const projectId of openProjects)
-			if (!next.has(projectId)) mcpGateway.closeProject(projectId);
-		openProjects = next;
+	const stopWorkspace = authority.workspace.subscribe((_event, record) => {
+		for (const projectId of record.removed.projects ?? [])
+			mcpGateway.closeProject(projectId);
 	});
 	appWindows?.bindViewRequests(async (window, method, params, signal) => {
 		if (window.source.kind !== 'mcp-app')
