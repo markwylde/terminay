@@ -175,7 +175,8 @@ as a reason, on its own, to reload anything.
 
 - **WHEN** one terminal is renamed while others are open in the same and in
   other projects
-- **THEN** only that terminal's tab and the rows that name it are rendered again
+- **THEN** no other terminal's panel or tab is rendered again, and no project
+  that does not hold the renamed terminal renders its workspace again
 
 #### Scenario: Change in another project
 

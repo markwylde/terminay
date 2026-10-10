@@ -13,7 +13,7 @@ import {
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
-import { sameJsonValue } from '../shared/workspaceProjection';
+import { keepIfUnchanged, keepListIfUnchanged } from './unchangedPresentation';
 import { recallHomeSelected, rememberHomeSelected } from './localViewState';
 import {
 	createProjectTab,
@@ -400,10 +400,7 @@ export function useProjectCollection<TTerminal>({
 						// A projection that changed nothing about this project presents
 						// the tab it already presented: the same object, so nothing
 						// keyed on the project runs again (ADR-0059).
-						return existing !== undefined &&
-							sameJsonValue(existing, presented)
-							? existing
-							: presented;
+						return keepIfUnchanged(existing, presented);
 					},
 				);
 				const serverById = new Map(
@@ -419,11 +416,7 @@ export function useProjectCollection<TTerminal>({
 					: nextFromServer;
 				// And a projection that changed no project presents the list it
 				// already presented.
-				const next =
-					ordered.length === current.length &&
-					ordered.every((project, index) => project === current[index])
-						? current
-						: ordered;
+				const next = keepListIfUnchanged(current, ordered) as ProjectTab[];
 				projectsRef.current = next;
 				return next;
 			});

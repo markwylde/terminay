@@ -40,6 +40,7 @@ import {
 	CSSProperties,
 	type FormEvent,
 	forwardRef,
+	memo,
 	type MouseEvent,
 	type MutableRefObject,
 	type KeyboardEvent as ReactKeyboardEvent,
@@ -183,9 +184,11 @@ import {
 } from './shared/serverWorkspaceReconciliation';
 import {
 	TerminalTitleStoreContext,
+	useWorkspaceProjectSlice,
 	useWorkspaceSelection,
 } from './shared/useWorkspaceProjection';
 import { sameJsonValue } from './shared/workspaceProjection';
+import { changedTerminalAppearance } from './workspace/unchangedPresentation';
 import {
 	WorkspaceSplitLayout,
 } from './shared/WorkspaceSplitLayout';
@@ -1410,7 +1413,13 @@ function unavailableFileViewerClient(reason: string): FileViewerClient {
 /** A terminal with no macro runs is always given this same list. */
 const NO_MACRO_RUNS: readonly never[] = Object.freeze([]);
 
-const ProjectWorkspace = forwardRef<
+/**
+ * One folder of one project. It is memoised, and its props are kept stable
+ * where they are made, so a workspace change that concerns another project
+ * does not render it (ADR-0059). What it reads of the projection it
+ * subscribes to itself, by project.
+ */
+const ProjectWorkspace = memo(forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
 >(
@@ -1469,6 +1478,14 @@ const ProjectWorkspace = forwardRef<
 		recordBoundedRendererRender(
 			`project-workspace:${project.id}:${folder.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
+		);
+		// Rendered again when this project, one of its folders, or one of its
+		// panels changes in the projection, and not for any other project's.
+		// The projection itself is then read whole: everything below that takes
+		// it looks only at this project's part.
+		useWorkspaceProjectSlice(
+			terminalClientContext?.workspaceSnapshotStore,
+			project.id,
 		);
 		const workspaceSnapshot =
 			terminalClientContext?.workspaceSnapshotStore?.snapshot ?? null;
@@ -3833,17 +3850,7 @@ const ProjectWorkspace = forwardRef<
 					// Dockview re-renders a panel and its tab on every parameter
 					// update, changed or not, and this runs for every panel at every
 					// workspace revision: only what differs is handed over.
-					const appearance: Record<string, unknown> = {};
-					for (const key of [
-						'emoji',
-						'color',
-						'inheritsProjectColor',
-						'activityIndicatorsEnabled',
-					] as const) {
-						const value = canonical[key];
-						if (value !== undefined && panel.params?.[key] !== value)
-							appearance[key] = value;
-					}
+					const appearance = changedTerminalAppearance(panel.params, canonical);
 					if (Object.keys(appearance).length > 0)
 						panel.api.updateParameters(appearance);
 				}
@@ -6050,7 +6057,7 @@ const ProjectWorkspace = forwardRef<
 			</section>
 		);
 	},
-);
+));
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
@@ -6392,6 +6399,18 @@ function App({
 			currentServerId,
 			projectId,
 		);
+	// The same set for a project until its collapsed folders change.
+	const collapsedFolderSets = useRef(
+		new Map<string, { ids: readonly string[]; set: ReadonlySet<string> }>(),
+	);
+	const collapsedFolderSetFor = (projectId: string): ReadonlySet<string> => {
+		const ids = collapsedFoldersFor(projectId);
+		const held = collapsedFolderSets.current.get(projectId);
+		if (held !== undefined && sameJsonValue(held.ids, ids)) return held.set;
+		const set: ReadonlySet<string> = new Set(ids);
+		collapsedFolderSets.current.set(projectId, { ids, set });
+		return set;
+	};
 	const collapsedFoldersFor = (projectId: string): readonly string[] =>
 		foldersTreeChanges.collapsed[
 			projectSidebarVisibilityKey(currentServerId, projectId)
@@ -6497,6 +6516,22 @@ function App({
 	const workspaceRefs = useRef(
 		new FolderWorkspaceRegistry<ProjectWorkspaceHandle>(),
 	);
+	// One ref callback per workspace for as long as it is mounted. A new
+	// function on every render would be a new prop on every render.
+	const workspaceRefCallbacks = useRef(
+		new Map<string, (instance: ProjectWorkspaceHandle | null) => void>(),
+	);
+	const workspaceRefFor = (projectId: string, folderId: string) => {
+		const key = folderWorkspaceKey(projectId, folderId);
+		const held = workspaceRefCallbacks.current.get(key);
+		if (held !== undefined) return held;
+		const callback = (instance: ProjectWorkspaceHandle | null): void => {
+			workspaceRefs.current.set(projectId, folderId, instance);
+			if (instance === null) workspaceRefCallbacks.current.delete(key);
+		};
+		workspaceRefCallbacks.current.set(key, callback);
+		return callback;
+	};
 	/**
 	 * Terminal moves this device asked the server for and has not yet seen in a
 	 * confirmed projection, by session id, with the project each is headed to
@@ -7251,6 +7286,9 @@ function App({
 			];
 		}),
 	);
+	const mergedInventoriesRef = useRef<
+		Record<string, WorkspaceInventoryEntry[]>
+	>({});
 	const inventoryByProject = useMemo(() => {
 		const folderOrder = new Map(
 			(
@@ -7264,12 +7302,25 @@ function App({
 				{ folderIds, generalId },
 			]),
 		);
-		return mergeProjectInventories(
+		const merged = mergeProjectInventories(
 			inventoryByFolder,
 			(projectId) => folderOrder.get(projectId)?.folderIds ?? undefined,
 			rememberedFolderId,
 			(projectId) => folderOrder.get(projectId)?.generalId ?? undefined,
 		);
+		// One folder publishing merges every project again. A project whose
+		// list comes out the same keeps the list it had, so only the project
+		// that published is handed a new one.
+		const held = mergedInventoriesRef.current;
+		let same = Object.keys(held).length === Object.keys(merged).length;
+		for (const [projectId, entries] of Object.entries(merged)) {
+			const before = held[projectId];
+			if (before !== undefined && sameJsonValue(before, entries))
+				merged[projectId] = before;
+			else same = false;
+		}
+		mergedInventoriesRef.current = same ? held : merged;
+		return mergedInventoriesRef.current;
 		// `selectedFolders` is what `rememberedFolderId` reads.
 	}, [folderOrderKey, inventoryByFolder, rememberedFolderId, selectedFolders]);
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
@@ -8691,6 +8742,15 @@ function App({
 			placeServerLabels,
 		],
 	);
+	// A workspace searches when a person types. It is handed one function
+	// for the life of the window, which searches the places as they are then,
+	// so that the places changing is not a reason to render every workspace.
+	const searchPlacesRef = useRef(searchPlaces);
+	searchPlacesRef.current = searchPlaces;
+	const searchPlacesNow = useCallback(
+		(query: string) => searchPlacesRef.current(query),
+		[],
+	);
 	const closeViewCommandBar = useCallback(
 		() => setIsViewCommandBarOpen(false),
 		[],
@@ -9889,9 +9949,7 @@ function App({
 							folders.map((folder) => (
 						<ProjectWorkspace
 							key={folderWorkspaceKey(project.id, folder.id)}
-							ref={(instance) => {
-								workspaceRefs.current.set(project.id, folder.id, instance);
-							}}
+							ref={workspaceRefFor(project.id, folder.id)}
 							agentStatusSnapshot={agentStatusSnapshot}
 							auxiliaryRoutes={auxiliaryRouteController}
 							folder={folder}
@@ -9908,7 +9966,7 @@ function App({
 							foldersTreeWidth={foldersTreeWidthFor(project.id)}
 							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
 							foldersColumnTab={foldersColumnTabFor(project.id)}
-							collapsedFolderIds={new Set(collapsedFoldersFor(project.id))}
+							collapsedFolderIds={collapsedFolderSetFor(project.id)}
 							onToggleFolderCollapsed={toggleFolderCollapsed}
 							onFoldersColumnTabChange={selectFoldersColumnTab}
 							compactAgentsHost={compactAgentsHost}
@@ -9930,7 +9988,7 @@ function App({
 							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
-							searchPlaces={searchPlaces}
+							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}
 							isStatusBarVisible={isStatusBarVisible}
 							statusBarSlot={statusBarSlot}

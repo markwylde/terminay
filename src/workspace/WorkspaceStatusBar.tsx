@@ -342,8 +342,13 @@ export function useFocusedTerminalStatus({
 		const next = read === null ? null : { sessionId, ...read };
 		// Dockview reports layout changes for every sash drag and resize; only
 		// re-render the workspace when what the bar shows actually changed.
+		// The title is left out of that comparison. The bar shows the terminal's
+		// title live, and a title is rewritten as often as its program likes:
+		// one that differs is not a reason to render the workspace.
+		const shown = (state: typeof next) =>
+			state === null ? null : JSON.stringify({ ...state, title: '' });
 		setLayoutState((current) =>
-			JSON.stringify(current) === JSON.stringify(next) ? current : next,
+			shown(current) === shown(next) ? current : next,
 		);
 	}, [apiRef]);
 
