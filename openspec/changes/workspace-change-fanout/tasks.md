@@ -55,6 +55,6 @@
 
 ## 8. Delivery
 
-- [ ] 8.1 Run `npm run lint`, `npm run typecheck:workspaces`, the unit suites, protocol conformance, and `npm run test:e2e` locally. Verified by all passing.
-- [ ] 8.2 Run `openspec validate --all` and `openspec validate --all --archived`. Verified by both passing.
-- [ ] 8.3 Open the pull request on `origin` with `tea`, and read back every commit status on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 8.1 Run `npm run lint`, `npm run typecheck:workspaces`, the unit suites, protocol conformance, and `npm run test:e2e` locally. Verified by all passing.
+- [x] 8.2 Run `openspec validate --all` and `openspec validate --all --archived`. Verified by both passing.
+- [x] 8.3 Open the pull request on `origin` with `tea`, and read back every commit status on the head SHA. Verified by every status being `success` or `skipped`.
