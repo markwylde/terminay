@@ -83,3 +83,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0054](./0054-a-local-socket-that-does-not-fit-the-data-directory-lives-in-an-owner-only-runtime-directory.md) | A local socket that does not fit in the data directory lives in an owner-only runtime directory named for it | accepted | 2026-10-09 |
 | [0055](./0055-exclusive-ownership-by-a-process-is-a-lock-the-kernel-holds.md) | Exclusive ownership by a process is a lock the kernel holds, never a file's existence or a heartbeat | accepted | 2026-10-09 |
 | [0056](./0056-terminal-output-reaches-workspace-state-only-as-sanitised-display-text.md) | Terminal output reaches workspace state only as sanitised display text the server resolves | accepted | 2026-10-09 |
+| [0057](./0057-nothing-written-into-a-terminal-is-a-secret.md) | Nothing Terminay writes into a terminal is a secret, so no feature moves a vault entry into a PTY | accepted | 2026-10-10 |

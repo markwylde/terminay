@@ -64,13 +64,8 @@ test("runtime composes settings and vault metadata without creating a secret tra
   let observed = "";
   await runtime.withSecret("provider.key", (secret) => { observed = Buffer.from(secret).toString(); });
   assert.equal(observed, "runtime-secret-sentinel");
-  const target = { serverId: "server-services", projectId: "project-1", sessionId: "session-1" };
-  const resolveMacroSecret = runtime.createMacroSecretResolver(target);
-  assert.throws(() => runtime.createMacroSecretResolver({ ...target, serverId: "other-server" }), /another server/);
-  const resolved = await resolveMacroSecret(target, "provider.key");
-  assert.equal(Buffer.from(resolved).toString(), "runtime-secret-sentinel");
-  resolved.fill(0);
-  await assert.rejects(() => resolveMacroSecret({ ...target, sessionId: "other" }, "provider.key"), /exact terminal/);
+  // Macros have no path to the vault: the runtime offers them no resolver.
+  assert.equal("createMacroSecretResolver" in runtime, false);
   assert.equal(JSON.stringify(runtime.diagnostics()).includes("runtime-secret-sentinel"), false);
 });
 

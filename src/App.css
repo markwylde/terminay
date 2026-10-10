@@ -2489,6 +2489,17 @@ body.project-tabbar-reordering .project-tabbar {
   width: 100%;
 }
 
+.macro-file-field--over input[type='text'] {
+  border-style: dashed;
+  border-color: var(--accent-color, #0a84ff);
+}
+
+.macro-file-field-notice {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .macro-file-field-menu {
   position: absolute;
   top: calc(100% + 6px);

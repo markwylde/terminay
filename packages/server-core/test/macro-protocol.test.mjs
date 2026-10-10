@@ -116,11 +116,6 @@ for (const kind of ["local", "remote"]) {
               assert.deepEqual(candidate, exactTarget);
               writes.push({ target: candidate, text: `<key:${key}>` });
             },
-            resolveSecret(candidate, secretId) {
-              assert.deepEqual(candidate, exactTarget);
-              assert.equal(secretId, "api-token");
-              return new TextEncoder().encode("server-secret-value");
-            },
             waitForInactivity(candidate, milliseconds) {
               assert.deepEqual(candidate, exactTarget);
               waits.push(milliseconds);
@@ -144,20 +139,17 @@ for (const kind of ["local", "remote"]) {
         title: "Deploy",
         steps: [
           { id: "type", type: "type", content: "deploy {{Environment}} " },
-          { id: "secret", type: "secret", secretId: "api-token" },
           { id: "wait", type: "wait_inactivity", durationSeconds: "2" },
           { id: "enter", type: "key", key: "Enter" },
         ],
       }, { expectedRevision: initial.revision });
       assert.equal(saved.revision, 1);
-      assert.equal(JSON.stringify(saved).includes("server-secret-value"), false);
 
       const run = await macroClient.run("deploy", target, { Environment: "prod" });
       await waitFor(() => runner.running === 0);
-      assert.deepEqual(writes.map((entry) => entry.text), ["deploy prod ", "server-secret-value", "<key:Enter>"]);
+      assert.deepEqual(writes.map((entry) => entry.text), ["deploy prod ", "<key:Enter>"]);
       assert.deepEqual(waits, [2_000]);
       assert.equal(run.target.sessionId, session.sessionId);
-      assert.equal(JSON.stringify(run).includes("server-secret-value"), false);
 
       await assert.rejects(
         () => macroClient.run("deploy", { ...target, sessionId: "other-session" }),
@@ -170,6 +162,30 @@ for (const kind of ["local", "remote"]) {
       await macroClient.cancel(cancelRun.runId, target);
       await waitFor(() => runner.running === 0);
       assert.equal(cancelState.revision, 2);
+
+      // replace with categories sets them
+      const categorised = await macroClient.replace(
+        cancelState.macros.map((macro) => macro.id === "deploy" ? { ...macro, category: "Release" } : macro),
+        { expectedRevision: cancelState.revision, categories: ["Release", "Empty"] },
+      );
+      assert.deepEqual(categorised.categories, ["Release", "Empty"]);
+      assert.equal(categorised.macros.find((macro) => macro.id === "deploy").category, "Release");
+      // replace without categories keeps them
+      const kept = await macroClient.replace(categorised.macros, { expectedRevision: categorised.revision });
+      assert.deepEqual(kept.categories, ["Release", "Empty"]);
+      assert.equal(kept.macros.find((macro) => macro.id === "deploy").category, "Release");
+      // a stored step the server does not execute is kept, and the macro does not run
+      const stale = await macroClient.upsert({ id: "stale", title: "Stale", steps: [{ id: "t", type: "type", content: "sudo x" }, { id: "s", type: "secret", secretId: "api-token" }] }, { expectedRevision: kept.revision });
+      assert.deepEqual(stale.macros.find((macro) => macro.id === "stale").steps[1], { id: "s", type: "unsupported", sourceType: "secret" });
+      const writesBefore = writes.length;
+      const rejected = await macroClient.run("stale", target);
+      await waitFor(() => runner.running === 0);
+      const finished = runner.list().find((candidate) => candidate.runId === rejected.runId) ?? rejected;
+      assert.equal(writes.length, writesBefore);
+      assert.notEqual(finished.status, "completed");
+      // reset clears categories
+      const cleared = await macroClient.reset({ expectedRevision: stale.revision });
+      assert.deepEqual(cleared.categories, []);
     } finally {
       await protocolClient.close().catch(() => undefined);
       await connection.close().catch(() => undefined);

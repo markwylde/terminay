@@ -35,11 +35,15 @@ test('secret values remain behind privileged preload APIs', () => {
   assert.match(settingsWindow, /dictationHost\.saveKey/)
   assert.match(settingsWindow, /dictationHost\.clearKey/)
   assert.doesNotMatch(settingsWindow, /window\.terminay\.(?:saveDictationOpenAiKey|clearDictationOpenAiKey)/)
-  assert.match(macrosWindow, /macroSettingsClient\.saveSecret/)
-  assert.match(macrosWindow, /macroSettingsClient\.deleteSecret/)
   assert.doesNotMatch(macrosWindow, /useLegacyMacroSettingsCapability/)
-  assert.doesNotMatch(macrosWindow, /window\.terminay\.(?:saveSecret|deleteSecret)/)
-  assert.doesNotMatch(macrosWindow, /window\.terminay\.getDecryptedSecret/)
-  assert.match(app, /macroSettingsCapability\.getDecryptedSecret/)
-  assert.doesNotMatch(app, /window\.terminay\.getDecryptedSecret/)
+})
+
+test('the Macros window and the macro run path reference no secret operation', async () => {
+  const macroSettingsHook = await readFile('src/hooks/useMacroSettings.ts', 'utf8')
+  const runController = await readFile('src/workspace/useMacroRunController.ts', 'utf8')
+  for (const source of [macrosWindow, macroSettingsHook, runController, app]) {
+    assert.doesNotMatch(source, /getSecrets|getDecryptedSecret|saveSecret|deleteSecret|SecretDefinition/)
+  }
+  assert.match(macrosWindow, /macroSettingsClient\.saveMacroLibrary/)
+  assert.match(macroSettingsHook, /export type MacroSettingsClient = MacroDefinitionsClient/)
 })

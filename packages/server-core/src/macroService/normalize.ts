@@ -1,6 +1,9 @@
 import { MacroServiceError } from './errors.js';
 import {
 	MACRO_SCHEMA_VERSION,
+	MAX_MACRO_CATEGORIES,
+	MAX_MACRO_CATEGORY_LENGTH,
+	MAX_UNSUPPORTED_STEP_TYPE_LENGTH,
 	type MacroDefinition,
 	type MacroFieldDefinition,
 	type MacroFieldOption,
@@ -81,6 +84,32 @@ export function normalizeMacroState(
 		: Array.isArray(input)
 			? input
 			: [];
+	const listed = normalizeMacroList(rawMacros, normalizedLimits);
+	// State written before categories existed carries none. Seed them once from
+	// the `prefix:` naming convention so an existing library does not open as
+	// one flat list; state at the current version is never re-derived.
+	const predatesCategories =
+		typeof record?.schemaVersion !== 'number' ||
+		record.schemaVersion < MACRO_SCHEMA_VERSION;
+	const seeded =
+		predatesCategories && record?.categories === undefined
+			? seedCategoriesFromPrefixes(listed)
+			: { categories: normalizeCategories(record?.categories), macros: listed };
+	return {
+		schemaVersion: MACRO_SCHEMA_VERSION,
+		revision,
+		cursor: String(revision),
+		categories: seeded.categories,
+		macros: reconcileMacroCategories(seeded.macros, seeded.categories),
+	};
+}
+
+/** Normalize a bare list of macro definitions and require unique ids. */
+export function normalizeMacroList(
+	rawMacros: readonly unknown[],
+	limits: MacroLimits = {},
+): readonly MacroDefinition[] {
+	const normalizedLimits = normalizeLimits(limits);
 	if (rawMacros.length > 4096)
 		throw new MacroServiceError(
 			'limit',
@@ -97,12 +126,88 @@ export function normalizeMacroState(
 			});
 		ids.add(macro.id);
 	}
-	return {
-		schemaVersion: MACRO_SCHEMA_VERSION,
-		revision,
-		cursor: String(revision),
-		macros,
+	return macros;
+}
+
+/**
+ * Category names are trimmed, bounded, free of control characters, and unique
+ * ignoring case. Anything else is dropped rather than rejected, so one bad
+ * name cannot make the library unloadable.
+ */
+export function normalizeCategories(input: unknown): readonly string[] {
+	if (!Array.isArray(input)) return [];
+	const categories: string[] = [];
+	const seen = new Set<string>();
+	for (const value of input) {
+		const name = normalizeCategoryName(value);
+		if (name === '' || seen.has(name.toLowerCase())) continue;
+		if (categories.length >= MAX_MACRO_CATEGORIES) break;
+		seen.add(name.toLowerCase());
+		categories.push(name);
+	}
+	return categories;
+}
+
+/** Point every macro at a listed category by its canonical name, or at none. */
+export function reconcileMacroCategories(
+	macros: readonly MacroDefinition[],
+	categories: readonly string[],
+): readonly MacroDefinition[] {
+	const canonical = new Map(
+		categories.map((name) => [name.toLowerCase(), name]),
+	);
+	return macros.map((macro) => {
+		const category = canonical.get(macro.category.toLowerCase()) ?? '';
+		return category === macro.category ? macro : { ...macro, category };
+	});
+}
+
+function seedCategoriesFromPrefixes(macros: readonly MacroDefinition[]): {
+	readonly categories: readonly string[];
+	readonly macros: readonly MacroDefinition[];
+} {
+	const prefixOf = (macro: MacroDefinition): string => {
+		const separator = macro.title.indexOf(':');
+		return separator > 0
+			? normalizeCategoryName(macro.title.slice(0, separator))
+			: '';
 	};
+	const counts = new Map<string, number>();
+	for (const macro of macros) {
+		const prefix = prefixOf(macro).toLowerCase();
+		if (prefix !== '') counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+	}
+	const categories = normalizeCategories(
+		macros
+			.map(prefixOf)
+			.filter((prefix) => (counts.get(prefix.toLowerCase()) ?? 0) > 1),
+	);
+	const listed = new Set(categories.map((name) => name.toLowerCase()));
+	return {
+		categories,
+		macros: macros.map((macro) => {
+			const prefix = prefixOf(macro);
+			return listed.has(prefix.toLowerCase())
+				? { ...macro, category: prefix }
+				: macro;
+		}),
+	};
+}
+
+function normalizeCategoryName(value: unknown): string {
+	if (typeof value !== 'string') return '';
+	const name = value.trim().replace(/\s+/g, ' ');
+	if (name.length > MAX_MACRO_CATEGORY_LENGTH || hasControlCharacter(name))
+		return '';
+	return name;
+}
+
+function hasControlCharacter(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code < 0x20 || code === 0x7f) return true;
+	}
+	return false;
 }
 
 export function normalizeMacro(
@@ -153,7 +258,14 @@ export function normalizeMacro(
 		explicitFields,
 		normalizedLimits.maxFields,
 	);
-	return { id, title, description, fields, steps };
+	return {
+		id,
+		title,
+		description,
+		category: normalizeCategoryName(record.category),
+		fields,
+		steps,
+	};
 }
 
 export function normalizeFieldValue(
@@ -358,8 +470,6 @@ function normalizeStep(
 				type,
 				key: boundedString(record.key, 'Enter', limits.maxStringBytes),
 			};
-		case 'secret':
-			return { id, type, secretId: normalizeId(record.secretId, '') };
 		case 'wait_time':
 		case 'wait_inactivity': {
 			const fallback = type === 'wait_time' ? '1' : '3';
@@ -381,11 +491,18 @@ function normalizeStep(
 		case 'paste':
 			return { id, type };
 		default:
-			throw new MacroServiceError(
-				'invalid_macro',
-				'macro step type is unsupported',
-				{ type },
-			);
+			// Kept, never executed: dropping it would silently change what the
+			// macro does, and throwing would make the whole library unloadable.
+			// Only the type name survives; no other field of the step is carried.
+			return {
+				id,
+				type: 'unsupported',
+				sourceType: (type === 'unsupported' &&
+				typeof record.sourceType === 'string'
+					? record.sourceType
+					: type
+				).slice(0, MAX_UNSUPPORTED_STEP_TYPE_LENGTH),
+			};
 	}
 }
 

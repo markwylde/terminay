@@ -16,7 +16,7 @@ A desktop terminal workspace that keeps shells, files, agents, and remote access
 - Create project tabs with root folders, per-project file explorer state, colors, and short icons
 - Rename project and terminal tabs, set tab colors, and inherit project styling
 - Use the Command bar to search app commands and run saved macros
-- Build reusable macros with typed steps, placeholder fields, waits, clipboard paste, and stored secrets
+- Build reusable macros as one script of text, key presses, and waits, with placeholder inputs asked at run time and categories to organise them
 - Browse project folders from a resizable sidebar with Git new/modified coloring
 - Open folders as dockable folder tabs with tree, list, thumbnail, and gallery views
 - Open files beside terminals with preview, text, hex, and Git diff modes

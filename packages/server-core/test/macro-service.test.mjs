@@ -11,17 +11,36 @@ import {
 
 const target = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "session-1" });
 
-test("macro normalization migrates template-only definitions and never serializes secret values", () => {
+test("a stored secret step loads as unsupported and carries no secretId", () => {
   const macro = normalizeMacro({
     id: "deploy",
     title: "Deploy",
     template: "echo {{Environment}}",
-    steps: [{ type: "secret", secretId: "api-token", value: "plaintext-secret" }],
+    steps: [{ id: "s1", type: "secret", secretId: "api-token", value: "plaintext-secret" }],
   });
-  assert.equal(macro.steps[0].type, "secret");
-  assert.equal(macro.steps[0].secretId, "api-token");
-  assert.equal("value" in macro.steps[0], false);
+  assert.deepEqual(macro.steps[0], { id: "s1", type: "unsupported", sourceType: "secret" });
+  assert.equal(JSON.stringify(macro).includes("api-token"), false);
   assert.equal(JSON.stringify(macro).includes("plaintext-secret"), false);
+  // Normalizing again keeps the original type name rather than "unsupported".
+  assert.deepEqual(normalizeMacro(macro).steps[0], macro.steps[0]);
+});
+
+test("an unknown step type does not fail the library", () => {
+  const state = normalizeMacroState({
+    schemaVersion: 2,
+    macros: [
+      { id: "odd", steps: [{ type: "teleport-somewhere-that-has-a-very-long-type-name", where: "x" }] },
+      { id: "fine", steps: [{ type: "type", content: "echo ok" }] },
+    ],
+  });
+  assert.equal(state.macros.length, 2);
+  assert.equal(state.macros[0].steps[0].type, "unsupported");
+  assert.equal(state.macros[0].steps[0].sourceType.length, 32);
+  assert.equal("where" in state.macros[0].steps[0], false);
+  assert.equal(state.macros[1].steps[0].type, "type");
+});
+
+test("macro normalization migrates template-only definitions", () => {
 
   const migrated = normalizeMacroState({ macros: [{ id: "legacy", template: "echo {{Name}}" }] });
   assert.equal(migrated.macros[0].steps[0].type, "type");
@@ -75,32 +94,80 @@ test("macro repository persists revisioned updates, rejects stale clients, and r
   assert.equal(repository.state.macros.length, 0);
 });
 
-test("macro runner resolves secrets at the PTY boundary and requires exact target authorization", async () => {
+test("a macro with an unsupported step is rejected before any PTY write", async () => {
   const macro = normalizeMacro({
     id: "deploy",
+    title: "Deploy",
     steps: [
-      { type: "type", content: "deploy {{Environment}} " },
+      { type: "type", content: "sudo deploy" },
+      { type: "key", key: "Enter" },
       { type: "secret", secretId: "api-token" },
       { type: "key", key: "Enter" },
     ],
   });
   const writes = [];
   const keys = [];
-  let resolverTarget;
+  let resolved = false;
+  const runner = new MacroRunner();
+  const result = await runner.run(macro, {
+    target,
+    async write(_candidate, bytes) { writes.push(Buffer.from(bytes).toString()); },
+    async key(_candidate, key) { keys.push(key); },
+    // A host that still offers a resolver is never asked.
+    async resolveSecret() { resolved = true; return Buffer.from("secret-value"); },
+  }, { authorization: { target, scope: "write" } });
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "invalid_macro");
+  assert.equal(result.bytesWritten, 0);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(keys, []);
+  assert.equal(resolved, false);
+});
+
+test("a macro run reads no vault entry", async () => {
+  const macro = normalizeMacro({
+    id: "everything",
+    steps: [
+      { type: "type", content: "deploy {{Environment}}" },
+      { type: "key", key: "Enter" },
+      { type: "wait_time", durationSeconds: "0" },
+      { type: "wait_inactivity", durationSeconds: "0" },
+      { type: "select_line" },
+    ],
+  });
+  const vault = new Proxy({}, { get() { throw new Error("a macro run touched the vault"); } });
+  const runner = new MacroRunner();
+  const result = await runner.run(macro, {
+    target,
+    vault,
+    write() {},
+    key() {},
+    waitForInactivity() {},
+    resolveSecret() { throw new Error("a macro run asked for a secret"); },
+  }, { authorization: { target, scope: "write" }, values: { Environment: "prod" } });
+  assert.equal(result.status, "completed");
+});
+
+test("macro runner types rendered text and requires exact target authorization", async () => {
+  const macro = normalizeMacro({
+    id: "deploy",
+    steps: [
+      { type: "type", content: "deploy {{Environment}} " },
+      { type: "key", key: "Enter" },
+    ],
+  });
+  const writes = [];
+  const keys = [];
   const runner = new MacroRunner({ maxOutputBytes: 128 });
   const result = await runner.run(macro, {
     target,
     authorize(candidate) { return candidate.serverId === target.serverId && candidate.projectId === target.projectId && candidate.sessionId === target.sessionId; },
     async write(candidate, bytes) { writes.push({ candidate, text: Buffer.from(bytes).toString() }); },
     async key(candidate, key) { keys.push({ candidate, key }); },
-    async resolveSecret(candidate, id) { resolverTarget = { candidate, id }; return Buffer.from("secret-value"); },
   }, { authorization: { target, scope: "write" }, values: { Environment: "prod" } });
   assert.equal(result.status, "completed");
-  assert.deepEqual(writes.map((entry) => entry.text), ["deploy prod ", "secret-value"]);
+  assert.deepEqual(writes.map((entry) => entry.text), ["deploy prod "]);
   assert.equal(keys[0].key, "Enter");
-  assert.deepEqual(resolverTarget.candidate, target);
-  assert.equal(resolverTarget.id, "api-token");
-  assert.equal(JSON.stringify(result).includes("secret-value"), false);
 
   await assert.rejects(
     () => runner.run(macro, { target, write() {} }, { authorization: { target: { ...target, sessionId: "other" }, scope: "write" } }),
@@ -170,4 +237,78 @@ test("macro runner applies cancel or continue policy when the launching connecti
   });
   runner.launcherDisconnected("connection-continue");
   assert.equal((await continueHandle.promise).status, "completed");
+});
+
+test("duplicate and empty category names are dropped", () => {
+  const state = normalizeMacroState({
+    schemaVersion: 2,
+    categories: ["  Deploy  ", "deploy", "", 7, "x".repeat(65), "bad\u0007name", "Review"],
+    macros: [],
+  });
+  assert.deepEqual(state.categories, ["Deploy", "Review"]);
+});
+
+test("a macro in an unknown category has none", () => {
+  const state = normalizeMacroState({
+    schemaVersion: 2,
+    categories: ["Deploy"],
+    macros: [
+      { id: "a", title: "A", category: "deploy", steps: [] },
+      { id: "b", title: "B", category: "Gone", steps: [] },
+    ],
+  });
+  // A case-only difference resolves to the listed name.
+  assert.equal(state.macros[0].category, "Deploy");
+  assert.equal(state.macros[1].category, "");
+});
+
+test("an empty category persists across a commit", async () => {
+  let persisted;
+  const repository = new MacroRepository({
+    async load() { return persisted; },
+    async commit(state) { persisted = state; },
+  });
+  await repository.load();
+  const saved = await repository.replace([{ id: "a", title: "A", category: "Used", steps: [] }], 0, undefined, ["Used", "Empty"]);
+  assert.equal(saved.ok, true);
+  assert.deepEqual(persisted.categories, ["Used", "Empty"]);
+  const reopened = new MacroRepository({ async load() { return persisted; }, async commit() {} });
+  assert.deepEqual((await reopened.load()).categories, ["Used", "Empty"]);
+
+  // A client that knows nothing about categories cannot erase them.
+  const legacy = await repository.replace([{ id: "a", title: "A", category: "Used", steps: [] }]);
+  assert.deepEqual(legacy.state.categories, ["Used", "Empty"]);
+  assert.equal(legacy.state.macros[0].category, "Used");
+
+  // An upsert naming an unlisted category lands with none.
+  const upserted = await repository.upsert({ id: "b", title: "B", category: "Nowhere", steps: [] });
+  assert.equal(upserted.state.macros.find((macro) => macro.id === "b").category, "");
+
+  const reset = await repository.reset();
+  assert.deepEqual(reset.state.categories, []);
+});
+
+test("version 1 state gains prefix categories once", () => {
+  const v1 = {
+    schemaVersion: 1,
+    revision: 4,
+    macros: [
+      { id: "1", title: "pr:create", steps: [] },
+      { id: "2", title: "pr:create-and-green", steps: [] },
+      { id: "3", title: "spec:create", steps: [] },
+      { id: "4", title: "Say thing", steps: [] },
+      { id: "5", title: ":odd", steps: [] },
+    ],
+  };
+  const migrated = normalizeMacroState(v1);
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.revision, 4);
+  assert.deepEqual(migrated.categories, ["pr"]);
+  assert.deepEqual(migrated.macros.map((macro) => macro.category), ["pr", "pr", "", "", ""]);
+
+  // Once at the current version nothing is derived again, even after the user
+  // has emptied the list and a shared prefix still exists.
+  assert.deepEqual(normalizeMacroState(migrated), migrated);
+  const cleared = normalizeMacroState({ ...migrated, categories: [], macros: migrated.macros.map((macro) => ({ ...macro, category: "" })) });
+  assert.deepEqual(cleared.categories, []);
 });

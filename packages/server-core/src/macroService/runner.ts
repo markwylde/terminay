@@ -127,6 +127,11 @@ export class MacroRunner {
 				options.values ?? {},
 				this.limits.maxStringBytes,
 			);
+			// Decided before the first write: a macro holding a step this server
+			// does not execute is invalid as a whole, never run in part.
+			for (const step of run.macro.steps)
+				if (step.type === 'unsupported')
+					throw unsupportedStepError(run.macro, step.sourceType);
 			for (let index = 0; index < run.macro.steps.length; index += 1) {
 				run.stepIndex = index;
 				assertNotCanceled(run.controller.signal);
@@ -181,29 +186,6 @@ export class MacroRunner {
 					);
 				await environment.key(run.target, step.key);
 				return;
-			case 'secret': {
-				if (environment.resolveSecret === undefined || !step.secretId)
-					throw new MacroServiceError(
-						'secret_unavailable',
-						'macro secret is unavailable',
-					);
-				let secret: Uint8Array | undefined;
-				try {
-					secret = await environment.resolveSecret(run.target, step.secretId);
-					if (
-						!(secret instanceof Uint8Array) ||
-						secret.byteLength > this.limits.maxStringBytes
-					)
-						throw new MacroServiceError(
-							'limit',
-							'resolved secret exceeds the macro output limit',
-						);
-					await this.write(run, environment, secret);
-				} finally {
-					secret?.fill(0);
-				}
-				return;
-			}
 			case 'wait_time':
 				await waitMilliseconds(
 					parseDelay(step.durationSeconds, values, this.limits.maxDelayMs),
@@ -240,6 +222,8 @@ export class MacroRunner {
 					'unsupported_step',
 					'clipboard paste requires an explicit server-side clipboard authority',
 				);
+			case 'unsupported':
+				throw unsupportedStepError(run.macro, step.sourceType);
 		}
 	}
 
@@ -258,6 +242,17 @@ export class MacroRunner {
 }
 
 export const MacroExecutionService = MacroRunner;
+
+function unsupportedStepError(
+	macro: MacroDefinition,
+	sourceType: string,
+): MacroServiceError {
+	return new MacroServiceError(
+		'invalid_macro',
+		`macro "${macro.title}" contains a step that cannot run`,
+		{ id: macro.id, type: sourceType },
+	);
+}
 
 function resolveValues(
 	macro: MacroDefinition,

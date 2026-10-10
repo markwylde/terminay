@@ -218,23 +218,24 @@ test('opens the macros window', async ({ appHarness, mainWindow }) => {
   const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
 
   await expect(macrosWindow.getByRole('heading', { name: 'Macros' })).toBeVisible()
-  await expect(macrosWindow.getByRole('button', { name: 'New Macro' })).toBeVisible()
-  await expect(macrosWindow.getByText('Build reusable automation steps.')).toBeVisible()
+  await expect(macrosWindow.getByRole('button', { name: 'New macro', exact: true })).toBeVisible()
+  await expect(macrosWindow.getByLabel('Filter macros')).toBeVisible()
+  await expect(macrosWindow.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
 })
 
 test('persists server-owned macro edits across child-window reopen', async ({ appHarness, mainWindow }) => {
   const openMacros = () => appHarness.openMacrosWindow(mainWindow)
   const title = `Persistent Macro ${Date.now()}`
   const firstWindow = await openMacros()
-  await firstWindow.getByRole('button', { name: 'New Macro' }).click()
-  await firstWindow.getByPlaceholder('Macro Title').fill(title)
-  await firstWindow.getByRole('button', { name: 'Save Changes' }).click()
-  await expect(firstWindow.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+  await firstWindow.getByRole('button', { name: 'New macro', exact: true }).click()
+  await firstWindow.getByLabel('Macro name').fill(title)
+  await firstWindow.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(firstWindow.locator('.macro-save-state')).toHaveText('Saved')
   await firstWindow.close()
 
   const reopenedWindow = await openMacros()
   await reopenedWindow.getByRole('button', { name: title }).click()
-  await expect(reopenedWindow.getByPlaceholder('Macro Title')).toHaveValue(title)
+  await expect(reopenedWindow.getByLabel('Macro name')).toHaveValue(title)
 })
 
 test('runs a macro from the launcher and records the completed run', async ({ mainWindow }) => {
