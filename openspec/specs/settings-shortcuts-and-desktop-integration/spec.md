@@ -304,20 +304,6 @@ The shared terminal-settings hook SHALL read and observe server settings through
 - **WHEN** the selected connection cannot answer a settings operation
 - **THEN** the operation is not retried on any other attached connection
 
-### Requirement: Server-authoritative file and macro settings
-
-File-panel diff-layout changes SHALL use the same settings command facade and SHALL remain server-authoritative across the shared UI hosts. File-extension defaults saved in Settings SHALL be observed by already-mounted Desktop and browser workspaces through that same selected-server client, and the file panel SHALL NOT consult a separate browser-local settings snapshot. Macro definitions and secret actions SHALL require an explicitly supplied selected-server client; there SHALL be no ambient macro compatibility context or preload-shaped fallback. A host without secret capability SHALL return a typed unavailable error while macro definitions remain server-authoritative.
-
-#### Scenario: File-extension default changed
-
-- **WHEN** a file-extension default is saved in Settings
-- **THEN** already-mounted Desktop and browser workspaces observe it through the selected-server client
-
-#### Scenario: Host lacks secret capability
-
-- **WHEN** a secret action runs on a host without secret capability
-- **THEN** a typed unavailable error is returned and macro definitions remain server-authoritative
-
 ### Requirement: Secret storage and vault disclosure
 
 API keys and other secrets SHALL use the appropriate server or client vault and SHALL NOT be returned as plaintext after being saved. Settings that enable integrations SHALL describe their data exposure and SHALL remain opt-in where they capture or transmit content. The server vault SHALL report only lock and availability state, revision, and secret metadata — identifier, label, configured state, and version. Set, replace, test, delete, and key-rotation operations SHALL run inside the server vault. A secret SHALL be available to server code only through a scoped callback and SHALL NOT be part of a settings snapshot, protocol response, or diagnostic record.
@@ -862,3 +848,17 @@ On a Linux desktop that offers no launcher count, and on any platform without an
 #### Scenario: Terminay quits with notifications outstanding
 - **WHEN** Terminay quits while the icon shows a count
 - **THEN** the icon carries no badge afterwards
+
+### Requirement: Server-authoritative file and macro definitions
+
+File-panel diff-layout changes SHALL use the same settings command facade and SHALL remain server-authoritative across the shared UI hosts. File-extension defaults saved in Settings SHALL be observed by already-mounted Desktop and browser workspaces through that same selected-server client, and the file panel SHALL NOT consult a separate browser-local settings snapshot. Macro definitions and categories SHALL require an explicitly supplied selected-server client; there SHALL be no ambient macro compatibility context or preload-shaped fallback. The macro settings client SHALL expose macro definitions and categories only, and no host SHALL offer it a secret action.
+
+#### Scenario: File-extension default changed
+
+- **WHEN** a file-extension default is saved in Settings
+- **THEN** already-mounted Desktop and browser workspaces observe it through the selected-server client
+
+#### Scenario: Macro settings client surface
+
+- **WHEN** the Macros window is given its selected-server client on any host
+- **THEN** the client reads, replaces, resets, and observes macro definitions and categories, and exposes no operation that reads, saves, or deletes a secret

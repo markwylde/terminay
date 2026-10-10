@@ -595,24 +595,6 @@ stale vault envelope using its expected revision.
 - **WHEN** a complete but stale vault envelope is submitted
 - **THEN** the canonical state repository rejects it on its expected revision
 
-### Requirement: Secret exposure limits and macro resolution
-
-Secret values MUST NOT be included in workspace snapshots, audit events, logs, or
-normal settings responses. Macro execution SHALL resolve secret placeholders on
-the server and SHALL write the result directly to the authorized PTY.
-
-#### Scenario: Snapshot contents
-
-- **WHEN** a workspace snapshot, audit event, log line, or settings response is
-  produced
-- **THEN** it contains no secret values
-
-#### Scenario: Macro with a secret placeholder
-
-- **WHEN** a macro containing a secret placeholder runs
-- **THEN** the server resolves the placeholder and writes the result directly to
-  the authorized PTY
-
 ### Requirement: Development data root isolation
 
 Source-development Desktop SHALL use a dedicated `Terminay Development`
@@ -992,3 +974,21 @@ anything.
 
 - **WHEN** a project is moved to another view or window
 - **THEN** none of its server-held resources are released
+
+### Requirement: Secret exposure limits
+
+Secret values MUST NOT be included in workspace snapshots, audit events, logs, or
+normal settings responses. Macro execution MUST NOT resolve a vault entry and
+MUST NOT write a secret value to a PTY.
+
+#### Scenario: Snapshot contents
+
+- **WHEN** a workspace snapshot, audit event, log line, or settings response is
+  produced
+- **THEN** it contains no secret values
+
+#### Scenario: Macro execution and secrets
+
+- **WHEN** a macro runs
+- **THEN** no vault entry is resolved for it and no secret value is written to
+  the PTY
