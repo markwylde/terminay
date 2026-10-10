@@ -92,15 +92,16 @@ test("workspace views, projects, panels, and sessions cannot cross ownership bou
   assert.equal(crossProjectPanel.ok, false);
   assert.equal(store.state.panels["panel-forged"], undefined);
 
-  const crossServer = store.state;
+  // The committed state is frozen: a forged one is built from a copy of it.
+  const crossServer = structuredClone(store.state);
   crossServer.views[defaultViewId] = { ...crossServer.views[defaultViewId], serverId: "server-b" };
   assert.throws(() => validateWorkspace(crossServer), /view crosses server boundary/);
 
-  const crossView = store.state;
+  const crossView = structuredClone(store.state);
   crossView.projects["project-a"] = { ...crossView.projects["project-a"], viewId: "view-b" };
   assert.throws(() => validateWorkspace(crossView), /view\/project ownership mismatch|project crosses server\/view boundary/);
 
-  const crossSession = store.state;
+  const crossSession = structuredClone(store.state);
   crossSession.terminalSessions["session-a"] = { ...crossSession.terminalSessions["session-a"], projectId: "project-b" };
   assert.throws(() => validateWorkspace(crossSession), /terminal panel\/session ownership mismatch/);
 });

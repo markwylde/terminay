@@ -1,5 +1,9 @@
 import {
 	parseWorkspaceDeltaDto,
+	parseWorkspaceRecordsDeltaDto,
+	WORKSPACE_RECORDS_DELTA_VERSION,
+	type WorkspaceRecordsDeltaDto,
+	workspaceDeltaVersionOf,
 	parseWorkspaceSnapshotDto,
 	type JsonValue,
 	type ProtocolId,
@@ -17,7 +21,12 @@ export interface WorkspaceCommandOptions extends WorkspaceQueryOptions {
 	readonly commandId?: ProtocolId;
 	readonly expectedRevision?: number;
 }
-export type { WorkspaceDeltaDto, WorkspaceSnapshotDto } from '@terminay/protocol';
+export type {
+	WorkspaceChangeRecordDto,
+	WorkspaceDeltaDto,
+	WorkspaceRecordsDeltaDto,
+	WorkspaceSnapshotDto,
+} from '@terminay/protocol';
 export interface ProjectMoveRequest {
 	readonly projectId: string;
 	readonly targetViewId: string;
@@ -182,7 +191,7 @@ export class WorkspaceClient {
 		revision: number,
 		cursor: string,
 		options: WorkspaceQueryOptions = {},
-	): Promise<WorkspaceDeltaDto> {
+	): Promise<WorkspaceDeltaDto | WorkspaceRecordsDeltaDto> {
 		// A legacy polling projection may have retained an arbitrary cursor string.
 		// The protocol only accepts the canonical cursor for the requested server
 		// revision, so reject that compatibility shape before it can generate a
@@ -198,7 +207,12 @@ export class WorkspaceClient {
 			{ revision, cursor },
 			options,
 		);
-		return parseWorkspaceDeltaDto(response.result, { serverId: readDeltaServerId(response.result), revision, cursor });
+		const expected = { serverId: readDeltaServerId(response.result), revision, cursor };
+		// A server that negotiated change records answers with them (ADR-0059);
+		// any other answers with the state the delta leads to.
+		return workspaceDeltaVersionOf(response.result) === WORKSPACE_RECORDS_DELTA_VERSION
+			? parseWorkspaceRecordsDeltaDto(response.result, expected)
+			: parseWorkspaceDeltaDto(response.result, expected);
 	}
 
 	/**

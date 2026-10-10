@@ -94,7 +94,8 @@ type UseTerminalControlControllerOptions = {
 	getTerminalCwd: (sessionId: string) => Promise<string | null>;
 	projectId: string;
 	sendInput: (sessionId: string, data: string) => void;
-	setTerminalTitleRevision: (update: (revision: number) => number) => void;
+	/** A terminal was given a title here: lists built from titles are rebuilt. */
+	onTerminalTitleSet: () => void;
 	state: TerminalControlState;
 	terminalContextReadersRef: MutableRefObject<
 		Map<string, TerminalContextReader>
@@ -218,7 +219,7 @@ export function useTerminalControlController({
 	getTerminalCwd,
 	projectId,
 	sendInput,
-	setTerminalTitleRevision,
+	onTerminalTitleSet,
 	state,
 	terminalContextReadersRef,
 	waitForInactivity,
@@ -382,7 +383,7 @@ export function useTerminalControlController({
 							};
 						}
 						api?.getPanel(match.found.panelId)?.api.setTitle(name);
-						setTerminalTitleRevision((revision) => revision + 1);
+						onTerminalTitleSet();
 						return { ok: true, result: { ok: true } };
 					}
 					case 'split_terminal': {
@@ -493,7 +494,7 @@ export function useTerminalControlController({
 			getTerminalCwd,
 			projectId,
 			sendInput,
-			setTerminalTitleRevision,
+			onTerminalTitleSet,
 			state,
 			terminalContextReadersRef,
 			waitForInactivity,

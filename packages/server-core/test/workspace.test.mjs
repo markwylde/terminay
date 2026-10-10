@@ -70,9 +70,8 @@ test("restart recovery marks running sessions interrupted without changing ident
   const project = store.apply({ commandId: "project", command: { type: "project.create", projectId, viewId, root: "/tmp/a", name: "A" } });
   assert.equal(project.ok, true);
   const state = store.state;
-  state.terminalSessions["session-a"] = { id: "session-a", serverId: "server-a", projectId, status: "running", createdAt: 1, outputPosition: 4 };
-  // The immutable snapshot API prevents callers from mutating the store; use a
-  // fresh valid state to model a persisted repository load for this unit.
+  // The committed state is frozen, so a persisted repository load is modelled
+  // by a fresh valid state built from it.
   const loaded = new WorkspaceStore({ ...state, terminalSessions: { "session-a": { id: "session-a", serverId: "server-a", projectId, status: "running", createdAt: 1, outputPosition: 4 } } });
   const interrupted = loaded.markInterruptedSessions(10);
   assert.equal(interrupted.terminalSessions["session-a"].status, "interrupted");

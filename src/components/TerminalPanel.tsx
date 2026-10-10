@@ -58,6 +58,7 @@ import { useServerConnection } from '../shared/connections/ConnectionsContext';
 import { isConnectionReconnecting } from '../shared/connections/connectionRegistry';
 import { recordRendererDiagnostic } from '../shared/rendererDiagnostics';
 import { isTouchTextSelectionEnabled } from '../shared/touchTextSelectionPreference';
+import type { TerminalTitleStore } from '../shared/TerminalTitleStore';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { formatBracketedPaste } from '../terminalInput';
 import {
@@ -168,6 +169,9 @@ export interface TerminalPanelClientContextValue {
 	readonly agentStatusClient?: AgentStatusClient;
 	/** Authenticated connection-wide workspace projection. */
 	readonly workspaceSnapshotStore?: WorkspaceSnapshotStore;
+	/** What each terminal on this connection displays, published live by the
+	 * server beside the workspace projection. */
+	readonly terminalTitleStore?: TerminalTitleStore;
 	/** Closes all connection-scoped subscriptions before the protocol transport. */
 	readonly dispose?: () => Promise<void>;
 	/** Server-backed catalog client shared with folder/file panels. */

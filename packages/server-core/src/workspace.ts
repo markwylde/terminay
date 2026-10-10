@@ -85,14 +85,12 @@ export interface TerminalPanel extends PanelBase {
 	readonly sessionId: ProtocolId;
 	readonly cwd?: string;
 	/** `Terminal N`, assigned by the server at creation. A terminal's `title`
-	 * is what it displays, resolved by the server: the named title, else the
-	 * program title, else this. */
+	 * here is the named title, else this. What its tab displays may instead be
+	 * a title its program set, which is live state and not part of this model
+	 * (ADR-0058). */
 	readonly defaultTitle?: string;
 	/** A name a person gave the terminal: the tab editor, AI, or MCP. */
 	readonly namedTitle?: string;
-	/** A title the running program set with `OSC 0` / `OSC 2`. Sanitised
-	 * display text from untrusted output; it carries no authority (ADR-0056). */
-	readonly programTitle?: string;
 	/** Absent means the terminal has no note; an empty string is a present,
 	 * empty note. */
 	readonly note?: string;
@@ -387,9 +385,6 @@ export function canonicalizeWorkspaceState(
 				...(panel.namedTitle === undefined
 					? {}
 					: { namedTitle: panel.namedTitle }),
-				...(panel.programTitle === undefined
-					? {}
-					: { programTitle: panel.programTitle }),
 				...(panel.note === undefined ? {} : { note: panel.note }),
 				...(panel.metadataRevision === undefined
 					? {}
@@ -622,15 +617,6 @@ export type WorkspaceCommand =
 	  }
 	| { readonly type: 'panel.close'; readonly panelId: ProtocolId }
 	| {
-			/** Host-owned: the title a terminal's program set, already sanitised.
-			 * `null` means the program has none. Never a client command. */
-			readonly type: 'panel.programTitle.set';
-			readonly panelId: ProtocolId;
-			readonly title: string | null;
-	  }
-	/** Host-owned: forget every terminal's program title. */
-	| { readonly type: 'panel.programTitles.clear' }
-	| {
 			readonly type: 'terminal.create';
 			readonly sessionId: ProtocolId;
 			readonly projectId: ProtocolId;
@@ -679,9 +665,60 @@ export interface WorkspaceEvent {
 	readonly type: WorkspaceCommand['type'];
 	readonly changedIds: readonly ProtocolId[];
 }
+/** The collections of a workspace state whose members are objects with ids. */
+export const WORKSPACE_COLLECTIONS = Object.freeze([
+	'views',
+	'projects',
+	'folders',
+	'panels',
+	'terminalSessions',
+] as const);
+export type WorkspaceCollection = (typeof WORKSPACE_COLLECTIONS)[number];
+type WorkspaceCollectionObject = WorkspaceState[WorkspaceCollection][string];
+
+/**
+ * What one commit changed (ADR-0059): every object whose content differs
+ * between the two revisions, in full, and the id of every object that is gone.
+ * The store derives it by comparing the states; a command does not declare it.
+ */
+export interface WorkspaceChangeRecord {
+	readonly fromRevision: number;
+	readonly revision: number;
+	readonly cursor: string;
+	readonly type: WorkspaceCommand['type'];
+	readonly changed: {
+		readonly [K in WorkspaceCollection]?: Readonly<
+			Record<ProtocolId, WorkspaceState[K][string]>
+		>;
+	};
+	readonly removed: {
+		readonly [K in WorkspaceCollection]?: readonly ProtocolId[];
+	};
+	/** Present when the order of views changed. */
+	readonly viewOrder?: readonly ProtocolId[];
+}
 export interface WorkspaceSnapshot {
 	readonly state: WorkspaceState;
 	readonly events: readonly WorkspaceEvent[];
+}
+/**
+ * One retained commit: its record, and the states on either side of it. The
+ * two states share every object the commit left alone, so holding both costs
+ * what the record does. A reader that may see only part of the workspace
+ * derives its own record from them (`workspaceStateDifference`).
+ */
+export interface WorkspaceCommittedChange {
+	readonly record: WorkspaceChangeRecord;
+	readonly previous: WorkspaceState;
+	readonly state: WorkspaceState;
+}
+/** The answer to "what happened since revision N": the commits, when the
+ * store still holds them all, and the state they lead to. */
+export interface WorkspaceDelta extends WorkspaceSnapshot {
+	/** Absent when history no longer reaches the requested revision, in which
+	 * case `state` is the only way forward. */
+	readonly records?: readonly WorkspaceChangeRecord[];
+	readonly changes?: readonly WorkspaceCommittedChange[];
 }
 export type WorkspaceApplyResult =
 	| {
@@ -967,11 +1004,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 			throw new TypeError('terminal panel/session ownership mismatch');
 		if (panel.type === 'terminal') {
 			if (panel.note !== undefined) assertPanelNote(panel.note);
-			for (const source of [
-				panel.defaultTitle,
-				panel.namedTitle,
-				panel.programTitle,
-			])
+			for (const source of [panel.defaultTitle, panel.namedTitle])
 				if (source !== undefined) boundedName(source);
 			if (panel.defaultTitle !== undefined && panel.title !== shownTitle(panel))
 				throw new TypeError('terminal panel title is not its resolved title');
@@ -1113,6 +1146,40 @@ function issuedFolderId(state: WorkspaceState): ProtocolId {
  * snapshot may contain only server identity and project roots; it is upgraded
  * without inventing panels or terminal content. A schema 5 snapshot gains
  * folders. */
+/**
+ * A program-set title is live state and is never stored (ADR-0058). A
+ * workspace written while it was a panel field has it dropped here, and the
+ * terminal's stored title goes back to its named title or default name.
+ */
+function forgetStoredProgramTitles(
+	value: Record<string, unknown>,
+): Record<string, unknown> {
+	const panels = value.panels;
+	if (typeof panels !== 'object' || panels === null || Array.isArray(panels))
+		return value;
+	let forgotten = false;
+	const next: Record<string, unknown> = {};
+	for (const [id, panel] of Object.entries(panels)) {
+		if (
+			typeof panel !== 'object' ||
+			panel === null ||
+			!('programTitle' in panel)
+		) {
+			next[id] = panel;
+			continue;
+		}
+		const { programTitle: _programTitle, ...rest } = panel as Record<
+			string,
+			unknown
+		>;
+		const stored =
+			typeof rest.namedTitle === 'string' ? rest.namedTitle : rest.defaultTitle;
+		next[id] = typeof stored === 'string' ? { ...rest, title: stored } : rest;
+		forgotten = true;
+	}
+	return forgotten ? { ...value, panels: next } : value;
+}
+
 export function migrateWorkspaceState(
 	input: unknown,
 	fallbackServerId: ProtocolId,
@@ -1121,6 +1188,7 @@ export function migrateWorkspaceState(
 		throw new TypeError('workspace snapshot must be an object');
 	let value = input as Record<string, unknown>;
 	if (value.schemaVersion === 5) value = migrateSchema5To6(value);
+	value = forgetStoredProgramTitles(value);
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return adoptTerminalTitleSources(
 			canonicalizeWorkspaceState(value as unknown as WorkspaceState),
@@ -1186,17 +1254,16 @@ const DEFAULT_TERMINAL_TITLE = /^Terminal \d+$/u;
 interface TerminalTitleSources {
 	readonly defaultTitle: string;
 	readonly namedTitle?: string;
-	readonly programTitle?: string;
 }
 
-/** What a terminal displays: a person's name for it, else the program's, else
- * its default name. */
+/** The title workspace state holds for a terminal: a person's name for it,
+ * else its default name. A title its program set is resolved over this by
+ * the title service and is never stored here (ADR-0058). */
 function shownTitle(sources: {
 	readonly defaultTitle?: string;
 	readonly namedTitle?: string;
-	readonly programTitle?: string;
 }): string | undefined {
-	return sources.namedTitle ?? sources.programTitle ?? sources.defaultTitle;
+	return sources.namedTitle ?? sources.defaultTitle;
 }
 
 function nextDefaultTerminalTitle(
@@ -1226,9 +1293,6 @@ function terminalTitleSources(
 			...(panel.namedTitle === undefined
 				? {}
 				: { namedTitle: panel.namedTitle }),
-			...(panel.programTitle === undefined
-				? {}
-				: { programTitle: panel.programTitle }),
 		};
 	const title = panel.title?.trim();
 	if (title !== undefined && DEFAULT_TERMINAL_TITLE.test(title))
@@ -1269,9 +1333,10 @@ function withTitleSources(
 		title: _title,
 		defaultTitle: _defaultTitle,
 		namedTitle: _namedTitle,
+		// Never a field of the model (ADR-0058): dropped if an input carries one.
 		programTitle: _programTitle,
 		...rest
-	} = panel;
+	} = panel as TerminalPanel & { readonly programTitle?: unknown };
 	return {
 		...rest,
 		title: shownTitle(sources) ?? sources.defaultTitle,
@@ -1279,9 +1344,6 @@ function withTitleSources(
 		...(sources.namedTitle === undefined
 			? {}
 			: { namedTitle: sources.namedTitle }),
-		...(sources.programTitle === undefined
-			? {}
-			: { programTitle: sources.programTitle }),
 	};
 }
 
@@ -1342,6 +1404,160 @@ function assertId(value: string, name: string): void {
 }
 function clone<T>(value: T): T {
 	return structuredClone(value);
+}
+
+/** Structural equality of two JSON values. */
+function sameJson(left: unknown, right: unknown): boolean {
+	if (left === right) return true;
+	if (
+		left === null ||
+		right === null ||
+		typeof left !== 'object' ||
+		typeof right !== 'object'
+	)
+		return false;
+	if (Array.isArray(left)) {
+		if (!Array.isArray(right) || left.length !== right.length) return false;
+		for (let index = 0; index < left.length; index += 1)
+			if (!sameJson(left[index], right[index])) return false;
+		return true;
+	}
+	if (Array.isArray(right)) return false;
+	const leftRecord = left as Record<string, unknown>;
+	const rightRecord = right as Record<string, unknown>;
+	const keys = Object.keys(leftRecord);
+	if (keys.length !== Object.keys(rightRecord).length) return false;
+	for (const key of keys) {
+		if (!Object.hasOwn(rightRecord, key)) return false;
+		if (!sameJson(leftRecord[key], rightRecord[key])) return false;
+	}
+	return true;
+}
+
+function deepFreeze<T>(value: T): T {
+	if (value === null || typeof value !== 'object' || Object.isFrozen(value))
+		return value;
+	Object.freeze(value);
+	for (const member of Object.values(value)) deepFreeze(member);
+	return value;
+}
+
+type ChangedObjects = {
+	[K in WorkspaceCollection]?: Record<ProtocolId, WorkspaceCollectionObject>;
+};
+type RemovedIds = { [K in WorkspaceCollection]?: ProtocolId[] };
+
+function noteChanged(
+	changed: ChangedObjects,
+	collection: WorkspaceCollection,
+	id: ProtocolId,
+	object: WorkspaceCollectionObject,
+): void {
+	const members = changed[collection] ?? {};
+	members[id] = object;
+	changed[collection] = members;
+}
+
+function noteRemoved(
+	removed: RemovedIds,
+	collection: WorkspaceCollection,
+	id: ProtocolId,
+): void {
+	const ids = removed[collection] ?? [];
+	ids.push(id);
+	removed[collection] = ids;
+}
+
+/**
+ * Make `next` share with `previous` every object the commit left the same, and
+ * say what it did not. An object a command did not change is then the same
+ * object before and after, which is how every reader downstream knows nothing
+ * happened to it (ADR-0059). `next` is frozen on return.
+ */
+function settleCommittedState(
+	previous: WorkspaceState,
+	next: MutableWorkspaceState,
+): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
+	const changed: ChangedObjects = {};
+	const removed: RemovedIds = {};
+	for (const collection of WORKSPACE_COLLECTIONS) {
+		const before = previous[collection] as Readonly<
+			Record<ProtocolId, WorkspaceCollectionObject>
+		>;
+		const after = next[collection] as Record<
+			ProtocolId,
+			WorkspaceCollectionObject
+		>;
+		let differs = false;
+		for (const [id, object] of Object.entries(after)) {
+			const held = before[id];
+			if (held !== undefined && sameJson(held, object)) {
+				after[id] = held;
+				continue;
+			}
+			differs = true;
+			noteChanged(changed, collection, id, object);
+		}
+		for (const id of Object.keys(before)) {
+			if (Object.hasOwn(after, id)) continue;
+			differs = true;
+			noteRemoved(removed, collection, id);
+		}
+		// Nothing in the collection changed, so the collection itself did not.
+		if (!differs)
+			(next as Record<WorkspaceCollection, unknown>)[collection] = before;
+	}
+	const viewOrderChanged = !sameJson(previous.viewOrder, next.viewOrder);
+	if (!viewOrderChanged) next.viewOrder = previous.viewOrder as ProtocolId[];
+	deepFreeze(next);
+	return {
+		changed: changed as WorkspaceChangeRecord['changed'],
+		removed,
+		...(viewOrderChanged ? { viewOrder: next.viewOrder } : {}),
+	};
+}
+
+/**
+ * What differs between two states: every object of `next` whose content is
+ * not that of `previous`, and the id of every object `previous` had that
+ * `next` does not. Objects the two states share are skipped by identity, so
+ * comparing the states on either side of a commit costs what the commit
+ * changed plus one pass over the ids.
+ */
+export function workspaceStateDifference(
+	previous: WorkspaceState,
+	next: WorkspaceState,
+): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
+	const changed: ChangedObjects = {};
+	const removed: RemovedIds = {};
+	for (const collection of WORKSPACE_COLLECTIONS) {
+		const before = previous[collection] as Readonly<
+			Record<ProtocolId, WorkspaceCollectionObject>
+		>;
+		const after = next[collection] as Readonly<
+			Record<ProtocolId, WorkspaceCollectionObject>
+		>;
+		if (before === after) continue;
+		for (const [id, object] of Object.entries(after)) {
+			const held = before[id];
+			if (held !== undefined && sameJson(held, object)) continue;
+			noteChanged(changed, collection, id, object);
+		}
+		for (const id of Object.keys(before))
+			if (!Object.hasOwn(after, id)) noteRemoved(removed, collection, id);
+	}
+	return {
+		changed: changed as WorkspaceChangeRecord['changed'],
+		removed,
+		...(sameJson(previous.viewOrder, next.viewOrder)
+			? {}
+			: { viewOrder: next.viewOrder }),
+	};
+}
+
+/** UTF-16 units a change record serialises to: what retaining it costs. */
+function recordBytes(record: WorkspaceChangeRecord): number {
+	return JSON.stringify(record).length;
 }
 function indexAt(index: number | undefined, length: number): number {
 	return Math.max(0, Math.min(length, index ?? length));
@@ -1526,40 +1742,81 @@ function syncProject(
 	};
 }
 
-/** In-memory authoritative workspace reducer. Persistence adapters can commit
- * the returned state atomically; no renderer/window identity is involved. */
+/** One commit as the store remembers it. */
+interface CommittedChange extends WorkspaceCommittedChange {
+	readonly event: WorkspaceEvent;
+	readonly bytes: number;
+}
+
+type WorkspaceApplyOutcome =
+	| {
+			readonly ok: true;
+			readonly revision: number;
+			readonly cursor: string;
+			readonly event: WorkspaceEvent;
+	  }
+	| { readonly ok: false; readonly conflict: WorkspaceConflict };
+
+export type WorkspaceChangeListener = (
+	event: WorkspaceEvent,
+	record: WorkspaceChangeRecord,
+) => void;
+
+/** Retained change records are bounded in total size as well as in number. */
+const DEFAULT_MAX_HISTORY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * In-memory authoritative workspace reducer. Persistence adapters can commit
+ * the returned state atomically; no renderer/window identity is involved.
+ *
+ * The committed state is one frozen value that every reader shares. A commit
+ * copies it once, into the draft a command is reduced on, and the state that
+ * results shares every object the command left alone (ADR-0059).
+ */
 export class WorkspaceStore {
-	private current: MutableWorkspaceState;
-	private readonly outcomes = new Map<ProtocolId, WorkspaceApplyResult>();
-	private readonly history: WorkspaceEvent[] = [];
+	private current: WorkspaceState;
+	private readonly outcomes = new Map<ProtocolId, WorkspaceApplyOutcome>();
+	private readonly history: CommittedChange[] = [];
+	private historyBytes = 0;
 	private readonly maxHistory: number;
+	private readonly maxHistoryBytes: number;
 
 	constructor(
 		initial: WorkspaceState,
 		options: {
 			readonly maxHistory?: number;
+			/** Bound, in UTF-16 units of their serialised form, on the change
+			 * records retained for deltas and for replaying a command id. */
+			readonly maxHistoryBytes?: number;
 			/** Transaction hook invoked before a reducer result becomes visible.
 			 * Production repositories use this to atomically replace durable state;
-			 * throwing leaves the previous in-memory revision authoritative. */
+			 * throwing leaves the previous in-memory revision authoritative. The
+			 * state it is given is the shared, frozen one. */
 			readonly commit?: (state: WorkspaceState) => void;
 		} = {},
 	) {
-		this.current = canonicalizeWorkspaceState(initial) as MutableWorkspaceState;
+		this.current = deepFreeze(clone(canonicalizeWorkspaceState(initial)));
 		this.maxHistory = options.maxHistory ?? 1024;
+		this.maxHistoryBytes = options.maxHistoryBytes ?? DEFAULT_MAX_HISTORY_BYTES;
 		this.commit = options.commit;
 		if (!Number.isSafeInteger(this.maxHistory) || this.maxHistory <= 0)
 			throw new RangeError('maxHistory must be positive');
+		if (
+			!Number.isSafeInteger(this.maxHistoryBytes) ||
+			this.maxHistoryBytes <= 0
+		)
+			throw new RangeError('maxHistoryBytes must be positive');
 	}
 	private readonly commit: ((state: WorkspaceState) => void) | undefined;
-	private readonly listeners = new Set<(event: WorkspaceEvent) => void>();
+	private readonly listeners = new Set<WorkspaceChangeListener>();
 
 	/** Observe committed commands. Observers cannot affect the command. */
-	subscribe(listener: (event: WorkspaceEvent) => void): () => void {
+	subscribe(listener: WorkspaceChangeListener): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
 	}
 
-	/** Projects that are the active project of some view, without a clone. */
+	/** Projects that are the active project of some view. */
 	activeProjectIds(): ReadonlySet<ProtocolId> {
 		const ids = new Set<ProtocolId>();
 		for (const view of Object.values(this.current.views))
@@ -1567,109 +1824,182 @@ export class WorkspaceStore {
 		return ids;
 	}
 
+	/** The committed state. It is frozen and shared: read it, never change it. */
 	get state(): WorkspaceState {
-		return clone(this.current);
+		return this.current;
 	}
 	snapshot(): WorkspaceSnapshot {
-		return { state: this.state, events: [] };
+		return { state: this.current, events: [] };
 	}
-	delta(afterRevision: number):
-		| WorkspaceSnapshot
-		| {
-				readonly state: WorkspaceState;
-				readonly events: readonly WorkspaceEvent[];
-		  } {
+	delta(afterRevision: number): WorkspaceDelta {
 		if (
 			!Number.isSafeInteger(afterRevision) ||
 			afterRevision < 0 ||
 			afterRevision > this.current.revision
 		)
 			throw new RangeError('invalid revision');
-		const oldest = this.history[0]?.revision;
-		if (oldest !== undefined && afterRevision < oldest - 1)
-			return this.snapshot();
+		const oldest = this.history[0]?.event.revision;
+		// Without history every revision but the current one is out of reach.
+		const reachable =
+			afterRevision === this.current.revision ||
+			(oldest !== undefined && afterRevision >= oldest - 1);
+		if (!reachable) return this.snapshot();
+		const since = this.history.filter(
+			(change) => change.event.revision > afterRevision,
+		);
 		return {
-			state: this.state,
-			events: this.history.filter((event) => event.revision > afterRevision),
+			state: this.current,
+			events: since.map((change) => change.event),
+			records: since.map((change) => change.record),
+			changes: since,
 		};
+	}
+
+	/** The change record that produced `revision`, while it is retained. */
+	recordAt(revision: number): WorkspaceChangeRecord | undefined {
+		return this.changeAt(revision)?.record;
+	}
+
+	/** The commit that produced `revision`, while it is retained. */
+	changeAt(revision: number): WorkspaceCommittedChange | undefined {
+		// The newest commit is the one asked for when a change is published.
+		for (let index = this.history.length - 1; index >= 0; index -= 1) {
+			const change = this.history[index];
+			if (change === undefined || change.event.revision < revision) break;
+			if (change.event.revision === revision) return change;
+		}
+		return undefined;
+	}
+
+	/** UTF-16 units of serialised change records currently retained. */
+	get retainedHistoryBytes(): number {
+		return this.historyBytes;
+	}
+
+	/**
+	 * Make a validated draft the committed state: number it, share what it left
+	 * unchanged, write it, and only then let anyone see it.
+	 */
+	private install(
+		next: MutableWorkspaceState,
+		commandId: ProtocolId,
+		type: WorkspaceCommand['type'],
+		changedIds: readonly ProtocolId[],
+	): CommittedChange {
+		const fromRevision = this.current.revision;
+		next.revision = fromRevision + 1;
+		next.cursor = String(next.revision);
+		const settled = settleCommittedState(this.current, next);
+		const record: WorkspaceChangeRecord = Object.freeze({
+			fromRevision,
+			revision: next.revision,
+			cursor: next.cursor,
+			type,
+			...settled,
+		});
+		const event: WorkspaceEvent = Object.freeze({
+			revision: next.revision,
+			cursor: next.cursor,
+			commandId,
+			type,
+			changedIds: Object.freeze([...changedIds]),
+		});
+		this.commit?.(next);
+		const previous = this.current;
+		this.current = next;
+		const change: CommittedChange = {
+			event,
+			record,
+			previous,
+			state: next,
+			bytes: recordBytes(record),
+		};
+		this.history.push(change);
+		this.historyBytes += change.bytes;
+		// The newest record is always kept: it is what the commit publishes.
+		while (
+			this.history.length > 1 &&
+			(this.history.length > this.maxHistory ||
+				this.historyBytes > this.maxHistoryBytes)
+		) {
+			const dropped = this.history.shift();
+			if (dropped === undefined) break;
+			this.historyBytes -= dropped.bytes;
+			// A command id is replayed only while its record is retained.
+			const outcome = this.outcomes.get(dropped.event.commandId);
+			if (outcome?.ok === true && outcome.event === dropped.event)
+				this.outcomes.delete(dropped.event.commandId);
+		}
+		return change;
+	}
+
+	private remember(commandId: ProtocolId, outcome: WorkspaceApplyOutcome): void {
+		this.outcomes.set(commandId, outcome);
+		// Refusals have no record to be dropped with, so they are bounded by
+		// count: the oldest outcomes go first.
+		for (const id of this.outcomes.keys()) {
+			if (this.outcomes.size <= this.maxHistory * 2) break;
+			this.outcomes.delete(id);
+		}
+	}
+
+	private replay(outcome: WorkspaceApplyOutcome): WorkspaceApplyResult {
+		return outcome.ok ? { ...outcome, state: this.current } : outcome;
 	}
 
 	apply(envelope: WorkspaceCommandEnvelope): WorkspaceApplyResult {
 		assertId(envelope.commandId, 'commandId');
 		const prior = this.outcomes.get(envelope.commandId);
-		if (prior !== undefined) return clone(prior);
-		if (
-			envelope.expectedRevision !== undefined &&
-			envelope.expectedRevision !== this.current.revision
-		) {
-			const conflict: WorkspaceApplyResult = {
+		if (prior !== undefined) return this.replay(prior);
+		const refuse = (message: string): WorkspaceApplyResult => {
+			const conflict: WorkspaceApplyOutcome = Object.freeze({
 				ok: false,
-				conflict: {
+				conflict: Object.freeze({
 					code: 'conflict',
 					currentRevision: this.current.revision,
 					currentCursor: this.current.cursor,
-					message: 'workspace revision is stale',
-				},
-			};
-			this.outcomes.set(envelope.commandId, conflict);
-			return clone(conflict);
-		}
+					message,
+				}),
+			});
+			this.remember(envelope.commandId, conflict);
+			return conflict;
+		};
+		if (
+			envelope.expectedRevision !== undefined &&
+			envelope.expectedRevision !== this.current.revision
+		)
+			return refuse('workspace revision is stale');
 		const next = clone(this.current) as MutableWorkspaceState;
 		const changedIds: ProtocolId[] = [];
 		try {
 			this.reduce(next, envelope.command, changedIds);
 			validateWorkspace(next);
 		} catch (error) {
-			const conflict: WorkspaceApplyResult = {
-				ok: false,
-				conflict: {
-					code: 'conflict',
-					currentRevision: this.current.revision,
-					currentCursor: this.current.cursor,
-					message:
-						error instanceof Error
-							? error.message
-							: 'workspace command rejected',
-				},
-			};
-			this.outcomes.set(envelope.commandId, conflict);
-			return clone(conflict);
+			return refuse(
+				error instanceof Error ? error.message : 'workspace command rejected',
+			);
 		}
-		next.revision += 1;
-		next.cursor = String(next.revision);
-		const event: WorkspaceEvent = {
-			revision: next.revision,
-			cursor: next.cursor,
-			commandId: envelope.commandId,
-			type: envelope.command.type,
+		const { event, record } = this.install(
+			next,
+			envelope.commandId,
+			envelope.command.type,
 			changedIds,
-		};
-		this.commit?.(clone(next));
-		this.current = next;
-		this.history.push(event);
-		while (this.history.length > this.maxHistory) this.history.shift();
-		const result: WorkspaceApplyResult = {
+		);
+		const outcome: WorkspaceApplyOutcome = {
 			ok: true,
-			revision: next.revision,
-			cursor: next.cursor,
+			revision: event.revision,
+			cursor: event.cursor,
 			event,
-			state: clone(next),
 		};
-		this.outcomes.set(envelope.commandId, result);
-		// Each outcome holds a whole state. A command id is replayed only while
-		// its event is still in the history, so older outcomes are let go.
-		for (const commandId of this.outcomes.keys()) {
-			if (this.outcomes.size <= this.maxHistory) break;
-			this.outcomes.delete(commandId);
-		}
+		this.remember(envelope.commandId, outcome);
 		for (const listener of this.listeners) {
 			try {
-				listener(event);
+				listener(event, record);
 			} catch {
 				/* observers cannot roll back a committed command */
 			}
 		}
-		return clone(result);
+		return this.replay(outcome);
 	}
 
 	markInterruptedSessions(at = Date.now()): WorkspaceState {
@@ -1684,23 +2014,10 @@ export class WorkspaceStore {
 				};
 				changedIds.push(id);
 			}
-		if (changedIds.length > 0) {
-			next.revision += 1;
-			next.cursor = String(next.revision);
-			const event: WorkspaceEvent = {
-				revision: next.revision,
-				cursor: next.cursor,
-				commandId: 'system:restart',
-				type: 'terminal.markInterrupted',
-				changedIds,
-			};
-			this.history.push(event);
-			while (this.history.length > this.maxHistory) this.history.shift();
-		}
+		if (changedIds.length === 0) return this.current;
 		validateWorkspace(next);
-		if (changedIds.length > 0) this.commit?.(clone(next));
-		this.current = next;
-		return this.state;
+		this.install(next, 'system:restart', 'terminal.markInterrupted', changedIds);
+		return this.current;
 	}
 
 	/**
@@ -1747,21 +2064,15 @@ export class WorkspaceStore {
 				changedIds.push(id);
 			}
 		}
-		if (changedIds.length === 0) return this.state;
-		next.revision += 1;
-		next.cursor = String(next.revision);
-		this.history.push({
-			revision: next.revision,
-			cursor: next.cursor,
-			commandId: 'system:terminal-reattach',
-			type: 'terminal.markInterrupted',
-			changedIds,
-		});
-		while (this.history.length > this.maxHistory) this.history.shift();
+		if (changedIds.length === 0) return this.current;
 		validateWorkspace(next);
-		this.commit?.(clone(next));
-		this.current = next;
-		return this.state;
+		this.install(
+			next,
+			'system:terminal-reattach',
+			'terminal.markInterrupted',
+			changedIds,
+		);
+		return this.current;
 	}
 
 	/** Privileged server restart recovery. A persisted terminal describes a PTY
@@ -1813,21 +2124,15 @@ export class WorkspaceStore {
 			delete next.terminalSessions[sessionId];
 			changedIds.push(sessionId);
 		}
-		if (changedIds.length === 0) return this.state;
-		next.revision += 1;
-		next.cursor = String(next.revision);
-		this.history.push({
-			revision: next.revision,
-			cursor: next.cursor,
-			commandId: 'system:terminal-restart',
-			type: 'terminal.markInterrupted',
-			changedIds,
-		});
-		while (this.history.length > this.maxHistory) this.history.shift();
+		if (changedIds.length === 0) return this.current;
 		validateWorkspace(next);
-		this.commit?.(clone(next));
-		this.current = next;
-		return this.state;
+		this.install(
+			next,
+			'system:terminal-restart',
+			'terminal.markInterrupted',
+			changedIds,
+		);
+		return this.current;
 	}
 
 	/** Server-internal: return the automation terminal space's project id,
@@ -1861,20 +2166,10 @@ export class WorkspaceStore {
 			panelIds: [],
 			layout: stack([]),
 		};
-		next.revision += 1;
-		next.cursor = String(next.revision);
 		validateWorkspace(next);
-		const event: WorkspaceEvent = {
-			revision: next.revision,
-			cursor: next.cursor,
-			commandId: 'system:automation-space',
-			type: 'project.create',
-			changedIds: [AUTOMATION_SPACE_PROJECT_ID],
-		};
-		this.commit?.(clone(next));
-		this.current = next;
-		this.history.push(event);
-		while (this.history.length > this.maxHistory) this.history.shift();
+		this.install(next, 'system:automation-space', 'project.create', [
+			AUTOMATION_SPACE_PROJECT_ID,
+		]);
 		return AUTOMATION_SPACE_PROJECT_ID;
 	}
 
@@ -2342,36 +2637,6 @@ export class WorkspaceStore {
 				changed.push(panel.id);
 				break;
 			}
-			case 'panel.programTitle.set': {
-				const panel = requirePanel(state, command.panelId);
-				if (panel.type !== 'terminal')
-					throw new Error('only a terminal panel has a program title');
-				const { programTitle: _program, ...rest } = terminalTitleSources(
-					state,
-					panel,
-				);
-				state.panels[panel.id] = withTitleSources(
-					panel,
-					command.title === null
-						? rest
-						: { ...rest, programTitle: boundedName(command.title) },
-				);
-				changed.push(panel.id);
-				break;
-			}
-			case 'panel.programTitles.clear': {
-				for (const panel of Object.values(state.panels)) {
-					if (panel.type !== 'terminal' || panel.programTitle === undefined)
-						continue;
-					const { programTitle: _program, ...rest } = terminalTitleSources(
-						state,
-						panel,
-					);
-					state.panels[panel.id] = withTitleSources(panel, rest);
-					changed.push(panel.id);
-				}
-				break;
-			}
 			case 'panel.reorder': {
 				const project = requireProject(state, command.projectId);
 				const folderId =
@@ -2589,6 +2854,10 @@ export class WorkspaceStore {
 				changed.push(session.id);
 				break;
 			}
+			default:
+				// A type the reducer does not know changes nothing, and a commit
+				// that changes nothing must not advance the revision for it.
+				throw new Error('unknown workspace command');
 		}
 	}
 }
