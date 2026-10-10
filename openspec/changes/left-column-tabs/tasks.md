@@ -39,5 +39,5 @@
 ## 8. Specs and delivery
 
 - [x] 8.1 Run `openspec validate left-column-tabs --strict`, `npm run lint`, `npx tsc --noEmit -p .`, and `npm run test:linked-folders`. Verified by all four exiting zero.
-- [ ] 8.2 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 8.2 Open the pull request on `origin` (Gitea) with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
 - [ ] 8.3 Before archiving, check that `left-column-agents-pane` has archived, so "Left column pane stack", "Left column chrome band", and "Left column layout is a device preference" exist in `openspec/specs/project-sidebar-layout/spec.md` for this change to remove and modify; if `one-window-one-server` has archived, move the `Agents pane presentation` delta onto "Agents pane shows the current project's agents". Once `linked-folders`, `folders-sidebar-cards`, and `worktree-folder-single-line` have archived, add a `project-folders` MODIFIED delta that makes "The Folders tree" say panels where it says terminals. Verified by `openspec validate --all` passing and a read-through showing one statement of where the Agents pane is, no mention of a left column pane stack, and no sentence saying the tree lists only terminals.
