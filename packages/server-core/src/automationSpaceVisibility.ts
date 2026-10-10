@@ -225,6 +225,18 @@ const RESULT_FILTERS: Readonly<
 		};
 	},
 	'agent.snapshot': withholdAgentSnapshot,
+	'terminal-titles.snapshot': (result, hidden) => {
+		if (!isRecord(result) || !isRecord(result.titles)) return result;
+		return {
+			...result,
+			titles: Object.fromEntries(
+				Object.entries(result.titles).filter(
+					([, entry]) =>
+						!isRecord(entry) || !hiddenProject(hidden, entry.projectId),
+				),
+			),
+		};
+	},
 };
 
 /** Requests naming a hidden project or session are refused as not found. */

@@ -15,12 +15,12 @@
 
 ## 3. Server: program titles as a live fact
 
-- [ ] 3.1 Add an in-memory title store keyed by session, fed by the existing sanitiser and coalescer, with the server's resolver (named title, else program title, else default name). Verified by unit tests for resolution, sanitising, the 250 ms window, an unchanged displayed title publishing nothing, and a program title under a named title publishing nothing.
-- [ ] 3.2 Publish the terminal title projection: a snapshot query and a keyed change event, scoped per connection like terminal activity, with a pending title replaced by a newer one for the same terminal. Gate it on a `terminal-titles.v1` capability. Verified by server-core tests for scope, replacement under a stalled connection, and a newly connected client receiving existing titles.
-- [ ] 3.3 Republish a terminal's displayed title when a named title is set or cleared, when its panel moves project, and when the `programSetTabTitles` setting changes; drop a terminal's title when its panel is removed. Verified by unit tests for each.
-- [ ] 3.4 Remove `programTitle`, `panel.programTitle.set`, and `panel.programTitles.clear` from the workspace model, reducer, validator, and protocol projection. Drop a persisted `programTitle` on load. Verified by a load test with a file that has one, and by `grep` finding no `programTitle` in `workspace.ts`.
-- [ ] 3.5 Serve MCP `list_terminals` display names and the agent session bridge's display name from the title resolver. Verified by the existing MCP title tests passing unchanged and a new one for a program title read with no client attached.
-- [ ] 3.6 Rewrite `packages/server-core/test/program-titles.test.mjs` against the store: title sequences cause no workspace commit, no revision, and no persistence write. Verified by that suite.
+- [x] 3.1 Add an in-memory title store keyed by session, fed by the existing sanitiser and coalescer, with the server's resolver (named title, else program title, else default name). Verified by unit tests for resolution, sanitising, the 250 ms window, an unchanged displayed title publishing nothing, and a program title under a named title publishing nothing.
+- [x] 3.2 Publish the terminal title projection: a snapshot query and a keyed change event, scoped per connection like terminal activity, with a pending title replaced by a newer one for the same terminal. Gate it on a `terminal-titles.v1` capability. Verified by server-core tests for scope, replacement under a stalled connection, and a newly connected client receiving existing titles.
+- [x] 3.3 Republish a terminal's displayed title when a named title is set or cleared, when its panel moves project, and when the `programSetTabTitles` setting changes; drop a terminal's title when its panel is removed. Verified by unit tests for each.
+- [x] 3.4 Remove `programTitle`, `panel.programTitle.set`, and `panel.programTitles.clear` from the workspace model, reducer, validator, and protocol projection. Drop a persisted `programTitle` on load. Verified by a load test with a file that has one, and by `grep` finding no `programTitle` in `workspace.ts`.
+- [x] 3.5 Serve MCP `list_terminals` display names and the agent session bridge's display name from the title resolver. Verified by the existing MCP title tests passing unchanged and a new one for a program title read with no client attached.
+- [x] 3.6 Rewrite `packages/server-core/test/program-titles.test.mjs` against the store: title sequences cause no workspace commit, no revision, and no persistence write. Verified by that suite.
 
 ## 4. Protocol: change records
 

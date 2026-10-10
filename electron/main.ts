@@ -2013,10 +2013,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		appWindows: {
 			terminalTitle: (terminalSessionId) =>
-				Object.values(authority?.workspace.state.panels ?? {}).find(
-					(panel) =>
-						panel.type === 'terminal' && panel.sessionId === terminalSessionId,
-				)?.title,
+				authority?.composition.terminalTitles?.displayedTitleForSession(
+					terminalSessionId,
+				),
 		},
 		macros: {
 			repository: embeddedMacros,
@@ -3166,7 +3165,7 @@ function bindMcpGateway(authority: ServerTerminalAuthority): void {
 			group: 'connectedServerTools',
 			agent: `The window "${window.title}"`,
 			terminalTitle:
-				mcpPanelFor(window.terminalSessionId, window.projectId)?.title ??
+				mcpTerminalTitle(window.terminalSessionId, window.projectId) ??
 				'this terminal',
 			summary: `use ${window.source.server}'s tool ${String(params.name ?? params.uri ?? '')}`,
 			details: [],
@@ -3260,7 +3259,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 										entry.projectId,
 									)
 								: {}),
-							name: panel?.title ?? entry.id,
+							name: mcpTerminalTitle(entry.id, entry.projectId) ?? entry.id,
 							status: entry.status,
 							active:
 								panel?.id ===
@@ -3599,7 +3598,7 @@ function mcpAutomationSubject(
 	const target = resolveMcpTerminal(context, reference);
 	const authority = requireMcpAuthority();
 	const session = authority.service.getSession(target.id);
-	const title = mcpPanelFor(target.id, target.projectId)?.title ?? target.id;
+	const title = mcpTerminalTitle(target.id, target.projectId) ?? target.id;
 	return {
 		subject: {
 			kind: 'terminal',
@@ -3716,7 +3715,7 @@ async function describeMcpRequest(request: {
 > {
 	const { op, params, context } = request;
 	const terminalTitle =
-		mcpPanelFor(context.terminalSessionId, context.projectId)?.title ??
+		mcpTerminalTitle(context.terminalSessionId, context.projectId) ??
 		'a terminal';
 	const agent = mcpAgentLabel(context.terminalSessionId);
 	try {
@@ -3755,7 +3754,7 @@ async function describeMcpOperation(
 		const reference = text(params.terminal);
 		if (reference === '') return 'a terminal';
 		const target = resolveMcpTerminal(context, reference);
-		return mcpPanelFor(target.id, target.projectId)?.title ?? target.id;
+		return mcpTerminalTitle(target.id, target.projectId) ?? target.id;
 	};
 	switch (op) {
 		case 'create_automation':
@@ -3961,6 +3960,20 @@ function mcpPanelFor(sessionId: string, projectId: string) {
 	);
 }
 
+/** The title a terminal's tab displays, as the server resolves it: a name a
+ * person gave it, else its program's title, else its default name. A program
+ * title is live state the title service holds, not a panel field (ADR-0058). */
+function mcpTerminalTitle(
+	sessionId: string,
+	projectId: string,
+): string | undefined {
+	return (
+		requireMcpAuthority().composition.terminalTitles?.displayedTitleForSession(
+			sessionId,
+		) ?? mcpPanelFor(sessionId, projectId)?.title
+	);
+}
+
 /** Whether a capability reaches a project on this server (ADR-0030). */
 function mcpReaches(
 	context: ControlRequestContext,
@@ -3976,7 +3989,7 @@ function resolveMcpTerminal(context: ControlRequestContext, reference: string) {
 		.filter(
 			(entry) =>
 				entry.id === reference ||
-				mcpPanelFor(entry.id, entry.projectId)?.title === reference,
+				mcpTerminalTitle(entry.id, entry.projectId) === reference,
 		);
 	if (candidates.length === 1) return candidates[0]!;
 	if (candidates.length > 1)

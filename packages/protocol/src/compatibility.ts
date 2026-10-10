@@ -28,6 +28,12 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	dictation: 'dictation.v1',
 	extensions: 'extensions.v1',
 	language: 'language.v1',
+	/** A workspace change travels as the change record of its commit, on the
+	 * change event and in the delta, instead of as the resulting state. */
+	workspaceChanges: 'workspace-changes.v1',
+	/** The title each terminal displays, published live as the server resolves
+	 * it rather than as a field of workspace state. */
+	terminalTitles: 'terminal-titles.v1',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -57,6 +63,8 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.files,
 		]),
 		optionalCapabilities: Object.freeze([
+			FEATURE_CAPABILITIES.workspaceChanges,
+			FEATURE_CAPABILITIES.terminalTitles,
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.git,
 			FEATURE_CAPABILITIES.settings,

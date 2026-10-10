@@ -103,6 +103,9 @@ export interface AutomationExecutorOptions {
 		) => ReturnType<WorkspaceStore['apply']>;
 		readonly ensureAutomationSpace: (root: string) => string;
 	};
+	/** The title a session's terminal displays, as the server resolves it. A
+	 * program-set title is live state, not a panel field (ADR-0058). */
+	readonly terminalTitle?: (sessionId: string) => string | undefined;
 	/** The canonical launch resolver (profile, cwd, environment, MCP hook). */
 	readonly resolveLaunch: (
 		intent: TerminalLaunchIntent,
@@ -800,7 +803,10 @@ export class AutomationExecutor implements AutomationRunController {
 					candidate.type === 'terminal' &&
 					candidate.sessionId === subject.sessionId,
 			);
-			const title = panel?.title ?? subject.title;
+			const title =
+				this.options.terminalTitle?.(subject.sessionId) ??
+				panel?.title ??
+				subject.title;
 			if (title !== undefined) values.TERMINAY_TERMINAL_TITLE = title;
 			const project = state.projects[subject.projectId];
 			const projectTitle =
