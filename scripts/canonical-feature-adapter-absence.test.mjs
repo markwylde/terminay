@@ -22,7 +22,7 @@ test('canonical renderer contains no recording or macro compatibility adapter', 
   assert.match(controller, /requireRecordingClient\(serverClient\)\.reveal\(recordingId\)/u)
   assert.match(controller, /RecordingCapabilityUnavailableError/u)
   assert.match(macros, /macroSettingsClient: MacroSettingsClient/u)
-  assert.match(browserAdapters, /MacroSettingsUnavailableError/u)
+  assert.match(browserAdapters, /createServerMacroSettingsClient/u)
 
   for (const path of [
     'src/services/recordings/legacyRecordingsClient.ts',

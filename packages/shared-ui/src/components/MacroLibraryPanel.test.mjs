@@ -44,3 +44,52 @@ test('macro library panels fail closed for malformed, oversized, or cross-panel 
   assert.throws(() => createMacroLibraryPanel({ macros, status: 'ready', layout: 'wide', selectedMacroId: 'macro:missing' }), /identify a macro/u)
   assert.throws(() => createMacroLibraryPanel({ macros: Array.from({ length: MAX_SHARED_MACROS + 1 }, (_, index) => ({ id: `macro:${index}`, label: 'Macro' })), status: 'ready', layout: 'wide' }), /at most/u)
 })
+
+const categorised = [
+  { id: 'macro:pr', label: 'pr:create', category: 'pr', searchText: 'Open a pull request', unsaved: true },
+  { id: 'macro:say', label: 'Say thing', searchText: 'Say {{message}}' },
+  { id: 'macro:spec', label: 'spec:create', category: 'spec', detail: 'Draft a proposal' },
+  { id: 'macro:orphan', label: 'Orphan', category: 'gone' },
+]
+const shape = panel => panel.groups.map(group => [group.category, group.items.map(item => item.id)])
+
+test('macro library panels group macros by category in category order', () => {
+  const panel = createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'wide', categories: ['spec', 'pr', 'empty'] })
+  assert.deepEqual(shape(panel), [
+    ['spec', ['macro:spec']],
+    ['pr', ['macro:pr']],
+    // An empty category is still listed so it can be filled.
+    ['empty', []],
+    // A macro without a listed category has none.
+    ['', ['macro:say', 'macro:orphan']],
+  ])
+  assert.equal(panel.groups[3].label, 'No category')
+  assert.equal(panel.groups[1].items[0].unsaved, true)
+  assert.equal(panel.groups[0].items[0].unsaved, false)
+  // The flat list is unchanged for hosts that do not group.
+  assert.equal(panel.list.items.length, 4)
+})
+
+test('macro library panels without categories list every macro in one group', () => {
+  const panel = createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'narrow' })
+  assert.deepEqual(shape(panel), [['', ['macro:pr', 'macro:say', 'macro:spec', 'macro:orphan']]])
+})
+
+test('macro library panels filter by label, detail, category and script text', () => {
+  const filtered = filter => shape(createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'wide', categories: ['spec', 'pr', 'empty'], filter }))
+  assert.deepEqual(filtered('pull request'), [['pr', ['macro:pr']]])
+  assert.deepEqual(filtered('PROPOSAL'), [['spec', ['macro:spec']]])
+  assert.deepEqual(filtered('{{message}}'), [['', ['macro:say']]])
+  assert.deepEqual(filtered('spec'), [['spec', ['macro:spec']]])
+  assert.deepEqual(filtered('matches nothing'), [])
+})
+
+test('macro library panels fail closed for malformed categories and filters', () => {
+  const build = extra => () => createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'wide', ...extra })
+  assert.throws(build({ categories: ['pr', 'PR'] }), /must be unique/u)
+  assert.throws(build({ categories: [' pr'] }), /must be trimmed/u)
+  assert.throws(build({ categories: ['bad\nname'] }), /safe, non-empty text/u)
+  assert.throws(build({ categories: Array.from({ length: 65 }, (_, index) => `c${index}`) }), /at most/u)
+  assert.throws(build({ filter: 'x'.repeat(129) }), /safe bounded text/u)
+  assert.throws(() => createMacroLibraryPanel({ macros: [{ id: 'macro:one', label: 'One', category: 7 }], status: 'ready', layout: 'wide' }), /category must be text/u)
+})

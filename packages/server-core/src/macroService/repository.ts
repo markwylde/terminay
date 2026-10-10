@@ -1,8 +1,11 @@
 import { MacroServiceError } from './errors.js';
 import {
+	normalizeCategories,
 	normalizeLimits,
 	normalizeMacro,
+	normalizeMacroList,
 	normalizeMacroState,
+	reconcileMacroCategories,
 } from './normalize.js';
 import {
 	MACRO_SCHEMA_VERSION,
@@ -83,13 +86,13 @@ export class MacroRepository {
 		}
 
 		let macros: readonly MacroDefinition[];
+		let categories = current.categories;
 		const command = envelope.command;
 		switch (command.type) {
 			case 'replace':
-				macros = normalizeMacroState(
-					{ macros: command.macros },
-					this.limits,
-				).macros;
+				macros = normalizeMacroList(command.macros, this.limits);
+				if (command.categories !== undefined)
+					categories = normalizeCategories(command.categories);
 				break;
 			case 'upsert': {
 				const macro = normalizeMacro(command.macro, 0, this.limits);
@@ -104,6 +107,7 @@ export class MacroRepository {
 				break;
 			case 'reset':
 				macros = [];
+				categories = [];
 				break;
 			default:
 				throw new MacroServiceError('invalid_macro', 'unknown macro command');
@@ -117,7 +121,8 @@ export class MacroRepository {
 			schemaVersion: MACRO_SCHEMA_VERSION,
 			revision: current.revision + 1,
 			cursor: String(current.revision + 1),
-			macros: cloneMacros(macros),
+			categories: [...categories],
+			macros: cloneMacros(reconcileMacroCategories(macros, categories)),
 		};
 		await this.backend.commit(cloneState(next));
 		this.current = next;
@@ -136,11 +141,15 @@ export class MacroRepository {
 		macros: readonly unknown[],
 		expectedRevision?: number,
 		commandId?: string,
+		categories?: readonly unknown[],
 	): Promise<MacroApplyResult> {
 		return this.apply({
 			commandId,
 			expectedRevision,
-			command: { type: 'replace', macros },
+			command:
+				categories === undefined
+					? { type: 'replace', macros }
+					: { type: 'replace', macros, categories },
 		});
 	}
 

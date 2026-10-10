@@ -41,16 +41,19 @@ export interface MacroFieldDefinition {
 export type MacroStep =
   | { readonly id: string; readonly type: "type"; readonly content: string }
   | { readonly id: string; readonly type: "key"; readonly key: string }
-  | { readonly id: string; readonly type: "secret"; readonly secretId: string }
   | { readonly id: string; readonly type: "wait_time"; readonly durationSeconds: string }
   | { readonly id: string; readonly type: "wait_inactivity"; readonly durationSeconds: string }
   | { readonly id: string; readonly type: "select_line" }
-  | { readonly id: string; readonly type: "paste" };
+  | { readonly id: string; readonly type: "paste" }
+  /** A stored step the server does not execute. A macro holding one never runs. */
+  | { readonly id: string; readonly type: "unsupported"; readonly sourceType: string };
 
 export interface MacroDefinition {
   readonly id: string;
   readonly title: string;
   readonly description: string;
+  /** Name of the category the macro belongs to, or empty for none. */
+  readonly category: string;
   readonly fields: readonly MacroFieldDefinition[];
   readonly steps: readonly MacroStep[];
 }
@@ -59,8 +62,13 @@ export interface MacroState {
   readonly schemaVersion: number;
   readonly revision: number;
   readonly cursor: string;
+  /** Ordered, unique category names. Empty when the server has none or predates them. */
+  readonly categories: readonly string[];
   readonly macros: readonly MacroDefinition[];
 }
+
+/** The macro state schema from which a server stores categories. */
+export const MACRO_CATEGORIES_SCHEMA_VERSION = 2;
 
 export interface MacroTarget {
   readonly serverId: ProtocolId;
@@ -92,17 +100,27 @@ export interface MacroEventTransport extends QueryCommandTransport {
   readonly subscribe: (event: string, listener: (payload: JsonValue) => void) => () => void;
 }
 
-/** Shared macro facade. Definitions and run commands contain no secret values;
- * the server resolves secret steps only at its PTY boundary. */
+/** Shared macro facade. Definitions and run commands carry no secrets: a
+ * macro never reads the server vault. */
 export class MacroClient {
+  /** Schema of the last state this server returned; unknown until one arrives. */
+  private serverSchemaVersion: number | undefined;
+
   constructor(private readonly transport: MacroEventTransport) {}
 
   async get(options: QueryOptions = {}): Promise<MacroState> {
-    return validateState(await this.transport.query(MACRO_OPERATIONS.get, {}, options));
+    return this.observe(validateState(await this.transport.query(MACRO_OPERATIONS.get, {}, options)));
   }
 
-  async replace(macros: readonly unknown[], options: CommandOptions = {}): Promise<MacroState> {
-    return this.apply(MACRO_OPERATIONS.replace, { macros: json(macros) }, options);
+  /**
+   * Replace every definition and, when `categories` is given, the category
+   * list. Categories are sent only to a server known to store them, so an
+   * older server is never handed a field it does not understand.
+   */
+  async replace(macros: readonly unknown[], options: CommandOptions & { readonly categories?: readonly string[] } = {}): Promise<MacroState> {
+    const { categories, ...commandOptions } = options;
+    const sendCategories = categories !== undefined && (this.serverSchemaVersion ?? 0) >= MACRO_CATEGORIES_SCHEMA_VERSION;
+    return this.apply(MACRO_OPERATIONS.replace, { macros: json(macros), ...(sendCategories ? { categories: json(categories) } : {}) }, commandOptions);
   }
 
   async upsert(macro: unknown, options: CommandOptions = {}): Promise<MacroState> {
@@ -151,7 +169,7 @@ export class MacroClient {
   onChanged(listener: (state: MacroState) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("macro change listener is required");
     if (typeof this.transport.subscribe !== "function") throw new Error("macro change subscription is unavailable");
-    return this.transport.subscribe(MACRO_EVENTS.changed, (payload) => listener(validateState(payload)));
+    return this.transport.subscribe(MACRO_EVENTS.changed, (payload) => listener(this.observe(validateState(payload))));
   }
 
   onRunChanged(listener: (run: MacroRunSnapshot) => void): () => void {
@@ -161,7 +179,12 @@ export class MacroClient {
   }
 
   private async apply(operation: string, payload: JsonValue, options: CommandOptions): Promise<MacroState> {
-    return validateState(await this.transport.command(operation, payload, options));
+    return this.observe(validateState(await this.transport.command(operation, payload, options)));
+  }
+
+  private observe(state: MacroState): MacroState {
+    this.serverSchemaVersion = state.schemaVersion;
+    return state;
   }
 }
 
@@ -172,14 +195,17 @@ function json(value: unknown): JsonValue {
 
 function validateState(value: JsonValue): MacroState {
   if (!isRecord(value) || !safeUInt(value.schemaVersion) || !safeUInt(value.revision) || typeof value.cursor !== "string" || !Array.isArray(value.macros)) throw new TypeError("macro state is invalid");
-  return Object.freeze({ schemaVersion: value.schemaVersion, revision: value.revision, cursor: value.cursor, macros: Object.freeze(value.macros.map(validateMacro)) });
+  if (value.categories !== undefined && (!Array.isArray(value.categories) || value.categories.some((name) => typeof name !== "string"))) throw new TypeError("macro categories are invalid");
+  const categories = Object.freeze([...((value.categories ?? []) as readonly string[])]);
+  return Object.freeze({ schemaVersion: value.schemaVersion, revision: value.revision, cursor: value.cursor, categories, macros: Object.freeze(value.macros.map(validateMacro)) });
 }
 
 function validateMacro(value: JsonValue): MacroDefinition {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string" || typeof value.description !== "string" || !Array.isArray(value.fields) || !Array.isArray(value.steps)) throw new TypeError("macro definition is invalid");
   const fields = value.fields.map(validateField);
   const steps = value.steps.map(validateStep);
-  return Object.freeze({ id: boundedId(value.id, "macro id"), title: value.title, description: value.description, fields: Object.freeze(fields), steps: Object.freeze(steps) });
+  if (value.category !== undefined && typeof value.category !== "string") throw new TypeError("macro category is invalid");
+  return Object.freeze({ id: boundedId(value.id, "macro id"), title: value.title, description: value.description, category: value.category ?? "", fields: Object.freeze(fields), steps: Object.freeze(steps) });
 }
 
 function validateField(value: JsonValue): MacroFieldDefinition {
@@ -197,12 +223,13 @@ function validateStep(value: JsonValue): MacroStep {
   switch (value.type) {
     case "type": if (typeof value.content !== "string") throw new TypeError("macro type step is invalid"); return Object.freeze({ id, type: value.type, content: value.content });
     case "key": if (typeof value.key !== "string") throw new TypeError("macro key step is invalid"); return Object.freeze({ id, type: value.type, key: value.key });
-    case "secret": if (typeof value.secretId !== "string") throw new TypeError("macro secret step is invalid"); return Object.freeze({ id, type: value.type, secretId: value.secretId });
     case "wait_time":
     case "wait_inactivity": if (typeof value.durationSeconds !== "string") throw new TypeError("macro wait step is invalid"); return Object.freeze({ id, type: value.type, durationSeconds: value.durationSeconds });
     case "select_line": return Object.freeze({ id, type: value.type });
     case "paste": return Object.freeze({ id, type: value.type });
-    default: throw new TypeError("macro step type is invalid");
+    // A step this client does not know is shown as unsupported, never dropped
+    // and never a reason to reject the whole library. Only its type name is kept.
+    default: return Object.freeze({ id, type: "unsupported" as const, sourceType: (value.type === "unsupported" && typeof value.sourceType === "string" ? value.sourceType : value.type).slice(0, 32) });
   }
 }
 

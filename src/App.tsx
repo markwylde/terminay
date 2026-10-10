@@ -196,6 +196,7 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import { useFilePathDrop } from './components/macros/useFilePathDrop';
 import type {
 	FoldersColumnTabId,
 	SidebarGroupId,
@@ -403,6 +404,8 @@ import {
 	CommandBarDialog,
 	commandBarPlaceItems,
 	filterCommandBarItems,
+	macroCommandGroup,
+	orderMacrosByCategory,
 	useCommandBarNavigation,
 	ViewCommandBar,
 } from './workspace/CommandBar';
@@ -675,6 +678,7 @@ type ProjectWorkspaceProps = {
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
+	macroCategories: readonly string[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
 	/** The places the Command Bar offers for what has been typed. */
@@ -943,6 +947,17 @@ const MacroFileFieldInput = forwardRef<
 		const [isLoading, setIsLoading] = useState(false);
 		const requestIdRef = useRef(0);
 		const normalizedValue = value.trim();
+		// A dropped or pasted file supplies its path as the value. The search
+		// menu stays closed: the path is already complete.
+		const pathDrop = useFilePathDrop(
+			useCallback(
+				(path: string) => {
+					onChange(path);
+					setIsOpen(false);
+				},
+				[onChange],
+			),
+		);
 
 		useEffect(() => {
 			requestIdRef.current += 1;
@@ -1057,14 +1072,20 @@ const MacroFileFieldInput = forwardRef<
 		);
 
 		return (
-			<div className="macro-file-field">
+			<div
+				className={`macro-file-field${pathDrop.isDragOver ? ' macro-file-field--over' : ''}`}
+				{...pathDrop.handlers}
+			>
 				<input
 					id={id}
 					ref={ref}
 					type="text"
 					value={value}
-					placeholder={placeholder || 'Start typing a file path...'}
+					placeholder={
+						placeholder || 'Type a path, paste one, or drop a file here'
+					}
 					onChange={(event) => {
+						pathDrop.clearNotice();
 						onChange(event.target.value);
 						setIsOpen(true);
 					}}
@@ -1076,6 +1097,11 @@ const MacroFileFieldInput = forwardRef<
 					spellCheck={false}
 					autoComplete="off"
 				/>
+				{pathDrop.notice !== null ? (
+					<p className="macro-file-field-notice" role="status">
+						{pathDrop.notice}
+					</p>
+				) : null}
 				{isOpen && normalizedValue.length > 0 ? (
 					<div className="macro-file-field-menu" role="listbox">
 						{isLoading ? (
@@ -1397,6 +1423,7 @@ const ProjectWorkspace = forwardRef<
 			isFoldersTreeOpen,
 			isMac,
 			macros,
+			macroCategories,
 			onActivateFolderPanel,
 			onAddProject,
 			onAnswerFolderOffer,
@@ -2406,9 +2433,6 @@ const ProjectWorkspace = forwardRef<
 		} = useMacroRunController({
 			focusActiveTerminal,
 			getActiveSessionId,
-			getDecryptedSecret: async () => {
-				throw new Error('Macro secrets are resolved by the selected server.');
-			},
 			sendInput: sendTerminalPanelInput,
 			setErrorText,
 			waitForInactivity: waitForSessionInactivity,
@@ -4004,9 +4028,9 @@ const ProjectWorkspace = forwardRef<
 						void setProjectRootFolderToWorkingDirectory();
 					},
 				},
-				...macros.map(
+				...orderMacrosByCategory(macros, macroCategories).map(
 					(macro): CommandBarItem => ({
-						group: 'Macros',
+						...macroCommandGroup(macro.category, macroCategories),
 						icon: <Play size={18} strokeWidth={2.1} />,
 						id: macro.id,
 						title: macro.title,
@@ -4052,6 +4076,7 @@ const ProjectWorkspace = forwardRef<
 			isMac,
 			macroQuery,
 			macros,
+			macroCategories,
 			openActiveTerminalSettings,
 			openProjectSettings,
 			project.isFileExplorerOpen,
@@ -6142,7 +6167,11 @@ function App({
 			),
 		);
 	}, [terminalClientContext?.applicationClient]);
-	const { macros, error: macroSettingsError } = useMacroSettings(
+	const {
+		macros,
+		categories: macroCategories,
+		error: macroSettingsError,
+	} = useMacroSettings(
 		serverMacroSettingsClient,
 	);
 	const serverSettingsClient = useMemo(() => {
@@ -9807,6 +9836,7 @@ function App({
 							sharedTerminalContextReaders={sharedTerminalContextReadersRef}
 							isMac={isMac}
 							macros={macros}
+							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
 							searchPlaces={searchPlaces}

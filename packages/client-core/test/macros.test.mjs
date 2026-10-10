@@ -4,15 +4,17 @@ import { MACRO_EVENTS, MACRO_OPERATIONS, MacroClient } from "../dist/index.js";
 
 const target = { serverId: "server-a", projectId: "project-a", sessionId: "session-a" };
 const state = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   revision: 2,
   cursor: "2",
+  categories: ["Release", "Empty"],
   macros: [{
     id: "deploy",
     title: "Deploy",
     description: "",
+    category: "Release",
     fields: [],
-    steps: [{ id: "secret-step", type: "secret", secretId: "api-token" }],
+    steps: [{ id: "old-step", type: "unsupported", sourceType: "secret" }],
   }],
 };
 
@@ -88,4 +90,47 @@ test("MacroClient fails closed when a compatibility transport cannot subscribe",
   const client = new MacroClient({ async query() { return state; }, async command() { return state; } });
   assert.throws(() => client.onChanged(() => undefined), /macro change subscription is unavailable/u);
   assert.throws(() => client.onRunChanged(() => undefined), /macro run subscription is unavailable/u);
+});
+
+function recordingClient(response) {
+  const commands = [];
+  const client = new MacroClient({
+    async query() { return response; },
+    async command(operation, payload) { commands.push([operation, payload]); return response; },
+    subscribe() { return () => undefined; },
+  });
+  return { client, commands };
+}
+
+test("categories round-trip through a server that stores them", async () => {
+  const { client, commands } = recordingClient(state);
+  const loaded = await client.get();
+  assert.deepEqual(loaded.categories, ["Release", "Empty"]);
+  assert.equal(loaded.macros[0].category, "Release");
+  await client.replace(loaded.macros, { expectedRevision: 2, categories: ["Release"] });
+  assert.deepEqual(commands[0][1].categories, ["Release"]);
+  // Omitted means "keep what the server has", so nothing is sent.
+  await client.replace(loaded.macros, { expectedRevision: 2 });
+  assert.equal("categories" in commands[1][1], false);
+});
+
+test("a server that predates categories is never sent them", async () => {
+  const v1 = { schemaVersion: 1, revision: 0, cursor: "0", macros: [{ id: "a", title: "A", description: "", fields: [], steps: [] }] };
+  const { client, commands } = recordingClient(v1);
+  // Before any state has been seen the server's schema is unknown.
+  await client.replace([], { categories: ["Release"] });
+  assert.equal("categories" in commands[0][1], false);
+  const loaded = await client.get();
+  assert.deepEqual(loaded.categories, []);
+  assert.equal(loaded.macros[0].category, "");
+  await client.replace(loaded.macros, { categories: ["Release"] });
+  assert.equal("categories" in commands[1][1], false);
+});
+
+test("a step type this client does not know arrives as unsupported", async () => {
+  const response = { schemaVersion: 1, revision: 0, cursor: "0", macros: [{ id: "a", title: "A", description: "", fields: [], steps: [{ id: "s", type: "secret", secretId: "api-token" }] }] };
+  const { client } = recordingClient(response);
+  const loaded = await client.get();
+  assert.deepEqual(loaded.macros[0].steps[0], { id: "s", type: "unsupported", sourceType: "secret" });
+  assert.equal(JSON.stringify(loaded).includes("api-token"), false);
 });

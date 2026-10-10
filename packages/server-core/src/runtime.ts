@@ -2,7 +2,6 @@ import type { ProtocolId } from '@terminay/protocol';
 import type { AgentStatusService } from './activity/agentService.js';
 import type { TerminalActivityService } from './activity/service.js';
 import type { ExtensionHostManager } from './extensions/manager.js';
-import type { MacroTarget } from './macroService/types.js';
 import {
 	type ServerPlatformPaths,
 	validateServerPlatformPaths,
@@ -303,26 +302,6 @@ export class ServerRuntime {
 		return vault.withSecret(id, callback);
 	}
 
-	/**
-	 * Build the server-side resolver consumed by MacroRunner. The requested
-	 * terminal identity must remain the exact identity selected when the run
-	 * was authorized; a renderer/window id cannot widen this scope.
-	 */
-	createMacroSecretResolver(
-		expectedTarget: MacroTarget,
-	): (target: MacroTarget, secretId: string) => Promise<Uint8Array> {
-		if (expectedTarget.serverId !== this.config.serverId)
-			throw new Error('macro target belongs to another server');
-		return (target, secretId) => {
-			if (!sameTarget(expectedTarget, target))
-				return Promise.reject(
-					new Error(
-						'macro target authorization does not match the exact terminal',
-					),
-				);
-			return this.withSecret(secretId, (secret) => new Uint8Array(secret));
-		};
-	}
 }
 
 function cleanupFailure(message: string, failures: readonly unknown[]): Error {
@@ -343,12 +322,4 @@ function readSettingsRevision(
 	} catch {
 		return undefined;
 	}
-}
-
-function sameTarget(left: MacroTarget, right: MacroTarget): boolean {
-	return (
-		left.serverId === right.serverId &&
-		left.projectId === right.projectId &&
-		left.sessionId === right.sessionId
-	);
 }

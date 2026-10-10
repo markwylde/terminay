@@ -1,6 +1,9 @@
 import type { ProtocolId } from '@terminay/protocol';
 
-export const MACRO_SCHEMA_VERSION = 1;
+export const MACRO_SCHEMA_VERSION = 2;
+export const MAX_MACRO_CATEGORIES = 64;
+export const MAX_MACRO_CATEGORY_LENGTH = 64;
+export const MAX_UNSUPPORTED_STEP_TYPE_LENGTH = 32;
 
 export type MacroFieldType =
 	| 'text'
@@ -32,7 +35,6 @@ export interface MacroFieldDefinition {
 export type MacroStep =
 	| { readonly id: string; readonly type: 'type'; readonly content: string }
 	| { readonly id: string; readonly type: 'key'; readonly key: string }
-	| { readonly id: string; readonly type: 'secret'; readonly secretId: string }
 	| {
 			readonly id: string;
 			readonly type: 'wait_time';
@@ -44,12 +46,21 @@ export type MacroStep =
 			readonly durationSeconds: string;
 	  }
 	| { readonly id: string; readonly type: 'select_line' }
-	| { readonly id: string; readonly type: 'paste' };
+	| { readonly id: string; readonly type: 'paste' }
+	/** A stored step of a type this server does not execute. It is kept so the
+	 * definition survives, and a macro that holds one never runs. */
+	| {
+			readonly id: string;
+			readonly type: 'unsupported';
+			readonly sourceType: string;
+	  };
 
 export interface MacroDefinition {
 	readonly id: string;
 	readonly title: string;
 	readonly description: string;
+	/** Name of the category the macro belongs to, or empty for none. */
+	readonly category: string;
 	readonly fields: readonly MacroFieldDefinition[];
 	readonly steps: readonly MacroStep[];
 }
@@ -58,6 +69,8 @@ export interface MacroState {
 	readonly schemaVersion: number;
 	readonly revision: number;
 	readonly cursor: string;
+	/** Ordered, unique category names. A category may hold no macro. */
+	readonly categories: readonly string[];
 	readonly macros: readonly MacroDefinition[];
 }
 
@@ -68,7 +81,13 @@ export interface MacroBackend {
 }
 
 export type MacroCommand =
-	| { readonly type: 'replace'; readonly macros: readonly unknown[] }
+	| {
+			readonly type: 'replace';
+			readonly macros: readonly unknown[];
+			/** Absent keeps the stored categories, so a client that does not know
+			 * about categories cannot erase them. */
+			readonly categories?: readonly unknown[];
+	  }
 	| { readonly type: 'upsert'; readonly macro: unknown }
 	| { readonly type: 'remove'; readonly macroId: string }
 	| { readonly type: 'reset' };
@@ -132,11 +151,6 @@ export interface MacroExecutionEnvironment {
 		bytes: Uint8Array,
 	) => void | Promise<void>;
 	readonly key?: (target: MacroTarget, key: string) => void | Promise<void>;
-	/** Resolves a secret only while executing; the runner never stores the value. */
-	readonly resolveSecret?: (
-		target: MacroTarget,
-		secretId: string,
-	) => Uint8Array | Promise<Uint8Array>;
 	/** Wait for terminal inactivity without exposing terminal output to the client. */
 	readonly waitForInactivity?: (
 		target: MacroTarget,

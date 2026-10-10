@@ -1,20 +1,30 @@
 import { useEffect, useState } from 'react'
-import type { MacroClient } from '@terminay/client-core'
-import type { MacroDefinition, SecretDefinition } from '../types/macros'
+import { MACRO_CATEGORIES_SCHEMA_VERSION, type MacroClient, type MacroState } from '@terminay/client-core'
+import type { MacroDefinition } from '../types/macros'
+
+/** The server's macros as the editor works with them. */
+export type MacroLibrary = {
+  macros: MacroDefinition[]
+  /** Ordered category names. A category may hold no macro. */
+  categories: string[]
+  revision: number
+  /** False against a server that predates categories; the editor then hides them. */
+  supportsCategories: boolean
+}
 
 export type MacroDefinitionsClient = {
-  getMacros(): Promise<MacroDefinition[]>
-  updateMacros(macros: MacroDefinition[]): Promise<MacroDefinition[]>
-  resetMacros(): Promise<MacroDefinition[]>
-  onMacrosChanged(listener: (message: { macros: MacroDefinition[] }) => void): () => void
+  getMacroLibrary(): Promise<MacroLibrary>
+  /** Replace every macro and the category list in one revisioned command. */
+  saveMacroLibrary(
+    library: Pick<MacroLibrary, 'macros' | 'categories'>,
+    expectedRevision?: number,
+  ): Promise<MacroLibrary>
+  resetMacros(): Promise<MacroLibrary>
+  onMacrosChanged(listener: (library: MacroLibrary) => void): () => void
 }
 
-export type MacroSettingsClient = MacroDefinitionsClient & {
-  getSecrets(): Promise<SecretDefinition[]>
-  getDecryptedSecret(id: string): Promise<string>
-  saveSecret(name: string, value: string): Promise<SecretDefinition>
-  deleteSecret(id: string): Promise<void>
-}
+/** Macros carry no secrets, so this is the whole macro settings surface. */
+export type MacroSettingsClient = MacroDefinitionsClient
 
 export class MacroSettingsUnavailableError extends Error {
   readonly code = 'unavailable'
@@ -25,6 +35,15 @@ export class MacroSettingsUnavailableError extends Error {
   }
 }
 
+function toLibrary(state: MacroState): MacroLibrary {
+  return {
+    macros: [...state.macros] as MacroDefinition[],
+    categories: [...state.categories],
+    revision: state.revision,
+    supportsCategories: state.schemaVersion >= MACRO_CATEGORIES_SCHEMA_VERSION,
+  }
+}
+
 /**
  * Adapt the selected server's canonical macro client to the editor contract.
  */
@@ -32,17 +51,20 @@ export function createServerMacroSettingsClient(
   client: MacroClient,
 ): MacroDefinitionsClient {
   return {
-    async getMacros() {
-      return [...(await client.get()).macros] as MacroDefinition[]
+    async getMacroLibrary() {
+      return toLibrary(await client.get())
     },
-    async updateMacros(macros) {
-      return [...(await client.replace(macros)).macros] as MacroDefinition[]
+    async saveMacroLibrary(library, expectedRevision) {
+      return toLibrary(await client.replace(library.macros, {
+        categories: library.categories,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      }))
     },
     async resetMacros() {
-      return [...(await client.reset()).macros] as MacroDefinition[]
+      return toLibrary(await client.reset())
     },
     onMacrosChanged: (listener) => client.onChanged((state) => {
-      listener({ macros: [...state.macros] as MacroDefinition[] })
+      listener(toLibrary(state))
     }),
   }
 }
@@ -53,18 +75,23 @@ export function createServerMacroSettingsClient(
  */
 export function useMacroSettings(client?: MacroDefinitionsClient) {
   if (client === undefined) throw new MacroSettingsUnavailableError()
-  const [macros, setMacros] = useState<MacroDefinition[]>([])
+  const [library, setLibrary] = useState<MacroLibrary>({
+    macros: [],
+    categories: [],
+    revision: 0,
+    supportsCategories: false,
+  })
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
     let mounted = true
-    void client.getMacros().then((nextMacros) => {
+    void client.getMacroLibrary().then((next) => {
       if (!mounted) {
         return
       }
 
-      setMacros(nextMacros)
+      setLibrary(next)
       setError(null)
       setIsLoading(false)
     }).catch((cause: unknown) => {
@@ -75,8 +102,8 @@ export function useMacroSettings(client?: MacroDefinitionsClient) {
       setIsLoading(false)
     })
 
-    const unsubscribe = client.onMacrosChanged((message) => {
-      setMacros(message.macros)
+    const unsubscribe = client.onMacrosChanged((next) => {
+      setLibrary(next)
       setError(null)
       setIsLoading(false)
     })
@@ -87,5 +114,5 @@ export function useMacroSettings(client?: MacroDefinitionsClient) {
     }
   }, [client])
 
-  return { macros, error, isLoading, setMacros }
+  return { ...library, library, error, isLoading }
 }
