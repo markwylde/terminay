@@ -121,6 +121,9 @@ export function createMacroLibraryPanel({ macros, status, layout, selectedMacroI
 }
 
 /**
+ * Groups name their items by id rather than holding them: the panel is
+ * rendered as acyclic immutable data, so an item appears once, in `list`.
+ *
  * Items under their category, in category order, then those without one. A
  * filter matches label, detail, category and search text; while it is active
  * only groups holding a match are listed. Without a filter an empty category
@@ -135,7 +138,7 @@ function groupMacroItems(items, categories, filter) {
     category,
     label: category === '' ? 'No category' : category,
     role: 'group',
-    items: Object.freeze(members),
+    itemIds: Object.freeze(members.map(item => item.id)),
   })
   const groups = []
   for (const category of categories) {
