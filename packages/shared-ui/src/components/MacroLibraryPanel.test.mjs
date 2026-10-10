@@ -51,7 +51,7 @@ const categorised = [
   { id: 'macro:spec', label: 'spec:create', category: 'spec', detail: 'Draft a proposal' },
   { id: 'macro:orphan', label: 'Orphan', category: 'gone' },
 ]
-const shape = panel => panel.groups.map(group => [group.category, group.items.map(item => item.id)])
+const shape = panel => panel.groups.map(group => [group.category, [...group.itemIds]])
 
 test('macro library panels group macros by category in category order', () => {
   const panel = createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'wide', categories: ['spec', 'pr', 'empty'] })
@@ -64,10 +64,24 @@ test('macro library panels group macros by category in category order', () => {
     ['', ['macro:say', 'macro:orphan']],
   ])
   assert.equal(panel.groups[3].label, 'No category')
-  assert.equal(panel.groups[1].items[0].unsaved, true)
-  assert.equal(panel.groups[0].items[0].unsaved, false)
+  const item = id => panel.list.items.find(candidate => candidate.id === id)
+  assert.equal(item('macro:pr').unsaved, true)
+  assert.equal(item('macro:spec').unsaved, false)
   // The flat list is unchanged for hosts that do not group.
   assert.equal(panel.list.items.length, 4)
+})
+
+test('macro library panels are acyclic immutable data: no object is reachable twice', () => {
+  const panel = createMacroLibraryPanel({ macros: categorised, status: 'ready', layout: 'wide', categories: ['spec', 'pr'] })
+  const seen = new Set()
+  const visit = value => {
+    if (typeof value !== 'object' || value === null) return
+    assert.equal(seen.has(value), false, 'an object is shared between two places in the panel')
+    assert.equal(Object.isFrozen(value), true)
+    seen.add(value)
+    for (const child of Object.values(value)) visit(child)
+  }
+  visit(panel)
 })
 
 test('macro library panels without categories list every macro in one group', () => {
