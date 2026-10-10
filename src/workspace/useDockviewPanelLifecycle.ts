@@ -110,6 +110,9 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 		event.api.onDidActivePanelChange(() => {
 			const latest = optionsRef.current;
 			latest.syncPanelFocusState();
+			// A file or folder tab coming to the front changes no focused
+			// terminal, so nothing else republishes which panel is in front.
+			latest.publishWorkspaceInventory();
 			const sessionId = event.api.activePanel?.params?.sessionId;
 			if (typeof sessionId === 'string' && sessionId.length > 0) {
 				latest.focusedSessionIdRef.current = sessionId;
