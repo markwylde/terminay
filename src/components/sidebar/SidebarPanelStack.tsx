@@ -146,6 +146,10 @@ export function SidebarPanelStack({
 	const renderedLayout = previewLayout ?? canonicalLayout;
 	const renderedLayoutRef = useRef(renderedLayout);
 	renderedLayoutRef.current = renderedLayout;
+	// A stack that has just mounted, or whose host is hidden mid project
+	// switch, reports no height yet. That is not a window too short to show
+	// the titles, so it renders nothing rather than flashing the notice.
+	const isMeasured = containerHeight > 0;
 
 	const clearSettlingResize = useCallback(() => {
 		settlingResizeRef.current = null;
@@ -519,7 +523,7 @@ export function SidebarPanelStack({
 			)}
 			ref={setRoot}
 		>
-			{!renderedLayout.feasible ? (
+			{!isMeasured ? null : !renderedLayout.feasible ? (
 				<div
 					className="sidebar-panel-stack__minimum-height-notice"
 					data-sidebar-minimum-height-notice
