@@ -5,9 +5,8 @@ import {
 	normalizeAccelerator,
 } from './keyboardShortcuts.ts';
 import {
-	FOLDERS_COLUMN_PANE_IDS,
-	type FoldersColumnLayout,
-	type FoldersColumnPaneId,
+	FOLDERS_COLUMN_TAB_IDS,
+	type FoldersColumnTabId,
 	SIDEBAR_GROUP_IDS,
 	SIDEBAR_PANEL_IDS,
 	type SidebarGroupId,
@@ -499,7 +498,6 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultDocumentationState: 'collapsed',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
-		defaultAgentsPaneHeight: 200,
 		defaultGitPaneHeight: 200,
 		defaultDocumentationPaneHeight: 240,
 		panelOrder: [...SIDEBAR_PANEL_IDS],
@@ -507,7 +505,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		projectActiveGroup: {},
 		projectFoldersVisibility: {},
 		projectFoldersWidth: {},
-		projectFoldersColumnLayout: {},
+		projectFoldersColumnTab: {},
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -1383,26 +1381,6 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'sidebar',
 					'explorer',
 					'git',
-					'height',
-					'splitter',
-					'divider',
-					'default',
-				],
-			}),
-			makeField({
-				key: 'sidebar.defaultAgentsPaneHeight',
-				label: 'Default Agents pane height',
-				description:
-					'Initial height in pixels of the Agents pane in new projects.',
-				sectionId: 'sidebar',
-				categoryId: 'files',
-				input: 'number',
-				min: 80,
-				max: 1000,
-				step: 10,
-				keywords: [
-					'sidebar',
-					'agents',
 					'height',
 					'splitter',
 					'divider',
@@ -2404,58 +2382,18 @@ function normalizeProjectFoldersWidth(value: unknown): Record<string, number> {
 	return Object.fromEntries(entries.slice(-256));
 }
 
-const DEFAULT_FOLDERS_PANE_HEIGHT = 320;
-
-/** One device's left-column stack, with anything missing or malformed replaced
- * by its default, so a stored layout can never hide a pane or lose one. */
-export function normalizeFoldersColumnLayout(
+function normalizeProjectFoldersColumnTab(
 	value: unknown,
-	defaultAgentsHeight: number = defaultTerminalSettings.sidebar
-		.defaultAgentsPaneHeight,
-): FoldersColumnLayout {
-	const input =
-		typeof value === 'object' && value !== null && !Array.isArray(value)
-			? (value as Record<string, unknown>)
-			: {};
-	const height = (candidate: unknown, fallback: number): number =>
-		typeof candidate === 'number' && Number.isFinite(candidate)
-			? Math.min(2_000, Math.max(30, Math.round(candidate)))
-			: fallback;
-	const stored: readonly unknown[] = Array.isArray(input.order)
-		? input.order
-		: [];
-	return {
-		order: [...FOLDERS_COLUMN_PANE_IDS].sort(
-			(a, b) => rankIn(stored, a) - rankIn(stored, b),
-		),
-		foldersHeight: height(input.foldersHeight, DEFAULT_FOLDERS_PANE_HEIGHT),
-		agentsHeight: height(input.agentsHeight, defaultAgentsHeight),
-		isFoldersCollapsed: input.isFoldersCollapsed === true,
-		isAgentsCollapsed: input.isAgentsCollapsed === true,
-	};
-}
-
-/** Where a pane sits in a stored order; panes the order omits keep their
- * default place after the ones it names. */
-function rankIn(order: readonly unknown[], id: FoldersColumnPaneId): number {
-	const index = order.indexOf(id);
-	return index < 0
-		? order.length + FOLDERS_COLUMN_PANE_IDS.indexOf(id)
-		: index;
-}
-
-function normalizeProjectFoldersColumnLayout(
-	value: unknown,
-): Record<string, FoldersColumnLayout> {
+): Record<string, FoldersColumnTabId> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		return {};
-	const entries = Object.entries(value).flatMap(([key, layout]) =>
-		typeof layout === 'object' &&
-		layout !== null &&
-		!Array.isArray(layout) &&
+	const allowed = new Set<string>(FOLDERS_COLUMN_TAB_IDS);
+	const entries = Object.entries(value).flatMap(([key, tabId]) =>
+		typeof tabId === 'string' &&
+		allowed.has(tabId) &&
 		key.length > 0 &&
 		key.length <= 512
-			? ([[key, normalizeFoldersColumnLayout(layout)]] as const)
+			? ([[key, tabId as FoldersColumnTabId]] as const)
 			: [],
 	);
 	return Object.fromEntries(entries.slice(-256));
@@ -3046,12 +2984,6 @@ export function normalizeTerminalSettings(
 				80,
 				2000,
 			),
-			defaultAgentsPaneHeight: clampNumber(
-				Number(sidebarInput.defaultAgentsPaneHeight),
-				defaultTerminalSettings.sidebar.defaultAgentsPaneHeight,
-				80,
-				2000,
-			),
 			defaultGitPaneHeight: clampNumber(
 				Number(sidebarInput.defaultGitPaneHeight),
 				defaultTerminalSettings.sidebar.defaultGitPaneHeight,
@@ -3077,8 +3009,8 @@ export function normalizeTerminalSettings(
 			projectFoldersWidth: normalizeProjectFoldersWidth(
 				sidebarInput.projectFoldersWidth,
 			),
-			projectFoldersColumnLayout: normalizeProjectFoldersColumnLayout(
-				sidebarInput.projectFoldersColumnLayout,
+			projectFoldersColumnTab: normalizeProjectFoldersColumnTab(
+				sidebarInput.projectFoldersColumnTab,
 			),
 		},
 		theme: {

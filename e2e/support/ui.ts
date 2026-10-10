@@ -64,27 +64,25 @@ export async function openFileExplorer(page: Page): Promise<void> {
   await expect(sidebar).toBeVisible()
 }
 
-/** The left column's Agents pane, expanded. */
+/** The left column's Agents list, brought to the front by its tab. */
 export async function openAgentsPane(page: Page): Promise<Locator> {
-  const pane = page.locator(
-    '.project-workspace--active [data-terminay-folders-column="true"] [data-sidebar-pane-id="agents"]',
+  const column = page.locator(
+    '.project-workspace--active [data-terminay-folders-column="true"]',
   )
-  await expect(pane).toBeVisible()
-  if (
-    await pane.evaluate((element) =>
-      element.classList.contains('sidebar-pane--collapsed'),
-    )
-  ) {
-    await pane.locator('.sidebar-pane__header').click()
-  }
-  return pane
+  const tab = column.getByRole('tab', { name: 'Agents' })
+  await expect(tab).toBeVisible()
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  const panel = column.locator('[data-folders-column-panel="agents"]')
+  await expect(panel).toBeVisible()
+  return panel
 }
 
 export async function selectSidebarGroup(
   page: Page,
   group: 'explorer' | 'documentation' | 'agents',
 ): Promise<void> {
-  // A wide layout keeps Agents in the left column, not in a sidebar group.
+  // Agents are a tab of the left column, not a sidebar group.
   if (group === 'agents') {
     await openAgentsPane(page)
     return

@@ -89,7 +89,7 @@ const linked = (extra = {}) => ({
 	isDirty: false,
 	worktreePath: '/repo/.worktrees/one-project-one-window',
 	branch: 'feat/one-project-one-window',
-	terminals: [],
+	panels: [],
 	isEmpty: true,
 	...extra,
 });
@@ -99,7 +99,7 @@ const render = (folders, props = {}) =>
 		React.createElement(FoldersTree, {
 			folders,
 			onSelectFolder: () => {},
-			onSelectTerminal: () => {},
+			onSelectPanel: () => {},
 			...props,
 		}),
 	);
@@ -160,7 +160,7 @@ const general = (extra = {}) => ({
 	isSelected: false,
 	isDirty: false,
 	branch: 'main',
-	terminals: [],
+	panels: [],
 	isEmpty: true,
 	...extra,
 });
@@ -169,6 +169,7 @@ const terminalRow = (extra = {}) => ({
 	panelId: 'panel-1',
 	sessionId: 'session-1',
 	title: 'Terminal 2',
+	kind: 'terminal',
 	status: 'idle',
 	isActive: false,
 	...extra,
@@ -345,7 +346,7 @@ test('a branch takes the accent only when its checkout is dirty, and a dirty lin
 	assert.equal(root.includes('no PR'), false);
 
 	const plain = render([
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
+		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
 	]);
 	assert.equal(plain.includes('folders-tree__branch'), false);
 	assert.equal(plain.includes('folders-tree__facts'), false);
@@ -353,7 +354,7 @@ test('a branch takes the accent only when its checkout is dirty, and a dirty lin
 
 test('every card ends with New terminal where one can be made, and an empty folder shows no placeholder', () => {
 	const markup = render(
-		[general(), linked({ terminals: [terminalRow()], isEmpty: false })],
+		[general(), linked({ panels: [terminalRow()], isEmpty: false })],
 		{ onNewTerminal: () => {} },
 	);
 	assert.equal(markup.match(/class="folders-tree__new-terminal"/g)?.length, 2);
@@ -370,7 +371,7 @@ test('every folder has a grip where folders can be reordered, General included, 
 	const folders = [
 		general(),
 		linked(),
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
+		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
 	];
 	const markup = render(folders, { onReorderFolders: () => {} });
 	assert.equal(markup.match(/class="folders-tree__grip"/g)?.length, 3);
@@ -409,7 +410,7 @@ test('the selected folder is tinted only when none of its terminals is the activ
 		linked({
 			isSelected: true,
 			isEmpty: false,
-			terminals: [terminalRow({ isActive: true })],
+			panels: [terminalRow({ isActive: true })],
 		}),
 	]);
 	assert.match(withActive, /folders-tree__row--folder folders-tree__row--selected"/);
@@ -530,7 +531,7 @@ test('a plain folder and a clean General show no facts line: General its branch 
 			isSelected: true,
 			isDirty: false,
 			branch: 'main',
-			terminals: [],
+			panels: [],
 			isEmpty: true,
 		},
 		{
@@ -539,7 +540,7 @@ test('a plain folder and a clean General show no facts line: General its branch 
 			kind: 'plain',
 			isSelected: false,
 			isDirty: false,
-			terminals: [],
+			panels: [],
 			isEmpty: true,
 		},
 	]);
@@ -601,7 +602,7 @@ test('the details say the branch, the worktree, and the location on three labell
 	assert.equal(card.includes('folders-tree-details'), false);
 	const others = render([
 		general(),
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, terminals: [], isEmpty: true },
+		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
 	]);
 	assert.equal(others.includes('aria-description'), false);
 });
@@ -698,4 +699,43 @@ test('a worktree being deleted says so beneath its label, in place of its facts'
 	assert.equal(idle.includes('folders-tree__folder--deleting'), false);
 	assert.equal(idle.includes('aria-busy'), false);
 	assert.match(idle, /class="folders-tree__facts"/);
+});
+
+test('a file or folder tab is a row with its kind icon, and is neither renamed nor dragged', () => {
+	const markup = render(
+		[
+			linked({
+				isSelected: true,
+				isEmpty: false,
+				panels: [
+					terminalRow(),
+					{ kind: 'file', panelId: 'file-1', title: 'notes.md', isActive: true },
+					{ kind: 'folder', panelId: 'folder-1', title: 'src', isActive: false },
+				],
+			}),
+		],
+		{ onRenameTerminal: () => {}, onTerminalDrag: () => {}, onTerminalMenu: () => {} },
+	);
+	const rows = [
+		...markup.matchAll(/<div class="folders-tree__row folders-tree__row--panel[^>]*>/g),
+	].map(([row]) => row);
+	assert.equal(rows.length, 3);
+	// In panel order, each saying what it is.
+	assert.deepEqual(
+		rows.map((row) => /data-folder-panel-kind="(\w+)"/.exec(row)?.[1]),
+		['terminal', 'file', 'folder'],
+	);
+	// The focused file is the active row, so the folder is not tinted alone.
+	assert.match(rows[1], /folders-tree__row--file folders-tree__row--active"/);
+	assert.match(rows[1], /aria-selected="true"/);
+	assert.equal(markup.includes('folders-tree__row--selected-alone'), false);
+	// Only the terminal has a session, a status, and a row that can be carried.
+	assert.match(rows[0], /data-folder-terminal-session="session-1"/);
+	assert.match(rows[0], /draggable="true"/);
+	for (const row of rows.slice(1)) {
+		assert.equal(row.includes('data-folder-terminal-session'), false);
+		assert.match(row, /draggable="false"/);
+	}
+	assert.equal((markup.match(/folders-tree__kind/g) ?? []).length, 2);
+	assert.match(markup, /title="notes\.md"/);
 });
