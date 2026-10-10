@@ -29,9 +29,9 @@
 	flex-direction: column;
 	margin: 6px;
 	overflow: hidden;
-	/* The fill is the card. The border is drawn only to say something: that a
-	   terminal can be dropped here, or that the card is in the hand. */
-	border: 1px solid transparent;
+	/* The fill is the card, and its rows run to its edges. An outline is drawn
+	   only to say something: that a terminal can be dropped here, or that the
+	   card is in the hand. It takes no room, so nothing is inset to make way. */
 	border-radius: 5px;
 	background: rgba(255, 255, 255, 0.035);
 }
@@ -41,7 +41,8 @@
 }
 
 .folders-tree__folder--drop-target {
-	border-color: rgba(87, 183, 255, 0.7);
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: -1px;
 	background: rgba(87, 183, 255, 0.08);
 }
 
@@ -53,7 +54,8 @@
 /* The card in the hand while its grip is dragged. */
 .folders-tree__folder--dragging {
 	z-index: 1;
-	border-color: rgba(220, 226, 240, 0.45);
+	outline: 1px solid rgba(220, 226, 240, 0.45);
+	outline-offset: -1px;
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
@@ -644,6 +646,8 @@
 .folders-column__tabs {
 	align-self: stretch;
 	height: auto;
+	/* The first tab starts where the cards beneath it do. */
+	padding-left: 6px;
 	background: transparent;
 	border-bottom: none;
 }
