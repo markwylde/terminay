@@ -2379,3 +2379,94 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 	).toHaveText('logs', { timeout: 15_000 });
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
+
+test('the tree lists every tab of a folder: terminals, files and folder tabs, in panel order', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'lf-every-tab',
+		seed: {
+			directories: ['assets'],
+			files: { 'notes.txt': 'a file tab\n', 'assets/inner.txt': 'inside\n' },
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openFileExplorer(mainWindow);
+
+	const rows = (folder: string) =>
+		folderGroup(mainWindow, folder).locator('.folders-tree__row--panel');
+	const kinds = (folder: string) =>
+		rows(folder).evaluateAll((elements) =>
+			elements.map((element) =>
+				element.getAttribute('data-folder-panel-kind'),
+			),
+		);
+	const tabs = mainWindow.locator(
+		'.project-workspace--active .terminal-tab-content',
+	);
+	await expect(rows('General')).toHaveCount(1);
+	expect(await kinds('General')).toEqual(['terminal']);
+
+	// Opening a file and a folder adds a row for each, after the terminal.
+	await fileItem(mainWindow, 'notes.txt').dblclick();
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(1);
+	await expect(rows('General')).toHaveCount(2);
+	await fileItem(mainWindow, 'assets').dblclick();
+	await expect(mainWindow.locator('.folder-viewer__title')).toHaveText(
+		'assets',
+	);
+	await expect(rows('General')).toHaveCount(3);
+	expect(await kinds('General')).toEqual(['terminal', 'file', 'folder']);
+	const fileRow = rows('General').nth(1);
+	const folderTabRow = rows('General').nth(2);
+	// Each is titled as its tab is, and carries its kind's icon where a
+	// terminal carries its status.
+	await expect(fileRow.locator('.folders-tree__name')).toHaveText('notes.txt');
+	await expect(folderTabRow.locator('.folders-tree__name')).toHaveText(
+		'assets',
+	);
+	await expect(fileRow.locator('.folders-tree__kind')).toBeVisible();
+	await expect(fileRow.locator('.agent-status-indicator')).toHaveCount(0);
+	await expect(
+		rows('General').first().locator('.agent-status-indicator'),
+	).toBeVisible();
+	// The terminal rows are still exactly the terminals.
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
+
+	// The tab in front is the row that is highlighted, whatever its kind.
+	await expect(folderTabRow).toHaveClass(/folders-tree__row--active/);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__row--active'),
+	).toHaveCount(1);
+
+	// A file's row goes to the file. Only a terminal is renamed or carried.
+	await fileRow.dblclick();
+	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
+	await expect(folderTabRow).not.toHaveClass(/folders-tree__row--active/);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__rename'),
+	).toHaveCount(0);
+	await expect(fileRow).toHaveAttribute('draggable', 'false');
+	await expect(rows('General').first()).toHaveAttribute('draggable', 'true');
+
+	// From another folder, the row selects its folder and shows the file.
+	await createPlainFolder(mainWindow, 'Scratch');
+	await selectFolder(mainWindow, 'Scratch');
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(0);
+	await fileRow.click();
+	await expect(folderRow(mainWindow, 'General')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(1);
+	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
+
+	// Closing the tab takes its row away.
+	await mainWindow.getByLabel('Close file tab').click();
+	await expect(rows('General')).toHaveCount(2);
+	expect(await kinds('General')).toEqual(['terminal', 'folder']);
+	await mainWindow.getByLabel('Close folder tab').click();
+	await expect(rows('General')).toHaveCount(1);
+	expect(await kinds('General')).toEqual(['terminal']);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});

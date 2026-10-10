@@ -4,6 +4,7 @@ import {
 	CircleDashed,
 	CircleX,
 	EllipsisVertical,
+	File,
 	Folder,
 	GitBranch,
 	GripVertical,
@@ -28,7 +29,7 @@ import type {
 import {
 	type FolderTreeChange,
 	type FolderTreeFolderRow,
-	type FolderTreeTerminalRow,
+	type FolderTreePanelRow,
 	folderOrderAfterMove,
 	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
@@ -70,7 +71,7 @@ const NO_SETTLE = { bounceStiffness: 1_000_000, bounceDamping: 10_000_000 };
 export type FoldersTreeProps = {
 	folders: readonly FolderTreeFolderRow[];
 	onSelectFolder: (folderId: string) => void;
-	onSelectTerminal: (folderId: string, panelId: string) => void;
+	onSelectPanel: (folderId: string, panelId: string) => void;
 	/** Absent where folders cannot be created, such as in a peek. */
 	onCreateFolder?: () => void;
 	/** Creates a terminal in a folder. Absent where a card only lists. */
@@ -124,7 +125,7 @@ export type FoldersTreeProps = {
 export function FoldersTree({
 	folders,
 	onSelectFolder,
-	onSelectTerminal,
+	onSelectPanel,
 	onCreateFolder,
 	onNewTerminal,
 	onReorderFolders,
@@ -339,30 +340,33 @@ export function FoldersTree({
 							onLoadChecks={onLoadChecks}
 						/>
 					) : null}
-					{folder.terminals.map((terminal) => (
-						<TerminalRow
-							key={terminal.panelId}
-							terminal={terminal}
-							onSelect={() => onSelectTerminal(folder.id, terminal.panelId)}
-							{...(onTerminalMenu === undefined
+					{folder.panels.map((panel) => (
+						<PanelRow
+							key={panel.panelId}
+							panel={panel}
+							onSelect={() => onSelectPanel(folder.id, panel.panelId)}
+							// A row offers what its tab offers. A terminal's tab has a
+							// menu, a name to change, and a move to another folder; a
+							// file or folder tab has none of the three.
+							{...(onTerminalMenu === undefined || panel.kind !== 'terminal'
 								? {}
 								: {
 										onMenu: (anchor: { x: number; y: number }) =>
-											onTerminalMenu(folder.id, terminal.panelId, anchor),
+											onTerminalMenu(folder.id, panel.panelId, anchor),
 									})}
-							{...(onRenameTerminal === undefined
+							{...(onRenameTerminal === undefined || panel.kind !== 'terminal'
 								? {}
 								: {
 										onRename: (title: string) =>
-											onRenameTerminal(folder.id, terminal.panelId, title),
+											onRenameTerminal(folder.id, panel.panelId, title),
 									})}
-							{...(onTerminalDrag === undefined
+							{...(onTerminalDrag === undefined || panel.kind !== 'terminal'
 								? {}
 								: {
 										onDragStart: () =>
 											onTerminalDrag({
 												folderId: folder.id,
-												panelId: terminal.panelId,
+												panelId: panel.panelId,
 											}),
 										onDragEnd: () => onTerminalDrag(null),
 									})}
@@ -603,7 +607,7 @@ function FolderHeader({
 	// folder with no such row is tinted instead, so the selection is not lost.
 	const isSelectedAlone =
 		folder.isSelected &&
-		!folder.terminals.some((terminal) => terminal.isActive);
+		!folder.panels.some((panel) => panel.isActive);
 	// A press on a control in the header is that control's, never the header's.
 	const own = (act: () => void) => (event: MouseEvent) => {
 		event.stopPropagation();
@@ -857,15 +861,15 @@ function ChecksChip({
 	);
 }
 
-function TerminalRow({
-	terminal,
+function PanelRow({
+	panel,
 	onSelect,
 	onMenu,
 	onRename,
 	onDragStart,
 	onDragEnd,
 }: Readonly<{
-	terminal: FolderTreeTerminalRow;
+	panel: FolderTreePanelRow;
 	onSelect: () => void;
 	onMenu?: (anchor: { x: number; y: number }) => void;
 	onRename?: (title: string) => void;
@@ -888,16 +892,20 @@ function TerminalRow({
 		if (draft === null) return;
 		setDraft(null);
 		if (!save) return;
-		const title = terminalRenameTitle(terminal.title, draft);
+		const title = terminalRenameTitle(panel.title, draft);
 		if (title !== null) onRename?.(title);
 	};
 	return (
 		<div
-			className={`folders-tree__row folders-tree__row--terminal${terminal.isActive ? ' folders-tree__row--active' : ''}`}
+			className={`folders-tree__row folders-tree__row--panel folders-tree__row--${panel.kind === 'folder' ? 'folder-tab' : panel.kind}${panel.isActive ? ' folders-tree__row--active' : ''}`}
 			role="treeitem"
-			aria-selected={terminal.isActive}
+			aria-selected={panel.isActive}
 			tabIndex={0}
-			data-folder-terminal-session={terminal.sessionId}
+			data-folder-panel={panel.panelId}
+			data-folder-panel-kind={panel.kind}
+			{...(panel.kind === 'terminal'
+				? { 'data-folder-terminal-session': panel.sessionId }
+				: {})}
 			draggable={onDragStart !== undefined && !isRenaming}
 			onClick={(event) => {
 				// The second click of a double-click is the rename, not another
@@ -908,7 +916,7 @@ function TerminalRow({
 			onKeyDown={activateOnKey(onSelect)}
 			{...(onRename === undefined
 				? {}
-				: { onDoubleClick: () => setDraft(terminal.title) })}
+				: { onDoubleClick: () => setDraft(panel.title) })}
 			{...(onMenu === undefined
 				? {}
 				: {
@@ -931,23 +939,31 @@ function TerminalRow({
 				// one nothing else reads, so the row cannot be dropped as text.
 				event.dataTransfer.setData(
 					'application/x-terminay-terminal',
-					terminal.panelId,
+					panel.panelId,
 				);
 				onDragStart?.();
 			}}
 			onDragEnd={onDragEnd}
 		>
-			<AgentStatusIndicator
-				state={terminal.status}
-				showIdle
-				className="folders-tree__status"
-			/>
+			{panel.kind === 'terminal' ? (
+				<AgentStatusIndicator
+					state={panel.status}
+					showIdle
+					className="folders-tree__status"
+				/>
+			) : (
+				// The kind's icon stands where a terminal's status does, so the
+				// titles of a mixed folder line up.
+				<span className="folders-tree__kind" aria-hidden="true">
+					{panel.kind === 'file' ? <File size={12} /> : <Folder size={12} />}
+				</span>
+			)}
 			{isRenaming ? (
 				<input
 					ref={inputRef}
 					type="text"
 					className="folders-tree__rename"
-					aria-label={`Rename ${terminal.title}`}
+					aria-label={`Rename ${panel.title}`}
 					value={draft}
 					spellCheck={false}
 					onChange={(event) => setDraft(event.target.value)}
@@ -977,16 +993,17 @@ function TerminalRow({
 					}}
 				/>
 			) : (
-				<span className="folders-tree__name" title={terminal.title}>
-					{terminal.title}
+				<span className="folders-tree__name" title={panel.title}>
+					{panel.title}
 				</span>
 			)}
-			{terminal.createdWorktree === undefined ? null : (
+			{panel.kind !== 'terminal' ||
+			panel.createdWorktree === undefined ? null : (
 				<span
 					className="folders-tree__tag"
-					title={`Created the worktree ${terminal.createdWorktree}`}
+					title={`Created the worktree ${panel.createdWorktree}`}
 				>
-					{terminal.createdWorktree}
+					{panel.createdWorktree}
 				</span>
 			)}
 		</div>

@@ -1,15 +1,17 @@
 import {
 	defaultTerminalSettings,
-	normalizeFoldersColumnLayout,
 } from '../terminalSettings.ts';
 import type {
-	FoldersColumnLayout,
+	FoldersColumnTabId,
 	SidebarGroupId,
 	SidebarPanelId,
 	SidebarSettings,
 } from '../types/settings';
 
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+/** Workspace state still carries a height for the Agents pane, which no
+ * surface draws at a height of its own. */
+const UNPRESENTED_AGENTS_PANE_HEIGHT = 200;
 export function projectTabIsBusy(
 	project: Pick<ProjectTab, 'creationStatus' | 'hydrating'>,
 ): boolean {
@@ -191,35 +193,30 @@ export function projectFoldersTreeWidthOnDevice(
 	);
 }
 
-/** The left column's pane stack on a device that has not arranged it. */
-export function projectFoldersColumnLayoutOnDevice(
+/** The left column's tab on a device that has not chosen one is Tabs. */
+export function projectFoldersColumnTabOnDevice(
 	sidebarSettings: SidebarSettings,
 	serverId: string,
 	projectId: string,
-): FoldersColumnLayout {
+): FoldersColumnTabId {
 	return (
-		sidebarSettings.projectFoldersColumnLayout[
+		sidebarSettings.projectFoldersColumnTab[
 			projectSidebarVisibilityKey(serverId, projectId)
-		] ??
-		normalizeFoldersColumnLayout(
-			undefined,
-			sidebarSettings.defaultAgentsPaneHeight,
-		)
+		] ?? 'tabs'
 	);
 }
 
-export function withProjectFoldersColumnLayout(
+export function withProjectFoldersColumnTab(
 	sidebarSettings: SidebarSettings,
 	serverId: string,
 	projectId: string,
-	layout: FoldersColumnLayout,
+	tabId: FoldersColumnTabId,
 ): SidebarSettings {
 	return {
 		...sidebarSettings,
-		projectFoldersColumnLayout: {
-			...sidebarSettings.projectFoldersColumnLayout,
-			[projectSidebarVisibilityKey(serverId, projectId)]:
-				normalizeFoldersColumnLayout(layout),
+		projectFoldersColumnTab: {
+			...sidebarSettings.projectFoldersColumnTab,
+			[projectSidebarVisibilityKey(serverId, projectId)]: tabId,
 		},
 	};
 }
@@ -414,7 +411,7 @@ export function createProjectTab(
 		isDocumentationPaneCollapsed: sidebarDefaults.defaultDocumentationState === 'collapsed',
 		expandedAgentEntryIds: [],
 		expandedDocumentationFolderIds: [],
-		sidebarAgentsHeight: sidebarDefaults.defaultAgentsPaneHeight,
+		sidebarAgentsHeight: UNPRESENTED_AGENTS_PANE_HEIGHT,
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
 		sidebarGitHeight: sidebarDefaults.defaultGitPaneHeight,
 		sidebarDocumentationHeight: sidebarDefaults.defaultDocumentationPaneHeight,

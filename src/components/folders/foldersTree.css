@@ -97,7 +97,7 @@
 	);
 }
 
-.folders-tree__row--terminal {
+.folders-tree__row--panel {
 	height: 28px;
 	padding: 0 10px 0 12px;
 	color: rgba(220, 226, 240, 0.8);
@@ -167,7 +167,7 @@
 	color: #fff;
 }
 
-.folders-tree__row--terminal .folders-tree__name {
+.folders-tree__row--panel .folders-tree__name {
 	flex: 1 1 auto;
 }
 
@@ -492,6 +492,16 @@
 	flex: none;
 }
 
+/* A file or folder tab's icon, in the box a terminal's status takes. */
+.folders-tree__kind {
+	display: inline-grid;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	place-items: center;
+	color: rgba(220, 226, 240, 0.55);
+}
+
 .folders-tree__tag {
 	flex: 0 1000 auto;
 	min-width: 40px;
@@ -623,9 +633,17 @@
 	align-items: center;
 	flex: 0 0 auto;
 	height: var(--panel-tab-strip-height, 34px);
-	padding: 0 12px;
+	padding: 0 12px 0 0;
 	background: var(--project-chrome);
 	border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+/* The band is the header's; the tab list inside it draws only its tabs. */
+.folders-column__tabs {
+	align-self: stretch;
+	height: auto;
+	background: transparent;
+	border-bottom: none;
 }
 
 .folders-column__menu {
@@ -648,22 +666,32 @@
 	color: var(--tab-text-selected, #ffffff);
 }
 
+/* Both lists occupy the same cell, so the one behind keeps its layout and
+ * with it where it was scrolled to. */
 .folders-column__body {
-	display: flex;
+	display: grid;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 	flex: 1 1 auto;
-	flex-direction: column;
 	min-height: 0;
 	overflow: hidden;
 }
 
-/* The tree scrolls itself, so its pane body must not scroll around it. */
-.folders-column__pane > .sidebar-pane__body {
+.folders-column__panel {
+	grid-area: 1 / 1;
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden auto;
 }
 
-.folders-column__pane > .sidebar-pane__body > .folders-tree {
+.folders-column__panel--hidden {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+/* The tree scrolls itself, so its panel must not scroll around it. */
+.folders-column__panel > .folders-tree {
 	flex: 1 1 auto;
 }
 

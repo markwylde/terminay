@@ -22,6 +22,7 @@ function workspace(overrides = {}) {
 		release: terminal('release', 'releases', { title: 'release notes' }),
 		readme: { id: 'readme', projectId: 'project-a', folderId: 'releases', type: 'file', path: 'README.md' },
 		ssh: terminal('ssh', 'servers'),
+		...overrides.panels,
 	};
 	const folder = (id, name, kind, panelIds, extra = {}) => ({ id, projectId: 'project-a', name, kind, panelIds, ...extra });
 	const folders = {
@@ -45,20 +46,65 @@ function workspace(overrides = {}) {
 }
 const byId = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
 
-test('folders are listed in order with their terminals, and only terminals', () => {
+test('folders are listed in order, each with every panel it holds', () => {
 	const rows = buildFolderTree(workspace());
 	// A linked folder is named by its worktree's branch, whatever name the
 	// server holds for it; General and a plain folder keep their own.
 	assert.deepEqual(rows.map((row) => row.name), ['General', 'fix/release-notes', 'feat/one-project-one-window', 'Servers']);
 	const tree = byId(rows);
-	assert.deepEqual(tree.general.terminals.map((row) => row.title), ['npm run dev', 'one project, one window']);
-	// The file panel is in the folder but is not a terminal row.
-	assert.deepEqual(tree.releases.terminals.map((row) => row.panelId), ['release']);
+	assert.deepEqual(tree.general.panels.map((row) => row.title), ['npm run dev', 'one project, one window']);
+	// The file panel is a row of its folder, after the terminal before it.
+	assert.deepEqual(tree.releases.panels.map((row) => [row.panelId, row.kind]), [['release', 'terminal'], ['readme', 'file']]);
 	assert.equal(tree.releases.isEmpty, false);
-	assert.deepEqual(tree.window.terminals, []);
+	assert.deepEqual(tree.window.panels, []);
 	assert.equal(tree.window.isEmpty, true);
 	// A terminal with no title of its own still has a label.
-	assert.equal(tree.servers.terminals[0].title, 'Terminal');
+	assert.equal(tree.servers.panels[0].title, 'Terminal');
+});
+
+test('a folder lists terminals, files and folder tabs in panel order', () => {
+	const input = workspace({
+		panels: {
+			notes: { id: 'notes', projectId: 'project-a', folderId: 'general', type: 'file', path: '/repo/docs/notes.md', title: 'notes.md' },
+			src: { id: 'src', projectId: 'project-a', folderId: 'general', type: 'folder', path: '/repo/src' },
+		},
+		folders: {
+			general: { id: 'general', projectId: 'project-a', name: 'General', kind: 'general', panelIds: ['notes', 'dev', 'src', 'agent'] },
+		},
+		input: {
+			selectedFolderId: 'general',
+			activePanelId: 'notes',
+			panelFacts: (panelId) => (panelId === 'src' ? { status: 'idle', title: 'src — repo' } : undefined),
+		},
+	});
+	const { general, releases } = byId(buildFolderTree(input));
+	assert.deepEqual(
+		general.panels.map((row) => [row.panelId, row.kind, row.title, row.isActive]),
+		[
+			['notes', 'file', 'notes.md', true],
+			['dev', 'terminal', 'npm run dev', false],
+			// Titled by what its tab shows, as the inventory reads it.
+			['src', 'folder', 'src — repo', false],
+			['agent', 'terminal', 'one project, one window', false],
+		],
+	);
+	// Only a terminal has a session and a status.
+	assert.equal('sessionId' in general.panels[0], false);
+	assert.equal('status' in general.panels[0], false);
+	assert.equal(general.panels[1].sessionId, 's-dev');
+	// A file with no title is named by its path, as its tab is.
+	assert.equal(releases.panels[1].title, 'README.md');
+});
+
+test('a folder holding only a file is not empty', () => {
+	const input = workspace({
+		folders: {
+			window: { id: 'window', projectId: 'project-a', name: 'one-project-one-window', kind: 'linked', panelIds: ['readme'], worktree: { repositoryId: 'repo', path: '/repo/.worktrees/one-project-one-window' } },
+		},
+	});
+	const { window: folder } = byId(buildFolderTree(input));
+	assert.equal(folder.isEmpty, false);
+	assert.deepEqual(folder.panels.map((row) => row.kind), ['file']);
 });
 
 test('a linked folder shows its branch, pull request and checks; General shows the root checkout branch; a plain folder shows none', () => {
@@ -168,18 +214,18 @@ test('General stands for the deepest checkout containing the project root', () =
 test('status and titles come from what is known about each panel, and default quietly', () => {
 	const facts = { agent: { status: 'waiting', title: 'Reviewing the plan' }, dev: { status: 'working' } };
 	const tree = byId(buildFolderTree(workspace({ input: { panelFacts: (panelId) => facts[panelId] } })));
-	assert.deepEqual(tree.general.terminals.map((row) => [row.title, row.status]), [['npm run dev', 'working'], ['Reviewing the plan', 'waiting']]);
-	assert.equal(tree.releases.terminals[0].status, 'idle');
+	assert.deepEqual(tree.general.panels.map((row) => [row.title, row.status]), [['npm run dev', 'working'], ['Reviewing the plan', 'waiting']]);
+	assert.equal(tree.releases.panels[0].status, 'idle');
 });
 
 test('the selected folder and active terminal are marked, and only in the selected folder', () => {
 	const tree = byId(buildFolderTree(workspace({ input: { selectedFolderId: 'releases', activePanelId: 'release' } })));
 	assert.equal(tree.releases.isSelected, true);
 	assert.equal(tree.general.isSelected, false);
-	assert.equal(tree.releases.terminals[0].isActive, true);
+	assert.equal(tree.releases.panels[0].isActive, true);
 	// The project's active panel is not marked when another folder is selected.
 	const other = byId(buildFolderTree(workspace({ input: { selectedFolderId: 'general', activePanelId: 'release' } })));
-	assert.equal(other.releases.terminals[0].isActive, false);
+	assert.equal(other.releases.panels[0].isActive, false);
 	assert.equal(other.general.isSelected, true);
 });
 
@@ -223,8 +269,8 @@ test('a terminal that created a worktree is tagged until it is in that folder, a
 		},
 	});
 	const tree = byId(buildFolderTree(offered));
-	assert.equal(tree.general.terminals[1].createdWorktree, 'one-project-one-window');
-	assert.equal(tree.general.terminals[0].createdWorktree, undefined);
+	assert.equal(tree.general.panels[1].createdWorktree, 'one-project-one-window');
+	assert.equal(tree.general.panels[0].createdWorktree, undefined);
 	assert.deepEqual(tree.window.offer, { panelId: 'agent', title: 'one project, one window' });
 
 	// Once it has moved in, the tag goes.
@@ -234,7 +280,7 @@ test('a terminal that created a worktree is tagged until it is in that folder, a
 	delete moved.folders.window.captureOffer;
 	moved.panels.agent.folderId = 'window';
 	const after = byId(buildFolderTree(moved));
-	assert.equal(after.window.terminals[0].createdWorktree, undefined);
+	assert.equal(after.window.panels[0].createdWorktree, undefined);
 	assert.equal(after.window.offer, undefined);
 });
 

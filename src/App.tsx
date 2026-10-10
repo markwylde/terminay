@@ -96,11 +96,13 @@ import { WorktreeSignInDialog } from './components/git-panel/WorktreeSignInDialo
 import { ChangesPane } from './components/git-panel/ChangesPane';
 import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { McpInstallModal } from './components/McpInstallModal';
-import { SidebarGroupTabs } from './components/sidebar/SidebarGroupTabs';
+import {
+	SIDEBAR_GROUP_TABS,
+	SidebarGroupTabs,
+} from './components/sidebar/SidebarGroupTabs';
 import {
 	applySidebarGroupReorder,
 	panelsInSidebarGroup,
-	resolveVisibleSidebarGroup,
 } from './components/sidebar/sidebarGroups';
 import {
 	SidebarPanelStack,
@@ -180,7 +182,6 @@ import {
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
 import {
-	useNarrowLayout,
 	WorkspaceSplitLayout,
 } from './shared/WorkspaceSplitLayout';
 import {
@@ -196,7 +197,7 @@ import type {
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
-	FoldersColumnLayout,
+	FoldersColumnTabId,
 	SidebarGroupId,
 	SidebarPanelId,
 	SidebarSettings,
@@ -244,10 +245,10 @@ import {
 	createProjectTab,
 	isProjectFoldersTreeOpenOnDevice,
 	type ProjectTab,
-	projectFoldersColumnLayoutOnDevice,
+	projectFoldersColumnTabOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarVisibilityKey,
-	withProjectFoldersColumnLayout,
+	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
@@ -713,11 +714,16 @@ type ProjectWorkspaceProps = {
 	isFoldersTreeOpen: boolean;
 	foldersTreeWidth: number;
 	onFoldersTreeWidthCommit: (projectId: string, width: number) => void;
-	foldersColumnLayout: FoldersColumnLayout;
-	onFoldersColumnLayoutChange: (
+	foldersColumnTab: FoldersColumnTabId;
+	onFoldersColumnTabChange: (
 		projectId: string,
-		layout: FoldersColumnLayout,
+		tabId: FoldersColumnTabId,
 	) => void;
+	/** Where the compact switcher shows this project's agents while its Agents
+	 * tab is open. Only the workspace in front draws into it. */
+	compactAgentsHost?: HTMLElement | null;
+	/** An agent's row was pressed in the compact switcher. */
+	onCompactAgentActivated?: () => void;
 	/** True while a terminal of this project is being dragged. */
 	acceptsFolderTerminalDrop: boolean;
 	onSelectFolder: (projectId: string, folderId: string) => void;
@@ -1374,7 +1380,9 @@ const ProjectWorkspace = forwardRef<
 			agentStatusSnapshot,
 			auxiliaryRoutes,
 			folder,
-			foldersColumnLayout,
+			foldersColumnTab,
+			compactAgentsHost,
+			onCompactAgentActivated,
 			foldersTreeWidth,
 			isActive,
 			isCompactChrome = false,
@@ -1389,7 +1397,7 @@ const ProjectWorkspace = forwardRef<
 			onNewTerminalInFolder,
 			onOpenShellInFolder,
 			onEditProject,
-			onFoldersColumnLayoutChange,
+			onFoldersColumnTabChange,
 			onFoldersTreeWidthCommit,
 			onSelectFolder,
 			onMoveTerminalToFolder,
@@ -1552,15 +1560,7 @@ const ProjectWorkspace = forwardRef<
 			() => featureAuthority?.fileObservationClient?.forFolder(linkedFolderId),
 			[featureAuthority?.fileObservationClient, linkedFolderId],
 		);
-		// Agents live in the left column. A narrow layout has no left column,
-		// so there the drawer offers them as a group of its own.
-		const isNarrowLayout = useNarrowLayout();
-		const isAgentsGroupOffered =
-			settings.agentIntegration.enabled && isNarrowLayout;
-		const activeSidebarGroup = resolveVisibleSidebarGroup(
-			project.sidebarActiveGroup,
-			isAgentsGroupOffered,
-		);
+		const activeSidebarGroup = project.sidebarActiveGroup;
 		const isDocumentationGroupVisible =
 			project.isFileExplorerOpen && activeSidebarGroup === 'documentation';
 		// Indexing latches on at the first visit and then belongs to the project:
@@ -5060,8 +5060,9 @@ const ProjectWorkspace = forwardRef<
 			[addTerminal, folderName, linkedFolderRoot, newTerminalShortcutLabel],
 		);
 
-		// One Agents pane, drawn by the left column or by the narrow drawer.
-		const agentsPaneContent =
+		// One Agents pane, drawn by the left column and, on a compact
+		// workspace, by the switcher, which also wants to hear of a press.
+		const renderAgentsPane = (onActivated?: () => void) =>
 			featureAvailability.state === 'unavailable' ? (
 				<FeatureUnavailableState reason={featureAvailability.reason} />
 			) : (
@@ -5080,7 +5081,10 @@ const ProjectWorkspace = forwardRef<
 								: [...project.expandedAgentEntryIds, entryId],
 						});
 					}}
-					onActivateTerminal={activateAgentTerminal}
+					onActivateTerminal={(terminalSessionId) => {
+						activateAgentTerminal(terminalSessionId);
+						onActivated?.();
+					}}
 					onAcknowledgeEntry={(entryId) => {
 						const entry = agentStatusSnapshot.entries[entryId];
 						if (
@@ -5100,7 +5104,10 @@ const ProjectWorkspace = forwardRef<
 				/>
 			);
 
-		const sidebarPanelItemsById: Record<SidebarPanelId, SidebarPanelStackItem> =
+		const sidebarPanelItemsById: Record<
+			Exclude<SidebarPanelId, 'agents'>,
+			SidebarPanelStackItem
+		> =
 			{
 				explorer: {
 					id: 'explorer',
@@ -5164,19 +5171,6 @@ const ProjectWorkspace = forwardRef<
 								rootPath={explorerProjectRoot}
 							/>
 						),
-				},
-				agents: {
-					id: 'agents',
-					title: 'Agents',
-					height: project.sidebarAgentsHeight,
-					collapsed: project.isAgentsPaneCollapsed,
-					onToggleCollapsed: () => {
-						onUpdateProject(project.id, {
-							isAgentsPaneCollapsed: !project.isAgentsPaneCollapsed,
-						});
-					},
-					count: projectAgentItems.length,
-					children: agentsPaneContent,
 				},
 				git: {
 					id: 'git',
@@ -5279,15 +5273,13 @@ const ProjectWorkspace = forwardRef<
 					),
 				},
 			};
-		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
-			(id) => isAgentsGroupOffered || id !== 'agents',
-		);
-		const visibleSidebarGroups = (
-			['explorer', 'documentation', 'agents'] as const
-		).filter((groupId) => isAgentsGroupOffered || groupId !== 'agents');
+		// The Agents pane is a tab of the left column; workspace state still
+		// names it in the order, and no sidebar group draws it.
 		const groupedSidebarPanelIds = panelsInSidebarGroup(
 			activeSidebarGroup,
-			visibleSidebarPanelIds,
+			project.sidebarPanelOrder,
+		).filter(
+			(id): id is Exclude<SidebarPanelId, 'agents'> => id !== 'agents',
 		);
 		const sidebarPanelItems = groupedSidebarPanelIds.map(
 			(id) => sidebarPanelItemsById[id],
@@ -5358,6 +5350,12 @@ const ProjectWorkspace = forwardRef<
 						</button>
 					</div>
 				) : null}
+				{isActive && compactAgentsHost != null
+					? createPortal(
+							renderAgentsPane(onCompactAgentActivated),
+							compactAgentsHost,
+						)
+					: null}
 				{isRenderingStatusBar && focusedFileStatus !== null
 					? createPortal(
 							<FocusedFileSummary
@@ -5391,16 +5389,14 @@ const ProjectWorkspace = forwardRef<
 						isActive ? (
 							<FoldersColumn
 								folders={folderTreeRows}
-								layout={foldersColumnLayout}
-								onLayoutChange={(layout) =>
-									onFoldersColumnLayoutChange(project.id, layout)
+								idPrefix={`folders-column-${project.id}`}
+								selectedTab={foldersColumnTab}
+								onSelectTab={(tabId) =>
+									onFoldersColumnTabChange(project.id, tabId)
 								}
 								agents={
 									settings.agentIntegration.enabled
-										? {
-												count: projectAgentItems.length,
-												children: agentsPaneContent,
-											}
+										? renderAgentsPane()
 										: undefined
 								}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
@@ -5423,7 +5419,7 @@ const ProjectWorkspace = forwardRef<
 								onSelectFolder={(folderId) =>
 									onSelectFolder(project.id, folderId)
 								}
-								onSelectTerminal={(folderId, panelId) =>
+								onSelectPanel={(folderId, panelId) =>
 									onActivateFolderPanel(project.id, folderId, panelId)
 								}
 								onTerminalMenu={(folderId, panelId, anchor) =>
@@ -5467,9 +5463,10 @@ const ProjectWorkspace = forwardRef<
 						project.isFileExplorerOpen ? (
 							<div className="file-explorer-sidebar">
 								<SidebarGroupTabs
-									activeGroup={activeSidebarGroup}
-									groups={visibleSidebarGroups}
+									activeTab={activeSidebarGroup}
+									tabs={SIDEBAR_GROUP_TABS}
 									idPrefix={`sidebar-group-${project.id}`}
+									label="Sidebar"
 									onSelect={(groupId) =>
 										onUpdateProject(project.id, {
 											sidebarActiveGroup: groupId,
@@ -5488,7 +5485,7 @@ const ProjectWorkspace = forwardRef<
 										onReorder={(orderedIds) => {
 											const reorderedVisibleIds = orderedIds.filter(
 												(id): id is SidebarPanelId =>
-													groupedSidebarPanelIds.includes(id as SidebarPanelId),
+													(groupedSidebarPanelIds as readonly string[]).includes(id),
 											);
 											closeGitPushMenu();
 											onUpdateProject(project.id, {
@@ -6221,9 +6218,9 @@ function App({
 		Readonly<{
 			visibility: Readonly<Record<string, boolean>>;
 			width: Readonly<Record<string, number>>;
-			layout: Readonly<Record<string, FoldersColumnLayout>>;
+			tab: Readonly<Record<string, FoldersColumnTabId>>;
 		}>
-	>({ visibility: {}, width: {}, layout: {} });
+	>({ visibility: {}, width: {}, tab: {} });
 	const persistFoldersTree = useCallback(
 		(update: (sidebar: SidebarSettings) => SidebarSettings) => {
 			const nextSettings = {
@@ -6257,28 +6254,28 @@ function App({
 			projectSidebarVisibilityKey(currentServerId, projectId)
 		] ??
 		projectFoldersTreeWidthOnDevice(settings.sidebar, currentServerId, projectId);
-	const foldersColumnLayoutFor = (projectId: string): FoldersColumnLayout =>
-		foldersTreeChanges.layout[
+	const foldersColumnTabFor = (projectId: string): FoldersColumnTabId =>
+		foldersTreeChanges.tab[
 			projectSidebarVisibilityKey(currentServerId, projectId)
 		] ??
-		projectFoldersColumnLayoutOnDevice(
+		projectFoldersColumnTabOnDevice(
 			settings.sidebar,
 			currentServerId,
 			projectId,
 		);
-	const commitFoldersColumnLayout = useCallback(
-		(projectId: string, layout: FoldersColumnLayout) => {
+	const selectFoldersColumnTab = useCallback(
+		(projectId: string, tabId: FoldersColumnTabId) => {
 			const key = projectSidebarVisibilityKey(currentServerId, projectId);
 			setFoldersTreeChanges((current) => ({
 				...current,
-				layout: { ...current.layout, [key]: layout },
+				tab: { ...current.tab, [key]: tabId },
 			}));
 			persistFoldersTree((sidebar) =>
-				withProjectFoldersColumnLayout(
+				withProjectFoldersColumnTab(
 					sidebar,
 					currentServerId,
 					projectId,
-					layout,
+					tabId,
 				),
 			);
 		},
@@ -6804,6 +6801,10 @@ function App({
 	} | null>(null);
 	const [isCompactSwitcherOpen, setIsCompactSwitcherOpen] = useState(false);
 	const [compactSwitcherQuery, setCompactSwitcherQuery] = useState('');
+	// The switcher's Agents tab is filled by the workspace in front, which is
+	// what holds the project's agents; the shell only gives it somewhere to draw.
+	const [compactAgentsHost, setCompactAgentsHost] =
+		useState<HTMLElement | null>(null);
 	const compactBreadcrumbRef = useRef<HTMLButtonElement | null>(null);
 	const compactConnectionRef = useRef<HTMLButtonElement | null>(null);
 	const compactSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -9511,6 +9512,18 @@ function App({
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
 					groups={compactSwitcherFilteredGroups}
+					{...(settings.agentIntegration.enabled &&
+					!isHomeSelected &&
+					activeProject !== null
+						? {
+								agents: (
+									<div
+										ref={setCompactAgentsHost}
+										className="compact-switcher__agents-host"
+									/>
+								),
+							}
+						: {})}
 					onActivatePanel={(row) => {
 						closeCompactSwitcher();
 						activateCompactSwitcherPanel(row);
@@ -9728,8 +9741,10 @@ function App({
 							isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
 							foldersTreeWidth={foldersTreeWidthFor(project.id)}
 							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
-							foldersColumnLayout={foldersColumnLayoutFor(project.id)}
-							onFoldersColumnLayoutChange={commitFoldersColumnLayout}
+							foldersColumnTab={foldersColumnTabFor(project.id)}
+							onFoldersColumnTabChange={selectFoldersColumnTab}
+							compactAgentsHost={compactAgentsHost}
+							onCompactAgentActivated={closeCompactSwitcher}
 							acceptsFolderTerminalDrop={
 								terminalTabDrag?.sourceProjectId === project.id
 							}

@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
 	applySidebarGroupReorder,
 	panelsInSidebarGroup,
-	resolveVisibleSidebarGroup,
+	SIDEBAR_GROUP_IDS,
 	sidebarGroupForPanel,
 } from './sidebarGroups.ts';
 
@@ -32,8 +32,14 @@ test('reordering Git above Files stays inside the Explorer group', () => {
 	);
 });
 
-test('Agents falls back to Explorer when agent integration is disabled', () => {
-	assert.equal(resolveVisibleSidebarGroup('agents', false), 'explorer');
-	assert.equal(resolveVisibleSidebarGroup('agents', true), 'agents');
-	assert.equal(resolveVisibleSidebarGroup('documentation', false), 'documentation');
+test('the sidebar has two groups, and the Agents pane is in neither', () => {
+	assert.deepEqual([...SIDEBAR_GROUP_IDS], ['explorer', 'documentation']);
+	assert.equal(sidebarGroupForPanel('agents'), undefined);
+	const order = ['explorer', 'agents', 'git', 'documentation'] as const;
+	assert.equal(
+		SIDEBAR_GROUP_IDS.some((groupId) =>
+			panelsInSidebarGroup(groupId, order).includes('agents'),
+		),
+		false,
+	);
 });

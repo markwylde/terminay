@@ -58,21 +58,12 @@ export type GitPanelViewMode = 'list' | 'tree';
 export type SidebarPaneState = 'expanded' | 'collapsed';
 export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git', 'documentation'] as const;
 export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
-export const SIDEBAR_GROUP_IDS = ['explorer', 'documentation', 'agents'] as const;
+export const SIDEBAR_GROUP_IDS = ['explorer', 'documentation'] as const;
 export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 
-/** The panes of a project's left column, in their default order. */
-export const FOLDERS_COLUMN_PANE_IDS = ['folders', 'agents'] as const;
-export type FoldersColumnPaneId = (typeof FOLDERS_COLUMN_PANE_IDS)[number];
-
-/** How one device stacks a project's left column. */
-export type FoldersColumnLayout = {
-	order: FoldersColumnPaneId[];
-	foldersHeight: number;
-	agentsHeight: number;
-	isFoldersCollapsed: boolean;
-	isAgentsCollapsed: boolean;
-};
+/** The tabs of a project's left column, in the order they are drawn. */
+export const FOLDERS_COLUMN_TAB_IDS = ['tabs', 'agents'] as const;
+export type FoldersColumnTabId = (typeof FOLDERS_COLUMN_TAB_IDS)[number];
 
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
@@ -81,7 +72,6 @@ export type SidebarSettings = {
 	defaultDocumentationState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
-	defaultAgentsPaneHeight: number;
 	defaultGitPaneHeight: number;
 	defaultDocumentationPaneHeight: number;
 	panelOrder: SidebarPanelId[];
@@ -95,9 +85,9 @@ export type SidebarSettings = {
 	/** Device-local Folders tree width in pixels, indexed by server and project
 	 * id. Absent means the default width. */
 	projectFoldersWidth: Record<string, number>;
-	/** Device-local pane stack of the left column (order, heights, collapse),
-	 * indexed by server and project id. Absent means the default stack. */
-	projectFoldersColumnLayout: Record<string, FoldersColumnLayout>;
+	/** Device-local selected tab of the left column, indexed by server and
+	 * project id. Absent means Tabs. */
+	projectFoldersColumnTab: Record<string, FoldersColumnTabId>;
 };
 
 export type FileViewerSettings = {

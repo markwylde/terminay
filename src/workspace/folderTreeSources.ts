@@ -23,6 +23,7 @@ import {
 	type FolderTreeChange,
 	type FolderTreeUnmerged,
 	type FolderTreeFolderRow,
+	type FolderTreeOpenViewer,
 	type FolderTreePanelFacts,
 	type FolderTreeWorktree,
 } from './folderTreeModel.ts';
@@ -44,6 +45,31 @@ export function panelFactsFromInventory(
 			title: entry.title,
 		});
 	return (panelId) => facts.get(panelId);
+}
+
+/**
+ * The file and folder tabs the inventory holds, in the order it lists them,
+ * each with the tab it follows in its folder.
+ */
+export function openViewersFromInventory(
+	entries: readonly WorkspaceInventoryEntry[],
+): FolderTreeOpenViewer[] {
+	const lastInFolder = new Map<string, string>();
+	const viewers: FolderTreeOpenViewer[] = [];
+	for (const entry of entries) {
+		if (entry.folderId === undefined) continue;
+		const afterPanelId = lastInFolder.get(entry.folderId);
+		lastInFolder.set(entry.folderId, entry.panelId);
+		if (entry.kind === 'terminal') continue;
+		viewers.push({
+			panelId: entry.panelId,
+			folderId: entry.folderId,
+			kind: entry.kind,
+			title: entry.title,
+			...(afterPanelId === undefined ? {} : { afterPanelId }),
+		});
+	}
+	return viewers;
 }
 
 /** The panel in front of the project, as its inventory marks it. */
@@ -185,6 +211,7 @@ export function buildProjectFolderTree(
 		folders: input.folders,
 		panels: input.panels,
 		panelFacts: panelFactsFromInventory(input.inventory),
+		openViewers: openViewersFromInventory(input.inventory),
 		...(input.selectedFolderId === undefined
 			? {}
 			: { selectedFolderId: input.selectedFolderId }),

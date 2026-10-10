@@ -235,7 +235,7 @@ export function ProjectTabPeek({
 						controller.close();
 						onChooseFolder(tabId, folderId);
 					}}
-					onSelectTerminal={(folderId, panelId) => {
+					onSelectPanel={(folderId, panelId) => {
 						controller.close();
 						onChooseTerminal(tabId, folderId, panelId);
 					}}
