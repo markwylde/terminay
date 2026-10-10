@@ -420,6 +420,125 @@ test('an empty category survives reopening the window', async ({ appHarness, mai
   await expect(macros.locator('[data-macro-category="Later"] .macro-nav-item')).toHaveCount(0)
 })
 
+/** A library with three categories, as an older library with shared name prefixes opens. */
+const categorised = test.extend({
+  userDataDir: async ({ userDataDir }, use) => {
+    const macro = (id: string, title: string) => ({
+      id,
+      title,
+      description: '',
+      fields: [],
+      steps: [{ id: `${id}-step`, type: 'type', content: `echo ${title}` }],
+    })
+    await writeFile(
+      path.join(userDataDir, 'server-macros.v1.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 1,
+        cursor: '1',
+        macros: [
+          macro('pr-create', 'pr:create'),
+          macro('pr-green', 'pr:green'),
+          macro('action-integrate', 'action:integrate'),
+          macro('action-watch', 'action:watch'),
+          macro('spec-create', 'spec:create'),
+          macro('spec-apply', 'spec:apply'),
+          macro('say', 'Say thing'),
+        ],
+      }),
+    )
+    await use(userDataDir)
+  },
+})
+
+const categoryOrder = (page: Page) =>
+  page.locator('.macro-library-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-macro-category')))
+
+categorised('hovering a category shows its actions without moving anything', async ({ appHarness, mainWindow }, testInfo) => {
+  const macros = await appHarness.openMacrosWindow(mainWindow)
+  await expect(categoryHeader(macros, 'pr')).toBeVisible()
+
+  const positions = () =>
+    macros.locator('.macro-library-category, .macro-nav-item').evaluateAll((rows) =>
+      rows.map((row) => {
+        const bounds = row.getBoundingClientRect()
+        return [Math.round(bounds.top * 100) / 100, Math.round(bounds.height * 100) / 100]
+      }),
+    )
+
+  await macros.mouse.move(700, 500)
+  const atRest = await positions()
+  await macros.screenshot({ path: testInfo.outputPath('library-at-rest.png') })
+  await expect(macros.getByRole('button', { name: 'Rename category pr' })).toBeHidden()
+
+  for (const category of ['pr', 'action', 'spec']) {
+    await categoryHeader(macros, category).hover()
+    await expect(macros.getByRole('button', { name: `Rename category ${category}` })).toBeVisible()
+    await expect(macros.getByRole('button', { name: `Reorder category ${category}` })).toBeVisible()
+    // Every header and every macro is exactly where it was, at exactly the size it was.
+    expect(await positions()).toEqual(atRest)
+  }
+  await categoryHeader(macros, 'pr').hover()
+  await macros.screenshot({ path: testInfo.outputPath('library-hovering-pr.png') })
+
+  // The count gives way to the actions in the same space; "No category" has neither handle nor actions.
+  await expect(categoryHeader(macros, 'pr').locator('.macro-library-category-count')).toBeHidden()
+  await expect(categoryHeader(macros, 'action').locator('.macro-library-category-count')).toBeVisible()
+  await expect(macros.getByRole('button', { name: /category No category/ })).toHaveCount(0)
+
+  // Renaming in place keeps the row the same height too.
+  await macros.getByRole('button', { name: 'Rename category pr' }).click()
+  await expect(macros.getByLabel('Category name')).toBeVisible()
+  expect(await positions()).toEqual(atRest)
+  await macros.screenshot({ path: testInfo.outputPath('library-renaming-pr.png') })
+  await macros.getByLabel('Category name').press('Escape')
+})
+
+categorised('reorders categories by dragging, and the Command Bar follows that order', async ({ appHarness, mainWindow }) => {
+  const macros = await appHarness.openMacrosWindow(mainWindow)
+  await expect(categoryHeader(macros, 'spec')).toBeVisible()
+  expect(await categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
+
+  // Dropped on the top half of a category, it lands above it.
+  await categoryHeader(macros, 'spec').dragTo(categoryHeader(macros, 'pr'), { targetPosition: { x: 60, y: 4 } })
+  expect(await categoryOrder(macros)).toEqual(['spec', 'pr', 'action', ''])
+  await expect(saveState(macros)).toHaveText('Unsaved category changes')
+
+  // Dropped on the bottom half of a category's group, it lands below it.
+  const actionGroup = macros.locator('[data-macro-category="action"]')
+  const actionHeight = (await actionGroup.boundingBox())?.height ?? 0
+  await categoryHeader(macros, 'spec').dragTo(actionGroup, { targetPosition: { x: 60, y: actionHeight - 4 } })
+  expect(await categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
+
+  // Dropped on the macros without a category, it becomes the last category; they stay last.
+  await categoryHeader(macros, 'pr').dragTo(macros.locator('[data-macro-category=""]'))
+  expect(await categoryOrder(macros)).toEqual(['action', 'spec', 'pr', ''])
+
+  // The handle reorders from the keyboard.
+  await macros.getByRole('button', { name: 'Reorder category pr' }).focus()
+  await macros.keyboard.press('Alt+ArrowUp')
+  expect(await categoryOrder(macros)).toEqual(['action', 'pr', 'spec', ''])
+  await expect(macros.getByRole('button', { name: 'Reorder category pr' })).toBeFocused()
+
+  // A macro still moves between categories; dragging a category did not take that over.
+  await libraryItem(macros, 'Say thing').dragTo(categoryHeader(macros, 'spec'))
+  await expect(macros.locator('[data-macro-category="spec"] .macro-nav-item')).toHaveText(['spec:create', 'spec:apply', 'Say thing'])
+
+  await save(macros)
+  await macros.reload()
+  await expect.poll(() => categoryOrder(macros)).toEqual(['action', 'pr', 'spec'])
+
+  // The Command Bar lists the categories in the same order.
+  await appHarness.openMacroLauncher(mainWindow)
+  const launcher = mainWindow.getByRole('dialog', { name: 'Command bar' })
+  const groups = () =>
+    launcher.locator('[data-terminay-command-bar-group]').evaluateAll((sections) =>
+      sections.map((section) => section.getAttribute('data-terminay-command-bar-group')),
+    )
+  await expect.poll(async () => (await groups()).filter((group) => ['action', 'pr', 'spec'].includes(group ?? ''))).toEqual(['action', 'pr', 'spec'])
+  await expect(launcher.locator('[data-terminay-command-bar-group="spec"] .macro-launcher-item')).toHaveText([/spec:create/, /spec:apply/, /Say thing/])
+})
+
 test('the library filter matches names, categories and script text', async ({ appHarness, mainWindow }) => {
   const macros = await appHarness.openMacrosWindow(mainWindow)
 
