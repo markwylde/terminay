@@ -1695,12 +1695,47 @@
   padding-top: 0;
 }
 
+/* A category header is one fixed-height row. Its handle and its actions are
+ * always laid out and only change visibility, so hovering moves nothing. */
 .macro-library-category {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 28px;
+  gap: 0;
+  height: 28px;
+  margin-top: 8px;
+  padding: 0 6px 0 0;
   border-radius: 6px;
+}
+
+.macro-library-category[draggable='true'] {
+  cursor: grab;
+}
+
+.macro-library-category-handle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--settings-text-muted);
+  cursor: grab;
+  opacity: 0;
+}
+
+.macro-library-category:hover .macro-library-category-handle,
+.macro-library-category-handle:focus-visible {
+  opacity: 1;
+}
+
+.macro-library-category-handle:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 1px;
 }
 
 .macro-library-category-name {
@@ -1711,30 +1746,49 @@
   white-space: nowrap;
 }
 
-.macro-library-category-actions {
-  display: none;
+.macro-library-category-trailing {
   flex-shrink: 0;
+  display: grid;
+  align-items: center;
+  justify-items: end;
+  height: 22px;
+}
+
+.macro-library-category-trailing > * {
+  grid-area: 1 / 1;
+}
+
+.macro-library-category-count {
+  padding-right: 6px;
+}
+
+.macro-library-category-actions {
+  display: inline-flex;
   gap: 1px;
+  visibility: hidden;
 }
 
 .macro-library-category:hover .macro-library-category-actions,
 .macro-library-category:focus-within .macro-library-category-actions {
-  display: inline-flex;
+  visibility: visible;
 }
 
-.macro-library-category:hover .macro-library-category-actions + .macro-library-category-count,
-.macro-library-category:focus-within .macro-library-category-actions + .macro-library-category-count {
-  display: none;
+.macro-library-category:hover .macro-library-category-count:has(+ .macro-library-category-actions),
+.macro-library-category:focus-within .macro-library-category-count:has(+ .macro-library-category-actions) {
+  visibility: hidden;
 }
 
 .macro-library-category-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: 4px;
-  padding: 2px 5px;
+  padding: 0;
   background: transparent;
   color: var(--settings-text-muted);
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
 }
 
@@ -1743,8 +1797,18 @@
   color: var(--settings-text);
 }
 
+.macro-library-group--drop-before {
+  box-shadow: 0 -2px 0 var(--settings-accent);
+}
+
+.macro-library-group--drop-after {
+  box-shadow: 0 2px 0 var(--settings-accent);
+}
+
 .macro-library-category-input {
-  padding: 2px 6px;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 6px;
   font-size: 12px;
   font-weight: 400;
   letter-spacing: 0;
@@ -2033,7 +2097,7 @@
 }
 
 .macro-script-insert-hint {
-  margin-left: auto;
+  white-space: nowrap;
 }
 
 .macro-script-insert-hint kbd {

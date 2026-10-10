@@ -392,6 +392,7 @@ export function MacrosWindow({
           }
           onRemoveCategory={removeCategory}
           onRenameCategory={renameCategory}
+          onReorderCategories={(categories) => setCategories((current) => ({ ...current, categories: [...categories] }))}
           onReorder={(orderedIds) => {
             const byId = new Map(draft.macros.map((macro) => [macro.id, macro]))
             const reordered = orderedIds.map((id) => byId.get(id)).filter((macro): macro is MacroDefinition => macro !== undefined)

@@ -6,7 +6,9 @@ const shared = await readFile(new URL('../src/shared/SharedMacroLibraryPane.tsx'
 const desktop = await readFile(new URL('../src/components/MacrosWindow.tsx', import.meta.url), 'utf8')
 const {
   groupMacroLibrary,
+  moveCategory,
   moveMacroInLibrary,
+  stepCategory,
   nextCategoryName,
   validCategoryName,
 } = await import('../src/shared/macroLibraryGroups.ts')
@@ -18,6 +20,7 @@ test('macro library is a host-neutral shared route body', () => {
   assert.match(shared, /onReorder/u)
   assert.match(shared, /onMoveMacro/u)
   assert.match(shared, /onFilterChange/u)
+  assert.match(shared, /onReorderCategories/u)
   assert.match(shared, /export function moveSharedMacro/u)
   assert.match(shared, /aria-keyshortcuts="Alt\+ArrowUp Alt\+ArrowDown"/u)
   assert.match(shared, /Alt\+Up Arrow and Alt\+Down Arrow/u)
@@ -93,4 +96,26 @@ test('category names are unique ignoring case and bounded', () => {
   assert.equal(validCategoryName('PR', ['pr'], 'pr'), 'PR')
   assert.equal(validCategoryName('   ', ['pr']), null)
   assert.equal(validCategoryName('x'.repeat(65), []), null)
+})
+
+test('a category moves to just before or just after another, and one place at a time from the keyboard', () => {
+  const categories = ['pr', 'action', 'spec']
+  assert.deepEqual(moveCategory(categories, 'spec', 'pr', 'before'), ['spec', 'pr', 'action'])
+  assert.deepEqual(moveCategory(categories, 'pr', 'spec', 'after'), ['action', 'spec', 'pr'])
+  assert.deepEqual(moveCategory(categories, 'pr', 'action', 'after'), ['action', 'pr', 'spec'])
+  assert.deepEqual(moveCategory(categories, 'action', 'spec', 'before'), categories)
+  // Onto itself, or naming a category that is not listed, changes nothing.
+  assert.deepEqual(moveCategory(categories, 'pr', 'pr', 'after'), categories)
+  assert.deepEqual(moveCategory(categories, 'gone', 'pr', 'before'), categories)
+  assert.deepEqual(moveCategory(categories, 'pr', 'gone', 'before'), categories)
+
+  assert.deepEqual(stepCategory(categories, 'action', -1), ['action', 'pr', 'spec'])
+  assert.deepEqual(stepCategory(categories, 'action', 1), ['pr', 'spec', 'action'])
+  assert.deepEqual(stepCategory(categories, 'pr', -1), categories)
+  assert.deepEqual(stepCategory(categories, 'spec', 1), categories)
+})
+
+test('the library groups follow the category order', () => {
+  const reordered = moveCategory(['pr', 'spec'], 'spec', 'pr', 'before')
+  assert.deepEqual(shape(groupMacroLibrary(macros, reordered)).map(([category]) => category), ['spec', 'pr', ''])
 })
