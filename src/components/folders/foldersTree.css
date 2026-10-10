@@ -589,6 +589,12 @@
 	background: rgba(255, 255, 255, 0.05);
 }
 
+/* A card in the hand is carried over the row, which holds its place and is
+   not drawn until the card is put down. */
+.folders-tree:has(.folders-tree__folder--dragging) .folders-tree__new {
+	visibility: hidden;
+}
+
 /* The peek under a project tab is the same cards without the column around
    them, and without the grip, the menu, or the New terminal row. */
 .folders-tree--peek {
