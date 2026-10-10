@@ -121,3 +121,17 @@ async function importBundled(relativePath) {
 		await rm(temporaryDirectory, { force: true, recursive: true });
 	}
 }
+
+test('Switch to Local is a hidden fragment link that only an inserted rule offers', async () => {
+	const { STARTUP_SWITCH_TO_LOCAL_FRAGMENT, startupSwitchToLocalCss } =
+		await importBundled('../electron/startupLoadingDocument.ts');
+	const html = decode(desktopStartupLoadingDocument());
+	// A fragment loads nothing, so the document stays free of loadable
+	// references; following it is an in-page navigation main acts on.
+	assert.equal(STARTUP_SWITCH_TO_LOCAL_FRAGMENT, '#switch-to-local');
+	assert.ok(
+		html.includes('<a class="local" href="#switch-to-local">Switch to Local</a>'),
+	);
+	assert.ok(html.includes('.local{display:none'));
+	assert.equal(startupSwitchToLocalCss(), '.local{display:inline-block!important}');
+});

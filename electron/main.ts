@@ -170,7 +170,11 @@ import {
 	DesktopWindowConnections,
 } from './desktopWindowConnections';
 import { forgetRememberedConnection } from './forgetRememberedConnection';
-import { pairingTargetWindow, switchWindowServer } from './windowServerSwitch';
+import {
+	openStartupWindowServer,
+	pairingTargetWindow,
+	switchWindowServer,
+} from './windowServerSwitch';
 import {
 	chooseWindowView,
 	type WindowViewKey,
@@ -257,7 +261,9 @@ import {
 import { secureSession } from './sessionSecurity';
 import {
 	desktopStartupLoadingDocument,
+	STARTUP_SWITCH_TO_LOCAL_FRAGMENT,
 	startupPhaseVisibilityCss,
+	startupSwitchToLocalCss,
 } from './startupLoadingDocument';
 import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
 import { assertTrustedIpcSender } from './trustedIpcSender';
@@ -290,7 +296,9 @@ const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
 const MAIN_PROJECT_WINDOW_MIN_HEIGHT = 260;
 const desktopTestCredentialCodec =
 	process.env.TERMINAY_TEST === '1'
-		? createEphemeralTestProtectedValueCodec()
+		? createEphemeralTestProtectedValueCodec(
+				process.env.TERMINAY_TEST_CREDENTIAL_KEY,
+			)
 		: undefined;
 
 process.env.APP_ROOT = path.join(__dirname, '..');
@@ -1129,6 +1137,86 @@ async function switchWindowToServer(
 	});
 	if (outcome === 'switched' && controller.isMainWorkspace)
 		rememberWindowServer(profileId);
+}
+
+/** How long the server the window is returning to may take before the
+ * loading state offers Local instead. */
+const STARTUP_OFFER_LOCAL_AFTER_MS = 2_000;
+
+/**
+ * Open the startup window on the server it last showed. The loading state
+ * stays up until that server answers, so the window never shows Local on its
+ * way to another server.
+ */
+async function openStartupWindow(window: BrowserWindow): Promise<void> {
+	const targetId = window.webContents.id;
+	const controller = windowServerControllers.get(targetId);
+	loadRememberedRemoteConnections();
+	let requestLocal: () => void = () => undefined;
+	const localRequested = new Promise<void>((resolve) => {
+		requestLocal = resolve;
+	});
+	// The loading document runs no script: its one link is a fragment, and
+	// following it is the request.
+	const onInPageNavigation = (_event: unknown, url: string) => {
+		if (url.endsWith(STARTUP_SWITCH_TO_LOCAL_FRAGMENT)) requestLocal();
+	};
+	window.webContents.on('did-navigate-in-page', onInPageNavigation);
+	try {
+		const outcome = await openStartupWindowServer({
+			rememberedProfileId: readRememberedWindowServer(),
+			localProfileId: embeddedLocalProfileId,
+			isRemembered: (id) =>
+				controller !== undefined && rememberedRemoteConnections.has(id),
+			connectRemote: (id) => {
+				const profile = rememberedRemoteConnections.get(id);
+				if (profile === undefined)
+					throw new Error('That server is no longer saved on this computer.');
+				beginStartupPhase('last-server-connect');
+				return prepareCanonicalDesktopRemoteConnection(
+					profile,
+					desktopWindowIds.for(targetId),
+				).catch((error: unknown) => {
+					console.error('[main] The last server did not answer', error);
+					throw error;
+				});
+			},
+			mountRemote: async (id, remote) => {
+				const profile = rememberedRemoteConnections.get(id);
+				if (profile === undefined || controller === undefined)
+					throw new Error('That server is no longer saved on this computer.');
+				await controller.mountRemote(profile, remote).catch((error: unknown) => {
+					console.error('[main] The last server failed to open', error);
+					throw error;
+				});
+				deferredCanonicalLaunches.delete(targetId);
+			},
+			discardRemote: (remote) =>
+				remote.transport.close({ code: 'normal' }).then(() => undefined),
+			mountLocal: () => launchDeferredCanonicalWindow(window),
+			localRequested,
+			offerLocalAfterMs: STARTUP_OFFER_LOCAL_AFTER_MS,
+			offerLocal: () => {
+				if (startupPhasePaintingStopped || window.isDestroyed()) return;
+				void window.webContents
+					.insertCSS(startupSwitchToLocalCss())
+					.catch(() => undefined);
+			},
+			// The verified bundle navigation now owns the window; stop repainting
+			// the loading document so a phase line can never race the handoff.
+			beforeMount: () => {
+				endStartupPhase('last-server-connect');
+				stopStartupPhasePainting();
+			},
+		});
+		// Choosing Local is a choice of server like any other, so the window
+		// reopens there. A server that merely did not answer stays remembered.
+		if (outcome === 'local-requested')
+			rememberWindowServer(embeddedLocalProfileId);
+	} finally {
+		if (!window.isDestroyed())
+			window.webContents.off('did-navigate-in-page', onInPageNavigation);
+	}
 }
 
 /** Open a new window showing a remembered server, or Local. */
@@ -6768,20 +6856,8 @@ async function completeDesktopStartup(): Promise<void> {
 		throw error;
 	}
 	endStartupPhase('agent-integration');
-	// The verified bundle navigation now owns the window; stop repainting the
-	// loading document so a phase line can never race the handoff.
 	desktopStartupTimeline.begin('ui-handoff');
-	stopStartupPhasePainting();
-	await launchDeferredCanonicalWindow(embeddedStartupWindow);
-	// The window opens on Local, which is always there, and then returns to
-	// the server it last showed once that server answers. One that does not
-	// answer, or was forgotten, leaves the window on Local.
-	const lastServer = readRememberedWindowServer();
-	if (lastServer !== undefined && lastServer !== embeddedLocalProfileId)
-		void switchWindowToServer(
-			embeddedStartupWindow.webContents.id,
-			lastServer,
-		).catch(() => undefined);
+	await openStartupWindow(embeddedStartupWindow);
 	desktopStartupTimeline.end('ui-handoff');
 	// Hosted signaling is a network round-trip, so it never delays the window.
 	void exposeOnStartup(

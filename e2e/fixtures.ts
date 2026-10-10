@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
 import {
 	mkdir,
@@ -373,6 +374,16 @@ export async function launchDesktopApp(options: {
 				...(path.basename(testInfo.file) ===
 				'terminal-recovery-beyond-replay-window.spec.ts'
 					? { TERMINAY_TEST_TERMINAL_REPLAY_BYTES: '16384' }
+					: {}),
+				// A paired server's credential has to be readable by the next
+				// launch, so every launch on one data directory shares a key.
+				...(path.basename(testInfo.file) ===
+				'desktop-loopback-standalone-pairing.spec.ts'
+					? {
+							TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
+								.update(userDataDir)
+								.digest('hex'),
+						}
 					: {}),
 				TERMINAY_USER_DATA_DIR: userDataDir,
 				TMP: tempDir,

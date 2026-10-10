@@ -59,9 +59,10 @@ Switching back to Local re-prepares the embedded server's session for that windo
 
 Desktop records the profile id its workspace window last showed in `window-server.v1.json`, written when that window switches. `DesktopWindowCompositionStore` and `window-composition.v1.json` are removed; the old file is left on disk and ignored.
 
-At startup the window opens on Local, as it always has, and main then switches it to the remembered server by the same path the connection menu uses. A window cannot be created on a remote server until that server's transport is open, so starting on the remote server directly would hold the whole application behind a network round-trip, and behind a timeout when the server is down. Opening on Local first means the application is usable at once and is never stuck outside Local. A remembered profile that has since been forgotten, or that does not answer, leaves the window on Local.
+At startup the window keeps its loading state until the remembered server's transport is open, and then mounts that server directly, so it opens on the server it was closed on and never shows Local on the way. The loading state already exists and is painted before anything else, so the application is not held behind a missing window; its line names that it is connecting to the last server. A server that takes longer than two seconds leaves the wait in the person's hands: the loading state then offers **Switch to Local**, which abandons the attempt, opens Local, and records Local as the window's server. A remembered profile that has since been forgotten, or that fails to answer, opens the window on Local and stays remembered. The loading document still runs no script: the offer is a fragment link revealed by an inserted style rule, and main acts on the in-page navigation.
 
-- *Alternative: create the startup window on the remembered server.* Rejected: no window until the server answers or times out.
+- *Alternative: open on Local, then switch once the server answers.* Rejected: it was what shipped first, and the window visibly showed the wrong server for about a second on every launch.
+- *Alternative: give up on the server after a fixed wait.* Rejected: a slow server is not a failed one, and only the person knows whether it is worth waiting for.
 - *Alternative: always stay on Local.* Rejected: a person who works on one remote server would switch on every launch.
 
 ### 5. Failure and incompatibility are window states

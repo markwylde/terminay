@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	openStartupWindowServer,
 	pairingTargetWindow,
 	switchWindowServer,
 } from '../electron/windowServerSwitch.ts';
@@ -117,4 +118,116 @@ test('a paired server is shown in the workspace window, never in Remote Control'
 		}),
 		'workspace',
 	);
+});
+
+function startup(overrides = {}) {
+	const steps = [];
+	let requestLocal = () => undefined;
+	const options = {
+		rememberedProfileId: 'remote:a',
+		localProfileId: 'local',
+		isRemembered: (id) => id === 'remote:a',
+		connectRemote: async (id) => {
+			steps.push(`connect:${id}`);
+			return { transport: id };
+		},
+		mountRemote: async (id, remote) => {
+			steps.push(`mount:${id}:${remote.transport}`);
+		},
+		discardRemote: async (remote) => {
+			steps.push(`discard:${remote.transport}`);
+		},
+		mountLocal: async () => {
+			steps.push('mount:local');
+		},
+		localRequested: new Promise((resolve) => {
+			requestLocal = resolve;
+		}),
+		offerLocalAfterMs: 60_000,
+		offerLocal: () => steps.push('offer-local'),
+		beforeMount: () => steps.push('before-mount'),
+		...overrides,
+	};
+	return {
+		steps,
+		requestLocal: () => requestLocal(),
+		run: () => openStartupWindowServer(options),
+	};
+}
+
+test('startup opens straight onto the remembered server and never mounts Local', async () => {
+	const { steps, run } = startup();
+	assert.equal(await run(), 'remote');
+	assert.deepEqual(steps, [
+		'connect:remote:a',
+		'before-mount',
+		'mount:remote:a:remote:a',
+	]);
+});
+
+test('startup opens on Local when Local, nothing, or a forgotten server was remembered', async () => {
+	for (const rememberedProfileId of [undefined, 'local', 'remote:forgotten']) {
+		const { steps, run } = startup({ rememberedProfileId });
+		assert.equal(await run(), 'local');
+		assert.deepEqual(steps, ['before-mount', 'mount:local']);
+	}
+});
+
+test('startup opens on Local when the remembered server does not answer', async () => {
+	const { steps, run } = startup({
+		connectRemote: async () => {
+			throw new Error('The server did not answer.');
+		},
+	});
+	assert.equal(await run(), 'local');
+	assert.deepEqual(steps, ['before-mount', 'mount:local']);
+});
+
+test('startup falls back to Local and closes the transport when the server workspace fails to load', async () => {
+	const { steps, run } = startup({
+		mountRemote: async () => {
+			throw new Error('The workspace failed to load.');
+		},
+	});
+	assert.equal(await run(), 'local');
+	assert.deepEqual(steps, [
+		'connect:remote:a',
+		'before-mount',
+		'discard:remote:a',
+		'mount:local',
+	]);
+});
+
+test('a server that answers promptly never offers Local', async () => {
+	const { steps, run } = startup({ offerLocalAfterMs: 20 });
+	await run();
+	await new Promise((resolve) => setTimeout(resolve, 60));
+	assert.ok(!steps.includes('offer-local'));
+});
+
+test('a slow server offers Local, and choosing it abandons the attempt', async () => {
+	let answer = () => undefined;
+	const { steps, run, requestLocal } = startup({
+		offerLocalAfterMs: 10,
+		connectRemote: (id) =>
+			new Promise((resolve) => {
+				answer = () => resolve({ transport: id });
+			}),
+	});
+	const opening = run();
+	await new Promise((resolve) => setTimeout(resolve, 40));
+	// Nothing is mounted while the server is merely slow.
+	assert.deepEqual(steps, ['offer-local']);
+	requestLocal();
+	assert.equal(await opening, 'local-requested');
+	assert.deepEqual(steps, ['offer-local', 'before-mount', 'mount:local']);
+	// A transport that opens after the choice is closed, never mounted.
+	answer();
+	await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.deepEqual(steps, [
+		'offer-local',
+		'before-mount',
+		'mount:local',
+		'discard:remote:a',
+	]);
 });
