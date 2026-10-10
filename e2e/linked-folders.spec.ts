@@ -2346,8 +2346,12 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 		),
 	).toBeFocused();
 
-	// Escape leaves the name.
+	// Escape leaves the name. The click that opened the input also activated
+	// the terminal, which takes focus a moment later and is given it back for
+	// a short while; a key pressed inside that exchange would reach the terminal.
 	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
 	await expect(input).toBeFocused();
 	await mainWindow.keyboard.type('thrown away');
 	await mainWindow.keyboard.press('Escape');
@@ -2356,6 +2360,8 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 
 	// So does a blank name.
 	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
 	await expect(input).toBeFocused();
 	await input.fill('   ');
 	await mainWindow.keyboard.press('Enter');
