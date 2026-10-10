@@ -37,6 +37,7 @@ export const STARTUP_SUB_PHASE_IDS = [
 	'shell-profiles-load',
 	'extension-host-start',
 	'built-in-extensions-stage',
+	'last-server-connect',
 ] as const;
 
 export type StartupSubPhaseId = (typeof STARTUP_SUB_PHASE_IDS)[number];
@@ -65,6 +66,7 @@ const STARTUP_PHASE_LABELS: Readonly<
 	'shell-profiles-load': 'Loading shell profiles',
 	'extension-host-start': 'Starting extensions',
 	'built-in-extensions-stage': 'Preparing built-in extensions',
+	'last-server-connect': 'Connecting to your last server',
 });
 
 export function startupPhaseLabel(

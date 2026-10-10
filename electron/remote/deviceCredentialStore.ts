@@ -17,9 +17,12 @@ export type ProtectedValueCodec = Readonly<{
   isAvailable: () => boolean
 }>
 
-/** Authenticated process-lifetime protection for isolated Desktop automation. */
-export function createEphemeralTestProtectedValueCodec(): ProtectedValueCodec {
-  const key = randomBytes(32)
+/** Authenticated process-lifetime protection for isolated Desktop automation.
+ * A suite that relaunches Desktop supplies the key, as 64 hex characters, so
+ * what one launch protected the next can read. */
+export function createEphemeralTestProtectedValueCodec(suppliedKey?: string): ProtectedValueCodec {
+  const key =
+    suppliedKey !== undefined && /^[0-9a-f]{64}$/u.test(suppliedKey) ? Buffer.from(suppliedKey, 'hex') : randomBytes(32)
   return Object.freeze({
     backend: () => 'terminay_test_ephemeral',
     decrypt: (encrypted: Buffer) => {
