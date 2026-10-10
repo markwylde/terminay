@@ -621,6 +621,93 @@
 	max-height: min(60vh, 520px);
 }
 
+/* --- One set of columns for a card ----------------------------------------
+ *
+ * Where a card has its collapse control, everything in it keeps to three
+ * columns: the control in a gutter at the leading edge, then an icon column,
+ * then the text. The folder's icon, its branch mark, a terminal's status, and
+ * the plus of New terminal share the icon column; the folder's name, its
+ * branch, its facts, and every tab's title start on the same text edge. Each
+ * line then reads as a line of one list, not as a row with an inset of its own.
+ */
+.folders-tree--tree {
+	--folders-tree-gutter: 14px;
+	--folders-tree-icon: 15px;
+	--folders-tree-gap: 6px;
+	--folders-tree-edge: 10px;
+	--folders-tree-icon-start: calc(
+		var(--folders-tree-edge) + var(--folders-tree-gutter) +
+			var(--folders-tree-gap)
+	);
+	--folders-tree-text-start: calc(
+		var(--folders-tree-icon-start) + var(--folders-tree-icon) +
+			var(--folders-tree-gap)
+	);
+}
+
+.folders-tree--tree .folders-tree__row--folder {
+	gap: 3px;
+	padding: 9px var(--folders-tree-edge);
+}
+
+.folders-tree--tree .folders-tree__title {
+	gap: var(--folders-tree-gap);
+}
+
+.folders-tree--tree .folders-tree__toggle {
+	justify-content: center;
+	width: var(--folders-tree-gutter);
+	margin: -4px 0;
+	padding: 4px 0;
+}
+
+/* The branch is the title's second line: under the name, and quieter. */
+.folders-tree--tree .folders-tree__branch {
+	gap: var(--folders-tree-gap);
+	padding-left: calc(var(--folders-tree-gutter) + var(--folders-tree-gap));
+	color: rgba(220, 226, 240, 0.62);
+}
+
+.folders-tree--tree .folders-tree__branch--dirty {
+	color: #e2a45f;
+}
+
+.folders-tree--tree .folders-tree__branch > svg {
+	width: var(--folders-tree-icon);
+}
+
+.folders-tree--tree .folders-tree__facts,
+.folders-tree--tree .folders-tree__deleting {
+	margin-top: 2px;
+	padding-left: calc(
+		var(--folders-tree-gutter) + var(--folders-tree-icon) +
+			var(--folders-tree-gap) * 2
+	);
+}
+
+.folders-tree--tree .folders-tree__row--panel,
+.folders-tree--tree .folders-tree__new-terminal {
+	gap: var(--folders-tree-gap);
+	padding-left: var(--folders-tree-icon-start);
+}
+
+.folders-tree--tree .folders-tree__row--panel > .folders-tree__status,
+.folders-tree--tree .folders-tree__row--panel > .folders-tree__kind,
+.folders-tree--tree .folders-tree__new-terminal > svg {
+	width: var(--folders-tree-icon);
+}
+
+/* New folder is outside every card and keeps to their columns all the same. */
+.folders-tree--tree .folders-tree__new {
+	gap: var(--folders-tree-gap);
+	padding-left: calc(6px + var(--folders-tree-icon-start));
+}
+
+.folders-tree--tree .folders-tree__new > svg {
+	flex: none;
+	width: var(--folders-tree-icon);
+}
+
 /* --- The tree as a project's left column ---------------------------------- */
 
 .folders-column {
