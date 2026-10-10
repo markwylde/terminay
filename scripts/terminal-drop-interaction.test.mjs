@@ -17,7 +17,7 @@ await build({
   target: 'node24',
 })
 
-const { escapeTerminalPathForShell, getTerminalDropText, shouldInterceptTerminalDrop, uploadBrowserTerminalDrop } = await import(outputPath)
+const { escapeTerminalPathForShell, getDroppedPath, getPastedPath, getTerminalDropText, pathFromFileUrl, shouldInterceptTerminalDrop, uploadBrowserTerminalDrop } = await import(outputPath)
 
 function drop({ types = [], files = [], values = {} } = {}) {
   return {
@@ -93,4 +93,40 @@ test('TerminalPanel uploads file drops through the selected-server client', () =
   assert.match(panel, /getTerminalDropText\(event\.dataTransfer, resolveDesktopDroppedFilePath\)/u)
   assert.match(panel, /uploadBrowserTerminalDrop/u)
   assert.match(panel, /const handleDrop = async[\s\S]*shouldInterceptTerminalDrop[\s\S]*event\.preventDefault\(\)/u)
+})
+
+test('a file URL becomes its path', () => {
+  assert.equal(pathFromFileUrl('file:///Users/sam/notes%20a.md'), '/Users/sam/notes a.md')
+  assert.equal(pathFromFileUrl('  file:///tmp/x\n'), '/tmp/x')
+  assert.equal(pathFromFileUrl('file:///C:/Users/sam/a.txt'), 'C:/Users/sam/a.txt')
+  assert.equal(pathFromFileUrl('/Users/sam/notes.md'), null)
+  assert.equal(pathFromFileUrl('https://example.com/a'), null)
+})
+
+test('a dropped path is taken unescaped from Terminay data, text, a file URL, or a host-resolved file', () => {
+  assert.deepEqual(getDroppedPath(drop({ types: ['terminay/path'], values: { 'terminay/path': "/work/it's here.txt" } })), { kind: 'path', path: "/work/it's here.txt" })
+  assert.deepEqual(getDroppedPath(drop({ values: { 'text/plain': '~/notes.md' } })), { kind: 'path', path: '~/notes.md' })
+  assert.deepEqual(getDroppedPath(drop({ values: { 'text/uri-list': '# comment\r\nfile:///tmp/a%20b.txt\r\n' } })), { kind: 'path', path: '/tmp/a b.txt' })
+  assert.deepEqual(getDroppedPath(drop({ values: { 'text/plain': 'file:///tmp/c.txt' } })), { kind: 'path', path: '/tmp/c.txt' })
+  const file = { name: 'report.pdf' }
+  assert.deepEqual(getDroppedPath(drop({ types: ['Files'], files: [file] }), (value) => value === file ? '/Users/sam/report.pdf' : undefined), { kind: 'path', path: '/Users/sam/report.pdf' })
+  // Words that are not a path are not a drop this field understands.
+  assert.equal(getDroppedPath(drop({ values: { 'text/plain': 'hello world' } })), null)
+})
+
+test('a dropped file whose path the host cannot resolve is reported as unavailable', () => {
+  const file = { name: 'report.pdf' }
+  assert.deepEqual(getDroppedPath(drop({ types: ['Files'], files: [file] })), { kind: 'unavailable' })
+  assert.deepEqual(getDroppedPath(drop({ types: ['Files'], files: [file] }), () => undefined), { kind: 'unavailable' })
+})
+
+test('a paste supplies a path only for a copied file or a file URL', () => {
+  const file = { name: 'report.pdf' }
+  assert.deepEqual(getPastedPath(drop({ files: [file] }), () => '/Users/sam/report.pdf'), { kind: 'path', path: '/Users/sam/report.pdf' })
+  assert.deepEqual(getPastedPath(drop({ values: { 'text/plain': 'file:///Users/sam/notes%20a.md' } })), { kind: 'path', path: '/Users/sam/notes a.md' })
+  assert.deepEqual(getPastedPath(drop({ files: [file] })), { kind: 'unavailable' })
+  // A copied file that also offers its URL as text still yields a path on a host that cannot resolve the file.
+  assert.deepEqual(getPastedPath(drop({ files: [file], values: { 'text/plain': 'file:///Users/sam/report.pdf' } })), { kind: 'path', path: '/Users/sam/report.pdf' })
+  // A plain path pastes as ordinary text, so the field is left to handle it.
+  assert.equal(getPastedPath(drop({ values: { 'text/plain': '/Users/sam/notes.md' } })), null)
 })

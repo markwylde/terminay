@@ -34,7 +34,13 @@ import {
 
 export type CommandBarItem = {
 	description: string;
+	/** The heading the item is listed under. */
 	group: string;
+	/** Identity of the group when its heading alone is not one: a macro category
+	 * may be named like a built-in group and must not merge with it. */
+	groupKey?: string;
+	/** Position of a macro group among the macro groups. */
+	groupOrder?: number;
 	icon: ReactNode;
 	id: string;
 	onSelect: () => void;
@@ -53,30 +59,85 @@ const GROUP_ORDER: readonly string[] = [
 
 export type CommandBarGroup = Readonly<{
 	group: string;
+	key: string;
 	items: readonly Readonly<{ index: number; item: CommandBarItem }>[];
 }>;
+
+const MACRO_GROUP_KEY_PREFIX = 'macro-category:';
+const UNCATEGORISED_MACROS_GROUP = 'Macros';
+
+function isMacroGroupKey(key: string): boolean {
+	return key === UNCATEGORISED_MACROS_GROUP || key.startsWith(MACRO_GROUP_KEY_PREFIX);
+}
+
+/**
+ * The Command Bar group of a macro: its category, in category order, or
+ * "Macros" after every category when it has none.
+ */
+export function macroCommandGroup(
+	category: string,
+	categories: readonly string[],
+): Pick<CommandBarItem, 'group' | 'groupKey' | 'groupOrder'> {
+	const position = categories.indexOf(category);
+	return position === -1
+		? {
+				group: UNCATEGORISED_MACROS_GROUP,
+				groupKey: UNCATEGORISED_MACROS_GROUP,
+				groupOrder: categories.length,
+			}
+		: {
+				group: category,
+				groupKey: `${MACRO_GROUP_KEY_PREFIX}${category}`,
+				groupOrder: position,
+			};
+}
+
+/** Macros in category order, keeping their saved order within a category, so
+ * each macro group is one contiguous run of the flat list. */
+export function orderMacrosByCategory<Macro extends { category: string }>(
+	macros: readonly Macro[],
+	categories: readonly string[],
+): Macro[] {
+	const rank = (macro: Macro) => {
+		const position = categories.indexOf(macro.category);
+		return position === -1 ? categories.length : position;
+	};
+	return macros
+		.map((macro, index) => ({ macro, index }))
+		.sort((left, right) => rank(left.macro) - rank(right.macro) || left.index - right.index)
+		.map(({ macro }) => macro);
+}
 
 /** Items under their group headings, each keeping its place in the flat list
  * that the keyboard moves through. Items must already be ordered by group. */
 export function groupCommandBarItems(
 	items: readonly CommandBarItem[],
 ): readonly CommandBarGroup[] {
-	const groups = new Map<string, { index: number; item: CommandBarItem }[]>();
+	const groups = new Map<
+		string,
+		{ group: string; order: number; items: { index: number; item: CommandBarItem }[] }
+	>();
 	items.forEach((item, index) => {
-		const groupItems = groups.get(item.group) ?? [];
-		groupItems.push({ index, item });
-		groups.set(item.group, groupItems);
+		const key = item.groupKey ?? item.group;
+		const entry = groups.get(key) ?? {
+			group: item.group,
+			order: item.groupOrder ?? 0,
+			items: [],
+		};
+		entry.items.push({ index, item });
+		groups.set(key, entry);
 	});
-	return [...groups.keys()]
-		.sort((left, right) => {
-			const leftAt = GROUP_ORDER.indexOf(left);
-			const rightAt = GROUP_ORDER.indexOf(right);
-			return (
-				(leftAt === -1 ? GROUP_ORDER.length : leftAt) -
-				(rightAt === -1 ? GROUP_ORDER.length : rightAt)
-			);
-		})
-		.map((group) => ({ group, items: groups.get(group) ?? [] }));
+	// Every macro group sits where "Macros" does, ahead of places.
+	const rank = (key: string) => {
+		const at = GROUP_ORDER.indexOf(isMacroGroupKey(key) ? UNCATEGORISED_MACROS_GROUP : key);
+		return at === -1 ? GROUP_ORDER.length : at;
+	};
+	return [...groups.entries()]
+		.sort(
+			([leftKey, left], [rightKey, right]) =>
+				rank(leftKey) - rank(rightKey) || left.order - right.order,
+		)
+		.map(([key, entry]) => ({ group: entry.group, key, items: entry.items }));
 }
 
 function escapeRegExp(value: string): string {
@@ -161,7 +222,10 @@ export function filterCommandBarItems(
 				}))
 				.filter(({ score }) => score > 0)
 				.sort((left, right) => {
-					if (left.item.group === 'Macros' && right.item.group === 'Macros') {
+					if (
+						isMacroGroupKey(left.item.groupKey ?? left.item.group) &&
+						isMacroGroupKey(right.item.groupKey ?? right.item.group)
+					) {
 						return left.index - right.index;
 					}
 					if (right.score !== left.score) {
@@ -416,10 +480,10 @@ export function CommandBarDialog({
 									<p>Nothing matches your search.</p>
 								</div>
 							) : (
-								groups.map(({ group, items: groupItems }) => (
+								groups.map(({ group, key, items: groupItems }) => (
 									<section
 										className="macro-launcher-group"
-										key={group}
+										key={key}
 										data-terminay-command-bar-group={group}
 									>
 										<div className="macro-launcher-group-label">{group}</div>

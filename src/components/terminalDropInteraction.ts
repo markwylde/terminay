@@ -58,6 +58,78 @@ export function getTerminalDropText(
   return paths.length > 0 ? paths.map(escapeTerminalPathForShell).join(' ') : null
 }
 
+/** A path a drag or a paste supplied, or the fact that it carried a file whose path this host cannot resolve. */
+export type DroppedPath = { readonly kind: 'path'; readonly path: string } | { readonly kind: 'unavailable' }
+
+/** `file:///Users/sam/notes%20a.md` becomes `/Users/sam/notes a.md`. Anything else is not a file URL. */
+export function pathFromFileUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (!/^file:\/\//i.test(trimmed)) return null
+  try {
+    const url = new URL(trimmed)
+    const path = decodeURIComponent(url.pathname)
+    if (path.length === 0 || hasControlCharacters(path)) return null
+    // A Windows drive arrives as `/C:/Users/…`.
+    return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path
+  } catch {
+    return null
+  }
+}
+
+function firstUriListEntry(value: string): string {
+  return value.split(/\r?\n/).find((line) => line.length > 0 && !line.startsWith('#')) ?? ''
+}
+
+/**
+ * The path a drop names, unescaped: it becomes a field value, not terminal
+ * input. Resolution follows the terminal's own rules: Terminay's path data,
+ * then a path or file URL in text, then a host-resolved native file. Nothing
+ * is read from the file.
+ */
+export function getDroppedPath(
+  dataTransfer: TerminalDropData,
+  resolveDesktopFilePath?: TerminalDroppedFilePathResolver,
+): DroppedPath | null {
+  const customPath = dataTransfer.getData('terminay/path')
+  if (customPath && !hasControlCharacters(customPath)) return { kind: 'path', path: customPath }
+
+  const urlPath = pathFromFileUrl(firstUriListEntry(dataTransfer.getData('text/uri-list')))
+  if (urlPath !== null) return { kind: 'path', path: urlPath }
+
+  const text = dataTransfer.getData('text/plain').trim()
+  const textUrlPath = pathFromFileUrl(text)
+  if (textUrlPath !== null) return { kind: 'path', path: textUrlPath }
+  if (text && isPortableTerminalPath(text) && !hasControlCharacters(text)) return { kind: 'path', path: text }
+
+  return getNativeFilePath(dataTransfer, resolveDesktopFilePath)
+}
+
+/**
+ * The path a paste names when the clipboard holds a copied file or a file URL.
+ * A plain path on the clipboard returns null so the field pastes it as text.
+ */
+export function getPastedPath(
+  dataTransfer: TerminalDropData,
+  resolveDesktopFilePath?: TerminalDroppedFilePathResolver,
+): DroppedPath | null {
+  const native = getNativeFilePath(dataTransfer, resolveDesktopFilePath)
+  if (native?.kind === 'path') return native
+  const urlPath =
+    pathFromFileUrl(firstUriListEntry(dataTransfer.getData('text/uri-list'))) ??
+    pathFromFileUrl(dataTransfer.getData('text/plain'))
+  if (urlPath !== null) return { kind: 'path', path: urlPath }
+  return native
+}
+
+function getNativeFilePath(
+  dataTransfer: TerminalDropData,
+  resolveDesktopFilePath?: TerminalDroppedFilePathResolver,
+): DroppedPath | null {
+  if (dataTransfer.files.length === 0) return null
+  const path = resolveDesktopFilePath?.(dataTransfer.files[0])
+  return typeof path === 'string' && path.length > 0 ? { kind: 'path', path } : { kind: 'unavailable' }
+}
+
 export function shouldInterceptTerminalDrop(
   dataTransfer: TerminalDropData,
   resolveDesktopFilePath?: TerminalDroppedFilePathResolver,

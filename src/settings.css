@@ -192,17 +192,6 @@
   transition: background-color 0.12s ease;
 }
 
-.macro-nav-item-drag-handle {
-  flex-shrink: 0;
-  padding: 0 4px 0 8px;
-  cursor: grab;
-  color: var(--settings-text-muted);
-  font-size: 14px;
-  user-select: none;
-  opacity: 0.28;
-  transition: opacity 0.12s ease, color 0.12s ease;
-}
-
 .macro-nav-item-button {
   appearance: none;
   display: block;
@@ -222,10 +211,6 @@
   background-color: var(--settings-nav-hover);
 }
 
-.macro-nav-item:hover .macro-nav-item-drag-handle {
-  opacity: 0.9;
-}
-
 .macro-nav-item--active .macro-nav-item-inner {
   background-color: var(--settings-nav-active-bg);
   box-shadow: none;
@@ -234,11 +219,6 @@
 .macro-nav-item--active .macro-nav-item-button {
   color: var(--settings-nav-active-text);
   font-weight: 500;
-}
-
-.macro-nav-item--active .macro-nav-item-drag-handle {
-  color: var(--settings-nav-active-text);
-  opacity: 0.8;
 }
 
 .settings-sidebar-footer {
@@ -378,199 +358,6 @@
   outline: none;
 }
 
-.settings-dropdown-container {
-  position: relative;
-}
-
-.settings-step-type-badge {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--settings-accent);
-  width: 90px;
-  flex-shrink: 0;
-  letter-spacing: 0.05em;
-}
-
-.macro-type-input-wrap {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-}
-
-.macro-type-input {
-  padding-right: 44px;
-}
-
-.macro-type-editor-button {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  width: 30px;
-  height: 24px;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--settings-border);
-  border-radius: 4px;
-  background: var(--settings-card-bg);
-  color: var(--settings-accent);
-  cursor: pointer;
-  box-shadow: -8px 0 12px var(--settings-bg);
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-
-.macro-type-editor-button:hover,
-.macro-type-editor-button:focus-visible {
-  background: var(--settings-nav-hover);
-  border-color: var(--settings-accent);
-  color: var(--settings-accent-hover);
-  outline: none;
-}
-
-.macro-text-modal {
-  width: min(820px, calc(100vw - 48px));
-  height: min(560px, calc(100vh - 64px));
-  min-width: min(520px, calc(100vw - 48px));
-  min-height: 360px;
-  max-width: calc(100vw - 48px);
-  max-height: calc(100vh - 48px);
-  display: flex;
-  flex-direction: column;
-  resize: both;
-  overflow: hidden;
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  background: var(--settings-card-bg);
-  color: var(--settings-text);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
-}
-
-.macro-text-modal-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--settings-border);
-}
-
-.macro-text-modal-header h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.macro-text-modal-header button {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--settings-text-muted);
-  cursor: pointer;
-}
-
-.macro-text-modal-header button:hover,
-.macro-text-modal-header button:focus-visible {
-  background: var(--settings-nav-hover);
-  color: var(--settings-text);
-  outline: none;
-}
-
-.macro-text-modal-textarea {
-  display: block;
-  flex: 1 1 auto;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  resize: none;
-  padding: 14px 16px;
-  border: none;
-  border-bottom: 1px solid var(--settings-border);
-  background: var(--settings-bg);
-  color: var(--settings-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.55;
-  outline: none;
-}
-
-.macro-text-modal-textarea:focus {
-  box-shadow: inset 0 0 0 1px var(--settings-accent);
-}
-
-.macro-text-modal-editor {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  border-bottom: 1px solid var(--settings-border);
-  background: var(--settings-bg);
-}
-
-.macro-text-modal-editor .monaco-editor,
-.macro-text-modal-editor .monaco-editor-background,
-.macro-text-modal-editor .monaco-editor .margin {
-  background: var(--settings-bg);
-}
-
-.macro-text-modal-footer {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-}
-
-.settings-secret-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
-  background: var(--settings-bg);
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  transition: border-color 0.1s ease;
-}
-
-.settings-secret-item:hover {
-  border-color: var(--settings-text-muted);
-}
-
-.settings-secret-name {
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.settings-tab-button {
-  appearance: none;
-  background: transparent;
-  border: none;
-  color: var(--settings-text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 8px 12px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.1s ease;
-}
-
-.settings-tab-button:hover {
-  background: var(--settings-nav-hover);
-  color: var(--settings-text);
-}
-
-.settings-tab-button--active {
-  background: var(--settings-nav-active-bg);
-  color: var(--settings-nav-active-text);
-}
-
 .settings-hero-actions {
   display: flex;
   gap: 8px;
@@ -679,81 +466,6 @@
   color: var(--settings-accent);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.settings-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.settings-field-card {
-  background: var(--settings-card-bg);
-  border: 1px solid var(--settings-border);
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--settings-card-shadow);
-}
-
-.settings-field-card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--settings-bg);
-  border-bottom: 1px solid var(--settings-border);
-}
-
-.settings-field-drag-handle {
-  cursor: grab;
-  color: var(--settings-text-muted);
-  font-size: 16px;
-  user-select: none;
-}
-
-.settings-field-name-input {
-  background: transparent;
-  border: none;
-  color: var(--settings-text);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 0;
-  flex: 1;
-  outline: none;
-}
-
-.settings-field-card-body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.settings-field-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.settings-field-input-group {
-  flex: 1;
-  min-width: 140px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.settings-field-input-group--full {
-  flex: 1 1 100%;
-}
-
-.settings-field-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--settings-text-muted);
 }
 
 /* Server-owned shell profile manager. Kept inside the shared settings route so
@@ -1911,4 +1623,626 @@
 	font-size: 1.05em;
 	font-weight: 600;
 	letter-spacing: 0.2em;
+}
+
+/* Macros window: library, script editor, and a preview beside or below it. */
+.macros-shell {
+  container-type: inline-size;
+}
+
+.macros-workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.macros-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.macros-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.macros-main .macros-content {
+  padding: 28px 40px;
+}
+
+.macros-aside {
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 28px 18px;
+  border-left: 1px solid var(--settings-border);
+  background: var(--settings-sidebar-bg);
+}
+
+@container (max-width: 1080px) {
+  .macros-workspace {
+    flex-direction: column;
+  }
+
+  .macros-aside {
+    width: auto;
+    max-height: 42%;
+    padding: 18px 40px;
+    border-left: 0;
+    border-top: 1px solid var(--settings-border);
+  }
+}
+
+.macro-library {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-library-brand {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.macro-library-list {
+  padding-top: 0;
+}
+
+.macro-library-category {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border-radius: 6px;
+}
+
+.macro-library-category-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-library-category-actions {
+  display: none;
+  flex-shrink: 0;
+  gap: 1px;
+}
+
+.macro-library-category:hover .macro-library-category-actions,
+.macro-library-category:focus-within .macro-library-category-actions {
+  display: inline-flex;
+}
+
+.macro-library-category:hover .macro-library-category-actions + .macro-library-category-count,
+.macro-library-category:focus-within .macro-library-category-actions + .macro-library-category-count {
+  display: none;
+}
+
+.macro-library-category-actions button {
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: transparent;
+  color: var(--settings-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.macro-library-category-actions button:hover {
+  background: var(--settings-nav-hover);
+  color: var(--settings-text);
+}
+
+.macro-library-category-input {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.macro-library-category--drop {
+  background: color-mix(in srgb, var(--settings-accent) 14%, transparent);
+  color: var(--settings-accent);
+}
+
+.macro-library-empty-category {
+  margin: 2px 0 4px;
+  padding: 6px 10px;
+  border: 1px dashed var(--settings-border);
+  border-radius: 6px;
+  color: var(--settings-text-muted);
+  font-size: 11.5px;
+}
+
+.macro-nav-item[draggable='true'] {
+  cursor: grab;
+}
+
+.macro-nav-item .macro-nav-item-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+}
+
+.macro-nav-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-nav-item-unsaved {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--settings-accent);
+}
+
+.macro-nav-item--drop .macro-nav-item-inner {
+  box-shadow: inset 0 2px 0 var(--settings-accent);
+}
+
+.macro-library-footer {
+  gap: 8px;
+  padding: 12px;
+}
+
+.macro-category-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--settings-text-muted);
+  font-size: 12px;
+}
+
+.macro-category-row .settings-select,
+.macro-category-row .settings-input-text {
+  width: auto;
+  min-width: 170px;
+  padding-block: 3px;
+  font-size: 12px;
+}
+
+.macro-overflow {
+  position: relative;
+}
+
+.macro-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  padding: 4px;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-card-bg);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 25%);
+  white-space: nowrap;
+}
+
+/* Script editor. A text block is a textarea laid over a highlighted copy of
+ * its own text; the copy sets the height, so the textarea needs no sizing. */
+.macro-script {
+  overflow: visible;
+}
+
+.macro-script-document {
+  min-height: 150px;
+  padding: 10px 0;
+  cursor: text;
+}
+
+.macro-script-block {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  padding: 2px 14px 2px 0;
+}
+
+.macro-script-block--gap:not(:focus-within) {
+  height: 4px;
+  padding-block: 0;
+  overflow: hidden;
+}
+
+.macro-script-gutter {
+  padding-right: 10px;
+  color: var(--settings-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 21px;
+  opacity: 0.65;
+  text-align: right;
+  user-select: none;
+}
+
+.macro-script-text {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.macro-script-highlight,
+.macro-script-text textarea {
+  grid-area: 1 / 1;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  white-space: pre-wrap;
+}
+
+.macro-script-highlight {
+  background: transparent;
+  color: var(--settings-text);
+  pointer-events: none;
+}
+
+.macro-script-highlight mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--settings-accent) 16%, transparent);
+  color: var(--settings-accent);
+}
+
+.macro-script-text textarea {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--settings-text);
+}
+
+.macro-script-text textarea::placeholder {
+  color: var(--settings-text-muted);
+}
+
+.macro-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0;
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  padding: 2px 4px 2px 9px;
+  background: var(--settings-bg);
+  color: var(--settings-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: default;
+}
+
+.macro-token select,
+.macro-token input {
+  border: 1px solid var(--settings-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  outline: none;
+  background: var(--settings-card-bg);
+  color: var(--settings-text);
+  font: inherit;
+  font-weight: 500;
+}
+
+.macro-token input {
+  width: 86px;
+}
+
+.macro-token select:focus,
+.macro-token input:focus {
+  border-color: var(--settings-accent);
+}
+
+.macro-token--blocked {
+  border-color: var(--settings-danger);
+  color: var(--settings-danger);
+}
+
+.macro-token-remove {
+  border: 0;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: transparent;
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.macro-token-remove:hover {
+  background: var(--settings-nav-hover);
+  color: var(--settings-danger);
+}
+
+.macro-step-menu {
+  position: absolute;
+  left: 0;
+  z-index: 6;
+  width: 280px;
+  margin-top: 24px;
+  padding: 4px;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-card-bg);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 25%);
+  color: var(--settings-text);
+  font-size: 12.5px;
+}
+
+.macro-step-menu-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.macro-step-menu-item--active {
+  background: var(--settings-nav-active-bg);
+}
+
+.macro-step-menu-hint {
+  color: var(--settings-text-muted);
+}
+
+.macro-script-insert {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  border-radius: 0 0 9px 9px;
+  color: var(--settings-text-muted);
+  font-size: 12px;
+}
+
+.macro-insert-button {
+  border: 1px dashed var(--settings-border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--settings-text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.macro-insert-button:hover {
+  border-style: solid;
+  background: var(--settings-nav-hover);
+}
+
+.macro-script-insert-hint {
+  margin-left: auto;
+}
+
+.macro-script-insert-hint kbd {
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--settings-code-bg);
+  color: var(--settings-code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.macro-inputs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) 112px minmax(0, 1fr) 64px 22px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+}
+
+.macro-inputs-head {
+  border-bottom: 1px solid var(--settings-border);
+  color: var(--settings-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.macro-inputs-entry {
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.macro-inputs-entry:last-child {
+  border-bottom: 0;
+}
+
+.macro-inputs-name {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-inputs-switch {
+  transform: scale(0.8);
+  transform-origin: left center;
+}
+
+.macro-inputs-remove {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--settings-text-muted);
+  cursor: pointer;
+}
+
+.macro-inputs-remove:hover {
+  color: var(--settings-danger);
+}
+
+.macro-inputs-note {
+  margin: -2px 16px 8px;
+  color: var(--settings-text-muted);
+  font-size: 11px;
+}
+
+.macro-inputs-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 10px;
+  color: var(--settings-text-muted);
+  font-size: 12px;
+}
+
+.macro-inputs-options code {
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--settings-code-bg);
+  color: var(--settings-code-text);
+}
+
+.macro-preview .settings-section {
+  margin-bottom: 24px;
+}
+
+.macro-preview-title {
+  margin: 0 0 8px;
+}
+
+.macro-preview-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.macro-preview-field label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--settings-text-muted);
+  font-size: 11.5px;
+}
+
+.macro-preview-required {
+  color: var(--settings-danger);
+}
+
+/* What reaches the terminal is drawn as terminal text in both themes. */
+.macro-preview-sequence {
+  margin: 0;
+  padding: 10px 12px 10px 34px;
+  border-radius: 8px;
+  background: #101010;
+  color: #f2f4f8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.macro-preview-sequence li::marker {
+  color: #8b9bb5;
+}
+
+.macro-preview-sequence li:only-child.macro-preview-dim {
+  list-style: none;
+}
+
+.macro-preview-typed {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.macro-preview-dim {
+  color: #8b9bb5;
+}
+
+.macro-preview-missing {
+  border-bottom: 1px dashed #f7c46c;
+  color: #f7c46c;
+}
+
+.macro-preview-raw {
+  color: #f7c46c;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.macro-preview-warning {
+  margin: 8px 0 0;
+  color: var(--settings-danger);
+  font-size: 12px;
+}
+
+.macro-preview-footnote {
+  margin-top: 8px;
+}
+
+.macro-path-field--over .settings-input-text {
+  border-style: dashed;
+  border-color: var(--settings-accent);
+  background: color-mix(in srgb, var(--settings-accent) 10%, transparent);
+}
+
+.macro-path-field-hint {
+  margin: 4px 0 0;
+  color: var(--settings-text-muted);
+  font-size: 11px;
+}
+
+.macro-path-field--over .macro-path-field-hint {
+  color: var(--settings-accent);
+}
+
+.macro-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 40px;
+  border-top: 1px solid var(--settings-border);
+  background: var(--settings-card-bg);
+}
+
+.macro-save-state {
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.macro-save-state--dirty {
+  color: var(--settings-text);
+}
+
+.macro-save-state--dirty::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--settings-accent);
+}
+
+.macro-save-error {
+  flex: 1;
+  min-width: 0;
+  color: var(--settings-danger);
+  font-size: 12px;
+}
+
+.macro-save-bar .settings-inline-actions {
+  margin-left: auto;
 }
