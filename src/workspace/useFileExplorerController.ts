@@ -35,6 +35,7 @@ import {
 import type { ProjectTab } from './projectTabModel';
 import { getOrCreateDirectoryLoad } from './directoryLoadCoordinator';
 import { isDirectoryEntry } from './fileExplorerEntries';
+import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import {
 	createGitPaneSyncLog,
 	type GitPaneSyncLog,
@@ -235,6 +236,7 @@ export async function applyGitWorkspaceRefresh({
 }): Promise<void> {
 	const startedAt = Date.now();
 	const fresh = sync !== undefined && isFreshGitPaneSync(sync.trigger);
+	if (fresh) recordBootstrapDiagnostic('git.fresh-measure');
 	const outcome = (
 		result: GitPaneSyncOutcome,
 		worktrees: number | null,
@@ -957,6 +959,7 @@ export function useFileExplorerController({
 			project.rootFolder ? { [project.rootFolder]: true } : {},
 		);
 		if (project.rootFolder && explorerReady) {
+			recordBootstrapDiagnostic('explorer.root-load');
 			void loadDirectory(project.rootFolder);
 			void refreshGitStatusesForRoot(project.rootFolder, true, undefined, 'root');
 		}

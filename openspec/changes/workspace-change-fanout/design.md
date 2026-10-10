@@ -86,7 +86,7 @@ Boundary: no change to the repository boundary, the atomic-replace contract, or 
 
 A **change record** is the ordered outcome of one commit: the revision it starts from and produces, the command type, and per collection (`views`, `projects`, `folders`, `panels`, `terminalSessions`) the objects it created or replaced, by id, and the ids it removed, plus any top-level field it changed.
 
-- The ordered `workspace.changed` event carries the change record, scoped to what the receiving connection may see by the same rule that scopes a snapshot today. A connection for which a record cannot be scoped exactly (an object entering or leaving its scope) receives the event with a marker telling it to fetch instead.
+- The ordered `workspace.changed` event carries the change record, scoped to what the receiving connection may see. As built, a scoped record is not a filtered copy of the commit's record: the store keeps the states on either side of each retained commit, which share everything the commit left alone, and a connection's record is the difference between what it could read before and after, through the one function that also scopes its snapshots. That is exact by construction, including for an object entering or leaving the scope, so no "fetch instead" marker was needed. A scoped record also omits the command's type. The event goes out without a record only when the store no longer retains the commit, and the client then asks for a delta.
 - `workspace.delta` gains a second version whose reply is the ordered change records since the requested revision. When the server's history no longer reaches that revision it answers with a snapshot, as it does now.
 - A client applies a record only when the record's starting revision is the revision it holds. Otherwise it asks for a delta from the revision it holds. Applying is all-or-nothing: the record is validated first and the projection is replaced in one step.
 
@@ -116,6 +116,12 @@ The store exposes selectors with a subscription per selection (`useSyncExternalS
 - A terminal tab, the sidebar rows, and the inventories that name terminals read the displayed title from the title projection through a per-terminal subscription.
 
 The earlier state of this branch reads availability through a ref and deduplicates the move-target list by serialising it. Both are replaced by the above: with stable project identities neither indirection is needed.
+
+Three choices made while building this:
+
+- A tab's title is still Dockview's own panel title, which the switcher, the inventory, MCP control, and recording all read. The title store hands a new title to the one panel it belongs to. Rows elsewhere read the store per row.
+- A list that names terminals is still built from the title each row had when the list was built. The text shown follows the terminal; search and filtering by title see a new title when the list is next rebuilt.
+- The title an AI generation is given as context is the workspace's own title for the terminal (its name, else its default), not a title its program set. An animated program title is not useful context, and the generated title is a name that replaces it.
 
 Boundary: none crossed. The renderer still gets everything through the preload contract and the protocol client.
 

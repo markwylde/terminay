@@ -86,5 +86,8 @@ Commit primitives, p50 (p95) in milliseconds:
 ## Not measured
 
 - Renderer time per revision. It was traced by reading, not profiled.
+- The packaged app with a real agent after the change. What a title change
+  no longer does is asserted by test; how typing feels has to be judged in
+  use.
 - A remote client over WebRTC.
 - A standalone server on SQLite; the write figures are for the Desktop file backend.
