@@ -756,4 +756,113 @@ test.describe('compact chrome', () => {
 			await fromRows(),
 		);
 	});
+
+	test('the compact switcher offers Tabs and Agents', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		// An agent in a second terminal, with the first terminal in front.
+		await resize(mainWindow, electronApp, {
+			x: 40,
+			y: 40,
+			width: 1280,
+			height: 800,
+		});
+		const firstSession = await activeSessionId(mainWindow);
+		await appHarness.sendAppCommand('new-terminal');
+		await expect
+			.poll(() => activeSessionId(mainWindow))
+			.not.toBe(firstSession);
+		const agentSession = await activeSessionId(mainWindow);
+		if (agentSession === null) throw new Error('Expected a second terminal');
+		await mainWindow.evaluate(async (terminalSessionId) => {
+			const seam = window.terminayAgentStatusTest;
+			if (!seam) throw new Error('Agent status test seam is unavailable');
+			const pid = await seam.terminalShellPid(terminalSessionId);
+			if (pid === null) throw new Error('Terminal shell pid is unavailable');
+			const accepted = await seam.publishSessions({
+				sourceId: 'com.terminay.e2e/agents',
+				harnesses: [{ id: 'codex', displayName: 'Codex' }],
+				publication: {
+					upserts: [
+						{
+							harness: 'codex',
+							pid,
+							cwd: '/tmp',
+							id: 'codex-switcher',
+							title: 'Agent reached from the switcher',
+							status: 'running',
+						},
+					],
+				},
+			});
+			if (!accepted) throw new Error('Agent publication was not accepted');
+		}, agentSession);
+		await mainWindow
+			.locator('.terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' })
+			.click();
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(firstSession);
+
+		await resize(mainWindow, electronApp, PHONE);
+		const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
+		await breadcrumb.click();
+		const switcher = switcherOf(mainWindow);
+		await expect(switcher).toBeVisible();
+
+		// Opens on Tabs: the list, its filter, and its create bar.
+		const tabsTab = switcher.getByRole('tab', { name: 'Tabs' });
+		const agentsTab = switcher.getByRole('tab', { name: 'Agents' });
+		await expect(switcher.getByRole('tab')).toHaveCount(2);
+		await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
+		await expect(
+			switcher.locator('[data-compact-switcher-terminal]'),
+		).not.toHaveCount(0);
+		const filter = switcher.getByRole('button', {
+			name: 'Search terminals and projects',
+		});
+		const addConnection = switcher.getByRole('button', {
+			name: 'Add connection',
+		});
+		await expect(filter).toBeVisible();
+		await expect(addConnection).toBeVisible();
+
+		// Agents shows the project's agent in place of all of that, and
+		// raises no keyboard.
+		await agentsTab.click();
+		await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+		const agent = switcher.locator('.agents-sidebar__agent');
+		await expect(agent).toHaveCount(1);
+		await expect(switcher.locator('.agents-sidebar__name')).toContainText(
+			'Agent reached from the switcher',
+		);
+		await expect(
+			switcher.locator('[data-compact-switcher-terminal]'),
+		).toHaveCount(0);
+		await expect(filter).toHaveCount(0);
+		await expect(addConnection).toHaveCount(0);
+		await expect(switcher.locator('input')).toHaveCount(0);
+
+		// Pressing the agent shows its terminal and dismisses the sheet.
+		await agent.click();
+		await expect(switcher).toHaveCount(0);
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(agentSession);
+
+		// Every open starts on Tabs.
+		await breadcrumb.click();
+		await expect(switcher).toBeVisible();
+		await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
+		await mainWindow.keyboard.press('Escape');
+		await expect(switcher).toHaveCount(0);
+
+		// With the dashboard in front there is no project whose agents to show.
+		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await mainWindow.locator('[data-compact-connection="true"]').click();
+		await expect(switcher).toBeVisible();
+		await expect(switcher.getByRole('tab')).toHaveCount(0);
+		await expect(
+			switcher.locator('[data-compact-switcher-terminal]'),
+		).not.toHaveCount(0);
+	});
 });

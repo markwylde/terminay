@@ -12,20 +12,22 @@ export const SIDEBAR_GROUP_PANELS: Readonly<
 > = {
 	explorer: ['explorer', 'git'],
 	documentation: ['documentation'],
-	agents: ['agents'],
 };
 
-const PANEL_GROUP: Readonly<Record<SidebarPanelId, SidebarGroupId>> = {
+/** The Agents pane is in workspace state and in no sidebar group: it is a tab
+ * of the left column. */
+const PANEL_GROUP: Readonly<
+	Record<SidebarPanelId, SidebarGroupId | undefined>
+> = {
 	explorer: 'explorer',
 	git: 'explorer',
 	documentation: 'documentation',
-	agents: 'agents',
+	agents: undefined,
 };
 
 export const SIDEBAR_GROUP_LABELS: Readonly<Record<SidebarGroupId, string>> = {
 	explorer: 'Explorer',
 	documentation: 'Documentation',
-	agents: 'Agents',
 };
 
 export function isSidebarGroupId(value: unknown): value is SidebarGroupId {
@@ -35,7 +37,9 @@ export function isSidebarGroupId(value: unknown): value is SidebarGroupId {
 	);
 }
 
-export function sidebarGroupForPanel(panelId: SidebarPanelId): SidebarGroupId {
+export function sidebarGroupForPanel(
+	panelId: SidebarPanelId,
+): SidebarGroupId | undefined {
 	return PANEL_GROUP[panelId];
 }
 
@@ -59,12 +63,4 @@ export function applySidebarGroupReorder(
 	return panelOrder.map((id) =>
 		allowed.has(id) ? (iterator.next().value ?? id) : id,
 	);
-}
-
-export function resolveVisibleSidebarGroup(
-	selected: SidebarGroupId,
-	agentsEnabled: boolean,
-): SidebarGroupId {
-	if (selected === 'agents' && !agentsEnabled) return 'explorer';
-	return selected;
 }

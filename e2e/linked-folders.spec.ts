@@ -198,7 +198,7 @@ async function setFoldersWidth(page: Page, width: number): Promise<number> {
 }
 
 /**
- * Press a folder's grip, carry it to a point on the page, and let it go there.
+ * Press a folder's title, carry it to a point on the page, and let it go there.
  * The pointer is moved a step at a time, as a hand moves it: which way a card
  * is going is read from how the pointer has been travelling. `whileHeld` runs
  * part of the way there, with the card still in the hand.
@@ -210,9 +210,10 @@ async function dragGripTo(
 	whileHeld?: (pointer: { x: number; y: number }) => Promise<void>,
 ): Promise<void> {
 	const grip = await folderRow(page, folder)
-		.locator('.folders-tree__grip')
+		.locator('[data-folder-drag-handle="true"] .folders-tree__name')
+		.first()
 		.boundingBox();
-	if (grip === null) throw new Error(`${folder} has no grip.`);
+	if (grip === null) throw new Error(`${folder} has no title to carry it by.`);
 	const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
 	await page.mouse.move(from.x, from.y);
 	await page.mouse.down();
@@ -1845,7 +1846,7 @@ test('New terminal on a folder card creates a terminal in that folder, selects t
 	).toHaveClass(/folders-tree__new-terminal/);
 });
 
-test('every folder is reordered by dragging its grip or with the arrow keys, General included, and the card follows the pointer up and down only', async ({
+test('every folder is reordered by dragging its title or with Alt and the arrow keys, General included, and the card follows the pointer up and down only', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -1858,10 +1859,19 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 		'beta',
 		'gamma',
 	]);
-	const grip = (folder: string) =>
-		folderRow(mainWindow, folder).locator('.folders-tree__grip');
-	for (const name of ['General', 'alpha', 'beta', 'gamma'])
-		await expect(grip(name)).toHaveCount(1);
+	// A card is carried by its title line; the title row is what the keyboard
+	// moves, and what keeps focus.
+	const grip = (folder: string) => folderRow(mainWindow, folder);
+	const title = (folder: string) =>
+		folderRow(mainWindow, folder)
+			.locator('[data-folder-drag-handle="true"] .folders-tree__name')
+			.first();
+	for (const name of ['General', 'alpha', 'beta', 'gamma']) {
+		await expect(title(name)).toHaveCount(1);
+		await expect(
+			folderRow(mainWindow, name).locator('.folders-tree__grip'),
+		).toHaveCount(0);
+	}
 	const cardBox = async (folder: string) => {
 		const box = await folderGroup(mainWindow, folder).boundingBox();
 		if (box === null) throw new Error(`${folder} is not on screen.`);
@@ -1881,7 +1891,7 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 	// The last folder, dropped over the top of the one above it.
 	await dragGripTo(mainWindow, 'gamma', await pointIn('beta', 2));
 	await expectOrder(['General', 'alpha', 'gamma', 'beta']);
-	// Pressing a grip is not selecting a folder.
+	// Carrying a card is not selecting its folder.
 	await expect(folderRow(mainWindow, 'General')).toHaveClass(
 		/folders-tree__row--selected/,
 	);
@@ -1898,8 +1908,8 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 	const before = await cardBox('General');
 	const last = await cardBox('beta');
 	let held: { dx: number; dy: number; pointerDy: number } | undefined;
-	const pressedAt = await grip('General').boundingBox();
-	if (pressedAt === null) throw new Error('General has no grip.');
+	const pressedAt = await title('General').boundingBox();
+	if (pressedAt === null) throw new Error('General has no title.');
 	await dragGripTo(
 		mainWindow,
 		'General',
@@ -1916,21 +1926,42 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 	if (held === undefined) throw new Error('The card was never read in the hand.');
 	expect(Math.abs(held.dx)).toBeLessThan(1.5);
 	expect(held.pointerDy).toBeGreaterThan(20);
-	expect(Math.abs(held.dy - held.pointerDy)).toBeLessThan(6);
+	// The card follows from where the press became a carry, a few pixels in.
+	expect(Math.abs(held.dy - held.pointerDy)).toBeLessThan(14);
 	await expectOrder(['gamma', 'alpha', 'beta', 'General']);
 	await expect(folderRow(mainWindow, 'General')).toHaveClass(
 		/folders-tree__row--selected/,
 	);
 
-	// A press that does not start on a grip carries nothing.
-	const name = await folderRow(mainWindow, 'alpha')
-		.locator('.folders-tree__name')
-		.boundingBox();
+	// A press that barely moves is a click: it selects and carries nothing.
+	const name = await title('alpha').boundingBox();
 	if (name === null) throw new Error('alpha is not on screen.');
 	await mainWindow.mouse.move(name.x + 4, name.y + name.height / 2);
 	await mainWindow.mouse.down();
+	await mainWindow.mouse.move(name.x + 6, name.y + name.height / 2 + 3);
+	await mainWindow.waitForTimeout(40);
+	await mainWindow.mouse.up();
+	await expect(folderRow(mainWindow, 'alpha')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect(folderNames(mainWindow)).toHaveText([
+		'gamma',
+		'alpha',
+		'beta',
+		'General',
+	]);
+	// A press on a control of the title is that control's, however far it goes.
+	const toggle = await folderRow(mainWindow, 'alpha')
+		.getByRole('button', { name: 'Collapse alpha' })
+		.boundingBox();
+	if (toggle === null) throw new Error('alpha has no toggle.');
+	await mainWindow.mouse.move(
+		toggle.x + toggle.width / 2,
+		toggle.y + toggle.height / 2,
+	);
+	await mainWindow.mouse.down();
 	for (let step = 1; step <= 8; step += 1) {
-		await mainWindow.mouse.move(name.x + 4, name.y + step * 20);
+		await mainWindow.mouse.move(toggle.x + 4, toggle.y + step * 20);
 		await mainWindow.waitForTimeout(20);
 	}
 	await mainWindow.mouse.up();
@@ -1942,10 +1973,10 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 	]);
 	await selectFolder(mainWindow, 'General');
 
-	// From the keyboard: one place for each press, the grip keeps focus, and
+	// From the keyboard: one place for each press, the title keeps focus, and
 	// either end of the order is as far as a folder goes.
 	await grip('beta').focus();
-	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.keyboard.press('Alt+ArrowUp');
 	await expect(folderNames(mainWindow)).toHaveText([
 		'gamma',
 		'beta',
@@ -1953,7 +1984,7 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 		'General',
 	]);
 	await expect(grip('beta')).toBeFocused();
-	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.keyboard.press('Alt+ArrowUp');
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
 		'gamma',
@@ -1961,7 +1992,7 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 		'General',
 	]);
 	await expect(grip('beta')).toBeFocused();
-	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.keyboard.press('Alt+ArrowUp');
 	await mainWindow.waitForTimeout(500);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
@@ -1971,7 +2002,7 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 	]);
 	await expect(grip('beta')).toBeFocused();
 	await grip('General').focus();
-	await mainWindow.keyboard.press('ArrowDown');
+	await mainWindow.keyboard.press('Alt+ArrowDown');
 	await mainWindow.waitForTimeout(500);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
@@ -1979,7 +2010,7 @@ test('every folder is reordered by dragging its grip or with the arrow keys, Gen
 		'alpha',
 		'General',
 	]);
-	await mainWindow.keyboard.press('ArrowUp');
+	await mainWindow.keyboard.press('Alt+ArrowUp');
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
 		'gamma',
@@ -2045,8 +2076,7 @@ test('cards slide to their new places, and take them at once where the device as
 }) => {
 	for (const name of ['alpha', 'beta']) await createPlainFolder(mainWindow, name);
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
-	const grip = (folder: string) =>
-		folderRow(mainWindow, folder).locator('.folders-tree__grip');
+	const grip = (folder: string) => folderRow(mainWindow, folder);
 	/**
 	 * Move a folder one place from the keyboard and read where the card it
 	 * passes is drawn: two frames after the key, and once everything is still.
@@ -2071,7 +2101,7 @@ test('cards slide to their new places, and take them at once where the device as
 	};
 
 	// With motion, the passed card is still on its way two frames in.
-	const sliding = await moveAndWatch('beta', 'ArrowUp', 'alpha');
+	const sliding = await moveAndWatch('beta', 'Alt+ArrowUp', 'alpha');
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'beta', 'alpha']);
 	expect(Math.abs(sliding.early - sliding.settled)).toBeGreaterThan(2);
 
@@ -2082,11 +2112,11 @@ test('cards slide to their new places, and take them at once where the device as
 		['General', 'beta', 'alpha'],
 		{ timeout: 15_000 },
 	);
-	const still = await moveAndWatch('alpha', 'ArrowUp', 'beta');
+	const still = await moveAndWatch('alpha', 'Alt+ArrowUp', 'beta');
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
 	expect(Math.abs(still.early - still.settled)).toBeLessThan(0.5);
 
-	// Carried by its grip, it ends where it would without the preference.
+	// Carried by its title, it ends where it would without the preference.
 	const general = await folderGroup(mainWindow, 'General').boundingBox();
 	if (general === null) throw new Error('General is not on screen.');
 	await dragGripTo(mainWindow, 'beta', {
@@ -2346,8 +2376,12 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 		),
 	).toBeFocused();
 
-	// Escape leaves the name.
+	// Escape leaves the name. The click that opened the input also activated
+	// the terminal, which takes focus a moment later and is given it back for
+	// a short while; a key pressed inside that exchange would reach the terminal.
 	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
 	await expect(input).toBeFocused();
 	await mainWindow.keyboard.type('thrown away');
 	await mainWindow.keyboard.press('Escape');
@@ -2356,6 +2390,8 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 
 	// So does a blank name.
 	await row.dblclick();
+	await expect(input).toBeFocused();
+	await mainWindow.waitForTimeout(500);
 	await expect(input).toBeFocused();
 	await input.fill('   ');
 	await mainWindow.keyboard.press('Enter');
@@ -2377,5 +2413,187 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 	await expect(
 		terminalRowOf(mainWindow, firstSession).locator('.folders-tree__name'),
 	).toHaveText('logs', { timeout: 15_000 });
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('the tree lists every tab of a folder: terminals, files and folder tabs, in panel order', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const workspace = await createWorkspace({
+		name: 'lf-every-tab',
+		seed: {
+			directories: ['assets'],
+			files: { 'notes.txt': 'a file tab\n', 'assets/inner.txt': 'inside\n' },
+		},
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openFileExplorer(mainWindow);
+
+	const rows = (folder: string) =>
+		folderGroup(mainWindow, folder).locator('.folders-tree__row--panel');
+	const kinds = (folder: string) =>
+		rows(folder).evaluateAll((elements) =>
+			elements.map((element) =>
+				element.getAttribute('data-folder-panel-kind'),
+			),
+		);
+	const tabs = mainWindow.locator(
+		'.project-workspace--active .terminal-tab-content',
+	);
+	await expect(rows('General')).toHaveCount(1);
+	expect(await kinds('General')).toEqual(['terminal']);
+
+	// Opening a file and a folder adds a row for each, after the terminal.
+	await fileItem(mainWindow, 'notes.txt').dblclick();
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(1);
+	await expect(rows('General')).toHaveCount(2);
+	await fileItem(mainWindow, 'assets').dblclick();
+	await expect(mainWindow.locator('.folder-viewer__title')).toHaveText(
+		'assets',
+	);
+	await expect(rows('General')).toHaveCount(3);
+	expect(await kinds('General')).toEqual(['terminal', 'file', 'folder']);
+	const fileRow = rows('General').nth(1);
+	const folderTabRow = rows('General').nth(2);
+	// Each is titled as its tab is, and carries its kind's icon where a
+	// terminal carries its status.
+	await expect(fileRow.locator('.folders-tree__name')).toHaveText('notes.txt');
+	await expect(folderTabRow.locator('.folders-tree__name')).toHaveText(
+		'assets',
+	);
+	await expect(fileRow.locator('.folders-tree__kind')).toBeVisible();
+	await expect(fileRow.locator('.agent-status-indicator')).toHaveCount(0);
+	await expect(
+		rows('General').first().locator('.agent-status-indicator'),
+	).toBeVisible();
+	// The terminal rows are still exactly the terminals.
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
+
+	// The tab in front is the row that is highlighted, whatever its kind.
+	await expect(folderTabRow).toHaveClass(/folders-tree__row--active/);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__row--active'),
+	).toHaveCount(1);
+
+	// A file's row goes to the file. Only a terminal is renamed or carried.
+	await fileRow.dblclick();
+	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
+	await expect(folderTabRow).not.toHaveClass(/folders-tree__row--active/);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__rename'),
+	).toHaveCount(0);
+	await expect(fileRow).toHaveAttribute('draggable', 'false');
+	await expect(rows('General').first()).toHaveAttribute('draggable', 'true');
+
+	// From another folder, the row selects its folder and shows the file.
+	await createPlainFolder(mainWindow, 'Scratch');
+	await selectFolder(mainWindow, 'Scratch');
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(0);
+	await fileRow.click();
+	await expect(folderRow(mainWindow, 'General')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	await expect(tabs.filter({ hasText: 'notes.txt' })).toHaveCount(1);
+	await expect(fileRow).toHaveClass(/folders-tree__row--active/);
+
+	// Closing the tab takes its row away.
+	await mainWindow.getByLabel('Close file tab').click();
+	await expect(rows('General')).toHaveCount(2);
+	expect(await kinds('General')).toEqual(['terminal', 'folder']);
+	await mainWindow.getByLabel('Close folder tab').click();
+	await expect(rows('General')).toHaveCount(1);
+	expect(await kinds('General')).toEqual(['terminal']);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('a folder collapses to its title line from its toggle or the keyboard, shows one status for its terminals, and stays collapsed across a reload', async ({
+	mainWindow,
+}) => {
+	const sessionId = await activeTerminalSessionId(mainWindow);
+	await createPlainFolder(mainWindow, 'Scratch');
+	await selectFolder(mainWindow, 'General');
+	const header = folderRow(mainWindow, 'General');
+	const card = folderGroup(mainWindow, 'General');
+	const rows = card.locator('.folders-tree__row--panel');
+	const newTerminal = card.getByRole('button', {
+		name: 'New terminal in General',
+	});
+	const attention = header.locator('.folders-tree__attention');
+	await expect(rows).toHaveCount(1);
+	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	// Open, the terminal says its own state and the title says none.
+	await expect(attention).toHaveCount(0);
+
+	// The toggle closes the card to its title line, and does not select.
+	await selectFolder(mainWindow, 'Scratch');
+	await header.getByRole('button', { name: 'Collapse General' }).click();
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await expect(rows).toHaveCount(0);
+	await expect(newTerminal).toHaveCount(0);
+	await expect(header.locator('.folders-tree__branch')).toHaveCount(0);
+	await expect(folderRow(mainWindow, 'Scratch')).toHaveClass(
+		/folders-tree__row--selected/,
+	);
+	// Every terminal in it is idle, so the title is quiet.
+	await expect(attention).toHaveCount(0);
+
+	// One state for the folder: the most urgent of its terminals.
+	await mainWindow.evaluate(async (terminalSessionId) => {
+		const seam = window.terminayAgentStatusTest;
+		if (!seam) throw new Error('Agent status test seam is unavailable');
+		const pid = await seam.terminalShellPid(terminalSessionId);
+		if (pid === null) throw new Error('Terminal shell pid is unavailable');
+		const accepted = await seam.publishSessions({
+			sourceId: 'com.terminay.e2e/agents',
+			harnesses: [{ id: 'codex', displayName: 'Codex' }],
+			publication: {
+				upserts: [
+					{
+						harness: 'codex',
+						pid,
+						cwd: '/tmp',
+						id: 'codex-collapsed',
+						title: 'Working in a collapsed folder',
+						status: 'running',
+					},
+				],
+			},
+		});
+		if (!accepted) throw new Error('Agent publication was not accepted');
+	}, sessionId);
+	await expect(attention).toHaveCount(1);
+	await expect(attention).toHaveAttribute('data-agent-state', 'working');
+
+	// Selecting a collapsed folder shows it and leaves it collapsed, with its
+	// title tinted since no row can show where the user is.
+	await selectFolder(mainWindow, 'General');
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await expect(header).toHaveClass(/folders-tree__row--selected-alone/);
+
+	// It is this device's choice, and a reload keeps it.
+	await mainWindow.reload();
+	await expect(folderRow(mainWindow, 'General')).toHaveAttribute(
+		'aria-expanded',
+		'false',
+		{ timeout: 15_000 },
+	);
+	await expect(rows).toHaveCount(0);
+	await expect(folderRow(mainWindow, 'Scratch')).toHaveAttribute(
+		'aria-expanded',
+		'true',
+	);
+
+	// Right opens it and Left closes it, as in any tree.
+	await folderRow(mainWindow, 'General').focus();
+	await mainWindow.keyboard.press('ArrowRight');
+	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	await expect(rows).toHaveCount(1);
+	await expect(newTerminal).toBeVisible();
+	await expect(attention).toHaveCount(0);
+	await mainWindow.keyboard.press('ArrowLeft');
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await header.getByRole('button', { name: 'Expand General' }).click();
+	await expect(rows).toHaveCount(1);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });

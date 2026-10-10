@@ -220,14 +220,14 @@ test('the tree joins the projection, the inventory, and the worktree listing', (
 	assert.equal(general.isSelected, false);
 	// Falls back to the projection's title, idle.
 	assert.deepEqual(
-		general.terminals.map((row) => [row.title, row.status, row.isActive]),
+		general.panels.map((row) => [row.title, row.status, row.isActive]),
 		[['server title', 'idle', false]],
 	);
 	assert.equal(one.isSelected, true);
 	assert.equal(one.branch, 'feat/one');
 	assert.equal(one.pullRequest.number, 350);
 	assert.deepEqual(
-		one.terminals.map((row) => [row.title, row.status, row.isActive]),
+		one.panels.map((row) => [row.title, row.status, row.isActive]),
 		[['renamed here', 'waiting', true]],
 	);
 });
@@ -262,4 +262,55 @@ test('a project no projection describes has no tree yet', () => {
 		}),
 		[],
 	);
+});
+
+test('the file and folder tabs open on this device are rows of their folder, where their tabs are', () => {
+	const viewer = (panelId, kind, folderId, extra = {}) => {
+		const { sessionId: _none, ...rest } = entry(panelId, { kind, folderId, ...extra });
+		return rest;
+	};
+	const rows = buildProjectFolderTree({
+		...projection,
+		folders: {
+			...projection.folders,
+			general: { ...projection.folders.general, panelIds: ['dev', 'logs'] },
+		},
+		panels: { ...projection.panels, logs: terminal('logs', 'general', 'logs') },
+		selectedFolderId: 'general',
+		inventory: [
+			// The tab strip: a file first, then the two terminals with a folder
+			// tab between them. The projection holds only the terminals.
+			viewer('readme', 'file', 'general', { title: 'README.md', isActivePanel: true }),
+			entry('dev', { folderId: 'general', title: 'dev' }),
+			viewer('src', 'folder', 'general', { title: 'src' }),
+			entry('logs', { folderId: 'general', title: 'logs' }),
+			// A tab in no folder this window knows is not placed anywhere.
+			viewer('stray', 'file', undefined),
+		],
+	});
+	const [general, one] = rows;
+	assert.deepEqual(
+		general.panels.map((row) => [row.panelId, row.kind, row.title, row.isActive]),
+		[
+			['readme', 'file', 'README.md', true],
+			['dev', 'terminal', 'dev', false],
+			['src', 'folder', 'src', false],
+			['logs', 'terminal', 'logs', false],
+		],
+	);
+	assert.equal(general.isEmpty, false);
+	// A folder whose tabs are not drawn here still lists what the server holds.
+	assert.deepEqual(one.panels.map((row) => row.panelId), ['agent']);
+});
+
+test('a folder whose only tab is a file is not empty', () => {
+	const { sessionId: _none, ...file } = entry('notes', { kind: 'file', folderId: 'one', title: 'notes.txt' });
+	const [, one] = buildProjectFolderTree({
+		...projection,
+		folders: { ...projection.folders, one: { ...projection.folders.one, panelIds: [] } },
+		selectedFolderId: 'one',
+		inventory: [file],
+	});
+	assert.deepEqual(one.panels.map((row) => [row.kind, row.title]), [['file', 'notes.txt']]);
+	assert.equal(one.isEmpty, false);
 });

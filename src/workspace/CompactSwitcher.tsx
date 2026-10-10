@@ -11,9 +11,11 @@
  */
 
 import { FolderPlus, Plus, Search, Server, X } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
+import { FOLDERS_COLUMN_TABS } from '../components/folders/foldersColumnTabs';
+import { SidebarGroupTabs } from '../components/sidebar/SidebarGroupTabs';
 import { useLongPress } from '../hooks/useLongPress';
 import type {
 	CompactSwitcherConnectionGroup,
@@ -25,8 +27,12 @@ import {
 	compactSwitcherIsEmpty,
 	formatCompactSwitcherSummary,
 } from './compactSwitcherModel.ts';
+import type { FoldersColumnTabId } from '../types/settings';
 
 export type CompactSwitcherProps = Readonly<{
+	/** The agents of the project in front. When present the sheet offers the
+	 * left column's two tabs, Tabs and Agents, and shows this under Agents. */
+	agents?: ReactNode;
 	/** The row for the panel in front, so the list says where you already are. */
 	activePanelKey?: string;
 	/** Where the create bar's terminal will land: the project in front and the
@@ -222,6 +228,7 @@ function CompactSwitcherProjectHeading({
 
 export function CompactSwitcher({
 	activePanelKey,
+	agents,
 	front,
 	groups,
 	onActivateFolder,
@@ -242,6 +249,11 @@ export function CompactSwitcher({
 	servers = [],
 }: CompactSwitcherProps) {
 	const searchRef = useRef<HTMLInputElement>(null);
+	// The sheet is for switching, so every open starts on Tabs: it is mounted
+	// afresh each time, and nothing remembers the last choice.
+	const [selectedTab, setSelectedTab] = useState<FoldersColumnTabId>('tabs');
+	const shownTab: FoldersColumnTabId =
+		agents === undefined ? 'tabs' : selectedTab;
 	// The switcher opens to be read, not typed into: nearly every use is a tap
 	// on a project or a panel. Nothing takes focus until a user asks for the
 	// filter, so opening the sheet never raises a keyboard.
@@ -315,7 +327,7 @@ export function CompactSwitcher({
 								<X size={15} aria-hidden="true" />
 							</button>
 						</div>
-					) : (
+					) : shownTab !== 'tabs' ? null : (
 						<button
 							type="button"
 							className="compact-switcher__search-open"
@@ -328,7 +340,42 @@ export function CompactSwitcher({
 						</button>
 					)}
 				</div>
-				<div className="compact-switcher__body">
+				{agents === undefined ? null : (
+					<SidebarGroupTabs
+						className="compact-switcher__tabs"
+						activeTab={shownTab}
+						tabs={FOLDERS_COLUMN_TABS}
+						idPrefix="compact-switcher"
+						label="Switcher"
+						showLabels
+						onSelect={(tabId) => {
+							// The filter belongs to Tabs; leaving takes it away.
+							if (tabId !== 'tabs' && isSearchOpen) closeSearch();
+							setSelectedTab(tabId);
+						}}
+					/>
+				)}
+				{shownTab === 'agents' ? (
+					<div
+						className="compact-switcher__body compact-switcher__agents"
+						id="compact-switcher-panel"
+						role="tabpanel"
+						aria-labelledby="compact-switcher-tab-agents"
+					>
+						{agents}
+					</div>
+				) : (
+				<>
+				<div
+					className="compact-switcher__body"
+					{...(agents === undefined
+						? {}
+						: {
+								id: 'compact-switcher-panel',
+								role: 'tabpanel',
+								'aria-labelledby': 'compact-switcher-tab-tabs',
+							})}
+				>
 					{isEmpty ? (
 						<p className="compact-switcher__empty" role="status">
 							Nothing matches “{query.trim()}”.
@@ -553,6 +600,8 @@ export function CompactSwitcher({
 						<Server size={16} aria-hidden="true" />
 					</button>
 				</div>
+				</>
+				)}
 			</div>
 		</div>
 	);

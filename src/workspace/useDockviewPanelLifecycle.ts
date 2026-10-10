@@ -81,6 +81,9 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 				removePanelMapping(panel.id, latest.filePathPanelMapRef);
 				removePanelMapping(panel.id, latest.folderPathPanelMapRef);
 				latest.closeServerPanel?.(panel.id);
+				// A file or folder tab is in the inventory too: the Folders
+				// tree and the compact switcher list it until told it is gone.
+				window.requestAnimationFrame(latest.publishWorkspaceInventory);
 				return;
 			}
 

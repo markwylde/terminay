@@ -340,7 +340,7 @@ test('Changes pane lists grouped working tree changes and opens a diff', async (
   // worktrees lives with the list of folders, and with only the main worktree
   // there is nothing it may target.
   await expect(changes.locator('.sidebar-pane__count')).toHaveText('3')
-  await foldersColumn(mainWindow).getByRole('button', { name: 'Folders actions' }).click()
+  await foldersColumn(mainWindow).getByRole('button', { name: 'Tabs actions' }).click()
   await expect(contextMenuItem(mainWindow, 'Delete all clean worktrees')).toBeDisabled()
   await mainWindow.keyboard.press('Escape')
   await expect(changes).not.toHaveClass(/sidebar-pane--collapsed/)
@@ -742,7 +742,7 @@ test('the Folders menu deletes every clean worktree and leaves changed ones alon
   await expect(clean(dirty)).toHaveCount(0, { timeout: 6000 })
 
   const openFoldersMenu = () =>
-    foldersColumn(mainWindow).getByRole('button', { name: 'Folders actions' }).click()
+    foldersColumn(mainWindow).getByRole('button', { name: 'Tabs actions' }).click()
 
   // Declining the confirmation removes nothing.
   await dialogs.clearCalls()

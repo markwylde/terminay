@@ -9,14 +9,17 @@ import {
 	getProjectTabColor,
 	isProjectFoldersTreeOpenOnDevice,
 	isProjectSidebarOpenOnDevice,
-	projectFoldersColumnLayoutOnDevice,
+	collapsedFoldersAfterToggle,
+	projectCollapsedFoldersOnDevice,
+	projectFoldersColumnTabOnDevice,
 	projectFoldersTreeWidthOnDevice,
 	projectSidebarPatch,
 	projectSidebarVisibilityKey,
 	projectTabColorHue,
 	projectTabHueDistance,
 	sidebarActiveGroupOnDevice,
-	withProjectFoldersColumnLayout,
+	withProjectCollapsedFolders,
+	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
 	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
@@ -89,83 +92,76 @@ test('the Folders tree is open by default and device-local per server and projec
 	assert.equal(isProjectFoldersTreeOpenOnDevice(resized, 'server-a', 'project-a'), false);
 });
 
-test('the left column stack is device-local per server and project', () => {
-	const sidebar = {
-		...defaultTerminalSettings.sidebar,
-		defaultAgentsPaneHeight: 260,
-	};
-	assert.deepEqual(
-		projectFoldersColumnLayoutOnDevice(sidebar, 'server-a', 'project-a'),
-		{
-			order: ['folders', 'agents'],
-			foldersHeight: 320,
-			agentsHeight: 260,
-			isFoldersCollapsed: false,
-			isAgentsCollapsed: false,
-		},
+test('the left column tab is device-local per server and project', () => {
+	const sidebar = defaultTerminalSettings.sidebar;
+	assert.equal(
+		projectFoldersColumnTabOnDevice(sidebar, 'server-a', 'project-a'),
+		'tabs',
 	);
-
-	const arranged = withProjectFoldersColumnLayout(sidebar, 'server-a', 'project-a', {
-		order: ['agents', 'folders'],
-		foldersHeight: 411.6,
-		agentsHeight: 180,
-		isFoldersCollapsed: false,
-		isAgentsCollapsed: true,
-	});
-	assert.deepEqual(
-		projectFoldersColumnLayoutOnDevice(arranged, 'server-a', 'project-a'),
-		{
-			order: ['agents', 'folders'],
-			foldersHeight: 412,
-			agentsHeight: 180,
-			isFoldersCollapsed: false,
-			isAgentsCollapsed: true,
-		},
+	const chosen = withProjectFoldersColumnTab(
+		sidebar,
+		'server-a',
+		'project-a',
+		'agents',
 	);
-	assert.deepEqual(
-		projectFoldersColumnLayoutOnDevice(arranged, 'server-a', 'project-b').order,
-		['folders', 'agents'],
+	assert.equal(
+		projectFoldersColumnTabOnDevice(chosen, 'server-a', 'project-a'),
+		'agents',
 	);
-	assert.deepEqual(
-		projectFoldersColumnLayoutOnDevice(arranged, 'server-b', 'project-a').order,
-		['folders', 'agents'],
+	assert.equal(
+		projectFoldersColumnTabOnDevice(chosen, 'server-a', 'project-b'),
+		'tabs',
+	);
+	assert.equal(
+		projectFoldersColumnTabOnDevice(chosen, 'server-b', 'project-a'),
+		'tabs',
 	);
 });
 
-test('a stored left column stack always names both panes at bounded heights', () => {
+test('an unknown stored left column tab reads as tabs', () => {
 	const normalized = normalizeTerminalSettings({
 		sidebar: {
+			projectFoldersColumnTab: {
+				'server-a:agents': 'agents',
+				'server-a:folders': 'folders',
+				'server-a:bad': 3,
+			},
+			// What an earlier build stored for the column is not read.
 			projectFoldersColumnLayout: {
-				'server-a:reordered': { order: ['agents', 'folders'] },
-				'server-a:partial': { order: ['agents'], foldersHeight: 4 },
-				'server-a:unknown': {
-					order: ['git', 'agents', 'agents', 'folders'],
-					agentsHeight: 9_000,
-					isAgentsCollapsed: 'yes',
-				},
-				'server-a:bad': 'tall',
+				'server-a:agents': { order: ['agents', 'folders'] },
 			},
 		},
-	}).sidebar.projectFoldersColumnLayout;
-	assert.deepEqual(Object.keys(normalized), [
-		'server-a:reordered',
-		'server-a:partial',
-		'server-a:unknown',
-	]);
-	assert.deepEqual(normalized['server-a:reordered']?.order, ['agents', 'folders']);
-	assert.deepEqual(normalized['server-a:partial'], {
-		order: ['agents', 'folders'],
-		foldersHeight: 30,
-		agentsHeight: 200,
-		isFoldersCollapsed: false,
-		isAgentsCollapsed: false,
+	}).sidebar;
+	assert.deepEqual(normalized.projectFoldersColumnTab, {
+		'server-a:agents': 'agents',
 	});
-	assert.deepEqual(normalized['server-a:unknown']?.order, ['agents', 'folders']);
-	assert.equal(normalized['server-a:unknown']?.agentsHeight, 2_000);
-	assert.equal(normalized['server-a:unknown']?.isAgentsCollapsed, false);
+	assert.equal('projectFoldersColumnLayout' in normalized, false);
+	assert.equal(
+		projectFoldersColumnTabOnDevice(normalized, 'server-a', 'folders'),
+		'tabs',
+	);
 	assert.deepEqual(
-		normalizeTerminalSettings({}).sidebar.projectFoldersColumnLayout,
+		normalizeTerminalSettings({}).sidebar.projectFoldersColumnTab,
 		{},
+	);
+});
+
+test('a stored sidebar group the sidebar does not offer reads as Explorer', () => {
+	const sidebar = normalizeTerminalSettings({
+		sidebar: {
+			projectActiveGroup: {
+				'server-a:project-a': 'agents',
+				'server-a:project-b': 'documentation',
+			},
+		},
+	}).sidebar;
+	assert.equal(
+		sidebarActiveGroupOnDevice(sidebar, 'server-a', 'project-a'),
+		'explorer',
+	);
+	assert.equal(
+		sidebarActiveGroupOnDevice(sidebar, 'server-a', 'project-b'),
+		'documentation',
 	);
 });
 
@@ -375,4 +371,31 @@ test('a user-chosen color off the palette still repels the next project', () => 
 		true,
 		`Expected the next color to avoid ${chosen}, got ${next}.`,
 	);
+});
+
+test('collapsed folders are device-local per server and project, and an empty set keeps no entry', () => {
+	const sidebar = defaultTerminalSettings.sidebar;
+	assert.deepEqual(projectCollapsedFoldersOnDevice(sidebar, 'server-a', 'project-a'), []);
+	assert.deepEqual(collapsedFoldersAfterToggle([], 'one'), ['one']);
+	assert.deepEqual(collapsedFoldersAfterToggle(['one', 'two'], 'one'), ['two']);
+
+	const collapsed = withProjectCollapsedFolders(sidebar, 'server-a', 'project-a', ['one', 'two']);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-a', 'project-a'), ['one', 'two']);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-a', 'project-b'), []);
+	assert.deepEqual(projectCollapsedFoldersOnDevice(collapsed, 'server-b', 'project-a'), []);
+	assert.deepEqual(
+		withProjectCollapsedFolders(collapsed, 'server-a', 'project-a', []).projectFoldersCollapsed,
+		{},
+	);
+
+	const normalized = normalizeTerminalSettings({
+		sidebar: {
+			projectFoldersCollapsed: {
+				'server-a:kept': ['one', 'one', 7, '', 'two'],
+				'server-a:empty': [],
+				'server-a:bad': 'one',
+			},
+		},
+	}).sidebar.projectFoldersCollapsed;
+	assert.deepEqual(normalized, { 'server-a:kept': ['one', 'two'] });
 });

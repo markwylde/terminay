@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from './fixtures';
+import { sendAppCommand } from './support/app';
 import {
 	openFileExplorer,
 	selectSidebarGroup,
@@ -35,8 +36,8 @@ function leftColumn(page: Page): Locator {
 	);
 }
 
-function leftColumnPane(page: Page, id: string): Locator {
-	return leftColumn(page).locator(`[data-sidebar-pane-id="${id}"]`);
+function leftColumnPanel(page: Page, id: 'tabs' | 'agents'): Locator {
+	return leftColumn(page).locator(`[data-folders-column-panel="${id}"]`);
 }
 
 function sidebarTitle(page: Page, id: string): Locator {
@@ -128,12 +129,21 @@ test('sidebar groups switch Explorer and Documentation stacks, and Agents is in 
 
 	await expect(tablist.getByRole('tab')).toHaveCount(2);
 	await expect(tablist.getByRole('tab', { name: 'Agents' })).toHaveCount(0);
-	await expect(leftColumnPane(mainWindow, 'folders')).toBeVisible();
-	await expect(leftColumnPane(mainWindow, 'agents')).toBeVisible();
+	// Agents are a tab of the left column instead.
+	await expect(
+		leftColumn(mainWindow).getByRole('tab', { name: 'Agents' }),
+	).toBeVisible();
 
 	await selectSidebarGroup(mainWindow, 'explorer');
 	await expect(sidebarPane(mainWindow, 'explorer')).toBeVisible();
 	await expect(sidebarPane(mainWindow, 'git')).toBeVisible();
+
+	// A narrow drawer offers the same two groups: there is no Agents group
+	// at any width.
+	await mainWindow.setViewportSize({ width: 390, height: 844 });
+	await openFileExplorer(mainWindow);
+	await expect(tablist.getByRole('tab')).toHaveCount(2);
+	await expect(tablist.getByRole('tab', { name: 'Agents' })).toHaveCount(0);
 });
 
 test('sidebar visibility stays local to this device and project', async ({
@@ -1118,83 +1128,132 @@ async function pageMouseDragPreview(
 	await page.mouse.move(x + deltaX, y);
 }
 
-test('the left column stacks Folders and Agents as collapsible, resizable, reorderable panes under an untitled band', async ({
+test('the left column switches between Tabs and Agents from icon tabs in its band', async ({
+	appHarness,
 	mainWindow,
 }) => {
 	const column = leftColumn(mainWindow);
-	const folders = leftColumnPane(mainWindow, 'folders');
-	const agents = leftColumnPane(mainWindow, 'agents');
-	await expect(folders).toBeVisible();
-	await expect(agents).toBeVisible();
-
-	// The band keeps its chrome and its menu, and says nothing.
 	const band = column.locator('.folders-column__header');
-	await expect(band).toBeVisible();
+	const tabsTab = band.getByRole('tab', { name: 'Tabs' });
+	const agentsTab = band.getByRole('tab', { name: 'Agents' });
+	const tabsPanel = leftColumnPanel(mainWindow, 'tabs');
+	const agentsPanel = leftColumnPanel(mainWindow, 'agents');
+	const actions = band.getByRole('button', { name: 'Tabs actions' });
+
+	// Two icon tabs in the band, Tabs first and selected; the band says nothing.
+	await expect(band.getByRole('tablist')).toBeVisible();
+	await expect(band.getByRole('tab')).toHaveCount(2);
+	await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
+	await expect(agentsTab).toHaveAttribute('aria-selected', 'false');
+	await expect(tabsTab).toHaveAttribute('title', 'Tabs');
 	expect((await band.innerText()).trim()).toBe('');
-	await expect(
-		band.getByRole('button', { name: 'Folders actions' }),
-	).toBeVisible();
-	const tabStrip = mainWindow
-		.locator('.project-workspace--active')
-		.getByRole('tablist', { name: 'Sidebar' });
+	await expect(tabsPanel).toBeVisible();
+	await expect(agentsPanel).toBeHidden();
+	await expect(actions).toBeVisible();
+
+	// One list, with none of a pane's chrome and no count on the icon.
+	await expect(column.locator('.sidebar-pane')).toHaveCount(0);
+	await expect(column.locator('[data-sidebar-pane-title]')).toHaveCount(0);
+	await expect(column.locator('[data-sidebar-resize-handle]')).toHaveCount(0);
+	await expect(column.locator('.sidebar-pane__count')).toHaveCount(0);
+	expect((await agentsTab.innerText()).trim()).toBe('');
+
+	// The band and its icons match the sidebar's on the other side.
 	await openFileExplorer(mainWindow);
+	const sidebarTabs = mainWindow
+		.locator('.project-workspace--active .file-explorer-sidebar')
+		.getByRole('tablist', { name: 'Sidebar' });
+	const box = (locator: Locator) =>
+		locator.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			return {
+				width: Math.round(rect.width),
+				height: Math.round(rect.height),
+			};
+		});
+	expect(await box(tabsTab)).toEqual(
+		await box(sidebarTabs.getByRole('tab', { name: 'Explorer' })),
+	);
 	expect(
 		await band.evaluate((element) => getComputedStyle(element).backgroundColor),
 	).toBe(
-		await tabStrip.evaluate(
+		await sidebarTabs.evaluate(
 			(element) => getComputedStyle(element).backgroundColor,
 		),
 	);
-
-	const top = async (pane: Locator) => (await pane.boundingBox())?.y ?? -1;
-	const height = async (pane: Locator) =>
-		(await pane.boundingBox())?.height ?? -1;
-	expect(await top(folders)).toBeLessThan(await top(agents));
-
-	// Collapse: the pane keeps its title and gives its body away.
-	const agentsHeightBefore = await height(agents);
-	await folders.locator('.sidebar-pane__header').click();
-	await expect(folders).toHaveClass(/sidebar-pane--collapsed/);
-	await expect(folders.locator('[data-sidebar-pane-title]')).toBeVisible();
-	await expect
-		.poll(() => height(agents))
-		.toBeGreaterThan(agentsHeightBefore);
-	await folders.locator('.sidebar-pane__header').click();
-	await expect(folders).not.toHaveClass(/sidebar-pane--collapsed/);
-
-	// Resize from the keyboard: the boundary moves and both titles stay.
-	const separator = column.locator('[data-sidebar-resize-handle="agents"]');
-	await expect(separator).toHaveAttribute('aria-orientation', 'horizontal');
-	const foldersHeightBefore = await height(folders);
-	await separator.focus();
-	await mainWindow.keyboard.press('ArrowUp');
-	await mainWindow.keyboard.press('ArrowUp');
-	await expect.poll(() => height(folders)).toBeLessThan(foldersHeightBefore);
-	const resizedFoldersHeight = await height(folders);
-
-	// Reorder from the keyboard: Agents moves above Folders.
-	await agents.getByRole('button', { name: 'Reorder Agents panel' }).focus();
-	await mainWindow.keyboard.press('ArrowUp');
-	await expect.poll(async () => (await top(agents)) < (await top(folders))).toBe(
-		true,
+	expect((await band.boundingBox())?.height).toBe(
+		(await sidebarTabs.boundingBox())?.height,
 	);
 
-	// The arrangement is this device's, and survives a reload.
-	await mainWindow.reload();
-	await expect(leftColumnPane(mainWindow, 'agents')).toBeVisible();
+	// Enough terminals that the tree is taller than a short window, scrolled.
+	await mainWindow.setViewportSize({ width: 1100, height: 420 });
+	for (let created = 0; created < 8; created += 1)
+		await sendAppCommand(mainWindow, 'new-terminal');
+	const tree = tabsPanel.locator('.folders-tree');
+	await expect(tree.locator('.folders-tree__row--terminal')).toHaveCount(9);
 	await expect
-		.poll(
-			async () =>
-				(await top(leftColumnPane(mainWindow, 'agents'))) <
-				(await top(leftColumnPane(mainWindow, 'folders'))),
-		)
+		.poll(() => tree.evaluate((el) => el.scrollHeight > el.clientHeight))
 		.toBe(true);
-	await expect
-		.poll(async () =>
-			Math.abs(
-				(await height(leftColumnPane(mainWindow, 'folders'))) -
-					resizedFoldersHeight,
-			),
-		)
-		.toBeLessThanOrEqual(2);
+	// As far down as it goes, which is what the browser will keep.
+	const scrolledTo = await tree.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+		return element.scrollTop;
+	});
+	expect(scrolledTo).toBeGreaterThan(0);
+	// The list scrolls; the column around it does not.
+	expect(
+		await column.evaluate((el) => el.scrollHeight === el.clientHeight),
+	).toBe(true);
+
+	// Agents takes the whole column, and the actions control goes with Tabs.
+	await agentsTab.click();
+	await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+	await expect(agentsPanel).toBeVisible();
+	await expect(tabsPanel).toBeHidden();
+	await expect(actions).toHaveCount(0);
+	const body = column.locator('.folders-column__body');
+	expect((await agentsPanel.boundingBox())?.height).toBe(
+		(await body.boundingBox())?.height,
+	);
+
+	// The keyboard moves between the tabs, and focus goes with the selection.
+	await agentsTab.focus();
+	await mainWindow.keyboard.press('ArrowRight');
+	await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
+	await expect(tabsTab).toBeFocused();
+	await expect(tabsPanel).toBeVisible();
+	await expect(actions).toBeVisible();
+	// The tree is where it was left.
+	expect(await tree.evaluate((element) => element.scrollTop)).toBe(
+		scrolledTo,
+	);
+	await mainWindow.keyboard.press('ArrowLeft');
+	await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+
+	// The choice is this device's, and survives a reload.
+	await mainWindow.reload();
+	await expect(
+		leftColumn(mainWindow).getByRole('tab', { name: 'Agents' }),
+	).toHaveAttribute('aria-selected', 'true');
+	await expect(leftColumnPanel(mainWindow, 'agents')).toBeVisible();
+	await expect(leftColumnPanel(mainWindow, 'tabs')).toBeHidden();
+
+	// With agent integration off there is one list and no tabs to choose from.
+	const settingsWindow = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'agent-integration',
+	});
+	const toggle = settingsWindow
+		.getByLabel('Agent status and sidebar')
+		.locator('input[type="checkbox"]');
+	await toggle.evaluate((element) => (element as HTMLInputElement).click());
+	await expect(toggle).not.toBeChecked();
+	await settingsWindow.close();
+	await expect(leftColumn(mainWindow).getByRole('tab')).toHaveCount(0);
+	await expect(leftColumn(mainWindow).getByRole('tablist')).toHaveCount(0);
+	await expect(leftColumnPanel(mainWindow, 'tabs')).toBeVisible();
+	await expect(leftColumnPanel(mainWindow, 'agents')).toHaveCount(0);
+	await expect(
+		leftColumn(mainWindow).getByRole('button', { name: 'Tabs actions' }),
+	).toBeVisible();
 });
