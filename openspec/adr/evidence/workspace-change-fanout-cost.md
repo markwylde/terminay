@@ -49,6 +49,40 @@ Commit primitives, p50 (p95) in milliseconds:
 - The write is 1.4 to 7.3 ms at every size measured. That is affordable at the rate people change a workspace and not at the rate programs print.
 - Nothing here was unbounded, and each site was correct on its own. The cost came from a value that changes every second being given the path built for changes a person makes.
 
+## After
+
+**One committed rename**, through the server's operation registry with three observers attached and the Desktop backend's atomic whole-file write, 400 runs, p50 (p95) in milliseconds. The states are built by commands, so they are smaller per panel than the field workspace above.
+
+| State | Before | After |
+| --- | --- | --- |
+| 4 panels | 0.23 (0.29) | 0.14 (0.19) |
+| 40 panels | 0.82 (1.17) | 0.30 (0.38) |
+| 160 panels | 2.93 (3.77) | 0.88 (1.33) |
+
+**Whole-state copies**, counted by the commit-cost harness in `packages/server-core/test/workspace-commit-cost.test.mjs`:
+
+| | Before | After |
+| --- | --- | --- |
+| One rename, through the registry | 8 | 1 |
+| Ten reads of the committed state | 20 | 0 |
+
+**One title change**, by test rather than by trace:
+
+| Layer | Before | After |
+| --- | --- | --- |
+| Workspace commits, revisions, file writes | 1 each | 0 |
+| Wire, per client | an event, then a full-state query and reply | one event carrying the title |
+| Client workspace projection | replaced, every object new | untouched |
+| Explorer listings, watches opened, Git subscriptions, forced Git measurements | 1 each per mounted folder | 0 |
+
+**One workspace change of any other kind** (a rename, a move, a close):
+
+| Layer | Before | After |
+| --- | --- | --- |
+| Wire, per client | an event, then a full-state query and reply | one event carrying the change record |
+| Client workspace projection | every object new | the objects the record names are new; the rest are the objects they were |
+| Explorer and Git, per mounted folder | re-listed and re-measured | untouched unless its root, project, or clients changed |
+
 ## Not measured
 
 - Renderer time per revision. It was traced by reading, not profiled.

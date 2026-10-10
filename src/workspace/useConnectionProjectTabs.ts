@@ -100,11 +100,20 @@ export function useConnectionProjectTabs(
 			next[serverId] = store.snapshot;
 			unsubscribes.push(
 				store.subscribe((snapshot) => {
-					setSnapshots((current) =>
-						current[serverId] === snapshot
+					// Tabs are made from a server's projects and views. A projection
+					// that left both alone (a panel renamed, a session ended) makes
+					// the tabs it already made.
+					setSnapshots((current) => {
+						const held = current[serverId];
+						return held === snapshot ||
+							(held !== null &&
+								held !== undefined &&
+								held.projects === snapshot.projects &&
+								held.views === snapshot.views &&
+								held.viewOrder === snapshot.viewOrder)
 							? current
-							: { ...current, [serverId]: snapshot },
-					);
+							: { ...current, [serverId]: snapshot };
+					});
 				}),
 			);
 		}

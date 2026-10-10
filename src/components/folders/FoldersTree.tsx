@@ -1,4 +1,5 @@
 import { Reorder, useDragControls, useReducedMotion } from 'framer-motion';
+import { LiveTerminalTitle } from '../../shared/useWorkspaceProjection';
 import {
 	CircleCheck,
 	CircleDashed,
@@ -1086,7 +1087,11 @@ function PanelRow({
 				/>
 			) : (
 				<span className="folders-tree__name" title={panel.title}>
-					{panel.title}
+					{panel.kind === 'terminal' ? (
+						<LiveTerminalTitle panelId={panel.panelId} fallback={panel.title} />
+					) : (
+						panel.title
+					)}
 				</span>
 			)}
 			{panel.kind !== 'terminal' ||

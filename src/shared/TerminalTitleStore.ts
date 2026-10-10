@@ -20,6 +20,7 @@ export class TerminalTitleStore {
 	private readonly titles = new Map<string, string>();
 	private readonly listeners = new Map<string, Set<() => void>>();
 	private readonly anyListeners = new Set<() => void>();
+	private readonly changeListeners = new Set<(panelId: string) => void>();
 	/** Panels an event named while a snapshot was being fetched. The event is
 	 * newer than the snapshot's answer for that panel, so it wins. */
 	private touched: Set<string> | null = null;
@@ -83,6 +84,16 @@ export class TerminalTitleStore {
 		return () => this.anyListeners.delete(listener);
 	}
 
+	/**
+	 * Hear which terminal's title changed. For a holder of many terminals that
+	 * acts on the one named, such as a workspace keeping its tabs' titles; it
+	 * is told the panel and does nothing for a panel it does not hold.
+	 */
+	subscribeChanges(listener: (panelId: string) => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
 	close(): void {
 		if (this.closed) return;
 		this.closed = true;
@@ -90,6 +101,7 @@ export class TerminalTitleStore {
 		this.unsubscribe = undefined;
 		this.listeners.clear();
 		this.anyListeners.clear();
+		this.changeListeners.clear();
 	}
 
 	private async load(): Promise<void> {
@@ -142,6 +154,7 @@ export class TerminalTitleStore {
 			any = true;
 			for (const listener of [...(this.listeners.get(panelId) ?? [])])
 				listener();
+			for (const listener of [...this.changeListeners]) listener(panelId);
 		}
 		if (any) for (const listener of [...this.anyListeners]) listener();
 	}

@@ -1,8 +1,9 @@
-/** The title sources a server publishes for a terminal panel. */
+/** The title sources the workspace holds for a terminal panel. A title its
+ * program set is not among them: that is live state, and reaches a client
+ * only as the title the terminal displays. */
 export type TerminalTitleSources = Readonly<{
 	defaultTitle?: string;
 	namedTitle?: string;
-	programTitle?: string;
 }>;
 
 export type TerminalTitleDraft = Readonly<{
@@ -23,10 +24,13 @@ export function terminalTitleDraft(
 	shownTitle: string,
 ): TerminalTitleDraft {
 	if (sources?.defaultTitle === undefined) return { title: shownTitle };
-	return {
-		title: sources.namedTitle ?? '',
-		automaticTitle: sources.programTitle ?? sources.defaultTitle,
-	};
+	// With no name, what the tab shows is its automatic title: its program's,
+	// or its default name. Under a name the program's title is not shown and
+	// not known here, so the default name stands in until the server says what
+	// the tab displays once the name is gone.
+	return sources.namedTitle === undefined
+		? { title: '', automaticTitle: shownTitle }
+		: { title: sources.namedTitle, automaticTitle: sources.defaultTitle };
 }
 
 /**

@@ -1,4 +1,5 @@
 import { Bell, X } from 'lucide-react';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import type { RefObject } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
@@ -95,7 +96,7 @@ function ActivityRows({
 								<span className="terminal-activity-menu__source">
 									<span className="terminal-activity-menu__terminal">
 										{item.emoji ? `${item.emoji} ` : ''}
-										{item.title}
+										<LiveTerminalTitle panelId={item.panelId} fallback={item.title} />
 									</span>
 									<span className="terminal-activity-menu__project">
 										{item.projectEmoji ? `${item.projectEmoji} ` : ''}

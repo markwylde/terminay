@@ -1442,6 +1442,32 @@ function deepFreeze<T>(value: T): T {
 	return value;
 }
 
+type ChangedObjects = {
+	[K in WorkspaceCollection]?: Record<ProtocolId, WorkspaceCollectionObject>;
+};
+type RemovedIds = { [K in WorkspaceCollection]?: ProtocolId[] };
+
+function noteChanged(
+	changed: ChangedObjects,
+	collection: WorkspaceCollection,
+	id: ProtocolId,
+	object: WorkspaceCollectionObject,
+): void {
+	const members = changed[collection] ?? {};
+	members[id] = object;
+	changed[collection] = members;
+}
+
+function noteRemoved(
+	removed: RemovedIds,
+	collection: WorkspaceCollection,
+	id: ProtocolId,
+): void {
+	const ids = removed[collection] ?? [];
+	ids.push(id);
+	removed[collection] = ids;
+}
+
 /**
  * Make `next` share with `previous` every object the commit left the same, and
  * say what it did not. An object a command did not change is then the same
@@ -1452,10 +1478,8 @@ function settleCommittedState(
 	previous: WorkspaceState,
 	next: MutableWorkspaceState,
 ): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
-	const changed: {
-		[K in WorkspaceCollection]?: Record<ProtocolId, WorkspaceCollectionObject>;
-	} = {};
-	const removed: { [K in WorkspaceCollection]?: ProtocolId[] } = {};
+	const changed: ChangedObjects = {};
+	const removed: RemovedIds = {};
 	for (const collection of WORKSPACE_COLLECTIONS) {
 		const before = previous[collection] as Readonly<
 			Record<ProtocolId, WorkspaceCollectionObject>
@@ -1472,12 +1496,12 @@ function settleCommittedState(
 				continue;
 			}
 			differs = true;
-			(changed[collection] ??= {})[id] = object;
+			noteChanged(changed, collection, id, object);
 		}
 		for (const id of Object.keys(before)) {
 			if (Object.hasOwn(after, id)) continue;
 			differs = true;
-			(removed[collection] ??= []).push(id);
+			noteRemoved(removed, collection, id);
 		}
 		// Nothing in the collection changed, so the collection itself did not.
 		if (!differs)
@@ -1504,10 +1528,8 @@ export function workspaceStateDifference(
 	previous: WorkspaceState,
 	next: WorkspaceState,
 ): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
-	const changed: {
-		[K in WorkspaceCollection]?: Record<ProtocolId, WorkspaceCollectionObject>;
-	} = {};
-	const removed: { [K in WorkspaceCollection]?: ProtocolId[] } = {};
+	const changed: ChangedObjects = {};
+	const removed: RemovedIds = {};
 	for (const collection of WORKSPACE_COLLECTIONS) {
 		const before = previous[collection] as Readonly<
 			Record<ProtocolId, WorkspaceCollectionObject>
@@ -1519,10 +1541,10 @@ export function workspaceStateDifference(
 		for (const [id, object] of Object.entries(after)) {
 			const held = before[id];
 			if (held !== undefined && sameJson(held, object)) continue;
-			(changed[collection] ??= {})[id] = object;
+			noteChanged(changed, collection, id, object);
 		}
 		for (const id of Object.keys(before))
-			if (!Object.hasOwn(after, id)) (removed[collection] ??= []).push(id);
+			if (!Object.hasOwn(after, id)) noteRemoved(removed, collection, id);
 	}
 	return {
 		changed: changed as WorkspaceChangeRecord['changed'],

@@ -9,7 +9,7 @@ import {
 test('a tab showing its program title has an empty name field with that title as placeholder', () => {
 	assert.deepEqual(
 		terminalTitleDraft(
-			{ defaultTitle: 'Terminal 1', programTitle: 'claude' },
+			{ defaultTitle: 'Terminal 1' },
 			'claude',
 		),
 		{ title: '', automaticTitle: 'claude' },
@@ -23,36 +23,24 @@ test('a tab with only its default name offers that as the placeholder', () => {
 	);
 });
 
-test('a renamed tab edits its name, and the placeholder is what clearing it would show', () => {
+test('a renamed tab edits its name, and the placeholder is its default name', () => {
+	// Under a name the program's title is not shown, and a client is told
+	// only what a terminal displays, so the default name stands in.
 	assert.deepEqual(
-		terminalTitleDraft(
-			{ defaultTitle: 'Terminal 1', namedTitle: 'api', programTitle: 'claude' },
-			'api',
-		),
-		{ title: 'api', automaticTitle: 'claude' },
+		terminalTitleDraft({ defaultTitle: 'Terminal 1', namedTitle: 'api' }, 'api'),
+		{ title: 'api', automaticTitle: 'Terminal 1' },
 	);
 });
 
 test('entering a name sends and shows that name', () => {
-	const draft = terminalTitleDraft(
-		{ defaultTitle: 'Terminal 1', programTitle: 'claude' },
-		'claude',
-	);
+	const draft = terminalTitleDraft({ defaultTitle: 'Terminal 1' }, 'claude');
 	assert.deepEqual(terminalTitleSubmission(draft, '  api  ', 'claude'), {
 		patchTitle: 'api',
 		shownTitle: 'api',
 	});
 });
 
-test('clearing the name sends an empty title and shows the automatic one', () => {
-	const draft = terminalTitleDraft(
-		{ defaultTitle: 'Terminal 1', namedTitle: 'api', programTitle: 'claude' },
-		'api',
-	);
-	assert.deepEqual(terminalTitleSubmission(draft, '   ', 'api'), {
-		patchTitle: '',
-		shownTitle: 'claude',
-	});
+test('clearing the name sends an empty title and shows the default until the server says what is displayed', () => {
 	const plain = terminalTitleDraft(
 		{ defaultTitle: 'Terminal 3', namedTitle: 'api' },
 		'api',
