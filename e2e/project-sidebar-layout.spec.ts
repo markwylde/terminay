@@ -999,6 +999,17 @@ test('committed pane sizes remain project-local through project switching and re
 		.body.height;
 	expect(secondHeight).not.toBeCloseTo(firstHeight, 0);
 
+	// A sidebar that is still being measured mid-switch must not flash the
+	// minimum-height status, so count every one that reaches the DOM.
+	await mainWindow.evaluate(() => {
+		const counter = window as unknown as { sidebarNoticeMutations: number };
+		counter.sidebarNoticeMutations = 0;
+		new MutationObserver(() => {
+			if (document.querySelector('[data-sidebar-minimum-height-notice]')) {
+				counter.sidebarNoticeMutations += 1;
+			}
+		}).observe(document.body, { childList: true, subtree: true });
+	});
 	await mainWindow.locator(`[data-project-id="${firstProjectId}"]`).click();
 	await expect(mainWindow.locator('.project-tab--active')).toHaveAttribute(
 		'data-project-id',
@@ -1011,6 +1022,13 @@ test('committed pane sizes remain project-local through project switching and re
 				(await panelGeometry(mainWindow, ids)).panes.explorer.body.height,
 		)
 		.toBeCloseTo(firstHeight, 0);
+	expect(
+		await mainWindow.evaluate(
+			() =>
+				(window as unknown as { sidebarNoticeMutations: number })
+					.sidebarNoticeMutations,
+		),
+	).toBe(0);
 	await mainWindow.reload();
 	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
 	await openFileExplorer(mainWindow);

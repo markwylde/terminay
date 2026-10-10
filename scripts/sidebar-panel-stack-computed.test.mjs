@@ -32,9 +32,24 @@ test('sidebar panel stack previews locally, overlays following titles, and commi
 		await page.setContent(
 			`<style>html,body,#root{margin:0;width:100%;height:100%;}${css}</style><div id="root"></div>`,
 		);
+		// The stack mounts before its height is measured. Record every notice
+		// that reaches the DOM so an unmeasured stack cannot flash one.
+		await page.evaluate(() => {
+			window.noticeMutations = 0;
+			new MutationObserver(() => {
+				if (document.querySelector('[data-sidebar-minimum-height-notice]')) {
+					window.noticeMutations += 1;
+				}
+			}).observe(document.getElementById('root'), {
+				childList: true,
+				subtree: true,
+			});
+		});
 		await page.addScriptTag({ path: bundle });
 		const stack = page.locator('[data-sidebar-panel-stack]');
 		await stack.waitFor();
+		await page.waitForSelector('[data-sidebar-pane-id="agents"]');
+		assert.equal(await page.evaluate(() => window.noticeMutations), 0);
 		const geometry = await page.evaluate(() => {
 			const stack = document.querySelector('[data-sidebar-panel-stack]');
 			const following = document.querySelector(
