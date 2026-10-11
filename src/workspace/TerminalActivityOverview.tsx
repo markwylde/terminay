@@ -1,6 +1,6 @@
 import { Bell, X } from 'lucide-react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
-import type { RefObject } from 'react';
+import { type RefObject, useEffect } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
 import {
@@ -212,6 +212,86 @@ export function TerminalActivityOverview({
 					)}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+/**
+ * The same list at phone width, where the header has room for a bell and not
+ * for a popover beside it: a sheet from the bottom edge, as the terminal
+ * switcher is. Each row goes to its terminal or is dismissed, and the sheet
+ * stays open while there is more to deal with.
+ */
+export function CompactNotifications({
+	notifications,
+	onActivate,
+	onDismiss,
+	onDismissAll,
+	onClose,
+}: {
+	notifications: TerminalActivityOverviewItem[];
+	onActivate: (item: TerminalActivityOverviewItem) => void;
+	onDismiss: (item: TerminalActivityOverviewItem) => void;
+	onDismissAll: () => void;
+	onClose: () => void;
+}) {
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			event.stopPropagation();
+			onClose();
+		};
+		window.addEventListener('keydown', onKeyDown, { capture: true });
+		return () =>
+			window.removeEventListener('keydown', onKeyDown, { capture: true });
+	}, [onClose]);
+	const count = notifications.length;
+	const now = Date.now();
+	return (
+		<div
+			className="compact-switcher-scrim"
+			data-compact-notifications="true"
+			onPointerDown={(event) => {
+				if (event.target !== event.currentTarget) return;
+				// Keep focus from falling to the body as the sheet goes away.
+				event.preventDefault();
+				onClose();
+			}}
+		>
+			<div
+				className="compact-switcher compact-notifications"
+				role="dialog"
+				aria-modal="true"
+				aria-label="Notifications"
+			>
+				<div className="compact-notifications__header">
+					<span className="compact-switcher__grab" aria-hidden="true" />
+					<span className="compact-notifications__title">Notifications</span>
+					{count > 0 ? (
+						<button
+							type="button"
+							className="compact-notifications__clear-all"
+							onClick={onDismissAll}
+						>
+							Clear all
+						</button>
+					) : null}
+				</div>
+				<div className="compact-notifications__body">
+					{count === 0 ? (
+						<p className="compact-notifications__empty" role="status">
+							No notifications
+						</p>
+					) : (
+						<ActivityRows
+							items={notifications}
+							now={now}
+							onActivate={onActivate}
+							onDismiss={onDismiss}
+						/>
+					)}
+				</div>
+			</div>
 		</div>
 	);
 }
