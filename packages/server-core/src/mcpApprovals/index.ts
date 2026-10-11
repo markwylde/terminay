@@ -23,6 +23,7 @@ export const MCP_PERMISSION_GROUPS = [
 	'automationsRead',
 	'automationsManage',
 	'appWindows',
+	'notifications',
 	'connectedServerTools',
 	// Not an agent operation: a message a window types into its terminal. It
 	// shares the policy table, grants, and approval prompt of the groups.
@@ -41,6 +42,7 @@ export const DEFAULT_MCP_PERMISSIONS: McpPermissionPolicies = Object.freeze({
 	automationsRead: 'allow',
 	automationsManage: 'ask',
 	appWindows: 'allow',
+	notifications: 'allow',
 	connectedServerTools: 'allow',
 	windowMessages: 'allow',
 });
@@ -53,6 +55,7 @@ export const MCP_PERMISSION_GROUP_LABELS: Readonly<
 	automationsRead: 'Read Automations',
 	automationsManage: 'Full Automation Management',
 	appWindows: 'App Windows',
+	notifications: 'Notifications',
 	connectedServerTools: 'Connected Server Tools',
 	windowMessages: 'Window Messages',
 });

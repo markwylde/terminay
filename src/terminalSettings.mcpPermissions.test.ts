@@ -13,6 +13,7 @@ test('MCP permissions default to frictionless terminals and asking before managi
 		automationsRead: 'allow',
 		automationsManage: 'ask',
 		appWindows: 'allow',
+		notifications: 'allow',
 		connectedServerTools: 'allow',
 		windowMessages: 'allow',
 	});
@@ -21,7 +22,7 @@ test('MCP permissions default to frictionless terminals and asking before managi
 	assert.equal(upgraded.terminayMcp.enabled, false);
 	assert.deepEqual(upgraded.terminayMcp.permissions, defaultTerminalSettings.terminayMcp.permissions);
 	const chosen = normalizeTerminalSettings({
-		terminayMcp: { enabled: true, permissions: { terminalsManage: 'ask', automationsRead: 'deny', automationsManage: 'always', appWindows: 'ask', windowMessages: 'deny', connectedServerTools: 'sometimes' } },
+		terminayMcp: { enabled: true, permissions: { terminalsManage: 'ask', automationsRead: 'deny', automationsManage: 'always', appWindows: 'ask', notifications: 'deny', windowMessages: 'deny', connectedServerTools: 'sometimes' } },
 	});
 	assert.deepEqual(chosen.terminayMcp.permissions, {
 		terminalsRead: 'allow',
@@ -29,12 +30,13 @@ test('MCP permissions default to frictionless terminals and asking before managi
 		automationsRead: 'deny',
 		automationsManage: 'ask',
 		appWindows: 'ask',
+		notifications: 'deny',
 		connectedServerTools: 'allow',
 		windowMessages: 'deny',
 	});
 });
 
-test('Settings > AI > Terminay MCP lists the six permission groups and Window Messages with three choices each', () => {
+test('Settings > AI > Terminay MCP lists the seven permission groups and Window Messages with three choices each', () => {
 	const section = terminalSettingsSections.find((candidate) => candidate.id === 'terminay-mcp');
 	assert.ok(section);
 	const rows = section.fields
@@ -47,6 +49,7 @@ test('Settings > AI > Terminay MCP lists the six permission groups and Window Me
 		['Read Automations', 'select', choices],
 		['Full Automation Management', 'select', choices],
 		['App Windows', 'select', choices],
+		['Notifications', 'select', choices],
 		['Connected Server Tools', 'select', choices],
 		['Window Messages', 'select', choices],
 	]);

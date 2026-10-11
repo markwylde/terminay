@@ -175,8 +175,9 @@ MCP authority has two parts, both checked by the server on every request: the
 calling terminal's capability scope (which terminals it can reach) and the
 user's permission policy (which kinds of operation it may perform). The policy
 groups operations into Read Terminals, Full Terminal Management, Read
-Automations, Full Automation Management, App Windows, and Connected Server
-Tools, with a further Window Messages policy, each set to Ask Permission, Always
+Automations, Full Automation Management, App Windows, Notifications, and
+Connected Server Tools, with a further Window Messages policy, each set to Ask
+Permission, Always
 Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
 an inline prompt in the calling terminal's pane, answerable from any client
 with authority to create terminals on that server. See

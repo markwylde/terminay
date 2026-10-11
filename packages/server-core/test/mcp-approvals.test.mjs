@@ -47,6 +47,7 @@ test("defaults keep terminal tools frictionless and ask before managing automati
     automationsRead: "allow",
     automationsManage: "ask",
     appWindows: "allow",
+    notifications: "allow",
     connectedServerTools: "allow",
     windowMessages: "allow",
   });

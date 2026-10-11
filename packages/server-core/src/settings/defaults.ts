@@ -61,6 +61,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 			automationsRead: 'allow',
 			automationsManage: 'ask',
 			appWindows: 'allow',
+			notifications: 'allow',
 			connectedServerTools: 'allow',
 			windowMessages: 'allow',
 		},

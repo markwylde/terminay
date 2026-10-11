@@ -20,6 +20,8 @@ export * from './mdxRuntime.js';
 export * from "./recordings.js";
 export * from "./activity.js";
 export * from "./activityClient.js";
+export * from "./notifications.js";
+export * from "./notificationsClient.js";
 export * from "./agentStatus.js";
 export * from "./git.js";
 export * from "./gitClient.js";

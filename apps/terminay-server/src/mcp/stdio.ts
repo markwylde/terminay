@@ -46,6 +46,10 @@ import {
 	MAX_WINDOW_HTML_BYTES,
 	MAX_WINDOW_TITLE_CHARS,
 } from './appWindowTools.js';
+import {
+	MAX_NOTIFICATION_TOOL_BODY_CHARS,
+	MAX_NOTIFICATION_TOOL_TITLE_CHARS,
+} from './notificationTools.js';
 import { readWindowDocument } from './windowDocument.js';
 import { SERVER_MCP_ENTRY } from './ownership.js';
 
@@ -446,6 +450,7 @@ function registerTools(
 	);
 	registerAutomationTools(server, call);
 	registerWindowTools(server, call);
+	registerNotificationTools(server, call);
 }
 
 const APPROVAL_NOTE =
@@ -706,6 +711,44 @@ function registerWindowTools(
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
 		async (_params, extra) => call('list_windows', {}, extra.signal),
+	);
+}
+
+const NOTIFICATION_NOTE =
+	'A notification is shown to the user only if it is still present after a short settle period of about five seconds. It is removed when the user interacts with this terminal, and one sent while the user is already in this terminal is not shown, so do not rely on it to say something they must read.';
+
+function registerNotificationTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const handle = z.string().regex(ID_PATTERN);
+	server.registerTool(
+		'send_notification',
+		{
+			description: `Send the user a notification from the terminal you are running in: a short plain-text body with an optional title, listed with Terminay's other notifications against this terminal. Use it to say that work has finished or that you need the user while they are elsewhere. Pass the handle of a notification you sent to replace its title and body in place. This terminal may hold at most 8 notifications it sent. ${NOTIFICATION_NOTE} Returns the notification's handle. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				body: z
+					.string()
+					.min(1)
+					.max(MAX_NOTIFICATION_TOOL_BODY_CHARS)
+					.refine((value) => value.trim().length > 0, 'body must not be blank'),
+				title: z.string().max(MAX_NOTIFICATION_TOOL_TITLE_CHARS).optional(),
+				notification: handle.optional(),
+			},
+		},
+		async (params, extra) => call('send_notification', params, extra.signal),
+	);
+	server.registerTool(
+		'dismiss_notification',
+		{
+			description: `Remove one notification you sent from the terminal you are running in, by the handle send_notification returned. One dismissed before the settle period ends is never shown to the user. ${NOTIFICATION_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: { notification: handle },
+		},
+		async (params, extra) => call('dismiss_notification', params, extra.signal),
 	);
 }
 
