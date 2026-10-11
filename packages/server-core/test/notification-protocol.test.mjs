@@ -241,37 +241,6 @@ test("a project-scoped client receives only its own terminals' notifications", a
   assert.equal(projector(journalEvent, { clientId: "c", authScope: "read" }), journalEvent);
 });
 
-test("a notification sent to the terminal a client's user is in is acknowledged before it is published", async (t) => {
-  const { clock, activity, manager, connect } = await served(t);
-  const desktop = await connect("desktop");
-  await desktop.notifications.subscribe();
-  const published = [];
-  desktop.notifications.store.subscribe((snapshot) => published.push(Object.keys(snapshot.notifications).length));
-
-  // This client's user is typing in session-a and nowhere else.
-  const probes = [];
-  await desktop.notifications.onProbe((probe) => {
-    probes.push(probe);
-    if (probe.sessionId !== "session-a") return;
-    void desktop.client.command("activity.acknowledge", { projectId: probe.projectId, sessionId: probe.sessionId });
-  });
-
-  manager.send({ projectId: "project-a", sessionId: "session-a" }, { body: "you are already here" });
-  manager.send({ projectId: "project-b", sessionId: "session-b" }, { body: "over here" });
-  await settled();
-  assert.deepEqual(probes, [
-    { projectId: "project-a", sessionId: "session-a" },
-    { projectId: "project-b", sessionId: "session-b" },
-  ]);
-  assert.equal(manager.pendingCount, 1, "the acknowledged terminal's notification is gone while still pending");
-
-  clock.advance(5_000);
-  await settled();
-  assert.deepEqual(listed(desktop).map((record) => record.sessionId), ["session-b"]);
-  assert.deepEqual(published, [1], "the viewed notification was never published");
-  assert.equal(activity.get(identity()).acknowledged, true);
-});
-
 test("a delta with a cursor that does not match its revision is refused", async (t) => {
   const { connect } = await served(t);
   const desktop = await connect("desktop");

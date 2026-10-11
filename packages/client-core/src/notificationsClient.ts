@@ -14,14 +14,7 @@ export const NOTIFICATION_OPERATIONS = Object.freeze({
   delta: "notifications.delta",
   dismiss: "notifications.dismiss",
   event: "notifications",
-  probe: "notifications.probe",
 } as const);
-
-/** The terminal a process has just sent a notification to. */
-export interface NotificationProbe {
-  readonly projectId: string;
-  readonly sessionId: string;
-}
 
 export interface NotificationClientTransport extends QueryCommandTransport {
   /** Notifications are a live server-owned projection, as activity is. */
@@ -68,18 +61,6 @@ export class NotificationClient {
       id: notification.id,
       projectId: notification.projectId,
       sessionId: notification.sessionId,
-    });
-  }
-
-  /**
-   * Hear when a process sends a notification to a terminal. A client whose
-   * user is already interacting with that terminal acknowledges it, so the
-   * notification is removed before it is ever published.
-   */
-  async onProbe(listener: (probe: NotificationProbe) => void): Promise<() => void> {
-    return this.transport.subscribe(NOTIFICATION_OPERATIONS.probe, (event) => {
-      const probe = event.payload as NotificationProbe | undefined;
-      if (typeof probe?.projectId === "string" && typeof probe.sessionId === "string") listener(probe);
     });
   }
 

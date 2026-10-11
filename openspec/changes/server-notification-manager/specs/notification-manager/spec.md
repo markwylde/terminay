@@ -83,7 +83,7 @@ The settle period SHALL apply only to notifications. A terminal's tab indicator 
 
 ### Requirement: Interaction removes a terminal's notifications
 
-Acknowledging a terminal, by clicking its tab, clicking into it, typing into it, or the server-owned acknowledgement operation, SHALL remove every notification of that terminal, including any a process sent. Dismissing one notification SHALL remove that notification and no other. A notification sent while the user is already interacting with its terminal SHALL be treated as viewed and SHALL NOT be published. A notification a process sent SHALL NOT change its terminal's activity state or indicator. Removal SHALL be server-owned, so that a notification removed through one client is removed for every client. Activating a project SHALL NOT remove its terminals' notifications.
+Acknowledging a terminal, by clicking its tab, clicking into it, typing into it, moving focus to it with a terminal navigation command, or the server-owned acknowledgement operation, SHALL remove every notification of that terminal, including any a process sent. Dismissing one notification SHALL remove that notification and no other. Where the user is when a notification is raised SHALL NOT remove it: a notification for the focused terminal, including one a process sent from the terminal the user has just typed in, SHALL be published after the settle period unless the user interacts with that terminal first. A notification a process sent SHALL NOT change its terminal's activity state or indicator. Removal SHALL be server-owned, so that a notification removed through one client is removed for every client. Activating a project SHALL NOT remove its terminals' notifications.
 
 #### Scenario: Typing clears a sent notification
 
@@ -97,7 +97,12 @@ Acknowledging a terminal, by clicking its tab, clicking into it, typing into it,
 
 #### Scenario: Sent while the user is in the terminal
 
-- **WHEN** a process sends a notification from the terminal the user is typing in
+- **WHEN** a process sends a notification from the focused terminal the user last typed in, and the user does nothing further in it
+- **THEN** it is published after the settle period
+
+#### Scenario: Sent, then the user types
+
+- **WHEN** a process sends a notification from a terminal and the user types into that terminal within the settle period
 - **THEN** it is never published
 
 #### Scenario: Activating the project
@@ -136,7 +141,7 @@ A notification a process sends SHALL carry a body of at most 280 characters and 
 
 ### Requirement: Notification protocol surface
 
-The protocol SHALL expose the published notifications as `notifications.snapshot` and `notifications.delta`, carried on the normal ordered event journal with the same contiguous-revision and resync rules as terminal activity. It SHALL accept `notifications.dismiss` only with the notification's id and the exact immutable project and session ids of its owner. Pending notifications SHALL NOT appear in a snapshot or a delta. When a process sends a notification the server SHALL emit `notifications.probe`, naming only that terminal's project and session, so that a client whose user is interacting with that terminal can acknowledge it within the settle period; the probe SHALL carry no notification id or text. A server SHALL advertise these as the `notifications.v1` feature capability, and a client connected to a server that does not advertise it SHALL derive its Notifications list from terminal activity. A project-scoped client SHALL receive only notifications of terminals in its scope. Every operation name SHALL be a valid wire operation name.
+The protocol SHALL expose the published notifications as `notifications.snapshot` and `notifications.delta`, carried on the normal ordered event journal with the same contiguous-revision and resync rules as terminal activity. It SHALL accept `notifications.dismiss` only with the notification's id and the exact immutable project and session ids of its owner. Pending notifications SHALL NOT appear in a snapshot or a delta. A server SHALL advertise these as the `notifications.v1` feature capability, and a client connected to a server that does not advertise it SHALL derive its Notifications list from terminal activity. A project-scoped client SHALL receive only notifications of terminals in its scope. Every operation name SHALL be a valid wire operation name.
 
 #### Scenario: A client connects during a settle period
 
@@ -152,11 +157,6 @@ The protocol SHALL expose the published notifications as `notifications.snapshot
 
 - **WHEN** a client detects a non-contiguous notification revision
 - **THEN** it requests a fresh snapshot instead of applying the gap
-
-#### Scenario: A probe names only the terminal
-
-- **WHEN** a process sends a notification with a title and body
-- **THEN** the probe the server emits carries that terminal's project and session ids and neither the title, the body, nor a notification id
 
 #### Scenario: A server that does not publish notifications
 
