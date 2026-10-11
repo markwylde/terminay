@@ -1,7 +1,18 @@
 # Contributing
 
-Read [AGENTS.md](AGENTS.md) first. It covers the OpenSpec workflow, the
-engineering boundaries, and how the Gitea remote and CI work.
+The best contribution you can make is telling me what isn't working. Report
+bugs, add screenshots, describe the scenario you were in, and point out ideas
+that don't work well in practice. That shows me which parts of Terminay people
+use the most and most want fixed.
+
+Post these on the
+[GitHub Issues tab](https://github.com/markwylde/terminay/issues) and I will
+look into them myself. Terminay does not accept pull requests, and they are
+disabled on the GitHub repository.
+
+The rest of this file is for building and running Terminay from source.
+[AGENTS.md](AGENTS.md) covers the OpenSpec workflow, the engineering
+boundaries, and how the Gitea remote and CI work.
 
 ## Prerequisites
 

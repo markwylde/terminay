@@ -198,7 +198,9 @@ your paired device records — unless you pass `--purge`.
 - [Installation guide](https://terminay.com/docs/installation)
 - [Standalone server runbook](https://github.com/markwylde/terminay/blob/main/docs/operations/standalone-server.md)
 - [Release, install, and update policy](https://github.com/markwylde/terminay/blob/main/docs/operations/release-update-policy.md)
-- [Source and issues](https://github.com/markwylde/terminay)
+- [Source](https://github.com/markwylde/terminay)
+- [Issues](https://github.com/markwylde/terminay/issues) — bug reports and
+  feature requests are welcome; pull requests are not accepted
 
 ## License
 

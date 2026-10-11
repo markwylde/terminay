@@ -64,4 +64,14 @@ The second command prints a QR code to pair a device. To connect from the
 desktop app instead, paste the pairing URL it prints into **Add connection**.
 
 Full guides live at [terminay.com/docs](https://terminay.com/docs).
-Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributing
+
+The best contribution you can make is telling me what isn't working. Report
+bugs, add screenshots, describe the scenario you were in, and point out ideas
+that don't work well in practice, all on the
+[GitHub Issues tab](https://github.com/markwylde/terminay/issues). That shows
+me which parts of Terminay people use the most and most want fixed.
+
+Terminay does not accept pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for more, including how to build from source.
