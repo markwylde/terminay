@@ -212,6 +212,62 @@ test('an installable build surfaces an update only once it is downloaded', async
 	});
 });
 
+test('re-checking a downloaded update keeps it ready to install', async () => {
+	const changes = [];
+	const h = harness({ onStatusChanged: () => changes.push('changed') });
+	h.updater.onCheck = downloadsVersion('1.4.0');
+	await h.appUpdater.check();
+
+	// The feed still names the downloaded version; its payload is re-verified
+	// only after the check itself has resolved.
+	h.updater.onCheck = async (updater) => {
+		updater.emit('update-available', { version: '1.4.0' });
+		return { downloadPromise: Promise.resolve([]) };
+	};
+	const status = await h.appUpdater.check({ manual: true });
+
+	assert.equal(status.state, 'ready');
+	assert.equal(status.latestVersion, '1.4.0');
+	assert.equal(describeManualCheck(status).message, 'Terminay 1.4.0 is ready to install.');
+	assert.equal(h.appUpdater.requestRestartToUpdate(), true);
+	assert.ok(changes.length > 0);
+});
+
+test('a newer release replaces a downloaded one that was never installed', async () => {
+	const h = harness();
+	h.updater.onCheck = downloadsVersion('1.3.0');
+	await h.appUpdater.check();
+
+	h.updater.onCheck = async (updater) => {
+		updater.emit('update-available', { version: '1.4.0' });
+		return { downloadPromise: Promise.resolve([]) };
+	};
+	const downloading = await h.appUpdater.check({ manual: true });
+	assert.equal(downloading.state, 'downloading');
+	assert.equal(downloading.latestVersion, '1.4.0');
+	assert.equal(describeManualCheck(downloading).message, 'Terminay 1.4.0 is downloading.');
+
+	h.updater.emit('update-downloaded', { version: '1.4.0' });
+	const ready = h.appUpdater.getStatus();
+	assert.equal(ready.state, 'ready');
+	assert.equal(ready.latestVersion, '1.4.0');
+});
+
+test('a newer release that fails to download leaves the waiting one ready', async () => {
+	const h = harness();
+	h.updater.onCheck = downloadsVersion('1.3.0');
+	await h.appUpdater.check();
+
+	h.updater.onCheck = async (updater) => {
+		updater.emit('update-available', { version: '1.4.0' });
+		updater.emit('error', new Error('sha512 checksum mismatch'));
+		return { downloadPromise: Promise.resolve([]) };
+	};
+	const status = await h.appUpdater.check({ manual: true });
+	assert.equal(status.state, 'ready');
+	assert.equal(status.latestVersion, '1.3.0');
+});
+
 test('a failed download falls back to linking the release page', async () => {
 	const h = harness();
 	h.updater.onCheck = async (updater) => {

@@ -63,6 +63,8 @@ export interface AppUpdaterOptions {
 	fetch: FetchLike;
 	now?: () => number;
 	log?: (message: string, error?: unknown) => void;
+	/** Called when a download starts, finishes, or fails outside a check's own result. */
+	onStatusChanged?: () => void;
 }
 
 export interface AppUpdater {
@@ -299,8 +301,11 @@ export function describeManualCheck(status: AppUpdateStatus): {
 	if (status.hasUpdate && version !== null)
 		return {
 			message: `Terminay ${version} is available.`,
-			detail:
-				'This build cannot install updates in place. Open the release page from the title bar.',
+			detail: `${
+				status.canInstallInPlace === true
+					? 'The update could not be downloaded.'
+					: 'This build cannot install updates in place.'
+			} Open the release page from the title bar.`,
 		};
 	if (status.errorMessage !== null)
 		return {
@@ -345,7 +350,11 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	let notesPromise: Promise<void> | null = null;
 
 	function status(): AppUpdateStatus {
-		const shownVersion = downloadedVersion ?? latestVersion;
+		// While a newer release downloads over a waiting one, name the newer.
+		const shownVersion =
+			state === 'downloading'
+				? (latestVersion ?? downloadedVersion)
+				: (downloadedVersion ?? latestVersion);
 		const hasUpdate =
 			downloadedVersion !== null ||
 			(state === 'available' && latestVersion !== null);
@@ -411,7 +420,9 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 				updater.autoInstallOnAppQuit = true;
 				updater.fullChangelog = false;
 				updater.on('checking-for-update', () => {
-					if (state !== 'downloading') state = 'checking';
+					// A downloaded update stays ready while the feed is re-read.
+					if (state !== 'downloading' && downloadedVersion === null)
+						state = 'checking';
 				});
 				updater.on('update-available', (info: UpdateInfoLike) => {
 					const version = versionString(info.version);
@@ -424,6 +435,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 						downloadPercent = 0;
 					}
 					loadNotes(version, checkSource, info);
+					options.onStatusChanged?.();
 				});
 				updater.on('update-not-available', () => {
 					if (downloadedVersion === null) {
@@ -446,18 +458,23 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					failure = null;
 					state = 'ready';
 					loadNotes(version, checkSource, info);
+					options.onStatusChanged?.();
 				});
 				updater.on('error', (error: unknown) => {
 					log('[updater] update failed', error);
 					failure = errorMessage(error);
 					if (downloadedVersion !== null) {
+						// The update already waiting is still the one to install.
 						state = 'ready';
-						return;
+						latestVersion = downloadedVersion;
+						downloadPercent = 100;
+					} else {
+						downloadPercent = null;
+						// A newer release we could not install in place is still worth
+						// surfacing: fall back to linking its release page.
+						state = latestVersion !== null ? 'available' : 'error';
 					}
-					downloadPercent = null;
-					// A newer release we could not install in place is still worth
-					// surfacing: fall back to linking its release page.
-					state = latestVersion !== null ? 'available' : 'error';
+					options.onStatusChanged?.();
 				});
 				return updater;
 			});
