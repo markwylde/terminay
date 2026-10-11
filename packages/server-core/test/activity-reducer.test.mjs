@@ -222,3 +222,89 @@ test("a structured executing marker settles a session without typing", () => {
   const shell = foregroundReducer.applySignal("session-c", { kind: "foreground", busy: false, processName: "zsh" }, { now: 5_000 });
   assert.equal(shell.snapshot.acknowledged, false);
 });
+
+test("echo of typing at a prompt is not raw-output activity", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_000 });
+  const afterInput = reducer.snapshot();
+  const deadline = reducer.nextDeadline();
+  assert.equal(reducer.applyRawOutput("session-a", { now: 1_010 }), undefined);
+  assert.deepEqual(reducer.snapshot(), afterInput);
+  assert.equal(reducer.nextDeadline(), deadline);
+  assert.equal(reducer.get("session-a").status, "idle");
+});
+
+test("continuous typing stays idle and publishes nothing for its echo", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_000 });
+  const revision = reducer.revision;
+  for (let now = 1_300; now <= 6_000; now += 300) {
+    assert.equal(reducer.applySignal("session-a", { kind: "userInput" }, { now }), undefined);
+    assert.equal(reducer.applyRawOutput("session-a", { now: now + 10 }), undefined);
+    assert.equal(reducer.get("session-a").status, "idle");
+  }
+  assert.equal(reducer.revision, revision);
+});
+
+test("typing just after output does not extend the working period", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  assert.equal(reducer.applyRawOutput("session-a", { now: 0 }).snapshot.status, "working");
+  for (const now of [500, 700, 900]) {
+    reducer.applySignal("session-a", { kind: "userInput" }, { now });
+    reducer.applyRawOutput("session-a", { now: now + 10 });
+    assert.equal(reducer.get("session-a").status, "working");
+  }
+  reducer.tick(1_000);
+  assert.equal(reducer.get("session-a").status, "idle");
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_100 });
+  reducer.applyRawOutput("session-a", { now: 1_110 });
+  assert.equal(reducer.get("session-a").status, "idle");
+});
+
+test("an echo that lands as the working period lapses publishes the idle transition", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applyRawOutput("session-a", { now: 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 900 });
+  const lapsed = reducer.applyRawOutput("session-a", { now: 1_000 });
+  assert.equal(lapsed.snapshot.status, "idle");
+});
+
+test("output still arriving a second after the last keystroke is working again", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applyRawOutput("session-a", { now: 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 500 });
+  reducer.applyRawOutput("session-a", { now: 600 });
+  reducer.applyRawOutput("session-a", { now: 1_400 });
+  assert.equal(reducer.get("session-a").status, "idle");
+  const resumed = reducer.applyRawOutput("session-a", { now: 1_500 });
+  assert.equal(resumed.snapshot.status, "working");
+});
+
+test("a typed command is working once its output outlasts the input window", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_000 });
+  assert.equal(reducer.applyRawOutput("session-a", { now: 1_100 }), undefined);
+  assert.equal(reducer.applyRawOutput("session-a", { now: 1_999 }), undefined);
+  const working = reducer.applyRawOutput("session-a", { now: 2_000 });
+  assert.equal(working.snapshot.status, "working");
+  assert.equal(working.snapshot.source, "raw:output");
+});
+
+test("a typed command that finishes inside the input window is never working", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  const events = [reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_000 })];
+  events.push(reducer.applyRawOutput("session-a", { now: 1_100 }));
+  events.push(reducer.applyRawOutput("session-a", { now: 1_500 }));
+  events.push(...reducer.tick(5_000));
+  assert.deepEqual(
+    events.filter((event) => event?.snapshot.status === "working"),
+    [],
+  );
+});
+
+test("a command-executing marker is working however recently the user typed", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1_000 });
+  const executing = reducer.applySignal("session-a", { kind: "command", phase: "executing" }, { now: 1_050 });
+  assert.equal(executing.snapshot.status, "working");
+});
