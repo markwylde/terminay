@@ -190,32 +190,58 @@ test.describe('terminal activity signals', () => {
     await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
-  test('work that finishes in the terminal the user is in stays until they do something in it', async ({
+  test('a focused terminal that finishes does not keep the finished indicator', async ({
     mainWindow,
   }) => {
     const activeTab = mainWindow
       .locator('.project-workspace--active .terminal-tab-content--active')
       .first()
-    const panel = mainWindow.locator('.project-workspace--active .terminal-panel:visible')
 
-    await panel.click()
+    await mainWindow.locator('.terminal-panel').first().click()
     await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'")
     await mainWindow.keyboard.press('Enter')
 
-    // Being in the terminal when it finishes is not having seen it.
-    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(
-      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
-    ).toHaveCount(1)
-
-    // Clicking into it is.
-    await panel.click()
-
     await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(activeTab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
     await expect(
       mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
     ).toHaveCount(0)
-    await expectNoNotificationFor(mainWindow, 6_000)
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+  })
+
+  test('a shell command that finishes after the user has left the window is announced, and coming back does not clear it', async ({
+    mainWindow,
+  }) => {
+    const activeTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content--active')
+      .first()
+
+    await mainWindow.locator('.terminal-panel').first().click()
+    await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'")
+    await mainWindow.keyboard.press('Enter')
+    // The user goes to another application. A test window cannot have its
+    // focus taken by one, so the page is told it has none.
+    await mainWindow.evaluate(() => {
+      const page = document as Document & { hadFocus?: () => boolean }
+      page.hadFocus = page.hasFocus
+      page.hasFocus = () => false
+    })
+
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1', { timeout: 15_000 })
+
+    // They come back and touch nothing.
+    await mainWindow.evaluate(() => {
+      const page = document as Document & { hadFocus?: () => boolean }
+      if (page.hadFocus) page.hasFocus = page.hadFocus
+    })
+    await mainWindow.waitForTimeout(1_500)
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+
+    await mainWindow.locator('.project-workspace--active .terminal-panel:visible').click()
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
   test('activating a project does not dismiss a finished terminal until that terminal is clicked', async ({

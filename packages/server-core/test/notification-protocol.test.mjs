@@ -241,6 +241,30 @@ test("a project-scoped client receives only its own terminals' notifications", a
   assert.equal(projector(journalEvent, { clientId: "c", authScope: "read" }), journalEvent);
 });
 
+test("a passive acknowledgement clears a terminal's activity and leaves what a process sent", async (t) => {
+  const { clock, activity, manager, connect } = await served(t);
+  const desktop = await connect("desktop");
+  await desktop.notifications.subscribe();
+
+  // A bell and a sent notification on the terminal the user is sitting in.
+  activity.ingestSignal(identity(), { kind: "bell" });
+  manager.send({ projectId: "project-a", sessionId: "session-a" }, { body: "come back" });
+  // The client judges the bell not news to a user who did nothing.
+  await desktop.client.command("activity.acknowledge", { projectId: "project-a", sessionId: "session-a", passive: true });
+  assert.equal(activity.get(identity()).acknowledged, true);
+
+  clock.advance(5_000);
+  await settled();
+  assert.deepEqual(listed(desktop).map((record) => record.kind), ["message"], "only the sent notification is published");
+
+  // Something the user does in the terminal clears that too.
+  await desktop.client.command("activity.acknowledge", { projectId: "project-a", sessionId: "session-a" });
+  await settled();
+  assert.deepEqual(listed(desktop), []);
+
+  await assert.rejects(desktop.client.command("activity.acknowledge", { projectId: "project-a", sessionId: "session-a", passive: "yes" }));
+});
+
 test("a delta with a cursor that does not match its revision is refused", async (t) => {
   const { connect } = await served(t);
   const desktop = await connect("desktop");

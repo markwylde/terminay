@@ -8,54 +8,59 @@ sent. Neither value changes when the user goes to another application or
 leaves the desk, so the terminal a user had just prompted an agent in was the
 one terminal that could never notify them.
 
-A first attempt added the window's focus to the definition. It repaired the
-case of another application and left the rest: a user who has walked away from
-a focused window, and the need to decide what a return to the window means.
-The owner chose the simpler rule this change records.
+Removing the shortcut outright was tried and measured. The activity reducer
+reports a plain shell as finished two seconds after input goes quiet, so every
+command a user typed and then read for a few seconds became a Dock badge and a
+phone banner. The owner chose to keep a plain shell quiet for a user who is
+there, and to make agents and sent notifications strict.
 
 ## Goals / Non-Goals
 
-- Goal: a notification is never cleared by an inference about attention.
-- Goal: the clearing rule can be stated in one sentence and is the same for
-  fallback activity, agent status, and sent notifications.
-- Non-goal: any change to the settle period, to what the server holds, or to
-  push.
+- Goal: an agent's state and a sent notification are never cleared by an
+  inference about attention.
+- Goal: a user typing shell commands is not notified about them while they
+  are at that terminal, and is when they have left.
+- Non-goal: any change to the settle period, to the reducer's rules for what
+  counts as finished, or to push.
 - Non-goal: the project-switch handoff acknowledgement for an unclaimed shell.
 
 ## Decisions
 
-- **Nothing is acknowledged on arrival.** The snapshot path renders what the
-  server says. Alternative considered: keep the shortcut and require window
-  focus. Rejected because presence at a focused window is still a guess.
-- **The clearing acts are the existing ones.** Clicking the tab, clicking into
-  the terminal, typing, a terminal navigation command, and dismissal already
-  report the server-owned acknowledgement. Nothing new is reported.
-- **Automatic focus is not an act.** The terminal-focused announcement, which
-  fires when the window returns or a project is activated, updates which
-  terminal is focused and acknowledges nothing, as before.
-- **Mouse movement does not clear.** It was considered as a sign of presence.
-  In a split layout the pointer crosses terminals on its way elsewhere and
-  would clear notifications nobody read.
+- **Agent terminals are excluded by the snapshot's `claimed` flag.** The
+  server already says whether a provider owns a terminal's activity. The
+  client applies the shortcut only where it is false.
+- **Interacting requires the window's focus, asked at arrival.** The document
+  that shows the terminal is asked when the activity arrives, so a terminal
+  in a window of its own is judged by that window. Clearing the interaction
+  on window blur was rejected: the main window's blur would clear a terminal
+  being typed in elsewhere.
+- **Arrival while away ends the interaction.** Otherwise the next activity
+  event after the user returned would acknowledge what they never saw.
+- **The shortcut's acknowledgement is passive.** An ordinary acknowledgement
+  is reported to the notification manager as interaction and removes what a
+  process sent. A user who did nothing has not seen that, so
+  `activity.acknowledge` takes `passive`, which clears the reducer's state and
+  is not reported as interaction. An older server ignores the flag and treats
+  it as an ordinary acknowledgement.
 - **The probe is removed, not left unanswered.** With no client answering it,
   the event, the manager's sent-listener, and the client method are dead code
   on a security-relevant surface.
+- **Mouse movement does not clear.** In a split layout the pointer crosses
+  terminals on its way elsewhere and would clear notifications nobody read.
 
 ## Risks / Trade-offs
 
-- [A user watching a terminal finish, hands off, is notified five seconds
-  later] → Accepted by the owner. The settle period absorbs the case where
-  they act; the remaining case errs towards telling them.
-- [A bell from the shell the user is typing in becomes a notification if they
-  then stop for the whole settle period] → Same trade; the next keystroke
-  clears it.
-- [End-to-end tests that relied on the focused terminal staying clear] →
-  Rewritten to state the new rule.
+- [A user watching an agent finish, hands off, is notified after the settle
+  period] → Accepted by the owner; typing or clicking within it prevents it.
+- [A user who walks away from a focused Terminay window is still treated as
+  at their shell] → Applies to plain shell activity only. Agents and sent
+  notifications, the cases that matter when away, are not affected.
+- [Automated browsers always report focus] → The end-to-end test tells the
+  page it has none; the definition is covered by unit tests.
 
 ## Migration Plan
 
-None. Rolls back by reverting. An older client connected to a newer server
-never receives a probe and so acknowledges nothing on arrival for sent
-notifications; an older server's probe is ignored by a newer client.
+None. The change is undone by reverting its commits.
 
 ## Open Questions
 

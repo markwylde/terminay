@@ -211,6 +211,8 @@ export function createActivityOperationRegistry(
 			payload.expectedUpdatedAt === undefined
 				? undefined
 				: uint(payload.expectedUpdatedAt, 'expectedUpdatedAt');
+		if (payload.passive !== undefined && typeof payload.passive !== 'boolean')
+			throw protocolError('validation', 'passive is invalid');
 		const claimedProjectId = projectClaim(request);
 		if (claimedProjectId !== undefined && claimedProjectId !== projectId) {
 			throw protocolError(
@@ -225,6 +227,7 @@ export function createActivityOperationRegistry(
 				sessionId,
 			},
 			expectedUpdatedAt,
+			{ passive: payload.passive === true },
 		);
 		return {
 			acknowledged: event !== undefined,
