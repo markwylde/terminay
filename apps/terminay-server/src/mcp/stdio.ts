@@ -715,7 +715,7 @@ function registerWindowTools(
 }
 
 const NOTIFICATION_NOTE =
-	'A notification is shown to the user only if it is still present after a short settle period of about five seconds. It is removed when the user interacts with this terminal, and one sent while the user is already in this terminal is not shown, so do not rely on it to say something they must read.';
+	'A notification is shown to the user only if it is still present after a short settle period of about five seconds. It is removed when the user interacts with this terminal by clicking or typing in it, including within that period, so do not rely on it to say something they must read.';
 
 function registerNotificationTools(
 	server: McpServer,

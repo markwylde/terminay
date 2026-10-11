@@ -56,7 +56,7 @@ test('the notification tools tell the agent when a notification is and is not sh
 			for (const tool of [send, dismiss]) {
 				assert.match(tool.description, /shown to the user only if it is still present after a short settle period of about five seconds/);
 				assert.match(tool.description, /removed when the user interacts with this terminal/);
-				assert.match(tool.description, /sent while the user is already in this terminal is not shown/);
+				assert.match(tool.description, /by clicking or typing in it, including within that period/);
 				// The same approval note the other gated tools carry.
 				assert.match(tool.description, /Settings > AI > Terminay MCP/);
 				assert.match(tool.description, /permission_declined/);
