@@ -1,5 +1,5 @@
 /**
- * The compact workspace chrome: one row, five controls.
+ * The compact workspace chrome: one row, six controls.
  *
  * At phone width the three bands a wide window can afford — the application
  * menu, the project strip, the panel tab strip — cost more than the terminal
@@ -19,9 +19,11 @@
  * landing in the right place.
  */
 
-import { ChevronDown, House, Search, Server } from 'lucide-react';
+import { Bell, ChevronDown, House, Search, Server } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
+import { activityCountDigits, formatActivityCount } from './activityCountBadge';
+import { notificationsButtonLabel } from './TerminalActivityOverview';
 
 export type CompactConnectionPresentation = Readonly<{
 	/** Named for assistive technology even though the glyph carries no label. */
@@ -40,9 +42,14 @@ export type CompactChromeRowProps = Readonly<{
 	/** False on Home, where the command acts on no project. */
 	isExplorerOpen: boolean;
 	isHomeSelected: boolean;
+	isNotificationsOpen: boolean;
 	isSwitcherOpen: boolean;
 	breadcrumbButtonRef?: RefObject<HTMLButtonElement | null>;
+	/** How many notifications there are, across every project and server. */
+	notificationCount: number;
+	notificationsButtonRef?: RefObject<HTMLButtonElement | null>;
 	onOpenCommandBar: () => void;
+	onToggleNotifications: () => void;
 	onOpenSwitcher: (source: 'breadcrumb' | 'connection') => void;
 	onShowDashboard: () => void;
 	onToggleExplorer: () => void;
@@ -63,9 +70,13 @@ export function CompactChromeRow({
 	connectionButtonRef,
 	isExplorerOpen,
 	isHomeSelected,
+	isNotificationsOpen,
 	isSwitcherOpen,
+	notificationCount,
+	notificationsButtonRef,
 	onOpenCommandBar,
 	onOpenSwitcher,
+	onToggleNotifications,
 	onShowDashboard,
 	onToggleExplorer,
 	projectColor,
@@ -74,6 +85,7 @@ export function CompactChromeRow({
 	terminalPanelId,
 	updateAction,
 }: CompactChromeRowProps) {
+	const countLabel = formatActivityCount(notificationCount);
 	return (
 		<div className="compact-chrome" data-compact-chrome="true">
 			{applicationMenu}
@@ -171,6 +183,30 @@ export function CompactChromeRow({
 				/>
 			</button>
 			{updateAction}
+			{/* The bell is the one place a phone lists what needs the user. A
+			    notification a process sent has no terminal indicator to show it. */}
+			<button
+				ref={notificationsButtonRef}
+				type="button"
+				className="compact-chrome__icon compact-notifications-button"
+				onClick={onToggleNotifications}
+				aria-haspopup="dialog"
+				aria-expanded={isNotificationsOpen}
+				aria-label={notificationsButtonLabel(notificationCount)}
+				title="Notifications"
+				data-compact-notifications-button="true"
+			>
+				<Bell size={15} aria-hidden="true" />
+				{notificationCount > 0 ? (
+					<span
+						className="notifications-count"
+						data-digits={activityCountDigits(countLabel)}
+						aria-hidden="true"
+					>
+						{countLabel}
+					</span>
+				) : null}
+			</button>
 			<button
 				ref={connectionButtonRef}
 				type="button"
