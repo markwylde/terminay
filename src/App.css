@@ -4393,10 +4393,80 @@ body.project-tabbar-reordering .project-tabbar {
   background: #ff8f8f;
 }
 
+/* The bell carries the same count pill as the wide header's. */
+.compact-notifications-button {
+  position: relative;
+}
+
 /* The panel tab strip is what the switcher replaced; Dockview keeps its layout
    and its state, and simply stops drawing tabs at this width. */
 .workspace--compact-chrome .dv-tabs-and-actions-container {
   display: none;
+}
+
+/* ---- the notifications sheet ---- */
+
+/* The switcher's sheet, holding the wide header's notification rows at a size
+   a thumb can hit. */
+.compact-notifications__header {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px 16px 8px;
+}
+
+.compact-notifications__title {
+  color: rgba(220, 226, 240, 0.5);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.compact-notifications__clear-all {
+  all: unset;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.86);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compact-notifications__clear-all:hover,
+.compact-notifications__clear-all:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.compact-notifications__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 8px 4px;
+}
+
+.compact-notifications__empty {
+  margin: 0;
+  padding: 18px 8px 22px;
+  color: rgba(220, 226, 240, 0.5);
+  font-size: 14px;
+  text-align: center;
+}
+
+.compact-notifications .terminal-activity-menu__item {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.compact-notifications .terminal-activity-menu__dismiss {
+  width: 36px;
+  height: 36px;
 }
 
 /* ---- the switcher ---- */
