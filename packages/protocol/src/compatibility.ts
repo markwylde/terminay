@@ -34,6 +34,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** The title each terminal displays, published live as the server resolves
 	 * it rather than as a field of workspace state. */
 	terminalTitles: 'terminal-titles.v1',
+	/** Notifications the server owns and publishes after a settle period,
+	 * instead of each client deriving them from terminal activity. */
+	notifications: 'notifications.v1',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -65,6 +68,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 		optionalCapabilities: Object.freeze([
 			FEATURE_CAPABILITIES.workspaceChanges,
 			FEATURE_CAPABILITIES.terminalTitles,
+			FEATURE_CAPABILITIES.notifications,
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.git,
 			FEATURE_CAPABILITIES.settings,

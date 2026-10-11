@@ -149,6 +149,8 @@ export type TerminayMcpPermissions = {
 	automationsManage: TerminayMcpPermissionPolicy;
 	/** Showing and closing windows in the calling terminal. */
 	appWindows: TerminayMcpPermissionPolicy;
+	/** Sending and dismissing notifications of the calling terminal. */
+	notifications: TerminayMcpPermissionPolicy;
 	/** Using the tools of user-connected MCP servers. */
 	connectedServerTools: TerminayMcpPermissionPolicy;
 	/** A window typing a message into its terminal. */

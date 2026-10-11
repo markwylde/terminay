@@ -1,8 +1,57 @@
+import { writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { settledTerminalSessionId } from './support/terminal-session'
 import { sendAppCommand } from './support/app'
 import { submitTerminalCommand } from './support/terminal'
+
+/**
+ * Sends one request on the terminal's own control socket with its own
+ * capability, framed as the stdio adapter frames it, so a notification is sent
+ * by the same path an agent or a command-line tool uses.
+ */
+const CONTROL_SCRIPT = `
+import { readFileSync } from 'node:fs';
+import { connect } from 'node:net';
+const [op, paramsFile] = process.argv.slice(2);
+const params = JSON.parse(readFileSync(paramsFile, 'utf8'));
+const socket = connect(process.env.TERMINAY_CONTROL_SOCKET);
+let buffer = '';
+socket.on('connect', () => {
+	socket.write(JSON.stringify({ id: 'n-1', token: process.env.TERMINAY_CONTROL_TOKEN, version: 1, op, params }) + '\\n');
+});
+socket.on('data', (chunk) => {
+	buffer += chunk;
+	const end = buffer.indexOf('\\n');
+	if (end < 0) return;
+	const response = JSON.parse(buffer.slice(0, end));
+	console.log(['RESULT', op, response.ok ? 'ok' : response.error.code].join(' '));
+	socket.end();
+});
+socket.on('error', (error) => { console.error(error.message); process.exit(2); });
+`
+
+/** The shell command that sends one notification from the terminal it runs in. */
+async function sendNotificationCommand(
+  userDataDir: string,
+  params: { title?: string; body: string },
+): Promise<string> {
+  const script = path.join(userDataDir, 'send-notification-e2e.mjs')
+  const paramsFile = path.join(userDataDir, 'send-notification-params.json')
+  await writeFile(script, CONTROL_SCRIPT)
+  await writeFile(paramsFile, JSON.stringify(params))
+  return `'${process.execPath}' '${script}' send_notification '${paramsFile}'`
+}
+
+/** Read the header count repeatedly, so a number that appears and goes is seen. */
+async function expectNoNotificationFor(page: Page, milliseconds: number): Promise<void> {
+  const deadline = Date.now() + milliseconds
+  while (Date.now() < deadline) {
+    await expect(page.locator('.notifications-count')).toHaveCount(0)
+    await page.waitForTimeout(150)
+  }
+}
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const activePresentation = page.locator(
@@ -297,5 +346,114 @@ test.describe('terminal activity signals', () => {
       mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
     ).toHaveCount(0)
     await expect(menu.getByRole('button', { name: 'Clear all' })).toHaveCount(0)
+  })
+  test('a tab indicator shows at once and the header count follows after the settle period', async ({
+    electronApp,
+    mainWindow,
+  }) => {
+    const badgeTotal = () =>
+      electronApp.evaluate(
+        () =>
+          (
+            globalThis as typeof globalThis & {
+              __terminayTestAppBadgeTotal?: () => number
+            }
+          ).__terminayTestAppBadgeTotal?.() ?? -1,
+      )
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(mainWindow, tab, "sleep 1.1; printf 'ding\\007\\n'\r")
+
+    // The terminal's own state is live.
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+    ).toHaveCount(1)
+
+    // The notification is not announced until it has stayed for the settle period.
+    await expectNoNotificationFor(mainWindow, 2_000)
+    await expect.poll(badgeTotal).toBe(0)
+
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1', { timeout: 10_000 })
+    await expect.poll(badgeTotal).toBe(1)
+  })
+
+  test('a notification dealt with inside the settle period never reaches the header', async ({
+    mainWindow,
+  }) => {
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(mainWindow, tab, "sleep 1.1; printf 'ding\\007\\n'\r")
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
+
+    // Viewing the terminal is the acknowledgement; it lands well inside the period.
+    await tab.click()
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'viewed')
+
+    await expectNoNotificationFor(mainWindow, 6_000)
+  })
+
+  test('a notification a process sends is listed with its text and dismissed on its own', async ({
+    mainWindow,
+    userDataDir,
+  }) => {
+    const send = await sendNotificationCommand(userDataDir, {
+      title: 'Review ready',
+      body: 'Three files changed',
+    })
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    // A bell and a sent notification, both from the terminal nobody is in.
+    await writeToBackgroundSession(mainWindow, tab, `sleep 2.1; printf 'ding\\007\\n'; ${send}\r`)
+
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('2', { timeout: 15_000 })
+
+    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
+    const menu = mainWindow.getByRole('menu', { name: 'Notifications' })
+    const sent = menu.locator('.terminal-activity-menu__row', { hasText: 'Review ready' })
+    await expect(sent).toHaveCount(1)
+    await expect(sent).toContainText('Three files changed')
+    await expect(sent).toContainText('Terminal 2')
+
+    await sent.getByRole('button', { name: /^Dismiss / }).click()
+
+    // Only that row leaves. The terminal still needs attention.
+    await expect(menu.locator('.terminal-activity-menu__row')).toHaveCount(1)
+    await expect(menu).not.toContainText('Review ready')
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1')
+    await expect(tab).toHaveAttribute('data-terminal-activity', 'attention')
+
+    await menu.getByRole('button', { name: 'Clear all' }).click()
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+    await expect(menu).toContainText('No notifications')
+  })
+
+  test('typing in a terminal clears a notification a process sent to it', async ({
+    mainWindow,
+    userDataDir,
+  }) => {
+    const send = await sendNotificationCommand(userDataDir, { body: 'Build finished' })
+    const { tab } = await withBackgroundTerminal(mainWindow)
+
+    await writeToBackgroundSession(mainWindow, tab, `sleep 2.1; ${send}\r`)
+    await expect(mainWindow.locator('.notifications-count')).toHaveText('1', { timeout: 15_000 })
+
+    await tab.click()
+    await submitTerminalCommand(mainWindow, 'true\r')
+    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+  })
+
+  test('a notification sent from the terminal the user is typing in is not shown', async ({
+    mainWindow,
+    userDataDir,
+  }) => {
+    const send = await sendNotificationCommand(userDataDir, { body: 'You are already here' })
+
+    await submitTerminalCommand(mainWindow, `${send}\r`)
+    await expect(
+      mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-rows'),
+    ).toContainText('RESULT send_notification ok')
+
+    await expectNoNotificationFor(mainWindow, 2_500)
   })
 })

@@ -21,6 +21,12 @@ import {
 	createActivityOperationRegistry,
 } from './activity/protocol.js';
 import type { TerminalActivityService } from './activity/service.js';
+import { bindNotificationsToActivity } from './notifications/activityFeed.js';
+import { NotificationManager } from './notifications/manager.js';
+import {
+	createNotificationEventProjector,
+	createNotificationOperationRegistry,
+} from './notifications/protocol.js';
 import {
 	type AiService,
 	createAiOperationHandlers,
@@ -258,6 +264,9 @@ export interface ServerCoreCompositionOptions
 	/** Optional canonical terminal activity authority exposed through the same
 	 * authenticated protocol and ordered event journal as terminal streams. */
 	readonly activity?: TerminalActivityService;
+	/** The notification manager a host built itself, when it needs its own
+	 * clock. Without one the composition builds its own alongside activity. */
+	readonly notifications?: NotificationManager;
 	/** Optional server-owned provider-journal and agent status authority. It shares
 	 * the terminal lifecycle with activity; it is never a renderer service. */
 	readonly agents?: AgentStatusService;
@@ -421,6 +430,8 @@ export interface ServerCoreComposition {
 	readonly agents?: AgentStatusService;
 	readonly agentSessions?: AgentSessionComposition;
 	readonly activityOperations?: ActivityOperationRegistry;
+	/** The server's notifications (ADR-0061); present with activity. */
+	readonly notifications?: NotificationManager;
 	readonly agentOperations?: AgentOperationRegistry;
 	/** What each terminal displays (ADR-0058); present with a workspace. */
 	readonly terminalTitles?: TerminalTitleService;
@@ -1182,6 +1193,33 @@ export function createServerCoreComposition(
 			? {}
 			: { inputSources: options.terminalInputSources }),
 	});
+	const activity = options.activity;
+	const notifications =
+		activity === undefined
+			? undefined
+			: (options.notifications ?? new NotificationManager());
+	const unbindNotifications =
+		activity === undefined || notifications === undefined
+			? undefined
+			: bindNotificationsToActivity(notifications, activity);
+	const notificationOperations =
+		activity === undefined || notifications === undefined
+			? undefined
+			: createNotificationOperationRegistry({
+					manager: notifications,
+					eventJournal,
+					acknowledgeTerminal: (owner) => {
+						const identity = { serverId: activity.serverId, ...owner };
+						try {
+							// The agent authority also marks its own entries read.
+							if (options.agents?.isSessionActive(identity) === true)
+								options.agents.acknowledge(identity);
+							else activity.acknowledge(identity);
+						} catch {
+							/* a terminal that has just exited has nothing to acknowledge */
+						}
+					},
+				});
 	const activityOperations =
 		options.activity === undefined
 			? undefined
@@ -1336,7 +1374,10 @@ export function createServerCoreComposition(
 			mergeOperationRegistries(
 				mergeOperationRegistries(
 					mergeOperationRegistries(
-						activityOperations?.operations ?? {},
+						mergeOperationRegistries(
+							activityOperations?.operations ?? {},
+							notificationOperations?.operations ?? {},
+						),
 						terminalTitleOperations?.operations ?? {},
 					),
 					agentOperations?.operations ?? {},
@@ -1395,6 +1436,9 @@ export function createServerCoreComposition(
 						options.activity === undefined
 							? undefined
 							: createActivityEventProjector(options.activity),
+						notifications === undefined
+							? undefined
+							: createNotificationEventProjector(),
 						options.agents === undefined
 							? undefined
 							: createAgentEventProjector(options.agents),
@@ -1611,6 +1655,11 @@ export function createServerCoreComposition(
 			await attempt(() => options.git?.close?.());
 			await attempt(() => options.agents?.stop());
 			await attempt(() => activityOperations?.close());
+			await attempt(() => {
+				unbindNotifications?.();
+				notificationOperations?.close();
+				notifications?.shutdown();
+			});
 			await attempt(() => agentOperations?.close());
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
@@ -1646,6 +1695,7 @@ export function createServerCoreComposition(
 			? {}
 			: { agentSessions: options.agentSessions }),
 		...(activityOperations === undefined ? {} : { activityOperations }),
+		...(notifications === undefined ? {} : { notifications }),
 		...(agentOperations === undefined ? {} : { agentOperations }),
 		...(terminalTitles === undefined ? {} : { terminalTitles }),
 		terminalOperations,
@@ -1916,6 +1966,9 @@ function uniqueCapabilities(
 			...(options.activity === undefined && options.agents === undefined
 				? []
 				: [FEATURE_CAPABILITIES.agents]),
+			...(options.activity === undefined
+				? []
+				: [FEATURE_CAPABILITIES.notifications]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
 			...(options.automations === undefined
 				? []

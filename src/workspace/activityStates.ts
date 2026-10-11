@@ -19,11 +19,15 @@ export type TerminalActivityOverviewState =
 export type TerminalActivityOverviewItem = {
 	color: string;
 	emoji: string;
+	/** The server's id for this notification, when the server published it. */
+	notificationId?: string;
 	panelId: string;
 	projectEmoji: string;
 	projectId: string;
 	projectTitle: string;
 	sessionId: string;
+	/** The text of a notification a process in the terminal sent. Plain text. */
+	sent?: { title?: string; body: string };
 	/** When the terminal entered `state`, in epoch milliseconds, when known. */
 	since?: number;
 	state: TerminalActivityOverviewState;

@@ -82,6 +82,28 @@ test('showing a window asks with the window title and the App Windows group', ()
 		assert.match(markup, new RegExp(`>${label}</button>`));
 });
 
+test('sending a notification asks with its title and body and the Notifications group', () => {
+	const markup = render([
+		approval('apr_n', {
+			operation: 'send_notification',
+			group: 'notifications',
+			groupLabel: 'Notifications',
+			summary: 'send a notification titled "Review ready": "Three files changed"',
+			details: [
+				{ label: 'Title', value: 'Review ready' },
+				{ label: 'Body', value: 'Three files changed' },
+			],
+		}),
+	]);
+	assert.match(
+		markup,
+		/<strong>Claude Code<\/strong> in <strong>Terminal 1<\/strong> wants to send a notification titled &quot;Review ready&quot;: &quot;Three files changed&quot;\./,
+	);
+	assert.match(markup, /Notifications/);
+	for (const label of ['Allow One Time', 'Allow This Session', 'Decline'])
+		assert.match(markup, new RegExp(`>${label}</button>`));
+});
+
 test('a window message asks naming the window, with the full text one tap away', () => {
 	const markup = render([
 		approval('apr_m', {

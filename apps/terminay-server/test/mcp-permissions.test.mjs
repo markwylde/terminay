@@ -59,6 +59,7 @@ test("every operation but capability discovery has exactly one fixed permission 
     "create_automation", "delete_automation", "run_automation", "set_automation_enabled",
     "stop_automation_run", "update_automation",
   ])
+  assert.deepEqual(byGroup.notifications.sort(), ["dismiss_notification", "send_notification"])
 })
 
 function gated(policies, handler = (params) => ({ ran: params })) {

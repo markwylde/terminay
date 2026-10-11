@@ -364,6 +364,12 @@ export async function launchDesktopApp(options: {
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),
+				// A notification is published five seconds after it arises. The suite
+				// reads the header count constantly, so it runs with a short settle
+				// period and a longer one only where the period is what is under test.
+				TERMINAY_TEST_NOTIFICATION_SETTLE_MS: notificationSettleForTest(
+					testInfo.title,
+				),
 				// Terminals held outside the app, so they survive a relaunch
 				// (ADR-0035). Off everywhere else until the rollout turns it on.
 				...(path.basename(testInfo.file) === 'terminals-survive-restart.spec.ts'
@@ -518,6 +524,10 @@ export const test = base.extend<ElectronFixtures>({
 });
 
 export { expect };
+
+function notificationSettleForTest(title: string): string {
+	return title.includes('settle period') ? '4000' : '300';
+}
 
 function persistenceFaultForTest(
 	title: string,

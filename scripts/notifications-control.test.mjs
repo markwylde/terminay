@@ -133,6 +133,41 @@ test('one red number counts attention plus finished', () => {
 	assert.equal(notificationsButtonLabel(1), 'Notifications, 1 notification');
 });
 
+test('a sent notification row shows its title and body and still names its terminal', () => {
+	const sent = renderToStaticMarkup(
+		React.createElement(TerminalActivityOverview, {
+			activityMenuRef: { current: null },
+			isOpen: true,
+			notifications: [
+				item('Terminal 1', 'attention', {
+					notificationId: 'n-1',
+					sent: { title: 'Review ready', body: '<b>Three</b> files changed' },
+				}),
+				item('Terminal 1', 'done', { isAgentStatus: true, notificationId: 'n-2' }),
+				item('Terminal 3', 'attention', {
+					notificationId: 'n-3',
+					sent: { body: 'only a body' },
+				}),
+			],
+			onActivate: noop,
+			onDismiss: noop,
+			onDismissAll: noop,
+			onToggle: noop,
+		}),
+	);
+	assert.equal(sent.match(/terminal-activity-menu__row/g)?.length, 3);
+	assert.match(sent, /terminal-activity-menu__title">Review ready</);
+	// The text is shown as text, never as markup.
+	assert.match(
+		sent,
+		/terminal-activity-menu__body">&lt;b&gt;Three&lt;\/b&gt; files changed</,
+	);
+	assert.match(sent, /terminal-activity-menu__title">only a body</);
+	assert.equal(sent.match(/terminal-activity-menu__body/g)?.length, 1);
+	assert.match(sent, /terminal-activity-menu__title">Agent finished</);
+	assert.match(sent, /class="notifications-count" data-digits="1"[^>]*>3</);
+});
+
 test('the count keeps one circle size and caps at 99+', () => {
 	const many = (count) =>
 		Array.from({ length: count }, (_, index) => item(`t${index}`, 'unviewed'));
@@ -246,13 +281,13 @@ test('the project dot leads the title on tabs and switcher rows', async () => {
 test('dismissal is the acknowledgement tab selection reports, without selecting', async () => {
 	const app = await readFile('src/App.tsx', 'utf8');
 	assert.match(app, /acknowledgeTerminal: markTerminalActivityViewed,/);
-	assert.match(
-		app,
-		/const dismissNotification = useCallback\([\s\S]{0,200}?\?\.acknowledgeTerminal\(item\.sessionId\);/,
-	);
 	const dismiss = app.slice(
 		app.indexOf('const dismissNotification'),
 		app.indexOf('const dismissAllNotifications'),
 	);
+	// A published notification is dismissed on the server by its own id; a
+	// server that publishes none still takes the terminal's acknowledgement.
+	assert.match(dismiss, /notificationClient\s*\.dismiss\(\{\s*id: item\.notificationId,/);
+	assert.match(dismiss, /\?\.acknowledgeTerminal\(item\.sessionId\);/);
 	assert.doesNotMatch(dismiss, /activateProject|activateTerminal\(/);
 });
