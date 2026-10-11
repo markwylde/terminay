@@ -2,7 +2,7 @@
 
 ### Requirement: Fallback acknowledgement
 
-For terminal fallback activity, clicking the terminal tab, clicking into the terminal, typing into it, moving focus to it with a terminal navigation command, or dismissing its notification from the header Notifications list SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity dot, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab and dismissing a terminal's notification SHALL each report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. Nothing else SHALL clear them. Where the user is when completion or attention arrives SHALL NOT acknowledge it: activity for the focused terminal, including one the user has just typed in, SHALL show its indicator and SHALL count until the user does one of those things in that terminal. Focus that reaches a terminal without the user acting on that terminal, as when the window returns to the front or its project is activated, SHALL NOT acknowledge it. Moving the mouse over a terminal SHALL NOT acknowledge it.
+For terminal fallback activity, clicking the terminal tab, clicking into the terminal, typing into it, moving focus to it with a terminal navigation command, or dismissing its notification from the header Notifications list SHALL clear pending finished and attention indicators. Activating the project, including clicking its tab or activity dot, SHALL NOT acknowledge that project's terminals. Selecting a terminal tab and dismissing a terminal's notification SHALL each report the same server-owned acknowledgement as typing; a panel becoming Dockview-active because its project was activated SHALL NOT. Late fallback lifecycle output produced while switching projects SHALL be part of the same viewing acknowledgement for the terminal the user was interacting with at handoff. Focus that reaches a terminal without the user acting on that terminal, as when the window returns to the front or its project is activated, SHALL NOT acknowledge it, and neither SHALL moving the mouse over it. A terminal counts as the one the user is interacting with only while it is the terminal they last clicked or typed in, it is the focused terminal, and the window showing it has focus; once focus moves to another terminal, including a newly created one, or the user goes to another application, it no longer does. Structured completion or attention that arrives for a terminal no agent owns, while the user is already interacting with that terminal, SHALL be acknowledged as viewed and SHALL NOT leave a finished or attention indicator on that tab, the project activity dot, or the header Notifications number. That acknowledgement SHALL be passive: it SHALL clear the terminal's activity and SHALL NOT remove a notification a process sent to it. Activity that arrives while the user is in another application SHALL end the interaction, so that returning to the window does not acknowledge it. Activity of a terminal an agent owns SHALL NOT be acknowledged on arrival wherever the user is.
 
 #### Scenario: Viewing clears the indicator
 
@@ -36,23 +36,13 @@ For terminal fallback activity, clicking the terminal tab, clicking into the ter
 
 #### Scenario: Completion on an already interacting terminal
 
-- **WHEN** structured or agent completion arrives for the focused terminal the user last typed in, and the user does nothing further in it
-- **THEN** a finished indicator appears on that tab and the project activity dot, and the header Notifications number includes it once it is published
+- **WHEN** structured completion arrives for a terminal no agent owns, which the user is already clicking or typing in, while its window has focus
+- **THEN** no finished indicator appears on that tab, the project activity dot, or the header Notifications number
 
 #### Scenario: Attention on an already interacting terminal
 
-- **WHEN** a bell or notification arrives for the focused terminal the user last typed in, and the user does nothing further in it
-- **THEN** an attention indicator appears on that tab and the project activity dot, and the header Notifications number includes it once it is published
-
-#### Scenario: Moving the mouse over the terminal
-
-- **WHEN** a terminal shows a finished or attention indicator and the user moves the mouse over that terminal without clicking
-- **THEN** the indicator, the project activity dot, and the header Notifications number remain
-
-#### Scenario: Returning to the window
-
-- **WHEN** a finished or attention indicator arose while the user was in another application and the user returns to the Terminay window, so that focus lands in that terminal, without clicking or typing in it
-- **THEN** the indicator, the project activity dot, and the header Notifications number remain
+- **WHEN** a bell or notification arrives for a terminal no agent owns, which the user is already clicking or typing in, while its window has focus
+- **THEN** no attention indicator appears on that tab, the project activity dot, or the header Notifications number
 
 #### Scenario: Completion after moving to another terminal
 
@@ -63,3 +53,23 @@ For terminal fallback activity, clicking the terminal tab, clicking into the ter
 
 - **WHEN** late fallback lifecycle output is produced while switching projects
 - **THEN** it belongs to the same viewing acknowledgement for the terminal that was visible at handoff
+
+#### Scenario: Completion after leaving for another application
+
+- **WHEN** a user types a command in a terminal, goes to another application, and structured completion then arrives for that terminal
+- **THEN** the terminal shows a finished indicator, and its project activity dot and the header Notifications number include it
+
+#### Scenario: Returning to the window does not acknowledge
+
+- **WHEN** a finished or attention indicator arose while the user was in another application and the user returns to the Terminay window, so that focus lands in that terminal, without clicking or typing in it
+- **THEN** the indicator, the project activity dot, and the header Notifications number remain
+
+#### Scenario: Moving the mouse over the terminal
+
+- **WHEN** a terminal shows a finished or attention indicator and the user moves the mouse over that terminal without clicking
+- **THEN** the indicator, the project activity dot, and the header Notifications number remain
+
+#### Scenario: Passive acknowledgement keeps a sent notification
+
+- **WHEN** a process sends a notification from a terminal no agent owns, the command that sent it finishes while the user is interacting with that terminal, and the user does nothing further in it
+- **THEN** the finished activity is acknowledged as viewed and the sent notification is still published

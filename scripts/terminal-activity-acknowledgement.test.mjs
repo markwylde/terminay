@@ -1,0 +1,119 @@
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { build } from 'esbuild';
+
+const { shouldAcknowledgeInteractedActivity } = await importAcknowledgement();
+
+test('project activation without interaction does not acknowledge finished work', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: null,
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: true,
+		}),
+		false,
+	);
+});
+
+test('a shell command finishing in the terminal the user is in is acknowledged', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: true,
+		}),
+		true,
+	);
+});
+
+test('working stays live even while the user is in the terminal', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'working',
+			windowFocused: true,
+		}),
+		false,
+	);
+});
+
+test('a terminal typed in earlier is not acknowledged once focus has moved on', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-2',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: true,
+		}),
+		false,
+	);
+});
+
+test('a terminal the user typed in is not acknowledged once they have left the window', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: false,
+		}),
+		false,
+	);
+});
+
+test('an agent finishing in the terminal the user is in is not acknowledged', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: true,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: true,
+		}),
+		false,
+	);
+});
+
+async function importAcknowledgement() {
+	const tempDir = await mkdtemp(
+		join(tmpdir(), 'terminay-activity-acknowledgement-'),
+	);
+	const outputPath = join(tempDir, 'acknowledgement.mjs');
+	await build({
+		bundle: true,
+		entryPoints: [
+			new URL(
+				'../src/workspace/terminalActivityAcknowledgement.ts',
+				import.meta.url,
+			).pathname,
+		],
+		format: 'esm',
+		outfile: outputPath,
+		platform: 'neutral',
+		target: 'es2022',
+	});
+	return import(outputPath);
+}

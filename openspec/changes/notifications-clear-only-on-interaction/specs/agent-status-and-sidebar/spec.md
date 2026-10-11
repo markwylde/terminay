@@ -2,7 +2,7 @@
 
 ### Requirement: Acknowledgement independent of state
 
-Acknowledgement SHALL be independent of operational state. Interacting with a terminal — clicking its tab, clicking into it, typing, or moving focus to it with a terminal navigation command — SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. Activating the project SHALL NOT clear unread treatment. Where the user is when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL NOT acknowledge it: a transition on the focused terminal SHALL be unread until the user interacts with that terminal.
+Acknowledgement SHALL be independent of operational state. Interacting with a terminal — clicking its tab, clicking into it, typing, or moving focus to it with a terminal navigation command — SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. Activating the project SHALL NOT clear unread treatment. Where the user is when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL NOT acknowledge it: a transition on the focused terminal, including one the user has just typed in, SHALL be unread until the user interacts with that terminal. Focus that lands in the terminal on its own, and mouse movement over it, SHALL NOT count as interacting.
 
 #### Scenario: Viewing an entry
 
@@ -22,9 +22,9 @@ Acknowledgement SHALL be independent of operational state. Interacting with a te
 #### Scenario: Done while already viewing
 
 - **WHEN** a bound agent becomes `done` on the focused terminal the user last typed in, and the user does nothing further in it
-- **THEN** the entry is unread and the green tab and project activity indicators are shown for it
+- **THEN** the entry is unread, remains `done`, and the green tab and project activity indicators are shown for it
 
 #### Scenario: Waiting while already viewing
 
 - **WHEN** a bound agent becomes `waiting` or `blocked` on the focused terminal the user last typed in, and the user does nothing further in it
-- **THEN** the entry is unread and the red tab and project activity indicators are shown for it
+- **THEN** the entry is unread, its operational state is unchanged, and the red tab and project activity indicators are shown for it
