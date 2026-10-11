@@ -67,6 +67,34 @@ test("provider activity has precedence over structured and raw fallback", () => 
   assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 5, agentId: "other" }, { now: 7 }), undefined);
 });
 
+test("a new chat in the same terminal is heard once the previous one has finished", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  const apply = (state, sequence, agentId, provider = "claude") =>
+    reducer.applyProviderActivity("session-a", { provider, state, sequence, agentId }, { projectId: "project-a", now: sequence });
+
+  apply("working", 1, "chat-a");
+  // While the first chat is at work, another agent cannot take its terminal.
+  assert.equal(apply("working", 2, "chat-b"), undefined);
+  assert.equal(apply("done", 3, "chat-a").snapshot.providerState, "done");
+
+  // It has finished: the next chat's turn is the terminal's activity.
+  const working = apply("working", 4, "chat-b");
+  assert.equal(working.snapshot.status, "working");
+  assert.equal(working.snapshot.agentId, "chat-b");
+  const done = apply("done", 5, "chat-b");
+  assert.equal(done.snapshot.providerState, "done");
+  assert.equal(done.snapshot.acknowledged, false);
+  // The chat that left is fenced again while its successor holds the terminal.
+  apply("working", 6, "chat-b");
+  assert.equal(apply("done", 7, "chat-a"), undefined);
+
+  // A different harness takes an idle terminal the same way.
+  apply("idle", 8, "chat-b");
+  const other = apply("working", 9, "run-1", "codex");
+  assert.equal(other.snapshot.provider, "codex");
+  assert.equal(other.snapshot.status, "working");
+});
+
 test("terminal exit removes only its session and fences stale updates", () => {
   const reducer = createTerminalActivityReducer({ now: () => 0 });
   reducer.applySignal("session-a", { kind: "command", phase: "executing" }, { projectId: "project-a", now: 1 });
