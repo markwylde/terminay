@@ -11,33 +11,34 @@ Tasks marked **(terminay.com)** are done in the sibling `terminay.com` repositor
 
 ## 2. Prerequisite
 
-- [ ] 2.1 Confirm `server-notification-manager` is implemented and archived, so that `notification-manager` is a main spec and the published set exists to read. Verified by `openspec/specs/notification-manager/spec.md` existing and its change sitting under `openspec/changes/archive/`.
+- [x] 2.1 Confirm `server-notification-manager` is implemented, so the published set exists to read. Verified by `packages/server-core/src/notifications/` being on this branch with its tests passing; the two changes ship in one pull request and are archived in order after it merges.
 - [ ] 2.2 Settle whether the Show indicator for active tabs and Show indicator for finished tabs settings are readable by the server and apply to push. Verified by a line in `design.md` recording the answer and a unit test for each setting if they apply.
 
 ## 3. Protocol
 
-- [ ] 3.1 Add the device-scoped operations to `packages/protocol`: enrol, withdraw, and report window visibility, plus the push-support flag in the protocol hello. Verified by protocol tests accepting valid messages and rejecting malformed, oversized, and unknown-field messages.
-- [ ] 3.2 Define the sealed push format in `packages/protocol`: version, routing id, sequence, count, bounded outstanding identifiers, the optional notification, fixed padding, and the AES-256-GCM seal with associated data. Verified by round-trip tests, a test that two payloads of different kinds and title lengths seal to the same length, and tests that a wrong key, altered byte, or wrong routing id fails to open.
-- [ ] 3.3 Add the three framed-host notification messages to `packages/protocol/src/host.ts`: enrolment request and reply, count report, and banner target. Verified by `packages/protocol/test/host.test.mjs` cases for valid and invalid forms of each, including the count bounds.
+- [x] 3.1 Add the device-scoped operations `push.enrol`, `push.withdraw`, and `push.visibility` beside the other server projections in `packages/server-core`, and the `push.v1` capability in `packages/protocol`. Verified by `packages/server-core/test/push-sender.test.mjs` accepting valid requests and rejecting malformed ones, unknown fields, and a client with no device, and by `capability-coverage.test.mjs`.
+- [x] 3.2 Define the sealed push format in `packages/protocol/src/push.ts`: version, routing id, sequence, count, bounded outstanding identifiers, the optional notification, fixed padding, and the AES-256-GCM seal with associated data. Verified by `packages/protocol/test/push.test.mjs`: round trips, two payloads of different kinds and title lengths sealing to the same length, and a wrong key, altered byte, or wrong routing id failing to open.
+- [x] 3.3 Add the notifications surface the framing manager offers a session to the session transport host contract in `src/web/sessionTransportHost.ts`, all-or-nothing. The framed-host `postMessage` messages themselves are defined and tested in `terminay.com`, which owns that schema. Verified by `scripts/push-host.test.mjs` reading a complete surface and refusing a partial one, and by the app typecheck.
 
 ## 4. Server
 
-- [ ] 4.1 Store a push enrolment on the device record in `packages/server-core/src/remote/deviceAuthentication.ts` and its persistence in both hosts. Verified by a test that an enrolment survives a restart and holds no endpoint or subscription key.
-- [ ] 4.2 Accept enrol and withdraw only from a ticketed peer and only for the sending device. Verified by tests rejecting an unticketed peer and an attempt to change another device's enrolment.
-- [ ] 4.3 Track whether each device is watching, from live connections and visibility reports. Verified by unit tests for visible, hidden, connection declared dead, and two windows of one device.
-- [ ] 4.4 Add the push sender in `packages/server-core` as a consumer of the notification manager's published set: coalesce a burst, build and seal the current state per enrolment, carry a sent notification's title and body, and skip watching devices. Verified by tests asserting no push for a notification removed before publication, one push after a burst, no push to a watching device, and that the pushed state equals a connected client's notification snapshot.
-- [ ] 4.5 Send the current state when a device stops watching and that state differs from the last sent. Verified by a test in which a notification arrives while watching and is pushed after the device reports hidden.
-- [ ] 4.6 Post to the configured hosted push origin with bounded backoff, drop the enrolment when the service reports it gone, and send only current state after an outage. Verified by tests against a fake push service for success, refusal, gone, and outage then recovery.
-- [ ] 4.7 Honour the installation's silent-push flag: send a state-only push only to installations that accept one. Verified by a test for each flag value on an acknowledgement.
-- [ ] 4.8 Delete enrolments on device revocation and on server identity reset. Verified by tests asserting no push is sent to a revoked device and none after a reset.
-- [ ] 4.9 Confirm push failure never reaches terminals or clients. Verified by a test in which the fake push service hangs and terminal output, activity deltas, and acknowledgement proceed unaffected.
+- [x] 4.1 Keep each device's push enrolment in an owner-only `push-enrolments.v1.json` in the data root, keyed by device id, in both hosts. Verified by a test that an enrolment survives a restart, that the file is mode 0600, and that it holds no endpoint or subscription key.
+- [x] 4.2 Accept enrol and withdraw only from an authenticated paired device and only for that device; no field names a device. Verified by tests rejecting a client with no device and an attempt to enrol on another device's behalf.
+- [x] 4.3 Track whether each device is watching, from live connections and visibility reports. Verified by unit tests for visible, hidden, connection declared dead, and two windows of one device.
+- [x] 4.4 Add the push sender in `packages/server-core` as a consumer of the notification manager's published set: coalesce a burst, build and seal the current state per enrolment, carry a sent notification's title and body, withhold the automation terminal space, and skip watching devices. Verified by tests asserting no push for a notification removed before publication, one push after a burst, no push to a watching device, and a composed server pushing to a paired device over a real connection.
+- [x] 4.5 Push the notification that arose while a device was watching when it stops watching, and send nothing when the window saw everything itself. Verified by tests for hidden, connection declared dead, and a notification that came and went while watched.
+- [x] 4.6 Post to the manager host beside the server's own hosted session origin with bounded backoff, drop the enrolment when the service reports it gone, and send only current state after an outage. Verified by tests against a fake push service for success, 404 and 410, 429, 502, 503, a network failure, and outage then recovery.
+- [x] 4.7 Honour the installation's silent-push flag: send a state-only push only to installations that accept one. Verified by a test for each flag value on an acknowledgement.
+- [x] 4.8 End a device's enrolment when the device registry no longer trusts it, which covers revocation and server identity reset in both hosts. Verified by tests asserting no push to a removed device and none after every enrolment is cleared.
+- [x] 4.9 Confirm push failure never reaches terminals or clients. Verified by a test in which the fake push service hangs: the notification manager keeps publishing and removing, and the request is abandoned at its deadline.
 
 ## 5. Workspace UI
 
-- [ ] 5.1 On connect in a framed session, request the enrolment from the host and send it to the server; withdraw when the host reports notifications off. Verified by an e2e scenario with a fake framed host asserting the enrol operation is sent once per connection and not at all without a host enrolment.
-- [ ] 5.2 Report window visibility to the server on change. Verified by a unit test of the reporter and an e2e assertion that hiding the page sends the report.
-- [ ] 5.3 Report the notification count to the framed host on mount and on change, alongside the existing Desktop report in `src/App.tsx`. Verified by an e2e scenario where a terminal finishing unviewed reports 1 and dismissing it reports 0.
-- [ ] 5.4 Select and acknowledge a terminal when the host hands over a banner target, and leave the selection unchanged when the target no longer exists. Verified by e2e scenarios for an existing terminal in a background project and for a closed one.
+- [x] 5.1 On connect in a framed session, request the enrolment from the host and send it to the server; withdraw when the host reports notifications off; apply changes in order. Verified by `scripts/push-host.test.mjs`: one enrol per connection, withdraw without an enrolment, off-then-on, and a change arriving mid-sync.
+- [x] 5.2 Report window visibility to the server on change, and at enrolment when the window is hidden. Verified by unit tests of the binding.
+- [x] 5.3 Report the notification count to the framing manager on mount and on change, bounded to its accepted range, alongside the Desktop badge report in `src/App.tsx`. Verified by a unit test of the bound and a test that the workspace passes the header count through it.
+- [x] 5.4 Select a terminal when the manager hands over a banner target, which acknowledges it, and leave the selection unchanged when the target no longer exists. Verified by unit tests of the target lookup for an existing terminal, a closed one, and a project this window does not show.
+- [ ] 5.5 Exercise the framed workspace end to end against the real manager: enrolment sent on connect, count reported, and a banner target selecting its terminal. Verified by the manual run in 9.3; the e2e harness has no framed manager to stand in for one.
 
 ## 6. Hosted push service (terminay.com)
 
