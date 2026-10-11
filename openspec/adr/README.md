@@ -86,3 +86,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0057](./0057-nothing-written-into-a-terminal-is-a-secret.md) | Nothing Terminay writes into a terminal is a secret, so no feature moves a vault entry into a PTY | accepted | 2026-10-10 |
 | [0058](./0058-a-fact-taken-from-terminal-output-is-live-server-state-and-never-a-workspace-commit.md) | A fact taken from terminal output is live server state, and never a workspace commit | accepted, supersedes 0056 | 2026-10-10 |
 | [0059](./0059-a-workspace-change-reaches-every-layer-as-the-change.md) | A workspace change reaches every layer as the change, and each layer's work is proportional to it | accepted | 2026-10-10 |
+| [0060](./0060-a-push-is-sealed-per-pairing-and-attributed-by-the-device.md) | A push is sealed per pairing and attributed by the device; the hosted push service reads nothing and identifies no one | accepted | 2026-10-11 |
+| [0061](./0061-a-notification-is-a-server-owned-record-published-after-a-settle-period.md) | A notification is a server-owned record that its terminal adds and removes, published after a settle period | accepted | 2026-10-11 |
