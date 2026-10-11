@@ -18,4 +18,4 @@
 
 - [x] 4.1 Run `openspec validate --all`. Verified by it passing.
 - [x] 4.2 Run the repository typecheck and lint for server-core. Verified by both passing.
-- [ ] 4.3 Open a pull request on `origin` and read back every commit status. Verified by each status being `success` or `skipped`.
+- [x] 4.3 Open a pull request on `origin` and read back every commit status. Verified by each status being `success` or `skipped`. Read back on pull request 383: 26 of 26 statuses `success`, after one re-run of `Workspace tests` for an unrelated replay-cost timing assertion.
