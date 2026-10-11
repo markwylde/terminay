@@ -129,6 +129,26 @@ test("raw shell echo before an explicit completion cannot pin a claimed session 
   assert.equal(service.get(identity()).acknowledged, false);
 });
 
+test("PTY output directly after input publishes no working event until it outlasts the input window", () => {
+  let now = 1_000;
+  const service = new TerminalActivityService({ serverId: "server-a", now: () => now });
+  service.register(identity());
+  const events = [];
+  service.subscribe((event) => events.push(event));
+  service.ingestSignal(identity(), { kind: "userInput" });
+  now = 1_020;
+  assert.deepEqual(service.ingestPtyOutput(identity(), "l"), []);
+  now = 1_900;
+  assert.deepEqual(service.ingestPtyOutput(identity(), "still inside the window\r\n"), []);
+  assert.deepEqual(events.filter((event) => event.snapshot.status === "working"), []);
+  now = 2_000;
+  const outlasted = service.ingestPtyOutput(identity(), "still printing\r\n");
+  assert.equal(outlasted.length, 1);
+  assert.equal(outlasted[0].snapshot.status, "working");
+  assert.equal(events.filter((event) => event.snapshot.status === "working").length, 1);
+  service.markExited(identity());
+});
+
 test("a delayed shell completion without an executing marker is still unread", () => {
   let now = 1;
   const service = new TerminalActivityService({ serverId: "server-a", now: () => now });
