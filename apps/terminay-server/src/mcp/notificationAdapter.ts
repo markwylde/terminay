@@ -41,7 +41,7 @@ export function createNotificationControlAdapter(
 				);
 				return {
 					notification: record.id,
-					sent: 'The notification is held for the terminal you are running in. The user is shown it only if it is still present after about five seconds, and not at all while they are already in this terminal.',
+					sent: 'The notification is held for the terminal you are running in. The user is shown it only if it is still present after about five seconds, and not at all if they click or type in this terminal before then.',
 				};
 			} catch (error) {
 				return notificationFailureFor(error);
