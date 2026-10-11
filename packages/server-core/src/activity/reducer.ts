@@ -298,12 +298,20 @@ export class TerminalActivityReducer {
 		const session = this.ensure(sessionId, options.projectId, at);
 		this.expire(session, at);
 
-		if (session.provider !== undefined && session.provider !== update.provider)
-			return undefined;
+		// A terminal belongs to one agent at a time. Another agent's update is
+		// fenced while the holder is still at work, and takes the terminal over
+		// once the holder has finished or gone idle: a new chat started in the
+		// same terminal is a different agent, and must be heard.
+		const anotherAgent =
+			(session.provider !== undefined &&
+				session.provider !== update.provider) ||
+			(session.agentId !== undefined &&
+				update.agentId !== undefined &&
+				session.agentId !== update.agentId);
 		if (
-			session.agentId !== undefined &&
-			update.agentId !== undefined &&
-			session.agentId !== update.agentId
+			anotherAgent &&
+			session.providerState !== 'done' &&
+			session.providerState !== 'idle'
 		)
 			return undefined;
 		if (
