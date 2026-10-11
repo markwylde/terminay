@@ -9525,7 +9525,9 @@ function App({
 		: '';
 	const updateLabel = isAppUpdateReady
 		? `Restart to Update${updateVersionSuffix}`
-		: `Update Available${updateVersionSuffix}`;
+		: appUpdateStatus?.state === 'downloading'
+			? `Downloading Update${updateVersionSuffix}`
+			: `Update Available${updateVersionSuffix}`;
 	const installDownloadedUpdate = async () => {
 		setIsInstallingAppUpdate(true);
 		setAppUpdateInstallError(null);
