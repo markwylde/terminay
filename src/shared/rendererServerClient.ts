@@ -5,6 +5,7 @@ import {
 	FileViewerClient,
 	DocumentationClient,
 	MdxRuntimeClient,
+	NotificationClient,
 	RecordingsClient,
 	TerminayClient,
 	TerminayClientFacade,
@@ -183,6 +184,21 @@ export async function createConnectedServerClientContext(
 					onResync,
 				),
 		});
+		// Notifications are optional: a server that does not publish them leaves
+		// the window reading terminal activity itself, as it always has.
+		const notificationClient = server.capabilities.includes(
+			FEATURE_CAPABILITIES.notifications,
+		)
+			? new NotificationClient({
+					query: featureTransport.query.bind(featureTransport),
+					command: featureTransport.command.bind(featureTransport),
+					subscribe: (event, listener, onResync) =>
+						featureTransport.subscribeClientEvents(event, listener, onResync),
+				})
+			: undefined;
+		void notificationClient?.subscribe().catch((error) => {
+			console.warn('notification subscription failed', error);
+		});
 		const fileViewerClient = new FileViewerClient(featureTransport);
 		const fileObservationClient = new FileObservationClient(featureTransport);
 		const documentationClient = new DocumentationClient(featureTransport);
@@ -294,6 +310,7 @@ export async function createConnectedServerClientContext(
 				store.close();
 				titles.close();
 				candidateActivityClient.close();
+				notificationClient?.close();
 				candidateAgentStatusClient.close();
 				removeStateListener();
 				await mdxRuntimeClient.disposeAll().catch(() => undefined);
@@ -330,6 +347,7 @@ export async function createConnectedServerClientContext(
 			applicationClient: client,
 			client: new TerminayTerminalClient(client),
 			activityClient,
+			...(notificationClient === undefined ? {} : { notificationClient }),
 			agentStatusClient,
 			workspaceSnapshotStore: store,
 			terminalTitleStore: titles,

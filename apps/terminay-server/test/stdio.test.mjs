@@ -42,6 +42,8 @@ const expectedTools = [
 	'show_window',
 	'close_window',
 	'list_windows',
+	'send_notification',
+	'dismiss_notification',
 ];
 
 test('headless MCP rejects non-local sockets and malformed inherited capabilities', async () => {

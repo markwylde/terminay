@@ -9,6 +9,7 @@ import {
 	type ServerMessagePort,
 	ServerPortTransport,
 } from '../shared/serverPortTransport';
+import type { SessionNotificationsHost } from '../workspace/pushHost';
 
 /** Sanitized manager profile projection. It carries no origin, credential, or
  * workspace value across the framed-host boundary. */
@@ -60,7 +61,30 @@ export type SessionTransportHost = Readonly<{
 	): () => void;
 	readComposition?(): Promise<TerminayWorkspaceComposition | undefined>;
 	writeComposition?(composition: TerminayWorkspaceComposition): Promise<void>;
+	/** Web Push for the installed PWA (ADR-0060). Present only when this shell
+	 * is framed by a manager that holds the device's push subscription. The
+	 * manager resolves the enrolment for this origin alone and learns from the
+	 * session a notification count and nothing else. */
+	notifications?: SessionNotificationsHost;
 }>;
+
+const SESSION_NOTIFICATION_MEMBERS = [
+	'getPushEnrolment',
+	'subscribePushEnrolment',
+	'setNotificationCount',
+	'subscribeNotificationTarget',
+] as const;
+
+function isSessionNotificationsHost(
+	value: unknown,
+): value is SessionNotificationsHost {
+	return (
+		isRecord(value) &&
+		SESSION_NOTIFICATION_MEMBERS.every(
+			(name) => typeof value[name] === 'function',
+		)
+	);
+}
 
 export const SESSION_TRANSPORT_CONNECTION_MEMBERS = [
 	'connectAttached',
@@ -198,6 +222,13 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 	) {
 		fail('leaveManager');
 	}
+	// Like the attached-connection surface, a partial notifications surface is
+	// a broken contract, not a degraded one.
+	if (
+		value.notifications !== undefined &&
+		!isSessionNotificationsHost(value.notifications)
+	)
+		fail('notifications');
 	// The attached-connection surface is optional and all-or-nothing: a partial
 	// surface is a broken contract, not a degraded one.
 	const present = SESSION_TRANSPORT_CONNECTION_MEMBERS.filter(
@@ -249,6 +280,11 @@ function isHostedBrowserSessionAuthority(
 	for (const name of ['readBundle', 'connect'] as const) {
 		if (typeof value[name] !== 'function') return false;
 	}
+	if (
+		value.notifications !== undefined &&
+		!isSessionNotificationsHost(value.notifications)
+	)
+		return false;
 	if (
 		value.managerConnectionsVersion !== undefined &&
 		typeof value.managerConnectionsVersion !== 'number'

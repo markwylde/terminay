@@ -28,6 +28,12 @@ import {
 	parseShowWindow,
 } from './appWindowTools.js';
 import {
+	isNotificationParamFailure,
+	type NotificationControlAdapter,
+	parseDismissNotification,
+	parseSendNotification,
+} from './notificationTools.js';
+import {
 	CONTROL_LARGE_FRAME_OPERATIONS,
 	CONTROL_MAX_LARGE_FRAME_BYTES,
 	ControlEndpointError,
@@ -168,6 +174,16 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly sendNotification?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly dismissNotification?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 	readonly listConnectedTools?: (
 		params: Record<string, unknown>,
 		context: ControlRequestContext,
@@ -237,6 +253,8 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	show_window: 'appWindows',
 	close_window: 'appWindows',
 	list_windows: 'appWindows',
+	send_notification: 'notifications',
+	dismiss_notification: 'notifications',
 	// Listing never prompts: a tool the policy refuses stays listed and
 	// refuses when called.
 	list_connected_tools: undefined,
@@ -400,6 +418,8 @@ export interface TerminalControlAdapterOptions {
 	readonly automations?: AutomationControlAdapter;
 	/** Host binding for the app-window and connected-server tools. */
 	readonly appWindows?: AppWindowControlAdapter;
+	/** Host binding for the notification tools. */
+	readonly notifications?: NotificationControlAdapter;
 	/** Model context the calling terminal's views left for the next result. */
 	readonly takeModelContext?: (
 		context: ControlRequestContext,
@@ -443,6 +463,8 @@ const DEFAULT_SCOPES: Readonly<
 	show_window: 'write',
 	close_window: 'write',
 	list_windows: 'read',
+	send_notification: 'write',
+	dismiss_notification: 'write',
 	list_connected_tools: 'read',
 	call_connected_tool: 'write',
 });
@@ -477,6 +499,8 @@ const HANDLER_BY_OPERATION: Readonly<
 	show_window: 'showWindow',
 	close_window: 'closeWindow',
 	list_windows: 'listWindows',
+	send_notification: 'sendNotification',
+	dismiss_notification: 'dismissNotification',
 	list_connected_tools: 'listConnectedTools',
 	call_connected_tool: 'callConnectedTool',
 });
@@ -885,8 +909,33 @@ export function createTerminalControlAdapter(
 							);
 						}),
 				};
+	const notifications = options.notifications;
+	const notificationHandlers: Partial<ServerControlHandlers> =
+		notifications === undefined
+			? {}
+			: {
+					sendNotification: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseSendNotification(params);
+							return isNotificationParamFailure(parsed)
+								? parsed
+								: notifications.sendNotification(parsed, context, signal);
+						}),
+					dismissNotification: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseDismissNotification(params);
+							return isNotificationParamFailure(parsed)
+								? parsed
+								: notifications.dismissNotification(parsed, context, signal);
+						}),
+				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
-		handlers: { ...handlers, ...automationHandlers, ...appWindowHandlers },
+		handlers: {
+			...handlers,
+			...automationHandlers,
+			...appWindowHandlers,
+			...notificationHandlers,
+		},
 		...(options.permissions === undefined
 			? {}
 			: { permissions: options.permissions }),

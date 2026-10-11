@@ -236,6 +236,11 @@ export class DesktopServerOwnedExposure {
 		return this.getStatus();
 	}
 
+	/** Where this server is exposed, once it has been. */
+	get currentSessionOrigin(): string | undefined {
+		return this.sessionOrigin;
+	}
+
 	async revokeDevice(deviceId: string): Promise<RemoteAccessStatus> {
 		await this.requireExposure().revokeDevice(deviceId);
 		this.persistDevices?.(this.requireExposure().devices.list());

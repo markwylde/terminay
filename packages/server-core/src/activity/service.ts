@@ -35,6 +35,11 @@ export type ProgramTitleListener = (
 	title: string,
 ) => void;
 
+/** Told when a user viewed, clicked into, or typed in a terminal. */
+export type TerminalInteractionListener = (
+	identity: ActivitySessionIdentity,
+) => void;
+
 export class TerminalActivityServiceError extends Error {
 	readonly code:
 		| 'invalid_identity'
@@ -78,6 +83,7 @@ export class TerminalActivityService {
 	private deadlineAt: number | null = null;
 	private stopped = false;
 	private programTitleListener: ProgramTitleListener | undefined;
+	private readonly interactionListeners = new Set<TerminalInteractionListener>();
 
 	constructor(private readonly options: TerminalActivityServiceOptions) {
 		assertId(options.serverId, 'server id');
@@ -103,6 +109,20 @@ export class TerminalActivityService {
 	 * the one consumer once the workspace exists. */
 	setProgramTitleListener(listener: ProgramTitleListener | undefined): void {
 		this.programTitleListener = listener;
+	}
+
+	/**
+	 * Observe user interaction with a terminal: typing, and acknowledgement by
+	 * any client. It is reported even when the reducer had nothing to clear, so
+	 * an observer need not infer interaction from an activity transition.
+	 */
+	onInteraction(listener: TerminalInteractionListener): () => void {
+		if (typeof listener !== 'function')
+			throw new TypeError('interaction listener must be a function');
+		this.interactionListeners.add(listener);
+		return () => {
+			this.interactionListeners.delete(listener);
+		};
 	}
 
 	get serverId(): string {
@@ -172,6 +192,7 @@ export class TerminalActivityService {
 			now: this.now(),
 		});
 		this.reconcileDeadline();
+		if (signal.kind === 'userInput') this.notifyInteraction(identity);
 		return event;
 	}
 
@@ -199,10 +220,12 @@ export class TerminalActivityService {
 			this.reducer.get(identity.sessionId)?.updatedAt !== expectedUpdatedAt
 		)
 			return undefined;
-		return this.reducer.acknowledge(identity.sessionId, {
+		const event = this.reducer.acknowledge(identity.sessionId, {
 			projectId: identity.projectId,
 			now: this.now(),
 		});
+		this.notifyInteraction(identity);
+		return event;
 	}
 
 	markExited(identity: ActivitySessionIdentity): ActivityEvent | undefined {
@@ -295,6 +318,16 @@ export class TerminalActivityService {
 			this.cancelTimeout(this.deadlineTimer);
 		this.deadlineTimer = undefined;
 		this.deadlineAt = null;
+	}
+
+	private notifyInteraction(identity: ActivitySessionIdentity): void {
+		for (const listener of [...this.interactionListeners]) {
+			try {
+				listener(identity);
+			} catch {
+				/* an observer cannot block acknowledgement */
+			}
+		}
 	}
 
 	private reconcileDeadline(): void {

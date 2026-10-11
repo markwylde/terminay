@@ -165,6 +165,9 @@ export interface TerminalPanelClientContextValue {
 	/** Optional canonical activity projection for this connection. It is kept
 	 * separate from the panel stream so non-terminal routes can share it. */
 	readonly activityClient?: ActivityClient;
+	/** The notifications this connection's server publishes. Absent when the
+	 * server does not publish them. */
+	readonly notificationClient?: import('@terminay/client-core').NotificationClient;
 	/** Optional reduced server-owned agent projection for this connection. */
 	readonly agentStatusClient?: AgentStatusClient;
 	/** Authenticated connection-wide workspace projection. */

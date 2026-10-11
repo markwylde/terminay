@@ -150,15 +150,26 @@ non-extractable device credential and proxies clipboard, microphone, and
 notifications over origin-checked `postMessage`. The PWA does not ship a
 workspace build.
 
+The installed PWA also receives notifications from servers it is not showing.
+Each paired server pushes its published notifications to the device as Web
+Push banners, titled with the name the user gave that server on the device.
+The app icon carries the sum of unread notifications across saved servers and
+each saved server shows its own count. A push is sealed with a key shared by
+one server and one device, so one server cannot raise a banner in another's
+name, and a device that is looking at a server is not pushed by it.
+
 Desktop and browser hosts hold no server credentials other than the connection
 credentials for the servers they are paired with.
 
 ### Hosted services
 
 Terminay's hosted service provides static bootstrap assets, the web connection
-host, WebRTC signaling, and relay coordination. It is data-blind: terminal,
+host, WebRTC signaling, relay coordination, and a push service that forwards
+notifications to browser vendors. It is data-blind: terminal,
 filesystem, workspace, recording, setting, and secret data do not become
-hosted application data.
+hosted application data. The push service carries only sealed payloads of one
+fixed size, holds the Web Push signing key, and stores nothing that identifies
+an installation or links one user's servers.
 
 ### Security boundaries
 
@@ -175,8 +186,9 @@ MCP authority has two parts, both checked by the server on every request: the
 calling terminal's capability scope (which terminals it can reach) and the
 user's permission policy (which kinds of operation it may perform). The policy
 groups operations into Read Terminals, Full Terminal Management, Read
-Automations, Full Automation Management, App Windows, and Connected Server
-Tools, with a further Window Messages policy, each set to Ask Permission, Always
+Automations, Full Automation Management, App Windows, Notifications, and
+Connected Server Tools, with a further Window Messages policy, each set to Ask
+Permission, Always
 Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
 an inline prompt in the calling terminal's pane, answerable from any client
 with authority to create terminals on that server. See
