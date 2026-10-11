@@ -72,7 +72,6 @@ export class NotificationManager {
 	private readonly sends = new Map<string, number[]>();
 	private readonly events: NotificationEvent[] = [];
 	private readonly listeners = new Set<NotificationListener>();
-	private readonly sentListeners = new Set<(owner: NotificationOwner) => void>();
 	private currentRevision = 0;
 	private stopped = false;
 
@@ -225,28 +224,7 @@ export class NotificationManager {
 			raisedAt: this.now(),
 		});
 		this.add(record);
-		for (const listener of [...this.sentListeners]) {
-			try {
-				listener({ projectId: record.projectId, sessionId: record.sessionId });
-			} catch {
-				// An observer cannot undo an accepted send.
-			}
-		}
 		return record;
-	}
-
-	/**
-	 * Observe a process adding a notification. It names only the terminal, so a
-	 * client that is already interacting with that terminal can acknowledge it
-	 * within the settle period; the pending record itself stays unseen.
-	 */
-	onSent(listener: (owner: NotificationOwner) => void): () => void {
-		if (typeof listener !== 'function')
-			throw new TypeError('sent listener must be a function');
-		this.sentListeners.add(listener);
-		return () => {
-			this.sentListeners.delete(listener);
-		};
 	}
 
 	/** Remove one notification the terminal itself sent. */
