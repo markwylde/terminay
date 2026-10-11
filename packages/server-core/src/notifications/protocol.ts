@@ -16,12 +16,6 @@ export const NOTIFICATION_OPERATIONS = Object.freeze({
 	delta: 'notifications.delta',
 	dismiss: 'notifications.dismiss',
 	event: 'notifications',
-	/**
-	 * Asks clients whether their user is interacting with a terminal a process
-	 * has just sent a notification to. It names the terminal and nothing else;
-	 * a client that is answers with the ordinary activity acknowledgement.
-	 */
-	probe: 'notifications.probe',
 } as const);
 
 export interface NotificationOperationRegistryOptions {
@@ -58,12 +52,6 @@ export function createNotificationOperationRegistry(
 			event as unknown as JsonValue,
 		);
 	});
-	const unsubscribeSent = manager.onSent((owner) => {
-		options.eventJournal.append(NOTIFICATION_OPERATIONS.probe, {
-			projectId: owner.projectId,
-			sessionId: owner.sessionId,
-		});
-	});
 	return {
 		operations: {
 			queries: {
@@ -88,7 +76,6 @@ export function createNotificationOperationRegistry(
 		},
 		close: () => {
 			unsubscribe();
-			unsubscribeSent();
 		},
 	};
 
@@ -148,11 +135,7 @@ export function createNotificationEventProjector(): (
 	client: AuthenticatedClient | undefined,
 ) => OrderedEvent | undefined {
 	return (event, client) => {
-		if (
-			event.event !== NOTIFICATION_OPERATIONS.event &&
-			event.event !== NOTIFICATION_OPERATIONS.probe
-		)
-			return event;
+		if (event.event !== NOTIFICATION_OPERATIONS.event) return event;
 		const projectId = projectClaim(client?.claims);
 		if (projectId === undefined) return event;
 		const payload = event.payload;

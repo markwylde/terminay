@@ -327,10 +327,6 @@ import {
 	summarizeActivityBadge,
 } from './workspace/activityCountBadge';
 import {
-	isInteractingWithTerminal,
-	shouldAcknowledgeInteractedActivity,
-} from './workspace/terminalActivityAcknowledgement';
-import {
 	buildTerminalActivityOverview,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
@@ -1770,7 +1766,6 @@ const ProjectWorkspace = memo(forwardRef<
 			(sessionId: string, now?: number) => void
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
-		const interactedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
 			new Map(),
@@ -2029,18 +2024,6 @@ const ProjectWorkspace = memo(forwardRef<
 					sessionId,
 				),
 			[],
-		);
-
-		// Whether the window a terminal is shown in has focus. A terminal moved
-		// to a window of its own is judged by that window. A user who has gone to
-		// another application is interacting with no terminal here.
-		const isTerminalWindowFocused = useCallback(
-			(sessionId: string) =>
-				(
-					getPanelForSession(sessionId)?.view.content.element.ownerDocument ??
-					document
-				).hasFocus(),
-			[getPanelForSession],
 		);
 
 		const { start: startDictation } = useDictationController({
@@ -2399,45 +2382,12 @@ const ProjectWorkspace = memo(forwardRef<
 					) {
 						continue;
 					}
-					const arrival = {
-						acknowledged: snapshot.acknowledged,
-						focusedSessionId: focusedSessionIdRef.current,
-						interactedSessionId: interactedSessionIdRef.current,
-						sessionId: snapshot.sessionId,
-						status: snapshot.status,
-					};
-					const windowFocused = isTerminalWindowFocused(snapshot.sessionId);
-					if (
-						!windowFocused &&
-						shouldAcknowledgeInteractedActivity({
-							...arrival,
-							windowFocused: true,
-						})
-					) {
-						// It arrived for the terminal they were in while they were in
-						// another application. Coming back is not acknowledgement, so
-						// the interaction ends here; a click or a keystroke starts
-						// another.
-						interactedSessionIdRef.current = null;
-					}
-					if (
-						shouldAcknowledgeInteractedActivity({ ...arrival, windowFocused })
-					) {
-						// Finished or attention on a terminal the user is clicking or
-						// typing in is acknowledgement, including claimed sessions.
-						// Working stays live so the amber indicator remains. A project
-						// becoming active is not interaction.
-						applyTerminalActivityEvaluation(snapshot.sessionId, {
-							state: 'viewed',
-							nextDeadline: null,
-						});
-						markTerminalActivityViewed(snapshot.sessionId);
-					} else {
-						applyTerminalActivityEvaluation(
-							snapshot.sessionId,
-							serverActivityEvaluation(snapshot),
-						);
-					}
+					// Nothing is acknowledged because of where the user is when it
+					// arrives. Only what they do in the terminal clears it.
+					applyTerminalActivityEvaluation(
+						snapshot.sessionId,
+						serverActivityEvaluation(snapshot),
+					);
 					const exitCode =
 						typeof snapshot.exitCode === 'number' ? snapshot.exitCode : null;
 					recordTerminalControlActivity(
@@ -2462,14 +2412,11 @@ const ProjectWorkspace = memo(forwardRef<
 			applyTerminalActivityEvaluation,
 			getPanelForSession,
 			isActive,
-			isTerminalWindowFocused,
-			markTerminalActivityViewed,
 			project.id,
 			serverActivityClient,
 		]);
 
 		useEffect(() => {
-			if (!isActive) interactedSessionIdRef.current = null;
 			if (isActive || serverActivityClient === undefined) return;
 			const sessionId = dockviewApiRef.current?.activePanel?.params?.sessionId;
 			if (typeof sessionId !== 'string' || sessionId.length === 0) return;
@@ -2492,48 +2439,6 @@ const ProjectWorkspace = memo(forwardRef<
 			);
 			return () => window.clearTimeout(settleTimer);
 		}, [isActive, markTerminalActivityViewed, serverActivityClient]);
-
-		const serverNotificationClient = terminalClientContext?.notificationClient;
-		useEffect(() => {
-			if (serverNotificationClient === undefined) return;
-			let disposed = false;
-			let unsubscribe: (() => void) | undefined;
-			// A process has just sent a notification to a terminal. If the user is
-			// clicking or typing in that terminal they have seen what it has to
-			// say, so it is acknowledged before the server ever publishes it.
-			void serverNotificationClient
-				.onProbe((probe) => {
-					if (probe.projectId !== project.id) return;
-					const terminal = {
-						focusedSessionId: focusedSessionIdRef.current,
-						interactedSessionId: interactedSessionIdRef.current,
-						sessionId: probe.sessionId,
-					};
-					if (!isInteractingWithTerminal({ ...terminal, windowFocused: true }))
-						return;
-					if (!isTerminalWindowFocused(probe.sessionId)) {
-						// Sent while they were in another application: it is kept, and
-						// coming back does not acknowledge it.
-						interactedSessionIdRef.current = null;
-						return;
-					}
-					markTerminalActivityViewed(probe.sessionId);
-				})
-				.then((stop) => {
-					if (disposed) stop();
-					else unsubscribe = stop;
-				})
-				.catch(() => undefined);
-			return () => {
-				disposed = true;
-				unsubscribe?.();
-			};
-		}, [
-			isTerminalWindowFocused,
-			markTerminalActivityViewed,
-			project.id,
-			serverNotificationClient,
-		]);
 
 		const focusActiveTerminal = useCallback(() => {
 			const terminalPanel = findTerminalFocusTarget({
@@ -2598,7 +2503,6 @@ const ProjectWorkspace = memo(forwardRef<
 					return;
 				}
 				focusedSessionIdRef.current = sessionId;
-				interactedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 				markTerminalActivityViewed(sessionId);
 				if (options.keepError !== true) setErrorText(null);
@@ -4810,11 +4714,6 @@ const ProjectWorkspace = memo(forwardRef<
 						),
 					);
 				}
-				// Focus moving to another terminal ends the interaction with the one
-				// the user was typing in; its later activity is news again.
-				if (interactedSessionIdRef.current !== sessionId) {
-					interactedSessionIdRef.current = null;
-				}
 				focusedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 			};
@@ -4894,7 +4793,6 @@ const ProjectWorkspace = memo(forwardRef<
 					return;
 				}
 
-				interactedSessionIdRef.current = sessionId;
 				markTerminalActivityViewed(sessionId);
 			};
 

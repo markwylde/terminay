@@ -190,23 +190,32 @@ test.describe('terminal activity signals', () => {
     await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
-  test('a focused terminal that finishes does not keep the finished indicator', async ({
+  test('work that finishes in the terminal the user is in stays until they do something in it', async ({
     mainWindow,
   }) => {
     const activeTab = mainWindow
       .locator('.project-workspace--active .terminal-tab-content--active')
       .first()
+    const panel = mainWindow.locator('.project-workspace--active .terminal-panel:visible')
 
-    await mainWindow.locator('.terminal-panel').first().click()
+    await panel.click()
     await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'")
     await mainWindow.keyboard.press('Enter')
 
+    // Being in the terminal when it finishes is not having seen it.
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect(
+      mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
+    ).toHaveCount(1)
+
+    // Clicking into it is.
+    await panel.click()
+
     await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(activeTab.locator('.agent-status-indicator[data-agent-state="done"]')).toHaveCount(0)
     await expect(
       mainWindow.locator('.project-tab--active .project-tab-activity-dot'),
     ).toHaveCount(0)
-    await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
+    await expectNoNotificationFor(mainWindow, 6_000)
   })
 
   test('activating a project does not dismiss a finished terminal until that terminal is clicked', async ({
@@ -443,7 +452,24 @@ test.describe('terminal activity signals', () => {
     await expect(mainWindow.locator('.notifications-count')).toHaveCount(0)
   })
 
-  test('a notification sent from the terminal the user is typing in is not shown', async ({
+  test('a notification sent from the terminal the user is in is shown when they do nothing in it', async ({
+    mainWindow,
+    userDataDir,
+  }) => {
+    const send = await sendNotificationCommand(userDataDir, { body: 'Come back when you can' })
+
+    await submitTerminalCommand(mainWindow, `${send}\r`)
+
+    await expect(mainWindow.locator('.notifications-count')).toBeVisible({ timeout: 15_000 })
+    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
+    await expect(
+      mainWindow
+        .getByRole('menu', { name: 'Notifications' })
+        .locator('.terminal-activity-menu__row', { hasText: 'Come back when you can' }),
+    ).toHaveCount(1)
+  })
+
+  test('typing in the terminal a notification was sent from, inside the settle period, means it is never shown', async ({
     mainWindow,
     userDataDir,
   }) => {
@@ -453,29 +479,8 @@ test.describe('terminal activity signals', () => {
     await expect(
       mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-rows'),
     ).toContainText('RESULT send_notification ok')
+    await submitTerminalCommand(mainWindow, 'true\r')
 
-    await expectNoNotificationFor(mainWindow, 2_500)
-  })
-
-  test('a notification sent from the terminal the user typed in is shown once they have left the window', async ({
-    mainWindow,
-    userDataDir,
-  }) => {
-    const send = await sendNotificationCommand(userDataDir, { body: 'Come back when you can' })
-
-    await submitTerminalCommand(mainWindow, `sleep 2.1; ${send}\r`)
-    // The user goes to another application. A test window cannot have its
-    // focus taken by one, so the page is told it has none.
-    await mainWindow.evaluate(() => {
-      document.hasFocus = () => false
-    })
-
-    await expect(mainWindow.locator('.notifications-count')).toBeVisible({ timeout: 15_000 })
-    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
-    await expect(
-      mainWindow
-        .getByRole('menu', { name: 'Notifications' })
-        .locator('.terminal-activity-menu__row', { hasText: 'Come back when you can' }),
-    ).toHaveCount(1)
+    await expectNoNotificationFor(mainWindow, 6_000)
   })
 })
