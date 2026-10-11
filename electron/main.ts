@@ -91,6 +91,11 @@ import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hosted
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { McpServerCommand } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
+import {
+	createFilePushEnrolmentPersistence,
+	PushEnrolmentStore,
+} from '../packages/server-core/src/push/enrolments';
+import { pushOriginForSessionOrigin } from '../packages/server-core/src/push/sender';
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
@@ -1960,6 +1965,20 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		...(notificationSettleOverride === undefined
 			? {}
 			: { notificationSettleMs: notificationSettleOverride }),
+		push: {
+			enrolments: new PushEnrolmentStore(
+				createFilePushEnrolmentPersistence(
+					path.join(app.getPath('userData'), 'push-enrolments.v1.json'),
+				),
+			),
+			// Posted to the manager host beside this server's own session origin.
+			origin: () => {
+				const sessionOrigin = desktopRemoteExposure?.currentSessionOrigin;
+				return sessionOrigin === undefined
+					? undefined
+					: pushOriginForSessionOrigin(sessionOrigin);
+			},
+		},
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
 			appRoot: process.env.APP_ROOT,
@@ -2316,7 +2335,15 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		}),
 		initialDevices: loadEmbeddedRemoteDevices(dataRoot),
-		persistDevices: (devices) => saveEmbeddedRemoteDevices(dataRoot, devices),
+		persistDevices: (devices) => {
+			saveEmbeddedRemoteDevices(dataRoot, devices);
+			// A device that is no longer trusted is sent no further push.
+			serverTerminalAuthority?.composition.push?.retainDevices(
+				devices
+					.filter((device) => device.revokedAt === null)
+					.map((device) => device.deviceId),
+			);
+		},
 		onApprovalRequested: (approval) => {
 			const notification = new Notification({
 				title: `${approval.deviceName} wants to pair`,

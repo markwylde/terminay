@@ -81,6 +81,10 @@ import {
 	SessionSourceSupervisor,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
+	createFilePushEnrolmentPersistence,
+	PushEnrolmentStore,
+	pushOriginForSessionOrigin,
+	type ServerCoreCompositionOptions,
 	serverVaultWorktreeCredentials,
 	TerminalActivityService,
 	TerminalReplayRegistry,
@@ -214,7 +218,27 @@ else if (options.command === 'mcp') {
 			throw error;
 		}
 	}
-	const devicePersistence = createRemoteDevicePersistence(options.dataRoot);
+	// Each paired device's push enrolment (ADR-0060). It ends with the device's
+	// trust, so it is pruned whenever the device registry is written.
+	const pushEnrolments = new PushEnrolmentStore(
+		createFilePushEnrolmentPersistence(
+			join(options.dataRoot, 'push-enrolments.v1.json'),
+		),
+	);
+	const storedDevices = createRemoteDevicePersistence(options.dataRoot);
+	const devicePersistence: RemoteDevicePersistence = {
+		load: storedDevices.load,
+		save: (records) => {
+			storedDevices.save(records);
+			const trusted = new Set(
+				records
+					.filter((device) => device.revokedAt === null)
+					.map((device) => device.deviceId),
+			);
+			for (const deviceId of pushEnrolments.deviceIds())
+				if (!trusted.has(deviceId)) pushEnrolments.remove(deviceId);
+		},
+	};
 	// `--expose hosted` is the administrator's standing decision for this data
 	// root, so the server provisions its own hosted session origin exactly as
 	// Desktop does for its embedded server, rather than advertising the
@@ -294,11 +318,21 @@ else if (options.command === 'mcp') {
 			// the URL fragment and never copied into a second readiness field.
 			const handoff = remote.start();
 			const credentials = createProtocolCredentials(remote);
-			const serverComposition = await createServerComposition(options, () => {
-				if (runtime === undefined)
-					throw new Error('server runtime is not composed');
-				return runtimeHealth(runtime, protocolReady);
-			});
+			const serverComposition = await createServerComposition(
+				options,
+				() => {
+					if (runtime === undefined)
+						throw new Error('server runtime is not composed');
+					return runtimeHealth(runtime, protocolReady);
+				},
+				{
+					enrolments: pushEnrolments,
+					// Posted to the manager host beside this server's hosted session
+					// origin. A server exposed only by direct signaling has none.
+					origin: () =>
+						exposeHosted ? pushOriginForSessionOrigin(sessionOrigin) : undefined,
+				},
+			);
 			const composition = serverComposition.core;
 			let runtime: StandaloneRuntime | undefined;
 			const pairingHosts: {
@@ -677,6 +711,7 @@ function createRemoteExposure(
 async function createServerComposition(
 	options: ServerCliOptions,
 	health: () => JsonValue,
+	push: NonNullable<ServerCoreCompositionOptions['push']>,
 ): Promise<
 	Readonly<{
 		core: ServerCoreComposition;
@@ -1005,6 +1040,7 @@ async function createServerComposition(
 					),
 				}),
 		activity,
+		push,
 		agents,
 		agentSessions: {
 			supervisor: agentSources,

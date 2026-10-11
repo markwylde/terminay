@@ -1,5 +1,5 @@
 import type { FileViewerClient } from '@terminay/client-core';
-import type { JsonValue } from '@terminay/protocol';
+import { FEATURE_CAPABILITIES, type JsonValue } from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
@@ -333,6 +333,12 @@ import {
 	type TerminalActivityOverviewItem,
 } from './workspace/TerminalActivityOverview';
 import { publishedNotificationItems } from './workspace/publishedNotifications';
+import {
+	bindPushHost,
+	boundedNotificationCount,
+	findNotificationTargetPanel,
+	readSessionNotificationsHost,
+} from './workspace/pushHost';
 import { usePublishedNotifications } from './workspace/usePublishedNotifications';
 import {
 	areTerminalActivityIndicatorsEnabled,
@@ -8149,6 +8155,43 @@ function App({
 		void setApplicationBadgeCount(notificationCount);
 	}, [notificationCount]);
 
+	// The installed PWA's manager, when it frames this session. It is told a
+	// count and nothing about what is counted, and carries this server's push
+	// enrolment, which only this server's own session ever receives.
+	const sessionNotifications = useMemo(
+		() => readSessionNotificationsHost(),
+		[],
+	);
+	useEffect(() => {
+		sessionNotifications?.setNotificationCount(
+			boundedNotificationCount(notificationCount),
+		);
+	}, [notificationCount, sessionNotifications]);
+	const pushConnection = byServerId.get(currentServerId)?.context;
+	const pushClient = pushConnection?.applicationClient;
+	const serverPushes =
+		pushConnection?.serverCapabilities?.includes(FEATURE_CAPABILITIES.push) ===
+		true;
+	useEffect(() => {
+		if (
+			sessionNotifications === undefined ||
+			pushClient === undefined ||
+			!serverPushes
+		)
+			return;
+		return bindPushHost({
+			host: sessionNotifications,
+			command: (operation, payload) =>
+				pushClient.command(operation, payload as JsonValue),
+			isVisible: () => document.visibilityState === 'visible',
+			onVisibilityChange: (listener) => {
+				document.addEventListener('visibilitychange', listener);
+				return () =>
+					document.removeEventListener('visibilitychange', listener);
+			},
+		});
+	}, [pushClient, serverPushes, sessionNotifications]);
+
 	// Which project a terminal belongs to, on any attached server. Session ids
 	// are per-server, so the server has to be part of the question.
 	const projectForSession = useCallback(
@@ -8852,6 +8895,24 @@ function App({
 		},
 		[notificationClient, workspaceOfPanel],
 	);
+	// A banner the user opened names a terminal. Selecting it is what clears
+	// its notification, exactly as activating its row in the list does.
+	const inventoryByProjectForTargetRef = useRef(inventoryByProject);
+	inventoryByProjectForTargetRef.current = inventoryByProject;
+	useEffect(() => {
+		if (sessionNotifications === undefined) return;
+		return sessionNotifications.subscribeNotificationTarget((target) => {
+			const panel = findNotificationTargetPanel(
+				inventoryByProjectForTargetRef.current,
+				target,
+			);
+			// A terminal that has since closed leaves the selection as it is.
+			if (panel === undefined) return;
+			setIsActivityMenuOpen(false);
+			activatePanelInProject(panel.projectId, panel.panelId);
+		});
+	}, [activatePanelInProject, sessionNotifications]);
+
 	const dismissAllNotifications = useCallback(() => {
 		for (const item of terminalActivityItems.notifications)
 			dismissNotification(item);
