@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-const { shouldAcknowledgeInteractedActivity } = await importAcknowledgement();
+const { isInteractingWithTerminal, shouldAcknowledgeInteractedActivity } =
+	await importAcknowledgement();
 
 test('project activation without interaction does not acknowledge finished work', () => {
 	assert.equal(
@@ -15,6 +16,7 @@ test('project activation without interaction does not acknowledge finished work'
 			interactedSessionId: null,
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
 		}),
 		false,
 	);
@@ -28,6 +30,7 @@ test('clicking or typing in a finished terminal acknowledges it', () => {
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
 		}),
 		true,
 	);
@@ -41,6 +44,7 @@ test('working stays live even while the user is in the terminal', () => {
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'working',
+			windowFocused: true,
 		}),
 		false,
 	);
@@ -54,7 +58,38 @@ test('a terminal typed in earlier is not acknowledged once focus has moved on', 
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
 		}),
+		false,
+	);
+});
+
+test('a terminal the user typed in is not acknowledged once they have left the window', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: false,
+		}),
+		false,
+	);
+});
+
+test('the user is in a terminal only while its window has focus', () => {
+	const terminal = {
+		focusedSessionId: 'terminal-1',
+		interactedSessionId: 'terminal-1',
+		sessionId: 'terminal-1',
+	};
+	assert.equal(
+		isInteractingWithTerminal({ ...terminal, windowFocused: true }),
+		true,
+	);
+	assert.equal(
+		isInteractingWithTerminal({ ...terminal, windowFocused: false }),
 		false,
 	);
 });

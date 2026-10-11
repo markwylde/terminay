@@ -456,4 +456,26 @@ test.describe('terminal activity signals', () => {
 
     await expectNoNotificationFor(mainWindow, 2_500)
   })
+
+  test('a notification sent from the terminal the user typed in is shown once they have left the window', async ({
+    mainWindow,
+    userDataDir,
+  }) => {
+    const send = await sendNotificationCommand(userDataDir, { body: 'Come back when you can' })
+
+    await submitTerminalCommand(mainWindow, `sleep 2.1; ${send}\r`)
+    // The user goes to another application. A test window cannot have its
+    // focus taken by one, so the page is told it has none.
+    await mainWindow.evaluate(() => {
+      document.hasFocus = () => false
+    })
+
+    await expect(mainWindow.locator('.notifications-count')).toBeVisible({ timeout: 15_000 })
+    await mainWindow.getByRole('button', { name: /^Notifications/ }).click()
+    await expect(
+      mainWindow
+        .getByRole('menu', { name: 'Notifications' })
+        .locator('.terminal-activity-menu__row', { hasText: 'Come back when you can' }),
+    ).toHaveCount(1)
+  })
 })
