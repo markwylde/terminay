@@ -27,6 +27,9 @@ import {
 	createNotificationEventProjector,
 	createNotificationOperationRegistry,
 } from './notifications/protocol.js';
+import type { PushEnrolmentStore } from './push/enrolments.js';
+import { createPushOperationRegistry } from './push/protocol.js';
+import { PushSender, type PushTransport } from './push/sender.js';
 import {
 	type AiService,
 	createAiOperationHandlers,
@@ -155,7 +158,7 @@ import {
 	TerminalTitleService,
 	terminalTitleEventProjector,
 } from './terminalTitles.js';
-import { WorkspaceStore } from './workspace.js';
+import { isAutomationSpace, WorkspaceStore } from './workspace.js';
 import {
 	restoreWorkspaceOnStartup,
 	type WorkspaceStartupRestoreOptions,
@@ -267,6 +270,14 @@ export interface ServerCoreCompositionOptions
 	/** The notification manager a host built itself, when it needs its own
 	 * clock. Without one the composition builds its own alongside activity. */
 	readonly notifications?: NotificationManager;
+	/** Web Push to paired devices (ADR-0060). The host supplies where
+	 * enrolments are kept and which hosted push service to post to; the
+	 * destination is never taken from a client. Needs `activity`. */
+	readonly push?: {
+		readonly enrolments: PushEnrolmentStore;
+		readonly origin: string | (() => string | undefined);
+		readonly transport?: PushTransport;
+	};
 	/** Optional server-owned provider-journal and agent status authority. It shares
 	 * the terminal lifecycle with activity; it is never a renderer service. */
 	readonly agents?: AgentStatusService;
@@ -432,6 +443,9 @@ export interface ServerCoreComposition {
 	readonly activityOperations?: ActivityOperationRegistry;
 	/** The server's notifications (ADR-0061); present with activity. */
 	readonly notifications?: NotificationManager;
+	/** Push to paired devices, when composed. A host ends a device's enrolment
+	 * through it when that device's trust ends. */
+	readonly push?: PushSender;
 	readonly agentOperations?: AgentOperationRegistry;
 	/** What each terminal displays (ADR-0058); present with a workspace. */
 	readonly terminalTitles?: TerminalTitleService;
@@ -1220,6 +1234,40 @@ export function createServerCoreComposition(
 						}
 					},
 				});
+	const push =
+		notifications === undefined || options.push === undefined
+			? undefined
+			: new PushSender({
+					notifications,
+					enrolments: options.push.enrolments,
+					origin: options.push.origin,
+					...(options.push.transport === undefined
+						? {}
+						: { transport: options.push.transport }),
+					describe: (record) => {
+						const state = options.workspace?.state;
+						if (state === undefined)
+							return { terminalTitle: 'Terminal', projectTitle: '' };
+						const project = state.projects[record.projectId];
+						// The automation terminal space is withheld from ordinary
+						// clients, and so from their lock screens.
+						if (project === undefined || isAutomationSpace(project))
+							return undefined;
+						return {
+							terminalTitle:
+								terminalTitles?.displayedTitleForSession(record.sessionId) ??
+								Object.values(state.panels).find(
+									(panel) =>
+										panel.type === 'terminal' &&
+										panel.sessionId === record.sessionId,
+								)?.title ??
+								'Terminal',
+							projectTitle: project.name,
+						};
+					},
+				});
+	const pushOperations =
+		push === undefined ? undefined : createPushOperationRegistry({ sender: push });
 	const activityOperations =
 		options.activity === undefined
 			? undefined
@@ -1376,7 +1424,10 @@ export function createServerCoreComposition(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
 							activityOperations?.operations ?? {},
-							notificationOperations?.operations ?? {},
+							mergeOperationRegistries(
+								notificationOperations?.operations ?? {},
+								pushOperations?.operations ?? {},
+							),
 						),
 						terminalTitleOperations?.operations ?? {},
 					),
@@ -1409,6 +1460,7 @@ export function createServerCoreComposition(
 				);
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
 		terminalOperations.closeConnection(connectionId);
+		push?.connectionClosed(connectionId);
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
 		appWindows?.closeConnection(connectionId);
@@ -1658,6 +1710,7 @@ export function createServerCoreComposition(
 			await attempt(() => {
 				unbindNotifications?.();
 				notificationOperations?.close();
+				push?.shutdown();
 				notifications?.shutdown();
 			});
 			await attempt(() => agentOperations?.close());
@@ -1696,6 +1749,7 @@ export function createServerCoreComposition(
 			: { agentSessions: options.agentSessions }),
 		...(activityOperations === undefined ? {} : { activityOperations }),
 		...(notifications === undefined ? {} : { notifications }),
+		...(push === undefined ? {} : { push }),
 		...(agentOperations === undefined ? {} : { agentOperations }),
 		...(terminalTitles === undefined ? {} : { terminalTitles }),
 		terminalOperations,
@@ -1969,6 +2023,9 @@ function uniqueCapabilities(
 			...(options.activity === undefined
 				? []
 				: [FEATURE_CAPABILITIES.notifications]),
+			...(options.activity === undefined || options.push === undefined
+				? []
+				: [FEATURE_CAPABILITIES.push]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
 			...(options.automations === undefined
 				? []

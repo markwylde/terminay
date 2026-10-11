@@ -297,6 +297,8 @@ export interface ServerTerminalAuthorityOptions {
 	/** E2E-only: how long a notification must stay present before it is
 	 * published. Production leaves this unset and gets the manager's own. */
 	readonly notificationSettleMs?: number;
+	/** Web Push to paired devices; see the composition option of the same name. */
+	readonly push?: ServerCoreCompositionOptions['push'];
 	readonly onEvent?: (event: TerminalEvent) => void;
 	/** A terminal's panel was moved to another project and the terminal has
 	 * been re-homed with it. Anything the host issued for the terminal under
@@ -1068,6 +1070,7 @@ export class ServerTerminalAuthority {
 				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
+			...(options.push === undefined ? {} : { push: options.push }),
 			...(options.notificationSettleMs === undefined
 				? {}
 				: {
