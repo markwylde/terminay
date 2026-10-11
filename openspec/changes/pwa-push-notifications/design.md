@@ -77,7 +77,9 @@ The manager cannot reach a server; the framed session can. Enrolment for a serve
 3. When that server's session is framed and connected, it asks the manager for its enrolment over the closed framed-host notification messages. The manager answers only the origin that asked, keyed by `event.origin`, exactly as the credential vault is.
 4. The session sends routing id, push key, and push token to the server on the authenticated application channel. The server stores them on that device's record.
 
-The server posts to the hosted push origin it is configured with, the same configuration that names hosted signaling. It never takes a destination from the client.
+The server posts to the connection manager beside its own hosted session origin (`app.<hosted domain>`), which it derives from where it is itself exposed. It never takes a destination from the client, and a server exposed only by direct signaling has none.
+
+The server keeps enrolments in their own owner-only file in the data root, keyed by device id, instead of inside the device registry record. Both hosts prune it whenever the device registry is written, so an enrolment ends with its device's trust without the registry's schema changing.
 
 *Boundary:* manager ↔ session origin. One server's key and token are cloned only into that server's iframe. This adds three messages under the existing "notifications" heading of the closed schema: enrolment request and reply, a count report (D8), and a banner target handed to the session (D9). It adds no storage proxy and no cross-origin read.
 
@@ -172,6 +174,117 @@ The manager's states are: not yet asked, on, blocked, needs the installed app, n
 *Boundary:* none crossed; this is manager-origin presentation over the browser's own permission.
 
 *Alternative.* Requesting the browser's prompt directly from the control is one tap fewer, and makes an accidental block the user's first and only chance.
+
+## Wire Contract
+
+This section is the contract between the two repositories. `terminay` owns the sealed payload, the server's calls to the hosted push service, and the session authority the workspace reads. `terminay.com` owns the hosted push service, the manager, its service worker, and the framed-host messages.
+
+All binary values in JSON are base64url without padding.
+
+### Enrolment
+
+The manager generates, per saved server (keyed by session origin):
+
+| Field | Form |
+| --- | --- |
+| `routingId` | 16 random bytes |
+| `key` | 32 random bytes, used as an AES-256-GCM key |
+| `token` | 32 random bytes |
+| `silent` | boolean: whether this installation accepts a push that shows nothing |
+
+The workspace receives exactly `{ routingId, key, token, silent }` and passes it to its server unchanged.
+
+### Sealed payload
+
+One push body is exactly **3072 bytes**:
+
+| Bytes | Content |
+| --- | --- |
+| 0 | format version, `1` |
+| 1–16 | `routingId` |
+| 17–28 | nonce, 12 random bytes |
+| 29–3071 | AES-256-GCM ciphertext followed by its 16-byte tag |
+
+The associated data is bytes 0–16 (version and routing id). The plaintext is 3027 bytes: a 2-byte big-endian length `L`, then `L` bytes of UTF-8 JSON, then zero padding.
+
+The JSON is:
+
+```json
+{
+  "s": 1791720599123,
+  "c": 2,
+  "o": ["n-…", "n-…"],
+  "m": false,
+  "n": {
+    "i": "n-…",
+    "k": "agent-finished",
+    "t": "Terminal 1",
+    "p": "Project 2",
+    "a": 1791720594000,
+    "pi": "project id",
+    "si": "session id",
+    "mt": "Review ready",
+    "mb": "Three files changed"
+  }
+}
+```
+
+- `s`: sequence, an integer that only increases for one enrolment. The receiver ignores a push whose `s` is not greater than the last it accepted for that routing id.
+- `c`: the server's current notification count, `0..9999`.
+- `o`: ids of the notifications currently outstanding on that server, newest first, as many as fit. `m` is `true` when the list was cut short, in which case the receiver closes nothing on the strength of an id being absent.
+- `n`: optional. The one notification to show. `k` is one of `agent-finished`, `agent-waiting`, `agent-blocked`, `command-finished`, `attention`, `message`. `t` and `p` are the terminal and project titles, each at most 80 characters. `a` is when it arose, in epoch milliseconds. `mt` and `mb` are present only for `message`: title at most 80 characters, body at most 280.
+
+A push without `n` is a state push. A server sends one only to an enrolment whose `silent` is `true`.
+
+### Hosted push service
+
+Served on the manager origin (`https://app.terminay.com`). `tokenHash` is the SHA-256 of the raw token bytes.
+
+| Request | Meaning | Responses |
+| --- | --- | --- |
+| `GET /v1/push/key` | The Web Push application server key | `200 {"publicKey": "…"}`; `404` when push is not configured |
+| `PUT /v1/push/enrolments/{tokenHash}` with `{"sealed": "…"}` | Create or replace one enrolment's sealed subscription; renews its expiry | `204`; `400` malformed; `429` |
+| `DELETE /v1/push/enrolments/{tokenHash}` with `Authorization: Bearer {token}` | Remove one enrolment | `204` whether or not it existed; `401` when the token does not hash to the path |
+| `POST /v1/push` with `Authorization: Bearer {token}`, `Content-Type: application/octet-stream`, and a 3072-byte body | Forward one sealed payload | `202` forwarded; `400` wrong length or type; `401` no token; `404` no such enrolment; `410` the browser vendor reports the subscription gone, and the row is deleted; `429` rate-limited, with `Retry-After`; `502` the vendor could not be reached; `503` push is not configured |
+
+A server treats `404` and `410` as the end of that enrolment and drops it. It retries `429`, `502`, `503`, and network failure with bounded backoff, and then sends only its current state.
+
+`sealed` is `nonce (12 bytes) || AES-256-GCM ciphertext || tag (16 bytes)` of the UTF-8 JSON `{"endpoint": "…", "p256dh": "…", "auth": "…"}`, under the key `HKDF-SHA256(ikm = token, salt = empty, info = "terminay push subscription v1", length = 32)`. The manager seals it; the service can open it only while handling a request that presents the token.
+
+The service stores `token_hash`, `sealed_subscription`, and `expires_at` and nothing else. It forwards only to `https` endpoints whose host is `fcm.googleapis.com`, `updates.push.services.mozilla.com`, or ends in `.push.apple.com` or `.notify.windows.com`. It sends with a twelve-hour time to live, high urgency, and a `Topic` derived from the token, so a newer push to one enrolment replaces an undelivered older one.
+
+### Session authority
+
+The hosted session bootstrap installs `window.__TERMINAY_HOSTED_SESSION_AUTHORITY__` before the workspace bundle runs. When it is framed by a manager that supports push it adds one member:
+
+```ts
+notifications: {
+  /** The enrolment the manager holds for this origin; undefined when notifications are off or unavailable. */
+  getPushEnrolment(): Promise<{ routingId: string; key: string; token: string; silent: boolean } | undefined>;
+  /** Called when that answer may have changed. Returns an unsubscribe. */
+  subscribePushEnrolment(listener: () => void): () => void;
+  /** This server's notification count, and nothing else. An integer 0..9999. */
+  setNotificationCount(count: number): void;
+  /** The terminal a banner the user opened names. A target that arrived before anyone listened is delivered to the first listener. Returns an unsubscribe. */
+  subscribeNotificationTarget(listener: (target: { projectId: string; sessionId: string }) => void): () => void;
+}
+```
+
+A first-party session tab, and a manager that does not support push, leave `notifications` undefined.
+
+### Framed-host messages
+
+Added to protocol version 1 of the closed `postMessage` schema, under its existing notifications heading:
+
+| Direction | Type | Fields |
+| --- | --- | --- |
+| session → manager | `push.enrolment.get` | `id` |
+| session → manager | `notification.count` | `count` |
+| manager → session | `push.enrolment` | `id`, and `routingId`, `key`, `token`, `silent` when an enrolment exists |
+| manager → session | `push.enrolment.changed` | none |
+| manager → session | `notification.target` | `projectId`, `sessionId` |
+
+The manager resolves an enrolment only from `event.origin`. `notification.count` is accepted only as an integer `0..9999` and changes only the count of the origin that sent it.
 
 ## Risks / Trade-offs
 
