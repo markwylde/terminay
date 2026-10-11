@@ -77,7 +77,7 @@ function ActivityRows({
 				const age = formatNotificationAge(item.since, now);
 				return (
 					<div
-						key={`${item.projectId}:${item.panelId}:${item.sessionId}`}
+						key={`${item.projectId}:${item.panelId}:${item.sessionId}:${item.notificationId ?? ''}`}
 						className="terminal-activity-menu__row"
 					>
 						<button
@@ -91,8 +91,15 @@ function ActivityRows({
 							/>
 							<span className="terminal-activity-menu__text">
 								<span className="terminal-activity-menu__title">
-									{notificationHeadline(state, item.isAgentStatus)}
+									{item.sent === undefined
+										? notificationHeadline(state, item.isAgentStatus)
+										: (item.sent.title ?? item.sent.body)}
 								</span>
+								{item.sent?.title === undefined ? null : (
+									<span className="terminal-activity-menu__body">
+										{item.sent.body}
+									</span>
+								)}
 								<span className="terminal-activity-menu__source">
 									<span className="terminal-activity-menu__terminal">
 										{item.emoji ? `${item.emoji} ` : ''}

@@ -583,6 +583,32 @@ profile only removes client metadata and is not revocation. See
 [remote access](../features/remote-access.md) for credential lifetimes,
 expiry, reconnect, and live-connection behavior.
 
+### Push notifications
+
+A server that is exposed through hosted signaling also pushes its
+notifications to paired devices that have the Terminay PWA installed and
+notifications turned on. There is nothing to configure on the server.
+
+- **What it reaches.** The server makes outbound HTTPS requests to the
+  connection manager beside its own session origin, `https://app.<hosted
+  domain>/v1/push` (`https://app.terminay.com/v1/push` by default). A firewall
+  that allows hosted signaling but blocks that host stops push and nothing
+  else.
+- **What it sends.** A per-device token and one sealed payload of 3072 bytes.
+  The payload is encrypted with a key only that server and that device hold;
+  the hosted service and the browser vendor cannot read it. Each push states
+  the server's current notification count and, where there is one to show, the
+  terminal and project it concerns.
+- **Where it is kept.** `push-enrolments.v1.json` in the data root, owner-only
+  like the host key. It holds one routing id, key, and token per paired device
+  and no push subscription. Deleting it is safe: each device enrols again the
+  next time it connects.
+- **When it stops.** Revoking a device or resetting the server identity ends
+  that device's enrolment. A server exposed only through direct self-hosted
+  signaling, or one that cannot reach the connection manager, sends no push
+  and is otherwise unaffected; a failed push is retried a few times and then
+  dropped, and never delays a terminal or a connected client.
+
 Standalone vault unlock is an operator action at startup or through the
 configured headless-vault integration. Secret values must only be available to
 the provider callback while unlocked. A vault key, browser credential, or

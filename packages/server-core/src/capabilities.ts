@@ -38,6 +38,8 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['agent', FEATURE_CAPABILITIES.agents],
 	['agents', FEATURE_CAPABILITIES.agents],
 	['activity', FEATURE_CAPABILITIES.agents],
+	['notifications', FEATURE_CAPABILITIES.notifications],
+	['push', FEATURE_CAPABILITIES.push],
 	['settings', FEATURE_CAPABILITIES.settings],
 	['shell-profiles', FEATURE_CAPABILITIES.settings],
 	['macros', FEATURE_CAPABILITIES.macros],

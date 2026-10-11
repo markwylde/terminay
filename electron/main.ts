@@ -72,11 +72,14 @@ import {
 	type ControlRequestContext,
 	createControlEndpoint,
 	createMcpPermissionGate,
+	createNotificationControlAdapter,
+	describeNotificationRequest,
 	placeControlSocket,
 	resolveControlSocketPlacement,
 	createTerminalControlAdapter,
 	type LocalControlEndpoint,
 	type McpApprovalDescription,
+	type NotificationControlAdapter,
 	ProjectHandleCodec,
 	reachOf,
 	resolveOpenTerminalProject,
@@ -88,6 +91,11 @@ import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hosted
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { McpServerCommand } from '../packages/extension-api/src/index';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
+import {
+	createFilePushEnrolmentPersistence,
+	PushEnrolmentStore,
+} from '../packages/server-core/src/push/enrolments';
+import { pushOriginForSessionOrigin } from '../packages/server-core/src/push/sender';
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
@@ -265,7 +273,10 @@ import {
 	startupPhaseVisibilityCss,
 	startupSwitchToLocalCss,
 } from './startupLoadingDocument';
-import { embeddedTerminalReplayBytesOverride } from './testTerminalLimits';
+import {
+	embeddedNotificationSettleMsOverride,
+	embeddedTerminalReplayBytesOverride,
+} from './testTerminalLimits';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
@@ -1923,6 +1934,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// E2E-only: a smaller retained replay window so a suite can outrun it during
 	// a real Local transport loss. Inert without the E2E marker.
 	const replayBytesOverride = embeddedTerminalReplayBytesOverride(process.env);
+	// E2E-only: a shorter notification settle period. Inert without the marker.
+	const notificationSettleOverride =
+		embeddedNotificationSettleMsOverride(process.env);
 	const sessionHolderDiagnosticEvent = createSessionHolderDiagnostics();
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 		serverId: embeddedServerId,
@@ -1948,6 +1962,23 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		...(replayBytesOverride === undefined
 			? {}
 			: { maxReplayBytes: replayBytesOverride }),
+		...(notificationSettleOverride === undefined
+			? {}
+			: { notificationSettleMs: notificationSettleOverride }),
+		push: {
+			enrolments: new PushEnrolmentStore(
+				createFilePushEnrolmentPersistence(
+					path.join(app.getPath('userData'), 'push-enrolments.v1.json'),
+				),
+			),
+			// Posted to the manager host beside this server's own session origin.
+			origin: () => {
+				const sessionOrigin = desktopRemoteExposure?.currentSessionOrigin;
+				return sessionOrigin === undefined
+					? undefined
+					: pushOriginForSessionOrigin(sessionOrigin);
+			},
+		},
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
 			appRoot: process.env.APP_ROOT,
@@ -2304,7 +2335,15 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		}),
 		initialDevices: loadEmbeddedRemoteDevices(dataRoot),
-		persistDevices: (devices) => saveEmbeddedRemoteDevices(dataRoot, devices),
+		persistDevices: (devices) => {
+			saveEmbeddedRemoteDevices(dataRoot, devices);
+			// A device that is no longer trusted is sent no further push.
+			serverTerminalAuthority?.composition.push?.retainDevices(
+				devices
+					.filter((device) => device.revokedAt === null)
+					.map((device) => device.deviceId),
+			);
+		},
 		onApprovalRequested: (approval) => {
 			const notification = new Notification({
 				title: `${approval.deviceName} wants to pair`,
@@ -3094,6 +3133,7 @@ async function startMcpControlEndpoint(): Promise<void> {
 			adapter: createDesktopMcpTerminalAdapter(),
 			automations: createDesktopMcpAutomationAdapter(),
 			appWindows: createDesktopMcpAppWindowAdapter(),
+			notifications: createDesktopMcpNotificationAdapter(),
 			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
@@ -3548,6 +3588,9 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 	if (serverTerminalAuthority?.composition.appWindows === undefined)
 		for (const tool of ['show_window', 'close_window', 'list_windows'] as const)
 			unavailable.add(tool);
+	if (serverTerminalAuthority?.composition.notifications === undefined)
+		for (const tool of ['send_notification', 'dismiss_notification'] as const)
+			unavailable.add(tool);
 	return CONTROL_TOOL_OPERATIONS.map((tool) => {
 		const group = CONTROL_PERMISSION_GROUPS[tool];
 		return {
@@ -3559,6 +3602,25 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 					: approvals.effectivePolicy(group, context.terminalSessionId),
 		};
 	});
+}
+
+/** The notification tools, bound to whichever authority is composed when called. */
+function createDesktopMcpNotificationAdapter(): NotificationControlAdapter {
+	const bound = (): NotificationControlAdapter => {
+		const notifications = serverTerminalAuthority?.composition.notifications;
+		if (notifications === undefined)
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'Notifications are unavailable on this server.',
+			);
+		return createNotificationControlAdapter({ notifications });
+	};
+	return {
+		sendNotification: (params, context, signal) =>
+			bound().sendNotification(params, context, signal),
+		dismissNotification: (params, context, signal) =>
+			bound().dismissNotification(params, context, signal),
+	};
 }
 
 function requireAutomationMcp() {
@@ -3855,6 +3917,9 @@ async function describeMcpOperation(
 			return { summary: 'close one of its windows', details: [] };
 		case 'list_windows':
 			return { summary: 'list the windows in this terminal', details: [] };
+		case 'send_notification':
+		case 'dismiss_notification':
+			return describeNotificationRequest(op, params);
 		case 'call_connected_tool':
 			// One call asks twice: to run the tool, then to show its view.
 			return group === 'appWindows'

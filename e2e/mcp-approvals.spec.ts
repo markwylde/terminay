@@ -55,6 +55,36 @@ socket.on('error', (error) => {
 });
 `;
 
+/** Sends one operation with the parameters in a file, and reports its outcome
+ * or, for capability discovery, the policy the server reports for sending. */
+const NOTIFICATION_SCRIPT = `
+import { readFileSync } from 'node:fs';
+import { connect } from 'node:net';
+const [op, tag, paramsFile] = process.argv.slice(2);
+const params = paramsFile ? JSON.parse(readFileSync(paramsFile, 'utf8')) : {};
+const socket = connect(process.env.TERMINAY_CONTROL_SOCKET);
+let buffer = '';
+socket.on('connect', () => {
+	socket.write(JSON.stringify({ id: 'mcp-1', token: process.env.TERMINAY_CONTROL_TOKEN, version: 1, op, params }) + '\\n');
+});
+socket.on('data', (chunk) => {
+	buffer += chunk;
+	const end = buffer.indexOf('\\n');
+	if (end < 0) return;
+	const response = JSON.parse(buffer.slice(0, end));
+	const outcome = !response.ok
+		? response.error.code
+		: op === 'get_mcp_capabilities'
+			? 'send_notification=' + response.result.tools.find((tool) => tool.tool === 'send_notification').permission
+			: typeof response.result.notification === 'string'
+				? 'handle'
+				: 'ok';
+	console.log(['RESULT', op, tag, outcome].join(' '));
+	socket.end();
+});
+socket.on('error', (error) => { console.error(error.message); process.exit(2); });
+`;
+
 const PHONE = { x: 40, y: 40, width: 390, height: 740 } as const;
 
 const strip = (page: Page): Locator =>
@@ -166,4 +196,93 @@ test('managing automations over MCP asks inline in the calling terminal', async 
 	await expect
 		.poll(() => automationNames(userDataDir))
 		.toEqual(['Digest', 'Granted', 'Phone', 'Session']);
+});
+
+test('Notifications is set from one window and governs sends asked for in another', async ({
+	mainWindow,
+	appHarness,
+	userDataDir,
+}) => {
+	test.setTimeout(120_000);
+	const script = path.join(userDataDir, 'mcp-notification-e2e.mjs');
+	const params = path.join(userDataDir, 'mcp-notification-e2e.json');
+	await writeFile(script, NOTIFICATION_SCRIPT);
+	await writeFile(
+		params,
+		JSON.stringify({ title: 'Review ready', body: 'Three files changed' }),
+	);
+	const run = (op: string, tag: string, withParams = false) =>
+		submitTerminalCommand(
+			mainWindow,
+			`'${process.execPath}' '${script}' ${op} ${tag}${withParams ? ` '${params}'` : ''}`,
+			activeTerminalPanel(mainWindow),
+		);
+
+	// Always Allow on a fresh server: the send returns a handle and nothing asks.
+	await run('get_mcp_capabilities', 'fresh');
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT get_mcp_capabilities fresh send_notification=allow',
+	);
+	await run('send_notification', 'allowed', true);
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT send_notification allowed handle',
+	);
+	await expect(strip(mainWindow)).toHaveCount(0);
+
+	// --- Ask Permission, set in the Settings window, applies in this one ----
+	const settings = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'terminay-mcp',
+	});
+	const policy = settings
+		.locator('.settings-row', { hasText: 'Notifications' })
+		.first()
+		.locator('select');
+	await expect(policy).toHaveValue('allow');
+	await policy.selectOption('ask');
+	await expect(settings.getByText('Saved', { exact: true })).toBeVisible();
+	await mainWindow.bringToFront();
+	await run('get_mcp_capabilities', 'asking');
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT get_mcp_capabilities asking send_notification=ask',
+	);
+	await run('send_notification', 'declined', true);
+	await expect(strip(mainWindow)).toContainText(
+		'wants to send a notification titled "Review ready": "Three files changed"',
+	);
+	await expect(strip(mainWindow)).toContainText('Notifications');
+	await strip(mainWindow).getByRole('button', { name: 'Decline' }).click();
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT send_notification declined permission_declined',
+	);
+	await run('send_notification', 'once', true);
+	await strip(mainWindow)
+		.getByRole('button', { name: 'Allow One Time' })
+		.click();
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT send_notification once handle',
+	);
+	await expect(strip(mainWindow)).toHaveCount(0);
+
+	// A Settings window opened afresh reads the same server-owned value.
+	await settings.close();
+	const reopened = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'terminay-mcp',
+	});
+	const reread = reopened
+		.locator('.settings-row', { hasText: 'Notifications' })
+		.first()
+		.locator('select');
+	await expect(reread).toHaveValue('ask');
+
+	// --- Never Allow refuses without asking ---------------------------------
+	await reread.selectOption('deny');
+	await expect(reopened.getByText('Saved', { exact: true })).toBeVisible();
+	await mainWindow.bringToFront();
+	await run('send_notification', 'denied', true);
+	await expect(rows(mainWindow)).toContainText(
+		'RESULT send_notification denied permission_denied',
+	);
+	await expect(strip(mainWindow)).toHaveCount(0);
 });

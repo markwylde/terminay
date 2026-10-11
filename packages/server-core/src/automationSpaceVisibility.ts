@@ -201,6 +201,32 @@ export function createAutomationSpaceEventProjector(
 	};
 }
 
+function hiddenNotification(
+	value: JsonValue,
+	hidden: AutomationSpaceHiddenIds,
+): boolean {
+	return (
+		isRecord(value) &&
+		(hiddenProject(hidden, value.projectId) ||
+			hiddenSession(hidden, value.sessionId))
+	);
+}
+
+function withholdNotificationSnapshot(
+	snapshot: JsonValue,
+	hidden: AutomationSpaceHiddenIds,
+): JsonValue {
+	if (!isRecord(snapshot) || !isRecord(snapshot.notifications)) return snapshot;
+	return {
+		...snapshot,
+		notifications: Object.fromEntries(
+			Object.entries(snapshot.notifications).filter(
+				([, notification]) => !hiddenNotification(notification, hidden),
+			),
+		),
+	};
+}
+
 const RESULT_FILTERS: Readonly<
 	Record<
 		string,
@@ -225,6 +251,25 @@ const RESULT_FILTERS: Readonly<
 		};
 	},
 	'agent.snapshot': withholdAgentSnapshot,
+	'notifications.snapshot': withholdNotificationSnapshot,
+	'notifications.delta': (result, hidden) => {
+		if (!isRecord(result)) return result;
+		return {
+			...result,
+			...(Array.isArray(result.events)
+				? {
+						events: result.events.filter(
+							(event) => !hiddenNotification(event, hidden),
+						),
+					}
+				: {}),
+			...(result.snapshot === undefined
+				? {}
+				: {
+						snapshot: withholdNotificationSnapshot(result.snapshot, hidden),
+					}),
+		};
+	},
 	'terminal-titles.snapshot': (result, hidden) => {
 		if (!isRecord(result) || !isRecord(result.titles)) return result;
 		return {
@@ -244,6 +289,7 @@ const TARGETED_OPERATIONS = new Set([
 	'activity.close-preflight',
 	'activity.acknowledge',
 	'agent.acknowledge',
+	'notifications.dismiss',
 ]);
 
 function assertTargetVisible(

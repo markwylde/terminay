@@ -204,6 +204,11 @@ const WINDOW_TOOLS: readonly string[] = [
 	'list_windows',
 ];
 
+const NOTIFICATION_TOOLS: readonly string[] = [
+	'send_notification',
+	'dismiss_notification',
+];
+
 function getMcpCapabilities(options: AdapterOptions): unknown {
 	const activityAvailable = options.activity !== undefined;
 	const workspaceAvailable = options.workspace !== undefined;
@@ -226,12 +231,15 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			'wait_for_attention',
 			...AUTOMATION_TOOLS,
 			...WINDOW_TOOLS,
+			...NOTIFICATION_TOOLS,
 		].map((tool) => ({
 			tool,
 			available:
 				// This adapter binds terminals only; a host that serves
-				// automations or app windows binds them separately.
-				AUTOMATION_TOOLS.includes(tool) || WINDOW_TOOLS.includes(tool)
+				// automations, app windows, or notifications binds them separately.
+				AUTOMATION_TOOLS.includes(tool) ||
+				WINDOW_TOOLS.includes(tool) ||
+				NOTIFICATION_TOOLS.includes(tool)
 					? false
 					: tool === 'wait_for_idle' ||
 				tool === 'wait_for_command' ||

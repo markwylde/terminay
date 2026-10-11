@@ -17,6 +17,8 @@ export * from './localUiServer.js';
 export * from './mcp/automationTools.js';
 export * from './mcp/appWindowTools.js';
 export * from './mcp/appWindowAdapter.js';
+export * from './mcp/notificationTools.js';
+export * from './mcp/notificationAdapter.js';
 export * from './mcp/connectedServers.js';
 export * from './mcp/controlEndpoint.js';
 export * from './mcp/controlSocketPlacement.js';

@@ -415,6 +415,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 			automationsRead: 'allow',
 			automationsManage: 'ask',
 			appWindows: 'allow',
+			notifications: 'allow',
 			connectedServerTools: 'allow',
 			windowMessages: 'allow',
 		},
@@ -825,6 +826,17 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'select',
 				options: TERMINAY_MCP_PERMISSION_OPTIONS,
 				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'window', 'app'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.notifications',
+				label: 'Notifications',
+				description:
+					'Send, update, and dismiss notifications for the terminal the agent is running in.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'notification', 'notify'],
 			}),
 			makeField({
 				key: 'terminayMcp.permissions.connectedServerTools',
@@ -2353,6 +2365,7 @@ function normalizeTerminayMcpPermissions(value: unknown): TerminayMcpPermissions
 		automationsRead: policy('automationsRead'),
 		automationsManage: policy('automationsManage'),
 		appWindows: policy('appWindows'),
+		notifications: policy('notifications'),
 		connectedServerTools: policy('connectedServerTools'),
 		windowMessages: policy('windowMessages'),
 	};

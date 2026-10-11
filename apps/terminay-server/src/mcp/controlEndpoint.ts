@@ -66,6 +66,8 @@ export const CONTROL_OPERATIONS = [
 	'show_window',
 	'close_window',
 	'list_windows',
+	'send_notification',
+	'dismiss_notification',
 	'list_connected_tools',
 	'call_connected_tool',
 ] as const;

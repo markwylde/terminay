@@ -33,6 +33,7 @@ import {
 } from '../packages/server-core/src/activity/index';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
+import { NotificationManager } from '../packages/server-core/src/notifications/manager';
 import {
 	AI_SERVER_OPERATIONS,
 	AiService,
@@ -293,6 +294,11 @@ export interface ServerTerminalAuthorityOptions {
 	/** Desktop-owned current shell settings for protocol-created sessions. */
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
+	/** E2E-only: how long a notification must stay present before it is
+	 * published. Production leaves this unset and gets the manager's own. */
+	readonly notificationSettleMs?: number;
+	/** Web Push to paired devices; see the composition option of the same name. */
+	readonly push?: ServerCoreCompositionOptions['push'];
 	readonly onEvent?: (event: TerminalEvent) => void;
 	/** A terminal's panel was moved to another project and the terminal has
 	 * been re-homed with it. Anything the host issued for the terminal under
@@ -1064,6 +1070,14 @@ export class ServerTerminalAuthority {
 				rehomeTerminalSession: (move) => this.rehomeTerminalSession(move),
 			},
 			activity: this.activity,
+			...(options.push === undefined ? {} : { push: options.push }),
+			...(options.notificationSettleMs === undefined
+				? {}
+				: {
+						notifications: new NotificationManager({
+							settleMs: options.notificationSettleMs,
+						}),
+					}),
 			agents: this.agents,
 			agentSessions: {
 				supervisor: this.agentSources,
