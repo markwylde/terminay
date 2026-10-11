@@ -2520,6 +2520,7 @@ function getAppUpdater(): AppUpdater {
 			},
 			fetch: (url, init) => fetch(url, { ...init, redirect: 'follow' }),
 			log: (message, error) => console.warn(message, error ?? ''),
+			onStatusChanged: () => broadcastAppUpdateStatusChanged(),
 		});
 		setInterval(() => {
 			void appUpdater?.check({ force: true });

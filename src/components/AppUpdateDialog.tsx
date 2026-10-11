@@ -48,6 +48,13 @@ export function AppUpdateDialog({
 
 	const releaseUrl = status.releaseUrl;
 	const isBeta = status.channel === 'beta';
+	const summary = isReady
+		? `Version ${status.latestVersion} has been downloaded. You're on ${status.currentVersion}. Restart to install it now, or it installs the next time you quit Terminay.`
+		: status.state === 'downloading'
+			? `Version ${status.latestVersion} is downloading. You're on ${status.currentVersion}. Restart to update appears here once the download has been verified.`
+			: status.canInstallInPlace === true
+				? `Version ${status.latestVersion} is available. You're on ${status.currentVersion}. It could not be downloaded, so get it from the release page.`
+				: `Version ${status.latestVersion} is available. You're on ${status.currentVersion}. This installation can't update itself, so download it from the release page.`;
 
 	// Portalled out of the title bar so its window-drag regions cannot sit
 	// over the dialog.
@@ -65,11 +72,7 @@ export function AppUpdateDialog({
 				className="project-edit-modal project-edit-modal--wide app-update-dialog"
 				data-terminay-app-update-dialog="true"
 			>
-				<p className="app-update-dialog__summary">
-					{isReady
-						? `Version ${status.latestVersion} has been downloaded. You're on ${status.currentVersion}. Restart to install it now, or it installs the next time you quit Terminay.`
-						: `Version ${status.latestVersion} is available. You're on ${status.currentVersion}. This installation can't update itself, so download it from the release page.`}
-				</p>
+				<p className="app-update-dialog__summary">{summary}</p>
 
 				<div className="app-update-dialog__notes">
 					{notes.length > 0 ? (
