@@ -210,9 +210,16 @@ export class TerminalActivityService {
 		return event;
 	}
 
+	/**
+	 * Acknowledge a terminal's activity. A passive acknowledgement is a client
+	 * judging that activity was not news to a user who did nothing; it clears
+	 * the activity and is not reported as interaction, so what a process sent
+	 * to the terminal stays.
+	 */
 	acknowledge(
 		identity: ActivitySessionIdentity,
 		expectedUpdatedAt?: number,
+		options: { readonly passive?: boolean } = {},
 	): ActivityEvent | undefined {
 		this.requireActive(identity);
 		if (
@@ -224,7 +231,7 @@ export class TerminalActivityService {
 			projectId: identity.projectId,
 			now: this.now(),
 		});
-		this.notifyInteraction(identity);
+		if (options.passive !== true) this.notifyInteraction(identity);
 		return event;
 	}
 

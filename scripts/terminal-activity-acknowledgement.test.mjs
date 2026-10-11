@@ -11,23 +11,27 @@ test('project activation without interaction does not acknowledge finished work'
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			claimed: false,
 			focusedSessionId: 'terminal-1',
 			interactedSessionId: null,
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
 		}),
 		false,
 	);
 });
 
-test('clicking or typing in a finished terminal acknowledges it', () => {
+test('a shell command finishing in the terminal the user is in is acknowledged', () => {
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			claimed: false,
 			focusedSessionId: 'terminal-1',
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
 		}),
 		true,
 	);
@@ -37,10 +41,12 @@ test('working stays live even while the user is in the terminal', () => {
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			claimed: false,
 			focusedSessionId: 'terminal-1',
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'working',
+			windowFocused: true,
 		}),
 		false,
 	);
@@ -50,10 +56,42 @@ test('a terminal typed in earlier is not acknowledged once focus has moved on', 
 	assert.equal(
 		shouldAcknowledgeInteractedActivity({
 			acknowledged: false,
+			claimed: false,
 			focusedSessionId: 'terminal-2',
 			interactedSessionId: 'terminal-1',
 			sessionId: 'terminal-1',
 			status: 'idle',
+			windowFocused: true,
+		}),
+		false,
+	);
+});
+
+test('a terminal the user typed in is not acknowledged once they have left the window', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: false,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: false,
+		}),
+		false,
+	);
+});
+
+test('an agent finishing in the terminal the user is in is not acknowledged', () => {
+	assert.equal(
+		shouldAcknowledgeInteractedActivity({
+			acknowledged: false,
+			claimed: true,
+			focusedSessionId: 'terminal-1',
+			interactedSessionId: 'terminal-1',
+			sessionId: 'terminal-1',
+			status: 'idle',
+			windowFocused: true,
 		}),
 		false,
 	);

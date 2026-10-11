@@ -94,7 +94,9 @@ export class ActivityClient {
 
   async acknowledge(
     identity: { readonly projectId: string; readonly sessionId: string },
-    options: { readonly fence?: boolean } = {},
+    /** `passive` says the user did nothing: the activity was simply not news
+     * to them. It leaves what a process sent to the terminal in place. */
+    options: { readonly fence?: boolean; readonly passive?: boolean } = {},
   ): Promise<void> {
     const snapshot = this.store.snapshot.sessions[identity.sessionId];
     await this.transport.command(ACTIVITY_OPERATIONS.acknowledge, {
@@ -102,6 +104,7 @@ export class ActivityClient {
       ...(snapshot === undefined || options.fence === false
         ? {}
         : { expectedUpdatedAt: snapshot.updatedAt }),
+      ...(options.passive === true ? { passive: true } : {}),
     });
   }
 
