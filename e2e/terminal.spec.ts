@@ -1553,6 +1553,39 @@ test.describe('terminal behavior', () => {
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
+	test('typing into a terminal does not show it as working, and a command that keeps printing does', async ({
+		mainWindow,
+	}) => {
+		const sessionId = await getActiveSessionId(mainWindow);
+		// The tab hides its working indicator by default; the sidebar row shows
+		// the server's status as it is.
+		const status = mainWindow.locator(
+			`[data-folder-terminal-session="${sessionId}"] .folders-tree__status`,
+		);
+		// Let the first prompt's own working period lapse before typing.
+		await expect(status).not.toHaveAttribute('data-agent-state', 'working', {
+			timeout: 5_000,
+		});
+
+		await writeToTerminalSession(
+			mainWindow,
+			sessionId,
+			'for i in 1 2 3 4 5 6 7 8;',
+		);
+		const observed = new Set<string | null>();
+		for (const key of ' do echo typing-tick; sleep 0.5; done') {
+			await mainWindow.keyboard.type(key);
+			await mainWindow.waitForTimeout(80);
+			observed.add(await status.getAttribute('data-agent-state'));
+		}
+		expect([...observed]).not.toContain('working');
+
+		await mainWindow.keyboard.press('Enter');
+		await expect(status).toHaveAttribute('data-agent-state', 'working', {
+			timeout: 4_000,
+		});
+	});
+
 	test('terminal tab settings can disable activity indicators for one tab', async ({
 		mainWindow,
 	}) => {

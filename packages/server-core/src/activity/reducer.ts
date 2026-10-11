@@ -268,11 +268,15 @@ export class TerminalActivityReducer {
 		this.expire(session, at);
 		if (session.provider !== undefined || session.claimed) return undefined;
 		const before = snapshotOf(session);
-		session.authority = 'raw';
-		session.source = 'raw:output';
-		session.rawActivityAt = at;
-		if (session.settled && !recentInput(session, at))
-			session.acknowledged = false;
+		// Output directly after input is the echo of the user's own typing, or a
+		// repaint answering it, and is not work. It neither begins nor extends
+		// raw working; the derive below still publishes a period `expire` ended.
+		if (!recentInput(session, at)) {
+			session.authority = 'raw';
+			session.source = 'raw:output';
+			session.rawActivityAt = at;
+			if (session.settled) session.acknowledged = false;
+		}
 		derive(session, at, this.rawActivityMs);
 		return this.commitIfChanged(session, before);
 	}
