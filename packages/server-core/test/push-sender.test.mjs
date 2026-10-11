@@ -49,7 +49,7 @@ function fakeClock(start = 1_000_000) {
   };
 }
 
-/** Let the sender's sealing and its awaited transport run to completion. */
+/** Let whatever is queued on the event loop run. */
 const settle = async () => { for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve)); };
 
 function harness(options = {}) {
@@ -71,8 +71,14 @@ function harness(options = {}) {
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
   });
-  /** Advance the clock and let whatever fired finish. */
-  const run = async (milliseconds) => { clock.advance(milliseconds); await settle(); };
+  /** Advance the clock and let whatever fired finish. Sealing runs off the
+   * event loop, so this waits on the sender itself, not on a number of turns;
+   * a request that is deliberately left hanging is not waited for. */
+  const run = async (milliseconds) => {
+    clock.advance(milliseconds);
+    await Promise.race([sender.whenIdle(), new Promise((resolve) => setTimeout(resolve, 250))]);
+    await settle();
+  };
   const opened = (device, index = -1) => openPushPayload(device, requests.at(index).body);
   return { clock, notifications, enrolments, sender, requests, run, opened, setRespond: (next) => { respond = next; } };
 }
@@ -538,7 +544,11 @@ test("a paired device enrols over a real connection and is pushed once it stops 
     return { client, close: async () => { await client.close().catch(() => undefined); await serverTask.catch(() => undefined); } };
   };
   // The composed sender coalesces on the real clock.
-  const coalesced = () => new Promise((resolve) => setTimeout(resolve, 500));
+  const coalesced = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await composition.push.whenIdle();
+    await settle();
+  };
   const phone = await connect("phone-window");
   const desktop = await connect("desktop-window");
   t.after(async () => { await phone.close(); await desktop.close(); await composition.shutdown(); });

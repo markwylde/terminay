@@ -99,6 +99,7 @@ export class PushSender {
 	private readonly cancelTimeout: (handle: unknown) => void;
 	private readonly devices = new Map<string, DeviceState>();
 	private readonly connections = new Map<string, string>();
+	private readonly inFlight = new Set<Promise<void>>();
 	private readonly unsubscribe: () => void;
 	private stopped = false;
 
@@ -196,6 +197,11 @@ export class PushSender {
 		this.enrolments.clear();
 	}
 
+	/** Resolves once no push is being sealed or sent. */
+	async whenIdle(): Promise<void> {
+		while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
+	}
+
 	isWatching(deviceId: string): boolean {
 		const device = this.devices.get(deviceId);
 		return device !== undefined && isWatching(device);
@@ -264,7 +270,9 @@ export class PushSender {
 	private arm(device: DeviceState, deviceId: string, delayMs: number): void {
 		device.timer = this.scheduleTimeout(() => {
 			device.timer = undefined;
-			void this.flush(device, deviceId);
+			const flushing = this.flush(device, deviceId).catch(() => undefined);
+			this.inFlight.add(flushing);
+			void flushing.finally(() => this.inFlight.delete(flushing));
 		}, delayMs);
 	}
 
