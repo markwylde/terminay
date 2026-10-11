@@ -328,6 +328,7 @@ import {
 } from './workspace/activityCountBadge';
 import {
 	buildTerminalActivityOverview,
+	CompactNotifications,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
 } from './workspace/TerminalActivityOverview';
@@ -7037,6 +7038,11 @@ function App({
 		useState<HTMLElement | null>(null);
 	const compactBreadcrumbRef = useRef<HTMLButtonElement | null>(null);
 	const compactConnectionRef = useRef<HTMLButtonElement | null>(null);
+	const compactNotificationsRef = useRef<HTMLButtonElement | null>(null);
+	const closeCompactNotifications = useCallback(() => {
+		setIsActivityMenuOpen(false);
+		compactNotificationsRef.current?.focus();
+	}, []);
 	const compactSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
 	const openCompactSwitcher = useCallback(
 		(source: 'breadcrumb' | 'connection') => {
@@ -9613,8 +9619,15 @@ function App({
 								: activeProject?.isFileExplorerOpen === true
 						}
 						isHomeSelected={isHomeSelected}
+						isNotificationsOpen={isActivityMenuOpen}
 						isSwitcherOpen={isCompactSwitcherOpen}
+						notificationCount={notificationCount}
+						notificationsButtonRef={compactNotificationsRef}
 						onOpenCommandBar={openCompactCommandBar}
+						onToggleNotifications={() => {
+							setIsRemoteMenuOpen(false);
+							setIsActivityMenuOpen((current) => !current);
+						}}
 						onOpenSwitcher={openCompactSwitcher}
 						onShowDashboard={selectHome}
 						onToggleExplorer={toggleActiveProjectExplorer}
@@ -9854,6 +9867,15 @@ function App({
 					</>
 				)}
 			</header>
+			{isCompactChrome && isActivityMenuOpen ? (
+				<CompactNotifications
+					notifications={terminalActivityItems.notifications}
+					onActivate={activateTerminalFromOverview}
+					onClose={closeCompactNotifications}
+					onDismiss={dismissNotification}
+					onDismissAll={dismissAllNotifications}
+				/>
+			) : null}
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
 					groups={compactSwitcherFilteredGroups}
