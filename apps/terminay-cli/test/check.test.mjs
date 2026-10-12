@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -454,7 +455,8 @@ test('with both scopes installed, the CLI inside an install describes that insta
 test('the binary prints exactly one line of JSON and exits zero, even with the release API unreachable', async (t) => {
 	// On a host that is not a systemd Linux box the platform gate answers
 	// first, which is its own behaviour and covered elsewhere.
-	if (process.platform !== 'linux') return t.skip('requires a Linux host');
+	if (process.platform !== 'linux' || !existsSync('/run/systemd/system'))
+		return t.skip('requires a systemd Linux host');
 	await withInstall({}, async ({ home, fake }) => {
 		const { stdout } = await execFileAsync(
 			process.execPath,
