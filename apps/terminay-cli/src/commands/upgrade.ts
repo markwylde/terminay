@@ -11,10 +11,22 @@ import {
 	downloadText,
 } from '../download.js';
 import { waitForReady } from '../health.js';
+import {
+	installUpgradeHelper,
+	isUpgradeHelperProcess,
+	upgradeHelperInstalled,
+} from '../helper.js';
 import { activate, activeVersion, installArchive, retain } from '../install.js';
 import { stagedName, writeInstallRecord } from '../layout.js';
+import { releaseLabel, writeUpgradeOutcome } from '../outcome.js';
+import {
+	assertChannelToFollow,
+	NoChannelError,
+	orderAgainstInstalled,
+	resolveUpgradeTarget,
+} from '../plan.js';
 import { hostArchitecture } from '../platform.js';
-import { resolveRef } from '../resolve.js';
+import type { ResolvedRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
 import { withEnvironmentValue, withUnitKillMode } from '../unit.js';
 import { verifyArchive } from '../verify.js';
@@ -25,9 +37,14 @@ import { verifyArchive } from '../verify.js';
  *
  * The sequence is the one the release and update policy names: verify, stage
  * beside the running version, stop, switch, start, wait for readiness, and on
- * failure switch back and start what was working. The data root is never
- * touched, so a rollback restores the previous version against the same state
- * it was already running with.
+ * failure switch back and start what was working. No server state in the data
+ * root is read or written, so a rollback restores the previous version against
+ * the same state it was already running with.
+ *
+ * Every attempt that reaches the point of moving the active version leaves an
+ * outcome record beside `versions/` (see `outcome.ts`), because the server
+ * that asked for the upgrade is restarted by it and has no other way to learn
+ * how it ended.
  */
 
 export interface UpgradeDependencies {
@@ -38,6 +55,9 @@ export interface UpgradeDependencies {
 	readonly readinessTimeoutMs?: number;
 	/** See `InstallDependencies.releasePublicKeyPem`: a test seam, not a bypass. */
 	readonly releasePublicKeyPem?: string;
+	/** Who is running this. Overridden by tests; root maintains the helper. */
+	readonly uid?: number;
+	readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface UpgradeResult {
@@ -49,17 +69,56 @@ export interface UpgradeResult {
 
 export class UpgradeError extends Error {}
 
-/** Compare two release versions by semver precedence, ignoring prerelease tags. */
-function compareVersions(left: string, right: string): number {
-	const parse = (value: string) =>
-		value.split(/[-+]/u, 1)[0]?.split('.').map(Number) ?? [];
-	const a = parse(left);
-	const b = parse(right);
-	for (let index = 0; index < 3; index += 1) {
-		const difference = (a[index] ?? 0) - (b[index] ?? 0);
-		if (difference !== 0) return difference < 0 ? -1 : 1;
+/**
+ * Fetch a release archive and verify it against its published checksum and
+ * the release signature, or build one when the reference is a source ref.
+ * Shared by every upgrade path, so none of them can verify less than another.
+ */
+export async function obtainArchive(options: {
+	readonly resolved: ResolvedRef;
+	/** Where the download is staged; discarded by the caller afterwards. */
+	readonly prefix: string;
+	readonly write: (line: string) => void;
+	readonly releasePublicKeyPem?: string;
+}): Promise<string> {
+	const { resolved, prefix, write } = options;
+	if (resolved.channel === 'source') {
+		write(
+			`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`,
+		);
+		const built = await buildFromSource({
+			ref: resolved.sourceRef ?? resolved.version,
+			...(resolved.revision === undefined
+				? {}
+				: { revision: resolved.revision }),
+			destination: prefix,
+			write,
+		});
+		return built.archivePath;
 	}
-	return 0;
+	const assets = resolved.assets;
+	if (assets === undefined)
+		throw new UpgradeError('the resolved release names no archive to download');
+	write('Downloading and verifying …');
+	const asset = await downloadAsset(assets.archive, prefix);
+	const [sidecar, signature] = await Promise.all([
+		downloadText(assets.sha256),
+		downloadBytes(assets.signature),
+	]);
+	await verifyArchive({
+		archivePath: asset.path,
+		sidecar,
+		signature,
+		digest: asset.sha256,
+		...(options.releasePublicKeyPem === undefined
+			? {}
+			: { publicKeyPem: options.releasePublicKeyPem }),
+	});
+	return asset.path;
+}
+
+function reasonOf(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 export async function runUpgrade(
@@ -70,132 +129,137 @@ export async function runUpgrade(
 ): Promise<UpgradeResult> {
 	const { layout, record, systemd, write } = context;
 
-	// A source install has no ordering the CLI can trust — a branch tip moves
-	// without any version changing — so it must be told what to move to.
-	if (ref === undefined && record.channel === 'source') {
-		throw new UpgradeError(
-			'this server was built from source, which has no channel to follow. Name the branch, commit, or release to upgrade to.',
+	// A system-scope service cannot upgrade itself, so root leaves it the
+	// helper that can (see `helper.ts`). An install made before the helper
+	// existed gains it here, on the one manual upgrade it needs — whether or
+	// not there turns out to be a newer release to move to. The helper's own
+	// oneshot never touches its units while it is running inside one.
+	if (
+		layout.upgradeHelper !== undefined &&
+		(dependencies.uid ?? process.getuid?.()) === 0 &&
+		!isUpgradeHelperProcess(dependencies.env) &&
+		!(await upgradeHelperInstalled(layout))
+	) {
+		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
+		write('Installed the upgrade helper, so this server can upgrade itself.');
+	}
+
+	let architecture: 'x64' | 'arm64';
+	let resolved: ResolvedRef;
+	try {
+		// Said before anything else is asked of the machine: an install with
+		// no channel has nothing to resolve, whatever host it is on.
+		assertChannelToFollow(ref, record);
+		architecture = dependencies.architecture ?? hostArchitecture();
+		resolved = await resolveUpgradeTarget(ref, record, {
+			architecture,
+			...(dependencies.repository === undefined
+				? {}
+				: { repository: dependencies.repository }),
+			...(dependencies.apiBase === undefined
+				? {}
+				: { apiBase: dependencies.apiBase }),
+			...(dependencies.webBase === undefined
+				? {}
+				: { webBase: dependencies.webBase }),
+		});
+	} catch (error) {
+		if (error instanceof NoChannelError) throw new UpgradeError(error.message);
+		throw error;
+	}
+
+	const order = orderAgainstInstalled(resolved, record);
+	if (order === 'same') {
+		write(
+			resolved.channel === 'tag'
+				? `Already on ${record.version}. Nothing to do.`
+				: `Already on the newest ${record.channel} build. Nothing to do.`,
 		);
+		return Object.freeze({
+			from: record.version,
+			to: record.version,
+			rolledBack: false,
+			upToDate: true,
+		});
 	}
-	const target = ref ?? (record.channel === 'main' ? 'main' : undefined);
-
-	const architecture = dependencies.architecture ?? hostArchitecture();
-	const resolved = await resolveRef(target, {
-		architecture,
-		...(dependencies.repository === undefined
-			? {}
-			: { repository: dependencies.repository }),
-		...(dependencies.apiBase === undefined
-			? {}
-			: { apiBase: dependencies.apiBase }),
-		...(dependencies.webBase === undefined
-			? {}
-			: { webBase: dependencies.webBase }),
-	});
-
-	if (resolved.channel === 'tag' && record.channel === 'tag') {
-		const order = compareVersions(resolved.version, record.version);
-		if (order === 0) {
-			write(`Already on ${record.version}. Nothing to do.`);
-			return Object.freeze({
-				from: record.version,
-				to: record.version,
-				rolledBack: false,
-				upToDate: true,
-			});
-		}
-		if (order < 0 && !options.allowDowngrade) {
-			throw new UpgradeError(
-				`refusing to move from ${record.version} down to ${resolved.version}. Pass --allow-downgrade if that is what you want.`,
-			);
-		}
-	}
-	if (resolved.channel === 'main' && record.channel === 'main') {
-		// The rolling channel reuses one version string, so the published time
-		// is the only ordering it has.
-		const published = resolved.publishedAt;
-		if (published !== undefined && record.publishedAt !== undefined) {
-			if (
-				Date.parse(published) < Date.parse(record.publishedAt) &&
-				!options.allowDowngrade
-			) {
-				throw new UpgradeError(
-					`the ${resolved.channel} release published at ${published} is older than the installed one from ${record.publishedAt}. Pass --allow-downgrade to install it anyway.`,
-				);
-			}
-			if (Date.parse(published) === Date.parse(record.publishedAt)) {
-				write(`Already on the newest ${record.channel} build. Nothing to do.`);
-				return Object.freeze({
-					from: record.version,
-					to: record.version,
-					rolledBack: false,
-					upToDate: true,
-				});
-			}
-		}
+	if (order === 'older' && !options.allowDowngrade) {
+		throw new UpgradeError(
+			resolved.channel === 'tag'
+				? `refusing to move from ${record.version} down to ${resolved.version}. Pass --allow-downgrade if that is what you want.`
+				: `the ${resolved.channel} release published at ${resolved.publishedAt} is older than the installed one from ${record.publishedAt}. Pass --allow-downgrade to install it anyway.`,
+		);
 	}
 
 	const previous =
 		(await activeVersion(layout)) ??
 		stagedName(record.channel, record.version, record.revision);
 
+	const fromLabel = releaseLabel(
+		record.channel,
+		record.version,
+		record.revision,
+	);
+
 	// Staged beside the running version: nothing below this point has stopped
 	// the service yet.
-	let archivePath: string;
-	if (resolved.channel === 'source') {
-		write(
-			`Building ${resolved.sourceRef ?? resolved.version} from source. This takes a while.`,
-		);
-		const built = await buildFromSource({
-			ref: resolved.sourceRef ?? resolved.version,
-			...(resolved.revision === undefined
-				? {}
-				: { revision: resolved.revision }),
-			destination: layout.prefix,
+	let installed: Awaited<ReturnType<typeof installArchive>>;
+	try {
+		const archivePath = await obtainArchive({
+			resolved,
+			prefix: layout.prefix,
 			write,
-		});
-		archivePath = built.archivePath;
-	} else {
-		const assets = resolved.assets;
-		if (assets === undefined)
-			throw new UpgradeError(
-				'the resolved release names no archive to download',
-			);
-		write('Downloading and verifying …');
-		const asset = await downloadAsset(assets.archive, layout.prefix);
-		const [sidecar, signature] = await Promise.all([
-			downloadText(assets.sha256),
-			downloadBytes(assets.signature),
-		]);
-		await verifyArchive({
-			archivePath: asset.path,
-			sidecar,
-			signature,
-			digest: asset.sha256,
 			...(dependencies.releasePublicKeyPem === undefined
 				? {}
-				: { publicKeyPem: dependencies.releasePublicKeyPem }),
+				: { releasePublicKeyPem: dependencies.releasePublicKeyPem }),
 		});
-		archivePath = asset.path;
-	}
-
-	const installed = await installArchive({
-		layout,
-		archivePath,
-		channel: resolved.channel,
-		expected: {
+		installed = await installArchive({
+			layout,
+			archivePath,
 			channel: resolved.channel,
-			architecture,
-			...(resolved.channel === 'tag' ? { version: resolved.version } : {}),
-			...(resolved.revision === undefined
-				? {}
-				: { revision: resolved.revision }),
-		},
-	});
+			expected: {
+				channel: resolved.channel,
+				architecture,
+				...(resolved.channel === 'tag' ? { version: resolved.version } : {}),
+				...(resolved.revision === undefined
+					? {}
+					: { revision: resolved.revision }),
+			},
+		});
+	} catch (error) {
+		// Nothing was switched, so the release that was running still is. The
+		// record says so, because a server that asked for this upgrade through
+		// the helper sees neither this process nor its exit status.
+		await writeUpgradeOutcome(layout.resultPath, {
+			from: fromLabel,
+			to: releaseLabel(resolved.channel, resolved.version, resolved.revision),
+			outcome: 'rolled-back',
+			reason: `the new release could not be staged, so nothing was changed: ${reasonOf(error)}`,
+		}).catch(() => undefined);
+		await discardDownloads(layout.prefix).catch(() => undefined);
+		throw error;
+	}
 	await discardDownloads(layout.prefix);
+	const toLabel = releaseLabel(
+		resolved.channel,
+		installed.manifest.version,
+		installed.manifest.revision,
+	);
 
 	if (installed.name === previous) {
 		write(`Already running ${installed.manifest.version}. Nothing to do.`);
+		// The build is the one already running, but the record may not have
+		// known when it was published. Learning it here is what lets the next
+		// check answer from the release metadata alone.
+		if (
+			resolved.publishedAt !== undefined &&
+			resolved.publishedAt !== record.publishedAt &&
+			resolved.channel === record.channel
+		) {
+			await writeInstallRecord(layout, {
+				...record,
+				publishedAt: resolved.publishedAt,
+			});
+		}
 		return Object.freeze({
 			from: record.version,
 			to: installed.manifest.version,
@@ -213,38 +277,56 @@ export async function runUpgrade(
 	if (unitAfter !== unitBefore) {
 		await writeFile(layout.unitPath, unitAfter, { mode: 0o644 });
 		await systemd.daemonReload();
-		write('Updated the service unit so terminals keep running across restarts.');
+		write(
+			'Updated the service unit so terminals keep running across restarts.',
+		);
 	}
 	await systemd.stop();
 	await activate(layout, installed.name);
-	await systemd.start();
+	// A unit that will not start is the same failure as one that starts and
+	// never reports ready: either way the previous version goes back.
+	const started = await systemd.start().then(
+		() => true,
+		() => false,
+	);
 
 	if (
+		!started ||
 		(await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) ===
-		undefined
+			undefined
 	) {
 		write('The upgraded server did not report ready. Rolling back.');
-		await systemd.stop();
+		await systemd.stop().catch(() => undefined);
 		await activate(layout, previous);
-		await systemd.start();
+		const restarted = await systemd.start().then(
+			() => true,
+			() => false,
+		);
 		const recovered =
+			restarted &&
 			(await waitForReady(
 				record.healthPort,
 				dependencies.readinessTimeoutMs,
 			)) !== undefined;
+		const reason = `the upgrade to ${installed.manifest.version} did not become ready, so ${record.version} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`;
+		await writeUpgradeOutcome(layout.resultPath, {
+			from: fromLabel,
+			to: toLabel,
+			outcome: 'rolled-back',
+			reason,
+		}).catch(() => undefined);
 		write(await systemd.journal(20));
-		throw new UpgradeError(
-			`the upgrade to ${installed.manifest.version} did not become ready, so ${record.version} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`,
-		);
+		throw new UpgradeError(reason);
 	}
 
 	// A server installed before the renderer directory was written has an
 	// environment naming only the local UI bundle, so it pairs a device and then
 	// serves a placeholder workspace. The symptom gives no hint that the remedy
 	// is an upgrade, so the upgrade repairs it rather than waiting to be asked.
-	const environmentBefore = await readFile(layout.environmentFile, 'utf8').catch(
-		() => '',
-	);
+	const environmentBefore = await readFile(
+		layout.environmentFile,
+		'utf8',
+	).catch(() => '');
 	if (
 		environmentBefore.length > 0 &&
 		!/^TERMINAY_UI_RENDERER_DIRECTORY=/mu.test(environmentBefore)
@@ -339,6 +421,11 @@ export async function runUpgrade(
 		installedAt: new Date().toISOString(),
 	});
 	const removed = await retain(layout, [installed.name, previous]);
+	await writeUpgradeOutcome(layout.resultPath, {
+		from: fromLabel,
+		to: toLabel,
+		outcome: 'succeeded',
+	});
 	write(
 		`Upgraded to ${installed.manifest.version}. Kept ${previous} to roll back to.`,
 	);

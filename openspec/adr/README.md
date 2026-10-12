@@ -88,3 +88,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0059](./0059-a-workspace-change-reaches-every-layer-as-the-change.md) | A workspace change reaches every layer as the change, and each layer's work is proportional to it | accepted | 2026-10-10 |
 | [0060](./0060-a-push-is-sealed-per-pairing-and-attributed-by-the-device.md) | A push is sealed per pairing and attributed by the device; the hosted push service reads nothing and identifies no one | accepted | 2026-10-11 |
 | [0061](./0061-a-notification-is-a-server-owned-record-published-after-a-settle-period.md) | A notification is a server-owned record that its terminal adds and removes, published after a settle period | accepted | 2026-10-11 |
+| [0062](./0062-a-server-upgrades-itself-to-its-own-channels-newest-signed-release.md) | A server upgrades itself to its own channel's newest signed release, and a client only asks | accepted | 2026-10-11 |

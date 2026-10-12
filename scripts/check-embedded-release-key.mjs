@@ -37,6 +37,31 @@ function fingerprint(pem) {
 	return key.export({ type: 'spki', format: 'der' }).toString('base64');
 }
 
+/**
+ * The server archive carries a bundled copy of the CLI, and that copy is what
+ * upgrades an installed server. It must trust exactly the key the npm package
+ * trusts, which is the one in the CLI source: a bundle that embedded another
+ * — or none, or two — would refuse this project's releases or accept someone
+ * else's. A bundler may write the key as a template or as an escaped string,
+ * so escaped newlines are read as the newlines they stand for.
+ */
+export function assertBundledKeyMatches(bundle, source) {
+	let bundled;
+	try {
+		bundled = fingerprint(extractEmbeddedKey(bundle.replaceAll('\\n', '\n')));
+	} catch (error) {
+		throw new Error(
+			`the CLI bundled into the server archive does not embed one release key: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (bundled !== fingerprint(extractEmbeddedKey(source))) {
+		throw new Error(
+			`the CLI bundled into the server archive embeds a different release key from ${EMBEDDED_KEY_SOURCE}; the archive's upgrader and the npm package would disagree about which releases are genuine`,
+		);
+	}
+	return bundled;
+}
+
 export function assertEmbeddedKeyMatches(source, publicKeyB64) {
 	if (typeof publicKeyB64 !== 'string' || publicKeyB64.length === 0) {
 		throw new Error('TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 is required');

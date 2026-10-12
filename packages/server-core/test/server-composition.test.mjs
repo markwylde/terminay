@@ -104,7 +104,7 @@ test("composition owns TerminalService and exposes a complete merged registry", 
   assert.equal(composition.operations.queries.get("terminal.presentation-checkpoint") !== undefined, true);
   assert.equal(composition.operations.commands.get("terminal.attach") !== undefined, true);
   assert.equal(composition.operations.queries.get("workspace.ping") !== undefined, true);
-  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal.v1"]);
+  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal.v1", "server.upgrade"]);
   assert.equal(composition.coreOptions.commands.get("terminal.input") !== undefined, true);
 
   const identity = {
@@ -187,6 +187,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(gitOperations.queries),
       ...Object.keys(recordingOperations.queries),
       "settings.get",
+      "server.upgrade.status",
       "terminal.cwd", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
     ];
     const expectedCommands = [
@@ -196,6 +197,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(gitOperations.commands),
       ...Object.keys(recordingOperations.commands),
       "settings.update", "settings.reset",
+      "server.upgrade.start",
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
       "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
       "terminal.materialize-clipboard-image",
@@ -207,7 +209,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
     }
     assert.deepEqual(
       composition.coreOptions.capabilities,
-      ["terminal.v1", "dictation.v1", "git.v1", "recording.v1", "settings.v1"],
+      ["terminal.v1", "server.upgrade", "dictation.v1", "git.v1", "recording.v1", "settings.v1"],
     );
   } finally {
     await composition.shutdown();
@@ -223,7 +225,8 @@ test("composition does not advertise optional authorities that are absent", asyn
     ptyFactory: createPtyFactory(),
   });
   try {
-    assert.deepEqual(composition.coreOptions.capabilities, ["terminal.v1"]);
+    // Every server says whether it has an upgrade to offer; this one has none.
+    assert.deepEqual(composition.coreOptions.capabilities, ["terminal.v1", "server.upgrade"]);
     for (const prefix of ["ai.", "git.", "recordings.", "settings.", "macros."]) {
       assert.equal(
         [...composition.operations.queries.keys(), ...composition.operations.commands.keys()]
@@ -276,7 +279,7 @@ test("the composed core serves terminal operations through its transport-neutral
     await pair.open();
     const hello = await client.connect();
     assert.equal(hello.serverId, identity.serverId);
-    assert.deepEqual(hello.capabilities, ["desktop", "terminal.v1"]);
+    assert.deepEqual(hello.capabilities, ["desktop", "terminal.v1", "server.upgrade"]);
 
     const listed = await client.query("terminal.list", { projectId: identity.projectId });
     assert.equal(listed.result.sessions[0].sessionId, identity.sessionId);

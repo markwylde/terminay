@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import test from 'node:test'
-import { EMBEDDED_KEY_SOURCE, assertEmbeddedKeyMatches } from './check-embedded-release-key.mjs'
+import { EMBEDDED_KEY_SOURCE, assertBundledKeyMatches, assertEmbeddedKeyMatches } from './check-embedded-release-key.mjs'
 import { getNextVersion, getReleaseType, incrementVersion } from './release-utils.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -184,6 +184,40 @@ test('the CLI embeds the release signing key and the check catches a mismatch', 
   assert.throws(() => assertEmbeddedKeyMatches(source, ''), /is required/)
   assert.throws(() => assertEmbeddedKeyMatches(source, 'not base64!'), /base64-encoded PEM/)
   assert.throws(() => assertEmbeddedKeyMatches('no key here', signing), /no public key is embedded/)
+})
+
+test('the CLI inside the server archive must embed the key the npm package embeds', async () => {
+  const source = await readFile(resolve(EMBEDDED_KEY_SOURCE), 'utf8')
+  const embedded = /-----BEGIN PUBLIC KEY-----[\s\S]*?-----END PUBLIC KEY-----/u.exec(source)[0]
+
+  // A bundler may keep the key as a template or write it as an escaped
+  // string; either is the same key.
+  assert.ok(assertBundledKeyMatches(`const key = \`${embedded}\n\`;`, source))
+  assert.ok(assertBundledKeyMatches(`const key = ${JSON.stringify(`${embedded}\n`)};`, source))
+
+  // An archive whose upgrader trusted another key would disagree with the
+  // npm package of the same version about which releases are genuine.
+  const { publicKey } = generateKeyPairSync('ed25519')
+  const other = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+  assert.throws(() => assertBundledKeyMatches(`const key = \`${other}\`;`, source), /embeds a different release key/)
+
+  // No key, or two, is not a bundle that can verify anything.
+  assert.throws(() => assertBundledKeyMatches('const key = undefined;', source), /does not embed one release key/)
+  assert.throws(() => assertBundledKeyMatches(`${embedded}\n${other}`, source), /does not embed one release key/)
+
+  // The release cannot publish an archive that skipped the check: the
+  // builder makes it while staging the CLI, and the probe the release runs
+  // on the extracted archive makes it again against this commit's source.
+  const builder = readFileSync(resolve('scripts/build-standalone-server-artifact.mjs'), 'utf8')
+  const staging = readFileSync(resolve('scripts/standalone-cli-bundle.mjs'), 'utf8')
+  const probe = readFileSync(resolve('scripts/probe-standalone-server-archive.mjs'), 'utf8')
+  assert.match(builder, /await stageArchiveCli\(\{ archiveRoot: root \}\)/)
+  assert.match(staging, /assertBundledKeyMatches\(bundle, source\)/)
+  assert.match(probe, /assertBundledKeyMatches\(/)
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+  const archiveJob = workflow.slice(workflow.indexOf('  build-standalone-server:\n'), workflow.indexOf('  publish-cli:\n'))
+  assert.match(archiveJob, /node scripts\/build-standalone-server-artifact\.mjs/)
+  assert.match(archiveJob, /node scripts\/probe-standalone-server-archive\.mjs/)
 })
 
 test('the release workflow publishes the CLI only after the key check passes', () => {

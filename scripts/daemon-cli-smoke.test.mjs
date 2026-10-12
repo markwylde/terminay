@@ -25,6 +25,7 @@ test('the smoke drives the whole documented lifecycle', () => {
 			'status',
 			'advertise-address',
 			'upgrade',
+			'upgrade helper',
 			'qr-code --no-wait',
 			'uninstall',
 		],

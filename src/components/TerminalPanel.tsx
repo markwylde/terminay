@@ -168,6 +168,9 @@ export interface TerminalPanelClientContextValue {
 	/** The notifications this connection's server publishes. Absent when the
 	 * server does not publish them. */
 	readonly notificationClient?: import('@terminay/client-core').NotificationClient;
+	/** This connection's server's own upgrade status and request. Absent when
+	 * the server does not publish one. */
+	readonly serverUpgradeClient?: import('@terminay/client-core').ServerUpgradeClient;
 	/** Optional reduced server-owned agent projection for this connection. */
 	readonly agentStatusClient?: AgentStatusClient;
 	/** Authenticated connection-wide workspace projection. */

@@ -40,6 +40,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** Web Push to a paired device's installed PWA: enrolment, and whether a
 	 * window is being looked at. */
 	push: 'push.v1',
+	/** The server's own upgrade: whether its channel carries a newer release,
+	 * and a paired device asking for it to be installed (ADR-0062). */
+	serverUpgrade: 'server.upgrade',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -73,6 +76,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.terminalTitles,
 			FEATURE_CAPABILITIES.notifications,
 			FEATURE_CAPABILITIES.push,
+			FEATURE_CAPABILITIES.serverUpgrade,
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.git,
 			FEATURE_CAPABILITIES.settings,

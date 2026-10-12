@@ -8,6 +8,8 @@ import { assertElfArchitecture, assertSafeArtifactPath, describeArtifactFiles, s
 import { getPtyRuntimePlatform, PTY_RUNTIME_NODE_VERSION } from './pty-runtime-platforms.mjs'
 import { assertHostedUiEntry, HOSTED_UI_ENTRY } from './hosted-ui-entry.mjs'
 import { normalizeArtifactRelease } from './standalone-artifact.mjs'
+import { assertBundledKeyMatches, EMBEDDED_KEY_SOURCE } from './check-embedded-release-key.mjs'
+import { ARCHIVE_CLI_BUNDLE, ARCHIVE_CLI_LAUNCHER } from './standalone-cli-bundle.mjs'
 
 // A session holder outlives the server that started it. This suite is not
 // about held terminals, so the servers it starts keep theirs in-process and
@@ -47,6 +49,14 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
     if (version !== manifest.version) {
       throw new Error(`standalone archive reports version ${version}; its manifest records ${manifest.version}`)
     }
+    // The archive is upgraded by the CLI inside it. That copy must run on the
+    // archive's own Node with nothing else on the machine, and must trust the
+    // release key the npm package of this commit trusts.
+    await executeCliHelp(root)
+    assertBundledKeyMatches(
+      await readFile(join(root, ARCHIVE_CLI_BUNDLE), 'utf8'),
+      await readFile(new URL(`../${EMBEDDED_KEY_SOURCE}`, import.meta.url), 'utf8'),
+    )
     return Object.freeze({
       archive: basename(archive),
       archiveSha256: await sha256File(archive),
@@ -102,7 +112,7 @@ export async function validateExtractedArchive(root, target, expected = {}) {
   if (manifest.node?.version !== PTY_RUNTIME_NODE_VERSION || manifest.nodePty?.nativePath !== 'node_modules/node-pty/build/Release/pty.node') {
     throw new Error('standalone archive manifest runtime metadata is invalid')
   }
-  if (manifest.entrypoints?.server !== 'bin/terminay-server') {
+  if (manifest.entrypoints?.server !== 'bin/terminay-server' || manifest.entrypoints?.cli !== ARCHIVE_CLI_LAUNCHER) {
     throw new Error('standalone archive manifest entrypoints are invalid')
   }
   // Channel, revision, and architecture are what an installer compares to
@@ -134,6 +144,9 @@ export async function validateExtractedArchive(root, target, expected = {}) {
   if (!entries.some((entry) => entry.kind === 'file' && relative(root, entry.path) === 'bin/terminay-server')) {
     throw new Error('standalone archive server launcher is missing')
   }
+  for (const [path, mode] of [[ARCHIVE_CLI_LAUNCHER, '755'], [ARCHIVE_CLI_BUNDLE, '644']]) {
+    if (declared.get(path)?.mode !== mode) throw new Error(`standalone archive upgrader is missing or has the wrong mode: ${path}`)
+  }
   await assertElfArchitecture(join(root, 'bin', 'node'), platform.elfMachine, 'archive Node runtime')
   await assertElfArchitecture(join(root, 'node_modules', 'node-pty', 'build', 'Release', 'pty.node'), platform.elfMachine, 'archive node-pty')
   return manifest
@@ -149,6 +162,17 @@ async function executeVersion(root) {
   const version = stdout.trim()
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) throw new Error('standalone archive returned an invalid version')
   return version
+}
+
+async function executeCliHelp(root) {
+  // PATH is emptied: the wrapper may rely on nothing the host provides.
+  const { stdout } = await execFileAsync(join(root, ARCHIVE_CLI_LAUNCHER), ['daemon', '--help'], {
+    cwd: root,
+    env: { PATH: '' },
+    timeout: 10_000,
+    maxBuffer: 256 * 1024,
+  })
+  if (!/terminay daemon <command>/u.test(stdout)) throw new Error('standalone archive upgrader did not print its usage')
 }
 
 function nativeTarget() {

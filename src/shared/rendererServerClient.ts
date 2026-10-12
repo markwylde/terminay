@@ -7,6 +7,8 @@ import {
 	MdxRuntimeClient,
 	NotificationClient,
 	RecordingsClient,
+	ServerUpgradeClient,
+	serverPublishesUpgradeStatus,
 	TerminayClient,
 	TerminayClientFacade,
 	TerminayGitClient,
@@ -199,6 +201,21 @@ export async function createConnectedServerClientContext(
 		void notificationClient?.subscribe().catch((error) => {
 			console.warn('notification subscription failed', error);
 		});
+		// A server's own upgrade is optional too: one that publishes no status,
+		// as an older server does, is shown with no upgrade indication.
+		const serverUpgradeClient = serverPublishesUpgradeStatus(
+			server.capabilities,
+		)
+			? new ServerUpgradeClient({
+					query: featureTransport.query.bind(featureTransport),
+					command: featureTransport.command.bind(featureTransport),
+					subscribe: (event, listener, onResync) =>
+						featureTransport.subscribeClientEvents(event, listener, onResync),
+				})
+			: undefined;
+		void serverUpgradeClient?.subscribe().catch((error) => {
+			console.warn('server upgrade subscription failed', error);
+		});
 		const fileViewerClient = new FileViewerClient(featureTransport);
 		const fileObservationClient = new FileObservationClient(featureTransport);
 		const documentationClient = new DocumentationClient(featureTransport);
@@ -311,6 +328,7 @@ export async function createConnectedServerClientContext(
 				titles.close();
 				candidateActivityClient.close();
 				notificationClient?.close();
+				serverUpgradeClient?.close();
 				candidateAgentStatusClient.close();
 				removeStateListener();
 				await mdxRuntimeClient.disposeAll().catch(() => undefined);
@@ -348,6 +366,7 @@ export async function createConnectedServerClientContext(
 			client: new TerminayTerminalClient(client),
 			activityClient,
 			...(notificationClient === undefined ? {} : { notificationClient }),
+			...(serverUpgradeClient === undefined ? {} : { serverUpgradeClient }),
 			agentStatusClient,
 			workspaceSnapshotStore: store,
 			terminalTitleStore: titles,

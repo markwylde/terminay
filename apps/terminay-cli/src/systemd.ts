@@ -82,6 +82,15 @@ export function createSystemd(options: SystemdOptions) {
 		restart: () => expect(['restart', UNIT_NAME]),
 		stop: () => expect(['stop', UNIT_NAME]),
 		resetFailed: () => systemctl(['reset-failed', UNIT_NAME]),
+		/**
+		 * The upgrade helper's units, named by the caller. The upgrade that
+		 * runs inside the helper's own oneshot calls none of these: it leaves
+		 * the units it is running in exactly as they are.
+		 */
+		enableNowUnit: (unit: string) => expect(['enable', '--now', unit]),
+		stopUnit: (unit: string) => systemctl(['stop', unit]),
+		disableNowUnit: (unit: string) => systemctl(['disable', '--now', unit]),
+		resetFailedUnit: (unit: string) => systemctl(['reset-failed', unit]),
 		async isActive(): Promise<boolean> {
 			return (await systemctl(['is-active', UNIT_NAME])).code === 0;
 		},

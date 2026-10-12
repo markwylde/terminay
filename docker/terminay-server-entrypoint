@@ -1,8 +1,18 @@
 #!/bin/sh
-# Entrypoint of the official image: the standalone server in the foreground, as
-# the container's main process. Configuration comes from the image's
-# environment defaults and anything the operator overrides; arguments are
-# passed through, so `docker run <image> --version` works.
+# Entrypoint of the official image. It stays the container's main process for
+# the life of the container and runs the standalone server as its child, so the
+# server can be restarted onto a newer release without the container stopping:
+# terminal sessions are held outside the server process and carry on.
+#
+# The image's own release under /opt/terminay is the baseline. An in-place
+# upgrade stages a newer one on the data volume, and at every start of the
+# server the release to run is chosen again: the staged one when it verifies
+# and is not older than the image's, and otherwise the image's. That choice is
+# made by the image's own copy of the CLI on the image's own Node, never by the
+# staged release, so a damaged staged release cannot stop the server starting.
+#
+# Configuration comes from the image's environment defaults and anything the
+# operator overrides; arguments are passed through to the server.
 set -eu
 
 umask 077
@@ -20,4 +30,118 @@ if [ ! -w "$data_root" ]; then
 fi
 export TERMINAY_DATA_ROOT="$data_root"
 
-exec /opt/terminay/bin/terminay-server "$@"
+image=${TERMINAY_IMAGE_RELEASE:-/opt/terminay}
+export TERMINAY_IMAGE_RELEASE="$image"
+releases="$data_root/releases"
+
+# Ask the image's CLI what to do next. It prints `run <release>` or `exit`;
+# its reasons go to stderr, which is the container's log.
+decide() {
+  "$image/bin/node" "$image/cli/terminay.mjs" container-release "$@"
+}
+
+# The release a decision names, or the image's own when the answer is not one
+# this script can start.
+release_of() {
+  case "$1" in
+    "run /"*)
+      candidate=${1#run }
+      if [ -x "$candidate/bin/terminay-server" ]; then
+        printf '%s\n' "$candidate"
+        return
+      fi
+      ;;
+  esac
+  printf '%s\n' "$image"
+}
+
+# Each release serves its own workspace UI and carries its own upgrader, so
+# both follow the release that was selected rather than the image's. A staged
+# release also names its own commit: the image's environment names the
+# image's, which is not what is running once another release is.
+use_release() {
+  export TERMINAY_UI_RENDERER_DIRECTORY="$1/ui"
+  if [ -x "$1/bin/terminay" ]; then
+    export TERMINAY_UPGRADER="$1/bin/terminay"
+  else
+    export TERMINAY_UPGRADER="$image/bin/terminay"
+  fi
+  if [ "$1" != "$image" ]; then
+    unset TERMINAY_SERVER_REVISION
+  fi
+}
+
+# A command that prints and exits — `docker run <image> --version` — is run
+# from the selected release and nothing more: no state is written, and its
+# status is the container's.
+case " $* " in
+  *" --version "* | *" --help "*)
+    decision=$(decide select) || decision=
+    release=$(release_of "$decision")
+    use_release "$release"
+    exec "$release/bin/terminay-server" "$@"
+    ;;
+esac
+
+child=
+stopping=0
+# Only the server is signalled. The session holder is a detached process of
+# its own and must outlive a restart, so the process group is left alone.
+forward() {
+  stopping=1
+  if [ -n "$child" ]; then
+    kill -s "$1" "$child" 2>/dev/null || :
+  fi
+}
+trap 'forward TERM' TERM
+trap 'forward INT' INT
+
+# What an in-place upgrade reads: which process to restart, and which release
+# it was started from. Best effort — the server runs either way.
+record() {
+  mkdir -p "$releases" 2>/dev/null || return 0
+  printf '%s\n' "$2" > "$releases/$1.tmp" 2>/dev/null || return 0
+  mv -f "$releases/$1.tmp" "$releases/$1" 2>/dev/null || :
+}
+
+decision=$(decide start) || decision=
+while :; do
+  release=$(release_of "$decision")
+  if [ "$stopping" = 1 ]; then
+    exit 143
+  fi
+  use_release "$release"
+
+  # stdin is handed on through a spare descriptor: a background command
+  # otherwise has it replaced with /dev/null before it starts.
+  exec 3<&0
+  "$release/bin/terminay-server" "$@" <&3 3<&- &
+  child=$!
+  exec 3<&-
+  record running "$release"
+  record server.pid "$child"
+
+  # A forwarded signal interrupts `wait` while the server is still shutting
+  # down, so it is waited for again until it has really gone.
+  while :; do
+    if wait "$child"; then status=0; else status=$?; fi
+    kill -0 "$child" 2>/dev/null || break
+  done
+  child=
+  rm -f "$releases/server.pid" 2>/dev/null || :
+
+  # A stop is a stop: nothing is started again once the container was told
+  # to end, whatever else was asked for.
+  if [ "$stopping" = 1 ]; then
+    exit "$status"
+  fi
+
+  # A requested restart starts the server again on whatever is selected now.
+  # An upgrade that was never confirmed is undone first. Anything else ends
+  # the container with the server's status, so its restart policy applies.
+  decision=$(decide exited "$status") || decision=
+  case "$decision" in
+    "run /"*) ;;
+    *) exit "$status" ;;
+  esac
+done

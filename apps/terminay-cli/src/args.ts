@@ -39,6 +39,10 @@ export interface DaemonOptions {
 	readonly expose?: string;
 	readonly projectRoot?: string;
 	readonly allowDowngrade: boolean;
+	/** `upgrade --check`: describe what an upgrade would do, and do nothing. */
+	readonly check?: boolean;
+	/** `upgrade --recreate`: replace the container with one on a newer image. */
+	readonly recreate?: boolean;
 	readonly purge: boolean;
 	readonly yes: boolean;
 	readonly wait: boolean;
@@ -92,6 +96,8 @@ const BOOLEAN_FLAGS = Object.freeze([
 	'--system',
 	'--user',
 	'--allow-downgrade',
+	'--check',
+	'--recreate',
 	'--purge',
 	'--yes',
 	'--no-wait',
@@ -120,6 +126,8 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 			'--system',
 			'--user',
 			'--allow-downgrade',
+			'--check',
+			'--recreate',
 			// How a server is reached can change without changing its version,
 			// and an upgrade is the moment an operator is already editing it.
 			'--public-host',
@@ -348,6 +356,30 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 
 	if (booleans.has('--system') && booleans.has('--user'))
 		fail('--system and --user cannot both be given');
+	// A check changes nothing, so anything that says what to change — a
+	// reference, a downgrade, an address — has no meaning beside it.
+	if (
+		booleans.has('--check') &&
+		(positional.length > 0 ||
+			booleans.has('--allow-downgrade') ||
+			booleans.has('--recreate') ||
+			values.size > 0)
+	)
+		fail('--check takes no version reference and no other upgrade flag');
+	// A recreate moves to the newer image of the reference the container was
+	// created from. Nothing on the command line chooses that image.
+	if (
+		booleans.has('--recreate') &&
+		(positional.length > 0 ||
+			booleans.has('--check') ||
+			booleans.has('--allow-downgrade') ||
+			booleans.has('--system') ||
+			booleans.has('--user') ||
+			values.size > 0)
+	)
+		fail(
+			'--recreate takes no version reference and no other flag: the container moves to the newer image of the reference it was created from',
+		);
 
 	let ref: string | undefined;
 	let approvalId: string | undefined;
@@ -402,6 +434,8 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 			? { projectRoot: values.get('--project-root') as string }
 			: {}),
 		allowDowngrade: booleans.has('--allow-downgrade'),
+		...(booleans.has('--check') ? { check: true } : {}),
+		...(booleans.has('--recreate') ? { recreate: true } : {}),
 		purge: booleans.has('--purge'),
 		yes: booleans.has('--yes'),
 		wait: !booleans.has('--no-wait'),
@@ -426,6 +460,9 @@ Commands:
                        v4.1.1, \`main\` for the rolling channel, or a branch or
                        commit to build from source. Defaults to the latest tag.
   upgrade [ref]        Upgrade, following the installed channel by default.
+                       With --check, print one line of JSON saying what is
+                       installed and whether its channel has something
+                       newer, and change nothing.
   uninstall            Stop and remove the service and installed versions.
   start | stop         Start or stop the service.
   status               Report unit state, version, channel, and exposure.
@@ -439,8 +476,13 @@ Commands:
 With no server installed and TERMINAY_DATA_ROOT set, status, qr-code,
 approvals, approve, and deny reach the server running against that data root
 directly — a server run in the foreground, such as a container's. Where a
-container runtime manages the server, install, upgrade, start, stop, and
-uninstall refuse and name the container action to take instead.
+container runtime manages the server, install, start, stop, and uninstall
+refuse and name the container action to take instead. upgrade works inside
+the official image: it stages the new release on the data volume and restarts
+the server on it without stopping the container, so terminals keep running.
+upgrade --recreate replaces the container with one on a newer image instead,
+which ends every terminal in it and needs the Docker socket mounted into the
+container and usable by the account the server runs as.
 
 Flags:
   --system, --user     Install scope. Prompted when a terminal is attached.
@@ -471,6 +513,12 @@ Flags:
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.
   --allow-downgrade    Permit upgrade to an older version.
+  --check              With upgrade: report, as JSON, what would happen.
+  --recreate           With upgrade, inside the official image: pull the newer
+                       image and replace the container with one of the same
+                       name, volumes, networks, and ports. Ends every terminal
+                       in the container. The previous container is started
+                       again if the new one does not report healthy.
   --purge              Also remove the data root on uninstall.
   --yes                Skip confirmation prompts.
   --no-wait            Print pairing URLs and exit without waiting.
