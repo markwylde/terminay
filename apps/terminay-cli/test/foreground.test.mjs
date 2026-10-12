@@ -364,9 +364,9 @@ test('an install record wins over TERMINAY_DATA_ROOT', async () => {
 	});
 });
 
+// `upgrade` is not here: inside the image it upgrades in place.
 const CONTAINER_REFUSALS = {
 	install: /pull a newer image and recreate the container/u,
-	upgrade: /pull a newer image and recreate the container/u,
 	start: /docker start/u,
 	stop: /docker stop/u,
 	uninstall: /remove the container.*remove its volume/u,
@@ -388,7 +388,14 @@ test('the container refusal covers the lifecycle commands and only where a conta
 			assertNotContainerManaged(command, { TERMINAY_MANAGED_BY: 'systemd' }),
 		);
 	}
-	for (const command of ['status', 'qr-code', 'approvals', 'approve', 'deny'])
+	for (const command of [
+		'status',
+		'qr-code',
+		'approvals',
+		'approve',
+		'deny',
+		'upgrade',
+	])
 		assert.doesNotThrow(() => assertNotContainerManaged(command, env));
 });
 
@@ -479,4 +486,82 @@ test('the binary says no server is running when the data root has no listener', 
 			),
 		);
 	});
+});
+
+test('daemon upgrade inside a managed container is an in-place upgrade, not a refusal', async (t) => {
+	const home = await mkdtemp(join(tmpdir(), 'terminay-container-'));
+	const fake = await createFakeBin();
+	t.after(async () => {
+		await fake.close();
+		await rm(home, { recursive: true, force: true });
+	});
+	for (const tool of ['systemctl', 'journalctl', 'loginctl', 'sudo'])
+		fake.install(tool, '');
+	// An image release with a manifest and nothing supervising a server from
+	// it: enough to be described, not enough to be upgraded.
+	const image = join(home, 'image');
+	await mkdir(image, { recursive: true });
+	await writeFile(
+		join(image, 'artifact-manifest.json'),
+		JSON.stringify({
+			schemaVersion: 1,
+			artifact: 'terminay-server',
+			target: 'linux-x64',
+			channel: 'source',
+			revision: '0'.repeat(40),
+			architecture: 'x64',
+			version: '4.1.0',
+			entrypoints: { server: 'bin/terminay-server' },
+			files: [
+				{
+					path: 'bin/terminay-server',
+					mode: '755',
+					size: 1,
+					sha256: 'a'.repeat(64),
+				},
+			],
+		}),
+	);
+	const env = {
+		...fake.env(),
+		HOME: home,
+		TERMINAY_MANAGED_BY: 'container',
+		TERMINAY_DATA_ROOT: join(home, 'data'),
+		TERMINAY_IMAGE_RELEASE: image,
+	};
+
+	const failure = await execFileAsync(
+		process.execPath,
+		[CLI, 'daemon', 'upgrade'],
+		{ env },
+	).then(
+		() => undefined,
+		(error) => error,
+	);
+	assert.notEqual(failure, undefined, 'nothing supervises a server here');
+	assert.doesNotMatch(failure.stderr, /managed by the container runtime/u);
+	assert.match(failure.stderr, /upgraded in place|entrypoint/u);
+
+	// The check needs no systemd either, and is one line of JSON and nothing
+	// else on stdout. A locally built image has no channel, so it says so
+	// without asking the network anything.
+	const { stdout, stderr } = await execFileAsync(
+		process.execPath,
+		[CLI, 'daemon', 'upgrade', '--check'],
+		{ env },
+	);
+	assert.equal(stderr, '');
+	assert.equal(stdout.endsWith('\n'), true);
+	assert.equal(stdout.trim().split('\n').length, 1);
+	const report = JSON.parse(stdout);
+	assert.equal(report.environment, 'container');
+	assert.deepEqual(report.installed, {
+		channel: 'source',
+		version: '4.1.0',
+		revision: '0'.repeat(40),
+	});
+	assert.equal(report.available, null);
+	assert.equal(report.canUpgrade, false);
+	assert.match(report.unavailable.reason, /built locally/u);
+	assert.deepEqual(fake.invocations(), []);
 });

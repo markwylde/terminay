@@ -30,6 +30,8 @@ import {
 import type { PushEnrolmentStore } from './push/enrolments.js';
 import { createPushOperationRegistry } from './push/protocol.js';
 import { PushSender, type PushTransport } from './push/sender.js';
+import { createServerUpgradeOperationRegistry } from './serverUpgrade/protocol.js';
+import { ServerUpgradeService } from './serverUpgrade/service.js';
 import {
 	type AiService,
 	createAiOperationHandlers,
@@ -215,7 +217,12 @@ export interface CompleteServerCoreOperationRegistry {
 export interface ServerCoreCompositionOptions
 	extends Omit<
 		ServerCoreOptions,
-		'queries' | 'commands' | 'policies' | 'eventJournal' | 'onConnectionClosed'
+		| 'queries'
+		| 'commands'
+		| 'policies'
+		| 'eventJournal'
+		| 'onConnectionOpened'
+		| 'onConnectionClosed'
 	> {
 	/** Existing service for hosts that have already composed the PTY factory. */
 	readonly terminalService?: TerminalService;
@@ -278,6 +285,11 @@ export interface ServerCoreCompositionOptions
 		readonly origin: string | (() => string | undefined);
 		readonly transport?: PushTransport;
 	};
+	/** The server's own upgrade (ADR-0062). A standalone host supplies the
+	 * service built around its release's upgrader. Without one the composition
+	 * builds a service that checks nothing and offers nothing, which is what
+	 * the embedded Local server and a server run from a checkout report. */
+	readonly serverUpgrade?: ServerUpgradeService;
 	/** Optional server-owned provider-journal and agent status authority. It shares
 	 * the terminal lifecycle with activity; it is never a renderer service. */
 	readonly agents?: AgentStatusService;
@@ -446,6 +458,8 @@ export interface ServerCoreComposition {
 	/** Push to paired devices, when composed. A host ends a device's enrolment
 	 * through it when that device's trust ends. */
 	readonly push?: PushSender;
+	/** Whether a newer release exists, and the upgrade a device may ask for. */
+	readonly serverUpgrade: ServerUpgradeService;
 	readonly agentOperations?: AgentOperationRegistry;
 	/** What each terminal displays (ADR-0058); present with a workspace. */
 	readonly terminalTitles?: TerminalTitleService;
@@ -1268,6 +1282,13 @@ export function createServerCoreComposition(
 				});
 	const pushOperations =
 		push === undefined ? undefined : createPushOperationRegistry({ sender: push });
+	const serverUpgrade =
+		options.serverUpgrade ??
+		new ServerUpgradeService({ serverVersion: options.serverVersion });
+	const serverUpgradeOperations = createServerUpgradeOperationRegistry({
+		service: serverUpgrade,
+		eventJournal,
+	});
 	const activityOperations =
 		options.activity === undefined
 			? undefined
@@ -1426,7 +1447,10 @@ export function createServerCoreComposition(
 							activityOperations?.operations ?? {},
 							mergeOperationRegistries(
 								notificationOperations?.operations ?? {},
-								pushOperations?.operations ?? {},
+								mergeOperationRegistries(
+									pushOperations?.operations ?? {},
+									serverUpgradeOperations.operations,
+								),
 							),
 						),
 						terminalTitleOperations?.operations ?? {},
@@ -1461,6 +1485,7 @@ export function createServerCoreComposition(
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
 		terminalOperations.closeConnection(connectionId);
 		push?.connectionClosed(connectionId);
+		serverUpgrade.clientDetached(connectionId);
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
 		appWindows?.closeConnection(connectionId);
@@ -1509,6 +1534,10 @@ export function createServerCoreComposition(
 				}),
 		...optionalCoreOptions(options),
 		...completeOperations,
+		// A client is attached from its authenticated hello to its close. The
+		// release check runs only while one is.
+		onConnectionOpened: (connectionId) =>
+			serverUpgrade.clientAttached(connectionId),
 		onConnectionClosed,
 		onTerminalCongestion: (attachmentId, clientId, connectionId) => {
 			terminalOperations.suppressOutput(attachmentId, connectionId);
@@ -1584,6 +1613,9 @@ export function createServerCoreComposition(
 				// from awaiting the promise it is running inside, while the
 				// restore is still awaited before `start()` resolves.
 				if (lifecycle === 'starting') lifecycle = 'ready';
+				// Asked once at start and never awaited: a release check that
+				// fails or is slow changes nothing about becoming ready.
+				serverUpgrade.start();
 				// Terminals whose process did not survive the restart are reaped
 				// and replaced here, for every host. Doing it in a host bootstrap
 				// is how Desktop and the standalone server came to restore the
@@ -1713,6 +1745,10 @@ export function createServerCoreComposition(
 				push?.shutdown();
 				notifications?.shutdown();
 			});
+			await attempt(() => {
+				serverUpgradeOperations.close();
+				serverUpgrade.dispose();
+			});
 			await attempt(() => agentOperations?.close());
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
@@ -1750,6 +1786,7 @@ export function createServerCoreComposition(
 		...(activityOperations === undefined ? {} : { activityOperations }),
 		...(notifications === undefined ? {} : { notifications }),
 		...(push === undefined ? {} : { push }),
+		serverUpgrade,
 		...(agentOperations === undefined ? {} : { agentOperations }),
 		...(terminalTitles === undefined ? {} : { terminalTitles }),
 		terminalOperations,
@@ -2010,6 +2047,9 @@ function uniqueCapabilities(
 		...new Set([
 			...options.capabilities,
 			FEATURE_CAPABILITIES.terminal,
+			// Every server says whether it has an upgrade to offer; one with no
+			// upgrader says it has none.
+			FEATURE_CAPABILITIES.serverUpgrade,
 			...(options.workspace === undefined
 				? []
 				: [

@@ -6,7 +6,11 @@ export type {
 	ParsedCommandLine,
 } from './args.js';
 export { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
+export type { UpgradeCheckReport } from './commands/check.js';
+export { runUpgradeCheck } from './commands/check.js';
+export { runContainerUpgrade } from './commands/containerUpgrade.js';
 export { runInstall } from './commands/install.js';
+export { runRecreate } from './commands/recreate.js';
 export { runStart, runStatus, runStop } from './commands/lifecycle.js';
 export {
 	runApprovals,

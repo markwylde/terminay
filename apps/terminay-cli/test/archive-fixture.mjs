@@ -20,16 +20,17 @@ export async function buildArchiveFixture(options) {
 		architecture = 'x64',
 		target = 'linux-x64',
 		extraFiles = {},
+		// Which of the extra files are programs, such as the bundled CLI.
+		executable = [],
+		// A test that needs a server to supervise supplies its own launcher.
+		launcher = `#!/bin/sh\n: "\${TERMINAY_SERVER_VERSION:=${version}}"\nif [ -n "\${TERMINAY_FIXTURE_SERVER_LOG:-}" ]; then printf '%s\\n' "$*" >> "$TERMINAY_FIXTURE_SERVER_LOG"; fi\nexec true\n`,
 	} = options;
 	const rootName = `terminay-server-${version}-${target}`;
 	const root = join(directory, rootName);
 	await mkdir(join(root, 'bin'), { recursive: true });
 	await mkdir(join(root, 'server/dist'), { recursive: true });
-	await writeFile(
-		join(root, 'bin/terminay-server'),
-		// A test can ask the fixture server to record how it was invoked.
-		`#!/bin/sh\n: "\${TERMINAY_SERVER_VERSION:=${version}}"\nif [ -n "\${TERMINAY_FIXTURE_SERVER_LOG:-}" ]; then printf '%s\\n' "$*" >> "$TERMINAY_FIXTURE_SERVER_LOG"; fi\nexec true\n`,
-	);
+	// By default, a server that a test can ask to record how it was invoked.
+	await writeFile(join(root, 'bin/terminay-server'), launcher);
 	await chmod(join(root, 'bin/terminay-server'), 0o755);
 	await writeFile(
 		join(root, 'server/dist/cli.js'),
@@ -39,6 +40,7 @@ export async function buildArchiveFixture(options) {
 	for (const [path, contents] of Object.entries(extraFiles)) {
 		await mkdir(join(root, path, '..'), { recursive: true });
 		await writeFile(join(root, path), contents);
+		if (executable.includes(path)) await chmod(join(root, path), 0o755);
 	}
 
 	const files = [];

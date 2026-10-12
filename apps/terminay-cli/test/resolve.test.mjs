@@ -231,3 +231,45 @@ test('a full commit sha resolves to a source build without any network call', as
 	assert.equal(resolved.sourceRef, revision);
 	assert.equal(resolved.assets, undefined);
 });
+
+test('a rolling build is dated by its archive, because the release that carries it never moves', async () => {
+	const fixture = await startHttpsFixture((request, response) => {
+		if (
+			request.url === `/repos/markwylde/terminay/releases/tags/${ROLLING_TAG}`
+		) {
+			json(response, 200, {
+				tag_name: ROLLING_TAG,
+				// When the rolling release was first created: the same for every
+				// build that has ever been published under it.
+				published_at: '2026-09-08T13:32:38Z',
+				assets: [
+					{
+						name: 'terminay-server-main-linux-x64.tar.gz',
+						updated_at: '2026-10-11T20:44:14Z',
+					},
+					{
+						name: 'terminay-server-main-linux-arm64.tar.gz',
+						updated_at: '2026-10-11T20:44:19Z',
+					},
+				],
+			});
+			return;
+		}
+		json(response, 404, { message: 'Not Found' });
+	});
+	try {
+		const options = { apiBase: fixture.origin, webBase: fixture.origin };
+		assert.equal(
+			(await resolveRef('main', { ...options, architecture: 'x64' }))
+				.publishedAt,
+			'2026-10-11T20:44:14Z',
+		);
+		assert.equal(
+			(await resolveRef('main', { ...options, architecture: 'arm64' }))
+				.publishedAt,
+			'2026-10-11T20:44:19Z',
+		);
+	} finally {
+		await fixture.close();
+	}
+});

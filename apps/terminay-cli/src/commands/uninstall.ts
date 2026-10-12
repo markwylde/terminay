@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises';
 
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
+import { removeUpgradeHelper } from '../helper.js';
 import {
 	confirm,
 	defaultStreams,
@@ -62,12 +63,16 @@ export async function runUninstall(
 	});
 	await systemd.disable();
 	await rm(layout.unitPath, { force: true });
+	// The upgrade helper goes with the service it upgrades: a watch left armed
+	// would start an upgrader that is about to be removed.
+	await removeUpgradeHelper({ layout, systemd });
 	await systemd.daemonReload();
 	await systemd.resetFailed();
 
 	await rm(layout.versionsDirectory, { recursive: true, force: true });
 	await rm(layout.currentLink, { force: true });
 	await rm(layout.recordPath, { force: true });
+	await rm(layout.resultPath, { force: true });
 	await rm(layout.environmentFile, { force: true });
 
 	if (purge) await rm(record.dataRoot, { recursive: true, force: true });

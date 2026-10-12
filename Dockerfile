@@ -50,8 +50,7 @@ RUN if printf '%s' "$OCI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-
 
 RUN npm run build:application-graph \
   && npm run build:server-postcompile \
-  && npm run build:server-ui:bundle \
-  && npm run build --workspace terminay
+  && npm run build:server-ui:bundle
 
 ARG TARGETARCH
 ARG OCI_REVISION=unknown
@@ -59,9 +58,9 @@ ARG TERMINAY_CHANNEL=main
 
 # Assemble the same self-contained tree the release archives carry: the pinned
 # Node runtime, the compiled server with its production dependency closure and
-# native node-pty, the server-served workspace UI, the built-in extensions, and
-# the selected WebRTC runtime. An image that leaves any of these out starts,
-# reports ready, and cannot be paired with.
+# native node-pty, the server-served workspace UI, the built-in extensions, the
+# selected WebRTC runtime, and the `terminay` CLI that upgrades it. An image
+# that leaves any of these out starts, reports ready, and cannot be paired with.
 RUN set -eu; \
   case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
     amd64) target=linux-x64 ;; \
@@ -86,13 +85,9 @@ RUN set -eu; \
     --runtime-modules node_modules \
     --webrtc-runtime build/webrtc-runtime \
     --output-dir /tmp/standalone > /tmp/standalone-build.json; \
-  mkdir -p /out/terminay /out/terminay-cli; \
+  mkdir -p /out/terminay; \
   tar -xzf "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("/tmp/standalone-build.json", "utf8")).archivePath)')" \
-    --strip-components=1 -C /out/terminay; \
-  npx esbuild apps/terminay-cli/dist/cli.js \
-    --bundle --platform=node --format=esm --target=node24 \
-    --banner:js="import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" \
-    --outfile=/out/terminay-cli/terminay.mjs
+    --strip-components=1 -C /out/terminay
 
 FROM debian:bookworm-slim AS runtime
 
@@ -125,8 +120,10 @@ RUN printf 'terminay ALL=(ALL:ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/terminay \
   && chmod 0440 /etc/sudoers.d/terminay \
   && visudo --check --quiet --file=/etc/sudoers.d/terminay
 
+# The image's release is the baseline: an in-place upgrade stages a newer one
+# on the data volume and the entrypoint starts whichever is newer. The CLI is
+# the one inside the release, so there is a single copy of it.
 COPY --from=build /out/terminay /opt/terminay
-COPY --from=build /out/terminay-cli /opt/terminay-cli
 COPY docker/terminay /usr/local/bin/terminay
 COPY docker/terminay-server-entrypoint /usr/local/bin/terminay-server-entrypoint
 RUN chmod 0755 /usr/local/bin/terminay /usr/local/bin/terminay-server-entrypoint
@@ -136,7 +133,9 @@ RUN chmod 0755 /usr/local/bin/terminay /usr/local/bin/terminay-server-entrypoint
 # direct origin for a client on the same machine and offers no ICE candidate;
 # set TERMINAY_PUBLIC_HOST to a routable address for browsers and phones. The
 # ICE range is pinned only once a public host or TERMINAY_ICE_PORT asks for it,
-# because a pinned range is a budget every connected device draws from.
+# because a pinned range is a budget every connected device draws from. The
+# renderer directory names the image's own release; the entrypoint points it
+# at whichever release it starts.
 ENV HOME=/home/terminay \
   TERMINAY_DATA_ROOT=/var/lib/terminay \
   TERMINAY_PROJECT_ROOT=/home/terminay \

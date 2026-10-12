@@ -21,10 +21,27 @@
 //                if it connects, the two networks are not isolated and the two
 //                cases above prove nothing.
 //
+//   upgrade      Not run unless named with `--only upgrade`, because it needs
+//                the project's published releases: it upgrades the server in
+//                place to the newest release on the image's channel, with a
+//                read-only root filesystem, and then restarts and recreates
+//                the container on the same volume. The container's main
+//                process must be the same one throughout, and the upgraded
+//                release must be the one running each time.
+//   recreate     Not run unless named with `--only recreate`, because it needs
+//                Docker itself, its socket, and a registry image from Docker
+//                Hub: it serves the image from a registry of its own, mounts
+//                the Docker socket into the server, and has the server replace
+//                its own container, first on a newer image and then on one
+//                whose health check always fails. The first must leave one
+//                container of the same name, volume, port, and environment on
+//                the newer image; the second must leave the container it
+//                started with, running. `--socket <path>` names the socket.
+//
 // The cases share nothing, so each runs in its own process and they all run at
 // once; `--only` runs the named cases in this process, one after another.
 //
-// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman] [--only <case,...>]
+// Usage: node scripts/container-image-smoke.mjs --image <ref> [--engine docker|podman] [--only <case,...>] [--socket <path>]
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomInt } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -47,10 +64,13 @@ const HOLD_MS = 10_000;
 // The width of the ICE range an isolated case publishes on the container host.
 const ICE_SPAN = 16;
 const CASES = ['bare', 'advertised', 'derived', 'control'];
-const created = { containers: new Set(), networks: new Set(), volumes: new Set() };
+// Named explicitly or not at all: they reach outside the machine.
+const OPTIONAL_CASES = ['upgrade', 'recreate'];
+const created = { containers: new Set(), networks: new Set(), volumes: new Set(), images: new Set() };
 
 if (!only) process.exit(await runCasesTogether());
-for (const label of only) if (!CASES.includes(label)) fail(`unknown case: ${label}`);
+for (const label of only)
+	if (![...CASES, ...OPTIONAL_CASES].includes(label)) fail(`unknown case: ${label}`);
 
 const work = await mkdtemp(join(tmpdir(), 'terminay-image-smoke-'));
 let failed = false;
@@ -69,7 +89,7 @@ try {
 		target: 'node20',
 	});
 
-	const cases = { bare, advertised, derived, control };
+	const cases = { bare, advertised, derived, control, upgrade, recreate };
 	for (const label of only) {
 		log(`--- ${label}`);
 		await cases[label]();
@@ -94,6 +114,8 @@ try {
 		run([engine, 'volume', 'rm', '--force', volume], { allowFailure: true });
 	for (const network of created.networks)
 		run([engine, 'network', 'rm', '--force', network], { allowFailure: true });
+	for (const tagged of created.images)
+		run([engine, 'image', 'rm', '--force', tagged], { allowFailure: true });
 	await rm(work, { force: true, recursive: true });
 }
 process.exit(failed ? 1 : 0);
@@ -161,11 +183,33 @@ async function bare() {
 	assert(/no service unit/iu.test(status), `status does not say the server is unmanaged:\n${status}`);
 	assert(/advertised\s+not set/iu.test(status), `a bare server reports an advertised address:\n${status}`);
 	assert(new RegExp(args.revision ?? '.', 'u').test(status), `status does not name the build revision:\n${status}`);
-	const refused = run([engine, 'exec', first, 'terminay', 'daemon', 'upgrade'], { allowFailure: true });
-	assert(refused.status !== 0, '`daemon upgrade` did not refuse inside the image');
+	// The entrypoint stays the container's main process and runs the server as
+	// its child, which is what lets the server be restarted onto a newer
+	// release without the container stopping.
+	const mainProcess = run([engine, 'exec', first, 'cat', '/proc/1/cmdline']).stdout;
+	assert(
+		/terminay-server-entrypoint/u.test(mainProcess),
+		`the container's main process is not the entrypoint: ${mainProcess.replaceAll('\0', ' ')}`,
+	);
+	// The upgrader is the CLI inside the release, and it can describe this
+	// container with a read-only root filesystem. Whether anything newer
+	// exists depends on the network, so only the description is asserted.
+	const described = upgradeCheck(first);
+	assert(described.environment === 'container', `the check does not see a container: ${JSON.stringify(described)}`);
+	assert(described.canUpgrade === true, `a supervised container cannot upgrade itself: ${JSON.stringify(described)}`);
+	assert(described.trigger?.kind === 'spawn', `unexpected trigger: ${JSON.stringify(described.trigger)}`);
+	assert(described.modes?.includes('in-place'), `in-place is not offered: ${JSON.stringify(described.modes)}`);
+	// No Docker socket was mounted, so replacing the container is not on offer.
+	assert(!described.modes?.includes('recreate'), `recreate is offered with no Docker socket: ${JSON.stringify(described.modes)}`);
+	assert(
+		!args.revision || described.installed?.revision === args.revision,
+		`the check does not name the image's revision: ${JSON.stringify(described.installed)}`,
+	);
+	const refused = run([engine, 'exec', first, 'terminay', 'daemon', 'install'], { allowFailure: true });
+	assert(refused.status !== 0, '`daemon install` did not refuse inside the image');
 	assert(
 		/container/iu.test(refused.stdout + refused.stderr),
-		`\`daemon upgrade\` did not point at the container runtime:\n${refused.stdout}${refused.stderr}`,
+		`\`daemon install\` did not point at the container runtime:\n${refused.stdout}${refused.stderr}`,
 	);
 	// The same flags are how an operator withholds root from the terminals.
 	const denied = run([engine, 'exec', first, 'sudo', '--non-interactive', 'true'], { allowFailure: true });
@@ -187,8 +231,12 @@ async function bare() {
 		`with no advertised address the server should connect host-to-host, got ${JSON.stringify(pair)}`,
 	);
 
-	// Graceful stop, then a different container on the same volume.
+	// Graceful stop, then a different container on the same volume. The
+	// entrypoint forwards the signal, so the stop is the server's own bounded
+	// shutdown and never the runtime's kill at the end of the grace period.
+	const stopStarted = Date.now();
 	run([engine, 'stop', '--time', '20', first]);
+	assert(Date.now() - stopStarted < 18_000, 'the container was killed rather than stopped');
 	const exit = run([engine, 'inspect', '--format', '{{.State.ExitCode}}', first]).stdout.trim();
 	assert(exit === '0', `the server exited ${exit} on SIGTERM`);
 	run([engine, 'rm', '--force', first]);
@@ -207,6 +255,227 @@ async function bare() {
 		reconnected.serverId === identity,
 		`the server identity changed across container recreation: ${identity} -> ${reconnected.serverId}`,
 	);
+}
+
+/**
+ * An in-place upgrade against the project's published releases.
+ *
+ * The shipped CLI trusts one release key and one release host, so this case
+ * cannot be given a release of its own: it upgrades to whatever the image's
+ * channel really has, and has nothing to do when that is what the image
+ * already carries.
+ */
+async function upgrade() {
+	const volume = createVolume('upgrade');
+	// A read-only root filesystem: the data volume is the only thing written.
+	const hardened = [
+		'--cap-drop=ALL',
+		'--security-opt', 'no-new-privileges',
+		'--read-only',
+		'--tmpfs', '/tmp:rw,nosuid,size=64m',
+	];
+	const start = (suffix) =>
+		startServer(suffix, ['--volume', `${volume}:/var/lib/terminay`, ...hardened]);
+	const mainProcess = (server) =>
+		run([engine, 'inspect', '--format', '{{.State.Pid}} {{.State.StartedAt}}', server]).stdout.trim();
+	const bystanderAlive = (server) =>
+		run(
+			[
+				engine, 'exec', server, 'sh', '-c',
+				'for p in /proc/[0-9]*; do read -r c < "$p/comm" 2>/dev/null && [ "$c" = sleep ] && exit 0; done; exit 1',
+			],
+			{ allowFailure: true },
+		).status === 0;
+
+	const first = start('upgrade-1');
+	await waitReady(first);
+	const before = upgradeCheck(first);
+	assert(!before.checkError, `the release channel could not be read: ${before.checkError}`);
+	assert(before.canUpgrade === true, `the container cannot upgrade itself: ${JSON.stringify(before)}`);
+	if (before.available === null) {
+		log('the image already carries the newest release on its channel; nothing to upgrade to');
+		return;
+	}
+
+	// A process in the container that the upgrade has no business with. It
+	// outlives the upgrade only if the container was never restarted.
+	run([engine, 'exec', '--detach', first, 'sleep', '100000']);
+	const mainBefore = mainProcess(first);
+	const upgraded = run([engine, 'exec', first, 'terminay', 'daemon', 'upgrade']);
+	assert(/Upgraded to /u.test(upgraded.stdout), `the upgrade did not report success:\n${upgraded.stdout}${upgraded.stderr}`);
+	await waitReady(first);
+	assert(mainProcess(first) === mainBefore, 'the container restarted during an in-place upgrade');
+	assert(bystanderAlive(first), 'a process outside the server did not survive the upgrade');
+
+	const after = upgradeCheck(first);
+	const sameRelease = (report) =>
+		report.installed.revision === after.installed.revision &&
+		report.installed.version === after.installed.version;
+	assert(
+		after.installed.revision !== before.installed.revision ||
+			after.installed.version !== before.installed.version,
+		`the running release did not change: ${JSON.stringify(after.installed)}`,
+	);
+	assert(
+		before.available.revision === undefined || after.installed.revision === before.available.revision,
+		`the running release is not the one that was offered: ${JSON.stringify(after.installed)}`,
+	);
+	assert(after.lastResult?.outcome === 'succeeded', `no successful outcome was recorded: ${JSON.stringify(after.lastResult)}`);
+	assert(after.available === null, `an upgrade is still offered after upgrading: ${JSON.stringify(after.available)}`);
+	// The server itself answers from the upgraded release.
+	assert(/ready\s+yes/iu.test(daemonStatus(first)), 'the upgraded server does not report ready');
+
+	// The upgraded release is what a restarted container runs.
+	run([engine, 'restart', '--time', '20', first]);
+	await waitReady(first);
+	assert(sameRelease(upgradeCheck(first)), 'a restart went back to the release the image carries');
+
+	const stopStarted = Date.now();
+	run([engine, 'stop', '--time', '20', first]);
+	assert(Date.now() - stopStarted < 18_000, 'the container was killed rather than stopped');
+	run([engine, 'rm', '--force', first]);
+	created.containers.delete(first);
+
+	// And what a new container from the same, older image runs on that volume.
+	const second = start('upgrade-2');
+	await waitReady(second);
+	assert(sameRelease(upgradeCheck(second)), 'a container recreated from the same image did not run the upgraded release');
+}
+
+/**
+ * Replacing the container through a mounted Docker socket.
+ *
+ * A recreate pulls, so the image has to come from a registry. This case runs
+ * one of its own and pushes the image under test to it under a moving tag;
+ * "a newer image" is then the same image with one more label pushed to that
+ * tag, and "an image that does not come up" the same with a health check that
+ * always fails. Nothing here depends on the project's published images.
+ */
+async function recreate() {
+	assert(!isPodman, 'the recreate case drives the Docker Engine API through its socket and needs docker');
+	const socket = args.socket ?? '/var/run/docker.sock';
+	const volume = createVolume('recreate');
+	const registry = name('registry');
+	const registryPort = 20_000 + randomInt(10_000);
+	const signaling = 20_000 + randomInt(10_000);
+	created.containers.add(registry);
+	run([engine, 'run', '--detach', '--name', registry, '--publish', `127.0.0.1:${registryPort}:5000`, 'registry:2']);
+	// A registry on localhost is one the daemon pulls from without TLS.
+	const reference = `localhost:${registryPort}/terminay-smoke:latest`;
+	created.images.add(reference);
+	const publish = async (source) => {
+		run([engine, 'tag', source, reference]);
+		// The registry is listening a moment after its container starts.
+		for (let attempt = 1; ; attempt += 1) {
+			const pushed = run([engine, 'push', reference], { allowFailure: true });
+			if (pushed.status === 0) break;
+			assert(attempt < 10, `could not push to the local registry:\n${pushed.stdout}${pushed.stderr}`);
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+		return run([engine, 'image', 'inspect', '--format', '{{.Id}}', source]).stdout.trim();
+	};
+	const derive = (suffix, lines) => {
+		const tagged = `${name(suffix)}:latest`;
+		created.images.add(tagged);
+		run([engine, 'build', '--tag', tagged, '-'], { input: [`FROM ${image}`, ...lines, ''].join('\n') });
+		return tagged;
+	};
+	const inspect = (container) => {
+		const result = run([engine, 'inspect', container], { allowFailure: true });
+		return result.status === 0 ? JSON.parse(result.stdout)[0] : undefined;
+	};
+
+	await publish(image);
+	// The account in the image is not root, so it is given the group that owns
+	// the socket as a container sees it.
+	const group = run([
+		engine, 'run', '--rm', '--user', '0:0', '--volume', `${socket}:/var/run/docker.sock`,
+		'--entrypoint', 'stat', image, '--format', '%g', '/var/run/docker.sock',
+	]).stdout.trim();
+	assert(/^\d+$/u.test(group), `could not read the group of the Docker socket: ${group}`);
+
+	const server = name('recreate');
+	const helper = `${server}-terminay-recreate`;
+	const previous = `${server}-terminay-previous`;
+	for (const container of [server, helper, previous]) created.containers.add(container);
+	run([
+		engine, 'run', '--detach', '--name', server,
+		'--env', 'TERMINAY_EXPOSE=direct',
+		'--env', 'TERMINAY_SMOKE_MARKER=kept',
+		'--label', 'terminay.smoke=kept',
+		'--volume', `${volume}:/var/lib/terminay`,
+		'--volume', `${socket}:/var/run/docker.sock`,
+		'--group-add', group,
+		'--publish', `127.0.0.1:${signaling}:8443/tcp`,
+		'--restart', 'unless-stopped',
+		reference,
+	]);
+	await waitReady(server);
+	run([engine, 'exec', server, 'sh', '-c', 'echo kept > /var/lib/terminay/smoke-marker']);
+	const described = upgradeCheck(server);
+	assert(
+		described.modes?.join(',') === 'in-place,recreate',
+		`recreate is not offered with a usable Docker socket: ${JSON.stringify(described)}`,
+	);
+
+	/** Wait for the helper to finish, however it ends. */
+	const settled = async () => {
+		const deadline = Date.now() + 240_000;
+		while (inspect(helper) !== undefined) {
+			assert(Date.now() < deadline, 'the recreate helper container did not finish');
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+		assert(inspect(previous) === undefined, `the previous container was left behind as ${previous}`);
+		const current = inspect(server);
+		assert(current?.State?.Running === true, `no running container is named ${server}`);
+		return current;
+	};
+	// The command is in the container it replaces, so it ends when that does.
+	const replace = () => run([engine, 'exec', server, 'terminay', 'daemon', 'upgrade', '--recreate'], { allowFailure: true });
+
+	// Onto a newer image.
+	const first = inspect(server);
+	const newer = await publish(derive('newer', ['LABEL terminay.smoke.generation="2"']));
+	const moved = replace();
+	const second = await settled();
+	assert(second.Id !== first.Id, `the container was not replaced:\n${moved.stdout}${moved.stderr}`);
+	assert(second.Image === newer, `the replacement runs ${second.Image}, not the newer image ${newer}`);
+	assert(second.Config.Image === reference, `the replacement was created from ${second.Config.Image}`);
+	assert(second.Config.Env.includes('TERMINAY_SMOKE_MARKER=kept'), 'an environment variable set on the container was not carried over');
+	assert(second.Config.Labels['terminay.smoke'] === 'kept', 'a label set on the container was not carried over');
+	assert(second.Config.Labels['terminay.smoke.generation'] === '2', 'the replacement does not carry the newer image\'s own label');
+	assert(
+		second.Mounts.some((mount) => mount.Destination === '/var/lib/terminay' && mount.Name === volume),
+		`the replacement is not on the same data volume: ${JSON.stringify(second.Mounts)}`,
+	);
+	assert(
+		second.HostConfig.PortBindings?.['8443/tcp']?.[0]?.HostPort === String(signaling),
+		`the published port was not carried over: ${JSON.stringify(second.HostConfig.PortBindings)}`,
+	);
+	assert(second.HostConfig.RestartPolicy?.Name === 'unless-stopped', 'the restart policy was not carried over');
+	await waitReady(server);
+	const marker = run([engine, 'exec', server, 'cat', '/var/lib/terminay/smoke-marker']).stdout.trim();
+	assert(marker === 'kept', 'the data volume was not the same one after the recreate');
+	const after = upgradeCheck(server);
+	assert(after.lastResult?.outcome === 'succeeded', `no successful outcome was recorded: ${JSON.stringify(after.lastResult)}`);
+	assert(after.modes?.includes('recreate'), 'the replacement lost the Docker socket');
+
+	// Onto an image that never reports healthy: the container it started with
+	// must be the one left running.
+	await publish(
+		derive('unhealthy', [
+			'LABEL terminay.smoke.generation="3"',
+			'HEALTHCHECK --interval=2s --timeout=2s --start-period=0s --retries=1 CMD ["/bin/false"]',
+		]),
+	);
+	replace();
+	const third = await settled();
+	assert(third.Id === second.Id, 'a replacement that was not healthy was kept');
+	assert(third.Image === newer, 'the restored container is not on the image it was running');
+	await waitReady(server);
+	const failed = upgradeCheck(server);
+	assert(failed.lastResult?.outcome === 'rolled-back', `the failure was not recorded: ${JSON.stringify(failed.lastResult)}`);
+	assert(/health check failed/u.test(failed.lastResult.reason ?? ''), `the outcome does not say why: ${failed.lastResult.reason}`);
 }
 
 async function advertised() {
@@ -408,6 +677,13 @@ function pairingUrl(server) {
 	return match[1];
 }
 
+/** What the release's own upgrader says about this container. */
+function upgradeCheck(server) {
+	const { stdout } = run([engine, 'exec', server, 'terminay', 'daemon', 'upgrade', '--check']);
+	assert(stdout.trim().split('\n').length === 1, `the check printed more than one line:\n${stdout}`);
+	return JSON.parse(stdout);
+}
+
 function daemonStatus(server) {
 	return run([engine, 'exec', server, 'terminay', 'daemon', 'status']).stdout;
 }
@@ -496,10 +772,11 @@ function deviceStore(suffix) {
 	return createVolume(`store-${suffix}`);
 }
 
-function run(command, { allowFailure = false } = {}) {
+function run(command, { allowFailure = false, input } = {}) {
 	const result = spawnSync(command[0], command.slice(1), {
 		encoding: 'utf8',
 		timeout: 180_000,
+		...(input === undefined ? {} : { input }),
 	});
 	if (!allowFailure && (result.error || result.status !== 0)) {
 		throw new Error(

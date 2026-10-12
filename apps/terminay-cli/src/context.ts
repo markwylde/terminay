@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 import type { DaemonCommand, DaemonOptions, InstallScope } from './args.js';
 import {
@@ -54,12 +54,17 @@ export const FOREGROUND_COMMANDS: readonly DaemonCommand[] = [
 	'deny',
 ];
 
-/** The lifecycle commands, which a container runtime owns when it is there. */
+/**
+ * The lifecycle commands, which a container runtime owns when it is there.
+ *
+ * `upgrade` is not among them: inside the image it stages the new release on
+ * the data volume and has the entrypoint restart the server on it, which needs
+ * nothing from the runtime (see `commands/containerUpgrade.ts`).
+ */
 const CONTAINER_ACTIONS: Readonly<Partial<Record<DaemonCommand, string>>> =
 	Object.freeze({
 		install:
 			'To install a different version, pull a newer image and recreate the container.',
-		upgrade: 'To upgrade, pull a newer image and recreate the container.',
 		start: 'To start it, run `docker start <container>`.',
 		stop: 'To stop it, run `docker stop <container>`.',
 		uninstall:
@@ -73,8 +78,8 @@ export class ContainerManagedError extends Error {}
  * Refuse a lifecycle command where a container runtime manages the server.
  *
  * Called before anything is resolved, downloaded, or written: inside an image
- * the server is the container's main process, so there is no unit to drive and
- * an install would only leave a second, unmanaged copy beside it.
+ * the server runs under the container's entrypoint, so there is no unit to
+ * drive and an install would only leave a second, unmanaged copy beside it.
  */
 export function assertNotContainerManaged(
 	command: DaemonCommand,
@@ -118,6 +123,10 @@ export interface ResolveContextOptions {
 	readonly home?: string;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly write?: (line: string) => void;
+	/** Relocates the system layout for the tests. */
+	readonly systemRoot?: string;
+	/** The path this CLI was started from. Overridden by tests. */
+	readonly self?: string;
 }
 
 export interface ResolveForegroundOptions extends ResolveContextOptions {
@@ -169,9 +178,23 @@ export async function resolveContext(
 		requested === undefined ? ['system', 'user'] : [requested];
 	const found: { layout: InstallLayout; record: InstallRecord }[] = [];
 	for (const scope of candidates) {
-		const layout = installLayout(scope, home);
+		const layout = installLayout(scope, home, options.systemRoot);
 		const record = await readInstallRecord(layout).catch(() => undefined);
 		if (record !== undefined) found.push({ layout, record });
+	}
+
+	// The CLI a server archive carries is run by that server, with no scope
+	// flag, on a machine that may hold both kinds of install. It lives under
+	// one prefix, and that prefix says which install it belongs to.
+	if (found.length > 1) {
+		const self = options.self ?? process.argv[1];
+		const own =
+			self === undefined
+				? []
+				: found.filter(({ layout }) =>
+						resolve(self).startsWith(`${layout.prefix}${sep}`),
+					);
+		if (own.length === 1) found.splice(0, found.length, ...own);
 	}
 
 	if (found.length === 0) {

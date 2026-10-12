@@ -340,6 +340,10 @@ import {
 	readSessionNotificationsHost,
 } from './workspace/pushHost';
 import { usePublishedNotifications } from './workspace/usePublishedNotifications';
+import { ServerUpgradeDialog } from './workspace/ServerUpgradeDialog';
+import { ServerUpgradeMenuRows } from './workspace/ServerUpgradeMenuRows';
+import { ServerUpgradeNotices } from './workspace/ServerUpgradeNotices';
+import { useServerUpgrades } from './workspace/useServerUpgrades';
 import {
 	areTerminalActivityIndicatorsEnabled,
 	buildProjectInventoryEntries,
@@ -6252,6 +6256,13 @@ function App({
 		});
 	}, [activeConnection, primary, primaryClientContext]);
 	const activeServerId = activeConnection?.serverId ?? terminalClientContext?.serverId;
+	// Each attached server's own upgrade, never Local's. The header warns for
+	// the active tab's server; the menu lists every server that has one.
+	const serverUpgrades = useServerUpgrades({
+		connections,
+		profiles: connectionProfiles,
+		activeProfileId: activeConnection?.profileId,
+	});
 	// A pending activation survives the remount that switching servers causes:
 	// the target project only exists once its collection has mounted.
 	const pendingServerActivationRef = useRef<CompositionTabHandle | null>(null);
@@ -9613,6 +9624,9 @@ function App({
 							isReachable: currentServerReachable,
 							serverLabel: currentServerLabel,
 							tone: remoteButtonTone,
+							...(serverUpgrades.activeVersion === undefined
+								? {}
+								: { upgradeVersion: serverUpgrades.activeVersion }),
 						}}
 						connectionButtonRef={compactConnectionRef}
 						isExplorerOpen={
@@ -9832,6 +9846,24 @@ function App({
 							refreshConnectionSwitcherEntries();
 							setIsRemoteMenuOpen((current) => !current);
 						}}
+						{...(serverUpgrades.activeVersion === undefined
+							? {}
+							: { serverUpgradeVersion: serverUpgrades.activeVersion })}
+						{...(serverUpgrades.rows.length === 0
+							? {}
+							: {
+									serverUpgrades: (
+										<ServerUpgradeMenuRows
+											rows={serverUpgrades.rows}
+											namesServers={serverUpgrades.namesServers}
+											onUpgrade={(profileId) => {
+												setIsRemoteMenuOpen(false);
+												serverUpgrades.requestUpgrade(profileId);
+											}}
+											variant="menu"
+										/>
+									),
+								})}
 						status={remoteStatus}
 						tone={remoteButtonTone}
 					/>
@@ -9914,6 +9946,21 @@ function App({
 						);
 					}}
 					onDismiss={closeCompactSwitcher}
+					{...(serverUpgrades.rows.length === 0
+						? {}
+						: {
+								serverUpgrades: (
+									<ServerUpgradeMenuRows
+										rows={serverUpgrades.rows}
+										namesServers={serverUpgrades.namesServers}
+										onUpgrade={(profileId) => {
+											closeCompactSwitcher();
+											serverUpgrades.requestUpgrade(profileId);
+										}}
+										variant="sheet"
+									/>
+								),
+							})}
 					{...(switchWindowServer === undefined
 						? {}
 						: {
@@ -10167,6 +10214,16 @@ function App({
 				/>
 			) : null}
 
+			<ServerUpgradeNotices
+				notices={serverUpgrades.notices}
+				onDismiss={serverUpgrades.dismissNotice}
+			/>
+			{serverUpgrades.confirmation === undefined ? null : (
+				<ServerUpgradeDialog
+					key={serverUpgrades.confirmation.entry.profileId}
+					confirmation={serverUpgrades.confirmation}
+				/>
+			)}
 			{isPairingModalOpen ? (
 				<RemotePairingModal
 					expiresAt={selectedPairingExpiresAt}
