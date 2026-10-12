@@ -19,10 +19,18 @@
  * landing in the right place.
  */
 
-import { Bell, ChevronDown, House, Search, Server } from 'lucide-react';
+import {
+	Bell,
+	ChevronDown,
+	House,
+	Search,
+	Server,
+	TriangleAlert,
+} from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
+import { upgradeAvailableSuffix } from './serverUpgradeModel.ts';
 import { notificationsButtonLabel } from './TerminalActivityOverview';
 
 export type CompactConnectionPresentation = Readonly<{
@@ -32,6 +40,8 @@ export type CompactConnectionPresentation = Readonly<{
 	isReachable: boolean;
 	/** The same tone class the wide bar's connection button carries. */
 	tone: string;
+	/** The version the active tab's server reports available; never Local's. */
+	upgradeVersion?: string;
 }>;
 
 export type CompactChromeRowProps = Readonly<{
@@ -214,11 +224,19 @@ export function CompactChromeRow({
 				onClick={() => onOpenSwitcher('connection')}
 				aria-haspopup="dialog"
 				aria-expanded={isSwitcherOpen}
-				aria-label={`Connections — ${connection.serverLabel}, ${connection.isExposed ? 'Exposed' : 'Offline'}`}
+				aria-label={`Connections — ${connection.serverLabel}, ${connection.isExposed ? 'Exposed' : 'Offline'}${upgradeAvailableSuffix(connection.upgradeVersion)}`}
 				title={connection.serverLabel}
 				data-compact-connection="true"
 			>
 				<Server size={15} aria-hidden="true" />
+				{connection.upgradeVersion === undefined ? null : (
+					<TriangleAlert
+						className="compact-connection__upgrade"
+						size={10}
+						aria-hidden="true"
+						data-server-upgrade-indicator={connection.upgradeVersion}
+					/>
+				)}
 				<span
 					className={`compact-connection__dot${connection.isReachable ? '' : ' compact-connection__dot--unreachable'}`}
 					aria-hidden="true"

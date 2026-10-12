@@ -1,13 +1,14 @@
-import { ChevronDown, Settings2 } from 'lucide-react';
+import { ChevronDown, Settings2, TriangleAlert } from 'lucide-react';
 import {
 	groupLiveConnectionsByDevice,
 	liveWindowsLabel,
 } from '../shared/liveConnectionsByDevice';
-import { type RefObject, useEffect, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useState } from 'react';
 import { friendlyPairingActionError } from '../shared/pairingActionError';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { ConnectionsControl } from './ConnectionsControl';
+import { upgradeAvailableSuffix } from './serverUpgradeModel.ts';
 
 export type ConnectionSwitcherEntry = {
 	id: string;
@@ -33,6 +34,11 @@ export function RemoteAccessConnectionMenu(props: {
 	onSwitchConnections?: () => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
+	/** The version the active tab's server reports available. It describes that
+	 * server only, and is never set for Local. */
+	serverUpgradeVersion?: string;
+	/** A row for each attached server that has an upgrade to show. */
+	serverUpgrades?: ReactNode;
 	status: RemoteAccessStatus | null;
 	tone: string;
 }) {
@@ -77,7 +83,7 @@ export function RemoteAccessConnectionMenu(props: {
 		connectionCount > 0
 			? `, ${connectionCount} active connection${connectionCount === 1 ? '' : 's'}`
 			: '';
-	const buttonState = `Open connection menu, ${isExposed ? 'Exposed' : 'Offline'}${connectionSummary}`;
+	const buttonState = `Open connection menu, ${isExposed ? 'Exposed' : 'Offline'}${connectionSummary}${upgradeAvailableSuffix(props.serverUpgradeVersion)}`;
 	return (
 		<div
 			ref={props.menuRef}
@@ -97,6 +103,16 @@ export function RemoteAccessConnectionMenu(props: {
 				<span className="remote-access-button__label">
 					{props.currentServerLabel}
 				</span>
+				{/* Not an exposure indicator: it appears only while the server the
+				    active tab belongs to has a newer release to move to. */}
+				{props.serverUpgradeVersion === undefined ? null : (
+					<TriangleAlert
+						className="remote-access-button__upgrade"
+						size={12}
+						aria-hidden="true"
+						data-server-upgrade-indicator={props.serverUpgradeVersion}
+					/>
+				)}
 				{status?.configurationIssue || status?.errorMessage ? (
 					<span
 						className="remote-access-button__badge remote-access-button__badge--warning"
@@ -194,6 +210,14 @@ export function RemoteAccessConnectionMenu(props: {
 							</button>
 						) : null}
 					</div>
+					{props.serverUpgrades ? (
+						<div className="remote-access-menu__section">
+							<div className="remote-access-menu__section-label">
+								Server updates
+							</div>
+							{props.serverUpgrades}
+						</div>
+					) : null}
 					{props.errorMessage ? (
 						<div
 							className="remote-access-menu__section remote-access-menu__section--error"

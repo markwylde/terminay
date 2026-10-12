@@ -46,6 +46,13 @@ export async function startReleaseFixture(options) {
 			revision: release.revision,
 			architecture: 'x64',
 			target: 'linux-x64',
+			...(release.launcher === undefined ? {} : { launcher: release.launcher }),
+			...(release.extraFiles === undefined
+				? {}
+				: { extraFiles: release.extraFiles }),
+			...(release.executable === undefined
+				? {}
+				: { executable: release.executable }),
 		});
 		const bytes = await readFile(fixture.archivePath);
 		const digest = createHash('sha256').update(bytes).digest('hex');

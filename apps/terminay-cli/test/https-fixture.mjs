@@ -84,7 +84,9 @@ export function releaseDocument(
 	return {
 		tag_name: tag,
 		published_at: publishedAt,
-		assets: assetNames.map((name) => ({ name })),
+		// GitHub stamps each asset with the time it was last replaced, which is
+		// the only time that moves on a release whose assets are swapped in place.
+		assets: assetNames.map((name) => ({ name, updated_at: publishedAt })),
 	};
 }
 

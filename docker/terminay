@@ -1,6 +1,19 @@
 #!/bin/sh
-# The `terminay` command inside the official image. It runs the same CLI the
-# npm package ships, on the Node runtime the server archive carries, so
+# The `terminay` command inside the official image. It is the CLI the server
+# archive carries, on the Node runtime that archive carries, so
 # `docker exec -it <container> terminay daemon qr-code` needs nothing installed.
+#
+# The CLI that runs is the one from the release the server is running: the
+# entrypoint records which that is, and after an in-place upgrade it is the
+# upgraded release on the data volume rather than the image's own.
 set -eu
-exec /opt/terminay/bin/node /opt/terminay-cli/terminay.mjs "$@"
+image=${TERMINAY_IMAGE_RELEASE:-/opt/terminay}
+running=
+if [ -r "${TERMINAY_DATA_ROOT:-/var/lib/terminay}/releases/running" ]; then
+  read -r running < "${TERMINAY_DATA_ROOT:-/var/lib/terminay}/releases/running" || :
+fi
+case "$running" in
+  /*) [ -x "$running/bin/terminay" ] || running=$image ;;
+  *) running=$image ;;
+esac
+exec "$running/bin/terminay" "$@"

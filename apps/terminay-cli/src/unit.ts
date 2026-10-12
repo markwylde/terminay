@@ -1,4 +1,4 @@
-import type { InstallLayout } from './layout.js';
+import { type InstallLayout, UPGRADE_SERVICE_UNIT_NAME } from './layout.js';
 
 /**
  * The unit and environment file the installer writes.
@@ -176,4 +176,64 @@ StandardError=journal
 [Install]
 WantedBy=${layout.scope === 'system' ? 'multi-user.target' : 'default.target'}
 `;
+}
+
+/**
+ * Set on the oneshot so the upgrade it runs knows it is the helper's own
+ * process, and leaves the helper's units exactly as they are while they run.
+ */
+export const UPGRADE_HELPER_ENVIRONMENT = 'TERMINAY_UPGRADE_HELPER';
+
+/**
+ * The system-scope upgrade helper (see `UpgradeHelperLayout`).
+ *
+ * A system service runs as an unprivileged account with no new privileges, so
+ * it can neither stop its own unit nor write the prefix. It can change one
+ * file, and systemd, as root, answers that change by starting a unit whose
+ * command line is fixed here. The path unit watches for a change; it never
+ * passes the file on, and the service never opens it, so nothing the run-as
+ * account writes can choose what is installed.
+ */
+export function renderUpgradePathUnit(layout: InstallLayout): string {
+	const helper = requireHelper(layout);
+	return `[Unit]
+Description=Terminay Server upgrade request
+Documentation=https://terminay.com/docs/installation
+
+[Path]
+PathChanged=${helper.requestFile}
+Unit=${UPGRADE_SERVICE_UNIT_NAME}
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+
+export function renderUpgradeServiceUnit(layout: InstallLayout): string {
+	requireHelper(layout);
+	// No reference and no flag beyond the scope: the upgrade follows the
+	// recorded channel, verifies the release signature, and refuses to move
+	// backwards, exactly as an operator's own `daemon upgrade --system` does.
+	return `[Unit]
+Description=Terminay Server upgrade
+Documentation=https://terminay.com/docs/installation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=${UPGRADE_HELPER_ENVIRONMENT}=1
+ExecStart=${layout.currentLink}/bin/terminay daemon upgrade --system
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+`;
+}
+
+function requireHelper(layout: InstallLayout) {
+	if (layout.upgradeHelper === undefined)
+		throw new Error('only a system-scope install has an upgrade helper');
+	return layout.upgradeHelper;
 }

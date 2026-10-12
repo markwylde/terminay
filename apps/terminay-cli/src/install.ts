@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { InstallLayout } from './layout.js';
+import type { ReleaseTree } from './layout.js';
 import { stagedName } from './layout.js';
 import {
 	type ArchiveManifest,
@@ -47,7 +47,7 @@ export interface InstalledVersion {
  * `versions/`, where the next command would treat it as installed.
  */
 export async function installArchive(options: {
-	readonly layout: InstallLayout;
+	readonly layout: ReleaseTree;
 	readonly archivePath: string;
 	readonly channel: ReleaseChannel;
 	readonly expected?: ExpectedRelease;
@@ -90,7 +90,7 @@ export async function installArchive(options: {
 
 /** Point `current` at a version. Written beside the link, then renamed over it. */
 export async function activate(
-	layout: InstallLayout,
+	layout: ReleaseTree,
 	versionName: string,
 ): Promise<void> {
 	const target = join(layout.versionsDirectory, versionName);
@@ -107,7 +107,7 @@ export async function activate(
 }
 
 export async function activeVersion(
-	layout: InstallLayout,
+	layout: ReleaseTree,
 ): Promise<string | undefined> {
 	const target = await readlink(layout.currentLink).catch(() => undefined);
 	return target === undefined ? undefined : basename(target);
@@ -115,14 +115,14 @@ export async function activeVersion(
 
 /** Roll back to a version known to have run. Identical to activation. */
 export async function rollback(
-	layout: InstallLayout,
+	layout: ReleaseTree,
 	versionName: string,
 ): Promise<void> {
 	await activate(layout, versionName);
 }
 
 export async function installedVersions(
-	layout: InstallLayout,
+	layout: ReleaseTree,
 ): Promise<readonly string[]> {
 	const entries = await readdir(layout.versionsDirectory, {
 		withFileTypes: true,
@@ -138,7 +138,7 @@ export async function installedVersions(
  * something proven to fall back to and disk use stays bounded.
  */
 export async function retain(
-	layout: InstallLayout,
+	layout: ReleaseTree,
 	keep: readonly string[],
 ): Promise<readonly string[]> {
 	const kept = new Set(keep.filter((name) => name.length > 0));

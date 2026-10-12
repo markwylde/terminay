@@ -17,8 +17,10 @@ import { runStart, runStatus, runStop } from '../dist/commands/lifecycle.js';
 import { runResetIdentity, runUninstall } from '../dist/commands/uninstall.js';
 import { runUpgrade, UpgradeError } from '../dist/commands/upgrade.js';
 import { NotInstalledError, resolveContext } from '../dist/context.js';
+import { upgradeHelperInstalled } from '../dist/helper.js';
 import { activeVersion, installedVersions } from '../dist/install.js';
 import { installLayout, readInstallRecord } from '../dist/layout.js';
+import { readUpgradeOutcome } from '../dist/outcome.js';
 import { createSystemd } from '../dist/systemd.js';
 import { parseEnvironmentFile } from '../dist/unit.js';
 import { createFakeBin } from './fake-bin.mjs';
@@ -791,7 +793,9 @@ test('uninstall still completes when the installed server cannot end sessions', 
 			assert.equal(result.removedVersions, true);
 			assert.equal(await readInstallRecord(layout), undefined);
 			assert.ok(
-				lines.some((line) => /Could not end running terminal sessions/u.test(line)),
+				lines.some((line) =>
+					/Could not end running terminal sessions/u.test(line),
+				),
 				'the operator must be told sessions may still be running',
 			);
 		},
@@ -829,7 +833,10 @@ test('upgrade repairs a unit written before terminals outlived the server, befor
 			// control group, and with it every held shell.
 			const installed = await readFile(layout.unitPath, 'utf8');
 			assert.match(installed, /^KillMode=process$/mu);
-			await writeFile(layout.unitPath, installed.replace('KillMode=process\n', ''));
+			await writeFile(
+				layout.unitPath,
+				installed.replace('KillMode=process\n', ''),
+			);
 			const before = fake.invocations().length;
 
 			await runUpgrade(
@@ -850,13 +857,25 @@ test('upgrade repairs a unit written before terminals outlived the server, befor
 				},
 			);
 
-			assert.match(await readFile(layout.unitPath, 'utf8'), /^KillSignal=SIGTERM\nKillMode=process$/mu);
+			assert.match(
+				await readFile(layout.unitPath, 'utf8'),
+				/^KillSignal=SIGTERM\nKillMode=process$/mu,
+			);
 			const calls = fake.invocations().slice(before);
 			const reload = calls.indexOf('systemctl --user daemon-reload');
-			const stop = calls.indexOf('systemctl --user stop terminay-server.service');
+			const stop = calls.indexOf(
+				'systemctl --user stop terminay-server.service',
+			);
 			assert.ok(reload >= 0, 'systemd must be told the unit changed');
-			assert.ok(stop > reload, 'the stop must already honour the new kill mode');
-			assert.ok(lines.some((line) => /terminals keep running across restarts/u.test(line)));
+			assert.ok(
+				stop > reload,
+				'the stop must already honour the new kill mode',
+			);
+			assert.ok(
+				lines.some((line) =>
+					/terminals keep running across restarts/u.test(line),
+				),
+			);
 			assert.equal(await activeVersion(layout), '4.1.1');
 		},
 	);
@@ -911,7 +930,10 @@ test('upgrade leaves a unit that already names a kill mode alone', async () => {
 
 			assert.equal(await readFile(layout.unitPath, 'utf8'), unit);
 			assert.equal(
-				fake.invocations().slice(before).includes('systemctl --user daemon-reload'),
+				fake
+					.invocations()
+					.slice(before)
+					.includes('systemctl --user daemon-reload'),
 				false,
 				'an unchanged unit needs no reload',
 			);
@@ -1799,6 +1821,416 @@ test('upgrade keeps the recorded public host, and can be given a new one', async
 				lines.join('\n'),
 				/Browsers and phones need a routable literal address/u,
 			);
+		},
+	);
+});
+
+const TWO_TAGS = [
+	{
+		tag: 'v4.1.0',
+		version: '4.1.0',
+		revision: 'a'.repeat(40),
+		publishedAt: '2026-09-01T00:00:00Z',
+	},
+	{
+		tag: 'v4.1.1',
+		version: '4.1.1',
+		revision: 'b'.repeat(40),
+		latest: true,
+		publishedAt: '2026-09-08T00:00:00Z',
+	},
+];
+
+/**
+ * A system-scope install on the faked machine. `/` is relocated under the
+ * temporary home, the caller is root as far as the CLI can tell, and the
+ * account tools on the process PATH are the stubs.
+ */
+async function withSystemInstall(run) {
+	await withMachine({ releases: TWO_TAGS }, async (machine) => {
+		const { home, fake, health, installDependencies } = machine;
+		const systemRoot = join(home, 'root');
+		fake.install('chown', '');
+		const originalPath = process.env.PATH;
+		process.env.PATH = `${fake.directory}:${originalPath}`;
+		try {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'system', runAs: 'ada', expose: 'hosted' },
+				{ ...installDependencies, systemRoot, uid: 0 },
+			);
+			const layout = installLayout('system', home, systemRoot);
+			await pointHealthAtFixture(layout, health.port);
+			await run({
+				...machine,
+				layout,
+				systemRoot,
+				context: async () => ({
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'system', env: fake.env() }),
+					write: machine.write,
+				}),
+				upgradeDependencies: {
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+					readinessTimeoutMs: 5_000,
+					uid: 0,
+					env: {},
+				},
+			});
+		} finally {
+			process.env.PATH = originalPath;
+		}
+	});
+}
+
+test('a system-scope install writes the upgrade helper and arms it', async () => {
+	await withSystemInstall(async ({ layout, fake }) => {
+		const helper = layout.upgradeHelper;
+		assert.equal(await upgradeHelperInstalled(layout), true);
+		assert.match(
+			await readFile(helper.serviceUnitPath, 'utf8'),
+			new RegExp(
+				`^ExecStart=${layout.currentLink}/bin/terminay daemon upgrade --system$`,
+				'mu',
+			),
+		);
+		assert.match(
+			await readFile(helper.pathUnitPath, 'utf8'),
+			new RegExp(`^PathChanged=${helper.requestFile}$`, 'mu'),
+		);
+		// Root-owned units the run-as account cannot write; a request directory
+		// that account alone can.
+		assert.equal((await stat(helper.pathUnitPath)).mode & 0o777, 0o644);
+		assert.equal((await stat(helper.serviceUnitPath)).mode & 0o777, 0o644);
+		assert.equal((await stat(helper.requestDirectory)).mode & 0o777, 0o700);
+		const calls = fake.invocations();
+		assert.ok(calls.includes(`chown -R ada:ada ${helper.requestDirectory}`));
+		assert.ok(calls.includes('systemctl enable --now terminay-upgrade.path'));
+		assert.ok(
+			!calls.some((line) => /chown .*systemd\/system/u.test(line)),
+			'the units must stay root-owned',
+		);
+	});
+});
+
+test('a user-scope install has no upgrade helper', async () => {
+	await withMachine(
+		{ releases: TWO_TAGS },
+		async ({ fake, layout, installDependencies }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			assert.equal(layout.upgradeHelper, undefined);
+			assert.equal(await upgradeHelperInstalled(layout), false);
+			assert.ok(
+				!fake.invocations().some((line) => /terminay-upgrade/u.test(line)),
+			);
+		},
+	);
+});
+
+test('a system-scope upgrade run as root adds a helper that is missing', async () => {
+	await withSystemInstall(
+		async ({ layout, fake, context, upgradeDependencies, lines }) => {
+			// An install from before the helper existed.
+			const helper = layout.upgradeHelper;
+			await rm(helper.pathUnitPath);
+			await rm(helper.serviceUnitPath);
+			await rm(helper.requestDirectory, { recursive: true });
+			assert.equal(await upgradeHelperInstalled(layout), false);
+			const before = fake.invocations().length;
+
+			const result = await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			assert.equal(result.to, '4.1.1');
+			assert.equal(await upgradeHelperInstalled(layout), true);
+			assert.equal((await stat(helper.requestDirectory)).mode & 0o777, 0o700);
+			assert.ok(
+				fake
+					.invocations()
+					.slice(before)
+					.includes('systemctl enable --now terminay-upgrade.path'),
+			);
+			assert.match(lines.join('\n'), /Installed the upgrade helper/u);
+		},
+	);
+});
+
+test('the helper is added even when there is nothing newer to move to', async () => {
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		await runUpgrade(undefined, OPTIONS, await context(), upgradeDependencies);
+		const helper = layout.upgradeHelper;
+		await rm(helper.pathUnitPath);
+		await rm(helper.serviceUnitPath);
+
+		// Already on the newest release: the one manual upgrade an older
+		// install needs must still leave the helper behind.
+		const result = await runUpgrade(
+			undefined,
+			OPTIONS,
+			await context(),
+			upgradeDependencies,
+		);
+		assert.equal(result.upToDate, true);
+		assert.equal(await upgradeHelperInstalled(layout), true);
+	});
+});
+
+test('an upgrade that is not root, or is the helper itself, leaves the helper units alone', async () => {
+	await withSystemInstall(
+		async ({ layout, fake, context, upgradeDependencies }) => {
+			const helper = layout.upgradeHelper;
+			await rm(helper.pathUnitPath);
+			const untouched = async (dependencies) => {
+				const before = fake.invocations().length;
+				await runUpgrade(
+					undefined,
+					OPTIONS,
+					await context(),
+					dependencies,
+				).catch(() => undefined);
+				assert.equal(await upgradeHelperInstalled(layout), false);
+				assert.ok(
+					!fake
+						.invocations()
+						.slice(before)
+						.some((line) => /terminay-upgrade/u.test(line)),
+				);
+			};
+			await untouched({ ...upgradeDependencies, uid: 1000 });
+		},
+	);
+
+	await withSystemInstall(
+		async ({ layout, fake, context, upgradeDependencies }) => {
+			// Inside the oneshot the helper's own units are running. The upgrade
+			// stops and starts the server's unit and touches no other.
+			const before = fake.invocations().length;
+			const result = await runUpgrade(undefined, OPTIONS, await context(), {
+				...upgradeDependencies,
+				env: { TERMINAY_UPGRADE_HELPER: '1' },
+			});
+			assert.equal(result.to, '4.1.1');
+			const calls = fake.invocations().slice(before);
+			assert.deepEqual(
+				calls.filter((line) => line.startsWith('systemctl')),
+				[
+					'systemctl stop terminay-server.service',
+					'systemctl start terminay-server.service',
+				],
+			);
+			assert.equal(await upgradeHelperInstalled(layout), true);
+		},
+	);
+});
+
+test('uninstall removes the helper units and the request directory', async () => {
+	await withSystemInstall(async ({ layout, fake, context }) => {
+		const helper = layout.upgradeHelper;
+		await runUninstall({ ...OPTIONS, yes: true }, await context(), pipe());
+		await assert.rejects(() => stat(helper.pathUnitPath));
+		await assert.rejects(() => stat(helper.serviceUnitPath));
+		await assert.rejects(() => stat(helper.requestDirectory));
+		const calls = fake.invocations();
+		const disabled = calls.indexOf(
+			'systemctl disable --now terminay-upgrade.path',
+		);
+		assert.ok(disabled >= 0, 'the path unit must be disabled and stopped');
+		assert.ok(
+			disabled < calls.lastIndexOf('systemctl daemon-reload'),
+			'systemd is reloaded after the units are gone',
+		);
+	});
+});
+
+test('a successful upgrade records where it moved from and to', async () => {
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
+		const before = Date.now();
+		await runUpgrade(undefined, OPTIONS, await context(), upgradeDependencies);
+
+		const outcome = JSON.parse(await readFile(layout.resultPath, 'utf8'));
+		assert.deepEqual(Object.keys(outcome), [
+			'schemaVersion',
+			'from',
+			'to',
+			'outcome',
+			'at',
+		]);
+		assert.equal(outcome.schemaVersion, 1);
+		assert.equal(outcome.from, '4.1.0');
+		assert.equal(outcome.to, '4.1.1');
+		assert.equal(outcome.outcome, 'succeeded');
+		assert.ok(Date.parse(outcome.at) >= before - 1000);
+		// Beside versions/, readable by the account the server runs as, and
+		// written whole.
+		assert.equal(layout.resultPath, join(layout.prefix, 'upgrade-result.json'));
+		assert.equal((await stat(layout.resultPath)).mode & 0o777, 0o644);
+		await assert.rejects(() => stat(`${layout.resultPath}.tmp`));
+	});
+});
+
+test('a rollback records the attempted version, the restored one, and the reason', async () => {
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		// No health server answers on this port, so readiness never arrives.
+		await pointHealthAtFixture(layout, 1);
+		await assert.rejects(
+			async () =>
+				runUpgrade(undefined, OPTIONS, await context(), {
+					...upgradeDependencies,
+					readinessTimeoutMs: 200,
+				}),
+			UpgradeError,
+		);
+		const outcome = await readUpgradeOutcome(layout.resultPath);
+		assert.equal(outcome.from, '4.1.0');
+		assert.equal(outcome.to, '4.1.1');
+		assert.equal(outcome.outcome, 'rolled-back');
+		assert.match(outcome.reason, /did not become ready/u);
+		assert.match(outcome.reason, /4\.1\.0 was restored/u);
+		assert.equal(await activeVersion(layout), '4.1.0');
+
+		// No secret, account, path, or device belongs in it.
+		const raw = await readFile(layout.resultPath, 'utf8');
+		assert.doesNotMatch(raw, /ada|dataRoot|\/var\/lib|serverId|test-box/u);
+	});
+});
+
+test('each attempt replaces the record of the one before', async () => {
+	await withSystemInstall(
+		async ({ layout, health, context, upgradeDependencies }) => {
+			await pointHealthAtFixture(layout, 1);
+			await runUpgrade(undefined, OPTIONS, await context(), {
+				...upgradeDependencies,
+				readinessTimeoutMs: 200,
+			}).catch(() => undefined);
+			assert.equal(
+				(await readUpgradeOutcome(layout.resultPath)).outcome,
+				'rolled-back',
+			);
+
+			await pointHealthAtFixture(layout, health.port);
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			const outcome = await readUpgradeOutcome(layout.resultPath);
+			assert.equal(outcome.outcome, 'succeeded');
+			assert.equal(outcome.reason, undefined);
+		},
+	);
+});
+
+test('an upgrade with nothing to do leaves no outcome, and one that cannot be staged says nothing moved', async () => {
+	await withSystemInstall(
+		async ({ layout, context, upgradeDependencies, releases }) => {
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			await rm(layout.resultPath);
+			const again = await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			assert.equal(again.upToDate, true);
+			assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
+			void releases;
+		},
+	);
+
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		// A release signed by a key this CLI does not trust never reaches disk.
+		const { generateKeyPairSync } = await import('node:crypto');
+		const other = generateKeyPairSync('ed25519')
+			.publicKey.export({ type: 'spki', format: 'pem' })
+			.toString();
+		await assert.rejects(async () =>
+			runUpgrade(undefined, OPTIONS, await context(), {
+				...upgradeDependencies,
+				releasePublicKeyPem: other,
+			}),
+		);
+		const outcome = await readUpgradeOutcome(layout.resultPath);
+		assert.equal(outcome.outcome, 'rolled-back');
+		assert.equal(outcome.from, '4.1.0');
+		assert.equal(outcome.to, '4.1.1');
+		assert.match(outcome.reason, /nothing was changed/u);
+		assert.equal(await activeVersion(layout), '4.1.0');
+	});
+});
+
+test('a rolling install is labelled by its commit, and learns when its build was published', async () => {
+	await withMachine(
+		{
+			releases: [
+				{
+					tag: 'main-latest',
+					version: '0.0.0',
+					assetVersion: 'main',
+					channel: 'main',
+					revision: 'd'.repeat(40),
+					latest: true,
+					publishedAt: '2026-10-02T00:00:00Z',
+				},
+			],
+		},
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall(
+				'main',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			await pointHealthAtFixture(layout, health.port);
+			// The record of an install made when the release's own, never-moving
+			// publication time was what got recorded.
+			const record = await readInstallRecord(layout);
+			assert.equal(record.publishedAt, '2026-10-02T00:00:00Z');
+			await writeFile(
+				layout.recordPath,
+				JSON.stringify({ ...record, publishedAt: '2026-09-08T13:32:38Z' }),
+			);
+
+			const result = await runUpgrade(
+				undefined,
+				OPTIONS,
+				{
+					layout,
+					record: await readInstallRecord(layout),
+					systemd: createSystemd({ scope: 'user', env: fake.env() }),
+					write,
+				},
+				{
+					apiBase: installDependencies.apiBase,
+					webBase: installDependencies.webBase,
+					architecture: 'x64',
+					releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+				},
+			);
+			// The same build, so nothing moves — but the record now knows the
+			// build's time, and the next check need not download anything.
+			assert.equal(result.upToDate, true);
+			assert.equal(
+				(await readInstallRecord(layout)).publishedAt,
+				'2026-10-02T00:00:00Z',
+			);
+			assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
 		},
 	);
 });

@@ -343,6 +343,14 @@ export class ServerConnection implements ServerConnectionLike {
 		};
 		await this.send(server);
 		this.currentState = 'open';
+		try {
+			// A connection torn down while its hello was being answered has
+			// already been reported closed, and is not reported open after it.
+			if (!this.connectionCleaned)
+				this.options.onConnectionOpened?.(this.connectionId, auth);
+		} catch {
+			/* an observer of the open cannot affect the connection */
+		}
 		// Capabilities are only known once the hello is processed, so the silence
 		// deadline for a heartbeat client starts here rather than on its own frame.
 		this.noteInboundFrame();
@@ -945,6 +953,8 @@ export function projectionDeliveryKey(event: OrderedEvent): string {
 		if (typeof payload.sessionId === 'string')
 			return `activity:${payload.sessionId}`;
 	}
+	// The server's upgrade status is current state, whole in every event.
+	if (event.event === 'server.upgrade') return 'server.upgrade:status';
 	// A terminal's displayed title is current state: a newer one stands in
 	// for one still waiting to be sent.
 	if (event.event === 'terminal-titles') {

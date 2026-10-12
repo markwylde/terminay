@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { ScopeError } from './account.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
+import { runUpgradeCheck } from './commands/check.js';
+import { runContainerUpgrade } from './commands/containerUpgrade.js';
 import { runInstall } from './commands/install.js';
 import {
 	runForegroundStatus,
@@ -13,8 +15,14 @@ import {
 	runPairing,
 	runResolveApproval,
 } from './commands/pairing.js';
+import {
+	HELPER_COMMAND,
+	runContainerRecreateHelper,
+	runRecreate,
+} from './commands/recreate.js';
 import { runResetIdentity, runUninstall } from './commands/uninstall.js';
 import { runUpgrade } from './commands/upgrade.js';
+import { isContainerManaged, runContainerRelease } from './container.js';
 import {
 	assertNotContainerManaged,
 	ContainerManagedError,
@@ -39,6 +47,16 @@ import { VerificationError } from './verify.js';
 const write = (line: string) => process.stdout.write(`${line}\n`);
 
 async function main(argv: readonly string[]): Promise<number> {
+	// Not a command for people, so not in the help: the official image's
+	// entrypoint asks which release to start (see `container.ts`).
+	if (argv[0] === 'container-release')
+		return runContainerRelease(argv.slice(1));
+	// Nor is this one: it is what the helper container of a recreate runs,
+	// on the new image, to replace the old container (see
+	// `commands/recreate.ts`).
+	if (argv[0] === HELPER_COMMAND)
+		return runContainerRecreateHelper(argv.slice(1));
+
 	const parsed = parseCommandLine(argv);
 	if (parsed.command === 'help') {
 		process.stdout.write(HELP_TEXT);
@@ -48,6 +66,29 @@ async function main(argv: readonly string[]): Promise<number> {
 	// Before the platform gate: where a container runtime owns the lifecycle,
 	// that is the answer, whatever else the host is missing.
 	assertNotContainerManaged(parsed.command);
+
+	if (parsed.command === 'upgrade') {
+		const contained = isContainerManaged();
+		// A check describes the installation to the server that runs it, as
+		// exactly one line of JSON on stdout and nothing else.
+		if (parsed.options.check === true) {
+			if (!contained) assertSupportedHost();
+			write(JSON.stringify(await runUpgradeCheck(parsed.options)));
+			return 0;
+		}
+		// Replacing the container is its own path, and refuses anywhere that
+		// is not a container with a usable Docker socket.
+		if (parsed.options.recreate === true) {
+			await runRecreate(parsed.options, { write });
+			return 0;
+		}
+		// Inside the image there is no unit to drive: the release is staged on
+		// the data volume and the entrypoint restarts the server on it.
+		if (contained) {
+			await runContainerUpgrade(parsed.ref, parsed.options, { write });
+			return 0;
+		}
+	}
 
 	// A foreground server needs neither systemd nor an install, so the commands
 	// that only talk to one are resolved before the gate rather than behind it.

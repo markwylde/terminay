@@ -60,6 +60,8 @@ interface ReleasePayload {
 	readonly tagName: string;
 	readonly publishedAt: string | undefined;
 	readonly assetNames: readonly string[];
+	/** When each asset was last replaced, by asset name. */
+	readonly assetUpdatedAt: Readonly<Record<string, string>>;
 }
 
 const SEMVER_TAG = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
@@ -103,6 +105,13 @@ function readReleaseJson(document: unknown): ReleasePayload | undefined {
 	const release = document as Record<string, unknown>;
 	if (typeof release.tag_name !== 'string') return undefined;
 	const assets = Array.isArray(release.assets) ? release.assets : [];
+	const assetUpdatedAt: Record<string, string> = {};
+	for (const asset of assets) {
+		if (typeof asset !== 'object' || asset === null) continue;
+		const { name, updated_at: updatedAt } = asset as Record<string, unknown>;
+		if (typeof name === 'string' && typeof updatedAt === 'string')
+			assetUpdatedAt[name] = updatedAt;
+	}
 	return Object.freeze({
 		tagName: release.tag_name,
 		publishedAt:
@@ -118,6 +127,7 @@ function readReleaseJson(document: unknown): ReleasePayload | undefined {
 				)
 				.filter((name): name is string => typeof name === 'string'),
 		),
+		assetUpdatedAt: Object.freeze(assetUpdatedAt),
 	});
 }
 
@@ -145,6 +155,7 @@ async function readReleaseHtml(
 		tagName: tag,
 		publishedAt: undefined,
 		assetNames: Object.freeze([...names]),
+		assetUpdatedAt: Object.freeze({}),
 	});
 }
 
@@ -234,13 +245,18 @@ async function resolveRolling(options: ResolveOptions): Promise<ResolvedRef> {
 		ROLLING_TAG,
 	);
 	requireArchitectureAsset(payload, options, ROLLING_ASSET_VERSION);
+	// The rolling release is created once and has its assets replaced on every
+	// build, so the release's own publication time never moves. The time this
+	// architecture's archive was last replaced is the time of the build.
+	const publishedAt =
+		payload.assetUpdatedAt[
+			archiveName(ROLLING_ASSET_VERSION, options.architecture)
+		];
 	return Object.freeze({
 		channel: 'main' as const,
 		version: ROLLING_ASSET_VERSION,
 		tag: ROLLING_TAG,
-		...(payload.publishedAt === undefined
-			? {}
-			: { publishedAt: payload.publishedAt }),
+		...(publishedAt === undefined ? {} : { publishedAt }),
 		assets: assetUrls(options, ROLLING_TAG, ROLLING_ASSET_VERSION),
 	});
 }

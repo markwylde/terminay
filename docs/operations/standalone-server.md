@@ -114,6 +114,7 @@ requirement.
 | --- | --- |
 | `daemon install [ref]` | Resolve, verify, unpack, write the unit, start, wait for readiness |
 | `daemon upgrade [ref]` | Follow the installed channel, stage beside, switch, roll back on failure |
+| `daemon upgrade --check` | Report the installed and available release as one line of JSON; change nothing |
 | `daemon status` | Unit state, version, channel, readiness, exposure modes |
 | `daemon start` / `daemon stop` | Wrap the unit and wait for readiness or exit |
 | `daemon qr-code` | Terminal QR, pairing URLs, and the approval prompt |
@@ -135,6 +136,48 @@ channel.
 already on, so a box tracking `main` never silently moves onto the tag stream.
 A source install has no ordering the CLI can trust, so it must be told what to
 move to.
+
+#### Upgrading from inside Terminay
+
+Every server archive carries this same CLI as `bin/terminay`, on the Node
+runtime the archive ships, so a running server can upgrade itself with nothing
+else installed on the host. The server asks its own upgrader whether its
+channel has a newer release when it starts, when a device connects, and once
+an hour while a device is connected. It asks nothing while no device is
+connected. The request goes to the project's GitHub releases and carries no
+server id and no workspace, terminal, or device data.
+
+When there is a newer release, every connected device shows a warning icon on
+the header's connections control, and the connection menu offers **Upgrade
+server…**. Any paired device may confirm it. The device names nothing but the
+request itself: the server upgrades to the newest signed release on the
+channel it is already on, and never to an older one. The connection drops
+while the server restarts and comes back by itself; terminals keep running
+(see [Terminal sessions across restarts](#terminal-sessions-across-restarts)).
+If the new release does not report ready, the previous one is started again
+and the menu says so.
+
+How the upgrade is carried out depends on the install:
+
+- **User scope.** The server starts `terminay daemon upgrade --user` as its
+  own account.
+- **System scope.** The server runs unprivileged and cannot restart its own
+  unit or write `/opt/terminay`. `daemon install` therefore writes two more
+  root-owned units, `terminay-upgrade.path` and `terminay-upgrade.service`.
+  The server changes `/var/lib/terminay-upgrade/request`, a file only the
+  run-as account can write; systemd answers by running
+  `/opt/terminay/current/bin/terminay daemon upgrade --system` as root. That
+  command line is fixed in the unit and the file's contents are never read,
+  so the run-as account can cause an upgrade to the newest signed release and
+  nothing else. A system-scope server installed before these units existed
+  shows the upgrade as available with the command to run once on the host;
+  that manual upgrade writes them.
+- **Container.** See [Running in a container](#running-in-a-container).
+
+`terminay daemon upgrade --check` prints, as one line of JSON, what the server
+is told: the installed and available release, whether this install can
+upgrade itself, and the outcome of the last attempt. The outcome is also kept
+as `upgrade-result.json` beside `versions/`.
 
 #### Verification
 
@@ -216,9 +259,56 @@ holds projects, shell history, and agent logins.
 `daemon qr-code` shows the pairing links and waits; when a device opens one it
 shows the device name and match code and asks for approval. `daemon approvals`,
 `daemon approve <id>`, `daemon deny <id>`, and `daemon status` work the same way
-through `docker exec`. `daemon install`, `upgrade`, `start`, `stop`, and
-`uninstall` refuse inside the image: the container runtime manages the server,
-so an upgrade is a newer image and a recreated container.
+through `docker exec`. `daemon install`, `start`, `stop`, and `uninstall`
+refuse inside the image: the container runtime manages the container.
+
+`daemon upgrade` works inside the image, and is what **Upgrade server…** in
+the connection menu runs. The image's release under `/opt/terminay` is a
+baseline. An upgrade verifies the newer release and stages it under
+`releases/` on the data volume, and the entrypoint, which stays the
+container's main process, restarts the server on it. The container does not
+restart, so terminals keep running, and nothing outside the data volume is
+written, so it works with a read-only root filesystem. At every start the
+entrypoint runs the staged release unless the image's own is newer: the
+upgraded release is what runs after `docker restart` and after recreating the
+container from the same image, and a newer image pulled later takes over. A
+staged release that fails verification is skipped and the image's runs.
+
+After an in-place upgrade the image tag no longer states the running version.
+`terminay daemon status`, `terminay daemon upgrade --check`, and the server's
+`--version` report the release that is running. An in-place upgrade replaces
+the server release only; the image's operating-system packages change when a
+newer image is pulled.
+
+##### Recreating the container from inside Terminay (optional)
+
+A container can also be offered a second upgrade mode that pulls the newer
+image and replaces the container with one of the same name, volumes, networks,
+and ports. It ends every terminal on that server, and the confirmation says
+so. It is offered only when the Docker socket is mounted into the container
+and the `terminay` account can use it:
+
+```bash
+docker run -d --name terminay \
+  -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --group-add "$(stat -c %g /var/run/docker.sock)" \
+  markwylde/terminay
+```
+
+Mounting the Docker socket gives every process in the container, including
+every terminal a paired device opens, control of the host's Docker daemon,
+which is root on the host. Terminay does not narrow that. Leave the socket out
+unless that is acceptable; the in-place upgrade needs none of it.
+
+The image that is pulled is the repository and tag the container was created
+from: a moving tag such as `latest` is pulled again, and a version tag moves
+to the newer version. It is trusted as any `docker pull` is, and is not
+covered by the release signature an in-place upgrade verifies. A container
+created from a digest, or with `--rm`, is not recreated. If the replacement
+does not become healthy, the previous container is started again. A container
+managed by Compose keeps its labels, so Compose still recognises it, but the
+image tag in the Compose file should be updated to match.
 
 The server and every terminal it opens run as the unprivileged `terminay`
 account, not as root. That account has passwordless `sudo`, so a terminal can
@@ -229,8 +319,8 @@ sudo apt update && sudo apt install -y build-essential
 ```
 
 Packages installed this way live in the container's own filesystem, outside
-both volumes, and are gone when the container is recreated, which is also how
-an upgrade happens. Build an image `FROM markwylde/terminay` for tools that
+both volumes, and are gone when the container is recreated. They survive an
+in-place upgrade. Build an image `FROM markwylde/terminay` for tools that
 should persist.
 
 Anyone who pairs a device can therefore become root inside the container. To

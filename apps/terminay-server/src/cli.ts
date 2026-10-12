@@ -45,6 +45,7 @@ import {
 	createServerAiProviderAdapters,
 	createWorkspaceAiTargetAuthority,
 	createServerCoreComposition,
+	ServerUpgradeService,
 	createWorktreeCaptureHost,
 	FOLDER_TERMINAL_CAPTURED_EVENT,
 	DocumentationCatalog,
@@ -152,6 +153,7 @@ import {
 	createSharedPairingHandoffRotator,
 } from './remote/pairingOperationQueue.js';
 import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
+import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
 import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
 
 declare const process: {
@@ -989,6 +991,23 @@ async function createServerComposition(
 			}),
 		),
 	});
+	// Only a standalone server started from a release has an upgrader: its
+	// launcher names the one that release ships. Started from a checkout there
+	// is none, and nothing is checked or offered.
+	const upgrader =
+		options.command === 'start'
+			? releaseUpgraderFromEnvironment(process.env)
+			: undefined;
+	const serverUpgrade = new ServerUpgradeService({
+		serverVersion: options.serverVersion,
+		...(upgrader === undefined ? {} : { upgrader }),
+		// Clients are never shown a failed check; the operator's log is.
+		onDiagnostic: (diagnostic) => {
+			process.stderr.write(
+				`[terminay-server] server upgrade ${diagnostic.kind}: ${diagnostic.message}\n`,
+			);
+		},
+	});
 	composition = createServerCoreComposition({
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
@@ -1041,6 +1060,7 @@ async function createServerComposition(
 				}),
 		activity,
 		push,
+		serverUpgrade,
 		agents,
 		agentSessions: {
 			supervisor: agentSources,

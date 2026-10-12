@@ -19,6 +19,10 @@ import {
 } from './pty-runtime-platforms.mjs';
 import { assertHostedUiEntry } from './hosted-ui-entry.mjs';
 import { normalizeArtifactRelease } from './standalone-artifact.mjs';
+import {
+	ARCHIVE_CLI_LAUNCHER,
+	stageArchiveCli,
+} from './standalone-cli-bundle.mjs';
 import { stageProductionDependencyClosure } from './standalone-runtime-dependencies.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -142,15 +146,18 @@ try {
 		dereference: false,
 	});
 	await writeLaunchers(root, serverPackage.version);
+	// The upgrader ships with the server it upgrades, bundled from the same
+	// source the npm package is built from and checked to embed the same
+	// release key, so an installed server needs no npm to move forward.
+	await stageArchiveCli({ archiveRoot: root });
 	await assertSafeTree(root, 'staged artifact');
 	await assertNoElectron(root);
-	await normalizeArtifactModes(
-		root,
-		new Set([
-			join(root, 'bin', 'node'),
-			join(root, 'bin', 'terminay-server'),
-		]),
-	);
+	const executables = new Set([
+		join(root, 'bin', 'node'),
+		join(root, 'bin', 'terminay-server'),
+		join(root, ARCHIVE_CLI_LAUNCHER),
+	]);
+	await normalizeArtifactModes(root, executables);
 
 	const manifest = {
 		schemaVersion: 1,
@@ -169,7 +176,7 @@ try {
 			version: nodePtyPackage.version,
 			nativePath: 'node_modules/node-pty/build/Release/pty.node',
 		},
-		entrypoints: { server: 'bin/terminay-server' },
+		entrypoints: { server: 'bin/terminay-server', cli: ARCHIVE_CLI_LAUNCHER },
 		webrtcRuntime: {
 			root: 'webrtc-runtime',
 			selection: JSON.parse(
@@ -183,13 +190,7 @@ try {
 		join(root, 'artifact-manifest.json'),
 		`${JSON.stringify(manifest, null, 2)}\n`,
 	);
-	await normalizeArtifactModes(
-		root,
-		new Set([
-			join(root, 'bin', 'node'),
-			join(root, 'bin', 'terminay-server'),
-		]),
-	);
+	await normalizeArtifactModes(root, executables);
 	await mkdir(outputDirectory, { recursive: true });
 	const archivePath = await createDeterministicTarGz({
 		archivePath: join(outputDirectory, `${rootName}.tar.gz`),
@@ -215,9 +216,18 @@ async function writeLaunchers(root, version) {
 		'#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n' +
 		': "$' +
 		`{TERMINAY_SERVER_VERSION:=${version}}"\n: "$` +
+		// The commit is baked in beside the version for the same reason: a
+		// release started from a data volume, rather than from the image whose
+		// environment names a commit, must still report its own.
+		`{TERMINAY_SERVER_REVISION:=${release.revision}}"\n: "$` +
 		'{TERMINAY_UI_BUNDLE:=$ROOT/ui}"\n: "$' +
 		'{TERMINAY_WEBRTC_RUNTIME_ROOT:=$ROOT/webrtc-runtime}"\n' +
-		'export TERMINAY_SERVER_VERSION TERMINAY_UI_BUNDLE TERMINAY_WEBRTC_RUNTIME_ROOT\nexec "$ROOT/bin/node" "$ROOT/server/dist/cli.js" "$@"\n';
+		// The upgrader this release ships. A server started from the archive can
+		// ask it whether a newer release exists and have it carry out the
+		// upgrade; one started any other way has none and offers no upgrade.
+		': "$' +
+		`{TERMINAY_UPGRADER:=$ROOT/${ARCHIVE_CLI_LAUNCHER}}"\n` +
+		'export TERMINAY_SERVER_VERSION TERMINAY_SERVER_REVISION TERMINAY_UI_BUNDLE TERMINAY_WEBRTC_RUNTIME_ROOT TERMINAY_UPGRADER\nexec "$ROOT/bin/node" "$ROOT/server/dist/cli.js" "$@"\n';
 	await writeFile(join(root, 'bin', 'terminay-server'), server, {
 		mode: 0o755,
 	});

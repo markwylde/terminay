@@ -21,6 +21,7 @@ import {
 	downloadText,
 } from '../download.js';
 import { waitForReady } from '../health.js';
+import { installUpgradeHelper } from '../helper.js';
 import {
 	activate,
 	installArchive,
@@ -120,6 +121,8 @@ export interface InstallDependencies {
 	 * systemd container smoke installs. The `terminay` binary never passes it.
 	 */
 	readonly localArchivePath?: string;
+	/** Relocates the system layout for the tests, which cannot write `/opt`. */
+	readonly systemRoot?: string;
 }
 
 export interface InstallResult {
@@ -206,7 +209,7 @@ export async function runInstall(
 		streams,
 	});
 
-	const layout = installLayout(scope, home);
+	const layout = installLayout(scope, home, dependencies.systemRoot);
 	const architecture = dependencies.architecture ?? hostArchitecture();
 	const resolved: ResolvedRef =
 		dependencies.localArchivePath === undefined
@@ -337,6 +340,12 @@ export async function runInstall(
 		await systemd.restart();
 	} else {
 		await systemd.enableNow();
+	}
+	// A system-scope service runs as an account that cannot restart its own
+	// unit, so root leaves it a helper that can upgrade it (see `helper.ts`).
+	// A user-scope service upgrades as itself and has none.
+	if (scope === 'system') {
+		await installUpgradeHelper({ layout, runAs: selection.runAs, systemd });
 	}
 
 	const ready =
