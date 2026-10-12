@@ -8,6 +8,8 @@ import {
 	parseEnvironmentFile,
 	renderEnvironmentFile,
 	renderUnit,
+	renderUpgradePathUnit,
+	renderUpgradeServiceUnit,
 	withUnitKillMode,
 } from '../dist/unit.js';
 
@@ -83,14 +85,27 @@ test('an older unit gains the kill mode once, and a kill mode already chosen sta
 	assert.doesNotMatch(older, /^KillMode=/mu);
 
 	const repaired = withUnitKillMode(older);
-	assert.match(repaired, /^KillSignal=SIGTERM\nKillMode=process\nTimeoutStopSec=15s$/mu);
-	assert.equal(withUnitKillMode(repaired), repaired, 'repairing twice changes nothing');
+	assert.match(
+		repaired,
+		/^KillSignal=SIGTERM\nKillMode=process\nTimeoutStopSec=15s$/mu,
+	);
+	assert.equal(
+		withUnitKillMode(repaired),
+		repaired,
+		'repairing twice changes nothing',
+	);
 
-	const chosen = older.replace('KillSignal=SIGTERM', 'KillSignal=SIGTERM\nKillMode=mixed');
+	const chosen = older.replace(
+		'KillSignal=SIGTERM',
+		'KillSignal=SIGTERM\nKillMode=mixed',
+	);
 	assert.equal(withUnitKillMode(chosen), chosen);
 
 	// A unit this tool did not write is left alone rather than guessed at.
-	assert.equal(withUnitKillMode('[Service]\nExecStart=/bin/true\n'), '[Service]\nExecStart=/bin/true\n');
+	assert.equal(
+		withUnitKillMode('[Service]\nExecStart=/bin/true\n'),
+		'[Service]\nExecStart=/bin/true\n',
+	);
 });
 
 test('the user unit runs as its owner and never sets User=', () => {
@@ -219,7 +234,10 @@ test('the environment names both UI variables with one value', () => {
 	// Two settings that share a value: the local HTTP UI reads one, the archive
 	// a paired device receives is built from the other.
 	assert.equal(values.TERMINAY_UI_BUNDLE, '/opt/terminay/current/ui');
-	assert.equal(values.TERMINAY_UI_RENDERER_DIRECTORY, '/opt/terminay/current/ui');
+	assert.equal(
+		values.TERMINAY_UI_RENDERER_DIRECTORY,
+		'/opt/terminay/current/ui',
+	);
 });
 
 test('the renderer directory is the variable the server actually reads', async () => {
@@ -256,5 +274,98 @@ test('an install without the renderer directory would serve a placeholder', asyn
 	assert.match(host, /Terminay workspace is connected\./u);
 	// The fallback is reached only when getUiArchive is absent, which is exactly
 	// what a missing renderer directory produces.
-	assert.match(host, /options\.getUiArchive\s*\n?\s*\?\s*await options\.getUiArchive\(\)/u);
+	assert.match(
+		host,
+		/options\.getUiArchive\s*\n?\s*\?\s*await options\.getUiArchive\(\)/u,
+	);
+});
+
+test('the upgrade helper is a path unit that starts one fixed, root-owned command', () => {
+	const layout = installLayout('system');
+	assert.equal(
+		renderUpgradePathUnit(layout),
+		`[Unit]
+Description=Terminay Server upgrade request
+Documentation=https://terminay.com/docs/installation
+
+[Path]
+PathChanged=/var/lib/terminay-upgrade/request
+Unit=terminay-upgrade.service
+
+[Install]
+WantedBy=multi-user.target
+`,
+	);
+	assert.equal(
+		renderUpgradeServiceUnit(layout),
+		`[Unit]
+Description=Terminay Server upgrade
+Documentation=https://terminay.com/docs/installation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=TERMINAY_UPGRADE_HELPER=1
+ExecStart=/opt/terminay/current/bin/terminay daemon upgrade --system
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+`,
+	);
+});
+
+test('the helper service takes nothing from the request: no reference, no flag, no file', () => {
+	const layout = installLayout('system');
+	const service = renderUpgradeServiceUnit(layout);
+	const command = /^ExecStart=(.*)$/mu.exec(service)[1];
+	// The whole command line, with nothing after the scope: the channel is the
+	// recorded one and the release is whatever that channel's newest is.
+	assert.equal(
+		command,
+		'/opt/terminay/current/bin/terminay daemon upgrade --system',
+	);
+	assert.doesNotMatch(command, /--allow-downgrade|%|\$|\{/u);
+	// It never opens what the run-as account can write, and reads no
+	// environment file that account could have influenced.
+	assert.doesNotMatch(service, /terminay-upgrade\/request|\/var\/lib/u);
+	assert.doesNotMatch(
+		service,
+		/EnvironmentFile=|ExecStartPre=|ExecStartPost=/u,
+	);
+	// Every file it executes is under the root-owned prefix.
+	assert.ok(command.startsWith(`${layout.prefix}/`));
+	assert.match(service, /^User=root$/mu);
+
+	// The path unit only watches. systemd passes a path unit's trigger on as
+	// nothing at all, and the unit names no specifier that would.
+	const path = renderUpgradePathUnit(layout);
+	assert.doesNotMatch(path, /%/u);
+	assert.doesNotMatch(path, /ExecStart/u);
+});
+
+test('the request file is outside the data root and outside what root executes', () => {
+	const layout = installLayout('system');
+	const { requestDirectory, requestFile } = layout.upgradeHelper;
+	assert.equal(requestFile, '/var/lib/terminay-upgrade/request');
+	assert.ok(!requestDirectory.startsWith(`${layout.defaultDataRoot}/`));
+	assert.notEqual(requestDirectory, layout.defaultDataRoot);
+	assert.ok(!requestDirectory.startsWith(layout.prefix));
+	assert.equal(
+		layout.upgradeHelper.pathUnitPath,
+		'/etc/systemd/system/terminay-upgrade.path',
+	);
+	assert.equal(
+		layout.upgradeHelper.serviceUnitPath,
+		'/etc/systemd/system/terminay-upgrade.service',
+	);
+});
+
+test('a user-scope install has no upgrade helper', () => {
+	const layout = installLayout('user', '/home/ada');
+	assert.equal(layout.upgradeHelper, undefined);
+	assert.throws(() => renderUpgradePathUnit(layout), /system-scope/u);
+	assert.throws(() => renderUpgradeServiceUnit(layout), /system-scope/u);
 });

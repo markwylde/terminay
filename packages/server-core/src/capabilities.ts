@@ -1,4 +1,8 @@
-import { FEATURE_CAPABILITIES, type FeatureCapability } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	type FeatureCapability,
+	SERVER_UPGRADE_OPERATIONS,
+} from '@terminay/protocol';
 
 /**
  * Connection mechanics: health, liveness, event subscription, and the hello
@@ -63,6 +67,13 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
  */
 export function capabilityOf(operation: string): OperationCapability | undefined {
 	if (typeof operation !== 'string' || operation.length === 0) return undefined;
+	// The server's own upgrade is a feature a server may not serve, so it is
+	// classified apart from the connection mechanics it shares a namespace with.
+	if (
+		operation === SERVER_UPGRADE_OPERATIONS.event ||
+		operation.startsWith(`${SERVER_UPGRADE_OPERATIONS.event}.`)
+	)
+		return FEATURE_CAPABILITIES.serverUpgrade;
 	const namespace = operation.split('.', 1)[0] ?? '';
 	return OPERATION_NAMESPACES.get(namespace);
 }

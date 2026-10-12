@@ -74,6 +74,9 @@ export type CompactSwitcherProps = Readonly<{
 	 * drawn, so switching lives here. */
 	servers?: readonly CompactSwitcherServer[];
 	onSwitchServer?: (profileId: string) => void;
+	/** A row for each attached server that has an upgrade to show. The header's
+	 * connection menu is not drawn at this width, so they are listed here. */
+	serverUpgrades?: ReactNode;
 }>;
 
 export type CompactSwitcherFront = Readonly<{
@@ -247,6 +250,7 @@ export function CompactSwitcher({
 	onQueryChange,
 	onSwitchServer,
 	query,
+	serverUpgrades,
 	servers = [],
 }: CompactSwitcherProps) {
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -501,6 +505,14 @@ export function CompactSwitcher({
 						))
 					)}
 				</div>
+				{serverUpgrades ? (
+					<div className="compact-switcher__servers compact-switcher__upgrades">
+						<div className="compact-switcher__servers-label">
+							Server updates
+						</div>
+						{serverUpgrades}
+					</div>
+				) : null}
 				{servers.length > 1 && onSwitchServer !== undefined ? (
 					<div
 						className="compact-switcher__servers"

@@ -182,6 +182,12 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 		/** What the connection negotiated in its hello. */
 		connection?: { readonly clientCapabilities?: readonly string[] },
 	) => OrderedEvent | undefined;
+	/** Runs once a connection's hello has been authenticated and answered. A
+	 * connection that opened is always reported closed afterwards. */
+	readonly onConnectionOpened?: (
+		connectionId: ProtocolId,
+		client: AuthenticatedClient,
+	) => void;
 	/** Host-owned cleanup for connection-scoped protocol adapters. Teardown is
 	 * scoped to the exact connection: another live connection authenticated by
 	 * the same client keeps its attachments, leases, and subscriptions. */

@@ -12,10 +12,18 @@ import {
  * server package owns the terminal service, operation registry, event journal,
  * and connection cleanup; no Electron object crosses this boundary.
  */
-export type EmbeddedDesktopAuthorityOptions = ServerCoreCompositionOptions;
+export type EmbeddedDesktopAuthorityOptions = Omit<
+	ServerCoreCompositionOptions,
+	'serverUpgrade'
+>;
 
 export function createEmbeddedDesktopAuthority(
 	options: EmbeddedDesktopAuthorityOptions,
 ): ServerCoreComposition {
-	return createServerCoreComposition(options);
+	// The embedded server is updated with Terminay Desktop (ADR-0062). It is
+	// never given an upgrader, whatever its caller or environment carries, so
+	// it checks no release and offers no upgrade.
+	const { serverUpgrade: _serverUpgrade, ...embedded } =
+		options as ServerCoreCompositionOptions;
+	return createServerCoreComposition(embedded);
 }

@@ -37,6 +37,7 @@ export const SMOKE_STEPS = Object.freeze([
 	'status',
 	'advertise-address',
 	'upgrade',
+	'upgrade helper',
 	'qr-code --no-wait',
 	'uninstall',
 ]);
@@ -67,7 +68,7 @@ import { join } from 'node:path'
 // nothing is left running when it finishes.
 process.env.TERMINAY_SESSION_HOLDER ??= '0';
 
-export async function buildArchive({ directory, version, revision }) {
+export async function buildArchive({ directory, version, revision, channel = 'source' }) {
   const rootName = 'terminay-server-' + version + '-linux-' + process.arch
   const root = join(directory, rootName)
   await mkdir(join(root, 'bin'), { recursive: true })
@@ -82,9 +83,14 @@ export async function buildArchive({ directory, version, revision }) {
     '#!/bin/sh',
     'set -eu',
     ': "\${TERMINAY_SERVER_VERSION:=' + version + '}"',
+    'export TERMINAY_SERVER_VERSION',
     'exec node -e \\'' +
       'const http=require("http");' +
       'const port=Number(process.env.TERMINAY_HEALTH_PORT||8444);' +
+      // A process left running outside the server, as the session holder that
+      // owns terminals is. It is started once and must outlive every restart.
+      'const fs=require("fs");const held="/run/terminay-smoke-holder.pid";' +
+      'if(!fs.existsSync(held)){const c=require("child_process").spawn("sleep",["100000"],{detached:true,stdio:"ignore"});c.unref();fs.writeFileSync(held,String(c.pid))}' +
       'http.createServer((q,s)=>{s.writeHead(200,{"content-type":"application/json"});' +
       's.end(JSON.stringify({status:"ok",ready:true,phase:"ready",serverId:process.env.TERMINAY_SERVER_ID,version:process.env.TERMINAY_SERVER_VERSION}))})' +
       '.listen(port,"127.0.0.1");' +
@@ -95,8 +101,13 @@ export async function buildArchive({ directory, version, revision }) {
   await writeFile(join(root, 'bin', 'terminay-server'), launcher)
   await chmod(join(root, 'bin', 'terminay-server'), 0o755)
 
+  // Where a real archive carries the bundled CLI. The stand-in runs the same
+  // upgrade the CLI runs, pointed at the smoke's own signed release.
+  await writeFile(join(root, 'bin', 'terminay'), '#!/bin/sh\\nexec node /smoke/upgrader.mjs "$@"\\n')
+  await chmod(join(root, 'bin', 'terminay'), 0o755)
+
   const files = []
-  for (const path of ['bin/terminay-server', 'ui/server.html']) {
+  for (const path of ['bin/terminay', 'bin/terminay-server', 'ui/server.html']) {
     const absolute = join(root, path)
     const info = await stat(absolute)
     files.push({
@@ -115,7 +126,7 @@ export async function buildArchive({ directory, version, revision }) {
         schemaVersion: 1,
         artifact: 'terminay-server',
         target: 'linux-' + process.arch,
-        channel: 'source',
+        channel,
         revision,
         architecture: process.arch,
         version,
@@ -133,14 +144,53 @@ export async function buildArchive({ directory, version, revision }) {
 }
 `;
 
+/**
+ * What the helper's oneshot executes as `<prefix>/current/bin/terminay`.
+ *
+ * The shipped CLI trusts one release key and one release host, by design, so
+ * a smoke cannot hand it a release of its own. This stand-in records how
+ * systemd invoked it and then runs the CLI's own upgrade with exactly the
+ * arguments it was given, against the signed release the driver serves.
+ */
+export const HELPER_UPGRADER = `
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+
+appendFileSync('/var/log/terminay-smoke-upgrader.log', JSON.stringify({
+  argv: process.argv.slice(2),
+  uid: process.getuid(),
+  helper: process.env.TERMINAY_UPGRADE_HELPER ?? null,
+}) + '\\n')
+
+const seam = '/run/terminay-smoke-release.json'
+if (!existsSync(seam)) process.exit(0)
+const { origin, publicKeyPem } = JSON.parse(readFileSync(seam, 'utf8'))
+// The release is served by the driver over a certificate made for this run.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+
+const { parseCommandLine } = await import('/cli/dist/args.js')
+const { runUpgrade } = await import('/cli/dist/commands/upgrade.js')
+const { resolveContext } = await import('/cli/dist/context.js')
+
+const write = (line) => process.stdout.write(line + '\\n')
+const parsed = parseCommandLine(process.argv.slice(2))
+await runUpgrade(parsed.ref, parsed.options, await resolveContext({ options: parsed.options, write }), {
+  apiBase: origin,
+  webBase: origin,
+  releasePublicKeyPem: publicKeyPem,
+  readinessTimeoutMs: 30000,
+})
+`;
+
 /** The driver that runs inside the container, against the real systemd. */
 export const CONTAINER_DRIVER = `
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
+import { createServer } from 'node:https'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { buildArchive } from '/smoke/build-archive.mjs'
 import { parseCommandLine } from '/cli/dist/args.js'
@@ -256,6 +306,105 @@ await runInstall(undefined, options, { write, streams, localArchivePath: second,
 assert.equal((await readInstallRecord(layout)).version, '9.9.1')
 assert.equal(systemctl('is-active', 'terminay-server.service'), 'active')
 
+write('--- upgrade helper ---')
+// A system-scope service cannot restart its own unit, so the install left a
+// root-owned path unit and oneshot. systemd, not the CLI, is asked whether
+// they are there, and the upgrade below is started by systemd alone.
+const helper = layout.upgradeHelper
+assert.equal(systemctl('is-enabled', 'terminay-upgrade.path'), 'enabled')
+assert.equal(systemctl('is-active', 'terminay-upgrade.path'), 'active')
+assert.match(systemctl('cat', 'terminay-upgrade.service'), /ExecStart=\\/opt\\/terminay\\/current\\/bin\\/terminay daemon upgrade --system\\n/)
+for (const unit of [helper.pathUnitPath, helper.serviceUnitPath]) {
+  const info = statSync(unit)
+  assert.equal(info.uid, 0, unit + ' must be owned by root')
+  assert.equal(info.mode & 0o022, 0, unit + ' must not be writable by anyone else')
+}
+assert.equal(statSync(helper.requestDirectory).mode & 0o777, 0o700)
+
+// A tagged install has a channel to follow, and the smoke serves that channel
+// itself: one release, checksummed and signed with a key made for this run.
+const record = JSON.parse(readFileSync(layout.recordPath, 'utf8'))
+writeFileSync(layout.recordPath, JSON.stringify({ ...record, channel: 'tag' }, null, 2) + '\\n')
+const third = await buildArchive({ directory: workspace, version: '9.9.2', revision: 'c'.repeat(40), channel: 'tag' })
+const assetName = 'terminay-server-9.9.2-linux-' + process.arch + '.tar.gz'
+const archiveBytes = readFileSync(third)
+const keys = generateKeyPairSync('ed25519')
+const assets = new Map([
+  [assetName, archiveBytes],
+  [assetName + '.sha256', Buffer.from(createHash('sha256').update(archiveBytes).digest('hex') + '  ' + assetName + '\\n')],
+  [assetName + '.sig', sign(null, archiveBytes, keys.privateKey)],
+])
+execFileSync('openssl', [
+  'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+  '-keyout', join(workspace, 'tls.key'), '-out', join(workspace, 'tls.crt'),
+], { stdio: 'ignore' })
+const releaseServer = createServer(
+  { key: readFileSync(join(workspace, 'tls.key')), cert: readFileSync(join(workspace, 'tls.crt')) },
+  (request, response) => {
+    const url = request.url ?? ''
+    if (url.startsWith('/repos/markwylde/terminay/releases/')) {
+      const body = JSON.stringify({ tag_name: 'v9.9.2', published_at: '2026-10-01T00:00:00Z', assets: [{ name: assetName }] })
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(body)
+      return
+    }
+    const asset = assets.get(basename(url))
+    if (url.startsWith('/markwylde/terminay/releases/download/v9.9.2/') && asset !== undefined) {
+      response.writeHead(200, { 'content-length': asset.length })
+      response.end(asset)
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  },
+)
+await new Promise((resolve) => releaseServer.listen(0, '127.0.0.1', resolve))
+writeFileSync('/run/terminay-smoke-release.json', JSON.stringify({
+  origin: 'https://127.0.0.1:' + releaseServer.address().port,
+  publicKeyPem: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+}))
+
+const holder = Number(readFileSync('/run/terminay-smoke-holder.pid', 'utf8'))
+const helperPidBefore = systemctl('show', 'terminay-server.service', '-p', 'MainPID', '--value')
+// This is the whole of what the unprivileged server does. What it writes is
+// never read: a reference, a flag, and a path here change nothing.
+writeFileSync(helper.requestFile, 'v0.0.1 --allow-downgrade /etc/passwd\\n')
+
+let upgraded = false
+for (let attempt = 0; attempt < 120 && !upgraded; attempt += 1) {
+  upgraded =
+    (await readInstallRecord(layout)).version === '9.9.2' &&
+    systemctl('is-active', 'terminay-upgrade.service') !== 'activating'
+  if (!upgraded) await new Promise((resolve) => setTimeout(resolve, 1000))
+}
+releaseServer.close()
+if (!upgraded) write(execFileSync('journalctl', ['-u', 'terminay-upgrade.service', '--no-pager', '-n', '40'], { encoding: 'utf8' }))
+assert.equal(upgraded, true, 'the request must cause systemd to run the upgrade')
+assert.equal(systemctl('show', 'terminay-upgrade.service', '-p', 'Result', '--value'), 'success')
+
+// systemd ran the fixed command as root, with nothing taken from the request.
+const invocations = readFileSync('/var/log/terminay-smoke-upgrader.log', 'utf8').trim().split('\\n').map((line) => JSON.parse(line))
+assert.deepEqual(invocations, [{ argv: ['daemon', 'upgrade', '--system'], uid: 0, helper: '1' }])
+
+// The server is back, ready, on the new release, as a new process.
+assert.equal(systemctl('is-active', 'terminay-server.service'), 'active')
+const helperStatus = await runStatus(await resolveContext({ options, write }))
+assert.equal(helperStatus.version, '9.9.2')
+assert.equal(helperStatus.ready, true)
+assert.equal(await activeVersion(layout), '9.9.2')
+assert.notEqual(systemctl('show', 'terminay-server.service', '-p', 'MainPID', '--value'), helperPidBefore)
+const helperHealth = await (await fetch('http://127.0.0.1:8444/readyz')).json()
+assert.equal(helperHealth.version, '9.9.2')
+// What was running outside the server before the upgrade still is.
+assert.doesNotThrow(() => process.kill(holder, 0), 'a process held outside the server must survive the upgrade')
+// The helper's own watch was never stopped, so the next request works too.
+assert.equal(systemctl('is-active', 'terminay-upgrade.path'), 'active')
+const outcome = JSON.parse(readFileSync(layout.resultPath, 'utf8'))
+assert.equal(outcome.outcome, 'succeeded')
+assert.equal(outcome.from, '9.9.1')
+assert.equal(outcome.to, '9.9.2')
+assert.equal(statSync(layout.resultPath).mode & 0o444, 0o444)
+
 write('--- qr-code --no-wait ---')
 // These archives have no server behind them, so there is no approval socket.
 // What is proven is that the command fails clearly rather than hanging or
@@ -277,6 +426,16 @@ try {
   stillKnown = false
 }
 assert.equal(stillKnown, false, 'systemd must no longer know the unit')
+for (const unit of ['terminay-upgrade.path', 'terminay-upgrade.service']) {
+  let known = true
+  try {
+    execFileSync('systemctl', ['cat', unit], { stdio: 'pipe' })
+  } catch {
+    known = false
+  }
+  assert.equal(known, false, 'systemd must no longer know ' + unit)
+}
+assert.equal(existsSync(helper.requestDirectory), false)
 
 write('SMOKE OK')
 `;
@@ -289,6 +448,7 @@ export async function runDaemonSmoke(options = {}) {
 	try {
 		await writeFile(join(workspace, 'build-archive.mjs'), ARCHIVE_BUILDER);
 		await writeFile(join(workspace, 'driver.mjs'), CONTAINER_DRIVER);
+		await writeFile(join(workspace, 'upgrader.mjs'), HELPER_UPGRADER);
 
 		run('docker', [
 			'run',
@@ -311,7 +471,7 @@ export async function runDaemonSmoke(options = {}) {
 			image,
 			'/bin/sh',
 			'-c',
-			'apt-get update -qq && apt-get install -y -qq systemd nodejs >/dev/null 2>&1 && exec /lib/systemd/systemd',
+			'apt-get update -qq && apt-get install -y -qq systemd nodejs openssl >/dev/null 2>&1 && exec /lib/systemd/systemd',
 		]);
 
 		// systemd takes a moment to reach a state where systemctl answers.

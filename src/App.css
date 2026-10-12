@@ -5135,6 +5135,251 @@ body.project-tabbar-reordering .project-tabbar {
 	opacity: 0.3;
 }
 
+/* A server's own upgrade. The warning tone is the header badge's, so the
+ * icon beside the server label and the row it leads to read as one thing. */
+.remote-access-button__upgrade,
+.compact-connection__upgrade,
+.server-upgrade-row__icon,
+.server-upgrade-dialog__title-icon {
+	flex: none;
+	color: #ffe7a6;
+}
+
+.compact-connection__upgrade {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+}
+
+.server-upgrade-dialog__title-icon {
+	margin-right: 6px;
+	vertical-align: -2px;
+}
+
+.server-upgrade-row {
+	display: grid;
+	gap: 2px;
+}
+
+.server-upgrade-row + .server-upgrade-row {
+	margin-top: 6px;
+}
+
+.server-upgrade-row__summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.server-upgrade-row__server {
+	font-weight: 600;
+}
+
+.server-upgrade-row__progress {
+	margin: 0;
+	padding: 2px 8px 6px;
+	color: #ffe7a6;
+	font-size: 12px;
+}
+
+.server-upgrade-row__command {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 8px;
+	margin: 0 8px 6px;
+	padding: 6px 6px 6px 10px;
+	border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.28);
+}
+
+.server-upgrade-row__command code {
+	min-width: 0;
+	padding: 3px 0;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	user-select: text;
+	-webkit-user-select: text;
+	cursor: text;
+}
+
+.server-upgrade-row__copy {
+	min-width: 56px;
+	min-height: 24px;
+	padding: 2px 8px;
+	border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font: inherit;
+	font-size: 11px;
+	font-weight: 600;
+	opacity: 0.8;
+}
+
+.server-upgrade-row__copy:hover,
+.server-upgrade-row__copy:focus-visible {
+	background: color-mix(in srgb, currentColor 10%, transparent);
+	opacity: 1;
+}
+
+/* Announced to assistive technology; the button label is the visible cue. */
+.server-upgrade-row__copy-status {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* In the phone-width switcher every control is a touch target. */
+.server-upgrade-row--sheet .server-upgrade-row__action,
+.server-upgrade-row--sheet .server-upgrade-row__copy {
+	min-height: 44px;
+}
+
+.server-upgrade-dialog {
+	width: 100%;
+	gap: 12px;
+	padding-top: 16px;
+}
+
+.server-upgrade-dialog__summary,
+.server-upgrade-dialog__consequence {
+	margin-top: 0;
+	margin-bottom: 0;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.server-upgrade-dialog__consequence {
+	color: rgba(214, 227, 240, 0.68);
+}
+
+.server-upgrade-dialog__modes {
+	display: grid;
+	gap: 4px;
+}
+
+.project-edit-modal label.server-upgrade-dialog__mode {
+	flex-direction: row;
+	align-items: flex-start;
+	gap: 10px;
+	min-height: 44px;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 8px;
+	color: #d6e3f0;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.server-upgrade-dialog__mode input {
+	margin: 2px 0 0;
+}
+
+.server-upgrade-dialog__mode-label,
+.server-upgrade-dialog__mode-note {
+	display: block;
+}
+
+.server-upgrade-dialog__mode-note {
+	margin-top: 2px;
+	color: #ffe7a6;
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.server-upgrade-dialog__error {
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 106, 106, 0.35);
+	border-radius: 6px;
+	color: #ffb3b3;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.server-upgrade-dialog .project-edit-actions .server-upgrade-dialog__primary {
+	border-color: #3b82f6;
+	background: #3b82f6;
+	color: #fff;
+}
+
+.server-upgrade-dialog
+	.project-edit-actions
+	.server-upgrade-dialog__primary:hover:not(:disabled) {
+	border-color: #2563eb;
+	background: #2563eb;
+}
+
+/* How a watched upgrade ended. Drawn over the workspace so being told never
+ * resizes a terminal. */
+.server-upgrade-notices {
+	position: fixed;
+	top: 48px;
+	right: 12px;
+	z-index: 3000;
+	display: grid;
+	gap: 8px;
+	width: min(360px, calc(100vw - 24px));
+	-webkit-app-region: no-drag;
+}
+
+.server-upgrade-notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 10px 8px 10px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 8px;
+	background: #161b22;
+	color: #d6e3f0;
+	font-size: 12px;
+	line-height: 1.45;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.server-upgrade-notice > span {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.server-upgrade-notice--failure {
+	border-color: rgba(255, 106, 106, 0.35);
+}
+
+.server-upgrade-notice__dismiss {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.6;
+}
+
+.server-upgrade-notice__dismiss:hover,
+.server-upgrade-notice__dismiss:focus-visible {
+	background: color-mix(in srgb, currentColor 10%, transparent);
+	opacity: 1;
+}
+
 .compact-switcher__servers {
 	display: grid;
 	gap: 2px;
