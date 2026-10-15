@@ -148,6 +148,15 @@ export class TerminalLaunchResolver {
 				'terminal project is unavailable',
 			);
 		}
+		// A project awaiting its start choice has no terminal; its first one is
+		// launched once the choice is made.
+		if (project.start !== undefined) {
+			throw new TerminalServiceError(
+				'project_awaiting_start',
+				'The project is waiting for a start choice.',
+				{ projectId: project.id, reason: 'project_awaiting_start' },
+			);
+		}
 		const catalogue = await this.options.profiles.catalogue();
 		const selectedProfileId =
 			intent.explicitProfileId ??
@@ -333,7 +342,11 @@ export class TerminalLaunchResolver {
 			folderId === undefined
 				? null
 				: await this.folderWorktreeDirectory(projectId, folderId);
-		return worktree ?? this.projectDirectory(project.root, project.rootOrigin);
+		if (worktree !== null) return worktree;
+		// A project with no root folder starts its terminals in the server
+		// account's verified home.
+		if (project.rootOrigin === 'none') return this.safeHomeDirectory();
+		return this.projectDirectory(project.root, project.rootOrigin);
 	}
 
 	/** A linked folder's worktree, or null to start at the project root: for a

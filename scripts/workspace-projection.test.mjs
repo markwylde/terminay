@@ -27,7 +27,7 @@ function state(revision, panelsA = ['panel-a1', 'panel-a2'], titles = {}) {
 	const panel = (id, projectId) => ({ id, projectId, type: 'terminal', sessionId: `session-${id}`, ...(titles[id] === undefined ? {} : { title: titles[id] }) })
 	const session = (id, projectId) => ({ id: `session-${id}`, serverId: 'server-a', projectId, status: 'running' })
 	return withGeneralFolders({
-		schemaVersion: 6,
+		schemaVersion: 7,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),

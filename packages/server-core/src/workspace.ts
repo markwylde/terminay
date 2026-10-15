@@ -4,7 +4,9 @@ import {
 	type ProtocolId,
 } from '@terminay/protocol';
 
-export const WORKSPACE_SCHEMA_VERSION = 6;
+export const WORKSPACE_SCHEMA_VERSION = 7;
+/** The most recent project folders a server remembers. */
+export const MAX_RECENT_PROJECT_FOLDERS = 50;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 /** A persisted record is rejected when it carries a field this server does not
  * define, so a state file written by a different shape is never half-read. */
@@ -14,6 +16,7 @@ const PROJECT_KEYS = Object.freeze([
 	'viewId',
 	'root',
 	'rootOrigin',
+	'start',
 	'name',
 	'color',
 	'icon',
@@ -61,10 +64,26 @@ function assertOnlyKnownKeys(
 export type PanelType = 'terminal' | 'file' | 'folder';
 export type TerminalStatus = 'running' | 'exited' | 'interrupted';
 export type SplitDirection = 'horizontal' | 'vertical';
+/** Where a project's root came from. `none` is a project with no root folder:
+ * its `root` is empty, its terminals start in the server account's home, and
+ * its filesystem features are inert. */
 export type ProjectRootOrigin =
 	| 'explicit'
 	| 'server-default'
-	| 'legacy-unverified';
+	| 'legacy-unverified'
+	| 'none';
+/** A project created without a root waits for a start choice. Absent means
+ * the project has started. */
+export type ProjectStartState = 'awaiting-choice';
+export const PROJECT_AWAITING_START_CHOICE: ProjectStartState =
+	'awaiting-choice';
+/** A folder that became a project's explicit root on this server. */
+export interface RecentProjectFolder {
+	/** Canonical absolute path. */
+	readonly path: string;
+	/** Epoch milliseconds of the last time it became a root. */
+	readonly usedAt: number;
+}
 
 export interface PanelBase {
 	readonly id: ProtocolId;
@@ -231,8 +250,12 @@ export interface WorkspaceProject {
 	readonly kind?: WorkspaceProjectKind;
 	readonly serverId: ProtocolId;
 	readonly viewId: ProtocolId;
+	/** Empty exactly when `rootOrigin` is `none`. */
 	readonly root: string;
 	readonly rootOrigin: ProjectRootOrigin;
+	/** Present only while the project awaits its start choice, which also
+	 * means it has no root. */
+	readonly start?: ProjectStartState;
 	readonly name: string;
 	readonly color?: string;
 	readonly icon?: string;
@@ -280,6 +303,10 @@ export interface WorkspaceState {
 	readonly folders: Readonly<Record<ProtocolId, WorkspaceFolder>>;
 	readonly panels: Readonly<Record<ProtocolId, WorkspacePanel>>;
 	readonly terminalSessions: Readonly<Record<ProtocolId, TerminalSession>>;
+	/** The folders that most recently became an explicit project root on this
+	 * server, most recent first, unique by path, at most
+	 * `MAX_RECENT_PROJECT_FOLDERS`. */
+	readonly recentProjectFolders: readonly RecentProjectFolder[];
 }
 
 /** Return the exact persisted workspace shape. Runtime callers may receive
@@ -311,6 +338,7 @@ export function canonicalizeWorkspaceState(
 			viewId: project.viewId,
 			root: project.root,
 			rootOrigin: project.rootOrigin,
+			...(project.start === undefined ? {} : { start: project.start }),
 			name: project.name,
 			...(project.kind === undefined ? {} : { kind: project.kind }),
 			...(project.color === undefined ? {} : { color: project.color }),
@@ -438,6 +466,10 @@ export function canonicalizeWorkspaceState(
 		folders,
 		panels,
 		terminalSessions,
+		recentProjectFolders: state.recentProjectFolders.map((entry) => ({
+			path: entry.path,
+			usedAt: entry.usedAt,
+		})),
 	};
 	validateWorkspace(result);
 	return result;
@@ -471,7 +503,14 @@ type MutableWorkspaceState = {
 	folders: Record<ProtocolId, WorkspaceFolder>;
 	panels: Record<ProtocolId, WorkspacePanel>;
 	terminalSessions: Record<ProtocolId, TerminalSession>;
+	recentProjectFolders: RecentProjectFolder[];
 };
+
+/** How a project awaiting its start choice starts: in a folder, which becomes
+ * its explicit root, or with no root folder. */
+export type ProjectStartChoice =
+	| { readonly kind: 'folder'; readonly path: string }
+	| { readonly kind: 'home' };
 
 export type WorkspaceCommand =
 	| {
@@ -489,8 +528,12 @@ export type WorkspaceCommand =
 			readonly type: 'project.create';
 			readonly projectId: ProtocolId;
 			readonly viewId: ProtocolId;
+			/** Empty when `rootOrigin` is `none`. */
 			readonly root: string;
 			readonly rootOrigin?: Exclude<ProjectRootOrigin, 'legacy-unverified'>;
+			/** Server-set: the project waits for its start choice. Requires the
+			 * `none` origin. */
+			readonly start?: ProjectStartState;
 			/** Absent or blank means the server assigns the next unique default. */
 			readonly name?: string;
 			readonly color?: string;
@@ -503,9 +546,26 @@ export type WorkspaceCommand =
 			readonly sidebar: WorkspaceSidebarPatch;
 	  }
 	| {
+			/** `root` is canonical: the protocol boundary resolved it. The root
+			 * becomes explicit, ends a wait for a start choice, and is recorded
+			 * as a recent project folder. */
 			readonly type: 'project.root.update';
 			readonly projectId: ProtocolId;
 			readonly root: string;
+			readonly usedAt?: number;
+	  }
+	| {
+			/** The first start choice for a project awaiting one. A folder's path
+			 * is canonical: the protocol boundary resolved it. */
+			readonly type: 'project.start';
+			readonly projectId: ProtocolId;
+			readonly choice: ProjectStartChoice;
+			readonly usedAt?: number;
+	  }
+	| {
+			/** Drop one folder from the recent project folders. */
+			readonly type: 'recent.forget';
+			readonly path: string;
 	  }
 	| {
 			readonly type: 'project.shellProfile.set';
@@ -696,6 +756,8 @@ export interface WorkspaceChangeRecord {
 	};
 	/** Present when the order of views changed. */
 	readonly viewOrder?: readonly ProtocolId[];
+	/** Present, in full, when the recent project folders changed. */
+	readonly recentProjectFolders?: readonly RecentProjectFolder[];
 }
 export interface WorkspaceSnapshot {
 	readonly state: WorkspaceState;
@@ -750,6 +812,7 @@ export function createInitialWorkspace(serverId: ProtocolId): WorkspaceState {
 		folders: {},
 		panels: {},
 		terminalSessions: {},
+		recentProjectFolders: [],
 	};
 }
 
@@ -909,9 +972,22 @@ export function validateWorkspace(state: WorkspaceState): void {
 		if (
 			project.rootOrigin !== 'explicit' &&
 			project.rootOrigin !== 'server-default' &&
-			project.rootOrigin !== 'legacy-unverified'
+			project.rootOrigin !== 'legacy-unverified' &&
+			project.rootOrigin !== 'none'
 		)
 			throw new TypeError('project root origin is invalid');
+		if (typeof project.root !== 'string')
+			throw new TypeError('project root is invalid');
+		if ((project.rootOrigin === 'none') !== (project.root === ''))
+			throw new TypeError('project root does not match its origin');
+		if (project.start !== undefined) {
+			if (project.start !== PROJECT_AWAITING_START_CHOICE)
+				throw new TypeError('project start state is invalid');
+			if (project.rootOrigin !== 'none')
+				throw new TypeError('a project awaiting a start choice has a root');
+			if (project.kind !== undefined)
+				throw new TypeError('a reserved project never awaits a start choice');
+		}
 		if (project.kind !== undefined) {
 			if (project.kind !== AUTOMATION_PROJECT_KIND)
 				throw new TypeError('project kind is invalid');
@@ -1028,7 +1104,57 @@ export function validateWorkspace(state: WorkspaceState): void {
 			throw new TypeError('invalid terminal session');
 		assertOnlyKnownKeys(session, TERMINAL_SESSION_KEYS, 'terminal session');
 		if (session.launch !== undefined) validateLaunchMetadata(session.launch);
+		if (state.projects[session.projectId]?.start !== undefined)
+			throw new TypeError('a project awaiting a start choice has a terminal');
 	}
+	validateRecentProjectFolders(state.recentProjectFolders);
+}
+
+const RECENT_PROJECT_FOLDER_KEYS = Object.freeze(['path', 'usedAt']);
+
+function validateRecentProjectFolders(value: unknown): void {
+	if (!Array.isArray(value) || value.length > MAX_RECENT_PROJECT_FOLDERS)
+		throw new TypeError('recent project folders are invalid');
+	const paths = new Set<string>();
+	for (const entry of value as unknown[]) {
+		if (typeof entry !== 'object' || entry === null || Array.isArray(entry))
+			throw new TypeError('recent project folder is invalid');
+		assertOnlyKnownKeys(entry, RECENT_PROJECT_FOLDER_KEYS, 'recent project folder');
+		const { path, usedAt } = entry as Record<string, unknown>;
+		if (
+			typeof path !== 'string' ||
+			path.length === 0 ||
+			path.length > 4096 ||
+			path.includes('\0') ||
+			!Number.isSafeInteger(usedAt) ||
+			(usedAt as number) < 0 ||
+			paths.has(path)
+		)
+			throw new TypeError('recent project folder is invalid');
+		paths.add(path);
+	}
+}
+
+/** The recent project folders with `path` first, used at `usedAt`, each path
+ * once, the least recently used dropped beyond the bound. */
+function withRecentProjectFolder(
+	recents: readonly RecentProjectFolder[],
+	path: string,
+	usedAt: number,
+): RecentProjectFolder[] {
+	if (!Number.isSafeInteger(usedAt) || usedAt < 0)
+		throw new Error('recent project folder time is invalid');
+	return [
+		{ path: boundedPath(path), usedAt },
+		...recents.filter((entry) => entry.path !== path),
+	].slice(0, MAX_RECENT_PROJECT_FOLDERS);
+}
+
+/** Refuse a command that would give a project awaiting its start choice a
+ * panel or a terminal: it has none until the choice is made. */
+function assertProjectStarted(project: WorkspaceProject): void {
+	if (project.start !== undefined)
+		throw new Error('project awaits a start choice');
 }
 
 /** Every project has exactly one General folder, anywhere in its order; every
@@ -1130,6 +1256,15 @@ function migrateSchema5To6(
 	};
 }
 
+/** Schema 6 had no start state and no recent project folders. Every project
+ * it holds has started, which is what an absent start state says, so only the
+ * empty recents list is added. A pure function of its input. */
+function migrateSchema6To7(
+	value: Record<string, unknown>,
+): Record<string, unknown> {
+	return { ...value, schemaVersion: 7, recentProjectFolders: [] };
+}
+
 /** Folder ids are issued by the server. Ones made while upgrading a stored
  * workspace and ones made by a command use different prefixes, so they can
  * never collide. */
@@ -1188,6 +1323,7 @@ export function migrateWorkspaceState(
 		throw new TypeError('workspace snapshot must be an object');
 	let value = input as Record<string, unknown>;
 	if (value.schemaVersion === 5) value = migrateSchema5To6(value);
+	if (value.schemaVersion === 6) value = migrateSchema6To7(value);
 	value = forgetStoredProgramTitles(value);
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return adoptTerminalTitleSources(
@@ -1211,7 +1347,7 @@ export function migrateWorkspaceState(
 	for (const [id, raw] of Object.entries(legacyProjects)) {
 		if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
 		const project = raw as Record<string, unknown>;
-		if (typeof project.root !== 'string') continue;
+		if (typeof project.root !== 'string' || project.root.length === 0) continue;
 		const name =
 			typeof project.name === 'string' && project.name.length > 0
 				? project.name
@@ -1477,7 +1613,10 @@ function noteRemoved(
 function settleCommittedState(
 	previous: WorkspaceState,
 	next: MutableWorkspaceState,
-): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
+): Pick<
+	WorkspaceChangeRecord,
+	'changed' | 'removed' | 'viewOrder' | 'recentProjectFolders'
+> {
 	const changed: ChangedObjects = {};
 	const removed: RemovedIds = {};
 	for (const collection of WORKSPACE_COLLECTIONS) {
@@ -1509,11 +1648,21 @@ function settleCommittedState(
 	}
 	const viewOrderChanged = !sameJson(previous.viewOrder, next.viewOrder);
 	if (!viewOrderChanged) next.viewOrder = previous.viewOrder as ProtocolId[];
+	const recentsChanged = !sameJson(
+		previous.recentProjectFolders,
+		next.recentProjectFolders,
+	);
+	if (!recentsChanged)
+		next.recentProjectFolders =
+			previous.recentProjectFolders as RecentProjectFolder[];
 	deepFreeze(next);
 	return {
 		changed: changed as WorkspaceChangeRecord['changed'],
 		removed,
 		...(viewOrderChanged ? { viewOrder: next.viewOrder } : {}),
+		...(recentsChanged
+			? { recentProjectFolders: next.recentProjectFolders }
+			: {}),
 	};
 }
 
@@ -1527,7 +1676,10 @@ function settleCommittedState(
 export function workspaceStateDifference(
 	previous: WorkspaceState,
 	next: WorkspaceState,
-): Pick<WorkspaceChangeRecord, 'changed' | 'removed' | 'viewOrder'> {
+): Pick<
+	WorkspaceChangeRecord,
+	'changed' | 'removed' | 'viewOrder' | 'recentProjectFolders'
+> {
 	const changed: ChangedObjects = {};
 	const removed: RemovedIds = {};
 	for (const collection of WORKSPACE_COLLECTIONS) {
@@ -1552,6 +1704,10 @@ export function workspaceStateDifference(
 		...(sameJson(previous.viewOrder, next.viewOrder)
 			? {}
 			: { viewOrder: next.viewOrder }),
+		...(previous.recentProjectFolders === next.recentProjectFolders ||
+		sameJson(previous.recentProjectFolders, next.recentProjectFolders)
+			? {}
+			: { recentProjectFolders: next.recentProjectFolders }),
 	};
 }
 
@@ -2239,6 +2395,13 @@ export class WorkspaceStore {
 				if (state.projects[command.projectId] !== undefined)
 					throw new Error('project already exists');
 				const view = requireView(state, command.viewId);
+				const rootOrigin = command.rootOrigin ?? 'explicit';
+				if (command.start !== undefined) {
+					if (command.start !== PROJECT_AWAITING_START_CHOICE)
+						throw new Error('project start state is invalid');
+					if (rootOrigin !== 'none')
+						throw new Error('a project awaiting a start choice has no root');
+				}
 				const general = generalFolder(issuedFolderId(state), command.projectId);
 				state.folders[general.id] = general;
 				changed.push(general.id);
@@ -2246,8 +2409,9 @@ export class WorkspaceStore {
 					id: command.projectId,
 					serverId: state.serverId,
 					viewId: command.viewId,
-					root: boundedPath(command.root),
-					rootOrigin: command.rootOrigin ?? 'explicit',
+					root: rootOrigin === 'none' ? noRoot(command.root) : boundedPath(command.root),
+					rootOrigin,
+					...(command.start === undefined ? {} : { start: command.start }),
 					name:
 						command.name === undefined || command.name.trim().length === 0
 							? nextDefaultProjectName(state)
@@ -2283,11 +2447,54 @@ export class WorkspaceStore {
 			}
 			case 'project.root.update': {
 				const project = requireProject(state, command.projectId);
+				const { start: _start, ...started } = project;
+				const root = boundedPath(command.root);
 				state.projects[command.projectId] = {
-					...project,
-					root: boundedPath(command.root),
+					...started,
+					root,
+					rootOrigin: 'explicit',
 				};
+				state.recentProjectFolders = withRecentProjectFolder(
+					state.recentProjectFolders,
+					root,
+					command.usedAt ?? Date.now(),
+				);
 				changed.push(command.projectId);
+				break;
+			}
+			case 'project.start': {
+				const project = requireProject(state, command.projectId);
+				if (project.start !== PROJECT_AWAITING_START_CHOICE)
+					throw new Error(PROJECT_START_CONFLICT_MESSAGE);
+				const { start: _start, ...started } = project;
+				const choice = command.choice;
+				if (choice?.kind === 'home') {
+					state.projects[command.projectId] = {
+						...started,
+						root: '',
+						rootOrigin: 'none',
+					};
+				} else if (choice?.kind === 'folder') {
+					const root = boundedPath(choice.path);
+					state.projects[command.projectId] = {
+						...started,
+						root,
+						rootOrigin: 'explicit',
+					};
+					state.recentProjectFolders = withRecentProjectFolder(
+						state.recentProjectFolders,
+						root,
+						command.usedAt ?? Date.now(),
+					);
+				} else throw new Error('project start choice is invalid');
+				changed.push(command.projectId);
+				break;
+			}
+			case 'recent.forget': {
+				const path = boundedPath(command.path);
+				state.recentProjectFolders = state.recentProjectFolders.filter(
+					(entry) => entry.path !== path,
+				);
 				break;
 			}
 			case 'project.shellProfile.set': {
@@ -2344,10 +2551,16 @@ export class WorkspaceStore {
 			}
 			case 'project.update': {
 				const project = requireProject(state, command.projectId);
+				const { start: _start, ...started } = project;
+				// A project with no root keeps it unless the update gives it one.
+				const rooted = command.root !== project.root;
 				state.projects[command.projectId] = {
-					...project,
+					...(rooted ? started : project),
 					name: boundedName(command.name),
-					root: boundedPath(command.root),
+					root: rooted ? boundedPath(command.root) : project.root,
+					...(rooted && project.rootOrigin === 'none'
+						? { rootOrigin: 'explicit' as const }
+						: {}),
 					...(command.color === undefined
 						? {}
 						: { color: boundedPresentation(command.color, 'color') }),
@@ -2424,6 +2637,7 @@ export class WorkspaceStore {
 				if (state.panels[panel.id] !== undefined)
 					throw new Error('panel already exists');
 				const project = requireProject(state, panel.projectId);
+				assertProjectStarted(project);
 				if (panel.type === 'terminal') {
 					const session = state.terminalSessions[panel.sessionId];
 					if (session === undefined || session.projectId !== panel.projectId)
@@ -2720,6 +2934,7 @@ export class WorkspaceStore {
 				const panel = requirePanel(state, command.panelId);
 				const from = requireProject(state, panel.projectId);
 				const to = requireProject(state, command.targetProjectId);
+				assertProjectStarted(to);
 				// A panel arriving from another project lands in General.
 				const target = folderForNewPanel(state, to, undefined);
 				if (from.id === to.id) {
@@ -2779,6 +2994,7 @@ export class WorkspaceStore {
 				if (state.terminalSessions[command.sessionId] !== undefined)
 					throw new Error('terminal session already exists');
 				const project = requireProject(state, command.projectId);
+				assertProjectStarted(project);
 				state.terminalSessions[command.sessionId] = {
 					id: command.sessionId,
 					serverId: state.serverId,
@@ -2801,6 +3017,7 @@ export class WorkspaceStore {
 				if (state.panels[command.panelId] !== undefined)
 					throw new Error('panel already exists');
 				const project = requireProject(state, command.projectId);
+				assertProjectStarted(project);
 				const folder = folderForNewPanel(state, project, command.folderId);
 				const createdAt = command.createdAt ?? Date.now();
 				state.terminalSessions[command.sessionId] = {
@@ -3017,6 +3234,16 @@ function requireUnusedFolderName(
 		if (state.folders[folderId]?.name.toLowerCase() === wanted)
 			throw new Error(`this project already has a folder named ${name}`);
 	}
+}
+/** The message a refused second start choice carries. */
+export const PROJECT_START_CONFLICT_MESSAGE =
+	'project has already started';
+
+/** The root of a project with no root folder. */
+function noRoot(value: string | undefined): '' {
+	if (value !== undefined && value !== '')
+		throw new Error('a project with no root folder has no root');
+	return '';
 }
 function boundedPath(value: string): string {
 	if (

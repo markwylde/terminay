@@ -23,7 +23,9 @@ import { resolveWorkspaceHydration } from './workspaceHydration.js';
 
 export interface WorkspaceStartupTerminalRequest {
 	readonly projectId: string;
-	readonly cwd: string;
+	/** The project's root. Absent for a project with no root folder, whose
+	 * terminal the launch resolver starts in the server account's home. */
+	readonly cwd?: string;
 	/** Set only for the first-run seed, which has a session id to honour. */
 	readonly sessionId?: string;
 	readonly projectRootOrigin?: 'server-default';
@@ -132,10 +134,13 @@ export async function restoreWorkspaceOnStartup(
 	const unavailable = options.unavailableProjectIds ?? new Set<string>();
 	for (const project of restoredProjectsInPresentationOrder(workspace.state)) {
 		if (unavailable.has(project.id)) continue;
+		// A project awaiting its start choice shows its chooser; its first
+		// terminal comes from that choice.
+		if (project.start !== undefined) continue;
 		if (projectHasTerminalPanel(workspace.state, project.id)) continue;
 		await options.createTerminal({
 			projectId: project.id,
-			cwd: project.root,
+			...(project.rootOrigin === 'none' ? {} : { cwd: project.root }),
 			cols: DEFAULT_COLS,
 			rows: DEFAULT_ROWS,
 		});

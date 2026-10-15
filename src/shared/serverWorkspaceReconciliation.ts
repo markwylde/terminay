@@ -48,8 +48,12 @@ export type ServerWorkspaceProject = Readonly<{
 	kind?: string;
 	serverId: string;
 	name: string;
+	/** Empty when `rootOrigin` is `none`: the project has no root folder. */
 	root: string;
-	rootOrigin: 'explicit' | 'server-default' | 'legacy-unverified';
+	rootOrigin: 'explicit' | 'server-default' | 'legacy-unverified' | 'none';
+	/** Present while the project awaits its start choice. Only a connection
+	 * that negotiated `project-start-choice.v1` is ever sent it. */
+	start?: 'awaiting-choice';
 	color?: string;
 	icon?: string;
 	viewId: string;
@@ -107,6 +111,9 @@ export type ServerWorkspaceSnapshot = Readonly<{
 			}>
 		>
 	>;
+	/** The server's recent project folders, most recent first. A
+	 * project-scoped snapshot carries none. */
+	recentProjectFolders?: readonly Readonly<{ path: string; usedAt: number }>[];
 }>;
 
 export type ServerWorkspaceSelection = Readonly<{
@@ -225,7 +232,7 @@ export function reconcileServerWorkspaceSelection(
 }
 
 /** The one workspace snapshot shape this bundle reads. */
-export const WORKSPACE_SCHEMA_VERSION = 6;
+export const WORKSPACE_SCHEMA_VERSION = 7;
 
 /**
  * The server answered in a workspace shape from another release. The hello
@@ -334,7 +341,9 @@ export function parseServerWorkspaceSnapshot(
 				'explicit',
 				'server-default',
 				'legacy-unverified',
+				'none',
 			].includes(project.rootOrigin) ||
+			(project.start !== undefined && project.start !== 'awaiting-choice') ||
 			(project.color !== undefined && typeof project.color !== 'string') ||
 			(project.icon !== undefined && typeof project.icon !== 'string') ||
 			(project.defaultShellProfileId !== undefined &&
