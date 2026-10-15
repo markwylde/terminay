@@ -195,21 +195,29 @@ export class RootFolderBrowser {
 				PROJECT_START_REFUSALS.invalidPath,
 				'The folder path is invalid.',
 			);
-		if (requested === '~' || requested.startsWith('~/')) {
-			const home = await this.options.homeDirectory();
-			if (home === null)
-				throw new RootFolderError(
-					PROJECT_START_REFUSALS.pathMissing,
-					'The server home folder is unavailable.',
-				);
-			return requested === '~' ? home : join(home, requested.slice(2));
-		}
-		if (!isAbsolute(requested))
+		const expanded = await this.expandHome(requested);
+		if (!isAbsolute(expanded))
 			throw new RootFolderError(
 				PROJECT_START_REFUSALS.invalidPath,
 				'The folder path must be absolute.',
 			);
-		return requested;
+		return expanded;
+	}
+
+	/**
+	 * Resolve `~` and `~/…` against the server account's verified home. Any
+	 * other path is returned as given. The client never expands `~`: only the
+	 * server knows whose home it means.
+	 */
+	async expandHome(requested: string): Promise<string> {
+		if (requested !== '~' && !requested.startsWith('~/')) return requested;
+		const home = await this.options.homeDirectory();
+		if (home === null)
+			throw new RootFolderError(
+				PROJECT_START_REFUSALS.pathMissing,
+				'The server home folder is unavailable.',
+			);
+		return requested === '~' ? home : join(home, requested.slice(2));
 	}
 }
 

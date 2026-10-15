@@ -348,6 +348,85 @@ test("setting a root on an awaiting project starts it and records the folder", a
   }
 });
 
+test("a typed ~ or ~/folder root is expanded against the verified home on the server", async () => {
+  const { home, cleanup } = await folders();
+  try {
+    const { workspace, create, command, prepared } = harness({ home, prepare: true });
+    await create("project-a", { root: join(home, "alpha") });
+    const answer = await command(WORKSPACE_OPERATIONS.projectRootUpdate, { projectId: "project-a", root: "~/beta" });
+    assert.equal(answer.result.root, join(home, "beta"));
+    assert.equal(workspace.state.projects["project-a"].root, join(home, "beta"));
+    // The host is handed the expanded path, never the literal tilde.
+    assert.ok(prepared.every((entry) => !entry.root.startsWith("~")));
+    await command(WORKSPACE_OPERATIONS.projectRootUpdate, { projectId: "project-a", root: "~" });
+    assert.equal(workspace.state.projects["project-a"].root, home);
+    assert.equal(workspace.state.projects["project-a"].rootOrigin, "explicit");
+    assert.deepEqual(workspace.state.recentProjectFolders.map((entry) => entry.path), [home, join(home, "beta")]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a typed ~ root sets the root of an awaiting project, and ~user is not expanded", async () => {
+  const { home, cleanup } = await folders();
+  try {
+    const { workspace, create, command, prepared } = harness({ home, prepare: true });
+    await create("project-a");
+    await command(WORKSPACE_OPERATIONS.projectRootUpdate, { projectId: "project-a", root: "~/alpha" });
+    const project = workspace.state.projects["project-a"];
+    assert.equal(project.start, undefined);
+    assert.equal(project.root, join(home, "alpha"));
+    // `~someone` names another account; the server passes it through as typed.
+    prepared.length = 0;
+    await command(WORKSPACE_OPERATIONS.projectRootUpdate, { projectId: "project-a", root: "~someone" }).catch(() => {});
+    assert.equal(prepared[0]?.root, "~someone");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a typed ~ root is refused when the server home is unavailable", async () => {
+  const workspace = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const prepared = [];
+  const registry = createWorkspaceOperationRegistry(workspace, {
+    eventJournal: new OrderedEventJournal(),
+    defaultProjectRoot: async () => tmpdir(),
+    rootFolders: new RootFolderBrowser({ homeDirectory: async () => null }),
+    prepareProjectRootUpdate: async (_projectId, root) => {
+      prepared.push(root);
+      return { canonicalRoot: root, commit: () => {} };
+    },
+  });
+  const viewId = workspace.state.viewOrder[0];
+  const context = { authScope: "write", clientId: "client-a", connectionId: "connection-a", signal: new AbortController().signal, clientCapabilities: STARTS };
+  await registry.operations.commands[WORKSPACE_OPERATIONS.command]({
+    body: new Uint8Array(), context,
+    envelope: { commandId: `c-${++serial}`, operation: WORKSPACE_OPERATIONS.command, payload: { command: { type: "project.create", projectId: "project-a", viewId, root: tmpdir() } } },
+  });
+  prepared.length = 0;
+  await refused(registry.operations.commands[WORKSPACE_OPERATIONS.projectRootUpdate]({
+    body: new Uint8Array(), context,
+    envelope: { commandId: `c-${++serial}`, operation: WORKSPACE_OPERATIONS.projectRootUpdate, payload: { projectId: "project-a", root: "~/x" } },
+  }), "not_found", "path_missing");
+  assert.deepEqual(prepared, []);
+});
+
+test("a start choice of ~ or ~/folder resolves to the verified home on the server", async () => {
+  const { home, cleanup } = await folders();
+  try {
+    const { workspace, create, start } = harness({ home, prepare: true });
+    await create("project-a");
+    await create("project-b");
+    const answer = await start("project-a", { kind: "folder", path: "~/alpha" });
+    assert.equal(answer.result.root, join(home, "alpha"));
+    await start("project-b", { kind: "folder", path: "~" });
+    assert.equal(workspace.state.projects["project-b"].root, home);
+    assert.equal(workspace.state.projects["project-b"].rootOrigin, "explicit");
+  } finally {
+    await cleanup();
+  }
+});
+
 test("a project-claimed connection is never shown the server's recent folders", async () => {
   const { registry, viewId, query } = harness();
   registry.applyHostCommand("p", { type: "project.create", projectId: "project-a", viewId, root: "/srv/start" });

@@ -667,7 +667,7 @@ async function updateProjectRoot(
 		throw protocolError('unavailable', 'project root updates are unavailable');
 	const payload = objectPayload(request.envelope.payload);
 	const projectId = stringField(payload.projectId, 'projectId');
-	const root = rootField(payload.root);
+	const root = await expandRootHome(options, rootField(payload.root));
 	const expectedRevision =
 		payload.expectedRevision === undefined
 			? request.envelope.expectedRevision
@@ -1426,6 +1426,23 @@ function stringField(value: JsonValue | undefined, name: string): string {
 	if (typeof value !== 'string' || value.length === 0 || value.length > 128)
 		throw protocolError('validation', `${name} is invalid`);
 	return value;
+}
+
+/**
+ * A typed `~` or `~/…` root names the verified account home of this server,
+ * expanded here and never by the client (the same rule the root browser uses).
+ */
+async function expandRootHome(
+	options: WorkspaceOperationRegistryOptions,
+	root: string,
+): Promise<string> {
+	if (options.rootFolders === undefined) return root;
+	try {
+		return await options.rootFolders.expandHome(root);
+	} catch (error) {
+		if (error instanceof RootFolderError) throw error.toProtocolError();
+		throw error;
+	}
 }
 
 function rootField(value: JsonValue | undefined): string {
