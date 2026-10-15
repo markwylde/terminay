@@ -446,3 +446,25 @@ test('filtering narrows folders with their panels', () => {
 	);
 	assert.deepEqual(empty[0].projects[0].panels, []);
 });
+
+test('an untracked terminal is listed idle and counted idle', async () => {
+	const { buildProjectInventoryEntries } = await import('../src/workspace/workspaceInventory.ts');
+	const entries = buildProjectInventoryEntries({
+		agentIntegrationEnabled: true,
+		panels: [
+			{ id: 'panel-a', title: 'caffeinate', params: { activityIndicatorsEnabled: false, sessionId: 's-a', terminalActivityState: 'recent' } },
+			{ id: 'panel-b', title: 'build', params: { sessionId: 's-b', terminalActivityState: 'recent' } },
+		],
+		project: { color: paged.color, emoji: paged.emoji, id: 'p1', title: 'Paged' },
+	});
+	const [group] = buildCompactSwitcherGroups({
+		sources: [source('local', 'Local', [paged], { p1: entries })],
+	});
+	const project = group.projects[0];
+	assert.deepEqual(
+		project.panels.map((row) => [row.title, row.state]),
+		[['caffeinate', 'idle'], ['build', 'working']],
+	);
+	assert.equal(project.summary.working, 1);
+	assert.equal(project.summary.idle, 1);
+});

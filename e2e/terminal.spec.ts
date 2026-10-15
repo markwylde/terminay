@@ -1606,7 +1606,7 @@ test.describe('terminal behavior', () => {
 
 		await quietTab.click({ button: 'right' });
 		await contextMenuItem(mainWindow, 'Open Settings').click();
-		const activitySwitch = mainWindow.getByLabel('Enable activity indicators');
+		const activitySwitch = mainWindow.getByLabel('Track activity');
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
 		await submitEditWindow(mainWindow);

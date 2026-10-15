@@ -160,7 +160,11 @@ import {
 	TerminalTitleService,
 	terminalTitleEventProjector,
 } from './terminalTitles.js';
-import { isAutomationSpace, WorkspaceStore } from './workspace.js';
+import {
+	isAutomationSpace,
+	untrackedTerminalSessionIds,
+	WorkspaceStore,
+} from './workspace.js';
 import {
 	restoreWorkspaceOnStartup,
 	type WorkspaceStartupRestoreOptions,
@@ -1226,10 +1230,28 @@ export function createServerCoreComposition(
 		activity === undefined
 			? undefined
 			: (options.notifications ?? new NotificationManager());
+	const workspaceForTracking = options.workspace;
 	const unbindNotifications =
 		activity === undefined || notifications === undefined
 			? undefined
-			: bindNotificationsToActivity(notifications, activity);
+			: bindNotificationsToActivity(
+					notifications,
+					activity,
+					workspaceForTracking === undefined
+						? undefined
+						: {
+								untrackedSessionIds: () =>
+									untrackedTerminalSessionIds(workspaceForTracking.state),
+								subscribe: (listener) => workspaceForTracking.subscribe(listener),
+								acknowledge: (identity) => {
+									// The agent authority also marks its own entries read.
+									// Passive: it is not interaction, so what a process sent stays.
+									if (options.agents?.isSessionActive(identity) === true)
+										options.agents.acknowledge(identity, undefined, { passive: true });
+									else activity.acknowledge(identity, undefined, { passive: true });
+								},
+							},
+				);
 	const notificationOperations =
 		activity === undefined || notifications === undefined
 			? undefined

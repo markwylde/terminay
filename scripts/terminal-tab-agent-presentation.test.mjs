@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-const { visibleTerminalTabAgentState } = await importPresentation();
+const { trackedTerminalTabAgentState, visibleTerminalTabAgentState } =
+	await importPresentation();
 
 test('acknowledged done and attention glyphs are hidden; working stays', () => {
 	assert.equal(visibleTerminalTabAgentState('done', false), undefined);
@@ -13,6 +14,20 @@ test('acknowledged done and attention glyphs are hidden; working stays', () => {
 	assert.equal(visibleTerminalTabAgentState('blocked', false), undefined);
 	assert.equal(visibleTerminalTabAgentState('working', false), 'working');
 	assert.equal(visibleTerminalTabAgentState('working', true), 'working');
+});
+
+test('an untracked tab presents no agent state', () => {
+	for (const agentState of ['working', 'waiting', 'blocked', 'done']) {
+		assert.equal(
+			trackedTerminalTabAgentState({
+				activityIndicatorsEnabled: false,
+				agentState,
+			}),
+			undefined,
+		);
+		assert.equal(trackedTerminalTabAgentState({ agentState }), agentState);
+	}
+	assert.equal(trackedTerminalTabAgentState(undefined), undefined);
 });
 
 test('unacknowledged done and attention glyphs remain', () => {

@@ -191,6 +191,11 @@
 	background: rgba(232, 185, 49, 0.16);
 }
 
+.workspace-dashboard__summary-chip--untracked {
+	color: rgba(220, 226, 240, 0.55);
+	background: rgba(255, 255, 255, 0.05);
+}
+
 .workspace-dashboard__summary-chip--done {
 	color: #8fe0ab;
 	background: rgba(69, 200, 116, 0.16);
@@ -403,21 +408,31 @@
 	min-height: 0;
 	min-width: 0;
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
+	grid-template-columns: repeat(5, minmax(0, 1fr));
 	gap: 10px;
 	padding: 12px 14px 16px;
 	overflow: hidden;
 }
 
+.workspace-dashboard__board--untracked-collapsed {
+	grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
 @media (max-width: 900px) {
-	.workspace-dashboard__board {
+	.workspace-dashboard__board,
+	.workspace-dashboard__board--untracked-collapsed {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		overflow-y: auto;
+	}
+
+	.workspace-dashboard__board .workspace-dashboard__column--untracked {
+		grid-column: 1 / -1;
 	}
 }
 
 @media (max-width: 520px) {
-	.workspace-dashboard__board {
+	.workspace-dashboard__board,
+	.workspace-dashboard__board--untracked-collapsed {
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
@@ -462,6 +477,58 @@
 
 .workspace-dashboard__column--done .workspace-dashboard__column-name {
 	color: #8fe0ab;
+}
+
+/* Untracked: a column for tabs whose activity is not watched. Closed, it is a
+   narrow strip that still names itself and its count. */
+.workspace-dashboard__untracked-toggle {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+	min-width: 0;
+	cursor: pointer;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.workspace-dashboard__untracked-toggle:focus-visible {
+	outline: 1px solid rgba(120, 170, 255, 0.75);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.workspace-dashboard__untracked-toggle .workspace-dashboard__column-name {
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.workspace-dashboard__untracked-toggle:hover .workspace-dashboard__column-name {
+	color: rgba(220, 226, 240, 0.75);
+}
+
+@media (min-width: 901px) {
+	.workspace-dashboard__column--collapsed .workspace-dashboard__column-head {
+		border-bottom: none;
+		padding: 9px 8px;
+	}
+
+	.workspace-dashboard__column--collapsed .workspace-dashboard__untracked-toggle {
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.workspace-dashboard__column--collapsed
+		.workspace-dashboard__untracked-toggle
+		.workspace-dashboard__column-name {
+		writing-mode: vertical-rl;
+	}
+
+	.workspace-dashboard__column--collapsed
+		.workspace-dashboard__untracked-toggle
+		.workspace-dashboard__column-count {
+		margin-left: 0;
+	}
 }
 
 .workspace-dashboard__column-count {
@@ -513,7 +580,7 @@
 	z-index: 1;
 	flex: 0 0 auto;
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
+	grid-template-columns: repeat(5, minmax(0, 1fr));
 	gap: 10px;
 	padding-top: 12px;
 	background: var(--terminal-panel-surface, #0f1318);
@@ -566,7 +633,7 @@
 
 .workspace-dashboard__lane-cells {
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
+	grid-template-columns: repeat(5, minmax(0, 1fr));
 	gap: 10px;
 	padding: 8px 0;
 }
@@ -581,6 +648,13 @@
 
 .workspace-dashboard__lane-cell-label {
 	display: none;
+}
+
+@media (min-width: 901px) {
+	.workspace-dashboard__lanes--untracked-collapsed .workspace-dashboard__lanes-head,
+	.workspace-dashboard__lanes--untracked-collapsed .workspace-dashboard__lane-cells {
+		grid-template-columns: repeat(4, minmax(0, 1fr)) 7em;
+	}
 }
 
 @media (max-width: 900px) {
@@ -602,6 +676,10 @@
 
 	.workspace-dashboard__lane-cell-label {
 		display: block;
+	}
+
+	.workspace-dashboard__untracked-toggle.workspace-dashboard__lane-cell-label {
+		display: flex;
 	}
 }
 

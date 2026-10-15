@@ -14,6 +14,7 @@
 
 import {
 	agentModelLabel,
+	isUntrackedAgent,
 	resolveAgentPresentation,
 } from '../agents/agentPresentation.ts';
 import type { AgentState, AgentStatusEntry } from '../types/agentStatus';
@@ -31,6 +32,9 @@ export type DashboardStatusCounts = {
 	attention: number;
 	done: number;
 	panels: number;
+	/** Terminals with Track activity off, and the agents in them. Counted
+	 * here and nowhere else. */
+	untracked: number;
 	working: number;
 };
 
@@ -62,6 +66,8 @@ export type DashboardAgent = {
 	/** Every descendant, not only the immediate children. */
 	subagentCount: number;
 	unread: boolean;
+	/** Its terminal has Track activity off: it shows no state. */
+	untracked?: true;
 	waitingReason?: string;
 };
 
@@ -89,6 +95,8 @@ export type DashboardPanelRow = {
 	sessionId?: string;
 	status: DashboardStatus;
 	title: string;
+	/** Track activity is off: always idle, and on the Board, Untracked. */
+	untracked?: true;
 };
 
 export type DashboardRow = DashboardProjectRow | DashboardPanelRow;
@@ -181,6 +189,7 @@ function toDashboardAgent(
 			0,
 		),
 		unread: entry.unread,
+		...(isUntrackedAgent(entry) ? { untracked: true as const } : {}),
 		...(presentation.metadata === undefined
 			? {}
 			: { metadata: presentation.metadata }),
@@ -249,20 +258,25 @@ function countStatuses(
 		attention: 0,
 		done: 0,
 		panels: entries.length,
+		untracked: 0,
 		working: 0,
 	};
 	// A panel and the agent inside it are one thing to attend to, so a panel is
 	// counted once by its own canonical status — which is already its agent's
 	// state when an agent owns it. Only an agent with no panel here adds a count
-	// of its own.
+	// of its own. An untracked one counts only as untracked.
 	const statuses = [
-		...entries.map((entry) => dashboardStatusFor(entry.status)),
+		...entries.map((entry) =>
+			entry.untracked ? 'untracked' : dashboardStatusFor(entry.status),
+		),
 		...detachedAgents
 			.filter((agent) => !agent.external)
-			.map((agent) => agent.state),
+			.map((agent) => (agent.untracked ? 'untracked' : agent.state)),
 	];
 	for (const status of statuses) {
-		if (status === 'waiting' || status === 'blocked') counts.attention += 1;
+		if (status === 'untracked') counts.untracked += 1;
+		else if (status === 'waiting' || status === 'blocked')
+			counts.attention += 1;
 		else if (status === 'working') counts.working += 1;
 		else if (status === 'done') counts.done += 1;
 	}
@@ -328,6 +342,7 @@ export function buildDashboardGroups(
 				projectId: project.id,
 				status: dashboardStatusFor(entry.status),
 				title: entry.title,
+				...(entry.untracked ? { untracked: true as const } : {}),
 				...(entry.folderId === undefined ? {} : { folderId: entry.folderId }),
 				...(entry.sessionId === undefined
 					? {}
@@ -378,6 +393,7 @@ export type DashboardSummary = {
 	done: number;
 	idle: number;
 	projects: number;
+	untracked: number;
 	working: number;
 };
 
@@ -395,15 +411,23 @@ export function summarizeDashboard(
 		done: 0,
 		idle: 0,
 		projects: groups.length,
+		untracked: 0,
 		working: 0,
 	};
 	for (const group of groups) {
-		const { attention, done, panels, working } = group.project.counts;
+		const { attention, done, panels, untracked, working } =
+			group.project.counts;
 		summary.attention += attention;
 		summary.done += done;
+		summary.untracked += untracked;
 		summary.working += working;
 		summary.idle +=
-			panels + group.detachedAgents.length - attention - done - working;
+			panels +
+			group.detachedAgents.length -
+			attention -
+			done -
+			untracked -
+			working;
 	}
 	return summary;
 }

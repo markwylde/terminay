@@ -36,14 +36,17 @@ function isAttention(kind: NotificationKind): boolean {
 /**
  * A terminal's own appearance settings can hide its activity indicator. They
  * hide its activity notification with it; what a process sent is not an
- * activity indicator and is always listed.
+ * activity indicator and is always listed. An untracked terminal raises no
+ * activity record on the server; this only covers the moment before the
+ * server's withdrawal arrives.
  */
 function isHiddenBySettings(
 	record: NotificationRecord,
 	entry: WorkspaceInventoryEntry,
 ): boolean {
+	if (record.source !== 'activity') return false;
+	if (entry.untracked) return true;
 	return (
-		record.source === 'activity' &&
 		entry.status !== 'idle' &&
 		entry.indicatorsSuppressed === true
 	);

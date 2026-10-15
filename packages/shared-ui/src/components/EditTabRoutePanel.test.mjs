@@ -15,7 +15,7 @@ test('edit-tab route panel provides one bounded project and terminal contract at
   assert.deepEqual(project.saveAction, { id: 'save-edit-tab', targetId: 'project:docs', kind: 'project', label: 'Save tab', minTouchTargetPx: EDIT_TAB_ROUTE_TOUCH_TARGET_PX })
   assert.equal(narrowTerminal.form.fields.projectColour, '#228b66')
   assert.deepEqual(narrowTerminal.form.fields.inheritProjectColourAction, { id: 'inherit-project-colour', label: 'Inherit project colour', disabled: false, minTouchTargetPx: EDIT_TAB_ROUTE_TOUCH_TARGET_PX })
-  assert.deepEqual(narrowTerminal.form.fields.activityIndicatorsEnabled, { id: 'edit-tab-activity-indicators', role: 'switch', label: 'Enable activity indicators', checked: true, disabled: false })
+  assert.deepEqual(narrowTerminal.form.fields.activityIndicatorsEnabled, { id: 'edit-tab-activity-indicators', role: 'switch', label: 'Track activity', checked: true, disabled: false })
 })
 
 test('edit-tab route panel exposes accessible loading, saving, unavailable, forbidden and retryable states', () => {
