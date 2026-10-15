@@ -77,6 +77,30 @@ export function isTerminalActivityIndicatorStateVisible(
 	return false;
 }
 
+/**
+ * An agent's state in the tab-activity vocabulary, so one set of indicator
+ * settings governs every terminal: working is active, done is finished, and
+ * waiting and blocked are attention.
+ */
+export function agentIndicatorActivityState(
+	state: AgentState,
+): TerminalActivityState | undefined {
+	if (state === 'working') return 'recent';
+	if (state === 'done') return 'unviewed';
+	if (state === 'waiting' || state === 'blocked') return 'attention';
+	return undefined;
+}
+
+export function isAgentIndicatorStateVisible(
+	state: AgentState,
+	params: PanelTabAppearance | undefined,
+): boolean {
+	return isTerminalActivityIndicatorStateVisible(
+		agentIndicatorActivityState(state),
+		params,
+	);
+}
+
 export type WorkspaceInventoryPanelKind = 'terminal' | 'file' | 'folder';
 
 export type WorkspaceInventoryStatus = 'idle' | TerminalActivityOverviewState;
@@ -192,6 +216,7 @@ export function buildProjectInventoryEntries(options: {
 			entries.push({
 				...base,
 				agentUnread: params?.agentUnread === true,
+				indicatorsSuppressed: !isAgentIndicatorStateVisible(agentState, params),
 				isAgentStatus: true,
 				...(params?.agentStateSince === undefined
 					? {}
@@ -226,11 +251,11 @@ export function buildProjectInventoryEntries(options: {
 }
 
 /**
- * The predicate the header activity menu and the project tab badges have always
- * used: an agent-owned terminal counts while it is working, while it needs
- * attention, and once it is done but unread; any other terminal counts only
- * while its own indicator settings would show its state. File and folder panels
- * have never had activity and never count.
+ * The predicate the header activity menu and the project tab badges use: an
+ * agent-owned terminal counts while it is working, while it needs attention,
+ * and once it is done but unread; every terminal counts only while its own
+ * indicator settings would show its state. File and folder panels have never
+ * had activity and never count.
  */
 export function isNotableInventoryEntry(
 	entry: WorkspaceInventoryEntry,
@@ -238,12 +263,13 @@ export function isNotableInventoryEntry(
 	if (entry.kind !== 'terminal') return false;
 	if (entry.sessionId === undefined) return false;
 	if (entry.status === 'idle') return false;
+	if (entry.indicatorsSuppressed === true) return false;
 	if (entry.isAgentStatus) {
 		if (entry.status === 'working') return true;
 		if (entry.status === 'waiting' || entry.status === 'blocked') return true;
 		return entry.status === 'done' && entry.agentUnread === true;
 	}
-	return entry.indicatorsSuppressed !== true;
+	return true;
 }
 
 /**

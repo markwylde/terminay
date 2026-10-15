@@ -16,6 +16,10 @@ import {
 	type ActivityCountBadge,
 	summarizeActivityBadge,
 } from './activityCountBadge.ts';
+import {
+	isAgentIndicatorStateVisible,
+	type PanelTabAppearance,
+} from './workspaceInventory.ts';
 
 export type AgentSnapshotsByServer = Readonly<
 	Record<string, AgentStatusSnapshot>
@@ -27,7 +31,8 @@ export type AgentSnapshotsByServer = Readonly<
  * The active server's badges come from its live panel inventory, which knows
  * what every tab is doing. Another server has no inventory here, but its agent
  * projection still says which of its projects are waiting on a person — and
- * that is the thing worth crossing a server boundary to show.
+ * that is the thing worth crossing a server boundary to show. The window's
+ * indicator settings govern these badges as they govern its own tabs.
  */
 export function agentBadgesForOtherServers(
 	snapshots: AgentSnapshotsByServer,
@@ -36,6 +41,7 @@ export function agentBadgesForOtherServers(
 		serverId: string,
 		activationTerminalSessionId: string,
 	) => string | undefined,
+	appearance?: PanelTabAppearance,
 ): Readonly<Record<string, ActivityCountBadge>> {
 	const states = new Map<string, ActivityBadgeSourceState[]>();
 	for (const [serverId, snapshot] of Object.entries(snapshots)) {
@@ -45,6 +51,11 @@ export function agentBadgesForOtherServers(
 		)) {
 			// External sessions never count towards project activity.
 			if (entry.external || entry.activationTerminalSessionId === null)
+				continue;
+			if (
+				appearance !== undefined &&
+				!isAgentIndicatorStateVisible(entry.state, appearance)
+			)
 				continue;
 			const projectId = projectForSession(
 				serverId,
