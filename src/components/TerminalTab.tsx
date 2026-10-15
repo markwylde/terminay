@@ -184,12 +184,15 @@ export function TerminalTab(
 			? visibleTerminalTabAgentState(
 					params.agentState,
 					params.agentUnread === true,
+					params,
 				)
 			: fallbackAgentState;
 	const displayedAgentNeedsAttention =
 		pendingMcpApproval ||
 		(params?.agentState !== undefined
-			? params.agentNeedsAttention === true && params.agentUnread === true
+			? params.agentNeedsAttention === true &&
+				params.agentUnread === true &&
+				displayedAgentState !== undefined
 			: displayedActivityState === 'attention');
 	const displayedAgentStatusLabel = pendingMcpApproval
 		? 'Waiting for your approval'

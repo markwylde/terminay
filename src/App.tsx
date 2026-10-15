@@ -8228,8 +8228,20 @@ function App({
 				agentSnapshotsByServer,
 				currentServerId,
 				projectForSession,
+				{
+					showActiveTabActivityIndicator:
+						settings.activityIndicators.showActiveTabs,
+					showFinishedTabActivityIndicator:
+						settings.activityIndicators.showFinishedTabs,
+				},
 			),
-		[agentSnapshotsByServer, currentServerId, projectForSession],
+		[
+			agentSnapshotsByServer,
+			currentServerId,
+			projectForSession,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
+		],
 	);
 	/**
 	 * Every server's live agents, assigned to the project that owns the terminal

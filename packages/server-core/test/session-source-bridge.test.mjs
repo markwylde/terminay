@@ -269,7 +269,7 @@ test('running to idle without an end time is still a completion', async () => {
 	assert.equal(root('session-1').state, 'done');
 });
 
-test('acknowledging a done entry keeps it read; the next idle snapshot settles to idle', async () => {
+test('acknowledging a done root returns it to idle; only a later turn makes it done again', async () => {
 	const clock = { now: 1_000 };
 	const { terminal, publish, root, agents } = await fixture({
 		parents: { 500: 300 },
@@ -289,6 +289,7 @@ test('acknowledging a done entry keeps it read; the next idle snapshot settles t
 	});
 	clock.now = 3_000;
 	assert.equal(agents.acknowledge(identity, root('session-1').entryId), true);
+	assert.equal(root('session-1').state, 'idle');
 	assert.equal(root('session-1').unread, false);
 	await publish({
 		upserts: [
@@ -302,6 +303,41 @@ test('acknowledging a done entry keeps it read; the next idle snapshot settles t
 	});
 	assert.equal(root('session-1').state, 'idle');
 	assert.equal(root('session-1').unread, false);
+	await publish({ upserts: [session({ status: 'idle', title: 'Renamed' })] });
+	assert.equal(root('session-1').state, 'idle');
+	clock.now = 4_000;
+	await publish({ upserts: [session({ title: 'Renamed' })] });
+	clock.now = 5_000;
+	await publish({
+		upserts: [
+			session({
+				status: 'idle',
+				lastTurn: 'completed',
+				lastTurnEndedAt: 4_900,
+				title: 'Renamed',
+			}),
+		],
+	});
+	assert.equal(root('session-1').state, 'done');
+	assert.equal(root('session-1').unread, true);
+});
+
+test('acknowledging the terminal returns its done root to idle', async () => {
+	const clock = { now: 1_000 };
+	const { terminal, publish, root, agents } = await fixture({
+		parents: { 500: 300 },
+		clock,
+	});
+	const identity = terminal('terminal-1', 'project-1', 300);
+	await publish({ reset: [session()] });
+	clock.now = 2_000;
+	await publish({ upserts: [session({ status: 'idle' })] });
+	assert.equal(root('session-1').state, 'done');
+	clock.now = 3_000;
+	assert.equal(agents.acknowledge(identity), true);
+	assert.equal(root('session-1').state, 'idle');
+	await publish({ upserts: [session({ status: 'idle' })] });
+	assert.equal(root('session-1').state, 'idle');
 });
 
 test('waiting, blocked, failed, and interrupted map to the canonical model', async () => {

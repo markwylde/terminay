@@ -95,10 +95,14 @@ test('session status projects to the terminal indicator and Agents sidebar', asy
 		status: 'running',
 	});
 	await publish(mainWindow, [root]);
-	await expect(
-		agentTab.locator('.agent-status-indicator[data-agent-state="working"]'),
-	).toBeVisible();
 	await selectSidebarGroup(mainWindow, 'agents');
+	await expect(
+		mainWindow.locator(
+			'.agents-sidebar__tree-item .agent-status-indicator[data-agent-state="working"]',
+		),
+	).toBeVisible();
+	// Active-tab indicators are off by default, for an agent as for a shell.
+	await expect(agentTab.locator('.agent-status-indicator')).toHaveCount(0);
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText(
 		'Implement the stable agent status flow',
 	);
@@ -139,6 +143,55 @@ test('session status projects to the terminal indicator and Agents sidebar', asy
 	await expect(
 		agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
 	).toBeVisible();
+});
+
+test("clicking a done agent's tab returns it to idle everywhere", async ({
+	mainWindow,
+}) => {
+	const terminalSessionId =
+		await createTerminalAndGetActiveSessionId(mainWindow);
+	const agentTab = mainWindow
+		.locator('.terminal-tab-content')
+		.filter({ hasText: 'Terminal 2' });
+	await mainWindow
+		.locator('.terminal-tab-content')
+		.filter({ hasText: 'Terminal 1' })
+		.click();
+	const root = await sessionIn(mainWindow, terminalSessionId, {
+		id: 'codex-e2e-viewed-root',
+		title: 'Fix the flaky upload',
+		status: 'running',
+	});
+	await publish(mainWindow, [root]);
+	const finished = {
+		...root,
+		status: 'idle',
+		lastTurn: 'completed',
+		lastTurnEndedAt: Date.now(),
+	};
+	await publish(mainWindow, [finished]);
+	await selectSidebarGroup(mainWindow, 'agents');
+	const agentRow = mainWindow
+		.locator('.agents-sidebar__tree-item')
+		.filter({ hasText: 'Fix the flaky upload' });
+	await expect(
+		agentRow.locator('.agent-status-indicator[data-agent-state="done"]'),
+	).toBeVisible();
+	await expect(
+		agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
+	).toBeVisible();
+
+	await agentTab.click();
+	await expect(agentTab.locator('.agent-status-indicator')).toHaveCount(0);
+	await expect(
+		agentRow.locator('.agent-status-indicator[data-agent-state="done"]'),
+	).toHaveCount(0);
+
+	// The source reporting the same finished turn again keeps it idle.
+	await publish(mainWindow, [{ ...finished, title: 'Fix the flaky upload' }]);
+	await expect(
+		agentRow.locator('.agent-status-indicator[data-agent-state="done"]'),
+	).toHaveCount(0);
 });
 
 test('a completed agent resumes working while a second running agent appears', async ({
