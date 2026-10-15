@@ -817,9 +817,11 @@ let serverTerminalAuthority: ServerTerminalAuthority | null = null;
 // MCP authority is separate from agent-journal observation. The store retains
 // only token digests and resolves every request to immutable terminal/project
 // scope before it reaches terminal operations.
-const mcpCapabilities = new ControlCapabilityStore({
-	ttlMs: 24 * 60 * 60 * 1000,
-});
+const mcpCapabilities = new ControlCapabilityStore();
+// Capabilities live as long as their terminals. A daily prune drops any whose
+// terminal ended without its exit being seen.
+const MCP_CAPABILITY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let mcpCapabilityPruneTimer: ReturnType<typeof setInterval> | undefined;
 let mcpControlEndpoint: LocalControlEndpoint | null = null;
 let removeMcpSettingsObserver: (() => void) | undefined;
 let removeMcpApprovalRevocation: (() => void) | undefined;
@@ -2286,6 +2288,14 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		);
 		saveMcpCapabilities();
 	}
+	pruneMcpCapabilities(authority);
+	if (mcpCapabilityPruneTimer !== undefined)
+		clearInterval(mcpCapabilityPruneTimer);
+	mcpCapabilityPruneTimer = setInterval(
+		() => pruneMcpCapabilities(authority),
+		MCP_CAPABILITY_PRUNE_INTERVAL_MS,
+	);
+	mcpCapabilityPruneTimer.unref();
 	removeMcpSettingsObserver?.();
 	removeMcpSettingsObserver = embeddedServerSettings.onChange((state) => {
 		applyMcpSetting(state.settings);
@@ -3059,6 +3069,17 @@ function saveMcpCapabilities(): void {
 	}
 }
 
+function runningTerminalSessionIds(
+	authority: ServerTerminalAuthority,
+): Set<string> {
+	return new Set(
+		authority.service
+			.listSessions()
+			.filter((session) => session.status === 'running')
+			.map((session) => session.sessionId),
+	);
+}
+
 function restoreSavedMcpCapabilities(authority: ServerTerminalAuthority): void {
 	let saved: unknown;
 	try {
@@ -3067,13 +3088,15 @@ function restoreSavedMcpCapabilities(authority: ServerTerminalAuthority): void {
 		return;
 	}
 	if (!Array.isArray(saved)) return;
-	const running = new Set(
-		authority.service
-			.listSessions()
-			.filter((session) => session.status === 'running')
-			.map((session) => session.sessionId),
-	);
-	mcpCapabilities.restore(saved, running);
+	mcpCapabilities.restore(saved, runningTerminalSessionIds(authority));
+}
+
+function pruneMcpCapabilities(authority: ServerTerminalAuthority): void {
+	try {
+		mcpCapabilities.prune(runningTerminalSessionIds(authority));
+	} catch (error) {
+		console.error('[mcp] pruning terminal capabilities failed', error);
+	}
 }
 
 function getMcpEntryPath(): string {
@@ -6650,6 +6673,10 @@ const handleBeforeQuit = createGracefulQuitHandler({
 			// the saved copy stops following before that happens.
 			removeMcpCapabilityPersistence?.();
 			removeMcpCapabilityPersistence = undefined;
+			if (mcpCapabilityPruneTimer !== undefined) {
+				clearInterval(mcpCapabilityPruneTimer);
+				mcpCapabilityPruneTimer = undefined;
+			}
 			if (endTerminalsOnQuit) {
 				await serverTerminalAuthority?.endAllTerminalSessions();
 				rmSync(getMcpCapabilityFilePath(), { force: true });
