@@ -856,6 +856,8 @@ test.describe('project tabs', () => {
 		await expect(
 			mainWindow.locator('.project-tab--creation-loading'),
 		).toHaveCount(0);
+		// The project in front is the last one created, still awaiting its start.
+		await chooseProjectStart(mainWindow);
 
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
 		await nativeWindow.evaluate((window) => {
