@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, SERVER_UPGRADE_OPERATIONS } from "@terminay/protocol";
+import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, PROJECT_START_OPERATIONS, SERVER_UPGRADE_OPERATIONS } from "@terminay/protocol";
 import {
   ACTIVITY_OPERATIONS,
   NOTIFICATION_OPERATIONS,
@@ -127,6 +127,7 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.health,
         FEATURE_CAPABILITIES.macros,
         FEATURE_CAPABILITIES.notifications,
+        FEATURE_CAPABILITIES.projectStartChoice,
         FEATURE_CAPABILITIES.serverUpgrade,
         FEATURE_CAPABILITIES.settings,
         FEATURE_CAPABILITIES.terminal,
@@ -170,6 +171,15 @@ test("every stable operation name in the protocol surface maps to its own capabi
       assert.equal(capabilityOf(operation), capability, operation);
     }
   }
+  // Starting a project is a workspace command; its recent folders and the
+  // server folder browser exist only where the start choice does.
+  assert.equal(capabilityOf(PROJECT_START_OPERATIONS.start), FEATURE_CAPABILITIES.workspace);
+  for (const operation of [
+    PROJECT_START_OPERATIONS.recentList,
+    PROJECT_START_OPERATIONS.recentForget,
+    PROJECT_START_OPERATIONS.browseRootFolders,
+  ])
+    assert.equal(capabilityOf(operation), FEATURE_CAPABILITIES.projectStartChoice, operation);
   for (const operation of [
     "extensions.list",
     "extensions.install",

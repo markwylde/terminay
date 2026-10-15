@@ -5,20 +5,20 @@
 
 ## 2. Workspace model and protocol
 
-- [ ] 2.1 Add `start?: 'awaiting-choice'` to `WorkspaceProject`, `'none'` to `ProjectRootOrigin`, and `recentProjectFolders` to `WorkspaceState`, then update `PROJECT_KEYS` and the validator (`packages/server-core/src/workspace.ts`). Verify: workspace validator tests accept the new shapes and reject `start` combined with a non-`none` origin.
-- [ ] 2.2 Bump `WORKSPACE_SCHEMA_VERSION` to 7 with an additive migration. Verify: a migration test loads a v6 fixture and gets identical projects plus empty recents.
-- [ ] 2.3 Add the `projectStartChoice` feature capability and the `project.start`, `recent.forget`, `recent.list` (with availability) and `fs.browseRootFolders` message types and validators in `packages/protocol`. Verify: protocol validator tests for valid and malformed payloads.
+- [x] 2.1 Add `start?: 'awaiting-choice'` to `WorkspaceProject`, `'none'` to `ProjectRootOrigin`, and `recentProjectFolders` to `WorkspaceState`, then update `PROJECT_KEYS` and the validator (`packages/server-core/src/workspace.ts`). Verify: workspace validator tests accept the new shapes and reject `start` combined with a non-`none` origin.
+- [x] 2.2 Bump `WORKSPACE_SCHEMA_VERSION` to 7 with an additive migration. Verify: a migration test loads a v6 fixture and gets identical projects plus empty recents.
+- [x] 2.3 Add the `projectStartChoice` feature capability and the `project.start`, `recent.forget`, `recent.list` (with availability) and `fs.browseRootFolders` message types and validators in `packages/protocol`. Verify: protocol validator tests for valid and malformed payloads.
 
 ## 3. Server behaviour
 
-- [ ] 3.1 Make `project.create` without a root, on a connection that negotiated `projectStartChoice`, commit `start: 'awaiting-choice'`, `rootOrigin: 'none'`, `root: ''`. Keep today's server-default path for other connections and for explicit roots. Verify: `workspaceProtocol` tests cover both connection kinds and MCP/terminal-created projects.
-- [ ] 3.2 Implement `project.start` in the reducer: first choice wins, later choices are refused with `start_conflict`, folders are canonicalized as explicit roots, and a validation failure leaves the state unchanged. Verify: reducer tests for home, folder, conflict, and missing folder.
-- [ ] 3.3 Record recents on an explicit root from `project.start` and `project.root.update`, capped at 50, deduplicated, most recent first. `project.root.update` on an awaiting project clears `start`. Implement `recent.forget`. Verify: unit tests for ordering, dedupe, 51st eviction, forget, and no recording of server-default or no-root starts.
-- [ ] 3.4 Launch the first terminal after `project.start` through the normal launch resolver, and resolve `rootOrigin: 'none'` to the verified account home unless an explicit cwd is given. Verify: composition tests assert the PTY cwd for a no-root project equals `homeDirectory`.
-- [ ] 3.5 On restore (server and `electron/` Desktop restore path), skip the fresh terminal for projects still awaiting a choice. Verify: a restore test with one started and one awaiting project asserts exactly one terminal is launched.
-- [ ] 3.6 Implement `fs.browseRootFolders` per ADR-0066: directories only, at most 1000 entries with `truncated`, home by default, per-request canonicalization, root-change authority checked before any fs access, not registered on MCP, and typed errors for missing, unreadable, or not-a-directory paths. Verify: server-core tests covering each case, including a refused unauthorised device and an absent MCP tool.
-- [ ] 3.7 Reject Explorer, Git, watch and Documentation feature queries for a no-root project with the typed `no_project_root` error. Verify: feature-query tests.
-- [ ] 3.8 Implement `recent.list` availability as a bounded stat-only check on demand, with no polling. Verify: test with one missing folder marked unavailable.
+- [x] 3.1 Make `project.create` without a root, on a connection that negotiated `projectStartChoice`, commit `start: 'awaiting-choice'`, `rootOrigin: 'none'`, `root: ''`. Keep today's server-default path for other connections and for explicit roots. Verify: `workspaceProtocol` tests cover both connection kinds and MCP/terminal-created projects.
+- [x] 3.2 Implement `project.start` in the reducer: first choice wins, later choices are refused with `start_conflict`, folders are canonicalized as explicit roots, and a validation failure leaves the state unchanged. Verify: reducer tests for home, folder, conflict, and missing folder.
+- [x] 3.3 Record recents on an explicit root from `project.start` and `project.root.update`, capped at 50, deduplicated, most recent first. `project.root.update` on an awaiting project clears `start`. Implement `recent.forget`. Verify: unit tests for ordering, dedupe, 51st eviction, forget, and no recording of server-default or no-root starts.
+- [x] 3.4 Launch the first terminal after `project.start` through the normal launch resolver, and resolve `rootOrigin: 'none'` to the verified account home unless an explicit cwd is given. Verify: composition tests assert the PTY cwd for a no-root project equals `homeDirectory`.
+- [x] 3.5 On restore (server and `electron/` Desktop restore path), skip the fresh terminal for projects still awaiting a choice. Verify: a restore test with one started and one awaiting project asserts exactly one terminal is launched.
+- [x] 3.6 Implement `fs.browseRootFolders` per ADR-0066: directories only, at most 1000 entries with `truncated`, home by default, per-request canonicalization, root-change authority checked before any fs access, not registered on MCP, and typed errors for missing, unreadable, or not-a-directory paths. Verify: server-core tests covering each case, including a refused unauthorised device and an absent MCP tool.
+- [x] 3.7 Reject Explorer, Git, watch and Documentation feature queries for a no-root project with the typed `no_project_root` error. Verify: feature-query tests.
+- [x] 3.8 Implement `recent.list` availability as a bounded stat-only check on demand, with no polling. Verify: test with one missing folder marked unavailable.
 
 ## 4. Renderer
 

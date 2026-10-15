@@ -64,6 +64,11 @@ export function shareUnchangedWorkspaceObjects(
 		);
 	if (sameJsonValue(previous.viewOrder, snapshot.viewOrder))
 		shared.viewOrder = previous.viewOrder;
+	if (
+		previous.recentProjectFolders !== undefined &&
+		sameJsonValue(previous.recentProjectFolders, snapshot.recentProjectFolders)
+	)
+		shared.recentProjectFolders = previous.recentProjectFolders;
 	return shared as unknown as ServerWorkspaceSnapshot;
 }
 
@@ -100,6 +105,8 @@ function applyRecord(
 		next[collection] = members;
 	}
 	if (record.viewOrder !== undefined) next.viewOrder = record.viewOrder;
+	if (record.recentProjectFolders !== undefined)
+		next.recentProjectFolders = record.recentProjectFolders;
 	return next as unknown as ServerWorkspaceSnapshot;
 }
 

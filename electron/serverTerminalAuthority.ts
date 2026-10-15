@@ -1384,6 +1384,9 @@ export class ServerTerminalAuthority {
 	private async rebuildProjectBindings(): Promise<ReadonlySet<string>> {
 		const unavailableProjectIds = new Set<string>();
 		for (const project of Object.values(this.workspace.state.projects)) {
+			// A project with no root folder, or one awaiting its start choice,
+			// has nothing to bind until it is given a root.
+			if (project.rootOrigin === 'none') continue;
 			try {
 				await this.registerProjectRoot(project.id, project.root);
 			} catch (error) {
@@ -1807,7 +1810,8 @@ export class ServerTerminalAuthority {
 		const project = this.workspace.state.projects[options.projectId];
 		if (project === undefined)
 			throw new Error('workspace project was not created');
-		await this.registerProjectRoot(options.projectId, project.root);
+		if (project.rootOrigin !== 'none')
+			await this.registerProjectRoot(options.projectId, project.root);
 		const requestedId = options.sessionId;
 		if (requestedId !== undefined)
 			this.buffers.set(requestedId, this.createRecentOutput());
