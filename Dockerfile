@@ -21,6 +21,7 @@ COPY apps/terminay-server/package.json ./apps/terminay-server/package.json
 COPY apps/terminay-web/package.json ./apps/terminay-web/package.json
 COPY extensions/builtin-agents/package.json ./extensions/builtin-agents/package.json
 COPY extensions/gitea/package.json ./extensions/gitea/package.json
+COPY extensions/github/package.json ./extensions/github/package.json
 COPY extensions/language-typescript/package.json ./extensions/language-typescript/package.json
 COPY packages/client-core/package.json ./packages/client-core/package.json
 COPY packages/cron/package.json ./packages/cron/package.json
