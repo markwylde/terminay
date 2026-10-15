@@ -10,7 +10,7 @@ import type {
   FileViewerPreviewSource,
 } from './terminay'
 
-export type FileViewerMode = 'preview' | 'tasks' | 'text' | 'hex' | 'diff'
+export type FileViewerMode = 'document' | 'preview' | 'tasks' | 'text' | 'hex' | 'diff'
 
 export type FileViewerEngine = 'auto' | 'performant' | 'monaco'
 
@@ -82,6 +82,8 @@ export type FileInfo = {
 
 export type FilePreviewCapabilities = {
   canDiff: boolean
+  /** The rich document editor: `.md` and `.mdx` text small enough to edit. */
+  canDocument: boolean
   canEditHex: boolean
   canEditText: boolean
   canPreview: boolean

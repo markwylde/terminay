@@ -14,6 +14,7 @@ type FileModeSwitcherProps = {
 
 const MODE_LABELS: Record<FileViewerMode, string> = {
   diff: 'Diff',
+  document: 'Document',
   hex: 'HEX',
   preview: 'Preview',
   tasks: 'Tasks',

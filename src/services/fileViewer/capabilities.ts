@@ -13,6 +13,8 @@ export const LARGE_FILE_THRESHOLD_BYTES = 100 * 1024 * 1024
 export const MAX_MONACO_FILE_BYTES = 128 * 1024 * 1024
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', '.mdx'])
+/** Files the rich document editor opens. Other Markdown spellings stay on Preview. */
+const DOCUMENT_NAME = /\.mdx?$/iu
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
   '.avif',
@@ -111,6 +113,7 @@ export function isTextLikeFile(file: FileInfo): boolean {
  */
 function resolveViewModes(input: {
   canDiff: boolean
+  canDocument: boolean
   canEditHex: boolean
   canEditText: boolean
   canPreview: boolean
@@ -125,7 +128,12 @@ function resolveViewModes(input: {
   }
 
   const primaryModes: FileViewerMode[] = input.canTasks
-    ? [...(input.canPreview ? (['preview'] as const) : []), 'tasks', 'text']
+    ? [
+        ...(input.canDocument ? (['document'] as const) : []),
+        ...(input.canPreview ? (['preview'] as const) : []),
+        'tasks',
+        'text',
+      ]
     : input.previewLeads && input.canPreview
       ? ['preview', 'text']
       : ['text', ...(input.canPreview ? (['preview'] as const) : [])]
@@ -151,8 +159,11 @@ export function detectFileCapabilities(
   const canUseMonaco = canEditText && file.size <= MAX_MONACO_FILE_BYTES
   const canEditHex = !file.isDirectory && (serverCapabilities?.canEditHex ?? true)
   const canDiff = !file.isDirectory && canEditText
+  const canDocument =
+    canEditText && DOCUMENT_NAME.test(file.name) && file.size <= LARGE_FILE_THRESHOLD_BYTES
   const { primaryModes, secondaryModes } = resolveViewModes({
     canDiff,
+    canDocument,
     canEditHex,
     canEditText,
     canPreview,
@@ -163,7 +174,11 @@ export function detectFileCapabilities(
   const offered = (mode: FileViewerMode) =>
     mode !== 'diff' && (primaryModes.includes(mode) || secondaryModes.includes(mode))
   const preferredMode = serverCapabilities?.preferredMode
-  const defaultMode: FileViewerMode = preferredMode !== undefined && offered(preferredMode)
+  // The server classifies files; it does not know the document editor, so a
+  // Markdown file it would open in Preview opens in Document instead.
+  const defaultMode: FileViewerMode = canDocument
+    ? 'document'
+    : preferredMode !== undefined && offered(preferredMode)
     ? preferredMode
     : (canTasks || (previewKind === 'html' && serverCapabilities === undefined)) && canPreview
       ? 'preview'
@@ -175,6 +190,7 @@ export function detectFileCapabilities(
 
   return {
     canDiff,
+    canDocument,
     canEditHex,
     canEditText,
     canPreview,
@@ -196,6 +212,8 @@ export function isFileViewerModeAvailable(
   mode: FileViewerMode,
 ): boolean {
   switch (mode) {
+    case 'document':
+      return capabilities.canDocument
     case 'preview':
       return capabilities.canPreview
     case 'tasks':
