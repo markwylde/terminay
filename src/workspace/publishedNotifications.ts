@@ -44,7 +44,6 @@ function isHiddenBySettings(
 ): boolean {
 	return (
 		record.source === 'activity' &&
-		!entry.isAgentStatus &&
 		entry.status !== 'idle' &&
 		entry.indicatorsSuppressed === true
 	);

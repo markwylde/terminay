@@ -133,7 +133,7 @@ export class AgentStatusStore {
 		if (!entry || !Number.isFinite(acknowledgedAt)) return false;
 		// Acknowledging an already-read entry is intentionally a no-op, so a
 		// duplicate acknowledgement from another client creates no revision.
-		if (!entry.unread) return false;
+		if (!needsAcknowledgement(entry)) return false;
 		return this.apply([acknowledged(entry, acknowledgedAt)]);
 	}
 
@@ -145,7 +145,7 @@ export class AgentStatusStore {
 		const entries = selectAgentStatusesForTerminal(
 			this.snapshot,
 			terminalSessionId,
-		).filter((entry) => entry.unread);
+		).filter(needsAcknowledgement);
 		if (entries.length === 0) return 0;
 		this.apply(entries.map((entry) => acknowledged(entry, acknowledgedAt)));
 		return entries.length;
@@ -174,15 +174,28 @@ export class AgentStatusStore {
 	}
 }
 
+/** A `done` root marks a result the user has not seen yet, so seeing it
+ * returns the root to `idle`, as a viewed terminal loses its finished dot. */
+function isUnseenResult(entry: AgentStatusEntry): boolean {
+	return entry.kind === 'root' && entry.state === 'done';
+}
+
+function needsAcknowledgement(entry: AgentStatusEntry): boolean {
+	return entry.unread || isUnseenResult(entry);
+}
+
 function acknowledged(
 	entry: AgentStatusEntry,
 	acknowledgedAt: number,
 ): AgentStatusEntry {
-	return {
+	const next: AgentStatusEntry = {
 		...entry,
 		unread: false,
 		acknowledgedAt: Math.max(entry.acknowledgedAt ?? -Infinity, acknowledgedAt),
 	};
+	if (!isUnseenResult(entry)) return next;
+	const { completionOutcome: _outcome, summary: _summary, ...rest } = next;
+	return { ...rest, state: 'idle', stateStartedAt: acknowledgedAt };
 }
 
 function sameEntry(left: AgentStatusEntry, right: AgentStatusEntry): boolean {

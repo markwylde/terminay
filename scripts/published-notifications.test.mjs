@@ -171,7 +171,7 @@ test("a terminal's indicator settings hide its activity notification but not wha
 		items.map((item) => item.notificationId),
 		['n-2'],
 	);
-	// An agent's terminal is governed by agent status, not the indicator settings.
+	// An agent's terminal follows the same indicator settings.
 	assert.equal(
 		publishedNotificationItems(
 			snapshot(record('n-3', 'agent', 'agent-finished')),
@@ -183,7 +183,7 @@ test("a terminal's indicator settings hide its activity notification but not wha
 				}),
 			],
 		).length,
-		1,
+		0,
 	);
 });
 

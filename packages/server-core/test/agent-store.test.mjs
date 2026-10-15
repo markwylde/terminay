@@ -74,6 +74,57 @@ test('acknowledgement clears unread once and records when', () => {
 	assert.equal(store.getSnapshot().entries.e2.unread, false);
 });
 
+test('acknowledging a done root returns it to idle', () => {
+	const store = new AgentStatusStore();
+	store.apply([
+		entry({ completionOutcome: 'success', summary: 'finished' }),
+		entry({ entryId: 'e2', activationTerminalSessionId: 'terminal-2' }),
+	]);
+	assert.equal(store.markAcknowledged('e1', 50), true);
+	const first = store.getSnapshot().entries.e1;
+	assert.equal(first.state, 'idle');
+	assert.equal(first.unread, false);
+	assert.equal(first.stateStartedAt, 50);
+	assert.equal(first.completionOutcome, undefined);
+	assert.equal(first.summary, undefined);
+	assert.equal(store.markTerminalAcknowledged('terminal-2', 60), 1);
+	assert.equal(store.getSnapshot().entries.e2.state, 'idle');
+});
+
+test('a done root that is already read is still returned to idle', () => {
+	const store = new AgentStatusStore();
+	store.apply([
+		entry({ unread: false }),
+		entry({
+			entryId: 'e2',
+			unread: false,
+			activationTerminalSessionId: 'terminal-2',
+		}),
+	]);
+	assert.equal(store.markAcknowledged('e1', 50), true);
+	assert.equal(store.getSnapshot().entries.e1.state, 'idle');
+	assert.equal(store.markTerminalAcknowledged('terminal-2', 60), 1);
+	assert.equal(store.getSnapshot().entries.e2.state, 'idle');
+});
+
+test('acknowledgement keeps every other state and a done subagent', () => {
+	const store = new AgentStatusStore();
+	store.apply([
+		entry({ state: 'waiting' }),
+		entry({ entryId: 'e2', state: 'blocked' }),
+		entry({ entryId: 'e3', state: 'working', unread: false }),
+		entry({ entryId: 'e4', kind: 'subagent', parentEntryId: 'e1' }),
+	]);
+	assert.equal(store.markTerminalAcknowledged('terminal-1', 50), 3);
+	const entries = store.getSnapshot().entries;
+	assert.equal(entries.e1.state, 'waiting');
+	assert.equal(entries.e2.state, 'blocked');
+	assert.equal(entries.e3.state, 'working');
+	assert.equal(entries.e3.acknowledgedAt, undefined);
+	assert.equal(entries.e4.state, 'done');
+	assert.equal(entries.e4.unread, false);
+});
+
 test('clear empties the snapshot in one revision', () => {
 	const store = new AgentStatusStore();
 	store.apply([entry()]);

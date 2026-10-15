@@ -100,7 +100,7 @@ test('out-of-order sequence or timestamp is rejected without publishing', () => 
 	);
 });
 
-test('acknowledgement and unread are independent from operational state', () => {
+test('acknowledging a done root returns it to idle; other states are untouched', () => {
 	const store = new AgentStatusStore();
 	store.dispatch(event('turn.started', 1, 100));
 	store.dispatch(
@@ -110,19 +110,27 @@ test('acknowledgement and unread are independent from operational state', () => 
 	let root = selectRootAgentStatuses(store.getSnapshot())[0];
 	assert.equal(root.state, 'done');
 	assert.equal(root.unread, true);
-	const stateStartedAt = root.stateStartedAt;
 
 	assert.equal(store.markAcknowledged(root.entryId, 250), true);
 	root = selectRootAgentStatuses(store.getSnapshot())[0];
-	assert.equal(root.state, 'done');
-	assert.equal(root.stateStartedAt, stateStartedAt);
+	assert.equal(root.state, 'idle');
+	assert.equal(root.stateStartedAt, 250);
+	assert.equal(root.completionOutcome, undefined);
+	assert.equal(root.summary, undefined);
 	assert.equal(root.unread, false);
 	assert.equal(root.acknowledgedAt, 250);
 
-	store.dispatch(event('turn.started', 3, 300));
+	store.dispatch(event('agent.metadata', 3, 270, { displayName: 'Renamed' }));
+	assert.equal(selectRootAgentStatuses(store.getSnapshot())[0].state, 'idle');
+
+	store.dispatch(event('turn.started', 4, 300));
 	root = selectRootAgentStatuses(store.getSnapshot())[0];
 	assert.equal(root.state, 'working');
 	assert.equal(root.unread, false);
+
+	store.dispatch(event('wait.started', 5, 400, { state: 'waiting' }));
+	assert.equal(store.markAcknowledged(root.entryId, 450), true);
+	assert.equal(selectRootAgentStatuses(store.getSnapshot())[0].state, 'waiting');
 });
 
 test('wait lifecycle distinguishes waiting and blocked and remains unread until acknowledged', () => {
@@ -350,7 +358,7 @@ test('subscriptions receive immutable snapshots and selectors are deterministic'
 	);
 });
 
-test('markTerminalAcknowledged clears all unread entries without changing their states', () => {
+test('markTerminalAcknowledged clears unread entries and returns only a done root to idle', () => {
 	const store = new AgentStatusStore();
 	const revisions = [];
 	store.subscribe((snapshot) => revisions.push(snapshot.revision));
@@ -374,7 +382,7 @@ test('markTerminalAcknowledged clears all unread entries without changing their 
 		selectAgentStatusesForTerminal(store.getSnapshot(), 'terminal-1').map(
 			(entry) => entry.state,
 		),
-		['done', 'done'],
+		['idle', 'done'],
 	);
 });
 

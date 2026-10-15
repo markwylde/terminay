@@ -85,6 +85,23 @@ test('badges from other servers are keyed by server and skip the active one', ()
 		['server-a:project-1', 'server-b:project-1'],
 	)
 	assert.deepEqual(crossServerAgentStates(snapshots).sort(), ['waiting', 'working'])
+	// The window's indicator settings govern these badges as they do its own tabs.
+	assert.deepEqual(
+		Object.keys(
+			agentBadgesForOtherServers(snapshots, undefined, projectOf, {
+				showActiveTabActivityIndicator: false,
+			}),
+		),
+		['server-a:project-1'],
+	)
+	assert.deepEqual(
+		Object.keys(
+			agentBadgesForOtherServers(snapshots, undefined, projectOf, {
+				showActiveTabActivityIndicator: true,
+			}),
+		).sort(),
+		['server-a:project-1', 'server-b:project-1'],
+	)
 })
 
 test('an agent whose terminal is not in its server workspace is not badged', () => {
