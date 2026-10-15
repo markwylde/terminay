@@ -75,17 +75,23 @@ export type ProjectCreationSteps = Readonly<{
 	resynchronise: () => Promise<ResynchronisedProject>;
 	/** The server has the project; the pending tab can bind to it. */
 	onProjectCreated?: () => void;
+	/**
+	 * Whether the server holds the created project awaiting a start choice.
+	 * Such a project gets no terminal here: its start choice launches one.
+	 */
+	awaitsStartChoice?: () => Promise<boolean>;
 }>;
 
 /**
  * Create a project and its first terminal, exactly once, however many times
- * the connection is replaced underneath. Resolves with the terminal session.
+ * the connection is replaced underneath. Resolves with the terminal session,
+ * or with `null` for a project the server holds awaiting a start choice.
  * Rejects with the server's own error when it refuses, and with the plain
  * unconfirmed message when recovery gives up.
  */
 export async function createProjectAcrossReconnects(
 	steps: ProjectCreationSteps,
-): Promise<string> {
+): Promise<string | null> {
 	let interruptions = 0;
 	const interrupted = async (
 		done: (project: NonNullable<ResynchronisedProject>) => boolean,
@@ -122,6 +128,7 @@ export async function createProjectAcrossReconnects(
 		}
 	}
 	steps.onProjectCreated?.();
+	if ((await steps.awaitsStartChoice?.()) === true) return null;
 
 	for (;;) {
 		try {

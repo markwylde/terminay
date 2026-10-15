@@ -222,3 +222,35 @@ test('a connection that is not coming back fails with the plain message', async 
 		(error: Error) => error.message === PROJECT_CREATION_UNCONFIRMED_MESSAGE,
 	);
 });
+
+test('a project the server holds awaiting a start choice gets no terminal', async () => {
+	const server = createServer();
+	const sessionId = await createProjectAcrossReconnects({
+		...stepsFor(server),
+		awaitsStartChoice: async () => true,
+	});
+	assert.equal(sessionId, null);
+	assert.deepEqual(server.calls, ['create']);
+	assert.equal(server.projects.size, 1);
+});
+
+test('a server without start choices still launches the first terminal', async () => {
+	const server = createServer();
+	const sessionId = await createProjectAcrossReconnects({
+		...stepsFor(server),
+		awaitsStartChoice: async () => false,
+	});
+	assert.deepEqual(server.calls, ['create', 'launch']);
+	assert.equal(server.projects.get('p1')?.terminalSessionId, sessionId);
+});
+
+test('an awaiting creation lost after the server applied it is not sent again', async () => {
+	const server = createServer();
+	server.interrupt('after-commit');
+	const sessionId = await createProjectAcrossReconnects({
+		...stepsFor(server),
+		awaitsStartChoice: async () => true,
+	});
+	assert.equal(sessionId, null);
+	assert.deepEqual(server.calls, ['create', 'resync']);
+});

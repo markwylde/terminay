@@ -28,8 +28,9 @@ test('the start choice is a versioned feature capability with stable operation n
   assert.equal(PROJECT_START_REFUSALS.noProjectRoot, 'no_project_root')
   assert.equal(MAX_RECENT_PROJECT_FOLDERS, 50)
   assert.equal(MAX_BROWSE_ROOT_FOLDER_ENTRIES, 1000)
-  // Not yet required of a server by the bundle's client.
+  // Asked of a server by the bundle's client, never required.
   assert.equal(CLIENT_SERVER_COMPATIBILITY.requiredCapabilities.includes(FEATURE_CAPABILITIES.projectStartChoice), false)
+  assert.equal(CLIENT_SERVER_COMPATIBILITY.optionalCapabilities.includes(FEATURE_CAPABILITIES.projectStartChoice), true)
 })
 
 test('project.start accepts a folder or home choice and nothing else', () => {

@@ -165,6 +165,8 @@ import {
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
+	resolveFeatureProjectRoot,
+	rootScopedFeatureAuthority,
 	isCancelledFeatureFailure,
 	isOptionalObservationFailure,
 	isTransportFeatureFailure,
@@ -252,6 +254,11 @@ import {
 	isConnectionLoss,
 	type ResynchronisedProject,
 } from './workspace/projectCreationRecovery';
+import { newProjectCreateRequest } from './workspace/projectCreationRequest';
+import { projectAwaitsStartChoice } from './workspace/projectStart';
+import { ProjectStartChooser } from './workspace/ProjectStartChooser';
+import { NoRootFolderState } from './workspace/NoRootFolderState';
+import { RootFolderBrowser } from './workspace/RootFolderBrowser';
 import { useCompactChrome } from './workspace/useCompactChrome';
 import {
 	createProjectTab,
@@ -1542,6 +1549,10 @@ const ProjectWorkspace = memo(forwardRef<
 			projectionStore,
 			(snapshot) => snapshot?.projects[project.id]?.root,
 		);
+		const projectedRootOrigin = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.rootOrigin,
+		);
 		const featureAvailability = useMemo(
 			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
 			[
@@ -1550,12 +1561,23 @@ const ProjectWorkspace = memo(forwardRef<
 				isProjectionLoaded,
 				projectedServerId,
 				projectedRoot,
+				projectedRootOrigin,
 			],
 		);
 		const featureAuthority =
 			featureAvailability.state === 'available'
 				? featureAvailability.authority
 				: undefined;
+		// A project with no root folder keeps its terminals, agents, and
+		// recordings; its Explorer, watches, Git, and Documentation get no
+		// client at all, so none of them can ask the server anything.
+		const isNoRootProject =
+			linkedFolderRoot === undefined &&
+			resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
+				.state === 'no-root';
+		const rootScopedAuthority = rootScopedFeatureAuthority(featureAvailability);
+		const [isRootFolderBrowserOpen, setIsRootFolderBrowserOpen] =
+			useState(false);
 		const explorerProjectRoot =
 			linkedFolderRoot ??
 			featureProjectRoot(featureAvailability, project.rootFolder);
@@ -1647,14 +1669,14 @@ const ProjectWorkspace = memo(forwardRef<
 			useTerminalSettings(serverSettingsClient);
 		// The macro launcher searches the project, so it keeps the project's
 		// client; the Files pane follows the folder.
-		const projectFileViewerClient = featureAuthority?.fileViewerClient;
+		const projectFileViewerClient = rootScopedAuthority?.fileViewerClient;
 		const serverFileViewerClient = useMemo(
 			() => projectFileViewerClient?.forFolder(linkedFolderId),
 			[linkedFolderId, projectFileViewerClient],
 		);
 		const explorerFileObservationClient = useMemo(
-			() => featureAuthority?.fileObservationClient?.forFolder(linkedFolderId),
-			[featureAuthority?.fileObservationClient, linkedFolderId],
+			() => rootScopedAuthority?.fileObservationClient?.forFolder(linkedFolderId),
+			[rootScopedAuthority?.fileObservationClient, linkedFolderId],
 		);
 		const activeSidebarGroup = project.sidebarActiveGroup;
 		const isDocumentationGroupVisible =
@@ -1681,9 +1703,9 @@ const ProjectWorkspace = memo(forwardRef<
 			project.isDocumentationPaneCollapsed,
 		]);
 		const documentation = useDocumentationController({
-			enabled: isDocumentationIndexingStarted,
-			client: featureAuthority?.documentationClient,
-			observationClient: featureAuthority?.fileObservationClient,
+			enabled: isDocumentationIndexingStarted && !isNoRootProject,
+			client: rootScopedAuthority?.documentationClient,
+			observationClient: rootScopedAuthority?.fileObservationClient,
 			projectId: project.id,
 			scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder,
 			expandedFolderIds: project.expandedDocumentationFolderIds,
@@ -1696,9 +1718,11 @@ const ProjectWorkspace = memo(forwardRef<
 				unavailableFileViewerClient(
 					featureAvailability.state === 'unavailable'
 						? featureAvailability.reason
-						: 'Explorer is unavailable on the selected server.',
+						: isNoRootProject
+							? 'This project has no root folder.'
+							: 'Explorer is unavailable on the selected server.',
 				),
-			[featureAvailability, serverFileViewerClient],
+			[featureAvailability, isNoRootProject, serverFileViewerClient],
 		);
 		const fileClientPath = useCallback(
 			(path: string) => getPathRelativeToRoot(path, explorerProjectRoot),
@@ -1811,6 +1835,38 @@ const ProjectWorkspace = memo(forwardRef<
 		);
 		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
 		const [errorText, setErrorText] = useState<string | null>(null);
+		// A project with no root folder is given one from the server's own
+		// folders, the same browser its start chooser opens (ADR-0066).
+		const openRootFolderBrowser = useCallback(
+			() => setIsRootFolderBrowserOpen(true),
+			[],
+		);
+		const browseRootFolders = useCallback(
+			(path?: string) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined)
+					return Promise.reject(
+						new Error('The selected server workspace is not ready.'),
+					);
+				return store.browseRootFolders(path);
+			},
+			[terminalClientContext?.workspaceSnapshotStore],
+		);
+		const chooseProjectRoot = useCallback(
+			async (root: string) => {
+				setIsRootFolderBrowserOpen(false);
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined) return;
+				try {
+					await store.setProjectRoot({ projectId: project.id, root });
+					setErrorText(null);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					setErrorText(`Unable to set the project root folder: ${message}`);
+				}
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
 		const featureFailureRef = useRef<
 			import('./shared/featureQueryAuthority').VisibleFeatureFailure | null
 		>(null);
@@ -2856,7 +2912,7 @@ const ProjectWorkspace = memo(forwardRef<
 		} = useFileExplorerController({
 			fileObservationClient: explorerFileObservationClient,
 			fileViewerClient,
-			gitClient: featureAuthority?.gitClient,
+			gitClient: rootScopedAuthority?.gitClient,
 			isServerFileViewer: true,
 			onOpenFile: openFile,
 			onOperationError: reportFeatureFailure,
@@ -5260,7 +5316,7 @@ const ProjectWorkspace = memo(forwardRef<
 							isExplorerPaneCollapsed: next,
 						});
 					},
-					actions: (
+					actions: isNoRootProject ? undefined : (
 						<button
 							type="button"
 							className="sidebar-pane__action-button"
@@ -5285,6 +5341,11 @@ const ProjectWorkspace = memo(forwardRef<
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : isNoRootProject ? (
+							<NoRootFolderState
+								pane="explorer"
+								onOpenFolder={openRootFolderBrowser}
+							/>
 						) : isWorktreeMissing ? (
 							<div className="git-panel__message">
 								This worktree&apos;s directory is missing.
@@ -5331,6 +5392,11 @@ const ProjectWorkspace = memo(forwardRef<
 					children:
 						featureAvailability.state === 'unavailable' ? (
 							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : isNoRootProject ? (
+							<NoRootFolderState
+								pane="git"
+								onOpenFolder={openRootFolderBrowser}
+							/>
 						) : (
 							<ChangesPane
 								changes={changes}
@@ -5365,7 +5431,7 @@ const ProjectWorkspace = memo(forwardRef<
 							isDocumentationPaneCollapsed:
 								!project.isDocumentationPaneCollapsed,
 						}),
-					actions: documentation.loading ? (
+					actions: isNoRootProject ? undefined : documentation.loading ? (
 						<>
 							<span
 								className="sidebar-pane__action-spinner"
@@ -5396,8 +5462,15 @@ const ProjectWorkspace = memo(forwardRef<
 							<RefreshCw size={14} aria-hidden="true" />
 						</button>
 					),
-					count: documentation.catalog?.documents.length,
-					children: (
+					count: isNoRootProject
+						? undefined
+						: documentation.catalog?.documents.length,
+					children: isNoRootProject ? (
+						<NoRootFolderState
+							pane="documentation"
+							onOpenFolder={openRootFolderBrowser}
+						/>
+					) : (
 						<DocumentationTree
 							catalog={documentation.catalog}
 							error={documentation.error}
@@ -5841,6 +5914,13 @@ const ProjectWorkspace = memo(forwardRef<
 					/>
 				) : null}
 				{folderMenuElement}
+				{isRootFolderBrowserOpen ? (
+					<RootFolderBrowser
+						browse={browseRootFolders}
+						onCancel={() => setIsRootFolderBrowserOpen(false)}
+						onChoose={(root) => void chooseProjectRoot(root)}
+					/>
+				) : null}
 				{/* A forge an extension recognised asks to be signed in to. The
 				    pull requests and checks it would bring are shown on the Folders
 				    tree, so the question does not wait for the sidebar to be open.
@@ -5996,7 +6076,9 @@ const ProjectWorkspace = memo(forwardRef<
 														projectRoot={project.rootFolder}
 														ref={firstFieldRef}
 														rootPath={
-															macroFileSearchRootPath || project.rootFolder
+															isNoRootProject
+																? ''
+																: macroFileSearchRootPath || project.rootFolder
 														}
 														value={String(value ?? '')}
 														placeholder={field.placeholder}
@@ -6647,10 +6729,7 @@ function App({
 		updateProject,
 	} = useProjectCollection<MovedTerminalTab>({
 		confirmProjectClose,
-		defaultProjectRoot:
-			workspaceSnapshot?.projects[
-				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
-			]?.root ?? '',
+		// No default root: a new project never takes another project's folder.
 		holdProjectOrderRef: draggingProjectIdRef,
 		holdActiveProjectIdRef: heldActiveProjectIdRef,
 		isAdoptWindow: false,
@@ -7189,7 +7268,7 @@ function App({
 		const projectId = `project-${Date.now().toString(36)}-${projectNumber}`;
 		const presentation = createProjectTab(
 			projectNumber,
-			homePath,
+			'',
 			projectsRef.current.map((project) => project.color),
 			settings.sidebar,
 			currentServerId,
@@ -7218,16 +7297,31 @@ function App({
 			// tab keeps loading and the creation resumes once the workspace
 			// has resynchronised, from what the server says it already has.
 			const sessionId = await createProjectAcrossReconnects({
+				// No root, whatever else is open: the server holds the project
+				// awaiting a start choice, or, for a server without one, puts it
+				// in its own default folder.
 				create: () =>
-					currentStore().createProject({
+					currentStore().createProject(
+						newProjectCreateRequest({
+							projectId,
+							viewId: boundWorkspaceViewId,
+							color: presentation.color,
+							icon: presentation.emoji,
+						}),
+					),
+				// A server that negotiated start choices holds the project
+				// awaiting one: it is ready as soon as it is committed, and its
+				// chooser, not this creation, launches its first terminal.
+				awaitsStartChoice: async () => {
+					const snapshot = await currentStore().waitForSnapshot(
+						(candidate) => candidate.projects[projectId] !== undefined,
+						{ timeoutMs: 10_000 },
+					);
+					return projectAwaitsStartChoice(
+						snapshot ?? currentStore().snapshot,
 						projectId,
-						viewId: boundWorkspaceViewId,
-						// A window with no project has no folder to reuse; the
-						// server then creates the project in its own default folder.
-						...(homePath.trim().length > 0 ? { root: homePath } : {}),
-						color: presentation.color,
-						icon: presentation.emoji,
-					}),
+					);
+				},
 				launchTerminal: () =>
 					createInitialTerminalForProjectRef.current(projectId),
 				resynchronise: () => resynchroniseCreatedProject(projectId),
@@ -7248,9 +7342,12 @@ function App({
 				// Show the project just created, including when it was created
 				// from Home.
 				activateProject(projectId);
-				window.requestAnimationFrame(() =>
-					scheduleCreatedTerminalFocus(sessionId),
-				);
+				// A project awaiting its start choice focuses its chooser's
+				// first start when it is shown.
+				if (sessionId !== null)
+					window.requestAnimationFrame(() =>
+						scheduleCreatedTerminalFocus(sessionId),
+					);
 			} else if (desiredProjectId !== null) {
 				activateProject(desiredProjectId);
 			}
@@ -7278,7 +7375,6 @@ function App({
 		boundWorkspaceViewId,
 		closeProject,
 		currentServerId,
-		homePath,
 		pendingProjectCreation,
 		resynchroniseCreatedProject,
 		projectsRef,
@@ -7287,6 +7383,33 @@ function App({
 		terminalClientContext?.workspaceSnapshotStore,
 	]);
 	createServerProjectRef.current = createServerProject;
+	// The client that made a project's start choice launches its first
+	// terminal, through the same path a new project's first terminal takes,
+	// and puts the person in it.
+	const [projectStartError, setProjectStartError] = useState<string | null>(
+		null,
+	);
+	const launchStartedProjectTerminal = useCallback((projectId: string) => {
+		setProjectStartError(null);
+		void (async () => {
+			const store =
+				creationConnectionRef.current.context?.workspaceSnapshotStore;
+			await store?.waitForSnapshot(
+				(snapshot) => !projectAwaitsStartChoice(snapshot, projectId),
+			);
+			const sessionId =
+				await createInitialTerminalForProjectRef.current(projectId);
+			window.requestAnimationFrame(() =>
+				scheduleCreatedTerminalFocus(sessionId),
+			);
+		})().catch((error: unknown) => {
+			setProjectStartError(
+				`The project started, but its terminal did not: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		});
+	}, []);
 	// Each folder's workspace publishes its own panels. The dashboard, the
 	// switcher, and the badges read a project as one list, so the folders'
 	// inventories are merged per project, in folder order, below.
@@ -9205,9 +9328,12 @@ function App({
 	});
 	mountedFoldersRef.current = nextMountedFolders;
 
+	// A project awaiting its start choice draws no workspace to take the
+	// window's shortcuts, so they are taken here as they are on Home.
 	const hasActiveProjectWorkspace =
 		!isHomeSelected &&
-		projects.some((project) => project.id === activeProjectId);
+		projects.some((project) => project.id === activeProjectId) &&
+		!projectAwaitsStartChoice(workspaceSnapshot, activeProjectId);
 
 	useEffect(() => {
 		if (hasActiveProjectWorkspace) return;
@@ -10108,6 +10234,14 @@ function App({
 						{workspaceSynchronizationError}
 					</div>
 				) : null}
+				{projectStartError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{projectStartError}
+					</div>
+				) : null}
 				{connectionFeatureError !== null ? (
 					<div
 						className="workspace-empty-state workspace-empty-state--error"
@@ -10146,6 +10280,29 @@ function App({
 					<MissedRunsNotice automations={serverAutomations} />
 					{projectFolderWorkspaces.flatMap(
 						({ project, folders, selectedFolderId }) =>
+							// A project awaiting its start choice has no panels and no
+							// sidebar: its chooser stands in for the whole workspace.
+							projectAwaitsStartChoice(workspaceSnapshot, project.id) &&
+							terminalClientContext?.workspaceSnapshotStore !== undefined ? (
+								<ProjectStartChooser
+									key={`start:${project.id}`}
+									projectId={project.id}
+									projectTitle={project.title}
+									projectColor={project.color}
+									isActive={
+										!isHomeSelected &&
+										!isPendingProjectFailure &&
+										project.id === activeProjectId
+									}
+									isCompact={isCompactChrome}
+									{...(connections.length > 1
+										? { serverLabel: currentServerLabel }
+										: {})}
+									store={terminalClientContext.workspaceSnapshotStore}
+									recentFoldersKey={workspaceSnapshot?.recentProjectFolders}
+									onStarted={launchStartedProjectTerminal}
+								/>
+							) :
 							folders.map((folder) => (
 						<ProjectWorkspace
 							key={folderWorkspaceKey(project.id, folder.id)}

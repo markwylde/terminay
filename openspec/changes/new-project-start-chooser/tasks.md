@@ -1,7 +1,7 @@
 ## 1. Stop inheriting a root (bug fix)
 
-- [ ] 1.1 Remove the first-project root from `defaultProjectRoot`/`homePath` in `src/App.tsx` (`:6679-6682`, `:7219-7221`, `:7256`) so `createServerProject` sends no root. Verify: a renderer unit test creates a project with another rooted project open and asserts the `project.create` command carries no `root`.
-- [ ] 1.2 Remove the active/first-project root fallback in `addProject` (`src/workspace/useProjectCollection.ts:457-462`). Verify: unit test asserting the disconnected path sends no inherited root.
+- [x] 1.1 Remove the first-project root from `defaultProjectRoot`/`homePath` in `src/App.tsx` (`:6679-6682`, `:7219-7221`, `:7256`) so `createServerProject` sends no root. Verify: a renderer unit test creates a project with another rooted project open and asserts the `project.create` command carries no `root`.
+- [x] 1.2 Remove the active/first-project root fallback in `addProject` (`src/workspace/useProjectCollection.ts:457-462`). Verify: unit test asserting the disconnected path sends no inherited root.
 
 ## 2. Workspace model and protocol
 
@@ -22,12 +22,12 @@
 
 ## 4. Renderer
 
-- [ ] 4.1 Build `ProjectStartChooser`, rendered in place of the Dockview when `start === 'awaiting-choice'`, with Open a folder, Home directory, the recents list with Forget, unavailable rows, the server label when several connections are attached, and focus on the first action. The sidebar stays empty. Verify: component tests for contents, keyboard navigation, the unavailable row, and focus.
-- [ ] 4.2 Build `RootFolderBrowser` in the in-page window frame (ADR-0053), backed by `fs.browseRootFolders`, with enter, parent, typed path, choose, cancel and error states. Verify: component tests with a mocked query, including truncation and the error state.
-- [ ] 4.3 Wire chooser actions to `project.start` and show conflict and validation errors inline. On success, focus the new xterm. Verify: renderer test that a `start_conflict` shows the server's state.
-- [ ] 4.4 Add the "No root folder" empty state with an Open a folder action to the Explorer (`useFileExplorerController`/`FileExplorerTree`), Git (`GitPanel`) and Documentation controllers, issuing no query when the root is `none`. Verify: unit tests assert no `listFolder`, Git, or watch call is made for a no-root project.
-- [ ] 4.5 Make sure Set Project Root and Set Root From Working Directory (`App.tsx:3020-3060`, `ConnectedWebRendererWorkspace.tsx:763`) work on no-root projects and leave no-root mode. Verify: renderer test.
-- [ ] 4.6 Fit the chooser and browser to the compact layout as a single scrolling column. Verify: compact-viewport component test asserts no horizontal overflow.
+- [x] 4.1 Build `ProjectStartChooser`, rendered in place of the Dockview when `start === 'awaiting-choice'`, with Open a folder, Home directory, the recents list with Forget, unavailable rows, the server label when several connections are attached, and focus on the first action. The sidebar stays empty. Verify: component tests for contents, keyboard navigation, the unavailable row, and focus.
+- [x] 4.2 Build `RootFolderBrowser` in the in-page window frame (ADR-0053), backed by `fs.browseRootFolders`, with enter, parent, typed path, choose, cancel and error states. Verify: component tests with a mocked query, including truncation and the error state.
+- [x] 4.3 Wire chooser actions to `project.start` and show conflict and validation errors inline. On success, focus the new xterm. Verify: renderer test that a `start_conflict` shows the server's state.
+- [x] 4.4 Add the "No root folder" empty state with an Open a folder action to the Explorer (`useFileExplorerController`/`FileExplorerTree`), Git (`GitPanel`) and Documentation controllers, issuing no query when the root is `none`. Verify: unit tests assert no `listFolder`, Git, or watch call is made for a no-root project.
+- [x] 4.5 Make sure Set Project Root and Set Root From Working Directory (`App.tsx:3020-3060`, `ConnectedWebRendererWorkspace.tsx:763`) work on no-root projects and leave no-root mode. Verify: renderer test.
+- [x] 4.6 Fit the chooser and browser to the compact layout as a single scrolling column. Verify: compact-viewport component test asserts no horizontal overflow.
 
 ## 5. End-to-end and validation
 
