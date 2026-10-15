@@ -959,16 +959,13 @@ function CanonicalFilePanel(
 				if (!isMounted) {
 					return;
 				}
-				const defaultMode =
-					rootServices.mdxPreview && /\.mdx$/iu.test(info.name)
-					? 'preview'
-					: resolveFileViewerMode(
-							capabilities,
-							getCustomDefaultMode(
-								info,
-								currentSettings.fileViewer.customFileExtensions,
-							) ?? capabilities.defaultMode,
-						);
+				const defaultMode = resolveFileViewerMode(
+					capabilities,
+					getCustomDefaultMode(
+						info,
+						currentSettings.fileViewer.customFileExtensions,
+					) ?? capabilities.defaultMode,
+				);
 				hasAppliedDefaultModeRef.current = true;
 				setMode(defaultMode);
 			}
