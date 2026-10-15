@@ -175,12 +175,10 @@ export interface ControlCapabilityLease extends ControlCapabilityScope {
 	/** The raw token is returned once at mint time and is never stored by the store. */
 	readonly token: string;
 	readonly issuedAt: number;
-	readonly expiresAt: number;
 }
 
 export interface ControlCapabilityStoreOptions {
 	readonly now?: () => number;
-	readonly ttlMs?: number;
 	readonly tokenFactory?: () => string;
 	readonly enabled?: boolean;
 }
@@ -198,7 +196,6 @@ export interface PersistedControlCapability {
 	readonly scope: ControlScope;
 	readonly reach: ControlReach;
 	readonly issuedAt: number;
-	readonly expiresAt: number;
 }
 
 /** Told the digest of each revoked capability and the terminal it was
@@ -442,6 +439,8 @@ function hashToken(token: string): Buffer {
 	return createHash('sha256').update(token, 'utf8').digest();
 }
 
+const PRUNE_GRACE_MS = 60_000;
+
 function defaultTokenFactory(): string {
 	return `tc_${randomBytes(32).toString('base64url')}`;
 }
@@ -453,18 +452,21 @@ interface StoredCapability {
 	readonly scope: ControlScope;
 	readonly reach: ControlReach;
 	readonly issuedAt: number;
-	readonly expiresAt: number;
 }
 
 /**
  * Server-owned capability storage. Only a SHA-256 digest is retained in
  * memory; the raw token is returned by mint/rotate and is not part of
  * metadata, diagnostics, or persistence APIs.
+ *
+ * A capability has no time limit. Its token reaches the terminal only through
+ * the launch environment, which cannot be updated, so it lives exactly as long
+ * as the terminal: revoked on exit, move, shutdown, or MCP disablement, and
+ * pruned when its terminal is found no longer running.
  */
 export class ControlCapabilityStore implements ControlCapabilityResolver {
 	private readonly capabilities = new Map<string, StoredCapability>();
 	private readonly now: () => number;
-	private readonly ttlMs: number;
 	private readonly tokenFactory: () => string;
 	private enabled: boolean;
 	private readonly revocationListeners =
@@ -473,10 +475,8 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 
 	constructor(options: ControlCapabilityStoreOptions = {}) {
 		this.now = options.now ?? Date.now;
-		this.ttlMs = options.ttlMs ?? 15 * 60 * 1000;
 		this.tokenFactory = options.tokenFactory ?? defaultTokenFactory;
 		this.enabled = options.enabled ?? true;
-		assertPositiveLimit(this.ttlMs, 'ttlMs');
 	}
 
 	/**
@@ -514,7 +514,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			digest = hashToken(token);
 		}
 		const issuedAt = this.now();
-		const expiresAt = issuedAt + this.ttlMs;
 		this.capabilities.set(digest.toString('hex'), {
 			digest,
 			terminalSessionId,
@@ -522,7 +521,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			scope,
 			reach,
 			issuedAt,
-			expiresAt,
 		});
 		this.changed();
 		return Object.freeze({
@@ -532,7 +530,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			scope,
 			...reachField(reach),
 			issuedAt,
-			expiresAt,
 		});
 	}
 
@@ -565,6 +562,25 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 
 	onTerminalExit(terminalSessionId: string): number {
 		return this.revokeSession(terminalSessionId);
+	}
+
+	/**
+	 * Revoke every capability whose terminal is not in `runningSessions`, so a
+	 * terminal that ended without its exit being seen leaves nothing behind.
+	 * A capability is minted before its terminal is listed as running, so one
+	 * issued within the last minute is left alone.
+	 */
+	prune(runningSessions: ReadonlySet<string>): number {
+		const issuedBefore = this.now() - PRUNE_GRACE_MS;
+		let count = 0;
+		for (const capability of [...this.capabilities.values()])
+			if (
+				capability.issuedAt <= issuedBefore &&
+				!runningSessions.has(capability.terminalSessionId) &&
+				this.revokeDigest(capability.digest)
+			)
+				count += 1;
+		return count;
 	}
 
 	revokeAll(): number {
@@ -605,10 +621,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		const digest = hashToken(token);
 		const capability = this.findByDigest(digest);
 		if (capability === undefined) return null;
-		if (capability.expiresAt <= this.now()) {
-			this.revokeDigest(capability.digest);
-			return null;
-		}
 		return {
 			terminalSessionId: capability.terminalSessionId,
 			projectId: capability.projectId,
@@ -639,28 +651,21 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	metadata(): readonly Omit<ControlCapabilityLease, 'token'>[] {
 		const result: Omit<ControlCapabilityLease, 'token'>[] = [];
 		for (const capability of this.capabilities.values()) {
-			if (capability.expiresAt <= this.now()) {
-				this.revokeDigest(capability.digest);
-				continue;
-			}
 			result.push({
 				terminalSessionId: capability.terminalSessionId,
 				projectId: capability.projectId,
 				scope: capability.scope,
 				...reachField(capability.reach),
 				issuedAt: capability.issuedAt,
-				expiresAt: capability.expiresAt,
 			});
 		}
 		return result;
 	}
 
-	/** Every unexpired capability, by digest. Raw tokens are never retained. */
+	/** Every capability, by digest. Raw tokens are never retained. */
 	snapshot(): readonly PersistedControlCapability[] {
-		const now = this.now();
 		const result: PersistedControlCapability[] = [];
 		for (const [digest, capability] of this.capabilities) {
-			if (capability.expiresAt <= now) continue;
 			result.push({
 				digest,
 				terminalSessionId: capability.terminalSessionId,
@@ -668,7 +673,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 				scope: capability.scope,
 				reach: capability.reach,
 				issuedAt: capability.issuedAt,
-				expiresAt: capability.expiresAt,
 			});
 		}
 		return result;
@@ -677,21 +681,18 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	/**
 	 * Reinstate capabilities saved by an earlier server process, for terminals
 	 * that are still running. An entry is ignored unless it is well formed,
-	 * unexpired, names a session in `runningSessions`, and that session holds
-	 * no capability already. Expiry is not extended. Returns how many were
-	 * reinstated.
+	 * names a session in `runningSessions`, and that session holds no
+	 * capability already. Returns how many were reinstated.
 	 */
 	restore(
 		entries: readonly unknown[],
 		runningSessions: ReadonlySet<string>,
 	): number {
 		if (!this.enabled) return 0;
-		const now = this.now();
 		let restored = 0;
 		for (const entry of entries) {
 			const capability = parsePersistedCapability(entry);
 			if (capability === undefined) continue;
-			if (capability.expiresAt <= now) continue;
 			if (!runningSessions.has(capability.terminalSessionId)) continue;
 			if (this.capabilities.has(capability.digest)) continue;
 			let held = false;
@@ -706,7 +707,6 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 				scope: capability.scope,
 				reach: capability.reach,
 				issuedAt: capability.issuedAt,
-				expiresAt: capability.expiresAt,
 			});
 			restored += 1;
 		}
@@ -768,19 +768,16 @@ function parsePersistedCapability(
 	if (typeof value !== 'object' || value === null) return undefined;
 	const entry = value as Record<string, unknown>;
 	const { digest, terminalSessionId, projectId, scope, reach } = entry;
-	const { issuedAt, expiresAt } = entry;
+	// Entries saved by builds that expired capabilities also carry
+	// `expiresAt`; it is ignored.
+	const { issuedAt } = entry;
 	if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest))
 		return undefined;
 	if (typeof terminalSessionId !== 'string' || typeof projectId !== 'string')
 		return undefined;
 	if (typeof scope !== 'string' || !(scope in scopeRank)) return undefined;
 	if (reach !== 'project' && reach !== 'workspace') return undefined;
-	if (
-		typeof issuedAt !== 'number' ||
-		typeof expiresAt !== 'number' ||
-		!Number.isSafeInteger(issuedAt) ||
-		!Number.isSafeInteger(expiresAt)
-	)
+	if (typeof issuedAt !== 'number' || !Number.isSafeInteger(issuedAt))
 		return undefined;
 	try {
 		assertScopeId(terminalSessionId, 'terminal session id');
@@ -799,7 +796,6 @@ function parsePersistedCapability(
 		scope: scope as ControlScope,
 		reach,
 		issuedAt,
-		expiresAt,
 	};
 }
 
