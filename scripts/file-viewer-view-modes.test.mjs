@@ -63,13 +63,48 @@ test('text recognised only by its content opens in Text, without a Preview tab',
 	assert.deepEqual(capabilities.secondaryModes, ['hex']);
 });
 
-test('Markdown leads with Preview and offers Tasks', () => {
+test('Markdown opens in Document, then offers Preview and Tasks', () => {
 	const capabilities = detectFileCapabilities(
 		file('README.md', { previewKind: 'markdown', preferredMode: 'preview' }),
 	);
+	assert.equal(capabilities.defaultMode, 'document');
+	assert.deepEqual(capabilities.primaryModes, ['document', 'preview', 'tasks', 'text', 'diff']);
+	assert.deepEqual(capabilities.secondaryModes, ['hex']);
+});
+
+test('MDX opens in Document too', () => {
+	const capabilities = detectFileCapabilities(
+		file('guide.MDX', { previewKind: 'markdown', preferredMode: 'preview' }),
+	);
+	assert.equal(capabilities.defaultMode, 'document');
+	assert.equal(capabilities.primaryModes[0], 'document');
+});
+
+test('other Markdown spellings lead with Preview and have no Document view', () => {
+	const capabilities = detectFileCapabilities(
+		file('notes.markdown', { previewKind: 'markdown', preferredMode: 'preview' }),
+	);
 	assert.equal(capabilities.defaultMode, 'preview');
 	assert.deepEqual(capabilities.primaryModes, ['preview', 'tasks', 'text', 'diff']);
-	assert.deepEqual(capabilities.secondaryModes, ['hex']);
+	assert.equal(resolveFileViewerMode(capabilities, 'document'), 'preview');
+});
+
+test('a Markdown file too large to edit richly has no Document view', () => {
+	const capabilities = detectFileCapabilities(
+		file('huge.md', {
+			previewKind: 'markdown',
+			preferredMode: 'preview',
+			size: LARGE_FILE_THRESHOLD_BYTES + 1,
+		}),
+	);
+	assert.equal(capabilities.canDocument, false);
+	assert.notEqual(capabilities.defaultMode, 'document');
+});
+
+test('Document is not offered for a source file', () => {
+	const source = detectFileCapabilities(file('prompt.ts'));
+	assert.equal(source.canDocument, false);
+	assert.equal(resolveFileViewerMode(source, 'document'), 'text');
 });
 
 test('an image offers Preview and HEX only', () => {
@@ -192,4 +227,12 @@ test('a host without the sandbox has no page preview and opens the file in Text'
 		{ pagePreview: false },
 	);
 	assert.equal(markdown.canPreview, true);
+});
+
+test('a custom extension default still overrides Document for Markdown', () => {
+	const markdown = detectFileCapabilities(
+		file('README.md', { previewKind: 'markdown', preferredMode: 'preview' }),
+	);
+	assert.equal(resolveFileViewerMode(markdown, 'text'), 'text');
+	assert.equal(resolveFileViewerMode(markdown, 'hex'), 'hex');
 });

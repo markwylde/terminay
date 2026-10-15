@@ -124,14 +124,11 @@ export function fileExplorerItem(page: Page, name: string) {
   return page.locator('.file-explorer-tree-item').filter({ hasText: name }).first()
 }
 
-/** Markdown opens as a document; this switches the panel to the File Viewer. */
-export async function viewDocumentSource(page: Page): Promise<void> {
-  const button = page
-    .locator('.documentation-editor')
-    .getByRole('button', { name: 'View source' })
-  await expect(button).toBeVisible()
-  await button.click()
-  await expect(page.locator('.file-mode-switcher')).toBeVisible()
+/** Markdown opens on the Document view; this moves the panel to Preview. */
+export async function leaveDocumentView(page: Page): Promise<void> {
+  await expect(page.locator('.documentation-editor:visible')).toBeVisible()
+  await selectFileView(page, 'Preview')
+  await expect(page.locator('.documentation-editor:visible')).toHaveCount(0)
 }
 
 /**

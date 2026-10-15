@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { rm, writeFile } from 'node:fs/promises'
+import { access, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
@@ -431,14 +431,20 @@ test('selecting a linked folder opens a file from its worktree without changing 
   )
   await worktreeFile().click()
 
-  // An untracked file has no diff, so it opens for reading. In a linked
-  // folder Markdown opens in the File Viewer: the Documentation presentation
-  // reads the project root, and would show the root checkout's file of the
-  // same name under this worktree's title.
+  // An untracked file has no diff, so it opens on the Document view, which
+  // edits the worktree's file through the folder's own file client.
   const opened = mainWindow.locator('.project-workspace--active .file-panel:visible')
   await expect(opened).toContainText('Opened safely.', { timeout: 6000 })
-  await expect(mainWindow.locator('.file-mode-switcher__button--active:visible')).toHaveText('Preview')
-  await expect(mainWindow.locator('.documentation-editor:visible')).toHaveCount(0)
+  await expect(mainWindow.locator('.file-mode-switcher__button--active:visible')).toHaveText('Document')
+  const editor = mainWindow.locator('.documentation-editor:visible')
+  await editor.getByText('Opened safely.', { exact: true }).click()
+  await mainWindow.keyboard.press('End')
+  await mainWindow.keyboard.type(' Edited here.')
+  await expect
+    .poll(() => linkedWorktree.readText('30-local-desktop-diagnostics.md'))
+    .toContain('Opened safely. Edited here.')
+  // The root checkout has no file of that name, and gained none.
+  await expect(access(mainRepo.path('30-local-desktop-diagnostics.md'))).rejects.toThrow()
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
   await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
   // The file opened as a panel of the worktree's folder, and nothing moved the

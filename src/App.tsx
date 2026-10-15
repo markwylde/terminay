@@ -76,7 +76,7 @@ import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { DocumentationTree } from './components/DocumentationTree';
 import type {
 	FilePanelInstanceParams,
-	FilePanelSaveHandler,
+	FilePanelSaveRegistration,
 } from './components/file-viewer';
 import {
 	FilePanel,
@@ -84,8 +84,6 @@ import {
 	FileTab,
 } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
-import { resolveOpenPresentation } from './components/file-viewer/openFilePresentation';
-import { presentationForFolder } from './components/file-viewer/projectRootFileServices';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import {
 	EmptyFolderContext,
@@ -628,7 +626,6 @@ function buildGitPushAgentCommand(
 
 type OpenFileOptions = {
 	initialMode?: FileViewerMode;
-	presentation?: 'file-viewer' | 'documentation';
 };
 
 type ProjectWorkspaceHandle = {
@@ -1776,15 +1773,18 @@ const ProjectWorkspace = memo(forwardRef<
 		// another or something arrives for it while they are away.
 		const interactedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
-		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
-			new Map(),
-		);
+		const filePanelSaveHandlersRef = useRef<
+			Map<string, FilePanelSaveRegistration>
+		>(new Map());
 		const filePanelSaveRegistry = useMemo(
 			() => ({
-				register: (panelId: string, handler: FilePanelSaveHandler) => {
-					filePanelSaveHandlersRef.current.set(panelId, handler);
+				register: (
+					panelId: string,
+					registration: FilePanelSaveRegistration,
+				) => {
+					filePanelSaveHandlersRef.current.set(panelId, registration);
 					return () => {
-						if (filePanelSaveHandlersRef.current.get(panelId) === handler)
+						if (filePanelSaveHandlersRef.current.get(panelId) === registration)
 							filePanelSaveHandlersRef.current.delete(panelId);
 					};
 				},
@@ -2631,38 +2631,9 @@ const ProjectWorkspace = memo(forwardRef<
 				if (existingPanelId) {
 					const existingPanel = api.getPanel(existingPanelId);
 					if (existingPanel) {
-						const presentation = presentationForFolder(
-							resolveOpenPresentation(
-								filePath,
-								options,
-								existingPanel.params?.presentation ?? 'file-viewer',
-							),
-							linkedFolderId,
-						);
-						if (
-							existingPanel.params?.presentation === 'documentation' &&
-							presentation === 'file-viewer'
-						) {
-							const flush = filePanelSaveHandlersRef.current.get(
-								existingPanel.id,
-							);
-							if (flush !== undefined) {
-								try {
-									await flush();
-								} catch {
-									return;
-								}
-							}
-						}
-						if (
-							presentation &&
-							existingPanel.params?.presentation !== presentation
-						) {
-							existingPanel.api.updateParameters({
-								...(existingPanel.params ?? {}),
-								presentation,
-							});
-						}
+						// An open that names no view keeps the panel's current view. A
+						// named view is switched to by the panel, which flushes a
+						// pending Document autosave first.
 						if (options?.initialMode) {
 							existingPanel.api.updateParameters({
 								...existingPanel.params,
@@ -2697,10 +2668,6 @@ const ProjectWorkspace = memo(forwardRef<
 					params: {
 						color: project.color,
 						filePath,
-						presentation: presentationForFolder(
-							resolveOpenPresentation(filePath, options),
-							linkedFolderId,
-						),
 						initialMode: options?.initialMode,
 						inheritsProjectColor: true,
 						isFocused: false,
@@ -2722,7 +2689,7 @@ const ProjectWorkspace = memo(forwardRef<
 				panel.api.setActive();
 				syncPanelFocusState();
 			},
-			[folderRootPath, linkedFolderId, project.color, syncPanelFocusState],
+			[folderRootPath, project.color, syncPanelFocusState],
 		);
 		useEffect(() => {
 			// A link is followed where it was clicked. Every folder of the project
@@ -2738,7 +2705,7 @@ const ProjectWorkspace = memo(forwardRef<
 					path.split('/').some((part) => !part || part === '.' || part === '..')
 				)
 					return;
-				void openFile(path, { presentation: 'documentation' });
+				void openFile(path);
 			};
 			window.addEventListener(
 				'terminay-documentation-open',
@@ -4217,17 +4184,16 @@ const ProjectWorkspace = memo(forwardRef<
 				if (!api || !panel) return;
 				const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
 				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
-				if (panel.params?.presentation === 'documentation') {
-					const flush = filePanelSaveHandlersRef.current.get(panelId);
-					if (flush !== undefined) {
-						try {
-							await flush();
-						} catch (error) {
-							setErrorText(
-								error instanceof Error ? error.message : String(error),
-							);
-							return;
-						}
+				const registration = filePanelSaveHandlersRef.current.get(panelId);
+				// An autosaving view puts its pending edits on disk before it goes.
+				if (registration?.autosaves === true) {
+					try {
+						await registration.save();
+					} catch (error) {
+						setErrorText(
+							error instanceof Error ? error.message : String(error),
+						);
+						return;
 					}
 				}
 				const sessionId = panelSessionMapRef.current.get(panelId);
@@ -4324,7 +4290,7 @@ const ProjectWorkspace = memo(forwardRef<
 			const registeredSave =
 				activePanel === undefined
 					? undefined
-					: filePanelSaveHandlersRef.current.get(activePanel.id);
+					: filePanelSaveHandlersRef.current.get(activePanel.id)?.save;
 			if (registeredSave !== undefined) {
 				try {
 					await registeredSave();
@@ -5431,9 +5397,7 @@ const ProjectWorkspace = memo(forwardRef<
 							expandedFolders={documentation.expandedFolders}
 							loading={documentation.loading}
 							onToggleFolder={documentation.toggleFolder}
-							onOpen={(path) =>
-								openFile(path, { presentation: 'documentation' })
-							}
+							onOpen={(path) => openFile(path)}
 						/>
 					),
 				},
