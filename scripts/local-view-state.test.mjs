@@ -500,6 +500,42 @@ test('a board grouping that cannot be read is the ungrouped board', async () => 
   }
 })
 
+test('the untracked column starts collapsed and remembers being opened', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallDashboardBoardUntrackedCollapsed(), true)
+    module.rememberDashboardBoardUntrackedCollapsed(false)
+    assert.equal(module.recallDashboardBoardUntrackedCollapsed(), false)
+    module.rememberDashboardBoardUntrackedCollapsed(true)
+    assert.equal(module.recallDashboardBoardUntrackedCollapsed(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('an untracked column preference that cannot be read is collapsed', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.dashboard-board-untracked-collapsed.v1': 'nope',
+  })
+  try {
+    assert.equal(module.recallDashboardBoardUntrackedCollapsed(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+  globalThis.localStorage = {
+    getItem() { throw new Error('storage disabled') },
+    setItem() { throw new Error('storage disabled') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberDashboardBoardUntrackedCollapsed(false))
+    assert.equal(module.recallDashboardBoardUntrackedCollapsed(), true)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
 /**
  * Home's sidebar is this device's, and it is not any project's: its visibility
  * and its selected section are hints like the rest of this module. A device that

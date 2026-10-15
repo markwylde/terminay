@@ -13,7 +13,7 @@
  * one entry plus what the surface happens to know about that entry's terminal.
  */
 
-import type { AgentStatusEntry } from '../types/agentStatus';
+import type { AgentStatusEntry, AgentStatusSnapshot } from '../types/agentStatus';
 
 /** What the surface knows about an entry beyond the entry itself. */
 export type AgentPresentationContext = {
@@ -181,4 +181,67 @@ export function resolveAgentPresentation(
 /** The model name a surface shows for an entry: display name, else the id. */
 export function agentModelLabel(entry: AgentStatusEntry): string | undefined {
 	return cleanText(entry.model?.displayName ?? entry.model?.id);
+}
+
+/**
+ * An agent as a surface may show it when its terminal might be untracked. The
+ * agent is still listed and named, but reads idle and unread-free, so no
+ * surface shows the state of an agent the person chose not to track. The
+ * server's entry is unchanged; this is presentation only.
+ */
+export function presentAgentForTracking<T extends AgentStatusEntry>(
+	entry: T,
+	untrackedSessionIds: ReadonlySet<string>,
+): T & UntrackedAgentMark {
+	if (
+		entry.activationTerminalSessionId === null ||
+		!untrackedSessionIds.has(entry.activationTerminalSessionId)
+	)
+		return entry;
+	return {
+		...entry,
+		state: 'idle',
+		unread: false,
+		untracked: true,
+	} as T & UntrackedAgentMark;
+}
+
+/** Set on an entry `presentAgentForTracking` silenced, so the Board can place it. */
+export type UntrackedAgentMark = { readonly untracked?: true };
+
+export function isUntrackedAgent(entry: AgentStatusEntry): boolean {
+	return (entry as AgentStatusEntry & UntrackedAgentMark).untracked === true;
+}
+
+/** A whole projection presented through `presentAgentForTracking`. */
+export function presentAgentSnapshotForTracking(
+	snapshot: AgentStatusSnapshot,
+	untrackedSessionIds: ReadonlySet<string>,
+): AgentStatusSnapshot {
+	if (untrackedSessionIds.size === 0) return snapshot;
+	const entries: Record<string, AgentStatusEntry> = {};
+	for (const [id, entry] of Object.entries(snapshot.entries))
+		entries[id] = presentAgentForTracking(entry, untrackedSessionIds);
+	return { ...snapshot, entries };
+}
+
+/**
+ * The terminal sessions whose panels have Track activity off, read from a
+ * server's workspace projection.
+ */
+export function untrackedSessionIdsFromPanels(
+	panels:
+		| Readonly<
+				Record<
+					string,
+					{ activityIndicatorsEnabled?: boolean; sessionId?: string }
+				>
+		  >
+		| undefined,
+): Set<string> {
+	const ids = new Set<string>();
+	for (const panel of Object.values(panels ?? {}))
+		if (panel.activityIndicatorsEnabled === false && panel.sessionId)
+			ids.add(panel.sessionId);
+	return ids;
 }

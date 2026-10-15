@@ -41,15 +41,28 @@ export const DASHBOARD_VIEW_MODE_LABELS: Record<DashboardViewMode, string> = {
 	projects: 'Projects',
 };
 
-/** A Board column. `attention` merges waiting and blocked: both want a person. */
-export type DashboardBoardColumn = 'attention' | 'working' | 'done' | 'idle';
+/**
+ * A Board column. `attention` merges waiting and blocked: both want a person.
+ * `untracked` holds terminals with Track activity off, which have no state to
+ * sort by.
+ */
+export type DashboardBoardColumn =
+	| 'attention'
+	| 'working'
+	| 'done'
+	| 'idle'
+	| 'untracked';
 
-/** Lifecycle order: an agent rests, works, may stop for a person, then finishes. */
+/**
+ * Lifecycle order: an agent rests, works, may stop for a person, then
+ * finishes. What is not tracked comes after all of it.
+ */
 export const DASHBOARD_BOARD_COLUMNS: readonly DashboardBoardColumn[] = [
 	'idle',
 	'working',
 	'attention',
 	'done',
+	'untracked',
 ];
 
 export const DASHBOARD_BOARD_COLUMN_LABELS: Record<
@@ -59,6 +72,7 @@ export const DASHBOARD_BOARD_COLUMN_LABELS: Record<
 	attention: 'Needs you',
 	done: 'Done',
 	idle: 'Idle',
+	untracked: 'Untracked',
 	working: 'Working',
 };
 
@@ -69,10 +83,11 @@ export const DASHBOARD_BOARD_COLUMN_EMPTY: Record<
 	attention: 'Nothing is waiting on you',
 	done: 'Nothing has finished',
 	idle: 'Nothing is resting',
+	untracked: 'Every tab is tracked',
 	working: 'Nothing is running',
 };
 
-/** Every canonical state lands in exactly one column. */
+/** Every canonical state lands in exactly one status column. */
 export function boardColumnFor(state: AgentState): DashboardBoardColumn {
 	switch (state) {
 		case 'blocked':
@@ -104,7 +119,16 @@ export type DashboardBoardItem = Readonly<{
 	serverId: string;
 	serverLabel?: string;
 	state: AgentState;
+	/** Track activity is off for its terminal: it goes in Untracked. */
+	untracked?: true;
 }>;
+
+/** The column an item belongs in. */
+export function boardColumnForItem(
+	item: DashboardBoardItem,
+): DashboardBoardColumn {
+	return item.untracked ? 'untracked' : boardColumnFor(item.state);
+}
 
 export function buildDashboardBoardItems(
 	groups: readonly ServerScopedRow<DashboardProjectGroup>[],
@@ -127,6 +151,7 @@ export function buildDashboardBoardItems(
 						key: `${scoped.key}:panel:${panel.panelId}`,
 						panel,
 						state: panel.status,
+						...(panel.untracked ? { untracked: true as const } : {}),
 					}),
 				);
 				continue;
@@ -139,6 +164,9 @@ export function buildDashboardBoardItems(
 						key: `${scoped.key}:agent:${agent.entryId}`,
 						panel,
 						state: agent.state,
+						...(panel.untracked || agent.untracked
+							? { untracked: true as const }
+							: {}),
 					}),
 				);
 			}
@@ -150,6 +178,7 @@ export function buildDashboardBoardItems(
 					agent,
 					key: `${scoped.key}:agent:${agent.entryId}`,
 					state: agent.state,
+					...(agent.untracked ? { untracked: true as const } : {}),
 				}),
 			);
 		}
@@ -165,9 +194,10 @@ export function groupBoardItemsByColumn(
 		attention: [],
 		done: [],
 		idle: [],
+		untracked: [],
 		working: [],
 	};
-	for (const item of items) columns[boardColumnFor(item.state)].push(item);
+	for (const item of items) columns[boardColumnForItem(item)].push(item);
 	return columns;
 }
 
@@ -176,7 +206,7 @@ export function groupBoardItemsByColumn(
  *
  * Grouping is a second arrangement of the same cards, not a second Board: a
  * lane holds exactly the items the ungrouped Board would have shown for its
- * project, bucketed into the same four columns. A project with nothing in any
+ * project, bucketed into the same five columns. A project with nothing in any
  * column gets no lane, for the same reason it gets no card ungrouped.
  */
 export type DashboardBoardLane = Readonly<{

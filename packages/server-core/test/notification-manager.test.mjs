@@ -443,3 +443,63 @@ test("the kind rule reads only reduced activity state", () => {
   assert.equal(activityNotificationKind({ ...base, status: "idle", attention: false, acknowledged: false, provider: "x/y", providerState: "idle" }), undefined);
   assert.equal(activityNotificationKind({ ...base, status: "idle", attention: true, acknowledged: true, provider: "x/y", providerState: "waiting" }), undefined);
 });
+
+// --- untracked terminals (ADR-0065) ---------------------------------------
+
+function tracked(initiallyUntracked = []) {
+  const clock = fakeClock(10_000);
+  const activity = new TerminalActivityService({ serverId: SERVER, now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  const manager = new NotificationManager({ now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  let untracked = new Set(initiallyUntracked);
+  const listeners = new Set();
+  const acknowledged = [];
+  bindNotificationsToActivity(manager, activity, {
+    untrackedSessionIds: () => untracked,
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    acknowledge(id) { acknowledged.push(id.sessionId); activity.acknowledge(id, undefined, { passive: true }); },
+  });
+  activity.register(identity());
+  const setUntracked = (ids) => { untracked = new Set(ids); for (const listener of listeners) listener(); };
+  return { clock, activity, manager, setUntracked, acknowledged };
+}
+
+test("an untracked terminal's activity raises no notification, agent state included", () => {
+  const { clock, activity, manager } = tracked(["session-a"]);
+  activity.ingestSignal(identity(), { kind: "bell" });
+  activity.ingestProvider(identity(), agent("blocked", 1));
+  assert.equal(manager.pendingCount, 0);
+  clock.advance(10_000);
+  assert.deepEqual(published(manager), []);
+});
+
+test("turning tracking off withdraws the terminal's activity record and keeps what was sent", () => {
+  const { clock, activity, manager, setUntracked } = tracked();
+  activity.ingestProvider(identity(), agent("done", 1));
+  manager.send(owner(), { body: "deploy finished" });
+  clock.advance(5_000);
+  assert.deepEqual(kinds(manager).sort(), ["agent-finished", "message"]);
+  setUntracked(["session-a"]);
+  assert.deepEqual(kinds(manager), ["message"]);
+});
+
+test("turning tracking back on acknowledges what happened while untracked", () => {
+  const { clock, activity, manager, setUntracked, acknowledged } = tracked(["session-a"]);
+  activity.ingestProvider(identity(), agent("done", 1));
+  clock.advance(5_000);
+  setUntracked([]);
+  assert.deepEqual(acknowledged, ["session-a"]);
+  clock.advance(10_000);
+  assert.deepEqual(published(manager), [], "the earlier finish is not replayed");
+  // What happens after tracking resumes is reported as usual.
+  activity.ingestProvider(identity(), agent("working", 2));
+  activity.ingestProvider(identity(), agent("waiting", 3));
+  clock.advance(5_000);
+  assert.deepEqual(kinds(manager), ["agent-waiting"]);
+});
+
+test("a process may still send a notification from an untracked terminal", () => {
+  const { clock, manager } = tracked(["session-a"]);
+  manager.send(owner(), { body: "needs you" });
+  clock.advance(5_000);
+  assert.deepEqual(kinds(manager), ["message"]);
+});

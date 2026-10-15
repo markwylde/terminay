@@ -270,19 +270,23 @@ export class AgentStatusService {
 		return true;
 	}
 
-	acknowledge(identity: ActivitySessionIdentity, entryId?: string): boolean {
+	acknowledge(
+		identity: ActivitySessionIdentity,
+		entryId?: string,
+		options: { readonly passive?: boolean } = {},
+	): boolean {
 		this.assertActive(identity);
 		if (entryId === undefined) {
 			const changed =
 				this.store.markTerminalAcknowledged(identity.sessionId, this.now()) > 0;
-			this.activity.acknowledge(identity);
+			this.activity.acknowledge(identity, undefined, options);
 			return changed;
 		}
 		const entry = selectAgentStatusEntry(this.store.getSnapshot(), entryId);
 		if (!entry || entry.activationTerminalSessionId !== identity.sessionId)
 			return false;
 		const changed = this.store.markAcknowledged(entryId, this.now());
-		if (changed) this.activity.acknowledge(identity);
+		if (changed) this.activity.acknowledge(identity, undefined, options);
 		return changed;
 	}
 

@@ -289,6 +289,40 @@ export function recallDashboardBoardGrouped(): boolean {
 }
 
 /**
+ * Whether this device keeps the Board's Untracked column collapsed.
+ *
+ * It holds tabs the person chose not to watch, so it starts collapsed: only a
+ * stored `false` opens it.
+ */
+const DASHBOARD_BOARD_UNTRACKED_COLLAPSED_STORAGE_KEY =
+	'terminay.view.dashboard-board-untracked-collapsed.v1';
+
+export function rememberDashboardBoardUntrackedCollapsed(
+	collapsed: boolean,
+): void {
+	try {
+		globalThis.localStorage?.setItem(
+			DASHBOARD_BOARD_UNTRACKED_COLLAPSED_STORAGE_KEY,
+			collapsed ? 'true' : 'false',
+		);
+	} catch {
+		/* A device that cannot remember still works; the column starts collapsed. */
+	}
+}
+
+export function recallDashboardBoardUntrackedCollapsed(): boolean {
+	try {
+		return (
+			globalThis.localStorage?.getItem(
+				DASHBOARD_BOARD_UNTRACKED_COLLAPSED_STORAGE_KEY,
+			) !== 'false'
+		);
+	} catch {
+		return true;
+	}
+}
+
+/**
  * Whether this device shows Home's sidebar.
  *
  * Kept apart from every project's sidebar visibility: Home is not a project, so

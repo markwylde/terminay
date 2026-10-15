@@ -221,7 +221,49 @@ test('raw-output entries honour their own indicator settings', () => {
 	);
 	// Suppressing an indicator hides the badge, never the canonical status.
 	assert.equal(entries[4].status, 'unviewed');
-	assert.equal(entries[5].status, 'attention');
+	// An untracked terminal reads idle everywhere.
+	assert.equal(entries[5].status, 'idle');
+	assert.equal(entries[5].untracked, true);
+});
+
+test('an untracked terminal is idle whatever it or its agent is doing', () => {
+	const untracked = (id, params) => ({
+		id,
+		params: { activityIndicatorsEnabled: false, sessionId: id, ...params },
+	});
+	const entries = build([
+		untracked('s1', {
+			terminalActivitySince: 10,
+			terminalActivityState: 'recent',
+		}),
+		untracked('s2', { terminalActivityState: 'attention' }),
+		untracked('s3', {
+			agentState: 'working',
+			agentStateSince: 10,
+		}),
+		untracked('s4', { agentState: 'done', agentUnread: true }),
+		untracked('s5', { agentState: 'blocked' }),
+		{ id: 's6', params: { sessionId: 's6', terminalActivityState: 'attention' } },
+	]);
+
+	for (const entry of entries.slice(0, 5)) {
+		assert.equal(entry.status, 'idle', entry.panelId);
+		assert.equal(entry.untracked, true, entry.panelId);
+		assert.equal(entry.indicatorsSuppressed, true, entry.panelId);
+		assert.equal(entry.since, undefined, entry.panelId);
+		assert.equal(entry.agentUnread, undefined, entry.panelId);
+		assert.equal(isNotableInventoryEntry(entry), false, entry.panelId);
+	}
+	// The agent is still known to be there, so its detail can be shown.
+	assert.deepEqual(
+		entries.map((entry) => entry.isAgentStatus),
+		[false, false, true, true, true, false],
+	);
+	assert.equal(entries[5].untracked, undefined);
+	assert.deepEqual(
+		selectNotableEntries(entries).map((item) => item.panelId),
+		['s6'],
+	);
 });
 
 test('agent entries honour the same indicator settings as raw output', () => {
@@ -268,8 +310,10 @@ test('agent entries honour the same indicator settings as raw output', () => {
 	);
 	// Suppressing an indicator hides the badge, never the canonical status.
 	assert.equal(entries[3].status, 'done');
-	assert.equal(entries[4].status, 'waiting');
 	assert.equal(entries[3].indicatorsSuppressed, true);
+	// An untracked terminal is idle, its agent's state included.
+	assert.equal(entries[4].status, 'idle');
+	assert.equal(entries[4].untracked, true);
 });
 
 test('a viewed terminal rests at idle', () => {

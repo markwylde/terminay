@@ -1773,6 +1773,17 @@ const DEFAULT_MAX_HISTORY_BYTES = 8 * 1024 * 1024;
  * copies it once, into the draft a command is reduced on, and the state that
  * results shares every object the command left alone (ADR-0059).
  */
+/** The terminal sessions whose panels have Track activity off (ADR-0065). */
+export function untrackedTerminalSessionIds(
+	state: WorkspaceState,
+): Set<ProtocolId> {
+	const ids = new Set<ProtocolId>();
+	for (const panel of Object.values(state.panels))
+		if (panel.type === 'terminal' && panel.activityIndicatorsEnabled === false)
+			ids.add(panel.sessionId);
+	return ids;
+}
+
 export class WorkspaceStore {
 	private current: WorkspaceState;
 	private readonly outcomes = new Map<ProtocolId, WorkspaceApplyOutcome>();
