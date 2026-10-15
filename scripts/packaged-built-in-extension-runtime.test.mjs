@@ -112,7 +112,7 @@ function active(state, extensionId) {
 async function exercisePackagedRoot(label, artifactRoot) {
   const source = new DirectoryBuiltInExtensionArtifactSource(resolve(artifactRoot))
   const artifacts = await source.list()
-  assert.equal(artifacts.length, 3, `${label} must expose the complete built-in inventory`)
+  assert.equal(artifacts.length, 4, `${label} must expose the complete built-in inventory`)
   const agentsArtifact = artifacts.find((artifact) => artifact.extensionId === AGENTS_ID)
   assert.ok(agentsArtifact)
   const registry = new OverrideRegistry(agentsArtifact.manifestMetadata)
@@ -153,7 +153,7 @@ async function exercisePackagedRoot(label, artifactRoot) {
     const state = await installer.initialize()
     assert.equal(state.extensions[AGENTS_ID].state, 'failed')
     assert.equal(Object.values(state.extensions).filter((record) => record.state === 'failed').length, 1, JSON.stringify(state.extensions))
-    assert.equal(Object.keys(state.extensions).length, 3)
+    assert.equal(Object.keys(state.extensions).length, 4)
   } finally {
     await rm(badRoot, { recursive: true, force: true })
   }

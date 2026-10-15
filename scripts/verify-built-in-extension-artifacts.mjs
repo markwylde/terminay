@@ -9,6 +9,7 @@ const expected = [
 	'com.terminay.builtin-agents',
 	'com.terminay.language.typescript',
 	'com.terminay.gitea',
+	'com.terminay.github',
 ].sort();
 
 /**
