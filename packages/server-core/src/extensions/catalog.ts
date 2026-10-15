@@ -37,4 +37,13 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			publisher: 'Terminay',
 			official: true,
 		}),
+		Object.freeze({
+			extensionId: 'com.terminay.github',
+			packageName: 'terminay-github',
+			displayName: 'GitHub',
+			description:
+				'Show each worktree\'s GitHub pull request and CI status in the Worktrees panel.',
+			publisher: 'Terminay',
+			official: true,
+		}),
 	]);

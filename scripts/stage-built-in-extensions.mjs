@@ -25,6 +25,7 @@ const expectedIds = new Set([
 	'com.terminay.builtin-agents',
 	'com.terminay.language.typescript',
 	'com.terminay.gitea',
+	'com.terminay.github',
 ]);
 
 /** Build, test, pack, and stage every official extension as a complete
