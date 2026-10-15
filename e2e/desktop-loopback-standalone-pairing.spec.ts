@@ -11,6 +11,7 @@ import {
 	tabBarScreenPoints,
 } from './support/project-tab-drag';
 import { submitTerminalCommand } from './support/terminal';
+import { createStartedProject } from './support/project-start';
 
 type StandaloneServer = Readonly<{
 	pairingUrl: string;
@@ -480,7 +481,7 @@ test(`closing the ${closed} one of two windows on a server leaves the other conn
 		await first.keyboard.press('Escape');
 		for (const window of [first, mainWindow]) {
 			if ((await projectIds(window)).length > 0) continue;
-			await window.getByLabel('Create project').click();
+			await createStartedProject(window);
 			await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
 			await expect(window.locator('[data-pending-project-id]')).toHaveCount(0);
 		}

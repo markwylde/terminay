@@ -7,6 +7,7 @@ import {
 	frontHomeTab,
 	homeTabChips,
 } from './support/home-tabs';
+import { createStartedProject } from './support/project-start';
 
 /**
  * Home's sidebar: Home, Tabs, and Automations, each opening as a Home tab. Its
@@ -237,7 +238,7 @@ test.describe('Home sidebar', () => {
 		mainWindow,
 	}) => {
 		const firstProjectId = await activeProjectId(mainWindow);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,

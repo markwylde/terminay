@@ -29,6 +29,8 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['project', FEATURE_CAPABILITIES.workspace],
 	['panel', FEATURE_CAPABILITIES.workspace],
 	['view', FEATURE_CAPABILITIES.workspace],
+	['recent', FEATURE_CAPABILITIES.projectStartChoice],
+	['fs', FEATURE_CAPABILITIES.projectStartChoice],
 	['terminal', FEATURE_CAPABILITIES.terminal],
 	['terminals', FEATURE_CAPABILITIES.terminal],
 	['terminal-titles', FEATURE_CAPABILITIES.terminalTitles],

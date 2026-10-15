@@ -3,7 +3,12 @@ import {
 	type JsonValue,
 	parseWorkspaceDeltaDto,
 	parseWorkspaceRecordsDeltaDto,
+	parseBrowseRootFoldersRequest,
+	parseProjectStartRequest,
+	parseRecentForgetRequest,
 	parseWorkspaceSnapshotDto,
+	PROJECT_START_OPERATIONS,
+	PROJECT_START_REFUSALS,
 	protocolError,
 	WORKSPACE_DELTA_VERSION,
 	WORKSPACE_RECORDS_DELTA_VERSION,
@@ -20,8 +25,11 @@ import type {
 	QueryRequest,
 } from './types.js';
 import { TerminalServiceError } from './terminalService/errors.js';
+import { RootFolderError, type RootFolderBrowser } from './rootFolderBrowser.js';
 import {
 	AUTOMATION_SPACE_TERMINAL_LIMIT,
+	PROJECT_AWAITING_START_CHOICE,
+	PROJECT_START_CONFLICT_MESSAGE,
 	automationSpaceRefusal,
 	canSeeAutomationSpace,
 	isAutomationSpace,
@@ -43,6 +51,7 @@ export const WORKSPACE_OPERATIONS = Object.freeze({
 	projectShellProfileSet: 'project.shell-profile.set',
 	projectShellProfileClear: 'project.shell-profile.clear',
 	projectShellProfileReplace: 'project.shell-profile.replace',
+	projectStart: PROJECT_START_OPERATIONS.start,
 } as const);
 export const WORKSPACE_EVENT = 'workspace.changed';
 /** Typed project lifecycle facts, emitted once per `project.create` /
@@ -111,6 +120,14 @@ export interface WorkspaceOperationRegistryOptions {
 	readonly shellProfileExists?: (
 		profileId: string,
 	) => boolean | Promise<boolean>;
+	/**
+	 * The server's own folders, read to start a project and to choose a root
+	 * (ADR-0066). Without it no start-choice, recent-folder, or browse
+	 * operation is registered, and every created project starts at once.
+	 */
+	readonly rootFolders?: RootFolderBrowser;
+	/** Clock for recent-folder times. */
+	readonly now?: () => number;
 }
 
 export interface WorkspaceOperationRegistry {
@@ -175,7 +192,16 @@ export function createWorkspaceOperationRegistry(
 				cursor,
 			}) as unknown as JsonValue;
 		},
+		...(options.rootFolders === undefined
+			? {}
+			: {
+					[PROJECT_START_OPERATIONS.recentList]: (request: QueryRequest) =>
+						listRecentProjectFolders(workspace, rootFoldersOf(options), request),
+					[PROJECT_START_OPERATIONS.browseRootFolders]: (request: QueryRequest) =>
+						browseRootFolders(rootFoldersOf(options), request),
+				}),
 	};
+	const startsInFlight = new Map<string, Promise<unknown>>();
 
 	const commands = {
 		[WORKSPACE_OPERATIONS.command]: (request: CommandRequest) =>
@@ -215,6 +241,14 @@ export function createWorkspaceOperationRegistry(
 		[WORKSPACE_OPERATIONS.projectShellProfileReplace]: (
 			request: CommandRequest,
 		) => replaceProjectShellProfiles(workspace, options, request),
+		...(options.rootFolders === undefined
+			? {}
+			: {
+					[WORKSPACE_OPERATIONS.projectStart]: (request: CommandRequest) =>
+						startProject(workspace, options, request, startsInFlight),
+					[PROJECT_START_OPERATIONS.recentForget]: (request: CommandRequest) =>
+						forgetRecentProjectFolder(workspace, options, request),
+				}),
 	};
 
 	const policies = {
@@ -230,6 +264,17 @@ export function createWorkspaceOperationRegistry(
 		[WORKSPACE_OPERATIONS.projectShellProfileReplace]: {
 			scope: 'write' as const,
 		},
+		...(options.rootFolders === undefined
+			? {}
+			: {
+					[WORKSPACE_OPERATIONS.projectStart]: { scope: 'write' as const },
+					[PROJECT_START_OPERATIONS.recentList]: { scope: 'read' as const },
+					[PROJECT_START_OPERATIONS.recentForget]: { scope: 'write' as const },
+					// Browsing for a root takes the authority to change one.
+					[PROJECT_START_OPERATIONS.browseRootFolders]: {
+						scope: 'write' as const,
+					},
+				}),
 	};
 
 	return {
@@ -329,12 +374,46 @@ function readScopeOf(
 	claimedProjectId: string | undefined,
 ): ((state: WorkspaceState) => WorkspaceState) | undefined {
 	const seesAutomationSpace = canSeeAutomationSpace(capabilities);
-	if (seesAutomationSpace && claimedProjectId === undefined) return undefined;
+	const seesStartChoice = speaksStartChoice(capabilities);
+	if (seesAutomationSpace && seesStartChoice && claimedProjectId === undefined)
+		return undefined;
 	return (state) =>
 		projectScopedState(
-			seesAutomationSpace ? state : withholdAutomationSpace(state),
+			startStateFor(
+				seesAutomationSpace ? state : withholdAutomationSpace(state),
+				capabilities,
+			),
 			claimedProjectId,
 		);
+}
+
+/** Whether a connection negotiated the start choice (ADR-0066). */
+export function speaksStartChoice(
+	capabilities: readonly string[] | undefined,
+): boolean {
+	return (
+		capabilities?.includes(FEATURE_CAPABILITIES.projectStartChoice) === true
+	);
+}
+
+/**
+ * A connection that did not negotiate the start choice cannot present a
+ * project waiting for one. It is shown such a project as one with no root
+ * folder, which it can still give a root.
+ */
+function startStateFor(
+	state: WorkspaceState,
+	capabilities: readonly string[] | undefined,
+): WorkspaceState {
+	if (speaksStartChoice(capabilities)) return state;
+	let projects: Record<string, WorkspaceState['projects'][string]> | undefined;
+	for (const [id, project] of Object.entries(state.projects)) {
+		if (project.start === undefined) continue;
+		projects ??= { ...state.projects };
+		const { start: _start, ...started } = project;
+		projects[id] = started;
+	}
+	return projects === undefined ? state : { ...state, projects };
 }
 
 /**
@@ -459,20 +538,25 @@ function connectionVisibleState(
 	state: WorkspaceState,
 	request: QueryRequest | CommandRequest,
 ): WorkspaceState {
-	return canSeeAutomationSpace(request.context.clientCapabilities)
-		? state
-		: withholdAutomationSpace(state);
+	const capabilities = request.context.clientCapabilities;
+	return startStateFor(
+		canSeeAutomationSpace(capabilities) ? state : withholdAutomationSpace(state),
+		capabilities,
+	);
 }
 
 function connectionVisibleDelta(
 	delta: ReturnType<WorkspaceStore['delta']>,
 	request: QueryRequest,
 ): ReturnType<WorkspaceStore['delta']> {
-	if (canSeeAutomationSpace(request.context.clientCapabilities)) return delta;
+	const capabilities = request.context.clientCapabilities;
+	if (canSeeAutomationSpace(capabilities))
+		return { ...delta, state: startStateFor(delta.state, capabilities) };
 	const hiddenIds = automationSpaceIds(delta.state);
-	if (hiddenIds.size === 0) return delta;
+	if (hiddenIds.size === 0)
+		return { ...delta, state: startStateFor(delta.state, capabilities) };
 	return {
-		state: withholdAutomationSpace(delta.state),
+		state: startStateFor(withholdAutomationSpace(delta.state), capabilities),
 		events: delta.events.filter(
 			(event) => !event.changedIds.some((id) => hiddenIds.has(id)),
 		),
@@ -583,7 +667,7 @@ async function updateProjectRoot(
 		throw protocolError('unavailable', 'project root updates are unavailable');
 	const payload = objectPayload(request.envelope.payload);
 	const projectId = stringField(payload.projectId, 'projectId');
-	const root = rootField(payload.root);
+	const root = await expandRootHome(options, rootField(payload.root));
 	const expectedRevision =
 		payload.expectedRevision === undefined
 			? request.envelope.expectedRevision
@@ -645,6 +729,7 @@ async function updateProjectRoot(
 			type: 'project.root.update',
 			projectId,
 			root: prepared.canonicalRoot,
+			usedAt: (options.now ?? Date.now)(),
 		},
 	});
 	if (!applied.ok) throw staleWorkspace(workspace, applied.conflict.message);
@@ -667,12 +752,18 @@ async function applyCommand(
 	request: CommandRequest,
 	requested: WorkspaceCommand,
 ): Promise<{ readonly result: JsonValue; readonly revision: number }> {
-	const command = await withDefaultProjectRoot(options, requested);
+	const command = await withDefaultProjectRoot(
+		options,
+		requested,
+		options.rootFolders !== undefined &&
+			speaksStartChoice(request.context.clientCapabilities),
+	);
 	enforceProjectClaim(workspace.state, request, command);
 	enforceAutomationSpace(workspace.state, request, command);
 	enforceFolderRules(workspace.state, command);
 	if (
 		command.type === 'project.create' &&
+		command.rootOrigin !== 'none' &&
 		options.prepareProjectRootUpdate !== undefined
 	) {
 		let prepared: PreparedProjectRootUpdate;
@@ -841,6 +932,7 @@ function commandProjectIds(
 		case 'project.root.update':
 		case 'project.shellProfile.set':
 		case 'project.shellProfile.clear':
+		case 'project.start':
 		case 'terminal.create':
 		case 'terminal.createPanel':
 		case 'panel.reorder':
@@ -886,6 +978,7 @@ function commandProjectIds(
 			return session === undefined ? [] : [session.projectId];
 		}
 		case 'project.shellProfile.replace':
+		case 'recent.forget':
 		case 'view.create':
 		case 'view.rename':
 		case 'view.close':
@@ -911,6 +1004,7 @@ function projectScopedState(
 			folders: {},
 			panels: {},
 			terminalSessions: {},
+			recentProjectFolders: NO_RECENT_PROJECT_FOLDERS,
 		};
 	}
 	const folders = Object.fromEntries(
@@ -944,8 +1038,15 @@ function projectScopedState(
 		folders,
 		panels,
 		terminalSessions,
+		// Recent folders are the server's, not the project's: they name other
+		// projects' roots.
+		recentProjectFolders: NO_RECENT_PROJECT_FOLDERS,
 	};
 }
+
+/** Shared, so two scoped states compare equal by identity. */
+const NO_RECENT_PROJECT_FOLDERS: WorkspaceState['recentProjectFolders'] =
+	Object.freeze([]);
 
 function projectScopedDelta(
 	delta: ReturnType<WorkspaceStore['delta']>,
@@ -982,18 +1083,274 @@ function projectClaim(
 		: undefined;
 }
 
-/** A project created without a root is created in the server's default folder. */
+/**
+ * A project a client creates without a root waits for its start choice when
+ * the connection negotiated it, and is otherwise created in the server's
+ * default folder. Only the server decides that a project waits, or has no
+ * root: a client never asks for either.
+ */
 async function withDefaultProjectRoot(
 	options: WorkspaceOperationRegistryOptions,
 	command: WorkspaceCommand,
+	awaitsStartChoice: boolean,
 ): Promise<WorkspaceCommand> {
 	if (command.type !== 'project.create') return command;
+	if (
+		(command as { start?: unknown }).start !== undefined ||
+		(command as { rootOrigin?: unknown }).rootOrigin === 'none'
+	)
+		throw protocolError(
+			'validation',
+			'a project waits for a start choice only when created without a root',
+		);
 	const root = (command as { root?: unknown }).root;
 	if (root !== undefined && root !== '') return command;
+	if (awaitsStartChoice)
+		return {
+			...command,
+			root: '',
+			rootOrigin: 'none',
+			start: PROJECT_AWAITING_START_CHOICE,
+		};
 	const fallback = await options.defaultProjectRoot?.().catch(() => null);
 	if (typeof fallback !== 'string' || fallback.length === 0)
 		throw protocolError('validation', 'project root is required');
 	return { ...command, root: fallback, rootOrigin: 'server-default' };
+}
+
+function rootFoldersOf(
+	options: WorkspaceOperationRegistryOptions,
+): RootFolderBrowser {
+	if (options.rootFolders === undefined)
+		throw protocolError('unavailable', 'project start choices are unavailable');
+	return options.rootFolders;
+}
+
+/** A refused start choice: the project already started. */
+function startConflict(workspace: WorkspaceStore) {
+	return protocolError('conflict', PROJECT_START_CONFLICT_MESSAGE, {
+		retryable: false,
+		details: {
+			reason: PROJECT_START_REFUSALS.startConflict,
+			currentRevision: workspace.state.revision,
+			currentCursor: workspace.state.cursor,
+		},
+	});
+}
+
+/** Recent folders and root browsing are the server's, not any project's, so
+ * a connection claimed to one project reaches neither. */
+function refuseProjectClaim(
+	request: QueryRequest | CommandRequest,
+	what: string,
+): void {
+	if (projectClaim(request) !== undefined)
+		throw protocolError('forbidden', `${what} requires server scope`);
+}
+
+/**
+ * The first start choice for a project awaiting one (ADR-0066). Choices for
+ * one project are taken one at a time, so a losing choice never touches the
+ * project's bindings: it waits, sees the project started, and is refused.
+ */
+async function startProject(
+	workspace: WorkspaceStore,
+	options: WorkspaceOperationRegistryOptions,
+	request: CommandRequest,
+	inFlight: Map<string, Promise<unknown>>,
+): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+	let parsed: ReturnType<typeof parseProjectStartRequest>;
+	try {
+		parsed = parseProjectStartRequest(request.envelope.payload);
+	} catch (error) {
+		throw protocolError(
+			'validation',
+			error instanceof Error ? error.message : 'project start request is invalid',
+		);
+	}
+	const { projectId, choice } = parsed;
+	const claim = projectClaim(request);
+	if (claim !== undefined && claim !== projectId)
+		throw protocolError(
+			'forbidden',
+			'project start is outside the authenticated project scope',
+		);
+	const previous = inFlight.get(projectId) ?? Promise.resolve();
+	const run = previous
+		.catch(() => undefined)
+		.then(() =>
+			commitStartChoice(workspace, options, request, projectId, choice),
+		);
+	inFlight.set(projectId, run);
+	try {
+		return await run;
+	} finally {
+		if (inFlight.get(projectId) === run) inFlight.delete(projectId);
+	}
+}
+
+async function commitStartChoice(
+	workspace: WorkspaceStore,
+	options: WorkspaceOperationRegistryOptions,
+	request: CommandRequest,
+	projectId: string,
+	choice: ReturnType<typeof parseProjectStartRequest>['choice'],
+): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+	const project = workspace.state.projects[projectId];
+	if (project === undefined) throw protocolError('conflict', 'project not found');
+	enforceAutomationSpace(workspace.state, request, {
+		type: 'project.start',
+		projectId,
+		choice,
+	});
+	if (project.start !== PROJECT_AWAITING_START_CHOICE)
+		throw startConflict(workspace);
+	let root = '';
+	let commit: (() => Promise<void> | void) | undefined;
+	if (choice.kind === 'folder') {
+		// Resolved on this server for this request alone (ADR-0020).
+		try {
+			root = await rootFoldersOf(options).canonicalDirectory(choice.path);
+		} catch (error) {
+			if (error instanceof RootFolderError) throw error.toProtocolError();
+			throw error;
+		}
+		if (options.prepareProjectRootUpdate !== undefined) {
+			let prepared: PreparedProjectRootUpdate;
+			try {
+				prepared = await options.prepareProjectRootUpdate(projectId, root);
+			} catch {
+				throw protocolError(
+					'validation',
+					'project root is not an accessible directory',
+					{ details: { reason: PROJECT_START_REFUSALS.unreadable } },
+				);
+			}
+			if (
+				typeof prepared.canonicalRoot !== 'string' ||
+				prepared.canonicalRoot.length === 0 ||
+				prepared.canonicalRoot.length > 4096 ||
+				prepared.canonicalRoot.includes('\0') ||
+				typeof prepared.commit !== 'function'
+			)
+				throw protocolError(
+					'internal',
+					'project root preparation returned an invalid result',
+				);
+			root = prepared.canonicalRoot;
+			commit = prepared.commit;
+		}
+	}
+	const applied = workspace.apply({
+		commandId: request.envelope.commandId,
+		...(request.envelope.expectedRevision === undefined
+			? {}
+			: { expectedRevision: request.envelope.expectedRevision }),
+		command: {
+			type: 'project.start',
+			projectId,
+			choice: choice.kind === 'folder' ? { kind: 'folder', path: root } : { kind: 'home' },
+			usedAt: (options.now ?? Date.now)(),
+		},
+	});
+	if (!applied.ok) {
+		if (workspace.state.projects[projectId]?.start === undefined)
+			throw startConflict(workspace);
+		throw staleWorkspace(workspace, applied.conflict.message);
+	}
+	await commit?.();
+	publishWorkspaceChange(options.eventJournal, workspace, projectId);
+	const started = workspace.state.projects[projectId];
+	return {
+		result: {
+			projectId,
+			root: started?.root ?? root,
+			rootOrigin: started?.rootOrigin === 'none' ? 'none' : 'explicit',
+			revision: applied.revision,
+			cursor: applied.cursor,
+		},
+		revision: applied.revision,
+	};
+}
+
+/** The server's recent project folders, each checked now with one stat. */
+async function listRecentProjectFolders(
+	workspace: WorkspaceStore,
+	rootFolders: RootFolderBrowser,
+	request: QueryRequest,
+): Promise<JsonValue> {
+	refuseProjectClaim(request, 'recent project folders');
+	const state = workspace.state;
+	const entries = await Promise.all(
+		state.recentProjectFolders.map(async (entry) => ({
+			path: entry.path,
+			usedAt: entry.usedAt,
+			available: await rootFolders.isAvailable(entry.path),
+		})),
+	);
+	return { revision: state.revision, entries };
+}
+
+async function forgetRecentProjectFolder(
+	workspace: WorkspaceStore,
+	options: WorkspaceOperationRegistryOptions,
+	request: CommandRequest,
+): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+	refuseProjectClaim(request, 'recent project folders');
+	let path: string;
+	try {
+		path = parseRecentForgetRequest(request.envelope.payload).path;
+	} catch (error) {
+		throw protocolError(
+			'validation',
+			error instanceof Error ? error.message : 'recent folder request is invalid',
+		);
+	}
+	// Forgetting a folder the list does not hold changes nothing.
+	if (!workspace.state.recentProjectFolders.some((entry) => entry.path === path))
+		return {
+			result: {
+				forgotten: false,
+				revision: workspace.state.revision,
+				cursor: workspace.state.cursor,
+			},
+			revision: workspace.state.revision,
+		};
+	const applied = workspace.apply({
+		commandId: request.envelope.commandId,
+		command: { type: 'recent.forget', path },
+	});
+	if (!applied.ok) throw staleWorkspace(workspace, applied.conflict.message);
+	publishWorkspaceChange(options.eventJournal, workspace, null);
+	return {
+		result: { forgotten: true, revision: applied.revision, cursor: applied.cursor },
+		revision: applied.revision,
+	};
+}
+
+/** Directory names of one folder on this server (ADR-0066). The dispatcher
+ * has already required root-change authority; nothing here runs before it. */
+async function browseRootFolders(
+	rootFolders: RootFolderBrowser,
+	request: QueryRequest,
+): Promise<JsonValue> {
+	refuseProjectClaim(request, 'browsing server folders');
+	let path: string | undefined;
+	try {
+		path = parseBrowseRootFoldersRequest(request.envelope.payload).path;
+	} catch (error) {
+		throw protocolError(
+			'validation',
+			error instanceof Error ? error.message : 'folder browse request is invalid',
+			{ details: { reason: PROJECT_START_REFUSALS.invalidPath } },
+		);
+	}
+	try {
+		return (await rootFolders.browse(path)) as unknown as JsonValue;
+	} catch (error) {
+		if (error instanceof RootFolderError) throw error.toProtocolError();
+		throw error;
+	}
 }
 
 function commandPayload(value: JsonValue): WorkspaceCommand {
@@ -1021,6 +1378,12 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
 	}
 	if (command.type === 'terminal.markExited') {
 		throw protocolError('forbidden', 'terminal exit marks are host-owned');
+	}
+	if (command.type === 'project.start' || command.type === 'recent.forget') {
+		throw protocolError(
+			'validation',
+			'project start choices and recent folders require the named operations',
+		);
 	}
 	// Only the server links a folder to a worktree or records who created one:
 	// both come from its own worktree listing, never from a client (ADR-0050).
@@ -1063,6 +1426,23 @@ function stringField(value: JsonValue | undefined, name: string): string {
 	if (typeof value !== 'string' || value.length === 0 || value.length > 128)
 		throw protocolError('validation', `${name} is invalid`);
 	return value;
+}
+
+/**
+ * A typed `~` or `~/…` root names the verified account home of this server,
+ * expanded here and never by the client (the same rule the root browser uses).
+ */
+async function expandRootHome(
+	options: WorkspaceOperationRegistryOptions,
+	root: string,
+): Promise<string> {
+	if (options.rootFolders === undefined) return root;
+	try {
+		return await options.rootFolders.expandHome(root);
+	} catch (error) {
+		if (error instanceof RootFolderError) throw error.toProtocolError();
+		throw error;
+	}
 }
 
 function rootField(value: JsonValue | undefined): string {

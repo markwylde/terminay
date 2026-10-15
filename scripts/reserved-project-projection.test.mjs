@@ -56,7 +56,7 @@ function project(id, extra = {}) {
 
 function snapshotWithSpace({ listSpace = false } = {}) {
 	return withGeneralFolders({
-		schemaVersion: 6,
+		schemaVersion: 7,
 		serverId: 'server-a',
 		revision: 4,
 		cursor: '4',

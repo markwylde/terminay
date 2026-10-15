@@ -5,7 +5,11 @@ import type { ServerWorkspaceProject } from './serverWorkspaceReconciliation';
 export type FeatureQueryScope = Readonly<{
 	serverId: string;
 	projectId: string;
+	/** Empty for a project with no root folder. */
 	projectRoot: string;
+	/** False for a project with no root folder: there is nothing for a
+	 * filesystem, watch, Git, or Documentation query to read (ADR-0066). */
+	hasRoot: boolean;
 }>;
 
 export type ProjectFeatureAuthority = Readonly<{
@@ -36,6 +40,41 @@ export function featureProjectRoot(
 	return availability.state === 'available'
 		? availability.authority.scope.projectRoot
 		: renderedProjectRoot;
+}
+
+export type FeatureProjectRoot =
+	| Readonly<{ state: 'rooted'; root: string }>
+	| Readonly<{ state: 'no-root' }>;
+
+/**
+ * The root a project's sidebar panes read, or that it has none. Only the
+ * server says a project has no root folder; a presentation still loading is
+ * shown at the root it renders.
+ */
+export function resolveFeatureProjectRoot(
+	availability: FeatureAvailability,
+	renderedProjectRoot: string,
+): FeatureProjectRoot {
+	if (availability.state === 'available' && !availability.authority.scope.hasRoot)
+		return { state: 'no-root' };
+	return {
+		state: 'rooted',
+		root: featureProjectRoot(availability, renderedProjectRoot),
+	};
+}
+
+/**
+ * The authority a project's filesystem features (Explorer, its watches, Git,
+ * and Documentation) may use. A project with no root folder gets none, so no
+ * such query can be made for it.
+ */
+export function rootScopedFeatureAuthority(
+	availability: FeatureAvailability,
+): ProjectFeatureAuthority | undefined {
+	return availability.state === 'available' &&
+		availability.authority.scope.hasRoot
+		? availability.authority
+		: undefined;
 }
 
 /**
@@ -219,7 +258,8 @@ function scopeForProject(serverId: string, project: ServerWorkspaceProject): Fea
 	return {
 		serverId,
 		projectId: project.id,
-		projectRoot: project.root,
+		projectRoot: project.rootOrigin === 'none' ? '' : project.root,
+		hasRoot: project.rootOrigin !== 'none',
 	};
 }
 

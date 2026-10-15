@@ -244,3 +244,51 @@ test("workspace facade sends folder commands and rejects unbounded ones before t
   await assert.rejects(workspace.deleteFolder("bad id"), /folder delete id is invalid/);
   assert.equal(calls.length, 9);
 });
+
+test("workspace facade starts a project, reads and forgets recent folders, and browses server folders by name", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({
+    async query(operation, payload) {
+      calls.push([operation, payload]);
+      if (operation === "recent.list") return { result: { revision: 4, entries: [{ path: "/srv/a", usedAt: 9, available: false }] } };
+      return { result: { path: "/home/mark", parent: "/home", entries: [{ name: "code" }], truncated: true } };
+    },
+    async command(operation, payload) {
+      calls.push([operation, payload]);
+      if (operation === "recent.forget") return { result: { forgotten: true, revision: 6, cursor: "6" } };
+      return { result: { projectId: "project-a", root: "", rootOrigin: "none", revision: 5, cursor: "5" } };
+    },
+  });
+  assert.deepEqual(await workspace.startProject({ projectId: "project-a", choice: { kind: "home" } }), { projectId: "project-a", root: "", rootOrigin: "none", revision: 5, cursor: "5" });
+  assert.equal((await workspace.listRecentProjectFolders()).entries[0].available, false);
+  assert.deepEqual(await workspace.forgetRecentProjectFolder("/srv/a"), { forgotten: true, revision: 6, cursor: "6" });
+  assert.equal((await workspace.browseRootFolders()).truncated, true);
+  await workspace.browseRootFolders("~/code");
+  assert.deepEqual(calls, [
+    ["project.start", { projectId: "project-a", choice: { kind: "home" } }],
+    ["recent.list", {}],
+    ["recent.forget", { path: "/srv/a" }],
+    ["fs.browse-root-folders", {}],
+    ["fs.browse-root-folders", { path: "~/code" }],
+  ]);
+});
+
+test("workspace facade rejects malformed start choices and answers that name another project", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({
+    async command(operation, payload) { calls.push([operation, payload]); return { result: { projectId: "project-b", root: "/srv/b", rootOrigin: "explicit", revision: 2, cursor: "2" } }; },
+    async query() { return { result: { path: "/x", entries: [{ name: "../escape" }], truncated: false } }; },
+  });
+  await assert.rejects(workspace.startProject({ projectId: "project-a", choice: { kind: "folder", path: "" } }), /project start request is invalid/);
+  await assert.rejects(workspace.startProject({ projectId: "project-a", choice: { kind: "root" } }), /project start request is invalid/);
+  assert.deepEqual(calls, []);
+  await assert.rejects(workspace.startProject({ projectId: "project-a", choice: { kind: "folder", path: "/srv/b" } }), /identity is invalid/);
+  await assert.rejects(workspace.browseRootFolders(), /folder browse result is invalid/);
+});
+
+test("a project with no root folder can be renamed and keeps having none", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({ async command(_operation, payload) { calls.push(payload.command); return { result: null }; } });
+  await workspace.updateProject({ projectId: "project-a", name: "Scratch", root: "", color: "#fff", icon: "" });
+  assert.equal(calls[0].root, "");
+});

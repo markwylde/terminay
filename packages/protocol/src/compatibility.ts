@@ -43,6 +43,11 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** The server's own upgrade: whether its channel carries a newer release,
 	 * and a paired device asking for it to be installed (ADR-0062). */
 	serverUpgrade: 'server.upgrade',
+	/** A project created without a root waits for a start choice, and the
+	 * server keeps recent project folders and browses its own folders for a
+	 * root (ADR-0066). A connection that does not negotiate it gets a project
+	 * created in the server's default folder instead. */
+	projectStartChoice: 'project-start-choice.v1',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -90,6 +95,10 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.dictation,
 			FEATURE_CAPABILITIES.extensions,
 			FEATURE_CAPABILITIES.language,
+			// Sent so a project created without a root waits for a start choice
+			// this bundle can present; a server without it creates the project
+			// in its default folder, as before.
+			FEATURE_CAPABILITIES.projectStartChoice,
 		]),
 	});
 

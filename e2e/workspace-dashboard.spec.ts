@@ -14,6 +14,7 @@ import {
 	setProjectRoot,
 	submitEditWindow,
 } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
@@ -103,7 +104,7 @@ test.describe('workspace dashboard', () => {
 		await openFileExplorer(mainWindow);
 		await fileExplorerItem(mainWindow, 'notes.txt').dblclick();
 		await expect(mainWindow.locator('.file-mode-switcher')).toBeVisible();
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		const secondProjectId = await activeProjectId(mainWindow);
@@ -193,7 +194,7 @@ test.describe('workspace dashboard', () => {
 		mainWindow,
 	}) => {
 		const firstProjectId = await activeProjectId(mainWindow);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 
@@ -241,7 +242,7 @@ test.describe('workspace dashboard', () => {
 		mainWindow,
 	}) => {
 		const firstProjectId = await activeProjectId(mainWindow);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 		const secondProjectId = await activeProjectId(mainWindow);
@@ -287,7 +288,7 @@ test.describe('workspace dashboard', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 
