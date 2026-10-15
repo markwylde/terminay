@@ -144,7 +144,14 @@ test('an idle agent-owned terminal is inventoried but not notable', () => {
 
 test('notable agent entries are working, attention, and unread done', () => {
 	const entries = build([
-		{ id: 'p1', params: { agentState: 'working', sessionId: 's1' } },
+		{
+			id: 'p1',
+			params: {
+				agentState: 'working',
+				sessionId: 's1',
+				showActiveTabActivityIndicator: true,
+			},
+		},
 		{ id: 'p2', params: { agentState: 'waiting', sessionId: 's2' } },
 		{ id: 'p3', params: { agentState: 'blocked', sessionId: 's3' } },
 		{
@@ -215,6 +222,54 @@ test('raw-output entries honour their own indicator settings', () => {
 	// Suppressing an indicator hides the badge, never the canonical status.
 	assert.equal(entries[4].status, 'unviewed');
 	assert.equal(entries[5].status, 'attention');
+});
+
+test('agent entries honour the same indicator settings as raw output', () => {
+	const entries = build([
+		// working needs the active-tab indicator opted in
+		{ id: 'p1', params: { agentState: 'working', sessionId: 's1' } },
+		{
+			id: 'p2',
+			params: {
+				agentState: 'working',
+				sessionId: 's2',
+				showActiveTabActivityIndicator: true,
+			},
+		},
+		// done is visible unless the finished indicator is opted out
+		{
+			id: 'p3',
+			params: { agentState: 'done', agentUnread: true, sessionId: 's3' },
+		},
+		{
+			id: 'p4',
+			params: {
+				agentState: 'done',
+				agentUnread: true,
+				sessionId: 's4',
+				showFinishedTabActivityIndicator: false,
+			},
+		},
+		// indicators off entirely hides even attention
+		{
+			id: 'p5',
+			params: {
+				activityIndicatorsEnabled: false,
+				agentState: 'waiting',
+				sessionId: 's5',
+			},
+		},
+		{ id: 'p6', params: { agentState: 'blocked', sessionId: 's6' } },
+	]);
+
+	assert.deepEqual(
+		selectNotableEntries(entries).map((item) => item.panelId),
+		['p2', 'p3', 'p6'],
+	);
+	// Suppressing an indicator hides the badge, never the canonical status.
+	assert.equal(entries[3].status, 'done');
+	assert.equal(entries[4].status, 'waiting');
+	assert.equal(entries[3].indicatorsSuppressed, true);
 });
 
 test('a viewed terminal rests at idle', () => {

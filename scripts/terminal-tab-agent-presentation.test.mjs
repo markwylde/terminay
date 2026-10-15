@@ -21,6 +21,29 @@ test('unacknowledged done and attention glyphs remain', () => {
 	assert.equal(visibleTerminalTabAgentState('blocked', true), 'blocked');
 });
 
+test('agent glyphs follow the tab indicator settings', () => {
+	const active = { showActiveTabActivityIndicator: true };
+	// Active-tab indicators are opt-in, for an agent as for a shell.
+	assert.equal(visibleTerminalTabAgentState('working', false, {}), undefined);
+	assert.equal(visibleTerminalTabAgentState('working', false, active), 'working');
+	assert.equal(
+		visibleTerminalTabAgentState('done', true, {
+			showFinishedTabActivityIndicator: false,
+		}),
+		undefined,
+	);
+	assert.equal(visibleTerminalTabAgentState('done', true, {}), 'done');
+	assert.equal(visibleTerminalTabAgentState('waiting', true, {}), 'waiting');
+	for (const state of ['working', 'waiting', 'blocked', 'done'])
+		assert.equal(
+			visibleTerminalTabAgentState(state, true, {
+				...active,
+				activityIndicatorsEnabled: false,
+			}),
+			undefined,
+		);
+});
+
 async function importPresentation() {
 	const tempDir = await mkdtemp(
 		join(tmpdir(), 'terminay-tab-agent-presentation-'),

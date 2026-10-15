@@ -603,6 +603,30 @@ export function selectUnreadAgentStatuses(
 	return selectAgentStatusEntries(snapshot).filter((entry) => entry.unread);
 }
 
+/** A `done` root marks a result the user has not seen yet, so seeing it
+ * returns the root to `idle`, as a viewed terminal loses its finished dot. */
+function isUnseenResult(entry: AgentStatusEntry): boolean {
+	return entry.kind === 'root' && entry.state === 'done';
+}
+
+function needsAcknowledgement(entry: AgentStatusEntry): boolean {
+	return entry.unread || isUnseenResult(entry);
+}
+
+function acknowledgedEntry(
+	entry: AgentStatusEntry,
+	acknowledgedAt: number,
+): AgentStatusEntry {
+	const next: AgentStatusEntry = {
+		...entry,
+		unread: false,
+		acknowledgedAt: Math.max(entry.acknowledgedAt ?? -Infinity, acknowledgedAt),
+	};
+	if (!isUnseenResult(entry)) return next;
+	const { completionOutcome: _outcome, summary: _summary, ...rest } = next;
+	return { ...rest, state: 'idle', stateStartedAt: acknowledgedAt };
+}
+
 export class AgentStatusStore {
 	private snapshot: AgentStatusSnapshot;
 	private readonly listeners = new Set<AgentStatusListener>();
@@ -636,11 +660,11 @@ export class AgentStatusStore {
 		if (!entry || !Number.isFinite(acknowledgedAt)) {
 			return false;
 		}
-		const nextAcknowledgedAt = Math.max(
-			entry.acknowledgedAt ?? -Infinity,
-			acknowledgedAt,
-		);
-		if (!entry.unread && nextAcknowledgedAt === entry.acknowledgedAt) {
+		const next = acknowledgedEntry(entry, acknowledgedAt);
+		if (
+			!needsAcknowledgement(entry) &&
+			next.acknowledgedAt === entry.acknowledgedAt
+		) {
 			return false;
 		}
 		this.publish({
@@ -648,11 +672,7 @@ export class AgentStatusStore {
 			revision: this.snapshot.revision + 1,
 			entries: {
 				...this.snapshot.entries,
-				[entryId]: {
-					...entry,
-					unread: false,
-					acknowledgedAt: nextAcknowledgedAt,
-				},
+				[entryId]: next,
 			},
 		});
 		return true;
@@ -668,20 +688,13 @@ export class AgentStatusStore {
 		const entries = selectAgentStatusesForTerminal(
 			this.snapshot,
 			activationTerminalSessionId,
-		).filter((entry) => entry.unread);
+		).filter(needsAcknowledgement);
 		if (entries.length === 0) {
 			return 0;
 		}
 		const nextEntries = { ...this.snapshot.entries };
 		for (const entry of entries) {
-			nextEntries[entry.entryId] = {
-				...entry,
-				unread: false,
-				acknowledgedAt: Math.max(
-					entry.acknowledgedAt ?? -Infinity,
-					acknowledgedAt,
-				),
-			};
+			nextEntries[entry.entryId] = acknowledgedEntry(entry, acknowledgedAt);
 		}
 		this.publish({
 			...this.snapshot,
