@@ -1,4 +1,6 @@
 import {
+	ChevronDown,
+	ChevronRight,
 	Columns3,
 	FileText,
 	Folder,
@@ -48,8 +50,10 @@ import {
 } from './dashboardViewMode';
 import {
 	recallDashboardBoardGrouped,
+	recallDashboardBoardUntrackedCollapsed,
 	recallDashboardViewMode,
 	rememberDashboardBoardGrouped,
+	rememberDashboardBoardUntrackedCollapsed,
 	rememberDashboardViewMode,
 } from './localViewState';
 import './workspaceDashboard.css';
@@ -187,8 +191,11 @@ function AgentDetail({
 	agent: DashboardAgent;
 	now: number;
 }) {
-	const note = agentActivityNote(agent);
-	const elapsed = formatElapsed(agent.stateStartedAt, now);
+	// An untracked agent's state is not shown, so nothing derived from it is.
+	const note = agent.untracked ? undefined : agentActivityNote(agent);
+	const elapsed = agent.untracked
+		? undefined
+		: formatElapsed(agent.stateStartedAt, now);
 	return (
 		<>
 			{agent.metadata ? (
@@ -198,7 +205,9 @@ function AgentDetail({
 				<span className="workspace-dashboard__prompt">{agent.prompt}</span>
 			) : null}
 			<span className="workspace-dashboard__footnotes">
-				<span className="workspace-dashboard__state">{agent.state}</span>
+				<span className="workspace-dashboard__state">
+					{agent.untracked ? 'untracked' : agent.state}
+				</span>
 				{elapsed ? (
 					<span className="workspace-dashboard__elapsed">for {elapsed}</span>
 				) : null}
@@ -380,7 +389,9 @@ function AgentCard({
 			type="button"
 		>
 			<span className="workspace-dashboard__card-head">
-				<AgentStatusIndicator showIdle size="medium" state={agent.state} />
+				{agent.untracked ? null : (
+					<AgentStatusIndicator showIdle size="medium" state={agent.state} />
+				)}
 				<span className="workspace-dashboard__card-name">{agent.name}</span>
 				{agent.external ? (
 					<span
@@ -431,12 +442,14 @@ function PanelCard({
 			type="button"
 		>
 			<span className="workspace-dashboard__card-head">
-				<AgentStatusIndicator
-					showIdle
-					size="medium"
-					state={row.status}
-					label={`${KIND_LABEL[row.panelKind]} ${row.status}`}
-				/>
+				{row.untracked ? null : (
+					<AgentStatusIndicator
+						showIdle
+						size="medium"
+						state={row.status}
+						label={`${KIND_LABEL[row.panelKind]} ${row.status}`}
+					/>
+				)}
 				<KindIcon
 					aria-hidden="true"
 					className="workspace-dashboard__kind"
@@ -452,7 +465,8 @@ function PanelCard({
 			) : null}
 			<span className="workspace-dashboard__footnotes">
 				<span className="workspace-dashboard__state">
-					{KIND_LABEL[row.panelKind]} · {row.status}
+					{KIND_LABEL[row.panelKind]} ·{' '}
+					{row.untracked ? 'untracked' : row.status}
 				</span>
 			</span>
 		</button>
@@ -502,56 +516,118 @@ function BoardCard({
 	);
 }
 
+/**
+ * The control that opens and closes the Untracked column. It names the column
+ * and how much is in it whether open or not, so a closed column still says
+ * what it holds.
+ */
+function UntrackedToggle({
+	className,
+	collapsed,
+	count,
+	onToggle,
+}: {
+	className?: string;
+	collapsed: boolean;
+	count: number;
+	onToggle: () => void;
+}) {
+	const Chevron = collapsed ? ChevronRight : ChevronDown;
+	return (
+		<button
+			aria-expanded={!collapsed}
+			aria-label={`${DASHBOARD_BOARD_COLUMN_LABELS.untracked}, ${count} tab${count === 1 ? '' : 's'}. ${collapsed ? 'Expand' : 'Collapse'}`}
+			className={`workspace-dashboard__untracked-toggle${className ? ` ${className}` : ''}`}
+			data-terminay-dashboard-untracked-toggle="true"
+			onClick={onToggle}
+			title={collapsed ? 'Show untracked tabs' : 'Hide untracked tabs'}
+			type="button"
+		>
+			<Chevron aria-hidden="true" size={13} />
+			<span className="workspace-dashboard__column-name">
+				{DASHBOARD_BOARD_COLUMN_LABELS.untracked}
+			</span>
+			<span className="workspace-dashboard__column-count">{count}</span>
+		</button>
+	);
+}
+
+/** How the Board's Untracked column is shown, and how to change it. */
+type UntrackedColumnState = Readonly<{
+	collapsed: boolean;
+	onToggle: () => void;
+}>;
+
 function BoardColumn({
 	column,
 	items,
 	now,
 	onActivateAgent,
 	onActivateRow,
+	untracked,
 }: {
 	column: DashboardBoardColumn;
 	items: readonly DashboardBoardItem[];
 	now: number;
 	onActivateAgent: DashboardActivateAgent;
 	onActivateRow: DashboardActivateRow;
+	untracked: UntrackedColumnState;
 }) {
+	const collapsible = column === 'untracked';
+	const collapsed = collapsible && untracked.collapsed;
 	return (
 		<section
 			aria-label={DASHBOARD_BOARD_COLUMN_LABELS[column]}
-			className={`workspace-dashboard__column workspace-dashboard__column--${column}`}
+			className={`workspace-dashboard__column workspace-dashboard__column--${column}${collapsed ? ' workspace-dashboard__column--collapsed' : ''}`}
 			data-terminay-dashboard-column={column}
+			data-terminay-dashboard-column-collapsed={
+				collapsible ? String(collapsed) : undefined
+			}
 		>
-			<header className="workspace-dashboard__column-head">
-				<span className="workspace-dashboard__column-name">
-					{DASHBOARD_BOARD_COLUMN_LABELS[column]}
-				</span>
-				<span className="workspace-dashboard__column-count">
-					{items.length}
-				</span>
-			</header>
-			<div className="workspace-dashboard__column-body">
-				{items.length === 0 ? (
-					<p className="workspace-dashboard__column-empty">
-						{DASHBOARD_BOARD_COLUMN_EMPTY[column]}
-					</p>
-				) : (
-					items.map((item) => (
-						<BoardCard
-							item={item}
-							key={item.key}
-							now={now}
-							onActivateAgent={onActivateAgent}
-							onActivateRow={onActivateRow}
-						/>
-					))
-				)}
-			</div>
+			{collapsible ? (
+				<header className="workspace-dashboard__column-head">
+					<UntrackedToggle
+						collapsed={collapsed}
+						count={items.length}
+						onToggle={untracked.onToggle}
+					/>
+				</header>
+			) : (
+				<header className="workspace-dashboard__column-head">
+					<span className="workspace-dashboard__column-name">
+						{DASHBOARD_BOARD_COLUMN_LABELS[column]}
+					</span>
+					<span className="workspace-dashboard__column-count">
+						{items.length}
+					</span>
+				</header>
+			)}
+			{collapsed ? null : (
+				<div className="workspace-dashboard__column-body">
+					{items.length === 0 ? (
+						<p className="workspace-dashboard__column-empty">
+							{DASHBOARD_BOARD_COLUMN_EMPTY[column]}
+						</p>
+					) : (
+						items.map((item) => (
+							<BoardCard
+								item={item}
+								key={item.key}
+								now={now}
+								onActivateAgent={onActivateAgent}
+								onActivateRow={onActivateRow}
+							/>
+						))
+					)}
+				</div>
+			)}
 		</section>
 	);
 }
 
 /**
- * The grouped Board: the same four columns, banded by project.
+ * The grouped Board: the same five columns, banded by project. The Untracked
+ * column opens and closes in every lane at once.
  *
  * The column names are stated once, above every lane, so a lane is read across
  * rather than re-learned. A narrow window cannot hold four cells side by side,
@@ -562,19 +638,37 @@ function BoardLanes({
 	now,
 	onActivateAgent,
 	onActivateRow,
+	untracked,
 }: {
 	lanes: readonly DashboardBoardLane[];
 	now: number;
 	onActivateAgent: DashboardActivateAgent;
 	onActivateRow: DashboardActivateRow;
+	untracked: UntrackedColumnState;
 }) {
+	const untrackedCount = lanes.reduce(
+		(total, lane) => total + lane.columns.untracked.length,
+		0,
+	);
 	return (
 		<div
-			className="workspace-dashboard__lanes"
+			className={`workspace-dashboard__lanes${untracked.collapsed ? ' workspace-dashboard__lanes--untracked-collapsed' : ''}`}
 			data-terminay-dashboard-board-grouped="true"
 		>
 			<div className="workspace-dashboard__lanes-head">
-				{DASHBOARD_BOARD_COLUMNS.map((column) => (
+				{DASHBOARD_BOARD_COLUMNS.map((column) =>
+					column === 'untracked' ? (
+						<span
+							className="workspace-dashboard__column-head workspace-dashboard__column--untracked"
+							key={column}
+						>
+							<UntrackedToggle
+								collapsed={untracked.collapsed}
+								count={untrackedCount}
+								onToggle={untracked.onToggle}
+							/>
+						</span>
+					) : (
 					<span
 						className={`workspace-dashboard__column-head workspace-dashboard__column--${column}`}
 						key={column}
@@ -589,7 +683,8 @@ function BoardLanes({
 							)}
 						</span>
 					</span>
-				))}
+					),
+				)}
 			</div>
 			{lanes.length === 0 ? (
 				<p className="workspace-dashboard__column-empty">
@@ -627,6 +722,39 @@ function BoardLanes({
 					<div className="workspace-dashboard__lane-cells">
 						{DASHBOARD_BOARD_COLUMNS.map((column) => {
 							const items = lane.columns[column];
+							if (column === 'untracked') {
+								return (
+									<div
+										className={`workspace-dashboard__lane-cell workspace-dashboard__column--untracked${items.length === 0 ? ' workspace-dashboard__lane-cell--empty' : ''}`}
+										data-terminay-dashboard-column={column}
+										data-terminay-dashboard-column-collapsed={String(
+											untracked.collapsed,
+										)}
+										key={column}
+									>
+										{/* Narrow windows drop the shared head, so each lane
+										    carries the control for its own cell. */}
+										<UntrackedToggle
+											className="workspace-dashboard__lane-cell-label"
+											collapsed={untracked.collapsed}
+											count={items.length}
+											onToggle={untracked.onToggle}
+										/>
+										{untracked.collapsed
+											? null
+											: items.map((item) => (
+													<BoardCard
+														item={item}
+														key={item.key}
+														now={now}
+														onActivateAgent={onActivateAgent}
+														onActivateRow={onActivateRow}
+														showProject={false}
+													/>
+												))}
+									</div>
+								);
+							}
 							return (
 								<div
 									className={`workspace-dashboard__lane-cell workspace-dashboard__column--${column}${items.length === 0 ? ' workspace-dashboard__lane-cell--empty' : ''}`}
@@ -769,7 +897,7 @@ function SummaryChip({
 }: {
 	count: number;
 	label: string;
-	tone: 'attention' | 'done' | 'idle' | 'working';
+	tone: 'attention' | 'done' | 'idle' | 'untracked' | 'working';
 }) {
 	return (
 		<span
@@ -838,6 +966,20 @@ export function WorkspaceDashboard({
 	const [filter, setFilter] = useState('');
 	const [boardGrouped, setBoardGrouped] = useState(
 		recallDashboardBoardGrouped,
+	);
+	const [untrackedCollapsed, setUntrackedCollapsed] = useState(
+		recallDashboardBoardUntrackedCollapsed,
+	);
+	const untracked = useMemo<UntrackedColumnState>(
+		() => ({
+			collapsed: untrackedCollapsed,
+			onToggle: () => {
+				const next = !untrackedCollapsed;
+				setUntrackedCollapsed(next);
+				rememberDashboardBoardUntrackedCollapsed(next);
+			},
+		}),
+		[untrackedCollapsed],
 	);
 	const now = useNow();
 
@@ -918,6 +1060,13 @@ export function WorkspaceDashboard({
 					<SummaryChip count={summary.working} label="working" tone="working" />
 					<SummaryChip count={summary.done} label="done" tone="done" />
 					<SummaryChip count={summary.idle} label="idle" tone="idle" />
+					{summary.untracked > 0 ? (
+						<SummaryChip
+							count={summary.untracked}
+							label="untracked"
+							tone="untracked"
+						/>
+					) : null}
 					<span className="workspace-dashboard__summary-projects">
 						{summary.projects} project{summary.projects === 1 ? '' : 's'}
 					</span>
@@ -946,6 +1095,7 @@ export function WorkspaceDashboard({
 				now={now}
 				onActivate={onActivate}
 				onActivateAgent={onActivateAgent}
+				untracked={untracked}
 			/>
 		</section>
 	);
@@ -959,6 +1109,7 @@ function DashboardBody({
 	now,
 	onActivate,
 	onActivateAgent,
+	untracked,
 }: {
 	boardGrouped: boolean;
 	emptyLabel: string;
@@ -967,6 +1118,7 @@ function DashboardBody({
 	now: number;
 	onActivate: DashboardActivateRow;
 	onActivateAgent: DashboardActivateAgent;
+	untracked: UntrackedColumnState;
 }): ReactNode {
 	const boardColumns = useMemo(
 		() =>
@@ -1004,13 +1156,16 @@ function DashboardBody({
 				now={now}
 				onActivateAgent={onActivateAgent}
 				onActivateRow={onActivate}
+				untracked={untracked}
 			/>
 		);
 	}
 
 	if (mode === 'board' && boardColumns !== undefined) {
 		return (
-			<div className="workspace-dashboard__board">
+			<div
+				className={`workspace-dashboard__board${untracked.collapsed ? ' workspace-dashboard__board--untracked-collapsed' : ''}`}
+			>
 				{DASHBOARD_BOARD_COLUMNS.map((column) => (
 					<BoardColumn
 						column={column}
@@ -1019,6 +1174,7 @@ function DashboardBody({
 						now={now}
 						onActivateAgent={onActivateAgent}
 						onActivateRow={onActivate}
+						untracked={untracked}
 					/>
 				))}
 			</div>

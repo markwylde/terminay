@@ -112,6 +112,7 @@ test('the project header rolls up its panels', () => {
 		attention: 2,
 		done: 1,
 		panels: 5,
+		untracked: 0,
 		working: 1,
 	});
 });

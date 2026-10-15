@@ -69,6 +69,11 @@ import {
 	selectLiveAgentStatusesForProject,
 } from './agentStatusStore';
 import {
+	presentAgentForTracking,
+	presentAgentSnapshotForTracking,
+	untrackedSessionIdsFromPanels,
+} from './agents/agentPresentation';
+import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
@@ -1935,9 +1940,11 @@ const ProjectWorkspace = memo(forwardRef<
 			}
 			// Agents are the project's, not one folder's: a terminal in another
 			// folder is still one of this project's terminals.
+			const untrackedSessionIds = new Set<string>();
 			for (const entry of projectInventory) {
 				if (entry.sessionId === undefined) continue;
 				terminalSessionIds.add(entry.sessionId);
+				if (entry.untracked) untrackedSessionIds.add(entry.sessionId);
 				if (!terminalPanelsBySession.has(entry.sessionId))
 					terminalPanelsBySession.set(entry.sessionId, entry.panelId);
 				if (!terminalTitlesBySession.has(entry.sessionId))
@@ -1958,7 +1965,7 @@ const ProjectWorkspace = memo(forwardRef<
 				project.id,
 				terminalSessionIds,
 			)
-				.slice()
+				.map((entry) => presentAgentForTracking(entry, untrackedSessionIds))
 				.sort(
 					(left, right) =>
 						priority[left.state] - priority[right.state] ||
@@ -8182,7 +8189,34 @@ function App({
 	// One subscription to every attached server's agent projection, read by two
 	// surfaces: the tab badges for the servers this window is not working in,
 	// and the dashboard, which shows every server's agents.
-	const agentSnapshotsByServer = useConnectionAgentSnapshots(connections);
+	const liveAgentSnapshotsByServer = useConnectionAgentSnapshots(connections);
+	// An agent in an untracked terminal is listed but reads idle on every
+	// surface below. The working server's live inventory says which terminals
+	// are untracked; another server's workspace projection says it for its own.
+	const agentSnapshotsByServer = useMemo(() => {
+		const currentUntracked = new Set<string>();
+		for (const entries of Object.values(inventoryByProject))
+			for (const entry of entries)
+				if (entry.untracked && entry.sessionId)
+					currentUntracked.add(entry.sessionId);
+		const presented: Record<string, AgentStatusSnapshot> = {};
+		for (const [serverId, snapshot] of Object.entries(
+			liveAgentSnapshotsByServer,
+		)) {
+			const untracked =
+				serverId === currentServerId
+					? currentUntracked
+					: untrackedSessionIdsFromPanels(
+							byServerId.get(serverId)?.context?.workspaceSnapshotStore
+								?.snapshot?.panels,
+						);
+			presented[serverId] = presentAgentSnapshotForTracking(
+				snapshot,
+				untracked,
+			);
+		}
+		return presented;
+	}, [byServerId, currentServerId, inventoryByProject, liveAgentSnapshotsByServer]);
 	// Another attached server has no live panel inventory in this window, but
 	// its agent projection still says which of its projects are waiting on a
 	// person — which is the thing worth showing across a server boundary.

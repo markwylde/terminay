@@ -28,3 +28,17 @@ export function visibleTerminalTabAgentState(
 	}
 	return undefined;
 }
+
+/**
+ * The agent state a tab may present at all. An untracked tab presents none,
+ * so its bound agent never draws a glyph on it.
+ */
+export function trackedTerminalTabAgentState(
+	params:
+		| { activityIndicatorsEnabled?: boolean; agentState?: AgentState }
+		| undefined,
+): AgentState | undefined {
+	return params?.activityIndicatorsEnabled === false
+		? undefined
+		: params?.agentState;
+}

@@ -5,8 +5,11 @@ import {
 	isGenericTerminalTitle,
 	joinMetadata,
 	meaningfulDisplayName,
+	presentAgentForTracking,
+	presentAgentSnapshotForTracking,
 	providerLabel,
 	resolveAgentPresentation,
+	untrackedSessionIdsFromPanels,
 } from '../src/agents/agentPresentation.ts';
 
 function root(overrides = {}) {
@@ -163,4 +166,41 @@ test('one source reporting several harnesses is labelled by the harness it decla
 		),
 		'Claude Code',
 	);
+});
+
+test('an agent in an untracked terminal is listed idle and unread-free', () => {
+	const untracked = new Set(['term-1']);
+	const blocked = root({ state: 'blocked', unread: true });
+	const presented = presentAgentForTracking(blocked, untracked);
+	assert.equal(presented.state, 'idle');
+	assert.equal(presented.unread, false);
+	assert.equal(presented.entryId, blocked.entryId);
+	// The server's entry is untouched, and tracked or external agents pass through.
+	assert.equal(blocked.state, 'blocked');
+	const tracked = root({ activationTerminalSessionId: 'term-2' });
+	assert.equal(presentAgentForTracking(tracked, untracked), tracked);
+	const external = root({ activationTerminalSessionId: null, external: true });
+	assert.equal(presentAgentForTracking(external, untracked), external);
+});
+
+test('a projection is silenced for the terminals its panels leave untracked', () => {
+	const untracked = untrackedSessionIdsFromPanels({
+		p1: { activityIndicatorsEnabled: false, sessionId: 'term-1' },
+		p2: { sessionId: 'term-2' },
+		p3: { activityIndicatorsEnabled: false },
+	});
+	assert.deepEqual([...untracked], ['term-1']);
+	const snapshot = {
+		entries: {
+			'e-1': root({ state: 'done', unread: true }),
+			'e-2': root({ activationTerminalSessionId: 'term-2', entryId: 'e-2' }),
+		},
+		eventCursors: {},
+		revision: 3,
+	};
+	const presented = presentAgentSnapshotForTracking(snapshot, untracked);
+	assert.equal(presented.entries['e-1'].state, 'idle');
+	assert.equal(presented.entries['e-2'].state, 'working');
+	assert.equal(presented.revision, 3);
+	assert.equal(presentAgentSnapshotForTracking(snapshot, new Set()), snapshot);
 });

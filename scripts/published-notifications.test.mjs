@@ -187,6 +187,23 @@ test("a terminal's indicator settings hide its activity notification but not wha
 	);
 });
 
+test('an untracked terminal lists no activity notification, agent ones included', () => {
+	const untracked = (title, overrides = {}) =>
+		entry(title, { indicatorsSuppressed: true, untracked: true, ...overrides });
+	const items = publishedNotificationItems(
+		snapshot(
+			record('n-1', 'quiet', 'command-finished'),
+			record('n-2', 'agent', 'agent-blocked'),
+			record('n-3', 'quiet', 'message', { body: 'still shown' }),
+		),
+		[untracked('quiet'), untracked('agent', { isAgentStatus: true })],
+	);
+	assert.deepEqual(
+		items.map((item) => item.notificationId),
+		['n-3'],
+	);
+});
+
 test('nothing published lists nothing', () => {
 	assert.deepEqual(publishedNotificationItems(snapshot(), [entry('a')]), []);
 });
