@@ -314,3 +314,26 @@ test('a folder whose only tab is a file is not empty', () => {
 	assert.deepEqual(one.panels.map((row) => [row.kind, row.title]), [['file', 'notes.txt']]);
 	assert.equal(one.isEmpty, false);
 });
+
+test('an untracked terminal reads idle in the tree and its collapsed folder shows nothing', async () => {
+	const { buildProjectInventoryEntries } = await import('../src/workspace/workspaceInventory.ts');
+	const { folderAttentionState } = await import('../src/workspace/folderTreeModel.ts');
+	const entries = buildProjectInventoryEntries({
+		agentIntegrationEnabled: true,
+		panels: [
+			{ id: 'caffeinate', params: { activityIndicatorsEnabled: false, sessionId: 's-1', terminalActivityState: 'attention' } },
+			{ id: 'agent', params: { activityIndicatorsEnabled: false, agentState: 'blocked', sessionId: 's-2' } },
+		],
+		project: { color: '#fff', emoji: '', id: 'project-a', title: 'Project' },
+	});
+	const facts = panelFactsFromInventory(entries);
+	assert.equal(facts('caffeinate')?.status, 'idle');
+	assert.equal(facts('agent')?.status, 'idle');
+	assert.equal(
+		folderAttentionState([
+			{ kind: 'terminal', status: facts('caffeinate').status },
+			{ kind: 'terminal', status: facts('agent').status },
+		]),
+		undefined,
+	);
+});

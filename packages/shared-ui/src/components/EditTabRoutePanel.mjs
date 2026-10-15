@@ -69,7 +69,7 @@ function createDraft(kind, draft, disabled) {
     ...base,
     projectColour,
     inheritsProjectColor: draft.inheritsProjectColor,
-    activityIndicatorsEnabled: Object.freeze({ id: 'edit-tab-activity-indicators', role: 'switch', label: 'Enable activity indicators', checked: draft.activityIndicatorsEnabled, disabled }),
+    activityIndicatorsEnabled: Object.freeze({ id: 'edit-tab-activity-indicators', role: 'switch', label: 'Track activity', checked: draft.activityIndicatorsEnabled, disabled }),
     inheritProjectColourAction: Object.freeze({ id: 'inherit-project-colour', label: 'Inherit project colour', disabled, minTouchTargetPx: EDIT_TAB_ROUTE_TOUCH_TARGET_PX }),
   })
 }

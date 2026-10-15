@@ -18,6 +18,7 @@ import {
 	groupBoardItemsByColumn,
 	isDashboardViewMode,
 } from '../src/workspace/dashboardViewMode.ts';
+import { presentAgentForTracking } from '../src/agents/agentPresentation.ts';
 
 const projects = [
 	{ color: '#336699', emoji: '🟩', id: 'p-a', title: 'Terminay' },
@@ -231,6 +232,7 @@ test('a panel and the agent inside it are counted once, not twice', () => {
 		attention: 1,
 		done: 0,
 		panels: 1,
+		untracked: 0,
 		working: 0,
 	});
 });
@@ -254,6 +256,7 @@ test('the summary adds up the roll-ups, idle included', () => {
 		done: 1,
 		idle: 1,
 		projects: 2,
+		untracked: 0,
 		working: 1,
 	});
 });
@@ -312,6 +315,7 @@ test('board columns read in lifecycle order', () => {
 		'working',
 		'attention',
 		'done',
+		'untracked',
 	]);
 });
 
@@ -533,4 +537,65 @@ test('the grouped board bands the same cards by project, in project order', () =
 		),
 	);
 	assert.deepEqual([...grouped].sort(), [...ungrouped].sort());
+});
+
+test('an untracked terminal and its agent go only in the Untracked column', () => {
+	const untrackedSessions = new Set(['s1', 's9']);
+	const scoped = buildCrossServerDashboardGroups([
+		{
+			serverId: 'srv-1',
+			serverLabel: 'Local',
+			projects,
+			inventoryByProject: {
+				'p-a': [
+					// The inventory has already made both idle.
+					panel({ isAgentStatus: true, panelId: 'a', sessionId: 's1', status: 'idle', untracked: true }),
+					panel({ panelId: 'b', sessionId: 's2', status: 'idle', untracked: true }),
+					panel({ panelId: 'c', sessionId: 's3', status: 'recent' }),
+				],
+			},
+			agentsByProject: {
+				'p-a': [agent({ displayName: 'Quiet', state: 'blocked', unread: true })].map(
+					(entry) => presentAgentForTracking(entry, untrackedSessions),
+				),
+				// An agent whose panel this window does not hold, in an untracked terminal.
+				'p-b': [
+					agent({ activationTerminalSessionId: 's9', displayName: 'Far', entryId: 'e-9', state: 'working' }),
+				].map((entry) => presentAgentForTracking(entry, untrackedSessions)),
+			},
+		},
+	]);
+
+	const columns = groupBoardItemsByColumn(buildDashboardBoardItems(scoped));
+	assert.deepEqual(
+		columns.untracked.map((item) => item.agent?.name ?? item.panel?.panelId),
+		['Quiet', 'b', 'Far'],
+	);
+	for (const item of columns.untracked) assert.equal(item.state, 'idle');
+	assert.deepEqual(columns.attention, []);
+	assert.deepEqual(
+		columns.working.map((item) => item.panel?.panelId),
+		['c'],
+	);
+	assert.deepEqual(columns.idle, []);
+
+	// Counted only as untracked.
+	assert.deepEqual(scoped[0].row.project.counts, {
+		attention: 0,
+		done: 0,
+		panels: 3,
+		untracked: 2,
+		working: 1,
+	});
+	assert.deepEqual(
+		summarizeDashboard(scoped.map((group) => group.row)),
+		{ attention: 0, done: 0, idle: 0, projects: 2, untracked: 3, working: 1 },
+	);
+
+	// Grouping keeps the column and the cards.
+	const lanes = buildDashboardBoardLanes(scoped);
+	assert.deepEqual(
+		lanes.flatMap((lane) => lane.columns.untracked.map((item) => item.key)).sort(),
+		columns.untracked.map((item) => item.key).sort(),
+	);
 });

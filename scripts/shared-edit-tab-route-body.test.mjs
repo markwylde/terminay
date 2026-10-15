@@ -11,7 +11,7 @@ test('edit tab form body is host-neutral shared route UI', async () => {
   assert.match(source, /Edit Project Tab/)
   assert.match(source, /Edit Terminal Tab/)
   assert.match(source, /Inherit project colour/)
-  assert.match(source, /Enable activity indicators/)
+  assert.match(source, /Track activity/)
   assert.match(source, /aria-label=\{state\.kind === 'project' \? 'Project theme hue' : 'Tab theme hue'\}/)
   assert.match(source, /aria-valuetext=\{`\$\{hueValue\} degrees`\}/)
   assert.match(source, /onSubmit: \(result: SharedEditTabResult\) => Promise<void>/)

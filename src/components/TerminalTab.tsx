@@ -33,7 +33,7 @@ import { DockTabChrome } from './DockTabChrome';
 import { TerminalPanelClientContext } from './TerminalPanel';
 import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
 import { TerminalAppWindowBadge } from '../workspace/appWindows/AppWindowBadge';
-import { visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
+import { trackedTerminalTabAgentState, visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
 
 export type TerminalTabMacroRunStep = {
 	id: string;
@@ -156,8 +156,11 @@ export function TerminalTab(
 		params?.terminalHydrationStatus !== 'ready' &&
 		params?.terminalHydrationStatus !== 'failed';
 	const terminalActivityState = params?.terminalActivityState ?? 'viewed';
+	// An untracked tab shows none of its activity, its agent's state included.
+	const isUntracked = params?.activityIndicatorsEnabled === false;
+	const trackedAgentState = trackedTerminalTabAgentState(params);
 	const displayedActivityState =
-		params?.activityIndicatorsEnabled === false ||
+		isUntracked ||
 		(terminalActivityState === 'recent' &&
 			params?.showActiveTabActivityIndicator !== true) ||
 		(terminalActivityState === 'unviewed' &&
@@ -180,23 +183,23 @@ export function TerminalTab(
 	const displayedAgentState =
 		pendingMcpApproval
 			? 'blocked'
-			: params?.agentState !== undefined
+			: trackedAgentState !== undefined
 			? visibleTerminalTabAgentState(
-					params.agentState,
-					params.agentUnread === true,
+					trackedAgentState,
+					params?.agentUnread === true,
 					params,
 				)
 			: fallbackAgentState;
 	const displayedAgentNeedsAttention =
 		pendingMcpApproval ||
-		(params?.agentState !== undefined
-			? params.agentNeedsAttention === true &&
-				params.agentUnread === true &&
+		(trackedAgentState !== undefined
+			? params?.agentNeedsAttention === true &&
+				params?.agentUnread === true &&
 				displayedAgentState !== undefined
 			: displayedActivityState === 'attention');
 	const displayedAgentStatusLabel = pendingMcpApproval
 		? 'Waiting for your approval'
-		: params?.agentState !== undefined || displayedAgentState === undefined
+		: trackedAgentState !== undefined || displayedAgentState === undefined
 			? undefined
 			: displayedActivityState === 'attention'
 				? 'Terminal needs attention'

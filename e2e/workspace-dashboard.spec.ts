@@ -1,8 +1,13 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
-import { settledTerminalSessionId } from './support/terminal-session';
+import { typeInVisibleTerminal } from './support/terminal-input';
 import {
+	activeTerminalSessionId,
+	settledTerminalSessionId,
+} from './support/terminal-session';
+import {
+	contextMenuItem,
 	fileExplorerItem,
 	openFileExplorer,
 	openProjectEditWindow,
@@ -372,7 +377,7 @@ test.describe('workspace dashboard', () => {
 		// true statement about the workspace.
 		await expect(
 			mainWindow.locator('[data-terminay-dashboard-column]'),
-		).toHaveCount(4);
+		).toHaveCount(5);
 		expect(
 			await mainWindow
 				.locator('[data-terminay-dashboard-column]')
@@ -381,7 +386,7 @@ test.describe('workspace dashboard', () => {
 						column.getAttribute('data-terminay-dashboard-column'),
 					),
 				),
-		).toEqual(['idle', 'working', 'attention', 'done']);
+		).toEqual(['idle', 'working', 'attention', 'done', 'untracked']);
 		await expect(
 			mainWindow.locator('[data-terminay-dashboard-column="idle"] .workspace-dashboard__card'),
 		).not.toHaveCount(0);
@@ -420,7 +425,7 @@ test.describe('workspace dashboard', () => {
 		);
 		await expect(lane).toBeVisible();
 		await expect(lane.locator('[data-terminay-dashboard-column]')).toHaveCount(
-			4,
+			5,
 		);
 		expect(
 			await lane
@@ -430,7 +435,7 @@ test.describe('workspace dashboard', () => {
 						column.getAttribute('data-terminay-dashboard-column'),
 					),
 				),
-		).toEqual(['idle', 'working', 'attention', 'done']);
+		).toEqual(['idle', 'working', 'attention', 'done', 'untracked']);
 		await expect(cards).toHaveCount(ungroupedCards);
 
 		// Leaving Home and coming back keeps the grouping.
@@ -508,5 +513,92 @@ test.describe('workspace dashboard', () => {
 		await expect(
 			mainWindow.locator('.workspace-dashboard__summary-projects'),
 		).toContainText('project');
+	});
+
+	test('an untracked tab reads idle everywhere and sits in a collapsed Untracked column', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		const tabs = mainWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await expect(tabs).toHaveCount(2);
+		const quietTab = tabs.filter({ hasText: 'Terminal 2' });
+		const firstTab = tabs.filter({ hasText: 'Terminal 1' });
+
+		await quietTab.click();
+		const quietSessionId = await activeTerminalSessionId(mainWindow);
+		await quietTab.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Open Settings').click();
+		const trackActivity = mainWindow.getByLabel('Track activity');
+		await expect(trackActivity).toBeChecked();
+		await trackActivity.uncheck();
+		await submitEditWindow(mainWindow);
+
+		// A command that rings the bell and finishes once it is in the background:
+		// attention and finished activity, neither of which may show.
+		await typeInVisibleTerminal(
+			mainWindow,
+			"sleep 1.5; printf '\\a'\r",
+			quietSessionId,
+		);
+		await firstTab.click();
+		await mainWindow.waitForTimeout(2_500);
+
+		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+
+		// List: the tab is there, idle.
+		await showDashboard(mainWindow);
+		const quietRow = mainWindow.locator(
+			`[data-terminay-dashboard-panel]:has-text("Terminal 2")`,
+		);
+		await expect(quietRow).toHaveAttribute(
+			'data-terminay-dashboard-status',
+			'idle',
+		);
+		await expect(
+			mainWindow.locator('[data-terminay-dashboard-summary="untracked"]'),
+		).toContainText('1');
+
+		// Board: only in Untracked, which starts collapsed and says it holds one.
+		await viewMode(mainWindow, 'board').click();
+		const untracked = mainWindow.locator(
+			'[data-terminay-dashboard-column="untracked"]',
+		);
+		const toggle = untracked.locator(
+			'[data-terminay-dashboard-untracked-toggle]',
+		);
+		await expect(untracked).toHaveAttribute(
+			'data-terminay-dashboard-column-collapsed',
+			'true',
+		);
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		await expect(toggle).toHaveAttribute('aria-label', /Untracked, 1 tab/);
+		await expect(
+			mainWindow.locator('.workspace-dashboard__card:has-text("Terminal 2")'),
+		).toHaveCount(0);
+
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		await expect(
+			untracked.locator('.workspace-dashboard__card:has-text("Terminal 2")'),
+		).toBeVisible();
+		await expect(
+			mainWindow.locator(
+				'[data-terminay-dashboard-column]:not([data-terminay-dashboard-column="untracked"]) .workspace-dashboard__card:has-text("Terminal 2")',
+			),
+		).toHaveCount(0);
+
+		// Opening it is remembered on this device.
+		await mainWindow.reload({ waitUntil: 'domcontentloaded' });
+		await expect(dashboard(mainWindow)).toBeVisible();
+		await expect(untracked).toHaveAttribute(
+			'data-terminay-dashboard-column-collapsed',
+			'false',
+		);
+
+		await toggle.click();
+		await viewMode(mainWindow, 'list').click();
 	});
 });

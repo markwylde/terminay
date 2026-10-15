@@ -116,7 +116,8 @@ export type WorkspaceInventoryEntry = {
 	/**
 	 * True when this panel's own appearance settings hide its raw-output
 	 * activity indicator. The dashboard still shows the canonical status; the
-	 * indicator-driven surfaces honour the setting.
+	 * indicator-driven surfaces honour the setting. Always true when
+	 * `untracked` is.
 	 */
 	indicatorsSuppressed?: boolean;
 	isAgentStatus: boolean;
@@ -134,6 +135,13 @@ export type WorkspaceInventoryEntry = {
 	since?: number;
 	status: WorkspaceInventoryStatus;
 	title: string;
+	/**
+	 * Set when the person turned off Track activity for this terminal. Its
+	 * status is then `idle` whatever it is doing, agent state included, so no
+	 * surface that reads `status` can show its activity; only the Board and
+	 * the dashboard summary branch on this to place and count it.
+	 */
+	untracked?: true;
 };
 
 export type InventoryPanelParams = PanelTabAppearance & {
@@ -210,6 +218,19 @@ export function buildProjectInventoryEntries(options: {
 			continue;
 		}
 
+		if (!areTerminalActivityIndicatorsEnabled(params)) {
+			entries.push({
+				...base,
+				indicatorsSuppressed: true,
+				isAgentStatus: Boolean(
+					agentIntegrationEnabled && sessionId && agentState,
+				),
+				status: 'idle',
+				untracked: true,
+			});
+			continue;
+		}
+
 		if (agentIntegrationEnabled && sessionId && agentState) {
 			// Once a native lifecycle hook has claimed this terminal, raw output
 			// activity must never compete with that authority.
@@ -255,7 +276,8 @@ export function buildProjectInventoryEntries(options: {
  * agent-owned terminal counts while it is working, while it needs attention,
  * and once it is done but unread; every terminal counts only while its own
  * indicator settings would show its state. File and folder panels have never
- * had activity and never count.
+ * had activity and never count. An untracked terminal is idle, so it never
+ * counts, whatever it or its agent is doing.
  */
 export function isNotableInventoryEntry(
 	entry: WorkspaceInventoryEntry,
