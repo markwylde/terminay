@@ -172,6 +172,8 @@ export * from './automationSpaceVisibility.js';
 export * from './folderReconciler.js';
 export * from './folderRoots.js';
 export * from './terminalTitles.js';
+export * from './rootFolderBrowser.js';
+export * from './rootlessProjects.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';

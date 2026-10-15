@@ -1,0 +1,385 @@
+/* The start chooser of a project awaiting its start choice, the server folder
+   browser it opens, and the "No root folder" state of the sidebar panes. */
+
+.project-start {
+	overflow-x: hidden;
+	overflow-y: auto;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+}
+
+.project-start__panel {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	width: 100%;
+	max-width: 560px;
+	min-width: 0;
+	margin: auto;
+	padding: 32px 24px;
+}
+
+.project-start__header {
+	min-width: 0;
+}
+
+.project-start__title {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.project-start__server {
+	margin: 4px 0 0;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.55);
+	overflow-wrap: anywhere;
+}
+
+.project-start__actions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.project-start__action {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	min-width: 0;
+	padding: 12px 14px;
+	border-radius: 8px;
+	cursor: pointer;
+	background: rgba(255, 255, 255, 0.06);
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+	transition: background-color 120ms ease;
+}
+
+.project-start__action > svg {
+	flex: none;
+	margin-top: 1px;
+	color: var(--project-color, #4db5ff);
+}
+
+.project-start__action:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.11);
+}
+
+.project-start__action:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+
+.project-start__action-text {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.project-start__action-text strong {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.project-start__action-text small {
+	font-size: 12px;
+	line-height: 1.35;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.project-start__error {
+	padding: 8px 10px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	color: #f14c4c;
+	background: rgba(241, 76, 76, 0.08);
+	overflow-wrap: anywhere;
+}
+
+.project-start__section-title {
+	margin: 10px 0 0;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.project-start__note {
+	margin: 0;
+	font-size: 12.5px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.project-start__recent {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.project-start__recent-row {
+	display: flex;
+	align-items: stretch;
+	gap: 4px;
+	min-width: 0;
+}
+
+.project-start__recent-open,
+.project-start__recent-forget {
+	all: unset;
+	box-sizing: border-box;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.project-start__recent-open {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	padding: 7px 10px;
+}
+
+.project-start__recent-open:hover:not([aria-disabled='true']),
+.project-start__recent-forget:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.project-start__recent-open[aria-disabled='true'] {
+	cursor: default;
+}
+
+.project-start__recent-open[aria-disabled='true'] .project-start__recent-name,
+.project-start__recent-open[aria-disabled='true'] .project-start__recent-path {
+	opacity: 0.5;
+}
+
+.project-start__recent-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+}
+
+.project-start__recent-path {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.project-start__recent-unavailable {
+	font-size: 11px;
+	color: #e0a84e;
+}
+
+.project-start__recent-forget {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	padding: 0 10px;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.6);
+}
+
+.project-start__recent-forget:disabled {
+	cursor: default;
+	opacity: 0.5;
+}
+
+.project-start__action:focus-visible,
+.project-start__recent-open:focus-visible,
+.project-start__recent-forget:focus-visible,
+.no-root-folder__action:focus-visible,
+.root-folder-browser__entry:focus-visible {
+	outline: 2px solid rgba(120, 170, 255, 0.9);
+	outline-offset: 1px;
+}
+
+/* At phone width it is one column, scrolled vertically alone: the starts
+   stack, and a path wraps instead of widening its row. */
+.project-start--compact .project-start__panel {
+	max-width: none;
+	margin: 0;
+	padding: 16px 12px 24px;
+}
+
+.project-start--compact .project-start__actions {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.project-start--compact .project-start__recent-path {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.project-start--compact .project-start__recent-open,
+.project-start--compact .project-start__recent-forget,
+.project-start--compact .project-start__action {
+	min-height: 44px;
+}
+
+.project-start--compact .project-start__recent-forget-label {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+}
+
+/* The server folder browser, inside the in-page window frame. */
+.root-folder-browser {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+	max-width: 100%;
+	box-sizing: border-box;
+}
+
+.root-folder-browser .sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+}
+
+.root-folder-browser__path {
+	display: flex;
+	gap: 8px;
+	min-width: 0;
+}
+
+.root-folder-browser__path input {
+	flex: 1;
+	min-width: 0;
+}
+
+.root-folder-browser__location {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.root-folder-browser__parent {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	padding: 4px 8px;
+}
+
+.root-folder-browser__current {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.78);
+}
+
+.root-folder-browser__list {
+	max-height: min(50vh, 360px);
+	margin: 0;
+	padding: 4px;
+	overflow-x: hidden;
+	overflow-y: auto;
+	list-style: none;
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.18);
+}
+
+.root-folder-browser__entry {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 6px 8px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.root-folder-browser__entry > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.root-folder-browser__entry:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.root-folder-browser__message {
+	font-size: 12.5px;
+	color: rgba(220, 226, 240, 0.55);
+	overflow-wrap: anywhere;
+}
+
+.root-folder-browser__message--error {
+	color: #f14c4c;
+}
+
+.root-folder-browser .project-edit-actions .root-folder-browser__choose {
+	border-color: #3b82f6;
+	background: #3b82f6;
+	color: #fff;
+}
+
+.root-folder-browser .project-edit-actions .root-folder-browser__choose:hover:not(:disabled) {
+	border-color: #2563eb;
+	background: #2563eb;
+}
+
+/* A sidebar pane of a project with no root folder. */
+.no-root-folder {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 8px 12px;
+}
+
+.no-root-folder__text {
+	margin: 0;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.55);
+}
+
+.no-root-folder__action {
+	all: unset;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 10px;
+	border-radius: 6px;
+	font-size: 12px;
+	cursor: pointer;
+	background: rgba(255, 255, 255, 0.06);
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.no-root-folder__action:hover {
+	background: rgba(255, 255, 255, 0.11);
+}

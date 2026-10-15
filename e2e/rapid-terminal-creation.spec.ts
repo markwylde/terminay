@@ -1,6 +1,7 @@
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { createStartedProject } from './support/project-start';
 
 /**
  * Creating terminals back to back, without ever using the terminals that
@@ -166,7 +167,7 @@ test('keeps terminals added to a second project while the first still holds its 
 	await addTabButton(mainWindow).click();
 	await expect(terminalTabs(mainWindow)).toHaveCount(3, { timeout: 15_000 });
 
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1, { timeout: 15_000 });
@@ -221,7 +222,7 @@ test('keeps terminals created while another window presents a project', async ({
 	await recordWorkspaceDiagnostics(mainWindow);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1);
 
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 

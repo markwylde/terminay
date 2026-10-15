@@ -42,7 +42,7 @@ function snapshot({
 		sidebarPanelOrder: ['explorer', 'agents', 'git', 'documentation'],
 	});
 	return withGeneralFolders({
-		schemaVersion: 6,
+		schemaVersion: 7,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
@@ -196,7 +196,7 @@ test('project and panel identity survives project switches and detach-reattach s
 			]),
 		);
 		return withGeneralFolders({
-			schemaVersion: 6,
+			schemaVersion: 7,
 			serverId: 'server-a',
 			revision,
 			cursor: String(revision),
@@ -316,10 +316,10 @@ test('a snapshot is accepted only with valid folders', () => {
 		mutate(candidate, candidate.projects['project-a'].folderIds[0]);
 		return () => parseServerWorkspaceSnapshot(candidate, 'server-a');
 	};
-	// The schema before folders is not readable by this client.
-	assert.throws(broken((state) => { state.schemaVersion = 5; }), (error) =>
+	// The schema before start choices is not readable by this client.
+	assert.throws(broken((state) => { state.schemaVersion = 6; }), (error) =>
 		error.code === 'workspace_schema_incompatible' && error.upgrade === 'server' && /Update the server/.test(error.message));
-	assert.throws(broken((state) => { state.schemaVersion = 7; }), (error) =>
+	assert.throws(broken((state) => { state.schemaVersion = 8; }), (error) =>
 		error.code === 'workspace_schema_incompatible' && error.upgrade === 'client' && /Update Terminay/.test(error.message));
 	assert.throws(broken((state) => { delete state.folders; }), /incompatible workspace snapshot/);
 	assert.throws(broken((state, general) => { state.folders[general].kind = 'plain'; }), /invalid workspace folder references/);

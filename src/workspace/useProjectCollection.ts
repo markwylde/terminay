@@ -6,15 +6,13 @@ import {
 	useState,
 } from 'react';
 import { closeHostPresentation } from '../host/nativeActions';
-import {
-	presentableViewProjects,
-	presentedProjects,
-} from '../shared/serverWorkspaceReconciliation';
+import { presentedProjects } from '../shared/serverWorkspaceReconciliation';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
 import { keepIfUnchanged, keepListIfUnchanged } from './unchangedPresentation';
 import { recallHomeSelected, rememberHomeSelected } from './localViewState';
+import { newProjectCreateRequest } from './projectCreationRequest';
 import {
 	createProjectTab,
 	isProjectSidebarOpenOnDevice,
@@ -450,19 +448,9 @@ export function useProjectCollection<TTerminal>({
 			projectCounterRef.current += 1;
 			const suffix = projectCounterRef.current;
 			const projectId = `project-${Date.now().toString(36)}-${suffix}`;
-			const activeView = snapshot.views[viewId];
-			const presentable = presentableViewProjects(snapshot, activeView);
-			// With no project to take a folder from, the server picks its own
-			// default folder rather than this window guessing one.
-			const serverRoot: string | undefined =
-				presentable.find(
-					(project) => project.id === activeView?.activeProjectId,
-				)?.root ??
-				presentable[0]?.root ??
-				(defaultProjectRoot.trim().length > 0 ? defaultProjectRoot : undefined);
 			const presentation = createProjectTab(
 				suffix,
-				serverRoot ?? '',
+				'',
 				[
 					...projectsRef.current.map((project) => project.color),
 					...reservedProjectColorsRef.current,
@@ -476,17 +464,20 @@ export function useProjectCollection<TTerminal>({
 			// go: leave Home for it once it exists.
 			if (projectsRef.current.length === 0) setIsHomeSelected(false);
 			void workspaceSnapshotStore
-				.createProject({
-					projectId,
-					viewId,
-					...(serverRoot === undefined ? {} : { root: serverRoot }),
-					color: presentation.color,
-					icon: presentation.emoji,
-					sidebar: {
-						...projectSidebarState(presentation),
-						isFileExplorerOpen: false,
-					},
-				})
+				.createProject(
+					// No root: the project takes none from the projects already
+					// open, and its server decides where it starts.
+					newProjectCreateRequest({
+						projectId,
+						viewId,
+						color: presentation.color,
+						icon: presentation.emoji,
+						sidebar: {
+							...projectSidebarState(presentation),
+							isFileExplorerOpen: false,
+						},
+					}),
+				)
 				.then(() => setProjectCreationError(null))
 				.catch((error) => {
 					setProjectCreationError(

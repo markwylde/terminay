@@ -10,6 +10,7 @@ export * from "./hostedPairingUrl.js";
 export * from "./managerOrigins.js";
 export * from "./negotiation.js";
 export * from "./pairingApproval.js";
+export * from "./projectStart.js";
 export * from "./push.js";
 export * from "./refreshSchedule.js";
 export * from "./serverUpgrade.js";

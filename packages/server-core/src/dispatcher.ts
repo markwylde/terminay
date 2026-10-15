@@ -365,6 +365,13 @@ function terminalServiceError(error: TerminalServiceError): ProtocolError {
 			return { code: 'not_found', message: error.message, retryable: false };
 		case 'forbidden':
 			return { code: 'forbidden', message: error.message, retryable: false };
+		case 'project_awaiting_start':
+			return {
+				code: 'conflict',
+				message: error.message,
+				retryable: false,
+				details: { reason: 'project_awaiting_start' },
+			};
 		case 'invalid_identity':
 		case 'invalid_dimensions':
 		case 'invalid_position':

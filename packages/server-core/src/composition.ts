@@ -165,6 +165,8 @@ import {
 	untrackedTerminalSessionIds,
 	WorkspaceStore,
 } from './workspace.js';
+import { RootFolderBrowser } from './rootFolderBrowser.js';
+import { refuseRootlessProjectOperations } from './rootlessProjects.js';
 import {
 	restoreWorkspaceOnStartup,
 	type WorkspaceStartupRestoreOptions,
@@ -661,6 +663,14 @@ export function createServerCoreComposition(
 						options.terminalLaunchPathAuthority ??
 						nodeTerminalLaunchPathAuthority
 					).homeDirectory,
+					// Starting a project and choosing its root read this server's
+					// folders, from the same verified home terminals start in.
+					rootFolders: new RootFolderBrowser({
+						homeDirectory: (
+							options.terminalLaunchPathAuthority ??
+							nodeTerminalLaunchPathAuthority
+						).homeDirectory,
+					}),
 					...options.workspaceOperations,
 					closeTerminalSessions: async (sessionIds) => {
 						await Promise.allSettled(
@@ -1497,12 +1507,22 @@ export function createServerCoreComposition(
 		operations,
 		terminalOperations.operations,
 	);
-	const completeOperations =
+	const visibleOperations =
 		automationSpace === undefined
 			? mergedOperations
 			: withholdAutomationSpaceOperations(
 					mergedOperations,
 					automationSpace.visibility,
+				);
+	// A project with no root folder has nothing for its files, Git, watch, or
+	// Documentation to act on, and every such request is refused here.
+	const workspaceForRoots = options.workspace;
+	const completeOperations =
+		workspaceForRoots === undefined
+			? visibleOperations
+			: refuseRootlessProjectOperations(
+					visibleOperations,
+					() => workspaceForRoots.state,
 				);
 	const onConnectionClosed = (connectionId: string, clientId: string): void => {
 		terminalOperations.closeConnection(connectionId);
@@ -2078,6 +2098,7 @@ function uniqueCapabilities(
 						FEATURE_CAPABILITIES.workspace,
 						FEATURE_CAPABILITIES.workspaceChanges,
 						FEATURE_CAPABILITIES.terminalTitles,
+						FEATURE_CAPABILITIES.projectStartChoice,
 					]),
 			...(options.activity === undefined && options.agents === undefined
 				? []

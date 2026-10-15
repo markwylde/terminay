@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { cancelEditWindow, longPress } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 const PHONE = { x: 40, y: 40, width: 390, height: 740 } as const;
 
@@ -284,7 +285,7 @@ test.describe('compact chrome', () => {
 		const firstProject = await activeProjectId(mainWindow);
 		const firstSession = await activeSessionId(mainWindow);
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);
@@ -467,7 +468,7 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await expect(mainWindow.locator('.project-tab')).not.toHaveCount(0);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);
@@ -532,7 +533,7 @@ test.describe('compact chrome', () => {
 		const firstProject = await activeProjectId(mainWindow);
 		const firstSession = await activeSessionId(mainWindow);
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);

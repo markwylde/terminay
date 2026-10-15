@@ -20,6 +20,8 @@ export type TerminalServiceErrorCode =
 	| 'missing_project_root'
 	| 'unsafe_cwd'
 	| 'unsafe_legacy_root'
+	/** The project awaits its start choice and has no terminal until then. */
+	| 'project_awaiting_start'
 	| 'profile_not_found'
 	| 'profile_unavailable'
 	| 'unsupported_startup_mode'

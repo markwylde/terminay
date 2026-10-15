@@ -16,6 +16,11 @@ import {
 	openProjectEditWindow,
 	submitEditWindow,
 } from './support/ui';
+import {
+	activeStartChooser,
+	chooseProjectStart,
+	createStartedProject,
+} from './support/project-start';
 
 async function readCssVariableFromStyle(
 	locator: Locator,
@@ -122,7 +127,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -210,7 +215,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -303,7 +308,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -403,9 +408,9 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(3);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -457,9 +462,9 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(3);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -519,7 +524,7 @@ test.describe('project tabs', () => {
 						}
 					).__terminayTestAppBadgeTotal?.() ?? -1,
 			);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -564,7 +569,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -637,7 +642,7 @@ test.describe('project tabs', () => {
 		const initialProjectTab = mainWindow.locator('.project-tab').first();
 		await expect(initialProjectTab).toContainText('Project');
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
@@ -851,6 +856,8 @@ test.describe('project tabs', () => {
 		await expect(
 			mainWindow.locator('.project-tab--creation-loading'),
 		).toHaveCount(0);
+		// The project in front is the last one created, still awaiting its start.
+		await chooseProjectStart(mainWindow);
 
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
 		await nativeWindow.evaluate((window) => {
@@ -951,7 +958,7 @@ test.describe('project tabs', () => {
 	test('reorders visible project tabs when one is dragged along the strip', async ({
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		const tabs = mainWindow.locator(
 			'.project-tab:not(.project-tab--overflowed)',
 		);
@@ -986,7 +993,7 @@ test.describe('project tabs', () => {
 		).toHaveText(['Project 2', 'Project']);
 	});
 
-	test('creating a project focuses the new terminal', async ({
+	test('creating a project focuses its first start, and starting it focuses the new terminal', async ({
 		mainWindow,
 	}) => {
 		await mainWindow.getByLabel('Create project').click();
@@ -997,6 +1004,12 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
+		await expect(
+			activeStartChooser(mainWindow).locator(
+				'[data-terminay-start-action="folder"]',
+			),
+		).toBeFocused();
+		await chooseProjectStart(mainWindow);
 		await expectTerminalInputFocused(mainWindow);
 	});
 
@@ -1041,8 +1054,8 @@ test.describe('project tabs', () => {
 		await mainWindow.keyboard.press('Escape');
 		await expect(commandBar).toHaveCount(0);
 
-		// A new project from Home opens in the server's default folder and is
-		// shown, with its terminal focused.
+		// A new project from Home is shown, waiting for its start; once
+		// started, its terminal is focused.
 		await mainWindow.getByLabel('Create project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
@@ -1050,6 +1063,7 @@ test.describe('project tabs', () => {
 			'project',
 		);
 		await expect(mainWindow.locator('.project-tab--active')).toBeVisible();
+		await chooseProjectStart(mainWindow);
 		await expectTerminalInputFocused(mainWindow);
 	});
 
@@ -1158,12 +1172,12 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,
 		);
 		for (let index = 0; index < 5; index += 1) {
-			await mainWindow.getByLabel('Create project').click();
+			await createStartedProject(mainWindow);
 			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 				0,
 			);
@@ -1256,6 +1270,7 @@ test.describe('a project creation the server refuses', () => {
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
+		await chooseProjectStart(mainWindow);
 	});
 
 	test('the + control replaces the failed tab, and dismiss removes it', async ({
@@ -1278,7 +1293,7 @@ test.describe('a project creation the server refuses', () => {
 			mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
 		).toHaveCount(1);
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
 			0,

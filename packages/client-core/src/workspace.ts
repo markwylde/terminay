@@ -1,4 +1,13 @@
 import {
+	type BrowseRootFoldersResult,
+	PROJECT_START_OPERATIONS,
+	parseBrowseRootFoldersResult,
+	parseProjectStartResult,
+	parseRecentListResult,
+	type ProjectStartChoiceDto,
+	type ProjectStartResult,
+	type RecentForgetResult,
+	type RecentListResult,
 	parseWorkspaceDeltaDto,
 	parseWorkspaceRecordsDeltaDto,
 	WORKSPACE_RECORDS_DELTA_VERSION,
@@ -22,6 +31,12 @@ export interface WorkspaceCommandOptions extends WorkspaceQueryOptions {
 	readonly expectedRevision?: number;
 }
 export type {
+	BrowseRootFoldersResult,
+	ProjectStartChoiceDto,
+	ProjectStartResult,
+	RecentForgetResult,
+	RecentListResult,
+	RecentProjectFolderEntry,
 	WorkspaceChangeRecordDto,
 	WorkspaceDeltaDto,
 	WorkspaceRecordsDeltaDto,
@@ -157,6 +172,10 @@ export interface ProjectRootUpdateRequest {
 export interface ProjectRootUpdateResult extends WorkspaceViewCommandResult {
 	readonly projectId: string;
 	readonly root: string;
+}
+export interface ProjectStartRequest {
+	readonly projectId: string;
+	readonly choice: ProjectStartChoiceDto;
 }
 export interface ProjectPresentationUpdateRequest {
 	readonly projectId: string;
@@ -684,6 +703,95 @@ export class WorkspaceClient {
 		});
 	}
 
+	/**
+	 * The first start choice for a project awaiting one (ADR-0066). The server
+	 * takes only the first choice; a later one is refused with the reason
+	 * `start_conflict`, and a folder it cannot use with the reason it gives.
+	 */
+	async startProject(
+		request: ProjectStartRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<ProjectStartResult> {
+		if (
+			!isBoundedId(request.projectId) ||
+			!(
+				request.choice?.kind === 'home' ||
+				(request.choice?.kind === 'folder' && boundedPath(request.choice.path))
+			)
+		)
+			throw new TypeError('project start request is invalid');
+		const response = await this.client.command<JsonValue>(
+			PROJECT_START_OPERATIONS.start,
+			{
+				projectId: request.projectId,
+				choice:
+					request.choice.kind === 'home'
+						? { kind: 'home' }
+						: { kind: 'folder', path: request.choice.path },
+			},
+			options,
+		);
+		const result = parseProjectStartResult(response.result);
+		if (result.projectId !== request.projectId)
+			throw new Error('project start response identity is invalid');
+		return result;
+	}
+
+	/** The server's recent project folders, most recent first, each checked
+	 * for whether it still exists. */
+	async listRecentProjectFolders(
+		options: WorkspaceQueryOptions = {},
+	): Promise<RecentListResult> {
+		const response = await this.client.query<JsonValue>(
+			PROJECT_START_OPERATIONS.recentList,
+			{},
+			options,
+		);
+		return parseRecentListResult(response.result);
+	}
+
+	/** Drop one folder from the server's recent project folders. No project
+	 * changes. */
+	async forgetRecentProjectFolder(
+		path: string,
+		options: WorkspaceCommandOptions = {},
+	): Promise<RecentForgetResult> {
+		if (!boundedPath(path))
+			throw new TypeError('recent folder request is invalid');
+		const response = await this.client.command<JsonValue>(
+			PROJECT_START_OPERATIONS.recentForget,
+			{ path },
+			options,
+		);
+		const result = response.result;
+		if (
+			typeof result !== 'object' ||
+			result === null ||
+			Array.isArray(result) ||
+			typeof result.forgotten !== 'boolean'
+		)
+			throw new Error('recent folder forget response is invalid');
+		const { revision, cursor } = asWorkspaceViewCommandResult(result);
+		return Object.freeze({ forgotten: result.forgotten, revision, cursor });
+	}
+
+	/** The directory names of one folder on the server, to choose a project
+	 * root from. Absent `path` is the server account's home; `~` and `~/…`
+	 * are resolved there too. */
+	async browseRootFolders(
+		path?: string,
+		options: WorkspaceQueryOptions = {},
+	): Promise<BrowseRootFoldersResult> {
+		if (path !== undefined && !boundedPath(path))
+			throw new TypeError('folder browse request is invalid');
+		const response = await this.client.query<JsonValue>(
+			PROJECT_START_OPERATIONS.browseRootFolders,
+			path === undefined ? {} : { path },
+			options,
+		);
+		return parseBrowseRootFoldersResult(response.result);
+	}
+
 	async updateProject(
 		request: ProjectPresentationUpdateRequest,
 		options: WorkspaceCommandOptions = {},
@@ -695,9 +803,9 @@ export class WorkspaceClient {
 			request.name.length > 256
 		)
 			throw new TypeError('project name is invalid');
+		// An empty root is how a project with no root folder keeps having none.
 		if (
 			typeof request.root !== 'string' ||
-			request.root.length === 0 ||
 			request.root.length > 4096 ||
 			request.root.includes('\0')
 		)

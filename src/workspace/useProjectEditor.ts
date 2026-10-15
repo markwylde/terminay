@@ -10,9 +10,17 @@ import type { AuxiliaryRouteController } from '../shared/auxiliaryRoutes';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import type { ProjectTab } from './projectTabModel';
 
+/**
+ * The root a person typed, with `~` expanded when the home folder is known.
+ * Without one (another project's folder is never a stand-in for it) the path
+ * goes to the server as typed, which validates it. An empty field keeps a
+ * project with no root folder as it is.
+ */
 export function normalizeProjectRoot(value: string, homePath: string): string {
 	const trimmed = value.trim();
-	if (!trimmed || trimmed === '~') return homePath;
+	if (!trimmed) return homePath;
+	if (homePath.length === 0) return trimmed;
+	if (trimmed === '~') return homePath;
 	if (trimmed.startsWith('~/') || trimmed.startsWith('~\\'))
 		return `${homePath}${trimmed.slice(1)}`;
 	return trimmed;

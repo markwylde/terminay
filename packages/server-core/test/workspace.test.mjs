@@ -59,7 +59,7 @@ test("project sidebar state is independently durable, bounded, and migrates with
   assert.equal(store.apply({ commandId: "invalid-sidebar", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: { sidebarPanelOrder: ["explorer"] } } }).ok, false);
   assert.equal(store.state.revision, beforeInvalid);
 
-  const previousVersion = { ...store.state, schemaVersion: WORKSPACE_SCHEMA_VERSION - 2 };
+  const previousVersion = { ...store.state, schemaVersion: 4 };
   assert.throws(() => migrateWorkspaceState(previousVersion, "server-a"), /unsupported workspace schema/);
 });
 
