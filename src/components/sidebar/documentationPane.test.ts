@@ -12,7 +12,7 @@ test('workspace sidebar chrome exposes Documentation refresh and count', async (
 	assert.match(source, /id: 'documentation'/);
 	assert.match(source, /title: 'Documentation'/);
 	assert.match(source, /aria-label="Reload documentation"/);
-	assert.match(source, /count: documentation\.catalog\?\.documents\.length/);
+	assert.match(source, /count: isNoRootProject\s*\?\s*undefined\s*:\s*documentation\.catalog\?\.documents\.length/);
 	assert.match(source, /expandedDocumentationFolderIds/);
 });
 
@@ -30,7 +30,7 @@ test('Documentation indexing is latched per project, not gated on pane collapse'
 
 test('the Documentation header trades refresh for a spinner and a stop button while indexing', async () => {
 	const source = await readFile(new URL('../../App.tsx', import.meta.url), 'utf8');
-	assert.match(source, /actions: documentation\.loading \? \(/);
+	assert.match(source, /actions: isNoRootProject \? undefined : documentation\.loading \? \(/);
 	assert.match(source, /className="sidebar-pane__action-spinner"/);
 	assert.match(source, /aria-label="Indexing documentation"/);
 	assert.match(source, /aria-label="Stop indexing documentation"/);
