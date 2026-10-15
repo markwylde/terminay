@@ -95,6 +95,10 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.dictation,
 			FEATURE_CAPABILITIES.extensions,
 			FEATURE_CAPABILITIES.language,
+			// Sent so a project created without a root waits for a start choice
+			// this bundle can present; a server without it creates the project
+			// in its default folder, as before.
+			FEATURE_CAPABILITIES.projectStartChoice,
 		]),
 	});
 

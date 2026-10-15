@@ -1,4 +1,4 @@
-import { WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
+import { WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type ProjectStartRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	type ServerWorkspaceSnapshot,
@@ -410,6 +410,29 @@ export class WorkspaceSnapshotStore {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		const result = await this.workspace.updateProjectRoot(request, options)
 		return result
+	}
+
+	/** The first start choice for a project awaiting one (ADR-0066). */
+	async startProject(request: ProjectStartRequest, options: WorkspaceCommandOptions = {}) {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		return await this.workspace.startProject(request, options)
+	}
+
+	/** The server's recent project folders, with whether each still exists. */
+	async listRecentProjectFolders() {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		return await this.workspace.listRecentProjectFolders()
+	}
+
+	async forgetRecentProjectFolder(path: string, options: WorkspaceCommandOptions = {}) {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		return await this.workspace.forgetRecentProjectFolder(path, options)
+	}
+
+	/** The directory names of one folder on this store's server. */
+	async browseRootFolders(path?: string) {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		return await this.workspace.browseRootFolders(path)
 	}
 
 	close(): void {
