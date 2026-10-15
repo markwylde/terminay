@@ -30,7 +30,7 @@ test('npm metadata accepts scalar values from npm 11 and singleton arrays from n
 test('candidate.1 source acquisition pins ranged transitive runtime dependencies', () => {
   const expected = Object.fromEntries(
     Object.entries(RETAINED_RUNTIME_PACKAGES)
-      .filter(([path]) => path.startsWith('node_modules/@peculiar/asn1-') || path === 'node_modules/pvutils')
+      .filter(([path]) => path.startsWith('node_modules/@peculiar/asn1-') || path === 'node_modules/asn1js' || path === 'node_modules/pvutils')
       .map(([path, [version]]) => [path.replace(/^node_modules\//u, ''), version]),
   )
   assert.deepEqual(TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES, expected)

@@ -87,6 +87,7 @@ export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   '@peculiar/asn1-schema': '2.8.0',
   '@peculiar/asn1-x509': '2.8.0',
   '@peculiar/asn1-x509-attr': '2.8.0',
+  asn1js: '3.0.10',
   pvutils: '1.1.5',
 }
 
