@@ -14,7 +14,6 @@ function store(options = {}) {
   let now = 1_000
   const capabilities = new ControlCapabilityStore({
     tokenFactory: () => `token-${++n}`,
-    ttlMs: 10_000,
     now: () => now,
     ...options,
   })
@@ -40,7 +39,7 @@ test("a snapshot carries digests and never a token", () => {
   assert.equal(text.includes(lease.token), false)
   const [entry] = capabilities.snapshot()
   assert.match(entry.digest, /^[0-9a-f]{64}$/)
-  assert.deepEqual(Object.keys(entry).sort(), ["digest", "expiresAt", "issuedAt", "projectId", "reach", "scope", "terminalSessionId"])
+  assert.deepEqual(Object.keys(entry).sort(), ["digest", "issuedAt", "projectId", "reach", "scope", "terminalSessionId"])
 })
 
 test("a capability is restored only for a terminal that is still running", () => {
@@ -53,18 +52,51 @@ test("a capability is restored only for a terminal that is still running", () =>
   assert.equal(second.capabilities.resolve(dropped.token), null)
 })
 
-test("restoring does not extend a capability's life or revive an expired one", () => {
+const DAY_MS = 24 * 60 * 60 * 1000
+
+test("a capability does not expire while its terminal runs", () => {
   const first = store()
   const lease = first.capabilities.mint("s1", "p1", "write")
-  const saved = first.capabilities.snapshot()
+  first.advance(30 * DAY_MS)
+  assert.notEqual(first.capabilities.resolve(lease.token), null)
 
-  const late = store({ now: () => lease.expiresAt })
-  assert.equal(late.capabilities.restore(saved, new Set(["s1"])), 0)
+  const second = store({ now: () => 1_000 + 60 * DAY_MS })
+  assert.equal(second.capabilities.restore(first.capabilities.snapshot(), new Set(["s1"])), 1)
+  assert.notEqual(second.capabilities.resolve(lease.token), null)
+})
 
-  const second = store()
-  second.capabilities.restore(saved, new Set(["s1"]))
-  second.advance(lease.expiresAt)
-  assert.equal(second.capabilities.resolve(lease.token), null)
+test("an entry saved with an expiry is restored and the expiry ignored", () => {
+  const first = store()
+  const lease = first.capabilities.mint("s1", "p1", "write")
+  const [entry] = first.capabilities.snapshot()
+  const second = store({ now: () => 1_000 + 7 * DAY_MS })
+  assert.equal(second.capabilities.restore([{ ...entry, expiresAt: 2_000 }], new Set(["s1"])), 1)
+  assert.notEqual(second.capabilities.resolve(lease.token), null)
+})
+
+test("pruning revokes capabilities whose terminal is no longer running", () => {
+  const { capabilities, advance } = store()
+  const alive = capabilities.mint("alive", "p1", "write")
+  const gone = capabilities.mint("gone", "p1", "write")
+  const revoked = []
+  capabilities.onRevoked((_digest, sessionId) => revoked.push(sessionId))
+  advance(DAY_MS)
+  assert.equal(capabilities.prune(new Set(["alive"])), 1)
+  assert.notEqual(capabilities.resolve(alive.token), null)
+  assert.equal(capabilities.resolve(gone.token), null)
+  assert.deepEqual(revoked, ["gone"])
+  assert.equal(capabilities.snapshot().length, 1)
+})
+
+test("pruning leaves a capability minted for a terminal not yet listed as running", () => {
+  const { capabilities, advance } = store()
+  const launching = capabilities.mint("launching", "p1", "write")
+  advance(1_000)
+  assert.equal(capabilities.prune(new Set()), 0)
+  assert.notEqual(capabilities.resolve(launching.token), null)
+  advance(60_000)
+  assert.equal(capabilities.prune(new Set()), 1)
+  assert.equal(capabilities.resolve(launching.token), null)
 })
 
 test("malformed, forged, and conflicting entries are discarded", () => {
@@ -82,7 +114,7 @@ test("malformed, forged, and conflicting entries are discarded", () => {
     // Workspace reach belongs to the automation space alone.
     { ...good, reach: "workspace" },
     { ...good, terminalSessionId: "../escape" },
-    { ...good, expiresAt: "soon" },
+    { ...good, issuedAt: "soon" },
   ]
   const second = store()
   assert.equal(second.capabilities.restore(bad, running), 0)
