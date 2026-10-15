@@ -4,6 +4,7 @@ import { settledTerminalSessionId } from './support/terminal-session'
 import { sendAppCommand } from './support/app'
 import { sendNotificationCommand } from './support/notifications'
 import { submitTerminalCommand } from './support/terminal'
+import { createStartedProject } from './support/project-start'
 
 /** Read the header count repeatedly, so a number that appears and goes is seen. */
 async function expectNoNotificationFor(page: Page, milliseconds: number): Promise<void> {
@@ -220,7 +221,7 @@ test.describe('terminal activity signals', () => {
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
     await expect(mainWindow.locator('.project-tab--active .project-tab-activity-dot')).toHaveCount(1)
 
-    await mainWindow.getByLabel('Create project').click()
+    await createStartedProject(mainWindow)
     await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
     await expect(
       mainWindow.locator('.project-tab:not(.project-tab--active) .project-tab-activity-dot'),

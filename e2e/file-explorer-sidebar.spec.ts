@@ -24,6 +24,7 @@ import {
 } from './support/folders'
 import { submitTerminalCommand } from './support/terminal'
 import { readDiagnosticEvents } from './support/local-desktop-diagnostics'
+import { createStartedProject } from './support/project-start'
 
 const execFileAsync = promisify(execFile)
 
@@ -900,7 +901,7 @@ test('sidebar state persists independently for each project after renderer reloa
   await changesPane1.locator('.sidebar-pane__header').click()
   await expect(changesPane1).toHaveClass(/sidebar-pane--collapsed/)
   // Project 2 starts with its own default state rather than inheriting project 1.
-  await mainWindow.getByLabel('Create project').click()
+  await createStartedProject(mainWindow)
   await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
   await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
   await setProjectRoot(mainWindow, workspace.rootDir)

@@ -14,6 +14,7 @@ import {
 	setProjectRoot,
 	submitEditWindow,
 } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	return await activeTerminalSessionId(page);
@@ -413,7 +414,7 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
 		).toHaveText('Move Me');
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -468,7 +469,7 @@ test.describe('terminal behavior', () => {
 
 		// Move the terminal to a new project — its xterm panel is destroyed and
 		// recreated, which must restore scrollback from the buffer (not start blank).
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -501,7 +502,7 @@ test.describe('terminal behavior', () => {
 		mainWindow,
 	}) => {
 		const movedSessionId = await getActiveSessionId(mainWindow);
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -562,7 +563,7 @@ test.describe('terminal behavior', () => {
 			timeout: 15000,
 		});
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -601,7 +602,7 @@ test.describe('terminal behavior', () => {
 		mainWindow,
 	}) => {
 		await sendAppCommand(mainWindow, 'new-terminal');
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -1014,7 +1015,7 @@ test.describe('terminal behavior', () => {
 			.fill('Wrong Project Shell');
 		await submitEditWindow(firstProjectEditWindow);
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);
@@ -1378,7 +1379,7 @@ test.describe('terminal behavior', () => {
 			.filter({ hasText: 'Terminal 1' })
 			.click();
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { createStartedProject } from './support/project-start';
 
 type CanonicalIdentity = Readonly<{
 	bundleId: string;
@@ -133,7 +134,7 @@ test('populated canonical workspace reloads without duplicate projects or sessio
 	mainWindow,
 }) => {
 	await canonicalIdentity(mainWindow);
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	const populated = await canonicalIdentity(mainWindow);
