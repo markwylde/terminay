@@ -517,8 +517,11 @@ test('active file save dispatch uses the registered live panel handler', async (
 		readFile('src/App.tsx', 'utf8'),
 		readFile('src/components/file-viewer/FilePanel.tsx', 'utf8'),
 	]);
-	assert.match(panel, /useFilePanelSaveRegistration\(props\.api\.id, saveCurrentFile\)/u);
-	assert.match(app, /filePanelSaveHandlersRef\.current\.get\(activePanel\.id\)/u);
+	assert.match(
+		panel,
+		/useFilePanelSaveRegistration\(\s*props\.api\.id,\s*mode === 'document' \? saveDocumentationDraft : saveCurrentFile,/u,
+	);
+	assert.match(app, /filePanelSaveHandlersRef\.current\.get\(activePanel\.id\)\?\.save/u);
 	assert.match(app, /await registeredSave\(\)/u);
 });
 
