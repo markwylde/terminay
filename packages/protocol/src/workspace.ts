@@ -127,6 +127,11 @@ export interface WorkspaceChangeRecordDto {
 	};
 	/** Present when the order of views changed. */
 	readonly viewOrder?: readonly ProtocolId[];
+	/** Present, in full, when the server's recent project folders changed. */
+	readonly recentProjectFolders?: readonly {
+		readonly path: string;
+		readonly usedAt: number;
+	}[];
 }
 
 /**
@@ -185,6 +190,16 @@ export function parseWorkspaceChangeRecordDto(
 	}
 	if (value.viewOrder !== undefined
 		&& (!Array.isArray(value.viewOrder) || value.viewOrder.some((id) => !isBoundedId(id)))) {
+		throw new TypeError('invalid workspace change record');
+	}
+	if (value.recentProjectFolders !== undefined
+		&& (!Array.isArray(value.recentProjectFolders)
+			|| value.recentProjectFolders.length > 50
+			|| value.recentProjectFolders.some((entry) => !isRecord(entry)
+				|| typeof entry.path !== 'string'
+				|| entry.path.length === 0
+				|| entry.path.length > 4096
+				|| !isRevision(entry.usedAt)))) {
 		throw new TypeError('invalid workspace change record');
 	}
 	return value as unknown as WorkspaceChangeRecordDto;
