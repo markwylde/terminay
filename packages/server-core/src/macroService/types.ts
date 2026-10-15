@@ -166,6 +166,8 @@ export interface MacroRunOptions {
 	/** Optional launching-client identity used only for disconnect policy. */
 	readonly launcherId?: string;
 	readonly disconnectPolicy?: MacroDisconnectPolicy;
+	/** Called as the run begins each step, with the run at that step. */
+	readonly onStep?: (snapshot: MacroRunSnapshot) => void;
 }
 
 export type MacroRunStatus = 'running' | 'completed' | 'canceled' | 'failed';

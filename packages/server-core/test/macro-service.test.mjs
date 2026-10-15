@@ -175,6 +175,25 @@ test("macro runner types rendered text and requires exact target authorization",
   );
 });
 
+test("macro runner reports each step as it begins", async () => {
+  const macro = normalizeMacro({
+    id: "steps",
+    steps: [
+      { type: "type", content: "one" },
+      { type: "key", key: "Enter" },
+      { type: "wait_inactivity", durationSeconds: "0" },
+    ],
+  });
+  const reported = [];
+  const runner = new MacroRunner();
+  const result = await runner.run(macro, { target, write() {}, key() {}, waitForInactivity() {} }, {
+    authorization: { target, scope: "write" },
+    onStep: (snapshot) => reported.push([snapshot.stepIndex, snapshot.status]),
+  });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(reported, [[0, "running"], [1, "running"], [2, "running"]]);
+});
+
 test("macro runner bounds waits and cancellation without retaining completed runs", async () => {
   const macro = normalizeMacro({ id: "wait", steps: [{ type: "wait_time", durationSeconds: "5" }] });
   const runner = new MacroRunner({ maxDelayMs: 10_000 });

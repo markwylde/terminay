@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TerminalTabMacroRun } from '../components/TerminalTab';
 import { renderMacroDurationMs, renderMacroTemplate } from '../macroSettings';
 import type { MacroDefinition, MacroFieldValue } from '../types/macros';
+import { furtherAlong, stepStatusForSnapshot } from './macroRunSnapshot';
 
 type MacroRunController = {
 	abortController: AbortController;
@@ -100,7 +101,21 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 	>({});
 	const controllersRef = useRef<Map<string, MacroRunController>>(new Map());
 
+	// Snapshots for a run whose launch response has not arrived yet. A step
+	// can be published before that response; it must not be lost to it.
+	const launchesInFlightRef = useRef(0);
+	const earlySnapshotsRef = useRef<Map<string, MacroRunSnapshot>>(new Map());
+
 	const applyServerSnapshot = useCallback((snapshot: MacroRunSnapshot) => {
+		if (
+			launchesInFlightRef.current > 0 &&
+			!controllersRef.current.has(snapshot.runId)
+		) {
+			earlySnapshotsRef.current.set(
+				snapshot.runId,
+				furtherAlong(earlySnapshotsRef.current.get(snapshot.runId), snapshot),
+			);
+		}
 		const sessionId = snapshot.target.sessionId;
 		setRunningMacroRunsBySession((current) => {
 			const runs = current[sessionId];
@@ -112,15 +127,7 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 					status: snapshot.status,
 					steps: run.steps.map((step, index) => ({
 						...step,
-						status: snapshot.status === 'canceled' && index >= snapshot.stepIndex
-							? 'canceled'
-							: snapshot.status === 'failed' && index === snapshot.stepIndex
-								? 'failed'
-								: index < snapshot.stepIndex || snapshot.status === 'completed'
-									? 'completed'
-									: index === snapshot.stepIndex
-										? 'running'
-										: 'pending',
+						status: stepStatusForSnapshot(snapshot, index),
 					})),
 				}),
 			};
@@ -309,13 +316,19 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 				options.serverMacroClient !== undefined &&
 				options.serverTargetForSession !== undefined
 			) {
+				launchesInFlightRef.current += 1;
 				try {
 					const target = options.serverTargetForSession(sessionId);
-					const snapshot = await options.serverMacroClient.run(
+					const response = await options.serverMacroClient.run(
 						macro.id,
 						target,
 						values,
 					);
+					const snapshot = furtherAlong(
+						earlySnapshotsRef.current.get(response.runId),
+						response,
+					);
+					earlySnapshotsRef.current.delete(response.runId);
 					const abortController = new AbortController();
 					registerRun(sessionId, {
 						id: snapshot.runId,
@@ -337,6 +350,9 @@ export function useMacroRunController(options: MacroRunControllerOptions) {
 					window.requestAnimationFrame(options.focusActiveTerminal);
 				} catch (error) {
 					options.setErrorText(error instanceof Error ? error.message : String(error));
+				} finally {
+					launchesInFlightRef.current -= 1;
+					if (launchesInFlightRef.current === 0) earlySnapshotsRef.current.clear();
 				}
 				return;
 			}
