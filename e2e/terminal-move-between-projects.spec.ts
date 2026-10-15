@@ -6,6 +6,7 @@ import {
 	createTerminal,
 } from './support/terminal-session';
 import { contextMenuItem, submitEditWindow } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 const MOVED_TITLE = 'Move Me';
 const LONG_RUNNING_TASK = 'while :; do date +TICK_%s; sleep 1; done\r';
@@ -84,7 +85,7 @@ async function arrangeProjects(page: Page): Promise<string> {
 	).toHaveCount(1);
 
 	for (const title of ['Project 2', 'Project 3']) {
-		await page.getByLabel('Create project').click();
+		await createStartedProject(page);
 		await expect(page.locator('.project-tab--active')).toContainText(title);
 		await typeInVisibleTerminal(page, LONG_RUNNING_TASK);
 	}

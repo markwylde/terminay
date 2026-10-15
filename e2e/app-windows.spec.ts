@@ -6,6 +6,7 @@ import { expect, test } from './fixtures';
 import { submitTerminalCommand } from './support/terminal';
 import { activeTerminalPanel, createTerminal } from './support/terminal-session';
 import { activateDockTab } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 /**
  * App windows end to end (terminal-app-windows). A stub script in a real
@@ -353,7 +354,7 @@ test('a window that arrives while another project is in front stays with its own
 	await writeFile(script, MCP_SCRIPT);
 	await writeFile(params, JSON.stringify({ title: 'Asked here', html: HELLO }));
 
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	const projects = mainWindow.locator('.project-tab');
 	await expect(projects).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);

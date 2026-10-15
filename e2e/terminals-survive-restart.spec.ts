@@ -5,6 +5,7 @@ import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { contextMenuItem } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 /**
  * Quitting Terminay and opening it again brings back the same terminals.
@@ -226,7 +227,7 @@ test('a terminal moved to another project is still in that project, and still ru
 			{ timeout: 10_000 },
 		);
 
-		await mainWindow.getByLabel('Create project').click();
+		await createStartedProject(mainWindow);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
 		);

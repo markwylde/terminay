@@ -33,6 +33,7 @@ import {
 	openFileExplorer,
 	setProjectRoot,
 } from './support/ui';
+import { chooseProjectStart, createStartedProject } from './support/project-start';
 
 /**
  * Folders within a project: General, plain folders, and the folder every Git
@@ -292,6 +293,7 @@ test('a repository project shows General and a linked folder per worktree with i
 	await expect(newTerminalRow(mainWindow, 'alpha')).toBeVisible();
 
 	await appHarness.sendAppCommand('new-project');
+	await chooseProjectStart(mainWindow);
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
 		'Project 2',
 	);
@@ -615,6 +617,7 @@ test('folder context menus offer what each kind of folder can do, and Open shell
 	// A project with no repository: General offers no Git action, and can
 	// still be copied, opened, and shown in the file manager.
 	await appHarness.sendAppCommand('new-project');
+	await chooseProjectStart(mainWindow);
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
 		'Project 2',
 	);
@@ -1108,6 +1111,7 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 	expect(await activeTerminalSessionId(mainWindow)).toBe(generalSession);
 
 	await appHarness.sendAppCommand('new-project');
+	await chooseProjectStart(mainWindow);
 	const tabs = mainWindow.locator('.project-tab:not(.project-tab--overflowed)');
 	await expect(tabs).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
@@ -1369,7 +1373,7 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 	await wide();
 	await expect(foldersColumn(mainWindow)).toBeVisible();
 	await selectFolder(mainWindow, 'General');
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await phone();

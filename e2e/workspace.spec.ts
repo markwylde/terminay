@@ -11,6 +11,7 @@ import {
 	openProjectEditWindow,
 	setProjectRoot,
 } from './support/ui';
+import { chooseProjectStart } from './support/project-start';
 
 const execFileAsync = promisify(execFile);
 
@@ -273,6 +274,7 @@ test.describe('workspace shell', () => {
 		mainWindow,
 	}) => {
 		await appHarness.sendAppCommand('new-project');
+		await chooseProjectStart(mainWindow);
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
 			'Project 2',
@@ -332,6 +334,7 @@ test.describe('workspace shell', () => {
 			});
 		});
 		await appHarness.sendAppCommand('new-project');
+		await chooseProjectStart(mainWindow);
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
 			'Project 2',

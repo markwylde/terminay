@@ -5,6 +5,7 @@ import {
 	selectSidebarGroup,
 	setProjectRoot,
 } from './support/ui';
+import { createStartedProject } from './support/project-start';
 
 type WorkspaceCommandRecord = Readonly<{
 	operation: string;
@@ -168,7 +169,7 @@ test('sidebar visibility stays local to this device and project', async ({
 		)
 		.toBe(0);
 
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(sidebar).not.toBeVisible();
 
@@ -999,7 +1000,7 @@ test('committed pane sizes remain project-local through project switching and re
 	const firstHeight = (await panelGeometry(mainWindow, ids)).panes.explorer.body
 		.height;
 
-	await mainWindow.getByLabel('Create project').click();
+	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await openFileExplorer(mainWindow);
