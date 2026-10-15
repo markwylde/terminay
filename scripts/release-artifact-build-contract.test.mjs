@@ -16,6 +16,7 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		['builtin-agents', 'terminay-builtin-agents'],
 		['language-typescript', 'terminay-language-typescript'],
 		['gitea', 'terminay-gitea'],
+		['github', 'terminay-github'],
 	];
 
 	assert.equal(serverCorePackage.scripts.build, 'tsc -p tsconfig.json');

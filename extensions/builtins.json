@@ -15,6 +15,11 @@
 			"directory": "gitea",
 			"extensionId": "com.terminay.gitea",
 			"packageName": "terminay-gitea"
+		},
+		{
+			"directory": "github",
+			"extensionId": "com.terminay.github",
+			"packageName": "terminay-github"
 		}
 	]
 }
