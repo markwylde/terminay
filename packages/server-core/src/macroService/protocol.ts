@@ -213,6 +213,13 @@ export function createMacroOperationRegistry(
 				values,
 				launcherId: request.context.connectionId,
 				disconnectPolicy,
+				// Each step begun is published, so a client's queue shows where
+				// the run is rather than only that it started.
+				onStep: (snapshot) =>
+					options.eventJournal.append(
+						MACRO_EVENTS.runChanged,
+						asJson(snapshot),
+					),
 			});
 			// A run may outlive the window that started it, so it is owned by
 			// the device where there is one.

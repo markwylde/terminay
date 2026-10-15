@@ -135,6 +135,7 @@ export class MacroRunner {
 			for (let index = 0; index < run.macro.steps.length; index += 1) {
 				run.stepIndex = index;
 				assertNotCanceled(run.controller.signal);
+				options.onStep?.(snapshotOf(run));
 				await this.executeStep(
 					run,
 					run.macro.steps[index] as MacroStep,

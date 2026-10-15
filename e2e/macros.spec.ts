@@ -676,6 +676,50 @@ test('clears finished macro runs from the queue', async ({ appHarness, mainWindo
   await expect(mainWindow.getByLabel(/Show macro queue \(\d+\)/)).toHaveCount(0)
 })
 
+/** A macro that types three prompts, each followed by Enter and a wait for the terminal to go quiet. */
+const threePrompts = test.extend({
+  userDataDir: async ({ userDataDir }, use) => {
+    const steps = ['one', 'two', 'three'].flatMap((word) => [
+      { id: `type-${word}`, type: 'type', content: `echo ${word}` },
+      { id: `enter-${word}`, type: 'key', key: 'Enter' },
+      { id: `idle-${word}`, type: 'wait_inactivity', durationSeconds: '3' },
+    ])
+    await writeFile(
+      path.join(userDataDir, 'server-macros.v1.json'),
+      JSON.stringify({
+        schemaVersion: 2,
+        revision: 1,
+        cursor: '1',
+        categories: [],
+        macros: [{ id: 'three-prompts', title: 'Three prompts', description: '', category: '', fields: [], steps }],
+      }),
+    )
+    await use(userDataDir)
+  },
+})
+
+threePrompts('the open macro queue follows a running macro from step to step', async ({ appHarness, mainWindow }) => {
+  await appHarness.openMacroLauncher(mainWindow)
+  await mainWindow.getByRole('button', { name: 'Three prompts' }).click()
+
+  await mainWindow.getByLabel('Show macro queue (1)').click()
+  const macroQueue = mainWindow.getByRole('menu', { name: 'Macro queue' })
+  await expect(macroQueue).toBeVisible()
+  const titles = macroQueue.locator('.terminal-tab-macro-step__title')
+  const runningIndex = () =>
+    titles.evaluateAll((rows) => rows.findIndex((row) => row.classList.contains('terminal-tab-macro-step__title--running')))
+
+  // Parked on each wait in turn, without the queue being closed and reopened.
+  await expect.poll(runningIndex, { intervals: [100] }).toBe(2)
+  await expect(macroQueue.locator('.terminal-tab-macro-run__status')).toHaveText('running')
+  await expect(titles.nth(0)).toHaveClass(/--completed/)
+  await expect(titles.nth(3)).toHaveClass(/--pending/)
+  await expect.poll(runningIndex, { intervals: [100] }).toBe(5)
+  await expect(titles.nth(4)).toHaveClass(/--completed/)
+  await expect.poll(runningIndex, { intervals: [100] }).toBe(8)
+  await expect(macroQueue.locator('.terminal-tab-macro-run__status')).toHaveText('completed', { timeout: 10_000 })
+})
+
 test('does not expose a host-local file search authority', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'macro-files',

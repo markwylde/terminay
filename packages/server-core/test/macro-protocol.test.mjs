@@ -232,3 +232,78 @@ test("macro disconnect policy is applied by the server connection cleanup", asyn
     await composition.shutdown();
   }
 });
+
+test("a running macro publishes each step it reaches, so the macro queue can show its stage", async () => {
+  const repository = new MacroRepository(createMemoryBackend());
+  const runner = new MacroRunner({ maxDelayMs: 10_000 });
+  // Each wait for inactivity holds until the test releases it.
+  const idleGates = [];
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: target.serverId,
+    serverVersion: "test",
+    capabilities: ["macros"],
+    ptyFactory: createPtyFactory(),
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
+    macros: {
+      repository,
+      runner,
+      environmentFor: (_request, exactTarget) => ({
+        target: exactTarget,
+        write() {},
+        key() {},
+        waitForInactivity: () => new Promise((resolve) => idleGates.push(resolve)),
+      }),
+    },
+  });
+  const pair = createInMemoryTransportPair({ autoOpen: false });
+  await pair.open();
+  const connection = composition.core.accept(pair.server);
+  const serverTask = connection.start();
+  const client = new TerminayClient({ transport: pair.client, clientId: "progress-client", capabilities: ["macros"] });
+  const macros = new MacroClient(new TerminayClientFacade(client));
+  const seen = [];
+  try {
+    await client.connect();
+    macros.onRunChanged((snapshot) => seen.push(snapshot));
+    await macros.upsert({
+      id: "three-prompts",
+      title: "Three prompts",
+      steps: [
+        { id: "t1", type: "type", content: "something" },
+        { id: "k1", type: "key", key: "Enter" },
+        { id: "w1", type: "wait_inactivity", durationSeconds: "1" },
+        { id: "t2", type: "type", content: "something else" },
+        { id: "k2", type: "key", key: "Enter" },
+        { id: "w2", type: "wait_inactivity", durationSeconds: "1" },
+        { id: "t3", type: "type", content: "last thing" },
+        { id: "k3", type: "key", key: "Enter" },
+        { id: "w3", type: "wait_inactivity", durationSeconds: "1" },
+      ],
+    });
+    const run = await macros.run("three-prompts", target);
+    const latest = () => seen.filter((snapshot) => snapshot.runId === run.runId).at(-1);
+
+    for (const [gate, waitStepIndex] of [[0, 2], [1, 5], [2, 8]]) {
+      await waitFor(() => idleGates.length > gate);
+      // The server is parked on this wait; a client must have been told so.
+      await waitFor(() => latest()?.stepIndex === waitStepIndex, 500).catch(() => undefined);
+      assert.equal(
+        latest()?.stepIndex,
+        waitStepIndex,
+        `while waiting for idle at step ${waitStepIndex}, the last published snapshot is still at step ${latest()?.stepIndex}`,
+      );
+      assert.equal(latest()?.status, "running");
+      idleGates[gate]();
+    }
+    await waitFor(() => latest()?.status === "completed");
+  } finally {
+    for (const release of idleGates) release();
+    await client.close().catch(() => undefined);
+    await connection.close().catch(() => undefined);
+    await serverTask.catch(() => undefined);
+    await pair.client.close().catch(() => undefined);
+    await pair.server.close().catch(() => undefined);
+    await composition.shutdown();
+  }
+});
