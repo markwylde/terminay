@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
-import { fileExplorerItem, openFileExplorer, selectFileView, setProjectRoot, viewDocumentSource } from './support/ui'
+import { fileExplorerItem, openFileExplorer, selectFileView, setProjectRoot, leaveDocumentView } from './support/ui'
 
 const execFileAsync = promisify(execFile)
 
@@ -44,7 +44,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'README.md').dblclick()
-  await viewDocumentSource(mainWindow)
+  await leaveDocumentView(mainWindow)
   await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Markdown Title')
   await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]')).toHaveCount(2)
   await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]').first()).not.toBeChecked()
@@ -118,7 +118,7 @@ test('text mode colorizes syntax on open without needing a scroll', async ({ cre
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'spec.md').dblclick()
-  await viewDocumentSource(mainWindow)
+  await leaveDocumentView(mainWindow)
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
 
   // Monaco renders every token as a span.mtk<N>; plaintext is entirely mtk1.

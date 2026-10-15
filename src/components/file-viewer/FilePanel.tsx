@@ -2,6 +2,7 @@ import type { IDockviewPanelProps } from 'dockview';
 import { LANGUAGE_CAPABILITY, TerminayClientFacade } from '@terminay/client-core';
 import {
 	type CSSProperties,
+	type MutableRefObject,
 	useCallback,
 	useContext,
 	useEffect,
@@ -68,9 +69,9 @@ import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
-import { isDocumentPath } from './openFilePresentation';
+import { normalizeFilePanelParams } from './filePanelParams';
+import { isDocumentPath, leaveDocumentView } from './openFilePresentation';
 import {
-	presentationForFolder,
 	projectRootFileServices,
 } from './projectRootFileServices';
 import {
@@ -175,26 +176,21 @@ function CanonicalFilePanel(
 	},
 ) {
 	const { terminalClientContext } = props;
+	const params = normalizeFilePanelParams(props.params);
 	const {
 		filePath,
 		initialMode,
-		presentation: requestedPresentation = 'file-viewer',
 		preferredEngine = 'auto',
 		projectRoot,
-	} = props.params;
+	} = params;
 	// What a linked folder's panel may not use, decided in one place.
 	const rootServices = projectRootFileServices(
 		terminalClientContext.linkedFolderId,
 	);
-	const presentation = presentationForFolder(
-		requestedPresentation,
-		terminalClientContext.linkedFolderId,
-	);
-	const baseParamsRef = useRef(props.params);
-	// Dockview keeps the panel instance while callers switch between File Viewer
-	// and Documentation.  Keep subsequent dirty/title metadata writes from
-	// restoring the presentation that was used when this component mounted.
-	baseParamsRef.current = props.params;
+	const baseParamsRef = useRef(params);
+	// Keep dirty/title metadata writes from restoring the params this component
+	// mounted with.
+	baseParamsRef.current = params;
 	const panelApiRef = useRef(props.api);
 	const containerApiRef = useRef(props.containerApi);
 	const { settings, setSettings, settingsClient } = useTerminalSettings();
@@ -299,6 +295,8 @@ function CanonicalFilePanel(
 	>([]);
 	const documentationSaveInFlightRef = useRef(false);
 	const deferredDocumentationWatchEventRef = useRef<FileWatchEvent | null>(null);
+	// The Document view's autosave flush, set while the editor is mounted.
+	const documentFlushRef = useRef<(() => Promise<boolean>) | undefined>(undefined);
 	const documentationSessionRef = useRef<{ sessionId: string; diskRevision: number; draftRevision: number } | undefined>(undefined);
 
 	const sessionStore = useMemo(
@@ -537,9 +535,7 @@ function CanonicalFilePanel(
 				return;
 			}
 
-			hasAppliedDefaultModeRef.current = true;
-			setMode(customEvent.detail.mode);
-			sessionStoreRef.current?.setMode(customEvent.detail.mode);
+			void handleModeChangeRef.current(customEvent.detail.mode);
 		};
 
 		window.addEventListener('terminay-file-mode-request', onModeRequest);
@@ -548,13 +544,13 @@ function CanonicalFilePanel(
 		};
 	}, [filePath]);
 	useEffect(() => {
-		if (presentation !== 'documentation' || !/\.mdx?$/iu.test(filePath)) return;
+		if (mode !== 'document' || !isDocumentPath(filePath)) return;
 		let cancelled = false;
 		void fileViewerClient.openFile(toProjectRelativePath(projectRoot, filePath), terminalClientContext.projectId).then((session) => {
 			if (!cancelled) documentationSessionRef.current = { sessionId: session.sessionId, diskRevision: session.metadata.diskRevision, draftRevision: session.metadata.draftRevision };
 		}).catch(() => { if (!cancelled) documentationSessionRef.current = undefined; });
 		return () => { cancelled = true; };
-	}, [filePath, fileViewerClient, presentation, projectRoot, terminalClientContext.projectId]);
+	}, [filePath, fileViewerClient, mode, projectRoot, terminalClientContext.projectId]);
 
 	const refreshDiff = useCallback(
 		async (targetPath: string, options?: { keepPrevious?: boolean }) => {
@@ -865,7 +861,11 @@ function CanonicalFilePanel(
 	);
 
 
-	useFilePanelSaveRegistration(props.api.id, presentation === 'documentation' ? saveDocumentationDraft : saveCurrentFile);
+	useFilePanelSaveRegistration(
+		props.api.id,
+		mode === 'document' ? saveDocumentationDraft : saveCurrentFile,
+		mode === 'document',
+	);
 
 	const handleSwitchToMonaco = useCallback(async () => {
 		const currentInfo = fileInfoRef.current;
@@ -1239,6 +1239,17 @@ function CanonicalFilePanel(
 	}, [engine, fileInfo, isDirty, saveCurrentFile]);
 
 	const handleModeChange = useCallback(async (nextMode: FileViewerMode) => {
+		// The Document view autosaves. Its pending edits reach disk before
+		// another view shows the file, and a failed save keeps the panel on
+		// Document, where the editor reports why.
+		if (
+			modeRef.current === 'document' &&
+			nextMode !== 'document' &&
+			!(await leaveDocumentView(
+				() => documentFlushRef.current?.() ?? Promise.resolve(true),
+			))
+		)
+			return;
 		const nextInfo = fileInfoRef.current;
 		hasAppliedDefaultModeRef.current = true;
 		if (
@@ -1249,7 +1260,7 @@ function CanonicalFilePanel(
 			setHexDraftBase64(draftBufferRef.current.getBase64());
 		}
 		if (
-			nextMode === 'text' &&
+			(nextMode === 'text' || nextMode === 'document') &&
 			nextInfo &&
 			nextInfo.size <= LARGE_FILE_THRESHOLD_BYTES
 		) {
@@ -1260,6 +1271,8 @@ function CanonicalFilePanel(
 		setMode(nextMode);
 		sessionStoreRef.current?.setMode(nextMode);
 	}, []);
+	const handleModeChangeRef = useRef(handleModeChange);
+	handleModeChangeRef.current = handleModeChange;
 	const handleDocumentationChange = useCallback((text: string) => {
 		setDraftText(text);
 		draftBufferRef.current.setText(text);
@@ -1267,9 +1280,9 @@ function CanonicalFilePanel(
 		sessionStoreRef.current?.setDirty(true);
 	}, []);
 	useEffect(() => {
-		if (presentation !== 'documentation' || isDirty || !/\.mdx?$/iu.test(filePath)) return;
+		if (mode !== 'document' || isDirty || !isDocumentPath(filePath)) return;
 		props.api.setTitle(documentDisplayTitle(draftText, filePath));
-	}, [draftText, filePath, isDirty, presentation, props.api]);
+	}, [draftText, filePath, isDirty, mode, props.api]);
 
 	// An HTML file is previewed as a page, which needs the sandbox proxy. Only
 	// such a file asks whether this host can run one.
@@ -1348,13 +1361,8 @@ function CanonicalFilePanel(
 		mode === 'diff' && !canDiff
 			? capabilities.fallbackMode
 		: resolveFileViewerMode(capabilities, mode);
-	const isDocumentation = presentation === 'documentation';
-	const setPresentation = (next: 'file-viewer' | 'documentation') => {
-		props.api.updateParameters({ ...baseParamsRef.current, presentation: next });
-	};
 	const isMdxPreview =
 		rootServices.mdxPreview &&
-		!isDocumentation &&
 		effectiveMode === 'preview' &&
 		/\.mdx$/iu.test(fileInfo.name);
 
@@ -1397,7 +1405,7 @@ function CanonicalFilePanel(
 				/>
 			) : null}
 
-			{!isDocumentation ? <div className="file-panel__toolbar">
+			<div className="file-panel__toolbar">
 				<div className="file-panel__toolbar-row">
 				<FileModeSwitcher
 					activeMode={effectiveMode}
@@ -1429,15 +1437,6 @@ function CanonicalFilePanel(
 						Invalid HEX
 					</span>
 				) : null}
-				{rootServices.documentation && isDocumentPath(fileInfo.name) ? (
-					<button
-						className="file-panel__action file-panel__open-as-document"
-						onClick={() => setPresentation('documentation')}
-						type="button"
-					>
-						Open as document
-					</button>
-				) : null}
 				</div>
 				{capabilities.shouldPromptForEngineChoice && showEngineChoice ? (
 					<FileLargeFileChooser
@@ -1451,10 +1450,10 @@ function CanonicalFilePanel(
 						}}
 					/>
 				) : null}
-			</div> : null}
+			</div>
 
 			<div className="file-panel__body">
-				{isDocumentation ? renderDocumentationSurface(
+				{effectiveMode === 'document' ? renderDocumentationSurface(
 					fileInfo,
 					draftText,
 					handleDocumentationChange,
@@ -1462,8 +1461,9 @@ function CanonicalFilePanel(
 					documentationSessionRef.current,
 					projectRoot,
 					terminalClientContext,
+					rootServices.mdxPreview,
 					fileGateway,
-					() => setPresentation('file-viewer'),
+					documentFlushRef,
 				) : null}
 				{isMdxPreview ? (
 					<LiveMdxPreview
@@ -1472,7 +1472,7 @@ function CanonicalFilePanel(
 						serverId={terminalClientContext.serverId}
 						runtimeClient={terminalClientContext.mdxRuntimeClient}
 					/>
-				) : !isDocumentation && effectiveMode === 'preview' ? (
+				) : effectiveMode === 'preview' ? (
 					<PreviewViewer
 						file={fileInfo}
 						htmlResources={htmlResources}
@@ -1480,10 +1480,10 @@ function CanonicalFilePanel(
 						text={draftText}
 					/>
 				) : null}
-				{!isDocumentation && effectiveMode === 'tasks' ? (
+				{effectiveMode === 'tasks' ? (
 					<TasksViewer text={draftText} diff={diff} />
 				) : null}
-				{!isDocumentation && engine === 'performant' &&
+				{engine === 'performant' &&
 				fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? (
 					<div className="file-panel__viewer" hidden={effectiveMode !== 'text'}>
 						<PerformantTextViewer
@@ -1499,7 +1499,7 @@ function CanonicalFilePanel(
 							sparseLineDeltas={sparseLineDeltas}
 						/>
 					</div>
-				) : !isDocumentation && effectiveMode === 'text' ? (
+				) : effectiveMode === 'text' ? (
 					!fileInfo.isDirectory ? (
 						<TextViewer
 							engine={engine}
@@ -1522,7 +1522,7 @@ function CanonicalFilePanel(
 						</div>
 					)
 				) : null}
-				{!isDocumentation && effectiveMode === 'hex' ? (
+				{effectiveMode === 'hex' ? (
 					<HexViewer
 						draftBase64={
 							fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES
@@ -1557,7 +1557,7 @@ function CanonicalFilePanel(
 						}}
 					/>
 				) : null}
-				{!isDocumentation && effectiveMode === 'diff' ? (
+				{effectiveMode === 'diff' ? (
 					<DiffViewer
 						diff={diff}
 						error={diffError}
@@ -1592,8 +1592,9 @@ function renderDocumentationSurface(
 	session: { readonly draftRevision: number; readonly diskRevision: number } | undefined,
 	projectRoot: string,
 	terminalClientContext: TerminalPanelClientContextValue,
+	mdxRuntimeAllowed: boolean,
 	fileGateway: FileViewerGateway,
-	onViewSource: () => void,
+	flushRef: MutableRefObject<(() => Promise<boolean>) | undefined>,
 ) {
 	const reason = documentationDocumentReason({
 		path: fileInfo.name,
@@ -1619,8 +1620,10 @@ function renderDocumentationSurface(
 			path={toProjectRelativePath(projectRoot, fileInfo.path)}
 			projectId={terminalClientContext.projectId}
 			serverId={terminalClientContext.serverId}
-			runtimeClient={terminalClientContext.mdxRuntimeClient}
-			onViewSource={onViewSource}
+			// A linked folder's file is edited, but its MDX components are not
+			// run: the runtime still reads from the project root.
+			runtimeClient={mdxRuntimeAllowed ? terminalClientContext.mdxRuntimeClient : undefined}
+			flushRef={flushRef}
 			loadImage={async (src) => {
 				const path = resolveDocumentationImagePath(
 					src,
