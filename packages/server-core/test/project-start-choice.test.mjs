@@ -462,7 +462,7 @@ test("recent.list marks a folder that is gone as unavailable, with one stat each
   }
 });
 
-// --- 3.6 fs.browseRootFolders -------------------------------------------------
+// --- 3.6 fs.browse-root-folders -------------------------------------------------
 
 test("browsing lists directory names only, from home by default", async () => {
   const { home, cleanup } = await folders();

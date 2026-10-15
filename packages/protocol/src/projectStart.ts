@@ -18,12 +18,12 @@ export const PROJECT_START_OPERATIONS = Object.freeze({
 	/** Command: drop one folder from the server's recent project folders. */
 	recentForget: 'recent.forget',
 	/** Query: the directory names of one folder on the server. */
-	browseRootFolders: 'fs.browseRootFolders',
+	browseRootFolders: 'fs.browse-root-folders',
 } as const);
 
 /** Most recent project folders a server keeps. */
 export const MAX_RECENT_PROJECT_FOLDERS = 50;
-/** Most directory names one `fs.browseRootFolders` answer carries. */
+/** Most directory names one `fs.browse-root-folders` answer carries. */
 export const MAX_BROWSE_ROOT_FOLDER_ENTRIES = 1000;
 const MAX_PATH_CHARS = 4096;
 const MAX_NAME_CHARS = 1024;

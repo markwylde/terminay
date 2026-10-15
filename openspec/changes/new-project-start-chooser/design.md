@@ -59,7 +59,7 @@ The terminal-launch resolver treats `rootOrigin: 'none'` as "no project director
 
 ### 6. A server-side root folder browse query
 
-`fs.browseRootFolders { path? }` → `{ path, parent?, entries: { name }[], truncated }`, with at most 1000 directory names and the account home by default. It lists directories only, with no file names or metadata, and canonicalizes on every request. It requires the same device authority as `project.root.update`. It is not exposed through MCP. The chooser and the no-root empty state share one `RootFolderBrowser` component, rendered through the in-page window frame (ADR-0053).
+`fs.browse-root-folders { path? }` → `{ path, parent?, entries: { name }[], truncated }`, with at most 1000 directory names and the account home by default. It lists directories only, with no file names or metadata, and canonicalizes on every request. It requires the same device authority as `project.root.update`. It is not exposed through MCP. The chooser and the no-root empty state share one `RootFolderBrowser` component, rendered through the in-page window frame (ADR-0053).
 
 *Why:* It works for remote and phone clients, and it follows the existing rule that a root is "browsed and validated on the server that will own it".
 *Boundary:* this is the first filesystem query not contained by a project root, so it crosses the server filesystem boundary of ADR-0011. ADR-0066 records the scope: names of directories only, root-change authority, no MCP.

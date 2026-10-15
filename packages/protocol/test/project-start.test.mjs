@@ -14,6 +14,7 @@ import {
   parseRecentForgetRequest,
   parseRecentListResult,
   parseWorkspaceChangeRecordDto,
+  validateEnvelope,
 } from '../dist/index.js'
 
 test('the start choice is a versioned feature capability with stable operation names', () => {
@@ -22,7 +23,7 @@ test('the start choice is a versioned feature capability with stable operation n
     start: 'project.start',
     recentList: 'recent.list',
     recentForget: 'recent.forget',
-    browseRootFolders: 'fs.browseRootFolders',
+    browseRootFolders: 'fs.browse-root-folders',
   })
   assert.equal(PROJECT_START_REFUSALS.startConflict, 'start_conflict')
   assert.equal(PROJECT_START_REFUSALS.noProjectRoot, 'no_project_root')
@@ -80,7 +81,20 @@ test('recent.list entries are bounded, unique, and say whether each folder is av
   ]) assert.throws(() => parseRecentListResult(malformed), /invalid/)
 })
 
-test('fs.browseRootFolders takes an optional path and answers with directory names only', () => {
+test('every start-choice operation name is one a query or command envelope carries', () => {
+  for (const operation of Object.values(PROJECT_START_OPERATIONS)) {
+    assert.doesNotThrow(
+      () => validateEnvelope({ type: 'query', queryId: 'q-1', operation, payload: {} }),
+      operation,
+    )
+    assert.doesNotThrow(
+      () => validateEnvelope({ type: 'command', commandId: 'c-1', correlationId: 'c-1', operation, payload: {} }),
+      operation,
+    )
+  }
+})
+
+test('fs.browse-root-folders takes an optional path and answers with directory names only', () => {
   assert.deepEqual(parseBrowseRootFoldersRequest(undefined), {})
   assert.deepEqual(parseBrowseRootFoldersRequest({}), {})
   assert.deepEqual(parseBrowseRootFoldersRequest({ path: '/srv' }), { path: '/srv' })
