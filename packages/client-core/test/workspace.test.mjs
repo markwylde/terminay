@@ -268,8 +268,8 @@ test("workspace facade starts a project, reads and forgets recent folders, and b
     ["project.start", { projectId: "project-a", choice: { kind: "home" } }],
     ["recent.list", {}],
     ["recent.forget", { path: "/srv/a" }],
-    ["fs.browseRootFolders", {}],
-    ["fs.browseRootFolders", { path: "~/code" }],
+    ["fs.browse-root-folders", {}],
+    ["fs.browse-root-folders", { path: "~/code" }],
   ]);
 });
 
