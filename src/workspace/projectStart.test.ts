@@ -13,11 +13,18 @@ import {
 	chooserFocusMove,
 	commitStartChoice,
 	folderName,
+	openProjectWithRoot,
 	projectAwaitsStartChoice,
 	projectHasNoRoot,
 	recentFolderRows,
 	startRefusalMessage,
 } from './projectStart.ts';
+import {
+	folderSuggestions,
+	RootFolderCompleter,
+	splitTypedFolderPath,
+	suggestionHighlightMove,
+} from './rootFolderCompletion.ts';
 import { RootFolderNavigator, type RootFolderListing } from './rootFolderNavigator.ts';
 import { normalizeProjectRoot } from './useProjectEditor.ts';
 
@@ -316,4 +323,108 @@ test('a typed root is never completed with another project folder', () => {
 	assert.equal(normalizeProjectRoot('', ''), '', 'an empty field keeps no root');
 	assert.equal(normalizeProjectRoot(' /srv/app ', ''), '/srv/app');
 	assert.equal(normalizeProjectRoot('~/code', '/home/mark'), '/home/mark/code');
+});
+
+test('a recent folder another shown project has as its root opens that project', () => {
+	const state = snapshot({
+		waiting: project('waiting', { root: '', rootOrigin: 'none', start: 'awaiting-choice' }),
+		rooted: project('rooted', { root: '/work/app' }),
+		homed: project('homed', { root: '', rootOrigin: 'none' }),
+		elsewhere: project('elsewhere', { root: '/work/other' }),
+	});
+	const shown = ['waiting', 'rooted', 'homed'];
+	assert.equal(openProjectWithRoot(state, '/work/app', 'waiting', shown), 'rooted');
+	// A folder no shown project has starts the waiting project there.
+	assert.equal(openProjectWithRoot(state, '/work/new', 'waiting', shown), undefined);
+	// A project in another window is not this window's to show.
+	assert.equal(openProjectWithRoot(state, '/work/other', 'waiting', shown), undefined);
+	// A no-root project never matches, and nor does the waiting project itself.
+	assert.equal(openProjectWithRoot(state, '', 'waiting', shown), undefined);
+	assert.equal(openProjectWithRoot(state, '/work/app', 'rooted', ['rooted']), undefined);
+	assert.equal(openProjectWithRoot(null, '/work/app', 'waiting', shown), undefined);
+});
+
+test('a typed path completes from its parent folder and the start of its last name', () => {
+	assert.deepEqual(splitTypedFolderPath('/Users/mark/Doc'), { parent: '/Users/mark', prefix: 'Doc' });
+	assert.deepEqual(splitTypedFolderPath('/Users/mark/'), { parent: '/Users/mark', prefix: '' });
+	assert.deepEqual(splitTypedFolderPath('/Us'), { parent: '/', prefix: 'Us' });
+	assert.deepEqual(splitTypedFolderPath('C:\\Us'), { parent: 'C:\\', prefix: 'Us' });
+	assert.deepEqual(splitTypedFolderPath('~/co'), { parent: '~/', prefix: 'co' });
+	assert.equal(splitTypedFolderPath('Documents'), null);
+	assert.equal(splitTypedFolderPath(''), null);
+
+	const folder = {
+		path: '/Users/mark',
+		parent: '/Users',
+		entries: [{ name: 'Desktop' }, { name: 'Documents' }, { name: 'docs' }, { name: 'Downloads' }],
+		truncated: false,
+	};
+	assert.deepEqual(folderSuggestions(folder, 'Doc'), [
+		{ name: 'Documents', path: '/Users/mark/Documents' },
+		{ name: 'docs', path: '/Users/mark/docs' },
+	]);
+	assert.equal(folderSuggestions(folder, '').length, 4);
+	assert.equal(folderSuggestions(folder, '', 2).length, 2);
+	assert.deepEqual(folderSuggestions(folder, 'zz'), []);
+});
+
+test('the arrow keys move round the suggestions, and other keys do not', () => {
+	assert.equal(suggestionHighlightMove('ArrowDown', -1, 3), 0);
+	assert.equal(suggestionHighlightMove('ArrowDown', 2, 3), 0);
+	assert.equal(suggestionHighlightMove('ArrowUp', -1, 3), 2);
+	assert.equal(suggestionHighlightMove('ArrowUp', 1, 3), 0);
+	assert.equal(suggestionHighlightMove('Tab', 0, 3), null);
+	assert.equal(suggestionHighlightMove('ArrowDown', -1, 0), null);
+});
+
+test('completion asks for a parent once, drops a stale answer, and suggests nothing for a missing one', async () => {
+	const tree: Record<string, BrowseRootFoldersResult> = {
+		'/home/mark': { path: '/home/mark', parent: '/home', entries: [{ name: 'code' }, { name: 'config' }, { name: 'notes' }], truncated: false },
+		'/srv': { path: '/srv', parent: '/', entries: [{ name: 'cache' }], truncated: false },
+	};
+	const asked: (string | undefined)[] = [];
+	const pending: Array<() => void> = [];
+	const seen: string[][] = [];
+	const completer = new RootFolderCompleter(
+		(path) => {
+			asked.push(path);
+			return new Promise((resolve, reject) => {
+				pending.push(() => {
+					const answer = tree[path ?? ''];
+					if (answer === undefined) reject(refusal('path_missing'));
+					else resolve(answer);
+				});
+			});
+		},
+		(suggestions) => seen.push(suggestions.map((suggestion) => suggestion.name)),
+		0,
+	);
+	const settle = async () => {
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		for (const answer of pending.splice(0)) answer();
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	};
+
+	completer.update('/home/mark/co');
+	await settle();
+	assert.deepEqual(seen.at(-1), ['code', 'config']);
+	// Typing on inside the same folder filters what is already listed.
+	completer.update('/home/mark/con');
+	assert.deepEqual(seen.at(-1), ['config']);
+	assert.deepEqual(asked, ['/home/mark']);
+
+	// A slower answer for a parent already left never lands.
+	completer.update('/srv/c');
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	completer.update('/home/mark/n');
+	assert.deepEqual(seen.at(-1), ['notes']);
+	await settle();
+	assert.deepEqual(seen.at(-1), ['notes']);
+
+	completer.update('/missing/x');
+	await settle();
+	assert.deepEqual(seen.at(-1), []);
+	completer.update('no-parent');
+	assert.deepEqual(seen.at(-1), []);
+	completer.dispose();
 });

@@ -5,6 +5,11 @@ import { createPortal } from 'react-dom';
 import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
 import { childFolderPath } from './projectStart';
 import {
+	type FolderSuggestion,
+	RootFolderCompleter,
+	suggestionHighlightMove,
+} from './rootFolderCompletion';
+import {
 	listedFolder,
 	RootFolderNavigator,
 	type RootFolderListing,
@@ -38,7 +43,12 @@ export function RootFolderBrowser({
 		state: 'loading',
 	});
 	const [typedPath, setTypedPath] = useState('');
+	const [suggestions, setSuggestions] = useState<readonly FolderSuggestion[]>(
+		[],
+	);
+	const [highlighted, setHighlighted] = useState(-1);
 	const navigatorRef = useRef<RootFolderNavigator | null>(null);
+	const completerRef = useRef<RootFolderCompleter | null>(null);
 	// A path typed while a listing loads is kept when that listing lands.
 	const pathEditedRef = useRef(false);
 
@@ -51,7 +61,15 @@ export function RootFolderBrowser({
 		navigatorRef.current = navigator;
 		// Opens at the server account's home.
 		void navigator.open();
-		return () => navigator.dispose();
+		const completer = new RootFolderCompleter(browse, (next) => {
+			setSuggestions(next);
+			setHighlighted(-1);
+		});
+		completerRef.current = completer;
+		return () => {
+			navigator.dispose();
+			completer.dispose();
+		};
 	}, [browse]);
 
 	return createPortal(
@@ -69,12 +87,23 @@ export function RootFolderBrowser({
 			<RootFolderBrowserView
 				listing={listing}
 				typedPath={typedPath}
+				suggestions={suggestions}
+				highlighted={highlighted}
 				onTypedPathChange={(path) => {
 					pathEditedRef.current = true;
 					setTypedPath(path);
+					completerRef.current?.update(path);
 				}}
+				onHighlight={setHighlighted}
+				onAcceptSuggestion={(suggestion) => {
+					pathEditedRef.current = true;
+					setTypedPath(suggestion.path);
+					completerRef.current?.clear();
+				}}
+				onDismissSuggestions={() => completerRef.current?.clear()}
 				onOpen={(path) => {
 					pathEditedRef.current = false;
+					completerRef.current?.clear();
 					void navigatorRef.current?.open(path);
 				}}
 				onChoose={onChoose}
@@ -88,7 +117,14 @@ export function RootFolderBrowser({
 export type RootFolderBrowserViewProps = Readonly<{
 	listing: RootFolderListing;
 	typedPath: string;
+	/** Folders completing the typed path; empty when none are offered. */
+	suggestions?: readonly FolderSuggestion[];
+	/** The suggestion the arrow keys are on, or -1. */
+	highlighted?: number;
 	onTypedPathChange: (path: string) => void;
+	onHighlight?: (index: number) => void;
+	onAcceptSuggestion?: (suggestion: FolderSuggestion) => void;
+	onDismissSuggestions?: () => void;
 	onOpen: (path: string) => void;
 	onChoose: (path: string) => void;
 	onCancel: () => void;
@@ -99,12 +135,19 @@ export type RootFolderBrowserViewProps = Readonly<{
 export function RootFolderBrowserView({
 	listing,
 	typedPath,
+	suggestions = [],
+	highlighted = -1,
 	onTypedPathChange,
+	onHighlight,
+	onAcceptSuggestion,
+	onDismissSuggestions,
 	onOpen,
 	onChoose,
 	onCancel,
 }: RootFolderBrowserViewProps): JSX.Element {
 	const pathInputId = useId();
+	const suggestionsId = `${pathInputId}-suggestions`;
+	const suggesting = suggestions.length > 0;
 	const listRef = useRef<HTMLUListElement | null>(null);
 	const folder = listedFolder(listing);
 	const loading = listing.state === 'loading';
@@ -127,16 +170,95 @@ export function RootFolderBrowserView({
 				<label htmlFor={pathInputId} className="sr-only">
 					Folder path
 				</label>
-				<input
-					id={pathInputId}
-					type="text"
-					autoComplete="off"
-					spellCheck={false}
-					placeholder="Type or paste a folder path"
-					value={typedPath}
-					onChange={(event) => onTypedPathChange(event.target.value)}
-					data-terminay-root-folder-path="true"
-				/>
+				<div className="root-folder-browser__path-field">
+					<input
+						id={pathInputId}
+						type="text"
+						role="combobox"
+						autoComplete="off"
+						spellCheck={false}
+						placeholder="Type or paste a folder path"
+						value={typedPath}
+						aria-autocomplete="list"
+						aria-expanded={suggesting}
+						aria-controls={suggesting ? suggestionsId : undefined}
+						aria-activedescendant={
+							suggesting && highlighted >= 0
+								? `${suggestionsId}-${highlighted}`
+								: undefined
+						}
+						onChange={(event) => onTypedPathChange(event.target.value)}
+						onBlur={() => onDismissSuggestions?.()}
+						onKeyDown={(event) => {
+							if (!suggesting) return;
+							const move = suggestionHighlightMove(
+								event.key,
+								highlighted,
+								suggestions.length,
+							);
+							if (move !== null) {
+								event.preventDefault();
+								onHighlight?.(move);
+								return;
+							}
+							if (event.key === 'Escape') {
+								// Closes the suggestions, not the window.
+								event.preventDefault();
+								onDismissSuggestions?.();
+								return;
+							}
+							// Tab takes the highlighted suggestion, or the only one;
+							// Enter takes a highlighted one and otherwise goes.
+							const index =
+								highlighted >= 0
+									? highlighted
+									: event.key === 'Tab' && suggestions.length === 1
+										? 0
+										: -1;
+							const suggestion = suggestions[index];
+							if (
+								(event.key === 'Tab' || event.key === 'Enter') &&
+								suggestion !== undefined
+							) {
+								event.preventDefault();
+								onAcceptSuggestion?.(suggestion);
+							}
+						}}
+						data-terminay-root-folder-path="true"
+					/>
+					{suggesting ? (
+						<div
+							id={suggestionsId}
+							className="root-folder-browser__suggestions"
+							role="listbox"
+							aria-label="Matching folders"
+							data-terminay-root-folder-suggestions="true"
+						>
+							{suggestions.map((suggestion, index) => (
+								<div
+									key={suggestion.path}
+									id={`${suggestionsId}-${index}`}
+									role="option"
+									// The field keeps focus; the arrows move the highlight.
+									tabIndex={-1}
+									aria-selected={index === highlighted}
+									className="root-folder-browser__suggestion"
+									title={suggestion.path}
+									// Taken before the field blurs and closes the list.
+									onPointerDown={(event) => {
+										event.preventDefault();
+										onAcceptSuggestion?.(suggestion);
+									}}
+									onPointerEnter={() => onHighlight?.(index)}
+									data-terminay-root-folder-suggestion={suggestion.name}
+								>
+									<Folder size={13} aria-hidden="true" />
+									<span>{suggestion.name}</span>
+								</div>
+							))}
+						</div>
+					) : null}
+				</div>
 				<button type="submit" disabled={typedPath.trim().length === 0}>
 					Go
 				</button>
@@ -163,69 +285,75 @@ export function RootFolderBrowserView({
 					{folder?.path ?? 'Loading…'}
 				</code>
 			</div>
-			{listing.state === 'error' ? (
-				<div
-					className="root-folder-browser__message root-folder-browser__message--error"
-					role="alert"
-					data-terminay-root-folder-error="true"
-				>
-					{listing.message}
-				</div>
-			) : folder === undefined ? (
-				<div className="root-folder-browser__message" role="status">
-					Loading folders…
-				</div>
-			) : folder.entries.length === 0 ? (
-				<div className="root-folder-browser__message">
-					This folder holds no folders.
-				</div>
-			) : (
-				<ul
-					ref={listRef}
-					className="root-folder-browser__list"
-					aria-label={`Folders in ${folder.path}`}
-					onKeyDown={(event) => {
-						if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-						const buttons = [
-							...(listRef.current?.querySelectorAll('button') ?? []),
-						];
-						const index = buttons.indexOf(
-							document.activeElement as HTMLButtonElement,
-						);
-						event.preventDefault();
-						buttons[
-							event.key === 'ArrowDown'
-								? Math.min(buttons.length - 1, index + 1)
-								: Math.max(0, index - 1)
-						]?.focus();
-					}}
-				>
-					{folder.entries.map((entry) => (
-						<li key={entry.name}>
-							<button
-								type="button"
-								className="root-folder-browser__entry"
-								disabled={loading}
-								title={childFolderPath(folder.path, entry.name)}
-								onClick={() => onOpen(childFolderPath(folder.path, entry.name))}
-								data-terminay-root-folder-entry={entry.name}
-							>
-								<Folder size={14} aria-hidden="true" />
-								<span>{entry.name}</span>
-							</button>
-						</li>
-					))}
-				</ul>
-			)}
-			{listing.state === 'ready' && listing.folder.truncated ? (
-				<div
-					className="root-folder-browser__message"
-					data-terminay-root-folder-truncated="true"
-				>
-					Showing the first {listing.folder.entries.length} folders. Type a path
-					to go to one not listed.
-				</div>
-			) : null}
+			{/* One height wherever the browser is; the listing scrolls in it. */}
+			<div
+				className="root-folder-browser__body"
+				data-terminay-root-folder-body="true"
+			>
+				{listing.state === 'error' ? (
+					<div
+						className="root-folder-browser__message root-folder-browser__message--error"
+						role="alert"
+						data-terminay-root-folder-error="true"
+					>
+						{listing.message}
+					</div>
+				) : folder === undefined ? (
+					<div className="root-folder-browser__message" role="status">
+						Loading folders…
+					</div>
+				) : folder.entries.length === 0 ? (
+					<div className="root-folder-browser__message">
+						This folder holds no folders.
+					</div>
+				) : (
+					<ul
+						ref={listRef}
+						className="root-folder-browser__list"
+						aria-label={`Folders in ${folder.path}`}
+						onKeyDown={(event) => {
+							if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+							const buttons = [
+								...(listRef.current?.querySelectorAll('button') ?? []),
+							];
+							const index = buttons.indexOf(
+								document.activeElement as HTMLButtonElement,
+							);
+							event.preventDefault();
+							buttons[
+								event.key === 'ArrowDown'
+									? Math.min(buttons.length - 1, index + 1)
+									: Math.max(0, index - 1)
+							]?.focus();
+						}}
+					>
+						{folder.entries.map((entry) => (
+							<li key={entry.name}>
+								<button
+									type="button"
+									className="root-folder-browser__entry"
+									disabled={loading}
+									title={childFolderPath(folder.path, entry.name)}
+									onClick={() => onOpen(childFolderPath(folder.path, entry.name))}
+									data-terminay-root-folder-entry={entry.name}
+								>
+									<Folder size={14} aria-hidden="true" />
+									<span>{entry.name}</span>
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				{listing.state === 'ready' && listing.folder.truncated ? (
+					<div
+						className="root-folder-browser__message"
+						data-terminay-root-folder-truncated="true"
+					>
+						Showing the first {listing.folder.entries.length} folders. Type a path
+						to go to one not listed.
+					</div>
+				) : null}
+			</div>
 			<div className="project-edit-actions">
 				<button type="button" onClick={onCancel}>
 					Cancel
