@@ -15,13 +15,12 @@ A package SHALL declare each chat provider under `contributes.agentChatProviders
 
 - `availability(signal)`: returns available, or unavailable with one of `not_installed`, `not_signed_in` or `unsupported_platform`, plus a bounded detail;
 - `openSession(request, events, signal)`: starts one provider session from the host's request, which holds an opaque session id, the working directory, a bounded instruction, and an MCP server entry or none;
-- on a session: `prompt(text, signal)` to run one turn, `cancel()` to stop the running turn, and `close()` to end the session.
+- on a session: `prompt(text, signal)` to run one turn, resolving when the turn completes or is cancelled and rejecting when it fails; `cancel()` to stop the running turn; and `close()` to end the session.
 
 Through `events` the provider SHALL report:
 
 - reply text deltas;
 - tool activity, as the MCP server and tool name for an MCP tool or a bounded tool kind for anything else, with an opaque call id and a running, completed or failed state;
-- turn completion;
 - failures, with a reason of `not_installed`, `not_signed_in`, `crashed` or `failed` and a bounded detail;
 - session exit.
 
