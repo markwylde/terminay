@@ -29,6 +29,9 @@ const READY_TIMEOUT_MS = 20_000;
 const activeWorkspace = (page: Page) =>
 	page.locator('.project-workspace--active');
 
+const projectTabTitle = (page: Page, projectId: string) =>
+	page.locator(`.project-tab[data-project-id="${projectId}"] .project-tab-title`);
+
 /** Create a project and wait for its chooser. Returns the project's id. */
 async function createAwaitingProject(page: Page): Promise<string> {
 	await page.getByLabel('Create project').click();
@@ -232,7 +235,12 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	);
 	expect(await activeTerminalCwd(mainWindow)).toBe(folder);
 
-	// A second project offers it as a recent folder and opens it.
+	// Started in a folder, it is named after the folder.
+	await expect(projectTabTitle(mainWindow, first)).toHaveText(name);
+
+	// A second project offered the folder the first already has shows the
+	// first, and the empty one closes: nothing new is started there.
+	const tabsBefore = await mainWindow.locator('.project-tab').count();
 	const second = await createAwaitingProject(mainWindow);
 	const recent = startChooserFor(mainWindow, second).locator(
 		`[data-terminay-recent-folder="${folder}"]`,
@@ -243,31 +251,130 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	await recent.locator('[data-terminay-recent-open]').click();
 	await expect(startChooserFor(mainWindow, second)).toHaveCount(0);
 	await expect(
+		mainWindow.locator(`.project-tab[data-project-id="${second}"]`),
+	).toHaveCount(0);
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(tabsBefore);
+	await expect(activeWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-project-id',
+		first,
+	);
+	await expect(
+		mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
+	).toHaveCount(1);
+
+	// Once no project has the folder, a recent entry starts a new project
+	// there, named after it.
+	const elsewhere = await realpath(
+		(await createWorkspace({ name: 'elsewhere' })).rootDir,
+	);
+	await setProjectRoot(mainWindow, elsewhere);
+	await expect(activeWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-project-root',
+		elsewhere,
+	);
+	const third = await createAwaitingProject(mainWindow);
+	await startChooserFor(mainWindow, third)
+		.locator(`[data-terminay-recent-folder="${folder}"] [data-terminay-recent-open]`)
+		.click();
+	await expect(startChooserFor(mainWindow, third)).toHaveCount(0);
+	await expect(
 		mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
 	).toHaveCount(1, { timeout: 15_000 });
 	await expect(activeWorkspace(mainWindow)).toHaveAttribute(
 		'data-terminay-project-root',
 		folder,
 	);
+	await expect(projectTabTitle(mainWindow, third)).toHaveText(name);
 	expect(await activeTerminalCwd(mainWindow)).toBe(folder);
 
-	// A third project forgets it, and it stays forgotten.
-	const third = await createAwaitingProject(mainWindow);
-	const chooser = startChooserFor(mainWindow, third);
+	// A fourth project forgets it, and it stays forgotten.
+	const fourth = await createAwaitingProject(mainWindow);
+	const chooser = startChooserFor(mainWindow, fourth);
 	const row = chooser.locator(`[data-terminay-recent-folder="${folder}"]`);
 	await expect(row).toBeVisible();
 	await row.getByRole('button', { name: `Forget ${name}` }).click();
 	await expect(row).toHaveCount(0);
-	await expect(chooser).toContainText('No recent projects yet.');
+	await expect(
+		chooser.locator(`[data-terminay-recent-folder="${elsewhere}"]`),
+	).toBeVisible();
 	// Forgetting a folder starts nothing.
 	await expect(chooser.locator('[data-terminay-start-action="folder"]')).toBeVisible();
 	await chooseProjectStart(mainWindow, 'home');
-	const fourth = await createAwaitingProject(mainWindow);
+	const fifth = await createAwaitingProject(mainWindow);
 	await expect(
-		startChooserFor(mainWindow, fourth).locator(
+		startChooserFor(mainWindow, fifth).locator(
 			`[data-terminay-recent-folder="${folder}"]`,
 		),
 	).toHaveCount(0);
+});
+
+test('the folder browser keeps one height between folders and completes a typed path', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	test.setTimeout(90_000);
+	const many = Array.from(
+		{ length: 200 },
+		(_, index) => `many/dir-${String(index).padStart(3, '0')}`,
+	);
+	const workspace = await createWorkspace({
+		name: 'browse-heights',
+		seed: { directories: ['sparse/one', 'sparse/two', ...many, 'projects-a', 'projects-b'] },
+	});
+	const base = await realpath(workspace.rootDir);
+
+	const projectId = await createAwaitingProject(mainWindow);
+	await startChooserFor(mainWindow, projectId)
+		.locator('[data-terminay-start-action="folder"]')
+		.click();
+	const browser = rootFolderBrowser(mainWindow);
+	const body = browser.locator('[data-terminay-root-folder-body]');
+	const list = browser.locator('.root-folder-browser__list');
+
+	await browseToFolder(mainWindow, path.join(base, 'sparse'));
+	await expect(browser.locator('[data-terminay-root-folder-entry]')).toHaveCount(2);
+	const sparseHeight = (await browser.boundingBox())?.height;
+	const sparseBody = (await body.boundingBox())?.height;
+	await browseToFolder(mainWindow, path.join(base, 'many'));
+	await expect(browser.locator('[data-terminay-root-folder-entry]')).toHaveCount(200);
+	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
+	expect((await body.boundingBox())?.height).toBe(sparseBody);
+	// The longer listing scrolls inside that height.
+	expect(
+		await list.evaluate((element) => element.scrollHeight > element.clientHeight),
+	).toBe(true);
+	await browseToFolder(mainWindow, path.join(base, 'sparse'));
+	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
+
+	// Typing a partial path suggests the typed parent's matching folders.
+	const field = browser.locator('[data-terminay-root-folder-path]');
+	await field.fill(`${base}/proj`);
+	const suggestions = browser.locator('[data-terminay-root-folder-suggestion]');
+	await expect(suggestions).toHaveText(['projects-a', 'projects-b']);
+	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
+	// The arrows choose one and Tab takes it.
+	await field.press('ArrowDown');
+	await field.press('ArrowDown');
+	await field.press('Tab');
+	await expect(field).toHaveValue(path.join(base, 'projects-b'));
+	await expect(suggestions).toHaveCount(0);
+	// Escape closes the suggestions and leaves the browser open.
+	await field.fill(`${base}/sp`);
+	await expect(suggestions).toHaveText(['sparse']);
+	await field.press('Escape');
+	await expect(suggestions).toHaveCount(0);
+	await expect(browser).toBeVisible();
+	// A pointer takes one too.
+	await field.fill(`${base}/ma`);
+	await suggestions.filter({ hasText: 'many' }).click();
+	await expect(field).toHaveValue(path.join(base, 'many'));
+	await browser.getByRole('button', { name: 'Go', exact: true }).click();
+	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
+		path.join(base, 'many'),
+	);
+	await browser.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(browser).toHaveCount(0);
+	await expect(startChooserFor(mainWindow, projectId)).toBeVisible();
 });
 
 test('a project still awaiting its start after a restart shows its chooser again and launches no terminal', async ({

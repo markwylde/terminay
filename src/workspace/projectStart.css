@@ -266,9 +266,57 @@
 	min-width: 0;
 }
 
+.root-folder-browser__path-field {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+	display: flex;
+}
+
 .root-folder-browser__path input {
 	flex: 1;
 	min-width: 0;
+}
+
+/* Over the listing, so suggesting never changes the browser's height. */
+.root-folder-browser__suggestions {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	z-index: 2;
+	margin: 0;
+	padding: 4px;
+	max-height: 240px;
+	overflow-x: hidden;
+	overflow-y: auto;
+	list-style: none;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 6px;
+	background: #1d2230;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.root-folder-browser__suggestion {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding: 5px 8px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.root-folder-browser__suggestion > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.root-folder-browser__suggestion[aria-selected='true'] {
+	background: rgba(59, 130, 246, 0.35);
 }
 
 .root-folder-browser__location {
@@ -295,8 +343,17 @@
 	color: rgba(220, 226, 240, 0.78);
 }
 
+.root-folder-browser__body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	height: min(50vh, 360px);
+	min-height: 0;
+}
+
 .root-folder-browser__list {
-	max-height: min(50vh, 360px);
+	flex: 1;
+	min-height: 0;
 	margin: 0;
 	padding: 4px;
 	overflow-x: hidden;

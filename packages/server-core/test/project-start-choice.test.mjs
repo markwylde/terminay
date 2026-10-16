@@ -229,6 +229,42 @@ test("choosing a folder makes its canonical path the explicit root", async () =>
   }
 });
 
+test("choosing a folder names a project still holding its default name after the folder", async () => {
+  const { home, cleanup } = await folders();
+  try {
+    const { workspace, create, start } = harness({ home });
+    await create("project-a");
+    assert.match(workspace.state.projects["project-a"].name, /^Project \d+$/);
+    await start("project-a", { kind: "folder", path: join(home, "linked-alpha") });
+    // Named after the canonical folder, not the symlink the person chose.
+    assert.equal(workspace.state.projects["project-a"].name, "alpha");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("choosing a folder keeps a name the person gave the project", async () => {
+  const { home, cleanup } = await folders();
+  try {
+    const { workspace, command, create, start } = harness({ home });
+    await create("project-a");
+    await command(WORKSPACE_OPERATIONS.command, { command: { type: "project.rename", projectId: "project-a", name: "Client work" } });
+    await start("project-a", { kind: "folder", path: join(home, "beta") });
+    assert.equal(workspace.state.projects["project-a"].name, "Client work");
+    assert.equal(workspace.state.projects["project-a"].root, join(home, "beta"));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("choosing home keeps the project's default name", async () => {
+  const { workspace, create, start } = harness();
+  await create("project-a");
+  const name = workspace.state.projects["project-a"].name;
+  await start("project-a", { kind: "home" });
+  assert.equal(workspace.state.projects["project-a"].name, name);
+});
+
 test("the first choice wins and a later one is refused with start_conflict", async () => {
   const { home, cleanup } = await folders();
   try {
