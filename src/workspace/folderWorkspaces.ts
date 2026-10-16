@@ -177,6 +177,25 @@ export type FolderInventories = Readonly<
 >;
 
 /**
+ * Whether a project has no panel in any of its folders: none the projection
+ * knows, and none a folder's workspace on this device has published.
+ */
+export function projectHoldsNoPanels(
+	project: Pick<ServerWorkspaceProject, 'folderIds'> | undefined,
+	folders: Readonly<Record<string, Pick<ServerWorkspaceFolder, 'panelIds'>>>,
+	inventories: FolderInventories,
+	projectId: string,
+): boolean {
+	const projected = (project?.folderIds ?? []).some(
+		(folderId) => (folders[folderId]?.panelIds.length ?? 0) > 0,
+	);
+	if (projected) return false;
+	return Object.values(inventories[projectId] ?? {}).every(
+		(entries) => entries.length === 0,
+	);
+}
+
+/**
  * Record what one folder's workspace published. An empty list is a workspace
  * with nothing to show, or one that has unmounted, and leaves no entry behind.
  * Returns the same object when nothing changed.

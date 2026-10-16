@@ -287,6 +287,7 @@ import {
 	foldersToMount,
 	folderWorkspaceKey,
 	mergeProjectInventories,
+	projectHoldsNoPanels,
 	withFolderInventory,
 } from './workspace/folderWorkspaces';
 import {
@@ -711,6 +712,9 @@ type ProjectWorkspaceProps = {
 	macroCategories: readonly string[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
+	/** Closing the tab in front with no tab open closes the project, when no
+	 * folder of it holds a panel either. */
+	onCloseActiveWithNoPanel: (projectId: string) => void;
 	/** The places the Command Bar offers for what has been typed. */
 	searchPlaces: (query: string) => readonly CommandBarItem[];
 	/** Toggles the device-local status bar; a window-wide preference. */
@@ -1479,6 +1483,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onPopoutProject,
 			onTerminalTabDrag,
 			onShowDashboard,
+			onCloseActiveWithNoPanel,
 			searchPlaces,
 			onToggleStatusBar,
 			isStatusBarVisible,
@@ -4344,9 +4349,12 @@ const ProjectWorkspace = memo(forwardRef<
 
 		const closeActivePanel = useCallback(async () => {
 			const panelId = dockviewApiRef.current?.activePanel?.id;
-			if (panelId === undefined) return;
+			if (panelId === undefined) {
+				onCloseActiveWithNoPanel(project.id);
+				return;
+			}
 			await requestClosePanel(panelId);
-		}, [requestClosePanel]);
+		}, [onCloseActiveWithNoPanel, project.id, requestClosePanel]);
 
 		const saveActivePanel = useCallback(async () => {
 			const activePanel = dockviewApiRef.current?.activePanel;
@@ -7717,6 +7725,23 @@ function App({
 		terminalClientContext?.workspaceSnapshotStore;
 	const inventoryByProjectRef = useRef(inventoryByProject);
 	inventoryByProjectRef.current = inventoryByProject;
+	const inventoryByFolderRef = useRef(inventoryByFolder);
+	inventoryByFolderRef.current = inventoryByFolder;
+	const closeProjectWithNoPanels = useCallback(
+		(projectId: string) => {
+			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
+			if (
+				projectHoldsNoPanels(
+					snapshot?.projects[projectId],
+					snapshot?.folders ?? NO_WORKSPACE_FOLDERS,
+					inventoryByFolderRef.current,
+					projectId,
+				)
+			)
+				closeProject(projectId);
+		},
+		[closeProject],
+	);
 	/**
 	 * The workspace that answers a project-level command, such as the
 	 * new-terminal shortcut: the one for the folder this device has selected.
@@ -8194,6 +8219,18 @@ function App({
 				homeRef.current?.requestCloseActiveTab();
 				return Promise.resolve();
 			}
+			// A project awaiting its start choice has no tab to close, so closing
+			// the tab in front closes the project.
+			if (
+				command === 'close-active' &&
+				projectAwaitsStartChoice(
+					workspaceSnapshotStoreRef.current?.snapshot,
+					activeProjectId,
+				)
+			) {
+				closeProject(activeProjectId);
+				return Promise.resolve();
+			}
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
@@ -8217,6 +8254,7 @@ function App({
 		[
 			activeProjectId,
 			auxiliaryRouteController,
+			closeProject,
 			commandWorkspace,
 			isHomeSelected,
 			selectHome,
@@ -9349,11 +9387,8 @@ function App({
 				command !== 'show-dashboard' &&
 				command !== 'toggle-status-bar' &&
 				command !== 'open-command-bar' &&
-				!(
-					isHomeSelected &&
-					(command === 'toggle-file-explorer-sidebar' ||
-						command === 'close-active')
-				)
+				command !== 'close-active' &&
+				!(isHomeSelected && command === 'toggle-file-explorer-sidebar')
 			)
 				return;
 			event.preventDefault();
@@ -10345,6 +10380,7 @@ function App({
 							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
+							onCloseActiveWithNoPanel={closeProjectWithNoPanels}
 							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}
 							isStatusBarVisible={isStatusBarVisible}
