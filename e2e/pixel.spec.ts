@@ -1,4 +1,5 @@
-import type { ElectronApplication, Page } from '@playwright/test';
+import { execSync } from 'node:child_process';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { activeTerminalPanel } from './support/terminal-session';
 
@@ -43,20 +44,17 @@ async function ask(page: Page, text: string) {
 	await input.press('Enter');
 }
 
-async function fakeClaudeRunning(electronApp: ElectronApplication): Promise<boolean> {
-	return electronApp.evaluate(async () => {
-		const { execSync } = await import('node:child_process');
-		try {
-			return execSync('ps -eo args').toString().includes('fake-claude-chat.mjs');
-		} catch {
-			return false;
-		}
-	});
+/** The fake agent runs in the same container as the test, so ask ps directly. */
+async function fakeClaudeRunning(): Promise<boolean> {
+	try {
+		return execSync('ps -eo args').toString().includes('fake-claude-chat.mjs');
+	} catch {
+		return false;
+	}
 }
 
 test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, asks before acting under Ask, and leaves completely when turned off', async ({
 	appHarness,
-	electronApp,
 	mainWindow,
 }) => {
 	test.setTimeout(120_000);
@@ -106,11 +104,11 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 	await expect(balloon(mainWindow)).toContainText('→ Allowed once');
 	await expect(activeTerminalPanel(mainWindow)).toContainText('pixel-asked-first');
 	await expect(balloon(mainWindow).getByRole('button', { name: 'Allow One Time' })).toHaveCount(0);
-	expect(await fakeClaudeRunning(electronApp)).toBe(true);
+	expect(await fakeClaudeRunning()).toBe(true);
 
 	// Turning Pixel off removes it everywhere and ends its agent.
 	await setPixel(appHarness, mainWindow, false);
 	await expect(dock(mainWindow)).toHaveCount(0);
 	await expect(mainWindow.locator('.mwpet')).toHaveCount(0);
-	await expect.poll(() => fakeClaudeRunning(electronApp), { timeout: 15_000 }).toBe(false);
+	await expect.poll(() => fakeClaudeRunning(), { timeout: 15_000 }).toBe(false);
 });
