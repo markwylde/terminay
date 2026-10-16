@@ -47,8 +47,11 @@ test('connected web host uses selected-server settings and preserves the disconn
 test('browser and Desktop share the host-neutral production workspace split layout', () => {
 	assert.match(app, /import\s+\{\s*WorkspaceSplitLayout\s*\}/u);
 	assert.match(app, /<WorkspaceSplitLayout/u);
-	assert.match(app, /navigationWidth=\{project\.fileExplorerWidth\}/u);
-	assert.match(app, /onNavigationWidthCommit=\{\(width\)\s*=>/u);
+	// One device-remembered width shared by every project, never the project's.
+	assert.match(app, /navigationWidth=\{sidebarWidth\}/u);
+	assert.match(app, /onNavigationWidthCommit=\{onSidebarWidthCommit\}/u);
+	assert.match(app, /useRememberedColumnWidth\('sidebar'\)/u);
+	assert.doesNotMatch(app, /fileExplorerWidth/u);
 	assert.doesNotMatch(app, /maximumNavigationWidth=\{Math\.max/u);
 	assert.doesNotMatch(
 		app,

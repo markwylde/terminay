@@ -100,7 +100,6 @@ export interface ProjectCreateRequest {
 	readonly sidebar?: ProjectSidebarState;
 }
 export interface ProjectSidebarState {
-	readonly fileExplorerWidth: number;
 	readonly isFileExplorerOpen: boolean;
 	readonly isExplorerPaneCollapsed: boolean;
 	readonly isAgentsPaneCollapsed: boolean;
@@ -899,7 +898,7 @@ function isProjectSidebarPatch(value: unknown): value is Partial<ProjectSidebarS
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
 	const patch = value as Record<string, unknown>;
 	const allowed = new Set([
-		'fileExplorerWidth', 'isFileExplorerOpen', 'isExplorerPaneCollapsed',
+		'isFileExplorerOpen', 'isExplorerPaneCollapsed',
 		'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed',
 		'expandedAgentEntryIds', 'expandedDocumentationFolderIds', 'sidebarAgentsHeight',
 		'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight',
@@ -909,7 +908,7 @@ function isProjectSidebarPatch(value: unknown): value is Partial<ProjectSidebarS
 	for (const key of ['isFileExplorerOpen', 'isExplorerPaneCollapsed', 'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed']) {
 		if (key in patch && typeof patch[key] !== 'boolean') return false;
 	}
-	for (const key of ['fileExplorerWidth', 'sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight']) {
+	for (const key of ['sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight']) {
 		if (key in patch && (!Number.isSafeInteger(patch[key]) || (patch[key] as number) < 30 || (patch[key] as number) > 2_000)) return false;
 	}
 	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds']) {

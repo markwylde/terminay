@@ -35,7 +35,7 @@ function snapshot({
 	activeProjectId = projectIds[0],
 } = {}) {
 	const sidebar = () => ({
-		fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
+		isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
 		isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true,
 		expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200,
 		sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220,
@@ -164,7 +164,7 @@ test('accepts a history-expired full delta and rejects stale or crossed ownershi
 test('project and panel identity survives project switches and detach-reattach snapshots', () => {
 	const workspace = (revision, activeProjectId, projectPanels) => {
 		const sidebar = () => ({
-			fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
+			isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
 			isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true,
 			expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200,
 			sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220,

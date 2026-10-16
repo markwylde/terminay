@@ -3,9 +3,10 @@
 ### Requirement: Explorer pane and project root presentation
 
 The Explorer SHALL watch the root of the project's selected folder and SHALL
-support refresh, collapse/expand, configurable default visibility and width, and
-Git new/modified decoration. Files and Changes SHALL share the Explorer sidebar
-group; Documentation and Agents SHALL occupy their own groups.
+support refresh, collapse/expand, configurable default visibility, and Git
+new/modified decoration. Files and Changes SHALL share the Explorer sidebar
+group; Documentation and Agents SHALL occupy their own groups. The Explorer SHALL
+be presented at the sidebar width the device remembers for every project.
 
 #### Scenario: Explorer shows the project root
 
@@ -23,4 +24,5 @@ group; Documentation and Agents SHALL occupy their own groups.
 #### Scenario: Configured default visibility and width apply
 
 - **WHEN** the Explorer is first shown for a project
-- **THEN** it opens at its configured default visibility and width
+- **THEN** it opens at its configured default visibility and at the sidebar
+  width this device remembers for every project

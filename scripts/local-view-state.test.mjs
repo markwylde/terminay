@@ -729,3 +729,62 @@ test('Home sidebar state never touches a project\'s remembered state', async () 
     delete globalThis.localStorage
   }
 })
+
+test('a device with no remembered column widths uses each column default', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallColumnWidth('folders'), 232)
+    assert.equal(module.recallColumnWidth('sidebar'), 280)
+    assert.equal(module.recallColumnWidth('home'), 220)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('each column remembers its own width, rounded, without touching the others', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    module.rememberColumnWidth('sidebar', 341.6)
+    module.rememberColumnWidth('home', 190)
+    assert.equal(module.recallColumnWidth('sidebar'), 342)
+    assert.equal(module.recallColumnWidth('home'), 190)
+    assert.equal(module.recallColumnWidth('folders'), 232)
+    module.rememberColumnWidth('folders', 300)
+    assert.equal(module.recallColumnWidth('sidebar'), 342)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a garbage or out-of-range stored width falls back to the default', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage({
+    'terminay.view.column-widths.v1': JSON.stringify({ folders: 'wide', sidebar: 5, home: 1e9 }),
+  })
+  try {
+    assert.equal(module.recallColumnWidth('folders'), 232)
+    assert.equal(module.recallColumnWidth('sidebar'), 280)
+    assert.equal(module.recallColumnWidth('home'), 220)
+    assert.deepEqual(module.parseColumnWidths('{not json'), {})
+    assert.deepEqual(module.parseColumnWidths(null), {})
+    assert.deepEqual(module.parseColumnWidths('{"sidebar":400,"other":3}'), { sidebar: 400 })
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('throwing storage leaves column widths at their defaults', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = {
+    getItem: () => { throw new Error('denied') },
+    setItem: () => { throw new Error('denied') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberColumnWidth('sidebar', 400))
+    assert.equal(module.recallColumnWidth('sidebar'), 280)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
