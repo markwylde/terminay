@@ -318,6 +318,44 @@
 	color: rgba(220, 226, 240, 0.72);
 }
 
+/* A worktree being pulled from origin: a turning spinner and a word in place
+   of its facts. The card stays bright; the folder is not going anywhere. */
+.folders-tree__pulling {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	font-size: 11px;
+	font-style: italic;
+	color: rgba(220, 226, 240, 0.72);
+}
+
+.folders-tree__pulling > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folders-tree__pulling-spinner {
+	flex: none;
+	color: color-mix(in srgb, var(--project-color, #57b7ff) 70%, #ffffff);
+	animation: folders-tree-pulling-spin 900ms linear infinite;
+}
+
+@keyframes folders-tree-pulling-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.folders-tree__pulling-spinner {
+		animation: none;
+	}
+}
+
 .folders-tree__facts {
 	display: flex;
 	flex-wrap: nowrap;
@@ -642,7 +680,8 @@
 }
 
 .folders-tree--tree .folders-tree__facts,
-.folders-tree--tree .folders-tree__deleting {
+.folders-tree--tree .folders-tree__deleting,
+.folders-tree--tree .folders-tree__pulling {
 	margin-top: 2px;
 }
 

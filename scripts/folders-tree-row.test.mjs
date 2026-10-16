@@ -739,6 +739,40 @@ test('a worktree being deleted says so beneath its label, in place of its facts'
 	assert.match(idle, /class="folders-tree__facts"/);
 });
 
+test('a worktree being pulled shows a spinner and Pulling… in place of its facts, undimmed', () => {
+	const facts = {
+		isDirty: true,
+		change: { kind: 'delta', additions: 4, deletions: 1 },
+		pullRequest: { number: 352, state: 'open', title: 'Banner' },
+	};
+	const markup = render([linked({ ...facts, isPulling: true })]);
+	assert.match(
+		markup,
+		/class="folders-tree__pulling" role="status"><svg[^>]*folders-tree__pulling-spinner[^>]*>.*?<\/svg><span>Pulling…<\/span>/,
+	);
+	assert.match(
+		markup,
+		/class="folders-tree__row folders-tree__row--folder"[^>]*aria-busy="true"/,
+	);
+	assert.ok(
+		markup.indexOf('feat/one-project-one-window') <
+			markup.indexOf('folders-tree__pulling'),
+	);
+	assert.equal(markup.includes('folders-tree__facts'), false);
+	// The folder is staying, so its card is not dimmed.
+	assert.equal(markup.includes('folders-tree__folder--deleting'), false);
+
+	// A removal outranks a pull.
+	const both = render([linked({ ...facts, isPulling: true, isDeleting: true })]);
+	assert.match(both, /Deleting…/);
+	assert.equal(both.includes('folders-tree__pulling'), false);
+
+	const idle = render([linked({ ...facts, isPulling: false })]);
+	assert.equal(idle.includes('folders-tree__pulling'), false);
+	assert.equal(idle.includes('aria-busy'), false);
+	assert.match(idle, /class="folders-tree__facts"/);
+});
+
 test('a file or folder tab is a row with its kind icon, and is neither renamed nor dragged', () => {
 	const markup = render(
 		[
