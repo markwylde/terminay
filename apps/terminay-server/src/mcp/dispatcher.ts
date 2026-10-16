@@ -1,12 +1,12 @@
-import type {
-	ControlDispatcher,
-	ControlDispatchResult,
-	ControlError,
-	ControlOperation,
-	ControlRequestContext,
-	ControlScope,
-} from './controlEndpoint.js';
 import type { McpPermissionGroup } from '@terminay/server-core';
+import {
+	type AppWindowControlAdapter,
+	isAppWindowParamFailure,
+	parseCallConnectedTool,
+	parseCloseWindow,
+	parseListConnectedTools,
+	parseShowWindow,
+} from './appWindowTools.js';
 import {
 	type AutomationControlAdapter,
 	isAutomationParamFailure,
@@ -19,26 +19,26 @@ import {
 	parseStopAutomationRun,
 	parseUpdateAutomation,
 } from './automationTools.js';
-import {
-	type AppWindowControlAdapter,
-	isAppWindowParamFailure,
-	parseCallConnectedTool,
-	parseCloseWindow,
-	parseListConnectedTools,
-	parseShowWindow,
-} from './appWindowTools.js';
-import {
-	isNotificationParamFailure,
-	type NotificationControlAdapter,
-	parseDismissNotification,
-	parseSendNotification,
-} from './notificationTools.js';
+import type {
+	ControlDispatcher,
+	ControlDispatchResult,
+	ControlError,
+	ControlOperation,
+	ControlRequestContext,
+	ControlScope,
+} from './controlEndpoint.js';
 import {
 	CONTROL_LARGE_FRAME_OPERATIONS,
 	CONTROL_MAX_LARGE_FRAME_BYTES,
 	ControlEndpointError,
 	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
+import {
+	isNotificationParamFailure,
+	type NotificationControlAdapter,
+	parseDismissNotification,
+	parseSendNotification,
+} from './notificationTools.js';
 
 export interface ServerControlHandlers {
 	readonly getMcpCapabilities?: (
@@ -562,6 +562,19 @@ export function createServerControlDispatcher(
 				},
 			};
 		}
+		// A chat has no terminal for a window to open in or a notification to be
+		// held for, so those tools are unavailable to it (ADR-0068).
+		if (
+			context.chat !== undefined &&
+			CALLING_TERMINAL_OPERATIONS.has(request.op)
+		)
+			return {
+				ok: false,
+				error: {
+					code: 'unsupported_op',
+					message: `control operation ${request.op} needs a calling terminal`,
+				},
+			};
 		const handler = options.handlers[HANDLER_BY_OPERATION[request.op]];
 		if (handler === undefined) {
 			return {
@@ -613,7 +626,10 @@ export function createServerControlDispatcher(
 							message: 'control operation get_mcp_capabilities is unavailable',
 						},
 					};
-				return capabilitiesHandler(context, context.signal);
+				const reported = await capabilitiesHandler(context, context.signal);
+				return context.chat === undefined
+					? reported
+					: withoutCallingTerminalTools(reported);
 			}
 			const listHandler = options.handlers.listTerminals;
 			if (listHandler === undefined)
@@ -633,6 +649,50 @@ export function createServerControlDispatcher(
 		) => unknown | Promise<unknown>;
 		return operationHandler(retained, context, context.signal);
 	};
+}
+
+/** Operations that act for, or in, the calling terminal itself. */
+export const CALLING_TERMINAL_OPERATIONS: ReadonlySet<ControlOperation> =
+	new Set<ControlOperation>([
+		'show_window',
+		'close_window',
+		'list_windows',
+		'send_notification',
+		'dismiss_notification',
+	]);
+
+/** Report the calling-terminal tools unavailable, whatever the host said. */
+function withoutCallingTerminalTools(
+	reported: ControlDispatchResult,
+): ControlDispatchResult {
+	const patch = (value: unknown): unknown => {
+		if (typeof value !== 'object' || value === null) return value;
+		const tools = (value as { tools?: unknown }).tools;
+		if (!Array.isArray(tools)) return value;
+		return {
+			...value,
+			tools: tools.map((entry) =>
+				typeof entry === 'object' &&
+				entry !== null &&
+				CALLING_TERMINAL_OPERATIONS.has(
+					(entry as { tool?: unknown }).tool as ControlOperation,
+				)
+					? { ...entry, available: false }
+					: entry,
+			),
+		};
+	};
+	if (
+		typeof reported === 'object' &&
+		reported !== null &&
+		(reported as { ok?: unknown }).ok === true &&
+		'result' in reported
+	)
+		return {
+			ok: true,
+			result: patch((reported as { result: unknown }).result),
+		};
+	return patch(reported);
 }
 
 function deepFreeze<T>(value: T): T {
@@ -969,7 +1029,10 @@ export function createTerminalControlAdapter(
 			ok: true,
 			result,
 			modelContext: notes
-				.map((note) => `Context from the open window "${note.title}":\n${note.text}`)
+				.map(
+					(note) =>
+						`Context from the open window "${note.title}":\n${note.text}`,
+				)
 				.join('\n\n'),
 		};
 	};
