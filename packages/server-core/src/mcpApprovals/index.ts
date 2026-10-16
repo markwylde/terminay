@@ -358,6 +358,14 @@ export class McpApprovalService {
 				this.finish(id, cancelledError(), 'ended');
 	}
 
+	/** Withdraw one caller's pending approvals, keeping its session grants:
+	 * the user stopped the turn that asked. */
+	cancelPending(terminalSessionId: string): void {
+		for (const [id, entry] of [...this.pending])
+			if (entry.view.terminalSessionId === terminalSessionId)
+				this.finish(id, cancelledError(), 'ended');
+	}
+
 	/** MCP disabled or the server stopping: everything ends. */
 	revokeAll(): void {
 		this.grants.clear();
