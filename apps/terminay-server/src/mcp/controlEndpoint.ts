@@ -1096,6 +1096,13 @@ function normalizeScope(
 		projectId: value.projectId,
 		scope: value.scope ?? 'write',
 		...reachField(value.reach ?? 'project'),
+		// A chat caller keeps its identity only when it agrees with the
+		// reserved key it was resolved under (ADR-0068).
+		...(isPlainObject(value.chat) &&
+		typeof value.chat.chatId === 'string' &&
+		value.terminalSessionId === chatCallerKey(value.chat.chatId)
+			? { chat: Object.freeze({ chatId: value.chat.chatId }) }
+			: {}),
 	};
 }
 

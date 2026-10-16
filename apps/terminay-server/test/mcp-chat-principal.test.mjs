@@ -158,3 +158,43 @@ test("a chat approval ended by cancellation reports ended and runs nothing", asy
 function approvalsAsk() {
   return { ...DEFAULT_MCP_PERMISSIONS, terminalsManage: "ask" };
 }
+
+test("through the real endpoint, a chat keeps its identity: window tools are refused and handlers see the chat", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { connect } = await import("node:net");
+  const { createControlEndpoint, encodeControlMessage, CONTROL_PROTOCOL_VERSION } = await import("../dist/index.js");
+  const capabilities = new ControlCapabilityStore();
+  const lease = capabilities.mintChat("c7", { kind: "workspace" });
+  const seen = [];
+  const dispatch = createServerControlDispatcher({
+    handlers: {
+      listTerminals: (context) => { seen.push(context.chat); return { terminals: [] }; },
+      showWindow: () => ({ window: "w" }),
+    },
+  });
+  const socketPath = join(await mkdtemp(join(tmpdir(), "tc-")), "s.sock");
+  const endpoint = createControlEndpoint({ socketPath, capabilities, dispatch });
+  await endpoint.start();
+  const call = (op, params) => new Promise((resolve) => {
+    const socket = connect(socketPath);
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      const end = buffer.indexOf("\n");
+      if (end !== -1) { resolve(JSON.parse(buffer.slice(0, end))); socket.end(); }
+    });
+    socket.write(encodeControlMessage({ id: `r-${op}`, token: lease.token, version: CONTROL_PROTOCOL_VERSION, op, params }));
+  });
+  try {
+    const listed = await call("list_terminals", {});
+    assert.equal(listed.ok, true);
+    assert.deepEqual(seen, [{ chatId: "c7" }]);
+    const shown = await call("show_window", { title: "x", html: "<p>x</p>" });
+    assert.equal(shown.ok, false);
+    assert.equal(shown.error.code, "unsupported_op");
+  } finally {
+    await endpoint.stop();
+  }
+});
