@@ -63,7 +63,9 @@ const GIT_VALUE_OPTIONS = new Set([
 export function worktreeAddDirectoryName(
 	argv: readonly unknown[],
 ): string | null {
-	const args = argv.filter((value): value is string => typeof value === 'string');
+	const args = argv.filter(
+		(value): value is string => typeof value === 'string',
+	);
 	let index = 1;
 	while (index < args.length && args[index]?.startsWith('-') === true) {
 		index += GIT_VALUE_OPTIONS.has(args[index] ?? '') ? 2 : 1;
@@ -84,6 +86,65 @@ function directoryName(path: string | undefined): string {
 	return basename(path.replace(/[\\/]+$/, ''));
 }
 
+/**
+ * What capture saw and decided, for diagnostics. It names the project and how
+ * many commands and sessions were weighed, never a path, a directory name, or
+ * a token, so it can be logged as it is.
+ */
+export type WorktreeCaptureReport =
+	| {
+			/** Git reported a `worktree add`. */
+			readonly kind: 'command.reported';
+			/** Whether its token belongs to a live terminal of this server. */
+			readonly attributed: boolean;
+			/** Whether the worktree's directory could be read from its arguments. */
+			readonly pathRead: boolean;
+	  }
+	| {
+			/** A worktree's folder was made. */
+			readonly kind: 'folder.appeared';
+			readonly projectId: string;
+			/** False on the project's first pass, where nobody is ever moved. */
+			readonly announced: boolean;
+			readonly creator: boolean;
+			readonly created: boolean;
+	  }
+	| {
+			/** Who created a worktree that appeared. */
+			readonly kind: 'creator.resolved';
+			readonly projectId: string;
+			readonly source: 'trace2' | 'process-table' | 'none';
+			/** Commands remembered when the worktree appeared, before expiry. */
+			readonly remembered: number;
+			/** Of those, how many were older than the window and dropped. */
+			readonly expired: number;
+			/** Unexpired commands from this project's terminals. */
+			readonly ofProject: number;
+			/** Of those, how many named this directory, and how many named none. */
+			readonly named: number;
+			readonly unnamed: number;
+			/** Distinct sessions behind the candidate commands; one is required. */
+			readonly candidateSessions: number;
+			/** Age of the newest command naming this directory, from any project. */
+			readonly newestNamedAgeMs: number | null;
+			/** Live shells of the project, when the process table was read. */
+			readonly shells: number | null;
+			/** Whether the creating session still has a terminal panel here. */
+			readonly panel: boolean;
+	  }
+	| {
+			readonly kind: 'capture.decided';
+			readonly projectId: string;
+			readonly outcome:
+				| 'moved'
+				| 'offered'
+				| 'refused'
+				| 'no-panel'
+				| 'no-folder'
+				| 'other-project'
+				| 'already-there';
+	  };
+
 export interface GitCommandStreamOptions {
 	/** A Unix socket path the server owns. It must be short: socket paths are
 	 * capped near 104 bytes. */
@@ -93,6 +154,7 @@ export interface GitCommandStreamOptions {
 		readonly directoryName: string;
 	}) => void;
 	readonly createToken: () => string;
+	readonly onObservation?: (report: WorktreeCaptureReport) => void;
 }
 
 /**
@@ -236,6 +298,11 @@ export class GitCommandStream {
 		// A child Git process extends its parent's id with `/`; the terminal's
 		// token is always the first part.
 		const sessionId = this.tokens.get(sid.split('/', 1)[0] ?? '');
+		this.options.onObservation?.({
+			kind: 'command.reported',
+			attributed: sessionId !== undefined,
+			pathRead: directory !== '',
+		});
 		if (sessionId === undefined) return;
 		this.options.onWorktreeAdd({ sessionId, directoryName: directory });
 	}
@@ -301,7 +368,10 @@ export function sessionRunningWorktreeAdd(
 		if (!/(^|[\\/\s])git(\.exe)?\s/.test(`${row.command} `)) continue;
 		// The command line is one string here, so it is split on spaces. A path
 		// containing a space is read wrongly and simply fails to match.
-		const name = worktreeAddDirectoryName(['git', ...row.command.split(/\s+/).slice(1)]);
+		const name = worktreeAddDirectoryName([
+			'git',
+			...row.command.split(/\s+/).slice(1),
+		]);
 		if (name === null || (name !== '' && name !== directory)) continue;
 		let pid = row.pid;
 		for (let hops = 0; hops < 64 && pid > 1; hops += 1) {
@@ -335,6 +405,7 @@ export interface WorktreeCaptureOptions {
 		readonly panelId: string;
 		readonly fromFolderId: string;
 	}) => void;
+	readonly onObservation?: (report: WorktreeCaptureReport) => void;
 	readonly now?: () => number;
 }
 
@@ -382,17 +453,36 @@ export class WorktreeCapture {
 		readonly worktree: { readonly path: string };
 	}): Promise<string | undefined> {
 		const directory = basename(appeared.worktree.path);
-		const sessionId =
-			this.reportedCreator(appeared.projectId, directory) ??
-			(await this.runningCreator(appeared.projectId, directory));
-		if (sessionId === undefined) return undefined;
+		const reported = this.reportedCreator(appeared.projectId, directory);
+		const running =
+			reported.sessionId === undefined
+				? await this.runningCreator(appeared.projectId, directory)
+				: { sessionId: undefined, shells: null };
+		const sessionId = reported.sessionId ?? running.sessionId;
 		const state = this.options.workspace();
-		return Object.values(state.panels).find(
-			(panel) =>
-				panel.type === 'terminal' &&
-				panel.sessionId === sessionId &&
-				panel.projectId === appeared.projectId,
-		)?.id;
+		const panelId =
+			sessionId === undefined
+				? undefined
+				: Object.values(state.panels).find(
+						(panel) =>
+							panel.type === 'terminal' &&
+							panel.sessionId === sessionId &&
+							panel.projectId === appeared.projectId,
+					)?.id;
+		this.options.onObservation?.({
+			kind: 'creator.resolved',
+			projectId: appeared.projectId,
+			source:
+				reported.sessionId !== undefined
+					? 'trace2'
+					: running.sessionId !== undefined
+						? 'process-table'
+						: 'none',
+			...reported.weighed,
+			shells: running.shells,
+			panel: panelId !== undefined,
+		});
+		return panelId;
 	}
 
 	/** Move the creating terminal into the new folder, or offer to. */
@@ -400,19 +490,38 @@ export class WorktreeCapture {
 		const state = this.options.workspace();
 		const panel = state.panels[appeared.panelId];
 		const folder = state.folders[appeared.folderId];
-		if (
-			panel === undefined ||
-			folder === undefined ||
-			panel.projectId !== appeared.projectId ||
-			panel.folderId === folder.id
-		)
+		const decided = (
+			outcome: Extract<
+				WorktreeCaptureReport,
+				{ kind: 'capture.decided' }
+			>['outcome'],
+		) =>
+			this.options.onObservation?.({
+				kind: 'capture.decided',
+				projectId: appeared.projectId,
+				outcome,
+			});
+		const skipped =
+			panel === undefined
+				? 'no-panel'
+				: folder === undefined
+					? 'no-folder'
+					: panel.projectId !== appeared.projectId
+						? 'other-project'
+						: panel.folderId === folder.id
+							? 'already-there'
+							: undefined;
+		if (skipped !== undefined || panel === undefined || folder === undefined) {
+			decided(skipped ?? 'no-panel');
 			return;
+		}
 		if (!this.options.moveAutomatically()) {
-			this.apply({
+			const offered = this.apply({
 				type: 'folder.offer.set',
 				folderId: folder.id,
 				panelId: panel.id,
 			});
+			decided(offered.ok ? 'offered' : 'refused');
 			return;
 		}
 		const fromFolderId = panel.folderId;
@@ -421,6 +530,7 @@ export class WorktreeCapture {
 			panelId: panel.id,
 			folderId: folder.id,
 		});
+		decided(moved.ok ? 'moved' : 'refused');
 		if (moved.ok)
 			this.options.onCaptured?.({
 				projectId: appeared.projectId,
@@ -435,8 +545,29 @@ export class WorktreeCapture {
 	private reportedCreator(
 		projectId: string,
 		directory: string,
-	): string | undefined {
-		const cutoff = this.now() - RECENT_COMMAND_WINDOW_MS;
+	): {
+		readonly sessionId: string | undefined;
+		readonly weighed: Pick<
+			Extract<WorktreeCaptureReport, { kind: 'creator.resolved' }>,
+			| 'remembered'
+			| 'expired'
+			| 'ofProject'
+			| 'named'
+			| 'unnamed'
+			| 'candidateSessions'
+			| 'newestNamedAgeMs'
+		>;
+	} {
+		const now = this.now();
+		const cutoff = now - RECENT_COMMAND_WINDOW_MS;
+		const remembered = this.recent.length;
+		const newestNamed = this.recent
+			.filter((command) => command.directoryName === directory)
+			.reduce<number | null>(
+				(newest, command) =>
+					newest === null || command.at > newest ? command.at : newest,
+				null,
+			);
 		this.recent = this.recent.filter((command) => command.at >= cutoff);
 		const sessions = this.options.workspace().terminalSessions;
 		const mine = this.recent.filter(
@@ -450,22 +581,35 @@ export class WorktreeCapture {
 				? named
 				: mine.filter((command) => command.directoryName === '');
 		const sessionIds = new Set(candidates.map((command) => command.sessionId));
-		if (sessionIds.size !== 1) return undefined;
-		const sessionId = [...sessionIds][0];
+		const weighed = {
+			remembered,
+			expired: remembered - this.recent.length,
+			ofProject: mine.length,
+			named: named.length,
+			unnamed: mine.filter((command) => command.directoryName === '').length,
+			candidateSessions: sessionIds.size,
+			newestNamedAgeMs: newestNamed === null ? null : now - newestNamed,
+		};
+		if (sessionIds.size !== 1) return { sessionId: undefined, weighed };
 		// Used once: the same command never explains a second worktree.
-		this.recent = this.recent.filter((command) => !candidates.includes(command));
-		return sessionId;
+		this.recent = this.recent.filter(
+			(command) => !candidates.includes(command),
+		);
+		return { sessionId: [...sessionIds][0], weighed };
 	}
 
 	/** From the process table: a `git worktree add` still running. */
 	private async runningCreator(
 		projectId: string,
 		directory: string,
-	): Promise<string | undefined> {
+	): Promise<{ sessionId: string | undefined; shells: number }> {
 		const shells = this.options.shells(projectId);
-		if (shells.size === 0) return undefined;
+		if (shells.size === 0) return { sessionId: undefined, shells: 0 };
 		const rows = await (this.options.processTable ?? readProcessTable)();
-		return sessionRunningWorktreeAdd(rows, shells, directory);
+		return {
+			sessionId: sessionRunningWorktreeAdd(rows, shells, directory),
+			shells: shells.size,
+		};
 	}
 
 	private apply(command: WorkspaceCommand): WorkspaceApplyResult {
@@ -490,6 +634,7 @@ export interface WorktreeCaptureHostOptions {
 	readonly sessions: () => readonly CaptureTerminalSession[];
 	readonly onCaptured?: WorktreeCaptureOptions['onCaptured'];
 	readonly processTable?: WorktreeCaptureOptions['processTable'];
+	readonly onObservation?: (report: WorktreeCaptureReport) => void;
 }
 
 /**
@@ -497,14 +642,16 @@ export interface WorktreeCaptureHostOptions {
  * it created: the stream Git reports to, the decision, and the two hooks a
  * `FolderReconciler` calls. Both hosts wire the same thing.
  */
-export function createWorktreeCaptureHost(options: WorktreeCaptureHostOptions): {
+export function createWorktreeCaptureHost(
+	options: WorktreeCaptureHostOptions,
+): {
 	/** Pass to the server composition so launched terminals report here. */
 	readonly gitCommands: GitCommandStream;
 	readonly capture: WorktreeCapture;
 	/** Spread into the folder reconciler's options. */
 	readonly reconcilerHooks: Pick<
 		FolderReconcilerOptions,
-		'creatorOf' | 'onWorktreeAppeared'
+		'creatorOf' | 'onWorktreeAppeared' | 'onWorktreeFolder'
 	>;
 	/** Start listening. A host that cannot listen still captures through the
 	 * process lookup. */
@@ -533,11 +680,17 @@ export function createWorktreeCaptureHost(options: WorktreeCaptureHostOptions): 
 		...(options.processTable === undefined
 			? {}
 			: { processTable: options.processTable }),
+		...(options.onObservation === undefined
+			? {}
+			: { onObservation: options.onObservation }),
 	});
 	const gitCommands = new GitCommandStream({
 		socketPath: options.socketPath,
 		onWorktreeAdd: (command) => capture.noteWorktreeAdd(command),
 		createToken: () => `terminay-${randomBytes(12).toString('hex')}`,
+		...(options.onObservation === undefined
+			? {}
+			: { onObservation: options.onObservation }),
 	});
 	return {
 		gitCommands,
@@ -548,6 +701,8 @@ export function createWorktreeCaptureHost(options: WorktreeCaptureHostOptions): 
 				if (appeared.createdByPanelId !== undefined)
 					capture.capture({ ...appeared, panelId: appeared.createdByPanelId });
 			},
+			onWorktreeFolder: (folder) =>
+				options.onObservation?.({ kind: 'folder.appeared', ...folder }),
 		},
 		start: () => gitCommands.listen(),
 		close: () => gitCommands.close(),
