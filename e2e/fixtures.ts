@@ -361,6 +361,15 @@ export async function launchDesktopApp(options: {
 								persistenceFaultForTest(testInfo.title),
 						}
 					: {}),
+				// Pixel's Claude Code provider runs a fake that speaks the real
+				// streaming-JSON protocol, so no agent account is needed.
+				...(path.basename(testInfo.file) === 'pixel.spec.ts'
+					? {
+							TERMINAY_CLAUDE_CODE_COMMAND: path.resolve(
+								'e2e/fixtures/fake-claude-chat.mjs',
+							),
+						}
+					: {}),
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),
