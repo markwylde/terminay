@@ -102,3 +102,10 @@ test('the dock says when Pixel is working and when it needs an answer', () => {
 	assert.match(asking, /data-state="attention"/);
 	assert.match(asking, /Pixel needs your answer/);
 });
+
+test('the Settings window lets Pixel’s nested settings be changed', async () => {
+	const { readFile } = await import('node:fs/promises');
+	const source = await readFile('src/components/SettingsWindow.tsx', 'utf8');
+	const roots = source.slice(source.indexOf('const allowedRoots'), source.indexOf(']);', source.indexOf('const allowedRoots')));
+	assert.match(roots, /'pixel'/);
+});
