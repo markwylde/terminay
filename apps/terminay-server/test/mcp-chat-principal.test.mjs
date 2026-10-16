@@ -144,7 +144,7 @@ test("a chat's approval names the chat, carries its id, and reports how it ended
 test("a chat approval ended by cancellation reports ended and runs nothing", async () => {
   const approvals = new McpApprovalService({ policies: approvalsAsk() });
   const settled = [];
-  approvals.onSettled((view, outcome) => settled.push(outcome));
+  approvals.onSettled((_view, outcome) => settled.push(outcome));
   const controller = new AbortController();
   const gate = createMcpPermissionGate({ approvals, describe: async () => ({ agent: "x", terminalTitle: "", summary: "s", details: [] }) });
   const pending = gate.authorize({ op: "write_terminal", group: "terminalsManage", params: {}, context: chatContext({ signal: controller.signal }) });

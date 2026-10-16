@@ -23,7 +23,7 @@ function fakeProviders(options = {}) {
     bridge: {
       providers: () => [{ id: "ext/echo", displayName: "Echo" }],
       async availability() { return availability; },
-      async openSession(providerId, request, onEvent) {
+      async openSession(_providerId, request, onEvent) {
         log.push(["open", request]);
         const session = { request, onEvent, prompts: [], cancelled: 0, closed: false };
         sessions.push(session);
