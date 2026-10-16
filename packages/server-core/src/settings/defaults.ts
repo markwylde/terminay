@@ -53,6 +53,10 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		codexModel: '',
 		prompt: '',
 	},
+	pixel: {
+		enabled: false,
+		provider: 'unset',
+	},
 	terminayMcp: {
 		enabled: true,
 		permissions: {
