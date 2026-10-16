@@ -39,11 +39,14 @@ export function RootFolderBrowser({
 	});
 	const [typedPath, setTypedPath] = useState('');
 	const navigatorRef = useRef<RootFolderNavigator | null>(null);
+	// A path typed while a listing loads is kept when that listing lands.
+	const pathEditedRef = useRef(false);
 
 	useEffect(() => {
 		const navigator = new RootFolderNavigator(browse, (next) => {
 			setListing(next);
-			if (next.state === 'ready') setTypedPath(next.folder.path);
+			if (next.state === 'ready' && !pathEditedRef.current)
+				setTypedPath(next.folder.path);
 		});
 		navigatorRef.current = navigator;
 		// Opens at the server account's home.
@@ -66,8 +69,14 @@ export function RootFolderBrowser({
 			<RootFolderBrowserView
 				listing={listing}
 				typedPath={typedPath}
-				onTypedPathChange={setTypedPath}
-				onOpen={(path) => void navigatorRef.current?.open(path)}
+				onTypedPathChange={(path) => {
+					pathEditedRef.current = true;
+					setTypedPath(path);
+				}}
+				onOpen={(path) => {
+					pathEditedRef.current = false;
+					void navigatorRef.current?.open(path);
+				}}
 				onChoose={onChoose}
 				onCancel={onCancel}
 			/>
