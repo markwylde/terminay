@@ -1,13 +1,8 @@
 export * from './activity/index.js';
-export * from './agentChat/index.js';
 export * from './aiService/index.js';
-export * from './appWindows/index.js';
 export * from './auth.js';
-export * from './automationService/index.js';
-export * from './automationSpaceVisibility.js';
 export * from './capabilities.js';
 export * from './composition.js';
-export * from './connectedServers/index.js';
 export * from './connection.js';
 export * from './control/index.js';
 export * from './diagnostics.js';
@@ -125,6 +120,7 @@ export {
 	FILE_CONTENT_OPERATIONS,
 	FILE_OBSERVATION_OPERATIONS,
 	FILE_OPERATIONS,
+	FolderScopeCache,
 	FileCatalog,
 	FileContentError,
 	FileContentStreamService,
@@ -132,7 +128,6 @@ export {
 	FileSession,
 	FileSessionRegistry,
 	FileWatchRegistry,
-	FolderScopeCache,
 	frontmatterTitle,
 	isHiddenDirectoryName,
 	isIgnoredDirectoryName,
@@ -148,22 +143,23 @@ export {
 	titleCase,
 	validIgnorePattern,
 } from './fileService/index.js';
-export * from './folderReconciler.js';
-export * from './folderRoots.js';
 export * from './gitService/index.js';
+export * from './worktreeInsights/index.js';
 export * from './languageService/index.js';
 export * from './macroService/index.js';
+export * from './automationService/index.js';
+export * from './agentChat/index.js';
 export * from './mcpApprovals/index.js';
+export * from './appWindows/index.js';
+export * from './notifications/index.js';
+export * from './push/index.js';
+export * from './connectedServers/index.js';
 export * from './mdxRuntime/index.js';
 export * from './migration/index.js';
-export * from './notifications/index.js';
 export * from './outboundDelivery.js';
 export * from './platform.js';
-export * from './push/index.js';
 export * from './recordingService/index.js';
 export * from './remote/index.js';
-export * from './rootFolderBrowser.js';
-export * from './rootlessProjects.js';
 export * from './runtime.js';
 export * from './serverUpgrade/index.js';
 export * from './sessionHolder/index.js';
@@ -171,13 +167,17 @@ export * from './settings/index.js';
 export * from './shellProfiles/index.js';
 export * from './streamDiagnostics.js';
 export * from './terminalService/index.js';
-export * from './terminalTitles.js';
 export * from './types.js';
 export * from './uiBundle/index.js';
+export * from './automationSpaceVisibility.js';
+export * from './folderReconciler.js';
+export * from './folderRoots.js';
+export * from './terminalTitles.js';
+export * from './rootFolderBrowser.js';
+export * from './rootlessProjects.js';
 export * from './workspace.js';
 export * from './workspaceHydration.js';
 export * from './workspaceProtocol.js';
 export * from './workspaceRecovery.js';
 export * from './workspaceRepository.js';
 export * from './worktreeCapture.js';
-export * from './worktreeInsights/index.js';
