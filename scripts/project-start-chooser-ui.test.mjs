@@ -212,6 +212,34 @@ test('the folder browser lists directories, a parent, a path field, and its two 
 	assert.doesNotMatch(markup, /data-terminay-root-folder-truncated/u);
 });
 
+test('the folder browser suggests folders for a typed path as a listbox', () => {
+	const ready = {
+		state: 'ready',
+		folder: { path: '/Users/mark', parent: '/Users', entries: [{ name: 'Documents' }], truncated: false },
+	};
+	const markup = browserView(ready, {
+		typedPath: '/Users/mark/Doc',
+		suggestions: [
+			{ name: 'Documents', path: '/Users/mark/Documents' },
+			{ name: 'docs', path: '/Users/mark/docs' },
+		],
+		highlighted: 1,
+	});
+	assert.match(markup, /role="combobox"[^>]*aria-expanded="true"/u);
+	assert.match(markup, /role="listbox"[^>]*data-terminay-root-folder-suggestions="true"/u);
+	assert.match(markup, /aria-selected="false"[^>]*title="\/Users\/mark\/Documents"[^>]*data-terminay-root-folder-suggestion="Documents"/u);
+	assert.match(markup, /aria-selected="true"[^>]*data-terminay-root-folder-suggestion="docs"/u);
+	assert.doesNotMatch(browserView(ready), /data-terminay-root-folder-suggestions/u);
+});
+
+test('the folder browser holds one height and scrolls its listing inside it', () => {
+	const markup = browserView({ state: 'loading' });
+	assert.match(markup, /data-terminay-root-folder-body="true"/u);
+	assert.match(css, /\.root-folder-browser__body \{[^}]*\bheight: min\(50vh, 360px\);/u);
+	assert.match(css, /\.root-folder-browser__list \{[^}]*flex: 1;[^}]*overflow-y: auto;/u);
+	assert.match(css, /\.root-folder-browser__suggestions \{[^}]*position: absolute;/u);
+});
+
 test('the folder browser marks a truncated listing', () => {
 	const markup = browserView({
 		state: 'ready',

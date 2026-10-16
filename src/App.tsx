@@ -7418,6 +7418,19 @@ function App({
 			);
 		});
 	}, []);
+	// A recent folder another project here already has opens that project.
+	// The one awaiting its start has no terminal, so it closes with no warning.
+	const shownProjectIds = useMemo(
+		() => projects.map((project) => project.id),
+		[projects],
+	);
+	const reuseOpenProject = useCallback(
+		(existingProjectId: string, projectId: string) => {
+			activateProject(existingProjectId);
+			closeProject(projectId, { skipConfirmation: true });
+		},
+		[activateProject, closeProject],
+	);
 	// Each folder's workspace publishes its own panels. The dashboard, the
 	// switcher, and the badges read a project as one list, so the folders'
 	// inventories are merged per project, in folder order, below.
@@ -10336,6 +10349,8 @@ function App({
 									store={terminalClientContext.workspaceSnapshotStore}
 									recentFoldersKey={workspaceSnapshot?.recentProjectFolders}
 									onStarted={launchStartedProjectTerminal}
+									shownProjectIds={shownProjectIds}
+									onReuseProject={reuseOpenProject}
 								/>
 							) :
 							folders.map((folder) => (

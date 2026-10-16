@@ -129,6 +129,32 @@ export function childFolderPath(parent: string, name: string): string {
 		: `${parent}${separator}${name}`;
 }
 
+/**
+ * The started project this window already shows whose root is `path`, other
+ * than `projectId`. Opening that recent folder shows it instead of starting a
+ * second project there. Paths compare as the server canonicalized them.
+ */
+export function openProjectWithRoot(
+	snapshot: ServerWorkspaceSnapshot | null | undefined,
+	path: string,
+	projectId: string,
+	shownProjectIds: Iterable<string>,
+): string | undefined {
+	if (snapshot === null || snapshot === undefined) return undefined;
+	for (const id of shownProjectIds) {
+		if (id === projectId) continue;
+		const project = snapshot.projects[id];
+		if (
+			project !== undefined &&
+			project.start === undefined &&
+			project.rootOrigin !== 'none' &&
+			project.root === path
+		)
+			return id;
+	}
+	return undefined;
+}
+
 /** The recent folders the chooser lists: the server's answer, bounded. */
 export type RecentFolderRow = Readonly<{
 	path: string;
