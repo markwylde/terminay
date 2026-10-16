@@ -1,0 +1,51 @@
+## 1. Upstream `@markwylde/pet`
+
+- [x] 1.1 Add host-driven chat (`onSend`/`onStop`/`onClear`, `chat.setMessages`, `chat.setStatus`) without changing behaviour for existing callers. Verified by new vitest cases and the existing suite passing.
+- [x] 1.2 Add per-message `actions` rendered as buttons, emitting `chat:action`, keyboard-operable and labelled. Verified by vitest DOM tests.
+- [ ] 1.3 Publish `@markwylde/pet@0.2.0` ([PR #3](https://github.com/markwylde/pet/pull/3)). Verified by `npm view @markwylde/pet version` showing `0.2.0`.
+
+## 2. Extension API 3.2: chat providers
+
+- [ ] 2.1 In `packages/extension-api`, add chat provider types (`AgentChatProviderRuntime`, session, events, availability, failure reasons), the `agentChatProviders` manifest contribution and `agent-chat` permission validation, `context.agents.registerChatProvider`, and bump `EXTENSION_API_VERSION` to `3.2.0` with a changelog note. Verified by extension-api unit tests for manifest validation (missing permission, valid declaration, chat-only package) and registration refusal (undeclared, duplicate, after deactivation).
+- [ ] 2.2 Add a chat provider test harness to `packages/extension-api` testing exports. Verified by its own unit test driving a fake provider through open, prompt, cancel and close.
+- [ ] 2.3 Add `agent.chat.*` host and child frames in `packages/server-core/src/extensions/protocol.ts`, child-side dispatch in `child.ts`, and host-side `invokeChat*` with per-extension session tracking in `host.ts`. Event validation and bounding drops events for unknown or closed sessions. Child exit, quarantine, disable and update end the open sessions. Verified by host and child unit tests with a fixture extension, including a crash mid-turn.
+- [ ] 2.4 Add a chat provider registry to the extension manager and catalog (`manager.ts`, `descriptor.ts`, `catalog.ts`), listing providers with availability and `disabled` when the extension is off or quarantined. Verified by manager unit tests.
+
+## 3. Chat MCP principal and approvals
+
+- [ ] 3.1 Extend `ControlCapabilityStore` with a `chat` principal and `mintChat(chatId, reach)` that yields project or workspace scope, plus revocation by chat. Verified by `controlEndpoint` unit tests: resolution, revocation, and a revoked token failing without revealing scope.
+- [ ] 3.2 Resolve workspace-reach chats in `workspaceReach.ts` like automation-space terminals, and project-reach chats like project terminals with `open_terminal` in that project. Flag app-window tools `requiresCallingTerminal` so they report unavailable and return `unsupported_op`. Verified by MCP tool tests for `list_terminals` across projects, `open_terminal` per reach, `show_window` → `unsupported_op`, and `get_mcp_capabilities`.
+- [ ] 3.3 Key approvals, session grants and the queue bound on the calling capability, with a `caller` that is a terminal or a chat (title and provider name). Pending approvals end on chat revocation. Verified by `mcpApprovals` and `permissionGate` unit tests: grant isolation between terminals and chats, revocation ending pending approvals without side effects, and an unchanged `approval_queue_full`.
+- [ ] 3.4 Provide `mintChatCapability` and `mcpServerEntry` only to the agent chat service, from both host compositions (`electron/serverTerminalAuthority.ts`/`electron/main.ts` and `apps/terminay-server`). Verified by a boundary test asserting no protocol operation, extension API or MCP tool can reach `mintChat`.
+
+## 4. Agent chat service (server)
+
+- [ ] 4.1 Create `packages/server-core/src/agentChat/`: the chat record (id, key, title, provider, reach, status, revision), the bounded conversation model (user, assistant with text and activity parts, approval, notice), the open-chat limit, key uniqueness and the reserved `pixel` key. Verified by unit tests for create, open by key, limits, bounds and oldest-entry drop.
+- [ ] 4.2 Run turns through the provider registry: open a session on first send in a private empty working directory under the server data dir, with an MCP entry when reach is not `none`. Map events to `thinking`/`streaming`/`idle`, refuse `chat_busy`, implement stop (cancel turn and pending approval), clear (end session, revoke, empty), close, and the inactivity failure. Verified by unit tests with a fake provider.
+- [ ] 4.3 Build activity notes on the server from Terminay tool names and terminal display titles looked up by handle, and generic kinds otherwise, never including tool output. Verified by unit tests for `read_terminal`, `run_command`, a non-Terminay tool, and an unknown handle.
+- [ ] 4.4 Turn provider failures and unexpected exits into notices naming `claude` or `codex login` where relevant, revoke on exit, and add the no-memory notice on the next session. Verified by unit tests for each failure reason and for an exit mid-turn.
+- [ ] 4.5 Turn chat-caller approvals into approval entries, route `decideApproval` to the existing decision path with its authority check, and record outcomes. Verified by unit tests for allow once, allow session, decline, and an approval ended by Stop.
+- [ ] 4.6 Register `agentChat.*` operations gated on terminal-create authority, plus the `agentChat.changed` journal event and the `agentChat.delta` transient event with revisions, in `composition.ts`. Add the mirrored client in `packages/client-core`. Verified by protocol tests, including refusal for a client without authority and resync after a missed revision.
+- [ ] 4.7 Record chat lifecycle diagnostics (session start and end, exit status, provider, failure reason) with no text, arguments, results or token, and keep conversations out of disk, settings and logs. Verified by a diagnostics unit test and a test that scans the data directory after a chat.
+
+## 5. Built-in agents: Claude Code and Codex providers
+
+- [ ] 5.1 Add `extensions/builtin-agents/src/chat/locate.ts` (override variable, PATH, login-shell PATH once with timeout, per-user locations, no shell invocation), declare the override variables in the manifest, and bump the manifest to `api: ^3.2.0` with `agent-chat` and the `agentChatProviders` declarations. Verified by unit tests using a temporary HOME and fake executables.
+- [ ] 5.2 Implement the `claude-code` provider: spawn `claude` with the confining stream-json flags, write turns as stream-json user messages, map `stream_event` text deltas, `tool_use`/`tool_result` and `result` to events, map auth errors to `not_signed_in`, and stop via interrupt with a kill fallback. Verified by unit tests against a fake `claude` script that replays recorded stream-json, asserting the exact argv.
+- [ ] 5.3 Implement the `codex` provider: spawn `codex app-server` with hooks, browser, computer-use and apps disabled; `initialize`; `config/read`; `thread/start` (read-only, `untrusted`, ephemeral, developer instructions, user MCP servers disabled by name, `terminay_chat` added); `turn/start` and `turn/interrupt`; map notifications to events; decline every approval request and cancel user-input and elicitation requests. Verified by unit tests against a fake app-server script, asserting the request payloads and declines.
+- [ ] 5.4 Register both providers in `src/index.ts` with availability (located and runnable), and kill their processes on close and deactivation. Verified by extension tests through the 2.2 harness.
+- [ ] 5.5 Add a real-CLI conformance test, skipped unless `TERMINAY_CHAT_CONFORMANCE=1`, that runs one turn per installed provider with a Terminay MCP entry and checks that a terminal can be listed. Verified by running it locally with Claude, with the output noted in the PR (Codex is at its usage limit on this machine, so that run is skipped unless the limit resets).
+
+## 6. Pixel
+
+- [ ] 6.1 Add server settings `pixel.enabled` (default `false`) and `pixel.provider` (default `unset`) in `packages/server-core/src/settings/classification.ts` and `defaults.ts`, and the UI type in `src/types/settings.ts`. Verified by settings unit tests for defaults, `server` classification and round-trip.
+- [ ] 6.2 Add `packages/server-core/src/pixel/`: `pixel.open` (refused while off or unset; creates or returns the `pixel` chat with workspace reach, configured provider and Pixel's instruction), closing the Pixel chat on disable or provider change, and a `pixel.state` event or query. Verified by unit tests for each transition, including off with a pending approval and off across a restart.
+- [ ] 6.3 Add Settings > AI > Pixel (Enable Pixel, provider select, a not-a-sandbox note) in `src/terminalSettings.ts`. Verified by a component test that renders it and updates both settings.
+- [ ] 6.4 Add `@markwylde/pet@0.2.0` to the UI workspace, and `src/pixel/PixelDock.tsx` (static `PetIcon`, working and attention indicators, accessible state name) in `WorkspaceStatusBar.tsx` before the remote button, with a bottom-right fallback when the status bar is hidden. Verified by component tests, including status-bar height.
+- [ ] 6.5 Add `src/pixel/usePixel.ts`: one pet per window, host-driven chat wired to `pixel.open` and `agentChat.*`; entries mapped to messages with approval actions; status mapped to `setStatus`; onboarding chips from available providers; coming out on a pending approval; reduced motion; theme tokens; destroyed when Pixel is off. Verified by component tests with a mocked client, including toggling off leaving no `.mwpet` element.
+
+## 7. Verification and docs
+
+- [ ] 7.1 Add an E2E suite with a fake chat provider (fixture extension or fake CLI via the override variables) covering: Pixel off by default; enable; click the dock → balloon; onboarding; a streamed reply with an activity note; a write under Always Allow; an Ask approval answered in the balloon; a second client seeing the conversation and deciding; turning Pixel off removing it from both. Verified by `npm run test:e2e` passing (Docker-isolated).
+- [ ] 7.2 Update `docs/product-overview.md` (agent chats, providers, Pixel), the ADR-0011 trust-boundary notes for the chat-mint invariant, and the extension author docs for chat providers. Verified by review in the PR diff.
+- [ ] 7.3 Run `npm run lint`, typecheck, unit suites and `openspec validate --all`, open the PR on Gitea, and read back every commit status. Verified by all statuses being `success` or `skipped`.
