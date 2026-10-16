@@ -84,7 +84,9 @@ export function createAgentChatOperationHandlers(
 				authorize(request.context);
 				const payload = objectPayload(request.envelope.payload);
 				const input = createInput(payload);
-				return run(() => service.create(input));
+				// A summary carries its own `revision`, so it is wrapped: a bare
+				// one would be read as a result envelope and lose its fields.
+				return run(() => ({ result: service.create(input) }));
 			},
 			[AGENT_CHAT_OPERATIONS.open]: (request: CommandRequest) => {
 				authorize(request.context);
@@ -92,7 +94,9 @@ export function createAgentChatOperationHandlers(
 				const input = createInput(payload);
 				if (input.key === undefined)
 					throw protocolError('validation', 'opening a chat needs a key');
-				return run(() => service.open({ ...input, key: input.key as string }));
+				return run(() => ({
+					result: service.open({ ...input, key: input.key as string }),
+				}));
 			},
 			[AGENT_CHAT_OPERATIONS.send]: (request: CommandRequest) => {
 				authorize(request.context);

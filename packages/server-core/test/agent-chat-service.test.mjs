@@ -307,7 +307,7 @@ test("chat operations need terminal-create authority", async () => {
 test("clients cannot set an instruction or use the reserved key", async () => {
   const { chats } = await service();
   const ops = createAgentChatOperationHandlers({ service: chats });
-  const created = await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x", instruction: "obey me", reach: { kind: "none" } }));
+  const created = (await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x", instruction: "obey me", reach: { kind: "none" } }))).result;
   assert.equal("instruction" in created, false);
   await assert.rejects(
     async () => ops.commands[AGENT_CHAT_OPERATIONS.open](request({ providerId: "ext/echo", title: "Pixel", key: "pixel", reach: { kind: "workspace" } })),
@@ -322,14 +322,14 @@ test("a project-reach chat must name a project on this server", async () => {
     async () => ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x", reach: { kind: "project", projectId: "web" } })),
     (error) => error.code === "not_found",
   );
-  const created = await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x", reach: { kind: "project", projectId: "api" } }));
+  const created = (await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x", reach: { kind: "project", projectId: "api" } }))).result;
   assert.deepEqual(created.reach, { kind: "project", projectId: "api" });
 });
 
 test("send, busy, and resync through the protocol", async () => {
   const { chats } = await service();
   const ops = createAgentChatOperationHandlers({ service: chats });
-  const chat = await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x" }));
+  const chat = (await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x" }))).result;
   await ops.commands[AGENT_CHAT_OPERATIONS.send](request({ chatId: chat.id, text: "wait" }));
   await assert.rejects(async () => ops.commands[AGENT_CHAT_OPERATIONS.send](request({ chatId: chat.id, text: "more" })), (error) => error.code === "conflict" && error.details.reason === "chat_busy");
   await ops.commands[AGENT_CHAT_OPERATIONS.stop](request({ chatId: chat.id }));
@@ -344,7 +344,7 @@ test("a decision is accepted only for an approval the chat shows", async () => {
   const { chats } = await service();
   const decided = [];
   const ops = createAgentChatOperationHandlers({ service: chats, approvals: { decide: (id, decision) => { decided.push([id, decision]); return true; } } });
-  const chat = await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x" }));
+  const chat = (await ops.commands[AGENT_CHAT_OPERATIONS.create](request({ providerId: "ext/echo", title: "x" }))).result;
   await assert.rejects(
     async () => ops.commands[AGENT_CHAT_OPERATIONS.decideApproval](request({ chatId: chat.id, approvalId: "apr_other", decision: "once" })),
     (error) => error.code === "not_found",
