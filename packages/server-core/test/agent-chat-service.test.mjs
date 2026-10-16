@@ -363,3 +363,13 @@ test("nothing of a conversation is left on disk once a chat closes", async () =>
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(await readdir(workRoot), []);
 });
+
+test("activity notes for Terminay calls use titles and the agent's own input", async () => {
+  const { describeChatMcpCall } = await import("../dist/index.js");
+  const titles = (reference) => (reference === "t_build" ? "build" : undefined);
+  assert.equal(describeChatMcpCall("read_terminal", { terminal: "t_build" }, titles), "Reading build");
+  assert.equal(describeChatMcpCall("run_command", { terminal: "t_build", command: "npm test" }, titles), "Running `npm test` in build");
+  assert.equal(describeChatMcpCall("write_terminal", { terminal: "t_unknown", text: "yes" }, titles), "Typing into a terminal");
+  assert.equal(describeChatMcpCall("get_mcp_capabilities", {}, titles), undefined);
+  assert.equal(describeChatMcpCall("create_automation", { name: "Digest" }, titles), "Creating the automation “Digest”");
+});

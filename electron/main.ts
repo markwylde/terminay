@@ -90,6 +90,7 @@ import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/
 import { parseHostedIceServers } from '../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/sessionOrigin';
 import type { McpServerCommand } from '../packages/extension-api/src/index';
+import { describeChatMcpCall } from '../packages/server-core/src/agentChat/activity';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import {
 	createFilePushEnrolmentPersistence,
@@ -2041,6 +2042,28 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			runLog: embeddedAutomationRuns,
 		},
 		mcpApprovals: true,
+		// A chat's capability is minted here, where the control socket lives,
+		// and only the agent chat service is handed this (ADR-0068).
+		agentChatMcp: {
+			mint: (chatId, reach) => mcpCapabilities.mintChat(chatId, reach),
+			revoke: (chatId) => {
+				mcpCapabilities.revokeChat(chatId);
+			},
+			serverEntry: (token) => {
+				const command = getMcpServerCommand();
+				return {
+					command: command.command,
+					args: [...command.args],
+					env: {
+						...(command.env ?? {}),
+						...definedEnv(getTerminalControlEnv({ token })),
+					},
+				};
+			},
+			// The dispatcher reports each Terminay call a chat makes, in
+			// Terminay's own words, so provider reports of them are not shown.
+			notesCalls: true,
+		},
 		connectedServers: {
 			backend: embeddedConnectedServersBackend,
 			vault: embeddedVault.vault,
@@ -2976,6 +2999,16 @@ function getTerminalSpawnEnv(capability?: {
 	return env;
 }
 
+function definedEnv(
+	env: Record<string, string | undefined>,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(env).filter(
+			(entry): entry is [string, string] => entry[1] !== undefined,
+		),
+	);
+}
+
 function getTerminalControlEnv(capability?: {
 	readonly token: string;
 }): Record<string, string | undefined> {
@@ -3786,11 +3819,40 @@ function createDesktopMcpPermissionGate(): ControlPermissionGate {
 		const approvals = serverTerminalAuthority?.composition.mcpApprovals;
 		return approvals === undefined
 			? undefined
-			: createMcpPermissionGate({ approvals, describe: describeMcpRequest });
+			: createMcpPermissionGate({
+					approvals,
+					describe: describeMcpRequest,
+					chatAgentName: (chatId) =>
+						serverTerminalAuthority?.composition.agentChat?.agentName(chatId),
+				});
 	};
 	return {
-		authorize: (request) => gate()?.authorize(request),
+		authorize: async (request) => {
+			const refusal = await gate()?.authorize(request);
+			if (refusal === undefined) noteChatMcpCall(request);
+			return refusal;
+		},
 	};
+}
+
+/** Show a permitted Terminay call in the chat that made it, in our words. */
+function noteChatMcpCall(request: {
+	readonly op: ControlOperation;
+	readonly params: Readonly<Record<string, unknown>>;
+	readonly context: ControlRequestContext;
+}): void {
+	const chatId = request.context.chat?.chatId;
+	const chats = serverTerminalAuthority?.composition.agentChat;
+	if (chatId === undefined || chats === undefined) return;
+	const text = describeChatMcpCall(request.op, request.params, (reference) => {
+		try {
+			const target = resolveMcpTerminal(request.context, reference);
+			return mcpTerminalTitle(target.id, target.projectId);
+		} catch {
+			return undefined;
+		}
+	});
+	if (text !== undefined) chats.noteMcpCall(chatId, text);
 }
 
 async function describeMcpRequest(request: {
