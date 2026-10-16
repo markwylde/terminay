@@ -63,6 +63,24 @@ test("project sidebar state is independently durable, bounded, and migrates with
   assert.throws(() => migrateWorkspaceState(previousVersion, "server-a"), /unsupported workspace schema/);
 });
 
+test("sidebar width is the device's: a stored width is dropped and a width patch is refused", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project-a", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  const project = store.state.projects["project-a"];
+  const stored = {
+    ...store.state,
+    projects: { ...store.state.projects, "project-a": { ...project, sidebar: { ...project.sidebar, fileExplorerWidth: 340 } } },
+  };
+  const loaded = migrateWorkspaceState(stored, "server-a");
+  assert.equal(Object.hasOwn(loaded.projects["project-a"].sidebar, "fileExplorerWidth"), false);
+  assert.deepEqual(loaded.projects["project-a"].sidebar, defaultWorkspaceSidebarState());
+
+  const before = store.state.revision;
+  assert.equal(store.apply({ commandId: "width", command: { type: "project.sidebar.update", projectId: "project-a", sidebar: { fileExplorerWidth: 300 } } }).ok, false);
+  assert.equal(store.state.revision, before);
+});
+
 test("restart recovery marks running sessions interrupted without changing identity", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const snapshot = store.state;

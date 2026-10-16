@@ -192,7 +192,6 @@ export type WorkspaceSidebarPanelId =
 	| 'git'
 	| 'documentation';
 export interface WorkspaceSidebarState {
-	readonly fileExplorerWidth: number;
 	readonly isFileExplorerOpen: boolean;
 	readonly isExplorerPaneCollapsed: boolean;
 	readonly isAgentsPaneCollapsed: boolean;
@@ -216,7 +215,6 @@ const SIDEBAR_PANEL_IDS: readonly WorkspaceSidebarPanelId[] = [
 
 export function defaultWorkspaceSidebarState(): WorkspaceSidebarState {
 	return {
-		fileExplorerWidth: 280,
 		isFileExplorerOpen: false,
 		isExplorerPaneCollapsed: false,
 		isAgentsPaneCollapsed: false,
@@ -821,7 +819,6 @@ function normalizeWorkspaceSidebarState(value: unknown): WorkspaceSidebarState {
 	validateWorkspaceSidebarState(value);
 	const sidebar = value as WorkspaceSidebarState;
 	return {
-		fileExplorerWidth: sidebar.fileExplorerWidth,
 		isFileExplorerOpen: sidebar.isFileExplorerOpen,
 		isExplorerPaneCollapsed: sidebar.isExplorerPaneCollapsed,
 		isAgentsPaneCollapsed: sidebar.isAgentsPaneCollapsed,
@@ -845,7 +842,6 @@ function patchWorkspaceSidebarState(
 		throw new TypeError('sidebar patch is invalid');
 	const input = patch as Record<string, unknown>;
 	const allowed = new Set<keyof WorkspaceSidebarState>([
-		'fileExplorerWidth',
 		'isFileExplorerOpen',
 		'isExplorerPaneCollapsed',
 		'isAgentsPaneCollapsed',
@@ -885,7 +881,6 @@ function validateWorkspaceSidebarState(
 	if (booleans.some((key) => typeof sidebar[key] !== 'boolean'))
 		throw new TypeError('project sidebar is invalid');
 	const dimensions = [
-		'fileExplorerWidth',
 		'sidebarAgentsHeight',
 		'sidebarExplorerHeight',
 		'sidebarGitHeight',

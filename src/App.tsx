@@ -267,12 +267,10 @@ import {
 	collapsedFoldersAfterToggle,
 	projectCollapsedFoldersOnDevice,
 	projectFoldersColumnTabOnDevice,
-	projectFoldersTreeWidthOnDevice,
 	projectSidebarVisibilityKey,
 	withProjectCollapsedFolders,
 	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
-	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './workspace/projectTabModel';
@@ -453,6 +451,7 @@ import {
 	rememberHomeSidebarVisible,
 	rememberSelectedFolder,
 } from './workspace/localViewState';
+import { useRememberedColumnWidth } from './workspace/useRememberedColumnWidth';
 import {
 	type DashboardActivation,
 	type DashboardAgent,
@@ -753,8 +752,12 @@ type ProjectWorkspaceProps = {
 	projectInventory: readonly WorkspaceInventoryEntry[];
 	/** Device-local; the same for every folder of the project. */
 	isFoldersTreeOpen: boolean;
+	/** Device-local; the same for every project. */
 	foldersTreeWidth: number;
-	onFoldersTreeWidthCommit: (projectId: string, width: number) => void;
+	onFoldersTreeWidthCommit: (width: number) => void;
+	/** Device-local; the same for every project. */
+	sidebarWidth: number;
+	onSidebarWidthCommit: (width: number) => void;
 	/** The folders of this project the tree draws collapsed, on this device. */
 	collapsedFolderIds: ReadonlySet<string>;
 	onToggleFolderCollapsed: (projectId: string, folderId: string) => void;
@@ -801,7 +804,6 @@ type ProjectWorkspaceProps = {
 		patch: Partial<
 			Pick<
 				ProjectTab,
-				| 'fileExplorerWidth'
 				| 'sidebarExplorerHeight'
 				| 'sidebarAgentsHeight'
 				| 'sidebarGitHeight'
@@ -828,8 +830,6 @@ type ProjectWorkspaceProps = {
 };
 
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
-/** Home's sidebar is a short menu, so it starts narrower than a project's. */
-const HOME_SIDEBAR_DEFAULT_WIDTH = 220;
 /** Home's chrome: a neutral slate, never any project's colour. */
 const HOME_CHROME_COLOR = '#5f6b7e';
 const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
@@ -1477,6 +1477,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onEditProject,
 			onFoldersColumnTabChange,
 			onFoldersTreeWidthCommit,
+			onSidebarWidthCommit,
 			onSelectFolder,
 			onMoveTerminalToFolder,
 			onMoveTerminalToProject,
@@ -1485,6 +1486,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onShowDashboard,
 			onCloseActiveWithNoPanel,
 			searchPlaces,
+			sidebarWidth,
 			onToggleStatusBar,
 			isStatusBarVisible,
 			statusBarSlot,
@@ -5055,7 +5057,7 @@ const ProjectWorkspace = memo(forwardRef<
 			foldersTreeWidth,
 			isActive,
 			isFoldersTreeOpen,
-			project.fileExplorerWidth,
+			sidebarWidth,
 			project.isFileExplorerOpen,
 		]);
 
@@ -5598,9 +5600,7 @@ const ProjectWorkspace = memo(forwardRef<
 					navigationSide="trailing"
 					isFoldersVisible={isFoldersTreeOpen}
 					foldersWidth={foldersTreeWidth}
-					onFoldersWidthCommit={(width) =>
-						onFoldersTreeWidthCommit(project.id, width)
-					}
+					onFoldersWidthCommit={onFoldersTreeWidthCommit}
 					// A workspace behind another keeps the column's width without
 					// drawing the tree, so its terminals are not resized when it
 					// comes to the front.
@@ -5667,21 +5667,8 @@ const ProjectWorkspace = memo(forwardRef<
 					onNavigationDismiss={() => {
 						onUpdateProject(project.id, { isFileExplorerOpen: false });
 					}}
-					navigationWidth={project.fileExplorerWidth}
-					onNavigationWidthCommit={(width) => {
-						void onCommitProjectSidebar(project.id, {
-							fileExplorerWidth: Math.min(
-								2_000,
-								Math.max(30, Math.round(width)),
-							),
-						}).catch((error) => {
-							setErrorText(
-								`Unable to save sidebar width: ${
-									error instanceof Error ? error.message : String(error)
-								}`,
-							);
-						});
-					}}
+					navigationWidth={sidebarWidth}
+					onNavigationWidthCommit={onSidebarWidthCommit}
 					navigation={
 						project.isFileExplorerOpen ? (
 							<div className="file-explorer-sidebar">
@@ -6451,20 +6438,25 @@ function App({
 		},
 		[currentServerId, settingsClient],
 	);
+	// The Folders tree and the sidebar each have one width on this device,
+	// shared by every project: resizing either in one project resizes it in all.
+	const [foldersColumnWidth, commitFoldersColumnWidth] =
+		useRememberedColumnWidth('folders');
+	const [sidebarWidth, commitSidebarWidth] =
+		useRememberedColumnWidth('sidebar');
 	/**
-	 * The Folders tree's open state and width, per server and project, on this
-	 * device. They are kept with the sidebar's device preferences and are
-	 * independent of the sidebar's own visibility. What this window has changed
-	 * is shown at once from here rather than after the settings round trip.
+	 * The Folders tree's open state, per server and project, on this device. It
+	 * is kept with the sidebar's device preferences and is independent of the
+	 * sidebar's own visibility. What this window has changed is shown at once
+	 * from here rather than after the settings round trip.
 	 */
 	const [foldersTreeChanges, setFoldersTreeChanges] = useState<
 		Readonly<{
 			visibility: Readonly<Record<string, boolean>>;
-			width: Readonly<Record<string, number>>;
 			tab: Readonly<Record<string, FoldersColumnTabId>>;
 			collapsed: Readonly<Record<string, readonly string[]>>;
 		}>
-	>({ visibility: {}, width: {}, tab: {}, collapsed: {} });
+	>({ visibility: {}, tab: {}, collapsed: {} });
 	const foldersTreeChangesRef = useRef(foldersTreeChanges);
 	foldersTreeChangesRef.current = foldersTreeChanges;
 	const persistFoldersTree = useCallback(
@@ -6495,11 +6487,6 @@ function App({
 			currentServerId,
 			projectId,
 		);
-	const foldersTreeWidthFor = (projectId: string): number =>
-		foldersTreeChanges.width[
-			projectSidebarVisibilityKey(currentServerId, projectId)
-		] ??
-		projectFoldersTreeWidthOnDevice(settings.sidebar, currentServerId, projectId);
 	const foldersColumnTabFor = (projectId: string): FoldersColumnTabId =>
 		foldersTreeChanges.tab[
 			projectSidebarVisibilityKey(currentServerId, projectId)
@@ -6583,25 +6570,6 @@ function App({
 					currentServerId,
 					projectId,
 					isOpen,
-				),
-			);
-		},
-		[currentServerId, persistFoldersTree],
-	);
-	const commitFoldersTreeWidth = useCallback(
-		(projectId: string, width: number) => {
-			const key = projectSidebarVisibilityKey(currentServerId, projectId);
-			const rounded = Math.round(width);
-			setFoldersTreeChanges((current) => ({
-				...current,
-				width: { ...current.width, [key]: rounded },
-			}));
-			persistFoldersTree((sidebar) =>
-				withProjectFoldersTreeWidth(
-					sidebar,
-					currentServerId,
-					projectId,
-					rounded,
 				),
 			);
 		},
@@ -6836,9 +6804,10 @@ function App({
 	// The Command Bar as the workspace view draws it: with Home in front, or
 	// with no project in the window to draw it.
 	const [isViewCommandBarOpen, setIsViewCommandBarOpen] = useState(false);
-	const [homeSidebarWidth, setHomeSidebarWidth] = useState(
-		HOME_SIDEBAR_DEFAULT_WIDTH,
-	);
+	// Home's sidebar has its own width on this device, apart from the project
+	// columns.
+	const [homeSidebarWidth, setHomeSidebarWidth] =
+		useRememberedColumnWidth('home');
 	const setHomeSidebarVisibility = useCallback((visible: boolean) => {
 		setIsHomeSidebarVisible(visible);
 		rememberHomeSidebarVisible(visible);
@@ -10372,8 +10341,10 @@ function App({
 							}
 							projectInventory={inventoryByProject[project.id] ?? NO_INVENTORY}
 							isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
-							foldersTreeWidth={foldersTreeWidthFor(project.id)}
-							onFoldersTreeWidthCommit={commitFoldersTreeWidth}
+							foldersTreeWidth={foldersColumnWidth}
+							onFoldersTreeWidthCommit={commitFoldersColumnWidth}
+							sidebarWidth={sidebarWidth}
+							onSidebarWidthCommit={commitSidebarWidth}
 							foldersColumnTab={foldersColumnTabFor(project.id)}
 							collapsedFolderIds={collapsedFolderSetFor(project.id)}
 							onToggleFolderCollapsed={toggleFolderCollapsed}
