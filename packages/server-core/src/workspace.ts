@@ -2476,10 +2476,14 @@ export class WorkspaceStore {
 					};
 				} else if (choice?.kind === 'folder') {
 					const root = boundedPath(choice.path);
+					const folderName = pathBasename(root);
 					state.projects[command.projectId] = {
 						...started,
 						root,
 						rootOrigin: 'explicit',
+						...(isDefaultProjectName(project.name) && folderName.length > 0
+							? { name: boundedName(folderName) }
+							: {}),
 					};
 					state.recentProjectFolders = withRecentProjectFolder(
 						state.recentProjectFolders,
@@ -3196,6 +3200,21 @@ export function withholdAutomationSpace(state: WorkspaceState): WorkspaceState {
 	};
 }
 
+const DEFAULT_PROJECT_NAME = /^Project(?: (\d+))?$/;
+
+/** A project carries no marker for a server-derived name, so a name matching
+ * the pattern `nextDefaultProjectName` produces counts as still default. */
+function isDefaultProjectName(name: string | undefined): boolean {
+	return name === undefined || DEFAULT_PROJECT_NAME.test(name);
+}
+
+/** Last segment of a canonical path, accepting either separator. */
+function pathBasename(path: string): string {
+	const segments = path.split(/[\\/]+/).filter((segment) => segment.length > 0);
+	const last = segments.at(-1) ?? '';
+	return /^[A-Za-z]:$/.test(last) ? '' : last.trim().slice(0, 256);
+}
+
 /** Lowest `Project N` no project holds. Derived here, inside the applied command,
  * so concurrent creations reading the same stale snapshot cannot collide. The
  * seeded default project is named plain `Project` and holds the first slot, so
@@ -3203,7 +3222,7 @@ export function withholdAutomationSpace(state: WorkspaceState): WorkspaceState {
 function nextDefaultProjectName(state: WorkspaceState): string {
 	const taken = new Set<number>();
 	for (const project of Object.values(state.projects)) {
-		const match = /^Project(?: (\d+))?$/.exec(project.name ?? '');
+		const match = DEFAULT_PROJECT_NAME.exec(project.name ?? '');
 		if (match === null) continue;
 		taken.add(match[1] === undefined ? 1 : Number.parseInt(match[1], 10));
 	}

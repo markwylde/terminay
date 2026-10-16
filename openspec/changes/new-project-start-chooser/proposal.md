@@ -8,9 +8,10 @@ Fixing the default to home only removes the wrong guess. A new project still doe
 
 - A project created from the UI with no root starts in an **awaiting start choice** state. Its main panel area shows a start chooser instead of a terminal. No terminal is launched and the project sidebars show nothing until the user chooses.
 - The chooser offers three starts:
-  - **Open a folder**: a folder browser served by the owning server, the same in Desktop, browser and phone clients.
+  - **Open a folder**: a fixed-height folder browser served by the owning server, the same in Desktop, browser and phone clients, with a path field that autocompletes as you type.
+  - A project started in a folder (browsed or recent) takes the folder's name, unless the user has already renamed it.
   - **Home directory**: a project with **no root folder**. Its terminal starts in the server account's home, and the Files, Changes and Documentation panes show a "No root folder" state that offers to open a folder.
-  - **Recent projects**: the owning server's last 50 explicitly chosen project folders, most recent first. Each entry can be forgotten. Opening one sets only the folder. The new project keeps its own default name, colour and icon.
+  - **Recent projects**: the owning server's last 50 explicitly chosen project folders, most recent first. Each entry can be forgotten. Opening one whose folder another project already has shows that project and closes the empty one. Otherwise it sets the folder.
 - After the user chooses, Terminay launches the project's first terminal through the normal launch resolver and focuses it.
 - A no-root project can gain a root later through Set Project Root or Set Root From Working Directory. It then leaves no-root mode.
 - The server keeps a bounded, per-server list of recent project folders, recorded whenever a project's root becomes explicit.

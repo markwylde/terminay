@@ -13,6 +13,7 @@ import {
 import {
 	chooserFocusMove,
 	commitStartChoice,
+	openProjectWithRoot,
 	type ProjectStartStore,
 	type RecentFolderRow,
 	recentFolderRows,
@@ -36,6 +37,12 @@ export type ProjectStartChooserProps = Readonly<{
 	/** The server took this client's choice; the project's first terminal is
 	 * the caller's to launch. */
 	onStarted: (projectId: string) => void;
+	/** The projects this window shows, which a recent folder may already be
+	 * the root of. */
+	shownProjectIds: readonly string[];
+	/** A recent folder is already this project's root: show it, and close
+	 * the one awaiting its start. */
+	onReuseProject: (existingProjectId: string, projectId: string) => void;
 }>;
 
 /**
@@ -53,6 +60,8 @@ export function ProjectStartChooser({
 	store,
 	recentFoldersKey,
 	onStarted,
+	shownProjectIds,
+	onReuseProject,
 }: ProjectStartChooserProps): JSX.Element {
 	const [recent, setRecent] = useState<RecentListResult | null>(null);
 	const [recentError, setRecentError] = useState<string | null>(null);
@@ -144,7 +153,16 @@ export function ProjectStartChooser({
 					setIsBrowsing(true);
 				}}
 				onHome={() => void choose({ kind: 'home' })}
-				onOpenRecent={(path) => void choose({ kind: 'folder', path })}
+				onOpenRecent={(path) => {
+					const existing = openProjectWithRoot(
+						store.snapshot,
+						path,
+						projectId,
+						shownProjectIds,
+					);
+					if (existing === undefined) void choose({ kind: 'folder', path });
+					else onReuseProject(existing, projectId);
+				}}
 				onForgetRecent={(path) => void forget(path)}
 			/>
 			{isBrowsing ? (
