@@ -58,7 +58,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0028](./0028-no-polling-without-owner-approval.md) | Never poll; a poll is a last resort that needs the owner's explicit approval | accepted, supersedes 0022 | 2026-09-24 |
 | [0029](./0029-worktree-properties-are-host-owned-typed-facts.md) | Extensions publish typed worktree facts; Terminay renders them, and an approved poll keeps forge state fresh | accepted | 2026-09-24 |
 | [0030](./0030-automations-run-in-a-server-owned-space-with-workspace-scoped-mcp.md) | Automations run in a server-owned terminal space outside every project, and only that space holds workspace-scoped MCP | accepted (superseded by 0031) | 2026-09-24 |
-| [0031](./0031-mcp-authority-is-scope-times-user-permission-policy.md) | MCP authority is capability scope combined with a user permission policy, and MCP may manage automations behind it | accepted, supersedes 0030 | 2026-09-27 |
+| [0031](./0031-mcp-authority-is-scope-times-user-permission-policy.md) | MCP authority is capability scope combined with a user permission policy, and MCP may manage automations behind it | accepted, supersedes 0030 (superseded by 0068) | 2026-09-27 |
 | [0033](./0033-pinned-node-runtime-baseline-on-npm-12-2.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.0 | accepted, supersedes 0001 | 2026-10-02 |
 | [0034](./0034-no-media-relay-reachability-from-candidates-and-routing-hints.md) | Terminay operates no media relay; reachability comes from candidates, routing hints, and the user's own network | accepted | 2026-10-03 |
 | [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 | 2026-10-03 |
@@ -92,3 +92,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0063](./0063-a-forge-extension-may-ask-the-forge-cli-for-a-token-once-never-per-refresh.md) | A forge extension may ask the forge's CLI for a token once, and never per refresh | accepted | 2026-10-16 |
 | [0065](./0065-an-untracked-terminal-is-silenced-where-activity-is-read-never-where-it-is-detected.md) | An untracked terminal is silenced where activity is read, never where it is detected | accepted | 2026-10-16 |
 | [0066](./0066-choosing-a-project-root-browses-server-directory-names-under-root-change-authority.md) | Choosing a project root browses the server's directory names, under the authority to change a root | accepted | 2026-10-16 |
+| [0067](./0067-chat-providers-may-run-agents-as-an-owner-approved-exception.md) | Chat providers may run the user's agents, as an owner-approved exception to observing agents | accepted | 2026-10-16 |
+| [0068](./0068-mcp-authority-belongs-to-a-terminal-or-a-chat.md) | MCP authority is capability scope combined with a user permission policy, and the caller is a terminal or a chat | accepted, supersedes 0031 | 2026-10-16 |
