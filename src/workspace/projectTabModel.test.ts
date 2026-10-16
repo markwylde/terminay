@@ -5,14 +5,12 @@ import {
 	normalizeTerminalSettings,
 } from '../terminalSettings.ts';
 import {
-	DEFAULT_FOLDERS_TREE_WIDTH,
 	getProjectTabColor,
 	isProjectFoldersTreeOpenOnDevice,
 	isProjectSidebarOpenOnDevice,
 	collapsedFoldersAfterToggle,
 	projectCollapsedFoldersOnDevice,
 	projectFoldersColumnTabOnDevice,
-	projectFoldersTreeWidthOnDevice,
 	projectSidebarPatch,
 	projectSidebarVisibilityKey,
 	projectTabColorHue,
@@ -21,7 +19,6 @@ import {
 	withProjectCollapsedFolders,
 	withProjectFoldersColumnTab,
 	withProjectFoldersTreeVisibility,
-	withProjectFoldersTreeWidth,
 	withProjectSidebarActiveGroup,
 	withProjectSidebarVisibility,
 } from './projectTabModel.ts';
@@ -69,10 +66,6 @@ test('sidebar visibility is device-local per server and project', () => {
 test('the Folders tree is open by default and device-local per server and project', () => {
 	const fresh = defaultTerminalSettings.sidebar;
 	assert.equal(isProjectFoldersTreeOpenOnDevice(fresh, 'server-a', 'project-a'), true);
-	assert.equal(
-		projectFoldersTreeWidthOnDevice(fresh, 'server-a', 'project-a'),
-		DEFAULT_FOLDERS_TREE_WIDTH,
-	);
 
 	const hidden = withProjectFoldersTreeVisibility(fresh, 'server-a', 'project-a', false);
 	assert.equal(isProjectFoldersTreeOpenOnDevice(hidden, 'server-a', 'project-a'), false);
@@ -82,14 +75,6 @@ test('the Folders tree is open by default and device-local per server and projec
 	assert.equal(isProjectSidebarOpenOnDevice(hidden, 'server-a', 'project-a'), false);
 	const sidebarOpen = withProjectSidebarVisibility(hidden, 'server-a', 'project-a', true);
 	assert.equal(isProjectFoldersTreeOpenOnDevice(sidebarOpen, 'server-a', 'project-a'), false);
-
-	const resized = withProjectFoldersTreeWidth(hidden, 'server-a', 'project-a', 301.6);
-	assert.equal(projectFoldersTreeWidthOnDevice(resized, 'server-a', 'project-a'), 302);
-	assert.equal(
-		projectFoldersTreeWidthOnDevice(resized, 'server-a', 'project-b'),
-		DEFAULT_FOLDERS_TREE_WIDTH,
-	);
-	assert.equal(isProjectFoldersTreeOpenOnDevice(resized, 'server-a', 'project-a'), false);
 });
 
 test('the left column tab is device-local per server and project', () => {
@@ -169,18 +154,15 @@ test('stored Folders tree preferences are normalised and unknown shapes dropped'
 	const normalized = normalizeTerminalSettings({
 		sidebar: {
 			projectFoldersVisibility: { 'server-a:project-a': false, 'server-a:bad': 'no' },
-			projectFoldersWidth: {
-				'server-a:project-a': 300,
-				'server-a:tiny': 4,
-				'server-a:bad': 'wide',
-			},
+			projectFoldersWidth: { 'server-a:project-a': 300 },
+			defaultWidth: 320,
 		},
 	}).sidebar;
 	assert.deepEqual(normalized.projectFoldersVisibility, { 'server-a:project-a': false });
-	assert.deepEqual(normalized.projectFoldersWidth, {
-		'server-a:project-a': 300,
-		'server-a:tiny': 120,
-	});
+	// Column widths are the device's, not the server's settings: a stored
+	// per-project width or default width is dropped.
+	assert.equal('projectFoldersWidth' in normalized, false);
+	assert.equal('defaultWidth' in normalized, false);
 	assert.deepEqual(normalizeTerminalSettings({}).sidebar.projectFoldersVisibility, {});
 });
 

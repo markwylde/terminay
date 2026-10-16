@@ -67,7 +67,6 @@ export type ServerWorkspaceProject = Readonly<{
 }>;
 
 export type ServerWorkspaceSidebarState = Readonly<{
-	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
 	isExplorerPaneCollapsed: boolean;
 	isAgentsPaneCollapsed: boolean;
@@ -505,7 +504,7 @@ function isWorkspaceSidebarState(value: unknown): value is ServerWorkspaceSideba
 	if (!isRecord(value)) return false;
 	const booleans = ['isFileExplorerOpen', 'isExplorerPaneCollapsed', 'isAgentsPaneCollapsed', 'isGitPaneCollapsed', 'isDocumentationPaneCollapsed'];
 	if (booleans.some((key) => typeof value[key] !== 'boolean')) return false;
-	const dimensions = ['fileExplorerWidth', 'sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight'];
+	const dimensions = ['sidebarAgentsHeight', 'sidebarExplorerHeight', 'sidebarGitHeight', 'sidebarDocumentationHeight'];
 	if (dimensions.some((key) => !Number.isSafeInteger(value[key]) || (value[key] as number) < 30 || (value[key] as number) > 2_000)) return false;
 	for (const key of ['expandedAgentEntryIds', 'expandedDocumentationFolderIds']) {
 		const entries = value[key];

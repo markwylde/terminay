@@ -70,7 +70,6 @@ export type SidebarSettings = {
 	defaultExplorerState: SidebarPaneState;
 	defaultGitState: SidebarPaneState;
 	defaultDocumentationState: SidebarPaneState;
-	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
 	defaultGitPaneHeight: number;
 	defaultDocumentationPaneHeight: number;
@@ -82,9 +81,6 @@ export type SidebarSettings = {
 	/** Device-local open/closed preference for the Folders tree, indexed by
 	 * server and project id. Absent means open. */
 	projectFoldersVisibility: Record<string, boolean>;
-	/** Device-local Folders tree width in pixels, indexed by server and project
-	 * id. Absent means the default width. */
-	projectFoldersWidth: Record<string, number>;
 	/** Device-local selected tab of the left column, indexed by server and
 	 * project id. Absent means Tabs. */
 	projectFoldersColumnTab: Record<string, FoldersColumnTabId>;

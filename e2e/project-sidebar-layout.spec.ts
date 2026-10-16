@@ -801,14 +801,20 @@ test('sidebar resize cancellation and width previews do not flood workspace comm
 		),
 	).toHaveLength(0);
 	await mainWindow.mouse.up();
+	// The width is the device's, shared by every project: finishing the resize
+	// remembers it on the device and sends no workspace command at all.
 	await expect
-		.poll(
-			async () =>
-				(await commandRecords(mainWindow)).filter(
-					(record) => record.command?.type === 'project.sidebar.update',
-				).length,
+		.poll(() =>
+			mainWindow.evaluate(() =>
+				window.localStorage.getItem('terminay.view.column-widths.v1'),
+			),
 		)
-		.toBe(1);
+		.toMatch(/"sidebar":\d+/u);
+	expect(
+		(await commandRecords(mainWindow)).filter(
+			(record) => record.command?.type === 'project.sidebar.update',
+		),
+	).toHaveLength(0);
 });
 
 test('every vertical boundary supports repeated bidirectional and keyboard resizing through collapse and reorder', async ({
