@@ -39,7 +39,7 @@ const SPACE = 'system:automations';
 
 function sidebar() {
 	return {
-		fileExplorerWidth: 280, isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
+		isFileExplorerOpen: false, isExplorerPaneCollapsed: false,
 		isAgentsPaneCollapsed: false, isGitPaneCollapsed: false, isDocumentationPaneCollapsed: true,
 		expandedAgentEntryIds: [], expandedDocumentationFolderIds: [], sidebarAgentsHeight: 200,
 		sidebarExplorerHeight: 320, sidebarGitHeight: 240, sidebarDocumentationHeight: 220,

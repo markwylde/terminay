@@ -53,7 +53,6 @@ const project = (id, viewId) => ({
 	folderIds: [],
 	panelIds: [],
 	sidebar: {
-		fileExplorerWidth: 280,
 		isFileExplorerOpen: true,
 		isExplorerPaneCollapsed: false,
 		isAgentsPaneCollapsed: false,

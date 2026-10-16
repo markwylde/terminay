@@ -497,7 +497,6 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultExplorerState: 'expanded',
 		defaultGitState: 'expanded',
 		defaultDocumentationState: 'collapsed',
-		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
 		defaultGitPaneHeight: 200,
 		defaultDocumentationPaneHeight: 240,
@@ -505,7 +504,6 @@ export const defaultTerminalSettings: TerminalSettings = {
 		projectVisibility: {},
 		projectActiveGroup: {},
 		projectFoldersVisibility: {},
-		projectFoldersWidth: {},
 		projectFoldersColumnTab: {},
 		projectFoldersCollapsed: {},
 	},
@@ -1366,18 +1364,6 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				sectionId: 'sidebar', categoryId: 'files', input: 'select',
 				options: [{ label: 'Expanded', value: 'expanded' }, { label: 'Collapsed', value: 'collapsed' }],
 				keywords: ['sidebar', 'documentation', 'markdown', 'collapse', 'expand', 'default'],
-			}),
-			makeField({
-				key: 'sidebar.defaultWidth',
-				label: 'Default sidebar width',
-				description: 'Initial sidebar width in pixels for new projects.',
-				sectionId: 'sidebar',
-				categoryId: 'files',
-				input: 'number',
-				min: 180,
-				max: 520,
-				step: 10,
-				keywords: ['sidebar', 'width', 'size', 'default'],
 			}),
 			makeField({
 				key: 'sidebar.defaultExplorerPaneHeight',
@@ -2382,20 +2368,6 @@ function normalizeProjectSidebarVisibility(value: unknown): Record<string, boole
 	return Object.fromEntries(entries.slice(-256));
 }
 
-function normalizeProjectFoldersWidth(value: unknown): Record<string, number> {
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
-		return {};
-	const entries = Object.entries(value).flatMap(([key, width]) =>
-		typeof width === 'number' &&
-		Number.isFinite(width) &&
-		key.length > 0 &&
-		key.length <= 512
-			? ([[key, Math.min(2_000, Math.max(120, Math.round(width)))]] as const)
-			: [],
-	);
-	return Object.fromEntries(entries.slice(-256));
-}
-
 function normalizeProjectFoldersColumnTab(
 	value: unknown,
 ): Record<string, FoldersColumnTabId> {
@@ -3008,12 +2980,6 @@ export function normalizeTerminalSettings(
 				sidebarInput.defaultDocumentationState === 'expanded'
 					? sidebarInput.defaultDocumentationState
 					: defaultTerminalSettings.sidebar.defaultDocumentationState,
-			defaultWidth: clampNumber(
-				Number(sidebarInput.defaultWidth),
-				defaultTerminalSettings.sidebar.defaultWidth,
-				180,
-				520,
-			),
 			defaultExplorerPaneHeight: clampNumber(
 				Number(sidebarInput.defaultExplorerPaneHeight),
 				defaultTerminalSettings.sidebar.defaultExplorerPaneHeight,
@@ -3041,9 +3007,6 @@ export function normalizeTerminalSettings(
 			),
 			projectFoldersVisibility: normalizeProjectSidebarVisibility(
 				sidebarInput.projectFoldersVisibility,
-			),
-			projectFoldersWidth: normalizeProjectFoldersWidth(
-				sidebarInput.projectFoldersWidth,
 			),
 			projectFoldersColumnTab: normalizeProjectFoldersColumnTab(
 				sidebarInput.projectFoldersColumnTab,

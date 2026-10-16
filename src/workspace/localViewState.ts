@@ -355,6 +355,87 @@ export function recallHomeSidebarVisible(): boolean {
 }
 
 /**
+ * How wide this device draws each resizable column.
+ *
+ * A width is the device's, not a project's: the Folders tree has one width and
+ * the project sidebar another, shared by every project, so switching projects
+ * never makes a column jump. Home's sidebar keeps its own. Nothing here travels
+ * to a server. A device with no answer, or an answer it cannot read, uses the
+ * column's default.
+ */
+export type ResizableColumn = 'folders' | 'sidebar' | 'home';
+
+export const COLUMN_WIDTHS_STORAGE_KEY = 'terminay.view.column-widths.v1';
+
+/** Home's sidebar is a short menu, so it starts narrower than a project's. */
+export const DEFAULT_COLUMN_WIDTHS: Readonly<Record<ResizableColumn, number>> =
+	{ folders: 232, sidebar: 280, home: 220 };
+
+const MINIMUM_COLUMN_WIDTH = 30;
+const MAXIMUM_COLUMN_WIDTH = 2_000;
+const RESIZABLE_COLUMNS = Object.keys(
+	DEFAULT_COLUMN_WIDTHS,
+) as ResizableColumn[];
+
+/** The widths a stored value holds, with each missing or unusable one left
+ * out. Shared with the listener that follows another window's resize. */
+export function parseColumnWidths(
+	raw: string | null | undefined,
+): Partial<Record<ResizableColumn, number>> {
+	if (raw === null || raw === undefined) return {};
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+			return {};
+		const widths: Partial<Record<ResizableColumn, number>> = {};
+		for (const column of RESIZABLE_COLUMNS) {
+			const width = (parsed as Record<string, unknown>)[column];
+			if (
+				Number.isSafeInteger(width) &&
+				(width as number) >= MINIMUM_COLUMN_WIDTH &&
+				(width as number) <= MAXIMUM_COLUMN_WIDTH
+			)
+				widths[column] = width as number;
+		}
+		return widths;
+	} catch {
+		return {};
+	}
+}
+
+function readColumnWidths(): Partial<Record<ResizableColumn, number>> {
+	try {
+		return parseColumnWidths(
+			globalThis.localStorage?.getItem(COLUMN_WIDTHS_STORAGE_KEY),
+		);
+	} catch {
+		return {};
+	}
+}
+
+export function recallColumnWidth(column: ResizableColumn): number {
+	return readColumnWidths()[column] ?? DEFAULT_COLUMN_WIDTHS[column];
+}
+
+export function rememberColumnWidth(
+	column: ResizableColumn,
+	width: number,
+): void {
+	const rounded = Math.min(
+		MAXIMUM_COLUMN_WIDTH,
+		Math.max(MINIMUM_COLUMN_WIDTH, Math.round(width)),
+	);
+	try {
+		globalThis.localStorage?.setItem(
+			COLUMN_WIDTHS_STORAGE_KEY,
+			JSON.stringify({ ...readColumnWidths(), [column]: rounded }),
+		);
+	} catch {
+		/* A device that cannot remember still works; it starts at the default. */
+	}
+}
+
+/**
  * Which Home section this device last showed, from before Home had tabs. It is
  * read once, to choose the tab a device with no remembered arrangement opens
  * on, and is never written.

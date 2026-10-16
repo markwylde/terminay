@@ -34,7 +34,6 @@ export type ProjectTab = {
 	title: string;
 	color: string;
 	emoji: string;
-	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
 	sidebarActiveGroup: SidebarGroupId;
 	isExplorerPaneCollapsed: boolean;
@@ -53,7 +52,6 @@ export type ProjectTab = {
 
 export type ProjectSidebarState = Pick<
 	ProjectTab,
-	| 'fileExplorerWidth'
 	| 'isExplorerPaneCollapsed'
 	| 'isAgentsPaneCollapsed'
 	| 'isGitPaneCollapsed'
@@ -77,7 +75,6 @@ type ProjectSidebarInput = Omit<
 };
 
 const PROJECT_SIDEBAR_KEYS: readonly (keyof ProjectSidebarState)[] = [
-	'fileExplorerWidth',
 	'isExplorerPaneCollapsed',
 	'isAgentsPaneCollapsed',
 	'isGitPaneCollapsed',
@@ -150,9 +147,6 @@ export function withProjectSidebarActiveGroup(
 	};
 }
 
-/** The Folders tree's width on a device that has not resized it. */
-export const DEFAULT_FOLDERS_TREE_WIDTH = 232;
-
 /** A device that has never toggled a project's Folders tree shows it open. */
 export function isProjectFoldersTreeOpenOnDevice(
 	sidebarSettings: SidebarSettings,
@@ -179,18 +173,6 @@ export function withProjectFoldersTreeVisibility(
 			[projectSidebarVisibilityKey(serverId, projectId)]: isOpen,
 		},
 	};
-}
-
-export function projectFoldersTreeWidthOnDevice(
-	sidebarSettings: SidebarSettings,
-	serverId: string,
-	projectId: string,
-): number {
-	return (
-		sidebarSettings.projectFoldersWidth[
-			projectSidebarVisibilityKey(serverId, projectId)
-		] ?? DEFAULT_FOLDERS_TREE_WIDTH
-	);
 }
 
 /** The left column's tab on a device that has not chosen one is Tabs. */
@@ -260,21 +242,6 @@ export function withProjectCollapsedFolders(
 		...sidebarSettings,
 		projectFoldersCollapsed:
 			folderIds.length === 0 ? others : { ...others, [key]: [...folderIds] },
-	};
-}
-
-export function withProjectFoldersTreeWidth(
-	sidebarSettings: SidebarSettings,
-	serverId: string,
-	projectId: string,
-	width: number,
-): SidebarSettings {
-	return {
-		...sidebarSettings,
-		projectFoldersWidth: {
-			...sidebarSettings.projectFoldersWidth,
-			[projectSidebarVisibilityKey(serverId, projectId)]: Math.round(width),
-		},
 	};
 }
 
@@ -443,7 +410,6 @@ export function createProjectTab(
 		title: `Project ${index}`,
 		color: getProjectTabColor(`${colorScope}:${id}`, usedColors, randomSource),
 		emoji: '',
-		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
 		sidebarActiveGroup: 'explorer',
 		isExplorerPaneCollapsed:

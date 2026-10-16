@@ -50,9 +50,9 @@ The Files and Changes panes SHALL present the root of the project's selected fol
 - **WHEN** a user selects General or a plain folder
 - **THEN** Files and Changes present the project root
 
-### Requirement: Folders tree visibility and width
+### Requirement: Folders tree visibility
 
-Folders tree open/closed visibility and width SHALL belong to the current device and project, stored with device preferences under the selected server and opaque project id, independently of the sidebar's visibility. A device that has no preference for a project SHALL present the Folders tree open.
+Folders tree open/closed visibility SHALL belong to the current device and project, stored with device preferences under the selected server and opaque project id, independently of the sidebar's visibility. A device that has no preference for a project SHALL present the Folders tree open.
 
 #### Scenario: First visit to a project on a device
 
