@@ -46,6 +46,6 @@
 
 ## 7. Verification and docs
 
-- [ ] 7.1 Add an E2E suite with a fake chat provider (fixture extension or fake CLI via the override variables) covering: Pixel off by default; enable; click the dock → balloon; onboarding; a streamed reply with an activity note; a write under Always Allow; an Ask approval answered in the balloon; a second client seeing the conversation and deciding; turning Pixel off removing it from both. Verified by `npm run test:e2e` passing (Docker-isolated).
+- [x] 7.1 Add an E2E suite with a fake chat provider (fixture extension or fake CLI via the override variables) covering: Pixel off by default; enable; click the dock → balloon; onboarding; a streamed reply with an activity note; a write under Always Allow; an Ask approval answered in the balloon; a second client seeing the conversation and deciding; turning Pixel off removing it from both. Verified by `npm run test:e2e` passing (Docker-isolated).
 - [x] 7.2 Update `docs/product-overview.md` (agent chats, providers, Pixel), the ADR-0011 trust-boundary notes for the chat-mint invariant, and the extension author docs for chat providers. Verified by review in the PR diff.
 - [ ] 7.3 Run `npm run lint`, typecheck, unit suites and `openspec validate --all`, open the PR on Gitea, and read back every commit status. Verified by all statuses being `success` or `skipped`.
