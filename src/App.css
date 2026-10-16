@@ -3148,6 +3148,12 @@ body.project-tabbar-reordering .project-tabbar {
   color: #a8ccff;
 }
 
+.workspace-status-bar__pixel {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+}
+
 .workspace-status-bar__remote {
   all: unset;
   flex: none;

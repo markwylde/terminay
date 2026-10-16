@@ -2,6 +2,16 @@ import type { JsonValue } from '@terminay/protocol';
 import type { QueryCommandTransport } from './queryCommand.js';
 import type { ClientEvent } from './types.js';
 
+/** A server that serves agent chats and Pixel says so in its hello. */
+export const AGENT_CHAT_CAPABILITY = 'agent-chat.v1' as const;
+
+/** Mirrors the server's Pixel operation names. */
+export const PIXEL_OPERATIONS = Object.freeze({
+	state: 'pixel.state',
+	open: 'pixel.open',
+	changed: 'pixel.changed',
+} as const);
+
 /** Mirrors the server's agent chat operation names. */
 export const AGENT_CHAT_OPERATIONS = Object.freeze({
 	providers: 'agentChat.providers',

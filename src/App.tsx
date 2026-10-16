@@ -60,6 +60,8 @@ import {
 	useFocusedTerminalStatus,
 	WorkspaceStatusBar,
 } from './workspace/WorkspaceStatusBar';
+import { PixelCompanion } from './pixel/Pixel';
+import { usePixelServer } from './pixel/usePixelServer';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
@@ -8529,6 +8531,12 @@ function App({
 	// One projection per server; every terminal pane and tab reads its own
 	// pending approvals from it.
 	const serverMcpApprovals = useServerMcpApprovals(automationEntries);
+	// Pixel belongs to the server this window shows; it is off unless that
+	// server's Enable Pixel setting is on.
+	const pixelServer = usePixelServer(
+		automationEntries.find((entry) => entry.serverId === activeServerId),
+	);
+	const [pixelSlot, setPixelSlot] = useState<HTMLDivElement | null>(null);
 	// Likewise one projection of app windows per server; the host below lays
 	// them out over the terminal panes that own them.
 	const serverAppWindows = useServerAppWindows(automationEntries);
@@ -10431,6 +10439,16 @@ function App({
 					}}
 					remote={remoteIndicator}
 					slotRef={setStatusBarSlot}
+					pixelSlotRef={setPixelSlot}
+				/>
+			) : null}
+			{pixelServer.state?.enabled === true &&
+			activeServerId !== undefined &&
+			(!isStatusBarVisible || pixelSlot !== null) ? (
+				<PixelCompanion
+					server={pixelServer}
+					serverId={activeServerId}
+					statusBarDock={isStatusBarVisible ? pixelSlot : null}
 				/>
 			) : null}
 
