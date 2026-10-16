@@ -31,6 +31,7 @@ import {
 	bindAgentChatApprovals,
 	createAgentChatOperationHandlers,
 } from './agentChat/index.js';
+import { PIXEL_EVENTS, PixelService, pixelSettingsFrom } from './pixel/index.js';
 import { bindNotificationsToActivity } from './notifications/activityFeed.js';
 import { NotificationManager } from './notifications/manager.js';
 import {
@@ -502,6 +503,8 @@ export interface ServerCoreComposition {
 	readonly mcpApprovals?: McpApprovalService;
 	/** Server-owned agent chats, when composed. */
 	readonly agentChat?: AgentChatService;
+	/** Pixel, composed with agent chats. */
+	readonly pixel?: PixelService;
 	/** Server-owned app windows, when composed. */
 	readonly appWindows?: AppWindowService;
 	/** The user's connected MCP servers, when composed. */
@@ -963,6 +966,32 @@ export function createServerCoreComposition(
 					...(options.agentChat?.projectExists === undefined
 						? {}
 						: { projectExists: options.agentChat.projectExists }),
+				});
+	const storedPixelSettings = () => {
+		try {
+			return pixelSettingsFrom(options.settings?.settings);
+		} catch {
+			return pixelSettingsFrom(undefined);
+		}
+	};
+	const pixel =
+		agentChat === undefined
+			? undefined
+			: new PixelService({
+					chats: agentChat,
+					settings: storedPixelSettings,
+					onChanged: (state) => {
+						eventJournal.publishTransient(
+							PIXEL_EVENTS.changed,
+							{ enabled: state.enabled, provider: state.provider },
+						);
+					},
+				});
+	const removePixelSettingsObserver =
+		pixel === undefined || options.settings === undefined
+			? undefined
+			: options.settings.onChange((state) => {
+					void pixel.apply(pixelSettingsFrom(state.settings));
 				});
 	// --- end agent chats ---
 	// --- app windows (ADR-0037) ---
@@ -1524,7 +1553,10 @@ export function createServerCoreComposition(
 								options.operations ?? {},
 								extensionOperations ?? {},
 							),
-							agentChatOperations ?? {},
+							mergeOperationRegistries(
+								agentChatOperations ?? {},
+								pixel?.operations() ?? {},
+							),
 						),
 						options.fileObservations?.operations ?? {},
 					),
@@ -1718,6 +1750,7 @@ export function createServerCoreComposition(
 					);
 				}
 				mcpApprovals?.setPolicies(storedMcpPermissions());
+				await pixel?.apply(storedPixelSettings());
 				terminalTitles?.reconcile();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -1869,6 +1902,7 @@ export function createServerCoreComposition(
 			await attempt(() => language?.dispose());
 			await attempt(() => automationOperations?.dispose());
 			await attempt(async () => {
+				removePixelSettingsObserver?.();
 				unbindAgentChatApprovals?.();
 				await agentChat?.shutdown();
 			});
@@ -1915,6 +1949,7 @@ export function createServerCoreComposition(
 		...(automationMcp === undefined ? {} : { automationMcp }),
 		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
 		...(agentChat === undefined ? {} : { agentChat }),
+		...(pixel === undefined ? {} : { pixel }),
 		...(appWindows === undefined ? {} : { appWindows }),
 		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),

@@ -139,6 +139,15 @@ export type GitPushAgentSettings = {
 	prompt: string;
 };
 
+/**
+ * Pixel, the status-bar companion. `provider` is a chat provider id, or
+ * `unset` until the user picks one on first click.
+ */
+export type PixelSettings = {
+	enabled: boolean;
+	provider: string;
+};
+
 /** How the server treats an MCP operation in one permission group. */
 export type TerminayMcpPermissionPolicy = 'ask' | 'allow' | 'deny';
 
@@ -186,6 +195,7 @@ export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
 	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;
+	pixel: PixelSettings;
 	terminayMcp: TerminayMcpSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;

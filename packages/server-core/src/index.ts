@@ -149,6 +149,7 @@ export * from './languageService/index.js';
 export * from './macroService/index.js';
 export * from './automationService/index.js';
 export * from './agentChat/index.js';
+export * from './pixel/index.js';
 export * from './mcpApprovals/index.js';
 export * from './appWindows/index.js';
 export * from './notifications/index.js';
