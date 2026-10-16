@@ -2,12 +2,12 @@
 
 - [x] 1.1 Add host-driven chat (`onSend`/`onStop`/`onClear`, `chat.setMessages`, `chat.setStatus`) without changing behaviour for existing callers. Verified by new vitest cases and the existing suite passing.
 - [x] 1.2 Add per-message `actions` rendered as buttons, emitting `chat:action`, keyboard-operable and labelled. Verified by vitest DOM tests.
-- [ ] 1.3 Publish `@markwylde/pet@0.2.0` ([PR #3](https://github.com/markwylde/pet/pull/3)). Verified by `npm view @markwylde/pet version` showing `0.2.0`.
+- [x] 1.3 Publish `@markwylde/pet@0.2.0` ([PR #3](https://github.com/markwylde/pet/pull/3)). Verified by `npm view @markwylde/pet version` showing `0.2.0`.
 
 ## 2. Extension API 3.2: chat providers
 
-- [ ] 2.1 In `packages/extension-api`, add chat provider types (`AgentChatProviderRuntime`, session, events, availability, failure reasons), the `agentChatProviders` manifest contribution and `agent-chat` permission validation, `context.agents.registerChatProvider`, and bump `EXTENSION_API_VERSION` to `3.2.0` with a changelog note. Verified by extension-api unit tests for manifest validation (missing permission, valid declaration, chat-only package) and registration refusal (undeclared, duplicate, after deactivation).
-- [ ] 2.2 Add a chat provider test harness to `packages/extension-api` testing exports. Verified by its own unit test driving a fake provider through open, prompt, cancel and close.
+- [x] 2.1 In `packages/extension-api`, add chat provider types (`AgentChatProviderRuntime`, session, events, availability, failure reasons), the `agentChatProviders` manifest contribution and `agent-chat` permission validation, `context.agents.registerChatProvider`, and bump `EXTENSION_API_VERSION` to `3.2.0` with a changelog note. Verified by extension-api unit tests for manifest validation (missing permission, valid declaration, chat-only package) and registration refusal (undeclared, duplicate, after deactivation).
+- [x] 2.2 Add a chat provider test harness to `packages/extension-api` testing exports. Verified by its own unit test driving a fake provider through open, prompt, cancel and close.
 - [ ] 2.3 Add `agent.chat.*` host and child frames in `packages/server-core/src/extensions/protocol.ts`, child-side dispatch in `child.ts`, and host-side `invokeChat*` with per-extension session tracking in `host.ts`. Event validation and bounding drops events for unknown or closed sessions. Child exit, quarantine, disable and update end the open sessions. Verified by host and child unit tests with a fixture extension, including a crash mid-turn.
 - [ ] 2.4 Add a chat provider registry to the extension manager and catalog (`manager.ts`, `descriptor.ts`, `catalog.ts`), listing providers with availability and `disabled` when the extension is off or quarantined. Verified by manager unit tests.
 
@@ -34,7 +34,7 @@
 - [ ] 5.2 Implement the `claude-code` provider: spawn `claude` with the confining stream-json flags, write turns as stream-json user messages, map `stream_event` text deltas, `tool_use`/`tool_result` and `result` to events, map auth errors to `not_signed_in`, and stop via interrupt with a kill fallback. Verified by unit tests against a fake `claude` script that replays recorded stream-json, asserting the exact argv.
 - [ ] 5.3 Implement the `codex` provider: spawn `codex app-server` with hooks, browser, computer-use and apps disabled; `initialize`; `config/read`; `thread/start` (read-only, `untrusted`, ephemeral, developer instructions, user MCP servers disabled by name, `terminay_chat` added); `turn/start` and `turn/interrupt`; map notifications to events; decline every approval request and cancel user-input and elicitation requests. Verified by unit tests against a fake app-server script, asserting the request payloads and declines.
 - [ ] 5.4 Register both providers in `src/index.ts` with availability (located and runnable), and kill their processes on close and deactivation. Verified by extension tests through the 2.2 harness.
-- [ ] 5.5 Add a real-CLI conformance test, skipped unless `TERMINAY_CHAT_CONFORMANCE=1`, that runs one turn per installed provider with a Terminay MCP entry and checks that a terminal can be listed. Verified by running it locally with Claude, with the output noted in the PR (Codex is at its usage limit on this machine, so that run is skipped unless the limit resets).
+- [ ] 5.5 Add a real-CLI conformance test, skipped unless `TERMINAY_CHAT_CONFORMANCE=1`, that runs one turn per installed provider with a Terminay MCP entry and checks that a terminal can be listed. Verified by running it locally with Claude, with the output noted in the PR.
 
 ## 6. Pixel
 
