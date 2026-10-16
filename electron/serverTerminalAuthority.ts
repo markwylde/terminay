@@ -104,7 +104,10 @@ import {
 } from '../packages/server-core/src/mdxRuntime/index';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import { FOLDER_TERMINAL_CAPTURED_EVENT } from '../packages/server-core/src/workspaceProtocol';
-import { createWorktreeCaptureHost } from '../packages/server-core/src/worktreeCapture';
+import {
+	createWorktreeCaptureHost,
+	type WorktreeCaptureReport,
+} from '../packages/server-core/src/worktreeCapture';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
@@ -332,6 +335,9 @@ export interface ServerTerminalAuthorityOptions {
 	/** Metadata-only observer for Git watches, measurements, and cache
 	 *  mismatches. Reports carry process-local ids, never a path or a ref. */
 	readonly onGitObservation?: (report: GitObservationReport) => void;
+	readonly onWorktreeCaptureObservation?: (
+		report: WorktreeCaptureReport,
+	) => void;
 	/** Metadata-only observer for session-holder lifecycle and held sessions
 	 *  ending. Reports carry no session id, path, credential, or output. */
 	readonly onSessionHolderObservation?: (
@@ -585,6 +591,8 @@ export class ServerTerminalAuthority {
 					...captured,
 				});
 			},
+			onObservation: (report) =>
+				options.onWorktreeCaptureObservation?.(report),
 		});
 		this.worktreeCapture = worktreeCapture;
 		// Until the socket is listening, launched terminals simply do not report,

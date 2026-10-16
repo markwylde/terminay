@@ -47,6 +47,13 @@ export interface FolderReconcilerOptions {
 		readonly worktree: WorkspaceFolderWorktreeLink;
 	}) => Promise<string | undefined>;
 	readonly onWorktreeAppeared?: (appeared: WorktreeAppeared) => void;
+	/** Every folder made for a worktree, and whether its creator was asked. */
+	readonly onWorktreeFolder?: (folder: {
+		readonly projectId: string;
+		readonly announced: boolean;
+		readonly creator: boolean;
+		readonly created: boolean;
+	}) => void;
 	readonly onError?: (projectId: string, error: unknown) => void;
 }
 
@@ -188,8 +195,7 @@ export class FolderReconciler {
 		const project = this.options.workspace().projects[projectId];
 		if (project === undefined || isAutomationSpace(project)) return;
 		const listing = await this.options.worktrees(projectId);
-		if (listing.state !== 'ready' && listing.state !== 'not-repository')
-			return;
+		if (listing.state !== 'ready' && listing.state !== 'not-repository') return;
 		this.known.set(
 			projectId,
 			new Set(
@@ -278,8 +284,19 @@ export class FolderReconciler {
 			// out makes the command invalid; the folder is still wanted.
 			const created =
 				creator === undefined
-					? this.apply({ type: 'folder.create', projectId, name, worktree: link })
+					? this.apply({
+							type: 'folder.create',
+							projectId,
+							name,
+							worktree: link,
+						})
 					: this.createWithCreator(projectId, name, link, creator);
+			this.options.onWorktreeFolder?.({
+				projectId,
+				announced: announce,
+				creator: creator !== undefined,
+				created: created.ok,
+			});
 			if (!created.ok) continue;
 
 			const folderId = created.event.changedIds.find(
@@ -338,9 +355,7 @@ export class FolderReconciler {
 		const state = this.options.workspace();
 		return (state.projects[projectId]?.folderIds ?? [])
 			.map((folderId) => state.folders[folderId])
-			.filter(
-				(folder): folder is WorkspaceFolder => folder?.kind === 'linked',
-			);
+			.filter((folder): folder is WorkspaceFolder => folder?.kind === 'linked');
 	}
 
 	private apply(command: WorkspaceCommand): WorkspaceApplyResult {
