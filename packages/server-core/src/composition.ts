@@ -1,10 +1,8 @@
-// --- end automations: executor and audit ---
-// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
-import { localTimeZone } from '@terminay/cron';
+import { nodeTerminalLaunchPathAuthority } from './terminalService/launchResolver.js';
 import {
 	FEATURE_CAPABILITIES,
-	type JsonValue,
 	LANGUAGE_CAPABILITY,
+	type JsonValue,
 	protocolError,
 } from '@terminay/protocol';
 import {
@@ -15,13 +13,14 @@ import {
 import { AgentStatusService } from './activity/agentService.js';
 import { createAgentInactivityHold } from './activity/inactivityHold.js';
 import type { ProjectAgentScope } from './activity/projectAgentScope.js';
+import type { SessionSourceBridge } from './activity/sessionSourceBridge.js';
+import type { SessionSourceSupervisor } from './extensions/sessionSources.js';
 import {
 	type ActivityOperationRegistry,
 	createActivityEventProjector,
 	createActivityOperationRegistry,
 } from './activity/protocol.js';
 import type { TerminalActivityService } from './activity/service.js';
-import type { SessionSourceBridge } from './activity/sessionSourceBridge.js';
 import {
 	AGENT_CHAT_EVENTS,
 	type AgentChatDiagnostic,
@@ -32,53 +31,27 @@ import {
 	bindAgentChatApprovals,
 	createAgentChatOperationHandlers,
 } from './agentChat/index.js';
+import { bindNotificationsToActivity } from './notifications/activityFeed.js';
+import { NotificationManager } from './notifications/manager.js';
+import {
+	createNotificationEventProjector,
+	createNotificationOperationRegistry,
+} from './notifications/protocol.js';
+import type { PushEnrolmentStore } from './push/enrolments.js';
+import { createPushOperationRegistry } from './push/protocol.js';
+import { PushSender, type PushTransport } from './push/sender.js';
+import { createServerUpgradeOperationRegistry } from './serverUpgrade/protocol.js';
+import { ServerUpgradeService } from './serverUpgrade/service.js';
 import {
 	type AiService,
 	createAiOperationHandlers,
 } from './aiService/index.js';
-import {
-	type AppWindowAttachment,
-	AppWindowService,
-	type AppWindowView,
-} from './appWindows/index.js';
-// --- automations: executor and audit (tasks 7.1-7.5) ---
-import {
-	type AutomationAuditEntry,
-	AutomationAuditLog,
-} from './automationService/audit.js';
-import { AutomationExecutor } from './automationService/executor.js';
-import {
-	type AutomationMcpOperations,
-	createAutomationMcpOperations,
-} from './automationService/mcp.js';
-// --- automations (home-sidebar-and-automations, task 4.4) ---
-import {
-	type AutomationOperationRegistry,
-	createAutomationOperationRegistry,
-	unavailableAutomationRunController,
-} from './automationService/protocol.js';
-import type { AutomationRepository } from './automationService/repository.js';
-import type { AutomationRunLog } from './automationService/runLog.js';
-import { AutomationScheduler } from './automationService/scheduler.js';
-import { AutomationTriggers } from './automationService/triggers.js';
-import type { AutomationRunController } from './automationService/types.js';
-import {
-	createAutomationSpaceEventProjector,
-	createAutomationSpaceVisibility,
-	withholdAutomationSpaceOperations,
-} from './automationSpaceVisibility.js';
-import {
-	type ConnectedServerBackend,
-	ConnectedServerRegistry,
-	type ConnectedServerVault,
-} from './connectedServers/index.js';
 import { createServerCore, type ServerCore } from './connection.js';
 import { OrderedEventJournal } from './events.js';
 import {
 	createExtensionOperationHandlers,
 	type ExtensionOperationOptions,
 } from './extensions/index.js';
-import type { SessionSourceSupervisor } from './extensions/sessionSources.js';
 import {
 	createFileObservationEventProjector,
 	type ServerFileObservationAdapter,
@@ -93,6 +66,51 @@ import {
 	LanguageSessionManager,
 } from './languageService/sessions.js';
 import type { MacroRepository, MacroRunner } from './macroService/index.js';
+// --- automations (home-sidebar-and-automations, task 4.4) ---
+import {
+	type AutomationOperationRegistry,
+	createAutomationOperationRegistry,
+	unavailableAutomationRunController,
+} from './automationService/protocol.js';
+import {
+	type AutomationMcpOperations,
+	createAutomationMcpOperations,
+} from './automationService/mcp.js';
+import {
+	DEFAULT_MCP_PERMISSIONS,
+	McpApprovalService,
+	mcpPermissionsFromSettings,
+} from './mcpApprovals/index.js';
+import {
+	type AppWindowAttachment,
+	AppWindowService,
+	type AppWindowView,
+} from './appWindows/index.js';
+import {
+	type ConnectedServerBackend,
+	ConnectedServerRegistry,
+	type ConnectedServerVault,
+} from './connectedServers/index.js';
+import { commandSubmissionInput } from './terminalService/commandSubmission.js';
+import type { AutomationRepository } from './automationService/repository.js';
+import type { AutomationRunLog } from './automationService/runLog.js';
+import type { AutomationRunController } from './automationService/types.js';
+// --- automations: executor and audit (tasks 7.1-7.5) ---
+import {
+	AutomationAuditLog,
+	type AutomationAuditEntry,
+} from './automationService/audit.js';
+import { AutomationExecutor } from './automationService/executor.js';
+// --- end automations: executor and audit ---
+// --- automations: scheduler and triggers (tasks 6.1-6.4) ---
+import { localTimeZone } from '@terminay/cron';
+import { AutomationScheduler } from './automationService/scheduler.js';
+import { AutomationTriggers } from './automationService/triggers.js';
+import type { RemoteConnectionAdmission } from './remote/transport.js';
+import {
+	createWorkspaceChangeEventProjector,
+	projectLifecycleEventProjector,
+} from './workspaceProtocol.js';
 // --- end automations ---
 import {
 	createMacroOperationRegistry,
@@ -102,30 +120,7 @@ import type {
 	MacroExecutionEnvironment,
 	MacroTarget,
 } from './macroService/types.js';
-import {
-	DEFAULT_MCP_PERMISSIONS,
-	McpApprovalService,
-	mcpPermissionsFromSettings,
-} from './mcpApprovals/index.js';
-import { bindNotificationsToActivity } from './notifications/activityFeed.js';
-import { NotificationManager } from './notifications/manager.js';
-import {
-	createNotificationEventProjector,
-	createNotificationOperationRegistry,
-} from './notifications/protocol.js';
-import type { PushEnrolmentStore } from './push/enrolments.js';
-import { createPushOperationRegistry } from './push/protocol.js';
-import { PushSender, type PushTransport } from './push/sender.js';
 import type { RecordingAdapter } from './recordingService/adapter.js';
-import type { RemoteConnectionAdmission } from './remote/transport.js';
-import { RootFolderBrowser } from './rootFolderBrowser.js';
-import { refuseRootlessProjectOperations } from './rootlessProjects.js';
-import { createServerUpgradeOperationRegistry } from './serverUpgrade/protocol.js';
-import { ServerUpgradeService } from './serverUpgrade/service.js';
-import type { SessionHolderPtyFactory } from './sessionHolder/factory.js';
-import { isHolderSessionId } from './sessionHolder/paths.js';
-import { reattachHeldSessions } from './sessionHolder/reattach.js';
-import { backgroundTerminalLimitMs } from './settings/backgroundTerminals.js';
 import {
 	createSettingsOperationRegistry,
 	type SettingsOperationRegistry,
@@ -137,11 +132,9 @@ import {
 	type ShellStartupMode,
 } from './shellProfiles/index.js';
 import { TerminalServiceAdapter } from './terminalService/adapter.js';
-import { commandSubmissionInput } from './terminalService/commandSubmission.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import { TerminalInputSourceAdapter } from './terminalService/inputSources.js';
 import {
-	nodeTerminalLaunchPathAuthority,
 	type ShellProfileLaunchAuthority,
 	type TerminalLaunchPathAuthority,
 	TerminalLaunchResolver,
@@ -158,12 +151,6 @@ import {
 	TERMINAL_CLOSE_OBSERVATION_TIMEOUT_MS,
 	type TerminalServiceOptions,
 } from './terminalService/types.js';
-import {
-	bindTerminalTitles,
-	createTerminalTitleOperationRegistry,
-	TerminalTitleService,
-	terminalTitleEventProjector,
-} from './terminalTitles.js';
 import type {
 	CommandHandler,
 	OperationPolicy,
@@ -173,23 +160,38 @@ import type {
 	ServerConnectionLike,
 	ServerCoreOptions,
 } from './types.js';
+import type { SessionHolderPtyFactory } from './sessionHolder/factory.js';
+import { isHolderSessionId } from './sessionHolder/paths.js';
+import { reattachHeldSessions } from './sessionHolder/reattach.js';
+import { backgroundTerminalLimitMs } from './settings/backgroundTerminals.js';
+import {
+	bindTerminalTitles,
+	createTerminalTitleOperationRegistry,
+	TerminalTitleService,
+	terminalTitleEventProjector,
+} from './terminalTitles.js';
 import {
 	isAutomationSpace,
 	untrackedTerminalSessionIds,
 	WorkspaceStore,
 } from './workspace.js';
-import {
-	automationSpaceRetainsExitedSession,
-	automationSpaceSessionGuard,
-	createWorkspaceChangeEventProjector,
-	createWorkspaceOperationRegistry,
-	projectLifecycleEventProjector,
-	type WorkspaceOperationRegistryOptions,
-} from './workspaceProtocol.js';
+import { RootFolderBrowser } from './rootFolderBrowser.js';
+import { refuseRootlessProjectOperations } from './rootlessProjects.js';
 import {
 	restoreWorkspaceOnStartup,
 	type WorkspaceStartupRestoreOptions,
 } from './workspaceStartup.js';
+import {
+	createAutomationSpaceEventProjector,
+	createAutomationSpaceVisibility,
+	withholdAutomationSpaceOperations,
+} from './automationSpaceVisibility.js';
+import {
+	automationSpaceRetainsExitedSession,
+	automationSpaceSessionGuard,
+	createWorkspaceOperationRegistry,
+	type WorkspaceOperationRegistryOptions,
+} from './workspaceProtocol.js';
 
 /**
  * Internal lifecycle evidence emitted by a host PTY adapter when foreground
@@ -887,8 +889,7 @@ export function createServerCoreComposition(
 			: createAutomationMcpOperations({
 					repository: options.automations.repository,
 					runLog: options.automations.runLog,
-					controller:
-						composedAutomationController ?? unavailableAutomationRunController,
+					controller: composedAutomationController ?? unavailableAutomationRunController,
 					timeZone: automationTimeZone,
 					...(automationAudit === undefined
 						? {}
@@ -1023,10 +1024,7 @@ export function createServerCoreComposition(
 				// A tab is a keystroke there too: a plain shell completes on it.
 				bracketed
 					? text
-					: text
-							.replace(/\s*\r?\n\s*/g, ' ')
-							.replace(/\t/g, ' ')
-							.trim(),
+					: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
 				bracketed,
 			),
 			authorization,
@@ -1116,8 +1114,7 @@ export function createServerCoreComposition(
 						const session = terminal.getSession(sessionId);
 						const state = options.workspace?.state;
 						const projectId =
-							session?.projectId ??
-							state?.terminalSessions[sessionId]?.projectId;
+							session?.projectId ?? state?.terminalSessions[sessionId]?.projectId;
 						if (projectId === undefined) return undefined;
 						const panel = Object.values(state?.panels ?? {}).find(
 							(candidate) =>
@@ -1180,9 +1177,7 @@ export function createServerCoreComposition(
 		...(automationSpace === undefined
 			? {}
 			: {
-					beforeSessionCreate: automationSpaceSessionGuard(
-						automationSpace.workspace,
-					),
+					beforeSessionCreate: automationSpaceSessionGuard(automationSpace.workspace),
 					isProjectHidden: automationSpace.visibility.isProjectHidden,
 				}),
 		// Which ended sessions may still be read. A kept automation terminal
@@ -1326,19 +1321,13 @@ export function createServerCoreComposition(
 						: {
 								untrackedSessionIds: () =>
 									untrackedTerminalSessionIds(workspaceForTracking.state),
-								subscribe: (listener) =>
-									workspaceForTracking.subscribe(listener),
+								subscribe: (listener) => workspaceForTracking.subscribe(listener),
 								acknowledge: (identity) => {
 									// The agent authority also marks its own entries read.
 									// Passive: it is not interaction, so what a process sent stays.
 									if (options.agents?.isSessionActive(identity) === true)
-										options.agents.acknowledge(identity, undefined, {
-											passive: true,
-										});
-									else
-										activity.acknowledge(identity, undefined, {
-											passive: true,
-										});
+										options.agents.acknowledge(identity, undefined, { passive: true });
+									else activity.acknowledge(identity, undefined, { passive: true });
 								},
 							},
 				);
@@ -1393,9 +1382,7 @@ export function createServerCoreComposition(
 					},
 				});
 	const pushOperations =
-		push === undefined
-			? undefined
-			: createPushOperationRegistry({ sender: push });
+		push === undefined ? undefined : createPushOperationRegistry({ sender: push });
 	const serverUpgrade =
 		options.serverUpgrade ??
 		new ServerUpgradeService({ serverVersion: options.serverVersion });
@@ -1654,7 +1641,9 @@ export function createServerCoreComposition(
 							: createFileObservationEventProjector,
 						automationSpace === undefined
 							? undefined
-							: createAutomationSpaceEventProjector(automationSpace.visibility),
+							: createAutomationSpaceEventProjector(
+									automationSpace.visibility,
+								),
 					),
 				}),
 		...optionalCoreOptions(options),
@@ -2266,10 +2255,7 @@ function composeLanguageService(
 						? projects.get(projectId)
 						: (
 								language.projects as Readonly<
-									Record<
-										string,
-										{ readonly resolver: { root(): Promise<string> } }
-									>
+									Record<string, { readonly resolver: { root(): Promise<string> } }>
 								>
 							)[projectId];
 				if (project === undefined)
@@ -2390,8 +2376,7 @@ function entries<T>(
 /** A file size for a person to read. */
 function formatByteSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024)
-		return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
 	if (bytes < 1024 * 1024 * 1024)
 		return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
