@@ -14,17 +14,17 @@ export const PIXEL_OPERATIONS = Object.freeze({
 
 /** Mirrors the server's agent chat operation names. */
 export const AGENT_CHAT_OPERATIONS = Object.freeze({
-	providers: 'agentChat.providers',
-	list: 'agentChat.list',
-	get: 'agentChat.get',
-	create: 'agentChat.create',
-	open: 'agentChat.open',
-	send: 'agentChat.send',
-	stop: 'agentChat.stop',
-	clear: 'agentChat.clear',
-	close: 'agentChat.close',
-	decideApproval: 'agentChat.decideApproval',
-	changed: 'agentChat.changed',
+	providers: 'agent-chat.providers',
+	list: 'agent-chat.list',
+	get: 'agent-chat.get',
+	create: 'agent-chat.create',
+	open: 'agent-chat.open',
+	send: 'agent-chat.send',
+	stop: 'agent-chat.stop',
+	clear: 'agent-chat.clear',
+	close: 'agent-chat.close',
+	decideApproval: 'agent-chat.decide-approval',
+	changed: 'agent-chat.changed',
 } as const);
 
 export type AgentChatReach =

@@ -16,21 +16,21 @@ import {
 
 /** Stable protocol names for agent chats. */
 export const AGENT_CHAT_OPERATIONS = Object.freeze({
-	providers: 'agentChat.providers',
-	list: 'agentChat.list',
-	get: 'agentChat.get',
-	create: 'agentChat.create',
-	open: 'agentChat.open',
-	send: 'agentChat.send',
-	stop: 'agentChat.stop',
-	clear: 'agentChat.clear',
-	close: 'agentChat.close',
-	decideApproval: 'agentChat.decideApproval',
+	providers: 'agent-chat.providers',
+	list: 'agent-chat.list',
+	get: 'agent-chat.get',
+	create: 'agent-chat.create',
+	open: 'agent-chat.open',
+	send: 'agent-chat.send',
+	stop: 'agent-chat.stop',
+	clear: 'agent-chat.clear',
+	close: 'agent-chat.close',
+	decideApproval: 'agent-chat.decide-approval',
 } as const);
 
 export const AGENT_CHAT_EVENTS = Object.freeze({
 	/** `{ chatId, revision, removed? }`; readers fetch the chat itself. */
-	changed: 'agentChat.changed',
+	changed: 'agent-chat.changed',
 } as const);
 
 export interface AgentChatOperationOptions {

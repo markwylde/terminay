@@ -73,10 +73,10 @@ uses the pet's balloon, is off by default, and asks for its provider on first cl
 - the conversation (entries with ids, bounded);
 - status, revision, the open provider session handle and the chat capability.
 
-It exposes core operations through `createAgentChatOperationHandlers`: `agentChat.providers`,
+It exposes core operations through `createAgentChatOperationHandlers`: `agent-chat.providers`,
 `.list`, `.get`, `.create`, `.open`, `.send`, `.stop`, `.clear`, `.close` and `.decideApproval`.
-It publishes a `agentChat.changed` journal event for list and entry changes, and a transient
-`agentChat.delta` for streaming text. Both carry chat revisions, so a client resynchronises with
+It publishes a `agent-chat.changed` journal event for list and entry changes, and a transient
+`agent-chat.delta` for streaming text. Both carry chat revisions, so a client resynchronises with
 `.get`. Every operation requires terminal-create authority, matching the approval decision path
 (ADR-0031/0068). The service is composed in `composition.ts` with three host-injected
 functions:
@@ -206,12 +206,12 @@ per server.
 
 ### 9. Pixel: a thin server feature plus a UI consumer
 
-- **Server.** `packages/server-core/src/pixel/` reads settings `pixel.enabled` (default `false`) and `pixel.provider` (`unset` | provider id). It offers one operation, `pixel.open`, which returns the Pixel chat id, creating the chat with key `pixel`, title "Pixel", the configured provider and workspace reach. The operation is refused while Pixel is off or the provider is unset. On disable or provider change it closes the Pixel chat. `agentChat.create`/`.open` refuse the reserved key.
+- **Server.** `packages/server-core/src/pixel/` reads settings `pixel.enabled` (default `false`) and `pixel.provider` (`unset` | provider id). It offers one operation, `pixel.open`, which returns the Pixel chat id, creating the chat with key `pixel`, title "Pixel", the configured provider and workspace reach. The operation is refused while Pixel is off or the provider is unset. On disable or provider change it closes the Pixel chat. `agent-chat.create`/`.open` refuse the reserved key.
 - **UI.** `src/pixel/`:
   - `PixelDock` sits in `WorkspaceStatusBar.tsx` before the remote button, with a bottom-right fallback when the bar is hidden;
   - `usePixel` creates one pet per window (`character: Pixel`, `hidden: true`, `dock`, `autoHide`, status-bar insets, device-local position under a `persist` key whose history stays empty because the chat is host-driven);
-  - onboarding uses the empty-state `suggestions` filtered by `agentChat.providers` availability;
-  - entries map to `ChatMessage`s, with approval entries as `actions` and `chat:action` → `agentChat.decideApproval`;
+  - onboarding uses the empty-state `suggestions` filtered by `agent-chat.providers` availability;
+  - entries map to `ChatMessage`s, with approval entries as `actions` and `chat:action` → `agent-chat.decide-approval`;
   - status maps to `setStatus`, and `--mwpet-*` map to Terminay theme tokens.
 - **Settings > AI > Pixel.** An Enable Pixel switch, a provider select, and a note that chat agents are confined to Terminay MCP but are not a sandbox.
 

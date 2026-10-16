@@ -373,3 +373,9 @@ test("activity notes for Terminay calls use titles and the agent's own input", a
   assert.equal(describeChatMcpCall("get_mcp_capabilities", {}, titles), undefined);
   assert.equal(describeChatMcpCall("create_automation", { name: "Digest" }, titles), "Creating the automation “Digest”");
 });
+
+test("every chat and Pixel operation and event name is one the protocol accepts", async () => {
+  const { AGENT_CHAT_EVENTS, PIXEL_EVENTS, PIXEL_OPERATIONS } = await import("../dist/index.js");
+  const names = [...Object.values(AGENT_CHAT_OPERATIONS), ...Object.values(AGENT_CHAT_EVENTS), ...Object.values(PIXEL_OPERATIONS), ...Object.values(PIXEL_EVENTS)];
+  for (const name of names) assert.match(name, /^[a-z][a-z0-9._:-]{0,255}$/, name);
+});
