@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { createStartedProject } from './support/project-start';
 import { activeTerminalPanel } from './support/terminal-session';
 
 /**
@@ -111,4 +112,49 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 	await expect(dock(mainWindow)).toHaveCount(0);
 	await expect(mainWindow.locator('.mwpet')).toHaveCount(0);
 	await expect.poll(() => fakeClaudeRunning(), { timeout: 15_000 }).toBe(false);
+});
+
+test('a second window shows the same Pixel conversation and can answer its approval', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	test.setTimeout(120_000);
+	await setPixel(appHarness, mainWindow, true);
+	const mainDock = mainWindow.locator('.workspace-status-bar .pixel-dock--status-bar');
+	await expect(mainDock).toBeVisible();
+	const claudeChip = balloon(mainWindow).getByRole('button', { name: 'Claude Code' });
+	await expect(async () => {
+		if (await balloon(mainWindow).isVisible()) await mainDock.click();
+		await mainDock.click();
+		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await claudeChip.click();
+	await expect(balloon(mainWindow).locator('.mwpet-chat-title')).toHaveText('Pixel · Claude Code');
+
+	// Pop a second project out into its own window; the main window keeps
+	// the first. Both windows are clients of the same server.
+	await createStartedProject(mainWindow);
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	const second = await appHarness.openChildWindow(async () => {
+		await appHarness.sendAppCommand('popout-active');
+	});
+	const secondDock = second.getByTestId('pixel-dock');
+	await expect(secondDock).toBeVisible();
+
+	// A question asked in one window is answered in both.
+	await ask(mainWindow, 'hello');
+	await expect(balloon(mainWindow)).toContainText('Hi from fake Claude.');
+	await secondDock.click();
+	await expect(balloon(second)).toContainText('Hi from fake Claude.');
+
+	// An approval asked for in the main window is answered from the second.
+	await setTerminalManagement(appHarness, mainWindow, 'ask');
+	if (!(await balloon(mainWindow).isVisible())) await mainDock.click();
+	await ask(mainWindow, 'type echo answered-elsewhere');
+	const allowHere = balloon(second).getByRole('button', { name: 'Allow One Time' });
+	await expect(allowHere).toBeVisible();
+	await allowHere.click();
+	await expect(balloon(mainWindow)).toContainText('→ Allowed once');
+	await expect(balloon(mainWindow).getByRole('button', { name: 'Allow One Time' })).toHaveCount(0);
+	await expect(balloon(second)).toContainText('Done, I ran it.');
 });
