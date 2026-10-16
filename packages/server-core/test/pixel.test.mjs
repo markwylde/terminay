@@ -132,3 +132,11 @@ test("Pixel stays off across a restart", async () => {
   assert.deepEqual(chats.list(), []);
   assert.equal(pixel.state().enabled, false);
 });
+
+test("opening Pixel over the protocol returns the whole summary, not just its revision", async () => {
+  const { pixel } = await setup();
+  const response = pixel.operations().commands[PIXEL_OPERATIONS.open]({ envelope: { payload: {} }, context: { authScope: "write" } });
+  // The dispatcher reads `{ result, revision }` as an envelope; the summary must be inside `result`.
+  assert.equal(typeof response.result.id, "string");
+  assert.equal(response.result.title, "Pixel");
+});

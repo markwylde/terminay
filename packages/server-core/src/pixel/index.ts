@@ -130,7 +130,9 @@ export class PixelService {
 				[PIXEL_OPERATIONS.open]: (request: CommandRequest) => {
 					authorize(request.context);
 					try {
-						return this.open() as unknown as JsonValue;
+						// Wrapped: the summary's own `revision` would otherwise be
+						// read as a result envelope.
+						return { result: this.open() } as unknown as JsonValue;
 					} catch (error) {
 						if (error instanceof PixelError)
 							throw protocolError('unavailable', error.message, {
