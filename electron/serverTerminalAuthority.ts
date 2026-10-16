@@ -1063,6 +1063,8 @@ export class ServerTerminalAuthority {
 				'macros.v1',
 				...(options.automations === undefined ? [] : ['automations.v1']),
 				...(options.mcpApprovals === true ? ['mcp-approvals.v1'] : []),
+				// Agent chats and Pixel run wherever extensions run.
+				...(extensionManagement === undefined ? [] : ['agent-chat.v1']),
 				...(options.mcpApprovals === true && options.appWindows !== undefined
 					? [
 							'app-windows.v1',

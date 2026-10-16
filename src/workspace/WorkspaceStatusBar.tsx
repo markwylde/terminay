@@ -28,6 +28,8 @@ type WorkspaceStatusBarProps = {
 	onToggleConnectionMenu: () => void;
 	/** The active project renders its focused-terminal summary into this slot. */
 	slotRef: Ref<HTMLDivElement>;
+	/** Pixel renders its dock into this slot, before the remote indicator. */
+	pixelSlotRef?: Ref<HTMLDivElement>;
 };
 
 const DEVICE_ICONS: Record<RemoteDeviceKind, typeof Smartphone> = {
@@ -38,12 +40,14 @@ const DEVICE_ICONS: Record<RemoteDeviceKind, typeof Smartphone> = {
 
 export function WorkspaceStatusBar({
 	onToggleConnectionMenu,
+	pixelSlotRef,
 	remote,
 	slotRef,
 }: WorkspaceStatusBarProps) {
 	return (
 		<footer className="workspace-status-bar" data-testid="workspace-status-bar">
 			<div className="workspace-status-bar__focused" ref={slotRef} />
+			<div className="workspace-status-bar__pixel" ref={pixelSlotRef} />
 			<button
 				aria-label={remote.accessibleLabel}
 				className={`workspace-status-bar__remote workspace-status-bar__remote--${remote.tone}`}
