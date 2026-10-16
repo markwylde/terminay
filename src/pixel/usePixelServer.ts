@@ -33,6 +33,8 @@ export type PixelServer = Readonly<{
 	providers: readonly AgentChatProvider[];
 	/** Why Pixel cannot chat right now, in plain words. */
 	problem: string | undefined;
+	/** Ask the server again which agents it can run. */
+	refreshProviders: () => void;
 	send: (text: string) => void;
 	stop: () => void;
 	clear: () => void;
@@ -134,26 +136,19 @@ export function usePixelServer(
 		};
 	}, [ready, state?.provider, transport]);
 
-	// The agents on offer, for the first-click question.
-	useEffect(() => {
-		if (
-			transport === undefined ||
-			state === null ||
-			!state.enabled ||
-			state.provider !== PIXEL_PROVIDER_UNSET
-		)
-			return;
-		let disposed = false;
+	// The agents on offer, for the first-click question. They are asked for
+	// again each time the question is shown: extensions start after the
+	// window does, and an agent may have been installed meanwhile.
+	const onboarding =
+		state?.enabled === true && state.provider === PIXEL_PROVIDER_UNSET;
+	const refreshProviders = useCallback(() => {
+		if (transport === undefined || !onboarding) return;
 		void transport.chats
 			.providers()
-			.then((next) => {
-				if (!disposed) setProviders(next);
-			})
+			.then(setProviders)
 			.catch(() => undefined);
-		return () => {
-			disposed = true;
-		};
-	}, [state, transport]);
+	}, [onboarding, transport]);
+	useEffect(refreshProviders, [refreshProviders]);
 
 	const withChat = useCallback(
 		(work: (chats: AgentChatClient, chatId: string) => Promise<void>) => {
@@ -171,6 +166,7 @@ export function usePixelServer(
 		chat,
 		providers,
 		problem,
+		refreshProviders,
 		send: (text) => {
 			setProblem(undefined);
 			withChat((chats, chatId) => chats.send(chatId, text));

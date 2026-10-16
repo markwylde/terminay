@@ -133,3 +133,29 @@ export function pixelDockLabel(
 			return 'Open Pixel';
 	}
 }
+
+const UNAVAILABLE: Readonly<Record<string, string>> = {
+	not_installed: 'is not installed',
+	not_signed_in: 'is not signed in',
+	unsupported_platform: 'does not run here',
+	disabled: 'is turned off in Extensions',
+};
+
+/** The first-click question, or why there is nothing to choose from. */
+export function onboardingGreeting(
+	providers: readonly AgentChatProvider[],
+): string {
+	if (providers.some((provider) => provider.available))
+		return "Hi! I'm Pixel. Which agent should I use?";
+	if (providers.length === 0)
+		return "Hi! I'm Pixel. I'm still looking for agents on this server. Close me and try again in a moment.";
+	const reasons = providers.map((provider) =>
+		[
+			`${provider.displayName} ${UNAVAILABLE[provider.reason ?? ''] ?? 'is unavailable'}.`,
+			provider.detail,
+		]
+			.filter(Boolean)
+			.join(' '),
+	);
+	return `Hi! I'm Pixel. I need Claude Code or Codex on this server. ${reasons.join(' ')}`;
+}

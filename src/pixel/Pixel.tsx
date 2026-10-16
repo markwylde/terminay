@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './pixel.css';
 import {
+	onboardingGreeting,
 	onboardingSuggestions,
 	PIXEL_PROVIDER_UNSET,
 	pixelDockLabel,
@@ -91,6 +92,9 @@ export function PixelCompanion({
 		const offClose = instance.on('chat:close', () => {
 			void instance.hide();
 		});
+		const offOpen = instance.on('chat:open', () => {
+			serverRef.current.refreshProviders();
+		});
 		const offAction = instance.on('chat:action', ({ message, action }) => {
 			const entry = serverRef.current.chat?.entries.find(
 				(candidate) => candidate.id === message.id,
@@ -106,6 +110,7 @@ export function PixelCompanion({
 		setPet(instance);
 		return () => {
 			offClose();
+			offOpen();
 			offAction();
 			instance.destroy();
 			setPet(null);
@@ -118,10 +123,7 @@ export function PixelCompanion({
 			const suggestions = onboardingSuggestions(providers);
 			return {
 				title: 'Pixel',
-				greeting:
-					suggestions.length > 0
-						? "Hi! I'm Pixel. Which agent should I use?"
-						: "Hi! I'm Pixel. I need Claude Code or Codex installed and signed in on this server.",
+				greeting: onboardingGreeting(providers),
 				suggestions,
 				placeholder: 'Pick an agent below…',
 			};
