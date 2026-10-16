@@ -1,4 +1,8 @@
 import type {
+	AgentChatAvailability,
+	AgentChatEvent,
+	AgentChatProviderContribution,
+	AgentChatSessionRequest,
 	AgentSessionSourceContribution,
 	LanguageServerContribution,
 	McpInstallTargetContribution,
@@ -61,6 +65,19 @@ export interface SessionSourceProvider {
 export interface WorktreeInsightSourceProvider {
 	readonly extensionId: string;
 	readonly contribution: WorktreeInsightSourceContribution;
+}
+
+/** One chat provider a running extension registered. */
+export interface ChatProviderEntry {
+	readonly extensionId: string;
+	readonly contribution: AgentChatProviderContribution;
+}
+
+/** One open provider session, bound to the extension child that runs it. */
+export interface ExtensionChatSession {
+	prompt(text: string, signal?: AbortSignal): Promise<void>;
+	cancel(): Promise<void>;
+	close(): Promise<void>;
 }
 
 /** One MCP install target a running extension registered. */
@@ -170,6 +187,7 @@ export class ExtensionHostManager {
 					...(status.agentSessionSources ?? []),
 					...(status.mcpInstallTargets ?? []),
 					...(status.worktreeInsightSources ?? []),
+					...(status.agentChatProviders ?? []),
 				])
 					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -305,6 +323,48 @@ export class ExtensionHostManager {
 		return this.ownerHost(sourceId).notifyWorktreeCredential(sourceId, origin);
 	}
 
+	/** Every chat provider registered by a running, published extension. */
+	chatProviderContributions(): readonly ChatProviderEntry[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.agentChatProviders ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	async chatAvailability(
+		providerId: string,
+		signal?: AbortSignal,
+	): Promise<AgentChatAvailability> {
+		return this.ownerHost(providerId).chatAvailability(providerId, signal);
+	}
+
+	/**
+	 * Open a session on the extension that owns `providerId`. The handle stays
+	 * bound to that extension's current child: if the child ends, `onEvent`
+	 * receives an exit and the handle's calls fail.
+	 */
+	async openChatSession(
+		providerId: string,
+		request: AgentChatSessionRequest,
+		onEvent: (event: AgentChatEvent) => void,
+	): Promise<ExtensionChatSession> {
+		const host = this.ownerHost(providerId);
+		await host.openChatSession(providerId, request, onEvent);
+		const { sessionId } = request;
+		return Object.freeze({
+			prompt: (text: string, signal?: AbortSignal) =>
+				host.promptChat(sessionId, text, signal),
+			cancel: () => host.cancelChat(sessionId),
+			close: () => host.closeChat(sessionId),
+		});
+	}
+
 	private ownerHost(contributionId: string): ExtensionHost {
 		const owner = this.contributionOwners.get(contributionId);
 		const host = owner === undefined ? undefined : this.hosts.get(owner);
@@ -391,7 +451,9 @@ export class ExtensionHostManager {
 
 	/** Observes every supervised host transition, for consumers that must end
 	 * their own work when an extension stops, fails, or is quarantined. */
-	onHostStateChanged(listener: (status: ExtensionHostStatus) => void): () => void {
+	onHostStateChanged(
+		listener: (status: ExtensionHostStatus) => void,
+	): () => void {
 		this.hostStateListeners.add(listener);
 		return () => this.hostStateListeners.delete(listener);
 	}
@@ -451,6 +513,7 @@ export class ExtensionHostManager {
 			...(status.agentSessionSources ?? []),
 			...(status.mcpInstallTargets ?? []),
 			...(status.worktreeInsightSources ?? []),
+			...(status.agentChatProviders ?? []),
 		]) {
 			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)

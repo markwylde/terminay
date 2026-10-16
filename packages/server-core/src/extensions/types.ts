@@ -1,4 +1,5 @@
 import type {
+	AgentChatProviderContribution,
 	AgentSessionSourceContribution,
 	ExtensionDependency,
 	LanguageServerContribution,
@@ -32,6 +33,8 @@ export interface ExtensionLaunchDescriptor {
 	readonly languageServers?: readonly LanguageServerContribution[];
 	/** Declared worktree insight sources, checked the same way. */
 	readonly worktreeInsights?: readonly WorktreeInsightSourceContribution[];
+	/** Declared chat providers, checked the same way. */
+	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -45,6 +48,7 @@ export interface ExtensionHostStatus {
 	readonly mcpInstallTargets?: readonly McpInstallTargetContribution[];
 	readonly languageServers?: readonly LanguageServerContribution[];
 	readonly worktreeInsightSources?: readonly WorktreeInsightSourceContribution[];
+	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
 }
 
 export interface ExtensionInvocation {
