@@ -26,7 +26,7 @@ function fakeTransport() {
         throw new Error("unexpected");
       },
       async command() { return {}; },
-      subscribe(event, onEvent, onResync) { assert.equal(event, "agentChat.changed"); listener = onEvent; resync = onResync; return () => { listener = undefined; }; },
+      subscribe(event, onEvent, onResync) { assert.equal(event, "agent-chat.changed"); listener = onEvent; resync = onResync; return () => { listener = undefined; }; },
     },
   };
 }
@@ -67,4 +67,10 @@ test("merge drops entries the server no longer lists", () => {
   const base = { id: "c1", revision: 3, order: ["a", "b"], entries: [{ id: "a", revision: 2 }, { id: "b", revision: 3 }] };
   const next = merge(base, { ...base, revision: 5, order: ["b", "c"], entries: [{ id: "c", revision: 5 }] }, 3);
   assert.deepEqual(next.entries.map((entry) => entry.id), ["b", "c"]);
+});
+
+test("the client's operation names match the server's and the protocol's rule", async () => {
+  const { PIXEL_OPERATIONS } = await import("../dist/index.js");
+  for (const name of [...Object.values(AGENT_CHAT_OPERATIONS), ...Object.values(PIXEL_OPERATIONS)])
+    assert.match(name, /^[a-z][a-z0-9._:-]{0,255}$/, name);
 });
