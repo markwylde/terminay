@@ -35,6 +35,12 @@ export interface McpPermissionGateOptions {
 		readonly params: Readonly<Record<string, unknown>>;
 		readonly context: ControlRequestContext;
 	}) => Promise<McpApprovalDescription | ControlFailure>;
+	/**
+	 * How a chat caller is named in its prompt, e.g. "Pixel (Claude Code)".
+	 * The agent chat service supplies it from its own record; absent, a chat
+	 * is named "An agent".
+	 */
+	readonly chatAgentName?: (chatId: string) => string | undefined;
 }
 
 /** The server-side permission gate: stored policy, session grants, and
@@ -59,13 +65,24 @@ export function createMcpPermissionGate(
 			// The approval's own lifecycle bounds the wait, not the request timer.
 			const resume = policy === 'ask' ? context.holdDeadline?.() : undefined;
 			try {
+				const chatId = context.chat?.chatId;
+				// A chat has no terminal: its prompt names the chat, never a
+				// terminal title the host might have guessed for the caller key.
+				const agent =
+					chatId === undefined
+						? (description?.agent ?? 'An agent')
+						: (options.chatAgentName?.(chatId) ?? 'An agent');
 				const outcome = await options.approvals.authorize({
 					terminalSessionId: context.terminalSessionId,
+					...(chatId === undefined ? {} : { chatId }),
 					projectId: context.projectId,
 					operation: request.op,
 					group,
-					agent: description?.agent ?? 'An agent',
-					terminalTitle: description?.terminalTitle ?? 'a terminal',
+					agent,
+					terminalTitle:
+						chatId === undefined
+							? (description?.terminalTitle ?? 'a terminal')
+							: '',
 					summary: description?.summary ?? request.op,
 					details: description?.details ?? [],
 					signal: context.signal,
