@@ -913,6 +913,15 @@
   box-shadow: none;
 }
 
+/* The start chooser has no panel tab bar for the active tab to flow into. */
+.app-shell:has(.project-start.project-workspace--active) .project-tab--active::before {
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  right: 4px;
+  border-radius: 8px;
+}
+
 .project-tab--active.project-tab--dragging::before {
   top: 5px;
   bottom: 5px;

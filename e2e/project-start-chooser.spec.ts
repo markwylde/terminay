@@ -149,6 +149,33 @@ test('closing the tab in front while a project awaits its start closes the proje
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
 });
 
+/** How far the active project tab's surface reaches below the project bar. */
+async function activeProjectTabOverhang(page: Page): Promise<string> {
+	return page
+		.locator('.project-tabbar .project-tab--active')
+		.evaluate((tab) => getComputedStyle(tab, '::before').bottom);
+}
+
+test('the active project tab joins the panel tab strip only once the project has one', async ({
+	mainWindow,
+}) => {
+	test.setTimeout(60_000);
+	const projectId = await createAwaitingProject(mainWindow);
+
+	// The chooser has no panel tab strip, so the tab is a closed pill.
+	await expect.poll(() => activeProjectTabOverhang(mainWindow)).toBe('5px');
+
+	await startChooserFor(mainWindow, projectId)
+		.locator('[data-terminay-start-action="home"]')
+		.click();
+	await expect(
+		mainWindow.locator('.project-workspace--active .terminal-panel:visible'),
+	).toHaveCount(1, { timeout: 15_000 });
+
+	// Now it runs on into the strip below.
+	await expect.poll(() => activeProjectTabOverhang(mainWindow)).toBe('-2px');
+});
+
 test('a folder opened through the browser becomes a recent folder that a later project opens and can forget', async ({
 	createWorkspace,
 	mainWindow,
