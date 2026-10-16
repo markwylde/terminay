@@ -206,7 +206,10 @@ test("repeated deaths still reach quarantine", async () => {
   });
 
   await host.start(descriptor);
-  await waitFor(() => diagnostics.of("failed").length >= 1, "first death missing");
+  // The child's own fatal report can be recorded as a failure before its exit
+  // schedules the restart, so wait for the restart to be due, not the failure.
+  await waitFor(() => diagnostics.of("restart-scheduled").length >= 1, "first death missing");
+  await waitFor(() => host.status().restartAt <= Date.now(), "restart backoff never elapsed");
   await host.start(descriptor);
   await waitFor(() => host.status().state === "quarantined", "second death did not quarantine");
   assert.equal(host.status().consecutiveCrashes, 2, "each death counts once, and two is the threshold");
