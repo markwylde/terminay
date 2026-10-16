@@ -2,8 +2,8 @@
 
 This dependency-free package is the public contract for server-side Terminay
 coding-agent and language server extensions. It contains the closed v1 manifest
-validator, the agent session source and MCP install target contracts, the
-language server contribution and launch contract, and fixed
+validator, the agent session source, MCP install target and chat provider
+contracts, the language server contribution and launch contract, and fixed
 application-protocol DTOs. It does not grant privileged server access.
 
 Version 3.0 removed the terminal-scoped agent provider contract (`agentProviders`,
@@ -101,6 +101,35 @@ call's deadline. `status` returns `{ state, configPath, message? }` with
 When the server cannot run the MCP adapter the host reports every target
 unavailable and makes no call.
 
+## Chat providers
+
+A chat provider runs the turns of an agent chat that Terminay owns (API 3.2).
+Declare it under `contributes.agentChatProviders` (`{ id, displayName,
+description?, platforms? }`), require the `agent-chat` permission, and register
+it with `context.agents.registerChatProvider(id, runtime)`.
+
+- `availability(signal)` returns `{ available: true }` or `{ available: false,
+  reason, detail? }`, with `reason` one of `not_installed`, `not_signed_in` or
+  `unsupported_platform`. Put the command that fixes it in `detail`.
+- `openSession(request, events, signal)` starts one session. The request holds
+  an opaque `sessionId`, an empty private `workingDirectory`, an optional
+  `instruction`, and `mcpServer`: the one MCP server the agent may use (`name`,
+  `command`, `args`, `env`), or `null` when the chat has no MCP reach.
+- The session's `prompt(text, signal)` runs one turn and resolves when the
+  agent finishes or `cancel()` stops it. `close()` ends the session and its
+  process.
+- Report through `events`: `text(delta)`, `tool({ callId, server?, name,
+  state })` with only names (never arguments or results), `failure({ reason,
+  detail? })`, and `exit({ code, signal })` when the process ends.
+
+A provider must confine its agent to `mcpServer`: built-in tools off where the
+agent allows it, no other MCP server or user MCP configuration, every request
+for another tool declined, no session history on disk, and nothing written to
+the agent's own configuration, settings, hooks or credentials. It starts the
+user's installed agent and never downloads one. Terminay keeps the
+conversation, mints the MCP capability, and shows approvals; a provider cannot
+read or change any of them.
+
 ## Testing agent extensions
 
 `createAgentExtensionHarness(extension, { manifest })` activates an extension
@@ -109,7 +138,10 @@ and `stop()` drive a session source; `sessions()`, `publications()`,
 `diagnostics()`, and `violations()` report what it published, and
 `assertConformant()` fails on any contract breach. `mcpStatus()`,
 `mcpInstall()`, and `mcpUninstall()` drive install targets with
-`fixtureMcpServerCommand` or a command you pass.
+`fixtureMcpServerCommand` or a command you pass. `chatAvailability()` and
+`openChatSession(providerId, request?)` drive a chat provider with
+`fixtureChatSessionRequest` overridden by what you pass; the returned session
+records its validated `events()`, any `violations()`, and the reply `text()`.
 [`fixtures/session-source`](fixtures/session-source) is an independent,
 packable third-party source.
 

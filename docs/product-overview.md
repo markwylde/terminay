@@ -47,6 +47,12 @@ and a VPS sit side by side in one tab strip.
   terminal runtime. Its immutable session id, not its title or current
   directory, is the boundary used by activity, agents, MCP, recording, and
   remote access.
+- An **agent chat** is a server-owned conversation with a coding agent, shared
+  by every client with authority to create terminals on the server and held
+  only in memory. A chat provider extension runs its turns; the server keeps
+  the conversation, and chooses the chat's MCP reach (none, one project, or
+  the whole server) when it is created. **Pixel**, the status-bar companion,
+  is the first feature built on agent chats.
 - **Settings, macros, and secrets** are classified by their server or client
   scope. Server state is available to every authorized client; device-local
   state and credentials remain on that client.
@@ -102,7 +108,19 @@ library. The server decides which project a session belongs to (its working
 directory is under the project root or inside one of the repository's linked
 worktrees) and which terminal owns it (its process descends from that
 terminal's PTY). The same extension contributes the MCP install targets that
-Desktop's Install Terminay MCP dialog offers.
+Desktop's Install Terminay MCP dialog offers, and the Claude Code and Codex
+chat providers.
+
+Agent chats are the one place Terminay runs a coding agent itself, an
+exception the repository owner approved (ADR-0067). A chat provider starts the
+user's installed CLI over its own machine protocol (`claude` streaming JSON,
+`codex app-server`), confined to the one MCP server Terminay hands it: built-in
+tools off where the agent allows it, the user's own MCP servers and hooks left
+out, every other tool request declined, and nothing written to the agent's
+files. The server owns the chat, its conversation, its MCP capability and its
+approvals; the extension only runs turns. Pixel, docked in the status bar, is
+one server-wide chat with whole-server reach, off until the user turns on
+Enable Pixel in Settings > AI > Pixel.
 
 It runs either as a Desktop-supervised Local child or as a standalone headless
 process. One runtime-validated application protocol carries commands, events,
@@ -183,7 +201,7 @@ remote access, MCP, recordings, and agent status. User-facing titles, current
 focus, and client-supplied paths do not define authority.
 
 MCP authority has two parts, both checked by the server on every request: the
-calling terminal's capability scope (which terminals it can reach) and the
+caller's capability scope (which terminals it can reach) and the
 user's permission policy (which kinds of operation it may perform). The policy
 groups operations into Read Terminals, Full Terminal Management, Read
 Automations, Full Automation Management, App Windows, Notifications, and
@@ -191,7 +209,10 @@ Connected Server Tools, with a further Window Messages policy, each set to Ask
 Permission, Always
 Allow, or Never Allow in Settings > AI > Terminay MCP. An Ask request waits on
 an inline prompt in the calling terminal's pane, answerable from any client
-with authority to create terminals on that server. See
+with authority to create terminals on that server. The caller is a terminal or
+an agent chat (ADR-0068); a chat's capability is minted only by the server's
+agent chat service, from the chat's recorded reach, and its approvals appear in
+the chat itself. See
 [MCP permissions](../openspec/specs/mcp-permissions/spec.md).
 
 An agent can show the user an **app window**: a floating window in the terminal
