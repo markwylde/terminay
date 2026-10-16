@@ -71,11 +71,16 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 	await expect(statusBarDock).toHaveAttribute('aria-label', 'Open Pixel');
 
 	// First click: Pixel asks which agent to use, offering the one installed.
-	await statusBarDock.click();
-	await expect(balloon(mainWindow)).toBeVisible();
-	await expect(balloon(mainWindow)).toContainText('Which agent should I use?');
+	// The built-in agents extension can start after the window, so the
+	// question is asked again each time the balloon opens.
 	const claudeChip = balloon(mainWindow).getByRole('button', { name: 'Claude Code' });
-	await expect(claudeChip).toBeVisible();
+	await expect(async () => {
+		if (await balloon(mainWindow).isVisible()) await statusBarDock.click();
+		await statusBarDock.click();
+		await expect(balloon(mainWindow)).toBeVisible();
+		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await expect(balloon(mainWindow)).toContainText('Which agent should I use?');
 	await claudeChip.click();
 	await expect(balloon(mainWindow).locator('.mwpet-chat-title')).toHaveText('Pixel · Claude Code');
 

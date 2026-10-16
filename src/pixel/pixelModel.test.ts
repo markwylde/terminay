@@ -144,3 +144,16 @@ test('onboarding offers only the agents this server can run', () => {
 	assert.equal(providerForChoice(providers, ' claude code ')?.id, 'c');
 	assert.equal(providerForChoice(providers, 'Codex'), undefined);
 });
+
+test('the first-click greeting says why no agent can be chosen', async () => {
+	const { onboardingGreeting } = await import('./pixelModel.ts');
+	assert.match(onboardingGreeting([{ id: 'c', displayName: 'Claude Code', available: true }]), /Which agent/);
+	assert.match(onboardingGreeting([]), /still looking/);
+	assert.equal(
+		onboardingGreeting([
+			{ id: 'c', displayName: 'Claude Code', available: false, reason: 'not_signed_in', detail: 'Run `claude` to sign in.' },
+			{ id: 'x', displayName: 'Codex', available: false, reason: 'not_installed' },
+		]),
+		"Hi! I'm Pixel. I need Claude Code or Codex on this server. Claude Code is not signed in. Run `claude` to sign in. Codex is not installed.",
+	);
+});
