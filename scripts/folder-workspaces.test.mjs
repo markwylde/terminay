@@ -10,6 +10,7 @@ import {
 	folderWorkspaceKey,
 	mergeFolderInventories,
 	mergeProjectInventories,
+	projectHoldsNoPanels,
 	UNPROJECTED_FOLDER_ID,
 	withFolderInventory,
 } from '../src/workspace/folderWorkspaces.ts';
@@ -297,4 +298,19 @@ test('the registry finds a workspace by project and folder, and forgets it on un
 	// Forgetting something never recorded is not an error.
 	registry.set('project-c', 'general', null);
 	assert.deepEqual(registry.all(), ['b-general']);
+});
+
+test('a project holds no panels only when no folder holds one, here or in the projection', () => {
+	const empty = {
+		general: folder('general', 'general'),
+		quiet: folder('quiet', 'linked'),
+	};
+	const shape = { folderIds: ['general', 'quiet'] };
+	assert.equal(projectHoldsNoPanels(shape, empty, {}, 'project-a'), true);
+	assert.equal(projectHoldsNoPanels(undefined, {}, {}, 'project-a'), true);
+	assert.equal(projectHoldsNoPanels(project, folders, {}, 'project-a'), false);
+	const local = { 'project-a': { quiet: [{ panelId: 'file-1' }] } };
+	assert.equal(projectHoldsNoPanels(shape, empty, local, 'project-a'), false);
+	const elsewhere = { 'project-b': { quiet: [{ panelId: 'file-1' }] } };
+	assert.equal(projectHoldsNoPanels(shape, empty, elsewhere, 'project-a'), true);
 });
