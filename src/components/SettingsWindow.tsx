@@ -151,6 +151,7 @@ function setValueAtPath(
 		'fileViewer',
 		'gitPushAgent',
 		'keyboardShortcuts',
+		'pixel',
 		'recording',
 		'remoteAccess',
 		'shell',
