@@ -311,14 +311,12 @@ test.describe('workspace shell', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
 
-		// With nothing left to close, the command closes nothing: a project
-		// closes only when the project itself is closed.
+		// With no panel left to close, the command closes the project.
 		await mainWindow.locator('.project-tab').nth(1).click();
 		await expect(placeholder).toBeVisible();
 		await appHarness.sendAppCommand('close-active');
 		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
 			'Project',
-			'Project 2',
 		]);
 	});
 
