@@ -59,12 +59,27 @@ A start choice SHALL be committed by the owning server as one command that sets 
 
 ### Requirement: Open a folder
 
-**Open a folder** SHALL open a folder browser served by the project's server, in every client host, starting at the server account's home directory. The browser SHALL list the directories of the current folder, let the user enter a directory, go to its parent, and type or paste a path. Choosing a folder SHALL make it the project's explicit root. Cancelling SHALL return to the chooser and leave the project awaiting a choice.
+**Open a folder** SHALL open a folder browser served by the project's server, in every client host, starting at the server account's home directory. The browser SHALL list the directories of the current folder, let the user enter a directory, go to its parent, and type or paste a path. As the user types a path, the browser SHALL suggest the subdirectories of the typed parent folder whose names start with the typed last segment, taken from the same server browse query, and SHALL let the user accept a suggestion by keyboard or pointer. The browser SHALL keep one height while the user moves between folders, whatever the number of entries, scrolling its listing within that height. Choosing a folder SHALL make it the project's explicit root and, when the project still has its server-derived default name, SHALL name the project after the folder. Cancelling SHALL return to the chooser and leave the project awaiting a choice.
 
 #### Scenario: Browsing and choosing
 
 - **WHEN** the user opens a folder browser, enters a directory, and chooses it
-- **THEN** that directory becomes the project's explicit root and the project's first terminal starts there
+- **THEN** that directory becomes the project's explicit root, the project is named after the directory, and the project's first terminal starts there
+
+#### Scenario: A renamed project keeps its name
+
+- **WHEN** the user has renamed a project awaiting a start choice and then chooses a folder
+- **THEN** the project keeps the name the user gave it
+
+#### Scenario: Completing a typed path
+
+- **WHEN** the user types `/Users/mark/Doc` into the browser's path field
+- **THEN** the browser suggests the subdirectories of `/Users/mark` that start with `Doc`, and accepting one fills in its full path
+
+#### Scenario: Stable height
+
+- **WHEN** the user moves from a folder with two subdirectories to one with two hundred and back
+- **THEN** the browser keeps the same height throughout and the longer listing scrolls inside it
 
 #### Scenario: Remote client
 
@@ -92,7 +107,7 @@ A start choice SHALL be committed by the owning server as one command that sets 
 
 ### Requirement: Recent project folders
 
-Each server SHALL keep its own list of recent project folders, holding at most 50 canonical folder paths, most recently used first, with no duplicates. A folder SHALL be recorded, or moved to the front, whenever it becomes a project's explicit root on that server, from the folder browser, a recent entry, or Set Root From Working Directory. A server default root and a no-root start SHALL NOT be recorded. Recording a 51st folder SHALL drop the least recently used one. Each entry SHALL show the folder's name and its full path. Opening an entry SHALL set only the project's root, and the project SHALL keep its own name, colour, and icon. Each entry SHALL offer **Forget**, which removes it from the server's list for every client and changes no project. A recorded folder that no longer exists SHALL be shown as unavailable, SHALL NOT be openable, and SHALL remain forgettable.
+Each server SHALL keep its own list of recent project folders, holding at most 50 canonical folder paths, most recently used first, with no duplicates. A folder SHALL be recorded, or moved to the front, whenever it becomes a project's explicit root on that server, from the folder browser, a recent entry, or Set Root From Working Directory. A server default root and a no-root start SHALL NOT be recorded. Recording a 51st folder SHALL drop the least recently used one. Each entry SHALL show the folder's name and its full path. Opening an entry whose folder is already the root of another project on the same server SHALL show that project and SHALL close the project awaiting a choice, creating nothing. Otherwise opening an entry SHALL set the project's root, SHALL name the project after the folder when the project still has its server-derived default name, and SHALL keep the project's colour and icon. Each entry SHALL offer **Forget**, which removes it from the server's list for every client and changes no project. A recorded folder that no longer exists SHALL be shown as unavailable, SHALL NOT be openable, and SHALL remain forgettable.
 
 #### Scenario: Recording a chosen folder
 
@@ -107,7 +122,12 @@ Each server SHALL keep its own list of recent project folders, holding at most 5
 #### Scenario: Opening a recent folder
 
 - **WHEN** the user opens a recent folder from the chooser
-- **THEN** the project takes that folder as its root, keeps its default name, colour, and icon, and the folder moves to the front of the list
+- **THEN** the project takes that folder as its root and is named after it, keeps its colour and icon, and the folder moves to the front of the list
+
+#### Scenario: Opening a recent folder another project already has
+
+- **WHEN** the user opens a recent folder that is already the root of another open project on the same server
+- **THEN** that project is shown, the project awaiting a choice is closed, and no project is created or changed
 
 #### Scenario: Forgetting a recent folder
 
