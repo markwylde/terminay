@@ -124,6 +124,10 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.git.measurement.failed',
 	'local-server.git.measurement.abandoned',
 	'local-server.git.cache.mismatch',
+	'local-server.worktree-capture.command.reported',
+	'local-server.worktree-capture.folder.appeared',
+	'local-server.worktree-capture.creator.resolved',
+	'local-server.worktree-capture.capture.decided',
 	'local-server.session-holder.attached',
 	'local-server.session-holder.record-removed',
 	'local-server.session-holder.incompatible',
@@ -212,7 +216,9 @@ export function sanitizeDiagnosticText(value: string): string {
 			// module names itself in a stack. Reducing it left every frame of a
 			// packaged main-process crash reading `<url:redacted>`. Its path is
 			// kept, and a query or fragment is still dropped.
-			scheme.toLowerCase() === 'file' ? url.replace(/[?#].*$/u, '') : '<url:redacted>',
+			scheme.toLowerCase() === 'file'
+				? url.replace(/[?#].*$/u, '')
+				: '<url:redacted>',
 	);
 	for (const [pattern, replacement] of secretPatterns)
 		result = result.replace(pattern, replacement);

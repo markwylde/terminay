@@ -277,10 +277,13 @@ test("a worktree that appears later records the panel that created it; one alrea
       return creator;
     },
     onWorktreeAppeared: (event) => appeared.push(event),
+    onWorktreeFolder: (event) => folders.push(event),
   });
+  const folders = [];
   const folderFor = (path) => Object.values(workspace.state.folders).find((folder) => folder.worktree?.path === path);
   await reconciler.reconcile("project-a");
   assert.deepEqual(asked, []);
+  assert.deepEqual(folders.splice(0), [{ projectId: "project-a", announced: false, creator: false, created: true }]);
   assert.equal(folderFor("/repo/.worktrees/old").createdByPanelId, undefined);
 
   listing.worktrees = [...listing.worktrees, row("/repo/.worktrees/feature")];
@@ -288,6 +291,7 @@ test("a worktree that appears later records the panel that created it; one alrea
   assert.deepEqual(asked, ["/repo/.worktrees/feature"]);
   assert.equal(folderFor("/repo/.worktrees/feature").createdByPanelId, "panel-a");
   assert.equal(appeared.at(-1).createdByPanelId, "panel-a");
+  assert.deepEqual(folders.splice(0), [{ projectId: "project-a", announced: true, creator: true, created: true }]);
 
   // A creator that no longer exists, and a lookup that fails, still get a folder.
   creator = "panel-gone";

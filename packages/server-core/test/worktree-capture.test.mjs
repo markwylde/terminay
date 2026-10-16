@@ -182,6 +182,7 @@ function captureFixture({ automatic = true, processTable = async () => [] } = {}
   host({ type: "terminal.createPanel", projectId: "project-a", sessionId: "session-b", panelId: "panel-b", createdAt: 2 });
   host({ type: "terminal.createPanel", projectId: "project-b", sessionId: "session-x", panelId: "panel-x", createdAt: 3 });
   const captured = [];
+  const reports = [];
   let now = 1_000_000;
   let tables = 0;
   const capture = new WorktreeCapture({
@@ -194,6 +195,7 @@ function captureFixture({ automatic = true, processTable = async () => [] } = {}
       return processTable();
     },
     onCaptured: (event) => captured.push(event),
+    onObservation: (report) => reports.push(report),
     now: () => now,
   });
   const linkedFolder = (createdByPanelId) => {
@@ -201,7 +203,7 @@ function captureFixture({ automatic = true, processTable = async () => [] } = {}
     return applied.event.changedIds.find((id) => workspace.state.folders[id]?.kind === "linked");
   };
   const appeared = { projectId: "project-a", worktree: { repositoryId: "repo", path: "/repo/.worktrees/feature" } };
-  return { workspace, capture, captured, appeared, linkedFolder, tables: () => tables, advance: (ms) => { now += ms; }, general: () => workspace.state.projects["project-a"].folderIds[0] };
+  return { workspace, capture, captured, reports, appeared, linkedFolder, tables: () => tables, advance: (ms) => { now += ms; }, general: () => workspace.state.projects["project-a"].folderIds[0] };
 }
 
 test("Git's own report names the creator, once, and only for a terminal of the project", async () => {
@@ -278,4 +280,43 @@ test("with the setting off the folder offers the move and nothing moves", () => 
   // A panel of another project is never offered or moved.
   capture.capture({ ...appeared, folderId, panelId: "panel-x" });
   assert.deepEqual(workspace.state.folders[folderId].captureOffer, { panelId: "panel-a" });
+});
+
+test("each decision is reported with what was weighed, and never a path or directory name", async () => {
+  const { capture, reports, appeared, advance, linkedFolder } = captureFixture();
+  capture.noteWorktreeAdd({ sessionId: "session-a", directoryName: "feature" });
+  advance(5_000);
+  assert.equal(await capture.creatorOf(appeared), "panel-a");
+  assert.deepEqual(reports.pop(), { kind: "creator.resolved", projectId: "project-a", source: "trace2", remembered: 1, expired: 0, ofProject: 1, named: 1, unnamed: 0, candidateSessions: 1, newestNamedAgeMs: 5_000, shells: null, panel: true });
+
+  // A command that expired before the worktree was noticed says so.
+  capture.noteWorktreeAdd({ sessionId: "session-a", directoryName: "feature" });
+  advance(10 * 60_000);
+  assert.equal(await capture.creatorOf(appeared), undefined);
+  assert.deepEqual(reports.pop(), { kind: "creator.resolved", projectId: "project-a", source: "none", remembered: 1, expired: 1, ofProject: 0, named: 0, unnamed: 0, candidateSessions: 0, newestNamedAgeMs: 600_000, shells: 2, panel: false });
+
+  const folderId = linkedFolder("panel-a");
+  capture.capture({ ...appeared, folderId, panelId: "panel-a" });
+  capture.capture({ ...appeared, folderId, panelId: "panel-a" });
+  assert.deepEqual(reports.splice(0).map((report) => report.outcome), ["moved", "already-there"]);
+  assert.ok(!JSON.stringify(reports).includes("feature"));
+});
+
+test("Git's report is observed whether or not its token is one this server issued", async (t) => {
+  const reports = [];
+  const path = socketPath();
+  const stream = new GitCommandStream({ socketPath: path, onWorktreeAdd: () => {}, createToken: () => "token-a", onObservation: (report) => reports.push(report) });
+  assert.equal(await stream.listen(), true);
+  t.after(() => stream.close());
+  stream.environmentFor("session-a");
+  const socket = connect(path);
+  await new Promise((resolve) => socket.once("connect", resolve));
+  socket.write(`${JSON.stringify({ event: "start", sid: "token-a/1", argv: ["git", "worktree", "add", "../feature"] })}\n`);
+  socket.write(`${JSON.stringify({ event: "start", sid: "forged/1", argv: ["git", "worktree", "add"] })}\n`);
+  socket.end();
+  for (let tries = 0; tries < 50 && reports.length < 2; tries += 1) await settle(10);
+  assert.deepEqual(reports, [
+    { kind: "command.reported", attributed: true, pathRead: true },
+    { kind: "command.reported", attributed: false, pathRead: false },
+  ]);
 });

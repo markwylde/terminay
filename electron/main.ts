@@ -197,6 +197,7 @@ import {
 	bindWebContentsDiagnostics,
 } from './diagnostics/electronEvents';
 import { gitObservationDiagnosticEvent } from './diagnostics/gitObservation';
+import { worktreeCaptureDiagnosticEvent } from './diagnostics/worktreeCapture';
 import { createSessionHolderDiagnostics } from './diagnostics/sessionHolderObservation';
 import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
 import { DesktopPerformanceLogging } from './diagnostics/performance';
@@ -2231,6 +2232,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		},
 		onGitObservation: (report) => {
 			void desktopDiagnostics.record(gitObservationDiagnosticEvent(report), {
+				channel: 'lifecycle',
+			});
+		},
+		onWorktreeCaptureObservation: (report) => {
+			void desktopDiagnostics.record(worktreeCaptureDiagnosticEvent(report), {
 				channel: 'lifecycle',
 			});
 		},
