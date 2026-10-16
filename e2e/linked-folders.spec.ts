@@ -868,6 +868,73 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
+test('a folder being pulled says Pulling… on its card until the pull settles', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-pulling-card', [
+		'alpha',
+		'beta',
+	]);
+	// A bare origin the worktree tracks, so the pull has somewhere to go.
+	const origin = join(repo.root, '..', 'origin.git');
+	await git(repo.root, 'init', '--bare', origin);
+	await git(repo.root, 'remote', 'add', 'origin', origin);
+	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'alpha');
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__pulling'),
+	).toHaveCount(0);
+
+	// A local pull settles faster than a look at the card can be timed, so
+	// every card that says it is pulling is written down as it does.
+	await mainWindow.evaluate(() => {
+		const seen: string[] = [];
+		(window as unknown as { __pullingCards: string[] }).__pullingCards = seen;
+		const record = () => {
+			for (const line of document.querySelectorAll('.folders-tree__pulling')) {
+				const row = line.closest('.folders-tree__row--folder');
+				const name = row?.querySelector('.folders-tree__name')?.textContent;
+				const spinner =
+					line.querySelector('.folders-tree__pulling-spinner') !== null;
+				const card = line.closest('.folders-tree__folder');
+				const opacity = card === null ? '' : getComputedStyle(card).opacity;
+				seen.push(
+					`${name}|${line.textContent}|${spinner}|${row?.getAttribute('aria-busy')}|${opacity}`,
+				);
+			}
+		};
+		new MutationObserver(record).observe(document.body, {
+			childList: true,
+			subtree: true,
+		});
+	});
+
+	await openFolderMenu(mainWindow, 'alpha');
+	await contextMenuItem(mainWindow, 'Pull from origin').click();
+	await expect
+		.poll(() =>
+			mainWindow.evaluate(
+				() =>
+					(window as unknown as { __pullingCards: string[] }).__pullingCards
+						.length,
+			),
+		)
+		.toBeGreaterThan(0);
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__pulling'),
+	).toHaveCount(0, { timeout: 10_000 });
+
+	const seen = await mainWindow.evaluate(
+		() => (window as unknown as { __pullingCards: string[] }).__pullingCards,
+	);
+	// Only the folder that was pulled said so, spinning, busy, and undimmed.
+	expect(new Set(seen)).toEqual(new Set(['alpha|Pulling…|true|true|1']));
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
 test('a terminal that runs git worktree add is moved into the new folder with nothing announced, stays in General once dragged back, and is offered the move when the setting is off', async ({
 	appHarness,
 	createWorkspace,

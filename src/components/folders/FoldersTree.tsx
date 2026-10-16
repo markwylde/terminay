@@ -10,6 +10,7 @@ import {
 	File,
 	Folder,
 	GitBranch,
+	LoaderCircle,
 	MinusCircle,
 	Plus,
 } from 'lucide-react';
@@ -651,9 +652,13 @@ function FolderHeader({
 	const unmerged =
 		folder.unmerged === undefined ? undefined : unmergedMark(folder.unmerged);
 	const { isDeleting } = folder;
-	// A worktree on its way out says so in place of what was measured of it.
+	// A removal outranks a pull; the card says only that it is going.
+	const isPulling = folder.isPulling && !isDeleting;
+	// A worktree on its way out, or being pulled, says so in place of what was
+	// measured of it.
 	const hasFacts =
 		!isDeleting &&
+		!isPulling &&
 		(changeChip !== undefined ||
 			pullRequest !== undefined ||
 			noPullRequest ||
@@ -701,7 +706,7 @@ function FolderHeader({
 			aria-expanded={!collapsed}
 			data-folder-header="true"
 			{...(collapsed ? { 'data-folder-collapsed': 'true' } : {})}
-			{...(isDeleting ? { 'aria-busy': true } : {})}
+			{...(isDeleting || isPulling ? { 'aria-busy': true } : {})}
 			tabIndex={0}
 			{...(change === undefined ? {} : { 'data-change': change.kind })}
 			{...(details === undefined
@@ -838,6 +843,16 @@ function FolderHeader({
 			{isDeleting ? (
 				<span className="folders-tree__deleting" role="status">
 					Deleting…
+				</span>
+			) : null}
+			{isPulling ? (
+				<span className="folders-tree__pulling" role="status">
+					<LoaderCircle
+						className="folders-tree__pulling-spinner"
+						size={11}
+						aria-hidden="true"
+					/>
+					<span>Pulling…</span>
 				</span>
 			) : null}
 			{hasFacts && !collapsed ? (

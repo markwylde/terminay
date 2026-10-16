@@ -196,6 +196,8 @@ export type ProjectFolderTreeInput = {
 	worktreeStatus: WorktreePanelStatus | null | undefined;
 	/** The worktrees this device is removing. */
 	deletingWorktreePaths?: ReadonlySet<string>;
+	/** The worktrees this device is pulling. */
+	pullingWorktreePaths?: ReadonlySet<string>;
 };
 
 /** A project's Folders tree from the sources above. Empty while no projection
@@ -220,5 +222,8 @@ export function buildProjectFolderTree(
 		...(input.deletingWorktreePaths === undefined
 			? {}
 			: { deletingWorktreePaths: input.deletingWorktreePaths }),
+		...(input.pullingWorktreePaths === undefined
+			? {}
+			: { pullingWorktreePaths: input.pullingWorktreePaths }),
 	});
 }
