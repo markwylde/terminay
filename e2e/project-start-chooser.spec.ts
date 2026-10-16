@@ -135,6 +135,20 @@ test('a project created beside a rooted one waits for its start, and Home starts
 	).toHaveCount(0);
 });
 
+test('closing the tab in front while a project awaits its start closes the project', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+	const projectId = await createAwaitingProject(mainWindow);
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+
+	await appHarness.sendAppCommand('close-active');
+
+	await expect(startChooserFor(mainWindow, projectId)).toHaveCount(0);
+	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+});
+
 test('a folder opened through the browser becomes a recent folder that a later project opens and can forget', async ({
 	createWorkspace,
 	mainWindow,
