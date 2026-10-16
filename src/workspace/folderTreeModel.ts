@@ -173,6 +173,8 @@ export type FolderTreeFolderRow = {
 	isDirty: boolean;
 	/** True while this device is removing the folder's worktree. */
 	isDeleting: boolean;
+	/** True while this device is pulling the folder's worktree from origin. */
+	isPulling: boolean;
 	/** Present when the checkout's branch holds commits the default branch
 	 * lacks, pushed or not. */
 	unmerged?: FolderTreeUnmerged;
@@ -198,6 +200,8 @@ export type FolderTreeInput = {
 	worktrees?: readonly FolderTreeWorktree[];
 	/** The worktrees this device is removing and has not heard the end of. */
 	deletingWorktreePaths?: ReadonlySet<string>;
+	/** The worktrees this device is pulling and has not heard the end of. */
+	pullingWorktreePaths?: ReadonlySet<string>;
 };
 
 const DEFAULT_TERMINAL_TITLE = 'Terminal';
@@ -336,6 +340,10 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 				folder.kind === 'linked' &&
 				folder.worktree !== undefined &&
 				input.deletingWorktreePaths?.has(folder.worktree.path) === true,
+			// General pulls the root checkout; a plain folder has none to pull.
+			isPulling:
+				worktree !== undefined &&
+				input.pullingWorktreePaths?.has(worktree.path) === true,
 			...(worktree?.unmerged === undefined
 				? {}
 				: { unmerged: worktree.unmerged }),

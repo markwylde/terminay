@@ -5107,9 +5107,11 @@ const ProjectWorkspace = memo(forwardRef<
 							inventory: projectInventory,
 							worktreeStatus: worktreePanelStatus,
 							deletingWorktreePaths,
+							pullingWorktreePaths,
 						}),
 			[
 				deletingWorktreePaths,
+				pullingWorktreePaths,
 				folder.id,
 				isActive,
 				project.id,

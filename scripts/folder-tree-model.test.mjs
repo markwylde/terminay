@@ -358,6 +358,26 @@ test('a linked folder is deleting while its worktree is being removed, and no ot
 	assert.equal(tree.servers.isDeleting, false);
 });
 
+test('a folder is pulling while its worktree is pulled, General included, and a plain folder never is', () => {
+	const none = byId(buildFolderTree(workspace()));
+	assert.equal(none.releases.isPulling, false);
+	assert.equal(none.general.isPulling, false);
+	const tree = byId(
+		buildFolderTree(
+			workspace({
+				input: {
+					pullingWorktreePaths: new Set(['/repo/.worktrees/release-notes', '/repo']),
+				},
+			}),
+		),
+	);
+	assert.equal(tree.releases.isPulling, true);
+	// General stands for the root checkout.
+	assert.equal(tree.general.isPulling, true);
+	assert.equal(tree.window.isPulling, false);
+	assert.equal(tree.servers.isPulling, false);
+});
+
 test('a folder sums its terminals up as the most urgent state among them, and as nothing when all are idle', () => {
 	const row = (status) => ({ kind: 'terminal', panelId: status, sessionId: status, title: status, status, isActive: false });
 	const file = { kind: 'file', panelId: 'f', title: 'notes.txt', isActive: false };
