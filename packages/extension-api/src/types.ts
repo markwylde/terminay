@@ -1,4 +1,8 @@
 import type {
+	AgentChatProviderContribution,
+	AgentChatProviderRegistry,
+} from './chat.js';
+import type {
 	WorktreeInsightSourceContribution,
 	WorktreeInsightSourceRegistry,
 } from './worktree.js';
@@ -19,7 +23,8 @@ export type ExtensionPermission =
 	| 'secrets:resolve'
 	| 'agent-observation'
 	| 'mcp-registration'
-	| 'worktree-observation';
+	| 'worktree-observation'
+	| 'agent-chat';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -102,6 +107,7 @@ export interface TerminayExtensionManifest {
 		mcpInstallTargets?: McpInstallTargetContribution[];
 		languageServers?: LanguageServerContribution[];
 		worktreeInsights?: WorktreeInsightSourceContribution[];
+		agentChatProviders?: AgentChatProviderContribution[];
 	};
 }
 
@@ -232,8 +238,12 @@ export interface ExtensionContext {
 	extensionId: string;
 	apiVersion: string;
 	paths: { configuration: string; data: string; cache: string };
-	/** Session sources are available only to manifests granted agent-observation. */
-	agents: AgentSessionSourceRegistry;
+	/**
+	 * Session sources are available only to manifests granted
+	 * agent-observation, and chat providers only to manifests granted
+	 * agent-chat.
+	 */
+	agents: AgentSessionSourceRegistry & AgentChatProviderRegistry;
 	/** MCP install targets are available only to manifests granted mcp-registration. */
 	mcp: McpInstallTargetRegistry;
 	/** Worktree insight sources are available only to manifests granted worktree-observation. */

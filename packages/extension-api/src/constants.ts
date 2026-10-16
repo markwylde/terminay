@@ -6,9 +6,9 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * observation broker, the lifecycle publisher, and the driver toolkit with
  * machine-wide agent session sources, and added MCP install targets, so every
  * extension declaring `^2.x` is incompatible with this host. 3.1 added
- * worktree insight sources.
+ * worktree insight sources. 3.2 added chat providers.
  */
-export const EXTENSION_API_VERSION = '3.1.0' as const;
+export const EXTENSION_API_VERSION = '3.2.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -68,6 +68,15 @@ export const EXTENSION_LIMITS = Object.freeze({
 	worktreeCheckItems: 100,
 	worktreeCheckCount: 10_000,
 	worktreeProviderNameLength: 64,
+	/** Chat providers and the events their sessions may report. */
+	chatProviders: 8,
+	chatSessionIdLength: 128,
+	chatInstructionLength: 8_192,
+	chatTextDeltaLength: 64 * 1024,
+	chatPromptLength: 64 * 1024,
+	chatToolCallIdLength: 256,
+	chatToolNameLength: 256,
+	chatDetailLength: 1_024,
 } as const);
 
 /** A language id such as `typescriptreact`; never a path or a selector. */

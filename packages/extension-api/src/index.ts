@@ -1,4 +1,5 @@
 export * from './agent.js';
+export * from './chat.js';
 export * from './constants.js';
 export * from './fixtures.js';
 export * from './protocol.js';

@@ -1,5 +1,15 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import {
+	type AgentChatAvailability,
+	type AgentChatEvent,
+	type AgentChatProviderRuntime,
+	type AgentChatSession,
+	type AgentChatSessionRequest,
+	validateAgentChatAvailability,
+	validateAgentChatEvent,
+	validateAgentChatSessionRequest,
+} from './chat.js';
 import { EXTENSION_API_VERSION, EXTENSION_LIMITS } from './constants.js';
 import type {
 	AgentSessionPublisher,
@@ -266,8 +276,53 @@ export interface AgentExtensionHarness {
 		targetId: string,
 		server?: McpServerCommand,
 	): Promise<McpInstallTargetActionResult>;
+	/** Chat provider ids the extension registered, in registration order. */
+	registeredChatProviderIds(): readonly string[];
+	chatAvailability(providerId: string): Promise<AgentChatAvailability>;
+	/**
+	 * Opens a provider session as the host does and records every event it
+	 * reports, validated. The session's agent processes end on `close` or on
+	 * release.
+	 */
+	openChatSession(
+		providerId: string,
+		request?: Partial<AgentChatSessionRequest>,
+	): Promise<ChatSessionHarness>;
 	release(reason: ExtensionReleaseReason): Promise<void>;
 	dispose(): Promise<void>;
+}
+
+export interface ChatSessionHarness {
+	readonly session: AgentChatSession;
+	/** Valid events in the order they were reported. */
+	events(): readonly AgentChatEvent[];
+	/** Reasons events were refused; a conformant provider has none. */
+	violations(): readonly string[];
+	/** The concatenated reply text reported so far. */
+	text(): string;
+	/** Runs one turn with a fresh signal and resolves when it ends. */
+	prompt(text: string): Promise<void>;
+}
+
+/** A plausible host-built chat session request for provider tests. */
+export const fixtureChatSessionRequest: AgentChatSessionRequest = Object.freeze(
+	{
+		sessionId: 'chat-session-1',
+		workingDirectory: '/fixture/chat/session-1',
+		instruction: 'You are a helpful assistant.',
+		mcpServer: Object.freeze({
+			name: 'terminay_chat',
+			...fixtureMcpServerCommandValue(),
+		}),
+	},
+);
+
+function fixtureMcpServerCommandValue(): McpServerCommand {
+	return {
+		command: '/Applications/Terminay.app/Contents/MacOS/Terminay',
+		args: ['/Applications/Terminay.app/Contents/Resources/serverMcpEntry.js'],
+		env: { ELECTRON_RUN_AS_NODE: '1' },
+	};
 }
 
 /** A plausible host-supplied MCP server command for target tests. */
@@ -305,8 +360,15 @@ export async function createAgentExtensionHarness(
 	const targetDeclarations = new Set(
 		(manifest?.contributes.mcpInstallTargets ?? []).map((target) => target.id),
 	);
+	const chatDeclarations = new Set(
+		(manifest?.contributes.agentChatProviders ?? []).map(
+			(provider) => provider.id,
+		),
+	);
 	const sources = new Map<string, AgentSessionSourceRuntime>();
 	const targets = new Map<string, McpInstallTargetRuntime>();
+	const chatProviders = new Map<string, AgentChatProviderRuntime>();
+	const openChats = new Set<AgentChatSession>();
 	const running = new Map<string, RunningSource>();
 	const subscriptions: Disposable[] = [];
 	const publications: SessionPublication[] = [];
@@ -347,6 +409,20 @@ export async function createAgentExtensionHarness(
 						running.get(sourceId)?.controller.abort();
 						running.delete(sourceId);
 						sources.delete(sourceId);
+					},
+				};
+			},
+			registerChatProvider(providerId, runtime) {
+				if (released) throw new Error('extension is deactivated');
+				if (manifest && !chatDeclarations.has(providerId))
+					throw new Error('chat provider registration is undeclared');
+				if (chatProviders.has(providerId))
+					throw new Error(`Duplicate chat provider: ${providerId}`);
+				chatProviders.set(providerId, runtime);
+				return {
+					providerId,
+					dispose(): void {
+						chatProviders.delete(providerId);
 					},
 				};
 			},
@@ -486,10 +562,13 @@ export async function createAgentExtensionHarness(
 		released = true;
 		for (const state of running.values()) state.controller.abort();
 		running.clear();
+		for (const session of [...openChats]) await session.close();
+		openChats.clear();
 		const owned = subscriptions.splice(0, subscriptions.length);
 		for (const subscription of owned.reverse()) await subscription.dispose();
 		sources.clear();
 		targets.clear();
+		chatProviders.clear();
 		await extension.deactivate?.();
 	}
 
@@ -615,6 +694,71 @@ export async function createAgentExtensionHarness(
 				validateMcpInstallTargetActionResult,
 			);
 		},
+		registeredChatProviderIds() {
+			return [...chatProviders.keys()];
+		},
+		async chatAvailability(providerId) {
+			const runtime = chatProviders.get(providerId);
+			if (!runtime) throw new Error(`Unknown chat provider: ${providerId}`);
+			const result = validateAgentChatAvailability(
+				await runtime.availability(new AbortController().signal),
+			);
+			if (!result.ok)
+				throw new Error(`availability breached the contract: ${result.reason}`);
+			return result.value;
+		},
+		async openChatSession(providerId, partial = {}) {
+			const runtime = chatProviders.get(providerId);
+			if (!runtime) throw new Error(`Unknown chat provider: ${providerId}`);
+			const checked = validateAgentChatSessionRequest({
+				...fixtureChatSessionRequest,
+				...partial,
+			});
+			if (!checked.ok)
+				throw new Error(`invalid session request: ${checked.reason}`);
+			const events: AgentChatEvent[] = [];
+			const refused: string[] = [];
+			let exited = false;
+			const record = (event: unknown): void => {
+				if (exited) return;
+				const result = validateAgentChatEvent(event);
+				if (!result.ok) {
+					refused.push(result.reason);
+					return;
+				}
+				events.push(result.value);
+				if (result.value.type === 'exit') exited = true;
+			};
+			const session = await runtime.openSession(
+				checked.value,
+				{
+					text: (delta) => record({ type: 'text', delta }),
+					tool: (tool) => record({ type: 'tool', tool }),
+					failure: (failure) => record({ type: 'failure', failure }),
+					exit: (exit) => record({ type: 'exit', exit }),
+				},
+				new AbortController().signal,
+			);
+			openChats.add(session);
+			const wrapped: AgentChatSession = {
+				prompt: (text, signal) => session.prompt(text, signal),
+				cancel: () => session.cancel(),
+				async close() {
+					openChats.delete(session);
+					await session.close();
+				},
+			};
+			return {
+				session: wrapped,
+				events: () => events,
+				violations: () => refused,
+				text: () =>
+					events
+						.map((event) => (event.type === 'text' ? event.delta : ''))
+						.join(''),
+				prompt: (text) => session.prompt(text, new AbortController().signal),
+			};
+		},
 		release,
 		async dispose() {
 			if (!released) await release('shutdown');
@@ -663,6 +807,11 @@ export async function createLanguageServerExtensionHarness(
 		},
 		agents: {
 			registerSessionSource() {
+				throw new Error(
+					'this harness serves language servers; use createAgentExtensionHarness',
+				);
+			},
+			registerChatProvider() {
 				throw new Error(
 					'this harness serves language servers; use createAgentExtensionHarness',
 				);
