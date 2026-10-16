@@ -8,8 +8,8 @@
 
 - [x] 2.1 In `packages/extension-api`, add chat provider types (`AgentChatProviderRuntime`, session, events, availability, failure reasons), the `agentChatProviders` manifest contribution and `agent-chat` permission validation, `context.agents.registerChatProvider`, and bump `EXTENSION_API_VERSION` to `3.2.0` with a changelog note. Verified by extension-api unit tests for manifest validation (missing permission, valid declaration, chat-only package) and registration refusal (undeclared, duplicate, after deactivation).
 - [x] 2.2 Add a chat provider test harness to `packages/extension-api` testing exports. Verified by its own unit test driving a fake provider through open, prompt, cancel and close.
-- [ ] 2.3 Add `agent.chat.*` host and child frames in `packages/server-core/src/extensions/protocol.ts`, child-side dispatch in `child.ts`, and host-side `invokeChat*` with per-extension session tracking in `host.ts`. Event validation and bounding drops events for unknown or closed sessions. Child exit, quarantine, disable and update end the open sessions. Verified by host and child unit tests with a fixture extension, including a crash mid-turn.
-- [ ] 2.4 Add a chat provider registry to the extension manager and catalog (`manager.ts`, `descriptor.ts`, `catalog.ts`), listing providers with availability and `disabled` when the extension is off or quarantined. Verified by manager unit tests.
+- [x] 2.3 Add `agent.chat.*` host and child frames in `packages/server-core/src/extensions/protocol.ts`, child-side dispatch in `child.ts`, and host-side `invokeChat*` with per-extension session tracking in `host.ts`. Event validation and bounding drops events for unknown or closed sessions. Child exit, quarantine, disable and update end the open sessions. Verified by host and child unit tests with a fixture extension, including a crash mid-turn.
+- [x] 2.4 Add a chat provider registry to the extension manager and catalog (`manager.ts`, `descriptor.ts`, `catalog.ts`), listing providers with availability and `disabled` when the extension is off or quarantined. Verified by manager unit tests.
 
 ## 3. Chat MCP principal and approvals
 

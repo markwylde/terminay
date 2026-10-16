@@ -1,11 +1,11 @@
 import { pathToFileURL } from 'node:url';
 import { EXTENSION_API_VERSION } from '@terminay/extension-api';
+import { AgentChatChild } from './agentChatChild.js';
 import { parseExtensionLanguageRequest } from './languageProtocol.js';
 import {
-	LanguageSessionRuntime,
 	type LanguageServerProviderLike,
+	LanguageSessionRuntime,
 } from './languageSessionRuntime.js';
-import { WorktreeInsightChild } from './worktreeInsightChild.js';
 import {
 	type ChildFrame,
 	frameByteLength,
@@ -13,6 +13,7 @@ import {
 	isHostFrame,
 	jsonIpcValue,
 } from './protocol.js';
+import { WorktreeInsightChild } from './worktreeInsightChild.js';
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 /** How long a dying child waits for its fatal report to reach the host. */
@@ -62,6 +63,20 @@ const worktreeInsights = new WorktreeInsightChild({
 		brokerRequest(operation, payload, signal),
 	result: (id) => {
 		send({ protocolVersion: 1, kind: 'result', id });
+	},
+	failure: (id, error) => failure(id, error),
+});
+
+const agentChats = new AgentChatChild({
+	send: (frame) => send(frame),
+	nextId: (prefix) => `${prefix}:${++sequence}`,
+	result: (id, payload) => {
+		send({
+			protocolVersion: 1,
+			kind: 'result',
+			id,
+			...(payload === undefined ? {} : { payload }),
+		});
 	},
 	failure: (id, error) => failure(id, error),
 });
@@ -183,6 +198,7 @@ async function receive(message: unknown): Promise<void> {
 	if (message.kind === 'deactivate') {
 		for (const controller of invocations.values()) controller.abort();
 		await languageRuntime?.stopAll().catch(() => undefined);
+		await agentChats.closeAll().catch(() => undefined);
 		stopAllSources();
 		try {
 			try {
@@ -203,6 +219,9 @@ async function receive(message: unknown): Promise<void> {
 	if (message.kind === 'mcp.target.invoke') await invokeMcpTarget(message);
 	if (worktreeInsights.handles(message.kind))
 		await worktreeInsights.receive(message);
+	// A prompt runs for as long as the agent replies, so chat frames are not
+	// awaited here: a turn must never hold up a cancel or another session.
+	if (agentChats.handles(message.kind)) void agentChats.receive(message);
 }
 
 async function activateExtension(frame: HostFrame): Promise<void> {
@@ -222,6 +241,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		const agentSessionSources: string[] = [];
 		const mcpInstallTargets: string[] = [];
 		const worktreeInsightSources: string[] = [];
+		const agentChatProviders: string[] = [];
 		stopAllSources();
 		sessionSources.clear();
 		mcpTargets.clear();
@@ -263,6 +283,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		const declaredSources = declaredIds(payload.agentSessionSources);
 		const declaredTargets = declaredIds(payload.mcpInstallTargets);
 		worktreeInsights.reset([...declaredIds(payload.worktreeInsights)]);
+		await agentChats.reset([...declaredIds(payload.agentChatProviders)]);
 		const result = await activate(
 			Object.freeze({
 				extensionId: payload.extensionId,
@@ -314,6 +335,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 							},
 						});
 					},
+					...agentChats.registry(agentChatProviders),
 				}),
 				mcp: Object.freeze({
 					registerInstallTarget(targetId: string, runtime: unknown) {
@@ -432,6 +454,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				mcpInstallTargets,
 				languageServers,
 				worktreeInsightSources,
+				agentChatProviders,
 			},
 		});
 	} catch (error) {
@@ -858,7 +881,9 @@ function send(frame: ChildFrame): boolean {
 	if (safe === undefined) return refuse('is not JSON-serializable');
 	const bytes = frameByteLength(safe);
 	if (bytes > MAX_MESSAGE_BYTES)
-		return refuse(`is ${bytes} bytes, over the ${MAX_MESSAGE_BYTES} byte limit`);
+		return refuse(
+			`is ${bytes} bytes, over the ${MAX_MESSAGE_BYTES} byte limit`,
+		);
 	if (typeof process.send !== 'function' || !process.connected)
 		return refuse('has no connected host channel');
 	try {

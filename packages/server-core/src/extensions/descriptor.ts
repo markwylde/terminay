@@ -54,6 +54,7 @@ export async function extensionLaunchDescriptor(
 		mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 		languageServers: manifest.contributes.languageServers ?? [],
 		worktreeInsights: manifest.contributes.worktreeInsights ?? [],
+		agentChatProviders: manifest.contributes.agentChatProviders ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});
 	return Object.freeze({ descriptor, manifest });

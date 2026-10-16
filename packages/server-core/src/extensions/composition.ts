@@ -73,7 +73,8 @@ export function createDefaultExtensionManagement(
 	const schedule =
 		options.schedule ??
 		((callback, milliseconds) => setTimeout(callback, milliseconds));
-	const cancelSchedule = options.cancelSchedule ?? ((timer) => clearTimeout(timer));
+	const cancelSchedule =
+		options.cancelSchedule ?? ((timer) => clearTimeout(timer));
 	/** Restarts pending per extension, so a supervisor never queues two. */
 	const restarts = new Map<string, ReturnType<typeof setTimeout>>();
 	let stopped = false;
@@ -158,6 +159,7 @@ export function createDefaultExtensionManagement(
 				mcpInstallTargets: manifest.contributes.mcpInstallTargets ?? [],
 				languageServers: manifest.contributes.languageServers ?? [],
 				worktreeInsights: manifest.contributes.worktreeInsights ?? [],
+				agentChatProviders: manifest.contributes.agentChatProviders ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -192,6 +194,7 @@ export function createDefaultExtensionManagement(
 			mcpInstallTargets: descriptor.mcpInstallTargets,
 			languageServers: descriptor.languageServers,
 			worktreeInsights: descriptor.worktreeInsights,
+			agentChatProviders: descriptor.agentChatProviders,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};
