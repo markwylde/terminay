@@ -14,7 +14,7 @@ A new project gets its root from the renderer, not the server. `createServerProj
 - A server-side folder browser that works in Desktop, browser and phone clients.
 
 **Non-Goals:**
-- Restoring a recent project's name, colour, icon, layout or panels. A recent entry is a folder only.
+- Restoring a recent project's colour, icon, layout or panels. A recent entry is a folder only; the project takes the folder's name.
 - Changing projects created with an explicit root (MCP, CLI, terminal-in-unknown-project, re-home, restore).
 - Changing the standalone server's `--project-root` default. It still seeds explicit-less creation from older clients.
 - Migrating existing projects. They load as started with their current roots.
@@ -68,6 +68,10 @@ The terminal-launch resolver treats `rootOrigin: 'none'` as "no project director
 ### 7. Chooser presentation
 
 When `start === 'awaiting-choice'`, the project's main area renders `ProjectStartChooser` instead of the Dockview, and the sidebar group renders nothing. Focus goes to the first action (Open a folder). Recent rows show the folder name and full path, with a Forget control. Unavailable rows are disabled but stay forgettable. In the compact layout it is a single vertical column.
+
+### 8. Folder name, reuse, and browser behaviour
+
+`project.start(folder)` renames the project to the canonical folder's basename when its name is still server-derived (`Project N` from `nextDefaultProjectName`), in the same transaction, so every client sees one commit. A user-chosen name is kept. Reuse of an open project is decided in the client before sending anything: if another project on the same server has a root equal to the recent entry's path, the client activates it and closes the awaiting project, which has no terminal, so no close warning applies. Comparing against the canonical paths already in the snapshot is enough. A path that differs only through a symlink starts a new project, which is acceptable. The folder browser has a fixed height and its listing scrolls. Path completion reuses `fs.browse-root-folders` on the typed parent, debounced, and filters by prefix on the client, so the server surface doesn't grow (ADR-0063 unchanged).
 
 ## Risks / Trade-offs
 

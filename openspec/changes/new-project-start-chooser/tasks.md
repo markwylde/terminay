@@ -35,3 +35,11 @@
 - [ ] 5.2 E2E: Open a folder through the browser, then create a second project and open the folder from recents, then forget it. Verify: passes under `npm run test:e2e`.
 - [ ] 5.3 E2E: restart Desktop with an awaiting project and assert the chooser returns with no terminal. Verify: passes under `npm run test:e2e`.
 - [ ] 5.4 Run `openspec validate --all`, `npm run lint`, `npm test`, and typecheck. Verify: all clean.
+
+## 6. Chooser refinements
+
+- [ ] 6.1 `project.start(folder)` names the project after the folder's basename when its name is still server-derived, and keeps a user-chosen name. Verify: server-core tests for the default-name and renamed cases.
+- [ ] 6.2 Opening a recent folder that another project on the same server has as its root activates that project and closes the awaiting one, without sending `project.start`. Verify: renderer unit test and an E2E step.
+- [ ] 6.3 Give the root folder browser a fixed height, with the listing scrolling inside it. Verify: E2E asserts the browser's height is unchanged between a sparse folder and a folder with many subdirectories.
+- [ ] 6.4 Autocomplete the browser's path field from `fs.browse-root-folders` on the typed parent, with keyboard (arrows, Tab/Enter, Escape) and pointer acceptance. Verify: unit tests for the completion model and an E2E step typing a partial path.
+
