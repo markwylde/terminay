@@ -189,13 +189,26 @@
 	display: inline-flex;
 	flex: none;
 	align-items: center;
-	gap: 4px;
-	padding: 0 10px;
-	font-size: 12px;
+	justify-content: center;
+	width: 28px;
 	color: rgba(220, 226, 240, 0.6);
+	opacity: 0;
 }
 
-.project-start__recent-forget:disabled {
+/* Forget shows only on its row's hover or keyboard focus, and always where
+   there is no hover. */
+.project-start__recent-row:hover .project-start__recent-forget,
+.project-start__recent-row:focus-within .project-start__recent-forget {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.project-start__recent-forget {
+		opacity: 1;
+	}
+}
+
+.project-start__recent-row:hover .project-start__recent-forget:disabled {
 	cursor: default;
 	opacity: 0.5;
 }
@@ -230,15 +243,6 @@
 .project-start--compact .project-start__recent-forget,
 .project-start--compact .project-start__action {
 	min-height: 44px;
-}
-
-.project-start--compact .project-start__recent-forget-label {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
 }
 
 /* The server folder browser, inside the in-page window frame. */

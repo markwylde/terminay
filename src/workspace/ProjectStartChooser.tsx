@@ -357,9 +357,6 @@ export function ProjectStartChooserView({
 									data-terminay-recent-forget="true"
 								>
 									<X size={14} aria-hidden="true" />
-									<span className="project-start__recent-forget-label">
-										Forget
-									</span>
 								</button>
 							</li>
 						))}
