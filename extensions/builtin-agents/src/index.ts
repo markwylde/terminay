@@ -1,5 +1,11 @@
 import type { TerminayExtension } from '@terminay/extension-api';
 import { defineExtension } from '@terminay/extension-api';
+import type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
+import { createClaudeCodeChatProvider } from './chat/claudeCode.js';
+import type { CodexChatOptions } from './chat/codex.js';
+import { createCodexChatProvider } from './chat/codex.js';
+import type { LocatorOptions } from './chat/locate.js';
+import { createAgentLocator } from './chat/locate.js';
 import type { McpInstallTargetOptions } from './mcp/targets.js';
 import { createMcpInstallTargets } from './mcp/targets.js';
 import type { SessionSourceOptions } from './source.js';
@@ -7,6 +13,22 @@ import { createSessionSource } from './source.js';
 
 export const EXTENSION_ID = 'com.terminay.builtin-agents';
 export const SESSION_SOURCE_ID = `${EXTENSION_ID}/agents`;
+export const CLAUDE_CODE_CHAT_PROVIDER_ID = `${EXTENSION_ID}/claude-code`;
+export const CODEX_CHAT_PROVIDER_ID = `${EXTENSION_ID}/codex`;
+
+export type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
+export {
+	claudeCodeArguments,
+	createClaudeCodeChatProvider,
+} from './chat/claudeCode.js';
+export type { CodexChatOptions } from './chat/codex.js';
+export {
+	CODEX_ARGUMENTS,
+	codexThreadConfig,
+	createCodexChatProvider,
+} from './chat/codex.js';
+export type { AgentLocator, LocatorOptions } from './chat/locate.js';
+export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
 
 export type {
 	McpInstallTargetDefinition,
@@ -22,6 +44,10 @@ export { createSessionSource, HARNESSES } from './source.js';
 export type BuiltInAgentsOptions = {
 	source?: SessionSourceOptions;
 	mcp?: McpInstallTargetOptions;
+	/** How the chat providers find `claude` and `codex`. */
+	locator?: LocatorOptions;
+	claudeCode?: Partial<ClaudeCodeChatOptions>;
+	codex?: Partial<CodexChatOptions>;
 };
 
 /** Builds the extension. The default export uses the real library providers and home directory. */
@@ -34,6 +60,26 @@ export function createBuiltInAgentsExtension(
 				context.agents.registerSessionSource(
 					SESSION_SOURCE_ID,
 					createSessionSource(options.source),
+				),
+			);
+			// A fresh locator per activation: CLIs are looked up once, then cached.
+			const locator = createAgentLocator(options.locator);
+			context.subscriptions.add(
+				context.agents.registerChatProvider(
+					CLAUDE_CODE_CHAT_PROVIDER_ID,
+					createClaudeCodeChatProvider({
+						locate: () => locator.locate('claude'),
+						...options.claudeCode,
+					}),
+				),
+			);
+			context.subscriptions.add(
+				context.agents.registerChatProvider(
+					CODEX_CHAT_PROVIDER_ID,
+					createCodexChatProvider({
+						locate: () => locator.locate('codex'),
+						...options.codex,
+					}),
 				),
 			);
 			for (const target of createMcpInstallTargets(options.mcp)) {

@@ -138,7 +138,7 @@ With reach `none`, the MCP config is empty and `--allowedTools` is omitted.
   - `approvalPolicy: "untrusted"`;
   - `ephemeral: true`;
   - `developerInstructions` = instruction;
-  - `config` setting `mcp_servers.<each user server>.enabled = false` and `mcp_servers.terminay_chat.{command,args,env}`.
+  - `config` setting `mcp_servers.<each user server>.enabled = false` and `mcp_servers.terminay_chat.{command,args,env}`, with `default_tools_approval_mode = "approve"` for that server only. Under `untrusted`, Codex otherwise asks through an elicitation for every tool without a read-only hint, which would block every Terminay write. Terminay's own gate decides instead, as with Claude's `--allowedTools`.
 - **Turns.** A turn is `turn/start`, and Stop is `turn/interrupt`.
 - **Event mapping.**
   - `item/agentMessage/delta` → `text`;
@@ -165,7 +165,7 @@ redistribute. VS Code's own Claude and Codex extensions use these same first-par
 1. `TERMINAY_CLAUDE_CODE_COMMAND` / `TERMINAY_CODEX_COMMAND`, which must be absolute;
 2. the child's `PATH`;
 3. the login shell's PATH (`$SHELL -lc 'printf %s "$PATH"'`), read once per activation with a 3 s timeout;
-4. known per-user locations (`~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.volta/bin`).
+4. known per-user locations (`~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.volta/bin`, and `~/.nvm/versions/node/*/bin`, newest first). `$SHELL -lc` does not read `.zshrc`, where nvm is usually set up.
 
 Results are cached per activation. There is no polling (ADR-0028). The env names are added to the
 manifest's declared environment variables so the host passes them.
