@@ -78,7 +78,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0049](./0049-a-folder-groups-panels-and-is-not-an-identity-boundary.md) | A folder groups a project's panels and is not an identity boundary | accepted | 2026-10-08 |
 | [0050](./0050-a-project-reaches-its-repositorys-worktrees-through-server-resolved-folder-roots.md) | A project reaches its repository's worktrees through folder roots the server resolves | accepted | 2026-10-08 |
 | [0051](./0051-terminay-observes-agents-and-does-not-instrument-them.md) | Terminay observes agents and does not instrument them, except where the owner has approved it | accepted | 2026-10-08 |
-| [0052](./0052-terminals-report-git-commands-to-the-server-through-git-trace2.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing | accepted | 2026-10-08 |
+| [0052](./0052-terminals-report-git-commands-to-the-server-through-git-trace2.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing | accepted (superseded by 0069) | 2026-10-08 |
 | [0053](./0053-in-page-windows-share-one-modal-frame.md) | Every in-page window is presented through one modal frame, with geometry kept on the device | accepted | 2026-10-08 |
 | [0054](./0054-a-local-socket-that-does-not-fit-the-data-directory-lives-in-an-owner-only-runtime-directory.md) | A local socket that does not fit in the data directory lives in an owner-only runtime directory named for it | accepted | 2026-10-09 |
 | [0055](./0055-exclusive-ownership-by-a-process-is-a-lock-the-kernel-holds.md) | Exclusive ownership by a process is a lock the kernel holds, never a file's existence or a heartbeat | accepted | 2026-10-09 |
@@ -94,3 +94,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0066](./0066-choosing-a-project-root-browses-server-directory-names-under-root-change-authority.md) | Choosing a project root browses the server's directory names, under the authority to change a root | accepted | 2026-10-16 |
 | [0067](./0067-chat-providers-may-run-agents-as-an-owner-approved-exception.md) | Chat providers may run the user's agents, as an owner-approved exception to observing agents | accepted | 2026-10-16 |
 | [0068](./0068-mcp-authority-belongs-to-a-terminal-or-a-chat.md) | MCP authority is capability scope combined with a user permission policy, and the caller is a terminal or a chat | accepted, supersedes 0031 | 2026-10-16 |
+| [0069](./0069-git-command-reports-reach-the-server-across-restarts.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing, across server restarts | accepted, supersedes 0052 | 2026-10-17 |

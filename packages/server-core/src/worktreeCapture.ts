@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { chmodSync, rmSync } from 'node:fs';
+import { createHmac, randomBytes } from 'node:crypto';
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import type {
 	FolderReconcilerOptions,
 	WorktreeAppeared,
@@ -22,7 +22,7 @@ import type {
  * 1. Git reports its own commands. Terminay's terminals carry Git's Trace2
  *    variables, so every Git process started under one sends its argument list
  *    to a socket this server owns, tagged with a token for the terminal
- *    session (ADR-0052).
+ *    session (ADR-0069).
  * 2. Failing that, the process table is read once when the worktree appears,
  *    and a `git worktree add` still running there is walked up to a terminal's
  *    shell. This is a race Git can win on a small repository.
@@ -93,6 +93,18 @@ function directoryName(path: string | undefined): string {
  */
 export type WorktreeCaptureReport =
 	| {
+			/** Whether the Git command socket is listening, and where it is. */
+			readonly kind: 'stream.listening';
+			readonly listening: boolean;
+			/** A fixed address survives a restart; a per-run one does not. */
+			readonly placement: GitCommandSocketPlacement;
+	  }
+	| {
+			/** Sessions kept across a restart whose tokens were registered again. */
+			readonly kind: 'sessions.adopted';
+			readonly count: number;
+	  }
+	| {
 			/** Git reported a `worktree add`. */
 			readonly kind: 'command.reported';
 			/** Whether its token belongs to a live terminal of this server. */
@@ -145,6 +157,48 @@ export type WorktreeCaptureReport =
 				| 'already-there';
 	  };
 
+/** Where the Git command socket lives (ADR-0069). */
+export type GitCommandSocketPlacement =
+	| 'data-directory'
+	| 'runtime-directory'
+	| 'per-run';
+
+/** The key file's name in the data directory. */
+export const GIT_TRACE_KEY_FILENAME = 'git-trace.key';
+const GIT_TRACE_KEY_BYTES = 32;
+
+/**
+ * The key a data directory's tokens are derived from (ADR-0069), created once
+ * and readable only by its owner. A missing or malformed file is replaced: the
+ * cost is that terminals kept from before are not recognised until reopened,
+ * never that one is mistaken for another.
+ */
+export function loadGitTraceKey(dataDirectory: string): Buffer {
+	const path = join(dataDirectory, GIT_TRACE_KEY_FILENAME);
+	try {
+		const key = readFileSync(path);
+		if (key.length === GIT_TRACE_KEY_BYTES) return key;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	const key = randomBytes(GIT_TRACE_KEY_BYTES);
+	writeFileSync(path, key, { mode: 0o600 });
+	chmodSync(path, 0o600);
+	return key;
+}
+
+/**
+ * A session's token: the same for the same session under the same key, so a
+ * server that re-adopts a terminal recognises the token its shell was given by
+ * an earlier run. Without the key it cannot be predicted.
+ */
+export function gitTraceTokenFor(
+	key: Uint8Array,
+): (sessionId: string) => string {
+	return (sessionId) =>
+		`terminay-${createHmac('sha256', key).update(sessionId).digest('hex').slice(0, 24)}`;
+}
+
 export interface GitCommandStreamOptions {
 	/** A Unix socket path the server owns. It must be short: socket paths are
 	 * capped near 104 bytes. */
@@ -153,7 +207,9 @@ export interface GitCommandStreamOptions {
 		readonly sessionId: string;
 		readonly directoryName: string;
 	}) => void;
-	readonly createToken: () => string;
+	/** The token for a session. Must give the same token for the same session
+	 * on every run that should recognise it (ADR-0069). */
+	readonly tokenFor: (sessionId: string) => string;
 	readonly onObservation?: (report: WorktreeCaptureReport) => void;
 }
 
@@ -217,18 +273,36 @@ export class GitCommandStream {
 			existing.GIT_TRACE2_PERF !== undefined
 		)
 			return {};
-		let token = this.sessions.get(sessionId);
-		if (token === undefined) {
-			token = this.options.createToken();
-			this.sessions.set(sessionId, token);
-			this.tokens.set(token, sessionId);
-		}
+		const token = this.register(sessionId);
 		return {
 			GIT_TRACE2_EVENT: `af_unix:stream:${this.options.socketPath}`,
 			GIT_TRACE2_EVENT_BRIEF: '1',
 			GIT_TRACE2_EVENT_NESTING: '1',
 			GIT_TRACE2_PARENT_SID: token,
 		};
+	}
+
+	/**
+	 * Recognise sessions kept across a restart. Their shells were given their
+	 * tokens by an earlier run; the same derivation gives the same tokens.
+	 */
+	adopt(sessionIds: Iterable<string>): void {
+		let count = 0;
+		for (const sessionId of sessionIds) {
+			this.register(sessionId);
+			count += 1;
+		}
+		this.options.onObservation?.({ kind: 'sessions.adopted', count });
+	}
+
+	private register(sessionId: string): string {
+		let token = this.sessions.get(sessionId);
+		if (token === undefined) {
+			token = this.options.tokenFor(sessionId);
+			this.sessions.set(sessionId, token);
+			this.tokens.set(token, sessionId);
+		}
+		return token;
 	}
 
 	/** Forget a terminal session that has ended. */
@@ -628,6 +702,13 @@ export interface CaptureTerminalSession {
 
 export interface WorktreeCaptureHostOptions {
 	readonly socketPath: string;
+	/** Where `socketPath` is, for diagnostics. `per-run` when absent. */
+	readonly socketPlacement?: GitCommandSocketPlacement;
+	/** Make the socket's directory fit to use; false leaves Git unreported. */
+	readonly prepareSocket?: () => Promise<boolean>;
+	/** The data directory's key (`loadGitTraceKey`). Absent, tokens last one
+	 * run, which is right for a server with no terminals that outlive it. */
+	readonly tokenKey?: Uint8Array;
 	readonly workspace: () => WorkspaceState;
 	readonly apply: WorktreeCaptureOptions['apply'];
 	readonly moveAutomatically: () => boolean;
@@ -687,7 +768,9 @@ export function createWorktreeCaptureHost(
 	const gitCommands = new GitCommandStream({
 		socketPath: options.socketPath,
 		onWorktreeAdd: (command) => capture.noteWorktreeAdd(command),
-		createToken: () => `terminay-${randomBytes(12).toString('hex')}`,
+		tokenFor: gitTraceTokenFor(
+			options.tokenKey ?? randomBytes(GIT_TRACE_KEY_BYTES),
+		),
 		...(options.onObservation === undefined
 			? {}
 			: { onObservation: options.onObservation }),
@@ -704,7 +787,16 @@ export function createWorktreeCaptureHost(
 			onWorktreeFolder: (folder) =>
 				options.onObservation?.({ kind: 'folder.appeared', ...folder }),
 		},
-		start: () => gitCommands.listen(),
+		start: async () => {
+			const prepared = (await options.prepareSocket?.()) ?? true;
+			const listening = prepared && (await gitCommands.listen());
+			options.onObservation?.({
+				kind: 'stream.listening',
+				listening,
+				placement: options.socketPlacement ?? 'per-run',
+			});
+			return listening;
+		},
 		close: () => gitCommands.close(),
 	};
 }

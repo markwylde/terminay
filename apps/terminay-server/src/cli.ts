@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
 	mkdirSync,
 	readFileSync,
@@ -21,6 +21,7 @@ import {
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
+import { gitCommandSocketHostOptions } from './gitCommandSocket.js';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
@@ -778,13 +779,18 @@ async function createServerComposition(
 	// One linked folder per worktree of each project's repository, driven by
 	// the Git service's own events.
 	// Which terminal created a worktree: Git in each terminal reports its own
-	// commands to this socket (ADR-0052). The path is short on purpose; Unix
-	// socket paths are capped near 104 bytes.
+	// commands to a socket with one address per data directory, so a shell
+	// kept across a restart still reaches the server (ADR-0069).
 	const worktreeCapture = createWorktreeCaptureHost({
-		socketPath: join(
-			tmpdir(),
-			`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
-		),
+		...gitCommandSocketHostOptions({
+			dataDirectory: options.dataRoot,
+			serverId: options.serverId,
+			platform: process.platform,
+			temporaryDirectory: tmpdir(),
+			...(process.env.XDG_RUNTIME_DIR
+				? { runtimeDirectory: process.env.XDG_RUNTIME_DIR }
+				: {}),
+		}),
 		workspace: () => workspace.state,
 		apply: (commandId, command) => {
 			const applied = composition.workspaceOperations?.applyHostCommand(
