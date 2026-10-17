@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ let serial = 0;
  * Git reports a command, the registry watch reveals the worktree, the
  * reconciler makes its folder, and capture moves the terminal or offers to.
  */
-async function fixture(t, { automatic = true } = {}) {
+async function fixture(t, { automatic = true, restart = false } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "tmy-capture-e2e-")));
   const repo = join(root, "repo");
   await run("git", ["init", "-q", "-b", "main", repo]);
@@ -33,16 +34,28 @@ async function fixture(t, { automatic = true } = {}) {
   const git = new GitService();
   await git.bindProject("project-a", repo);
   const captured = [];
-  const host = createWorktreeCaptureHost({
+  const hostOptions = {
     socketPath: join(tmpdir(), `tmy-e2e-${process.pid}-${++serial}.sock`),
+    tokenKey: randomBytes(32),
     workspace: () => workspace.state,
     apply,
     moveAutomatically: () => automatic,
     // No terminal has a shell process here, so only Git's own report can name one.
     sessions: () => [],
     onCaptured: (event) => captured.push(event),
-  });
+  };
+  // A shell started by an earlier run of the server keeps the environment
+  // that run gave it; the earlier run is gone before the shell runs Git.
+  const kept = new Map();
+  if (restart) {
+    const earlier = createWorktreeCaptureHost(hostOptions);
+    assert.equal(await earlier.start(), true);
+    kept.set("session-a", earlier.gitCommands.environmentFor("session-a"));
+    earlier.close();
+  }
+  const host = createWorktreeCaptureHost(hostOptions);
   assert.equal(await host.start(), true);
+  if (restart) host.gitCommands.adopt(kept.keys());
   const reconciler = new FolderReconciler({
     workspace: () => workspace.state,
     apply,
@@ -77,7 +90,7 @@ async function fixture(t, { automatic = true } = {}) {
   /** Run `git worktree add` as a process of the given terminal session would. */
   const addWorktree = (sessionId, name) =>
     run("sh", ["-c", `git -C '${repo}' worktree add -q -b ${name} '${join(root, name)}'`], {
-      env: { ...process.env, ...(sessionId === null ? {} : host.gitCommands.environmentFor(sessionId)) },
+      env: { ...process.env, ...(sessionId === null ? {} : (kept.get(sessionId) ?? host.gitCommands.environmentFor(sessionId))) },
     });
   return { workspace, captured, linked, until, addWorktree, general: () => workspace.state.projects["project-a"].folderIds[0] };
 }
@@ -94,6 +107,14 @@ test("a terminal that adds a worktree is moved into the folder that appears for 
   // The other terminal stayed where it was.
   assert.equal(workspace.state.panels["panel-b"].folderId, general());
   assert.deepEqual(captured, [{ projectId: "project-a", folderId: folder.id, panelId: "panel-a", fromFolderId: general() }]);
+});
+
+test("a terminal kept across a server restart is still moved into the folder of a worktree it adds", async (t) => {
+  const { workspace, linked, until, addWorktree, general } = await fixture(t, { restart: true });
+  await addWorktree("session-a", "feature");
+  await until(() => linked().length === 1 && linked()[0].panelIds.length === 1, "the kept terminal was not captured");
+  assert.deepEqual(linked()[0].panelIds, ["panel-a"]);
+  assert.equal(workspace.state.panels["panel-b"].folderId, general());
 });
 
 test("with the setting off the folder appears with an offer and the terminal stays put", async (t) => {

@@ -124,6 +124,8 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.git.measurement.failed',
 	'local-server.git.measurement.abandoned',
 	'local-server.git.cache.mismatch',
+	'local-server.worktree-capture.stream.listening',
+	'local-server.worktree-capture.sessions.adopted',
 	'local-server.worktree-capture.command.reported',
 	'local-server.worktree-capture.folder.appeared',
 	'local-server.worktree-capture.creator.resolved',

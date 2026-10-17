@@ -10,7 +10,7 @@ const seen = [];
 const commands = new GitCommandStream({
   socketPath: join(tmpdir(), `tmy-capture-memory-${process.pid}.sock`),
   onWorktreeAdd: (command) => seen.push(command),
-  createToken: () => "tok-memory",
+  tokenFor: () => "tok-memory",
 });
 if (!(await commands.listen())) throw new Error("the stream could not listen");
 const env = commands.environmentFor("session-a");
