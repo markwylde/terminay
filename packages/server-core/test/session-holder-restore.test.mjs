@@ -520,3 +520,34 @@ test("a holder this server cannot speak to has its sessions ended and shown as e
   assert.equal(fresh.snapshot().status, "running");
   assert.deepEqual(readHolderRecords(dataRoot).map((entry) => entry.buildId), ["build-a"]);
 });
+
+test("a restart registers Git reporting again for every running session it re-adopts, and for nothing else", async () => {
+  const workspace = reloaded(seededWorkspace(["live", "done"]));
+  const holder = fakeHolder({
+    live: { pid: 4242, from: 0 },
+    done: { pid: 4343, from: 0, exit: { exitCode: 0, signal: null } },
+    stranger: { pid: 4444, from: 0 },
+  });
+  holder.detach = async () => {};
+  const adopted = [];
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: SERVER_ID,
+    serverVersion: "1.0.0",
+    capabilities: [],
+    sessionHolder: holder,
+    workspace,
+    gitCommands: {
+      environmentFor: () => ({}),
+      release: () => {},
+      adopt: (sessionIds) => adopted.push(...sessionIds),
+    },
+    workspaceStartup: { firstRun: false, createTerminal: async () => {} },
+  });
+  await composition.start();
+  try {
+    assert.deepEqual(adopted, ["live"]);
+  } finally {
+    await composition.shutdown();
+  }
+});
