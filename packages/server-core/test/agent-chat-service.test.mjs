@@ -379,3 +379,19 @@ test("every chat and Pixel operation and event name is one the protocol accepts"
   const names = [...Object.values(AGENT_CHAT_OPERATIONS), ...Object.values(AGENT_CHAT_EVENTS), ...Object.values(PIXEL_OPERATIONS), ...Object.values(PIXEL_EVENTS)];
   for (const name of names) assert.match(name, /^[a-z][a-z0-9._:-]{0,255}$/, name);
 });
+
+test("a chat's viewer is the connection that sent its latest message, forgotten when that connection closes", async () => {
+  const { chats } = await service();
+  const chat = chats.create({ providerId: "ext/echo", title: "Helper", reach: { kind: "workspace" } });
+  assert.equal(chats.viewerOf(chat.id), undefined);
+  chats.send(chat.id, "hello", { clientId: "window-a", connectionId: "conn-a" });
+  assert.deepEqual(chats.viewerOf(chat.id), { clientId: "window-a", connectionId: "conn-a" });
+  await settled(chats, chat.id);
+  chats.send(chat.id, "again", { clientId: "window-b", connectionId: "conn-b" });
+  assert.deepEqual(chats.viewerOf(chat.id), { clientId: "window-b", connectionId: "conn-b" });
+  await settled(chats, chat.id);
+  chats.forgetViewerConnection("conn-a");
+  assert.deepEqual(chats.viewerOf(chat.id), { clientId: "window-b", connectionId: "conn-b" });
+  chats.forgetViewerConnection("conn-b");
+  assert.equal(chats.viewerOf(chat.id), undefined);
+});

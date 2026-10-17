@@ -106,7 +106,10 @@ export function createAgentChatOperationHandlers(
 					throw protocolError('validation', 'text is required');
 				const text = payload.text;
 				return run(() => {
-					service.send(chatId, text);
+					service.send(chatId, text, {
+						clientId: request.context.clientId,
+						connectionId: request.context.connectionId,
+					});
 					return { chatId, accepted: true };
 				});
 			},

@@ -34,6 +34,23 @@ import {
 	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
 import {
+	isWorkspaceViewParamFailure,
+	parseArrangeTabs,
+	parseCloseTab,
+	parseCreateFolder,
+	parseFocusProject,
+	parseFocusTab,
+	parseGetLayout,
+	parseMoveTab,
+	parseMoveTabToFolder,
+	parseOpenFile,
+	parsePlacementFields,
+	parseRenameFolder,
+	parseResizePane,
+	parseSelectFolder,
+	type WorkspaceViewControlAdapter,
+} from './workspaceViewTools.js';
+import {
 	isNotificationParamFailure,
 	type NotificationControlAdapter,
 	parseDismissNotification,
@@ -95,6 +112,66 @@ export interface ServerControlHandlers {
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
 	readonly splitTerminal?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly getLayout?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly focusTab?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly moveTab?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly resizePane?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly arrangeTabs?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly focusProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly selectFolder?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly createFolder?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly renameFolder?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly moveTabToFolder?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly openFile?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeTab?: (
 		params: Record<string, unknown>,
 		context: ControlRequestContext,
 		signal: AbortSignal,
@@ -241,6 +318,18 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	focus_terminal: 'terminalsManage',
 	rename_terminal: 'terminalsManage',
 	split_terminal: 'terminalsManage',
+	get_layout: 'terminalsRead',
+	focus_tab: 'terminalsManage',
+	move_tab: 'terminalsManage',
+	resize_pane: 'terminalsManage',
+	arrange_tabs: 'terminalsManage',
+	focus_project: 'terminalsManage',
+	select_folder: 'terminalsManage',
+	create_folder: 'terminalsManage',
+	rename_folder: 'terminalsManage',
+	move_tab_to_folder: 'terminalsManage',
+	open_file: 'terminalsManage',
+	close_tab: 'terminalsManage',
 	list_automations: 'automationsRead',
 	get_automation: 'automationsRead',
 	list_automation_runs: 'automationsRead',
@@ -294,7 +383,12 @@ export interface TerminalParams {
 export interface OpenTerminalParams {
 	readonly name?: string;
 	readonly cwd?: string;
+	/** Where the new terminal goes, beside `beside`, on the agent's client. */
 	readonly split?: SplitDirection;
+	/** The tab `split` is relative to; defaults to the calling terminal. */
+	readonly beside?: string;
+	/** Bring the new terminal to the front on the agent's client. */
+	readonly focus?: boolean;
 	/** Opaque project handle from a workspace-reach `list_terminals` row. */
 	readonly project?: string;
 }
@@ -317,6 +411,8 @@ export interface RenameTerminalParams {
 export interface SplitTerminalParams {
 	readonly terminal: TerminalRef;
 	readonly direction: SplitDirection;
+	readonly name?: string;
+	readonly focus?: boolean;
 }
 export interface WaitForIdleParams {
 	readonly terminal: TerminalRef;
@@ -420,6 +516,12 @@ export interface TerminalControlAdapterOptions {
 	readonly appWindows?: AppWindowControlAdapter;
 	/** Host binding for the notification tools. */
 	readonly notifications?: NotificationControlAdapter;
+	/**
+	 * The view of the client the agent is talking from (ADR-0070). With it,
+	 * `split_terminal`, `open_terminal`'s `split` and `focus`, and
+	 * `focus_terminal` act on that client; without it they are unavailable.
+	 */
+	readonly workspaceView?: WorkspaceViewControlAdapter;
 	/** Model context the calling terminal's views left for the next result. */
 	readonly takeModelContext?: (
 		context: ControlRequestContext,
@@ -451,6 +553,18 @@ const DEFAULT_SCOPES: Readonly<
 	focus_terminal: 'write',
 	rename_terminal: 'write',
 	split_terminal: 'write',
+	get_layout: 'read',
+	focus_tab: 'write',
+	move_tab: 'write',
+	resize_pane: 'write',
+	arrange_tabs: 'write',
+	focus_project: 'write',
+	select_folder: 'write',
+	create_folder: 'write',
+	rename_folder: 'write',
+	move_tab_to_folder: 'write',
+	open_file: 'write',
+	close_tab: 'write',
 	list_automations: 'read',
 	get_automation: 'read',
 	list_automation_runs: 'read',
@@ -484,6 +598,18 @@ const HANDLER_BY_OPERATION: Readonly<
 	focus_terminal: 'focusTerminal',
 	rename_terminal: 'renameTerminal',
 	split_terminal: 'splitTerminal',
+	get_layout: 'getLayout',
+	focus_tab: 'focusTab',
+	move_tab: 'moveTab',
+	resize_pane: 'resizePane',
+	arrange_tabs: 'arrangeTabs',
+	focus_project: 'focusProject',
+	select_folder: 'selectFolder',
+	create_folder: 'createFolder',
+	rename_folder: 'renameFolder',
+	move_tab_to_folder: 'moveTabToFolder',
+	open_file: 'openFile',
+	close_tab: 'closeTab',
 	wait_for_idle: 'waitForIdle',
 	wait_for_command: 'waitForCommand',
 	wait_for_attention: 'waitForAttention',
@@ -751,8 +877,11 @@ export function createTerminalControlAdapter(
 			? {}
 			: {
 					getMcpCapabilities: (context, signal) =>
-						invoke(signal, () =>
-							options.adapter.getMcpCapabilities!(context, signal),
+						invoke(signal, async () =>
+							withViewAvailability(
+								await options.adapter.getMcpCapabilities!(context, signal),
+								options.workspaceView !== undefined,
+							),
 						),
 				}),
 		listTerminals: (context, signal) =>
@@ -783,11 +912,66 @@ export function createTerminalControlAdapter(
 					: options.adapter.getTerminalStatus(parsed, context, signal);
 			}),
 		openTerminal: (params, context, signal) =>
-			invoke(signal, () => {
+			invoke(signal, async () => {
 				const parsed = parseOpenTerminal(params);
-				return isControlFailure(parsed)
-					? parsed
-					: options.adapter.openTerminal(parsed, context, signal);
+				if (isControlFailure(parsed)) return parsed;
+				const { split, beside, focus, ...open } = parsed;
+				const view = options.workspaceView;
+				const placing = split !== undefined;
+				if (!placing && focus !== true)
+					return options.adapter.openTerminal(open, context, signal);
+				// Where it goes decides where it opens: beside a tab, the new
+				// terminal opens in that tab's project.
+				let anchor: { readonly beside?: string; readonly project?: string } =
+					{};
+				if (view !== undefined)
+					try {
+						anchor = await view.anchorFor(
+							{
+								...(beside === undefined ? {} : { beside }),
+								...(open.project === undefined ? {} : { project: open.project }),
+								placing,
+							},
+							context,
+							signal,
+						);
+					} catch (error) {
+						// Only an unknown tab is the caller's mistake; anything else
+						// leaves the terminal to open unplaced.
+						if (beside !== undefined) throw error;
+					}
+				const opened = await options.adapter.openTerminal(
+					{
+						...open,
+						...(anchor.project === undefined ? {} : { project: anchor.project }),
+					},
+					context,
+					signal,
+				);
+				const terminal = openedTerminal(opened);
+				if (terminal === undefined) return opened;
+				if (view === undefined)
+					return { ...(opened as object), ...UNPLACED };
+				if (placing && anchor.beside === undefined)
+					return {
+						...(opened as object),
+						placed: false,
+						reason: 'There is no tab to open it beside.',
+					};
+				return {
+					...(opened as object),
+					...(await view.placeTerminal(
+						{
+							terminal,
+							...(placing && anchor.beside !== undefined
+								? { beside: anchor.beside, position: split }
+								: {}),
+							focus: focus === true,
+						},
+						context,
+						signal,
+					)),
+				};
 			}),
 		writeTerminal: (params, context, signal) =>
 			invoke(signal, () => {
@@ -811,11 +995,26 @@ export function createTerminalControlAdapter(
 					: options.adapter.closeTerminal(parsed, context, signal);
 			}),
 		focusTerminal: (params, context, signal) =>
-			invoke(signal, () => {
+			invoke(signal, async () => {
 				const parsed = parseTerminalOnly(params);
-				return isControlFailure(parsed)
-					? parsed
-					: options.adapter.focusTerminal(parsed, context, signal);
+				if (isControlFailure(parsed)) return parsed;
+				// The host resolves the terminal within scope; the agent's client
+				// shows it.
+				const resolved = await options.adapter.focusTerminal(
+					parsed,
+					context,
+					signal,
+				);
+				const terminal = openedTerminal(resolved);
+				if (terminal === undefined) return resolved;
+				const view = options.workspaceView;
+				if (view === undefined) return noView();
+				const focused = (await view.focusTab(
+					{ tab: terminal },
+					context,
+					signal,
+				)) as Record<string, unknown>;
+				return { terminal, focused: true, layout: focused.layout };
 			}),
 		renameTerminal: (params, context, signal) =>
 			invoke(signal, () => {
@@ -825,11 +1024,39 @@ export function createTerminalControlAdapter(
 					: options.adapter.renameTerminal(parsed, context, signal);
 			}),
 		splitTerminal: (params, context, signal) =>
-			invoke(signal, () => {
+			invoke(signal, async () => {
 				const parsed = parseSplitTerminal(params);
-				return isControlFailure(parsed)
-					? parsed
-					: options.adapter.splitTerminal(parsed, context, signal);
+				if (isControlFailure(parsed)) return parsed;
+				// The host opens exactly one terminal in the target's project and
+				// folder; the agent's client puts it beside the target.
+				const opened = await options.adapter.splitTerminal(
+					parsed,
+					context,
+					signal,
+				);
+				const terminal = openedTerminal(opened);
+				if (terminal === undefined) return opened;
+				const view = options.workspaceView;
+				const placement =
+					view === undefined
+						? UNPLACED
+						: await view.placeTerminal(
+								{
+									terminal,
+									beside: parsed.terminal,
+									position: parsed.direction,
+									focus: parsed.focus === true,
+								},
+								context,
+								signal,
+							);
+				return {
+					...(opened as object),
+					terminal,
+					beside: parsed.terminal,
+					opened: 1,
+					...placement,
+				};
 			}),
 		waitForIdle: (params, context, signal) =>
 			invoke(signal, () => {
@@ -969,6 +1196,43 @@ export function createTerminalControlAdapter(
 							);
 						}),
 				};
+	const workspaceView = options.workspaceView;
+	const viewHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				view: WorkspaceViewControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isWorkspaceViewParamFailure(parsed)) return parsed;
+				return workspaceView === undefined
+					? noView()
+					: run(workspaceView, parsed as P, context, signal);
+			});
+	const workspaceViewHandlers: Partial<ServerControlHandlers> = {
+		getLayout: viewHandler(parseGetLayout, (view, p, c, s) => view.getLayout(p, c, s)),
+		focusTab: viewHandler(parseFocusTab, (view, p, c, s) => view.focusTab(p, c, s)),
+		moveTab: viewHandler(parseMoveTab, (view, p, c, s) => view.moveTab(p, c, s)),
+		resizePane: viewHandler(parseResizePane, (view, p, c, s) => view.resizePane(p, c, s)),
+		arrangeTabs: viewHandler(parseArrangeTabs, (view, p, c, s) => view.arrangeTabs(p, c, s)),
+		focusProject: viewHandler(parseFocusProject, (view, p, c, s) => view.focusProject(p, c, s)),
+		selectFolder: viewHandler(parseSelectFolder, (view, p, c, s) => view.selectFolder(p, c, s)),
+		createFolder: viewHandler(parseCreateFolder, (view, p, c, s) => view.createFolder(p, c, s)),
+		renameFolder: viewHandler(parseRenameFolder, (view, p, c, s) => view.renameFolder(p, c, s)),
+		moveTabToFolder: viewHandler(parseMoveTabToFolder, (view, p, c, s) => view.moveTabToFolder(p, c, s)),
+		openFile: viewHandler(parseOpenFile, (view, p, c, s) => view.openFile(p, c, s)),
+		closeTab: viewHandler(parseCloseTab, (view, p, c, s) => view.closeTab(p, c, s)),
+	};
 	const notifications = options.notifications;
 	const notificationHandlers: Partial<ServerControlHandlers> =
 		notifications === undefined
@@ -995,6 +1259,7 @@ export function createTerminalControlAdapter(
 			...automationHandlers,
 			...appWindowHandlers,
 			...notificationHandlers,
+			...workspaceViewHandlers,
 		},
 		...(options.permissions === undefined
 			? {}
@@ -1035,6 +1300,61 @@ export function createTerminalControlAdapter(
 				)
 				.join('\n\n'),
 		};
+	};
+}
+
+/** The tools that need the agent's client (ADR-0070). */
+export const WORKSPACE_VIEW_OPERATIONS: ReadonlySet<ControlOperation> =
+	new Set<ControlOperation>([
+		'focus_terminal',
+		'get_layout',
+		'focus_tab',
+		'move_tab',
+		'resize_pane',
+		'arrange_tabs',
+		'focus_project',
+		'select_folder',
+		'create_folder',
+		'rename_folder',
+		'move_tab_to_folder',
+		'open_file',
+		'close_tab',
+	]);
+
+/** Report the view tools available exactly when a view adapter is bound. */
+function withViewAvailability(reported: unknown, available: boolean): unknown {
+	if (!isRecord(reported) || !Array.isArray(reported.tools)) return reported;
+	return {
+		...reported,
+		tools: reported.tools.map((entry) =>
+			isRecord(entry) &&
+			WORKSPACE_VIEW_OPERATIONS.has(entry.tool as ControlOperation)
+				? { ...entry, available }
+				: entry,
+		),
+	};
+}
+
+/** The terminal handle a host's open or focus result names. */
+function openedTerminal(result: unknown): string | undefined {
+	if (!isRecord(result) || result.ok === false) return undefined;
+	const value =
+		result.ok === true && isRecord(result.result) ? result.result : result;
+	return typeof value.terminal === 'string' ? value.terminal : undefined;
+}
+
+const UNPLACED = Object.freeze({
+	placed: false,
+	reason: 'This host cannot place terminals in a window.',
+});
+
+function noView(): ControlFailure {
+	return {
+		ok: false,
+		error: {
+			code: 'unsupported_op',
+			message: 'Reading and changing the window layout is unavailable on this host.',
+		},
 	};
 }
 
@@ -1299,11 +1619,16 @@ function parseOpenTerminal(
 		(typeof project !== 'string' || !PROJECT_HANDLE_PATTERN.test(project))
 	)
 		return badRequest('project handle is invalid');
+	const placement = parsePlacementFields(value);
+	if (isControlFailure(placement)) return placement;
+	if (placement.beside !== undefined && split === undefined)
+		return badRequest('beside needs split, the side to open on');
 	return {
 		...(name === undefined ? {} : { name }),
 		...(cwd === undefined ? {} : { cwd }),
 		...(split === undefined ? {} : { split: split as SplitDirection }),
 		...(project === undefined ? {} : { project }),
+		...placement,
 	};
 }
 
@@ -1355,7 +1680,16 @@ function parseSplitTerminal(
 		!SPLIT_DIRECTIONS.has(direction as SplitDirection)
 	)
 		return badRequest('split direction is invalid');
-	return { ...terminal, direction: direction as SplitDirection };
+	const name = optionalString(value.name, 'name', 256);
+	if (isControlFailure(name)) return name;
+	if (value.focus !== undefined && typeof value.focus !== 'boolean')
+		return badRequest('focus must be a boolean');
+	return {
+		...terminal,
+		direction: direction as SplitDirection,
+		...(name === undefined ? {} : { name }),
+		...(value.focus === undefined ? {} : { focus: value.focus as boolean }),
+	};
 }
 
 function parseWaitForIdle(

@@ -641,12 +641,16 @@ test('MCP open_terminal follows the calling terminal into its folder and worktre
 	assert.equal(panelOf(third.terminal).folderId, general);
 	assert.equal(pty.processes.at(-1).options.cwd, repo);
 
-	// Splitting stays in the folder of the terminal that is split.
-	await call(fromGeneral, 'split_terminal', {
+	// Splitting opens exactly one terminal, in the folder of the terminal that
+	// is split, starting at that folder's worktree.
+	const split = await call(fromGeneral, 'split_terminal', {
 		terminal: first.terminal,
 		direction: 'right',
 	});
 	assert.equal(panelOf(first.terminal).folderId, linked.id);
+	assert.notEqual(split.terminal, first.terminal);
+	assert.equal(panelOf(split.terminal).folderId, linked.id);
+	assert.equal(pty.processes.at(-1).options.cwd, worktree);
 
 	// Project reach lists the terminals of every folder of its project.
 	const listed = await call(fromGeneral, 'list_terminals');
@@ -659,11 +663,12 @@ test('MCP open_terminal follows the calling terminal into its folder and worktre
 			explicit.terminal,
 			second.terminal,
 			third.terminal,
+			split.terminal,
 		].sort(),
 	);
 	// Workspace reach lists them too, plus its own.
 	const all = await call(automation, 'list_terminals');
-	assert.equal(all.terminals.length, 7);
+	assert.equal(all.terminals.length, 8);
 });
 
 /**

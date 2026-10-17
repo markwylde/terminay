@@ -182,7 +182,7 @@ test("a restart sorts every persisted session into running, exited, or interrupt
   const terminal = service();
   const result = await reattachHeldSessions({ serverId: SERVER_ID, workspace, terminal, holder, now: () => 1000 });
 
-  assert.deepEqual(result, { adopted: ["live"], ended: ["tail-exit", "lost"], orphaned: [] });
+  assert.deepEqual(result, { adopted: ["live"], ended: ["tail-exit", "lost"], orphaned: [], recovered: [] });
 
   // Still running: adopted under its original identity, with nothing spawned.
   const live = terminal.getSession("live");
@@ -247,21 +247,34 @@ test("a held session that had already ended replays its output and then its exit
   assert.equal(replayOf(terminal, "done").output, "bye\n");
 });
 
-test("a held session the workspace does not know is ended", async () => {
+test("a running shell the workspace does not know is recovered into a project of its own; an ended one is ended", async () => {
   const workspace = reloaded(seededWorkspace(["known"]));
   const holder = fakeHolder({
     known: { pid: 1, from: 0 },
-    stranger: { pid: 2, from: 0 },
+    stranger: { pid: 2, from: 0, retained: "still typing" },
+    finished: { pid: 3, from: 0, exit: { exitCode: 0, signal: null } },
   });
   const terminal = service();
-  const result = await reattachHeldSessions({ serverId: SERVER_ID, workspace, terminal, holder });
-  assert.deepEqual(result.orphaned, ["stranger"]);
-  assert.deepEqual(holder.ended, ["stranger"]);
-  assert.equal(terminal.getSession("stranger"), undefined);
+  const result = await reattachHeldSessions({ serverId: SERVER_ID, workspace, terminal, holder, now: () => 1000 });
+  assert.deepEqual(result.recovered, ["stranger"]);
+  assert.deepEqual(result.orphaned, ["finished"]);
+  assert.deepEqual(holder.ended, ["finished"]);
+  assert.deepEqual(result.adopted.sort(), ["known", "stranger"]);
+  // The stranger is running, shown, and in a project anyone can find.
+  const stranger = terminal.getSession("stranger");
+  assert.equal(stranger.status, "running");
+  assert.equal(replayOf(terminal, "stranger").output, "still typing");
+  const panel = Object.values(workspace.state.panels).find((candidate) => candidate.sessionId === "stranger");
+  const project = workspace.state.projects[panel.projectId];
+  assert.equal(project.name, "Recovered terminals");
+  assert.equal(project.root, "/held/cwd");
+  assert.ok(workspace.state.views[workspace.state.viewOrder[0]].projectIds.includes(project.id));
+  assert.equal(stranger.projectId, project.id);
   assert.equal(terminal.getSession("known").status, "running");
+  assert.equal(terminal.getSession("finished"), undefined);
 });
 
-test("a freshly initialized workspace recovers nothing and ends whatever a holder still has", async () => {
+test("a freshly initialized workspace ends its seed's namesake and recovers any other running shell", async () => {
   // First-run initialization commits one terminal session that is about to be
   // created. It must not be mistaken for a session that was lost, or the seed
   // that follows would find it already present and create nothing.
@@ -272,10 +285,12 @@ test("a freshly initialized workspace recovers nothing and ends whatever a holde
   const terminal = service();
   const result = await reattachHeldSessions({ serverId: SERVER_ID, workspace, terminal, holder, freshWorkspace: true });
 
-  assert.deepEqual(result, { adopted: [], ended: [], orphaned: [seedId, "leftover"] });
-  assert.deepEqual(holder.ended, [seedId, "leftover"]);
+  assert.deepEqual(result, { adopted: ["leftover"], ended: [], orphaned: [seedId], recovered: ["leftover"] });
+  assert.deepEqual(holder.ended, [seedId]);
   assert.equal(terminal.getSession(seedId), undefined);
+  assert.equal(terminal.getSession("leftover").status, "running");
   assert.equal(workspace.state.terminalSessions[seedId].status, "running");
+  assert.equal(workspace.state.projects[workspace.state.terminalSessions.leftover.projectId].name, "Recovered terminals");
   assert.deepEqual(holder.pruned, [[]]);
 });
 
@@ -546,7 +561,9 @@ test("a restart registers Git reporting again for every running session it re-ad
   });
   await composition.start();
   try {
-    assert.deepEqual(adopted, ["live"]);
+    // A running shell the workspace did not name is recovered and adopted
+    // too (ADR-0071), so it reports again; the ended one does not.
+    assert.deepEqual(adopted, ["live", "stranger"]);
   } finally {
     await composition.shutdown();
   }

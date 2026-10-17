@@ -49,6 +49,27 @@ async function tool(name, params) {
 	return response;
 }
 
+function focusedTerminal(layout) {
+	const tabs = [];
+	const visit = (node) => {
+		if (node === undefined) return;
+		if (Array.isArray(node.children)) for (const child of node.children) visit(child);
+		if (Array.isArray(node.tabs)) tabs.push(...node.tabs);
+	};
+	visit(layout.root);
+	return (tabs.find((tab) => tab.tab === layout.focused_tab) ?? tabs.find((tab) => tab.terminal))?.terminal;
+}
+
+/** "2x2 grid", "3 panes", from a layout's pane tree. */
+function gridShape(root) {
+	if (root === undefined) return 'nothing';
+	if (Array.isArray(root.tabs)) return '1 pane';
+	const columns = root.split === 'row' ? root.children : [root];
+	const heights = columns.map((column) => (column.split === 'column' ? column.children.length : 1));
+	if (heights.every((height) => height === heights[0])) return `a ${columns.length}x${heights[0]} grid`;
+	return `${heights.reduce((sum, height) => sum + height, 0)} panes`;
+}
+
 async function turn(text) {
 	if (text === 'hello') say('Hi from fake Claude.');
 	else if (text === 'count') {
@@ -61,6 +82,26 @@ async function turn(text) {
 		else {
 			const written = await tool('run_command', { terminal, command: text.slice(5) });
 			say(written.ok ? 'Done, I ran it.' : `I could not run it: ${written.error.code}.`);
+		}
+	} else if (text === 'open a background terminal') {
+		const opened = await tool('open_terminal', { name: 'Background job' });
+		say(opened.ok ? `Opened it in ${opened.result.project_title ?? 'your project'}.` : `I could not open it: ${opened.error.code} (${opened.error.message}).`);
+	} else if (text.includes('2x2')) {
+		// What a careful agent does with "open three more and make a 2x2 grid":
+		// look, split three times, then look again and report what it saw.
+		const before = await tool('get_layout', {});
+		const first = before.ok ? focusedTerminal(before.result) : undefined;
+		if (first === undefined) {
+			say(`I cannot see your window (${before.ok ? 'no terminal in front' : before.error.code}).`);
+		} else {
+			const right = await tool('split_terminal', { terminal: first, direction: 'right' });
+			const belowLeft = await tool('split_terminal', { terminal: first, direction: 'below' });
+			const belowRight = right.ok ? await tool('split_terminal', { terminal: right.result.terminal, direction: 'below' }) : right;
+			const opened = [right, belowLeft, belowRight].filter((result) => result.ok).length;
+			const placed = [right, belowLeft, belowRight].filter((result) => result.ok && result.result.placed === true).length;
+			const after = await tool('get_layout', {});
+			const shape = after.ok ? gridShape(after.result.root) : 'unknown';
+			say(`Opened ${opened}, placed ${placed}. Your window shows ${shape}.`);
 		}
 	} else say(`You said: ${text}`);
 	out({ type: 'result', subtype: 'success', is_error: false, result: '' });
