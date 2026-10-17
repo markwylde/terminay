@@ -4136,6 +4136,10 @@ function mcpReaches(
 	context: ControlRequestContext,
 	projectId: string,
 ): boolean {
+	// A terminal the server still remembers after its project was closed is
+	// gone from the workspace, so MCP neither lists nor addresses it.
+	if (requireMcpAuthority().workspace.state.projects[projectId] === undefined)
+		return false;
 	return reachOf(context) === 'workspace' || projectId === context.projectId;
 }
 

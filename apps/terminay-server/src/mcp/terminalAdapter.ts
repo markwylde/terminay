@@ -131,7 +131,7 @@ export function createServerTerminalControlAdapter(
 		runCommand: (params, context) => runCommand(options, params, context),
 		closeTerminal: (params, context) => closeTerminal(options, params, context),
 		focusTerminal: (params, context, signal) => {
-			const session = targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options, context, params.terminal);
 			return options.workspace === undefined
 				? options.focusTerminal === undefined
 					? unsupported('focus_terminal')
@@ -146,7 +146,7 @@ export function createServerTerminalControlAdapter(
 					);
 		},
 		renameTerminal: (params, context, signal) => {
-			const session = targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options, context, params.terminal);
 			return options.workspace === undefined
 				? options.renameTerminal === undefined
 					? unsupported('rename_terminal')
@@ -162,7 +162,7 @@ export function createServerTerminalControlAdapter(
 					);
 		},
 		splitTerminal: (params, context, signal) => {
-			const session = targetSession(options.terminal, context, params.terminal);
+			const session = targetSession(options, context, params.terminal);
 			return options.workspace === undefined
 				? options.splitTerminal === undefined
 					? unsupported('split_terminal')
@@ -261,16 +261,14 @@ async function listTerminals(
 	context: ControlRequestContext,
 ): Promise<unknown> {
 	const workspaceReach = reachOf(context) === 'workspace';
-	// Project titles are read only for workspace reach; project reach never
-	// names a project.
 	const state =
-		workspaceReach && options.workspace !== undefined
-			? await options.workspace.load()
-			: undefined;
+		options.workspace === undefined
+			? undefined
+			: await options.workspace.load();
 	const terminals = options.terminal
 		.listSessions()
 		.filter((session) =>
-			canAddressSession(context, options.terminal.serverId, session),
+			canAddressSession(context, options.terminal.serverId, session, state),
 		)
 		.map((session) => {
 			const activity = activitySnapshot(options.activity, session);
@@ -298,7 +296,7 @@ async function readTerminal(
 	context: ControlRequestContext,
 	maxReadBytes: number,
 ): Promise<unknown> {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	const terminal = outputReader(options.terminal);
 	const readAuthorization = authorization(
 		session,
@@ -359,7 +357,7 @@ async function searchTerminal(
 	context: ControlRequestContext,
 	maxReadBytes: number,
 ): Promise<unknown> {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	const terminal = outputReader(options.terminal);
 	// Search is snapshot-only. Obtain a bounded text presentation large enough
 	// to search useful scrollback, then independently bound the result object.
@@ -483,7 +481,7 @@ function terminalStatus(
 	params: TerminalParams,
 	context: ControlRequestContext,
 ): unknown {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	const activity = activitySnapshot(options.activity, session);
 	return {
 		terminal: session.sessionId,
@@ -640,7 +638,7 @@ async function writeTerminal(
 	params: WriteTerminalParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	const text = params.submit === true ? `${params.text}\r` : params.text;
 	await options.terminal.write(
 		session,
@@ -659,7 +657,7 @@ async function runCommand(
 	params: RunCommandParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	const auth = authorization(session, options.terminal.serverId, 'write');
 	const bracketed = await options.terminal.bracketedPasteMode(session, auth);
 	const from =
@@ -682,7 +680,7 @@ async function closeTerminal(
 	params: TerminalParams,
 	context: ControlRequestContext,
 ): Promise<unknown> {
-	const session = targetSession(options.terminal, context, params.terminal);
+	const session = targetSession(options, context, params.terminal);
 	await options.terminal.kill(
 		session,
 		authorization(session, options.terminal.serverId, 'write'),
@@ -772,7 +770,7 @@ function waitForActivity(
 				'canonical terminal activity is unavailable',
 			),
 		);
-	const session = targetSession(options.terminal, context, terminal);
+	const session = targetSession(options, context, terminal);
 	const identity = {
 		serverId: options.terminal.serverId,
 		projectId: session.projectId,
@@ -843,14 +841,20 @@ function waitForActivity(
 }
 
 function targetSession(
-	service: TerminalService,
+	options: AdapterOptions,
 	context: ControlRequestContext,
 	terminal: string,
 ): TerminalSessionSnapshot {
+	const service = options.terminal;
 	const session = service.getSession(terminal);
 	if (
 		session === undefined ||
-		!canAddressSession(context, service.serverId, session)
+		!canAddressSession(
+			context,
+			service.serverId,
+			session,
+			options.workspace?.state,
+		)
 	)
 		throw new ControlEndpointError(
 			'terminal_not_found',
