@@ -12,6 +12,7 @@ export * from "./queryCommand.js";
 export * from "./terminal.js";
 export * from "./terminalPanel.js";
 export * from "./dictation.js";
+export * from "./agentChat.js";
 export * from "./ai.js";
 export * from "./fileViewer.js";
 export * from "./fileObservation.js";

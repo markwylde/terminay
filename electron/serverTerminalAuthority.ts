@@ -26,6 +26,7 @@ import {
 import type { JsonValue } from '@terminay/protocol';
 import { decodeFrame } from '@terminay/protocol';
 import { AgentStatusService } from '../packages/server-core/src/activity/agentService';
+import { agentChatProviderBridge } from '../packages/server-core/src/agentChat/extensionBridge';
 import {
 	ProjectAgentScope,
 	SessionSourceBridge,
@@ -352,6 +353,18 @@ export interface ServerTerminalAuthorityOptions {
 	readonly automations?: ServerCoreCompositionOptions['automations'];
 	/** Compose MCP permission approvals; set by the host that serves MCP. */
 	readonly mcpApprovals?: boolean;
+	/**
+	 * How a chat's MCP capability is minted and revoked, set by the host that
+	 * serves the control socket. Only the agent chat service receives it
+	 * (ADR-0068). Without it, chats can be created only with no MCP reach.
+	 */
+	readonly agentChatMcp?: NonNullable<
+		ServerCoreCompositionOptions['agentChat']
+	>['mcp'];
+	/** Diagnostics for chat sessions: lifecycle only, never text. */
+	readonly onAgentChatDiagnostic?: NonNullable<
+		ServerCoreCompositionOptions['agentChat']
+	>['onDiagnostic'];
 	/** Compose server-owned app windows; needs `mcpApprovals`. */
 	readonly appWindows?: ServerCoreCompositionOptions['appWindows'];
 	/** Compose the registry of user-connected MCP servers. */
@@ -1050,6 +1063,8 @@ export class ServerTerminalAuthority {
 				'macros.v1',
 				...(options.automations === undefined ? [] : ['automations.v1']),
 				...(options.mcpApprovals === true ? ['mcp-approvals.v1'] : []),
+				// Agent chats and Pixel run wherever extensions run.
+				...(extensionManagement === undefined ? [] : ['agent-chat.v1']),
 				...(options.mcpApprovals === true && options.appWindows !== undefined
 					? [
 							'app-windows.v1',
@@ -1140,6 +1155,25 @@ export class ServerTerminalAuthority {
 				: { recordings: options.recordings }),
 			...(options.settings === undefined ? {} : { settings: options.settings }),
 			...(options.mcpApprovals === true ? { mcpApprovals: true } : {}),
+			...(extensionManagement === undefined
+				? {}
+				: {
+						agentChat: {
+							providers: agentChatProviderBridge(extensionManagement.hosts),
+							workRoot: resolve(
+								options.dataRoot ?? join(tmpdir(), 'terminay'),
+								'agent-chat',
+							),
+							...(options.agentChatMcp === undefined
+								? {}
+								: { mcp: options.agentChatMcp }),
+							projectExists: (projectId: string) =>
+								this.workspace.state.projects[projectId] !== undefined,
+							...(options.onAgentChatDiagnostic === undefined
+								? {}
+								: { onDiagnostic: options.onAgentChatDiagnostic }),
+						},
+					}),
 			...(options.appWindows === undefined
 				? {}
 				: { appWindows: options.appWindows }),

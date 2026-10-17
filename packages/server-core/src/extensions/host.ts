@@ -1,6 +1,10 @@
 import { type ChildProcess, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
+	type AgentChatAvailability,
+	type AgentChatEvent,
+	type AgentChatProviderContribution,
+	type AgentChatSessionRequest,
 	type AgentSessionSourceContribution,
 	EXTENSION_API_VERSION,
 	EXTENSION_LIMITS,
@@ -8,6 +12,9 @@ import {
 	type LanguageServerContribution,
 	type McpInstallTargetContribution,
 	type McpServerCommand,
+	validateAgentChatAvailability,
+	validateAgentChatEvent,
+	validateAgentChatSessionRequest,
 	validateMcpInstallTargetActionResult,
 	validateMcpInstallTargetStatus,
 	validateMcpServerCommand,
@@ -16,10 +23,10 @@ import {
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
 	type ExtensionErrorDetail,
-	extensionErrorDetail,
 	type ExtensionHostDiagnostic,
 	type ExtensionHostDiagnosticListener,
 	type ExtensionHostTransition,
+	extensionErrorDetail,
 } from './diagnostics.js';
 import {
 	type ExtensionLanguageDiagnosticsNotification,
@@ -51,7 +58,7 @@ import type {
 interface PendingCall {
 	readonly resolve: (value: unknown) => void;
 	readonly reject: (error: Error) => void;
-	readonly timer: ReturnType<typeof setTimeout>;
+	readonly timer: ReturnType<typeof setTimeout> | undefined;
 	readonly abort?: () => void;
 }
 
@@ -170,9 +177,18 @@ export class ExtensionHost {
 		Object.freeze([]);
 	/** Worktree insight sources the host started and has not yet seen stop. */
 	private readonly runningInsightSources = new Set<string>();
-	private languageServers: readonly LanguageServerContribution[] = Object.freeze(
-		[],
-	);
+	private languageServers: readonly LanguageServerContribution[] =
+		Object.freeze([]);
+	private agentChatProviders: readonly AgentChatProviderContribution[] =
+		Object.freeze([]);
+	/** Chat sessions the host opened and has not yet seen end. */
+	private readonly chatSessions = new Map<
+		string,
+		{
+			readonly providerId: string;
+			readonly onEvent: (event: AgentChatEvent) => void;
+		}
+	>();
 	private agentPublicationsInFlight = 0;
 	/** The child's account of the error that is ending it, if it sent one. */
 	private fatalReport: ExtensionFatalErrorReport | undefined;
@@ -201,6 +217,7 @@ export class ExtensionHost {
 			mcpInstallTargets: this.mcpInstallTargets,
 			languageServers: this.languageServers,
 			worktreeInsightSources: this.worktreeInsightSources,
+			agentChatProviders: this.agentChatProviders,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -283,6 +300,10 @@ export class ExtensionHost {
 						this.descriptor.worktreeInsights === undefined
 							? []
 							: structuredClone(this.descriptor.worktreeInsights),
+					agentChatProviders:
+						this.descriptor.agentChatProviders === undefined
+							? []
+							: structuredClone(this.descriptor.agentChatProviders),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -312,6 +333,13 @@ export class ExtensionHost {
 				this.descriptor,
 				'worktree-observation',
 				'worktree insight source',
+			);
+			this.agentChatProviders = validateRegistrations(
+				record(activated)?.agentChatProviders,
+				this.descriptor.agentChatProviders ?? [],
+				this.descriptor,
+				'agent-chat',
+				'chat provider',
 			);
 			this.setState({
 				extensionId: this.extensionId,
@@ -394,6 +422,7 @@ export class ExtensionHost {
 		}
 		await this.stopSessionSources();
 		await this.stopWorktreeInsightSources();
+		await this.closeChatSessions();
 		try {
 			await this.call('deactivate', undefined, this.limits.shutdownTimeoutMs);
 		} catch {
@@ -414,6 +443,7 @@ export class ExtensionHost {
 		this.mcpInstallTargets = Object.freeze([]);
 		this.languageServers = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
+		this.agentChatProviders = Object.freeze([]);
 	}
 
 	/**
@@ -519,6 +549,147 @@ export class ExtensionHost {
 
 	worktreeInsightContributions(): readonly WorktreeInsightSourceContribution[] {
 		return this.worktreeInsightSources;
+	}
+
+	chatProviderContributions(): readonly AgentChatProviderContribution[] {
+		return this.agentChatProviders;
+	}
+
+	async chatAvailability(
+		providerId: string,
+		signal?: AbortSignal,
+	): Promise<AgentChatAvailability> {
+		this.requireChatProvider(providerId);
+		const result = validateAgentChatAvailability(
+			await this.call(
+				'agent.chat.availability',
+				{ providerId },
+				this.limits.invocationTimeoutMs,
+				signal,
+			),
+		);
+		if (!result.ok)
+			throw new Error('chat provider returned an invalid availability');
+		return result.value;
+	}
+
+	/**
+	 * Open one provider session. `onEvent` receives every validated event the
+	 * session reports, and a final `exit` when the session ends for any reason,
+	 * including this extension stopping or crashing.
+	 */
+	async openChatSession(
+		providerId: string,
+		request: AgentChatSessionRequest,
+		onEvent: (event: AgentChatEvent) => void,
+	): Promise<void> {
+		this.requireChatProvider(providerId);
+		const checked = validateAgentChatSessionRequest(request);
+		if (!checked.ok)
+			throw new TypeError(`invalid chat session: ${checked.reason}`);
+		const { sessionId } = checked.value;
+		if (this.chatSessions.has(sessionId))
+			throw new Error('chat session is already open');
+		this.chatSessions.set(sessionId, { providerId, onEvent });
+		try {
+			await this.call(
+				'agent.chat.open',
+				{ providerId, request: checked.value },
+				this.limits.invocationTimeoutMs,
+			);
+		} catch (error) {
+			this.chatSessions.delete(sessionId);
+			throw error;
+		}
+	}
+
+	/** Run one turn; it has no deadline because a reply can take as long as it takes. */
+	async promptChat(
+		sessionId: string,
+		text: string,
+		signal?: AbortSignal,
+	): Promise<void> {
+		if (!this.chatSessions.has(sessionId))
+			throw unavailable('chat session is not open');
+		await this.call(
+			'agent.chat.prompt',
+			{ sessionId, text },
+			Number.POSITIVE_INFINITY,
+			signal,
+		);
+	}
+
+	async cancelChat(sessionId: string): Promise<void> {
+		if (!this.chatSessions.has(sessionId)) return;
+		await this.call(
+			'agent.chat.cancel',
+			{ sessionId },
+			this.limits.invocationTimeoutMs,
+		);
+	}
+
+	async closeChat(sessionId: string): Promise<void> {
+		if (!this.chatSessions.has(sessionId)) return;
+		await this.call(
+			'agent.chat.close',
+			{ sessionId },
+			this.limits.shutdownTimeoutMs,
+		).catch(() => undefined);
+		this.chatSessionEnded(sessionId, { code: null, signal: null });
+	}
+
+	private requireChatProvider(providerId: string): void {
+		if (!this.agentChatProviders.some((provider) => provider.id === providerId))
+			throw unavailable('chat provider is unavailable');
+	}
+
+	private async closeChatSessions(): Promise<void> {
+		await Promise.all(
+			[...this.chatSessions.keys()].map((sessionId) =>
+				this.closeChat(sessionId),
+			),
+		);
+	}
+
+	/** The child is gone, so every session it ran has ended with it. */
+	private endChatSessions(): void {
+		for (const sessionId of [...this.chatSessions.keys()])
+			this.chatSessionEnded(sessionId, { code: null, signal: null });
+	}
+
+	private chatSessionEnded(
+		sessionId: string,
+		exit: { code: number | null; signal: string | null },
+	): void {
+		const session = this.chatSessions.get(sessionId);
+		if (session === undefined) return;
+		this.chatSessions.delete(sessionId);
+		try {
+			session.onEvent({ type: 'exit', exit });
+		} catch {
+			/* an observer cannot affect the extension it observes */
+		}
+	}
+
+	/** Session events are fire-and-forget; a stale or invalid one is dropped. */
+	private handleChatEvent(frame: ChildFrame): void {
+		const payload = record(frame.payload);
+		const sessionId =
+			typeof payload?.sessionId === 'string' ? payload.sessionId : undefined;
+		const session =
+			sessionId === undefined ? undefined : this.chatSessions.get(sessionId);
+		if (session === undefined || sessionId === undefined) return;
+		const result = validateAgentChatEvent(payload?.event);
+		if (!result.ok) return;
+		if (result.value.type === 'exit') {
+			this.chatSessionEnded(sessionId, result.value.exit);
+			return;
+		}
+		try {
+			session.onEvent(result.value);
+		} catch {
+			/* an observer cannot affect the extension it observes */
+		}
 	}
 
 	/** Start one registered worktree insight source with the live contexts. */
@@ -643,7 +814,11 @@ export class ExtensionHost {
 			broker === undefined ||
 			!this.runningInsightSources.has(sourceId)
 		) {
-			this.sendBrokerResult(id, undefined, 'worktree insight source is not running');
+			this.sendBrokerResult(
+				id,
+				undefined,
+				'worktree insight source is not running',
+			);
 			return;
 		}
 		const controller = new AbortController();
@@ -665,7 +840,9 @@ export class ExtensionHost {
 			this.sendBrokerResult(
 				id,
 				undefined,
-				error instanceof Error ? error.message : 'worktree credential request failed',
+				error instanceof Error
+					? error.message
+					: 'worktree credential request failed',
 			);
 		} finally {
 			this.activeBrokerCalls.delete(id);
@@ -710,7 +887,14 @@ export class ExtensionHost {
 				kind !== 'deactivate')
 		)
 			return Promise.reject(new Error('extension child is unavailable'));
-		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000)
+		// Only a chat turn runs without a deadline; it ends when the agent
+		// finishes, when it is cancelled, or when the child goes away.
+		const unbounded =
+			timeoutMs === Number.POSITIVE_INFINITY && kind === 'agent.chat.prompt';
+		if (
+			!unbounded &&
+			(!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000)
+		)
 			return Promise.reject(new TypeError('invalid extension deadline'));
 		const id = `${this.extensionId}:${++this.sequence}`;
 		const frame: HostFrame = {
@@ -722,15 +906,17 @@ export class ExtensionHost {
 		if (frameByteLength(frame) > this.limits.maxMessageBytes)
 			return Promise.reject(new Error('extension IPC message exceeds limit'));
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				this.send({
-					protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-					kind: 'cancel',
-					id,
-				});
-				reject(new Error(`extension ${kind} timed out`));
-			}, timeoutMs);
+			const timer = unbounded
+				? undefined
+				: setTimeout(() => {
+						this.pending.delete(id);
+						this.send({
+							protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+							kind: 'cancel',
+							id,
+						});
+						reject(new Error(`extension ${kind} timed out`));
+					}, timeoutMs);
 			const abort =
 				signal === undefined
 					? undefined
@@ -899,6 +1085,10 @@ export class ExtensionHost {
 			this.handleWorktreeInsightFrame(message);
 			return;
 		}
+		if (message.kind === 'agent.chat.event') {
+			this.handleChatEvent(message);
+			return;
+		}
 		if (message.kind === 'worktree.source.disposed') {
 			const sourceId = boundedId(record(message.payload)?.sourceId);
 			if (
@@ -961,7 +1151,11 @@ export class ExtensionHost {
 			operation === 'worktree.token' ||
 			operation === 'worktree.token.reject'
 		) {
-			await this.handleWorktreeTokenRequest(frame.id, operation, payload?.payload);
+			await this.handleWorktreeTokenRequest(
+				frame.id,
+				operation,
+				payload?.payload,
+			);
 			return;
 		}
 		if (operation !== 'log' && operation !== 'secret.resolve') {
@@ -1046,9 +1240,7 @@ export class ExtensionHost {
 					sourceId,
 					publication: {
 						...(reset === undefined ? {} : { reset: reset as unknown[] }),
-						...(upserts === undefined
-							? {}
-							: { upserts: upserts as unknown[] }),
+						...(upserts === undefined ? {} : { upserts: upserts as unknown[] }),
 						...(removals === undefined
 							? {}
 							: { removals: removals as unknown[] }),
@@ -1329,9 +1521,11 @@ export class ExtensionHost {
 			this.sourceStopped(sourceId);
 		for (const sourceId of [...this.runningInsightSources])
 			this.insightSourceStopped(sourceId);
+		this.endChatSessions();
 		this.agentSessionSources = Object.freeze([]);
 		this.mcpInstallTargets = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
+		this.agentChatProviders = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
 		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);

@@ -1,3 +1,4 @@
+import type { AgentChatProviderContribution } from './chat.js';
 import {
 	ENVIRONMENT_VARIABLE_NAME_PATTERN,
 	EXTENSION_ID_PATTERN,
@@ -50,6 +51,7 @@ const permissions = new Set<ExtensionPermission>([
 	'agent-observation',
 	'mcp-registration',
 	'worktree-observation',
+	'agent-chat',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -238,6 +240,7 @@ export function validateExtensionManifest(
 				'mcpInstallTargets',
 				'languageServers',
 				'worktreeInsights',
+				'agentChatProviders',
 			]),
 			'$.contributes',
 			out,
@@ -248,12 +251,14 @@ export function validateExtensionManifest(
 			mcpInstallTargets,
 			languageServers,
 			worktreeInsights,
+			agentChatProviders,
 		} = value.contributes;
 		if (
 			agentSessionSources === undefined &&
 			mcpInstallTargets === undefined &&
 			languageServers === undefined &&
-			worktreeInsights === undefined
+			worktreeInsights === undefined &&
+			agentChatProviders === undefined
 		) {
 			out.push({
 				path: '$.contributes',
@@ -290,6 +295,15 @@ export function validateExtensionManifest(
 				validateWorktreeInsightSourceContribution,
 				out,
 			);
+		if (agentChatProviders !== undefined)
+			validateNamespacedContributions(
+				agentChatProviders,
+				'agentChatProviders',
+				EXTENSION_LIMITS.chatProviders,
+				extensionId,
+				validateAgentChatProviderContribution,
+				out,
+			);
 		// The permission array validator reports a malformed array itself.
 		if (Array.isArray(value.permissions)) {
 			if (
@@ -321,6 +335,16 @@ export function validateExtensionManifest(
 					path: '$.permissions',
 					code: 'missing_permission',
 					message: 'Worktree insight sources require worktree-observation',
+				});
+			if (
+				Array.isArray(agentChatProviders) &&
+				agentChatProviders.length > 0 &&
+				!value.permissions.includes('agent-chat')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'Chat providers require agent-chat',
 				});
 		}
 	}
@@ -575,7 +599,11 @@ export function validateLanguageServerLaunch(
 
 function validateNamespacedContributions(
 	value: unknown,
-	key: 'agentSessionSources' | 'mcpInstallTargets' | 'worktreeInsights',
+	key:
+		| 'agentSessionSources'
+		| 'mcpInstallTargets'
+		| 'worktreeInsights'
+		| 'agentChatProviders',
 	maximum: number,
 	extensionId: string,
 	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
@@ -740,6 +768,39 @@ export function validateWorktreeInsightSourceContribution(
 		);
 	return out.length === 0
 		? { ok: true, value: value as unknown as WorktreeInsightSourceContribution }
+		: { ok: false, issues: out };
+}
+
+/** Validates a standalone chat provider manifest contribution. */
+export function validateAgentChatProviderContribution(
+	value: unknown,
+	extensionId: string,
+): ValidationResult<AgentChatProviderContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set(['id', 'displayName', 'description', 'platforms']),
+		'$',
+		out,
+	);
+	namespacedContributionId(value.id, extensionId, out);
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	validatePlatforms(value.platforms, '$.platforms', out);
+	return out.length === 0
+		? { ok: true, value: value as unknown as AgentChatProviderContribution }
 		: { ok: false, issues: out };
 }
 
