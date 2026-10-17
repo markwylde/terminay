@@ -25,13 +25,20 @@ export function reachOf(
 	return context.reach === 'workspace' ? 'workspace' : 'project';
 }
 
-/** Whether a capability may address a session. Never crosses servers. */
+/**
+ * Whether a capability may address a session. Never crosses servers, and never
+ * reaches a session the server still remembers after its project was closed:
+ * the workspace no longer shows it, so neither does MCP.
+ */
 export function canAddressSession(
 	context: Pick<ControlCapabilityScope, 'projectId' | 'reach'>,
 	serverId: string,
 	session: { readonly serverId: string; readonly projectId: string },
+	state?: WorkspaceState,
 ): boolean {
 	if (session.serverId !== serverId) return false;
+	if (state !== undefined && state.projects[session.projectId] === undefined)
+		return false;
 	return reachOf(context) === 'workspace'
 		? true
 		: session.projectId === context.projectId;
