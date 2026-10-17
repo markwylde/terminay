@@ -402,6 +402,12 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	);
 	assert.equal(relay.state.log.includes('device-join'), true);
 	assert.equal(relay.state.log.includes('client-join'), true);
+	// A real window is never idle: the workspace sends heartbeats on it. This
+	// connection would otherwise carry nothing for the rest of the test, and a
+	// silent peer on a loaded runner can lose ICE consent and be closed, which
+	// is not what the window assertions below are about.
+	const keepBusy = await busy(connection.transport);
+	t.after(keepBusy);
 
 	// Each native window is its own connection. Two windows of this device
 	// stay connected together, and beside the connection that named no window.
@@ -834,3 +840,23 @@ test('Desktop pairs, reconnects, and is revoked against a standalone server it r
 		/timed out|revoked|denied|proof|failed|unknown/u,
 	);
 });
+
+/**
+ * Keep a connection carrying traffic, as a real window's heartbeats do:
+ * a byte every second, its echo drained. Returns the stop function.
+ */
+async function busy(transport) {
+	await transport.open();
+	let stopped = false;
+	const drain = (async () => {
+		for await (const _frame of transport.incoming) if (stopped) break;
+	})().catch(() => undefined);
+	const timer = setInterval(() => {
+		if (!stopped) void transport.send(Uint8Array.of(0)).catch(() => undefined);
+	}, 1_000);
+	return async () => {
+		stopped = true;
+		clearInterval(timer);
+		await Promise.race([drain, new Promise((resolve) => setTimeout(resolve, 100))]);
+	};
+}

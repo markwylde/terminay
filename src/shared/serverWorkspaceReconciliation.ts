@@ -127,8 +127,9 @@ export type ServerWorkspaceDelta = Readonly<{
 }>;
 
 /** Whether a projected project is a reserved server-owned space rather than a
- * user project. Every project list, ordering, switcher, tab bar, inventory,
- * and Tabs consumer excludes these. */
+ * user project. Every project list, ordering, switcher, tab bar, and
+ * inventory excludes these; Tabs lists their terminals apart, after the
+ * window's projects (ADR-0071). */
 export function isReservedWorkspaceProject(
 	project: Pick<ServerWorkspaceProject, 'kind'> | undefined,
 ): boolean {

@@ -80,6 +80,9 @@ test("the Pixel chat is one workspace chat with Pixel's instruction", async () =
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(opened[0][0], CLAUDE);
   assert.equal(opened[0][1].instruction, PIXEL_INSTRUCTION);
+  // Pixel is told to read the layout back rather than claim what it did.
+  assert.match(PIXEL_INSTRUCTION, /get_layout/);
+  assert.match(PIXEL_INSTRUCTION, /Never say you did something that a tool result does not show/);
   assert.equal(opened[0][1].mcpServer.name, "terminay_chat");
   assert.equal(pixel.state().chatId, chat.id);
 });

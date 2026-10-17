@@ -152,6 +152,7 @@ export * from './agentChat/index.js';
 export * from './pixel/index.js';
 export * from './mcpApprovals/index.js';
 export * from './appWindows/index.js';
+export * from './workspaceView/index.js';
 export * from './notifications/index.js';
 export * from './push/index.js';
 export * from './connectedServers/index.js';

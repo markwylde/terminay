@@ -30,7 +30,7 @@ const [
 	terminalAdoptionController,
 	gitPushMenuController,
 	fileExplorerTree,
-	terminalControlController,
+	workspaceViewController,
 	terminalDockviewWindowController,
 ] = await Promise.all([
 	readFile('src/App.tsx', 'utf8'),
@@ -60,7 +60,7 @@ const [
 	readFile('src/workspace/useTerminalAdoptionController.ts', 'utf8'),
 	readFile('src/workspace/useGitPushMenuController.ts', 'utf8'),
 	readFile('src/workspace/FileExplorerTree.tsx', 'utf8'),
-	readFile('src/workspace/useTerminalControlController.ts', 'utf8'),
+	readFile('src/workspace/useWorkspaceViewController.ts', 'utf8'),
 	readFile('src/workspace/useTerminalDockviewWindowController.ts', 'utf8'),
 ]);
 
@@ -176,16 +176,16 @@ test('terminal features own creation, adoption, and active Dockview commands', (
 	assert.match(terminalDockviewCommands, /popoutActiveDockviewPanel/);
 });
 
-test('the terminal control feature owns MCP command resolution and waiters', () => {
-	assert.match(app, /useTerminalControlController\(\{/);
+test('the workspace view feature owns MCP view requests, and the renderer answers no MCP tool', () => {
+	// MCP tools run on the server; the window only applies view requests the
+	// server addresses to it (ADR-0070).
+	assert.match(app, /useWorkspaceViewController\(/);
 	assert.doesNotMatch(app, /case 'list_terminals'/);
 	assert.doesNotMatch(app, /case 'wait_for_command'/);
-	assert.doesNotMatch(app, /controlCommandWaitersRef/);
-	assert.doesNotMatch(app, /controlAttentionWaitersRef/);
-	assert.match(terminalControlController, /case 'list_terminals'/);
-	assert.match(terminalControlController, /case 'wait_for_command'/);
-	assert.match(terminalControlController, /recordTerminalControlActivity/);
-	assert.match(terminalControlController, /recordTerminalControlExit/);
+	assert.doesNotMatch(app, /handleControlRequest/);
+	assert.match(workspaceViewController, /serveWorkspaceView/);
+	assert.match(workspaceViewController, /case 'arrange'/);
+	assert.doesNotMatch(workspaceViewController, /case 'list_terminals'/);
 });
 
 test('the Dockview window controller owns header and popout listeners', () => {

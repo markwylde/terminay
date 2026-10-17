@@ -52,7 +52,41 @@ export function describeChatMcpCall(
 		case 'rename_terminal':
 			return `Renaming ${terminal()}`;
 		case 'split_terminal':
-			return `Splitting ${terminal()}`;
+			return `Opening a terminal beside ${terminal()}`;
+		case 'get_layout':
+			return 'Looking at the layout';
+		case 'focus_tab':
+			return 'Switching tabs';
+		case 'move_tab':
+			return 'Moving a tab';
+		case 'resize_pane':
+			return 'Resizing a pane';
+		case 'arrange_tabs':
+			return `Arranging tabs into ${
+				params.arrangement === 'grid'
+					? 'a grid'
+					: params.arrangement === 'tabs'
+						? 'one pane'
+						: params.arrangement === 'rows'
+							? 'rows'
+							: 'columns'
+			}`;
+		case 'focus_project':
+			return 'Switching project';
+		case 'select_folder':
+			return 'Switching folder';
+		case 'create_folder': {
+			const folder = quoted(params.name, 60);
+			return folder === '' ? 'Creating a folder' : `Creating the folder “${folder}”`;
+		}
+		case 'rename_folder':
+			return 'Renaming a folder';
+		case 'move_tab_to_folder':
+			return 'Moving a tab to a folder';
+		case 'open_file':
+			return 'Opening a file';
+		case 'close_tab':
+			return 'Closing a tab';
 		case 'wait_for_idle':
 			return `Waiting for ${terminal()} to go quiet`;
 		case 'wait_for_command':
