@@ -24,6 +24,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	appWindowMirror: 'app-window-mirror.v1',
 	/** Files a person attaches to a message they send from an app window. */
 	appWindowAttachments: 'app-window-attachments.v1',
+	/** An MCP agent reads and arranges the panes of the window it is talking
+	 * from, which that window applies and answers (ADR-0070). */
+	workspaceView: 'workspace-view.v1',
 	recording: 'recording.v1',
 	dictation: 'dictation.v1',
 	extensions: 'extensions.v1',
@@ -91,6 +94,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.appWindows,
 			FEATURE_CAPABILITIES.appWindowMirror,
 			FEATURE_CAPABILITIES.appWindowAttachments,
+			FEATURE_CAPABILITIES.workspaceView,
 			FEATURE_CAPABILITIES.recording,
 			FEATURE_CAPABILITIES.dictation,
 			FEATURE_CAPABILITIES.extensions,

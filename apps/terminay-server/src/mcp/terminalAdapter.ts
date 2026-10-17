@@ -12,8 +12,10 @@ import {
 	type TerminalRetainedOutputReadOptions,
 	TerminalService,
 	type TerminalSessionSnapshot,
+	findAutomationSpace,
 	type WorkspacePanel,
 	WorkspaceRepository,
+	type WorkspaceState,
 	type WorkspaceRepository as WorkspaceRepositoryType,
 } from '@terminay/server-core';
 import {
@@ -34,6 +36,7 @@ import type {
 	WriteTerminalParams,
 } from './dispatcher.js';
 import {
+	assertAutomationSpaceCapacity,
 	canAddressSession,
 	ProjectHandleCodec,
 	reachOf,
@@ -50,18 +53,8 @@ export interface ServerTerminalControlAdapterOptions {
 	readonly workspace?: WorkspaceRepositoryType;
 	readonly maxReadBytes?: number;
 	readonly maxWaitSeconds?: number;
-	readonly focusTerminal?: (
-		params: TerminalParams,
-		context: ControlRequestContext,
-		signal: AbortSignal,
-	) => unknown | Promise<unknown>;
 	readonly renameTerminal?: (
 		params: RenameTerminalParams,
-		context: ControlRequestContext,
-		signal: AbortSignal,
-	) => unknown | Promise<unknown>;
-	readonly splitTerminal?: (
-		params: SplitTerminalParams,
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
@@ -130,21 +123,11 @@ export function createServerTerminalControlAdapter(
 		writeTerminal: (params, context) => writeTerminal(options, params, context),
 		runCommand: (params, context) => runCommand(options, params, context),
 		closeTerminal: (params, context) => closeTerminal(options, params, context),
-		focusTerminal: (params, context, signal) => {
-			const session = targetSession(options, context, params.terminal);
-			return options.workspace === undefined
-				? options.focusTerminal === undefined
-					? unsupported('focus_terminal')
-					: options.focusTerminal(params, context, signal)
-				: applyWorkspaceViewCommand(
-						options.workspace,
-						'focus_terminal',
-						session.sessionId,
-						session.projectId,
-						context,
-						signal,
-					);
-		},
+		// Showing a terminal is the agent's client's to do (ADR-0070): the host
+		// only resolves it within scope.
+		focusTerminal: (params, context) => ({
+			terminal: targetSession(options, context, params.terminal).sessionId,
+		}),
 		renameTerminal: (params, context, signal) => {
 			const session = targetSession(options, context, params.terminal);
 			return options.workspace === undefined
@@ -161,22 +144,9 @@ export function createServerTerminalControlAdapter(
 						params.name,
 					);
 		},
-		splitTerminal: (params, context, signal) => {
-			const session = targetSession(options, context, params.terminal);
-			return options.workspace === undefined
-				? options.splitTerminal === undefined
-					? unsupported('split_terminal')
-					: options.splitTerminal(params, context, signal)
-				: applyWorkspaceViewCommand(
-						options.workspace,
-						'split_terminal',
-						session.sessionId,
-						session.projectId,
-						context,
-						signal,
-						params.direction,
-					);
-		},
+		// One new terminal in the target's project and folder; the agent's
+		// client places it (ADR-0070).
+		splitTerminal: (params, context) => splitTerminal(options, params, context),
 		waitForIdle: (params, context, signal) =>
 			waitForIdle(options, params, context, signal, maxWaitSeconds),
 		waitForCommand: (params, context, signal) =>
@@ -226,6 +196,18 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			'focus_terminal',
 			'rename_terminal',
 			'split_terminal',
+			'get_layout',
+			'focus_tab',
+			'move_tab',
+			'resize_pane',
+			'arrange_tabs',
+			'focus_project',
+			'select_folder',
+			'create_folder',
+			'rename_folder',
+			'move_tab_to_folder',
+			'open_file',
+			'close_tab',
 			'wait_for_idle',
 			'wait_for_command',
 			'wait_for_attention',
@@ -245,13 +227,9 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 				tool === 'wait_for_command' ||
 				tool === 'wait_for_attention'
 					? activityAvailable
-					: tool === 'focus_terminal'
-						? workspaceAvailable || options.focusTerminal !== undefined
-						: tool === 'rename_terminal'
-							? workspaceAvailable || options.renameTerminal !== undefined
-							: tool === 'split_terminal'
-								? workspaceAvailable || options.splitTerminal !== undefined
-								: true,
+					: tool === 'rename_terminal'
+						? workspaceAvailable || options.renameTerminal !== undefined
+						: true,
 		})),
 	};
 }
@@ -526,16 +504,84 @@ async function openTerminal(
 		projectId === context.projectId
 			? await callerPanel(options.workspace, context)
 			: undefined;
+	return createTerminal(options, context, {
+		projectId,
+		anchor: caller,
+		state,
+		...(params.name === undefined ? {} : { name: params.name }),
+		...(params.cwd === undefined ? {} : { cwd: params.cwd }),
+	});
+}
+
+/**
+ * One new terminal in the target's project and folder, starting where the
+ * target's folder starts. Where it appears on screen is the agent's client's
+ * to decide (ADR-0070).
+ */
+async function splitTerminal(
+	options: AdapterOptions,
+	params: SplitTerminalParams,
+	context: ControlRequestContext,
+): Promise<unknown> {
+	const target = targetSession(options, context, params.terminal);
+	const state =
+		options.workspace === undefined ? undefined : await options.workspace.load();
+	const projectId = target.projectId;
+	assertAutomationSpaceCapacity(
+		state === undefined
+			? projectId === context.projectId && reachOf(context) === 'workspace'
+			: findAutomationSpace(state)?.id === projectId,
+		options.terminal
+			.listSessions()
+			.filter(
+				(session) =>
+					session.serverId === options.terminal.serverId &&
+					session.projectId === projectId &&
+					session.status === 'running',
+			).length,
+	);
+	const anchor =
+		state === undefined
+			? undefined
+			: Object.values(state.panels).find(
+					(
+						panel,
+					): panel is Extract<WorkspacePanel, { type: 'terminal' }> =>
+						panel.type === 'terminal' &&
+						panel.projectId === projectId &&
+						panel.sessionId === target.sessionId,
+				);
+	return createTerminal(options, context, {
+		projectId,
+		anchor,
+		state: reachOf(context) === 'workspace' ? state : undefined,
+		...(params.name === undefined ? {} : { name: params.name }),
+	});
+}
+
+async function createTerminal(
+	options: AdapterOptions,
+	context: ControlRequestContext,
+	request: {
+		readonly projectId: string;
+		readonly anchor: Extract<WorkspacePanel, { type: 'terminal' }> | undefined;
+		readonly state: WorkspaceState | undefined;
+		readonly name?: string;
+		readonly cwd?: string;
+	},
+): Promise<unknown> {
+	const workspaceReach = reachOf(context) === 'workspace';
+	const { projectId, anchor } = request;
 	// The launch resolver reads the target project's canonical kind, so the
 	// new terminal's MCP reach follows where it opens (ADR-0030).
 	const launch = await options.launchResolver.resolve({
 		identity: options.terminal.allocateIdentity(projectId),
 		cols: 80,
 		rows: 24,
-		...(params.cwd === undefined ? {} : { explicitCwd: params.cwd }),
-		...(caller === undefined
+		...(request.cwd === undefined ? {} : { explicitCwd: request.cwd }),
+		...(anchor === undefined
 			? {}
-			: { activePanelId: caller.id, folderId: caller.folderId }),
+			: { activePanelId: anchor.id, folderId: anchor.folderId }),
 	});
 	const handle = await options.terminal.createResolvedSession(launch);
 	// Record the opener before the panel appears, so the terminal is shown
@@ -546,9 +592,9 @@ async function openTerminal(
 		await reconcileOpenedTerminal(
 			options.workspace,
 			handle.snapshot(),
-			params.name,
+			request.name,
 			context,
-			caller?.folderId,
+			anchor?.folderId,
 		);
 	} catch (error) {
 		await options.terminal.kill(handle.snapshot()).catch(() => undefined);
@@ -559,17 +605,15 @@ async function openTerminal(
 			terminal: handle.sessionId,
 			...workspaceProjectFields(
 				options.projectHandles,
-				state,
+				request.state,
 				handle.projectId,
 			),
 			status: handle.status,
-			...(params.split === undefined ? {} : { split: params.split }),
 		};
 	return {
 		terminal: handle.sessionId,
 		projectId: handle.projectId,
 		status: handle.status,
-		...(params.split === undefined ? {} : { split: params.split }),
 	};
 }
 
@@ -865,7 +909,7 @@ function targetSession(
 
 async function applyWorkspaceViewCommand(
 	workspace: WorkspaceRepository,
-	operation: 'focus_terminal' | 'rename_terminal' | 'split_terminal',
+	operation: 'rename_terminal',
 	sessionId: string,
 	projectId: string,
 	context: ControlRequestContext,
@@ -887,29 +931,13 @@ async function applyWorkspaceViewCommand(
 			'The requested terminal has no canonical workspace panel.',
 		);
 	}
-
-	const command =
-		operation === 'focus_terminal'
-			? {
-					type: 'panel.activate' as const,
-					projectId: panel.projectId,
-					panelId: panel.id,
-				}
-			: operation === 'rename_terminal'
-				? {
-						type: 'panel.update' as const,
-						panelId: panel.id,
-						patch: { title: value ?? '' },
-					}
-				: {
-						type: 'panel.split' as const,
-						projectId: panel.projectId,
-						panelId: panel.id,
-						direction: splitDirection(value),
-					};
 	const result = await workspace.apply({
 		commandId: `${context.requestId}.${operation}`.slice(0, 128),
-		command,
+		command: {
+			type: 'panel.update' as const,
+			panelId: panel.id,
+			patch: { title: value ?? '' },
+		},
 	});
 	throwIfAborted(signal);
 	if (!result.ok) {
@@ -918,16 +946,7 @@ async function applyWorkspaceViewCommand(
 			`The workspace rejected ${operation} at revision ${result.conflict.currentRevision}.`,
 		);
 	}
-	if (operation === 'rename_terminal')
-		return { terminal: sessionId, renamed: true, name: value };
-	if (operation === 'split_terminal')
-		return { terminal: sessionId, split: value };
-	return { terminal: sessionId, focused: true };
-}
-
-function splitDirection(value: string | undefined): 'horizontal' | 'vertical' {
-	if (value === 'right' || value === 'left') return 'horizontal';
-	return 'vertical';
+	return { terminal: sessionId, renamed: true, name: value };
 }
 
 function throwIfAborted(signal: AbortSignal): void {

@@ -57,6 +57,7 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['extensions', FEATURE_CAPABILITIES.extensions],
 	['extension', FEATURE_CAPABILITIES.extensions],
 	['language', FEATURE_CAPABILITIES.language],
+	['workspace-view', FEATURE_CAPABILITIES.workspaceView],
 	['server', CONNECTION_MECHANICS],
 	['events', CONNECTION_MECHANICS],
 	['connection', CONNECTION_MECHANICS],

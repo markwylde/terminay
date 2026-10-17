@@ -95,3 +95,5 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0067](./0067-chat-providers-may-run-agents-as-an-owner-approved-exception.md) | Chat providers may run the user's agents, as an owner-approved exception to observing agents | accepted | 2026-10-16 |
 | [0068](./0068-mcp-authority-belongs-to-a-terminal-or-a-chat.md) | MCP authority is capability scope combined with a user permission policy, and the caller is a terminal or a chat | accepted, supersedes 0031 | 2026-10-16 |
 | [0069](./0069-git-command-reports-reach-the-server-across-restarts.md) | Terminay's terminals report the Git commands run in them to the server, through Git's own tracing, across server restarts | accepted, supersedes 0052 | 2026-10-17 |
+| [0070](./0070-an-agents-view-operations-are-applied-by-the-client-it-is-talking-from.md) | An agent's view operations are applied by the client it is talking from | accepted | 2026-10-17 |
+| [0071](./0071-a-running-terminal-always-has-a-place-someone-can-see.md) | A running terminal always has a place someone can see | accepted | 2026-10-17 |

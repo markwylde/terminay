@@ -37,3 +37,4 @@ export * from "./health.js";
 export * from "./shellProfiles.js";
 export * from "./extensions.js";
 export * from "./language.js";
+export * from "./workspaceView.js";

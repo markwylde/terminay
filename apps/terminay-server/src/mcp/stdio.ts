@@ -358,11 +358,13 @@ function registerTools(
 		'open_terminal',
 		{
 			description:
-				'Open a sibling terminal. From an automation terminal, the terminal opens in the automation space unless project names a project handle returned by list_terminals.',
+				'Open exactly one new terminal. With split, the new terminal is placed in a new pane on that side of beside (a tab id or terminal handle; by default your own terminal) in the Terminay window you are talking from, and opens in that tab\'s project. With focus: true it is brought to the front there; without it, what the user is looking at does not change. From an automation terminal or a chat with no beside, it opens in the automation space unless project names a project handle from list_terminals or get_layout. The result reports placed and the window\'s layout afterwards; placed: false says why it could not be placed. Call once per terminal you want.',
 			inputSchema: {
 				name: name.optional(),
 				cwd: cwd.optional(),
 				split: direction.optional(),
+				beside: terminal.optional(),
+				focus: z.boolean().optional(),
 				project: z.string().regex(PROJECT_HANDLE_PATTERN).optional(),
 			},
 		},
@@ -394,7 +396,8 @@ function registerTools(
 	server.registerTool(
 		'focus_terminal',
 		{
-			description: 'Mark a sibling terminal active in the logical workspace.',
+			description:
+				'Show a terminal in the Terminay window you are talking from: its project, its folder, and its tab in front. Other windows and devices are not changed. Returns the layout afterwards.',
 			inputSchema: { terminal },
 		},
 		async ({ terminal: target }, extra) =>
@@ -411,8 +414,14 @@ function registerTools(
 	server.registerTool(
 		'split_terminal',
 		{
-			description: 'Split beside a sibling terminal.',
-			inputSchema: { terminal, direction },
+			description:
+				'Open exactly ONE new terminal in a new pane on the given side of terminal, in the Terminay window you are talking from. To get four panes, call it three times (or open terminals and call arrange_tabs with grid). focus: true brings the new terminal to the front. Returns the new terminal handle, placed, and the window\'s layout afterwards; check it rather than assuming.',
+			inputSchema: {
+				terminal,
+				direction,
+				name: name.optional(),
+				focus: z.boolean().optional(),
+			},
 		},
 		async (params, extra) => call('split_terminal', params, extra.signal),
 	);
@@ -448,9 +457,137 @@ function registerTools(
 		},
 		async (params, extra) => call('wait_for_attention', params, extra.signal),
 	);
+	registerWorkspaceViewTools(server, call);
 	registerAutomationTools(server, call);
 	registerWindowTools(server, call);
 	registerNotificationTools(server, call);
+}
+
+const VIEW_NOTE =
+	'It acts on the Terminay window you are talking from (the one showing your terminal, or the one that sent this chat its last message) and on no other window or device. It fails with renderer_unavailable when no such window is open.';
+const LAYOUT_NOTE =
+	'The result carries layout: the window\'s view afterwards, as get_layout describes it.';
+
+function registerWorkspaceViewTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const tab = boundedIdentifier();
+	const id = boundedIdentifier();
+	const project = z.string().regex(PROJECT_HANDLE_PATTERN);
+	const fraction = z.number().min(0.05).max(0.95);
+	const folderName = z.string().min(1).max(64);
+	server.registerTool(
+		'get_layout',
+		{
+			description: `Describe what the user sees: which project and folder is shown (visible), the project's folders, and its panes as a tree. A split node has split "row" (side by side) or "column" (stacked) and children with size fractions; a pane lists its tabs in order, each with its tab id, terminal handle for terminals, kind, title, and whether it is the pane's active tab; focused_tab is the tab with keyboard focus. Defaults to the shown project; project picks another (automation terminals and chats only), and projects lists them. Call it before and after changing the layout. ${VIEW_NOTE}`,
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+			inputSchema: { project: project.optional() },
+		},
+		async (params, extra) => call('get_layout', params, extra.signal),
+	);
+	server.registerTool(
+		'focus_tab',
+		{
+			description: `Bring a tab to the front, switching to its project and folder. tab is a tab id from get_layout or a terminal handle. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { tab },
+		},
+		async (params, extra) => call('focus_tab', params, extra.signal),
+	);
+	server.registerTool(
+		'move_tab',
+		{
+			description: `Move a tab into a new pane on one side (right, left, above, below) of the pane holding beside, or into that pane as another tab (center). Terminals keep running and keep their output. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: {
+				tab,
+				beside: tab,
+				position: z.enum(['right', 'left', 'above', 'below', 'center']).default('right'),
+			},
+		},
+		async (params, extra) => call('move_tab', params, extra.signal),
+	);
+	server.registerTool(
+		'resize_pane',
+		{
+			description: `Resize the pane holding a tab: width and/or height as a fraction (0.05 to 0.95) of the workspace area. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { tab, width: fraction.optional(), height: fraction.optional() },
+		},
+		async (params, extra) => call('resize_pane', params, extra.signal),
+	);
+	server.registerTool(
+		'arrange_tabs',
+		{
+			description: `Rearrange the shown folder's tabs, or just the listed tabs, into equal panes: grid (as square as possible, e.g. 4 tabs make 2x2), columns (side by side), rows (stacked), or tabs (one pane, all as tabs). Terminals keep running. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: {
+				arrangement: z.enum(['grid', 'columns', 'rows', 'tabs']),
+				tabs: z.array(tab).min(1).max(32).optional(),
+				project: project.optional(),
+			},
+		},
+		async (params, extra) => call('arrange_tabs', params, extra.signal),
+	);
+	server.registerTool(
+		'focus_project',
+		{
+			description: `Switch the window to a project, by the project handle get_layout or list_terminals gives. Only automation terminals and chats reach other projects. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { project },
+		},
+		async (params, extra) => call('focus_project', params, extra.signal),
+	);
+	server.registerTool(
+		'select_folder',
+		{
+			description: `Show one of a project's folders (from get_layout's folders) in the window. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { folder: id },
+		},
+		async (params, extra) => call('select_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'create_folder',
+		{
+			description:
+				'Create a folder (a named group of tabs) in your project, or in project. Every device sees it. Returns its folder id.',
+			inputSchema: { name: folderName, project: project.optional() },
+		},
+		async (params, extra) => call('create_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'rename_folder',
+		{
+			description: 'Rename a folder you or the user made. Every device sees it.',
+			inputSchema: { folder: id, name: folderName },
+		},
+		async (params, extra) => call('rename_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'move_tab_to_folder',
+		{
+			description:
+				'Move a terminal tab to another folder of its project. The terminal keeps running. Every device sees it.',
+			inputSchema: { tab, folder: id },
+		},
+		async (params, extra) => call('move_tab_to_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'open_file',
+		{
+			description: `Open a file in a viewer tab for the user, by a path inside the project's folder (relative to it, or absolute). You do not receive its content; read files yourself if you need them. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { path: z.string().min(1).max(4096), project: project.optional() },
+		},
+		async (params, extra) => call('open_file', params, extra.signal),
+	);
+	server.registerTool(
+		'close_tab',
+		{
+			description: `Close a tab as the user closing it would, including any prompt to keep a busy terminal or save a document; closed says whether it closed. To end a terminal without asking, use close_terminal. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
+			inputSchema: { tab },
+		},
+		async (params, extra) => call('close_tab', params, extra.signal),
+	);
 }
 
 const APPROVAL_NOTE =

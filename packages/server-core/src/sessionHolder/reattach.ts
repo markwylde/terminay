@@ -6,7 +6,10 @@ import type {
 	WorkspaceState,
 	WorkspaceStore,
 } from '../workspace.js';
-import type { SessionHolderPtyFactory } from './factory.js';
+import type {
+	HeldSessionSummary,
+	SessionHolderPtyFactory,
+} from './factory.js';
 
 /**
  * Restart recovery when a session holder keeps PTYs running (ADR-0035).
@@ -14,8 +17,9 @@ import type { SessionHolderPtyFactory } from './factory.js';
  * Every persisted terminal session ends up in exactly one of three states:
  * adopted and running under its original identity, ended with the output it
  * left behind, or ended with nothing to show. Its panel is kept in all three.
- * A session the holder has but the workspace does not is ended, so nothing
- * runs that no panel can reach.
+ * A shell still running that the holder has and the workspace does not is
+ * recovered into a project of its own, so nothing runs that no panel can
+ * reach and no shell is ended that someone may still need (ADR-0071).
  */
 
 export interface ReattachHeldSessionsOptions {
@@ -38,9 +42,16 @@ export interface ReattachHeldSessionsResult {
 	readonly adopted: readonly string[];
 	/** Sessions that are no longer running; their panels show what was saved. */
 	readonly ended: readonly string[];
-	/** Held sessions the workspace does not know, which were ended. */
+	/** Held sessions the workspace did not know and that had already ended,
+	 * or belonged to another server; they were ended. */
 	readonly orphaned: readonly string[];
+	/** Held shells the workspace did not know that were still running: each
+	 * now has a panel in a "Recovered terminals" project, and was adopted. */
+	readonly recovered: readonly string[];
 }
+
+/** The name of the project a restart gives shells it found and could not place. */
+export const RECOVERED_TERMINALS_PROJECT_NAME = 'Recovered terminals';
 
 const FALLBACK_COLS = 80;
 const FALLBACK_ROWS = 24;
@@ -53,24 +64,66 @@ export async function reattachHeldSessions(
 	const held = new Map(
 		(await holder.start()).map((session) => [session.sessionId, session]),
 	);
-	if (options.freshWorkspace === true) {
-		for (const sessionId of held.keys()) await holder.end(sessionId);
-		holder.pruneTails(new Set());
-		return { adopted: [], ended: [], orphaned: [...held.keys()] };
-	}
-	const state = workspace.state;
-	const persisted = state.terminalSessions;
-	const panels = terminalPanelsBySession(state);
-
+	const persisted = workspace.state.terminalSessions;
 	const orphaned: string[] = [];
-	for (const sessionId of held.keys()) {
+	const strays: HeldSessionSummary[] = [];
+	for (const [sessionId, record] of held) {
 		const session = persisted[sessionId];
+		// A fresh workspace's one session is about to be created, not recovered.
+		if (options.freshWorkspace === true && session !== undefined) {
+			orphaned.push(sessionId);
+			held.delete(sessionId);
+			await holder.end(sessionId);
+			continue;
+		}
 		if (session !== undefined && session.serverId === options.serverId)
 			continue;
+		// A shell still running that nothing in the workspace names is kept and
+		// given a place below. One that has ended, or that a workspace names
+		// for another server, has nothing to recover.
+		if (session === undefined && record.exit === undefined) {
+			strays.push(record);
+			continue;
+		}
 		orphaned.push(sessionId);
 		held.delete(sessionId);
 		await holder.end(sessionId);
 	}
+	const recovered = recoverStrays(options, strays, now());
+	for (const record of strays)
+		if (!recovered.includes(record.sessionId)) {
+			orphaned.push(record.sessionId);
+			held.delete(record.sessionId);
+			await holder.end(record.sessionId);
+		}
+	if (options.freshWorkspace === true) {
+		// Nothing persisted is reconciled; only what was recovered is adopted.
+		const adopted: string[] = [];
+		const ended: string[] = [];
+		for (const sessionId of recovered) {
+			const session = workspace.state.terminalSessions[sessionId];
+			if (session === undefined) continue;
+			try {
+				const taken = await holder.adopt(sessionId);
+				terminal.adoptSession({
+					identity: identityOf(session),
+					cwd: taken.record.cwd,
+					createdAt: session.createdAt,
+					cols: taken.record.cols,
+					rows: taken.record.rows,
+					process: taken.process,
+					outputPosition: taken.from,
+				});
+				adopted.push(sessionId);
+			} catch {
+				ended.push(sessionId);
+			}
+		}
+		holder.pruneTails(new Set());
+		return { adopted, ended, orphaned, recovered };
+	}
+	const state = workspace.state;
+	const panels = terminalPanelsBySession(state);
 
 	// The workspace is reconciled before anything is adopted, so the exit of a
 	// held session that has already ended is recorded by the ordinary exit path
@@ -78,7 +131,7 @@ export async function reattachHeldSessions(
 	const reattachable = new Set<string>();
 	const exitedWhileAway = new Map<string, number | undefined>();
 	const tails = new Map<string, ReturnType<typeof holder.readTail>>();
-	for (const session of Object.values(persisted)) {
+	for (const session of Object.values(state.terminalSessions)) {
 		if (held.has(session.id)) {
 			if (session.status !== 'exited') reattachable.add(session.id);
 			continue;
@@ -162,7 +215,55 @@ export async function reattachHeldSessions(
 			),
 		),
 	);
-	return { adopted, ended, orphaned };
+	return { adopted, ended, orphaned, recovered };
+}
+
+/**
+ * Give each running shell the workspace did not know a panel, in one new
+ * "Recovered terminals" project in the first view. Returns the sessions that
+ * now have one; a shell the workspace refuses to place is left to be ended.
+ */
+function recoverStrays(
+	options: ReattachHeldSessionsOptions,
+	strays: readonly HeldSessionSummary[],
+	at: number,
+): string[] {
+	const first = strays[0];
+	if (first === undefined) return [];
+	const { workspace } = options;
+	const viewId = workspace.state.viewOrder[0];
+	if (viewId === undefined) return [];
+	let projectId = `recovered-${at.toString(36)}`;
+	for (let n = 2; workspace.state.projects[projectId] !== undefined; n += 1)
+		projectId = `recovered-${at.toString(36)}-${n}`;
+	const created = workspace.apply({
+		commandId: `recover:${projectId}`.slice(0, 128),
+		command: {
+			type: 'project.create',
+			projectId,
+			viewId,
+			root: first.cwd,
+			name: RECOVERED_TERMINALS_PROJECT_NAME,
+		},
+	});
+	if (!created.ok) return [];
+	const recovered: string[] = [];
+	for (const [index, record] of strays.entries()) {
+		const placed = workspace.apply({
+			commandId: `recover:${record.sessionId}`.slice(0, 128),
+			command: {
+				type: 'terminal.createPanel',
+				sessionId: record.sessionId,
+				projectId,
+				panelId: `p:${record.sessionId}`.slice(0, 128),
+				title: `Recovered ${index + 1}`,
+				cwd: record.cwd,
+				createdAt: record.createdAt,
+			},
+		});
+		if (placed.ok) recovered.push(record.sessionId);
+	}
+	return recovered;
 }
 
 function identityOf(session: TerminalSession) {
