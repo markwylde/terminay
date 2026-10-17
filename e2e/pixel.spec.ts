@@ -81,7 +81,7 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 	}).toPass({ timeout: 30_000 });
 	await expect(balloon(mainWindow)).toContainText('Which agent should I use?');
 	await claudeChip.click();
-	await expect(balloon(mainWindow).locator('.mwpet-chat-title')).toHaveText('Pixel · Claude Code');
+	await expect(balloon(mainWindow).locator('.mwpet-chat-status')).toContainText('Claude Code');
 
 	// A plain reply streams in.
 	await ask(mainWindow, 'hello');
@@ -129,7 +129,7 @@ test('a second window shows the same Pixel conversation and can answer its appro
 		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
 	}).toPass({ timeout: 30_000 });
 	await claudeChip.click();
-	await expect(balloon(mainWindow).locator('.mwpet-chat-title')).toHaveText('Pixel · Claude Code');
+	await expect(balloon(mainWindow).locator('.mwpet-chat-status')).toContainText('Claude Code');
 
 	// Pop a second project out into its own window; the main window keeps
 	// the first. Both windows are clients of the same server.
