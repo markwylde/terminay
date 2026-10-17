@@ -265,6 +265,15 @@ interface ChatRecord {
 	inactivity?: ReturnType<typeof setTimeout>;
 	notify?: ReturnType<typeof setTimeout>;
 	closed: boolean;
+	/** The client connection that sent the latest message: where the chat's
+	 * view requests go (ADR-0070). Held in memory only. */
+	viewer?: AgentChatViewer;
+}
+
+/** A client connection a chat's agent is talking to. */
+export interface AgentChatViewer {
+	readonly clientId: string;
+	readonly connectionId: string;
 }
 
 const KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -427,7 +436,7 @@ export class AgentChatService {
 	 * Append the user's message and run one turn. Resolves once the turn is
 	 * under way; the reply arrives as changes.
 	 */
-	send(chatId: string, text: string): void {
+	send(chatId: string, text: string, from?: AgentChatViewer): void {
 		this.assertRunning();
 		const chat = this.require(chatId);
 		const message = typeof text === 'string' ? text.trim() : '';
@@ -442,6 +451,7 @@ export class AgentChatService {
 				'This chat is still replying. Wait for it, or press Stop.',
 			);
 		this.push(chat, { kind: 'user', text: message });
+		if (from !== undefined) chat.viewer = from;
 		chat.status = 'thinking';
 		chat.turnFailed = false;
 		chat.reply = undefined;
@@ -450,6 +460,17 @@ export class AgentChatService {
 		this.armInactivity(chat);
 		this.changed(chat, true);
 		void this.runTurn(chat, message, turn);
+	}
+
+	/** The client connection that sent the chat's latest message, while it is connected. */
+	viewerOf(chatId: string): AgentChatViewer | undefined {
+		return this.chats.get(chatId)?.viewer;
+	}
+
+	/** A connection closed: no chat is talking to it any more. */
+	forgetViewerConnection(connectionId: string): void {
+		for (const chat of this.chats.values())
+			if (chat.viewer?.connectionId === connectionId) delete chat.viewer;
 	}
 
 	/** Stop the running turn and withdraw the chat's pending approvals. */

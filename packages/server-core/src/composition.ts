@@ -88,6 +88,10 @@ import {
 	type AppWindowView,
 } from './appWindows/index.js';
 import {
+	type WorkspaceViewTarget,
+	WorkspaceViewRelay,
+} from './workspaceView/index.js';
+import {
 	type ConnectedServerBackend,
 	ConnectedServerRegistry,
 	type ConnectedServerVault,
@@ -507,6 +511,19 @@ export interface ServerCoreComposition {
 	readonly pixel?: PixelService;
 	/** Server-owned app windows, when composed. */
 	readonly appWindows?: AppWindowService;
+	/**
+	 * The relay to the client an MCP caller is talking from (ADR-0070), and
+	 * how that client is found: the calling terminal's presentation-lease
+	 * holder, or the connection that sent a chat's latest message.
+	 */
+	readonly workspaceView?: {
+		readonly relay: WorkspaceViewRelay;
+		readonly targetFor: (caller: {
+			readonly terminalSessionId: string;
+			readonly projectId: string;
+			readonly chatId?: string;
+		}) => WorkspaceViewTarget | undefined;
+	};
 	/** The user's connected MCP servers, when composed. */
 	readonly connectedServers?: ConnectedServerRegistry;
 	/** The composed run executor, when no host `controller` was supplied. */
@@ -1097,6 +1114,33 @@ export function createServerCoreComposition(
 							: { directory: options.appWindows.attachmentDirectory }),
 					},
 				});
+	// Only a server that serves MCP has agents to ask a window anything.
+	const workspaceViewRelay =
+		mcpApprovals === undefined
+			? undefined
+			: new WorkspaceViewRelay({ eventJournal });
+	const workspaceView = workspaceViewRelay && {
+		relay: workspaceViewRelay,
+		targetFor: (caller: {
+			readonly terminalSessionId: string;
+			readonly projectId: string;
+			readonly chatId?: string;
+		}): WorkspaceViewTarget | undefined => {
+			if (caller.chatId !== undefined) return agentChat?.viewerOf(caller.chatId);
+			const holder = terminalOperations.presentationHolder({
+				projectId: caller.projectId,
+				sessionId: caller.terminalSessionId,
+			});
+			return holder === undefined
+				? undefined
+				: {
+						clientId: holder.clientId,
+						...(holder.connectionId === undefined
+							? {}
+							: { connectionId: holder.connectionId }),
+					};
+		},
+	};
 	const removeAppWindowExitObserver =
 		appWindows === undefined
 			? undefined
@@ -1568,7 +1612,10 @@ export function createServerCoreComposition(
 						mergeOperationRegistries(
 							mcpApprovals?.operations() ?? {},
 							mergeOperationRegistries(
-								appWindows?.operations() ?? {},
+								mergeOperationRegistries(
+									appWindows?.operations() ?? {},
+									workspaceViewRelay?.operations() ?? {},
+								),
 								connectedServers?.operations() ?? {},
 							),
 						),
@@ -1635,6 +1682,8 @@ export function createServerCoreComposition(
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
 		appWindows?.closeConnection(connectionId);
+		workspaceViewRelay?.closeConnection(connectionId);
+		agentChat?.forgetViewerConnection(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};
 	const coreOptions: ServerCoreOptions = {
@@ -1920,6 +1969,7 @@ export function createServerCoreComposition(
 				mcpApprovals?.revokeAll();
 				removeAppWindowExitObserver?.();
 				appWindows?.endAll();
+				workspaceViewRelay?.endAll();
 			});
 			lifecycle = 'stopped';
 			if (failures.length > 0)
@@ -1960,6 +2010,7 @@ export function createServerCoreComposition(
 		...(agentChat === undefined ? {} : { agentChat }),
 		...(pixel === undefined ? {} : { pixel }),
 		...(appWindows === undefined ? {} : { appWindows }),
+		...(workspaceView === undefined ? {} : { workspaceView }),
 		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),
 		...(automationScheduler === undefined ? {} : { automationScheduler }),
@@ -2235,7 +2286,10 @@ function uniqueCapabilities(
 				? []
 				: [FEATURE_CAPABILITIES.automations]),
 			...(options.mcpApprovals === true
-				? [FEATURE_CAPABILITIES.mcpApprovals]
+				? [
+						FEATURE_CAPABILITIES.mcpApprovals,
+						FEATURE_CAPABILITIES.workspaceView,
+					]
 				: []),
 			...(options.appWindows !== undefined && options.mcpApprovals === true
 				? [

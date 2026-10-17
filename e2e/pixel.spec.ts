@@ -158,3 +158,74 @@ test('a second window shows the same Pixel conversation and can answer its appro
 	await expect(balloon(mainWindow).getByRole('button', { name: 'Allow One Time' })).toHaveCount(0);
 	await expect(balloon(second)).toContainText('Done, I ran it.');
 });
+
+test('asked for three more terminals in a 2x2 grid, Pixel opens them in the project on screen, places them, and reports only what it can see', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	test.setTimeout(120_000);
+	await setPixel(appHarness, mainWindow, true);
+	const statusBarDock = mainWindow.locator('.workspace-status-bar .pixel-dock--status-bar');
+	await expect(statusBarDock).toBeVisible();
+	const claudeChip = balloon(mainWindow).getByRole('button', { name: 'Claude Code' });
+	await expect(async () => {
+		if (await balloon(mainWindow).isVisible()) await statusBarDock.click();
+		await statusBarDock.click();
+		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await claudeChip.click();
+	await expect(balloon(mainWindow).locator('.mwpet-chat-status')).toContainText('Claude Code');
+
+	const workspace = mainWindow.locator('.project-workspace--active');
+	await expect(workspace.locator('.terminal-tab-content')).toHaveCount(1);
+	await ask(mainWindow, 'can you open three more and place all the terminals in a 2x2 grid');
+
+	// Pixel's report comes from the layout it read back, not from its plan.
+	await expect(balloon(mainWindow)).toContainText('Opened 3, placed 3. Your window shows a 2x2 grid.', { timeout: 30_000 });
+	await expect(balloon(mainWindow)).toContainText('✓ Looking at the layout');
+	await expect(balloon(mainWindow)).toContainText('✓ Opening a terminal beside');
+	// And it is on screen, in the project the user is looking at.
+	await expect(workspace.locator('.terminal-tab-content')).toHaveCount(4);
+	await expect(workspace.locator('.dv-groupview')).toHaveCount(4);
+	const boxes = await workspace.locator('.terminal-panel:visible').evaluateAll((panels) =>
+		panels.map((panel) => {
+			const box = panel.getBoundingClientRect();
+			return [Math.round(box.x), Math.round(box.y)];
+		}),
+	);
+	expect(new Set(boxes.map(([x]) => x)).size).toBe(2);
+	expect(new Set(boxes.map(([, y]) => y)).size).toBe(2);
+});
+
+test('a terminal Pixel opens in the automation space is listed in Tabs and opens from there', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	test.setTimeout(120_000);
+	await setPixel(appHarness, mainWindow, true);
+	const statusBarDock = mainWindow.locator('.workspace-status-bar .pixel-dock--status-bar');
+	await expect(statusBarDock).toBeVisible();
+	const claudeChip = balloon(mainWindow).getByRole('button', { name: 'Claude Code' });
+	await expect(async () => {
+		if (await balloon(mainWindow).isVisible()) await statusBarDock.click();
+		await statusBarDock.click();
+		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await claudeChip.click();
+	await expect(balloon(mainWindow).locator('.mwpet-chat-status')).toContainText('Claude Code');
+
+	await ask(mainWindow, 'open a background terminal');
+	await expect(balloon(mainWindow)).toContainText('Opened it in Automations.');
+	// Not a tab of the project in front...
+	await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1);
+	// ...but never out of sight: Tabs lists it under Automations.
+	await statusBarDock.click();
+	await mainWindow.locator('[data-terminay-home-control]:visible').first().click();
+	await mainWindow.locator('[data-terminay-home-section-tab="tabs"]').click();
+	const space = mainWindow.locator('[data-terminay-dashboard-project="system:automations"]').first();
+	await expect(space).toBeVisible();
+	const row = mainWindow.locator('[data-terminay-dashboard] [data-terminay-dashboard-panel]', { hasText: 'Background job' });
+	await expect(row).toHaveCount(1);
+	await row.click();
+	await expect(mainWindow.locator('[data-terminay-automation-terminal-page]')).toBeVisible();
+});

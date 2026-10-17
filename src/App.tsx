@@ -453,6 +453,12 @@ import {
 	rememberHomeSidebarVisible,
 	rememberSelectedFolder,
 } from './workspace/localViewState';
+import {
+	useWorkspaceViewController,
+	type WorkspaceViewWindow,
+} from './workspace/useWorkspaceViewController';
+import { pathInsideRoot } from './workspace/workspaceView';
+import { elsewhereTerminals } from './workspace/elsewhereTerminals';
 import { useRememberedColumnWidth } from './workspace/useRememberedColumnWidth';
 import {
 	type DashboardActivation,
@@ -469,14 +475,6 @@ import { useRemoteAccessController } from './workspace/useRemoteAccessController
 import { shouldAcknowledgeInteractedActivity } from './workspace/terminalActivityAcknowledgement';
 import { useTerminalActivityController } from './workspace/useTerminalActivityController';
 import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
-import {
-	type ControlHandlerResult,
-	clearTerminalControlActivity,
-	createTerminalControlState,
-	recordTerminalControlActivity,
-	recordTerminalControlExit,
-	useTerminalControlController,
-} from './workspace/useTerminalControlController';
 import {
 	scheduleCreatedTerminalFocus,
 	useTerminalCreationController,
@@ -697,12 +695,11 @@ type ProjectWorkspaceHandle = {
 	openShellAtFolderRoot: () => Promise<void>;
 	/** The repository's worktree listing as this workspace last read it. */
 	worktreeStatus: () => WorktreePanelStatus | null;
-	/** Handle an MCP control request scoped to a terminal in this project. */
-	handleControlRequest: (
-		op: string,
-		params: unknown,
-		scopeSessionId: string,
-	) => Promise<ControlHandlerResult>;
+	/** This workspace's panes, for an MCP agent's view request (ADR-0070). */
+	viewApi: () => DockviewApi | null;
+	/** Open a file tab for a path inside this folder's root; its tab id, or
+	 * undefined when the path is outside the root. */
+	openFileTab: (path: string) => Promise<string | undefined>;
 };
 
 type ProjectWorkspaceProps = {
@@ -1759,7 +1756,6 @@ const ProjectWorkspace = memo(forwardRef<
 		>(new Map());
 		const terminalContextReadersRef =
 			sharedTerminalContextReaders ?? ownTerminalContextReadersRef;
-		const terminalControlStateRef = useRef(createTerminalControlState());
 		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
 		const workspaceSnapshotStoreRef = useRef(
 			terminalClientContext?.workspaceSnapshotStore,
@@ -2448,10 +2444,6 @@ const ProjectWorkspace = memo(forwardRef<
 					state: 'viewed',
 					nextDeadline: null,
 				});
-				clearTerminalControlActivity(
-					terminalControlStateRef.current,
-					sessionId,
-				);
 			}
 			const applySnapshot = () => {
 				for (const snapshot of Object.values(
@@ -2513,18 +2505,6 @@ const ProjectWorkspace = memo(forwardRef<
 							serverActivityEvaluation(snapshot),
 						);
 					}
-					const exitCode =
-						typeof snapshot.exitCode === 'number' ? snapshot.exitCode : null;
-					recordTerminalControlActivity(
-						terminalControlStateRef.current,
-						snapshot.sessionId,
-						{
-							status: snapshot.status,
-							attention: snapshot.attention,
-							exitCode,
-							at: snapshot.updatedAt,
-						},
-					);
 				}
 			};
 			applySnapshot();
@@ -4515,28 +4495,26 @@ const ProjectWorkspace = memo(forwardRef<
 			};
 		}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
 
-		const {
-			handleRequest: handleControlRequest,
-			ownsSession: ownsControlSession,
-		} = useTerminalControlController({
-			addTerminal,
-			apiRef: dockviewApiRef,
-			getTerminalCwd: getServerTerminalCwd,
-			projectId: project.id,
-			sendInput: sendTerminalPanelInput,
-			onTerminalTitleSet: publishWorkspaceInventory,
-			state: terminalControlStateRef.current,
-			terminalContextReadersRef,
-			waitForInactivity:
-				terminalPanelClientContext === null
-					? null
-					: (projectId, sessionId, idleMs) =>
-							terminalPanelClientContext.client.waitForInactivity(
-								projectId,
-								sessionId,
-								idleMs,
-							),
-		});
+		const ownsControlSession = useCallback(
+			(sessionId: string) =>
+				dockviewApiRef.current?.panels.some(
+					(panel) =>
+						(panel.params as { sessionId?: unknown } | undefined)
+							?.sessionId === sessionId,
+				) ?? false,
+			[],
+		);
+		const openFileTab = useCallback(
+			async (path: string): Promise<string | undefined> => {
+				if (folderRootPath === undefined || folderRootPath === null)
+					return undefined;
+				const resolved = pathInsideRoot(folderRootPath, path);
+				if (resolved === undefined) return undefined;
+				await openFile(resolved);
+				return filePathPanelMapRef.current.get(resolved);
+			},
+			[folderRootPath, openFile],
+		);
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -4567,7 +4545,8 @@ const ProjectWorkspace = memo(forwardRef<
 					await addTerminal({ atFolderRoot: true });
 				},
 				worktreeStatus: () => worktreePanelStatusRef.current,
-				handleControlRequest,
+				viewApi: () => dockviewApiRef.current,
+				openFileTab,
 			}),
 			[
 				addTerminal,
@@ -4583,7 +4562,7 @@ const ProjectWorkspace = memo(forwardRef<
 				exportProjectForMove,
 				focusActiveTerminal,
 				ownsControlSession,
-				handleControlRequest,
+				openFileTab,
 			],
 		);
 
@@ -4933,12 +4912,6 @@ const ProjectWorkspace = memo(forwardRef<
 				).detail;
 				if (!detail?.sessionId || typeof detail.exitCode !== 'number') return;
 				cancelMacroRunsForSession(detail.sessionId);
-
-				recordTerminalControlExit(
-					terminalControlStateRef.current,
-					detail.sessionId,
-					detail.exitCode,
-				);
 
 				const panel = getPanelForSession(detail.sessionId);
 				panel?.api.updateParameters({ terminalSessionStatus: 'exited' });
@@ -8450,19 +8423,43 @@ function App({
 	 * not hold can still say which of its projects has an agent waiting.
 	 * Nothing is summed across servers: each row still belongs to one.
 	 */
+	// Terminals this window does not show — the automation space, and projects
+	// of views no window here presents — are listed too, so a running terminal
+	// is never out of sight (ADR-0071).
+	const elsewhere = useMemo(
+		() =>
+			workspaceSnapshot === null || workspaceSnapshot === undefined
+				? undefined
+				: elsewhereTerminals(
+						workspaceSnapshot,
+						new Set(projects.map((project) => project.id)),
+					),
+		[projects, workspaceSnapshot],
+	);
+	const elsewhereRef = useRef(elsewhere);
+	elsewhereRef.current = elsewhere;
 	const dashboardSources = useMemo<readonly DashboardServerSource[]>(
 		() =>
-			projectTabSources.map((source) => ({
-				serverId: source.serverId,
-				serverLabel: source.serverLabel,
-				projects: source.projects,
-				inventoryByProject:
-					source.serverId === currentServerId ? inventoryByProject : {},
-				agentsByProject: agentsByServerProject[source.serverId] ?? {},
-			})),
+			projectTabSources.map((source) => {
+				const here = source.serverId === currentServerId;
+				const others = here ? elsewhere : undefined;
+				return {
+					serverId: source.serverId,
+					serverLabel: source.serverLabel,
+					projects:
+						others === undefined
+							? source.projects
+							: [...source.projects, ...others.projects],
+					inventoryByProject: here
+						? { ...inventoryByProject, ...others?.inventoryByProject }
+						: {},
+					agentsByProject: agentsByServerProject[source.serverId] ?? {},
+				};
+			}),
 		[
 			agentsByServerProject,
 			currentServerId,
+			elsewhere,
 			inventoryByProject,
 			projectTabSources,
 		],
@@ -8509,6 +8506,47 @@ function App({
 	// Likewise one projection of app windows per server; the host below lays
 	// them out over the terminal panes that own them.
 	const serverAppWindows = useServerAppWindows(automationEntries);
+	// An MCP agent the user is talking to here reads and arranges this
+	// window's panes through the server (ADR-0070). The window is described
+	// afresh for each request, so a request always sees what is on screen.
+	const isHomeSelectedRef = useRef(isHomeSelected);
+	isHomeSelectedRef.current = isHomeSelected;
+	const workspaceViewWindow: WorkspaceViewWindow<ProjectWorkspaceHandle> = {
+		projectIds: () => projectsRef.current.map((project) => project.id),
+		shownProjectId: () =>
+			isHomeSelectedRef.current
+				? undefined
+				: (activeProjectIdRef.current ?? undefined),
+		targetProjectId: () => activeProjectIdRef.current ?? undefined,
+		selectedFolderId: (projectId) => {
+			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
+			return commandFolderId(
+				snapshot?.projects[projectId],
+				snapshot?.folders ?? NO_WORKSPACE_FOLDERS,
+				rememberedFolderId(projectId),
+			);
+		},
+		folderIds: (projectId) => {
+			const snapshot = workspaceSnapshotStoreRef.current?.snapshot;
+			const folderIds = snapshot?.projects[projectId]?.folderIds;
+			return folderIds === undefined || folderIds.length === 0
+				? [
+						commandFolderId(
+							snapshot?.projects[projectId],
+							snapshot?.folders ?? NO_WORKSPACE_FOLDERS,
+							rememberedFolderId(projectId),
+						),
+					]
+				: folderIds;
+		},
+		workspace: (projectId, folderId) =>
+			workspaceRefs.current.get(projectId, folderId),
+		showProject: (projectId) => activateProjectRef.current(projectId),
+		selectFolder,
+	};
+	const workspaceViewWindowRef = useRef(workspaceViewWindow);
+	workspaceViewWindowRef.current = workspaceViewWindow;
+	useWorkspaceViewController(automationEntries, workspaceViewWindowRef);
 	useEffect(() => {
 		window.dispatchEvent(new Event(APP_WINDOW_LAYOUT_EVENT));
 	}, [activeProjectId, isHomeSelected]);
@@ -8777,6 +8815,30 @@ function App({
 		byServerId.get(currentServerId)?.context !== undefined;
 	const activateDashboardRow = useCallback(
 		(serverId: string, row: DashboardRow) => {
+			const where =
+				serverId === currentServerId
+					? elsewhereRef.current?.placement[row.projectId]
+					: undefined;
+			if (where === 'automations') {
+				// The automation space is shown in the Automations section.
+				if (row.kind === 'panel')
+					openInHome({ kind: 'terminal', serverId, panelId: row.panelId });
+				else openHomeSection('automations');
+				return;
+			}
+			if (where === 'other-view') {
+				// A project no window here shows is brought into this one.
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined || boundWorkspaceViewId === null) return;
+				void store
+					.moveProject({
+						projectId: row.projectId,
+						targetViewId: boundWorkspaceViewId,
+					})
+					.then(() => activateProjectRef.current(row.projectId))
+					.catch(() => undefined);
+				return;
+			}
 			if (activateAnotherServer(serverId, row.projectId)) return;
 			// Resolve at click time: a row rendered before a project or panel went
 			// away must not act on it.
@@ -8791,8 +8853,13 @@ function App({
 		[
 			activateAnotherServer,
 			applyDashboardActivation,
+			boundWorkspaceViewId,
+			currentServerId,
 			inventoryByProject,
+			openHomeSection,
+			openInHome,
 			projectsRef,
+			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
 	// Activating an agent is activating the panel it runs in, resolved the same

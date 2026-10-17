@@ -500,20 +500,33 @@ test.describe('Automation runs', () => {
 			view.locator('[data-terminay-automation-exited-terminal-exit]'),
 		).toHaveText('Exited with code 0 · read-only');
 
-		// The automation space is never a project: not in the tab bar, not in Tabs.
+		// The automation space is never a project tab, but its terminals are
+		// never out of sight: Tabs lists them under Automations (ADR-0071).
 		await expect(projectTabs).toHaveCount(tabsBefore);
 		await expect(
 			mainWindow.locator(`.project-tab[data-project-id="${AUTOMATION_SPACE_ID}"]`),
 		).toHaveCount(0);
 		await sectionTab(mainWindow, 'tabs').click();
 		await expect(mainWindow.locator('[data-terminay-dashboard]')).toBeVisible();
-		await expect(
-			mainWindow.locator(
-				`[data-terminay-dashboard-project="${AUTOMATION_SPACE_ID}"]`,
-			),
-		).toHaveCount(0);
-		await expect(mainWindow.locator('[data-terminay-dashboard]')).not.toContainText(
-			'Echo and keep',
+		const spaceHeader = mainWindow
+			.locator(`[data-terminay-dashboard-project="${AUTOMATION_SPACE_ID}"]`)
+			.first();
+		await expect(spaceHeader).toBeVisible();
+		await expect(spaceHeader).toContainText('Automations');
+
+		// Activating it there opens it in the Automations section.
+		await sectionTab(mainWindow, 'automations').click();
+		const keptTitle = (await kept.locator('.workspace-dashboard__title').textContent())?.trim() ?? '';
+		expect(keptTitle).not.toBe('');
+		await sectionTab(mainWindow, 'tabs').click();
+		const keptRow = mainWindow
+			.locator('[data-terminay-dashboard] [data-terminay-dashboard-panel]')
+			.filter({ hasText: keptTitle })
+			.last();
+		await expect(keptRow).toBeVisible();
+		await keptRow.click();
+		await expect(view.locator('.xterm-rows')).toContainText(
+			'automation-e2e-kept',
 		);
 
 		// Closing it from its view closes it on the server.

@@ -77,6 +77,7 @@ import {
 	placeControlSocket,
 	resolveControlSocketPlacement,
 	createTerminalControlAdapter,
+	createWorkspaceViewAdapter,
 	type LocalControlEndpoint,
 	type McpApprovalDescription,
 	type NotificationControlAdapter,
@@ -84,6 +85,7 @@ import {
 	reachOf,
 	resolveOpenTerminalProject,
 	type TerminalControlAdapter,
+	type WorkspaceViewControlAdapter,
 	workspaceProjectFields,
 } from '../apps/terminay-server/src/index';
 import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
@@ -3197,6 +3199,7 @@ async function startMcpControlEndpoint(): Promise<void> {
 			automations: createDesktopMcpAutomationAdapter(),
 			appWindows: createDesktopMcpAppWindowAdapter(),
 			notifications: createDesktopMcpNotificationAdapter(),
+			workspaceView: createDesktopMcpWorkspaceViewAdapter(),
 			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
@@ -3325,12 +3328,52 @@ function createDesktopMcpAppWindowAdapter(): AppWindowControlAdapter {
 	};
 }
 
+// Opaque project handles for workspace reach (ADR-0030); project reach never
+// names a project. One codec, so a handle from list_terminals is the same
+// handle get_layout gives and every view tool accepts.
+const mcpProjectHandles = new ProjectHandleCodec(embeddedServerId);
+
+/** The view tools, bound to whichever authority is composed when called
+ * (ADR-0070). */
+function createDesktopMcpWorkspaceViewAdapter(): WorkspaceViewControlAdapter {
+	const bound = (): WorkspaceViewControlAdapter => {
+		const authority = requireMcpAuthority();
+		const { workspaceView } = authority.composition;
+		if (workspaceView === undefined)
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'Reading and changing the window layout is unavailable on this server.',
+			);
+		return createWorkspaceViewAdapter({
+			relay: workspaceView.relay,
+			targetFor: workspaceView.targetFor,
+			state: () => authority.workspace.state,
+			apply: (command, context) => applyMcpWorkspaceCommand(context, command),
+			projectHandles: mcpProjectHandles,
+		});
+	};
+	return {
+		getLayout: (p, c, s) => bound().getLayout(p, c, s),
+		focusTab: (p, c, s) => bound().focusTab(p, c, s),
+		moveTab: (p, c, s) => bound().moveTab(p, c, s),
+		resizePane: (p, c, s) => bound().resizePane(p, c, s),
+		arrangeTabs: (p, c, s) => bound().arrangeTabs(p, c, s),
+		focusProject: (p, c, s) => bound().focusProject(p, c, s),
+		selectFolder: (p, c, s) => bound().selectFolder(p, c, s),
+		createFolder: (p, c, s) => bound().createFolder(p, c, s),
+		renameFolder: (p, c, s) => bound().renameFolder(p, c, s),
+		moveTabToFolder: (p, c, s) => bound().moveTabToFolder(p, c, s),
+		openFile: (p, c, s) => bound().openFile(p, c, s),
+		closeTab: (p, c, s) => bound().closeTab(p, c, s),
+		anchorFor: (r, c, s) => bound().anchorFor(r, c, s),
+		placeTerminal: (p, c, s) => bound().placeTerminal(p, c, s),
+	};
+}
+
 function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 	const terminal = (context: ControlRequestContext, reference: string) =>
 		resolveMcpTerminal(context, reference);
-	// Opaque project handles for workspace reach (ADR-0030); project reach
-	// never names a project.
-	const projectHandles = new ProjectHandleCodec(embeddedServerId);
+	const projectHandles = mcpProjectHandles;
 	const liveTerminalsIn = (projectId: string) =>
 		requireMcpAuthority()
 			.list()
@@ -3457,6 +3500,13 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			};
 		},
 		openTerminal: async (params, context) => {
+			// A workspace-reach caller opens in the automation space unless it
+			// names a project, and the space exists only once something has
+			// needed it. A chat may be the first thing that does.
+			if (reachOf(context) === 'workspace' && params.project === undefined)
+				requireMcpAuthority().composition.workspaceOperations?.ensureAutomationSpace(
+					app.getPath('home'),
+				);
 			const state = requireMcpAuthority().workspace.state;
 			const projectId = resolveOpenTerminalProject({
 				context,
@@ -3490,16 +3540,6 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 					type: 'panel.update',
 					panelId: panel.id,
 					patch: { title: params.name },
-				});
-			if (params.split !== undefined && panel !== undefined)
-				applyMcpWorkspaceCommand(context, {
-					type: 'panel.split',
-					projectId,
-					panelId: panel.id,
-					direction:
-						params.split === 'above' || params.split === 'below'
-							? 'vertical'
-							: 'horizontal',
 				});
 			if (reachOf(context) === 'workspace')
 				return {
@@ -3553,21 +3593,11 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 			);
 			return { terminal: target.id, closed: true };
 		},
-		focusTerminal: (params, context) => {
-			const target = terminal(context, params.terminal);
-			const panel = mcpPanelFor(target.id, target.projectId);
-			if (panel === undefined)
-				throw new ControlEndpointError(
-					'terminal_not_found',
-					'The requested terminal is unavailable.',
-				);
-			applyMcpWorkspaceCommand(context, {
-				type: 'panel.activate',
-				projectId: target.projectId,
-				panelId: panel.id,
-			});
-			return { terminal: target.id, focused: true };
-		},
+		// Showing a terminal is the agent's client's to do (ADR-0070): the host
+		// only resolves it within scope.
+		focusTerminal: (params, context) => ({
+			terminal: terminal(context, params.terminal).id,
+		}),
 		renameTerminal: (params, context) => {
 			const target = terminal(context, params.terminal);
 			const panel = mcpPanelFor(target.id, target.projectId);
@@ -3601,18 +3631,19 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				targetPanel?.id,
 				targetPanel?.folderId,
 			);
+			// Where it appears is the agent's client's to decide (ADR-0070).
 			const panel = mcpPanelFor(opened.id, target.projectId);
-			if (panel !== undefined)
+			if (params.name !== undefined && panel !== undefined)
 				applyMcpWorkspaceCommand(context, {
-					type: 'panel.split',
-					projectId: target.projectId,
+					type: 'panel.update',
 					panelId: panel.id,
-					direction:
-						params.direction === 'above' || params.direction === 'below'
-							? 'vertical'
-							: 'horizontal',
+					patch: { title: params.name },
 				});
-			return { terminal: opened.id, split: params.direction };
+			if (reachOf(context) === 'workspace')
+				await serverTerminalAuthority?.composition.automationExecutor
+					?.recordOpenedTerminal(context.terminalSessionId, opened.id)
+					.catch(() => undefined);
+			return { terminal: opened.id, status: opened.status };
 		},
 		waitForIdle: async (params, context, signal) => {
 			const target = terminal(context, params.terminal);

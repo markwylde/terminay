@@ -90,7 +90,7 @@ function createLaunchResolver(options = {}) {
 
 test("server terminal adapter wires bounded PTY operations to implicit project scope", async () => {
   const pty = createPtyFactory();
-  const ids = ["caller", "sibling", "opened"];
+  const ids = ["caller", "sibling", "split", "opened"];
   const terminal = new TerminalService({
     serverId: "server-a",
     ptyFactory: pty,
@@ -122,17 +122,9 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
     terminal,
     launchResolver: createLaunchResolver(),
     activity,
-    focusTerminal: (params) => {
-      layoutCalls.push(["focus", params]);
-      return { focused: params.terminal };
-    },
     renameTerminal: (params) => {
       layoutCalls.push(["rename", params]);
       return { renamed: params.name };
-    },
-    splitTerminal: (params) => {
-      layoutCalls.push(["split", params]);
-      return { split: params.direction };
     },
   });
   const dispatch = createTerminalControlAdapter({ adapter });
@@ -178,7 +170,10 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
   assert.equal(status.status, "running");
   assert.equal(status.output_position, 18);
   assert.equal(status.replay_from, 0);
-  assert.deepEqual(await request("focus", "focus_terminal", { terminal: "sibling" }), { focused: "sibling" });
+  // With no client to show it on, focusing reports that rather than succeeding.
+  const focused = await request("focus", "focus_terminal", { terminal: "sibling" });
+  assert.equal(focused.ok, false);
+  assert.equal(focused.error.code, "unsupported_op");
   assert.deepEqual(
     await request("rename", "rename_terminal", {
       terminal: "sibling",
@@ -186,14 +181,26 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
     }),
     { renamed: "Worker" },
   );
+  // Splitting opens exactly one terminal; with no client to place it on, it
+  // says it was not placed instead of claiming a split.
+  const before = terminal.listSessions().length;
   assert.deepEqual(
     await request("split", "split_terminal", {
       terminal: "sibling",
       direction: "below",
     }),
-    { split: "below" },
+    {
+      terminal: "split",
+      projectId: "project-a",
+      status: "running",
+      beside: "sibling",
+      opened: 1,
+      placed: false,
+      reason: "This host cannot place terminals in a window.",
+    },
   );
-  assert.equal(layoutCalls.length, 3);
+  assert.equal(terminal.listSessions().length, before + 1);
+  assert.equal(layoutCalls.length, 1);
   assert.deepEqual(await request("open", "open_terminal", { name: "New" }), {
     terminal: "opened",
     projectId: "project-a",
@@ -514,9 +521,9 @@ test("open_terminal spawn failure leaves no terminal session or durable panel", 
   assert.doesNotMatch(JSON.stringify(result), /sensitive provider failure/u);
 });
 
-test("server terminal adapter binds layout operations to the canonical workspace repository", async () => {
+test("server terminal adapter renames through the workspace and never writes the server's split layout or active panel", async () => {
   const pty = createPtyFactory();
-  const ids = ["caller", "sibling"];
+  const ids = ["caller", "sibling", "split"];
   const terminal = new TerminalService({
     serverId: "server-a",
     ptyFactory: pty,
@@ -605,20 +612,14 @@ test("server terminal adapter binds layout operations to the canonical workspace
     terminal,
     launchResolver: createLaunchResolver(),
     workspace,
-    focusTerminal: () => {
-      throw new Error("renderer focus callback must not run");
-    },
     renameTerminal: () => {
       throw new Error("renderer rename callback must not run");
-    },
-    splitTerminal: () => {
-      throw new Error("renderer split callback must not run");
     },
   });
   const dispatch = createTerminalControlAdapter({ adapter });
   const request = (id, op, params) => dispatch({ id, version: 1, op, params }, { ...context(), requestId: id });
+  const before = await workspace.load();
 
-  assert.deepEqual(await request("workspace-focus", "focus_terminal", { terminal: "sibling" }), { terminal: "sibling", focused: true });
   assert.deepEqual(
     await request("workspace-rename", "rename_terminal", {
       terminal: "sibling",
@@ -626,37 +627,21 @@ test("server terminal adapter binds layout operations to the canonical workspace
     }),
     { terminal: "sibling", renamed: true, name: "Worker" },
   );
-  assert.deepEqual(
-    await request("workspace-split", "split_terminal", {
-      terminal: "sibling",
-      direction: "below",
-    }),
-    { terminal: "sibling", split: "below" },
-  );
+  const split = await request("workspace-split", "split_terminal", {
+    terminal: "sibling",
+    direction: "below",
+  });
+  assert.equal(split.terminal, "split");
+  assert.equal(split.placed, false);
   const updated = await workspace.load();
   assert.equal(updated.panels["panel-sibling"].title, "Worker");
-  assert.equal(updated.projects["project-a"].activePanelId, "panel-sibling");
-  assert.equal(updated.projects["project-a"].layout.kind, "split");
-  assert.equal(updated.projects["project-a"].layout.direction, "vertical");
-
-  const movedViewId = `${viewId}:other`;
-  await workspace.apply({
-    commandId: "view-other",
-    command: { type: "view.create", viewId: movedViewId, name: "Other" },
-  });
-  await workspace.apply({
-    commandId: "move-project",
-    command: {
-      type: "project.move",
-      projectId: "project-a",
-      targetViewId: movedViewId,
-    },
-  });
-  const moved = await request("workspace-moved", "focus_terminal", {
-    terminal: "sibling",
-  });
-  assert.deepEqual(moved, { terminal: "sibling", focused: true });
-  assert.equal((await workspace.load()).projects["project-a"].viewId, movedViewId);
+  // The new terminal is a workspace fact every device sees...
+  assert.equal(updated.panels["p:split"].projectId, "project-a");
+  assert.equal(updated.panels["p:split"].folderId, updated.panels["panel-sibling"].folderId);
+  // ...but where it sits and what is in front are each device's own.
+  assert.equal(before.projects["project-a"].layout.kind, "stack");
+  assert.equal(updated.projects["project-a"].layout.kind, "stack");
+  for (const folder of Object.values(updated.folders)) assert.equal(folder.layout.kind, "stack");
 });
 
 test("server terminal adapter waits on canonical activity transitions with bounded timeout", async () => {

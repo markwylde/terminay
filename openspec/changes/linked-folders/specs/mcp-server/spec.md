@@ -8,8 +8,7 @@ terminal, and when no working directory is given SHALL start in that folder's
 root under the canonical launch policy. A terminal a workspace-scope caller
 creates in a named project SHALL be created in that project's General folder.
 `list_terminals` SHALL list the terminals of every folder in scope, and no MCP
-tool SHALL accept a folder as an input or use a folder to widen or narrow its
-scope.
+tool SHALL use a folder to widen or narrow its scope.
 
 #### Scenario: An agent opens a terminal from a linked folder
 
