@@ -129,7 +129,8 @@ export function PixelCompanion({
 			};
 		}
 		return {
-			title: chat === undefined ? 'Pixel' : `Pixel · ${chat.providerName}`,
+			title: 'Pixel',
+			...(chat === undefined ? {} : { subtitle: chat.providerName }),
 			greeting:
 				"Hi! I'm Pixel. Ask me what's going on in your terminals, or what to do in them.",
 			suggestions: ["What's running right now?", 'Did anything fail?'],

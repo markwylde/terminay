@@ -482,6 +482,24 @@ test("workspace reach addresses any project's terminal on the same server; proje
 	assert.equal(refusedSpace.error.code, 'terminal_not_found');
 });
 
+test('a terminal the server remembers after its project closed is neither listed nor addressable', async () => {
+	const { call, terminal, workspaceContext } = await fixture();
+	const orphan = await terminal.createSession({
+		projectId: 'project-closed',
+		cols: 80,
+		rows: 24,
+	});
+	const listed = await call(workspaceContext, 'list_terminals');
+	assert.equal(
+		listed.terminals.some((row) => row.terminal === orphan.sessionId),
+		false,
+	);
+	const refused = await call(workspaceContext, 'read_terminal', {
+		terminal: orphan.sessionId,
+	});
+	assert.equal(refused.error.code, 'terminal_not_found');
+});
+
 test('workspace reach never crosses servers', async () => {
 	const { call, workspaceContext, repository } = await fixture();
 	const other = new TerminalService({
