@@ -109,6 +109,7 @@ import {
 	createWorktreeCaptureHost,
 	type WorktreeCaptureReport,
 } from '../packages/server-core/src/worktreeCapture';
+import { gitCommandSocketHostOptions } from '../apps/terminay-server/src/gitCommandSocket';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
@@ -578,13 +579,20 @@ export class ServerTerminalAuthority {
 			(failure) => options.onFileOperationFailure?.(failure),
 		);
 		// Which terminal created a worktree: Git in each terminal reports its own
-		// commands to this socket (ADR-0052). The path is short on purpose; Unix
-		// socket paths are capped near 104 bytes.
+		// commands to a socket with one address per data directory, so a shell
+		// kept across a restart still reaches the server (ADR-0069).
 		const worktreeCapture = createWorktreeCaptureHost({
-			socketPath: join(
-				tmpdir(),
-				`terminay-git-${createHash('sha256').update(options.serverId).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.sock`,
-			),
+			...gitCommandSocketHostOptions({
+				...(options.dataRoot === undefined
+					? {}
+					: { dataDirectory: options.dataRoot }),
+				serverId: options.serverId,
+				platform: process.platform,
+				temporaryDirectory: tmpdir(),
+				...(process.env.XDG_RUNTIME_DIR
+					? { runtimeDirectory: process.env.XDG_RUNTIME_DIR }
+					: {}),
+			}),
 			workspace: () => this.workspace.state,
 			apply: (commandId, command) => {
 				const applied = this.composition.workspaceOperations?.applyHostCommand(

@@ -18,8 +18,14 @@ import {
 
 /** The socket's name inside a data directory. */
 export const CONTROL_SOCKET_FILENAME = 'terminay-mcp-control.sock';
-/** The socket's name inside a runtime directory, which holds nothing else. */
+/** The socket's name inside a runtime directory, which holds only Terminay's
+ * own sockets for that data directory. */
 export const CONTROL_SOCKET_RUNTIME_FILENAME = 'control.sock';
+/** The Git command socket (ADR-0069): placed the same way, under its own names. */
+export const GIT_COMMAND_SOCKET_FILENAMES: SocketFileNames = {
+	dataDirectory: 'terminay-git.sock',
+	runtimeDirectory: 'git.sock',
+};
 export const CONTROL_SOCKET_WINDOWS_PIPE = '\\\\.\\pipe\\terminay-control';
 /** One limit for every local socket: the one the session holder defines. */
 export const CONTROL_SOCKET_MAX_PATH_BYTES =
@@ -31,12 +37,25 @@ export type ControlSocketPlacement =
 	| {
 			readonly location: 'runtime-directory';
 			readonly path: string;
-			/** The directory that holds the socket and nothing else. */
+			/** The directory that holds the socket and nothing of anyone else's. */
 			readonly directory: string;
 	  };
 
+/** A socket's name in the data directory and in the runtime directory. */
+export interface SocketFileNames {
+	readonly dataDirectory: string;
+	readonly runtimeDirectory: string;
+}
+
+const CONTROL_SOCKET_FILENAMES: SocketFileNames = {
+	dataDirectory: CONTROL_SOCKET_FILENAME,
+	runtimeDirectory: CONTROL_SOCKET_RUNTIME_FILENAME,
+};
+
 export interface ControlSocketPlacementOptions {
 	readonly dataDirectory: string;
+	/** Which socket is being placed. The control socket when absent. */
+	readonly fileNames?: SocketFileNames;
 	readonly platform: string;
 	/** The system temporary directory, `os.tmpdir()`. */
 	readonly temporaryDirectory: string;
@@ -94,11 +113,12 @@ export function resolveControlSocketPlacement(
 ): ControlSocketPlacement {
 	if (options.platform === 'win32')
 		return { location: 'named-pipe', path: CONTROL_SOCKET_WINDOWS_PIPE };
-	const socketPath = join(options.dataDirectory, CONTROL_SOCKET_FILENAME);
+	const names = options.fileNames ?? CONTROL_SOCKET_FILENAMES;
+	const socketPath = join(options.dataDirectory, names.dataDirectory);
 	if (socketPathFits(socketPath))
 		return { location: 'data-directory', path: socketPath };
 	const directory = controlSocketRuntimeDirectory(options);
-	const runtimeSocketPath = join(directory, CONTROL_SOCKET_RUNTIME_FILENAME);
+	const runtimeSocketPath = join(directory, names.runtimeDirectory);
 	if (socketPathFits(runtimeSocketPath))
 		return {
 			location: 'runtime-directory',
@@ -106,16 +126,17 @@ export function resolveControlSocketPlacement(
 			directory,
 		};
 	throw new ControlSocketPlacementError(
-		placementFailure(options.dataDirectory, directory),
+		placementFailure(names, options.dataDirectory, directory),
 	);
 }
 
 function placementFailure(
+	names: SocketFileNames,
 	dataDirectory: string,
 	runtimeDirectory: string,
 	refusal?: string,
 ): ControlSocketPlacementFailure {
-	const socketPath = join(dataDirectory, CONTROL_SOCKET_FILENAME);
+	const socketPath = join(dataDirectory, names.dataDirectory);
 	return {
 		dataDirectory,
 		socketPath,
@@ -123,7 +144,7 @@ function placementFailure(
 		limitBytes: CONTROL_SOCKET_MAX_PATH_BYTES,
 		runtimeDirectory,
 		runtimeSocketPathBytes: Buffer.byteLength(
-			join(runtimeDirectory, CONTROL_SOCKET_RUNTIME_FILENAME),
+			join(runtimeDirectory, names.runtimeDirectory),
 		),
 		...(refusal === undefined ? {} : { refusal }),
 	};
@@ -192,6 +213,7 @@ export async function placeControlSocket(
 	if (prepared.ok) return placement;
 	throw new ControlSocketPlacementError(
 		placementFailure(
+			options.fileNames ?? CONTROL_SOCKET_FILENAMES,
 			options.dataDirectory,
 			placement.directory,
 			prepared.reason,

@@ -21,8 +21,7 @@ async function fixture({ environment = { PATH: "/bin" }, hostEnvironment } = {})
       return process;
     },
   };
-  let token = 0;
-  const commands = new GitCommandStream({ socketPath: join(tmpdir(), `tmy-env-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`), onWorktreeAdd: () => {}, createToken: () => `tok-${++token}` });
+  const commands = new GitCommandStream({ socketPath: join(tmpdir(), `tmy-env-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`), onWorktreeAdd: () => {}, tokenFor: (sessionId) => `tok-${sessionId}` });
   assert.equal(await commands.listen(), true);
   const workspace = new WorkspaceStore(createInitialWorkspace("server-a"));
   const composition = createServerCoreComposition({

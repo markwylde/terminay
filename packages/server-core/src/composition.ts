@@ -344,10 +344,10 @@ export interface ServerCoreCompositionOptions
 	readonly git?: ServerGitAdapter;
 	/** The stream Git in Terminay's terminals reports its commands to. A host
 	 * that supplies one has every terminal it launches carry Git's Trace2
-	 * variables (ADR-0052). */
+	 * variables (ADR-0069). */
 	readonly gitCommands?: Pick<
 		import('./worktreeCapture.js').GitCommandStream,
-		'environmentFor' | 'release'
+		'environmentFor' | 'release' | 'adopt'
 	>;
 	/** Resolves a folder of a project to the root its operations run in. A host
 	 * that supplies one lets a terminal created in a linked folder start in that
@@ -646,7 +646,7 @@ export function createServerCoreComposition(
 						: {
 								// Git's own tracing variables are added last, and only when
 								// the terminal's environment does not already name a target
-								// of the user's (ADR-0052).
+								// of the user's (ADR-0069).
 								environmentFor: (intent, placement) => ({
 									...options.terminalLaunchEnvironmentFor?.(intent, placement),
 									...options.gitCommands?.environmentFor(
@@ -1782,7 +1782,7 @@ export function createServerCoreComposition(
 					const keepsTerminalPanels =
 						options.sessionHolder !== undefined &&
 						(options.sessionHolder.hadPriorState?.() ?? true);
-					if (options.sessionHolder !== undefined && keepsTerminalPanels)
+					if (options.sessionHolder !== undefined && keepsTerminalPanels) {
 						await reattachHeldSessions({
 							serverId: options.serverId,
 							workspace: options.workspace,
@@ -1790,6 +1790,15 @@ export function createServerCoreComposition(
 							holder: options.sessionHolder,
 							freshWorkspace: options.workspaceStartup.firstRun,
 						});
+						// A kept shell still carries the Git reporting token an earlier
+						// run gave it; recognise it again (ADR-0069).
+						options.gitCommands?.adopt(
+							terminal
+								.listSessions()
+								.filter((session) => session.status === 'running')
+								.map((session) => session.sessionId),
+						);
+					}
 					await restoreWorkspaceOnStartup({
 						preserveTerminalPanels: keepsTerminalPanels,
 						workspace: options.workspace,

@@ -23,6 +23,7 @@ const {
 	CONTROL_SOCKET_MAX_PATH_BYTES,
 	ControlCapabilityStore,
 	ControlSocketPlacementError,
+	GIT_COMMAND_SOCKET_FILENAMES,
 	controlSocketRuntimeDirectory,
 	createControlEndpoint,
 	describeControlSocketPlacementFailure,
@@ -61,6 +62,21 @@ test('a socket that does not fit goes in a runtime directory named for the data 
 	assert.match(placement.directory, /^\/tmp\/terminay-[a-f0-9]{12}$/);
 	assert.equal(placement.path, `${placement.directory}/control.sock`);
 	assert.ok(Buffer.byteLength(placement.path) <= CONTROL_SOCKET_MAX_PATH_BYTES);
+});
+
+test('the Git command socket is placed the same way, under its own names, beside the control socket', () => {
+	assert.deepEqual(
+		resolve({ dataDirectory: SHORT, fileNames: GIT_COMMAND_SOCKET_FILENAMES }),
+		{ location: 'data-directory', path: `${SHORT}/terminay-git.sock` },
+	);
+	const git = resolve({
+		dataDirectory: LONG,
+		fileNames: GIT_COMMAND_SOCKET_FILENAMES,
+	});
+	const control = resolve({ dataDirectory: LONG });
+	assert.equal(git.location, 'runtime-directory');
+	assert.equal(git.directory, control.directory);
+	assert.equal(git.path, `${control.directory}/git.sock`);
 });
 
 test('the boundary is the limit itself: one byte over moves the socket', () => {

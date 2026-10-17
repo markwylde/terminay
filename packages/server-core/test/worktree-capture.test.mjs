@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import {
   WorkspaceStore,
   WorktreeCapture,
   createInitialWorkspace,
+  createWorktreeCaptureHost,
+  gitTraceTokenFor,
+  loadGitTraceKey,
   parseProcessTable,
   sessionRunningWorktreeAdd,
   worktreeAddDirectoryName,
@@ -41,8 +44,7 @@ test("worktree add is recognised after any options, and nothing else is", () => 
 
 async function stream() {
   const seen = [];
-  let token = 0;
-  const commands = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: (command) => seen.push(command), createToken: () => `tok-${++token}` });
+  const commands = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: (command) => seen.push(command), tokenFor: (sessionId) => `tok-${sessionId}` });
   assert.equal(await commands.listen(), true);
   return { commands, seen };
 }
@@ -90,10 +92,10 @@ test("the user's own tracing is left alone, and a stream that is not listening r
   t.after(() => commands.close());
   for (const name of ["GIT_TRACE2_EVENT", "GIT_TRACE2", "GIT_TRACE2_PERF"]) assert.deepEqual(commands.environmentFor("session-a", { [name]: "/tmp/mine" }), {});
   assert.equal(commands.sessionCount, 0);
-  const idle = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: () => {}, createToken: () => "t" });
+  const idle = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: () => {}, tokenFor: () => "t" });
   assert.deepEqual(idle.environmentFor("session-a"), {});
   // A path too long to be a socket cannot listen, and that is survivable.
-  const tooLong = new GitCommandStream({ socketPath: join(tmpdir(), `${"x".repeat(200)}.sock`), onWorktreeAdd: () => {}, createToken: () => "t" });
+  const tooLong = new GitCommandStream({ socketPath: join(tmpdir(), `${"x".repeat(200)}.sock`), onWorktreeAdd: () => {}, tokenFor: () => "t" });
   assert.equal(await tooLong.listen(), false);
   assert.deepEqual(tooLong.environmentFor("session-a"), {});
 });
@@ -305,7 +307,7 @@ test("each decision is reported with what was weighed, and never a path or direc
 test("Git's report is observed whether or not its token is one this server issued", async (t) => {
   const reports = [];
   const path = socketPath();
-  const stream = new GitCommandStream({ socketPath: path, onWorktreeAdd: () => {}, createToken: () => "token-a", onObservation: (report) => reports.push(report) });
+  const stream = new GitCommandStream({ socketPath: path, onWorktreeAdd: () => {}, tokenFor: () => "token-a", onObservation: (report) => reports.push(report) });
   assert.equal(await stream.listen(), true);
   t.after(() => stream.close());
   stream.environmentFor("session-a");
@@ -318,5 +320,85 @@ test("Git's report is observed whether or not its token is one this server issue
   assert.deepEqual(reports, [
     { kind: "command.reported", attributed: true, pathRead: true },
     { kind: "command.reported", attributed: false, pathRead: false },
+  ]);
+});
+
+test("a data directory's key is made once, kept owner-only, and replaced when missing or malformed", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tmy-key-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = loadGitTraceKey(directory);
+  assert.equal(first.length, 32);
+  assert.deepEqual(loadGitTraceKey(directory), first);
+  assert.equal((await stat(join(directory, "git-trace.key"))).mode & 0o777, 0o600);
+  await rm(join(directory, "git-trace.key"));
+  const second = loadGitTraceKey(directory);
+  assert.notDeepEqual(second, first);
+  await writeFile(join(directory, "git-trace.key"), "short");
+  assert.equal(loadGitTraceKey(directory).length, 32);
+});
+
+test("a session's token is the same on every run with one key, differs between keys, and is unpredictable from the id", () => {
+  const key = Buffer.alloc(32, 1);
+  const a = gitTraceTokenFor(key);
+  const b = gitTraceTokenFor(Buffer.from(key));
+  assert.equal(a("session-a"), b("session-a"));
+  assert.match(a("session-a"), /^terminay-[a-f0-9]{24}$/);
+  assert.notEqual(a("session-a"), a("session-b"));
+  assert.notEqual(a("session-a"), gitTraceTokenFor(Buffer.alloc(32, 2))("session-a"));
+});
+
+test("a later run recognises an adopted session's token, and never a released one", async (t) => {
+  const key = Buffer.alloc(32, 7);
+  const earlier = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: () => {}, tokenFor: gitTraceTokenFor(key) });
+  assert.equal(await earlier.listen(), true);
+  const kept = earlier.environmentFor("session-kept").GIT_TRACE2_PARENT_SID;
+  const ended = earlier.environmentFor("session-ended").GIT_TRACE2_PARENT_SID;
+  earlier.close();
+
+  const seen = [];
+  const reports = [];
+  const later = new GitCommandStream({ socketPath: socketPath(), onWorktreeAdd: (command) => seen.push(command), tokenFor: gitTraceTokenFor(key), onObservation: (report) => reports.push(report) });
+  assert.equal(await later.listen(), true);
+  t.after(() => later.close());
+  later.adopt(["session-kept"]);
+  assert.deepEqual(reports.shift(), { kind: "sessions.adopted", count: 1 });
+  const path = later.environmentFor("session-new").GIT_TRACE2_EVENT.slice("af_unix:stream:".length);
+  const add = (token, dir) => `${JSON.stringify({ event: "start", sid: `${token}/1`, argv: ["git", "worktree", "add", dir] })}\n`;
+  await send(path, add(kept, "../kept") + add(ended, "../ended"));
+  for (let tries = 0; tries < 50 && reports.length < 2; tries += 1) await settle(10);
+  assert.deepEqual(seen, [{ sessionId: "session-kept", directoryName: "kept" }]);
+  assert.deepEqual(reports.map((report) => report.attributed), [true, false]);
+
+  later.release("session-kept");
+  await send(path, add(kept, "../again"));
+  await settle(50);
+  assert.equal(seen.length, 1);
+});
+
+test("a socket left behind by a run that ended without closing does not stop the next run listening at that address", async (t) => {
+  const path = socketPath();
+  await writeFile(path, "");
+  const seen = [];
+  const next = new GitCommandStream({ socketPath: path, onWorktreeAdd: (command) => seen.push(command), tokenFor: (id) => `tok-${id}` });
+  assert.equal(await next.listen(), true);
+  t.after(() => next.close());
+  next.environmentFor("session-a");
+  await send(path, `${JSON.stringify({ event: "start", sid: "tok-session-a/1", argv: ["git", "worktree", "add", "../feature"] })}\n`);
+  for (let tries = 0; tries < 50 && seen.length === 0; tries += 1) await settle(10);
+  assert.deepEqual(seen, [{ sessionId: "session-a", directoryName: "feature" }]);
+});
+
+test("starting says whether Git can report and where its socket is, and a socket directory unfit to use leaves Git unreported", async (t) => {
+  const reports = [];
+  const base = { workspace: () => createInitialWorkspace("server-a"), apply: () => ({ ok: false }), moveAutomatically: () => true, sessions: () => [], onObservation: (report) => reports.push(report) };
+  const fixed = createWorktreeCaptureHost({ ...base, socketPath: socketPath(), socketPlacement: "data-directory", tokenKey: Buffer.alloc(32) });
+  t.after(() => fixed.close());
+  assert.equal(await fixed.start(), true);
+  const refused = createWorktreeCaptureHost({ ...base, socketPath: socketPath(), socketPlacement: "runtime-directory", prepareSocket: async () => false });
+  assert.equal(await refused.start(), false);
+  assert.deepEqual(refused.gitCommands.environmentFor("session-a"), {});
+  assert.deepEqual(reports, [
+    { kind: "stream.listening", listening: true, placement: "data-directory" },
+    { kind: "stream.listening", listening: false, placement: "runtime-directory" },
   ]);
 });
