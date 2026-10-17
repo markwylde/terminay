@@ -21,6 +21,17 @@ import {
 	createActivityOperationRegistry,
 } from './activity/protocol.js';
 import type { TerminalActivityService } from './activity/service.js';
+import {
+	AGENT_CHAT_EVENTS,
+	type AgentChatDiagnostic,
+	type AgentChatMcpBridge,
+	type AgentChatProviderBridge,
+	AgentChatService,
+	agentChatCallerKey,
+	bindAgentChatApprovals,
+	createAgentChatOperationHandlers,
+} from './agentChat/index.js';
+import { PIXEL_EVENTS, PixelService, pixelSettingsFrom } from './pixel/index.js';
 import { bindNotificationsToActivity } from './notifications/activityFeed.js';
 import { NotificationManager } from './notifications/manager.js';
 import {
@@ -354,6 +365,20 @@ export interface ServerCoreCompositionOptions
 	 * that serves the MCP control socket asks for it; its policy is read from
 	 * `settings` when present. */
 	readonly mcpApprovals?: boolean;
+	/**
+	 * Compose server-owned agent chats. The host supplies the chat providers
+	 * its extensions registered, where each session's working directory goes,
+	 * and, when it serves the MCP control socket, how a chat's capability is
+	 * minted and revoked (ADR-0068). Without `mcp`, only chats with no MCP
+	 * reach can be created.
+	 */
+	readonly agentChat?: {
+		readonly providers: AgentChatProviderBridge;
+		readonly workRoot: string;
+		readonly mcp?: Omit<AgentChatMcpBridge, 'cancelPendingApprovals'>;
+		readonly projectExists?: (projectId: string) => boolean;
+		readonly onDiagnostic?: (diagnostic: AgentChatDiagnostic) => void;
+	};
 	/** Compose server-owned app windows (ADR-0037). Needs `mcpApprovals`, whose
 	 * Window Messages policy gates what a view types into its terminal. */
 	readonly appWindows?: {
@@ -476,6 +501,10 @@ export interface ServerCoreComposition {
 	readonly automationMcp?: AutomationMcpOperations;
 	/** Pending MCP approvals and session grants, when composed. */
 	readonly mcpApprovals?: McpApprovalService;
+	/** Server-owned agent chats, when composed. */
+	readonly agentChat?: AgentChatService;
+	/** Pixel, composed with agent chats. */
+	readonly pixel?: PixelService;
 	/** Server-owned app windows, when composed. */
 	readonly appWindows?: AppWindowService;
 	/** The user's connected MCP servers, when composed. */
@@ -896,6 +925,75 @@ export function createServerCoreComposition(
 					mcpApprovals.setPolicies(mcpPermissionsFromSettings(state.settings)),
 				);
 	// --- end MCP permission approvals ---
+	// --- agent chats (ADR-0067, ADR-0068) ---
+	const agentChat =
+		options.agentChat === undefined
+			? undefined
+			: new AgentChatService({
+					providers: options.agentChat.providers,
+					workRoot: options.agentChat.workRoot,
+					...(options.agentChat.mcp === undefined
+						? {}
+						: {
+								mcp: {
+									...options.agentChat.mcp,
+									cancelPendingApprovals: (chatId: string) =>
+										mcpApprovals?.cancelPending(agentChatCallerKey(chatId)),
+								},
+							}),
+					// Change notices carry only ids: every subscriber receives
+					// them, and readers with authority fetch the chat itself.
+					onChanged: (change) => {
+						eventJournal.publishTransient(
+							AGENT_CHAT_EVENTS.changed,
+							change as unknown as JsonValue,
+						);
+					},
+					...(options.agentChat.onDiagnostic === undefined
+						? {}
+						: { onDiagnostic: options.agentChat.onDiagnostic }),
+				});
+	const unbindAgentChatApprovals =
+		agentChat === undefined || mcpApprovals === undefined
+			? undefined
+			: bindAgentChatApprovals(agentChat, mcpApprovals);
+	const agentChatOperations =
+		agentChat === undefined
+			? undefined
+			: createAgentChatOperationHandlers({
+					service: agentChat,
+					...(mcpApprovals === undefined ? {} : { approvals: mcpApprovals }),
+					...(options.agentChat?.projectExists === undefined
+						? {}
+						: { projectExists: options.agentChat.projectExists }),
+				});
+	const storedPixelSettings = () => {
+		try {
+			return pixelSettingsFrom(options.settings?.settings);
+		} catch {
+			return pixelSettingsFrom(undefined);
+		}
+	};
+	const pixel =
+		agentChat === undefined
+			? undefined
+			: new PixelService({
+					chats: agentChat,
+					settings: storedPixelSettings,
+					onChanged: (state) => {
+						eventJournal.publishTransient(
+							PIXEL_EVENTS.changed,
+							{ enabled: state.enabled, provider: state.provider },
+						);
+					},
+				});
+	const removePixelSettingsObserver =
+		pixel === undefined || options.settings === undefined
+			? undefined
+			: options.settings.onChange((state) => {
+					void pixel.apply(pixelSettingsFrom(state.settings));
+				});
+	// --- end agent chats ---
 	// --- app windows (ADR-0037) ---
 	/** Evaluate Window Messages for one message, with the files it carries. */
 	const authorizeWindowMessage = async (
@@ -1451,8 +1549,14 @@ export function createServerCoreComposition(
 				mergeOperationRegistries(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
-							options.operations ?? {},
-							extensionOperations ?? {},
+							mergeOperationRegistries(
+								options.operations ?? {},
+								extensionOperations ?? {},
+							),
+							mergeOperationRegistries(
+								agentChatOperations ?? {},
+								pixel?.operations() ?? {},
+							),
 						),
 						options.fileObservations?.operations ?? {},
 					),
@@ -1646,6 +1750,7 @@ export function createServerCoreComposition(
 					);
 				}
 				mcpApprovals?.setPolicies(storedMcpPermissions());
+				await pixel?.apply(storedPixelSettings());
 				terminalTitles?.reconcile();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -1796,6 +1901,11 @@ export function createServerCoreComposition(
 			await attempt(() => options.activity?.shutdown());
 			await attempt(() => language?.dispose());
 			await attempt(() => automationOperations?.dispose());
+			await attempt(async () => {
+				removePixelSettingsObserver?.();
+				unbindAgentChatApprovals?.();
+				await agentChat?.shutdown();
+			});
 			await attempt(() => {
 				removeMcpPolicyObserver?.();
 				mcpApprovals?.revokeAll();
@@ -1838,6 +1948,8 @@ export function createServerCoreComposition(
 		...(automationExecutor === undefined ? {} : { automationExecutor }),
 		...(automationMcp === undefined ? {} : { automationMcp }),
 		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
+		...(agentChat === undefined ? {} : { agentChat }),
+		...(pixel === undefined ? {} : { pixel }),
 		...(appWindows === undefined ? {} : { appWindows }),
 		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),

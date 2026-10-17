@@ -564,9 +564,7 @@ export class ExtensionInstaller {
 		}
 	}
 
-	async launchDescriptor(
-		extensionId: string,
-	): Promise<
+	async launchDescriptor(extensionId: string): Promise<
 		Readonly<{
 			extensionId: string;
 			packageRoot: string;
@@ -575,6 +573,7 @@ export class ExtensionInstaller {
 			mcpInstallTargets: readonly import('@terminay/extension-api').McpInstallTargetContribution[];
 			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
 			worktreeInsights: readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[];
+			agentChatProviders: readonly import('@terminay/extension-api').AgentChatProviderContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -594,14 +593,23 @@ export class ExtensionInstaller {
 				),
 			),
 			mcpInstallTargets: Object.freeze(
-				structuredClone(slot.receipt.manifest.contributes.mcpInstallTargets ?? []),
+				structuredClone(
+					slot.receipt.manifest.contributes.mcpInstallTargets ?? [],
+				),
 			),
 			languageServers: Object.freeze(
-				structuredClone(slot.receipt.manifest.contributes.languageServers ?? []),
+				structuredClone(
+					slot.receipt.manifest.contributes.languageServers ?? [],
+				),
 			),
 			worktreeInsights: Object.freeze(
 				structuredClone(
 					slot.receipt.manifest.contributes.worktreeInsights ?? [],
+				),
+			),
+			agentChatProviders: Object.freeze(
+				structuredClone(
+					slot.receipt.manifest.contributes.agentChatProviders ?? [],
 				),
 			),
 			manifest: slot.receipt.manifest,

@@ -161,14 +161,46 @@ export interface ControlRequest {
 /** Internal dispatch view; the raw capability token is intentionally omitted. */
 export type ControlDispatchRequest = Omit<ControlRequest, 'token'>;
 
+/**
+ * A capability held by an agent chat rather than a terminal (ADR-0068). Its
+ * `terminalSessionId` is the reserved key `chat:<chatId>`, which names no
+ * terminal, so per-caller state such as approvals and session grants keys on
+ * it exactly as it does for a terminal.
+ */
+export interface ControlChatPrincipal {
+	readonly chatId: string;
+}
+
+/** What a chat's reach is, as the chat record holds it. */
+export type ControlChatReach =
+	| { readonly kind: 'workspace' }
+	| { readonly kind: 'project'; readonly projectId: string };
+
+const CHAT_CALLER_PREFIX = 'chat:';
+
+/** The reserved caller key for a chat; never a terminal session id. */
+export function chatCallerKey(chatId: string): string {
+	return `${CHAT_CALLER_PREFIX}${chatId}`;
+}
+
+/** Whether a caller key names a chat rather than a terminal. */
+export function isChatCallerKey(callerKey: string): boolean {
+	return callerKey.startsWith(CHAT_CALLER_PREFIX);
+}
+
 export interface ControlCapabilityScope {
-	/** Immutable server-owned terminal identity, never supplied by a request. */
+	/**
+	 * Immutable server-owned caller identity, never supplied by a request: a
+	 * terminal session id, or `chat:<chatId>` for a chat.
+	 */
 	readonly terminalSessionId: string;
 	/** Immutable server-owned project identity, never supplied by a request. */
 	readonly projectId: string;
 	readonly scope?: ControlScope;
 	/** Server-derived reach; absent means `project`. */
 	readonly reach?: ControlReach;
+	/** Present only when the caller is a chat, which has no terminal. */
+	readonly chat?: ControlChatPrincipal;
 }
 
 export interface ControlCapabilityLease extends ControlCapabilityScope {
@@ -452,6 +484,7 @@ interface StoredCapability {
 	readonly scope: ControlScope;
 	readonly reach: ControlReach;
 	readonly issuedAt: number;
+	readonly chat?: ControlChatPrincipal;
 }
 
 /**
@@ -495,6 +528,9 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 				'The local control endpoint is disabled.',
 			);
 		assertScopeId(terminalSessionId, 'terminal session id');
+		// The chat key space is reserved, so no terminal can hold a chat's key.
+		if (isChatCallerKey(terminalSessionId))
+			throw new TypeError('invalid terminal session id');
 		assertScopeId(projectId, 'project id');
 		this.assertScope(scope);
 		const reach = controlReachForPlacement(projectId, placement);
@@ -531,6 +567,72 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			...reachField(reach),
 			issuedAt,
 		});
+	}
+
+	/**
+	 * Mint the single capability of one chat provider session, replacing any
+	 * the chat held. Reach comes from the server's chat record: a project, or
+	 * the workspace, which resolves exactly as an automation-space terminal's
+	 * does. Only the agent chat service is handed this (ADR-0068).
+	 */
+	mintChat(chatId: string, reach: ControlChatReach): ControlCapabilityLease {
+		if (!this.enabled)
+			throw new ControlEndpointError(
+				'forbidden',
+				'The local control endpoint is disabled.',
+			);
+		const callerKey = chatCallerKey(chatId);
+		assertScopeId(callerKey, 'chat id');
+		const projectId =
+			reach.kind === 'workspace' ? AUTOMATION_SPACE_ID : reach.projectId;
+		assertScopeId(projectId, 'project id');
+		if (reach.kind === 'project' && projectId === AUTOMATION_SPACE_ID)
+			throw new TypeError('invalid chat reach');
+		this.revokeSession(callerKey);
+		const token = this.uniqueToken();
+		const digest = hashToken(token);
+		const issuedAt = this.now();
+		const chat = Object.freeze({ chatId });
+		const controlReach: ControlReach =
+			reach.kind === 'workspace' ? 'workspace' : 'project';
+		this.capabilities.set(digest.toString('hex'), {
+			digest,
+			terminalSessionId: callerKey,
+			projectId,
+			scope: 'write',
+			reach: controlReach,
+			issuedAt,
+			chat,
+		});
+		this.changed();
+		return Object.freeze({
+			token,
+			terminalSessionId: callerKey,
+			projectId,
+			scope: 'write' as const,
+			...reachField(controlReach),
+			issuedAt,
+			chat,
+		});
+	}
+
+	/** End a chat's capability: its session ended, or it was cleared or closed. */
+	revokeChat(chatId: string): number {
+		return this.revokeSession(chatCallerKey(chatId));
+	}
+
+	private uniqueToken(): string {
+		let token = this.tokenFactory();
+		let attempts = 0;
+		for (;;) {
+			if (!isValidToken(token))
+				throw new TypeError('tokenFactory returned an invalid token');
+			if (!this.hasDigest(hashToken(token))) return token;
+			attempts += 1;
+			if (attempts >= 32)
+				throw new Error('tokenFactory did not produce a unique capability');
+			token = this.tokenFactory();
+		}
 	}
 
 	rotate(
@@ -575,6 +677,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		let count = 0;
 		for (const capability of [...this.capabilities.values()])
 			if (
+				capability.chat === undefined &&
 				capability.issuedAt <= issuedBefore &&
 				!runningSessions.has(capability.terminalSessionId) &&
 				this.revokeDigest(capability.digest)
@@ -626,6 +729,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			projectId: capability.projectId,
 			scope: capability.scope,
 			...reachField(capability.reach),
+			...(capability.chat === undefined ? {} : { chat: capability.chat }),
 		};
 	}
 
@@ -666,6 +770,8 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	snapshot(): readonly PersistedControlCapability[] {
 		const result: PersistedControlCapability[] = [];
 		for (const [digest, capability] of this.capabilities) {
+			// A chat lives only in server memory, so its capability is never saved.
+			if (capability.chat !== undefined) continue;
 			result.push({
 				digest,
 				terminalSessionId: capability.terminalSessionId,
@@ -781,6 +887,7 @@ function parsePersistedCapability(
 		return undefined;
 	try {
 		assertScopeId(terminalSessionId, 'terminal session id');
+		if (isChatCallerKey(terminalSessionId)) return undefined;
 		assertScopeId(projectId, 'project id');
 		// Workspace reach is valid only for the automation space; a saved entry
 		// claiming it for anything else is discarded, never honoured.
@@ -989,6 +1096,13 @@ function normalizeScope(
 		projectId: value.projectId,
 		scope: value.scope ?? 'write',
 		...reachField(value.reach ?? 'project'),
+		// A chat caller keeps its identity only when it agrees with the
+		// reserved key it was resolved under (ADR-0068).
+		...(isPlainObject(value.chat) &&
+		typeof value.chat.chatId === 'string' &&
+		value.terminalSessionId === chatCallerKey(value.chat.chatId)
+			? { chat: Object.freeze({ chatId: value.chat.chatId }) }
+			: {}),
 	};
 }
 

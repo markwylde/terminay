@@ -1,15 +1,44 @@
 # Terminay built-in agents extension
 
 `terminay-builtin-agents` (`com.terminay.builtin-agents`) is Terminay's official
-extension for coding agents. It does two things:
+extension for coding agents. It does three things:
 
 - It reports every live Claude Code, Codex, Grok, and oh-my-pi session on the
   server's machine to Terminay's **Agents** panel.
 - It registers the Terminay MCP server with Claude Code, Codex, Cursor CLI,
   Gemini CLI, Grok, and OpenCode from **Install Terminay MCP**.
+- It runs agent chats, such as Pixel's, with the user's installed Claude Code
+  or Codex.
 
 It is an ordinary ESM Node.js package that uses only `@terminay/extension-api`
 and Node.js. It does not import Terminay Server Core, Electron, or renderer code.
+
+## Chat providers
+
+Two chat providers, `com.terminay.builtin-agents/claude-code` and
+`com.terminay.builtin-agents/codex`, run the turns of Terminay's agent chats
+(ADR-0067). Each starts the agent the user already installed and signed in to:
+
+- **Claude Code** runs one `claude -p` process per session in streaming-JSON
+  mode, with `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`, only
+  the MCP server Terminay supplies (its tools pre-allowed, since Terminay's own
+  permission policy decides them), `--permission-prompts none`, and
+  `--no-session-persistence`. Stop sends the stream-json interrupt.
+- **Codex** runs one `codex app-server` per session with hooks, browser use,
+  computer use and apps off, and one ephemeral thread in a read-only sandbox
+  with the `untrusted` approval policy. The user's own MCP servers are disabled
+  by name and Terminay's is added with its tools pre-approved. Every command,
+  file-change and permission request is declined.
+
+Neither writes to `~/.claude` or `~/.codex`. Each finds its CLI from
+`TERMINAY_CLAUDE_CODE_COMMAND` / `TERMINAY_CODEX_COMMAND` (absolute paths), the
+server's `PATH`, the login shell's `PATH` (read once per activation), and the
+usual per-user install directories, including nvm's. A missing CLI reports
+`not_installed`; a signed-out one reports `not_signed_in` and names `claude` or
+`codex login`.
+
+`test/chat-conformance.test.mjs` runs one real turn per installed agent when
+`TERMINAY_CHAT_CONFORMANCE=1`.
 
 ## Detection
 

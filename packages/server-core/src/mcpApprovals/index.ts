@@ -83,7 +83,10 @@ export interface McpApprovalDetail {
 }
 
 export interface McpApprovalRequest {
+	/** The caller key: a terminal session id, or `chat:<chatId>` for a chat. */
 	readonly terminalSessionId: string;
+	/** Present when the caller is an agent chat; it is shown in that chat. */
+	readonly chatId?: string;
 	readonly projectId: string;
 	readonly operation: string;
 	readonly group: McpPermissionGroup;
@@ -99,6 +102,7 @@ export interface McpApprovalRequest {
 export interface McpApprovalView {
 	readonly id: string;
 	readonly terminalSessionId: string;
+	readonly chatId?: string;
 	readonly projectId: string;
 	readonly operation: string;
 	readonly group: McpPermissionGroup;
@@ -109,6 +113,20 @@ export interface McpApprovalView {
 	readonly details: readonly McpApprovalDetail[];
 	readonly createdAt: number;
 }
+
+/** How a pending approval ended, for the surface that showed it. */
+export type McpApprovalOutcome =
+	| 'allowed-once'
+	| 'allowed-session'
+	| 'declined'
+	| 'allowed-by-policy'
+	| 'denied-by-policy'
+	| 'ended';
+
+export type McpApprovalSettledListener = (
+	view: McpApprovalView,
+	outcome: McpApprovalOutcome,
+) => void;
 
 export type McpPermissionErrorCode =
 	| 'permission_denied'
@@ -168,6 +186,7 @@ export class McpApprovalService {
 	/** terminalSessionId → groups granted for this capability's lifetime. */
 	private readonly grants = new Map<string, Set<McpPermissionGroup>>();
 	private readonly listeners = new Set<() => void>();
+	private readonly settledListeners = new Set<McpApprovalSettledListener>();
 	private readonly maxPendingPerTerminal: number;
 	private readonly now: () => number;
 	private readonly generateId: () => string;
@@ -219,11 +238,12 @@ export class McpApprovalService {
 			const group = entry.view.group;
 			if (!changed.includes(group)) continue;
 			const policy = next[group];
-			if (policy === 'allow') this.finish(id, 'allow');
+			if (policy === 'allow') this.finish(id, 'allow', 'allowed-by-policy');
 			else if (policy === 'deny')
 				this.finish(
 					id,
 					new McpPermissionError('permission_denied', deniedMessage(group)),
+					'denied-by-policy',
 				);
 		}
 	}
@@ -247,8 +267,7 @@ export class McpApprovalService {
 					deniedMessage(request.group),
 				),
 			};
-		if (request.signal.aborted)
-			return { ok: false, error: cancelledError() };
+		if (request.signal.aborted) return { ok: false, error: cancelledError() };
 		const queued = [...this.pending.values()].filter(
 			(entry) => entry.view.terminalSessionId === request.terminalSessionId,
 		).length;
@@ -264,6 +283,7 @@ export class McpApprovalService {
 		const view: McpApprovalView = Object.freeze({
 			id,
 			terminalSessionId: request.terminalSessionId,
+			...(request.chatId === undefined ? {} : { chatId: request.chatId }),
 			projectId: request.projectId,
 			operation: request.operation,
 			group: request.group,
@@ -276,13 +296,15 @@ export class McpApprovalService {
 		});
 		return new Promise<McpAuthorization>((resolve) => {
 			const onAbort = (): void => {
-				this.finish(id, cancelledError());
+				this.finish(id, cancelledError(), 'ended');
 			};
 			this.pending.set(id, {
 				view,
 				settle: (outcome) => {
 					request.signal.removeEventListener('abort', onAbort);
-					resolve(outcome === 'allow' ? { ok: true } : { ok: false, error: outcome });
+					resolve(
+						outcome === 'allow' ? { ok: true } : { ok: false, error: outcome },
+					);
 				},
 			});
 			request.signal.addEventListener('abort', onAbort, { once: true });
@@ -307,9 +329,16 @@ export class McpApprovalService {
 					'permission_declined',
 					'The user declined this request.',
 				),
+				'declined',
 			);
-		else this.finish(approvalId, 'allow');
-		if (decision === 'session') this.releaseGranted(entry.view.terminalSessionId);
+		else
+			this.finish(
+				approvalId,
+				'allow',
+				decision === 'session' ? 'allowed-session' : 'allowed-once',
+			);
+		if (decision === 'session')
+			this.releaseGranted(entry.view.terminalSessionId);
 		return true;
 	}
 
@@ -326,18 +355,33 @@ export class McpApprovalService {
 		this.grants.delete(terminalSessionId);
 		for (const [id, entry] of [...this.pending])
 			if (entry.view.terminalSessionId === terminalSessionId)
-				this.finish(id, cancelledError());
+				this.finish(id, cancelledError(), 'ended');
+	}
+
+	/** Withdraw one caller's pending approvals, keeping its session grants:
+	 * the user stopped the turn that asked. */
+	cancelPending(terminalSessionId: string): void {
+		for (const [id, entry] of [...this.pending])
+			if (entry.view.terminalSessionId === terminalSessionId)
+				this.finish(id, cancelledError(), 'ended');
 	}
 
 	/** MCP disabled or the server stopping: everything ends. */
 	revokeAll(): void {
 		this.grants.clear();
-		for (const id of [...this.pending.keys()]) this.finish(id, cancelledError());
+		for (const id of [...this.pending.keys()])
+			this.finish(id, cancelledError(), 'ended');
 	}
 
 	subscribe(listener: () => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	/** Called once for each pending approval as it ends, with how it ended. */
+	onSettled(listener: McpApprovalSettledListener): () => void {
+		this.settledListeners.add(listener);
+		return () => this.settledListeners.delete(listener);
 	}
 
 	/** Protocol operations for clients: read pending approvals and decide one.
@@ -378,11 +422,22 @@ export class McpApprovalService {
 		};
 	}
 
-	private finish(id: string, outcome: 'allow' | McpPermissionError): void {
+	private finish(
+		id: string,
+		outcome: 'allow' | McpPermissionError,
+		how: McpApprovalOutcome,
+	): void {
 		const entry = this.pending.get(id);
 		if (entry === undefined) return;
 		this.pending.delete(id);
 		entry.settle(outcome);
+		for (const listener of this.settledListeners) {
+			try {
+				listener(entry.view, how);
+			} catch {
+				/* a presentation listener cannot affect the decision */
+			}
+		}
 		this.publish();
 	}
 
@@ -394,7 +449,7 @@ export class McpApprovalService {
 				entry.view.terminalSessionId === terminalSessionId &&
 				this.effectivePolicy(entry.view.group, terminalSessionId) === 'allow'
 			)
-				this.finish(id, 'allow');
+				this.finish(id, 'allow', 'allowed-session');
 	}
 
 	private publish(): void {

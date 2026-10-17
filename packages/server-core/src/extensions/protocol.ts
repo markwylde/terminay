@@ -39,6 +39,12 @@ export const HOST_FRAME_KINDS = [
 	'worktree.source.stop',
 	'worktree.source.contexts',
 	'worktree.source.credential',
+	/** Availability, and the open, prompt, cancel, and close of one chat session. */
+	'agent.chat.availability',
+	'agent.chat.open',
+	'agent.chat.prompt',
+	'agent.chat.cancel',
+	'agent.chat.close',
 ] as const;
 export type HostFrameKind = (typeof HOST_FRAME_KINDS)[number];
 
@@ -58,6 +64,8 @@ export const CHILD_FRAME_KINDS = [
 	'worktree.source.publish',
 	'worktree.source.sign-in',
 	'worktree.source.disposed',
+	/** Text, tool activity, failure, or exit from one open chat session. */
+	'agent.chat.event',
 	'fatal',
 ] as const;
 export type ChildFrameKind = (typeof CHILD_FRAME_KINDS)[number];

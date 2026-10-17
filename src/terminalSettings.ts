@@ -48,6 +48,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'disableStdin',
 	'fileViewer',
 	'gitPushAgent',
+	'pixel',
 	'terminayMcp',
 	'ignoreBracketedPasteMode',
 	'keepTerminalsAfterQuit',
@@ -333,6 +334,12 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	},
 ];
 
+/** Pixel has no agent until the user picks one on first click. */
+export const PIXEL_PROVIDER_UNSET = 'unset';
+/** The built-in agents extension's chat providers. */
+export const PIXEL_CLAUDE_CODE_PROVIDER = 'com.terminay.builtin-agents/claude-code';
+export const PIXEL_CODEX_PROVIDER = 'com.terminay.builtin-agents/codex';
+
 export const DEFAULT_GIT_PUSH_AGENT_PROMPT = `You are helping me commit and push my work from the terminal.
 
 Task: {{task}}
@@ -406,6 +413,10 @@ export const defaultTerminalSettings: TerminalSettings = {
 		claudeCodeModel: '',
 		codexModel: '',
 		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
+	},
+	pixel: {
+		enabled: false,
+		provider: PIXEL_PROVIDER_UNSET,
 	},
 	terminayMcp: {
 		enabled: true,
@@ -740,6 +751,41 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'textarea',
 				placeholder: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 				keywords: ['ai', 'git', 'push', 'prompt', 'template'],
+			}),
+		],
+	},
+	{
+		id: 'pixel',
+		categoryId: 'ai',
+		title: 'Pixel',
+		description:
+			'Pixel lives in the status bar. Click it to chat with Claude Code or Codex about everything on this server: it can read your terminals, type into them, and manage automations, under the Terminay MCP permissions below. Its agent can act only through Terminay MCP as far as each agent allows, but it is not a sandbox.',
+		fields: [
+			makeField({
+				key: 'pixel.enabled',
+				label: 'Enable Pixel',
+				description:
+					'Shows Pixel on every device connected to this server. Off, Pixel is gone everywhere and no agent runs.',
+				sectionId: 'pixel',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: ['pixel', 'pet', 'assistant', 'chat', 'agent', 'companion'],
+			}),
+			makeField({
+				key: 'pixel.provider',
+				label: 'Pixel agent',
+				description:
+					'The agent Pixel chats through. It uses the one installed and signed in on this server.',
+				sectionId: 'pixel',
+				categoryId: 'ai',
+				input: 'select',
+				options: [
+					{ label: 'Ask on first click', value: PIXEL_PROVIDER_UNSET },
+					{ label: 'Claude Code', value: PIXEL_CLAUDE_CODE_PROVIDER },
+					{ label: 'Codex', value: PIXEL_CODEX_PROVIDER },
+				],
+				visibleWhen: { key: 'pixel.enabled', value: true },
+				keywords: ['pixel', 'claude', 'claude code', 'codex', 'agent'],
 			}),
 		],
 	},
@@ -2476,6 +2522,10 @@ export function normalizeTerminalSettings(
 		typeof input.dictation === 'object' && input.dictation !== null
 			? input.dictation
 			: defaultTerminalSettings.dictation;
+	const pixelInput =
+		typeof input.pixel === 'object' && input.pixel !== null
+			? input.pixel
+			: defaultTerminalSettings.pixel;
 	const terminayMcpInput =
 		typeof input.terminayMcp === 'object' && input.terminayMcp !== null
 			? input.terminayMcp
@@ -2571,6 +2621,17 @@ export function normalizeTerminalSettings(
 				typeof gitPushAgentInput.prompt === 'string'
 					? gitPushAgentInput.prompt
 					: defaultTerminalSettings.gitPushAgent.prompt,
+		},
+		pixel: {
+			enabled:
+				typeof pixelInput.enabled === 'boolean'
+					? pixelInput.enabled
+					: defaultTerminalSettings.pixel.enabled,
+			provider:
+				typeof pixelInput.provider === 'string' &&
+				/^[a-z0-9][a-z0-9.-]*\/[a-z][a-z0-9-]*$|^unset$/.test(pixelInput.provider)
+					? pixelInput.provider
+					: defaultTerminalSettings.pixel.provider,
 		},
 		terminayMcp: {
 			enabled:
