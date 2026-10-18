@@ -29,13 +29,16 @@ async function repository(t) {
 	return { base, root };
 }
 
-async function eventually(check, timeoutMs = 5_000) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		if (await check()) return;
-		if (Date.now() > deadline) throw new Error('condition never held');
-		await new Promise((resolve) => setTimeout(resolve, 25));
-	}
+/** Settles once `check` holds, re-checked each time the scope reports a change. */
+function changedUntil(scope, check) {
+	if (check()) return Promise.resolve();
+	return new Promise((resolve) => {
+		const stop = scope.onChanged(() => {
+			if (!check()) return;
+			stop();
+			resolve();
+		});
+	});
 }
 
 test('git worktree listing includes linked worktrees outside the root', async (t) => {
@@ -82,10 +85,8 @@ test('a worktree added after binding is picked up by the metadata watch', async 
 	const later = join(base, 'later');
 	assert.deepEqual(scope.projectIdsFor(later), []);
 	git(root, 'worktree', 'add', '-q', later, '-b', 'later');
-	await eventually(async () => {
-		await scope.settled();
-		return scope.projectIdsFor(later).length === 1;
-	});
+	// The scope reports a change once the new worktree is part of it.
+	await changedUntil(scope, () => scope.projectIdsFor(later).length === 1);
 	assert.ok(changes >= 2);
 });
 

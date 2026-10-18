@@ -169,6 +169,7 @@ export class OutboundDeliveryPump {
 	private stateQueuedByteCount = 0;
 	private running = false;
 	private activeDelivery: PendingDelivery | undefined;
+	private readonly idleWaiters = new Set<() => void>();
 	private terminalLaneCursor = 0;
 	private stateLaneCursor = 0;
 	private consecutiveControlDeliveries = 0;
@@ -255,6 +256,27 @@ export class OutboundDeliveryPump {
 						: this.now() - lane.unconfirmedSince,
 			})),
 		};
+	}
+
+	/**
+	 * Settles once nothing is queued and nothing is being written: every frame
+	 * admitted so far has been delivered, superseded, or failed. A frame that
+	 * is never admitted (a suppressed lane's output) is not waited for.
+	 */
+	whenIdle(): Promise<void> {
+		if (this.idle()) return Promise.resolve();
+		return new Promise((resolve) => this.idleWaiters.add(resolve));
+	}
+
+	private idle(): boolean {
+		return !this.running && this.snapshot.queuedFrames === 0;
+	}
+
+	private settleIdle(): void {
+		if (this.idleWaiters.size === 0 || !this.idle()) return;
+		const waiters = [...this.idleWaiters];
+		this.idleWaiters.clear();
+		for (const resolve of waiters) resolve();
 	}
 
 	get snapshot(): OutboundDeliverySnapshot {
@@ -578,6 +600,7 @@ export class OutboundDeliveryPump {
 			this.running = false;
 			if (this.snapshot.queuedFrames > 0 && this.terminalError === undefined)
 				this.start();
+			this.settleIdle();
 		}
 	}
 
@@ -796,6 +819,7 @@ export class OutboundDeliveryPump {
 		this.stateQueuedByteCount = 0;
 		this.terminalQueuedByteCount = 0;
 		livePumps.delete(this);
+		this.settleIdle();
 		recordStreamDiagnostic('delivery', 'pump_closed', {
 			connection: this.diagnosticLabel,
 			code: reason.code,

@@ -887,19 +887,9 @@ export class AutomationExecutor implements AutomationRunController {
 		this.running.delete(run.entry.runId);
 		this.clearRunTimer(run);
 		const finishedAt = Math.max(this.now(), run.entry.startedAt);
-		// The run log keeps the suppression count it may have gained meanwhile.
-		const current = this.options.runLog.get(run.entry.runId) ?? run.entry;
-		run.entry = await this.options.runLog.record({
-			...run.entry,
-			suppressedEvents: current.suppressedEvents,
-			status: 'finished',
-			...result,
-			...(result.reason === undefined
-				? {}
-				: { reason: boundedLine(result.reason, 512) }),
-			finishedAt,
-			durationMs: finishedAt - run.entry.startedAt,
-		});
+		// The run log announces the finish to its observers as it commits, so
+		// the audit trail must already hold it: whoever reads the trail on that
+		// announcement finds the run finished there too.
 		this.options.audit?.record({
 			type: 'run',
 			operation: 'automation.run.finished',
@@ -912,6 +902,19 @@ export class AutomationExecutor implements AutomationRunController {
 			...(result.skipReason === undefined
 				? {}
 				: { skipReason: result.skipReason }),
+		});
+		// The run log keeps the suppression count it may have gained meanwhile.
+		const current = this.options.runLog.get(run.entry.runId) ?? run.entry;
+		run.entry = await this.options.runLog.record({
+			...run.entry,
+			suppressedEvents: current.suppressedEvents,
+			status: 'finished',
+			...result,
+			...(result.reason === undefined
+				? {}
+				: { reason: boundedLine(result.reason, 512) }),
+			finishedAt,
+			durationMs: finishedAt - run.entry.startedAt,
 		});
 		return run.entry;
 	}

@@ -39,6 +39,8 @@ function createPtyFactory() {
         kill() {},
         onData(listener) { pty.dataListeners.add(listener); return () => pty.dataListeners.delete(listener); },
         onExit(listener) { pty.exitListeners.add(listener); return () => pty.exitListeners.delete(listener); },
+        // The terminal service retains output and records an exit as each is
+        // reported, so both are in effect once these return.
         emit(text) { for (const listener of pty.dataListeners) listener(encoder.encode(text)); },
         exit(exitCode) { for (const listener of pty.exitListeners) listener({ exitCode, signal: null }); },
       };
@@ -77,7 +79,6 @@ function setup() {
 }
 
 const identity = (projectId, sessionId) => ({ serverId: SERVER, projectId, sessionId });
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 const decode = (base64) => new TextDecoder().decode(Buffer.from(base64, "base64"));
 
 test("an exited automation-space terminal with an open panel attaches read-only with its output and exit", async () => {
@@ -89,7 +90,6 @@ test("an exited automation-space terminal with an open panel attaches read-only 
     const sessionId = created.result.sessionId;
     const pty = ptyFactory.ptys.at(-1);
     pty.emit("script output\r\n");
-    await settle();
 
     // A running terminal keeps its ordinary attach rules.
     await assert.rejects(
@@ -98,7 +98,6 @@ test("an exited automation-space terminal with an open panel attaches read-only 
     );
 
     pty.exit(3);
-    await settle();
 
     const attached = await capable.client.command("terminal.attach", { identity: identity(SPACE, sessionId), clientId: "capable", fromPosition: 0, readOnly: true }, { commandId: "view" });
     const result = attached.result;
@@ -148,7 +147,6 @@ test("an exited terminal in an ordinary project is never attached read-only", as
   try {
     const created = await capable.client.command("terminal.create", { projectId: "project-a", cwd: "/repo/a", cols: 80, rows: 24 }, { commandId: "user" });
     ptyFactory.ptys.at(-1).exit(0);
-    await settle();
     await assert.rejects(
       capable.client.command("terminal.attach", { identity: identity("project-a", created.result.sessionId), clientId: "capable", fromPosition: 0, readOnly: true }, { commandId: "view" }),
       /has exited/,
@@ -170,7 +168,6 @@ test("a read-only replay is bounded to the newest retained output and states wha
     for (let index = 0; index < 48; index += 1) pty.emit(line);
     pty.emit("THE END");
     pty.exit(0);
-    await settle();
     const attached = await capable.client.command("terminal.attach", { identity: identity(SPACE, created.result.sessionId), clientId: "capable", fromPosition: 0, readOnly: true }, { commandId: "view" });
     const events = attached.result.events;
     const skip = events.find((event) => event.type === "skip");

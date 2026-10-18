@@ -38,12 +38,20 @@ async function nextEnvelope(incoming) {
 	return decodeFrame(next.value).envelope;
 }
 
-async function waitFor(predicate) {
-	for (let attempt = 0; attempt < 100; attempt += 1) {
-		if (predicate()) return;
-		await new Promise((resolve) => setImmediate(resolve));
-	}
-	assert.fail("timed out waiting for the server operation to start");
+/** Signals by request id; `started(id)` settles once that request's handler has run. */
+function startedSignals() {
+	const signals = new Map();
+	const waiters = new Map();
+	return {
+		signals,
+		set(id, signal) {
+			signals.set(id, signal);
+			waiters.get(id)?.();
+		},
+		get: (id) => signals.get(id),
+		has: (id) => signals.has(id),
+		started: (id) => (signals.has(id) ? Promise.resolve() : new Promise((resolve) => waiters.set(id, resolve))),
+	};
 }
 
 async function closeConnection(connection) {
@@ -52,7 +60,7 @@ async function closeConnection(connection) {
 }
 
 test("cancel aborts only the matching in-flight query and returns a bounded result", async () => {
-	const signals = new Map();
+	const signals = startedSignals();
 	const aborted = new Map();
 	const release = new Map();
 	const connection = await connect({
@@ -70,7 +78,7 @@ test("cancel aborts only the matching in-flight query and returns a bounded resu
 	try {
 		await connection.pair.client.send(encodeFrame({ type: "query", queryId: "query-cancel", operation: "test.wait", payload: {} }));
 		await connection.pair.client.send(encodeFrame({ type: "query", queryId: "query-keep", operation: "test.wait", payload: {} }));
-		await waitFor(() => signals.has("query-cancel") && signals.has("query-keep"));
+		await Promise.all([signals.started("query-cancel"), signals.started("query-keep")]);
 
 		await connection.pair.client.send(encodeFrame({
 			type: "cancel",
@@ -101,7 +109,7 @@ test("cancel aborts only the matching in-flight query and returns a bounded resu
 });
 
 test("cancel aborts a command by correlation id without cancelling a sibling command", async () => {
-	const signals = new Map();
+	const signals = startedSignals();
 	const aborted = new Map();
 	const release = new Map();
 	const connection = await connect({
@@ -119,7 +127,7 @@ test("cancel aborts a command by correlation id without cancelling a sibling com
 	try {
 		await connection.pair.client.send(encodeFrame({ type: "command", commandId: "command-cancel", correlationId: "correlation-cancel", operation: "test.wait", payload: {} }));
 		await connection.pair.client.send(encodeFrame({ type: "command", commandId: "command-keep", correlationId: "correlation-keep", operation: "test.wait", payload: {} }));
-		await waitFor(() => signals.has("correlation-cancel") && signals.has("correlation-keep"));
+		await Promise.all([signals.started("correlation-cancel"), signals.started("correlation-keep")]);
 
 		await connection.pair.client.send(encodeFrame({
 			type: "cancel",
