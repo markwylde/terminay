@@ -13,12 +13,22 @@ test("server runtime exposes redacted health and bounded lifecycle", async () =>
   assert.equal(runtime.health().phase, "stopped");
 });
 
-test("shutdown returns at the configured deadline when a service hangs", async () => {
-  const runtime = new ServerRuntime({ serverId: "server-timeout", serverVersion: "1.0.0", dataRoot: "/tmp/a", runtimeMode: "standalone", shutdownTimeoutMs: 5 }, { stopServices: () => new Promise(() => {}) });
+test("shutdown returns at the configured deadline when a service hangs", async (t) => {
+  let hanging;
+  const reached = new Promise((resolve) => { hanging = resolve; });
+  const runtime = new ServerRuntime({ serverId: "server-timeout", serverVersion: "1.0.0", dataRoot: "/tmp/a", runtimeMode: "standalone", shutdownTimeoutMs: 5_000 }, {
+    stopServices: () => { hanging(); return new Promise(() => {}); },
+  });
   await runtime.start();
-  const started = Date.now();
-  await runtime.stop();
-  assert.ok(Date.now() - started < 500);
+  // The deadline runs on the test's clock.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const stopping = runtime.stop();
+  await reached;
+  // Only the deadline can end this stop, so it is still waiting just before it.
+  t.mock.timers.tick(4_999);
+  assert.equal(await Promise.race([stopping.then(() => "returned"), Promise.resolve("waiting")]), "waiting");
+  t.mock.timers.tick(1);
+  await stopping;
   assert.equal(runtime.health().phase, "stopped");
 });
 
@@ -99,14 +109,17 @@ test("stopping a never-started runtime still withdraws remote exposure", async (
 test("stop during startup cannot publish a ready runtime after teardown", async () => {
   let release;
   let stopped = 0;
+  let startCalled;
+  const servicesStarting = new Promise((resolve) => { startCalled = resolve; });
   const runtime = new ServerRuntime({
     serverId: "runtime-start-stop", serverVersion: "1.0.0", dataRoot: "/tmp/runtime-start-stop", runtimeMode: "standalone",
   }, {
-    startServices: () => new Promise((resolve) => { release = resolve; }),
+    startServices: () => { startCalled(); return new Promise((resolve) => { release = resolve; }); },
     stopServices: () => { stopped += 1; },
   });
   const starting = runtime.start();
-  await new Promise((resolve) => setImmediate(resolve));
+  // Startup is in its services when the stop arrives.
+  await servicesStarting;
   const stopping = runtime.stop();
   release();
   const health = await starting;
