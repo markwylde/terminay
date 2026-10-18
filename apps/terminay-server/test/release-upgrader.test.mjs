@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
 	chmod,
 	mkdtemp,
 	readFile,
 	rm,
-	stat,
 	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -45,11 +44,15 @@ const answer = (overrides = {}) => ({
  * A stand-in for the release's `bin/terminay`: a script that records how it
  * was run and answers a check with the given shell fragment.
  */
-async function fakeUpgrader(t, onCheck) {
+async function fakeUpgrader(t, onCheck, { announce = false } = {}) {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-fake-upgrader-'));
 	t.after(() => rm(directory, { recursive: true, force: true }));
 	const path = join(directory, 'terminay');
 	const calls = join(directory, 'calls');
+	// With `announce`, an upgrade run says so on a FIFO as it starts, so a
+	// test can wait for a detached run it holds no handle to.
+	const announcements = join(directory, 'announcements');
+	if (announce) execFileSync('mkfifo', [announcements]);
 	await writeFile(
 		path,
 		`#!/bin/sh
@@ -57,6 +60,7 @@ printf '%s\\n' "$*" >> '${calls}'
 if [ "$3" = "--check" ]; then
 ${onCheck}
 fi
+${announce ? `printf '%s\\n' "$*" > '${announcements}'` : ''}
 printf 'upgrading as pid %s in group %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' ')"
 `,
 	);
@@ -64,6 +68,8 @@ printf 'upgrading as pid %s in group %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' 
 	return {
 		path,
 		directory,
+		/** The next upgrade run to start, as it announces itself. */
+		announced: async () => (await readFile(announcements, 'utf8')).trim(),
 		calls: async () =>
 			(await readFile(calls, 'utf8').catch(() => ''))
 				.split('\n')
@@ -240,34 +246,52 @@ test('a check that exits non-zero, prints nonsense, or cannot be run is a failed
 });
 
 test('a check that prints too much or takes too long is killed', async (t) => {
+	// No deadline comes due unless the test fires it, so the noisy check can
+	// only be ended by what it prints.
+	const neverDue = { setTimeout: () => undefined, clearTimeout: () => undefined };
 	const noisy = await fakeUpgrader(
 		t,
 		'while :; do echo "0123456789012345678901234567890123456789"; done',
 	);
-	const startedNoisy = Date.now();
 	await assert.rejects(
 		createReleaseUpgrader({
 			upgraderPath: noisy.path,
 			env: process.env,
 			maxOutputBytes: 4096,
+			timers: neverDue,
 		}).check(),
 		/more than a check answers with/u,
 	);
-	assert.ok(Date.now() - startedNoisy < 10_000);
 	const slow = await fakeUpgrader(t, 'exec sleep 30');
-	const startedSlow = Date.now();
-	await assert.rejects(
-		createReleaseUpgrader({
-			upgraderPath: slow.path,
-			env: process.env,
-			checkTimeoutMs: 200,
-		}).check(),
-		/did not answer in time/u,
-	);
-	assert.ok(
-		Date.now() - startedSlow < 10_000,
-		'the slow check was not killed at its deadline',
-	);
+	let deadline;
+	let started;
+	const ran = new Promise((resolve) => {
+		started = resolve;
+	});
+	const checking = createReleaseUpgrader({
+		upgraderPath: slow.path,
+		env: process.env,
+		checkTimeoutMs: 200,
+		timers: {
+			setTimeout: (handler, ms) => {
+				assert.equal(ms, 200);
+				deadline = handler;
+				return 1;
+			},
+			clearTimeout: () => undefined,
+		},
+		spawn: (...args) => {
+			const child = spawn(...args);
+			started(child);
+			return child;
+		},
+	}).check();
+	const child = await ran;
+	const exited = new Promise((resolve) => child.once('exit', (_code, signal) => resolve(signal)));
+	// Its deadline comes; the check is answered for and the run is ended.
+	deadline();
+	await assert.rejects(checking, /did not answer in time/u);
+	assert.equal(await exited, 'SIGKILL', 'the slow check was not killed at its deadline');
 });
 
 test('a spawned upgrade runs detached in its own session with its output in a log', async (t) => {
@@ -345,13 +369,12 @@ test('a request-file upgrade replaces the file and runs nothing', async (t) => {
 		trigger: { kind: 'request-file', path: request },
 	};
 	assert.equal(await upgrader.trigger(handover), undefined);
-	const first = await stat(request);
 	assert.equal(await readFile(request, 'utf8'), '1000\n');
 	now = 2_000;
-	await new Promise((resolve) => setTimeout(resolve, 20));
 	await upgrader.trigger(handover);
-	assert.ok(
-		(await stat(request)).mtimeMs > first.mtimeMs,
+	assert.equal(
+		await readFile(request, 'utf8'),
+		'2000\n',
 		'the request file did not change',
 	);
 	assert.deepEqual(
@@ -400,7 +423,7 @@ test('only a release launcher names an upgrader', async (t) => {
 });
 
 test('the release upgrader drives the upgrade service end to end', async (t) => {
-	const fake = await fakeUpgrader(t, print(answer()));
+	const fake = await fakeUpgrader(t, print(answer()), { announce: true });
 	const service = new ServerUpgradeService({
 		serverVersion: '5.1.1',
 		upgrader: createReleaseUpgrader({
@@ -412,15 +435,11 @@ test('the release upgrader drives the upgrade service end to end', async (t) => 
 	t.after(() => service.dispose());
 	await service.check();
 	assert.deepEqual(service.status.available, { version: '5.2.0' });
+	const announced = fake.announced();
 	const status = await service.startUpgrade('in-place');
 	assert.equal(status.upgrade.state, 'in-progress');
-	// The upgrader is detached; give it a moment to have recorded its start.
-	for (
-		let waited = 0;
-		waited < 50 && (await fake.calls()).length < 2;
-		waited += 1
-	)
-		await new Promise((resolve) => setTimeout(resolve, 20));
+	// The upgrader is detached; it says when it has started.
+	assert.equal(await announced, 'daemon upgrade --user');
 	// This stand-in exits while the server is still running, which the
 	// service answers by looking again; a real upgrade ends the server first.
 	assert.deepEqual((await fake.calls()).slice(0, 2), [
@@ -473,7 +492,8 @@ test('the embedded server never checks, even when an upgrader leaks into it', as
 	assert.equal(composition.serverUpgrade.enabled, false);
 	composition.serverUpgrade.clientAttached('window');
 	await composition.serverUpgrade.check();
-	await new Promise((resolve) => setTimeout(resolve, 50));
+	// The embedded composition is never given an upgrader, so there is
+	// nothing that could run one later.
 	assert.deepEqual(
 		await fake.calls(),
 		[],
