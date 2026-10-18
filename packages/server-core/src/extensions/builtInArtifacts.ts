@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { cp, lstat, readdir, readFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import type {
 	BuiltInExtensionArtifact,
 	BuiltInExtensionArtifactSource,
 } from './installerTypes.js';
+import { forEachConcurrently, TREE_IO_CONCURRENCY } from './treeIo.js';
 
 const INVENTORY_FILE = 'inventory.v1.json';
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -46,13 +48,12 @@ export class DirectoryBuiltInExtensionArtifactSource
 			throw new Error(
 				'built-in extension artifact is not in the verified release inventory',
 			);
-		await verifyTree(join(this.root, record.directory), record.files, signal);
-		if (signal?.aborted) throw signal.reason;
-		await cp(join(this.root, record.directory), stagingRoot, {
-			recursive: true,
-			dereference: false,
-			errorOnExist: true,
-		});
+		// The copy is not hashed here. The installer hashes the staged tree it
+		// is about to promote and refuses it unless it matches this artifact's
+		// `inventoryHash`, which `parseArtifact` has bound to the per-file
+		// list. Hashing the source too would read and hash every byte twice,
+		// and would check bytes other than the ones that become the slot.
+		await copyTree(join(this.root, record.directory), stagingRoot, signal);
 	}
 
 	private async load(): Promise<readonly DirectoryArtifact[]> {
@@ -128,6 +129,21 @@ function parseArtifact(value: unknown): DirectoryArtifact {
 		new Set(files.map((file) => file.path)).size !== files.length
 	)
 		throw new Error('built-in extension inventory file list is invalid');
+	// The tree hash the installer checks a staged copy against must be the
+	// hash of exactly this file list, so the list and the hash cannot disagree
+	// about what the release ships.
+	if (
+		createHash('sha256')
+			.update(
+				JSON.stringify(
+					files.map(({ path, size, sha256 }) => ({ path, size, hash: sha256 })),
+				),
+			)
+			.digest('hex') !== value.inventoryHash
+	)
+		throw new Error(
+			'built-in extension inventory hash differs from its file list',
+		);
 	const manifestMetadata = value.manifestMetadata;
 	if (!record(manifestMetadata))
 		throw new Error('built-in extension inventory manifest is invalid');
@@ -191,41 +207,37 @@ function parseFile(value: unknown): InventoryFile {
 	});
 }
 
-async function verifyTree(
-	root: string,
-	expected: readonly InventoryFile[],
+/** Copy a release tree of regular files, several files at a time. */
+async function copyTree(
+	source: string,
+	destination: string,
 	signal?: AbortSignal,
 ): Promise<void> {
-	const files: InventoryFile[] = [];
-	async function walk(directory: string): Promise<void> {
-		for (const entry of await readdir(directory, { withFileTypes: true })) {
+	const files: string[] = [];
+	async function walk(relativeDirectory: string): Promise<void> {
+		await mkdir(join(destination, relativeDirectory), { recursive: true });
+		for (const entry of await readdir(join(source, relativeDirectory), {
+			withFileTypes: true,
+		})) {
 			if (signal?.aborted) throw signal.reason;
-			const absolute = join(directory, entry.name);
-			const path = relative(root, absolute).split(sep).join('/');
-			const info = await lstat(absolute);
-			if (entry.isSymbolicLink() || (!info.isDirectory() && !info.isFile()))
+			const path = join(relativeDirectory, entry.name);
+			if (entry.isDirectory()) await walk(path);
+			else if (entry.isFile()) files.push(path);
+			else
 				throw new Error(
 					'built-in extension artifact contains a non-regular entry',
 				);
-			if (info.isDirectory()) await walk(absolute);
-			else
-				files.push(
-					Object.freeze({
-						path,
-						size: info.size,
-						sha256: createHash('sha256')
-							.update(await readFile(absolute))
-							.digest('hex'),
-					}),
-				);
 		}
 	}
-	await walk(root);
-	files.sort((left, right) => left.path.localeCompare(right.path));
-	if (JSON.stringify(files) !== JSON.stringify(expected))
-		throw new Error(
-			'built-in extension artifact differs from release inventory',
+	await walk('');
+	await forEachConcurrently(files, TREE_IO_CONCURRENCY, async (path) => {
+		if (signal?.aborted) throw signal.reason;
+		await copyFile(
+			join(source, path),
+			join(destination, path),
+			constants.COPYFILE_EXCL,
 		);
+	});
 }
 
 function sameArtifact(

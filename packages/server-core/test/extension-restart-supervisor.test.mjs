@@ -30,9 +30,8 @@ function manifest() {
  * and succeeds afterwards. A counter file outside the package survives every
  * restart, so the fixture recovers like a real one that hit a transient fault.
  *
- * Activation zero is the installer's own package probe, which starts and stops
- * the host before the extension is ever enabled; it is deliberately not one of
- * the crashes under test.
+ * A release built-in materialized on a fresh data root is not probed: its
+ * first activation is the real start, so that is the first crash.
  */
 function tree(version, counterPath, crashes) {
   const packageJson = JSON.stringify({
@@ -49,7 +48,7 @@ function tree(version, counterPath, crashes) {
       let attempts = 0;
       try { attempts = Number(readFileSync(${JSON.stringify(counterPath)}, "utf8")) || 0; } catch {}
       writeFileSync(${JSON.stringify(counterPath)}, String(attempts + 1));
-      if (attempts > 0 && attempts <= ${crashes})
+      if (attempts < ${crashes})
         setTimeout(() => { throw new Error("crash on bind " + attempts); }, 5);
       return { methods: {} };
     }
@@ -214,7 +213,7 @@ test("a host that crashes once is restarted on its own and publishes again", asy
 
     await value.timers.runNext();
     assert.equal(value.status().state, "running", "the host came back without an application restart");
-    assert.equal(await value.activations(), 3, "the probe, the crash, and the restart");
+    assert.equal(await value.activations(), 2, "the crash and the restart");
     assert.ok(
       value.records.some((record) => record.transition === "restart-attempted"),
       "the restart itself is recorded",
