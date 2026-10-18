@@ -72,6 +72,21 @@ async function served(t) {
     for (const close of closers) await close();
     await composition.shutdown();
   });
+  // Re-checked after every notification event any client applies.
+  const waiters = new Set();
+  const changed = () => { for (const waiter of [...waiters]) waiter(); };
+  /** Settles once `check` holds, re-checked as each notification event arrives. */
+  const until = (check) => {
+    if (check()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        if (!check()) return;
+        waiters.delete(waiter);
+        resolve();
+      };
+      waiters.add(waiter);
+    });
+  };
 
   async function connect(clientId) {
     const pair = createInMemoryTransportPair();
@@ -88,17 +103,16 @@ async function served(t) {
       command: async (operation, payload, options) => (await client.command(operation, payload, options)).result,
       subscribe: async (event, listener, onResync) => {
         const subscription = await client.subscribe(event);
-        subscription.onEvent(listener);
+        subscription.onEvent((value) => { listener(value); changed(); });
         if (onResync !== undefined) subscription.onResync(onResync);
         return () => void subscription.unsubscribe().catch(() => undefined);
       },
     });
     return { client, notifications: notificationClient };
   }
-  return { clock, activity, manager: notifications, composition, connect };
+  return { clock, activity, manager: notifications, composition, connect, until, changed };
 }
 
-const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
 const listed = (client) => Object.values(client.notifications.store.snapshot.notifications);
 
 test("the composition builds a notification manager alongside activity", async (t) => {
@@ -127,7 +141,7 @@ test("every notification operation name can be encoded on the wire, and both sid
 });
 
 test("a client that connects during a settle period sees nothing, then receives the publication", async (t) => {
-  const { clock, activity, connect } = await served(t);
+  const { clock, activity, connect, until } = await served(t);
   activity.ingestSignal(identity(), { kind: "bell" });
   clock.advance(2_000);
 
@@ -136,12 +150,12 @@ test("a client that connects during a settle period sees nothing, then receives 
   assert.deepEqual(listed(desktop), [], "a pending notification is in no snapshot");
 
   clock.advance(3_000);
-  await settled();
+  await until(() => listed(desktop).length > 0);
   assert.deepEqual(listed(desktop).map((record) => [record.kind, record.sessionId, record.projectId]), [["attention", "session-a", "project-a"]]);
 });
 
 test("a dismissal reaches a second client, and an activity dismissal acknowledges the terminal", async (t) => {
-  const { clock, activity, connect } = await served(t);
+  const { clock, activity, connect, until } = await served(t);
   const desktop = await connect("desktop");
   const browser = await connect("browser");
   await desktop.notifications.subscribe();
@@ -149,11 +163,11 @@ test("a dismissal reaches a second client, and an activity dismissal acknowledge
 
   activity.ingestSignal(identity(), { kind: "bell" });
   clock.advance(5_000);
-  await settled();
+  await until(() => listed(browser).length > 0 && listed(desktop).length > 0);
   assert.equal(listed(browser).length, 1);
 
   await desktop.notifications.dismiss(listed(desktop)[0]);
-  await settled();
+  await until(() => listed(desktop).length === 0 && listed(browser).length === 0);
   assert.deepEqual(listed(desktop), []);
   assert.deepEqual(listed(browser), []);
   const session = activity.get(identity());
@@ -162,21 +176,23 @@ test("a dismissal reaches a second client, and an activity dismissal acknowledge
 });
 
 test("dismissing a sent notification removes only that one", async (t) => {
-  const { clock, activity, manager, connect } = await served(t);
+  const { clock, activity, manager, connect, until } = await served(t);
   const desktop = await connect("desktop");
   await desktop.notifications.subscribe();
 
   activity.ingestSignal(identity(), { kind: "bell" });
   manager.send({ projectId: "project-a", sessionId: "session-a" }, { title: "Review ready", body: "Three files changed" });
   clock.advance(5_000);
-  await settled();
+  await until(() => listed(desktop).length >= 2);
   assert.equal(listed(desktop).length, 2);
 
   const sent = listed(desktop).find((record) => record.source === "message");
   assert.equal(sent.title, "Review ready");
   assert.equal(sent.body, "Three files changed");
   await desktop.notifications.dismiss(sent);
-  await settled();
+  await until(() => !listed(desktop).some((record) => record.source === "message"));
+  // Catch up on anything else published since, so nothing can still be on its way.
+  await desktop.notifications.replay();
   assert.deepEqual(listed(desktop).map((record) => record.kind), ["attention"]);
   assert.equal(activity.get(identity()).attention, true, "the terminal was not acknowledged");
 });
@@ -194,36 +210,39 @@ test("sending and dismissing a notification leave terminal activity untouched", 
 });
 
 test("a dismissal naming another project or session is not accepted", async (t) => {
-  const { clock, activity, connect } = await served(t);
+  const { clock, activity, connect, until } = await served(t);
   const desktop = await connect("desktop");
   await desktop.notifications.subscribe();
   activity.ingestSignal(identity(), { kind: "bell" });
   clock.advance(5_000);
-  await settled();
+  await until(() => listed(desktop).length > 0);
   const [record] = listed(desktop);
 
+  // A dismissal publishes its removal before it answers, so catching up on
+  // what the server published since leaves nothing still on its way.
   for (const wrong of [{ ...record, projectId: "project-b" }, { ...record, sessionId: "session-b" }, { ...record, id: "n-unknown" }]) {
     await desktop.client.command(SERVER_OPERATIONS.dismiss, { id: wrong.id, projectId: wrong.projectId, sessionId: wrong.sessionId });
-    await settled();
+    await desktop.notifications.replay();
     assert.equal(listed(desktop).length, 1, "a mismatched dismissal removes nothing");
   }
   await assert.rejects(desktop.client.command(SERVER_OPERATIONS.dismiss, { id: record.id, projectId: "project-a" }));
-  await settled();
+  await desktop.notifications.replay();
   assert.equal(listed(desktop).length, 1);
   assert.equal(activity.get(identity()).attention, true);
 });
 
 test("a project-scoped client receives only its own terminals' notifications", async (t) => {
-  const { clock, activity, connect } = await served(t);
+  const { clock, activity, connect, until, changed } = await served(t);
   const scoped = await connect("scoped-project-a");
   const events = [];
   const subscription = await scoped.client.subscribe(SERVER_OPERATIONS.event);
-  subscription.onEvent((event) => events.push(event.payload));
+  subscription.onEvent((event) => { events.push(event.payload); changed(); });
 
   activity.ingestSignal(identity("session-b", "project-b"), { kind: "bell" });
   activity.ingestSignal(identity("session-a", "project-a"), { kind: "bell" });
   clock.advance(5_000);
-  await settled();
+  // Project B's bell settles first, so anything of it would arrive ahead of A's.
+  await until(() => events.some((event) => event.sessionId === "session-a"));
 
   assert.deepEqual(events.map((event) => event.sessionId), ["session-a"]);
   const snapshot = (await scoped.client.query(SERVER_OPERATIONS.snapshot, {})).result;
@@ -242,7 +261,7 @@ test("a project-scoped client receives only its own terminals' notifications", a
 });
 
 test("a passive acknowledgement clears a terminal's activity and leaves what a process sent", async (t) => {
-  const { clock, activity, manager, connect } = await served(t);
+  const { clock, activity, manager, connect, until } = await served(t);
   const desktop = await connect("desktop");
   await desktop.notifications.subscribe();
 
@@ -254,12 +273,13 @@ test("a passive acknowledgement clears a terminal's activity and leaves what a p
   assert.equal(activity.get(identity()).acknowledged, true);
 
   clock.advance(5_000);
-  await settled();
+  await until(() => listed(desktop).length > 0);
+  await desktop.notifications.replay();
   assert.deepEqual(listed(desktop).map((record) => record.kind), ["message"], "only the sent notification is published");
 
   // Something the user does in the terminal clears that too.
   await desktop.client.command("activity.acknowledge", { projectId: "project-a", sessionId: "session-a" });
-  await settled();
+  await until(() => listed(desktop).length === 0);
   assert.deepEqual(listed(desktop), []);
 
   await assert.rejects(desktop.client.command("activity.acknowledge", { projectId: "project-a", sessionId: "session-a", passive: "yes" }));
@@ -273,14 +293,14 @@ test("a delta with a cursor that does not match its revision is refused", async 
 });
 
 test("closing a terminal removes its notifications for connected clients", async (t) => {
-  const { clock, activity, connect } = await served(t);
+  const { clock, activity, connect, until } = await served(t);
   const desktop = await connect("desktop");
   await desktop.notifications.subscribe();
   activity.ingestSignal(identity(), { kind: "bell" });
   clock.advance(5_000);
-  await settled();
+  await until(() => listed(desktop).length > 0);
   assert.equal(listed(desktop).length, 1);
   activity.markExited(identity());
-  await settled();
+  await until(() => listed(desktop).length === 0);
   assert.deepEqual(listed(desktop), []);
 });
