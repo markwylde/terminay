@@ -475,12 +475,43 @@ type FastGitResizeSample = Readonly<{
 		| 'start'
 		| 'held-before-release'
 		| 'release'
-		| '50ms'
-		| '100ms'
-		| '250ms'
-		| '500ms'
-		| '1000ms';
+		| 'flushed'
+		| 'reconciled';
 }>;
+
+async function sidebarUpdateCount(page: Page): Promise<number> {
+	return (await commandRecords(page)).filter(
+		(record) => record.command?.type === 'project.sidebar.update',
+	).length;
+}
+
+/**
+ * Sample what follows a release, each at the event it waits on: two frames
+ * for React to draw the release, then the sidebar command reaching the
+ * authority and the window drawing the server's revision after it, and three
+ * frames more. The canonical reconciliation is the last thing that moves the
+ * boundary, so a spring-back has happened by the last sample.
+ */
+async function sampleAfterRelease(
+	page: Page,
+	sample: (when: FastGitResizeSample['when']) => Promise<void>,
+	before: Readonly<{ commands: number; revision: number }>,
+): Promise<void> {
+	await animationFrames(page, 2);
+	await sample('flushed');
+	await expect
+		.poll(() => sidebarUpdateCount(page), {
+			message: 'the release never reached the sidebar authority',
+		})
+		.toBeGreaterThan(before.commands);
+	await expect
+		.poll(() => workspaceRevision(page), {
+			message: 'the release never reconciled the server workspace snapshot',
+		})
+		.toBeGreaterThan(before.revision);
+	await animationFrames(page, 3);
+	await sample('reconciled');
+}
 
 /**
  * This is the manual failure report, deliberately without settling between
@@ -534,34 +565,25 @@ test('fast real release of the Files/Git boundary does not spring back', async (
 	};
 
 	await sample('start');
+	const before = {
+		commands: await sidebarUpdateCount(mainWindow),
+		revision: await workspaceRevision(mainWindow),
+	};
 	await mainWindow.mouse.move(x, y);
 	await mainWindow.mouse.down();
-	// Four ordinary real mouse moves mirror a quick manual drag. These waits
-	// make the duration observable and keep pointer-down to pointer-up <600ms.
+	// Four ordinary real mouse moves mirror a quick manual drag, each drawn
+	// before the next.
 	for (const fraction of [0.25, 0.5, 0.75, 1]) {
 		await mainWindow.mouse.move(x, y - 120 * fraction, { steps: 3 });
-		await mainWindow.waitForTimeout(75);
+		await animationFrames(mainWindow, 1);
 	}
 	await sample('held-before-release');
-	expect(
-		Date.now() - startedAt,
-		'Fast user gesture unexpectedly exceeded 600ms before mouse-up.',
-	).toBeLessThan(600);
 
 	// Do not await a command, workspace snapshot, or React state update before
 	// release: this is the exact timing of the reported interaction.
 	await mainWindow.mouse.up();
 	await sample('release');
-	for (const [when, delay] of [
-		['50ms', 50],
-		['100ms', 50],
-		['250ms', 150],
-		['500ms', 250],
-		['1000ms', 500],
-	] as const) {
-		await mainWindow.waitForTimeout(delay);
-		await sample(when);
-	}
+	await sampleAfterRelease(mainWindow, sample, before);
 
 	const held = samples.find((entry) => entry.when === 'held-before-release');
 	if (!held) throw new Error('Missing held-before-release geometry.');
@@ -619,6 +641,10 @@ test('twenty immediate real releases of the Files/Git boundary never spring back
 		};
 
 		await sample('start');
+		const before = {
+			commands: await sidebarUpdateCount(mainWindow),
+			revision: await workspaceRevision(mainWindow),
+		};
 		await mainWindow.mouse.move(x, y);
 		await mainWindow.mouse.down();
 		await mainWindow.mouse.move(x, y - 80, { steps: 1 });
@@ -627,16 +653,7 @@ test('twenty immediate real releases of the Files/Git boundary never spring back
 		// framework settle is allowed between the final move and mouse release.
 		await mainWindow.mouse.up();
 		await sample('release');
-		for (const [when, delay] of [
-			['50ms', 50],
-			['100ms', 50],
-			['250ms', 150],
-			['500ms', 250],
-			['1000ms', 500],
-		] as const) {
-			await mainWindow.waitForTimeout(delay);
-			await sample(when);
-		}
+		await sampleAfterRelease(mainWindow, sample, before);
 		traces.push({ attempt, samples });
 
 		// Bring the next attempt back to approximately the same useful range;
