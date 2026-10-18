@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { afterEach, beforeEach, mock } from 'node:test';
 import {
 	openStartupWindowServer,
 	pairingTargetWindow,
@@ -120,6 +120,11 @@ test('a paired server is shown in the workspace window, never in Remote Control'
 	);
 });
 
+// The offer of Local waits on a timer. Every startup test holds it, so the
+// offer is made only when a test moves the clock past it.
+beforeEach(() => mock.timers.enable({ apis: ['setTimeout'] }));
+afterEach(() => mock.timers.reset());
+
 function startup(overrides = {}) {
 	const steps = [];
 	let requestLocal = () => undefined;
@@ -201,21 +206,31 @@ test('startup falls back to Local and closes the transport when the server works
 test('a server that answers promptly never offers Local', async () => {
 	const { steps, run } = startup({ offerLocalAfterMs: 20 });
 	await run();
-	await new Promise((resolve) => setTimeout(resolve, 60));
+	mock.timers.tick(60);
 	assert.ok(!steps.includes('offer-local'));
 });
 
 test('a slow server offers Local, and choosing it abandons the attempt', async () => {
 	let answer = () => undefined;
+	let discarded;
+	const discarding = new Promise((resolve) => {
+		discarded = resolve;
+	});
 	const { steps, run, requestLocal } = startup({
 		offerLocalAfterMs: 10,
 		connectRemote: (id) =>
 			new Promise((resolve) => {
 				answer = () => resolve({ transport: id });
 			}),
+		discardRemote: async (remote) => {
+			steps.push(`discard:${remote.transport}`);
+			discarded();
+		},
 	});
 	const opening = run();
-	await new Promise((resolve) => setTimeout(resolve, 40));
+	mock.timers.tick(9);
+	assert.deepEqual(steps, []);
+	mock.timers.tick(1);
 	// Nothing is mounted while the server is merely slow.
 	assert.deepEqual(steps, ['offer-local']);
 	requestLocal();
@@ -223,7 +238,7 @@ test('a slow server offers Local, and choosing it abandons the attempt', async (
 	assert.deepEqual(steps, ['offer-local', 'before-mount', 'mount:local']);
 	// A transport that opens after the choice is closed, never mounted.
 	answer();
-	await new Promise((resolve) => setTimeout(resolve, 10));
+	await discarding;
 	assert.deepEqual(steps, [
 		'offer-local',
 		'before-mount',
