@@ -234,6 +234,12 @@ async function withContainer(options, run) {
 	const started = [];
 	/** `docker run`: the entrypoint, as the container's main process. */
 	const start = (args = [], image = imageRelease) => {
+		// A container's servers report only after it starts. Anything already
+		// reported belongs to an earlier container, however many lines of it
+		// the test happened to wait for, so it can never satisfy a wait on this
+		// one: a stopped server's line would send the next health check to a
+		// port nothing answers.
+		seen = servers.length;
 		const child = spawn(SHELL, [ENTRYPOINT, ...args], {
 			env: {
 				PATH: process.env.PATH,
