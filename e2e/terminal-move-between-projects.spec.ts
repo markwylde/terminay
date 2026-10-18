@@ -1,12 +1,16 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { createStartedProject } from './support/project-start';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	activeTerminalSessionId,
 	createTerminal,
 } from './support/terminal-session';
 import { contextMenuItem, submitEditWindow } from './support/ui';
-import { createStartedProject } from './support/project-start';
+import {
+	afterWorkspaceSync,
+	synchronizeWorkspace,
+} from './support/workspace-sync';
 
 const MOVED_TITLE = 'Move Me';
 const LONG_RUNNING_TASK = 'while :; do date +TICK_%s; sleep 1; done\r';
@@ -76,7 +80,9 @@ async function arrangeProjects(page: Page): Promise<string> {
 		.last()
 		.click({ button: 'right' });
 	await contextMenuItem(page, 'Open Settings').click();
-	await page.getByRole('textbox', { name: 'Name', exact: true }).fill(MOVED_TITLE);
+	await page
+		.getByRole('textbox', { name: 'Name', exact: true })
+		.fill(MOVED_TITLE);
 	await submitEditWindow(page);
 	await expect(
 		page
@@ -132,6 +138,7 @@ test.describe('moving a terminal between projects', () => {
 	});
 
 	test('a moved terminal stays only in its new project while projects are switched', async ({
+		electronApp,
 		mainWindow,
 	}) => {
 		const movedSessionId = await arrangeProjects(mainWindow);
@@ -140,7 +147,7 @@ test.describe('moving a terminal between projects', () => {
 
 		for (const title of ['Project', 'Project 3', 'Project 2', 'Project']) {
 			await activateProject(mainWindow, title);
-			await mainWindow.waitForTimeout(1_500);
+			await synchronizeWorkspace(electronApp, mainWindow);
 			expect
 				.soft(await movedTabsByProject(mainWindow), `after opening ${title}`)
 				.toEqual([0, 1, 0]);
@@ -152,6 +159,7 @@ test.describe('moving a terminal between projects', () => {
 	});
 
 	test('a moved terminal does not reappear in its old project when the workspace next synchronizes', async ({
+		electronApp,
 		mainWindow,
 	}) => {
 		const movedSessionId = await arrangeProjects(mainWindow);
@@ -159,14 +167,13 @@ test.describe('moving a terminal between projects', () => {
 		expect(await movedTabsByProject(mainWindow)).toEqual([0, 1, 0]);
 
 		// Any canonical workspace change makes every client reconcile.
-		await createTerminal(mainWindow);
-		await mainWindow.waitForTimeout(2_000);
+		await afterWorkspaceSync(mainWindow, () => createTerminal(mainWindow));
 		expect
 			.soft(await movedTabsByProject(mainWindow), 'after a workspace change')
 			.toEqual([0, 1, 0]);
 
 		await activateProject(mainWindow, 'Project');
-		await mainWindow.waitForTimeout(1_500);
+		await synchronizeWorkspace(electronApp, mainWindow);
 		expect
 			.soft(await movedTabsByProject(mainWindow), 'after returning to Project')
 			.toEqual([0, 1, 0]);
@@ -186,8 +193,7 @@ test.describe('moving a terminal between projects', () => {
 	}) => {
 		const movedSessionId = await arrangeProjects(mainWindow);
 		await moveActiveProjectTabTo(mainWindow, 'Project 2');
-		await createTerminal(mainWindow);
-		await mainWindow.waitForTimeout(2_000);
+		await afterWorkspaceSync(mainWindow, () => createTerminal(mainWindow));
 		expect
 			.soft(await movedTabsByProject(mainWindow), 'before moving back')
 			.toEqual([0, 1, 0]);
@@ -199,14 +205,14 @@ test.describe('moving a terminal between projects', () => {
 			.first()
 			.click();
 
-		await moveActiveProjectTabTo(mainWindow, 'Project');
-		await mainWindow.waitForTimeout(2_000);
+		await afterWorkspaceSync(mainWindow, () =>
+			moveActiveProjectTabTo(mainWindow, 'Project'),
+		);
 		expect
 			.soft(await movedTabsByProject(mainWindow), 'after moving back')
 			.toEqual([1, 0, 0]);
 
-		await createTerminal(mainWindow);
-		await mainWindow.waitForTimeout(2_000);
+		await afterWorkspaceSync(mainWindow, () => createTerminal(mainWindow));
 		expect
 			.soft(await movedTabsByProject(mainWindow), 'after a workspace change')
 			.toEqual([1, 0, 0]);
