@@ -311,44 +311,90 @@ test("node-pty coalesces continuous output into one in-flight sample and one pen
   process.dispose();
 });
 
+/**
+ * A clock the test advances: the adapter's output ramp reads it and arms its
+ * timers on it, and nothing runs until the test says that time has passed.
+ */
+function createRampClock() {
+  let now = 0;
+  const timers = [];
+  return {
+    timers,
+    get now() { return now; },
+    outputRamp: {
+      now: () => now,
+      schedule: (callback, milliseconds) => { const timer = { callback, at: now + milliseconds }; timers.push(timer); return timer; },
+      cancelSchedule: (timer) => { const index = timers.indexOf(timer); if (index >= 0) timers.splice(index, 1); },
+    },
+    /** Move time on, running each ramp timer that falls due on the way. */
+    advance(milliseconds) {
+      const until = now + milliseconds;
+      for (;;) {
+        timers.sort((left, right) => left.at - right.at);
+        const due = timers[0];
+        if (due === undefined || due.at > until) break;
+        timers.shift();
+        now = due.at;
+        due.callback();
+      }
+      now = until;
+    },
+  };
+}
+
 test("node-pty samples the host foreground at a bounded rate under sustained output", async (t) => {
   const child = createChild();
+  const clock = createRampClock();
   let samples = 0;
   const factory = createNodePtyFactory(
     { spawn: () => child },
-    // A host observation that completes at once, so nothing but the adapter's
-    // own pacing separates one sample from the next.
-    { resolveForegroundProcess: async () => { samples += 1; return "claude"; } },
+    {
+      // A host observation that completes at once, so nothing but the adapter's
+      // own pacing separates one sample from the next.
+      resolveForegroundProcess: async () => { samples += 1; return "claude"; },
+      // Neither the poll nor the ramp runs on the machine's clock: the rate is
+      // counted against time the test lets pass, not time the run took.
+      foregroundPolling: { ...createScheduler(), outputRamp: clock.outputRamp },
+    },
   );
   const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
   t.after(() => process.dispose());
   process.onForegroundProcess(() => {});
   process.onData(() => {});
 
-  // A repainting TUI: each chunk arrives after the previous sample settled.
-  const startedAt = performance.now();
-  for (let index = 0; index < 400; index += 1) {
+  // A repainting TUI printing a frame every 10 ms for four seconds; each
+  // chunk arrives after the previous sample settled.
+  const FRAMES = 400;
+  const FRAME_MS = 10;
+  for (let index = 0; index < FRAMES; index += 1) {
     child.emitData(`frame-${index}\n`);
     await new Promise((resolve) => setImmediate(resolve));
+    clock.advance(FRAME_MS);
+    await new Promise((resolve) => setImmediate(resolve));
   }
-  const elapsedSeconds = (performance.now() - startedAt) / 1000;
+  const elapsedSeconds = (FRAMES * FRAME_MS) / 1000;
 
   // Output may refresh the projection promptly; it may not turn every chunk
   // into a walk of the host process table.
   const allowed = 2 + Math.ceil(elapsedSeconds * 4);
+  assert.ok(samples > 1, "sustained output stopped sampling the host after the first chunk");
   assert.ok(
     samples <= allowed,
-    `${samples} host samples for 400 chunks in ${elapsedSeconds.toFixed(3)}s; at most ${allowed} are allowed`,
+    `${samples} host samples for ${FRAMES} chunks in ${elapsedSeconds}s; at most ${allowed} are allowed`,
   );
   process.dispose();
 });
 
 test("node-pty close observation is not delayed by output pacing", async (t) => {
   const child = createChild();
+  const clock = createRampClock();
   let samples = 0;
   const factory = createNodePtyFactory(
     { spawn: () => child },
-    { resolveForegroundProcess: async () => { samples += 1; return "vim"; } },
+    {
+      resolveForegroundProcess: async () => { samples += 1; return "vim"; },
+      foregroundPolling: { ...createScheduler(), outputRamp: clock.outputRamp },
+    },
   );
   const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
   t.after(() => process.dispose());
@@ -357,14 +403,22 @@ test("node-pty close observation is not delayed by output pacing", async (t) => 
     child.emitData(`frame-${index}\n`);
     await new Promise((resolve) => setImmediate(resolve));
   }
+  // Output has sampled, and the ramp is holding the next sample back.
+  assert.equal(clock.timers.length, 1, "sustained output left no paced sample waiting");
 
   // Destructive close asks for an observation that began after the request;
   // it is answered by a fresh sample at once, however recently output sampled.
+  // The test's clock stands still, so an answer that waited on output pacing
+  // could never arrive.
   const before = samples;
-  const startedAt = performance.now();
-  await process.refreshForegroundProcess();
+  let answered = false;
+  const observation = process.refreshForegroundProcess().then(() => { answered = true; });
+  for (let turn = 0; turn < 10 && !answered; turn += 1)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(answered, true, "the close observation waited on output pacing");
+  await observation;
   assert.ok(samples > before, "the close observation reused a sample taken before it was requested");
-  assert.ok(performance.now() - startedAt < 100, "the close observation waited on output pacing");
+  assert.equal(clock.now, 0, "time passed while the close observation was answered");
   process.dispose();
 });
 
