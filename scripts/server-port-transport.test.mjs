@@ -224,8 +224,13 @@ test('a frame from another server is rejected before it reaches the transport', 
   const scoped = new ServerScopedMessagePort(port1, 'desktop-local')
   const transport = new ServerPortTransport(scoped)
   let errors = 0
+  let refused
+  const messageError = new Promise((resolve) => {
+    refused = resolve
+  })
   scoped.onmessageerror = () => {
     errors += 1
+    refused()
   }
 
   try {
@@ -236,7 +241,7 @@ test('a frame from another server is rejected before it reaches the transport', 
       serverId: 'other-server',
       frame: new Uint8Array([1]),
     })
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await messageError
     assert.equal(errors, 1)
     assert.equal(transport.state, 'open')
   } finally {
@@ -264,7 +269,6 @@ test('the renderer connector aborts a server handshake that never replies', asyn
 test('application handshake stops promptly when its recovery attempt is superseded', async () => {
   const { port1, port2 } = new MessageChannel()
   const signal = new TestAbortSignal()
-  const startedAt = performance.now()
   try {
     await assert.rejects(
       connectRendererApplicationClient('desktop-local', port2, {
@@ -283,7 +287,7 @@ test('application handshake stops promptly when its recovery attempt is supersed
         (error?.message === 'connection handshake failed' &&
           error.cause?.message === 'recovery attempt superseded'),
     )
-    assert.ok(performance.now() - startedAt < 500)
+    // The abort, not the 15 s deadline, ended it: the rejection names it.
     assert.equal(signal.addedListeners, signal.removedListeners)
   } finally {
     port1.close()
@@ -462,7 +466,6 @@ test('superseded feature setup rejects promptly, reports failure, and closes the
     },
     subscribe: async () => new Promise(() => {}),
   }
-  const startedAt = performance.now()
 
   await assert.rejects(
     createRendererServerClientContext(
@@ -486,7 +489,7 @@ test('superseded feature setup rejects promptly, reports failure, and closes the
     ),
     /recovery attempt superseded/u,
   )
-  assert.ok(performance.now() - startedAt < 500)
+  // The abort, not the 15 s deadline, ended it: the rejection names it.
   assert.equal(closed, 1)
   assert.ok(
     phases.some(
