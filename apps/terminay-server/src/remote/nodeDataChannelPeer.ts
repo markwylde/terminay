@@ -67,6 +67,8 @@ export interface NodeDataChannelPeerConnectorOptions {
 	readonly outboundSignalTimeoutMs?: number;
 	/** Bound relay-decoded SDP and ICE payload bytes before native peer delivery. */
 	readonly maxSignalBytes?: number;
+	/** What schedules the setup and signaling deadlines. Defaults to the global timers. */
+	readonly timers?: NodeDataChannelDeadlineTimers;
 	/** Bound relay-admitted ICE candidates received before the remote SDP. */
 	readonly maxPendingCandidates?: number;
 	/**
@@ -76,6 +78,20 @@ export interface NodeDataChannelPeerConnectorOptions {
 	 */
 	readonly maxRemoteCandidates?: number;
 }
+
+/** Schedules and cancels the peer's one-shot deadlines. */
+export interface NodeDataChannelDeadlineTimers {
+	setTimeout(handler: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+
+const GLOBAL_DEADLINE_TIMERS: NodeDataChannelDeadlineTimers = {
+	setTimeout: (handler, ms) => globalThis.setTimeout(handler, ms),
+	clearTimeout: (handle) =>
+		globalThis.clearTimeout(
+			handle as ReturnType<typeof globalThis.setTimeout> | undefined,
+		),
+};
 
 /** Create a relay-admitted channel opener for createNodeDataChannelRuntimeAdapter. */
 export function createNodeDataChannelOpenChannels(
@@ -109,6 +125,7 @@ export function createNodeDataChannelOpenChannels(
 		throw new RangeError('node-datachannel peer role is invalid');
 	}
 	const timeoutMs = options.timeoutMs ?? 30_000;
+	const timers = options.timers ?? GLOBAL_DEADLINE_TIMERS;
 	if (
 		!Number.isSafeInteger(timeoutMs) ||
 		timeoutMs <= 0 ||
@@ -312,6 +329,7 @@ export function createNodeDataChannelOpenChannels(
 				context.signal,
 				outboundSignalTimeoutMs,
 				'node-datachannel outbound signaling timed out',
+				timers,
 			);
 			// Encoding may be asynchronous. The connection can be revoked, aborted,
 			// or otherwise fail while the signer is in flight; never publish a
@@ -326,6 +344,7 @@ export function createNodeDataChannelOpenChannels(
 				context.signal,
 				outboundSignalTimeoutMs,
 				'node-datachannel outbound signaling timed out',
+				timers,
 			);
 		};
 		const handleSignal = async (raw: unknown): Promise<void> => {
@@ -335,6 +354,7 @@ export function createNodeDataChannelOpenChannels(
 				context.signal,
 				signalDecodingTimeoutMs,
 				'node-datachannel signaling decoding timed out',
+				timers,
 			);
 			if (closed) return;
 			if (message === null)
@@ -588,7 +608,7 @@ export function createNodeDataChannelOpenChannels(
 				completeIfReady();
 			}
 			const readiness = setInterval(completeIfReady, 5);
-			const timeout = setTimeout(
+			const timeout = timers.setTimeout(
 				() => fail(new Error('node-datachannel peer setup timed out')),
 				timeoutMs,
 			);
@@ -606,7 +626,7 @@ export function createNodeDataChannelOpenChannels(
 				return await result;
 			} finally {
 				clearInterval(readiness);
-				clearTimeout(timeout);
+				timers.clearTimeout(timeout);
 			}
 		} catch (error) {
 			fail(error);
@@ -669,6 +689,7 @@ async function runWithBudget<T>(
 	signal: AbortSignal,
 	timeoutMs: number,
 	timeoutMessage: string,
+	timers: NodeDataChannelDeadlineTimers,
 ): Promise<T> {
 	if (signal.aborted)
 		throw (
@@ -680,7 +701,7 @@ async function runWithBudget<T>(
 		const finish = (callback: () => void): void => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timeout);
+			timers.clearTimeout(timeout);
 			signal.removeEventListener('abort', abort);
 			callback();
 		};
@@ -691,7 +712,7 @@ async function runWithBudget<T>(
 						new DOMException('The operation was aborted', 'AbortError'),
 				),
 			);
-		const timeout = setTimeout(
+		const timeout = timers.setTimeout(
 			() => finish(() => reject(new Error(timeoutMessage))),
 			timeoutMs,
 		);
