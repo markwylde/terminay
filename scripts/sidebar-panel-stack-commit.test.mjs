@@ -48,6 +48,8 @@ test('a controlled sidebar keeps the preview position after pointer-up', async (
 		const page = await browser.newPage({
 			viewport: { width: 320, height: 800 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(
 			`<style>html,body,#root{margin:0;width:100%;height:100%;}${css}</style><div id="root"></div>`,
 		);
@@ -102,16 +104,20 @@ test('a delayed authoritative sidebar update keeps its pointer-up preview throug
 				function Harness() {
 					const [items, setItems] = useState(initial);
 					const [unrelatedRender, setUnrelatedRender] = useState(0);
-					return <><output data-unrelated-render>{unrelatedRender}</output><SidebarPanelStack items={items} onReorder={() => {}}
+					const [authoritative, setAuthoritative] = useState(false);
+					// The authoritative update is held until the test releases it,
+					// so "while pending" is a state, not a stretch of time.
+					return <><output data-unrelated-render>{unrelatedRender}</output><output data-authoritative>{String(authoritative)}</output><SidebarPanelStack items={items} onReorder={() => {}}
 						onHeightsCommit={(heights) => new Promise((resolve) => {
 							window.commits.push(heights);
 							setUnrelatedRender((current) => current + 1);
-							setTimeout(() => {
+							window.releaseCommit = () => {
 								setItems((current) => current.map((item) =>
 									heights[item.id] === undefined ? item : { ...item, height: heights[item.id] },
 								));
+								setAuthoritative(true);
 								resolve();
-							}, 120);
+							};
 						})}
 					/></>;
 				}
@@ -131,6 +137,8 @@ test('a delayed authoritative sidebar update keeps its pointer-up preview throug
 		const page = await browser.newPage({
 			viewport: { width: 320, height: 800 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(
 			`<style>html,body,#root{margin:0;width:100%;height:100%;}${css}</style><div id="root"></div>`,
 		);
@@ -153,7 +161,6 @@ test('a delayed authoritative sidebar update keeps its pointer-up preview throug
 			() =>
 				document.querySelector('[data-unrelated-render]')?.textContent === '1',
 		);
-		await page.waitForTimeout(50);
 		const whilePendingTop = await page
 			.locator('[data-sidebar-pane-id="agents"] [data-sidebar-pane-title]')
 			.evaluate((element) => element.getBoundingClientRect().top);
@@ -161,7 +168,11 @@ test('a delayed authoritative sidebar update keeps its pointer-up preview throug
 			Math.abs(whilePendingTop - previewTop) <= 1,
 			`unrelated render moved the boundary from ${previewTop} to ${whilePendingTop}`,
 		);
-		await page.waitForTimeout(100);
+		await page.evaluate(() => window.releaseCommit());
+		await page.waitForFunction(
+			() =>
+				document.querySelector('[data-authoritative]')?.textContent === 'true',
+		);
 		const authoritativeTop = await page
 			.locator('[data-sidebar-pane-id="agents"] [data-sidebar-pane-title]')
 			.evaluate((element) => element.getBoundingClientRect().top);
@@ -217,6 +228,8 @@ test('lostpointercapture during a live drag does not discard the preview', async
 		const page = await browser.newPage({
 			viewport: { width: 320, height: 800 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(
 			`<style>html,body,#root{margin:0;width:100%;height:100%;}${css}</style><div id="root"></div>`,
 		);

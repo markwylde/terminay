@@ -29,6 +29,8 @@ test('sidebar panel stack previews locally, overlays following titles, and commi
 		const page = await browser.newPage({
 			viewport: { width: 320, height: 500 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(
 			`<style>html,body,#root{margin:0;width:100%;height:100%;}${css}</style><div id="root"></div>`,
 		);
@@ -116,7 +118,14 @@ test('sidebar panel stack previews locally, overlays following titles, and commi
 		assert.equal(geometry.grabPointIsHandle, true);
 		const handle = page.locator('[data-sidebar-resize-handle="agents"]');
 		await handle.hover();
-		await page.waitForTimeout(180);
+		// The rail eases into its hover colour: wait for the colour, not for
+		// the length of the transition.
+		await page.waitForFunction(
+			(element) =>
+				getComputedStyle(element, '::before').backgroundColor ===
+				'rgb(87, 183, 255)',
+			await handle.elementHandle(),
+		);
 		const hoveredRail = await handle.evaluate((element) => {
 			const rail = getComputedStyle(element, '::before');
 			return {
@@ -128,7 +137,12 @@ test('sidebar panel stack previews locally, overlays following titles, and commi
 		assert.equal(hoveredRail.boxShadow, 'none');
 		await page.mouse.move(geometry.stack.x + 2, geometry.stack.bottom - 2);
 		await handle.focus();
-		await page.waitForTimeout(180);
+		await page.waitForFunction(
+			(element) =>
+				getComputedStyle(element, '::before').backgroundColor ===
+				'rgb(87, 183, 255)',
+			await handle.elementHandle(),
+		);
 		const focusedHandle = await handle.evaluate((element) => ({
 			focusVisible: element.matches(':focus-visible'),
 			outlineStyle: getComputedStyle(element).outlineStyle,
