@@ -259,26 +259,44 @@ test("hostile discovery inputs are capped and the redacted discovery result stay
   assert.equal(windowsResult.discoveredProfiles.every((entry) => entry.name.length <= 128), true);
 });
 
-test("host call deadlines abort and bound hanging discovery adapters", async () => {
+test("host call deadlines abort and bound hanging discovery adapters", async (t) => {
+  // The deadline runs on the test's clock. A host call's deadline is armed
+  // before the adapter is called, so each call is where time is moved on.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const signals = [];
+  const callWaiters = new Set();
+  const hang = (signal) => {
+    signals.push(signal);
+    for (const waiter of [...callWaiters]) {
+      if (signals.length < waiter.count) continue;
+      callWaiters.delete(waiter);
+      waiter.resolve();
+    }
+    return new Promise(() => {});
+  };
+  /** Settles once `count` host calls have been made. */
+  const called = (count) => signals.length >= count
+    ? Promise.resolve()
+    : new Promise((resolve) => callWaiters.add({ count, resolve }));
   const service = new ShellProfileDiscoveryService({
     platform: "darwin",
     accountShell: "/bin/hanging",
-    readEtcShells: (signal) => {
-      signals.push(signal);
-      return new Promise(() => {});
-    },
-    probeExecutable(_candidate, signal) {
-      signals.push(signal);
-      return new Promise(() => {});
-    },
+    readEtcShells: hang,
+    probeExecutable: (_candidate, signal) => hang(signal),
   }, { hostCallTimeoutMs: 10 });
 
-  const started = Date.now();
-  const result = await service.discover();
-  const elapsed = Date.now() - started;
+  const discovered = service.discover();
+  for (let count = 1; count <= 5; count += 1) {
+    await called(count);
+    const signal = signals[count - 1];
+    if (signal.aborted) continue;
+    t.mock.timers.tick(9);
+    assert.equal(signal.aborted, false, `host call ${count} was abandoned before its deadline`);
+    t.mock.timers.tick(1);
+    assert.equal(signal.aborted, true, `host call ${count} outlived its deadline`);
+  }
+  const result = await discovered;
   assert.equal(result.systemProfile.availability.available, false);
-  assert.equal(elapsed < 500, true, `hanging host calls took ${elapsed}ms`);
   assert.equal(signals.length, 5);
   assert.equal(signals.every((signal) => signal.aborted), true);
 });
