@@ -206,26 +206,30 @@ export class AgentChatClient {
 				return fetching;
 			}
 			fetching = (async () => {
-				do {
-					again = false;
-					try {
-						const after = full || current === undefined ? 0 : current.revision;
-						const view = await this.get(chatId, after);
-						if (closed) return;
-						current = merge(current, view, after);
-						listener(current);
-					} catch (error) {
-						if (isNotFound(error)) {
-							current = undefined;
-							if (!closed) listener(undefined);
-							return;
+				try {
+					do {
+						again = false;
+						try {
+							const after = full || current === undefined ? 0 : current.revision;
+							const view = await this.get(chatId, after);
+							if (closed) return;
+							current = merge(current, view, after);
+							listener(current);
+						} catch (error) {
+							if (isNotFound(error)) {
+								current = undefined;
+								if (!closed) listener(undefined);
+								return;
+							}
+							throw error;
 						}
-						throw error;
-					}
-				} while (again && !closed);
-			})().finally(() => {
-				fetching = undefined;
-			});
+					} while (again && !closed);
+				} finally {
+					// Cleared the moment the loop stops, not a turn later: a change
+					// reported in between would join a read that has already ended.
+					fetching = undefined;
+				}
+			})();
 			return fetching;
 		};
 		const unsubscribe = await this.transport.subscribe(

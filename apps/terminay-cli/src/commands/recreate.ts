@@ -14,6 +14,7 @@ import {
 	runningRelease,
 	selectRelease,
 } from '../container.js';
+import { type DeadlineTimers, GLOBAL_DEADLINE_TIMERS } from '../deadlines.js';
 import {
 	createDockerClient,
 	DOCKER_PROBE_TIMEOUT_MS,
@@ -98,6 +99,8 @@ export interface RecreateDependencies {
 	readonly healthTimeoutMs?: number;
 	readonly settleMs?: number;
 	readonly handoverTimeoutMs?: number;
+	/** What schedules every deadline and grace period. The process's own timers by default. */
+	readonly timers?: DeadlineTimers;
 }
 
 function reasonOf(error: unknown): string {
@@ -264,9 +267,11 @@ async function describeSelf(
 			: await probeDockerSocket(
 					socketPath,
 					dependencies.probeTimeoutMs ?? DOCKER_PROBE_TIMEOUT_MS,
+					dependencies.timers,
 				));
 	if (!probe.usable) return no(SOCKET_REFUSALS[probe.cause]);
-	const docker = dependencies.docker ?? createDockerClient(socketPath);
+	const docker =
+		dependencies.docker ?? createDockerClient(socketPath, dependencies.timers);
 	const layout = containerLayout(env);
 	const dataRoot = dirname(layout.prefix);
 
@@ -802,6 +807,7 @@ async function startAndAwaitHealthy(
 ): Promise<string | undefined> {
 	const timeoutMs = dependencies.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
 	const settleMs = dependencies.settleMs ?? SETTLE_MS;
+	const timers = dependencies.timers ?? GLOBAL_DEADLINE_TIMERS;
 	type Verdict =
 		| { readonly kind: 'healthy' }
 		| { readonly kind: 'unhealthy' }
@@ -830,14 +836,14 @@ async function startAndAwaitHealthy(
 			`the Docker daemon stopped reporting on it before it was healthy${error === undefined ? '' : `: ${reasonOf(error)}`}`,
 		),
 	);
-	const deadline = setTimeout(
+	const deadline = timers.setTimeout(
 		() =>
 			failed(
 				`it did not report healthy within ${Math.round(timeoutMs / 1000)} seconds`,
 			),
 		timeoutMs,
 	);
-	let grace: ReturnType<typeof setTimeout> | undefined;
+	let grace: unknown;
 	const unhealthy = (state: NonNullable<DockerContainer['State']>): string => {
 		const last = state.Health?.Log?.at(-1)?.Output?.trim();
 		return `its health check failed${last === undefined || last.length === 0 ? '' : `: ${reasonOf(last)}`}`;
@@ -854,7 +860,7 @@ async function startAndAwaitHealthy(
 				`it exited with status ${state.ExitCode ?? 'unknown'} before it was healthy`,
 			);
 		else if (health === undefined || health === 'none' || health === '')
-			grace = setTimeout(() => settle({ kind: 'healthy' }), settleMs);
+			grace = timers.setTimeout(() => settle({ kind: 'healthy' }), settleMs);
 
 		const outcome = await verdict;
 		if (outcome.kind === 'healthy') return undefined;
@@ -865,8 +871,8 @@ async function startAndAwaitHealthy(
 			?.State;
 		return final == null ? 'its health check failed' : unhealthy(final);
 	} finally {
-		clearTimeout(deadline);
-		clearTimeout(grace);
+		timers.clearTimeout(deadline);
+		if (grace !== undefined) timers.clearTimeout(grace);
 		watch.close();
 	}
 }
@@ -940,7 +946,8 @@ export async function runContainerRecreateHelper(
 	const layout = containerLayout(env);
 	const dataRoot = dirname(layout.prefix);
 	const docker =
-		dependencies.docker ?? createDockerClient(dockerSocketPath(env));
+		dependencies.docker ??
+		createDockerClient(dockerSocketPath(env), dependencies.timers);
 	const fromLabel = label(from);
 	let toLabel = label(fallbackTo);
 	const record = (outcome: 'succeeded' | 'rolled-back', reason?: string) =>

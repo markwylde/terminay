@@ -18,12 +18,16 @@ test("in-memory transport delivers bounded copied frames and closes", async () =
 
 test("scripted transport can deterministically drop and delay sends", async () => {
   const pair = createScriptedTransportPair({ autoOpen: true, left: { dropEveryNthSend: 2 } });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Auto-open opens both ends as the pair is made, before anything awaits.
+  assert.equal(pair.client.state, "open");
+  assert.equal(pair.server.state, "open");
   await pair.client.send(new Uint8Array([1]));
   await pair.client.send(new Uint8Array([2]));
+  await pair.client.send(new Uint8Array([3]));
   const iterator = pair.server.incoming[Symbol.asyncIterator]();
   assert.deepEqual([...(await iterator.next()).value], [1]);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  // The frame after the dropped one arrives next, so the dropped one never did.
+  assert.deepEqual([...(await iterator.next()).value], [3]);
   assert.equal(pair.server.bufferedBytes, 0);
   await pair.server.close();
   await pair.client.close();

@@ -31,19 +31,41 @@ function fakeTransport() {
   };
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+/** What a mirror has reported, and a wait for the report that satisfies `accept`. */
+function mirrorLog() {
+  const seen = [];
+  const waiters = [];
+  return {
+    seen,
+    listener(chat) {
+      seen.push(chat);
+      for (const waiter of [...waiters]) {
+        if (!waiter.accept(chat)) continue;
+        waiters.splice(waiters.indexOf(waiter), 1);
+        waiter.resolve(chat);
+      }
+    },
+    next(accept) {
+      return new Promise((resolve) => waiters.push({ accept, resolve }));
+    },
+  };
+}
+
+const text = (chat, id) => chat?.entries.find((entry) => entry.id === id)?.text;
 
 test("a mirror reads only what changed after its revision and keeps the server's order", async () => {
   const server = fakeTransport();
   server.add({ id: "e1", kind: "user", text: "hi" });
   const client = new AgentChatClient(server.transport);
-  const seen = [];
-  const stop = await client.mirror("c1", (chat) => seen.push(chat));
+  const log = mirrorLog();
+  const stop = await client.mirror("c1", log.listener);
+  const added = log.next((chat) => text(chat, "e2") === "one");
   server.add({ id: "e2", kind: "notice", tone: "info", text: "one" });
-  await tick();
+  await added;
+  const edited = log.next((chat) => text(chat, "e2") === "two");
   server.edit("e2", "two");
-  await tick();
-  const latest = seen.at(-1);
+  await edited;
+  const latest = log.seen.at(-1);
   assert.deepEqual(latest.entries.map((entry) => [entry.id, entry.text]), [["e1", "hi"], ["e2", "two"]]);
   const afters = server.queries.map(([, payload]) => payload.afterRevision);
   assert.equal(afters[0], 0);
@@ -54,13 +76,15 @@ test("a mirror reads only what changed after its revision and keeps the server's
 test("a resync reads the whole chat and a removal clears it", async () => {
   const server = fakeTransport();
   const client = new AgentChatClient(server.transport);
-  const seen = [];
-  await client.mirror("c1", (chat) => seen.push(chat));
+  const log = mirrorLog();
+  await client.mirror("c1", log.listener);
+  const reread = log.next(() => true);
   server.resync();
-  await tick();
+  await reread;
+  assert.equal(server.queries.length, 2);
   assert.equal(server.queries.at(-1)[1].afterRevision, 0);
   server.remove();
-  assert.equal(seen.at(-1), undefined);
+  assert.equal(log.seen.at(-1), undefined);
 });
 
 test("merge drops entries the server no longer lists", () => {

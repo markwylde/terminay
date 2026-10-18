@@ -36,7 +36,49 @@ function context(overrides = {}) {
   }
 }
 
-const tick = () => new Promise((resolve) => setImmediate(resolve))
+/** Resolves once `count` approvals are waiting, re-checked as the service publishes. */
+function approvalsReach(approvals, count) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (approvals.list().length !== count) return
+      stop()
+      resolve()
+    }
+    const stop = approvals.subscribe(check)
+    check()
+  })
+}
+
+/**
+ * Request deadlines that come due only as the test moves this clock: `advance`
+ * fires every deadline that falls due within it, in order.
+ */
+function manualClock() {
+  let now = 0
+  let next = 0
+  const timers = new Map()
+  return {
+    setTimeout(handler, ms) {
+      next += 1
+      timers.set(next, { at: now + ms, handler })
+      return next
+    },
+    clearTimeout(id) {
+      timers.delete(id)
+    },
+    advance(ms) {
+      const until = now + ms
+      for (;;) {
+        const [due] = [...timers].filter(([, timer]) => timer.at <= until).sort(([a, x], [b, y]) => x.at - y.at || a - b)
+        if (due === undefined) break
+        timers.delete(due[0])
+        now = due[1].at
+        due[1].handler()
+      }
+      now = until
+    },
+  }
+}
 
 test("no MCP operation starts a project, lists recent folders, or browses server folders", async () => {
   // ADR-0066: the root folder browser is reachable only with root-change
@@ -129,7 +171,7 @@ test("the approved request is exactly the one shown, whatever the caller does af
   const { dispatch, calls, approvals } = gated({})
   const params = { name: "Digest", action: { kind: "runCommand", command: "mail-digest" }, claimedApproval: true }
   const pending = dispatch(op("create_automation", params), context())
-  await tick()
+  await approvalsReach(approvals, 1)
   params.action.command = "rm -rf ~"
   const [approval] = approvals.list()
   assert.equal(approval.agent, "Claude Code")
@@ -142,12 +184,12 @@ test("the approved request is exactly the one shown, whatever the caller does af
 test("decline and cancellation never run the operation, even when approved at the same moment", async () => {
   const { dispatch, calls, approvals } = gated({})
   const declined = dispatch(op("create_automation", {}), context())
-  await tick()
+  await approvalsReach(approvals, 1)
   approvals.decide(approvals.list()[0].id, "decline")
   assert.equal((await declined).error.code, "permission_declined")
   const controller = new AbortController()
   const cancelled = dispatch(op("create_automation", {}), context({ signal: controller.signal }))
-  await tick()
+  await approvalsReach(approvals, 1)
   const [approval] = approvals.list()
   controller.abort()
   approvals.decide(approval.id, "once")
@@ -159,7 +201,9 @@ async function withEndpoint(options, run) {
   const directory = await mkdtemp(join(tmpdir(), "terminay-mcp-permissions-"))
   const socketPath = join(directory, "control.sock")
   const capabilities = new ControlCapabilityStore({ tokenFactory: (() => { let n = 0; return () => `token-${++n}` })() })
-  const endpoint = createControlEndpoint({ socketPath, capabilities, ...options })
+  // No request deadline comes due unless a test moves this clock.
+  const clock = options.timers ?? manualClock()
+  const endpoint = createControlEndpoint({ socketPath, capabilities, timers: clock, ...options })
   await endpoint.start()
   try {
     await run({ socketPath, capabilities })
@@ -184,16 +228,28 @@ function send(socketPath, value) {
 }
 
 test("a request waiting on approval outlives the request deadline, and its handler gets a fresh one", async () => {
+  let handlerStarted
+  const handling = new Promise((resolve) => { handlerStarted = resolve })
+  let finishHandler
+  const handled = new Promise((resolve) => { finishHandler = resolve })
   const { dispatch, approvals } = gated({}, async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    handlerStarted()
+    await handled
     return { ok: true, result: "created" }
   })
-  await withEndpoint({ dispatch, requestTimeoutMs: 50 }, async ({ socketPath, capabilities }) => {
+  const clock = manualClock()
+  await withEndpoint({ dispatch, requestTimeoutMs: 50, timers: clock }, async ({ socketPath, capabilities }) => {
     const lease = capabilities.mint("caller", "project-a")
     const { response, socket } = send(socketPath, { id: "c1", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "create_automation", params: {} })
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    await approvalsReach(approvals, 1)
+    // Three deadlines' worth of waiting on the person: none comes due.
+    clock.advance(150)
     assert.equal(approvals.list().length, 1)
     approvals.decide(approvals.list()[0].id, "once")
+    await handling
+    // The handler's own deadline starts when it does, not when the request did.
+    clock.advance(20)
+    finishHandler()
     assert.deepEqual(await response, { id: "c1", ok: true, result: "created" })
     socket.destroy()
   })
@@ -204,11 +260,9 @@ test("closing the caller's connection withdraws its approval", async () => {
   await withEndpoint({ dispatch }, async ({ socketPath, capabilities }) => {
     const lease = capabilities.mint("caller", "project-a")
     const { socket } = send(socketPath, { id: "c1", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "create_automation", params: {} })
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    assert.equal(approvals.list().length, 1)
+    await approvalsReach(approvals, 1)
     socket.destroy()
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    assert.equal(approvals.list().length, 0)
+    await approvalsReach(approvals, 0)
     assert.equal(calls.length, 0)
   })
 })
@@ -219,7 +273,7 @@ test("revoking the terminal's capability ends its approvals and session grants",
     capabilities.onRevoked((_digest, terminalSessionId) => approvals.revokeTerminal(terminalSessionId))
     const lease = capabilities.mint("caller", "project-a")
     const first = send(socketPath, { id: "c1", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "create_automation", params: {} })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await approvalsReach(approvals, 1)
     approvals.decide(approvals.list()[0].id, "session")
     assert.equal((await first.response).ok, true)
     first.socket.destroy()
@@ -232,8 +286,7 @@ test("revoking the terminal's capability ends its approvals and session grants",
     assert.equal(approvals.effectivePolicy("automationsManage", "caller"), "ask")
     const fresh = capabilities.mint("caller", "project-a")
     const third = send(socketPath, { id: "c3", token: fresh.token, version: CONTROL_PROTOCOL_VERSION, op: "create_automation", params: {} })
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    assert.equal(approvals.list().length, 1)
+    await approvalsReach(approvals, 1)
     capabilities.onTerminalExit("caller")
     assert.equal((await third.response).error.code, "invalid_token")
     assert.equal(approvals.list().length, 0)

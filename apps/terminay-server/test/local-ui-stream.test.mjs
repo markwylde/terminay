@@ -7,6 +7,10 @@ test('local UI stream authenticates upgrade and delegates to protocol core', asy
 	const token = 'local-stream-token-123456';
 	let accepted = 0;
 	let opened = 0;
+	let started;
+	const connectionStarted = new Promise((resolve) => {
+		started = resolve;
+	});
 	const server = createLocalUiServer({
 		serverId: 'stream-server',
 		serverVersion: '1.0.0',
@@ -21,6 +25,7 @@ test('local UI stream authenticates upgrade and delegates to protocol core', asy
 					start: async () => {
 						await transport.open();
 						opened += 1;
+						started();
 					},
 					process: async () => {},
 					subscribe: async () => ({
@@ -57,7 +62,8 @@ test('local UI stream authenticates upgrade and delegates to protocol core', asy
 		);
 		await once(socket, 'open');
 		assert.equal(socket.protocol, 'terminay.v1');
-		await waitFor(() => opened === 1);
+		await connectionStarted;
+		assert.equal(opened, 1);
 		assert.equal(accepted, 1);
 		socket.close();
 	} finally {
@@ -114,11 +120,18 @@ test('direct pairing browser navigation gets a Desktop instruction page', async 
 test('local UI stream reports a contained protocol connection failure', async () => {
 	const token = 'local-stream-token-123456';
 	const failures = [];
+	let reported;
+	const failureReported = new Promise((resolve) => {
+		reported = resolve;
+	});
 	const server = createLocalUiServer({
 		serverId: 'stream-server',
 		serverVersion: '1.0.0',
 		authToken: token,
-		onConnectionError: (error) => failures.push(error),
+		onConnectionError: (error) => {
+			failures.push(error);
+			reported();
+		},
 		protocolCore: {
 			accept: () => ({
 				state: 'new',
@@ -145,7 +158,8 @@ test('local UI stream reports a contained protocol connection failure', async ()
 			['terminay.v1', `terminay.auth.${base64url(token)}`],
 		);
 		await once(socket, 'open');
-		await waitFor(() => failures.length === 1);
+		await failureReported;
+		assert.equal(failures.length, 1);
 		assert.match(failures[0].message, /contained stream failure/u);
 		socket.close();
 	} finally {
@@ -162,13 +176,4 @@ function once(emitter, event) {
 		emitter.once(event, resolve);
 		emitter.once('error', reject);
 	});
-}
-
-async function waitFor(predicate) {
-	const deadline = Date.now() + 1000;
-	while (!predicate()) {
-		if (Date.now() > deadline)
-			throw new Error('timed out waiting for condition');
-		await new Promise((resolve) => setTimeout(resolve, 5));
-	}
 }

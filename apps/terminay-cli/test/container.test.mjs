@@ -71,7 +71,11 @@ function serverLauncher(version, behaviour = 'ready') {
 		'http.createServer((request, response) => {',
 		'  response.writeHead(ready ? 200 : 503, { "content-type": "application/json" });',
 		'  response.end(JSON.stringify({ status: "ok", ready, version, ui: process.env.TERMINAY_UI_RENDERER_DIRECTORY, upgrader: process.env.TERMINAY_UPGRADER, revision: process.env.TERMINAY_SERVER_REVISION }));',
-		'}).listen(Number(process.env.TERMINAY_HEALTH_PORT), "127.0.0.1");',
+		'}).listen(Number(process.env.TERMINAY_HEALTH_PORT), "127.0.0.1", () => {',
+		// Told to the test the moment the server can be asked, so it waits on
+		// this rather than asking until it answers.
+		'  console.log(["fixture-server", version, ready ? "ready" : "not-ready", process.pid].join(" "));',
+		'});',
 		'process.on("SIGTERM", () => process.exit(0));',
 		'process.on("SIGINT", () => process.exit(0));',
 	].join('\n');
@@ -112,7 +116,7 @@ function freePort() {
 function health(port) {
 	return new Promise((done) => {
 		const request = get(
-			{ host: '127.0.0.1', port, path: '/readyz', timeout: 1000 },
+			{ host: '127.0.0.1', port, path: '/readyz' },
 			(response) => {
 				let body = '';
 				response.setEncoding('utf8');
@@ -128,19 +132,46 @@ function health(port) {
 				});
 			},
 		);
-		request.on('timeout', () => request.destroy());
 		request.on('error', () => done(undefined));
 	});
 }
 
-async function until(read, accept, what, timeoutMs = 20_000) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await read();
-		if (accept(value)) return value;
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-		await new Promise((done) => setTimeout(done, 100));
-	}
+/**
+ * Deadline timers that come due only when the test says so. The upgrade's
+ * stop and readiness deadlines go through these, so a slow machine can never
+ * be the reason one passes.
+ */
+function manualTimers() {
+	const pending = new Map();
+	const watchers = [];
+	let next = 0;
+	return {
+		setTimeout(handler, ms) {
+			next += 1;
+			pending.set(next, { handler, ms });
+			for (const watcher of watchers.filter((entry) => entry.ms === ms)) {
+				watchers.splice(watchers.indexOf(watcher), 1);
+				watcher.resolve(next);
+			}
+			return next;
+		},
+		clearTimeout(id) {
+			pending.delete(id);
+		},
+		/** Resolves with the first `ms` deadline that is, or becomes, pending. */
+		armed(ms) {
+			for (const [id, timer] of pending)
+				if (timer.ms === ms) return Promise.resolve(id);
+			return new Promise((resolve) => watchers.push({ ms, resolve }));
+		},
+		/** That deadline's time comes. */
+		fire(id) {
+			const timer = pending.get(id);
+			assert.ok(timer, `deadline ${id} is not pending`);
+			pending.delete(id);
+			timer.handler();
+		},
+	};
 }
 
 function alive(pid) {
@@ -203,6 +234,12 @@ async function withContainer(options, run) {
 	const started = [];
 	/** `docker run`: the entrypoint, as the container's main process. */
 	const start = (args = [], image = imageRelease) => {
+		// A container's servers report only after it starts. Anything already
+		// reported belongs to an earlier container, however many lines of it
+		// the test happened to wait for, so it can never satisfy a wait on this
+		// one: a stopped server's line would send the next health check to a
+		// port nothing answers.
+		seen = servers.length;
 		const child = spawn(SHELL, [ENTRYPOINT, ...args], {
 			env: {
 				PATH: process.env.PATH,
@@ -222,12 +259,51 @@ async function withContainer(options, run) {
 		child.stderr.on('data', (chunk) => {
 			container.stderr += chunk;
 		});
+		let partial = '';
+		child.stdout.on('data', (chunk) => {
+			partial += chunk;
+			const lines = partial.split('\n');
+			partial = lines.pop();
+			for (const line of lines) {
+				const [tag, version, readiness] = line.split(' ');
+				if (tag !== 'fixture-server') continue;
+				servers.push({ version, ready: readiness === 'ready' });
+				for (const check of [...serverWaiters]) check();
+			}
+		});
+		// Once its output has closed too, so all of it has been read.
 		container.exited = new Promise((done) => {
-			child.on('exit', (code, signal) => done({ code, signal }));
+			child.on('close', (code, signal) => done({ code, signal }));
 		});
 		started.push(container);
 		return container;
 	};
+	/** Every fixture server that has started listening, in order. */
+	const servers = [];
+	const serverWaiters = new Set();
+	let seen = 0;
+	/**
+	 * The next server to start listening after the last one waited for, of
+	 * `version` and, when given, that readiness.
+	 */
+	const listening = (version, ready) =>
+		new Promise((done) => {
+			const check = () => {
+				const index = servers.findIndex(
+					(server, at) =>
+						at >= seen &&
+						server.version === version &&
+						(ready === undefined || server.ready === ready),
+				);
+				if (index < 0) return;
+				serverWaiters.delete(check);
+				seen = index + 1;
+				done(servers[index]);
+			};
+			serverWaiters.add(check);
+			check();
+		});
+	const timers = manualTimers();
 	const lines = [];
 	try {
 		await run({
@@ -241,13 +317,16 @@ async function withContainer(options, run) {
 			start,
 			lines,
 			holderFile,
-			ready: (version) =>
-				until(
-					() => health(port),
-					(snapshot) =>
-						snapshot?.ready === true && snapshot.version === version,
-					`${version} to report ready`,
-				),
+			timers,
+			listening,
+			/** The next server of `version` to listen ready, as it reports itself. */
+			ready: async (version) => {
+				await listening(version, true);
+				const snapshot = await health(port);
+				assert.equal(snapshot?.ready, true);
+				assert.equal(snapshot.version, version);
+				return snapshot;
+			},
 			/** `docker stop`: SIGTERM to the main process. */
 			stop: async (container) => {
 				container.child.kill('SIGTERM');
@@ -264,6 +343,7 @@ async function withContainer(options, run) {
 						webBase: releases.origin,
 						releasePublicKeyPem: releases.publicPem,
 						readinessTimeoutMs: 8_000,
+						timers,
 						...overrides.dependencies,
 					},
 				),
@@ -708,11 +788,15 @@ test('a release that never reports ready is rolled back and the command fails', 
 		const main = container.start();
 		await container.ready('4.1.0');
 
+		const upgrading = container.upgrade(undefined, {
+			dependencies: { readinessTimeoutMs: 1_500 },
+		});
+		// The new release is up and answering, but not ready; then the wait
+		// for it reaches its deadline.
+		await container.listening('4.1.1', false);
+		container.timers.fire(await container.timers.armed(1_500));
 		await assert.rejects(
-			() =>
-				container.upgrade(undefined, {
-					dependencies: { readinessTimeoutMs: 1_500 },
-				}),
+			upgrading,
 			(error) =>
 				error instanceof UpgradeError &&
 				/did not become ready/u.test(error.message) &&
@@ -801,7 +885,7 @@ test('the image command runs the CLI of the release the server is running', asyn
 				child.stdout.on('data', (chunk) => {
 					stdout += chunk;
 				});
-				child.on('exit', (code) => done({ code, stdout }));
+				child.on('close', (code) => done({ code, stdout }));
 			});
 		// Nothing recorded: the image's own.
 		const fromImage = await run(env());

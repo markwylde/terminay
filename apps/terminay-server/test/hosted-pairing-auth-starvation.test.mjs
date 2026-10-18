@@ -15,12 +15,12 @@ import { createServerRemoteExposure } from '../dist/remote/serverExposure.js';
  * The fake runtime's `addIceCandidate` never settles, which is what a real
  * trickle candidate arriving after DTLS is up can look like. With the reply
  * queued behind that work the client times out after 15 s and reports
- * "Terminay did not authenticate the workspace in time"; the assertions here
- * use a 2 s budget so the starvation is a fast, deterministic failure.
+ * "Terminay did not authenticate the workspace in time". Here a reply queued
+ * behind it never arrives at all, however long the machine takes: the tests
+ * wait for the reply itself, never for a time budget.
  */
 
 const SESSION_ID = 'session123';
-const REPLY_BUDGET_MS = 2_000;
 
 function deviceKey() {
 	return generateKeyPairSync('rsa', {
@@ -31,7 +31,7 @@ function deviceKey() {
 }
 
 /** Minimal in-memory data channel with the surface the host uses. */
-function fakeChannel(label) {
+function fakeChannel(label, changed) {
 	const listeners = new Map();
 	return {
 		label,
@@ -52,6 +52,7 @@ function fakeChannel(label) {
 		},
 		send(data) {
 			this.sent.push(String(data));
+			changed();
 		},
 		/** Deliver a client frame to the host's listeners for this lane. */
 		receive(value) {
@@ -76,13 +77,15 @@ function fakeRuntime(state) {
 			// depend on this promise.
 			addIceCandidate() {
 				state.iceCalls += 1;
+				state.changed();
 				return new Promise(() => {});
 			}
 			close() {}
 			createDataChannel(label) {
-				const channel = fakeChannel(label);
+				const channel = fakeChannel(label, state.changed);
 				this.channels.set(label, channel);
 				state.channels.set(label, channel);
+				state.changed();
 				return channel;
 			}
 			async createOffer() {
@@ -134,17 +137,20 @@ async function startRelay(state) {
 	};
 }
 
-function waitFor(predicate, label, timeoutMs = 10_000) {
-	return new Promise((resolveWait, reject) => {
-		const startedAt = Date.now();
-		const tick = () => {
+/**
+ * Resolves with what `predicate` returns once it is truthy, re-checked on every
+ * change the fakes and the exposure report.
+ */
+function until(state, predicate) {
+	return new Promise((resolveWait) => {
+		const check = () => {
 			const value = predicate();
-			if (value) return resolveWait(value);
-			if (Date.now() - startedAt > timeoutMs)
-				return reject(new Error(`timed out waiting for ${label}`));
-			setTimeout(tick, 10);
+			if (!value) return;
+			state.checks.delete(check);
+			resolveWait(value);
 		};
-		tick();
+		state.checks.add(check);
+		check();
 	});
 }
 
@@ -160,6 +166,10 @@ function lastReply(channel, id) {
 async function startHost(t, overrides = {}) {
 	const state = {
 		channels: new Map(),
+		checks: new Set(),
+		changed: () => {
+			for (const check of [...state.checks]) check();
+		},
 		hostSignals: [],
 		iceCalls: 0,
 		peers: [],
@@ -174,6 +184,7 @@ async function startHost(t, overrides = {}) {
 		cleanupIntervalMs: 0,
 	});
 	const handoff = exposure.start();
+	exposure.onApprovalRequested(() => state.changed());
 	const hostKey = createHostedHostKey();
 	const accepted = [];
 	const host = await startHostedPairingHost({
@@ -187,6 +198,7 @@ async function startHost(t, overrides = {}) {
 				},
 			};
 			accepted.push(connection);
+			state.changed();
 			return connection;
 		},
 		handoff,
@@ -220,11 +232,8 @@ async function approvedTicket(context, clientNonce, beforeApproval) {
 		roomId: secrets.pairingRoomId,
 		type: 'client-join',
 	});
-	const api = await waitFor(() => state.channels.get('api'), 'the api lane');
-	const control = await waitFor(
-		() => state.channels.get('control'),
-		'the control lane',
-	);
+	const api = await until(state, () => state.channels.get('api'));
+	const control = await until(state, () => state.channels.get('control'));
 	const key = deviceKey();
 	api.receive(
 		JSON.stringify({
@@ -239,10 +248,7 @@ async function approvedTicket(context, clientNonce, beforeApproval) {
 			type: 'api-request',
 		}),
 	);
-	const pending = await waitFor(
-		() => exposure.listPendingApprovals()[0],
-		'the pending approval',
-	);
+	const pending = await until(state, () => exposure.listPendingApprovals()[0]);
 	assert.equal(
 		pending.matchCode,
 		await deriveMatchCode({
@@ -275,27 +281,16 @@ test('application authentication is answered while an ICE candidate never settle
 				roomId: context.secrets.pairingRoomId,
 				type: 'ice',
 			});
-			await waitFor(
-				() => context.state.iceCalls > 0,
-				'the host to start applying the candidate',
-			);
+			await until(context.state, () => context.state.iceCalls > 0);
 		},
 	);
 	control.receive(
 		JSON.stringify({ id: 'auth-1', ticket, type: 'application-auth' }),
 	);
 
-	const reply = await waitFor(
-		() => lastReply(control, 'auth-1'),
-		'the application-authenticated reply',
-		REPLY_BUDGET_MS,
-	);
+	const reply = await until(context.state, () => lastReply(control, 'auth-1'));
 	assert.equal(reply.ok, true);
-	await waitFor(
-		() => context.accepted.length === 1,
-		'the workspace to attach',
-		REPLY_BUDGET_MS,
-	);
+	await until(context.state, () => context.accepted.length === 1);
 });
 
 test('a stalled handshake in a fresh pairing room does not delay another peer authentication', async (t) => {
@@ -326,10 +321,7 @@ test('a stalled handshake in a fresh pairing room does not delay another peer au
 		roomId: secrets.pairingRoomId,
 		type: 'ice',
 	});
-	await waitFor(
-		() => context.state.iceCalls > 0,
-		'the second peer candidate to remain in flight',
-	);
+	await until(context.state, () => context.state.iceCalls > 0);
 
 	control.receive(
 		JSON.stringify({
@@ -338,10 +330,8 @@ test('a stalled handshake in a fresh pairing room does not delay another peer au
 			type: 'application-auth',
 		}),
 	);
-	const reply = await waitFor(
-		() => lastReply(control, 'auth-other-peer-stalled'),
-		'the first peer authentication reply',
-		REPLY_BUDGET_MS,
+	const reply = await until(context.state, () =>
+		lastReply(control, 'auth-other-peer-stalled'),
 	);
 	assert.equal(reply.ok, true);
 });

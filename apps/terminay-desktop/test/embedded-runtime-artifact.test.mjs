@@ -62,9 +62,8 @@ function readReadiness(child) {
   return new Promise((resolve, reject) => {
     let output = "";
     let stderr = "";
-    const timeout = setTimeout(() => reject(new Error("packed Desktop server did not become ready")), 20_000);
+    // The server either prints its readiness line or exits; both are events.
     const fail = (code) => {
-      clearTimeout(timeout);
       reject(new Error(`packed Desktop server exited before readiness (${code}): ${stderr}`));
     };
     child.once("exit", fail);
@@ -73,7 +72,6 @@ function readReadiness(child) {
       output += chunk;
       const newline = output.indexOf("\n");
       if (newline === -1) return;
-      clearTimeout(timeout);
       child.off("exit", fail);
       try { resolve(JSON.parse(output.slice(0, newline))); }
       catch (error) { reject(error); }
@@ -86,14 +84,7 @@ function stopForeground(child) {
   return new Promise((resolve) => {
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve({ code: child.exitCode, stderr });
-    }, 10_000);
-    child.once("exit", (code) => {
-      clearTimeout(timeout);
-      resolve({ code, stderr });
-    });
+    child.once("exit", (code) => resolve({ code, stderr }));
     child.kill("SIGTERM");
   });
 }
@@ -133,22 +124,6 @@ async function assertNoSymlinks(root) {
     assert.equal(details.isSymbolicLink(), false, `packed Desktop payload retained symlink ${path}`);
     if (details.isDirectory()) await assertNoSymlinks(path);
   }
-}
-
-function waitFor(predicate, label, timeoutMs = 3_000) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      try {
-        if (predicate()) return resolve();
-      } catch (error) {
-        return reject(error);
-      }
-      if (Date.now() >= deadline) return reject(new Error(`timed out waiting for ${label}`));
-      setTimeout(check, 10);
-    };
-    check();
-  });
 }
 
 function outputText(events) {
@@ -312,7 +287,8 @@ test("extracted Desktop package starts the extracted shared embedded server runt
     }));
 
     const local = desktop.createDesktopEmbeddedLocalServer({
-      claim: () => ({ value: "packed-desktop-bootstrap-credential", expiresAt: Date.now() + 60_000 }),
+      // Never expires, so how long the steps below take cannot expire it.
+      claim: () => ({ value: "packed-desktop-bootstrap-credential", expiresAt: Number.MAX_SAFE_INTEGER }),
     }, {
       serverId: "packed-desktop",
       serverVersion: "1.0.0",
@@ -350,6 +326,8 @@ test("extracted Desktop package starts the extracted shared embedded server runt
         ptyFactory: serverCore.createNodePtyFactory(nodePty),
       });
       const events = [];
+      let finished;
+      const exitedWithOutput = new Promise((resolve) => { finished = resolve; });
       const session = await terminal.createSession({
         projectId: "default",
         sessionId: "packed-desktop-node-pty",
@@ -362,13 +340,14 @@ test("extracted Desktop package starts the extracted shared embedded server runt
       const subscription = terminal.subscribe(session.identity, {
         authorization: { ...session.identity, clientId: "artifact-test", scope: "read" },
         fromPosition: 0,
-        onEvent: (event) => events.push(event),
+        onEvent: (event) => {
+          events.push(event);
+          // Re-checked on every output and on the exit itself.
+          if (session.status === "exited" && outputText(events).includes("PACKED_DESKTOP_NODE_PTY_OK")) finished();
+        },
       });
       try {
-        await waitFor(
-          () => session.status === "exited" && outputText(events).includes("PACKED_DESKTOP_NODE_PTY_OK"),
-          "extracted Desktop node-pty session",
-        );
+        await exitedWithOutput;
         assert.equal(session.exit.reason, "exit");
       } finally {
         subscription.close();
