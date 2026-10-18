@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { open, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   createSessionHolderPtyFactory,
   launchDetachedSessionHolder,
@@ -33,14 +34,44 @@ function isAlive(pid) {
   }
 }
 
-async function until(predicate, label, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await predicate();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await delay(25);
-  }
+/** Every holder this file launched, by pid. */
+const holders = new Map();
+
+/** Launch a holder the way a host does, keeping its process to hear it exit. */
+function launchHolder(entry, env) {
+  const child = launchDetachedSessionHolder(process.execPath, [entry], { ...process.env, ...env });
+  holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
+  return child;
+}
+
+/** Settles once a holder this file launched has exited. */
+function holderExited(pid) {
+  const holder = holders.get(pid);
+  assert.ok(holder, `holder ${pid} was not launched by this test`);
+  // The holder is unreferenced so it never keeps a test alive; waiting on it
+  // does, until it exits.
+  holder.child.ref();
+  return holder.exited;
+}
+
+/**
+ * A FIFO in the data root, which is every shell's working directory. A shell
+ * that reads `go` waits for the test to write it; a `cat` of `hold` is a busy
+ * foreground process, and the test's open of it for writing settles only once
+ * that `cat` is running, so it is the shell saying "everything before me is
+ * done".
+ */
+function fifo(dataRoot, name) {
+  const path = join(dataRoot, name);
+  assert.equal(spawnSync("mkfifo", [path]).status, 0, `mkfifo ${name}`);
+  return path;
+}
+
+/** Open `hold` for writing: settles once the shell's `cat hold` is running. */
+async function heldOpen(t, path) {
+  const handle = await open(path, "w");
+  t.after(() => handle.close());
+  return handle;
 }
 
 function dataRootFor(t) {
@@ -51,8 +82,8 @@ function dataRootFor(t) {
     // Whatever a failed assertion left behind must not outlive the test.
     for (const record of readHolderRecords(dataRoot)) {
       try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
+      await holders.get(record.pid)?.exited;
     }
-    await delay(50);
     rmSync(dataRoot, { recursive: true, force: true });
   });
   return dataRoot;
@@ -63,7 +94,7 @@ function server(dataRoot, buildId = "build-a", options = {}) {
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env }),
+    launch: ({ env }) => { launchHolder(ENTRY, env); },
     ...options,
   });
   const service = new TerminalService({ serverId: SERVER_ID, ptyFactory: factory });
@@ -76,19 +107,36 @@ async function endEverything({ service, factory }) {
   await factory.endAll();
 }
 
-/** Collect a subscription's output as text. */
+/**
+ * Collect a subscription's output as text. `seen(value)` settles once the
+ * output includes it, and `exited` once the session's exit arrives.
+ */
 function watch(service, sessionId, fromPosition) {
   const state = { output: "", exits: [], firstPosition: undefined };
+  const waiters = new Set();
+  let reportExit;
+  const exited = new Promise((resolve) => { reportExit = resolve; });
   const subscription = service.subscribe(sessionId, {
     ...(fromPosition === undefined ? {} : { fromPosition }),
     onEvent: (event) => {
       if (event.type === "output") {
         state.firstPosition ??= event.position;
         state.output += text(event.bytes);
-      } else if (event.type === "exit") state.exits.push(event);
+        for (const waiter of [...waiters]) {
+          if (!state.output.includes(waiter.value)) continue;
+          waiters.delete(waiter);
+          waiter.resolve();
+        }
+      } else if (event.type === "exit") {
+        state.exits.push(event);
+        reportExit(event);
+      }
     },
   });
-  return { state, subscription };
+  const seen = (value) => state.output.includes(value)
+    ? Promise.resolve()
+    : new Promise((resolve) => waiters.add({ value, resolve }));
+  return { state, subscription, seen, exited };
 }
 
 async function adoptAll(dataRoot, buildId, options) {
@@ -115,6 +163,8 @@ const create = (service, sessionId, dataRoot) =>
 
 test("a shell survives its server and is adopted with its output and position intact", async (t) => {
   const dataRoot = dataRootFor(t);
+  const go = fifo(dataRoot, "go");
+  const hold = fifo(dataRoot, "hold");
   const first = server(dataRoot);
   await create(first.service, "s1", dataRoot);
   const before = watch(first.service, "s1");
@@ -122,20 +172,21 @@ test("a shell survives its server and is adopted with its output and position in
   assert.ok(Number.isSafeInteger(pid) && pid > 0);
 
   await first.service.write("s1", bytesOf("echo marker-$((40+2))\n"));
-  await until(() => before.state.output.includes("marker-42"), "the first command");
+  await before.seen("marker-42");
   const acknowledged = first.service.getSession("s1").outputPosition;
 
-  // Work that outlives the server: it prints after the server has gone and
-  // then keeps a foreground process running.
-  await first.service.write("s1", bytesOf("sleep 1; echo while-$((1+1))-away; sleep 30\n"));
-  await delay(100);
+  // Work that outlives the server: once told to go, which is after the server
+  // has gone, it prints and then keeps a foreground process running.
+  await first.service.write("s1", bytesOf("echo armed-$((3+3)); read _ < go; echo while-$((1+1))-away; cat hold\n"));
+  await before.seen("armed-6");
 
   await first.service.shutdown({ detach: true });
   await first.factory.detach();
   assert.equal(before.state.exits.length, 0, "detaching published an exit");
   assert.equal(isAlive(pid), true, "the shell died with its server");
 
-  await delay(1_500);
+  await writeFile(go, "go\n");
+  await heldOpen(t, hold);
 
   const second = await adoptAll(dataRoot);
   t.after(() => endEverything(second));
@@ -147,49 +198,51 @@ test("a shell survives its server and is adopted with its output and position in
 
   // A client that had acknowledged `acknowledged` receives exactly the rest.
   const after = watch(second.service, "s1", acknowledged);
-  await until(() => after.state.output.includes("while-2-away"), "output produced while detached");
+  await after.seen("while-2-away");
   assert.equal(after.state.firstPosition, acknowledged);
   assert.equal(after.state.output.includes("marker-42"), false, "acknowledged output was replayed");
 
   // A fresh client still gets everything retained.
   const fresh = watch(second.service, "s1", adopted.replayFrom);
-  await until(() => fresh.state.output.includes("while-2-away"), "the full replay");
+  await fresh.seen("while-2-away");
   assert.ok(fresh.state.output.includes("marker-42"));
 
-  // Busy state resumes with no input from anyone.
-  const observation = await until(async () => {
-    const value = await second.service.observeForegroundProcess("s1");
-    return value.foregroundBusy ? value : undefined;
-  }, "the adopted session to report busy");
+  // Busy state resumes with no input from anyone: `cat` is in the foreground.
+  const observation = await second.service.observeForegroundProcess("s1");
   assert.equal(observation.foregroundBusy, true);
 
   // And the same shell is still interactive.
   await second.service.write("s1", bytesOf("\x03"));
   await second.service.write("s1", bytesOf("echo back-$((2+3))\n"));
-  await until(() => fresh.state.output.includes("back-5"), "input after adoption");
+  await fresh.seen("back-5");
 });
 
 test("output beyond the bound while detached is dropped oldest-first and the command still completes", async (t) => {
   const dataRoot = dataRootFor(t);
+  const go = fifo(dataRoot, "go");
+  const hold = fifo(dataRoot, "hold");
   const first = server(dataRoot);
   await create(first.service, "s1", dataRoot);
   const before = watch(first.service, "s1");
   await first.service.write("s1", bytesOf("echo ready-$((1+2))\n"));
-  await until(() => before.state.output.includes("ready-3"), "the shell prompt");
+  await before.seen("ready-3");
   const acknowledged = first.service.getSession("s1").outputPosition;
 
   // 1.5 MiB against a 1 MiB ring, written only after the server has gone.
-  await first.service.write("s1", bytesOf("sleep 1; head -c 1500000 /dev/zero | tr '\\0' x; echo; echo flood-$((3+4))-done\n"));
-  await delay(100);
+  await first.service.write("s1", bytesOf("echo armed-$((3+3)); read _ < go; head -c 1500000 /dev/zero | tr '\\0' x; echo; echo flood-$((3+4))-done; cat hold\n"));
+  await before.seen("armed-6");
   await first.service.shutdown({ detach: true });
   await first.factory.detach();
 
-  await delay(2_500);
+  // The flood runs with no server attached, and has been printed once `cat`
+  // after it is running: the holder has read all but what the PTY buffers.
+  await writeFile(go, "go\n");
+  await heldOpen(t, hold);
   const second = await adoptAll(dataRoot);
   t.after(() => endEverything(second));
   const adopted = second.service.getSession("s1");
   const tail = watch(second.service, "s1", adopted.replayFrom);
-  await until(() => tail.state.output.includes("flood-7-done"), "the flood to finish", 30_000);
+  await tail.seen("flood-7-done");
 
   const settled = second.service.getSession("s1");
   assert.ok(settled.outputPosition > 1_500_000, "the position did not count dropped bytes");
@@ -225,11 +278,12 @@ test("a server from another build drains the old holder and still drives its ses
 
   const output = watch(second.service, "old", second.service.getSession("old").replayFrom);
   await second.service.write("old", bytesOf("echo old-$((5+5))\n"));
-  await until(() => output.state.output.includes("old-10"), "the old session to answer");
+  await output.seen("old-10");
 
-  // The drained holder leaves once its last session is closed.
+  // The drained holder leaves once its last session is closed, and only after
+  // that session's shell has ended.
   await second.factory.end("old");
-  await until(() => !isAlive(oldHolder.pid), "the drained holder to exit");
+  await holderExited(oldHolder.pid);
   assert.equal(isAlive(oldPid), false);
   assert.equal(second.service.getSession("new").status, "running");
 });
@@ -243,7 +297,9 @@ test("end-all ends every shell and leaves no holder", async (t) => {
   const [holder] = readHolderRecords(dataRoot);
 
   await endEverything(first);
-  await until(() => !isAlive(holder.pid) && pids.every((pid) => !isAlive(pid)), "everything to end");
+  // A holder exits only once its shells have, and removes its record first.
+  await holderExited(holder.pid);
+  assert.deepEqual(pids.filter((pid) => isAlive(pid)), []);
   assert.deepEqual(readHolderRecords(dataRoot), []);
   assert.deepEqual(["s1", "s2"].map((id) => first.service.getSession(id).status), ["interrupted", "interrupted"]);
 });
@@ -256,7 +312,7 @@ test("a holder that dies takes its sessions with it and the server records an ab
   const [holder] = readHolderRecords(dataRoot);
 
   process.kill(holder.pid, "SIGKILL");
-  await until(() => seen.state.exits.length === 1, "the lost session to be reported");
+  await seen.exited;
   assert.notEqual(seen.state.exits[0].exitCode, 0, "a lost session looked like a clean exit");
   assert.equal(first.service.getSession("s1").status, "exited");
   await first.factory.detach();
