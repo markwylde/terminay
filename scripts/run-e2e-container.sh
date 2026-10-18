@@ -28,7 +28,23 @@ run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 container=terminay-e2e-$run_id
 artifact_dir=${TERMINAY_E2E_ARTIFACT_DIR:-"$repo_dir/.docker-cache/e2e/$run_id"}
 
+artifacts_copied=
+copy_artifacts() {
+  [ -z "$artifacts_copied" ] || return 0
+  artifacts_copied=1
+  mkdir -p "$artifact_dir"
+  for output in playwright-report test-results; do
+    docker cp "$container:/workspace/$output" "$artifact_dir/" >/dev/null 2>&1 || true
+  done
+  echo "Container E2E artifacts: $artifact_dir"
+}
+
+# A run that is cancelled still keeps what the suite wrote so far: the traces
+# and videos of tests that already failed.
 cleanup() {
+  if docker container inspect "$container" >/dev/null 2>&1; then
+    copy_artifacts
+  fi
   docker rm --force "$container" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
@@ -84,10 +100,6 @@ docker start --attach "$container"
 status=$?
 set -e
 
-mkdir -p "$artifact_dir"
-for output in playwright-report test-results; do
-  docker cp "$container:/workspace/$output" "$artifact_dir/" >/dev/null 2>&1 || true
-done
-echo "Container E2E artifacts: $artifact_dir"
+copy_artifacts
 
 exit "$status"
