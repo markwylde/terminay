@@ -55,13 +55,33 @@ async function extensionFixture(options = {}) {
 
 const broker = { async request() {} };
 
+/** Re-checks every waiter whenever `changed` is called by a host callback. */
+function changes() {
+  const waiters = new Set();
+  return {
+    changed: () => { for (const waiter of [...waiters]) waiter(); },
+    until(check) {
+      if (check()) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiter = () => {
+          if (!check()) return;
+          waiters.delete(waiter);
+          resolve();
+        };
+        waiters.add(waiter);
+      });
+    },
+  };
+}
+
 test("a language session starts, opens a document, and answers requests", async () => {
   const projectRoot = await projectFixture();
   const descriptor = await extensionFixture();
   const diagnostics = [];
+  const observed = changes();
   const host = new ExtensionHost(descriptor.extensionId, {
     broker,
-    onLanguageDiagnostics: (notification) => diagnostics.push(notification),
+    onLanguageDiagnostics: (notification) => { diagnostics.push(notification); observed.changed(); },
   });
   await host.start(descriptor);
   assert.deepEqual(
@@ -96,7 +116,7 @@ test("a language session starts, opens a document, and answers requests", async 
   });
   // The target outside the project root is dropped rather than exposed.
   assert.deepEqual(definition.locations.map((location) => location.path), ["lib/target.ts"]);
-  await waitFor(() => diagnostics.length > 0);
+  await observed.until(() => diagnostics.length > 0);
   assert.equal(diagnostics[0].path, "main.ts");
   assert.equal(diagnostics[0].revision, 3);
   assert.equal(diagnostics[0].diagnostics[0].severity, "error");
@@ -110,11 +130,12 @@ test("a language server that dies fails its session and counts once, then quaran
   const descriptor = await extensionFixture({ crashOnHover: true });
   const exits = [];
   const transitions = [];
+  const observed = changes();
   const host = new ExtensionHost(descriptor.extensionId, {
     broker,
     limits: { maxCrashesInWindow: 2 },
-    onLanguageSessionExit: (exit) => exits.push(exit),
-    onDiagnostic: (diagnostic) => transitions.push(diagnostic.transition),
+    onLanguageSessionExit: (exit) => { exits.push(exit); observed.changed(); },
+    onDiagnostic: (diagnostic) => { transitions.push(diagnostic.transition); observed.changed(); },
   });
   await host.start(descriptor);
   await host.invokeLanguage({
@@ -127,7 +148,8 @@ test("a language server that dies fails its session and counts once, then quaran
       input: { sessionId: "s1", path: "main.ts", position: { line: 0, character: 0 } },
     }),
   );
-  await waitFor(() => exits.length === 1);
+  // The host counts the crash in the same pass that reports the exit.
+  await observed.until(() => exits.length >= 1);
   assert.equal(exits[0].reason, "exited");
   assert.equal(exits[0].exitCode, 3);
   assert.equal(host.status().state, "running");
@@ -142,7 +164,7 @@ test("a language server that dies fails its session and counts once, then quaran
       input: { sessionId: "s2", path: "main.ts", position: { line: 0, character: 0 } },
     }),
   );
-  await waitFor(() => host.status().state === "quarantined");
+  await observed.until(() => transitions.includes("quarantined"));
   assert.equal(host.status().state, "quarantined");
   await host.stop();
 });
@@ -172,12 +194,3 @@ test("the manager indexes contributed language servers by extension and language
   await manager.shutdown();
   assert.equal(manager.languageServersFor(".ts").length, 0);
 });
-
-async function waitFor(predicate, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("condition was not met before the deadline");
-}
