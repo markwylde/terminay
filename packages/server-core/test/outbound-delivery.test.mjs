@@ -33,7 +33,8 @@ test('outbound delivery serializes concurrent sends and completes in FIFO order'
 		.send(new Uint8Array([3]))
 		.then(() => completed.push('third'));
 
-	await immediate();
+	// The pump is parked waiting for the transport to accept a write.
+	await transport.until(() => transport.parkedWrites > 0);
 	assert.deepEqual(transport.sent, []);
 	transport.releaseWrites();
 	await Promise.all([first, second, third]);
@@ -141,7 +142,7 @@ test('latest-value state coalesces under backpressure without consuming control 
 	assert.deepEqual(failures, []);
 	transport.releaseWrites();
 	await Promise.all([...deliveries, control]);
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.equal(transport.sent.some((frame) => frame[0] === 255), true);
 	assert.deepEqual(failures, []);
 });
@@ -161,7 +162,7 @@ test('state capacity pressure collapses one subscription to resync without closi
 	const control = pump.send(new Uint8Array([255]));
 	transport.releaseWrites();
 	await Promise.all([...deliveries, control]);
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.equal(transport.sent.filter((frame) => frame[0] === 200).length, 1);
 	assert.equal(transport.sent.filter((frame) => frame[0] === 255).length, 1);
 	assert.deepEqual(failures, []);
@@ -203,7 +204,7 @@ test('terminal congestion supersedes only its lane and preserves control deliver
 		createSkipFrame: () => new Uint8Array([8]),
 	});
 
-	await immediate();
+	await transport.until(() => transport.parkedWrites > 0);
 	assert.deepEqual(transport.sent, []);
 	assert.deepEqual(congestion, [
 		{
@@ -218,7 +219,7 @@ test('terminal congestion supersedes only its lane and preserves control deliver
 
 	transport.releaseWrites();
 	await Promise.all([...admitted, control, otherLane]);
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.deepEqual(
 		transport.sent.map((frame) => [...frame]),
 		[[1], [9], [7], [5]],
@@ -267,7 +268,7 @@ test('many congested terminal lanes cannot consume reserved control capacity', a
 
 	transport.releaseWrites();
 	await Promise.all([...deliveries, ...controls]);
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.deepEqual(transport.sent.slice(1, 5).map((frame) => frame[0]), [250, 251, 252, 253]);
 	assert.equal(failures.length, 0);
 });
@@ -295,7 +296,7 @@ test('transport acceptance does not advance the terminal presentation watermark'
 	await pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
 	await pump.sendTerminal(new Uint8Array([2]), admission(1, 2));
 	await pump.sendTerminal(new Uint8Array([3]), admission(2, 3));
-	await waitFor(() => transport.sent.length === 3);
+	await pump.whenIdle();
 	assert.deepEqual(transport.sent.map((frame) => [...frame]), [[1], [2], [7]]);
 	assert.equal(congestion.length, 1);
 	assert.equal(congestion[0].confirmedPosition, 0);
@@ -336,7 +337,7 @@ test('an unacknowledged trickle resynchronizes after the presentation age limit'
 	await pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
 	now = 6;
 	await pump.sendTerminal(new Uint8Array([2]), admission(1, 2));
-	await waitFor(() => transport.sent.length === 2);
+	await pump.whenIdle();
 	assert.deepEqual(transport.sent.map((frame) => [...frame]), [[1], [7]]);
 	assert.equal(congestion.length, 1);
 });
@@ -357,13 +358,14 @@ test('detaching a lane blocked in transport drops later output and releases sche
 		createSkipFrame: () => new Uint8Array([7]),
 	});
 	const active = pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
-	await immediate();
+	// The frame is in the transport, blocked there.
+	await transport.until(() => transport.parkedWrites > 0);
 	pump.releaseTerminal('attachment-detached');
 	await pump.sendTerminal(new Uint8Array([2]), admission(1, 2));
 
 	transport.releaseWrites();
 	await active;
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.deepEqual(transport.sent.map((frame) => [...frame]), [[1]]);
 });
 
@@ -394,7 +396,7 @@ test('sustained terminal output remains live while rendered acknowledgements adv
 		);
 		pump.acknowledgeTerminal('attachment-a', position + 1);
 	}
-	await waitFor(() => transport.sent.length === 100);
+	await pump.whenIdle();
 
 	assert.equal(congestion.length, 0);
 	assert.equal(transport.sent.at(-1)?.[0], 99);
@@ -444,7 +446,7 @@ test('a stalled renderer stays bounded while another terminal and workspace cont
 		maximumQueuedBytes = Math.max(maximumQueuedBytes, pump.snapshot.queuedBytes);
 		maximumQueuedFrames = Math.max(maximumQueuedFrames, pump.snapshot.queuedFrames);
 	}
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 
 	assert.equal(congestion.length, 1, 'the stalled attachment enters one bounded resync state');
 	assert.equal(congestion[0].laneId, 'terminal-stalled');
@@ -457,13 +459,14 @@ test('a stalled renderer stays bounded while another terminal and workspace cont
 });
 
 test('live event send rejection closes one server connection without an unhandled rejection', async () => {
-	const journal = new OrderedEventJournal();
+	const journal = listenedJournal(() => transport.changed());
 	const transport = new ControlledTransport(
 		(frame) => decodeFrame(frame).envelope.type === 'event',
 	);
 	const diagnostics = [];
 	let closed = 0;
 	const core = createServerCore({
+		onConnectionOpened: () => transport.changed(),
 		serverId: 'delivery-server',
 		serverVersion: 'test',
 		capabilities: [],
@@ -477,7 +480,10 @@ test('live event send rejection closes one server connection without an unhandle
 		onClosed: () => {
 			closed += 1;
 		},
-		onDeliveryDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+		onDeliveryDiagnostic: (diagnostic) => {
+			diagnostics.push(diagnostic);
+			transport.changed();
+		},
 	});
 	const unhandled = [];
 	const onUnhandled = (reason) => unhandled.push(reason);
@@ -495,7 +501,7 @@ test('live event send rejection closes one server connection without an unhandle
 				limits: {},
 			}),
 		);
-		await waitFor(() => connection.state === 'open');
+		await transport.until(() => connection.state === 'open');
 		transport.push(
 			encodeFrame({
 				type: 'command',
@@ -509,15 +515,20 @@ test('live event send rejection closes one server connection without an unhandle
 				},
 			}),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some(
 				(frame) => decodeFrame(frame).envelope.type === 'command_result',
 			),
 		);
+		// The result is sent before the subscription starts listening; wait for that too.
+		await transport.until(() => journal.listening === 1);
 
 		journal.append('terminal', { position: 1 });
-		await waitFor(() => connection.state === 'closed');
+		// The connection's run ends once it has closed.
 		await run;
+		assert.equal(connection.state, 'closed');
+		// Node reports an unhandled rejection once the microtasks it arose in
+		// have run, which is before the next macrotask.
 		await immediate();
 
 		assert.equal(transport.closeCount, 1);
@@ -539,10 +550,11 @@ test('live event send rejection closes one server connection without an unhandle
 });
 
 test('a 200 MiB terminal producer resynchronizes its attachment without closing the shared application connection', async () => {
-	const journal = new OrderedEventJournal();
+	const journal = listenedJournal(() => transport.changed());
 	const transport = new ControlledTransport();
 	const diagnostics = [];
 	const core = createServerCore({
+		onConnectionOpened: () => transport.changed(),
 		serverId: 'terminal-burst-server',
 		serverVersion: 'test',
 		capabilities: [],
@@ -554,7 +566,10 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 		}),
 	});
 	const connection = core.accept(transport, {
-		onDeliveryDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+		onDeliveryDiagnostic: (diagnostic) => {
+			diagnostics.push(diagnostic);
+			transport.changed();
+		},
 	});
 	void connection.start();
 	try {
@@ -569,7 +584,7 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 				limits: {},
 			}),
 		);
-		await waitFor(() => connection.state === 'open');
+		await transport.until(() => connection.state === 'open');
 		transport.push(
 			encodeFrame({
 				type: 'command',
@@ -583,10 +598,19 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 				},
 			}),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some(
 				(frame) => decodeFrame(frame).envelope.type === 'command_result',
 			),
+		);
+		// The result is sent before the subscription starts listening; wait for that too.
+		await transport.until(() => journal.listening === 1);
+		// While it replays, what is published waits and is then sent one frame at
+		// a time; the burst below must meet the live path instead. A probe
+		// published now is sent only once that replay is over.
+		journal.append('terminal', { probe: true });
+		await transport.until(() =>
+			transport.sent.some((frame) => decodeFrame(frame).envelope.payload?.probe === true),
 		);
 
 		// Model a renderer/xterm stall while a PTY emits a finite burst. The
@@ -615,12 +639,12 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 				payload: { subscriptionId: 'terminal-events' },
 			}),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			diagnostics.some(({ phase }) => phase === 'terminal_congestion'),
 		);
 		assert.equal(connection.state, 'open');
 		transport.releaseWrites();
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some((frame) => {
 				const envelope = decodeFrame(frame).envelope;
 				return envelope.type === 'event' &&
@@ -628,7 +652,7 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 					envelope.payload.type === 'skip';
 			}),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some((frame) => {
 				const envelope = decodeFrame(frame).envelope;
 				return envelope.type === 'command_result' &&
@@ -654,9 +678,10 @@ test('a 200 MiB terminal producer resynchronizes its attachment without closing 
 });
 
 test('overlapping event subscriptions admit each live terminal byte range once without advancing the journal', async () => {
-	const journal = new OrderedEventJournal();
+	const journal = listenedJournal(() => transport.changed());
 	const transport = new ControlledTransport();
 	const core = createServerCore({
+		onConnectionOpened: () => transport.changed(),
 		serverId: 'duplicate-terminal-server',
 		serverVersion: 'test',
 		capabilities: [],
@@ -678,7 +703,7 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 			capabilities: ['events.resync'],
 			limits: {},
 		}));
-		await waitFor(() => connection.state === 'open');
+		await transport.until(() => connection.state === 'open');
 
 		for (const subscriptionId of ['all-events-a', 'all-events-b']) {
 			transport.push(encodeFrame({
@@ -692,9 +717,11 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 				},
 			}));
 		}
-		await waitFor(() => transport.sent.filter((frame) =>
+		await transport.until(() => transport.sent.filter((frame) =>
 			decodeFrame(frame).envelope.type === 'command_result',
 		).length === 2);
+		// Each result is sent before its subscription starts listening; wait for both.
+		await transport.until(() => journal.listening === 2);
 
 		journal.publishTransient('terminal', {
 			attachmentId: 'shared-attachment',
@@ -707,10 +734,12 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 			nextPosition: 1,
 			bytes: 'eA==',
 		});
-		await waitFor(() => transport.sent.some((frame) =>
+		await transport.until(() => transport.sent.some((frame) =>
 			decodeFrame(frame).envelope.type === 'event',
 		));
-		await immediate();
+		// Both subscriptions saw the output as it was published; once the
+		// connection has written everything queued, a duplicate would be here.
+		await connection['outbound'].whenIdle();
 
 		const terminalEvents = transport.sent
 			.map((frame) => decodeFrame(frame).envelope)
@@ -730,14 +759,14 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 			nextPosition: 2,
 			bytes: 'eQ==',
 		});
-		await waitFor(() => transport.sent
+		await transport.until(() => transport.sent
 			.map((frame) => decodeFrame(frame).envelope)
 			.filter((envelope) => envelope.type === 'event' && envelope.event === 'terminal')
 			.length === 2);
 		assert.equal(journal.revision, 0);
 
 		journal.append('workspace', { projectId: 'project-a', changed: true });
-		await waitFor(() => transport.sent
+		await transport.until(() => transport.sent
 			.map((frame) => decodeFrame(frame).envelope)
 			.filter((envelope) => envelope.type === 'event' && envelope.event === 'workspace')
 			.length === 2);
@@ -758,9 +787,10 @@ test('overlapping event subscriptions admit each live terminal byte range once w
 });
 
 test('a binary-output-capable terminal subscriber receives raw frame bytes without base64 payload data', async () => {
-	const journal = new OrderedEventJournal();
+	const journal = listenedJournal(() => transport.changed());
 	const transport = new ControlledTransport();
 	const core = createServerCore({
+		onConnectionOpened: () => transport.changed(),
 		serverId: 'binary-terminal-server',
 		serverVersion: 'test',
 		capabilities: [],
@@ -781,7 +811,7 @@ test('a binary-output-capable terminal subscriber receives raw frame bytes witho
 				limits: {},
 			}),
 		);
-		await waitFor(() => connection.state === 'open');
+		await transport.until(() => connection.state === 'open');
 		transport.push(
 			encodeFrame({
 				type: 'command',
@@ -791,11 +821,13 @@ test('a binary-output-capable terminal subscriber receives raw frame bytes witho
 				payload: { subscriptionId: 'binary-terminal-subscription', fromRevision: 0 },
 			}),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some(
 				(frame) => decodeFrame(frame).envelope.type === 'command_result',
 			),
 		);
+		// The result is sent before the subscription starts listening; wait for that too.
+		await transport.until(() => journal.listening === 1);
 
 		journal.publishTransient(
 			'terminal',
@@ -811,7 +843,7 @@ test('a binary-output-capable terminal subscriber receives raw frame bytes witho
 			},
 			new Uint8Array([0, 0xff, 0x1b]),
 		);
-		await waitFor(() =>
+		await transport.until(() =>
 			transport.sent.some((frame) => {
 				const decoded = decodeFrame(frame);
 				return decoded.envelope.type === 'event' && decoded.envelope.event === 'terminal';
@@ -835,9 +867,10 @@ test('a binary-output-capable terminal subscriber receives raw frame bytes witho
 });
 
 test('a legacy terminal subscriber receives a base64 fallback for a raw live body', async () => {
-	const journal = new OrderedEventJournal();
+	const journal = listenedJournal(() => transport.changed());
 	const transport = new ControlledTransport();
 	const core = createServerCore({
+		onConnectionOpened: () => transport.changed(),
 		serverId: 'legacy-terminal-server',
 		serverVersion: 'test',
 		capabilities: [],
@@ -856,7 +889,7 @@ test('a legacy terminal subscriber receives a base64 fallback for a raw live bod
 			capabilities: ['events.resync'],
 			limits: {},
 		}));
-		await waitFor(() => connection.state === 'open');
+		await transport.until(() => connection.state === 'open');
 		transport.push(encodeFrame({
 			type: 'command',
 			commandId: 'legacy-terminal-subscribe',
@@ -864,7 +897,9 @@ test('a legacy terminal subscriber receives a base64 fallback for a raw live bod
 			operation: 'events.subscribe',
 			payload: { subscriptionId: 'legacy-terminal-subscription', fromRevision: 0 },
 		}));
-		await waitFor(() => transport.sent.some((frame) => decodeFrame(frame).envelope.type === 'command_result'));
+		await transport.until(() => transport.sent.some((frame) => decodeFrame(frame).envelope.type === 'command_result'));
+		// The result is sent before the subscription starts listening; wait for that too.
+		await transport.until(() => journal.listening === 1);
 
 		journal.publishTransient('terminal', {
 			attachmentId: 'legacy-terminal-attachment',
@@ -876,7 +911,7 @@ test('a legacy terminal subscriber receives a base64 fallback for a raw live bod
 			position: 0,
 			nextPosition: 3,
 		}, new Uint8Array([0, 0xff, 0x1b]));
-		await waitFor(() => transport.sent.some((frame) => {
+		await transport.until(() => transport.sent.some((frame) => {
 			const decoded = decodeFrame(frame);
 			return decoded.envelope.type === 'event' && decoded.envelope.event === 'terminal';
 		}));
@@ -921,12 +956,12 @@ test('a congested terminal lane resumes when its attachment is replaced', async 
 		pump.sendTerminal(new Uint8Array([2]), lane('attachment-a', 1, 2)),
 		pump.sendTerminal(new Uint8Array([3]), lane('attachment-a', 2, 3)),
 	];
-	await immediate();
+	await transport.until(() => transport.parkedWrites > 0);
 	assert.equal(congestion.length, 1, 'the lane enters one bounded suppressed state');
 
 	transport.releaseWrites();
 	await Promise.all(admitted);
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	const sentBeforeRecovery = transport.sent.length;
 
 	// A congested client is exactly the client that cannot acknowledge the bytes
@@ -934,7 +969,7 @@ test('a congested terminal lane resumes when its attachment is replaced', async 
 	// Only replacing the attachment can, and that is what recovery does.
 	pump.acknowledgeTerminal('attachment-a', 3);
 	await pump.sendTerminal(new Uint8Array([4]), lane('attachment-a', 3, 4));
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.equal(
 		transport.sent.length,
 		sentBeforeRecovery,
@@ -945,7 +980,7 @@ test('a congested terminal lane resumes when its attachment is replaced', async 
 	// fresh one for the replacement attachment.
 	pump.releaseTerminal('attachment-a');
 	await pump.sendTerminal(new Uint8Array([5]), lane('attachment-b', 3, 4));
-	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	await pump.whenIdle();
 	assert.deepEqual(
 		transport.sent.slice(sentBeforeRecovery).map((frame) => [...frame]),
 		[[5]],
@@ -967,6 +1002,7 @@ class ControlledTransport {
 	#waiters = [];
 	#writeWaiters = [];
 	#listeners = new Set();
+	#observers = new Set();
 	#rejectSend;
 
 	constructor(rejectSend = () => false) {
@@ -981,11 +1017,18 @@ class ControlledTransport {
 		this.#setState('open');
 	}
 
+	/** Writers waiting for the transport to accept a write. */
+	get parkedWrites() {
+		return this.#writeWaiters.length;
+	}
+
 	async waitForWritable(_requiredBytes, signal) {
 		if (signal?.aborted) throw signal.reason;
 		if (this.state !== 'open') throw new Error(`transport is ${this.state}`);
 		if (!this.blockWrites) return;
-		await new Promise((resolve) => this.#writeWaiters.push(resolve));
+		const writable = new Promise((resolve) => this.#writeWaiters.push(resolve));
+		this.changed();
+		await writable;
 		if (this.state !== 'open') throw new Error(`transport is ${this.state}`);
 	}
 
@@ -1000,6 +1043,7 @@ class ControlledTransport {
 			if (this.#rejectSend(frame))
 				throw new Error('scripted transport rejection');
 			this.sent.push(frame.slice());
+			this.changed();
 		} finally {
 			this.#activeSends -= 1;
 		}
@@ -1016,6 +1060,33 @@ class ControlledTransport {
 	onStateChange(listener) {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
+	}
+
+	/** Re-check every `until` waiter: something the tests wait on happened. */
+	changed() {
+		for (const observer of [...this.#observers]) observer();
+	}
+
+	/** Settles once `check` holds, re-checked on each send, park, state change, or `changed()`. */
+	until(check) {
+		if (check()) return Promise.resolve();
+		return new Promise((resolve, reject) => {
+			const observer = () => {
+				// A check that throws fails the test, never the transport's send.
+				let held;
+				try {
+					held = check();
+				} catch (error) {
+					this.#observers.delete(observer);
+					reject(error);
+					return;
+				}
+				if (!held) return;
+				this.#observers.delete(observer);
+				resolve();
+			};
+			this.#observers.add(observer);
+		});
 	}
 
 	push(frame) {
@@ -1045,15 +1116,29 @@ class ControlledTransport {
 	#setState(state, reason) {
 		this.state = state;
 		for (const listener of this.#listeners) listener(state, reason);
+		this.changed();
 	}
 }
 
 const immediate = () => new Promise((resolve) => setImmediate(resolve));
 
-async function waitFor(predicate, timeoutMs = 1_000) {
-	const deadline = Date.now() + timeoutMs;
-	while (!predicate()) {
-		if (Date.now() >= deadline) throw new Error('condition timed out');
-		await immediate();
-	}
+/**
+ * A journal that counts the listeners the server has subscribed to it and
+ * calls `changed` as each one starts, so a test can wait for a subscription
+ * to be live before it publishes.
+ */
+function listenedJournal(changed) {
+	const journal = new OrderedEventJournal();
+	const subscribe = journal.subscribe.bind(journal);
+	journal.listening = 0;
+	journal.subscribe = (listener) => {
+		const unsubscribe = subscribe(listener);
+		journal.listening += 1;
+		changed();
+		return () => {
+			journal.listening -= 1;
+			return unsubscribe();
+		};
+	};
+	return journal;
 }
