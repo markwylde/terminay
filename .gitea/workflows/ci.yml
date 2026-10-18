@@ -19,13 +19,24 @@ concurrency:
   group: terminay-ci-${{ github.ref }}
   cancel-in-progress: true
 
+# A job that reaches its timeout is killed without a word about why. Each
+# job therefore records when it started, declares its timeout to the
+# watchdog, and runs its long steps through scripts/ci-watchdog.mjs as their
+# shell. Shortly before the timeout the watchdog prints the step's processes,
+# the test files still running, and each Node process's JavaScript stack and
+# open handles; it never stops or fails anything.
 jobs:
   packaged-macos-smoke:
     name: Packaged macOS startup smoke
     runs-on: xcode-16
     timeout-minutes: 25
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 25
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -42,6 +53,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: |
           mkdir -p "$HOME/.local"
           npm install --global --prefix "$HOME/.local" npm@12.2.0
@@ -50,6 +62,7 @@ jobs:
           npm ci
 
       - name: Build unsigned packaged application
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -68,6 +81,7 @@ jobs:
       # the built-in extension lifecycle, then the session holder starting a
       # shell. This is the only macOS runner, and each check is mostly waiting.
       - name: Verify the packaged built-ins and session holder, and boot from a read-only DMG copy
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TERMINAY_ELECTRON_BUILT_INS: release/0.0.0/mac-arm64/Terminay.app/Contents/Resources/built-in-extensions
           TERMINAY_STANDALONE_BUILT_INS: apps/terminay-server/dist/built-in-extensions
@@ -77,12 +91,26 @@ jobs:
             'npm run test:packaged-built-in-extension-runtime && node --test scripts/packaged-session-holder-macos.test.mjs' \
             'bash scripts/packaged-macos-pr-smoke.sh'
 
+      - name: Upload packaged smoke diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
+        with:
+          name: packaged-macos-smoke-diagnostics
+          path: ${{ runner.temp }}/terminay-packaged-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
   packaged-linux-built-in-lifecycle:
     name: Packaged Linux built-in lifecycle (linux-x64)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 20
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -104,6 +132,7 @@ jobs:
       # cache there. Nothing is archived or uploaded when a job ends, which is
       # why every setup-node step turns its own package-manager cache off.
       - name: Install dependencies from the clean manifest
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
@@ -111,14 +140,20 @@ jobs:
           npm ci
 
       - name: Build, extract, and exercise packaged built-ins offline
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: npm run test:packaged-built-in-extension-runtime:linux -- linux-x64
 
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -131,6 +166,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
@@ -138,6 +174,7 @@ jobs:
           npm ci
 
       - name: Build, lint, and run the fast gate
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -151,8 +188,13 @@ jobs:
     name: Workspace tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -165,6 +207,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
@@ -172,6 +215,7 @@ jobs:
           npm ci
 
       - name: Build and test every workspace
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -182,8 +226,13 @@ jobs:
     name: Real WebRTC pairing
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -196,6 +245,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
@@ -206,6 +256,7 @@ jobs:
       # test that opens a real peer skips there. This job stages it and runs
       # them: Desktop and server pairing over loopback peers.
       - name: Stage the WebRTC runtime and run the real-peer tests
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -220,8 +271,13 @@ jobs:
     name: Container image smoke
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 40
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -237,7 +293,7 @@ jobs:
       # together. The device half of the test is bundled from Desktop's
       # sources, which import these workspace packages by their built output.
       - name: Build the official image and the packages Desktop's pairing code imports
-        shell: bash
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
           TURBO_TEAM: wylde
@@ -262,9 +318,11 @@ jobs:
           tail -n 40 "$image_log"
 
       - name: Validate image packaging contract
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: node --test scripts/ghcr-image.test.mjs
 
       - name: Pair Desktop's pairing code with the image
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: |
           node scripts/container-image-smoke.mjs \
             --image "terminay-image-smoke:${GITHUB_SHA}" \
@@ -280,14 +338,20 @@ jobs:
     name: Real MCP CLI compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 15
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
       - name: Test latest MCP clients in Docker
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: npm run e2e:mcp-cli-real-tests
 
       - name: Free this job's Docker images
@@ -398,7 +462,9 @@ jobs:
   e2e-test:
     name: E2E (${{ matrix.shard }}/18)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 12
     needs: e2e-image
     permissions:
       contents: read
@@ -409,6 +475,9 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 
     steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -431,6 +500,7 @@ jobs:
         run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Pull and verify content-addressed E2E image
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           IMAGE_TAG: ${{ needs.e2e-image.outputs.image }}
           IMAGE_KEY: ${{ needs.e2e-image.outputs.image-key }}
@@ -439,6 +509,7 @@ jobs:
           test "$(docker image inspect --format '{{ index .Config.Labels "net.wylde.terminay.e2e-cache-key" }}' "$IMAGE_TAG")" = "$IMAGE_KEY"
 
       - name: Run end-to-end test shard
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TERMINAY_E2E_IMAGE: ${{ needs.e2e-image.outputs.image }}
           TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"

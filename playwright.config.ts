@@ -11,6 +11,11 @@ export default defineConfig({
   // prebundleSharedWebShellDependencies.
   globalSetup: './e2e/support/global-setup.ts',
   timeout: 30_000,
+  // A CI shard stops itself well inside its job's ten-minute timeout, so a
+  // hung test is reported as interrupted and the reports, traces, and
+  // videos reach the uploaded artifacts. A job that hit its own timeout
+  // would be killed before any of them were written.
+  globalTimeout: process.env.CI ? 8 * 60_000 : 0,
   expect: {
     timeout: 5_000,
   },
@@ -24,6 +29,8 @@ export default defineConfig({
   reporter: process.env.CI
     ? [
         ['github'],
+        // A line per test as it ends, so the log shows where a shard got to.
+        ['list'],
         ['html', { open: 'never' }],
         ['json', { outputFile: 'test-results/e2e-timings.json' }],
       ]

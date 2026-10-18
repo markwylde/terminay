@@ -1,0 +1,61 @@
+name: Benchmarks
+
+# Measurements of how the real machine performs: CPU time, memory growth.
+# Their results depend on the runner as much as on the code, so they never
+# gate a pull request or a push. They run weekly and on demand, and a breach
+# is a finding to investigate, not a failed build. A contract test keeps them
+# out of every gating path.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminay-benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Six real Secure-Werift peer pairs over loopback for the measured window,
+  # within a CPU-time and RSS-growth budget, then a crash and recovery.
+  webrtc-multi-peer-load:
+    name: Selected WebRTC multi-peer load
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 30
+
+    steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Install dependencies
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+        run: |
+          npm install --global npm@12.2.0
+          npm ci
+
+      - name: Stage the WebRTC runtime and run the load benchmark
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        env:
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+          TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT: ${{ github.workspace }}/build/webrtc-runtime
+        run: npm run benchmark:webrtc-multi-peer-load
