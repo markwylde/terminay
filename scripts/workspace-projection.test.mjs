@@ -93,7 +93,14 @@ async function started(client) {
 	return { store, published }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+/** Resolves once the store publishes a projection at `revision` or later. */
+const reaching = (store, revision) => new Promise((resolve) => {
+	const stop = store.subscribeAny(() => {
+		if (store.snapshot.revision < revision) return
+		stop()
+		resolve(store.snapshot)
+	})
+})
 
 test('a change event with its record advances the projection without a query', async () => {
 	const before = state(1)
@@ -140,12 +147,13 @@ test('a record that starts from a later revision is a missed change: nothing is 
 	const three = state(3, ['panel-a1'], { 'panel-a1': 'api' })
 	const client = fakeClient({ snapshots: [one], deltas: [{ deltaVersion: 2, serverId: 'server-a', fromRevision: 1, fromCursor: '1', revision: 3, cursor: '3', records: [recordBetween(one, two), recordBetween(two, three, 'panel.close')] }] })
 	const { store, published } = await started(client)
+	const caughtUp = reaching(store, 3)
 
 	client.emitChange(3, recordBetween(two, three, 'panel.close'))
 	// Declined synchronously: the projection is exactly what it was.
 	assert.equal(store.snapshot.revision, 1)
 	assert.equal(published.length, 0)
-	await settle()
+	await caughtUp
 
 	assert.deepEqual(client.calls.at(-1), ['workspace.delta', { revision: 1, cursor: '1' }])
 	assert.equal(store.snapshot.revision, 3)
@@ -165,9 +173,10 @@ test('a record for a revision already reached is ignored', async () => {
 
 	client.emitChange(2, record)
 	const reached = store.snapshot
+	// Both are dropped as they arrive: a fetch for either would have been
+	// sent before emitChange returned.
 	client.emitChange(2, record)
 	client.emitChange(1, recordBetween(state(0), one))
-	await settle()
 
 	assert.equal(store.snapshot, reached)
 	assert.equal(published.length, 1)
@@ -181,11 +190,11 @@ test('records delivered out of order converge through one delta', async () => {
 	const three = state(3, ['panel-a1', 'panel-a2'], { 'panel-a1': 'api', 'panel-a2': 'db' })
 	const client = fakeClient({ snapshots: [one], deltas: [{ deltaVersion: 2, serverId: 'server-a', fromRevision: 1, fromCursor: '1', revision: 3, cursor: '3', records: [recordBetween(one, two), recordBetween(two, three)] }] })
 	const { store } = await started(client)
+	const caughtUp = reaching(store, 3)
 
 	client.emitChange(3, recordBetween(two, three))
 	client.emitChange(2, recordBetween(one, two))
-	await settle()
-	await settle()
+	await caughtUp
 
 	assert.equal(store.snapshot.revision, 3)
 	assert.equal(store.snapshot.panels['panel-a2'].title, 'db')
@@ -209,10 +218,11 @@ test('a malformed or invalid record changes nothing and falls back to a delta', 
 		const client = fakeClient({ snapshots: [one], deltas: [{ deltaVersion: 2, serverId: 'server-a', fromRevision: 1, fromCursor: '1', revision: 2, cursor: '2', records: [good] }] })
 		const { store, published } = await started(client)
 		const held = store.snapshot
+		const caughtUp = reaching(store, 2)
 		client.emitChange(2, record)
 		assert.equal(store.snapshot, held, 'the projection is not partially mutated')
 		assert.equal(published.length, 0)
-		await settle()
+		await caughtUp
 		assert.equal(store.snapshot.revision, 2)
 		assert.equal(store.snapshot.panels['panel-a1'].title, 'api')
 		store.close()
@@ -225,9 +235,10 @@ test('an event without a record, from a server that sends none, is answered with
 	const client = fakeClient({ snapshots: [one], deltas: [{ deltaVersion: 1, serverId: 'server-a', fromRevision: 1, fromCursor: '1', revision: 2, cursor: '2', state: two, events: [] }] })
 	const { store } = await started(client)
 	const held = store.snapshot
+	const caughtUp = reaching(store, 2)
 
 	client.emitChange(2)
-	await settle()
+	await caughtUp
 
 	assert.equal(store.snapshot.revision, 2)
 	assert.equal(store.snapshot.panels['panel-a1'].title, 'api')
@@ -244,9 +255,10 @@ test('a snapshot after a resync keeps every object that did not change while awa
 	const client = fakeClient({ snapshots: [one, later] })
 	const { store } = await started(client)
 	const held = store.snapshot
+	const resynchronized = reaching(store, 9)
 
 	client.emitResync()
-	await settle()
+	await resynchronized
 
 	assert.equal(store.snapshot.revision, 9)
 	assert.notEqual(store.snapshot.panels['panel-b1'], held.panels['panel-b1'])

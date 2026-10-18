@@ -69,9 +69,12 @@ test("compiled development CLI resolves its declared node-pty outside a hostile 
         fromRevision: 0,
       });
       const output = [];
+      let printed;
+      const marker = new Promise((resolve) => { printed = resolve; });
       const removeOutputListener = subscription.onEvent((event) => {
         if (event.payload?.type !== "output" || event.payload?.attachmentId !== attached.result.attachmentId) return;
         output.push(Buffer.from(event.payload.bytes, "base64").toString("utf8"));
+        if (output.join("").includes("DEVELOPMENT_NODE_PTY_OK")) printed();
       });
       const command = Buffer.from("printf 'DEVELOPMENT_NODE_PTY_OK\\n'\n", "utf8").toString("base64");
       try {
@@ -83,7 +86,7 @@ test("compiled development CLI resolves its declared node-pty outside a hostile 
           source: "remote",
         });
         assert.equal(input.ok, true);
-        await waitFor(() => output.join("").includes("DEVELOPMENT_NODE_PTY_OK"), "development PTY output");
+        await marker;
         assert.match(output.join(""), /DEVELOPMENT_NODE_PTY_OK/u);
       } finally {
         removeOutputListener();
@@ -97,27 +100,19 @@ test("compiled development CLI resolves its declared node-pty outside a hostile 
     assert.equal(exit.code, 0, exit.stderr);
     child = undefined;
   } finally {
-    if (child !== undefined) await stop(child);
+    // Only a failure leaves the child running; end it outright.
+    if (child !== undefined) await stop(child, "SIGKILL");
     await rm(root, { recursive: true, force: true });
   }
 });
 
-async function waitFor(predicate, label) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`timed out waiting for ${label}`);
-}
-
 function readReadiness(child) {
   return new Promise((resolve, reject) => {
+    // Readiness is the first line on stdout. The CLI either prints it or
+    // exits; both are events, so nothing here waits on a clock.
     let output = "";
     let stderr = "";
-    const timeout = setTimeout(() => reject(new Error(`development CLI did not become ready: ${stderr}`)), 15_000);
     const fail = (code) => {
-      clearTimeout(timeout);
       reject(new Error(`development CLI exited before readiness (${code}): ${stderr}`));
     };
     child.once("exit", fail);
@@ -126,7 +121,6 @@ function readReadiness(child) {
       output += chunk;
       const newline = output.indexOf("\n");
       if (newline === -1) return;
-      clearTimeout(timeout);
       child.off("exit", fail);
       try { resolve(JSON.parse(output.slice(0, newline))); }
       catch (error) { reject(error); }
@@ -134,19 +128,13 @@ function readReadiness(child) {
   });
 }
 
-function stop(child) {
+/** Signal the CLI and resolve on its exit. */
+function stop(child, signal = "SIGTERM") {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve({ code: child.exitCode, stderr: "" });
   return new Promise((resolve) => {
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve({ code: child.exitCode, stderr });
-    }, 10_000);
-    child.once("exit", (code) => {
-      clearTimeout(timeout);
-      resolve({ code, stderr });
-    });
-    child.kill("SIGTERM");
+    child.once("exit", (code) => resolve({ code, stderr }));
+    child.kill(signal);
   });
 }

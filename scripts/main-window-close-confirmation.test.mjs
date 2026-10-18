@@ -11,7 +11,9 @@ test('Keep Running is the safe default and leaves the main window open', async (
 	const window = createWindow();
 	let quitCalls = 0;
 	let receivedOptions;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 2,
@@ -27,7 +29,7 @@ test('Keep Running is the safe default and leaves the main window open', async (
 	});
 
 	const event = window.emitClose();
-	await settle();
+	await attempt.done;
 
 	assert.equal(event.prevented(), 1);
 	assert.equal(quitCalls, 0);
@@ -39,7 +41,9 @@ test('Keep Running is the safe default and leaves the main window open', async (
 test('Quit requests normal application shutdown after preventing the window close', async () => {
 	const window = createWindow();
 	let quitCalls = 0;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 1,
@@ -52,7 +56,7 @@ test('Quit requests normal application shutdown after preventing the window clos
 	});
 
 	const event = window.emitClose();
-	await settle();
+	await attempt.done;
 
 	assert.equal(event.prevented(), 1);
 	assert.equal(quitCalls, 1);
@@ -63,7 +67,9 @@ test('confirming a busy non-final window closes only that window', async () => {
 	let closeCalls = 0;
 	let quitCalls = 0;
 	let receivedOptions;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 1,
@@ -82,7 +88,7 @@ test('confirming a busy non-final window closes only that window', async () => {
 	});
 
 	const event = window.emitClose();
-	await settle();
+	await attempt.done;
 
 	assert.equal(event.prevented(), 1);
 	assert.equal(closeCalls, 1);
@@ -143,7 +149,9 @@ test('an app containing only idle shells closes without a dialog', async () => {
 	const window = createWindow();
 	let dialogCalls = 0;
 	let closeCalls = 0;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 0,
@@ -160,7 +168,7 @@ test('an app containing only idle shells closes without a dialog', async () => {
 	});
 	const event = window.emitClose();
 	assert.equal(event.prevented(), 1);
-	await settle();
+	await attempt.done;
 	assert.equal(dialogCalls, 0);
 	assert.equal(closeCalls, 1);
 });
@@ -170,13 +178,16 @@ test('a delayed busy observation still warns before closing', async () => {
 	let dialogCalls = 0;
 	let closeCalls = 0;
 	let receivedOptions;
+	let observeBusy;
+	const observation = new Promise((resolve) => {
+		observeBusy = resolve;
+	});
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
-		getRunningTerminalCount: async () => {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			return 1;
-		},
+		getRunningTerminalCount: () => observation,
 		isLastWindow: () => false,
 		showConfirmation: async (_window, options) => {
 			dialogCalls += 1;
@@ -192,7 +203,8 @@ test('a delayed busy observation still warns before closing', async () => {
 	const event = window.emitClose();
 	assert.equal(event.prevented(), 1);
 	assert.equal(dialogCalls, 0);
-	await new Promise((resolve) => setTimeout(resolve, 50));
+	observeBusy(1);
+	await attempt.done;
 	assert.equal(dialogCalls, 1);
 	assert.equal(closeCalls, 0);
 	assert.deepEqual(receivedOptions.buttons, ['Close Window', 'Keep Running']);
@@ -205,13 +217,20 @@ test('repeat close attempts share one pending confirmation', async () => {
 	const dialogResult = new Promise((resolve) => {
 		resolveDialog = resolve;
 	});
+	let dialogShown;
+	const shown = new Promise((resolve) => {
+		dialogShown = resolve;
+	});
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 1,
 		isLastWindow: () => true,
 		showConfirmation: () => {
 			dialogCalls += 1;
+			dialogShown();
 			return dialogResult;
 		},
 		requestQuit: () => undefined,
@@ -223,19 +242,21 @@ test('repeat close attempts share one pending confirmation', async () => {
 	assert.equal(first.prevented(), 1);
 	assert.equal(second.prevented(), 1);
 	assert.equal(dialogCalls, 0);
-	await settle();
+	await shown;
 	assert.equal(dialogCalls, 1);
 	const third = window.emitClose();
 	assert.equal(third.prevented(), 1);
 	assert.equal(dialogCalls, 1);
 	resolveDialog({ response: 1 });
-	await settle();
+	await attempt.done;
 });
 
 test('closing the last busy window defers to the quit confirmation when terminals are kept', async () => {
 	const window = createWindow();
 	let quitCalls = 0;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 2,
@@ -250,7 +271,7 @@ test('closing the last busy window defers to the quit confirmation when terminal
 	});
 
 	const event = window.emitClose();
-	await settle();
+	await attempt.done;
 
 	assert.equal(event.prevented(), 1);
 	assert.equal(quitCalls, 1);
@@ -259,7 +280,9 @@ test('closing the last busy window defers to the quit confirmation when terminal
 test('a busy non-final window still asks even when terminals are kept', async () => {
 	const window = createWindow();
 	let dialogCalls = 0;
+	const attempt = closeAttempt();
 	bindMainWindowCloseConfirmation({
+		onSettled: attempt.settled,
 		window,
 		isQuitting: () => false,
 		getRunningTerminalCount: () => 1,
@@ -274,7 +297,7 @@ test('a busy non-final window still asks even when terminals are kept', async ()
 	});
 
 	window.emitClose();
-	await settle();
+	await attempt.done;
 	assert.equal(dialogCalls, 1);
 });
 
@@ -298,8 +321,14 @@ function createWindow() {
 	};
 }
 
-async function settle() {
-	await new Promise((resolve) => setTimeout(resolve, 0));
+/** One close attempt's end: `settled` is handed to the binding, and `done`
+ * resolves when the binding reports the confirmation has run its course. */
+function closeAttempt() {
+	let settled;
+	const done = new Promise((resolve) => {
+		settled = resolve;
+	});
+	return { done, settled: () => settled() };
 }
 
 async function importCloseConfirmation() {

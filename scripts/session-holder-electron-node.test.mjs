@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -44,15 +44,38 @@ function isAlive(pid) {
 	}
 }
 
-async function until(predicate, label, timeoutMs = 20_000) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await predicate();
-		if (value) return value;
-		if (Date.now() > deadline)
-			throw new Error(`timed out waiting for ${label}`);
-		await delay(25);
-	}
+/**
+ * Resolves once a process this test did not start has exited. Nothing it owns
+ * tells the test, so the operating system's own exit notification is waited
+ * on: `caffeinate -w` (kqueue) on macOS, `waitpid` (pidfd) on Linux. Both
+ * return at once for a process already gone.
+ */
+function exitOf(pid) {
+	const [command, args] =
+		process.platform === 'darwin'
+			? ['caffeinate', ['-w', String(pid)]]
+			: ['waitpid', [String(pid)]];
+	return new Promise((resolve, reject) => {
+		const waiter = spawn(command, args, { stdio: 'ignore' });
+		waiter.once('error', reject);
+		waiter.once('exit', () => resolve());
+	});
+}
+
+/** Resolves once the session's retained output includes `marker`, checked
+ * now and on every terminal event the service publishes. */
+function printed(service, sessionId, marker) {
+	return new Promise((resolve) => {
+		let stop;
+		const check = () => {
+			if (!outputOf(service, sessionId).includes(marker)) return false;
+			stop?.();
+			resolve();
+			return true;
+		};
+		if (check()) return;
+		stop = service.onEvent(check);
+	});
 }
 
 function server(dataRoot) {
@@ -92,7 +115,6 @@ test(
 					/* already gone */
 				}
 			}
-			await delay(50);
 			rmSync(dataRoot, { recursive: true, force: true });
 		});
 
@@ -107,11 +129,9 @@ test(
 			rows: 24,
 		});
 		const pid = first.service.getSession('s1').pid;
+		const answered = printed(first.service, 's1', 'electron-42');
 		await first.service.write('s1', bytesOf('echo electron-$((6*7))\n'));
-		await until(
-			() => outputOf(first.service, 's1').includes('electron-42'),
-			'the shell to answer',
-		);
+		await answered;
 		const [holder] = readHolderRecords(dataRoot);
 		assert.notEqual(holder.pid, process.pid);
 
@@ -136,18 +156,15 @@ test(
 		assert.equal(second.service.getSession('s1').pid, pid);
 		assert.ok(outputOf(second.service, 's1').includes('electron-42'));
 
+		const answeredAgain = printed(second.service, 's1', 'again-10');
 		await second.service.write('s1', bytesOf('echo again-$((9+1))\n'));
-		await until(
-			() => outputOf(second.service, 's1').includes('again-10'),
-			'the adopted shell to answer',
-		);
+		await answeredAgain;
 
 		await second.service.shutdown();
 		await second.factory.endAll();
-		await until(
-			() => !isAlive(pid) && !isAlive(holder.pid),
-			'the shell and holder to end',
-		);
+		await Promise.all([exitOf(pid), exitOf(holder.pid)]);
+		assert.equal(isAlive(pid), false);
+		assert.equal(isAlive(holder.pid), false);
 		assert.deepEqual(readHolderRecords(dataRoot), []);
 	},
 );

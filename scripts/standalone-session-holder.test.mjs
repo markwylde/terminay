@@ -4,7 +4,6 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import {
 	readHolderRecords,
@@ -39,15 +38,23 @@ function isAlive(pid) {
 	}
 }
 
-async function until(predicate, label, timeoutMs = 20_000) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await predicate();
-		if (value) return value;
-		if (Date.now() > deadline)
-			throw new Error(`timed out waiting for ${label}`);
-		await delay(25);
-	}
+/**
+ * Resolves once a process this test did not start has exited. Nothing it owns
+ * tells the test, so the operating system's own exit notification is waited
+ * on: `caffeinate -w` (kqueue) on macOS, `waitpid` (pidfd) on Linux. Both
+ * return at once for a process already gone, and both see an exited but
+ * unreaped process as exited, which is what `isAlive` reports too.
+ */
+function exitOf(pid) {
+	const [command, args] =
+		process.platform === 'darwin'
+			? ['caffeinate', ['-w', String(pid)]]
+			: ['waitpid', [String(pid)]];
+	return new Promise((resolve, reject) => {
+		const waiter = spawn(command, args, { stdio: 'ignore' });
+		waiter.once('error', reject);
+		waiter.once('exit', () => resolve());
+	});
 }
 
 /** Direct children of a process, as the kernel reports them. */
@@ -91,14 +98,22 @@ async function startServer(dataRoot) {
 	child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
 	child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
 	const exited = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
-	await until(
-		async () => {
-			if (stdout.includes('\n')) return true;
-			if (child.exitCode !== null) throw new Error(`server exited before readiness: ${stderr}`);
-			return false;
-		},
-		'server readiness',
-	);
+	// Readiness is the first line on stdout. The server either prints it or
+	// exits; both are events. It prints it only once its terminals are up: the
+	// default terminal of a new data root is created, through the session
+	// holder, before readiness, and an existing holder is attached before it.
+	await new Promise((resolve, reject) => {
+		const ready = () => {
+			if (!stdout.includes('\n')) return;
+			child.stdout.off('data', ready);
+			child.off('close', early);
+			resolve();
+		};
+		const early = () => reject(new Error(`server exited before readiness: ${stderr}`));
+		child.stdout.on('data', ready);
+		child.once('close', early);
+		ready();
+	});
 	assert.equal(JSON.parse(stdout.slice(0, stdout.indexOf('\n'))).ready, true);
 	return {
 		child,
@@ -129,22 +144,18 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 		for (const record of readHolderRecords(dataRoot)) {
 			try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
 		}
-		await delay(50);
 		rmSync(dataRoot, { recursive: true, force: true });
 	});
 
 	// First start: a new data root is seeded with one terminal, held outside
 	// the server process.
 	server = await startServer(dataRoot);
-	const [holder] = await until(() => {
-		const records = readHolderRecords(dataRoot);
-		return records.length === 1 ? records : undefined;
-	}, 'the session holder');
+	const records = readHolderRecords(dataRoot);
+	assert.equal(records.length, 1, 'the session holder');
+	const [holder] = records;
 	assert.notEqual(holder.pid, server.child.pid);
-	const shells = await until(() => {
-		const children = childrenOf(holder.pid);
-		return children.length === 1 ? children : undefined;
-	}, 'the seeded shell');
+	const shells = childrenOf(holder.pid);
+	assert.equal(shells.length, 1, 'the seeded shell');
 	const [shellPid] = shells;
 	const before = terminalSessions(dataRoot);
 	assert.equal(before.length, 1);
@@ -166,7 +177,6 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 
 	// Second start, same data root: same holder, same shell, nothing new.
 	server = await startServer(dataRoot);
-	await delay(300);
 	assert.deepEqual(readHolderRecords(dataRoot).map((record) => record.pid), [holder.pid]);
 	// The restart is in the log as an attach to the same holder, same build,
 	// with its one live session, and nothing was launched or drained.
@@ -208,7 +218,9 @@ test('a standalone server restarts onto the terminal it already had', { skip }, 
 	const ended = endSessions(dataRoot);
 	assert.equal(ended.status, 0, ended.stderr);
 	assert.deepEqual(JSON.parse(ended.stdout), { holders: 1, sessions: 1, remaining: 0 });
-	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
+	await Promise.all([exitOf(holder.pid), exitOf(shellPid)]);
+	assert.equal(isAlive(holder.pid), false);
+	assert.equal(isAlive(shellPid), false);
 	assert.deepEqual(readHolderRecords(dataRoot), []);
 
 	// With nothing held, it is a no-op rather than an error.
@@ -225,18 +237,11 @@ test('end-sessions refuses to take terminals away from a running server', { skip
 		for (const record of readHolderRecords(dataRoot)) {
 			try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
 		}
-		await delay(50);
 		rmSync(dataRoot, { recursive: true, force: true });
 	});
 	server = await startServer(dataRoot);
-	const [holder] = await until(() => {
-		const records = readHolderRecords(dataRoot);
-		return records.length === 1 ? records : undefined;
-	}, 'the session holder');
-	const [shellPid] = await until(() => {
-		const children = childrenOf(holder.pid);
-		return children.length === 1 ? children : undefined;
-	}, 'the seeded shell');
+	const [holder] = readHolderRecords(dataRoot);
+	const [shellPid] = childrenOf(holder.pid);
 
 	const refused = endSessions(dataRoot);
 	assert.equal(refused.status, 1);
@@ -248,7 +253,9 @@ test('end-sessions refuses to take terminals away from a running server', { skip
 	await server.stop();
 	server = undefined;
 	assert.equal(endSessions(dataRoot).status, 0);
-	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
+	await Promise.all([exitOf(holder.pid), exitOf(shellPid)]);
+	assert.equal(isAlive(holder.pid), false);
+	assert.equal(isAlive(shellPid), false);
 });
 
 /**
@@ -266,20 +273,13 @@ test('a killed server leaves nothing behind but the session holder and its shell
 		for (const record of readHolderRecords(dataRoot)) {
 			try { process.kill(record.pid, 'SIGKILL'); } catch { /* already gone */ }
 		}
-		await delay(50);
 		rmSync(dataRoot, { recursive: true, force: true });
 	});
 	server = await startServer(dataRoot);
-	const [holder] = await until(() => {
-		const records = readHolderRecords(dataRoot);
-		return records.length === 1 ? records : undefined;
-	}, 'the session holder');
-	const [shellPid] = await until(() => {
-		const children = childrenOf(holder.pid);
-		return children.length === 1 ? children : undefined;
-	}, 'the seeded shell');
-	// Give extension hosts and watchers time to start, so they are in the list.
-	await delay(1_500);
+	const [holder] = readHolderRecords(dataRoot);
+	const [shellPid] = childrenOf(holder.pid);
+	// Extension hosts and watchers are started before readiness, so they are
+	// in the list.
 
 	const kept = new Set([holder.pid, ...descendantsOf(holder.pid)]);
 	const others = descendantsOf(server.child.pid).filter((pid) => !kept.has(pid));
@@ -288,14 +288,13 @@ test('a killed server leaves nothing behind but the session holder and its shell
 	await new Promise((resolve) => server.child.once('close', resolve));
 	server = undefined;
 
-	await until(
-		() => others.every((pid) => !isAlive(pid)),
-		`the server's other children to exit (${others.filter((pid) => isAlive(pid)).join(', ')})`,
-		10_000,
-	);
+	await Promise.all(others.map(exitOf));
+	assert.deepEqual(others.filter((pid) => isAlive(pid)), [], "the server's other children exited");
 	assert.equal(isAlive(holder.pid), true, 'the holder died with the server');
 	assert.equal(isAlive(shellPid), true, 'the shell died with the server');
 
 	assert.equal(endSessions(dataRoot).status, 0);
-	await until(() => !isAlive(holder.pid) && !isAlive(shellPid), 'the holder and shell to end');
+	await Promise.all([exitOf(holder.pid), exitOf(shellPid)]);
+	assert.equal(isAlive(holder.pid), false);
+	assert.equal(isAlive(shellPid), false);
 });

@@ -283,6 +283,10 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					return;
 				}
 				failedReconnects = 0;
+				// The document's port belongs to the retired lane, and its request
+				// for a replacement was ignored while this one was established.
+				// Hand it the new lane's port as soon as the lane is live.
+				attachedForDocument = false;
 				startTransport();
 			} catch (error) {
 				reportDiagnostic(

@@ -62,6 +62,8 @@ async function openHarness(viewport) {
 	const css = await readFile('src/shared/WorkspaceSplitLayout.css', 'utf8');
 	const browser = await chromium.launch({ headless: true });
 	const page = await browser.newPage({ viewport });
+	// Waits are for the state itself, never against a budget.
+	page.setDefaultTimeout(0);
 	await page.setContent(`
 		<style>
 			html, body, #root { width: 100%; height: 100%; margin: 0; }

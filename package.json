@@ -94,7 +94,6 @@
 		"test:shared-client-path": "node --test scripts/shared-client-path.test.mjs",
 		"release:readiness": "node scripts/release-readiness.mjs",
 		"test:control-protocol": "node --test scripts/control-protocol.test.mjs",
-		"test:control-server": "node --test scripts/control-server.test.mjs",
 		"test:server-terminal-runtime": "node --test scripts/server-terminal-authority-host-bookkeeping.test.mjs scripts/server-terminal-authority-output-cost.test.mjs scripts/task9-embedded-agent-authority.test.mjs",
 		"test:pty-packaged-macos": "npm run build:app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir --mac --arm64 --publish never && TERMINAY_PACKAGED_APP=release/0.0.0/mac-arm64/Terminay.app node --test scripts/pty-packaged-macos.test.mjs",
 		"test:packaged-startup-macos": "TERMINAY_PACKAGED_APP=${TERMINAY_PACKAGED_APP:-release/0.0.0/mac-arm64/Terminay.app} node --test scripts/packaged-desktop-startup-smoke.test.mjs",

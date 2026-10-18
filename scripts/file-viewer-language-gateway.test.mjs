@@ -49,16 +49,28 @@ function deferred() {
 }
 
 /** Records every envelope the gateway sends and lets a test settle queries by
- * hand, which is how superseded and stale results are exercised. */
+ * hand, which is how superseded and stale results are exercised. Each query
+ * and each diagnostics unsubscribe also settles a promise, so a test waits on
+ * the gateway reaching the transport rather than on its debounce timer. */
 function createFakeTransport() {
   const queries = []
   const commands = []
   const diagnosticsListeners = []
+  const queryWaiters = []
+  const unsubscribed = deferred()
   let respond = () => ({ items: [], isIncomplete: false, isTruncated: false })
   return {
     commands,
     diagnosticsListeners,
     queries,
+    unsubscribed: unsubscribed.promise,
+    /** Resolves with the query record once `count` queries have arrived. */
+    queryArrived(count = queries.length + 1) {
+      if (queries.length >= count) return Promise.resolve(queries[count - 1])
+      const waiter = deferred()
+      queryWaiters.push({ count, resolve: waiter.resolve })
+      return waiter.promise
+    },
     setResponder(next) {
       respond = next
     },
@@ -68,6 +80,10 @@ function createFakeTransport() {
     async query(operation, payload, options = {}) {
       const record = { operation, options, payload, signal: options.signal }
       queries.push(record)
+      for (const waiter of queryWaiters.filter((entry) => entry.count <= queries.length)) {
+        queryWaiters.splice(queryWaiters.indexOf(waiter), 1)
+        waiter.resolve(queries[waiter.count - 1])
+      }
       return respond(record)
     },
     async command(operation, payload) {
@@ -79,6 +95,7 @@ function createFakeTransport() {
       return () => {
         const index = diagnosticsListeners.indexOf(listener)
         if (index >= 0) diagnosticsListeners.splice(index, 1)
+        unsubscribed.resolve()
       }
     },
   }
@@ -165,7 +182,7 @@ test('a superseded in-flight query is aborted and its result is not delivered', 
   await gateway.open('project-1', 'src/index.ts', 'typescript', 'util.\n')
 
   const superseded = gateway.completion('project-1', 'src/index.ts', { character: 5, line: 0 })
-  await new Promise((resolve) => setTimeout(resolve, 40))
+  await transport.queryArrived(1)
   assert.equal(transport.queries.length, 1)
   assert.equal(transport.queries[0].signal.aborted, false)
 
@@ -187,7 +204,7 @@ test('a result computed against an older revision is dropped', async () => {
   await gateway.open('project-1', 'src/index.ts', 'typescript', 'util.\n')
 
   const inFlight = gateway.hover('project-1', 'src/index.ts', { character: 1, line: 0 })
-  await new Promise((resolve) => setTimeout(resolve, 40))
+  await transport.queryArrived(1)
   assert.equal(transport.queries[0].payload.revision, 1)
 
   await gateway.change('project-1', 'src/index.ts', 'util.t\n')
@@ -210,7 +227,6 @@ test('diagnostics are filtered to the subscribed project and path', async () => 
     { path: 'src/index.ts', projectId: 'project-1' },
     (event) => seen.push(event),
   )
-  await new Promise((resolve) => setTimeout(resolve, 10))
 
   const diagnostic = {
     message: 'Type error',
@@ -242,7 +258,10 @@ test('diagnostics are filtered to the subscribed project and path', async () => 
   assert.equal(seen.length, 1)
   assert.equal(seen[0].revision, 2)
   assert.equal(seen[0].diagnostics[0].message, 'Type error')
+  // The event stream is released either by stop() itself or, if stop() came
+  // before the subscription settled, as soon as it does.
   stop()
+  await transport.unsubscribed
   assert.equal(transport.diagnosticsListeners.length, 0)
   gateway.dispose()
 })

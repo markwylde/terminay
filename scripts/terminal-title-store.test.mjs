@@ -21,8 +21,16 @@ function fakeClient(snapshots) {
 	let resyncListener
 	const calls = []
 	const pending = []
+	let parked
+	const held = new Promise((resolve) => { parked = resolve })
+	let released
+	const unsubscribed = new Promise((resolve) => { released = resolve })
 	return {
 		calls,
+		/** Settles once a held snapshot query is waiting for its answer. */
+		held,
+		/** Settles once the subscription has been released. */
+		unsubscribed,
 		emit(payload) { eventListener?.({ payload }) },
 		emitResync() { resyncListener?.() },
 		/** Answer the oldest unanswered snapshot query. */
@@ -32,7 +40,7 @@ function fakeClient(snapshots) {
 			assert.equal(operation, 'terminal-titles.snapshot')
 			const titles = snapshots.shift() ?? {}
 			if (titles instanceof Error) throw titles
-			if (titles.held === true) await new Promise((resolve) => pending.push(resolve))
+			if (titles.held === true) await new Promise((resolve) => { pending.push(resolve); parked() })
 			return { result: { titles: titles.held === true ? titles.titles : titles } }
 		},
 		async subscribe(event) {
@@ -40,13 +48,11 @@ function fakeClient(snapshots) {
 			return {
 				onEvent(listener) { eventListener = listener; return () => { eventListener = undefined } },
 				onResync(listener) { resyncListener = listener; return () => { resyncListener = undefined } },
-				async unsubscribe() { calls.push('unsubscribe') },
+				async unsubscribe() { calls.push('unsubscribe'); released() },
 			}
 		},
 	}
 }
-
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 test('the store subscribes, then loads every title', async () => {
 	const client = fakeClient([{ 'panel-a': entry('panel-a', 'claude'), 'panel-b': entry('panel-b', 'Terminal 2') }])
@@ -117,7 +123,7 @@ test('a title that changes while the snapshot is in flight is not overwritten by
 	const client = fakeClient([{ held: true, titles: { 'panel-a': entry('panel-a', 'stale'), 'panel-b': entry('panel-b', 'Terminal 2'), 'panel-c': entry('panel-c', 'gone soon') } }])
 	const store = new TerminalTitleStore({ client, enabled: true })
 	const starting = store.start()
-	await settle()
+	await client.held
 	client.emit(entry('panel-a', 'fresh'))
 	client.emit({ panelId: 'panel-c', projectId: 'project-a', sessionId: 'session-panel-c', removed: true })
 	client.answer()
@@ -139,10 +145,13 @@ test('a resync reloads every title and tells only the terminals whose title diff
 	store.subscribe('panel-a', () => { heard.a += 1 })
 	store.subscribe('panel-b', () => { heard.b += 1 })
 	store.subscribe('panel-c', () => { heard.c += 1 })
-	store.subscribeAny(() => { heard.any += 1 })
+	let reloaded
+	const changed = new Promise((resolve) => { reloaded = resolve })
+	store.subscribeAny(() => { heard.any += 1; reloaded() })
 
+	// Every terminal's listeners are told before the any-listeners are.
 	client.emitResync()
-	await settle()
+	await changed
 
 	assert.deepEqual(heard, { a: 0, b: 1, c: 1, any: 1 })
 	assert.equal(store.title('panel-b'), 'db')
@@ -165,6 +174,6 @@ test('a failed snapshot leaves the store empty and usable, and a closed store he
 	client.emit(entry('panel-a', 'after close'))
 	assert.equal(heard, 0)
 	assert.equal(store.title('panel-a'), 'claude')
-	await settle()
+	await client.unsubscribed
 	assert.equal(client.calls.at(-1), 'unsubscribe')
 })

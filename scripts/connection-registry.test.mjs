@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ConnectionRegistry } from '../src/shared/connections/connectionRegistry.ts'
+import { RecoveryRetrySchedule } from '../src/web/sessionConnectAttempt.ts'
 import { CLIENT_SERVER_COMPATIBILITY } from '@terminay/protocol'
 
 function transport() {
@@ -84,17 +85,17 @@ function registryFor(hellos, options = {}) {
 	return { clients, opened, registry }
 }
 
-/** Wait for the registry to settle: every attempt is a microtask chain. */
-async function settled(registry, predicate, attempts = 200) {
-	for (let index = 0; index < attempts; index += 1) {
-		if (predicate(registry.snapshot)) return registry.snapshot
-		await new Promise((resolve) => setTimeout(resolve, 1))
-	}
-	throw new Error(
-		`registry never settled: ${JSON.stringify(
-			registry.snapshot.connections.map((entry) => [entry.profileId, entry.phase]),
-		)}`,
-	)
+/** Wait for the registry to settle: resolves on the change that satisfies
+ * the predicate, since every phase change is published to subscribers. */
+function settled(registry, predicate) {
+	if (predicate(registry.snapshot)) return Promise.resolve(registry.snapshot)
+	return new Promise((resolve) => {
+		const unsubscribe = registry.subscribe((current) => {
+			if (!predicate(current)) return
+			unsubscribe()
+			resolve(current)
+		})
+	})
 }
 
 test('every connection declares what this bundle needs and names only mechanics itself', async () => {
@@ -205,7 +206,15 @@ test('a server missing a required capability is attached and inert', async () =>
 
 test('a workspace from another release is incompatible, not retried', async () => {
 	let contexts = 0
+	// The retry delay is the test's: any attempt the registry schedules is
+	// recorded here instead of waiting on a real timer.
+	const armed = []
+	const schedule = new RecoveryRetrySchedule({
+		setTimeout: (callback) => armed.push(callback),
+		clearTimeout: () => {},
+	})
 	const { registry, clients } = registryFor([hello('server-old')], {
+		createSchedule: () => schedule,
 		createContext: async () => {
 			contexts += 1
 			throw Object.assign(
@@ -222,8 +231,10 @@ test('a workspace from another release is incompatible, not retried', async () =
 	assert.match(snapshot.primary.error, /Update the server/)
 	assert.equal(snapshot.primary.context, undefined)
 	assert.equal(clients.made[0].closed, true)
-	// The same answer comes back every time, so nothing asks again on its own.
-	await new Promise((resolve) => setTimeout(resolve, 30))
+	// The same answer comes back every time, so nothing asks again on its own:
+	// no further attempt is armed, at any delay.
+	assert.equal(schedule.armed, false)
+	assert.equal(armed.length, 0)
 	assert.equal(contexts, 1)
 	assert.equal(registry.snapshot.primary.phase, 'incompatible')
 	await registry.dispose()

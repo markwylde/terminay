@@ -51,7 +51,17 @@ test('WebRTC local session signaling resolves localhost only for local developme
 test('RemoteAccessService creates and rotates WebRTC pairing rooms without a local listener', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-service-test-'))
   const hostWindows = []
-  const service = createTestService({ hostWindows, tempDir })
+  let secondWindow
+  const rotated = new Promise((resolve) => {
+    secondWindow = resolve
+  })
+  const service = createTestService({
+    hostWindows,
+    tempDir,
+    onHostWindow: () => {
+      if (hostWindows.length === 2) secondWindow()
+    },
+  })
 
   const first = await service.toggle()
   const firstConfig = hostWindows[0].configs[0]
@@ -69,7 +79,8 @@ test('RemoteAccessService creates and rotates WebRTC pairing rooms without a loc
   service.handleWebRtcHostStatus(hostWindows[0].webContentsId, { type: 'host-registered' })
   assert.equal(service.getStatus().webRtcStatus, 'pairing-ready')
   service.handleWebRtcHostStatus(hostWindows[0].webContentsId, { type: 'client-join' })
-  await waitFor(() => hostWindows.length === 2)
+  // The rotation opens a second host window for the next browser.
+  await rotated
   assert.notEqual(hostWindows[1].configs[0].roomId, firstConfig.roomId)
   assert.equal(hostWindows[1].configs[0].sessionId, firstConfig.sessionId)
 
@@ -85,7 +96,8 @@ test('RemoteAccessService enrolls once and reconnects with only the paired devic
   const pairingSessionId = 'pairing-session'
   const pairingToken = 'pairing-token'
   service.pairingManager.adoptSession({
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    // An instant past any clock, so the session cannot expire mid-test.
+    expiresAt: '2999-01-01T00:00:00.000Z',
     origin: appOrigin,
     pairingSessionId,
     pairingToken,
@@ -136,7 +148,7 @@ test('RemoteAccessService caches one server UI archive for browser clients', asy
   assert.equal(context.hostKind, 'browser')
 })
 
-function createTestService({ hostWindows = [], tempDir, serverId = 'remote-service-test-server' }) {
+function createTestService({ hostWindows = [], tempDir, serverId = 'remote-service-test-server', onHostWindow = () => {} }) {
   return new RemoteAccessService({
     userDataPath: tempDir,
     serverId,
@@ -152,6 +164,7 @@ function createTestService({ hostWindows = [], tempDir, serverId = 'remote-servi
         webContentsId: hostWindows.length + 1,
       }
       hostWindows.push(hostWindow)
+      onHostWindow(hostWindow)
       return hostWindow
     },
     getControllableSession: () => null,
@@ -166,14 +179,6 @@ function createTestService({ hostWindows = [], tempDir, serverId = 'remote-servi
   })
 }
 
-
-async function waitFor(predicate, timeoutMs = 5_000) {
-  const startedAt = Date.now()
-  while (!predicate()) {
-    if (Date.now() - startedAt >= timeoutMs) throw new Error('Timed out waiting for condition.')
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-}
 
 async function importRemoteAccessService() {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-remote-service-test-'))
