@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
-import { prepareWindow } from './support/app';
+import { prepareWindow, sendAppCommand } from './support/app';
 import { createStartedProject } from './support/project-start';
 import {
 	holdTornOffProjectTab,
@@ -12,6 +12,7 @@ import {
 	tabBarScreenPoints,
 } from './support/project-tab-drag';
 import { submitTerminalCommand } from './support/terminal';
+import { afterWorkspaceSync } from './support/workspace-sync';
 
 type StandaloneServer = Readonly<{
 	pairingUrl: string;
@@ -438,15 +439,37 @@ test('a project tab dropped on a window showing another server stays where it wa
 		);
 
 		// Held over a Local window's bar: it is not a place this tab can go.
+		// The drag reads the cursor on a timer of its own; it has read this
+		// one once its floating tab is centred on it, which it is only where
+		// no window takes the tab (one that does hides it).
 		await setCursorScreenPoint(electronApp, target.onBar);
-		await remote.waitForTimeout(500);
+		await expect
+			.poll(() =>
+				electronApp.evaluate(({ BrowserWindow }, point) => {
+					return BrowserWindow.getAllWindows().some((window) => {
+						if (window.isDestroyed() || !window.isVisible()) return false;
+						const bounds = window.getBounds();
+						return (
+							Math.abs(bounds.x + bounds.width / 2 - point.x) <= 1 &&
+							Math.abs(bounds.y + bounds.height / 2 - point.y) <= 1
+						);
+					});
+				}, target.onBar),
+			)
+			.toBe(true);
 		await expect
 			.soft(secondLocal.locator('.project-tab--drop-placeholder'))
 			.toHaveCount(0);
 
-		// Released there: the drag is abandoned and nothing moves.
+		// Released there: the drag is abandoned and nothing moves. The source
+		// window has heard how the drag ended once its tab is no longer torn
+		// off, and anything it asked of its server is drawn by the time the
+		// next change it makes is.
 		await remote.mouse.up();
-		await secondLocal.waitForTimeout(3_000);
+		await expect(remote.locator('.project-tab--torn-off')).toHaveCount(0);
+		await afterWorkspaceSync(remote, () =>
+			sendAppCommand(remote, 'new-terminal'),
+		);
 		expect(remote.isClosed(), 'the source window closed').toBe(false);
 		expect(
 			await projectIds(remote),
@@ -503,21 +526,39 @@ for (const closed of ['opened', 'switched'] as const) {
 			await submitTerminalCommand(kept, 'echo before-$((40+2))');
 			await expect(rows).toContainText('before-42', { timeout: 15_000 });
 
+			// The window left behind never loses its connection, and its terminal
+			// still answers. Every time the reconnecting notice is shown is
+			// noted as it happens, from before the close until that answer.
+			const reconnecting = kept.locator('.session-workspace__reconnecting');
+			await kept.evaluate(() => {
+				const state = window as unknown as { reconnectingSeen: number };
+				state.reconnectingSeen = 0;
+				const seen = () => {
+					if (document.querySelector('.session-workspace__reconnecting'))
+						state.reconnectingSeen += 1;
+				};
+				seen();
+				new MutationObserver(seen).observe(document.body, {
+					childList: true,
+					subtree: true,
+				});
+			});
 			const closingNativeWindow = await electronApp.browserWindow(closing);
 			await closingNativeWindow.evaluate((window) => window.close());
 			await expect
 				.poll(() => closing.isClosed(), { timeout: 15_000 })
 				.toBe(true);
-
-			// The window left behind never loses its connection, and its terminal
-			// still answers.
-			const reconnecting = kept.locator('.session-workspace__reconnecting');
-			for (let elapsed = 0; elapsed < 45_000; elapsed += 250) {
-				expect(await reconnecting.count()).toBe(0);
-				await kept.waitForTimeout(250);
-			}
 			await submitTerminalCommand(kept, 'echo after-$((40+2))');
 			await expect(rows).toContainText('after-42', { timeout: 15_000 });
+			expect(await reconnecting.count()).toBe(0);
+			expect(
+				await kept.evaluate(
+					() =>
+						(window as unknown as { reconnectingSeen: number })
+							.reconnectingSeen,
+				),
+				'the window left behind showed it was reconnecting',
+			).toBe(0);
 			await expectShowing(kept, serverHost);
 			await expect(
 				connectionMenu(kept)
