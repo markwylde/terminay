@@ -20,9 +20,11 @@ import {
 	DocumentationAutosaveController,
 	type DocumentationAutosaveSession,
 } from './DocumentationAutosaveController';
+import { createDocumentationEditorChanges } from './documentationEditorChanges';
 import {
 	createDocumentationEditorPlugins,
 	documentationLexicalTheme,
+	type SameDocument,
 } from './documentationEditorPlugins';
 import { selfCloseVoidHtmlElements } from './documentationMarkdownCompat';
 import '@fontsource/open-sans/latin-400.css';
@@ -109,11 +111,14 @@ function DocumentationEditorSurface({
 	const [downloadInFlight, setDownloadInFlight] = useState(false);
 	const [zoomLevel, setZoomLevel] = useState(0);
 	useEffect(() => subscribeTerminalZoom(setZoomLevel), []);
-	const valueRef = useRef(markdown);
+	const sameDocumentRef = useRef<SameDocument>(() => false);
+	const [changes] = useState(() =>
+		createDocumentationEditorChanges(markdown, (left, right) =>
+			sameDocumentRef.current(left, right),
+		),
+	);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<MDXEditorMethods>(null);
-	const suppressModeChangeRef = useRef(false);
-	const suppressModeChangeTimerRef = useRef<number | undefined>(undefined);
 	const autosaveRef = useRef<DocumentationAutosaveController | undefined>(
 		undefined,
 	);
@@ -124,17 +129,24 @@ function DocumentationEditorSurface({
 	loadImageRef.current = loadImage;
 	const imageUrlsRef = useRef(new Map<string, Promise<string>>());
 	const [plugins] = useState(() =>
-		createDocumentationEditorPlugins((src) => {
-			let url = imageUrlsRef.current.get(src);
-			if (url === undefined) {
-				url = (async () => {
-					const blob = await loadImageRef.current?.(src).catch(() => undefined);
-					return blob === undefined ? src : URL.createObjectURL(blob);
-				})();
-				imageUrlsRef.current.set(src, url);
-			}
-			return url;
-		}),
+		createDocumentationEditorPlugins(
+			(src) => {
+				let url = imageUrlsRef.current.get(src);
+				if (url === undefined) {
+					url = (async () => {
+						const blob = await loadImageRef
+							.current?.(src)
+							.catch(() => undefined);
+						return blob === undefined ? src : URL.createObjectURL(blob);
+					})();
+					imageUrlsRef.current.set(src, url);
+				}
+				return url;
+			},
+			(sameDocument) => {
+				sameDocumentRef.current = sameDocument;
+			},
+		),
 	);
 	if (autosaveRef.current === undefined)
 		autosaveRef.current = new DocumentationAutosaveController(
@@ -150,28 +162,28 @@ function DocumentationEditorSurface({
 		);
 	const handleChange = useCallback(
 		(next: string, initial: boolean) => {
-			if (suppressModeChangeRef.current || next === valueRef.current) return;
 			// Opening a document is not editing it. The editor reports the
 			// normalized form of what it just parsed — soft line breaks collapsed
 			// to the spaces they stand for, and whatever else its serializer spells
 			// differently — and taking that as an edit would mark a file dirty and
-			// rewrite it on disk for having been read. Keep the value so the
-			// document is not re-imported, and wait for the user.
-			valueRef.current = next;
-			if (initial) return;
-			onChange(next);
-			autosaveRef.current?.changed(next, false);
+			// rewrite it on disk for having been read. A change of views can
+			// respell the document the same way. Neither is saved; every edit is,
+			// however soon after a change of views it is made.
+			const edit = changes.reported(next, initial);
+			if (edit === undefined) return;
+			onChange(edit);
+			autosaveRef.current?.changed(edit, false);
 		},
-		[onChange],
+		[changes, onChange],
 	);
 	const flush = useCallback(() => {
 		void autosaveRef.current?.flush();
 	}, []);
 	useEffect(() => {
-		if (markdown === valueRef.current) return;
-		valueRef.current = markdown;
+		if (markdown === changes.current()) return;
+		changes.loaded(markdown);
 		editorRef.current?.setMarkdown(selfCloseVoidHtmlElements(markdown));
-	}, [markdown]);
+	}, [changes, markdown]);
 	useEffect(() => {
 		if (flushRef === undefined) return;
 		const flushAutosave = () =>
@@ -184,8 +196,6 @@ function DocumentationEditorSurface({
 	useEffect(
 		() => () => {
 			autosaveRef.current?.dispose();
-			if (suppressModeChangeTimerRef.current !== undefined)
-				window.clearTimeout(suppressModeChangeTimerRef.current);
 		},
 		[],
 	);
@@ -381,20 +391,14 @@ function DocumentationEditorSurface({
 				} as CSSProperties
 			}
 			onBlur={flush}
-			onPointerDownCapture={(event) => {
-				const label = (event.target as Element)
-					.closest('[aria-label]')
-					?.getAttribute('aria-label');
-				if (!['Rich text', 'Source mode', 'Diff mode'].includes(label ?? ''))
-					return;
-				suppressModeChangeRef.current = true;
-				if (suppressModeChangeTimerRef.current !== undefined)
-					window.clearTimeout(suppressModeChangeTimerRef.current);
-				suppressModeChangeTimerRef.current = window.setTimeout(() => {
-					suppressModeChangeRef.current = false;
-					suppressModeChangeTimerRef.current = undefined;
-				}, 250);
+			// The view toggle changes views in its click handler, and MDXEditor
+			// makes every report that change causes before that handler returns.
+			// Capture and bubble on this root bracket the toggle's handler, so
+			// the change of views is exactly the click that makes it.
+			onClickCapture={(event) => {
+				if (isViewToggle(event.target)) changes.viewChangeStarted();
 			}}
+			onClick={changes.viewChangeEnded}
 		>
 			{status || message ? (
 				<div className="documentation-editor__status" aria-live="polite">
@@ -455,6 +459,14 @@ function DocumentationEditorSurface({
 			) : null}
 		</div>
 	);
+}
+
+const viewToggleLabels = new Set(['Rich text', 'Source mode', 'Diff mode']);
+
+function isViewToggle(target: EventTarget): boolean {
+	if (!(target instanceof Element)) return false;
+	const label = target.closest('[aria-label]')?.getAttribute('aria-label');
+	return label !== undefined && label !== null && viewToggleLabels.has(label);
 }
 
 async function downloadPreview(
