@@ -20,6 +20,19 @@ const query = (operation, payload, requestContext = context()) => ({
   body: new Uint8Array(), context: requestContext,
 });
 
+/** Settles once the journal holds an event matching `check`, re-checked as each is published. */
+function journaled(journal, check) {
+  const found = () => journal.replay(0).events.some(check);
+  if (found()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = journal.subscribe(() => {
+      if (!found()) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 test("file observations are project scoped, ordered, idempotent, and cancelled with their client", async () => {
   const journal = new OrderedEventJournal();
   let watcher;
@@ -101,7 +114,7 @@ test("folder-size progress is bounded and cancellation aborts host work", async 
   const start = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.folderSizeStart];
   const cancel = adapter.operations.commands[FILE_OBSERVATION_OPERATIONS.folderSizeCancel];
   const handle = await start(command(FILE_OBSERVATION_OPERATIONS.folderSizeStart, { projectId: "project-a", resource: "docs" }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await journaled(journal, (event) => event.payload.phase === "progress");
   assert.deepEqual(journal.replay(0).events[0].payload, {
     jobId: handle.jobId, clientId: "client-a", projectId: "project-a", resource: "docs",
     phase: "progress", bytes: 5, files: 1, directories: 0,
@@ -111,7 +124,7 @@ test("folder-size progress is bounded and cancellation aborts host work", async 
   })), /limit/u);
   await cancel(command(FILE_OBSERVATION_OPERATIONS.folderSizeCancel, { jobId: handle.jobId }));
   assert.equal(sizeInput.signal.aborted, true);
-  await new Promise((resolve) => setImmediate(resolve));
+  await journaled(journal, (event) => event.payload.phase === "cancelled");
   assert.equal(journal.replay(0).events.at(-1).payload.phase, "cancelled");
 });
 
@@ -128,8 +141,10 @@ test("file observation event projector isolates exact client and project", () =>
 test("a watch start is answered only once the host is observing", async () => {
   const journal = new OrderedEventJournal();
   let observing;
+  let watchCalled;
+  const watching = new Promise((resolve) => { watchCalled = resolve; });
   const host = {
-    watch() { return new Promise((resolve) => { observing = resolve; }); },
+    watch() { watchCalled(); return new Promise((resolve) => { observing = resolve; }); },
     async calculateFolderSize() { return { bytes: 0, files: 0, directories: 0 }; },
   };
   const adapter = new ServerFileObservationAdapter({ serverId: "server-a", host, eventJournal: journal });
@@ -141,7 +156,12 @@ test("a watch start is answered only once the host is observing", async () => {
   let sharedAnswered = false;
   const shared = Promise.resolve(start(command(FILE_OBSERVATION_OPERATIONS.watchStart, { projectId: "project-a", resource: "" })))
     .then((handle) => { sharedAnswered = true; return handle; });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The host has been asked to observe. Between here and an answer the
+  // adapter runs only promise continuations (no timer, no I/O, against this
+  // host), and a macrotask turn runs after every one of them: an adapter that
+  // did not wait for the host would have answered by then.
+  await watching;
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(answered, false, "answered before the host was observing");
   assert.equal(sharedAnswered, false);
   observing();

@@ -168,24 +168,30 @@ function sourceDescriptor(descriptor) {
   return descriptor;
 }
 
+/** What the host tells the agents broker; `until` re-checks as each call arrives. */
 function recordingBroker() {
   const publications = [];
   const diagnostics = [];
   const stopped = [];
+  const waiters = new Set();
+  const changed = () => { for (const waiter of [...waiters]) waiter(); };
   return {
     publications, diagnostics, stopped,
-    async publish(request) { publications.push(structuredClone(request)); return { ok: true }; },
-    diagnostic(request) { diagnostics.push(request); },
-    sourceStopped(request) { stopped.push(request.sourceId); },
+    async publish(request) { publications.push(structuredClone(request)); changed(); return { ok: true }; },
+    diagnostic(request) { diagnostics.push(request); changed(); },
+    sourceStopped(request) { stopped.push(request.sourceId); changed(); },
+    until(check) {
+      if (check()) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiter = () => {
+          if (!check()) return;
+          waiters.delete(waiter);
+          resolve();
+        };
+        waiters.add(waiter);
+      });
+    },
   };
-}
-
-async function eventually(check, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error("condition never held");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 test("manager publishes a complete contribution set only after activation", async () => {
@@ -209,7 +215,7 @@ test("a started source's publisher calls reach the broker coalesced and in order
   t.after(() => host.stop());
   await host.start(descriptor);
   await host.startSessionSource("example.sources/agents", ["fixture"]);
-  await eventually(() => agents.publications.length > 0 && agents.diagnostics.length > 0);
+  await agents.until(() => agents.publications.length > 0 && agents.diagnostics.length > 0);
   const [first] = agents.publications;
   assert.equal(first.extensionId, "example.sources");
   assert.equal(first.sourceId, "example.sources/agents");
@@ -219,7 +225,7 @@ test("a started source's publisher calls reach the broker coalesced and in order
   assert.equal(first.publication.reset[1].waitingFor, "1");
   assert.deepEqual(agents.diagnostics[0].diagnostic, { code: "degraded-process-watch", message: "koffi unavailable" });
   await host.setSessionSourceHarnesses("example.sources/agents", []);
-  await eventually(() => agents.publications.some((request) => request.publication.upserts?.some((session) => session.id === "s4")));
+  await agents.until(() => agents.publications.some((request) => request.publication.upserts?.some((session) => session.id === "s4")));
   const s4 = agents.publications.flatMap((request) => request.publication.upserts ?? []).find((session) => session.id === "s4");
   assert.equal(s4.title, "none");
   await host.stopSessionSource("example.sources/agents");
@@ -227,16 +233,19 @@ test("a started source's publisher calls reach the broker coalesced and in order
 });
 
 test("a child that dies stops every running source exactly once", async (t) => {
-  const descriptor = sourceDescriptor(await fixture("example.sources", SOURCE_EXTENSION.replace("signal.addEventListener", "setTimeout(() => process.exit(9), 20); signal.addEventListener")));
+  // The child dies when the host next speaks to its source, once it is running.
+  const descriptor = sourceDescriptor(await fixture("example.sources", SOURCE_EXTENSION.replace("signal.addEventListener", "onEnabledHarnessesChanged(() => process.exit(9)); signal.addEventListener")));
   const agents = recordingBroker();
   const host = new ExtensionHost("example.sources", { broker: { async request() {} }, agents, limits: { initialBackoffMs: 60_000 } });
   t.after(() => host.stop());
   await host.start(descriptor);
   await host.startSessionSource("example.sources/agents", ["fixture"]);
-  await eventually(() => agents.stopped.length === 1);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.deepEqual(agents.stopped, ["example.sources/agents"]);
+  await host.setSessionSourceHarnesses("example.sources/agents", []).catch(() => undefined);
+  await agents.until(() => agents.stopped.length >= 1);
+  // The exit is handled in one pass that stops the sources and then records
+  // the failure; the failed state says that pass has finished.
   assert.equal(host.status().state, "failed");
+  assert.deepEqual(agents.stopped, ["example.sources/agents"]);
 });
 
 test("MCP install targets are invoked with the host command and their results validated", async (t) => {
@@ -340,13 +349,16 @@ test("oversized and late child results are rejected or ignored without poisoning
   await assert.rejects(oversizedHost.invoke({ method: "huge" }), /oversized child message|exited/);
   assert.equal(oversizedHost.status().state, "failed");
 
-  const late = await fixture("example.late", `export function activate() { return { methods: {
-    late() { return new Promise(resolve => setTimeout(() => resolve("too late"), 40)); }, ping() { return "pong"; }
+  // The late call answers only when the next call arrives, so its result
+  // reaches the host after its deadline and just before that call's own.
+  const late = await fixture("example.late", `export function activate() { let finish; return { methods: {
+    late() { return new Promise(resolve => { finish = () => resolve("too late"); }); },
+    ping() { finish?.(); return "pong"; }
   } }; }`);
   const lateHost = new ExtensionHost(late.extensionId, { broker: { async request() {} } });
   await lateHost.start(late);
   await assert.rejects(lateHost.invoke({ method: "late", deadlineMs: 5 }), /timed out/);
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(await lateHost.invoke({ method: "ping" }), "pong");
   assert.equal(await lateHost.invoke({ method: "ping" }), "pong");
   await lateHost.stop();
 });

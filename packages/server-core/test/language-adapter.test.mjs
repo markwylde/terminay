@@ -45,6 +45,8 @@ function harness(options = {}) {
   };
   let diagnosticsListener;
   const journal = new OrderedEventJournal();
+  // The adapter's debounce runs on time the test controls.
+  const timers = new Set();
   let adapter;
   const sessions = new LanguageSessionManager({
     extensions,
@@ -57,11 +59,26 @@ function harness(options = {}) {
     projects: { default: { projectId: "default", resolver: new CanonicalProjectPathResolver("/project", storage) } },
     eventJournal: journal,
     diagnosticsDebounceMs: 5,
+    schedule: (callback, milliseconds) => {
+      const timer = { callback, milliseconds };
+      timers.add(timer);
+      return timer;
+    },
+    cancelSchedule: (timer) => timers.delete(timer),
   });
   return {
     adapter,
     sessions,
     journal,
+    timers,
+    /** Let `milliseconds` pass: run every timer that is due by then. */
+    advance(milliseconds) {
+      for (const timer of [...timers]) {
+        if (timer.milliseconds > milliseconds) continue;
+        timers.delete(timer);
+        timer.callback();
+      }
+    },
     invocations,
     operations: adapter.operations(),
     emitDiagnostics: (notification) => diagnosticsListener?.(notification),
@@ -183,9 +200,13 @@ test("document commands reach the session and diagnostics reach the journal debo
   };
   harnessed.emitDiagnostics({ sessionId, path: "main.ts", diagnostics: [diagnostic], isTruncated: false });
   harnessed.emitDiagnostics({ sessionId, path: "main.ts", diagnostics: [diagnostic, diagnostic], isTruncated: false });
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  const replay = await harnessed.journal.replay(0);
-  const events = replay.events.filter((event) => event.event === LANGUAGE_OPERATIONS.diagnosticsEvent);
+  const diagnosticsEvents = async () =>
+    (await harnessed.journal.replay(0)).events.filter((event) => event.event === LANGUAGE_OPERATIONS.diagnosticsEvent);
+  // Nothing is written until the debounce window has passed.
+  harnessed.advance(4);
+  assert.deepEqual(await diagnosticsEvents(), []);
+  harnessed.advance(5);
+  const events = await diagnosticsEvents();
   // A burst of publishes for one file becomes one journal event.
   assert.equal(events.length, 1);
   assert.equal(events[0].payload.serverId, "server-a");

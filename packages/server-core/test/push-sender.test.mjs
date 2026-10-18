@@ -49,14 +49,13 @@ function fakeClock(start = 1_000_000) {
   };
 }
 
-/** Let whatever is queued on the event loop run. */
-const settle = async () => { for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve)); };
 
 function harness(options = {}) {
   const clock = fakeClock();
   const notifications = new NotificationManager({ now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, sendRateLimit: 1_000 });
   const enrolments = new PushEnrolmentStore();
   const requests = [];
+  const requestWaiters = new Set();
   let respond = options.respond ?? (() => ({ status: 202 }));
   const sender = new PushSender({
     notifications,
@@ -65,6 +64,7 @@ function harness(options = {}) {
     describe: options.describe ?? ((record) => ({ terminalTitle: `Terminal for ${record.sessionId}`, projectTitle: `Project ${record.projectId}` })),
     transport: async (url, init) => {
       requests.push({ url, headers: init.headers, body: init.body, signal: init.signal });
+      for (const waiter of [...requestWaiters]) waiter();
       return respond(requests.length, init);
     },
     now: clock.now,
@@ -72,15 +72,26 @@ function harness(options = {}) {
     clearTimeout: clock.clearTimeout,
   });
   /** Advance the clock and let whatever fired finish. Sealing runs off the
-   * event loop, so this waits on the sender itself, not on a number of turns;
-   * a request that is deliberately left hanging is not waited for. */
+   * event loop, so this waits on the sender itself, not on a number of turns.
+   * A test that leaves a request hanging advances the clock itself. */
   const run = async (milliseconds) => {
     clock.advance(milliseconds);
-    await Promise.race([sender.whenIdle(), new Promise((resolve) => setTimeout(resolve, 250))]);
-    await settle();
+    await sender.whenIdle();
+  };
+  /** Settles once the service has been asked for `count` requests in all. */
+  const requested = (count) => {
+    if (requests.length >= count) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        if (requests.length < count) return;
+        requestWaiters.delete(waiter);
+        resolve();
+      };
+      requestWaiters.add(waiter);
+    });
   };
   const opened = (device, index = -1) => openPushPayload(device, requests.at(index).body);
-  return { clock, notifications, enrolments, sender, requests, run, opened, setRespond: (next) => { respond = next; } };
+  return { clock, notifications, enrolments, sender, requests, run, requested, opened, setRespond: (next) => { respond = next; } };
 }
 
 /** Raise an activity notification and wait out the settle period and the coalescing delay. */
@@ -355,11 +366,16 @@ test("a hung service is abandoned at the request deadline and blocks nothing", a
   const events = [];
   h.notifications.subscribe((event) => events.push(event.type));
 
-  await publish(h);
+  // Published, coalesced, and sent; the request then hangs, so the sender
+  // is not idle until its deadline, and the test advances the clock itself.
+  h.notifications.setActivity(owner(), "agent-finished");
+  await h.run(5_000);
+  h.clock.advance(250);
+  await h.requested(1);
   assert.equal(h.requests.length, 1);
   // The manager, and so every client, carries on while the request hangs.
   h.notifications.setActivity(owner("session-b"), "attention");
-  await h.run(5_000);
+  h.clock.advance(5_000);
   h.notifications.setActivity(owner("session-a"), undefined);
   assert.deepEqual(events, ["notification.published", "notification.published", "notification.removed"]);
 
@@ -524,7 +540,10 @@ test("a paired device enrols over a real connection and is pushed once it stops 
     ptyFactory: quietPty,
     activity,
     notifications,
-    push: { enrolments, origin: ORIGIN, transport: async (url, init) => { requests.push({ url, ...init }); return { status: 202 }; } },
+    push: {
+      enrolments, origin: ORIGIN, transport: async (url, init) => { requests.push({ url, ...init }); return { status: 202 }; },
+      now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+    },
     authenticate: ({ hello }) => ({
       clientId: hello.clientId,
       authScope: "admin",
@@ -543,11 +562,11 @@ test("a paired device enrols over a real connection and is pushed once it stops 
     await client.connect();
     return { client, close: async () => { await client.close().catch(() => undefined); await serverTask.catch(() => undefined); } };
   };
-  // The composed sender coalesces on the real clock.
+  // The composed sender coalesces on the test's clock: let that pass, then
+  // wait for whatever it sent.
   const coalesced = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    clock.advance(250);
     await composition.push.whenIdle();
-    await settle();
   };
   const phone = await connect("phone-window");
   const desktop = await connect("desktop-window");
