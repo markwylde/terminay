@@ -70,6 +70,12 @@ type ElectronFixtures = {
 
 const desktopAppReadyTimeoutMs = 15_000;
 
+/**
+ * A test tagged with this runs the embedded server on a clock it holds; see
+ * e2e/support/server-clock.ts.
+ */
+export const HELD_SERVER_CLOCK = '@held-server-clock';
+
 const FAILURE_DIAGNOSTIC_EVENTS = 200;
 const FAILURE_DIAGNOSTIC_LINE = 600;
 const FAILURE_TERMINAL_ROWS = 15;
@@ -377,8 +383,10 @@ export async function launchDesktopApp(options: {
 				// reads the header count constantly, so it runs with a short settle
 				// period. Where activity and notification timing is what is under
 				// test, the server keeps the test's clock instead, and the test ends
-				// each period itself.
-				...(path.basename(testInfo.file) === 'terminal-signals.spec.ts'
+				// each period itself: the whole of terminal-signals.spec.ts, and any
+				// test tagged HELD_SERVER_CLOCK.
+				...(path.basename(testInfo.file) === 'terminal-signals.spec.ts' ||
+				testInfo.tags.includes(HELD_SERVER_CLOCK)
 					? { TERMINAY_TEST_SERVER_CLOCK: 'manual' }
 					: { TERMINAY_TEST_NOTIFICATION_SETTLE_MS: '300' }),
 				// Terminals held outside the app, so they survive a relaunch
