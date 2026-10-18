@@ -309,8 +309,8 @@ test.describe('recordings UI', () => {
     await mainWindow.locator('.project-workspace--active .xterm').first().click()
     await mainWindow.keyboard.type("printf 'replay-%s\\n' visible-output")
     await mainWindow.keyboard.press('Enter')
-    // Let the shell print the output before the recording is finalized.
-    await mainWindow.waitForTimeout(1_000)
+    // The shell has printed the output before the recording is finalized.
+    await expect(mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-rows')).toContainText('replay-visible-output')
     await terminalTab.click({ button: 'right' })
     await contextMenuItem(mainWindow, 'Stop Recording').click()
     await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
