@@ -16,6 +16,37 @@ const {
   encodeControlMessage,
 } = await import("../dist/index.js")
 
+/**
+ * Request deadlines that come due only as the test moves this clock: `advance`
+ * fires every deadline that falls due within it, in order.
+ */
+function manualClock() {
+  let now = 0
+  let next = 0
+  const timers = new Map()
+  return {
+    setTimeout(handler, ms) {
+      next += 1
+      timers.set(next, { at: now + ms, handler })
+      return next
+    },
+    clearTimeout(id) {
+      timers.delete(id)
+    },
+    advance(ms) {
+      const until = now + ms
+      for (;;) {
+        const [due] = [...timers].filter(([, timer]) => timer.at <= until).sort(([a, x], [b, y]) => x.at - y.at || a - b)
+        if (due === undefined) break
+        timers.delete(due[0])
+        now = due[1].at
+        due[1].handler()
+      }
+      now = until
+    },
+  }
+}
+
 async function withEndpoint(options, run) {
   const directory = await mkdtemp(join(tmpdir(), "terminay-headless-control-"))
   const socketPath = join(directory, "control.sock")
@@ -214,7 +245,8 @@ test("malformed and oversized partial frames never reach dispatch", async () => 
 
 test("per-connection concurrency and deadlines are bounded", async () => {
   let release
-  await withEndpoint({ maxInFlightPerConnection: 1, requestTimeoutMs: 30, dispatch: (_request, { signal }) => new Promise((resolve) => {
+  const clock = manualClock()
+  await withEndpoint({ maxInFlightPerConnection: 1, requestTimeoutMs: 30, timers: clock, dispatch: (_request, { signal }) => new Promise((resolve) => {
     release = () => resolve({ done: true })
     signal.addEventListener("abort", () => resolve({ done: false }), { once: true })
   }) }, async ({ socketPath, capabilities }) => {
@@ -226,6 +258,8 @@ test("per-connection concurrency and deadlines are bounded", async () => {
     const limited = await responses.next()
     assert.equal(limited.id, "second")
     assert.equal(limited.error.code, "limit_exceeded")
+    // The first is still in flight, so its deadline is set; now it comes due.
+    clock.advance(30)
     const timedOut = await responses.next()
     assert.equal(timedOut.id, "first")
     assert.equal(timedOut.error.code, "timeout")
@@ -235,7 +269,10 @@ test("per-connection concurrency and deadlines are bounded", async () => {
 })
 
 test("revoking a capability aborts an active operation and rejects later requests", async () => {
+  let dispatched
+  const active = new Promise((resolve) => { dispatched = resolve })
   await withEndpoint({ dispatch: async (_request, { signal }) => {
+    dispatched()
     await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }))
     return { reached: true }
   } }, async ({ socketPath, capabilities }) => {
@@ -243,7 +280,7 @@ test("revoking a capability aborts an active operation and rejects later request
     const socket = await openSocket(socketPath)
     const responses = collectResponses(socket)
     socket.write(encodeControlMessage({ id: "active", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "list_terminals", params: {} }))
-    await new Promise((resolve) => setTimeout(resolve, 5))
+    await active
     capabilities.revoke(lease.token)
     const response = await responses.next()
     assert.equal(response.id, "active")
