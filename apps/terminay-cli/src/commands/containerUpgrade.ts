@@ -17,6 +17,7 @@ import {
 	writePendingUpgrade,
 	writeStagedRecord,
 } from '../container.js';
+import { type DeadlineTimers, GLOBAL_DEADLINE_TIMERS } from '../deadlines.js';
 import { discardDownloads } from '../download.js';
 import { probeHealth, READINESS_TIMEOUT_MS } from '../health.js';
 import { activeVersion, installArchive, retain } from '../install.js';
@@ -60,6 +61,8 @@ export interface ContainerUpgradeDependencies {
 	readonly webBase?: string;
 	readonly readinessTimeoutMs?: number;
 	readonly stopTimeoutMs?: number;
+	/** What schedules the stop and readiness deadlines. The process's own timers by default. */
+	readonly timers?: DeadlineTimers;
 	/** See `InstallDependencies.releasePublicKeyPem`: a test seam, not a bypass. */
 	readonly releasePublicKeyPem?: string;
 }
@@ -68,6 +71,27 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function reasonOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Run `wait` until it says to stop or `timeoutMs` passes. Returns whether the
+ * deadline passed first.
+ */
+async function withDeadline(
+	timeoutMs: number,
+	timers: DeadlineTimers,
+	wait: (expired: () => boolean) => Promise<void>,
+): Promise<boolean> {
+	let passed = false;
+	const deadline = timers.setTimeout(() => {
+		passed = true;
+	}, timeoutMs);
+	try {
+		await wait(() => passed);
+	} finally {
+		timers.clearTimeout(deadline);
+	}
+	return passed;
 }
 
 async function readTrimmed(path: string): Promise<string> {
@@ -85,6 +109,7 @@ async function restartServer(
 	layout: ContainerLayout,
 	pid: number,
 	stopTimeoutMs: number,
+	timers: DeadlineTimers,
 ): Promise<void> {
 	await writeFile(layout.restartMarker, '', { mode: 0o644 });
 	const signal = (name: NodeJS.Signals) => {
@@ -95,14 +120,15 @@ async function restartServer(
 		}
 	};
 	signal('SIGTERM');
-	const deadline = Date.now() + stopTimeoutMs;
-	while (isAlive(pid) && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
+	const untilGone = async (expired: () => boolean) => {
+		while (isAlive(pid) && !expired()) await sleep(POLL_INTERVAL_MS);
+	};
+	await withDeadline(stopTimeoutMs, timers, untilGone);
 	if (isAlive(pid)) {
 		// A server that outlives its own bounded shutdown is ended, as a
 		// service manager would end it after its stop timeout.
 		signal('SIGKILL');
-		const killed = Date.now() + 5_000;
-		while (isAlive(pid) && Date.now() < killed) await sleep(POLL_INTERVAL_MS);
+		await withDeadline(5_000, timers, untilGone);
 	}
 }
 
@@ -119,22 +145,30 @@ async function waitForRelease(
 	previousPid: number | undefined,
 	timeoutMs: number,
 	watchPending: boolean,
+	timers: DeadlineTimers,
 ): Promise<Arrival> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		if (watchPending && (await readPendingUpgrade(layout)) === undefined)
-			return 'undone';
-		const pid = await supervisedServerPid(layout);
-		if (
-			pid !== undefined &&
-			pid !== previousPid &&
-			(await readTrimmed(layout.runningPath)) === release &&
-			(await probeHealth(layout.healthPort))?.ready === true
-		)
-			return 'ready';
-		if (Date.now() >= deadline) return 'timed-out';
-		await sleep(POLL_INTERVAL_MS);
-	}
+	let arrival: Arrival = 'timed-out';
+	await withDeadline(timeoutMs, timers, async (expired) => {
+		for (;;) {
+			if (watchPending && (await readPendingUpgrade(layout)) === undefined) {
+				arrival = 'undone';
+				return;
+			}
+			const pid = await supervisedServerPid(layout);
+			if (
+				pid !== undefined &&
+				pid !== previousPid &&
+				(await readTrimmed(layout.runningPath)) === release &&
+				(await probeHealth(layout.healthPort))?.ready === true
+			) {
+				arrival = 'ready';
+				return;
+			}
+			if (expired()) return;
+			await sleep(POLL_INTERVAL_MS);
+		}
+	});
+	return arrival;
 }
 
 export async function runContainerUpgrade(
@@ -148,6 +182,7 @@ export async function runContainerUpgrade(
 	const layout = containerLayout(env);
 	const readinessTimeoutMs =
 		dependencies.readinessTimeoutMs ?? READINESS_TIMEOUT_MS;
+	const timers = dependencies.timers ?? GLOBAL_DEADLINE_TIMERS;
 
 	if (
 		options.publicHost !== undefined ||
@@ -345,6 +380,7 @@ export async function runContainerUpgrade(
 		layout,
 		serverPid,
 		dependencies.stopTimeoutMs ?? STOP_TIMEOUT_MS,
+		timers,
 	);
 	const arrival = await waitForRelease(
 		layout,
@@ -352,6 +388,7 @@ export async function runContainerUpgrade(
 		serverPid,
 		readinessTimeoutMs,
 		true,
+		timers,
 	);
 
 	if (arrival !== 'ready') {
@@ -376,6 +413,7 @@ export async function runContainerUpgrade(
 					layout,
 					failedPid,
 					dependencies.stopTimeoutMs ?? STOP_TIMEOUT_MS,
+					timers,
 				);
 			}
 			await rm(layout.pendingPath, { force: true });
@@ -387,6 +425,7 @@ export async function runContainerUpgrade(
 				undefined,
 				readinessTimeoutMs,
 				false,
+				timers,
 			)) === 'ready';
 		const reason = `the upgrade to ${toLabel} did not become ready, so ${fromLabel} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`;
 		await writeUpgradeOutcome(layout.resultPath, {
