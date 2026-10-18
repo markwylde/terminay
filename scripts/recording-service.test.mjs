@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -30,37 +31,42 @@ function createHarness(home, initialRoot, overrides = {}) {
   return { options, service: new TerminalRecordingService(options), settings }
 }
 
+/** The recording's files. Call it once the cast's stream has opened or closed,
+ * so the cast is known to be on disk. */
 async function findRecordingFiles(root, recordingId) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const dateDirectories = (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-    for (const directory of dateDirectories) {
-      const base = join(root, directory.name, recordingId)
-      try {
-        await stat(`${base}.cast`)
-        return { cast: `${base}.cast`, metadata: `${base}.json` }
-      } catch {
-        // The write stream may not have created the cast yet.
-      }
+  const dateDirectories = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+  for (const directory of dateDirectories) {
+    const base = join(root, directory.name, recordingId)
+    try {
+      await stat(`${base}.cast`)
+      return { cast: `${base}.cast`, metadata: `${base}.json` }
+    } catch {
+      // Not in this date directory.
     }
-    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`Recording files not found for ${recordingId}`)
 }
 
-async function readStable(filePath) {
-  let previous = null
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      const current = await readFile(filePath, 'utf8')
-      if (current === previous) return current
-      previous = current
-    } catch {
-      // The stream may not have created the cast yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error(`Recording did not stabilize: ${filePath}`)
+/** Stops a recording and resolves once its cast stream has closed, which is
+ * when everything the recording wrote is on disk. */
+async function stop(service, sessionId, ...finalizeArguments) {
+  const active = service.activeRecordings.get(sessionId)
+  assert.ok(active)
+  const closed = once(active.stream, 'close')
+  const state = service.finalize(sessionId, ...finalizeArguments)
+  await closed
+  return state
+}
+
+/** Ends a recording the way a crash does: its descriptor closes with whatever
+ * was written, and nothing finalizes its sidecar. */
+async function abandon(service, sessionId) {
+  const active = service.activeRecordings.get(sessionId)
+  assert.ok(active)
+  const closed = once(active.stream, 'close')
+  active.stream.end()
+  await closed
 }
 
 function assertPathFree(value) {
@@ -91,11 +97,11 @@ test('public DTOs are opaque-id-only while persisted files are private and compl
     assertPathFree(started)
     service.appendOutput('session-one', 'Password: ')
     service.appendInput('session-one', 'secret\n')
-    const stopped = service.finalize('session-one', 7, 15)
+    const stopped = await stop(service, 'session-one', 7, 15)
     assertPathFree(stopped)
 
     const files = await findRecordingFiles(root, started.recordingId)
-    const cast = await readStable(files.cast)
+    const cast = await readFile(files.cast, 'utf8')
     const metadata = JSON.parse(await readFile(files.metadata, 'utf8'))
     assert.equal(metadata.version, 2)
     assert.equal(metadata.recordingState, 'completed')
@@ -148,9 +154,8 @@ test('the live input toggle affects only later events', async () => {
     service.appendInput('session-toggle', 'after-off')
     settings.recording.captureInput = true
     service.appendInput('session-toggle', 'captured-later')
-    service.finalize('session-toggle')
-    const files = await findRecordingFiles(root, started.recordingId)
-    const cast = await readStable(files.cast)
+    await stop(service, 'session-toggle')
+    const cast = await readFile((await findRecordingFiles(root, started.recordingId)).cast, 'utf8')
     assert.equal(cast.includes('before-off'), false)
     assert.equal(cast.includes('captured'), true)
     assert.equal(cast.includes('after-off'), false)
@@ -170,8 +175,7 @@ test('startup recovery marks orphaned recordings interrupted and retains old con
     const harness = createHarness(home, firstRoot)
     const orphan = harness.service.start('orphan')
     harness.service.appendOutput('orphan', 'survives restart')
-    const files = await findRecordingFiles(firstRoot, orphan.recordingId)
-    await readStable(files.cast)
+    await abandon(harness.service, 'orphan')
 
     harness.settings.recording.directory = secondRoot
     const restarted = new TerminalRecordingService(harness.options)
@@ -221,15 +225,14 @@ test('persisting a new root retains historical roots that are temporarily unavai
     const harness = createHarness(home, firstRoot)
     const first = harness.service.start('first')
     harness.service.appendOutput('first', 'historical')
-    harness.service.finalize('first')
-    await readStable((await findRecordingFiles(firstRoot, first.recordingId)).cast)
+    await stop(harness.service, 'first')
     const indexedFirstRoot = await realpath(firstRoot)
     await rename(firstRoot, unavailableRoot)
 
     harness.settings.recording.directory = secondRoot
     const whileUnavailable = new TerminalRecordingService(harness.options)
     const second = whileUnavailable.start('second')
-    whileUnavailable.finalize('second')
+    await stop(whileUnavailable, 'second')
     const index = JSON.parse(await readFile(harness.options.getLibraryIndexPath(), 'utf8'))
     assert.equal(index.roots.includes(indexedFirstRoot), true)
     assert.equal(index.roots.some((root) => root.endsWith('/second')), true)
@@ -288,13 +291,13 @@ test('a disk-full cast stream error removes the active writer and persists faile
     const started = service.start('stream-fault')
     const active = service.activeRecordings.get('stream-fault')
     assert.ok(active)
+    await once(active.stream, 'ready')
     const files = await findRecordingFiles(root, started.recordingId)
-    await readStable(files.cast)
     active.stream.emit('error', Object.assign(new Error(`${root}/private.cast failed`), { code: 'ENOSPC' }))
     assert.equal(service.activeRecordings.size, 0)
     assert.equal(service.getState('stream-fault').status, 'failed')
     assertPathFree(service.getState('stream-fault'))
-    await readStable(files.metadata)
+    // The failed lifecycle is written before the error handler returns.
     const metadata = JSON.parse(await readFile(files.metadata, 'utf8'))
     assert.equal(metadata.recordingState, 'failed')
     assert.equal(metadata.endedAt !== null, true)
