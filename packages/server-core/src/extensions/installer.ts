@@ -792,7 +792,18 @@ export class ExtensionInstaller {
 				'node_modules',
 				...resolution.packageName.split('/'),
 			);
-			await this.probe(receipt, packageRoot);
+			// A release built-in with no slot selected yet has nothing a probe could
+			// protect: the reconciliation that commits it starts this same slot
+			// in a fresh host straight away and records a failure explicitly.
+			// Probing it first would start and stop it once more for nothing. A
+			// user install, or a built-in replacing a selected slot, is probed
+			// before the pointer moves.
+			const persistedBefore = state.extensions[receipt.extensionId];
+			const replacesSelectedSlot =
+				persistedBefore?.activeSlotId !== undefined &&
+				persistedBefore.packageName === receipt.packageName;
+			if (!isBuiltInResolution(resolution) || replacesSelectedSlot)
+				await this.probe(receipt, packageRoot);
 			const destination = join(this.root, 'packages', slotId);
 			try {
 				await rename(staging, destination);
