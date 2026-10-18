@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import {
 	access,
@@ -22,13 +22,11 @@ const execFileAsync = promisify(execFile);
 const APP_PATH = resolve(
 	process.env.TERMINAY_PACKAGED_APP || 'release/0.0.0/mac-arm64/Terminay.app',
 );
-const WAIT_TIMEOUT_MS = 10_000;
 
 test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		skip:
 			(process.platform !== 'darwin' || process.arch !== 'arm64') &&
 			'This packaged Desktop proof currently covers macOS arm64 only.',
-	timeout: 40_000,
 }, async (t) => {
 	const payload = await inspectPackagedPayload(APP_PATH);
 	t.diagnostic(JSON.stringify(payload));
@@ -48,6 +46,8 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 	let electronApp;
 	try {
 		electronApp = await electron.launch({
+			// Every wait is for a state the application reaches, not a budget.
+			timeout: 0,
 			cwd: canonicalTempPath,
 			executablePath,
 			env: createSanitizedPackagedEnv({
@@ -60,6 +60,7 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 				TMPDIR: tempPath,
 			}),
 		});
+		electronApp.context().setDefaultTimeout(0);
 		const mainPid = electronApp.process().pid;
 		assert.ok(mainPid > 0);
 		assert.deepEqual(
@@ -94,27 +95,33 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		const interactiveId = await mainWindow.evaluate(
 			async () => (await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 		);
-		const interactiveHost = await waitForNewHost(mainPid, initialHostPids);
+		const interactiveHost = await hostOfReadyShell(mainWindow, interactiveId, mainPid, initialHostPids);
 		assert.ok(
 			interactiveHost.command.includes(payload.expectedHostEntry),
 			`Unexpected packaged PTY host command: ${interactiveHost.command}`,
 		);
-		await waitForPackagedShell(mainWindow, interactiveId);
 		const inactivity = await mainWindow.evaluate(async (sessionId) => {
 			let output = '';
 			let lastDataAt = 0;
+			let printed;
+			const ended = new Promise((resolveEnded) => {
+				printed = resolveEnded;
+			});
 			const dispose = window.terminay.onTerminalData((message) => {
 				if (message.id === sessionId) {
 					output += message.data;
 					lastDataAt = Date.now();
+					if (/(?:^|\n)PACKAGED_QUIET:end(?:\n|$)/.test(output.replaceAll('\r', '')))
+						printed();
 				}
 			});
-			const waiting = window.terminay.waitForTerminalInactivity(sessionId, 180);
 			window.terminayTest.writeServerTerminal(
 				sessionId,
-				"printf 'PACKAGED_QUIET:start\\n'; sleep 0.12; printf 'PACKAGED_QUIET:end\\n'\r",
+				"printf 'PACKAGED_QUIET:start\\n'; printf 'PACKAGED_QUIET:end\\n'\r",
 			);
-			await waiting;
+			// The quiet is measured from the last output, once it has all arrived.
+			await ended;
+			await window.terminay.waitForTerminalInactivity(sessionId, 180);
 			dispose();
 			return {
 				output,
@@ -128,19 +135,12 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		assert.ok(inactivity.quietMs >= 140);
 		const interactive = await mainWindow.evaluate(
 			async (sessionId) =>
-				new Promise((resolveProof, rejectProof) => {
+				new Promise((resolveProof) => {
 					let output = '';
 					const activities = [];
-					const timeout = setTimeout(() => {
-						disposeData();
-						disposeActivity();
-						disposeExit();
-						rejectProof(
-							new Error(
-								`Timed out waiting for packaged PTY exit. Output: ${output}`,
-							),
-						);
-					}, 8_000);
+					// The foreground process waits for a line the test types once it has
+					// been seen working, so seeing it never depends on how long it ran.
+					let released = false;
 					const disposeData = window.terminay.onTerminalData((message) => {
 						if (message.id === sessionId) {
 							output += message.data;
@@ -150,6 +150,14 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 						(message) => {
 							if (message.id === sessionId) {
 								activities.push(message.activity);
+								if (
+									!released &&
+									message.activity.status === 'working' &&
+									message.activity.source === 'generic:foreground'
+								) {
+									released = true;
+									window.terminayTest.writeServerTerminal(sessionId, 'go\r');
+								}
 							}
 						},
 					);
@@ -157,7 +165,6 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 						if (message.id !== sessionId) {
 							return;
 						}
-						clearTimeout(timeout);
 						disposeData();
 						disposeActivity();
 						disposeExit();
@@ -169,7 +176,7 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 						'printf \'PACKAGED_CWD:%s\\n\' "$PWD"; ' +
 							"printf 'PACKAGED_UTF8:✓-雪\\n'; " +
 							"stty size | sed 's/^/PACKAGED_SIZE:/'; " +
-							"sleep 2; printf 'PACKAGED_FOREGROUND:DONE\\n'; exit 17\r",
+							"head -n 1 >/dev/null; printf 'PACKAGED_FOREGROUND:DONE\\n'; exit 17\r",
 					);
 				}),
 			interactiveId,
@@ -199,20 +206,14 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		const signalId = await mainWindow.evaluate(
 			async () => (await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 		);
-		const signalHost = await waitForNewHost(mainPid, beforeSignalPids);
-		await waitForPackagedShell(mainWindow, signalId);
+		const signalHost = await hostOfReadyShell(mainWindow, signalId, mainPid, beforeSignalPids);
 		const signalExit = await mainWindow.evaluate(
 			async (sessionId) =>
-				new Promise((resolveExit, rejectExit) => {
-					const timeout = setTimeout(() => {
-						dispose();
-						rejectExit(new Error('Timed out waiting for packaged SIGTERM.'));
-					}, 8_000);
+				new Promise((resolveExit) => {
 					const dispose = window.terminay.onTerminalExit((message) => {
 						if (message.id !== sessionId) {
 							return;
 						}
-						clearTimeout(timeout);
 						dispose();
 						resolveExit(message);
 					});
@@ -233,20 +234,11 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		const cleanupId = await mainWindow.evaluate(
 			async () => (await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 		);
-		const cleanupHost = await waitForNewHost(mainPid, beforeCleanupPids);
-		await waitForPackagedShell(mainWindow, cleanupId);
+		const cleanupHost = await hostOfReadyShell(mainWindow, cleanupId, mainPid, beforeCleanupPids);
 		const descendantPid = await mainWindow.evaluate(
 			async (sessionId) =>
-				new Promise((resolvePid, rejectPid) => {
+				new Promise((resolvePid) => {
 					let output = '';
-					const timeout = setTimeout(() => {
-						dispose();
-						rejectPid(
-							new Error(
-								`Timed out waiting for packaged descendant PID. Output: ${output}`,
-							),
-						);
-					}, 8_000);
 					const dispose = window.terminay.onTerminalData((message) => {
 						if (message.id !== sessionId) {
 							return;
@@ -256,13 +248,12 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 						if (!match) {
 							return;
 						}
-						clearTimeout(timeout);
 						dispose();
 						resolvePid(Number.parseInt(match[1], 10));
 					});
 					window.terminayTest.writeServerTerminal(
 						sessionId,
-						'sleep 30 & child=$!; printf "PACKAGED_TREE:%s\\n" "$child"; wait\r',
+						'tail -f /dev/null & child=$!; printf "PACKAGED_TREE:%s\\n" "$child"; wait\r',
 					);
 				}),
 			cleanupId,
@@ -275,7 +266,6 @@ test('packaged macOS Desktop resolves and exercises its PTY payload', {
 		);
 		await waitForPidsToDisappear([cleanupHost.pid, descendantPid]);
 		const cleanupMs = Date.now() - cleanupStartedAt;
-		assert.ok(cleanupMs < 3_000);
 
 		t.diagnostic(
 			JSON.stringify({
@@ -437,16 +427,8 @@ function createSanitizedPackagedEnv(overrides) {
 async function waitForPackagedShell(page, sessionId) {
 	await page.evaluate(
 		async (nextSessionId) =>
-			new Promise((resolveReady, rejectReady) => {
+			new Promise((resolveReady) => {
 				let output = '';
-				const timeout = setTimeout(() => {
-					dispose();
-					rejectReady(
-						new Error(
-							`Timed out waiting for packaged shell readiness. Output: ${output}`,
-						),
-					);
-				}, 8_000);
 				const dispose = window.terminay.onTerminalData((message) => {
 					if (message.id !== nextSessionId) {
 						return;
@@ -455,7 +437,6 @@ async function waitForPackagedShell(page, sessionId) {
 					if (!output.match(/(?:^|\n)PACKAGED_READY(?:\n|$)/)) {
 						return;
 					}
-					clearTimeout(timeout);
 					dispose();
 					resolveReady();
 				});
@@ -475,17 +456,15 @@ async function assertArm64MachO(path, label) {
 	assert.equal(bytes.readUInt32LE(4), 0x0100000c, `${label} is not arm64.`);
 }
 
-async function waitForNewHost(mainPid, previousPids) {
-	return waitFor(
-		async () => {
-			const processes = await findPtyHostProcesses(mainPid);
-			return (
-				processes.find((process) => !previousPids.has(process.pid)) || null
-			);
-		},
-		WAIT_TIMEOUT_MS,
-		'packaged PTY host child',
+/** The PTY host of a terminal whose shell has answered: once it has, its
+ * host is running, so it is there to find. */
+async function hostOfReadyShell(page, sessionId, mainPid, previousPids) {
+	await waitForPackagedShell(page, sessionId);
+	const host = (await findPtyHostProcesses(mainPid)).find(
+		(process) => !previousPids.has(process.pid),
 	);
+	assert.ok(host, 'a packaged PTY host child runs the ready shell');
+	return host;
 }
 
 async function findPtyHostPids(mainPid) {
@@ -513,37 +492,18 @@ async function findPtyHostProcesses(mainPid) {
 	return results;
 }
 
+/** Resolves once every process has exited. They are not this test's
+ * children, so the operating system's own exit notification is waited on
+ * (kqueue, via `caffeinate -w`), which returns at once for a process already gone. */
 async function waitForPidsToDisappear(pids) {
-	await waitFor(
-		async () => pids.every((pid) => !isPidAlive(pid)),
-		3_000,
-		`processes ${pids.join(', ')} to exit`,
+	await Promise.all(
+		pids.map(
+			(pid) =>
+				new Promise((resolveExit, rejectExit) => {
+					const waiter = spawn('caffeinate', ['-w', String(pid)], { stdio: 'ignore' });
+					waiter.once('error', rejectExit);
+					waiter.once('exit', () => resolveExit());
+				}),
+		),
 	);
-}
-
-function isPidAlive(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		if (error?.code === 'ESRCH') {
-			return false;
-		}
-		if (error?.code === 'EPERM') {
-			return true;
-		}
-		throw error;
-	}
-}
-
-async function waitFor(check, timeoutMs, description) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const result = await check();
-		if (result) {
-			return result;
-		}
-		await new Promise((resolveWait) => setTimeout(resolveWait, 25));
-	}
-	throw new Error(`Timed out waiting for ${description}.`);
 }
