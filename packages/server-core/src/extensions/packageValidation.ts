@@ -8,6 +8,11 @@ import {
 } from '@terminay/extension-api';
 import { assertExtensionCompatible } from './descriptor.js';
 import type { RegistryPackageResolution } from './installerTypes.js';
+import {
+	forEachConcurrently,
+	sha256Hex,
+	TREE_IO_CONCURRENCY,
+} from './treeIo.js';
 
 const MAX_FILES = 20_000;
 const MAX_BYTES = 256 * 1024 * 1024;
@@ -167,10 +172,9 @@ function isAllowedBuiltInLocalDependency(
 async function inventoryTree(
 	root: string,
 ): Promise<readonly { path: string; size: number; hash: string }[]> {
-	const output: { path: string; size: number; hash: string }[] = [];
+	const files: { absolute: string; path: string }[] = [];
 	const scriptedPackages: string[] = [];
 	const nativeModules: string[] = [];
-	let bytes = 0;
 	async function walk(directory: string): Promise<void> {
 		for (const entry of await readdir(directory, { withFileTypes: true })) {
 			const absolute = join(directory, entry.name);
@@ -193,27 +197,34 @@ async function inventoryTree(
 					'native builds in extension dependencies are unsupported',
 				);
 			if (relativePath.endsWith('.node')) nativeModules.push(relativePath);
-			const contents = await readFile(absolute);
-			bytes += contents.byteLength;
-			output.push({
-				path: relativePath,
-				size: contents.byteLength,
-				hash: sha256(contents),
-			});
-			if (output.length > MAX_FILES || bytes > MAX_BYTES)
+			files.push({ absolute, path: relativePath });
+			if (files.length > MAX_FILES)
 				throw new Error('extension package tree exceeds v1 limits');
-			if (relativePath.endsWith('package.json')) {
-				const json = parseObject(contents, relativePath);
-				if (
-					typeof json.scripts === 'object' &&
-					json.scripts !== null &&
-					Object.keys(json.scripts).some((name) => INSTALL_SCRIPTS.has(name))
-				)
-					scriptedPackages.push(relativePath.slice(0, -'package.json'.length));
-			}
 		}
 	}
 	await walk(root);
+	const output: { path: string; size: number; hash: string }[] = [];
+	let bytes = 0;
+	await forEachConcurrently(files, TREE_IO_CONCURRENCY, async (file) => {
+		const contents = await readFile(file.absolute);
+		bytes += contents.byteLength;
+		if (bytes > MAX_BYTES)
+			throw new Error('extension package tree exceeds v1 limits');
+		if (file.path.endsWith('package.json')) {
+			const json = parseObject(contents, file.path);
+			if (
+				typeof json.scripts === 'object' &&
+				json.scripts !== null &&
+				Object.keys(json.scripts).some((name) => INSTALL_SCRIPTS.has(name))
+			)
+				scriptedPackages.push(file.path.slice(0, -'package.json'.length));
+		}
+		output.push({
+			path: file.path,
+			size: contents.byteLength,
+			hash: await sha256Hex(contents),
+		});
+	});
 	// Install scripts are never run. A package that ships a prebuilt native
 	// module under its own directory does not require its install script (it
 	// typically only fetches or verifies a prebuild); any other install script

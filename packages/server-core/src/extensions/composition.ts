@@ -198,52 +198,97 @@ export function createDefaultExtensionManagement(
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};
-	const activateEnabled = async (): Promise<void> => {
-		for (const extensionId of await installer.enabledExtensionIds()) {
-			if (
-				hosts.statuses().find((status) => status.extensionId === extensionId)
-					?.state === 'running'
-			)
-				continue;
-			// A host that reconciliation started and that has already crashed is
-			// the supervisor's to bring back, on the backoff the host chose.
-			// Activating it here as well would restart it twice and skip the wait.
-			if (restarts.has(extensionId)) continue;
-			try {
-				await activate(extensionId);
-			} catch (error) {
-				await installer.setFailureState(
-					extensionId,
-					'failed',
-					error instanceof Error
-						? error.message
-						: 'extension activation failed',
-				);
-			}
+	const recordActivationFailure = async (
+		extensionId: string,
+		error: unknown,
+	): Promise<void> => {
+		await installer.setFailureState(
+			extensionId,
+			'failed',
+			error instanceof Error ? error.message : 'extension activation failed',
+		);
+	};
+	/**
+	 * Activate several extensions at once.
+	 *
+	 * Each host is its own child process, so one waiting on another bought
+	 * nothing but time: a fresh profile launched its built-ins one after
+	 * another on the way to the first window. An extension still starts only
+	 * once those it declares a dependency on have settled, and each failure is
+	 * recorded against its own extension without holding up the others.
+	 */
+	const activateTogether = async (
+		extensionIds: readonly string[],
+	): Promise<void> => {
+		const dependencies = new Map(
+			await Promise.all(
+				extensionIds.map(
+					async (extensionId) =>
+						[
+							extensionId,
+							await installer
+								.launchDescriptor(extensionId)
+								.then(({ manifest }) =>
+									(manifest.extensionDependencies ?? []).map(
+										(dependency) => dependency.extensionId,
+									),
+								)
+								// `activate` reads the same descriptor and reports why
+								// it is unusable; it need not be reported twice.
+								.catch(() => []),
+						] as const,
+				),
+			),
+		);
+		let remaining = [...extensionIds];
+		while (remaining.length > 0) {
+			const waiting = new Set(remaining);
+			const ready = remaining.filter((extensionId) =>
+				(dependencies.get(extensionId) ?? []).every(
+					(dependency) =>
+						dependency === extensionId || !waiting.has(dependency),
+				),
+			);
+			// A dependency cycle cannot be ordered; its members start together.
+			const wave = ready.length > 0 ? ready : remaining;
+			await Promise.all(
+				wave.map((extensionId) =>
+					activate(extensionId).catch((error: unknown) =>
+						recordActivationFailure(extensionId, error),
+					),
+				),
+			);
+			remaining = remaining.filter(
+				(extensionId) => !wave.includes(extensionId),
+			);
 		}
 	};
+	const activateEnabled = async (): Promise<void> => {
+		await activateTogether(
+			(await installer.enabledExtensionIds()).filter(
+				(extensionId) =>
+					hosts.statuses().find((status) => status.extensionId === extensionId)
+						?.state !== 'running' &&
+					// A host that reconciliation started and that has already crashed
+					// is the supervisor's to bring back, on the backoff the host
+					// chose. Activating it here as well would restart it twice and
+					// skip the wait.
+					!restarts.has(extensionId),
+			),
+		);
+	};
 	activateReconciled = async (before, reconciled): Promise<void> => {
-		for (const record of Object.values(reconciled.extensions)) {
-			if (
-				!shouldActivateAfterReconciliation(
-					before.extensions[record.extensionId],
-					record,
-					hosts,
+		await activateTogether(
+			Object.values(reconciled.extensions)
+				.filter((record) =>
+					shouldActivateAfterReconciliation(
+						before.extensions[record.extensionId],
+						record,
+						hosts,
+					),
 				)
-			)
-				continue;
-			try {
-				await activate(record.extensionId);
-			} catch (error) {
-				await installer.setFailureState(
-					record.extensionId,
-					'failed',
-					error instanceof Error
-						? error.message
-						: 'extension activation failed',
-				);
-			}
-		}
+				.map((record) => record.extensionId),
+		);
 	};
 	/**
 	 * Bring a failed host back on its own.
