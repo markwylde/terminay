@@ -29,16 +29,35 @@ export interface TerminalPasteProgress {
 export type TerminalPasteChunkScheduler = () => Promise<void>
 
 /**
+ * Whether the panel's own attachment may write to the PTY. `pending` is the
+ * state of a panel whose attachment is being established or replaced: it has
+ * not yet been told whether it holds the interactive presentation lease, so
+ * what the user types is held rather than sent or refused.
+ */
+export type TerminalInputPresentationRole = 'controller' | 'pending' | 'read_only'
+
+/**
  * Serializes writes for one server-backed panel. The attachment transport is
  * asynchronous, so issuing writes directly from xterm's onData handler can
  * let later input overtake an earlier write. Keep the queue bounded by the
- * encoded byte length and invalidate it when the panel's attachment lifecycle
- * ends.
+ * encoded byte length.
+ *
+ * The queue belongs to the mounted panel, not to one attachment. Replacing the
+ * panel's attachment (congestion recovery, a refused resume, a rebind onto a
+ * replacement connection) is a `handoff`: input already queued, and input
+ * typed while the replacement is attaching, is held and then delivered in
+ * order, once, by the replacement when it holds the presentation. Only a
+ * definite read-only presentation refuses input, and only a transport failure
+ * or the panel's disposal closes the queue.
  */
 export class ServerTerminalInputQueue {
 	private readonly encoder = new TextEncoder()
 	private readonly items: QueuedServerTerminalInputItem[] = []
 	private attachment: TerminalPanelAttachment | null = null
+	// The panel applies each attachment's presentation before it attaches that
+	// attachment here, so a queue that is never told otherwise writes to what
+	// it is attached to.
+	private role: TerminalInputPresentationRole = 'controller'
 	private queuedBytes = 0
 	private attachmentGeneration = 0
 	private pumping = false
@@ -50,19 +69,25 @@ export class ServerTerminalInputQueue {
 			async () => {},
 	) {}
 
-	enqueue(data: string): void {
-		if (this.closed) {
-			return
+	get isClosed(): boolean {
+		return this.closed
+	}
+
+	/** Returns whether the input was accepted for delivery. */
+	enqueue(data: string): boolean {
+		if (this.closed || this.role === 'read_only') {
+			return false
 		}
 
 		const byteLength = this.encoder.encode(data).byteLength
 		if (this.queuedBytes + byteLength > MAX_PANEL_INPUT_QUEUE_BYTES) {
-			return
+			return false
 		}
 
 		this.items.push({ data, byteLength })
 		this.queuedBytes += byteLength
 		void this.pump()
+		return true
 	}
 
 	/**
@@ -74,7 +99,7 @@ export class ServerTerminalInputQueue {
 		data: string,
 		onProgress: (progress: TerminalPasteProgress) => void,
 	): void {
-		if (this.closed || data.length === 0) return
+		if (this.closed || this.role === 'read_only' || data.length === 0) return
 
 		const totalBytes = this.encoder.encode(data).byteLength
 		if (totalBytes <= MAX_PANEL_INPUT_QUEUE_BYTES) {
@@ -105,6 +130,36 @@ export class ServerTerminalInputQueue {
 
 		this.attachment = attachment
 		this.attachmentGeneration += 1
+		void this.pump()
+	}
+
+	/**
+	 * The panel's attachment is being replaced. Stop writing to the old one
+	 * but keep everything not yet sent; it goes to the replacement once that
+	 * is attached and holds the presentation. A write already in flight on the
+	 * old attachment settles there first, so nothing overtakes it.
+	 */
+	handoff(): void {
+		if (this.closed) return
+		this.attachment = null
+		this.attachmentGeneration += 1
+		this.role = 'pending'
+	}
+
+	/**
+	 * Apply the presentation the server reported for the panel's current
+	 * attachment. A controller delivers what is queued; a read-only observer
+	 * may not write, so queued input is discarded and new input refused, which
+	 * the observer's control bar makes visible.
+	 */
+	setPresentationRole(role: 'controller' | 'read_only'): void {
+		if (this.closed) return
+		this.role = role
+		if (role === 'read_only') {
+			this.discardItems()
+			this.queuedBytes = 0
+			return
+		}
 		void this.pump()
 	}
 
@@ -150,7 +205,7 @@ export class ServerTerminalInputQueue {
 		try {
 			while (!this.closed && this.items.length > 0) {
 				const attachment = this.attachment
-				if (attachment === null) {
+				if (attachment === null || this.role !== 'controller') {
 					return
 				}
 
@@ -174,7 +229,8 @@ export class ServerTerminalInputQueue {
 					await attachment.write(chunk.data)
 					delivered = true
 				} catch (error) {
-					if (!this.closed && this.attachment === attachment && this.attachmentGeneration === generation) {
+					if (this.closed) return
+					if (this.attachment === attachment && this.attachmentGeneration === generation) {
 						if (isTerminalPresentationOwnershipError(error)) {
 							// The server definitively rejected this write before PTY delivery
 							// because control changed after it was queued. This is normal
@@ -186,7 +242,15 @@ export class ServerTerminalInputQueue {
 						// send later input and risk changing shell command order.
 						this.close()
 						this.onError(error)
+					} else if (isOutcomeUnknownWriteError(error)) {
+						// The attachment was replaced while this write was in flight and
+						// its outcome is unknown: it may already be in the PTY. Never
+						// send it twice; the input behind it goes on to the replacement.
+						delivered = true
 					}
+					// Otherwise the replaced attachment definitively refused the write
+					// before it reached the PTY. It stays first in line and is sent,
+					// once, by the replacement.
 				}
 				if (!delivered || this.items[0] !== item) continue
 
@@ -216,7 +280,12 @@ export class ServerTerminalInputQueue {
 			}
 		} finally {
 			this.pumping = false
-			if (!this.closed && this.items.length > 0 && this.attachment !== null) {
+			if (
+				!this.closed &&
+				this.items.length > 0 &&
+				this.attachment !== null &&
+				this.role === 'controller'
+			) {
 				void this.pump()
 			}
 		}
@@ -269,6 +338,16 @@ function utf8CodePointBytes(codePoint: number): number {
 	if (codePoint <= 0x7ff) return 2
 	if (codePoint <= 0xffff) return 3
 	return 4
+}
+
+/**
+ * A write whose result never came back: the transport went away after it was
+ * sent, or the reply could not be read. It may have reached the PTY.
+ */
+function isOutcomeUnknownWriteError(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null) return false
+	const code = (error as { code?: unknown }).code
+	return code === 'unknown_command_outcome' || code === 'invalid_response'
 }
 
 export function isTerminalPresentationOwnershipError(error: unknown): boolean {
