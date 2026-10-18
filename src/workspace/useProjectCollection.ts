@@ -134,6 +134,7 @@ export function useProjectCollection<TTerminal>({
 	holdProjectOrderRef,
 	holdActiveProjectIdRef,
 	sidebarSettings,
+	sidebarSettingsKnown = true,
 	stayOpenWhenEmpty = false,
 	presentsEveryView = false,
 	workspaceSnapshotStore,
@@ -162,6 +163,16 @@ export function useProjectCollection<TTerminal>({
 	holdActiveProjectIdRef?: MutableRefObject<string | null>;
 	sidebarSettings: SidebarSettings;
 	/**
+	 * Whether `sidebarSettings` are this device's saved preferences rather than
+	 * the defaults held while they load. Until they are known, a server
+	 * workspace presents no project: a project's sidebar visibility and group
+	 * are device preferences, so a tab presented from defaults would show the
+	 * wrong sidebar, and a toggle made then would be overwritten by the
+	 * restored preference. The first project a person can act on is the
+	 * restored one.
+	 */
+	sidebarSettingsKnown?: boolean;
+	/**
 	 * Whether this window outlives its last project. The main window does: with
 	 * no project it shows Home. A popped-out window's only purpose is its
 	 * projects, so closing its last one closes it.
@@ -189,7 +200,7 @@ export function useProjectCollection<TTerminal>({
 	// terminal space, ADR-0030) never become project tabs, so the tab bar,
 	// switcher, inventory, and Tabs section that read `projects` never see them.
 	const initialServerProjects =
-		initialServerSnapshot == null
+		initialServerSnapshot == null || !sidebarSettingsKnown
 			? []
 			: presentedProjects(
 					initialServerSnapshot,
@@ -253,6 +264,7 @@ export function useProjectCollection<TTerminal>({
 	const [activeProjectId, setActiveProjectId] = useState(() => {
 		if (isAdoptWindow) return '';
 		if (hasServerWorkspace && initialServerSnapshot === null) return '';
+		if (hasServerWorkspace && !sidebarSettingsKnown) return '';
 		const storedId = readPresentationActiveProject(
 			projectColorScope,
 			initialViewId,
@@ -278,6 +290,13 @@ export function useProjectCollection<TTerminal>({
 		if (isAdoptWindow) return false;
 		return recallHomeSelected(projectColorScope, initialViewId);
 	});
+	/**
+	 * Whether the server's projects have been presented with this device's
+	 * sidebar preferences. Until then the workspace is still hydrating, even
+	 * when the server's snapshot is already known.
+	 */
+	const [isPresentingKnownSidebars, setPresentingKnownSidebars] =
+		useState(sidebarSettingsKnown);
 	const reservedProjectColorsRef = useRef(new Set<string>());
 	const [projectCreationError, setProjectCreationError] = useState<
 		string | null
@@ -340,6 +359,9 @@ export function useProjectCollection<TTerminal>({
 
 	useEffect(() => {
 		if (workspaceSnapshotStore === undefined) return;
+		// Admit the server's projects only once this device's sidebar
+		// preferences are known; `subscribe` replays the snapshot already held.
+		if (!sidebarSettingsKnown) return;
 		return workspaceSnapshotStore.subscribe((snapshot) => {
 			const viewId = workspaceViewId ?? snapshot.viewOrder[0];
 			const orderedServerProjects = presentedProjects(
@@ -427,11 +449,13 @@ export function useProjectCollection<TTerminal>({
 			);
 			activeProjectIdRef.current = nextActiveId;
 			setActiveProjectId(nextActiveId);
+			setPresentingKnownSidebars(true);
 		});
 	}, [
 		holdActiveProjectIdRef,
 		presentsEveryView,
 		projectColorScope,
+		sidebarSettingsKnown,
 		sidebarVisibilityScope,
 		workspaceSnapshotStore,
 		workspaceViewId,
@@ -441,7 +465,11 @@ export function useProjectCollection<TTerminal>({
 		if (workspaceSnapshotStore !== undefined) {
 			const snapshot = workspaceSnapshotStore.snapshot;
 			const viewId = workspaceViewId ?? snapshot?.viewOrder[0];
-			if (snapshot === null || viewId === undefined) {
+			if (
+				snapshot === null ||
+				viewId === undefined ||
+				!isPresentingKnownSidebars
+			) {
 				setProjectCreationError('Workspace is still loading from the server.');
 				return;
 			}
@@ -503,6 +531,7 @@ export function useProjectCollection<TTerminal>({
 		setActiveProjectId(`project-${index}`);
 	}, [
 		defaultProjectRoot,
+		isPresentingKnownSidebars,
 		projectColorScope,
 		workspaceSnapshotStore,
 		workspaceViewId,
@@ -833,7 +862,7 @@ export function useProjectCollection<TTerminal>({
 		adoptProject,
 		canAddProject:
 			workspaceSnapshotStore === undefined ||
-			workspaceSnapshotStore.snapshot !== null,
+			(workspaceSnapshotStore.snapshot !== null && isPresentingKnownSidebars),
 		closeProject,
 		homePath: defaultProjectRoot,
 		// A window holding no project has nothing but Home to show.
@@ -841,10 +870,11 @@ export function useProjectCollection<TTerminal>({
 			isHomeSelected ||
 			(workspaceSnapshotStore !== undefined &&
 				workspaceSnapshotStore.snapshot !== null &&
+				isPresentingKnownSidebars &&
 				projects.length === 0),
 		isWorkspaceHydrating:
 			workspaceSnapshotStore !== undefined &&
-			workspaceSnapshotStore.snapshot === null,
+			(workspaceSnapshotStore.snapshot === null || !isPresentingKnownSidebars),
 		projectCreationError,
 		projects,
 		projectsRef,
