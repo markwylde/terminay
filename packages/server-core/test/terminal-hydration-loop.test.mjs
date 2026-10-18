@@ -54,27 +54,6 @@ function createPtyFactory() {
   };
 }
 
-const settle = async (turns = 25) => {
-  for (let index = 0; index < turns; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-};
-
-/**
- * Wait for a condition instead of for a fixed number of event-loop turns.
- *
- * Recovery crosses real timers - a fresh presentation waits for the checkpoint
- * drain within a deadline - so counting turns measures how loaded the machine
- * is rather than whether the terminal recovered. Returns false on timeout so
- * the caller can assert with a useful message.
- */
-const waitUntil = async (predicate, timeoutMs = 15_000) => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  return predicate();
-};
-
 async function harness() {
   const pty = createPtyFactory();
   const checkpoints = new TerminalPresentationCheckpointAuthority();
@@ -83,6 +62,9 @@ async function harness() {
     ptyFactory: pty,
     generateSessionId: (() => { let n = 0; return () => `session-hydration-${++n}`; })(),
     presentationCheckpoints: checkpoints,
+    // Settle deadlines never pass: a fresh presentation waits for the
+    // checkpoint authority to drain, however long the machine takes.
+    presentationSettleTimer: { setTimeout: () => undefined, clearTimeout: () => undefined },
   });
   const session = await service.createSession({ projectId: "project-hydration", cols: 80, rows: 24 });
   const journal = new OrderedEventJournal();
@@ -146,10 +128,11 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
     for (let index = 0; index < 400; index += 1) h.pty.processes[0].emitData("x".repeat(1024));
     // Let the checkpoint authority finish ingesting, so this test measures the
     // hydration contract rather than how many turns a drain happened to get.
-    await h.service.settlePresentation(h.identity, 10_000);
-    await settle(20);
+    await h.service.settlePresentation(h.identity);
 
     const rendered = [];
+    let liveRendered;
+    const live = new Promise((resolve) => { liveRendered = resolve; });
     const skips = [];
     let attaches = 0;
     const MAX = 6;
@@ -175,6 +158,7 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
         if (event.type === "output") {
           rendered.push(new TextDecoder().decode(event.bytes));
           void attachment.ack(event.nextPosition).catch(() => undefined);
+          if (rendered.join("").includes("LIVE-AFTER-HYDRATION")) liveRendered();
         }
         if (event.type === "skip") skips.push(event);
         if (isRecoverable(event) && attaches <= MAX) void openPanel();
@@ -184,7 +168,13 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
     };
 
     await openPanel();
-    await settle(120);
+
+    // A hydrated terminal must stream live output. Live output is delivered
+    // behind every skip the attachment carries, and a recovery would count
+    // its re-attach the moment the skip arrived, so once this has been
+    // rendered everything below is final.
+    h.pty.processes[0].emitData("LIVE-AFTER-HYDRATION\n");
+    await live;
 
     // A fresh presentation waits for the checkpoint authority to catch up, so
     // it pins a current screen rather than one that is stale by whatever was
@@ -198,14 +188,6 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
       skips.some(isRecoverable),
       false,
       "a gap established during hydration is never a reason to hydrate again",
-    );
-
-    h.pty.processes[0].emitData("LIVE-AFTER-HYDRATION\n");
-
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("LIVE-AFTER-HYDRATION")),
-      true,
-      "a hydrated terminal must stream live output",
     );
     assert.equal(attaches, 1, `hydration must not re-arm itself (attaches=${attaches})`);
   } finally {
