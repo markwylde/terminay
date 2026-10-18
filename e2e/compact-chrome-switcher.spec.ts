@@ -193,11 +193,10 @@ test.describe('compact chrome', () => {
 		await expect(
 			mainWindow.locator('.dv-tabs-and-actions-container:visible'),
 		).toHaveCount(0);
-		await longPress(terminalRow);
-
-		await expect(
+		await longPress(
+			terminalRow,
 			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
-		).toBeVisible();
+		);
 		await cancelEditWindow(mainWindow);
 	});
 
