@@ -15,6 +15,15 @@ import {
 	submitEditWindow,
 } from './support/ui';
 import { createStartedProject } from './support/project-start';
+import {
+	commandArrived,
+	commandGate,
+	endSettlePeriod,
+	HELD_SERVER_CLOCK,
+	INPUT_QUIET_MS,
+	INPUT_WINDOW_MS,
+	serverClock,
+} from './support/server-clock';
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	return await activeTerminalSessionId(page);
@@ -116,23 +125,42 @@ function visibleTerminalRoot(page: Page) {
 
 async function blurTerminalInput(page: Page): Promise<void> {
 	// A new terminal takes focus once it has attached, which on a busy runner
-	// can be after its panel is visible. Blur until the terminal stays
-	// unfocused, so a focus that lands late is not mistaken for one the test's
-	// own gesture caused.
-	const terminalInputFocused = () =>
-		page.evaluate(
+	// can be after its panel is visible. Wait for that focus, then take it
+	// away, so a focus that lands late is not mistaken for one the test's own
+	// gesture caused.
+	await expectTerminalInputFocused(page);
+	await page.evaluate(() => {
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
+	});
+	expect(
+		await page.evaluate(
 			() =>
 				document.activeElement?.classList.contains('xterm-helper-textarea') ??
 				false,
-		);
-	await expect(async () => {
-		await page.evaluate(() => {
-			const active = document.activeElement;
-			if (active instanceof HTMLElement) active.blur();
-		});
-		await page.waitForTimeout(300);
-		expect(await terminalInputFocused()).toBe(false);
-	}).toPass({ timeout: 10_000 });
+		),
+	).toBe(false);
+}
+
+/**
+ * A round trip from the window to the main process and back. The main
+ * process handles a window's requests in the order they were sent, so
+ * whatever the window asked of it before this has been handled when it
+ * returns.
+ */
+async function hostRoundTrip(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		await window.terminayHost?.readTerminalClipboard();
+	});
+}
+
+/** The terminal's input has focus, and the window counts it as focused. */
+async function expectSessionFocused(page: Page, sessionId: string) {
+	await expect(
+		page
+			.locator(`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`)
+			.locator('.xterm-helper-textarea'),
+	).toBeFocused();
 }
 
 async function dispatchTerminalTouchPointer(
@@ -1045,14 +1073,13 @@ test.describe('terminal behavior', () => {
 		});
 		await expect(nameField).toHaveValue('');
 		await expect(nameField).toHaveAttribute('placeholder', 'Terminal 1');
-		await mainWindow.waitForTimeout(500);
-		await expect
-			.poll(async () =>
-				electronApp.evaluate(
-					({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
-				),
-			)
-			.toBe(windowCountBeforeEdit);
+		// Any window the double-click asked for has been made by now.
+		await hostRoundTrip(mainWindow);
+		expect(
+			await electronApp.evaluate(
+				({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+			),
+		).toBe(windowCountBeforeEdit);
 
 		await cancelEditWindow(editWindow);
 	});
@@ -1064,10 +1091,10 @@ test.describe('terminal behavior', () => {
 			.locator('.project-workspace--active .terminal-tab-content--active')
 			.first();
 		await expect(activeTerminalTab).toBeVisible();
-		await longPress(activeTerminalTab);
-		await expect(
+		await longPress(
+			activeTerminalTab,
 			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
-		).toBeVisible();
+		);
 		await cancelEditWindow(mainWindow);
 	});
 
@@ -1348,9 +1375,10 @@ test.describe('terminal behavior', () => {
 		await expect.poll(async () => mainWindow.url()).toBe(initialUrl);
 	});
 
-	test('terminal activity overview jumps to inactive terminals across projects', async ({
-		mainWindow,
-	}) => {
+	test('terminal activity overview jumps to inactive terminals across projects', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const finish = await commandGate(userDataDir);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
@@ -1368,11 +1396,13 @@ test.describe('terminal behavior', () => {
 			);
 		if (!backgroundSessionId)
 			throw new Error('Terminal 2 session id is unavailable');
+		const finishing = `${finish.wait}; printf 'overview-activity-%s\\n' hit; printf '\\033]9;4;0;\\007'`;
 		await writeToTerminalSession(
 			mainWindow,
 			backgroundSessionId,
-			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
+			`${finishing}\r`,
 		);
+		await commandArrived(electronApp, backgroundSessionId, finishing);
 
 		await mainWindow
 			.locator('.project-workspace--active .terminal-tab-content')
@@ -1386,6 +1416,16 @@ test.describe('terminal behavior', () => {
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
+		// The work finishes once the typing is long past, with another project
+		// in front, and its notification stays for the whole settle period.
+		const clock = serverClock(electronApp);
+		await clock.advance(INPUT_WINDOW_MS);
+		await finish.open();
+		await expect
+			.poll(() => clock.output(backgroundSessionId))
+			.toContain('overview-activity-hit');
+		await expect.poll(async () => (await clock.notifications()).pending).toBe(1);
+		await endSettlePeriod(electronApp);
 
 		const activityButton = mainWindow.getByRole('button', {
 			name: /^Notifications/,
@@ -1489,9 +1529,12 @@ test.describe('terminal behavior', () => {
 		await expect(activityButton).toBeVisible();
 	});
 
-	test('terminal activity overview uses the same recent-input suppression as tab status dots', async ({
-		mainWindow,
-	}) => {
+	test('terminal activity overview uses the same recent-input suppression as tab status dots', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const clock = serverClock(electronApp);
+		const reply = await commandGate(userDataDir);
+		const firstSessionId = await getActiveSessionId(mainWindow);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
@@ -1506,26 +1549,48 @@ test.describe('terminal behavior', () => {
 
 		await quickTab.click();
 		const quickSessionId = await getActiveSessionId(mainWindow);
-		await writeToTerminalSession(
-			mainWindow,
-			quickSessionId,
-			"sleep 0.1; printf 'quick-activity-suppressed\\n'\r",
-		);
+		const quick = `${reply.wait}; printf 'quick-activity-%s\\n' suppressed`;
+		await writeToTerminalSession(mainWindow, quickSessionId, `${quick}\r`);
+		await commandArrived(electronApp, quickSessionId, quick);
 
+		// The reply comes once the user has left the tab, still inside the
+		// second after their own typing.
 		await firstTab.click();
-
-		await mainWindow.waitForTimeout(250);
+		await expectSessionFocused(mainWindow, firstSessionId);
+		await reply.open();
+		await expect
+			.poll(() => clock.output(quickSessionId))
+			.toContain('quick-activity-suppressed');
+		expect(await clock.activity(quickSessionId)).toMatchObject({
+			acknowledged: true,
+			attention: false,
+		});
+		expect((await clock.activity(quickSessionId))?.status).not.toBe('working');
+		expect(await clock.notifications()).toMatchObject({ pending: 0 });
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 
-		await mainWindow.waitForTimeout(1_100);
+		// Past the second in which it was the user's, it is still theirs, and
+		// nothing is held to be announced.
+		await clock.advance(INPUT_WINDOW_MS + 100);
+		expect(await clock.activity(quickSessionId)).toMatchObject({
+			acknowledged: true,
+			attention: false,
+		});
+		expect(await clock.notifications()).toMatchObject({
+			pending: 0,
+			published: 0,
+		});
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
-	test('terminal activity ignores output immediately after leaving a tab', async ({
-		mainWindow,
-	}) => {
+	test('terminal activity ignores output immediately after leaving a tab', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const clock = serverClock(electronApp);
+		const noise = await commandGate(userDataDir);
+		const firstSessionId = await getActiveSessionId(mainWindow);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
@@ -1540,56 +1605,88 @@ test.describe('terminal behavior', () => {
 
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
-		await mainWindow.waitForTimeout(1_100);
-		await writeToTerminalSession(
-			mainWindow,
-			quietSessionId,
-			"sleep 0.1; printf 'focus-change-noise\\n'\r",
-		);
+		// Whatever the new terminal started with is long past.
+		await clock.advance(INPUT_WINDOW_MS + 100);
+		const command = `${noise.wait}; printf 'focus-change-%s\\n' noise`;
+		await writeToTerminalSession(mainWindow, quietSessionId, `${command}\r`);
+		await commandArrived(electronApp, quietSessionId, command);
 
+		// Output arriving just after the user has left the tab.
 		await firstTab.click();
-
-		await mainWindow.waitForTimeout(250);
+		await expectSessionFocused(mainWindow, firstSessionId);
+		await noise.open();
+		await expect
+			.poll(() => clock.output(quietSessionId))
+			.toContain('focus-change-noise');
+		expect(await clock.activity(quietSessionId)).toMatchObject({
+			acknowledged: true,
+			attention: false,
+		});
+		expect(await clock.notifications()).toMatchObject({ pending: 0 });
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
-	test('typing into a terminal does not show it as working, and a command that keeps printing does', async ({
-		mainWindow,
-	}) => {
+	test('typing into a terminal does not show it as working, and a command that keeps printing does', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const clock = serverClock(electronApp);
+		const tick = await commandGate(userDataDir);
 		const sessionId = await getActiveSessionId(mainWindow);
 		// The tab hides its working indicator by default; the sidebar row shows
 		// the server's status as it is.
 		const status = mainWindow.locator(
 			`[data-folder-terminal-session="${sessionId}"] .folders-tree__status`,
 		);
+		const serverStatus = async () =>
+			(await clock.activity(sessionId))?.status;
 		// Let the first prompt's own working period lapse before typing.
-		await expect(status).not.toHaveAttribute('data-agent-state', 'working', {
-			timeout: 5_000,
-		});
+		await clock.advance(INPUT_QUIET_MS);
+		await expect.poll(serverStatus).not.toBe('working');
+		await expect(status).not.toHaveAttribute('data-agent-state', 'working');
 
-		await writeToTerminalSession(
-			mainWindow,
-			sessionId,
-			'for i in 1 2 3 4 5 6 7 8;',
-		);
-		const observed = new Set<string | null>();
-		for (const key of ' do echo typing-tick; sleep 0.5; done') {
+		const loop = `for i in 1 2 3; do ${tick.wait}; printf 'typing-%s\\n' tick; done`;
+		const head = 'for i in 1 2 3;';
+		await writeToTerminalSession(mainWindow, sessionId, head);
+		await expect.poll(() => clock.input(sessionId)).toContain(head);
+		// Each key is typed half a second after the last, so the typing goes on
+		// for far longer than the second its echo is the user's. After each
+		// key's echo has been taken in, the server and the row say it is not
+		// working.
+		let typed = head;
+		for (const key of loop.slice(head.length)) {
+			await clock.advance(INPUT_WINDOW_MS / 2);
+			const before = (await clock.output(sessionId)).length;
 			await mainWindow.keyboard.type(key);
-			await mainWindow.waitForTimeout(80);
-			observed.add(await status.getAttribute('data-agent-state'));
+			typed += key;
+			await expect
+				.poll(() => clock.input(sessionId))
+				.toContain(typed);
+			await expect
+				.poll(async () => (await clock.output(sessionId)).length)
+				.toBeGreaterThan(before);
+			expect(await serverStatus()).not.toBe('working');
 		}
-		expect([...observed]).not.toContain('working');
+		await expect(status).not.toHaveAttribute('data-agent-state', 'working');
 
 		await mainWindow.keyboard.press('Enter');
-		await expect(status).toHaveAttribute('data-agent-state', 'working', {
-			timeout: 4_000,
-		});
+		await commandArrived(electronApp, sessionId, loop);
+		// Printing well after the typing is work.
+		await clock.advance(INPUT_WINDOW_MS);
+		await tick.open();
+		await expect
+			.poll(() => clock.output(sessionId))
+			.toContain('typing-tick');
+		await expect.poll(serverStatus).toBe('working');
+		await expect(status).toHaveAttribute('data-agent-state', 'working');
 	});
 
-	test('terminal tab settings can disable activity indicators for one tab', async ({
-		mainWindow,
-	}) => {
+	test('terminal tab settings can disable activity indicators for one tab', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const clock = serverClock(electronApp);
+		const later = await commandGate(userDataDir);
+		const firstSessionId = await getActiveSessionId(mainWindow);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
@@ -1604,6 +1701,11 @@ test.describe('terminal behavior', () => {
 
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
+		// The command is typed first and prints only once the test opens its
+		// gate, after activity is turned off for the tab.
+		const command = `${later.wait}; printf 'quiet-activity-%s\\n' hidden`;
+		await writeToTerminalSession(mainWindow, quietSessionId, `${command}\r`);
+		await commandArrived(electronApp, quietSessionId, command);
 
 		await quietTab.click({ button: 'right' });
 		await contextMenuItem(mainWindow, 'Open Settings').click();
@@ -1611,22 +1713,32 @@ test.describe('terminal behavior', () => {
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
 		await submitEditWindow(mainWindow);
-		await writeToTerminalSession(
-			mainWindow,
-			quietSessionId,
-			"sleep 1.2; printf 'quiet-activity-hidden\\n'\r",
-		);
+		// Closing the editor gives the terminal it edited its focus back; the
+		// user moves on from there.
+		await expectSessionFocused(mainWindow, quietSessionId);
 
+		// Output once the typing is long past, with the user on another tab,
+		// and then a whole settle period.
 		await firstTab.click();
-		await mainWindow.waitForTimeout(1_100);
+		await expectSessionFocused(mainWindow, firstSessionId);
+		await clock.advance(INPUT_WINDOW_MS + 200);
+		await later.open();
+		await expect
+			.poll(() => clock.output(quietSessionId))
+			.toContain('quiet-activity-hidden');
+		await endSettlePeriod(electronApp);
 
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		expect(await clock.notifications()).toMatchObject({ published: 0 });
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 	});
 
-	test('active terminal tabs do not keep a finished indicator after structured completion', async ({
-		mainWindow,
-	}) => {
+	test('active terminal tabs do not keep a finished indicator after structured completion', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		const clock = serverClock(electronApp);
+		const done = await commandGate(userDataDir);
+		const sessionId = await getActiveSessionId(mainWindow);
 		const activeTab = mainWindow
 			.locator('.project-workspace--active .terminal-tab-content--active')
 			.first();
@@ -1634,9 +1746,19 @@ test.describe('terminal behavior', () => {
 			'.agent-status-indicator[data-agent-state="done"]',
 		);
 
+		const command = `${done.wait}; printf '\\033]9;4;0;\\007'; printf 'structured-%s\\n' done`;
 		await mainWindow.locator('.terminal-panel').first().click();
-		await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;0;\\007'");
+		await mainWindow.keyboard.type(command);
 		await mainWindow.keyboard.press('Enter');
+		await commandArrived(electronApp, sessionId, command);
+		// The completion comes once the typing is long past, in the terminal
+		// the user is looking at.
+		await clock.advance(INPUT_QUIET_MS);
+		await done.open();
+		await expect
+			.poll(() => clock.output(sessionId))
+			.toContain('structured-done');
+		await endSettlePeriod(electronApp);
 
 		await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(finishedIndicator).toHaveCount(0);
