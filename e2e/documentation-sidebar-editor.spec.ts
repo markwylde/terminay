@@ -9,10 +9,6 @@ import {
 } from './support/renderer-clock';
 import { openDocumentationSidebar, setProjectRoot } from './support/ui';
 
-/** How long the editor takes what it reports after a change of views as the
- * change of views, not an edit (DocumentationEditor), and a little more. */
-const VIEW_CHANGE_QUIET_MS = 300;
-
 test('Documentation groups Markdown by folder and opens the rich document surface', async ({
 	createWorkspace,
 	mainWindow,
@@ -153,9 +149,10 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 			'utf8',
 		);
 	await expect.poll(onDisk).toContain(':::info');
-	// Changing views quiets the editor's change reports for a moment of the
-	// renderer's time; the test's clock is on it from here.
-	await installRendererClock(mainWindow);
+	// An admonition's body reaches the document when the views change, so the
+	// change of views that carries these words is saving an edit.
+	await infoAdmonition.locator('[contenteditable="true"]').click();
+	await mainWindow.keyboard.type('Noted before views');
 	await editor.getByRole('radio', { name: 'Source mode' }).click();
 	await expect(editor.getByText('Source mode', { exact: true })).toBeVisible();
 	await expect(editor.locator('.cm-sourceView')).toHaveCSS(
@@ -169,23 +166,23 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		.all()) {
 		await expect(pane).toHaveCSS('background-color', 'rgb(13, 16, 20)');
 	}
-	// Changing views is not an edit; whether it lost the admonition is read
-	// off the next save, below, which comes after anything it saved.
+	// Whether the changes of views kept the admonition and its words is read
+	// off the next save, below, which comes after anything they saved.
 
 	await editor.getByRole('radio', { name: 'Rich text', exact: true }).click();
-	// An edit is one again once that moment is over.
-	await holdRendererClock(mainWindow);
-	await advanceRendererClock(mainWindow, VIEW_CHANGE_QUIET_MS);
-	await releaseRendererClock(mainWindow);
-	// Saves are made one after another, so the one that carries this edit
-	// comes after any the change of views made, and the admonition is in it.
+	// Typing straight after a change of views is an edit like any other.
 	await richText.locator('h1').first().click();
 	await mainWindow.keyboard.press('End');
 	await mainWindow.keyboard.type(' after-views');
+	// Saves are made one after another, so the one that carries this edit
+	// comes after any the change of views made, and the admonition is in it.
 	await expect
 		.poll(async () => {
 			const text = await onDisk();
-			return { info: text.includes(':::info'), edit: text.includes('after-views') };
+			return {
+				info: text.includes(':::info\nNoted before views\n:::'),
+				edit: text.includes('# Hello after-views'),
+			};
 		})
 		.toEqual({ info: true, edit: true });
 	await editor.getByRole('button', { name: 'Insert Table' }).click();
@@ -547,6 +544,46 @@ test('Documentation does not rewrite a document that was only read', async ({
 		await mainWindow.locator('.file-panel').getAttribute('data-dirty'),
 	).toBe('false');
 	expect(await workspace.readText('README.md')).toBe(handWrappedDocument);
+});
+
+test('Documentation does not rewrite a document whose views were only changed', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	// Changing views makes an empty admonition's editor write its blank
+	// paragraph back, and the editor reports the document spelled anew.
+	const document = '# Views\n\n:::info\n:::\n';
+	const workspace = await createWorkspace({
+		name: 'documentation-view-changes-read-only',
+		seed: { files: { 'README.md': document } },
+	});
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	await openDocumentationSidebar(mainWindow);
+	// The autosave delay is the renderer's time: the test's clock is on it
+	// from before the views change.
+	await installRendererClock(mainWindow);
+	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
+	const editor = mainWindow.locator('.documentation-editor');
+	const admonition = editor.locator(
+		'.documentation-editor__admonition--info [contenteditable="true"]',
+	);
+	await admonition.click();
+	await editor.getByRole('radio', { name: 'Source mode' }).click();
+	await expect(editor.locator('.cm-sourceView')).toBeVisible();
+	await editor.getByRole('radio', { name: 'Diff mode' }).click();
+	await expect(editor.locator('.cm-mergeViewEditor').first()).toBeVisible();
+	await editor.getByRole('radio', { name: 'Rich text', exact: true }).click();
+	await expect(admonition).toBeVisible();
+
+	// Well past the one-second autosave delay, nothing is unsaved and the bytes
+	// on disk are still the author's.
+	await holdRendererClock(mainWindow);
+	await advanceRendererClock(mainWindow, 2_500);
+	await releaseRendererClock(mainWindow);
+	expect(
+		await mainWindow.locator('.file-panel').getAttribute('data-dirty'),
+	).toBe('false');
+	expect(await workspace.readText('README.md')).toBe(document);
 });
 
 test('Documentation keeps typed whitespace and the wrapping of untouched prose', async ({

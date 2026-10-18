@@ -1,3 +1,4 @@
+import * as mdxEditor from '@mdxeditor/editor';
 import {
 	AdmonitionDirectiveDescriptor,
 	BlockTypeSelect,
@@ -29,14 +30,21 @@ import {
 	lexicalTheme as mdxEditorLexicalTheme,
 	quotePlugin,
 	realmPlugin,
+	syntaxExtensions$,
 	tablePlugin,
 	thematicBreakPlugin,
 	toolbarPlugin,
 	UndoRedo,
 } from '@mdxeditor/editor';
+import type { NodeRef } from '@mdxeditor/gurx';
 import { $createTextNode } from 'lexical';
 import type * as Mdast from 'mdast';
+import type { Options as FromMarkdownOptions } from 'mdast-util-from-markdown';
+import { sameMarkdownDocument } from './documentationEditorChanges';
 import { collapseSoftLineBreaks } from './documentationMarkdownCompat';
+
+/** Answers whether two Markdown texts are the same document to this editor. */
+export type SameDocument = (left: string, right: string) => boolean;
 
 export const documentationEditorPluginNames = Object.freeze([
 	'headingsPlugin',
@@ -109,12 +117,48 @@ export const softLineBreakPlugin = realmPlugin({
 });
 
 /**
+ * The cell MDXEditor's parser reads its mdast extensions from. The package
+ * exports it but leaves it out of its type declarations.
+ */
+const mdastExtensions$ = (
+	mdxEditor as unknown as {
+		mdastExtensions$?: NodeRef<
+			NonNullable<FromMarkdownOptions['mdastExtensions']>
+		>;
+	}
+).mdastExtensions$;
+
+/**
+ * Hands the editor's owner a comparison that reads Markdown with the syntax
+ * and mdast extensions the editor itself parses with, so frontmatter,
+ * directives, and JSX are the same document to both. The extensions are read
+ * at each comparison, because plugins after this one are still adding theirs.
+ */
+export const documentComparisonPlugin = realmPlugin<{
+	receive: (sameDocument: SameDocument) => void;
+}>({
+	init(realm, params) {
+		params?.receive((left, right) => {
+			// Without the editor's mdast extensions nothing can be said to be the
+			// same document, and an edit is saved rather than dropped.
+			if (mdastExtensions$ === undefined) return false;
+			return sameMarkdownDocument(left, right, {
+				extensions: realm.getValue(syntaxExtensions$),
+				mdastExtensions: realm.getValue(mdastExtensions$),
+			});
+		});
+	},
+});
+
+/**
  * Built once per Documentation editor instance, so each can load the images
- * its own document references.
+ * its own document references and compare documents as it reads them.
  */
 export const createDocumentationEditorPlugins = (
 	imagePreviewHandler?: ImagePreviewHandler,
+	receiveDocumentComparison: (sameDocument: SameDocument) => void = () => {},
 ) => [
+	documentComparisonPlugin({ receive: receiveDocumentComparison }),
 	softLineBreakPlugin(),
 	headingsPlugin(),
 	listsPlugin(),
