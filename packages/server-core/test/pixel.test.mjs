@@ -22,6 +22,9 @@ const CODEX = "com.terminay.builtin-agents/codex";
 async function setup(initial = { enabled: true, provider: CLAUDE }) {
   const opened = [];
   const closed = [];
+  // Settles once a session has been opened and its first prompt is underway.
+  let promptStarted;
+  const prompting = new Promise((resolve) => { promptStarted = resolve; });
   const providers = {
     providers: () => [{ id: CLAUDE, displayName: "Claude Code" }, { id: CODEX, displayName: "Codex" }],
     async availability() { return { available: true }; },
@@ -29,7 +32,7 @@ async function setup(initial = { enabled: true, provider: CLAUDE }) {
       opened.push([providerId, request]);
       let release;
       return {
-        async prompt() { await new Promise((resolve) => { release = resolve; }); },
+        async prompt() { promptStarted(); await new Promise((resolve) => { release = resolve; }); },
         async cancel() { release?.(); },
         async close() { closed.push(providerId); release?.(); onEvent({ type: "exit", exit: { code: 0, signal: null } }); },
       };
@@ -52,7 +55,7 @@ async function setup(initial = { enabled: true, provider: CLAUDE }) {
   let settings = initial;
   const events = [];
   const pixel = new PixelService({ chats, settings: () => settings, onChanged: (state) => events.push(state) });
-  return { pixel, chats, approvals, opened, closed, revoked, events, set: (next) => { settings = next; return pixel.apply(next); } };
+  return { pixel, chats, approvals, opened, closed, revoked, events, prompting, set: (next) => { settings = next; return pixel.apply(next); } };
 }
 
 test("Pixel's settings are server settings, off by default with no agent", () => {
@@ -70,14 +73,14 @@ test("opening Pixel is refused while off or with no agent chosen", async () => {
 });
 
 test("the Pixel chat is one workspace chat with Pixel's instruction", async () => {
-  const { pixel, chats, opened } = await setup();
+  const { pixel, chats, opened, prompting } = await setup();
   const chat = pixel.open();
   assert.equal(pixel.open().id, chat.id);
   assert.deepEqual(chat.reach, { kind: "workspace" });
   assert.equal(chat.title, "Pixel");
   assert.equal(chat.key, "pixel");
   chats.send(chat.id, "hi");
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await prompting;
   assert.equal(opened[0][0], CLAUDE);
   assert.equal(opened[0][1].instruction, PIXEL_INSTRUCTION);
   // Pixel is told to read the layout back rather than claim what it did.
@@ -99,16 +102,15 @@ test("changing Pixel's agent closes its chat; the next one uses the new agent", 
 });
 
 test("turning Pixel off mid-reply with an approval pending ends everything and runs nothing", async () => {
-  const { pixel, chats, approvals, closed, revoked, events, set } = await setup();
+  const { pixel, chats, approvals, closed, revoked, events, prompting, set } = await setup();
   const chat = pixel.open();
   chats.send(chat.id, "run the tests");
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await prompting;
   const pending = approvals.authorize({
     terminalSessionId: `chat:${chat.id}`, chatId: chat.id, projectId: "system:automations", operation: "run_command",
     group: "terminalsManage", agent: "Pixel (Claude Code)", terminalTitle: "", summary: "run `npm test` in api", details: [],
     signal: new AbortController().signal,
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(approvals.list().length, 1);
   await set({ enabled: false, provider: CLAUDE });
   assert.equal((await pending).ok, false);

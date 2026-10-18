@@ -15,10 +15,16 @@ import {
 function fakeProviders(options = {}) {
   const log = [];
   const sessions = [];
+  const promptWaiters = new Set();
   let availability = options.availability ?? { available: true };
   return {
     log,
     sessions,
+    /** Settles once a prompt with this text has reached the provider. */
+    prompted: (text) =>
+      sessions.some((session) => session.prompts.includes(text))
+        ? Promise.resolve()
+        : new Promise((resolve) => promptWaiters.add({ text, resolve })),
     setAvailability(value) { availability = value; },
     bridge: {
       providers: () => [{ id: "ext/echo", displayName: "Echo" }],
@@ -31,6 +37,11 @@ function fakeProviders(options = {}) {
         return {
           async prompt(text) {
             session.prompts.push(text);
+            for (const waiter of [...promptWaiters]) {
+              if (waiter.text !== text) continue;
+              promptWaiters.delete(waiter);
+              waiter.resolve();
+            }
             if (text === "fail") {
               onEvent({ type: "failure", failure: { reason: "not_signed_in", detail: "Run `echo login`." } });
               throw new Error("not signed in");
@@ -67,6 +78,9 @@ function fakeMcp() {
   };
 }
 
+// Re-checked on every change the service reports.
+const changeWaiters = new Set();
+
 async function service(overrides = {}) {
   const workRoot = await mkdtemp(join(tmpdir(), "terminay-chat-work-"));
   const providers = overrides.providers ?? fakeProviders();
@@ -78,19 +92,28 @@ async function service(overrides = {}) {
     mcp: mcp.bridge,
     workRoot,
     changeCoalesceMs: 0,
-    onChanged: (change) => changes.push(change),
+    onChanged: (change) => {
+      changes.push(change);
+      for (const waiter of [...changeWaiters]) waiter();
+    },
     onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     ...(overrides.inactivityMs === undefined ? {} : { inactivityMs: overrides.inactivityMs }),
   });
   return { chats, providers, mcp, changes, diagnostics, workRoot };
 }
 
-async function settled(chats, chatId) {
-  for (let i = 0; i < 200; i += 1) {
-    if (chats.get(chatId).status === "idle") return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("turn never ended");
+/** Settles once the chat's turn has ended, as the service reports it. */
+function settled(chats, chatId) {
+  const idle = () => chats.get(chatId).status === "idle";
+  if (idle()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!idle()) return;
+      changeWaiters.delete(check);
+      resolve();
+    };
+    changeWaiters.add(check);
+  });
 }
 
 const textOf = (view) =>
@@ -153,7 +176,7 @@ test("a message while busy is refused and stop ends the turn", async () => {
   const { chats, providers, mcp } = await service();
   const chat = chats.create({ providerId: "ext/echo", title: "Helper", reach: { kind: "workspace" } });
   chats.send(chat.id, "wait");
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await providers.prompted("wait");
   assert.throws(() => chats.send(chat.id, "more"), (error) => error.code === "chat_busy");
   await chats.stop(chat.id);
   assert.equal(chats.get(chat.id).status, "idle");
@@ -258,7 +281,6 @@ test("a chat's approvals appear in it, decide through the approval service, and 
     group: "terminalsManage", agent: "Pixel (Echo)", terminalTitle: "", summary: "run `npm test` in api",
     details: [{ label: "Command", value: "npm test", code: true }], signal: new AbortController().signal,
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   let entry = chats.get(chat.id).entries.find((e) => e.kind === "approval");
   assert.equal(entry.statement, "Pixel (Echo) wants to run `npm test` in api");
   assert.equal(entry.state, "pending");
@@ -360,7 +382,6 @@ test("nothing of a conversation is left on disk once a chat closes", async () =>
   chats.send(chat.id, "remember this sentence");
   await settled(chats, chat.id);
   await chats.close(chat.id);
-  await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(await readdir(workRoot), []);
 });
 
