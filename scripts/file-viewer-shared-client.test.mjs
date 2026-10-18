@@ -137,9 +137,14 @@ test('connected FilePanel reads use canonical server paths and never preload fil
 		'/workspace/project-a/docs/readme.txt',
 	);
 	const watchEvents = [];
-	const removeWatchListener = gateway.onFileWatchEvent((event) =>
-		watchEvents.push(event),
-	);
+	let watchEventArrived;
+	const firstWatchEvent = new Promise((resolve) => {
+		watchEventArrived = resolve;
+	});
+	const removeWatchListener = gateway.onFileWatchEvent((event) => {
+		watchEvents.push(event);
+		watchEventArrived();
+	});
 	await gateway.watchFile('/workspace/project-a/docs/readme.txt');
 	watchListener({
 		kind: 'changed',
@@ -147,7 +152,7 @@ test('connected FilePanel reads use canonical server paths and never preload fil
 		resource: 'docs/readme.txt',
 		sequence: 1,
 	});
-	await new Promise((resolve) => setTimeout(resolve, 0));
+	await firstWatchEvent;
 	await gateway.unwatchFile('/workspace/project-a/docs/readme.txt');
 	removeWatchListener();
 	assert.equal(info.path, '/workspace/project-a/docs/readme.txt');
@@ -172,22 +177,25 @@ test('canonical Monaco handoff orders concurrent chunks and preserves split UTF-
 	let active = 0;
 	let peakActive = 0;
 	const calls = [];
-	const draft = await materializeCanonicalPerformantDraft(
+	// Each range is held until the test releases it, so the later chunk can be
+	// made to finish first while both are in flight.
+	const releases = new Map();
+	let bothRequested;
+	const bothInFlight = new Promise((resolve) => {
+		bothRequested = resolve;
+	});
+	const materializing = materializeCanonicalPerformantDraft(
 		{
 			async readContentRange(path, offset, length, projectId, { signal }) {
 				active += 1;
 				peakActive = Math.max(peakActive, active);
 				calls.push([path, offset, length, projectId]);
 				await new Promise((resolve, reject) => {
-					const timer = setTimeout(resolve, offset === 0 ? 8 : 0);
-					signal.addEventListener(
-						'abort',
-						() => {
-							clearTimeout(timer);
-							reject(signal.reason);
-						},
-						{ once: true },
-					);
+					releases.set(offset, resolve);
+					if (releases.size === 2) bothRequested();
+					signal.addEventListener('abort', () => reject(signal.reason), {
+						once: true,
+					});
 				});
 				active -= 1;
 				return { bytes: source.slice(offset, offset + length) };
@@ -205,6 +213,10 @@ test('canonical Monaco handoff orders concurrent chunks and preserves split UTF-
 		],
 		new AbortController().signal,
 	);
+	await bothInFlight;
+	releases.get(boundary)();
+	releases.get(0)();
+	const draft = await materializing;
 	assert.ok(peakActive > 1);
 	assert.ok(peakActive <= 2);
 	assert.deepEqual(
