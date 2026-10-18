@@ -37,7 +37,11 @@ async function startRelay(overrides = {}) {
 			});
 			open.push(socket);
 			const frames = [];
-			socket.on('message', (raw) => frames.push(JSON.parse(String(raw))));
+			const waiters = new Set();
+			socket.on('message', (raw) => {
+				frames.push(JSON.parse(String(raw)));
+				for (const waiter of [...waiters]) waiter();
+			});
 			await Promise.race([
 				once(socket, 'open'),
 				once(socket, 'error').then(([error]) => {
@@ -47,6 +51,17 @@ async function startRelay(overrides = {}) {
 			return {
 				socket,
 				frames,
+				/** Resolves once `count` frames have arrived on this socket. */
+				framesReach: (count) =>
+					new Promise((resolveFrames) => {
+						const check = () => {
+							if (frames.length < count) return;
+							waiters.delete(check);
+							resolveFrames();
+						};
+						waiters.add(check);
+						check();
+					}),
 				send: (frame) => socket.send(JSON.stringify(frame)),
 				closes: new Promise((resolveClose) =>
 					socket.once('close', (code, reason) =>
@@ -63,19 +78,6 @@ async function startRelay(overrides = {}) {
 	};
 }
 
-function waitFor(predicate, label, timeoutMs = 5_000) {
-	return new Promise((resolveWait, reject) => {
-		const startedAt = Date.now();
-		const tick = () => {
-			if (predicate()) return resolveWait();
-			if (Date.now() - startedAt > timeoutMs)
-				return reject(new Error(`timed out waiting for ${label}`));
-			setTimeout(tick, 10);
-		};
-		tick();
-	});
-}
-
 test('the relay routes the hosted frame vocabulary between one host and its joining client', async (t) => {
 	const harness = await startRelay();
 	t.after(() => harness.close());
@@ -83,10 +85,7 @@ test('the relay routes the hosted frame vocabulary between one host and its join
 	const host = await harness.connect();
 	host.send({ type: 'host-ready', roomId: 'pair-room' });
 	host.send({ type: 'device-host-ready', sessionId: 'session-1' });
-	await waitFor(
-		() => host.frames.length === 2,
-		'both host registrations to be acknowledged',
-	);
+	await host.framesReach(2);
 	assert.deepEqual(host.frames, [
 		{ type: 'host-registered', roomId: 'pair-room' },
 		{ type: 'device-host-registered', sessionId: 'session-1' },
@@ -101,7 +100,7 @@ test('the relay routes the hosted frame vocabulary between one host and its join
 		clientNonce: 'nonce',
 		opaque: { transcript: 'x' },
 	});
-	await waitFor(() => host.frames.length === 3, 'the join to reach the host');
+	await host.framesReach(3);
 	// The frame is forwarded exactly as it arrived: nothing in it is parsed
 	// beyond the type and the room.
 	assert.deepEqual(host.frames[2], {
@@ -112,18 +111,12 @@ test('the relay routes the hosted frame vocabulary between one host and its join
 	});
 
 	host.send({ type: 'offer', sdp: 'opaque-offer' });
-	await waitFor(
-		() => client.frames.length === 1,
-		'the offer to reach the client',
-	);
+	await client.framesReach(1);
 	assert.deepEqual(client.frames[0], { type: 'offer', sdp: 'opaque-offer' });
 
 	client.send({ type: 'answer', sdp: 'opaque-answer' });
 	client.send({ type: 'ice', candidate: 'opaque-candidate' });
-	await waitFor(
-		() => host.frames.length === 5,
-		'the answer and candidate to reach the host',
-	);
+	await host.framesReach(5);
 	assert.deepEqual(host.frames.slice(3), [
 		{ type: 'answer', sdp: 'opaque-answer' },
 		{ type: 'ice', candidate: 'opaque-candidate' },
@@ -136,18 +129,19 @@ test('the relay routes the hosted frame vocabulary between one host and its join
 		sessionId: 'session-1',
 		deviceId: 'device-1',
 	});
-	await waitFor(
-		() => host.frames.length === 6,
-		'the device join to reach the host',
-	);
+	await host.framesReach(6);
 	host.send({ type: 'device-offer', sdp: 'opaque-device-offer' });
-	await waitFor(
-		() => deviceClient.frames.length === 1,
-		'the device offer to reach the device',
-	);
-	assert.equal(
-		client.frames.length,
-		1,
+	await deviceClient.framesReach(1);
+	// The host's next pairing frame reaches the client straight after its
+	// first: the device offer before it went only to the device.
+	host.send({ type: 'offer', sdp: 'opaque-offer-2' });
+	await client.framesReach(2);
+	assert.deepEqual(
+		client.frames,
+		[
+			{ type: 'offer', sdp: 'opaque-offer' },
+			{ type: 'offer', sdp: 'opaque-offer-2' },
+		],
 		'the pairing client must not see device-plane frames',
 	);
 });
@@ -158,7 +152,7 @@ test('a second host registration is refused rather than taking the room over', a
 
 	const host = await harness.connect();
 	host.send({ type: 'host-ready', roomId: 'pair-room' });
-	await waitFor(() => host.frames.length === 1, 'the first registration');
+	await host.framesReach(1);
 
 	const impostor = await harness.connect();
 	impostor.send({ type: 'host-ready', roomId: 'other-room' });
@@ -170,10 +164,7 @@ test('a second host registration is refused rather than taking the room over', a
 	// The original host keeps the room and keeps routing.
 	const client = await harness.connect();
 	client.send({ type: 'client-join', roomId: 'pair-room' });
-	await waitFor(
-		() => host.frames.length === 2,
-		'the join to reach the original host',
-	);
+	await host.framesReach(2);
 });
 
 test('joins are capped per room and per window, and unknown rooms are refused', async (t) => {
@@ -185,19 +176,27 @@ test('joins are capped per room and per window, and unknown rooms are refused', 
 
 	const host = await harness.connect();
 	host.send({ type: 'host-ready', roomId: 'pair-room' });
-	await waitFor(() => host.frames.length === 1, 'the registration');
+	await host.framesReach(1);
 
 	for (let index = 0; index < 2; index += 1) {
 		const client = await harness.connect();
 		client.send({ type: 'client-join', roomId: 'pair-room' });
-		await waitFor(() => host.frames.length === index + 2, `join ${index + 1}`);
+		await host.framesReach(index + 2);
 	}
 
 	const excess = await harness.connect();
 	excess.send({ type: 'client-join', roomId: 'pair-room' });
 	const refused = await excess.closes;
 	assert.equal(refused.reason, 'handshake-limit');
-	assert.equal(host.frames.length, 3, 'a capped join never reaches the host');
+	// The relay answers the host's next frame on the host's own connection,
+	// after anything it would have forwarded from the refused join.
+	host.send({ type: 'device-host-ready', sessionId: 'session-1' });
+	await host.framesReach(4);
+	assert.deepEqual(
+		host.frames[3],
+		{ type: 'device-host-registered', sessionId: 'session-1' },
+		'a capped join never reaches the host',
+	);
 
 	const wrongRoom = await harness.connect();
 	wrongRoom.send({ type: 'client-join', roomId: 'someone-elses-room' });
@@ -219,23 +218,30 @@ test('oversized and unroutable frames never reach a peer', async (t) => {
 
 	const host = await harness.connect();
 	host.send({ type: 'host-ready', roomId: 'pair-room' });
-	await waitFor(() => host.frames.length === 1, 'the registration');
+	await host.framesReach(1);
 
 	const client = await harness.connect();
 	client.send({ type: 'client-join', roomId: 'pair-room' });
-	await waitFor(() => host.frames.length === 2, 'the join');
+	await host.framesReach(2);
 
 	client.socket.send(
 		JSON.stringify({ type: 'answer', sdp: 'x'.repeat(4_096) }),
 	);
 	const closed = await client.closes;
 	assert.equal(closed.code, 1009, 'an oversized frame closes the connection');
-	assert.equal(host.frames.length, 2, 'an oversized frame is never forwarded');
 
 	const noisy = await harness.connect();
 	noisy.socket.send('not json');
 	assert.equal((await noisy.closes).reason, 'unroutable-frame');
-	assert.equal(host.frames.length, 2);
+	// The relay answers the host's next frame on the host's own connection,
+	// after anything it would have forwarded from either.
+	host.send({ type: 'device-host-ready', sessionId: 'session-1' });
+	await host.framesReach(3);
+	assert.deepEqual(
+		host.frames[2],
+		{ type: 'device-host-registered', sessionId: 'session-1' },
+		'an oversized or unroutable frame is never forwarded',
+	);
 });
 
 test('the upgrade boundary refuses the manager host, a foreign host, and a foreign path', async (t) => {
