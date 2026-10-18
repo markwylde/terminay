@@ -87,6 +87,7 @@ async function startRelay() {
 		socket.on('message', (raw) => {
 			const message = JSON.parse(String(raw));
 			state.log.push(message.type);
+			changed();
 			switch (message.type) {
 				case 'host-ready':
 					state.pairingHost = socket;
@@ -154,17 +155,25 @@ const startedAtAll = Date.now();
 function mark(label) {
 	process.stderr.write(`[flow +${Date.now() - startedAtAll}ms] ${label}\n`);
 }
-function waitFor(predicate, label, timeoutMs = 60_000) {
+/**
+ * Every wait is re-checked whenever something it could depend on happens: a
+ * frame through the relay, a client lane appearing or opening, a client
+ * rejection, and the host's callbacks. None of them runs on a timer.
+ */
+const waits = new Set();
+function changed() {
+	for (const check of [...waits]) check();
+}
+function waitFor(predicate, label) {
 	mark(`wait: ${label}`);
-	return new Promise((resolveWait, reject) => {
-		const startedAt = Date.now();
-		const tick = () => {
-			if (predicate()) return resolveWait();
-			if (Date.now() - startedAt > timeoutMs)
-				return reject(new Error(`timed out waiting for ${label}`));
-			setTimeout(tick, 25);
+	return new Promise((resolveWait) => {
+		const check = () => {
+			if (!predicate()) return;
+			waits.delete(check);
+			resolveWait();
 		};
-		tick();
+		waits.add(check);
+		check();
 	});
 }
 
@@ -181,9 +190,11 @@ async function connectClient(relay, options) {
 	const clientNonce = randomBytes(32).toString('base64url');
 	const peer = new RTCPeerConnection(LOOPBACK_PEER);
 	const channels = new Map();
-	peer.addEventListener('datachannel', (event) =>
-		channels.set(event.channel.label, event.channel),
-	);
+	peer.addEventListener('datachannel', (event) => {
+		channels.set(event.channel.label, event.channel);
+		event.channel.addEventListener('open', changed);
+		changed();
+	});
 	const remoteIce = [];
 	let remoteSet = false;
 	let offerVerified;
@@ -209,6 +220,7 @@ async function connectClient(relay, options) {
 			const message = JSON.parse(String(raw));
 			if (message.type === 'error') {
 				rejected.push(new Error(message.message));
+				changed();
 				return;
 			}
 			if (message.type === 'offer' || message.type === 'device-offer') {
@@ -261,7 +273,10 @@ async function connectClient(relay, options) {
 				if (remoteSet) await peer.addIceCandidate(message.candidate);
 				else remoteIce.push(message.candidate);
 			}
-		})().catch((error) => rejected.push(error));
+		})().catch((error) => {
+			rejected.push(error);
+			changed();
+		});
 	});
 	socket.send(
 		JSON.stringify({
@@ -397,9 +412,11 @@ test('a device pairs only after the host approves its match code, and the ticket
 				start: async () => undefined,
 				close: async () => {
 					connection.closed = true;
+					changed();
 				},
 			};
 			connections.push(connection);
+			changed();
 			return connection;
 		},
 		handoff,
@@ -410,13 +427,20 @@ test('a device pairs only after the host approves its match code, and the ticket
 		signal: { connectHost: '127.0.0.1' },
 		webrtcRuntimeRoot: RUNTIME_ROOT,
 		onPeerConnected: (peer) => admitted.push(peer),
-		onPeerDisconnected: (connectionId) => disconnected.push(connectionId),
+		onPeerDisconnected: (connectionId) => {
+			disconnected.push(connectionId);
+			changed();
+		},
 		iceServers: [],
 		rotateHandoff: () => exposure.rotate(),
 		onHandoff: (next) => {
 			currentHandoff = next;
+			changed();
 		},
-		onDiagnostic: (event) => diagnostics.push(event),
+		onDiagnostic: (event) => {
+			diagnostics.push(event);
+			changed();
+		},
 	});
 	t.after(async () => {
 		await host.close();
@@ -540,17 +564,14 @@ test('a device pairs only after the host approves its match code, and the ticket
 			type: 'ice',
 		}),
 	);
-	// The ticket is bound to this peer; consuming it opens the application and host context.
-	const authenticatedAt = Date.now();
+	// The ticket is bound to this peer; consuming it opens the application and
+	// host context. That the answer does not wait on the candidate is proved
+	// with one that never settles in hosted-pairing-auth-starvation.test.mjs.
 	assert.equal(await client.authenticate(approved.ticket), true);
 	assert.equal(
 		connections[0].closed,
 		false,
 		'the approved peer remains connected after a stale-link attempt',
-	);
-	assert.ok(
-		Date.now() - authenticatedAt < 5_000,
-		'application auth is answered without waiting on signaling',
 	);
 	await waitFor(() => connections.length === 1, 'application accepted');
 	const context = await client.request('/api/host-context', {});
@@ -603,9 +624,10 @@ test('a device pairs only after the host approves its match code, and the ticket
 
 	// Reconnect: device-join needs the device key proof; a bogus proof never produces an offer.
 	const deviceId = approved.deviceId;
-	const offersBefore = relay.state.log.filter(
-		(type) => type === 'device-offer',
-	).length;
+	const count = (type) =>
+		relay.state.log.filter((logged) => logged === type).length;
+	const offersBefore = count('device-offer');
+	const joinsBefore = count('device-join');
 	const bogus = await connectClient(relay, {
 		mode: 'device',
 		deviceId,
@@ -615,16 +637,13 @@ test('a device pairs only after the host approves its match code, and the ticket
 		deviceProof: () => randomBytes(256).toString('base64url'),
 	});
 	t.after(() => bogus.close());
-	await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500));
-	assert.equal(
-		relay.state.log.filter((type) => type === 'device-offer').length,
-		offersBefore,
-		'no offer for a bad device proof',
-	);
-	assert.equal(
-		connections[0].closed,
-		false,
-		'the live peer is untouched by an unauthenticated join',
+	// The bogus join has reached the host before the genuine one below is
+	// made. The host takes joins one at a time in that order, so an offer for
+	// the bogus one would come before the genuine join's: that one is checked
+	// for once the genuine join's own offer has arrived.
+	await waitFor(
+		() => count('device-join') === joinsBefore + 1,
+		'the bogus join to reach the host',
 	);
 
 	// A genuine device-join gets an offer, but the live peer is replaced only after the ticket is consumed.
@@ -653,6 +672,12 @@ test('a device pairs only after the host approves its match code, and the ticket
 	await rejoin.open();
 	mark('rejoin open');
 	assert.equal(rejoin.rejected.length, 0);
+	assert.equal(
+		count('device-offer'),
+		offersBefore + 1,
+		'no offer for a bad device proof',
+	);
+	assert.equal(bogus.channels.size, 0, 'the bogus join is never answered');
 	assert.equal(
 		connections[0].closed,
 		false,
@@ -811,9 +836,11 @@ test('the data-root socket mints a fresh pairing room while a live peer keeps wo
 				start: async () => undefined,
 				close: async () => {
 					connection.closed = true;
+					changed();
 				},
 			};
 			connections.push(connection);
+			changed();
 			return connection;
 		},
 		handoff,
@@ -1325,13 +1352,8 @@ function readFirstJsonLine(child) {
 	return new Promise((resolveLine, reject) => {
 		let output = '';
 		let errors = '';
-		const timeout = setTimeout(
-			() =>
-				reject(new Error(`server did not become ready: ${output}${errors}`)),
-			60_000,
-		);
+		// The server either prints its readiness line or exits; both are events.
 		const onExit = (code) => {
-			clearTimeout(timeout);
 			reject(
 				new Error(
 					`server exited before readiness (${code}): ${output}${errors}`,
@@ -1348,7 +1370,6 @@ function readFirstJsonLine(child) {
 			output += chunk;
 			const lineEnd = output.indexOf('\n');
 			if (lineEnd === -1) return;
-			clearTimeout(timeout);
 			child.off('exit', onExit);
 			try {
 				resolveLine(JSON.parse(output.slice(0, lineEnd)));
