@@ -367,6 +367,20 @@ export interface ControlEndpointLimits {
 	readonly maxQueuedResponseBytes: number;
 }
 
+/** Schedules and cancels a request's deadline. */
+export interface ControlEndpointTimers {
+	setTimeout(handler: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+
+const GLOBAL_CONTROL_TIMERS: ControlEndpointTimers = {
+	setTimeout: (handler, ms) => globalThis.setTimeout(handler, ms),
+	clearTimeout: (handle) =>
+		globalThis.clearTimeout(
+			handle as ReturnType<typeof globalThis.setTimeout> | undefined,
+		),
+};
+
 export interface ControlEndpointOptions extends Partial<ControlEndpointLimits> {
 	/** Absolute Unix socket path, or a Windows named-pipe path. */
 	readonly socketPath: string;
@@ -383,6 +397,8 @@ export interface ControlEndpointOptions extends Partial<ControlEndpointLimits> {
 	/** Override the default authorization floor for an operation. */
 	readonly operationScopes?: Partial<Record<ControlOperation, ControlScope>>;
 	readonly onError?: (error: unknown) => void;
+	/** What schedules request deadlines. Defaults to the global timers. */
+	readonly timers?: ControlEndpointTimers;
 }
 
 export interface LocalControlEndpoint {
@@ -1248,6 +1264,7 @@ export function createControlEndpoint(
 		options.maxInFlightTotal ?? CONTROL_MAX_IN_FLIGHT_TOTAL;
 	const requestTimeoutMs =
 		options.requestTimeoutMs ?? CONTROL_REQUEST_TIMEOUT_MS;
+	const timers = options.timers ?? GLOBAL_CONTROL_TIMERS;
 	// A host that pins the frame bound without naming a large one keeps a
 	// single bound: nothing may then exceed what it chose.
 	const maxLargeFrameBytes = Math.max(
@@ -1386,18 +1403,18 @@ export function createControlEndpoint(
 		inFlight.set(request.id, controller);
 		allControllers.set(controller, hashToken(request.token).toString('hex'));
 		if (counted) totalInFlight += 1;
-		let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
+		let timeout: unknown = timers.setTimeout(
 			() => controller.abort('timeout'),
 			requestTimeoutMs,
 		);
 		const holdDeadline = (): (() => void) => {
-			clearTimeout(timeout);
+			if (timeout !== undefined) timers.clearTimeout(timeout);
 			timeout = undefined;
 			let resumed = false;
 			return () => {
 				if (resumed || controller.signal.aborted) return;
 				resumed = true;
-				timeout = setTimeout(
+				timeout = timers.setTimeout(
 					() => controller.abort('timeout'),
 					requestTimeoutMs,
 				);
@@ -1508,7 +1525,7 @@ export function createControlEndpoint(
 					responseForError(request.id, asControlError(error)),
 				);
 		} finally {
-			clearTimeout(timeout);
+			if (timeout !== undefined) timers.clearTimeout(timeout);
 			inFlight.delete(request.id);
 			allControllers.delete(controller);
 			if (counted) totalInFlight -= 1;
