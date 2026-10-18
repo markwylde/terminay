@@ -99,14 +99,37 @@ class BuiltIns {
   }
 }
 
+/**
+ * Re-checks every waiter whenever something the tests wait on happens: a
+ * diagnostic, a host state change, or a restart being scheduled.
+ */
+function changes() {
+  const waiters = new Set();
+  return {
+    changed: () => { for (const waiter of [...waiters]) waiter(); },
+    until(check) {
+      if (check()) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiter = () => {
+          if (!check()) return;
+          waiters.delete(waiter);
+          resolve();
+        };
+        waiters.add(waiter);
+      });
+    },
+  };
+}
+
 /** A schedule whose timers only fire when the test says so. */
-function clock() {
+function clock(observed) {
   const queued = [];
   return {
     queued,
     schedule: (callback, milliseconds) => {
       const timer = { callback, milliseconds, cancelled: false };
       queued.push(timer);
+      observed.changed();
       return timer;
     },
     cancel: (timer) => {
@@ -120,16 +143,12 @@ function clock() {
     /**
      * The supervisor records a failure before it schedules the restart that
      * follows, so a test that has only waited for the failure can look at the
-     * schedule before the restart reaches it. Wait for the timer rather than
-     * assuming it is already there.
+     * schedule before the restart reaches it. Wait for the timer to be
+     * scheduled rather than assuming it is already there.
      */
     async next() {
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        const timer = queued[0];
-        if (timer !== undefined) return timer;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      assert.fail(`no restart was scheduled${this.describe === undefined ? "" : `: ${this.describe()}`}`);
+      await observed.until(() => queued[0] !== undefined);
+      return queued[0];
     },
     async runNext() {
       await this.next();
@@ -144,19 +163,20 @@ async function fixture(crashes) {
   const dataRoot = await mkdtemp(join(tmpdir(), "terminay-restart-supervisor-"));
   const counterPath = join(dataRoot, "activations");
   const records = [];
-  const timers = clock();
-  // When no restart arrives, say what the host did instead: the transitions
-  // it recorded and the state it settled in are what tell a race apart.
-  timers.describe = () =>
-    `host ${JSON.stringify(management.hosts.statuses().map((status) => status.state))}, transitions ${JSON.stringify(records.map((record) => record.transition))}`;
+  const observed = changes();
+  const timers = clock(observed);
   const management = createDefaultExtensionManagement({
     dataRoot,
     authorityLabel: "Test server",
     builtIns: new BuiltIns(counterPath, crashes),
-    onHostDiagnostic: (record) => records.push(record),
+    onHostDiagnostic: (record) => {
+      records.push(record);
+      observed.changed();
+    },
     schedule: timers.schedule,
     cancelSchedule: timers.cancel,
   });
+  management.hosts.onHostStateChanged(observed.changed);
   return {
     dataRoot,
     management,
@@ -164,12 +184,6 @@ async function fixture(crashes) {
     timers,
     activations: async () => Number(await readFile(counterPath, "utf8").catch(() => "0")),
     status: () => management.hosts.statuses().find((status) => status.extensionId === EXTENSION),
-    settle: async () => {
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        if (records.some((record) => record.transition === "failed" && record.settled !== true)) break;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-    },
     /**
      * The failure diagnostic is recorded before the host's own status leaves
      * `running`, and `sessionSourceContributions()` is derived from that
@@ -177,15 +191,10 @@ async function fixture(crashes) {
      * crashed host still publishing its providers, so wait for the status the
      * assertions actually read.
      */
-    waitForFailures: async (count) => {
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        const failures = records.filter((record) => record.transition === "failed").length;
-        const settled = management.hosts.statuses().every((status) => status.state !== "running");
-        if (failures >= count && settled) return;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      assert.fail(`only ${records.filter((r) => r.transition === "failed").length} failures were recorded, wanted ${count}: ${timers.describe()}`);
-    },
+    waitForFailures: (count) =>
+      observed.until(() =>
+        records.filter((record) => record.transition === "failed").length >= count &&
+        management.hosts.statuses().every((status) => status.state !== "running")),
     cleanup: async () => {
       management.stopSupervision();
       await management.hosts.shutdown().catch(() => undefined);
@@ -343,10 +352,12 @@ test("shutdown cancels a pending restart", async () => {
     await value.timers.next();
     assert.equal(value.timers.pending(), 1);
 
-    value.management.stopSupervision();
-    assert.equal(value.timers.pending(), 0, "no restart survives shutdown");
     const activations = await value.activations();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    value.management.stopSupervision();
+    // Every restart goes through the test's schedule, so with none left on it
+    // nothing can start the host again, however long anyone waits.
+    assert.equal(value.timers.pending(), 0, "no restart survives shutdown");
+    assert.equal(value.timers.queued.length, 0);
     assert.equal(await value.activations(), activations, "nothing restarted after shutdown");
   } finally {
     await value.cleanup();
