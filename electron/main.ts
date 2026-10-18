@@ -285,6 +285,7 @@ import {
 	embeddedManualServerClock,
 	type ManualServerClock,
 } from './testServerClock';
+import { installTestTerminalHandoff } from './testTerminalHandoff';
 import { NOTIFICATION_SETTLE_MS } from '../packages/server-core/src/notifications/types';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
@@ -2379,6 +2380,11 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	);
 	serverTerminalAuthority = authority;
 	if (serverClock !== undefined) exposeTestServerClock(authority, serverClock);
+	if (process.env.TERMINAY_TEST === '1')
+		Object.defineProperty(globalThis, '__terminayTestTerminalHandoff', {
+			configurable: true,
+			value: installTestTerminalHandoff(authority.service),
+		});
 	// An approval and a session grant live exactly as long as the calling
 	// terminal's capability: exit, move, disable, and restart all end them.
 	removeMcpApprovalRevocation?.();

@@ -1328,12 +1328,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		};
 
 		const writePanelInput = (data: string, isPaste = false) => {
-			if (
-				!useServerTerminal ||
-				serverAttachmentFailed ||
-				!terminalPresentationControllerRef.current
-			)
-				return;
+			// The queue knows whether this panel's attachment holds the
+			// presentation, is read-only, or is still being established or
+			// replaced. Input typed in that last state is held, not dropped.
+			if (!useServerTerminal || serverAttachmentFailed) return;
 			if (!isPaste) {
 				serverInputQueue?.enqueue(data);
 				return;
@@ -1704,14 +1702,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				activeBinding = binding;
 				if (client !== undefined) currentAttachClient = client;
 				if (clientId !== undefined) currentAttachClientId = clientId;
-				serverInputQueue?.close();
-				serverInputQueue = new ServerTerminalInputQueue(
-					(error) => failServerTransport(error, binding),
-					() =>
-						new Promise((resolve) =>
-							window.requestAnimationFrame(() => resolve()),
-						),
-				);
+				// Input belongs to the mounted panel, not to one attachment. A
+				// replacement attach keeps what is queued and what is typed while
+				// it attaches; only a failure or disposal closes the queue.
+				if (serverInputQueue === null || serverInputQueue.isClosed) {
+					serverInputQueue = new ServerTerminalInputQueue(
+						// Only a write on the current attachment reports here; one
+						// that fails on a replaced attachment settles in the queue.
+						(error) => failServerTransport(error),
+						() =>
+							new Promise((resolve) =>
+								window.requestAnimationFrame(() => resolve()),
+							),
+					);
+				} else {
+					serverInputQueue.handoff();
+				}
 				cancelTerminalPasteRef.current = () => serverInputQueue?.cancelPaste();
 				const attachmentClient = client ?? currentAttachClient;
 				const nextRequest = {
@@ -1764,8 +1770,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 								state.role === 'controller';
 							terminalPresentationControllerRef.current =
 								state.role === 'controller';
-							if (state.role !== 'controller')
-								serverInputQueue?.discardPending();
+							serverInputQueue?.setPresentationRole(state.role);
 							if (becameController) {
 								remoteSizeOverrideRef.current = null;
 								setIsRemoteSizeOverrideActive(false);
@@ -2070,7 +2075,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				panelAttachment = null;
 				if (activeBinding !== null) bindingFence.retire(activeBinding);
 				activeBinding = null;
-				serverInputQueue?.close();
+				// Keep what the user typed, and keep accepting it, while the
+				// replacement attaches; it is delivered once that holds control.
+				serverInputQueue?.handoff();
 				// Leave the server attachment in place until resume replaces it.
 				// Detaching here drops a just-taken lease and makes Take back
 				// control target a dead attachment while the checkpoint loads.
@@ -2145,7 +2152,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				panelAttachment = null;
 				if (activeBinding !== null) bindingFence.retire(activeBinding);
 				activeBinding = null;
-				serverInputQueue?.close();
+				serverInputQueue?.handoff();
 				void staleAttachment?.detach().catch(() => {});
 				setServerTerminalError(null);
 				setPresentationUnavailable(false);
