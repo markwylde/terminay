@@ -409,7 +409,7 @@ function realServer(dataRoot, workspace, buildId = "build-a") {
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => { launchHolder(ENTRY, env); },
+    launch: ({ env }) => launchHolder(ENTRY, env),
   });
   let counter = 0;
   const composition = createServerCoreComposition({
