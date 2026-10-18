@@ -68,7 +68,9 @@ function deferred() {
 	return { promise, resolve };
 }
 
-test('edits are debounced and stay pending until the server accepts the last one', async () => {
+test('edits are debounced and stay pending until the server accepts the last one', async (t) => {
+	// The debounce is the test's clock.
+	t.mock.timers.enable({ apis: ['setTimeout'] });
 	const sent = [];
 	const gates = [];
 	const sync = createTerminalNoteSync({
@@ -85,17 +87,21 @@ test('edits are debounced and stay pending until the server accepts the last one
 	sync.edit('panel-a', 'a');
 	sync.edit('panel-a', 'ab');
 	assert.equal(sync.hasPendingEdit('panel-a'), true);
-	await new Promise((resolve) => setTimeout(resolve, 20));
+	t.mock.timers.tick(4);
+	assert.deepEqual(sent, []);
+	t.mock.timers.tick(1);
 	assert.deepEqual(sent, [['panel-a', 'ab']]);
 
 	// A keystroke during the send keeps the panel pending after it resolves.
 	sync.edit('panel-a', 'abc');
 	gates[0].resolve();
-	await new Promise((resolve) => setImmediate(resolve));
+	// The sync settles its send with a catch and a finally attached to the
+	// send's promise. The same chain attached after it settles after it.
+	await gates[0].promise.catch(() => undefined).finally(() => undefined);
 	assert.equal(sync.hasPendingEdit('panel-a'), true);
 
+	// Flushing sends the waiting edit at once, without the debounce.
 	const flushed = sync.flush('panel-a');
-	await new Promise((resolve) => setImmediate(resolve));
 	assert.deepEqual(sent[1], ['panel-a', 'abc']);
 	gates[1].resolve();
 	await flushed;
@@ -146,7 +152,9 @@ test('flushAll sends every waiting edit without the debounce', async () => {
 	sync.edit('panel-a', 'one');
 	sync.edit('panel-b', 'two');
 	sync.flushAll();
-	await new Promise((resolve) => setImmediate(resolve));
+	// Both were sent at once; flushing each waits for its send to settle.
+	assert.equal(sent.length, 2);
+	await Promise.all([sync.flush('panel-a'), sync.flush('panel-b')]);
 	assert.deepEqual(sent, [
 		['panel-a', 'one'],
 		['panel-b', 'two'],
