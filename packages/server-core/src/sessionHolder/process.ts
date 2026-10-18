@@ -1,3 +1,4 @@
+import { closeSync } from 'node:fs';
 import type { NodePtyModuleLike } from '../terminalService/nodePty.js';
 import { SessionHolder } from './holder.js';
 import { isSessionHolderGeneration } from './paths.js';
@@ -12,6 +13,12 @@ export const SESSION_HOLDER_ENV = Object.freeze({
 	generation: 'TERMINAY_SESSION_HOLDER_GENERATION',
 	buildId: 'TERMINAY_SESSION_HOLDER_BUILD_ID',
 	limitMs: 'TERMINAY_SESSION_HOLDER_LIMIT_MS',
+	/**
+	 * A descriptor the launcher holds the other end of. The holder closes it
+	 * once its record is in place, which is how the launcher hears it is
+	 * ready: a directory watch can miss the record on a loaded machine.
+	 */
+	readyFd: 'TERMINAY_SESSION_HOLDER_READY_FD',
 });
 
 /**
@@ -34,6 +41,7 @@ export async function runSessionHolderProcess(
 		buildId.length === 0
 	)
 		throw new Error('session holder environment is incomplete');
+	const readyFd = Number(env[SESSION_HOLDER_ENV.readyFd]);
 	process.umask(0o077);
 	// The launch variables describe this holder, not the shells it starts.
 	for (const name of Object.values(SESSION_HOLDER_ENV)) delete process.env[name];
@@ -45,6 +53,13 @@ export async function runSessionHolderProcess(
 		limitMs: parseLimit(env[SESSION_HOLDER_ENV.limitMs]),
 		onClosed: () => process.exit(0),
 	});
+	// The record is in place: say so, and leave no shell this descriptor.
+	if (Number.isSafeInteger(readyFd) && readyFd > 2)
+		try {
+			closeSync(readyFd);
+		} catch {
+			/* a launcher that gave none, or has gone, is told nothing */
+		}
 	// Logout and shutdown arrive as SIGTERM: save tails, then end sessions.
 	for (const signal of ['SIGTERM', 'SIGINT'] as const)
 		process.on(signal, () => void holder.close('signal', { signal }));

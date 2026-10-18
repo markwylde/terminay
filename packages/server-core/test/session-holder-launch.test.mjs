@@ -197,3 +197,22 @@ test("a server that leaves while its holder is starting ends that launch", async
   await assert.rejects(spawning, { message: "the server is leaving" });
   assert.equal(child.killed, 1);
 });
+
+test("a holder says it is ready by closing the descriptor its launcher holds, once its record is in place", async (t) => {
+  const dataRoot = dataRootFor(t);
+  const generation = "a1b2c3d4e5f60718";
+  const real = launchDetachedSessionHolder(process.execPath, [ENTRY], {
+    ...process.env,
+    [SESSION_HOLDER_ENV.dataRoot]: dataRoot,
+    [SESSION_HOLDER_ENV.generation]: generation,
+    [SESSION_HOLDER_ENV.buildId]: "build-a",
+    [SESSION_HOLDER_ENV.limitMs]: "none",
+  });
+  holders.set(real.pid, { child: real, exited: new Promise((resolve) => real.once("exit", resolve)) });
+  const ready = real.stdio[3];
+  ready.resume();
+  await new Promise((resolve) => ready.once("close", resolve));
+  // Heard on the descriptor, with no watch: the record is already there.
+  assert.deepEqual(readHolderRecords(dataRoot).map((record) => [record.generation, record.pid]), [[generation, real.pid]]);
+  assert.equal(real.exitCode, null, "the holder ended instead of becoming ready");
+});
