@@ -175,8 +175,33 @@ test('sidebar visibility stays local to this device and project', async ({
 
 	await mainWindow.locator('.project-tab').first().click();
 	await expect(sidebar).toBeVisible();
+	// The restored sidebar is the first one drawn: no project is presented from
+	// default settings, sidebar closed, while this device's settings load.
+	await mainWindow.addInitScript(() => {
+		const record = window as Window & { __closedSidebarDraws?: number };
+		record.__closedSidebarDraws = 0;
+		const inspect = () => {
+			const workspace = document.querySelector('.project-workspace--active');
+			if (workspace === null) return;
+			const drawn = workspace.querySelector('.file-explorer-sidebar');
+			if (drawn === null || !drawn.checkVisibility())
+				record.__closedSidebarDraws = (record.__closedSidebarDraws ?? 0) + 1;
+		};
+		new MutationObserver(inspect).observe(document, {
+			attributes: true,
+			childList: true,
+			subtree: true,
+		});
+	});
 	await mainWindow.reload();
 	await expect(sidebar).toBeVisible();
+	expect(
+		await mainWindow.evaluate(
+			() =>
+				(window as Window & { __closedSidebarDraws?: number })
+					.__closedSidebarDraws,
+		),
+	).toBe(0);
 });
 
 async function panelGeometry(page: Page, ids: readonly string[]) {
