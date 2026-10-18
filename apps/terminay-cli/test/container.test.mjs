@@ -74,12 +74,26 @@ function serverLauncher(version, behaviour = 'ready') {
 		'}).listen(Number(process.env.TERMINAY_HEALTH_PORT), "127.0.0.1", () => {',
 		// Told to the test the moment the server can be asked, so it waits on
 		// this rather than asking until it answers.
-		'  console.log(["fixture-server", version, ready ? "ready" : "not-ready", process.pid].join(" "));',
+		'  console.log(["fixture-server", version, ready ? "ready" : "not-ready", process.env.TERMINAY_FIXTURE_RECORDED].join(" "));',
 		'});',
 		'process.on("SIGTERM", () => process.exit(0));',
 		'process.on("SIGINT", () => process.exit(0));',
 	].join('\n');
-	return `#!/bin/sh\nexec "$TERMINAY_FIXTURE_NODE" -e '${script}' -- "$@"\n`;
+	// The first thing the server does is look at what the entrypoint has
+	// recorded about it: a server that can answer before the entrypoint has
+	// said which process it is and which release it runs could be found ready
+	// by an upgrade that then refuses, or that cannot stop it.
+	return [
+		'#!/bin/sh',
+		'releases="$TERMINAY_DATA_ROOT/releases"',
+		'pid= running=',
+		'IFS= read -r pid 2>/dev/null < "$releases/server.pid"',
+		'IFS= read -r running 2>/dev/null < "$releases/running"',
+		'recorded=unrecorded',
+		'if [ "$pid" = "$$" ] && [ "$running/bin/terminay-server" = "$0" ]; then recorded=recorded; fi',
+		`TERMINAY_FIXTURE_RECORDED=$recorded exec "$TERMINAY_FIXTURE_NODE" -e '${script}' -- "$@"`,
+		'',
+	].join('\n');
 }
 
 const RELEASES = [
@@ -103,20 +117,37 @@ const RELEASES = [
 	},
 ];
 
-function freePort() {
+/**
+ * A loopback port for the health endpoint, held until the first container's
+ * server is about to take it, so nothing else on the machine is handed it in
+ * between.
+ */
+function reservePort() {
 	return new Promise((done) => {
 		const server = createServer();
 		server.listen(0, '127.0.0.1', () => {
-			const { port } = server.address();
-			server.close(() => done(port));
+			let released = false;
+			done({
+				port: server.address().port,
+				release() {
+					if (released) return;
+					released = true;
+					server.close();
+				},
+			});
 		});
 	});
 }
 
+/**
+ * One question to whatever is listening on the health port now. It goes on a
+ * connection of its own: a pooled one may reach a server that has since been
+ * replaced on that port.
+ */
 function health(port) {
 	return new Promise((done) => {
 		const request = get(
-			{ host: '127.0.0.1', port, path: '/readyz' },
+			{ host: '127.0.0.1', port, path: '/readyz', agent: false },
 			(response) => {
 				let body = '';
 				response.setEncoding('utf8');
@@ -158,11 +189,21 @@ function manualTimers() {
 		clearTimeout(id) {
 			pending.delete(id);
 		},
-		/** Resolves with the first `ms` deadline that is, or becomes, pending. */
-		armed(ms) {
+		/**
+		 * Resolves with the first `ms` deadline that is, or becomes, pending.
+		 * Rejects if `during`, what would set it, settles first: then it never
+		 * will be.
+		 */
+		armed(ms, during) {
 			for (const [id, timer] of pending)
 				if (timer.ms === ms) return Promise.resolve(id);
-			return new Promise((resolve) => watchers.push({ ms, resolve }));
+			return new Promise((resolve, reject) => {
+				watchers.push({ ms, resolve });
+				during?.then(
+					() => reject(new Error(`settled without a ${ms} ms deadline`)),
+					reject,
+				);
+			});
 		},
 		/** That deadline's time comes. */
 		fire(id) {
@@ -192,7 +233,8 @@ async function withContainer(options, run) {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-container-'));
 	const dataRoot = join(directory, 'volume');
 	await mkdir(dataRoot, { recursive: true });
-	const port = await freePort();
+	const reservation = await reservePort();
+	const { port } = reservation;
 	const holderFile = join(directory, 'holder.pid');
 	const makeImage = async (image) => {
 		const built = await buildArchiveFixture({
@@ -232,14 +274,11 @@ async function withContainer(options, run) {
 		TERMINAY_HEALTH_PORT: String(port),
 	});
 	const started = [];
+	/** The container started last: the one whose servers a wait is about. */
+	let current;
 	/** `docker run`: the entrypoint, as the container's main process. */
 	const start = (args = [], image = imageRelease) => {
-		// A container's servers report only after it starts. Anything already
-		// reported belongs to an earlier container, however many lines of it
-		// the test happened to wait for, so it can never satisfy a wait on this
-		// one: a stopped server's line would send the next health check to a
-		// port nothing answers.
-		seen = servers.length;
+		reservation.release();
 		const child = spawn(SHELL, [ENTRYPOINT, ...args], {
 			env: {
 				PATH: process.env.PATH,
@@ -251,8 +290,21 @@ async function withContainer(options, run) {
 				...env(image),
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
+			// A process group of its own, as a container's processes are, so
+			// that ending the container ends everything it started.
+			detached: true,
 		});
-		const container = { child, stdout: '', stderr: '', pid: child.pid };
+		const container = {
+			child,
+			stdout: '',
+			stderr: '',
+			pid: child.pid,
+			/** Every fixture server this container started, in order. */
+			servers: [],
+			/** How many of them a wait has already been satisfied by. */
+			seen: 0,
+			waiters: new Set(),
+		};
 		child.stdout.on('data', (chunk) => {
 			container.stdout += chunk;
 		});
@@ -265,43 +317,79 @@ async function withContainer(options, run) {
 			const lines = partial.split('\n');
 			partial = lines.pop();
 			for (const line of lines) {
-				const [tag, version, readiness] = line.split(' ');
+				const [tag, version, readiness, recorded] = line.split(' ');
 				if (tag !== 'fixture-server') continue;
-				servers.push({ version, ready: readiness === 'ready' });
-				for (const check of [...serverWaiters]) check();
+				container.servers.push({
+					version,
+					ready: readiness === 'ready',
+					recorded: recorded === 'recorded',
+				});
+				for (const waiter of [...container.waiters]) waiter.check();
 			}
 		});
 		// Once its output has closed too, so all of it has been read.
 		container.exited = new Promise((done) => {
-			child.on('close', (code, signal) => done({ code, signal }));
+			child.on('close', (code, signal) => {
+				container.closed = { code, signal };
+				done(container.closed);
+				for (const waiter of [...container.waiters]) waiter.gone();
+			});
 		});
 		started.push(container);
+		current = container;
 		return container;
 	};
-	/** Every fixture server that has started listening, in order. */
-	const servers = [];
-	const serverWaiters = new Set();
-	let seen = 0;
 	/**
-	 * The next server to start listening after the last one waited for, of
-	 * `version` and, when given, that readiness.
+	 * The next server of the container started last to start listening after
+	 * the last one waited for, of `version` and, when given, that readiness.
+	 *
+	 * Rejects instead when the container exits first, or when `during`, the
+	 * operation that should bring that server up, fails: either way it is not
+	 * coming.
 	 */
-	const listening = (version, ready) =>
-		new Promise((done) => {
-			const check = () => {
-				const index = servers.findIndex(
-					(server, at) =>
-						at >= seen &&
-						server.version === version &&
-						(ready === undefined || server.ready === ready),
-				);
-				if (index < 0) return;
-				serverWaiters.delete(check);
-				seen = index + 1;
-				done(servers[index]);
+	const listening = (version, ready, during) =>
+		new Promise((done, fail) => {
+			const container = current;
+			assert.ok(container, 'no container has been started');
+			const waiter = {
+				check() {
+					const index = container.servers.findIndex(
+						(server, at) =>
+							at >= container.seen &&
+							server.version === version &&
+							(ready === undefined || server.ready === ready),
+					);
+					if (index < 0) return;
+					container.waiters.delete(waiter);
+					container.seen = index + 1;
+					const server = container.servers[index];
+					// Whatever finds a server answering must find it recorded too:
+					// that is how an upgrade knows which process to restart.
+					if (server.recorded) done(server);
+					else
+						fail(
+							new Error(
+								`${version} was listening before the entrypoint recorded it`,
+							),
+						);
+				},
+				gone() {
+					container.waiters.delete(waiter);
+					fail(
+						new Error(
+							`the container exited (${JSON.stringify(container.closed)}) before a ${version} server listened\n${container.stderr}`,
+						),
+					);
+				},
 			};
-			serverWaiters.add(check);
-			check();
+			container.waiters.add(waiter);
+			during?.catch((error) => {
+				container.waiters.delete(waiter);
+				fail(error);
+			});
+			waiter.check();
+			if (container.closed !== undefined && container.waiters.has(waiter))
+				waiter.gone();
 		});
 	const timers = manualTimers();
 	const lines = [];
@@ -355,14 +443,22 @@ async function withContainer(options, run) {
 				}),
 		});
 	} finally {
+		reservation.release();
+		// The container goes, and everything in it: the entrypoint, and any
+		// server or release decision it had running, recorded or not.
 		for (const container of started) {
-			if (container.child.exitCode === null) container.child.kill('SIGKILL');
+			try {
+				process.kill(-container.pid, 'SIGKILL');
+			} catch {
+				// Nothing of it is left.
+			}
 		}
-		const pidFile = join(dataRoot, 'releases/server.pid');
-		for (const file of [pidFile, holderFile]) {
-			const pid = Number((await readFile(file, 'utf8').catch(() => '')).trim());
-			if (pid > 1 && alive(pid)) process.kill(pid, 'SIGKILL');
-		}
+		// The session holder detached into a session of its own.
+		const holder = Number(
+			(await readFile(holderFile, 'utf8').catch(() => '')).trim(),
+		);
+		if (holder > 1 && alive(holder)) process.kill(holder, 'SIGKILL');
+		await Promise.all(started.map((container) => container.exited));
 		await releases.close();
 		await rm(directory, { recursive: true, force: true });
 	}
@@ -793,8 +889,8 @@ test('a release that never reports ready is rolled back and the command fails', 
 		});
 		// The new release is up and answering, but not ready; then the wait
 		// for it reaches its deadline.
-		await container.listening('4.1.1', false);
-		container.timers.fire(await container.timers.armed(1_500));
+		await container.listening('4.1.1', false, upgrading);
+		container.timers.fire(await container.timers.armed(1_500, upgrading));
 		await assert.rejects(
 			upgrading,
 			(error) =>

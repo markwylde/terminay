@@ -112,14 +112,22 @@ while :; do
   fi
   use_release "$release"
 
+  # Both records are in place before the server can answer anyone, so
+  # whatever finds it ready also finds which process to restart and which
+  # release it runs. The server records its own pid, from the process that
+  # then becomes it, ahead of starting.
+  #
   # stdin is handed on through a spare descriptor: a background command
   # otherwise has it replaced with /dev/null before it starts.
+  record running "$release"
   exec 3<&0
-  "$release/bin/terminay-server" "$@" <&3 3<&- &
+  sh -c '
+    printf "%s\n" "$$" > "$1.tmp" 2>/dev/null && mv -f "$1.tmp" "$1" 2>/dev/null
+    shift
+    exec "$@"
+  ' terminay-server "$releases/server.pid" "$release/bin/terminay-server" "$@" <&3 3<&- &
   child=$!
   exec 3<&-
-  record running "$release"
-  record server.pid "$child"
 
   # A forwarded signal interrupts `wait` while the server is still shutting
   # down, so it is waited for again until it has really gone.
