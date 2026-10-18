@@ -13,6 +13,8 @@ test('workspace sidebar keeps one compact boundary at default and resized widths
 		const page = await browser.newPage({
 			viewport: { width: 1000, height: 500 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(`
 			<style>
 				html, body { width: 100%; height: 100%; margin: 0; }
@@ -137,6 +139,8 @@ test('workspace sidebar separator drags and commits the controlled width', async
 		const page = await browser.newPage({
 			viewport: { width: 1000, height: 500 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(`
 			<style>
 				html, body, #root { width: 100%; height: 100%; margin: 0; }
@@ -263,6 +267,8 @@ test('workspace sidebar width cancellation restores the local preview without a 
 		const page = await browser.newPage({
 			viewport: { width: 1000, height: 500 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(`
 			<style>
 				html, body, #root { width: 100%; height: 100%; margin: 0; }
@@ -378,6 +384,8 @@ test('workspace sidebar defaults to an eighty percent maximum width', async () =
 		const page = await browser.newPage({
 			viewport: { width: 1000, height: 500 },
 		});
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await page.setContent(`
 			<style>
 				html, body, #root { width: 100%; height: 100%; margin: 0; }
