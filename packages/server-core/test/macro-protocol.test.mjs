@@ -61,16 +61,35 @@ function createPtyFactory() {
   };
 }
 
-function waitFor(predicate, timeoutMs = 2_000) {
-  const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (predicate()) return resolve();
-      if (Date.now() - started >= timeoutMs) return reject(new Error("timed out waiting for macro condition"));
-      setTimeout(check, 5);
-    };
-    check();
+/** Settles once `check` holds, re-checked on each change `subscribe` reports. */
+function when(subscribe, check) {
+  if (check()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = subscribe(() => {
+      if (!check()) return;
+      unsubscribe();
+      resolve();
+    });
   });
+}
+
+const runEvents = (journal, runId) =>
+  journal.replay().events.filter((event) => event.event === "macros.run.changed" && event.payload.runId === runId);
+
+/**
+ * Settles once the server has published the run's end. That is published
+ * after the runner has let the run go, so nothing of it is still running.
+ */
+const ended = (journal, runId) =>
+  when((listener) => journal.subscribe(listener), () => runEvents(journal, runId).some((event) => event.payload.status !== "running"));
+
+/** Re-checks every waiter whenever `changed` is called. */
+function changes() {
+  const waiters = new Set();
+  return {
+    changed: () => { for (const waiter of [...waiters]) waiter(); },
+    until: (check) => when((listener) => { waiters.add(listener); return () => waiters.delete(listener); }, check),
+  };
 }
 
 async function createPair(kind) {
@@ -146,7 +165,8 @@ for (const kind of ["local", "remote"]) {
       assert.equal(saved.revision, 1);
 
       const run = await macroClient.run("deploy", target, { Environment: "prod" });
-      await waitFor(() => runner.running === 0);
+      await ended(composition.eventJournal, run.runId);
+      assert.equal(runner.running, 0);
       assert.deepEqual(writes.map((entry) => entry.text), ["deploy prod ", "<key:Enter>"]);
       assert.deepEqual(waits, [2_000]);
       assert.equal(run.target.sessionId, session.sessionId);
@@ -160,7 +180,8 @@ for (const kind of ["local", "remote"]) {
       const cancelRun = await macroClient.run("cancel-me", target);
       assert.equal(cancelRun.status, "running");
       await macroClient.cancel(cancelRun.runId, target);
-      await waitFor(() => runner.running === 0);
+      await ended(composition.eventJournal, cancelRun.runId);
+      assert.equal(runner.running, 0);
       assert.equal(cancelState.revision, 2);
 
       // replace with categories sets them
@@ -179,7 +200,8 @@ for (const kind of ["local", "remote"]) {
       assert.deepEqual(stale.macros.find((macro) => macro.id === "stale").steps[1], { id: "s", type: "unsupported", sourceType: "secret" });
       const writesBefore = writes.length;
       const rejected = await macroClient.run("stale", target);
-      await waitFor(() => runner.running === 0);
+      await ended(composition.eventJournal, rejected.runId);
+      assert.equal(runner.running, 0);
       const finished = runner.list().find((candidate) => candidate.runId === rejected.runId) ?? rejected;
       assert.equal(writes.length, writesBefore);
       assert.notEqual(finished.status, "completed");
@@ -220,7 +242,7 @@ test("macro disconnect policy is applied by the server connection cleanup", asyn
     const run = await macros.run("disconnect", target);
     assert.equal(run.status, "running");
     await client.close();
-    await waitFor(() => composition.eventJournal.replay().events.at(-1)?.payload.status === "canceled");
+    await when((listener) => composition.eventJournal.subscribe(listener), () => composition.eventJournal.replay().events.at(-1)?.payload.status === "canceled");
     assert.equal(runner.running, 0);
     assert.equal(composition.eventJournal.replay().events.at(-1).payload.status, "canceled");
     assert.equal(saved.revision, 1);
@@ -238,6 +260,7 @@ test("a running macro publishes each step it reaches, so the macro queue can sho
   const runner = new MacroRunner({ maxDelayMs: 10_000 });
   // Each wait for inactivity holds until the test releases it.
   const idleGates = [];
+  const observed = changes();
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
     serverId: target.serverId,
@@ -252,7 +275,7 @@ test("a running macro publishes each step it reaches, so the macro queue can sho
         target: exactTarget,
         write() {},
         key() {},
-        waitForInactivity: () => new Promise((resolve) => idleGates.push(resolve)),
+        waitForInactivity: () => new Promise((resolve) => { idleGates.push(resolve); observed.changed(); }),
       }),
     },
   });
@@ -265,7 +288,7 @@ test("a running macro publishes each step it reaches, so the macro queue can sho
   const seen = [];
   try {
     await client.connect();
-    macros.onRunChanged((snapshot) => seen.push(snapshot));
+    macros.onRunChanged((snapshot) => { seen.push(snapshot); observed.changed(); });
     await macros.upsert({
       id: "three-prompts",
       title: "Three prompts",
@@ -285,18 +308,20 @@ test("a running macro publishes each step it reaches, so the macro queue can sho
     const latest = () => seen.filter((snapshot) => snapshot.runId === run.runId).at(-1);
 
     for (const [gate, waitStepIndex] of [[0, 2], [1, 5], [2, 8]]) {
-      await waitFor(() => idleGates.length > gate);
-      // The server is parked on this wait; a client must have been told so.
-      await waitFor(() => latest()?.stepIndex === waitStepIndex, 500).catch(() => undefined);
+      await observed.until(() => idleGates.length > gate);
+      // The server is parked on this wait, and must already have published it.
+      const published = runEvents(composition.eventJournal, run.runId).at(-1)?.payload;
       assert.equal(
-        latest()?.stepIndex,
+        published?.stepIndex,
         waitStepIndex,
-        `while waiting for idle at step ${waitStepIndex}, the last published snapshot is still at step ${latest()?.stepIndex}`,
+        `while waiting for idle at step ${waitStepIndex}, the last published snapshot is still at step ${published?.stepIndex}`,
       );
+      // So a client is told, before anything that follows.
+      await observed.until(() => latest()?.stepIndex === waitStepIndex);
       assert.equal(latest()?.status, "running");
       idleGates[gate]();
     }
-    await waitFor(() => latest()?.status === "completed");
+    await observed.until(() => latest()?.status === "completed");
   } finally {
     for (const release of idleGates) release();
     await client.close().catch(() => undefined);
