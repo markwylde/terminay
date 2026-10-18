@@ -91,7 +91,6 @@ function service(overrides = {}) {
   return { insights, hosts, vault, changes, saved };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const PROPS = {
   pullRequest: { number: 285, title: "About window", url: `${ORIGIN}/owner/repo/pulls/285`, state: "open" },
@@ -107,26 +106,23 @@ test("git config parsing yields remotes and branch upstreams", () => {
 
 test("a project's first listing issues a context to running sources, and only real changes re-issue it", async () => {
   const { insights, hosts } = service();
-  await settle();
+  // Reconciling is serialised: this settles after the one attaching started.
+  await insights.reconcile();
   assert.equal(hosts.calls.started.length, 1);
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   assert.equal(hosts.calls.contexts.length, 1);
   const [context] = hosts.calls.contexts[0].contexts;
   assert.equal(context.repositoryRoot, "/work/repo");
   assert.deepEqual(context.worktrees.map((worktree) => [worktree.id, worktree.upstream?.branch]), [["wt-main", "main"], ["wt-x", "feat/x"]]);
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   assert.equal(hosts.calls.contexts.length, 1, "an identical listing does not re-issue");
   await insights.observeListing(listing("p1", [["wt-main", "main"]]));
-  await settle(); await settle();
   assert.equal(hosts.calls.contexts.length, 2, "a changed worktree set re-issues");
 });
 
 test("properties are accepted only for issued contexts and worktrees, and scoped to their project", async () => {
   const { insights, hosts, changes } = service();
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   const contextId = hosts.calls.contexts[0].contexts[0].id;
   insights.publish({ extensionId: EXTENSION, sourceId: SOURCE, contextId: "forged", worktreeId: "wt-main", properties: PROPS });
   insights.publish({ extensionId: EXTENSION, sourceId: SOURCE, contextId, worktreeId: "not-issued", properties: PROPS });
@@ -143,7 +139,6 @@ test("invalid properties are rejected and the last valid ones kept", async () =>
   const errors = [];
   const { insights, hosts } = service({ onError: (message) => errors.push(message) });
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   const contextId = hosts.calls.contexts[0].contexts[0].id;
   insights.publish({ extensionId: EXTENSION, sourceId: SOURCE, contextId, worktreeId: "wt-main", properties: PROPS });
   insights.publish({ extensionId: EXTENSION, sourceId: SOURCE, contextId, worktreeId: "wt-main", properties: { pullRequest: { ...PROPS.pullRequest, url: "https://u:p@x.example/" } } });
@@ -154,7 +149,6 @@ test("invalid properties are rejected and the last valid ones kept", async () =>
 test("closing a project, losing a worktree, or stopping a source drops its properties", async () => {
   const { insights, hosts, changes } = service();
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   const contextId = hosts.calls.contexts[0].contexts[0].id;
   for (const worktreeId of ["wt-main", "wt-x"])
     insights.publish({ extensionId: EXTENSION, sourceId: SOURCE, contextId, worktreeId, properties: PROPS });
@@ -172,7 +166,6 @@ test("closed projects are cancelled on the next listing", async () => {
   await insights.observeListing(listing("p1"));
   open.delete("p1");
   await insights.observeListing(listing("p2", undefined, "repo-2"));
-  await settle(); await settle();
   const latest = hosts.calls.contexts.at(-1).contexts;
   assert.equal(latest.length, 1);
   assert.equal(insights.signInFor("p1"), undefined);
@@ -182,9 +175,8 @@ test("a sign-in request prompts every project on that host once, and Yes stores 
   const { insights, hosts, vault } = service();
   await insights.observeListing(listing("p1"));
   await insights.observeListing(listing("p2", undefined, "repo-2"));
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge", tokenPageUrl: `${ORIGIN}/user/settings/applications` } });
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge", tokenPageUrl: `${ORIGIN}/user/settings/applications` } });
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(insights.signInFor("p1")?.origin, ORIGIN);
   assert.equal(insights.signInFor("p2")?.tokenPageUrl, `${ORIGIN}/user/settings/applications`);
   await assert.rejects(insights.respond("p1", ORIGIN, "accept", "has space"), /invalid/);
@@ -196,46 +188,38 @@ test("a sign-in request prompts every project on that host once, and Yes stores 
   assert.equal(await insights.token({ extensionId: "other.ext", sourceId: "other.ext/x", origin: ORIGIN }), undefined, "another extension cannot resolve it");
   await insights.rejectToken({ extensionId: EXTENSION, sourceId: SOURCE, origin: ORIGIN });
   assert.equal(vault.values.size, 0);
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(insights.signInFor("p1")?.origin, ORIGIN, "a rejected token permits a new prompt");
 });
 
 test("maybe later suppresses the host for this server run only", async () => {
   const { insights } = service();
   await insights.observeListing(listing("p1"));
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   await insights.respond("p1", ORIGIN, "later");
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(insights.signInFor("p1"), undefined);
   const restarted = service();
   await restarted.insights.observeListing(listing("p1"));
-  restarted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await restarted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(restarted.insights.signInFor("p1")?.origin, ORIGIN);
 });
 
 test("don't ask again persists per extension until re-enabled", async () => {
   const { insights, saved } = service();
   await insights.observeListing(listing("p1"));
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   await insights.respond("p1", ORIGIN, "never");
   assert.deepEqual(saved.at(-1), [EXTENSION]);
   assert.deepEqual(await insights.suppressedExtensions(), [EXTENSION]);
-  insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: "https://other.example", provider: "Forge" } });
-  await settle();
+  await insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: "https://other.example", provider: "Forge" } });
   assert.equal(insights.signInFor("p1"), undefined);
   const persisted = service({ suppressed: [EXTENSION] });
   await persisted.insights.observeListing(listing("p1"));
-  persisted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await persisted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(persisted.insights.signInFor("p1"), undefined, "the choice survives a restart");
   await persisted.insights.setPromptsSuppressed(EXTENSION, false);
-  persisted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
-  await settle();
+  await persisted.insights.requestSignIn({ extensionId: EXTENSION, sourceId: SOURCE, request: { origin: ORIGIN, provider: "Forge" } });
   assert.equal(persisted.insights.signInFor("p1")?.origin, ORIGIN);
 });
 
@@ -249,8 +233,8 @@ test("prompt preferences round-trip through their file", async () => {
 });
 
 test("sources stop when their contribution disappears", async () => {
-  const { hosts } = service();
-  await settle();
+  const { insights, hosts } = service();
+  await insights.reconcile();
   hosts.contributions = [];
   await hosts.changed();
   assert.deepEqual(hosts.calls.stopped, [SOURCE]);
@@ -260,17 +244,13 @@ test("contexts carry whether their project is active, and focus re-issues them",
   const active = new Set();
   const { insights, hosts } = service({ activeProjectIds: () => active });
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   assert.equal(hosts.calls.contexts.at(-1).contexts[0].active, false);
   const issued = hosts.calls.contexts.length;
-  insights.refreshActivity();
-  await settle(); await settle();
+  await insights.refreshActivity();
   assert.equal(hosts.calls.contexts.length, issued, "no change, no re-issue");
   active.add("p1");
-  insights.refreshActivity();
-  await settle(); await settle();
+  await insights.refreshActivity();
   assert.equal(hosts.calls.contexts.at(-1).contexts[0].active, true);
   await insights.observeListing(listing("p1"));
-  await settle(); await settle();
   assert.equal(hosts.calls.contexts.length, issued + 1, "an unchanged listing keeps the active context");
 });
