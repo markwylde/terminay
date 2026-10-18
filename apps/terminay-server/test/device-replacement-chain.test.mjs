@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDeviceReplacementChain } from '../src/remote/hostedPeerLifecycle.ts';
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
-
 test('two peers for one device take over in order', async () => {
 	const chain = createDeviceReplacementChain();
 	const order = [];
@@ -16,7 +14,9 @@ test('two peers for one device take over in order', async () => {
 	const second = chain.run('device-a', async () => {
 		order.push('second:start');
 	});
-	await settle();
+	// Another device's task, queued after both, runs and finishes: a
+	// replacement that did not wait would have started before it.
+	await chain.run('device-b', async () => {});
 	assert.deepEqual(order, ['first:start'], 'the replacement waits for the peer it replaces');
 	releaseFirst();
 	await Promise.all([first, second]);
@@ -36,6 +36,5 @@ test('a failed takeover does not block the next one, and drained chains are drop
 	const chain = createDeviceReplacementChain();
 	await assert.rejects(chain.run('device-a', async () => { throw new Error('cleanup failed'); }), /cleanup failed/u);
 	assert.equal(await chain.run('device-a', async () => 'next'), 'next');
-	await settle();
 	assert.equal(chain.size, 0, 'the chain is not retained per device id forever');
 });

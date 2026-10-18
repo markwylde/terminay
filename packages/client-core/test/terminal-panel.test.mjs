@@ -232,12 +232,17 @@ test("terminal panel bounds acknowledgement concurrency and advances to output r
   const originalCommand = source.command.bind(source);
   let releaseFirstAcknowledgement;
   const firstAcknowledgementBlocked = new Promise((resolve) => { releaseFirstAcknowledgement = resolve; });
+  let firstAcknowledgementSent;
+  const firstAcknowledgementReached = new Promise((resolve) => { firstAcknowledgementSent = resolve; });
   let acknowledgementCalls = 0;
   source.command = async (operation, payload) => {
     if (operation === "terminal.ack") {
       acknowledgementCalls += 1;
       source.calls.push([operation, payload]);
-      if (acknowledgementCalls === 1) await firstAcknowledgementBlocked;
+      if (acknowledgementCalls === 1) {
+        firstAcknowledgementSent();
+        await firstAcknowledgementBlocked;
+      }
       return { type: "command_result", commandId: `ack-${acknowledgementCalls}`, correlationId: `ack-${acknowledgementCalls}`, ok: true };
     }
     return originalCommand(operation, payload);
@@ -246,7 +251,7 @@ test("terminal panel bounds acknowledgement concurrency and advances to output r
 
   source.emit(output(3, new Uint8Array([1])));
   const first = panel.ack(4);
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await firstAcknowledgementReached;
   assert.equal(acknowledgementCalls, 1);
 
   const later = [];

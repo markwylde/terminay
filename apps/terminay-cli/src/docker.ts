@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { request } from 'node:http';
+import { type DeadlineTimers, GLOBAL_DEADLINE_TIMERS } from './deadlines.js';
 
 /**
  * The Docker Engine API, over the socket an operator mounted into the
@@ -192,6 +193,7 @@ function send(
 	path: string,
 	body: unknown,
 	timeoutMs: number,
+	timers: DeadlineTimers,
 ): Promise<Answer> {
 	return new Promise((resolve, reject) => {
 		const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -199,7 +201,7 @@ function send(
 		const fail = (error: DockerError) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(deadline);
+			timers.clearTimeout(deadline);
 			reject(error);
 		};
 		const outgoing = request(
@@ -234,7 +236,7 @@ function send(
 				response.on('end', () => {
 					if (settled) return;
 					settled = true;
-					clearTimeout(deadline);
+					timers.clearTimeout(deadline);
 					resolve({
 						status: response.statusCode ?? 0,
 						body: Buffer.concat(chunks).toString('utf8'),
@@ -243,7 +245,7 @@ function send(
 			},
 		);
 		// A one-shot deadline on one request (ADR-0028 decision 3).
-		const deadline = setTimeout(() => {
+		const deadline = timers.setTimeout(() => {
 			outgoing.destroy();
 			fail(
 				new DockerError(
@@ -272,6 +274,7 @@ function watch(
 	socketPath: string,
 	id: string,
 	listener: (event: ContainerEvent) => void,
+	timers: DeadlineTimers,
 ): Promise<ContainerWatch> {
 	const filters = JSON.stringify({
 		type: ['container'],
@@ -292,7 +295,7 @@ function watch(
 				headers: { host: 'docker' },
 			},
 			(response) => {
-				clearTimeout(deadline);
+				timers.clearTimeout(deadline);
 				if (response.statusCode !== 200) {
 					response.resume();
 					reject(
@@ -339,7 +342,7 @@ function watch(
 			},
 		);
 		// A one-shot deadline on the subscription being accepted.
-		const deadline = setTimeout(() => {
+		const deadline = timers.setTimeout(() => {
 			outgoing.destroy();
 			reject(
 				new DockerError(
@@ -350,7 +353,7 @@ function watch(
 			);
 		}, REQUEST_TIMEOUT_MS);
 		outgoing.on('error', (error: NodeJS.ErrnoException) => {
-			clearTimeout(deadline);
+			timers.clearTimeout(deadline);
 			if (opened) finish(error);
 			else reject(new DockerError(error.message, 0, error.code));
 		});
@@ -374,7 +377,10 @@ function failure(answer: Answer, what: string): DockerError {
 
 const segment = (value: string) => encodeURIComponent(value);
 
-export function createDockerClient(socketPath: string): DockerApi {
+export function createDockerClient(
+	socketPath: string,
+	timers: DeadlineTimers = GLOBAL_DEADLINE_TIMERS,
+): DockerApi {
 	const call = async (
 		method: string,
 		path: string,
@@ -382,7 +388,14 @@ export function createDockerClient(socketPath: string): DockerApi {
 		body?: unknown,
 		timeoutMs: number = REQUEST_TIMEOUT_MS,
 	): Promise<Answer> => {
-		const answer = await send(socketPath, method, path, body, timeoutMs);
+		const answer = await send(
+			socketPath,
+			method,
+			path,
+			body,
+			timeoutMs,
+			timers,
+		);
 		// 304 is how the engine says a container was already started or stopped.
 		if ((answer.status >= 200 && answer.status < 300) || answer.status === 304)
 			return answer;
@@ -398,6 +411,7 @@ export function createDockerClient(socketPath: string): DockerApi {
 			path,
 			undefined,
 			REQUEST_TIMEOUT_MS,
+			timers,
 		);
 		if (answer.status === 404) return undefined;
 		if (answer.status !== 200) throw failure(answer, what);
@@ -521,7 +535,7 @@ export function createDockerClient(socketPath: string): DockerApi {
 			return typeof status === 'number' ? status : 0;
 		},
 		watchContainer(id, listener) {
-			return watch(socketPath, id, listener);
+			return watch(socketPath, id, listener, timers);
 		},
 	};
 	return Object.freeze(api);
@@ -545,6 +559,7 @@ export type SocketProbe =
 export async function probeDockerSocket(
 	socketPath: string,
 	timeoutMs: number = DOCKER_PROBE_TIMEOUT_MS,
+	timers: DeadlineTimers = GLOBAL_DEADLINE_TIMERS,
 ): Promise<SocketProbe> {
 	let info: Awaited<ReturnType<typeof stat>>;
 	try {
@@ -558,7 +573,7 @@ export async function probeDockerSocket(
 	}
 	if (!info.isSocket()) return { usable: false, cause: 'not-a-socket' };
 	try {
-		await createDockerClient(socketPath).ping(timeoutMs);
+		await createDockerClient(socketPath, timers).ping(timeoutMs);
 		return { usable: true };
 	} catch (error) {
 		const code = error instanceof DockerError ? error.code : undefined;

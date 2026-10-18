@@ -56,7 +56,7 @@ test("loopback UI listeners use OS-assigned ports instead of a probe-and-race po
   }
 });
 
-test("runtime lifecycle clears the bounded shutdown timer after services finish", async () => {
+test("runtime lifecycle clears the bounded shutdown timer after services finish", async (t) => {
   const runtime = createStandaloneServer({
     serverId: "lifecycle-server",
     serverVersion: "1.0.0",
@@ -65,9 +65,18 @@ test("runtime lifecycle clears the bounded shutdown timer after services finish"
     hooks: { stopServices: async () => undefined },
   });
   await runtime.start();
-  const startedAt = Date.now();
+  // From here no timer fires unless the test moves the clock, which it never
+  // does: stopping cannot be finished by its deadline.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const armed = t.mock.method(globalThis, "setTimeout");
+  const cleared = t.mock.method(globalThis, "clearTimeout");
   await runtime.stop();
-  assert.ok(Date.now() - startedAt < 250);
+  const deadline = armed.mock.calls.find((call) => call.arguments[1] === 2_000);
+  assert.ok(deadline, "stopping sets its bounded shutdown deadline");
+  assert.ok(
+    cleared.mock.calls.some((call) => call.arguments[0] === deadline.result),
+    "the deadline is cleared once the services have finished",
+  );
   assert.equal(runtime.health().phase, "stopped");
 });
 

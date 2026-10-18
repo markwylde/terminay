@@ -23,10 +23,16 @@ function memoryStorage(seed = new Map()) {
  * server and lets a test push server bytes back. */
 function fakeTransport() {
 	const sent = [];
+	const sentWaiters = [];
 	const inbound = [];
 	let push;
 	return {
 		sent,
+		/** Resolves once the manager has sent the server `count` frames. */
+		sentReach(count) {
+			if (sent.length >= count) return Promise.resolve();
+			return new Promise((resolve) => sentWaiters.push({ count, resolve }));
+		},
 		deliver(bytes) { push === undefined ? inbound.push(bytes) : push(bytes); },
 		end() { push = undefined; inbound.push(undefined); },
 		transport: {
@@ -36,7 +42,13 @@ function fakeTransport() {
 			async open() {},
 			async close() {},
 			onStateChange() { return () => {}; },
-			async send(frame) { sent.push([...frame]); },
+			async send(frame) {
+				sent.push([...frame]);
+				for (const waiter of sentWaiters.filter((entry) => sent.length >= entry.count)) {
+					sentWaiters.splice(sentWaiters.indexOf(waiter), 1);
+					waiter.resolve();
+				}
+			},
 			get incoming() {
 				return {
 					async *[Symbol.asyncIterator]() {
@@ -60,6 +72,12 @@ function fakeTransport() {
 
 function harness(t, overrides = {}) {
 	const posted = [];
+	const postWaiters = [];
+	/** Resolves once the manager has posted `count` messages to the frame. */
+	const postedReach = (count) => {
+		if (posted.length >= count) return Promise.resolve();
+		return new Promise((resolve) => postWaiters.push({ count, resolve }));
+	};
 	const listeners = new Set();
 	const opened = fakeTransport();
 	const delegate = {
@@ -77,7 +95,15 @@ function harness(t, overrides = {}) {
 	};
 	const host = new FramedConnectionManagerHost({
 		sessionOrigin: SESSION_ORIGIN,
-		frame: { postMessage(message, targetOrigin, transfer) { posted.push({ message, targetOrigin, transfer }); } },
+		frame: {
+			postMessage(message, targetOrigin, transfer) {
+				posted.push({ message, targetOrigin, transfer });
+				for (const waiter of postWaiters.filter((entry) => posted.length >= entry.count)) {
+					postWaiters.splice(postWaiters.indexOf(waiter), 1);
+					waiter.resolve();
+				}
+			},
+		},
 		frameSource: 'the-frame',
 		messageTarget: {
 			addEventListener(_type, listener) { listeners.add(listener); },
@@ -92,11 +118,17 @@ function harness(t, overrides = {}) {
 		for (const entry of posted)
 			for (const port of entry.transfer ?? []) port.close?.();
 	});
-	const send = async (data, origin = SESSION_ORIGIN, source = 'the-frame') => {
+	/** Delivers a message as the frame would, without waiting for an answer. */
+	const dispatch = (data, origin = SESSION_ORIGIN, source = 'the-frame') => {
 		for (const listener of [...listeners]) listener({ data, origin, source });
-		await new Promise((resolve) => setImmediate(resolve));
 	};
-	return { host, posted, send, opened };
+	/** Delivers a request and resolves once the manager has answered it. */
+	const send = (data, origin, source) => {
+		const answered = postedReach(posted.length + 1);
+		dispatch(data, origin, source);
+		return answered;
+	};
+	return { host, posted, postedReach, dispatch, send, opened };
 }
 
 test('the framed schema lists sanitized profiles and nothing else', async (t) => {
@@ -129,7 +161,7 @@ test('attach transfers a byte port and never a credential', async (t) => {
 	port.start();
 	const fromServer = new Promise((resolve) => { port.onmessage = (event) => resolve(event.data); });
 	port.postMessage(new Uint8Array([1, 2, 3]));
-	await new Promise((resolve) => setImmediate(resolve));
+	await opened.sentReach(1);
 	assert.deepEqual(opened.sent, [[1, 2, 3]]);
 	opened.deliver(new Uint8Array([9, 8]));
 	assert.deepEqual([...(await fromServer)], [9, 8]);
@@ -155,16 +187,19 @@ test('detach closes the manager transport and answers the frame', async (t) => {
 });
 
 test('the manager ignores foreign origins, foreign frames, and unknown message types', async (t) => {
-	const { posted, send } = harness(t);
-	await send({ v: 1, type: 'connections.list', requestId: 'r8' }, 'https://evil.example.test');
-	await send({ v: 1, type: 'connections.list', requestId: 'r9' }, SESSION_ORIGIN, 'another-frame');
-	await send({ v: 1, type: 'vault.read', requestId: 'r10' });
-	assert.deepEqual(posted, []);
+	const { posted, dispatch, send } = harness(t);
+	dispatch({ v: 1, type: 'connections.list', requestId: 'r8' }, 'https://evil.example.test');
+	dispatch({ v: 1, type: 'connections.list', requestId: 'r9' }, SESSION_ORIGIN, 'another-frame');
+	dispatch({ v: 1, type: 'vault.read', requestId: 'r10' });
 	// A known type with an unsupported schema version or an unknown field is a
-	// typed refusal, never a partially honoured request.
+	// typed refusal, never a partially honoured request. Those two are the
+	// first answers to arrive, so nothing sent before them was answered.
 	await send({ v: 2, type: 'connections.list', requestId: 'r11' });
 	await send({ v: 1, type: 'connections.attach', requestId: 'r12', profileId: 'profile-a', extra: 1 });
-	assert.deepEqual(posted.map((entry) => entry.message.code), ['invalid-request', 'invalid-request']);
+	assert.deepEqual(posted.map((entry) => [entry.message.requestId, entry.message.code]), [
+		['r11', 'invalid-request'],
+		['r12', 'invalid-request'],
+	]);
 });
 
 test('status notifications reach the framed primary as a closed message', async (t) => {
@@ -226,18 +261,22 @@ test('two attaches for one profile open exactly one connection', async (t) => {
 	// The loser of the race used to be answered with a port of its own, and the
 	// transport it had opened was left running with nothing holding it.
 	const opens = [];
-	const { posted, send } = harness(t, {
+	let finishOpening;
+	const opening = new Promise((resolve) => { finishOpening = resolve; });
+	const { posted, postedReach, dispatch } = harness(t, {
 		openConnection: async (profileId) => {
 			const opened = fakeTransport();
 			opens.push(opened);
-			await new Promise((resolve) => setTimeout(resolve, 5));
+			// Both attaches arrive while the first is still opening.
+			await opening;
 			return { serverId: 'server-a', transport: opened.transport };
 		},
 	});
-	const first = send({ v: 1, type: 'connections.attach', requestId: 'a1', profileId: 'profile-a' });
-	const second = send({ v: 1, type: 'connections.attach', requestId: 'a2', profileId: 'profile-a' });
-	await Promise.all([first, second]);
-	await new Promise((resolve) => setTimeout(resolve, 20));
+	dispatch({ v: 1, type: 'connections.attach', requestId: 'a1', profileId: 'profile-a' });
+	dispatch({ v: 1, type: 'connections.attach', requestId: 'a2', profileId: 'profile-a' });
+	finishOpening();
+	// Every attach is answered exactly once.
+	await postedReach(2);
 	assert.equal(opens.length, 1);
 	const codes = posted.map((entry) => entry.message.code ?? entry.message.result.kind);
 	assert.deepEqual(codes.sort(), ['attach-failed', 'attached']);
@@ -247,6 +286,10 @@ test('two attaches for one profile open exactly one connection', async (t) => {
 test('a failed attached transport is closed and the manager is told', async (t) => {
 	const closedProfiles = [];
 	let transportClosed = false;
+	let markTransportClosed;
+	const transportClosing = new Promise((resolve) => { markTransportClosed = resolve; });
+	let markManagerTold;
+	const managerTold = new Promise((resolve) => { markManagerTold = resolve; });
 	// A transport whose incoming stream is already finished: the server side
 	// went away between opening and the first frame.
 	const dead = {
@@ -256,6 +299,7 @@ test('a failed attached transport is closed and the manager is told', async (t) 
 		async open() {},
 		async close() {
 			transportClosed = true;
+			markTransportClosed();
 		},
 		onStateChange() {
 			return () => {};
@@ -272,10 +316,11 @@ test('a failed attached transport is closed and the manager is told', async (t) 
 		openConnection: async () => ({ serverId: 'server-a', transport: dead }),
 		closeConnection: async (profileId) => {
 			closedProfiles.push(profileId);
+			markManagerTold();
 		},
 	});
 	await send({ v: 1, type: 'connections.attach', requestId: 'b1', profileId: 'profile-a' });
-	await new Promise((resolve) => setTimeout(resolve, 10));
+	await Promise.all([transportClosing, managerTold]);
 	// Neither the transport nor the manager's record of the connection may be
 	// left behind by a lane that has stopped working.
 	assert.equal(transportClosed, true);

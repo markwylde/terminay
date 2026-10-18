@@ -259,7 +259,9 @@ test('stopping the source stops publishing', async (t) => {
 	harness.stop();
 	const count = harness.publications().length;
 	await driver.createLiveSession({ id: 'late', pid: 601, cwd: '/work/app' });
-	await new Promise((resolve) => setImmediate(resolve));
+	// Stopping aborts the source's signal before it returns, and both the source
+	// and the host's publisher refuse anything once it is aborted, so there is
+	// no later moment at which the count could move.
 	assert.equal(harness.publications().length, count);
 	harness.assertConformant();
 });

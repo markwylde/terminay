@@ -174,6 +174,11 @@ export interface ReleaseUpgraderOptions {
 	readonly logPath?: () => string;
 	readonly spawn?: typeof spawnChild;
 	readonly now?: () => number;
+	/** What schedules a check's deadline. Defaults to the global timers. */
+	readonly timers?: {
+		setTimeout(handler: () => void, ms: number): unknown;
+		clearTimeout(handle: unknown): void;
+	};
 }
 
 /**
@@ -198,6 +203,14 @@ export function createReleaseUpgrader(
 		(() =>
 			join(mkdtempSync(join(tmpdir(), 'terminay-upgrade-')), 'upgrade.log'));
 	const now = options.now ?? Date.now;
+	const timers = options.timers ?? {
+		setTimeout: (handler: () => void, ms: number) =>
+			globalThis.setTimeout(handler, ms),
+		clearTimeout: (handle: unknown) =>
+			globalThis.clearTimeout(
+				handle as ReturnType<typeof globalThis.setTimeout> | undefined,
+			),
+	};
 
 	const check = (): Promise<ServerUpgradeCheckReport> =>
 		new Promise((resolve, reject) => {
@@ -230,14 +243,14 @@ export function createReleaseUpgrader(
 				settle(error);
 			};
 			// A one-shot deadline on one run (ADR-0028 decision 3).
-			const deadline = setTimeout(
+			const deadline = timers.setTimeout(
 				() => stop(new Error('the upgrader did not answer in time')),
 				timeoutMs,
 			);
 			function settle(error: Error | undefined, output?: string): void {
 				if (settled) return;
 				settled = true;
-				clearTimeout(deadline);
+				timers.clearTimeout(deadline);
 				if (error !== undefined) {
 					reject(error);
 					return;

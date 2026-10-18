@@ -506,7 +506,10 @@ test('headless MCP recovers after a malformed local control response closes its 
 test('cancelling an MCP tool call closes its control connection so a pending approval is withdrawn', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-server-mcp-cancel-'));
 	const socketPath = join(root, 'control.sock');
-	let received;
+	let receive;
+	const received = new Promise((resolve) => {
+		receive = resolve;
+	});
 	let closed;
 	const connectionClosed = new Promise((resolve) => {
 		closed = resolve;
@@ -517,8 +520,8 @@ test('cancelling an MCP tool call closes its control connection so a pending app
 			for (const request of decoder.push(chunk)) {
 				// Never answer: the request is waiting on a user's approval.
 				if (request.op === 'create_automation') {
-					received = request;
 					socket.once('close', () => closed(true));
+					receive(request);
 				}
 			}
 		});
@@ -554,11 +557,9 @@ test('cancelling an MCP tool call closes its control connection so a pending app
 			undefined,
 			{ signal: controller.signal },
 		);
-		const started = Date.now();
-		while (received === undefined && Date.now() - started < 5_000)
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		assert.equal(received?.params.action.command, 'mail-digest');
-		assert.equal(received?.params.action.prompt, 'Summarise.\nThen stop.');
+		const request = await received;
+		assert.equal(request.params.action.command, 'mail-digest');
+		assert.equal(request.params.action.prompt, 'Summarise.\nThen stop.');
 		controller.abort();
 		await assert.rejects(call);
 		assert.equal(await connectionClosed, true);

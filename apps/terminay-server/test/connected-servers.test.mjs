@@ -44,6 +44,19 @@ async function setup({ entries, env = {}, now } = {}) {
   return { gateway, projects, entry, starts }
 }
 
+/** Resolves once the first entry is no longer connected, re-checked as the gateway announces changes. */
+function lost(gateway) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (gateway.status()[0].state === "connected") return
+      stop()
+      resolve()
+    }
+    const stop = gateway.onChanged(check)
+    check()
+  })
+}
+
 test("nothing is started until a terminal first needs an entry's tools", async () => {
   const { gateway, starts } = await setup()
   try {
@@ -216,11 +229,11 @@ test("listeners hear when the offered tools may have changed, and a lost connect
     const [{ pid }] = await starts()
     const seen = changes
     process.kill(pid)
-    for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    await lost(gateway)
     assert.equal(gateway.status()[0].state, "not-connected")
     assert.ok(changes > seen)
-    // No timer brought it back.
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    // Nothing brings it back unasked: the gateway sets no timer of its own,
+    // and its clock moves only when this test moves it.
     assert.equal((await starts()).length, 1)
     // The change just announced makes every waiting adapter list again. A
     // server that exits as soon as it has connected must not be started by
@@ -237,7 +250,7 @@ test("listeners hear when the offered tools may have changed, and a lost connect
     assert.equal((await gateway.listTools("project-a", signal())).length, 4)
     // Lost again and left alone for a while, the next listing brings it back.
     process.kill((await starts())[1].pid)
-    for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    await lost(gateway)
     assert.equal((await gateway.listTools("project-a", signal())).length, 4)
     assert.equal((await starts()).length, 2)
     clock += 31_000
@@ -408,7 +421,7 @@ test("a server that has gone away does not keep its tools once its entry changes
   try {
     await gateway.listTools("project-a", signal())
     process.kill((await starts())[0].pid)
-    for (let attempt = 0; attempt < 100 && gateway.status()[0].state === "connected"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    await lost(gateway)
     assert.equal((await gateway.listTools("project-a", signal())).length, 4)
     gateway.setEntries([entry({ enabled: false })])
     assert.deepEqual(await gateway.listTools("project-a", signal()), [])

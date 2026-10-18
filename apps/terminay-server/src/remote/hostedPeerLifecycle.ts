@@ -576,16 +576,14 @@ export function createDeviceReplacementChain(): {
 		run(deviceId, task) {
 			const previous = chains.get(deviceId) ?? Promise.resolve();
 			const run = previous.then(task, task);
-			const settled = run.then(
-				() => undefined,
-				() => undefined,
-			);
-			chains.set(deviceId, settled);
 			// Drop the entry once it drains so a long-lived host does not retain
-			// one promise per device id it has ever seen.
-			void settled.then(() => {
+			// one promise per device id it has ever seen. It is dropped as the run
+			// settles, before whoever awaits the run resumes.
+			const drop = (): void => {
 				if (chains.get(deviceId) === settled) chains.delete(deviceId);
-			});
+			};
+			const settled: Promise<void> = run.then(drop, drop);
+			chains.set(deviceId, settled);
 			return run;
 		},
 	};

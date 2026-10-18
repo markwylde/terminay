@@ -46,7 +46,7 @@ test('a multi-megabyte UI archive is sent as 64 KiB chunks with a window of four
 	channel.dispatchMessage(
 		JSON.stringify({ archiveFormatVersion: 1, id: 'bundle', type: 'asset:get-bundle' }),
 	);
-	await waitFor(() => controlMessages(channel).some((message) => message.type === 'asset:bundle-complete'));
+	await untilSent(channel, () => controlMessages(channel).some((message) => message.type === 'asset:bundle-complete'));
 
 	const start = controlMessages(channel).find((message) => message.type === 'asset:bundle-start');
 	const expectedChunks = Math.ceil(CRASH_ARCHIVE_BYTES / UI_ARCHIVE_CHUNK_BYTES);
@@ -86,7 +86,9 @@ test('a native max-message-size throw becomes asset:bundle-error and does not re
 		channel.dispatchMessage(
 			JSON.stringify({ archiveFormatVersion: 1, id: 'bundle', type: 'asset:get-bundle' }),
 		);
-		await waitFor(() => controlMessages(channel).some((message) => message.type === 'asset:bundle-error'));
+		await untilSent(channel, () => controlMessages(channel).some((message) => message.type === 'asset:bundle-error'));
+		// Node reports a rejection nobody handled once the microtasks queued
+		// with it have run, before the next macrotask: one turn is exactly that.
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal(rejections.length, 0);
 		assert.deepEqual(controlMessages(channel).at(-1), {
@@ -112,9 +114,9 @@ test('an in-flight archive transfer reports cancelled when the peer cancels it',
 	channel.dispatchMessage(
 		JSON.stringify({ archiveFormatVersion: 1, id: 'cancel-bundle', type: 'asset:get-bundle' }),
 	);
-	await waitFor(() => binaryChunkIndexes(channel).length === 4);
+	await untilSent(channel, () => binaryChunkIndexes(channel).length === 4);
 	channel.dispatchMessage(JSON.stringify({ id: 'cancel-bundle', type: 'asset:bundle-cancel' }));
-	await waitFor(() => controlMessages(channel).some((message) => message.type === 'asset:bundle-error'));
+	await untilSent(channel, () => controlMessages(channel).some((message) => message.type === 'asset:bundle-error'));
 	assert.equal(binaryChunkIndexes(channel).length, 4);
 	assert.match(
 		controlMessages(channel).find((message) => message.type === 'asset:bundle-error')?.message ?? '',
@@ -128,6 +130,8 @@ function createChannel(overrides = {}) {
 		label: 'asset',
 		readyState: 'open',
 		sent: [],
+		/** Re-run after every send. */
+		sendChecks: new Set(),
 		maxOutstanding: 0,
 		...overrides,
 		addEventListener(type, listener) {
@@ -138,7 +142,11 @@ function createChannel(overrides = {}) {
 		},
 		send(data) {
 			this.sent.push(data);
-			overrides.send?.call(this, data);
+			try {
+				overrides.send?.call(this, data);
+			} finally {
+				for (const check of [...this.sendChecks]) check();
+			}
 		},
 		dispatchMessage(data) {
 			for (const listener of [...listeners]) listener({ data });
@@ -181,10 +189,15 @@ function binaryChunkIndexes(channel) {
 		.map((payload) => new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint32(4, false));
 }
 
-async function waitFor(predicate, timeoutMs = 5_000) {
-	const deadline = Date.now() + timeoutMs;
-	while (!predicate()) {
-		if (Date.now() > deadline) throw new Error('Timed out waiting for archive transfer.');
-		await new Promise((resolve) => setImmediate(resolve));
-	}
+/** Resolves once `predicate` holds, re-checked after every send on `channel`. */
+function untilSent(channel, predicate) {
+	return new Promise((resolve) => {
+		const check = () => {
+			if (!predicate()) return;
+			channel.sendChecks.delete(check);
+			resolve();
+		};
+		channel.sendChecks.add(check);
+		check();
+	});
 }

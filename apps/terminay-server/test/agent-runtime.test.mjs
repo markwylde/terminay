@@ -33,12 +33,19 @@ test("standalone runtime starts and stops the server-owned agent authority", asy
   assert.equal(agents.listening, false);
 });
 
-async function eventually(check, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error("condition never held");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+/** Resolves once `check` holds, re-checked on every snapshot the service publishes. */
+function whenSnapshot(agents, check) {
+  return new Promise((resolve) => {
+    let stop;
+    const test = () => {
+      if (!check()) return false;
+      stop?.();
+      resolve();
+      return true;
+    };
+    if (test()) return;
+    stop = agents.subscribe(() => void test());
+  });
 }
 
 test("a fixture session source runs in a real extension child and reaches the Agents snapshot", async (t) => {
@@ -97,7 +104,7 @@ test("a fixture session source runs in a real extension child and reaches the Ag
     }],
   });
 
-  await eventually(() => Object.keys(agents.getSnapshotForProject("project-a").entries).length === 2);
+  await whenSnapshot(agents, () => Object.keys(agents.getSnapshotForProject("project-a").entries).length === 2);
   const entries = Object.values(agents.getSnapshotForProject("project-a").entries);
   const bound = entries.find((entry) => entry.displayName === "Bound fixture");
   const external = entries.find((entry) => entry.external);
@@ -109,5 +116,5 @@ test("a fixture session source runs in a real extension child and reaches the Ag
   assert.equal(external.activationTerminalSessionId, null);
 
   await hosts.stop("com.example.fixture-agents");
-  await eventually(() => Object.keys(agents.getSnapshot().entries).length === 0);
+  await whenSnapshot(agents, () => Object.keys(agents.getSnapshot().entries).length === 0);
 });
