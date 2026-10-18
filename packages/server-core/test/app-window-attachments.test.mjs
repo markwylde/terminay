@@ -16,8 +16,6 @@ const PART = MAX_APP_WINDOW_ATTACHMENT_PART_BYTES;
 const scratch = async () => join(await mkdtemp(join(tmpdir(), "terminay-attachments-test-")), "terminay-attachments");
 const bytes = (length, fill = 7) => new Uint8Array(length).fill(fill);
 const listed = async (directory) => readdir(directory).catch(() => []);
-/** Removal after a refusal is not awaited by the request that caused it. */
-const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 async function setup(overrides = {}) {
   const directory = await scratch();
@@ -152,7 +150,6 @@ test("parts must arrive in order and within the declared size, or the whole mess
     const context = await setup();
     const { uploadId } = await context.begin({ text: "hi", attachments: [{ name: "a.bin", size: 10 }, { name: "b.bin", size: 1 }] });
     await rejectsWith(attempt({ ...context, uploadId }), "validation");
-    await settled();
     assert.deepEqual(await listed(context.directory), []);
     assert.deepEqual(context.typed, []);
     // The upload is gone: nothing more can be added to it.
@@ -177,7 +174,6 @@ test("an upload belongs to the connection that began it and ends when control mo
   // Control moves to the phone: the desktop's next part ends the upload.
   setHolder("client-phone");
   await rejectsWith(part(uploadId, 0, 2, bytes(2)), "forbidden");
-  await settled();
   assert.deepEqual(await listed(directory), []);
   assert.deepEqual(typed, []);
 });
@@ -196,7 +192,8 @@ test("closing the window, ending the session, losing the connection, or cancelli
     await context.part(uploadId, 0, 0, bytes(2));
     assert.equal((await listed(context.directory)).length, 1);
     await end({ ...context, uploadId });
-    await settled();
+    // Closing, ending, and losing a connection are not requests; their removal settles here.
+    await context.windows.uploadsRemoved();
     assert.deepEqual(await listed(context.directory), []);
     assert.deepEqual(context.typed, []);
   }
@@ -215,7 +212,6 @@ test("a message that cannot be typed leaves no file behind", async () => {
   await part(uploadId, 0, 0, bytes(2));
   await part(uploadId, 1, 0, bytes(2));
   await rejectsWith(finish(uploadId), "unavailable");
-  await settled();
   assert.deepEqual(await listed(directory), []);
 });
 
@@ -229,7 +225,6 @@ test("a file that cannot be written drops the message and what was already writt
   await rm(directory, { recursive: true });
   await writeFile(directory, "not a directory");
   await rejectsWith(part(uploadId, 1, 0, bytes(2)), "resource");
-  await settled();
   assert.ok(first);
   assert.deepEqual(typed, []);
 });
@@ -242,7 +237,7 @@ test("delivered attachments outlive their window and their terminal session", as
   windows.close("session-1", window.id);
   windows.endSession("session-1");
   windows.endAll();
-  await settled();
+  await windows.uploadsRemoved();
   assert.equal((await listed(directory)).length, 1);
 });
 
