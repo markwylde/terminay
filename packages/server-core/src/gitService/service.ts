@@ -1908,10 +1908,7 @@ export class GitService {
 					return await work();
 				} finally {
 					this.mutatingWorktreeIds.delete(worktreeId);
-					// A mutation can move, remove, or rewrite any worktree; never
-					// answer the next listing from a cache taken before it.
-					const observation = this.observations.get(repositoryId);
-					if (observation !== undefined) observation.dirtyAll = true;
+					this.invalidateRepository(repositoryId);
 				}
 			});
 		this.repositoryMutationTails.set(repositoryId, run);
@@ -1925,6 +1922,17 @@ export class GitService {
 				() => undefined,
 			);
 		return run;
+	}
+
+	/**
+	 * Say that the server changed a repository itself, outside the mutations
+	 * this service runs, such as a Quick Push commit. A mutation can move,
+	 * remove, or rewrite any worktree, so no listing is answered from a cache
+	 * measured before this call; the server does not wait on its own watch.
+	 */
+	invalidateRepository(repositoryId: string): void {
+		const observation = this.observations.get(repositoryId);
+		if (observation !== undefined) observation.dirtyAll = true;
 	}
 
 	private async listWorktreeIdentities(target: GitTargetRequest): Promise<{

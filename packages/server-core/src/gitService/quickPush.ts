@@ -136,7 +136,7 @@ export class GitQuickPushService {
 		// Consume before invoking any executor so retries cannot replay a commit,
 		// push, or pull-request operation after a timeout or client disconnect.
 		stored.consumed = true;
-		let context = this.boundContext(
+		const context = this.boundContext(
 			await this.snapshot(
 				{
 					projectId: stored.proposal.context.projectId,
@@ -156,6 +156,22 @@ export class GitQuickPushService {
 			);
 		}
 
+		try {
+			return await this.execute(request, stored, context);
+		} finally {
+			// The actions commit and push outside the Git service, so its cached
+			// listing predates them. Whoever lists next, on hearing that this
+			// returned, must see what it did rather than wait on a watch.
+			this.git.invalidateRepository(stored.proposal.revision.repositoryId);
+		}
+	}
+
+	private async execute(
+		request: GitQuickPushApprovalRequest,
+		stored: StoredProposal,
+		approvedContext: GitQuickPushContext,
+	): Promise<GitQuickPushApprovalResult> {
+		let context = approvedContext;
 		let baseline = stored.proposal.revision;
 		const results: GitQuickPushActionResult[] = [];
 		for (let index = 0; index < stored.proposal.actions.length; index += 1) {

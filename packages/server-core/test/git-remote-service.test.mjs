@@ -96,6 +96,8 @@ test("GitProviderService composes provider discovery/planning with review-bound 
     async worktrees() { return { projectId: "project-a", repositoryId: "repo-a", repositoryRoot: "/server/repository", defaultBranch: "main", state: "ready", worktrees: [{ id: worktreeId, repositoryId: "repo-a", path: "/server/repository", branch: "main", detached: false, head: "abc", isMain: true, isBare: false, isPrunable: false, locked: false, state: "clean", entries: [] }], bounded: false }; },
     async status() { return { ...context, state: "ready", repositoryRoot: "/server/repository", worktreeRoot: "/server/repository", branch: { name: "main", detached: false, head: "abc", upstream: "origin/main", upstreamState: "configured", ahead: 0, behind: 0 } }; },
     async diff() { return { projectId: "project-a", repositoryId: "repo-a", worktreeId, state: "ready", compareTarget: "HEAD", path: null, files: [], hunks: [], patch: "", binary: false, bounded: false }; },
+    invalidated: [],
+    invalidateRepository(repositoryId) { this.invalidated.push(repositoryId); },
   };
   const service = new GitProviderService(git, { git: { run: async (args) => args[0] === "remote" ? { stdout: "git@github.com:acme/project.git", stderr: "", exitCode: 0, truncated: false } : { stdout: "", stderr: "", exitCode: 0, truncated: false } } });
   const quickPush = service.createQuickPushService({ plan: async (_context, discovery) => {
@@ -106,4 +108,5 @@ test("GitProviderService composes provider discovery/planning with review-bound 
   const result = await quickPush.approve({ proposalId: proposal.proposalId, revision: proposal.revision, actionDigest: proposal.actionDigest });
   assert.equal(result.applied, true);
   assert.equal(result.partialFailure, false);
+  assert.deepEqual(git.invalidated, ["repo-a"], "the push is not answered from a listing cached before it");
 });
