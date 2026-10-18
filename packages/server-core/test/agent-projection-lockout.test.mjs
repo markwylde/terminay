@@ -29,7 +29,10 @@ function createPtyFactory() {
   };
 }
 
-test("extension lifecycle replay cannot close the application connection or block terminal creation", { timeout: 5_000 }, async () => {
+// A lockout hangs forever, so the timeout only has to end the run. It is wide
+// because this takes a tenth of a second alone and many seconds on a starved
+// runner, where node's own timer can fire ten seconds late.
+test("extension lifecycle replay cannot close the application connection or block terminal creation", { timeout: 60_000 }, async () => {
   const pty = createPtyFactory();
   let now = 1;
   const activity = new TerminalActivityService({
