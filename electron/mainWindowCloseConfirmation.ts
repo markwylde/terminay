@@ -72,6 +72,9 @@ export function bindMainWindowCloseConfirmation(options: {
 	requestQuit: () => void;
 	requestClose: () => void;
 	onError?: (error: unknown) => void;
+	/** Called when a close attempt's confirmation has run to its end, whatever
+	 * it decided. Nothing in the application needs it; a test waits on it. */
+	onSettled?: () => void;
 }): void {
 	let confirmationPending = false;
 	let confirmationAccepted = false;
@@ -122,6 +125,7 @@ export function bindMainWindowCloseConfirmation(options: {
 			.catch((error) => options.onError?.(error))
 			.finally(() => {
 				confirmationPending = false;
+				options.onSettled?.();
 			});
 	});
 }
