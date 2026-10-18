@@ -54,6 +54,49 @@ const RELEASES = [
 	},
 ];
 
+/**
+ * Deadline timers that come due only when the test says so. Every deadline a
+ * recreate sets — on an engine request, the socket probe, a container's health,
+ * the grace a container with no health check is given — goes through these, so
+ * a slow machine can never be the reason one passes.
+ */
+function manualTimers() {
+	const pending = new Map();
+	const watchers = [];
+	let next = 0;
+	return {
+		setTimeout(handler, ms) {
+			next += 1;
+			pending.set(next, { handler, ms });
+			for (const watcher of watchers.filter((entry) => entry.ms === ms)) {
+				watchers.splice(watchers.indexOf(watcher), 1);
+				watcher.resolve(next);
+			}
+			return next;
+		},
+		clearTimeout(id) {
+			pending.delete(id);
+		},
+		/** Resolves with the first `ms` deadline that is, or becomes, pending. */
+		armed(ms) {
+			for (const [id, timer] of pending)
+				if (timer.ms === ms) return Promise.resolve(id);
+			return new Promise((resolve) => watchers.push({ ms, resolve }));
+		},
+		/** That deadline's time comes. */
+		fire(id) {
+			const timer = pending.get(id);
+			assert.ok(timer, `deadline ${id} is not pending`);
+			pending.delete(id);
+			timer.handler();
+		},
+		/** The first `ms` deadline set from now on comes due as soon as it is set. */
+		async expire(ms) {
+			this.fire(await this.armed(ms));
+		},
+	};
+}
+
 /** What an image built from the Dockerfile reports as its configuration. */
 function imageOf(version, revision, dataRoot) {
 	return {
@@ -108,11 +151,17 @@ async function withEngine(options, run) {
 	// As an image is when its health check was switched off.
 	if (options.noHealthcheck === true) delete newImage.Config.Healthcheck;
 	const helperLog = [];
+	const timers = manualTimers();
 	const settings = {
 		healthTimeoutMs: 2_000,
 		settleMs: 30,
+		timers,
 		...options.settings,
 	};
+	let replacementStarted;
+	const started = new Promise((resolve) => {
+		replacementStarted = resolve;
+	});
 	let helperEnv;
 	const docker = await startFakeDocker({
 		registry: {
@@ -126,6 +175,8 @@ async function withEngine(options, run) {
 		startError: options.startError,
 		// A started helper container runs the new image's CLI.
 		onStart: async (container, exited) => {
+			if (container.Name === '/terminay' && container.created !== undefined)
+				replacementStarted(container);
 			if (container.Config.Labels?.[HELPER_LABEL] === undefined) return;
 			const status = await runContainerRecreateHelper(
 				container.created.Cmd.slice(1),
@@ -233,6 +284,9 @@ async function withEngine(options, run) {
 			lines,
 			helperLog,
 			settings,
+			timers,
+			/** Resolves once the replacement container has been started. */
+			replacementStarted: started,
 			recreate: (overrides = {}) =>
 				runRecreate(
 					{ ...OPTIONS, recreate: true },
@@ -243,7 +297,7 @@ async function withEngine(options, run) {
 				runUpgradeCheck(OPTIONS, {
 					env: { ...env, ...overrides.env },
 					...source,
-					recreate: { probeTimeoutMs: 200, ...overrides.recreate },
+					recreate: { probeTimeoutMs: 200, timers, ...overrides.recreate },
 				}),
 			outcome: () => readUpgradeOutcome(layout.resultPath),
 		});
@@ -278,9 +332,11 @@ test('the socket path follows DOCKER_HOST only when it names a Unix socket', () 
 test('a socket with an engine behind it is usable', async () => {
 	const docker = await startFakeDocker();
 	try {
-		assert.deepEqual(await probeDockerSocket(docker.socketPath), {
-			usable: true,
-		});
+		// No deadline comes due here, so only the engine's answer can decide.
+		assert.deepEqual(
+			await probeDockerSocket(docker.socketPath, undefined, manualTimers()),
+			{ usable: true },
+		);
 	} finally {
 		await docker.close();
 	}
@@ -307,16 +363,18 @@ test('no socket, or something that is not one, is not usable', async () => {
 	}
 });
 
-test('a socket nothing answers on is not usable, and is given up on promptly', async () => {
+test('a socket nothing answers on is not usable, and is given up on at its deadline', async () => {
 	const docker = await startFakeDocker();
 	try {
 		docker.state.silent = true;
-		const started = Date.now();
-		assert.deepEqual(await probeDockerSocket(docker.socketPath, 150), {
+		const timers = manualTimers();
+		const probe = probeDockerSocket(docker.socketPath, 150, timers);
+		// The one deadline the probe sets is what gives up on it.
+		await timers.expire(150);
+		assert.deepEqual(await probe, {
 			usable: false,
 			cause: 'unresponsive',
 		});
-		assert.ok(Date.now() - started < 2_000);
 	} finally {
 		await docker.close();
 	}
@@ -328,7 +386,8 @@ test('a socket whose listener hangs up without answering is not usable', async (
 	const server = createServer((socket) => socket.destroy());
 	await new Promise((resolve) => server.listen(socketPath, resolve));
 	try {
-		assert.deepEqual(await probeDockerSocket(socketPath, 300), {
+		// The hang-up decides it, not a deadline: none comes due.
+		assert.deepEqual(await probeDockerSocket(socketPath, 300, manualTimers()), {
 			usable: false,
 			cause: 'unresponsive',
 		});
@@ -377,9 +436,11 @@ test('a container with no socket is offered in-place only', async () => {
 });
 
 test('a container whose socket does not answer is offered in-place only', async () => {
-	await withEngine({}, async ({ check, docker }) => {
+	await withEngine({}, async ({ check, docker, timers }) => {
 		docker.state.silent = true;
-		assert.deepEqual((await check()).modes, ['in-place']);
+		const report = check();
+		await timers.expire(200);
+		assert.deepEqual((await report).modes, ['in-place']);
 	});
 });
 
@@ -734,8 +795,10 @@ test('a replacement that is not healthy is removed and the old container started
 test('a replacement that never reports healthy is given up on at the deadline', async () => {
 	await withEngine(
 		{ health: () => 'starting', settings: { healthTimeoutMs: 150 } },
-		async ({ recreate, docker, container, outcome }) => {
-			await assert.rejects(recreate(), UpgradeError);
+		async ({ recreate, docker, container, outcome, timers }) => {
+			const recreated = recreate();
+			await timers.expire(150);
+			await assert.rejects(recreated, UpgradeError);
 			assert.equal(named(docker, 'terminay').Id, container.Id);
 			assert.equal(named(docker, 'terminay').State.Running, true);
 			assert.match((await outcome()).reason, /did not report healthy within/u);
@@ -818,8 +881,11 @@ test('an engine that stops reporting on the replacement is a failure, not a reas
 test('a replacement with no health check is kept once it has stayed up', async () => {
 	await withEngine(
 		{ noHealthcheck: true, health: () => 'starting' },
-		async ({ recreate, docker, newImage, outcome }) => {
-			await recreate();
+		async ({ recreate, docker, newImage, outcome, timers }) => {
+			const recreated = recreate();
+			// The grace period passes with the replacement still running.
+			await timers.expire(30);
+			await recreated;
 			const replacement = named(docker, 'terminay');
 			assert.equal(replacement.Image, newImage.Id);
 			assert.equal(replacement.State.Health, undefined);
@@ -849,8 +915,14 @@ test('a replacement with no health check that exits is not kept', async () => {
 test('the wait for health is one subscription and one look, never a repeated question', async () => {
 	await withEngine(
 		{ health: () => 'starting', settings: { healthTimeoutMs: 400 } },
-		async ({ recreate, docker }) => {
-			await assert.rejects(recreate(), UpgradeError);
+		async ({ recreate, docker, timers, replacementStarted }) => {
+			const recreated = recreate();
+			// The wait runs from the start until its deadline: anything that
+			// asked again would have done so in between.
+			const deadline = await timers.armed(400);
+			await replacementStarted;
+			timers.fire(deadline);
+			await assert.rejects(recreated, UpgradeError);
 			const replacement = docker.calls.findIndex((call) =>
 				/POST \/containers\/create\?name=terminay$/u.test(call),
 			);
@@ -980,7 +1052,7 @@ test('recreate refuses a container it could not stand a replacement in for', asy
 });
 
 test('recreate refuses without a usable socket, and outside a container', async () => {
-	await withEngine({}, async ({ recreate, directory, env, docker }) => {
+	await withEngine({}, async ({ recreate, directory, env, docker, timers }) => {
 		await assert.rejects(
 			recreate({
 				env: {
@@ -991,10 +1063,9 @@ test('recreate refuses without a usable socket, and outside a container', async 
 			/no Docker socket is mounted/u,
 		);
 		docker.state.silent = true;
-		await assert.rejects(
-			recreate({ probeTimeoutMs: 150 }),
-			/no Docker daemon answered/u,
-		);
+		const unanswered = recreate({ probeTimeoutMs: 150 });
+		await timers.expire(150);
+		await assert.rejects(unanswered, /no Docker daemon answered/u);
 		docker.state.silent = false;
 		await assert.rejects(
 			recreate({ env: { ...env, TERMINAY_MANAGED_BY: undefined } }),
