@@ -74,7 +74,7 @@ function serverLauncher(version, behaviour = 'ready') {
 		'}).listen(Number(process.env.TERMINAY_HEALTH_PORT), "127.0.0.1", () => {',
 		// Told to the test the moment the server can be asked, so it waits on
 		// this rather than asking until it answers.
-		'  console.log(`fixture-server ${version} ${ready ? "ready" : "not-ready"} ${process.pid}`);',
+		'  console.log(["fixture-server", version, ready ? "ready" : "not-ready", process.pid].join(" "));',
 		'});',
 		'process.on("SIGTERM", () => process.exit(0));',
 		'process.on("SIGINT", () => process.exit(0));',
