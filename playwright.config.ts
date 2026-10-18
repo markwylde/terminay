@@ -15,7 +15,7 @@ export default defineConfig({
   // hung test is reported as interrupted and the reports, traces, and
   // videos reach the uploaded artifacts. A job that hit its own timeout
   // would be killed before any of them were written.
-  globalTimeout: process.env.CI ? 6 * 60_000 : 0,
+  globalTimeout: process.env.CI ? 8 * 60_000 : 0,
   expect: {
     timeout: 5_000,
   },
