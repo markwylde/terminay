@@ -1005,6 +1005,19 @@ test('committed pane sizes remain project-local through project switching and re
 	await mainWindow.mouse.up();
 	const firstHeight = (await panelGeometry(mainWindow, ids)).panes.explorer.body
 		.height;
+	// The reload below rebuilds the sidebar from the server's snapshot, so the
+	// resize must have been applied there, not only shown by the renderer's
+	// pending-commit overlay. The server records a command as it applies it.
+	await expect
+		.poll(async () =>
+			(await commandRecords(mainWindow)).some(
+				(record) =>
+					record.command?.type === 'project.sidebar.update' &&
+					record.command.projectId === firstProjectId &&
+					typeof record.command.sidebar?.sidebarExplorerHeight === 'number',
+			),
+		)
+		.toBe(true);
 
 	await createStartedProject(mainWindow);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
@@ -1047,10 +1060,17 @@ test('committed pane sizes remain project-local through project switching and re
 		),
 	).toBe(0);
 	await mainWindow.reload();
-	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
-	await openFileExplorer(mainWindow);
+	// A reload restores this device's sidebar visibility and the project's
+	// expanded panes. The renderer first paints with default device settings
+	// (sidebar closed) and opens the sidebar once the stored ones load, so a
+	// toggle decided from a snapshot taken before that load would close the
+	// restored sidebar. Wait for the restored state itself instead.
 	await expect(activeSidebar(mainWindow)).toBeVisible();
-	for (const id of ids) await expandPane(mainWindow, id);
+	for (const id of ids) {
+		await expect(sidebarPane(mainWindow, id)).not.toHaveClass(
+			/sidebar-pane--collapsed/,
+		);
+	}
 	await expect
 		.poll(
 			async () =>
