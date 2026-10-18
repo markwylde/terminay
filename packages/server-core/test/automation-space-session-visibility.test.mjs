@@ -65,8 +65,12 @@ test("terminal.list, attach, and events withhold automation-space sessions from 
   const capable = await connect(composition, "capable", ["workspace.v1", AUTOMATIONS_FEATURE_CAPABILITY]);
   const legacy = await connect(composition, "legacy", ["workspace.v1"]);
   const legacyEvents = [];
+  let legacyEventArrived = () => {};
   const subscription = await legacy.client.subscribe("workspace.changed");
-  subscription.onEvent((event) => legacyEvents.push(event.payload));
+  subscription.onEvent((event) => {
+    legacyEvents.push(event.payload);
+    legacyEventArrived();
+  });
   try {
     const created = await capable.client.command("terminal.create", { projectId: SPACE, cwd: "/home/server", cols: 80, rows: 24 }, { commandId: "auto-term" });
     const sessionId = created.result.sessionId;
@@ -88,7 +92,10 @@ test("terminal.list, attach, and events withhold automation-space sessions from 
     assert.equal(userList.result.sessions.length, 1);
 
     // workspace.changed hints never name the automation space for a legacy client.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The hint for the user's own terminal travels behind every hint the
+    // automation terminal caused, on the same subscription.
+    const namesUserProject = () => legacyEvents.some((payload) => payload.projectId === "project-a");
+    if (!namesUserProject()) await new Promise((resolve) => { legacyEventArrived = () => { if (namesUserProject()) resolve(); }; });
     assert.ok(legacyEvents.length > 0);
     assert.equal(legacyEvents.some((payload) => payload.projectId === SPACE), false);
   } finally {
