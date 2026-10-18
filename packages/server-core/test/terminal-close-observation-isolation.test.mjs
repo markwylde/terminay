@@ -38,7 +38,10 @@ function createScheduler() {
   };
 }
 
-test("slow foreground observation cannot delay a snapshot or an unrelated terminal close", async () => {
+test("slow foreground observation cannot delay a snapshot or an unrelated terminal close", async (t) => {
+  // Observation deadlines run on the test's clock, which moves only when the
+  // test ticks it; nothing here waits on real time.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const children = new Map();
   const resolvers = new Map();
   let noisyCalls = 0;
@@ -85,20 +88,32 @@ test("slow foreground observation cannot delay a snapshot or an unrelated termin
     cols: 80,
     rows: 24,
   });
+  // Each observation arms its 30 ms deadline as it is called; the hook then
+  // says so, which is when the test may move time past it.
+  let deadlineArmed = () => undefined;
   const registry = createActivityOperationRegistry({
     service: activity,
     eventJournal: new OrderedEventJournal(),
     observeForeground: async (_request, scope) => {
-      if (scope.sessionId !== undefined) {
-        return [await terminal.observeForegroundProcess(
+      const observing = scope.sessionId !== undefined
+        ? terminal.observeForegroundProcess(
           { serverId: "server-a", projectId: scope.projectId, sessionId: scope.sessionId },
           undefined,
           30,
-        )];
-      }
-      return [...await terminal.observeProjectForegroundProcesses(scope.projectId, undefined, 30)];
+        ).then((observation) => [observation])
+        : terminal.observeProjectForegroundProcesses(scope.projectId, undefined, 30).then((observations) => [...observations]);
+      deadlineArmed();
+      return observing;
     },
   });
+  /** Run a close preflight whose observation can only end at its deadline. */
+  const pastDeadline = async (payload) => {
+    const armed = new Promise((resolve) => { deadlineArmed = resolve; });
+    const answer = registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, payload));
+    await armed;
+    t.mock.timers.tick(30);
+    return answer;
+  };
   const context = Object.freeze({
     connectionId: "connection-a",
     clientId: "client-a",
@@ -113,32 +128,32 @@ test("slow foreground observation cannot delay a snapshot or an unrelated termin
     children.get("noisy").emitData("codex-output\n");
     assert.ok(noisyCalls >= 1);
 
-    const snapshotStarted = Date.now();
+    // A snapshot is answered synchronously: there is nothing it could wait on.
     const snapshot = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
-    assert.ok(Date.now() - snapshotStarted < 50);
+    assert.equal(typeof snapshot.then, "undefined", "a snapshot waited on observation");
     assert.equal(snapshot.sessions[idle.sessionId].foregroundBusy, false);
 
-    const closeStarted = Date.now();
+    // With the clock never moved, the noisy sibling's deadline cannot pass, so
+    // this settles only because it does not wait on that sibling.
     const preflight = await registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, {
       projectId: "project-a",
       sessionId: idle.sessionId,
     }));
-    assert.ok(Date.now() - closeStarted < 200, "closing an idle terminal must not await a noisy sibling");
     assert.equal(preflight.observation, "available");
     assert.deepEqual(preflight.runningSessionIds, []);
     assert.equal(preflight.sessions[0].sessionId, idle.sessionId);
 
-    const busy = await registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, {
+    const busy = await pastDeadline({
       projectId: "project-a",
       sessionId: noisy.sessionId,
-    }));
+    });
     assert.equal(busy.observation, "limited");
     assert.equal(busy.sessions[0].observation, "limited");
     assert.equal(activity.get({ serverId: "server-a", projectId: "project-a", sessionId: noisy.sessionId }).foregroundObservation, "limited");
 
-    const project = await registry.operations.queries[ACTIVITY_OPERATIONS.closePreflight](query(ACTIVITY_OPERATIONS.closePreflight, {
+    const project = await pastDeadline({
       projectId: "project-a",
-    }));
+    });
     assert.deepEqual(project.sessions.map((session) => session.sessionId).sort(), ["idle", "noisy"]);
     assert.equal(project.observation, "limited");
   } finally {
