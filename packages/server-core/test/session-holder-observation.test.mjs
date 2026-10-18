@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -46,6 +47,13 @@ function launchHolder(entry, env) {
   const child = launchDetachedSessionHolder(process.execPath, [entry], { ...process.env, ...env });
   holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
   return child;
+}
+
+/** Settles once a holder this file launched says it is ready (its record is in place). */
+function holderReady(child) {
+  const ready = child.stdio[3];
+  ready.resume();
+  return new Promise((resolve) => ready.once("close", resolve));
 }
 
 /** Settles once a holder this file launched has exited. */
@@ -105,7 +113,7 @@ function server(dataRoot, buildId = "build-a", options = {}) {
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => { launchHolder(ENTRY, env); },
+    launch: ({ env }) => launchHolder(ENTRY, env),
     onObservation: (report) => {
       reports.push(report);
       for (const waiter of [...waiters]) {
@@ -240,11 +248,8 @@ test("a record whose process is gone and a holder that cannot be spoken to are t
     sessionHolderRecordPath(dataRoot, "aaaaaaaaaaaaaaaa"),
     JSON.stringify({ generation: "aaaaaaaaaaaaaaaa", pid: gone, buildId: "build-a", versions: [1], credential: "c", startedAt: 10 }),
   );
-  launchHolder(FUTURE_ENTRY, { TEST_HOLDER_DATA_ROOT: dataRoot });
-  const future = await whenWritten(
-    sessionHolderDirectory(dataRoot),
-    () => readHolderRecords(dataRoot).find((record) => record.versions.includes(99)),
-  );
+  await holderReady(launchHolder(FUTURE_ENTRY, { TEST_HOLDER_DATA_ROOT: dataRoot }));
+  const future = readHolderRecords(dataRoot).find((record) => record.versions.includes(99));
 
   const next = server(dataRoot);
   await next.factory.start();
@@ -281,18 +286,19 @@ test("a launch that fails is reported with its error, and an observer that throw
   assert.equal(broken.of("launch-failed").length, 1);
   assert.equal(broken.of("launch-failed")[0].error, "no such runtime");
 
-  // The launch deadline runs on the test's clock: the launcher is called once
-  // it is armed, and the clock is moved past it.
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  // A holder that dies before it is ready fails the launch on its exit, and
+  // the report says so, with how long the launch had been waiting.
+  const dying = new EventEmitter();
+  dying.kill = () => {};
   let launched;
   const armed = new Promise((resolve) => { launched = resolve; });
-  const silent = server(dataRoot, "build-a", { launch: () => launched(), launchTimeoutMs: 100 });
+  const silent = server(dataRoot, "build-a", { launch: () => { launched(); return dying; } });
   const silentSpawn = silent.factory.spawn(spawnOptions("s2", dataRoot));
   await armed;
-  t.mock.timers.tick(100);
+  dying.emit("exit", 1, null);
   await assert.rejects(silentSpawn);
-  t.mock.timers.reset();
-  assert.equal(silent.of("launch-failed")[0].error, "session holder did not start");
+  assert.equal(silent.of("launch-failed")[0].error, "session holder exited before it was ready (exit code 1)");
+  assert.ok(Number.isSafeInteger(silent.of("launch-failed")[0].durationMs));
 
   const hostile = server(dataRoot, "build-a", { onObservation: () => { throw new Error("observer failed"); } });
   t.after(async () => { await hostile.service.shutdown(); await hostile.factory.endAll(); });

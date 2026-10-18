@@ -86,7 +86,7 @@ import {
 } from '../packages/server-core/src/fileService/observationAdapter';
 import {
 	createSessionHolderPtyFactory,
-	type SessionHolderLaunchRequest,
+	type SessionHolderLauncher,
 	type SessionHolderPtyFactory,
 } from '../packages/server-core/src/sessionHolder/factory';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
@@ -291,8 +291,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly sessionHolder?: {
 		/** Identifies this build; a holder from another build is drained. */
 		readonly buildId: string;
-		/** Start a detached holder process with the given extra environment. */
-		readonly launch: (request: SessionHolderLaunchRequest) => void;
+		/** Start a detached holder process with the given extra environment,
+		 * returning it so a holder that dies before it is ready fails at once. */
+		readonly launch: SessionHolderLauncher;
 		/** How long sessions keep running with nothing attached; `null` is no limit. */
 		readonly limitMs: number | null;
 	};

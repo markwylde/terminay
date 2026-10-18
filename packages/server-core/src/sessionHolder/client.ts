@@ -64,10 +64,13 @@ type RequestBody<T extends RequestMessage['type']> = Omit<
 
 export interface SessionHolderConnectOptions {
 	readonly versions?: readonly number[];
-	readonly timeoutMs?: number;
+	/**
+	 * Gives up on a holder that is alive but does not answer. Nothing else
+	 * bounds a connect: it ends when the holder answers, refuses, or its
+	 * socket closes, which a holder process ending always does.
+	 */
+	readonly signal?: AbortSignal;
 }
-
-const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 
 /** The server's connection to one session holder generation. */
 export class SessionHolderClient {
@@ -105,21 +108,24 @@ export class SessionHolderClient {
 		options: SessionHolderConnectOptions = {},
 	): Promise<SessionHolderClient> {
 		return new Promise((resolve, reject) => {
+			const { signal } = options;
+			if (signal?.aborted) {
+				reject(abandoned(signal));
+				return;
+			}
 			const socket = connect(record.socketPath);
 			const frames = new HolderFrameDecoder();
 			let client: SessionHolderClient | undefined;
 			let settled = false;
+			const onAbort = (): void => fail(abandoned(signal));
+			signal?.addEventListener('abort', onAbort, { once: true });
 			const fail = (error: Error): void => {
 				if (settled) return;
 				settled = true;
-				clearTimeout(timer);
+				signal?.removeEventListener('abort', onAbort);
 				socket.destroy();
 				reject(error);
 			};
-			const timer = setTimeout(
-				() => fail(new SessionHolderRefusedError('closed')),
-				options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
-			);
 			socket.once('connect', () => {
 				socket.write(
 					encodeHolderFrame({
@@ -165,7 +171,7 @@ export class SessionHolderClient {
 						return;
 					}
 					settled = true;
-					clearTimeout(timer);
+					signal?.removeEventListener('abort', onAbort);
 					client = new SessionHolderClient(socket, message);
 					resolve(client);
 				}
@@ -474,4 +480,10 @@ export class SessionHolderClient {
 			}
 		}
 	}
+}
+
+function abandoned(signal: AbortSignal | undefined): Error {
+	return signal?.reason instanceof Error
+		? signal.reason
+		: new Error('session holder connection was abandoned');
 }
