@@ -52,7 +52,7 @@ test('WebRTC host authenticates the canonical four-lane application session befo
   cleanup()
 })
 
-test('WebRTC host preserves an authenticated session across a transient ICE disconnect', async () => {
+test('WebRTC host preserves an authenticated session across a transient ICE disconnect', async (t) => {
   const api = createHostApi()
   const channels = new Map()
   const peer = new MockPeerConnection()
@@ -74,12 +74,17 @@ test('WebRTC host preserves an authenticated session across a transient ICE disc
   }))
   await api.waitForApplicationAttach()
 
+  // The recovery grace period is the test's clock: it reconnects 1 ms short
+  // of the default 5 s grace, and then the grace runs out with nothing to do.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   peer.iceConnectionState = 'disconnected'
   peer.dispatchEvent(new Event('iceconnectionstatechange'))
-  await settle()
+  t.mock.timers.tick(4_999)
+  assert.deepEqual(api.closedApplications, [])
 
   peer.iceConnectionState = 'connected'
   peer.dispatchEvent(new Event('iceconnectionstatechange'))
+  t.mock.timers.tick(1)
 
   assert.deepEqual(api.closedApplications, [])
   assert.equal(channels.get('application').readyState, 'open')
@@ -88,7 +93,7 @@ test('WebRTC host preserves an authenticated session across a transient ICE disc
   cleanup()
 })
 
-test('WebRTC host closes an authenticated session once when ICE recovery expires', async () => {
+test('WebRTC host closes an authenticated session once when ICE recovery expires', async (t) => {
   const api = createHostApi()
   const channels = new Map()
   const peer = new MockPeerConnection()
@@ -111,9 +116,13 @@ test('WebRTC host closes an authenticated session once when ICE recovery expires
   }))
   await api.waitForApplicationAttach()
 
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   peer.iceConnectionState = 'disconnected'
   peer.dispatchEvent(new Event('iceconnectionstatechange'))
-  await waitFor(() => api.closedApplications.length === 1)
+  t.mock.timers.tick(9)
+  assert.equal(api.closedApplications.length, 0)
+  t.mock.timers.tick(1)
+  assert.equal(api.closedApplications.length, 1)
 
   peer.connectionState = 'failed'
   peer.dispatchEvent(new Event('connectionstatechange'))
@@ -140,7 +149,7 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
 
   const cleanup = await runHost({
     appOrigin: 'https://room-a12345.terminay.com',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    expiresAt: FAR_FUTURE,
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -213,7 +222,7 @@ test('WebRTC host owns relay registration and sends an offer after client join',
 
   const cleanup = await runHost({
     appOrigin: 'https://room-a12345.terminay.com',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    expiresAt: FAR_FUTURE,
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -245,7 +254,7 @@ test('WebRTC host ignores signaling messages for another room', async () => {
 
   const cleanup = await runHost({
     appOrigin: 'https://session-a.terminay.com',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    expiresAt: FAR_FUTURE,
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -255,10 +264,19 @@ test('WebRTC host ignores signaling messages for another room', async () => {
 
   api.emitSignalMessage({ roomId: 'room-b67890', type: 'host-registered' })
   api.emitSignalMessage({ roomId: 'room-b67890', type: 'client-join' })
-  await settle()
-
+  // A message for this room reports its status before anything else.
   assert.deepEqual(api.statusMessages, [])
-  assert.equal(api.signalMessages.some((message) => message.type === 'offer'), false)
+
+  // A join for this room, after them, makes an offer by the same path a join
+  // for the other room would have: so once this one is sent, the other would
+  // have been sent before it.
+  api.emitSignalMessage({ roomId: 'room-a12345', type: 'client-join' })
+  await waitFor(() => api.signalMessages.some((message) => message.type === 'offer'))
+  assert.deepEqual(api.statusMessages, [{ type: 'client-join' }])
+  assert.deepEqual(
+    api.signalMessages.filter((message) => message.type === 'offer').map((message) => message.roomId),
+    ['room-a12345'],
+  )
 
   cleanup()
 })
@@ -268,7 +286,7 @@ test('WebRTC host accepts relay-admitted answer frames without a derived signali
 	const peer = new MockPeerConnection()
 	const config = {
     appOrigin: 'https://session-a.terminay.com',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    expiresAt: FAR_FUTURE,
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -356,15 +374,12 @@ test('WebRTC host stops an unacknowledged archive transfer when the browser canc
 		id: 'cancel-bundle',
     type: 'asset:bundle-cancel',
   }))
-  await settle()
+  await waitFor(() => controlMessages(assetChannel).some((message) => message.type === 'asset:bundle-error' && /cancelled/.test(message.message ?? '')))
 
+  // Nothing acknowledges the window, so no chunk past it can ever be sent.
   assert.equal(
     binaryChunkIndexes(assetChannel).length,
     4,
-  )
-  assert.equal(
-		controlMessages(assetChannel).some((message) => message.type === 'asset:bundle-error' && /cancelled/.test(message.message ?? '')),
-    true,
   )
   cleanup()
 })
@@ -454,7 +469,7 @@ test('WebRTC host admits one archive request per peer and rejects request-window
 function createHostConfig() {
   return {
     appOrigin: 'https://session-a.terminay.com',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    expiresAt: FAR_FUTURE,
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -463,17 +478,29 @@ function createHostConfig() {
 	}
 }
 
-async function waitFor(predicate, timeoutMs = 1000) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error('Timed out waiting for condition.')
+/** An instant past any clock, so no room expires mid-test. */
+const FAR_FUTURE = '2999-01-01T00:00:00.000Z'
+
+const waiters = new Set()
+
+/** Every fake below calls this when it records something: each pending wait
+ * then checks its condition again. */
+function changed() {
+  for (const waiter of [...waiters]) waiter()
 }
 
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 20))
+/** Resolves once `predicate` holds, checked now and whenever a fake records
+ * something. */
+function waitFor(predicate) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!predicate()) return
+      waiters.delete(check)
+      resolve()
+    }
+    waiters.add(check)
+    check()
+  })
 }
 
 function createHostApi() {
@@ -509,9 +536,11 @@ function createHostApi() {
     },
     closeApplication(channelId, reason) {
       this.closedApplications.push({ channelId, reason })
+      changed()
     },
     closeTerminal(channelId, reason) {
       this.closedTerminals.push({ channelId, reason })
+      changed()
     },
     emitTerminalCloseRequest(message) {
       for (const listener of closeRequestListeners) listener(message)
@@ -524,6 +553,7 @@ function createHostApi() {
     handleApiRequest: async () => ({}),
     handleTerminalMessage(channelId, message) {
       this.terminalMessages.push({ channelId, message })
+      changed()
     },
     onConfig: () => () => {},
     openSignal() {
@@ -531,6 +561,7 @@ function createHostApi() {
     },
     sendSignalMessage(message) {
       this.signalMessages.push(message)
+      changed()
     },
     onSignalMessage(listener) {
       signalListeners.add(listener)
@@ -544,6 +575,7 @@ function createHostApi() {
     statusMessages: [],
     updateStatus(message) {
       this.statusMessages.push(message)
+      changed()
     },
     waitForAttach: () => attachPromise,
     waitForApplicationAttach: () => applicationAttachPromise,
@@ -571,6 +603,7 @@ class MockDataChannel extends EventTarget {
 
   send(message) {
     this.sent.push(message)
+    changed()
   }
 }
 
@@ -596,6 +629,7 @@ class AutoAckDataChannel extends MockDataChannel {
       this.maxOutstanding,
       this.sentChunks.size - this.acknowledged.size,
     )
+    // The fake browser's own latency; the test waits on the acknowledgements.
     setTimeout(() => {
       this.acknowledged.add(index)
       this.dispatchMessage(JSON.stringify({
@@ -603,6 +637,7 @@ class AutoAckDataChannel extends MockDataChannel {
 			index,
 			type: 'asset:bundle-ack',
       }))
+      changed()
     }, 2)
   }
 }
@@ -651,6 +686,7 @@ class MockPeerConnection extends EventTarget {
 
   setRemoteDescription(description) {
     this.remoteDescription = description
+    changed()
     return Promise.resolve()
   }
 }
