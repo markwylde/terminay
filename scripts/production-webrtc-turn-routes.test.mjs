@@ -19,15 +19,10 @@ function run(command, args, options = {}) {
     })
     const stdout = []
     const stderr = []
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL')
-      reject(new Error(`${command} timed out.`))
-    }, options.timeoutMs ?? 360_000)
     child.stdout.on('data', (chunk) => stdout.push(chunk))
     child.stderr.on('data', (chunk) => stderr.push(chunk))
     child.once('error', reject)
     child.once('exit', (code, signal) => {
-      clearTimeout(timeout)
       resolve({
         code,
         signal,
@@ -38,13 +33,36 @@ function run(command, args, options = {}) {
   })
 }
 
+/** Follow a container's log until a line matches, which is how the TURN
+ * server says it is listening. Rejects if the log ends first. */
+function logLine(container, pattern) {
+  return new Promise((resolve, reject) => {
+    const follower = spawn('docker', ['logs', '--follow', container], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let output = ''
+    let found = false
+    const read = (chunk) => {
+      output += chunk.toString()
+      if (found || !pattern.test(output)) return
+      found = true
+      follower.kill('SIGTERM')
+      resolve()
+    }
+    follower.stdout.on('data', read)
+    follower.stderr.on('data', read)
+    follower.once('error', reject)
+    follower.once('exit', (code, signal) => {
+      if (!found) reject(new Error(`${container} log ended before ${pattern} (${code ?? signal}): ${output}`))
+    })
+  })
+}
+
 function redact(output, secret) {
   return output.split(secret).join('[redacted]')
 }
 
-test('secure production Werift proves direct and authenticated TURN routes', {
-  timeout: 420_000,
-}, async () => {
+test('secure production Werift proves direct and authenticated TURN routes', async () => {
   const proofRoot = await mkdtemp(path.join(os.tmpdir(), 'terminay-turn-routes-'))
   const configRoot = path.join(proofRoot, 'coturn')
   const configPath = path.join(configRoot, 'turnserver.conf')
@@ -60,6 +78,8 @@ test('secure production Werift proves direct and authenticated TURN routes', {
       'realm=terminay-route-proof.invalid',
       'pidfile=/tmp/turnserver.pid',
       'listening-port=3478',
+      // Logged to the container's output, so the test can read when it listens.
+      'log-file=stdout',
       `min-port=${RELAY_MIN}`,
       `max-port=${RELAY_MAX}`,
       'external-ip=127.0.0.1',
@@ -96,10 +116,10 @@ test('secure production Werift proves direct and authenticated TURN routes', {
       COTURN_IMAGE,
       '-c',
       '/etc/coturn/turnserver.conf',
-    ], { timeoutMs: 180_000 })
+    ])
     assert.equal(launch.code, 0, redact(launch.stderr || launch.stdout, secret))
     started = true
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    await logLine(container, /UDP listener opened on.*:3478/)
 
     const proofEnv = {
       ...process.env,
@@ -122,7 +142,7 @@ test('secure production Werift proves direct and authenticated TURN routes', {
     assert.equal(proof.code, 0, safeOutput)
     assert.match(safeOutput, /"routeTests":2/)
   } finally {
-    if (started) await run('docker', ['rm', '--force', container], { timeoutMs: 30_000 })
+    if (started) await run('docker', ['rm', '--force', container])
     await rm(proofRoot, { force: true, recursive: true })
   }
 })
