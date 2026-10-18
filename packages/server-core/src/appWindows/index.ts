@@ -245,6 +245,8 @@ export class AppWindowService {
 	private nextId = 0;
 	private nextResponseId = 0;
 	private nextUploadId = 0;
+	/** Removals of abandoned uploads' files that are still under way. */
+	private readonly removals = new Set<Promise<void>>();
 	/** Relays recorded views to the clients watching a terminal (ADR-0039). */
 	readonly mirror: AppWindowMirrorRelay | undefined;
 
@@ -368,7 +370,7 @@ export class AppWindowService {
 		const window = this.windows.get(windowId);
 		if (window === undefined || window.terminalSessionId !== terminalSessionId)
 			return false;
-		this.abandonUpload(window);
+		void this.abandonUpload(window);
 		this.windows.delete(windowId);
 		this.publish();
 		return true;
@@ -409,7 +411,7 @@ export class AppWindowService {
 		const owned = this.forSession(terminalSessionId);
 		if (owned.length === 0) return;
 		for (const window of owned) {
-			this.abandonUpload(window);
+			void this.abandonUpload(window);
 			this.windows.delete(window.id);
 		}
 		this.publish();
@@ -419,7 +421,7 @@ export class AppWindowService {
 	endAll(): void {
 		this.mirror?.endAll();
 		if (this.windows.size === 0) return;
-		for (const window of this.windows.values()) this.abandonUpload(window);
+		for (const window of this.windows.values()) void this.abandonUpload(window);
 		this.windows.clear();
 		this.publish();
 	}
@@ -473,7 +475,7 @@ export class AppWindowService {
 		this.mirror?.closeConnection(connectionId);
 		// An upload cannot continue without the connection its parts came on.
 		for (const window of this.windows.values())
-			if (window.upload?.connectionId === connectionId) this.abandonUpload(window);
+			if (window.upload?.connectionId === connectionId) void this.abandonUpload(window);
 	}
 
 	private windowOperations(): OperationRegistries {
@@ -626,7 +628,7 @@ export class AppWindowService {
 					return asJson({ windowId: window.id, uploadId: window.upload.id });
 				},
 				[APP_WINDOW_OPERATIONS.messagePart]: async (request: CommandRequest) => {
-					const { window, upload } = this.uploading(request);
+					const { window, upload } = await this.uploading(request);
 					const payload = record(request.envelope.payload);
 					const file = payload?.file;
 					const offset = payload?.offset;
@@ -637,7 +639,7 @@ export class AppWindowService {
 						(offset as number) < 0 ||
 						request.body.byteLength > MAX_APP_WINDOW_ATTACHMENT_PART_BYTES
 					) {
-						this.abandonUpload(window);
+						await this.abandonUpload(window);
 						throw protocolError('validation', 'attachment part is invalid');
 					}
 					try {
@@ -650,20 +652,20 @@ export class AppWindowService {
 					} catch (error) {
 						// A part that does not fit, or a disk that will not take it: the
 						// message cannot be delivered whole, so it is not delivered.
-						this.abandonUpload(window);
+						await this.abandonUpload(window);
 						throw error instanceof RangeError
 							? protocolError('validation', error.message)
 							: protocolError('resource', 'the attachment could not be written');
 					}
 				},
 				[APP_WINDOW_OPERATIONS.messageFinish]: async (request: CommandRequest) => {
-					const { window, upload } = this.uploading(request);
+					const { window, upload } = await this.uploading(request);
 					const attachments = this.options.attachments;
 					let paths: readonly string[];
 					try {
 						paths = await upload.writer.finish();
 					} catch (error) {
-						this.abandonUpload(window);
+						await this.abandonUpload(window);
 						throw error instanceof RangeError
 							? protocolError('validation', error.message)
 							: protocolError('resource', 'the attachment could not be written');
@@ -679,7 +681,7 @@ export class AppWindowService {
 							request.context.signal,
 						);
 					} catch (error) {
-						this.abandonUpload(window);
+						await this.abandonUpload(window);
 						throw error;
 					}
 					delete window.upload;
@@ -701,7 +703,7 @@ export class AppWindowService {
 						upload.clientId === request.context.clientId &&
 						upload.connectionId === request.context.connectionId
 					)
-						this.abandonUpload(window);
+						await this.abandonUpload(window);
 					return asJson({ windowId: window.id });
 				},
 				[APP_WINDOW_OPERATIONS.context]: async (request: CommandRequest) => {
@@ -813,10 +815,10 @@ export class AppWindowService {
 	}
 
 	/** The upload a request continues: its own, on its own connection, while it still controls the terminal. */
-	private uploading(request: CommandRequest): {
+	private async uploading(request: CommandRequest): Promise<{
 		readonly window: MutableWindow;
 		readonly upload: PendingUpload;
-	} {
+	}> {
 		const window = this.requested(request);
 		const upload = window.upload;
 		if (
@@ -828,7 +830,7 @@ export class AppWindowService {
 			throw protocolError('not_found', 'that upload is no longer in progress');
 		if (!this.options.isPresentationHolder(view(window), request.context)) {
 			// Control moved: what was being sent from here is not sent.
-			this.abandonUpload(window);
+			await this.abandonUpload(window);
 			throw protocolError(
 				'forbidden',
 				'only the client controlling this terminal can speak for its windows',
@@ -838,13 +840,22 @@ export class AppWindowService {
 		return { window, upload };
 	}
 
-	/** Stop a message whose files were arriving, and remove what arrived. */
-	private abandonUpload(window: MutableWindow): void {
+	/** Settles once the files of every upload abandoned so far are removed. */
+	async uploadsRemoved(): Promise<void> {
+		while (this.removals.size > 0) await Promise.all([...this.removals]);
+	}
+
+	/** Stop a message whose files were arriving, and remove what arrived.
+	 * Settles once they are removed. */
+	private abandonUpload(window: MutableWindow): Promise<void> {
 		const upload = window.upload;
-		if (upload === undefined) return;
+		if (upload === undefined) return Promise.resolve();
 		delete window.upload;
 		window.sending = false;
-		void upload.writer.abort();
+		const removal = upload.writer.abort();
+		this.removals.add(removal);
+		void removal.then(() => this.removals.delete(removal));
+		return removal;
 	}
 
 	private owned(terminalSessionId: string, windowId: string): MutableWindow {
