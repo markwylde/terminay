@@ -640,6 +640,8 @@ test('Desktop stops waiting for approval as soon as the pairing peer is lost, an
 	// It ends on the lost peer, not on the approval expiring: the rejection
 	// says which.
 	assert.ok(result.error, 'the attempt rejects instead of hanging');
+	// What released the attempt is named by the rejection itself: the lost
+	// peer, not the approval running out.
 	assert.match(
 		result.error.message,
 		/connection to the server was lost/u,
