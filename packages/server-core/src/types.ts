@@ -154,6 +154,12 @@ export interface EventJournalOptions {
 	readonly snapshot?: () => ResyncSnapshot | Promise<ResyncSnapshot>;
 }
 
+/** Schedules and cancels the heartbeat silence deadline. */
+export interface HeartbeatTimers {
+	setTimeout(handler: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+
 export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	readonly authenticate?: AuthenticateClient;
 	readonly eventJournal?: OrderedEventJournalLike;
@@ -167,6 +173,8 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	readonly heartbeatSuspendToleranceMs?: number;
 	/** Wall clock the silence deadline is measured against. */
 	readonly heartbeatNow?: () => number;
+	/** What schedules the silence deadline. Defaults to the global timers. */
+	readonly heartbeatTimers?: HeartbeatTimers;
 	readonly defaultQueryScope?: AuthScope;
 	readonly defaultCommandScope?: AuthScope;
 	/** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh
