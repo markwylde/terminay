@@ -7,6 +7,7 @@ import { submitTerminalCommand } from './support/terminal';
 import { activeTerminalPanel, createTerminal } from './support/terminal-session';
 import { activateDockTab } from './support/ui';
 import { createStartedProject } from './support/project-start';
+import { commandGate } from './support/server-clock';
 
 /**
  * App windows end to end (terminal-app-windows). A stub script in a real
@@ -248,8 +249,15 @@ test('an agent shows its own HTML in a window that minimises to an edge tab', as
 	await expect(rows(mainWindow)).toContainText('RESULT list_windows windows=0');
 
 	// --- a window that arrives in a terminal you are not looking at ----------
-	await call('show_window', { title: 'Other terminal', html: HELLO }, 'sleep 4; ');
+	// The request waits on a gate the test opens once Terminal 1 is in front.
+	const elsewhere = await commandGate(userDataDir);
+	await call(
+		'show_window',
+		{ title: 'Other terminal', html: HELLO },
+		`${elsewhere.wait}; `,
+	);
 	await activateDockTab(mainWindow, 'Terminal 1');
+	await elsewhere.open();
 	// Back in Terminal 1 the view is exactly as it was left: it never reloaded.
 	await expect(deploy).toHaveAttribute('data-placement', 'window');
 	await expect(view(deploy).locator('#region')).toHaveValue('ap-south-1');
@@ -362,16 +370,19 @@ test('a window that arrives while another project is in front stays with its own
 	const other = projects.last();
 
 	// A terminal in the first project asks for a window, and the user moves to
-	// the other project before it arrives.
+	// the other project before it arrives: the request waits on a gate the
+	// test opens once the other project is in front.
+	const later = await commandGate(userDataDir);
 	await asking.click();
 	await expect(asking).toHaveClass(/project-tab--active/);
 	await submitTerminalCommand(
 		mainWindow,
-		`sleep 4; '${process.execPath}' '${script}' show_window '${params}'`,
+		`${later.wait}; '${process.execPath}' '${script}' show_window '${params}'`,
 		activeTerminalPanel(mainWindow),
 	);
 	await other.click();
 	await expect(other).toHaveClass(/project-tab--active/);
+	await later.open();
 
 	// The window has arrived: its project's tab is badged.
 	await expect(asking.locator('.app-window-badge')).toHaveAttribute(
