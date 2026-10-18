@@ -26,6 +26,10 @@ async function withAdapter(respond, run) {
 	const socketPath = join(root, 'control.sock');
 	const requests = [];
 	const held = [];
+	const heldWaiters = [];
+	/** Resolves once a request is being held unanswered. */
+	const nextHeld = () =>
+		held.length > 0 ? Promise.resolve() : new Promise((resolve) => heldWaiters.push(resolve));
 	const control = createServer((socket) => {
 		const decoder = new ControlFrameDecoder(CONTROL_MAX_LARGE_FRAME_BYTES);
 		socket.on('error', () => {});
@@ -36,6 +40,7 @@ async function withAdapter(respond, run) {
 				const reply = respond(request);
 				if (reply === undefined) {
 					held.push((result) => socket.write(encodeControlMessage({ id: request.id, ok: true, result })));
+					for (const resolve of heldWaiters.splice(0)) resolve();
 					continue;
 				}
 				socket.write(encodeControlMessage({ id: request.id, ...reply }));
@@ -52,7 +57,7 @@ async function withAdapter(respond, run) {
 	const client = new Client({ name: 'stdio-app-windows-test', version: '1.0.0' });
 	try {
 		await client.connect(transport);
-		await run({ client, requests, held });
+		await run({ client, requests, held, nextHeld });
 	} finally {
 		await client.close().catch(() => {});
 		await new Promise((resolve) => control.close(resolve));
@@ -279,29 +284,29 @@ test('the agent is told when the set of connected tools changes, through one hel
 			if (request.params.after === revision) return undefined;
 			return ok({ tools, revision });
 		},
-		async ({ client, requests, held }) => {
+		async ({ client, requests, held, nextHeld }) => {
 			let notified = 0;
-			client.setNotificationHandler(ToolListChangedNotificationSchema, () => { notified += 1; });
-			await waitFor(() => held.length === 1);
+			let notify;
+			const changed = new Promise((resolve) => { notify = resolve; });
+			client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+				notified += 1;
+				notify();
+			});
+			await nextHeld();
+			assert.equal(held.length, 1);
 			assert.equal(notified, 0);
 			assert.equal(requests.filter((request) => request.params.after === 'rev-1').length, 1);
 			tools = [DRAW];
 			revision = 'rev-2';
 			held.shift()({ tools, revision });
-			await waitFor(() => notified === 1);
+			await changed;
+			assert.equal(notified, 1);
 			assert.deepEqual((await client.listTools()).tools.at(-1).name, 'diagrams__draw');
 			// It re-arms with the new revision and does not spin.
-			await waitFor(() => held.length === 1);
+			await nextHeld();
+			assert.equal(held.length, 1);
 			assert.equal(requests.filter((request) => request.params.after === 'rev-2').length, 1);
 			assert.equal(notified, 1);
 		},
 	);
 });
-
-async function waitFor(condition, timeoutMs = 5000) {
-	const deadline = Date.now() + timeoutMs;
-	while (!condition()) {
-		if (Date.now() > deadline) throw new Error('condition was not met in time');
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-}
