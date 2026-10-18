@@ -25,6 +25,12 @@ import {
 import { submitTerminalCommand } from './support/terminal'
 import { readDiagnosticEvents } from './support/local-desktop-diagnostics'
 import { createStartedProject } from './support/project-start'
+import {
+  advanceRendererClock,
+  holdRendererClock,
+  installRendererClock,
+  releaseRendererClock,
+} from './support/renderer-clock'
 
 const execFileAsync = promisify(execFile)
 
@@ -622,6 +628,9 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   const linked = folderRow(mainWindow, 'delete-sibling-worktree')
   await expect(linked).toBeVisible({ timeout: 6000 })
 
+  // The Explorer's refreshes wait a moment after a change; that moment is
+  // the renderer's time, and the test's clock is on it from here.
+  await installRendererClock(mainWindow)
   await openFolderMenu(mainWindow, 'delete-sibling-worktree')
   await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
   await dialogs.queueConfirm(true)
@@ -630,8 +639,15 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   await expect(linked).toHaveCount(0, { timeout: 6000 })
   // Worktree removal publishes Git status before the follow-up Explorer
   // refresh settles. Its file-operation diagnostic is durable even if another
-  // successful Explorer request immediately clears the visible banner.
-  await mainWindow.waitForTimeout(1000)
+  // successful Explorer request immediately clears the visible banner. Every
+  // refresh the removal scheduled is run out, and then a later one is seen
+  // to finish: the server answers the Explorer in order, so the follow-up
+  // has been answered, and any failure of it logged, by then.
+  await holdRendererClock(mainWindow)
+  await advanceRendererClock(mainWindow, 1_000)
+  await releaseRendererClock(mainWindow)
+  await writeFile(join(mainRepo.rootDir, 'after-removal.txt'), 'later\n', 'utf8')
+  await expect(fileExplorerItem(mainWindow, 'after-removal.txt')).toBeVisible()
   const explorerFailures = (await readDiagnosticEvents(userDataDir)).filter(
     (event) => event.event === 'local-server.file-operation.failed',
   )
