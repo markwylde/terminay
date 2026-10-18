@@ -302,6 +302,14 @@ export interface ServerTerminalAuthorityOptions {
 	/** E2E-only: how long a notification must stay present before it is
 	 * published. Production leaves this unset and gets the manager's own. */
 	readonly notificationSettleMs?: number;
+	/** E2E-only: the clock terminal activity and notifications keep time by,
+	 * so a test can end their periods exactly. Production leaves this unset and
+	 * they use the real one. */
+	readonly clock?: {
+		readonly now: () => number;
+		readonly setTimeout: (handler: () => void, milliseconds: number) => unknown;
+		readonly clearTimeout: (handle: unknown) => void;
+	};
 	/** Web Push to paired devices; see the composition option of the same name. */
 	readonly push?: ServerCoreCompositionOptions['push'];
 	readonly onEvent?: (event: TerminalEvent) => void;
@@ -512,7 +520,10 @@ export class ServerTerminalAuthority {
 		this.workspaceCommandTestRecords =
 			process.env.TERMINAY_TEST === '1' ? [] : undefined;
 		this.installWorkspaceCommandTestObserver();
-		this.activity = new TerminalActivityService({ serverId: options.serverId });
+		this.activity = new TerminalActivityService({
+			serverId: options.serverId,
+			...options.clock,
+		});
 		this.agents = new AgentStatusService({ activity: this.activity });
 		this.agentScope = new ProjectAgentScope();
 		const agentBridge = new SessionSourceBridge({
@@ -1102,11 +1113,15 @@ export class ServerTerminalAuthority {
 			},
 			activity: this.activity,
 			...(options.push === undefined ? {} : { push: options.push }),
-			...(options.notificationSettleMs === undefined
+			...(options.notificationSettleMs === undefined &&
+			options.clock === undefined
 				? {}
 				: {
 						notifications: new NotificationManager({
-							settleMs: options.notificationSettleMs,
+							...options.clock,
+							...(options.notificationSettleMs === undefined
+								? {}
+								: { settleMs: options.notificationSettleMs }),
 						}),
 					}),
 			agents: this.agents,

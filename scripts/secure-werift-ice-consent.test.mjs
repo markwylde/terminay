@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -15,8 +16,9 @@ import { pathToFileURL } from 'node:url';
  * fifteen seconds later. RFC 7675 retransmits consent checks and expires
  * consent only after 30 seconds without an answer.
  *
- * These tests run against the artifact the server will actually load. Each
- * waits out real consent intervals, about five seconds apiece.
+ * These tests run against the artifact the server will actually load. The
+ * consent interval is driven by mocked timers, so each check happens when the
+ * test says and nothing waits on a clock.
  */
 
 const ARTIFACT = path.resolve('build/webrtc-runtime/artifact/lib/index.mjs');
@@ -26,7 +28,7 @@ async function loadRuntime() {
 }
 
 /** A connected ICE connection whose nominated pair answers as `answer` says. */
-function connectedIce(runtime, answer) {
+function connectedIce(t, runtime, answer) {
 	const ice = new runtime.Connection(true, {});
 	ice.localUsername = 'local';
 	ice.remoteUsername = 'remote';
@@ -58,21 +60,25 @@ function connectedIce(runtime, answer) {
 	const states = [];
 	ice.state = 'connected';
 	ice.stateChanged.subscribe((state) => states.push(state));
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	// The runtime imports node:timers/promises as an ES module, which sees the
+	// mocked timers only once the builtin exports are synced.
+	syncBuiltinESMExports();
 	ice.queryConsent();
+	/** Let the next consent check run, and everything it settles. */
+	const nextCheck = async () => {
+		// Past the longest randomized interval: 5 s x 1.2.
+		t.mock.timers.tick(6_000);
+		for (let turn = 0; turn < 10; turn += 1)
+			await new Promise((resolveTurn) => setImmediate(resolveTurn));
+	};
 	const stop = () => {
 		ice.queryConsentHandle?.resolve?.();
 		ice.state = 'closed';
+		t.mock.timers.reset();
+		syncBuiltinESMExports();
 	};
-	return { requests, states, stop };
-}
-
-async function until(predicate, limitMs) {
-	const startedAt = Date.now();
-	while (!predicate()) {
-		if (Date.now() - startedAt > limitMs) return false;
-		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-	}
-	return true;
+	return { nextCheck, requests, states, stop };
 }
 
 test('a consent check is retransmitted, so a slow answer keeps the path connected', async (t) => {
@@ -82,11 +88,13 @@ test('a consent check is retransmitted, so a slow answer keeps the path connecte
 		return;
 	}
 	// The answer arrives, but only to a retransmission of the check.
-	const ice = connectedIce(runtime, async (_count, retransmissions) => {
+	const ice = connectedIce(t, runtime, async (_count, retransmissions) => {
 		if (!(retransmissions > 0)) throw new Error('STUN transaction timed out');
 	});
 	try {
-		assert.equal(await until(() => ice.requests.length >= 2, 15_000), true);
+		await ice.nextCheck();
+		await ice.nextCheck();
+		assert.equal(ice.requests.length, 2, 'checking goes on');
 		assert.equal(
 			ice.requests.every((retransmissions) => retransmissions > 0),
 			true,
@@ -103,16 +111,18 @@ test('a missed consent check is not the end: the next answer reports the path co
 		t.skip('the selected WebRTC runtime artifact is not staged');
 		return;
 	}
-	const ice = connectedIce(runtime, async (count) => {
+	const ice = connectedIce(t, runtime, async (count) => {
 		if (count === 1) throw new Error('STUN transaction timed out');
 	});
 	try {
-		assert.equal(
-			await until(() => ice.states.includes('connected'), 15_000),
-			true,
+		await ice.nextCheck();
+		assert.deepEqual(ice.states, ['disconnected'], 'the miss is reported');
+		await ice.nextCheck();
+		assert.deepEqual(
+			ice.states,
+			['disconnected', 'connected'],
 			'consent checks continued after the miss and restored the path',
 		);
-		assert.deepEqual(ice.states, ['disconnected', 'connected']);
 	} finally {
 		ice.stop();
 	}
