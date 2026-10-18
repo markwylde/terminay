@@ -57,7 +57,9 @@ test('replacement barrier remains pending until native closed', async () => {
   assert.equal(released, true)
 })
 
-test('renderer destruction publishes and releases the replacement barrier without native closed', async () => {
+test('renderer destruction publishes and releases the replacement barrier without native closed', async (t) => {
+  // The release crosses one task boundary; the test's clock moves it.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const first = fakeWindow()
   let barrier = Promise.resolve()
   bindNativeWindowCloseBarrier(first, (next) => { barrier = next })
@@ -68,7 +70,8 @@ test('renderer destruction publishes and releases the replacement barrier withou
   await Promise.resolve()
   assert.equal(released, false)
 
-  await new Promise((resolve) => setTimeout(resolve, 5))
+  // One task later, not the 250 ms fallback, releases it.
+  t.mock.timers.tick(0)
   await barrier
   assert.equal(released, true)
 })

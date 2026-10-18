@@ -184,6 +184,7 @@ async function embeddedServer(t, serverId, options = {}) {
 	return {
 		authority,
 		pty,
+		protocol,
 		facade,
 		workspace,
 		createProject: (projectId, root) =>
@@ -196,25 +197,30 @@ const linkedFolders = (authority, projectId) =>
 		.map((folderId) => authority.workspace.state.folders[folderId])
 		.filter((folder) => folder.kind === 'linked');
 
-/** Wait for something the server does on its own, after an event. */
-async function eventually(read, description, timeoutMs = 15_000) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await read();
-		if (value !== undefined && value !== false && value !== null) return value;
-		if (Date.now() > deadline)
-			assert.fail(`timed out waiting for ${description}`);
-		await new Promise((resolve) => setTimeout(resolve, 25));
-	}
+/** Wait for something the server does to its workspace on its own, after an
+ * event: `read` is asked now and again on every workspace commit, and the
+ * first value it gives is the answer. */
+function whenWorkspace(authority, read) {
+	return new Promise((resolve) => {
+		let found = false;
+		const check = () => {
+			const value = read();
+			if (found || value === undefined || value === false || value === null)
+				return;
+			found = true;
+			stop?.();
+			resolve(value);
+		};
+		const stop = authority.workspace.subscribe(check);
+		check();
+	});
 }
 
 const folderFor = (authority, projectId, path) =>
-	eventually(
-		() =>
-			linkedFolders(authority, projectId).find(
-				(folder) => folder.worktree.path === path,
-			),
-		`a folder linked to ${path}`,
+	whenWorkspace(authority, () =>
+		linkedFolders(authority, projectId).find(
+			(folder) => folder.worktree.path === path,
+		),
 	);
 
 const listedNames = async (facade, payload) =>
@@ -243,14 +249,14 @@ test('a bound project gets one linked folder per worktree, and loses it when the
 	await folderFor(authority, 'repo', later);
 	assert.equal(linkedFolders(authority, 'repo').length, 2);
 
-	// Let the passes asked for so far finish, so that only the Git service
-	// reporting the removal can be what removes the folder.
+	// Let the passes asked for so far finish. The reconciler starts no timer
+	// of its own, so from here only the Git service reporting a change can run
+	// the pass that removes the folder.
 	await authority.folders.reconciler.reconcile('repo');
-	await new Promise((resolve) => setTimeout(resolve, 500));
 	await git(repo.root, 'worktree', 'remove', '--force', later);
-	await eventually(
+	await whenWorkspace(
+		authority,
 		() => linkedFolders(authority, 'repo').length === 1,
-		'the removed worktree to lose its folder',
 	);
 	assert.deepEqual(
 		linkedFolders(authority, 'repo').map((folder) => folder.worktree.path),
@@ -324,7 +330,7 @@ test('file operations naming a folder run in that folder’s worktree', async (t
 	const repo = await repository(t);
 	const worktree = await repo.addWorktree('feature');
 	await writeFile(join(worktree, 'feature.ts'), 'export const feature = 1;\n');
-	const { authority, facade, createProject } = await embeddedServer(
+	const { authority, protocol, facade, createProject } = await embeddedServer(
 		t,
 		'folders-files',
 	);
@@ -379,14 +385,23 @@ test('file operations naming a folder run in that folder’s worktree', async (t
 		resource: '',
 	});
 	assert.equal(watch.folderId, folder.id);
-	await writeFile(join(worktree, 'watched.ts'), 'export {};\n');
-	const events = await eventually(async () => {
-		const read = await facade.query('files.watch.read', {
-			subscriptionId: watch.subscriptionId,
+	// The server announces each watch event, and the read then holds it.
+	const announcements = await protocol.subscribe('files.watch');
+	const announced = new Promise((resolve) => {
+		const stop = announcements.onEvent(({ payload }) => {
+			if (payload?.subscriptionId !== watch.subscriptionId) return;
+			stop();
+			resolve(payload);
 		});
-		return read.events.length > 0 ? read.events : undefined;
-	}, 'a watch event from the worktree');
+	});
+	await writeFile(join(worktree, 'watched.ts'), 'export {};\n');
+	assert.equal((await announced).folderId, folder.id);
+	const { events } = await facade.query('files.watch.read', {
+		subscriptionId: watch.subscriptionId,
+	});
+	assert.ok(events.length > 0, 'the announced event is there to read');
 	assert.equal(events[0].folderId, folder.id);
+	await announcements.unsubscribe();
 	await facade.command('files.watch.stop', {
 		subscriptionId: watch.subscriptionId,
 	});
@@ -468,9 +483,9 @@ test('folder services are dropped when the folder goes and when the project is c
 	assert.equal(authority.folders.catalog.size, 2);
 
 	await git(repo.root, 'worktree', 'remove', '--force', dropped);
-	await eventually(
+	await whenWorkspace(
+		authority,
 		() => authority.workspace.state.folders[droppedFolder.id] === undefined,
-		'the removed worktree to lose its folder',
 	);
 	// The workspace change that deleted the folder pruned its services.
 	assert.equal(authority.folders.catalog.size, 1);

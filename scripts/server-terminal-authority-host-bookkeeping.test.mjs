@@ -18,6 +18,7 @@ const {
 	ServerPortTransport,
 	ServerScopedMessagePort,
 	ServerTerminalAuthority,
+	createManualServerClock,
 	TerminalService,
 	TerminalServiceError,
 	getPathRelativeToRoot,
@@ -68,10 +69,16 @@ function bindRendererChannel(channel) {
 	let serverMessage;
 	let serverMessageError;
 	let closed = 0;
+	let markClosed;
+	const firstClose = new Promise((resolve) => {
+		markClosed = resolve;
+	});
 	channel.port1.on('message', (data) => serverMessage?.({ data }));
 	channel.port1.on('messageerror', () => serverMessageError?.());
 	return {
 		closed: () => closed,
+		/** Settles when the server first closes its end. */
+		firstClose,
 		port: {
 			get onmessage() {
 				return serverMessage;
@@ -89,10 +96,28 @@ function bindRendererChannel(channel) {
 			start: () => channel.port1.start(),
 			close: () => {
 				closed += 1;
+				markClosed();
 				channel.port1.close();
 			},
 		},
 	};
+}
+
+/** Resolves with the session's activity once it satisfies `predicate`, checked
+ * now and on every activity event. */
+function activityReaches(authority, identity, predicate) {
+	return new Promise((resolve) => {
+		let reached = false;
+		const check = () => {
+			const snapshot = authority.activity.get(identity);
+			if (reached || snapshot === undefined || !predicate(snapshot)) return;
+			reached = true;
+			stop?.();
+			resolve(snapshot);
+		};
+		const stop = authority.activity.subscribe(check);
+		check();
+	});
 }
 
 function createPtyFactory() {
@@ -277,24 +302,7 @@ test('replacing a renderer port for the same window closes the previous connecti
 		await firstClient.connect();
 
 		authority.acceptRendererPort(second.port, { ownerId: 17 });
-		await Promise.race([
-			new Promise((resolve) => {
-				const poll = () => {
-					if (first.closed() >= 1) resolve(undefined);
-					else setTimeout(poll, 10);
-				};
-				poll();
-			}),
-			new Promise((_, reject) => {
-				setTimeout(
-					() =>
-						reject(
-							new Error('the previous renderer connection was not closed'),
-						),
-					1_000,
-				);
-			}),
-		]);
+		await first.firstClose;
 		assert.ok(first.closed() >= 1);
 
 		const secondClient = new TerminayClient({
@@ -583,13 +591,11 @@ test('Desktop production authority projects a real PTY foreground process onto i
 			clientId: 'foreground-test',
 			scope: 'write',
 		});
-		const deadline = Date.now() + 5_000;
-		let snapshot;
-		while (Date.now() < deadline) {
-			snapshot = authority.activity.get(session.identity);
-			if (snapshot?.foregroundBusy === true) break;
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
+		const snapshot = await activityReaches(
+			authority,
+			session.identity,
+			(current) => current.foregroundBusy === true,
+		);
 		assert.equal(snapshot?.sessionId, session.identity.sessionId);
 		assert.equal(snapshot?.projectId, session.identity.projectId);
 		assert.equal(snapshot?.foregroundBusy, true);
@@ -660,7 +666,11 @@ function writeAuthorization() {
 
 test('trusted Desktop writes produce canonical OSC completion activity through the PTY boundary', async () => {
 	const pty = createPtyFactory();
+	// Activity keeps time by the test's clock, so its input windows end only
+	// when the test moves it.
+	const clock = createManualServerClock(1_000_000);
 	const authority = new ServerTerminalAuthority({
+		clock,
 		serverId: 'trusted-activity',
 		terminalService: new TerminalService({
 			serverId: 'trusted-activity',
@@ -691,14 +701,17 @@ test('trusted Desktop writes produce canonical OSC completion activity through t
 				setImmediate(() => this.emitData(`\u001b]${marker}\u0007`));
 		};
 
+		const reaches = (predicate) => activityReaches(authority, identity, predicate);
 		await authority.write(session.id, "printf '\\033]9;4;3;\\007'\r");
-		await new Promise(setImmediate);
-		assert.equal(authority.activity.get(identity)?.status, 'working');
+		await reaches((activity) => activity.status === 'working');
 		await authority.write(session.id, "printf '\\033]9;4;0;\\007'\r");
-		await new Promise(setImmediate);
-		assert.equal(authority.activity.get(identity)?.status, 'idle');
+		await reaches((activity) => activity.status === 'idle');
 		assert.equal(authority.activity.get(identity)?.acknowledged, true);
-		await new Promise((resolve) => setTimeout(resolve, 2_100));
+		// The completion is the user's own until their input has been quiet
+		// for two seconds.
+		clock.advance(1_999);
+		assert.equal(authority.activity.get(identity)?.acknowledged, true);
+		clock.advance(1);
 		assert.equal(authority.activity.get(identity)?.acknowledged, false);
 		assert.equal(
 			authority.activity.get(identity)?.source,
@@ -706,11 +719,9 @@ test('trusted Desktop writes produce canonical OSC completion activity through t
 		);
 
 		await authority.write(session.id, "printf '\\033]133;C\\007'\r");
-		await new Promise(setImmediate);
-		assert.equal(authority.activity.get(identity)?.status, 'working');
+		await reaches((activity) => activity.status === 'working');
 		await authority.write(session.id, "printf '\\033]133;D;0\\007'\r");
-		await new Promise(setImmediate);
-		assert.equal(authority.activity.get(identity)?.status, 'idle');
+		await reaches((activity) => activity.status === 'idle');
 		assert.equal(authority.activity.get(identity)?.acknowledged, false);
 		assert.equal(
 			authority.activity.get(identity)?.source,
@@ -1594,6 +1605,7 @@ async function importAuthority() {
 			stdin: {
 				contents: [
 					`export { ServerTerminalAuthority } from ${JSON.stringify(new URL('../electron/serverTerminalAuthority.ts', import.meta.url).pathname)}`,
+					`export { createManualServerClock } from ${JSON.stringify(new URL('../electron/testServerClock.ts', import.meta.url).pathname)}`,
 					`export { TerminalService } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/service.ts', import.meta.url).pathname)}`,
 					`export { TerminalServiceError } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/errors.ts', import.meta.url).pathname)}`,
 					`export { WorkspaceStore, createInitialWorkspace } from ${JSON.stringify(new URL('../packages/server-core/src/workspace.ts', import.meta.url).pathname)}`,

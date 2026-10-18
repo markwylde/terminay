@@ -184,19 +184,25 @@ async function startEnabled(installer, hosts, dataRoot) {
   }
 }
 
-async function waitFor(assertion, label) {
-  const deadline = Date.now() + 10_000
-  let lastError
-  while (Date.now() < deadline) {
+/** Resolves once `assertion` passes, tried now and on every agent status
+ * snapshot, which is how a session source's report arrives. */
+function whenAgents(agentStatus, assertion) {
+  const passes = () => {
     try {
       assertion()
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve) => setTimeout(resolve, 25))
+      return true
+    } catch {
+      return false
     }
   }
-  throw new Error(`${label}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+  if (passes()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const stop = agentStatus.subscribe(() => {
+      if (!passes()) return
+      stop()
+      resolve()
+    })
+  })
 }
 
 async function exercisePackagedHostRuntime(label, artifactRoot) {
@@ -220,7 +226,8 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
   // The declared home variable reaches the packaged child from the host environment.
   process.env.CLAUDE_CONFIG_DIR = claudeHome
   // A real process stands in for the agent so liveness comes from the OS.
-  const agent = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' })
+  // It runs until the test kills it, however long the test takes.
+  const agent = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60_000)'], { stdio: 'ignore' })
   await new Promise((resolveSpawn) => agent.once('spawn', resolveSpawn))
   await createClaudeFixtureDriver(claudeHome, Date.now()).createLiveSession({
     id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
@@ -265,20 +272,22 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
       [AGENTS_SOURCE_ID],
       `${label} must publish the staged session source only after activation`,
     )
-    await waitFor(() => {
+    // The packaged session reduced into a canonical agent root.
+    await whenAgents(agentStatus, () => {
       const entry = packagedEntries().find((candidate) => candidate.displayName === 'Packaged Claude session')
       assert.ok(entry, `${label} must reduce the packaged library session into a canonical agent root`)
       assert.equal(entry.state, 'working')
       assert.equal(entry.external, true)
       assert.equal(entry.harness, 'claude-code')
-    }, `${label} packaged built-in agents session`)
+    })
 
     state = await installer.disable(AGENTS_ID)
     await hosts.stop(AGENTS_ID)
     assert.equal(state.extensions[AGENTS_ID].enabled, false)
     assert.equal(hosts.statuses().find((status) => status.extensionId === AGENTS_ID)?.state, 'stopped')
     assert.equal(hosts.sessionSourceContributions().length, 0)
-    await waitFor(() => assert.equal(packagedEntries().length, 0), `${label} disabling the source must withdraw its sessions`)
+    // Disabling the source withdraws its sessions.
+    await whenAgents(agentStatus, () => assert.equal(packagedEntries().length, 0))
     await hosts.shutdown()
 
     // This deliberately constructs a new server authority against the same
@@ -303,9 +312,10 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
     assert.equal(active(state, AGENTS_ID).version, agentsArtifact.version, `${label} rollback must select the packaged floor`)
     await startEnabled(installer, hosts, dataRoot)
     assert.ok(hosts.sessionSourceContributions().some((provider) => provider.contribution.id === AGENTS_SOURCE_ID), `${label} rollback must reactivate the staged session source`)
-    await waitFor(
+    // The rollback reports the live session again.
+    await whenAgents(
+      agentStatus,
       () => assert.ok(packagedEntries().some((entry) => entry.displayName === 'Packaged Claude session')),
-      `${label} rollback must report the live session again`,
     )
   } finally {
     agent.kill('SIGKILL')

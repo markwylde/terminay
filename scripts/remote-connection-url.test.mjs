@@ -36,7 +36,9 @@ test('accepts a Docker-hosted HTTPS one-time fragment pairing URL', () => {
 });
 
 test('accepts the explicit device-pairing fragment and rejects query credentials', () => {
-	const expiresAt = new Date(Date.now() + 60_000).toISOString();
+	// Fixed instants either side of any clock, so the test never depends on
+	// how long it takes to reach the assertion.
+	const expiresAt = '2999-01-01T00:00:00.000Z';
 	const valid = `https://terminay.example.test/#pairingFlow=device&pairingSessionId=session-1&pairingToken=token-1&pairingExpiresAt=${encodeURIComponent(expiresAt)}`;
 	assert.equal(policy.normalizeRemoteConnectionUrl(valid), valid);
 	assert.equal(policy.isRemoteAccessPairingUrl(valid), true);
@@ -52,7 +54,7 @@ test('accepts the explicit device-pairing fragment and rejects query credentials
 		() => policy.normalizeRemoteConnectionUrl(query),
 		/fragment/u,
 	);
-	const expired = `https://terminay.example.test/#pairingSessionId=session-1&pairingToken=token-1&pairingExpiresAt=${encodeURIComponent(new Date(Date.now() - 1).toISOString())}`;
+	const expired = `https://terminay.example.test/#pairingSessionId=session-1&pairingToken=token-1&pairingExpiresAt=${encodeURIComponent('2000-01-01T00:00:00.000Z')}`;
 	assert.throws(() => policy.normalizeRemoteConnectionUrl(expired), /expired/u);
 });
 
