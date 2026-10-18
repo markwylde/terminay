@@ -375,10 +375,12 @@ export async function launchDesktopApp(options: {
 					: {}),
 				// A notification is published five seconds after it arises. The suite
 				// reads the header count constantly, so it runs with a short settle
-				// period and a longer one only where the period is what is under test.
-				TERMINAY_TEST_NOTIFICATION_SETTLE_MS: notificationSettleForTest(
-					testInfo.title,
-				),
+				// period. Where activity and notification timing is what is under
+				// test, the server keeps the test's clock instead, and the test ends
+				// each period itself.
+				...(path.basename(testInfo.file) === 'terminal-signals.spec.ts'
+					? { TERMINAY_TEST_SERVER_CLOCK: 'manual' }
+					: { TERMINAY_TEST_NOTIFICATION_SETTLE_MS: '300' }),
 				// Terminals held outside the app, so they survive a relaunch
 				// (ADR-0035). Off everywhere else until the rollout turns it on.
 				...(path.basename(testInfo.file) === 'terminals-survive-restart.spec.ts'
@@ -533,10 +535,6 @@ export const test = base.extend<ElectronFixtures>({
 });
 
 export { expect };
-
-function notificationSettleForTest(title: string): string {
-	return title.includes('settle period') ? '4000' : '300';
-}
 
 function persistenceFaultForTest(
 	title: string,

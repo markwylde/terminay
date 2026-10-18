@@ -294,17 +294,81 @@ test("the connection answers its own liveness probe", async () => {
   }
 });
 
-test("a heartbeat client that goes silent is reaped; a client that never promised one is not", async () => {
-  const reaped = [];
-  const core = createServerCore({
-    serverId: "heartbeat-reaper",
+/**
+ * A clock for the silence deadline that moves only when the test moves it.
+ * `advance` is time passing with the server awake: every deadline that comes
+ * due fires, in order. `sleep` is a machine waking from sleep: the wall clock
+ * jumps, and only then does each overdue deadline fire, late.
+ */
+function createManualClock() {
+  let now = 0;
+  let nextId = 0;
+  const timers = new Map();
+  const fireDue = () => {
+    for (;;) {
+      const due = [...timers.values()]
+        .filter((timer) => timer.at <= now)
+        .sort((left, right) => left.at - right.at || left.id - right.id)[0];
+      if (due === undefined) return;
+      timers.delete(due.id);
+      due.handler();
+    }
+  };
+  return {
+    now: () => now,
+    timers: {
+      setTimeout(handler, ms) {
+        nextId += 1;
+        const timer = { id: nextId, at: now + ms, handler };
+        timers.set(timer.id, timer);
+        return timer;
+      },
+      clearTimeout(timer) {
+        timers.delete(timer.id);
+      },
+    },
+    advance(ms) {
+      const target = now + ms;
+      for (;;) {
+        const next = [...timers.values()]
+          .filter((timer) => timer.at <= target)
+          .sort((left, right) => left.at - right.at || left.id - right.id)[0];
+        if (next === undefined) break;
+        now = next.at;
+        fireDue();
+      }
+      now = target;
+    },
+    sleep(ms) {
+      now += ms;
+      fireDue();
+    },
+  };
+}
+
+/** Let whatever a fired deadline started finish: closing is asynchronous. */
+async function settled(connection) {
+  for (let turn = 0; turn < 20 && connection.state === "open"; turn += 1) await nextTurn();
+  for (let turn = 0; turn < 20; turn += 1) await nextTurn();
+}
+
+function heartbeatCore(serverId, heartbeatTimeoutMs, clock, reaped) {
+  return createServerCore({
+    serverId,
     serverVersion: "test",
     capabilities: [],
-    // A tight bound keeps the test deterministic; production uses 60s.
-    heartbeatTimeoutMs: 60,
+    heartbeatTimeoutMs,
+    heartbeatNow: clock.now,
+    heartbeatTimers: clock.timers,
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
     onConnectionClosed: (connectionId) => reaped.push(connectionId),
   });
+}
+
+test("a heartbeat client that goes silent is reaped; a client that never promised one is not", async () => {
+  const reaped = [];
+  const clock = createManualClock();
+  const core = heartbeatCore("heartbeat-reaper", 60_000, clock, reaped);
 
   // A client that never advertised the heartbeat may idle indefinitely: Local
   // Desktop and MCP connections make no liveness promise.
@@ -313,8 +377,12 @@ test("a heartbeat client that goes silent is reaped; a client that never promise
   // transport, even though nothing ever reported a close.
   const promised = await connectHeartbeatClient(core, ["connection.heartbeat"]);
 
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  clock.advance(59_999);
+  await settled(promised.connection);
+  assert.deepEqual(reaped, [], "nobody is reaped before the deadline");
 
+  clock.advance(1);
+  await settled(promised.connection);
   assert.deepEqual(reaped, [promised.connection.connectionId],
     "only the connection that promised a heartbeat is reaped for silence");
   assert.equal(quiet.connection.state, "open");
@@ -326,23 +394,20 @@ test("a heartbeat client that goes silent is reaped; a client that never promise
 
 test("a heartbeat keeps an idle connection alive indefinitely", async () => {
   const reaped = [];
-  const core = createServerCore({
-    serverId: "heartbeat-idle",
-    serverVersion: "test",
-    capabilities: [],
-    heartbeatTimeoutMs: 120,
-    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
-    onConnectionClosed: (connectionId) => reaped.push(connectionId),
-  });
+  const clock = createManualClock();
+  const core = heartbeatCore("heartbeat-idle", 60_000, clock, reaped);
   const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
   try {
     // No terminal output, no workspace events: a quiet workspace stays connected
     // on pings alone, which traffic inference could never distinguish from death.
-    for (let beat = 0; beat < 6; beat += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      const pong = await session.client.query("connection.ping", { sentAt: Date.now() });
+    // Each ping lands well inside the deadline, and together they span far more
+    // than one.
+    for (let beat = 0; beat < 10; beat += 1) {
+      clock.advance(40_000);
+      const pong = await session.client.query("connection.ping", { sentAt: clock.now() });
       assert.equal(pong.ok, true);
     }
+    await settled(session.connection);
     assert.deepEqual(reaped, []);
     assert.equal(session.connection.state, "open");
   } finally {
@@ -351,39 +416,23 @@ test("a heartbeat keeps an idle connection alive indefinitely", async () => {
   }
 });
 
-/** A wall clock the test can jump forward, as a sleeping machine's does. */
-function createSleepableClock() {
-  let sleptMs = 0;
-  return {
-    now: () => Date.now() + sleptMs,
-    sleep(ms) { sleptMs += ms; },
-  };
-}
-
 test("a silence deadline that came due while the server was suspended is replaced, not honoured", async () => {
   const reaped = [];
-  const clock = createSleepableClock();
-  const core = createServerCore({
-    serverId: "heartbeat-suspended",
-    serverVersion: "test",
-    capabilities: [],
-    heartbeatTimeoutMs: 100,
-    heartbeatNow: clock.now,
-    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
-    onConnectionClosed: (connectionId) => reaped.push(connectionId),
-  });
+  const clock = createManualClock();
+  const core = heartbeatCore("heartbeat-suspended", 60_000, clock, reaped);
   const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
 
   // The machine sleeps for ten minutes: the deadline's timer fires on wake,
   // far later by the wall clock than the deadline it was armed with.
   clock.sleep(600_000);
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await settled(session.connection);
   assert.deepEqual(reaped, [], "sleep is not client silence");
   assert.equal(session.connection.state, "open");
 
   // The fresh deadline runs while the server is awake. A client that is still
   // silent when it elapses really is gone.
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  clock.advance(60_000);
+  await settled(session.connection);
   assert.deepEqual(reaped, [session.connection.connectionId],
     "the fresh deadline reaps a client that never answered");
 
@@ -393,25 +442,18 @@ test("a silence deadline that came due while the server was suspended is replace
 
 test("a client that answers within the fresh deadline after a suspension stays connected", async () => {
   const reaped = [];
-  const clock = createSleepableClock();
-  const core = createServerCore({
-    serverId: "heartbeat-resumed",
-    serverVersion: "test",
-    capabilities: [],
-    heartbeatTimeoutMs: 100,
-    heartbeatNow: clock.now,
-    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
-    onConnectionClosed: (connectionId) => reaped.push(connectionId),
-  });
+  const clock = createManualClock();
+  const core = heartbeatCore("heartbeat-resumed", 60_000, clock, reaped);
   const session = await connectHeartbeatClient(core, ["connection.heartbeat"]);
   try {
     clock.sleep(600_000);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settled(session.connection);
     for (let beat = 0; beat < 6; beat += 1) {
-      const pong = await session.client.query("connection.ping", { sentAt: Date.now() });
+      const pong = await session.client.query("connection.ping", { sentAt: clock.now() });
       assert.equal(pong.ok, true);
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      clock.advance(40_000);
     }
+    await settled(session.connection);
     assert.deepEqual(reaped, []);
     assert.equal(session.connection.state, "open");
   } finally {

@@ -57,42 +57,57 @@ async function countDiagnostics(
 test('an animating title publishes no workspace change, loads no explorer, and measures no Git', async ({
 	mainWindow,
 }) => {
-	// Two paced loops of forty frames take twenty seconds on an idle machine,
-	// and a shell forking `sleep` on a loaded runner runs them several times
-	// slower. The default thirty seconds is not enough for both.
-	test.setTimeout(120_000);
 	const title = activeTabTitle(mainWindow);
 	await expect(title).toHaveText('Terminal 1');
-	// Let the launch settle, so what is counted is the titles' own cost.
 	await runShellCommand(mainWindow, "printf '\\033]2;ready\\007'");
 	await expect(title).toHaveText('ready');
-	await mainWindow.waitForTimeout(1_500);
+
+	// Each loop below prints one frame and then waits for Enter, and the test
+	// presses Enter only once that frame is on screen. Frames arrive one at a
+	// time however fast or slow the machine is, as an agent's do, and nothing
+	// here waits on a clock. Echo is off, so Enter itself prints nothing.
+	const frames = 40;
+	const input = mainWindow
+		.locator(
+			'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
+		)
+		.first();
+	const rows = mainWindow
+		.locator('.project-workspace--active .terminal-panel:visible .xterm-rows')
+		.first();
 
 	// A terminal that prints is active, and its activity renders its
 	// workspace whatever it prints. So the same loop is run first printing
 	// text that is not a title, and what the titles add is measured against
 	// that.
-	const frames = 40;
 	await recordDiagnostics(mainWindow);
 	await runShellCommand(
 		mainWindow,
-		`for i in $(seq 1 ${frames}); do printf 'tick %s\\n' "$i"; sleep 0.25; done; printf '\\033]2;printed\\007'`,
+		`stty -echo; for i in $(seq 1 ${frames}); do printf 'tick %03d\\n' "$i"; read -r _; done; stty echo; printf '\\033]2;printed\\007'`,
 	);
-	await expect(title).toHaveText('printed', { timeout: 50_000 });
-	await mainWindow.waitForTimeout(1_000);
+	for (let frame = 1; frame <= frames; frame += 1) {
+		await expect(rows).toContainText(`tick ${String(frame).padStart(3, '0')}`);
+		await input.press('Enter');
+	}
+	// The title follows the last line in the same stream, so once it shows,
+	// everything the loop printed has been rendered.
+	await expect(title).toHaveText('printed');
 	const rendersForOutputAlone = await countDiagnostics(
 		mainWindow,
 		'workspace-render',
 	);
 
 	// What an agent CLI does for as long as it works: a new title, again and
-	// again. Forty of them, a quarter of a second apart.
+	// again, forty of them.
 	await recordDiagnostics(mainWindow);
 	await runShellCommand(
 		mainWindow,
-		`for i in $(seq 1 ${frames}); do printf '\\033]2;working %s\\007' "$i"; sleep 0.25; done`,
+		`stty -echo; for i in $(seq 1 ${frames}); do printf '\\033]2;working %s\\007' "$i"; read -r _; done; stty echo`,
 	);
-	await expect(title).toHaveText(`working ${frames}`, { timeout: 50_000 });
+	for (let frame = 1; frame <= frames; frame += 1) {
+		await expect(title).toHaveText(`working ${frame}`);
+		await input.press('Enter');
+	}
 
 	expect(
 		await countDiagnostics(mainWindow, 'projection'),

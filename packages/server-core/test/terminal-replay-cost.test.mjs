@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TerminalService } from "../dist/index.js";
+import { BoundedChunkQueue, TerminalService } from "../dist/index.js";
 
 /**
  * A repainting TUI delivers its output as hundreds of small PTY callbacks a
@@ -8,6 +8,10 @@ import { TerminalService } from "../dist/index.js";
  * holds a few hundred chunks or tens of thousands: the replay is bounded in
  * bytes, so the work to keep it bounded cannot grow with how finely those
  * bytes happened to arrive.
+ *
+ * The cost is counted, not timed: every chunk records each time its bytes are
+ * read, and keeping the bound by re-summing what is retained would read every
+ * retained chunk on every append.
  */
 
 const MAX_REPLAY_BYTES = 1024 * 1024;
@@ -37,39 +41,57 @@ async function fullReplay(chunkBytes) {
   });
   await service.createSession({ projectId: "p1", sessionId: "s1", shellPath: "/bin/sh", cols: 80, rows: 24 });
   const fill = new Uint8Array(chunkBytes).fill(0x78);
-  // Past the bound, so the measurement is of the steady state a long-lived
-  // terminal spends its life in rather than of the first megabyte.
+  // Past the bound, so what follows is the steady state a long-lived
+  // terminal spends its life in rather than the first megabyte.
   for (let sent = 0; sent < MAX_REPLAY_BYTES + chunkBytes; sent += chunkBytes) pty.emit(fill);
   return { pty, service };
 }
 
-/** Best of several rounds, so one collection pause cannot decide the result. */
-function perChunkMicroseconds(pty) {
-  const chunk = new Uint8Array(SMALL).fill(0x79);
-  let best = Number.POSITIVE_INFINITY;
-  for (let round = 0; round < 5; round += 1) {
-    const startedAt = performance.now();
-    for (let index = 0; index < MEASURED_CHUNKS; index += 1) pty.emit(chunk);
-    best = Math.min(best, ((performance.now() - startedAt) * 1000) / MEASURED_CHUNKS);
-  }
-  return best;
+/** A queue past its bound, made of chunks that count every read of their bytes. */
+function countingQueue(chunkBytes) {
+  const queue = new BoundedChunkQueue(MAX_REPLAY_BYTES, "within-bound");
+  const reads = { count: 0 };
+  const chunk = (size) => {
+    const bytes = new Uint8Array(size);
+    return { get bytes() { reads.count += 1; return bytes; } };
+  };
+  for (let held = 0; held < MAX_REPLAY_BYTES + chunkBytes; held += chunkBytes) queue.push(chunk(chunkBytes));
+  return {
+    queue,
+    /** Reads of retained bytes per appended small chunk. */
+    readsPerAppend() {
+      reads.count = 0;
+      for (let index = 0; index < MEASURED_CHUNKS; index += 1) queue.push(chunk(SMALL));
+      return reads.count / MEASURED_CHUNKS;
+    },
+  };
 }
 
-test("retaining an output chunk costs the same however many chunks the replay holds", async (t) => {
-  const few = await fullReplay(LARGE);
-  const many = await fullReplay(SMALL);
-  t.after(() => Promise.all([few.service.shutdown(), many.service.shutdown()]));
-
+test("retaining an output chunk costs the same however many chunks the replay holds", () => {
   // Same bytes retained, same chunk appended; only the number of retained
   // chunks differs (hundreds against tens of thousands).
-  const withFewChunks = perChunkMicroseconds(few.pty);
-  const withManyChunks = perChunkMicroseconds(many.pty);
+  const few = countingQueue(LARGE);
+  const many = countingQueue(SMALL);
+  assert.ok(few.queue.length < 300 && many.queue.length > 60_000);
 
+  const withFewChunks = few.readsPerAppend();
+  const withManyChunks = many.readsPerAppend();
+  // An append reads its own chunk and whichever chunks it evicts: a handful,
+  // never a share of what is retained.
   assert.ok(
-    withManyChunks <= withFewChunks * 4,
-    `a chunk cost ${withManyChunks.toFixed(1)}µs with a finely-chunked replay against ` +
-      `${withFewChunks.toFixed(1)}µs with a coarse one; retention must not scale with the chunk count`,
+    withManyChunks <= 8 && withFewChunks <= 8,
+    `an append read ${withManyChunks} chunks with a finely-chunked replay and ${withFewChunks} with a coarse one; ` +
+      "retention must not scale with the chunk count",
   );
+});
+
+test("a terminal's replay is held in that bounded queue", async (t) => {
+  const { service } = await fullReplay(SMALL);
+  t.after(() => service.shutdown());
+  // The queue above is what keeps a session's replay; nothing else does.
+  const replay = service.sessionsById.get("s1").replay;
+  assert.ok(replay instanceof BoundedChunkQueue);
+  assert.equal(replay.maxBytes, MAX_REPLAY_BYTES);
 });
 
 test("the replay stays bounded and contiguous while small chunks displace old ones", async (t) => {

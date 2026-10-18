@@ -22,20 +22,26 @@ async function fixture(extensionId, source) {
 
 function collector() {
   const records = [];
+  const waiters = new Set();
   return {
     records,
-    onDiagnostic: (record) => records.push(record),
+    onDiagnostic: (record) => {
+      records.push(record);
+      for (const waiter of [...waiters]) {
+        if (!waiter.predicate()) continue;
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
+    },
     of: (transition) => records.filter((record) => record.transition === transition),
     first: (transition) => records.find((record) => record.transition === transition),
+    /** Resolve once the recorded diagnostics satisfy `predicate`. Each record
+     * is checked as it arrives, so nothing here waits on a clock. */
+    until: (predicate) =>
+      predicate()
+        ? Promise.resolve()
+        : new Promise((resolve) => waiters.add({ predicate, resolve })),
   };
-}
-
-async function waitFor(predicate, message) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.fail(message);
 }
 
 test("a child that throws asynchronously reports its error name, message, and stack", async () => {
@@ -51,7 +57,7 @@ test("a child that throws asynchronously reports its error name, message, and st
     onDiagnostic: diagnostics.onDiagnostic,
   });
   await host.start(descriptor);
-  await waitFor(() => diagnostics.first("failed") !== undefined, "no failure was recorded");
+  await diagnostics.until(() => diagnostics.first("failed") !== undefined);
 
   const failed = diagnostics.first("failed");
   assert.equal(failed.error.name, "TypeError");
@@ -80,7 +86,7 @@ test("an unhandled rejection is reported with its own exit code", async () => {
     onDiagnostic: diagnostics.onDiagnostic,
   });
   await host.start(descriptor);
-  await waitFor(() => diagnostics.first("failed") !== undefined, "no failure was recorded");
+  await diagnostics.until(() => diagnostics.first("failed") !== undefined);
 
   assert.equal(diagnostics.first("failed").error.message, "session file went missing");
   assert.equal(diagnostics.first("child-exited").exitCode, 71, "an unhandled rejection exits 71");
@@ -100,7 +106,7 @@ test("a child killed without reporting still records the observed exit status", 
     onDiagnostic: diagnostics.onDiagnostic,
   });
   await host.start(descriptor);
-  await waitFor(() => diagnostics.first("child-exited") !== undefined, "no exit was recorded");
+  await diagnostics.until(() => diagnostics.first("child-exited") !== undefined);
 
   const exited = diagnostics.first("child-exited");
   assert.equal(exited.error, undefined, "a killed child reports nothing");
@@ -125,7 +131,7 @@ test("every host transition is recorded once, with quarantine and its clearing",
   });
 
   await host.start(descriptor);
-  await waitFor(() => diagnostics.of("failed").length === 1, "first failure missing");
+  await diagnostics.until(() => diagnostics.of("failed").length === 1);
   assert.equal(diagnostics.first("spawned").consecutiveFailures, 0);
   assert.equal(diagnostics.first("ready").consecutiveFailures, 0);
   const scheduled = diagnostics.first("restart-scheduled");
@@ -133,7 +139,7 @@ test("every host transition is recorded once, with quarantine and its clearing",
 
   now += 1_000;
   await host.start(descriptor);
-  await waitFor(() => diagnostics.of("failed").length === 2, "second failure missing");
+  await diagnostics.until(() => diagnostics.of("failed").length === 2);
   const quarantined = diagnostics.first("quarantined");
   assert.equal(quarantined.consecutiveFailures, 2);
   assert.equal(quarantined.error.message, "crash on bind");
@@ -199,19 +205,28 @@ test("repeated deaths still reach quarantine", async () => {
     }
   `);
   const diagnostics = collector();
+  // The backoff is measured on a clock the test moves, so the restart is due
+  // exactly when the test makes it due.
+  let now = 1_000_000;
   const host = new ExtensionHost(descriptor.extensionId, {
     broker: { async request() {} },
     onDiagnostic: diagnostics.onDiagnostic,
-    limits: { maxCrashesInWindow: 2, initialBackoffMs: 1 },
+    now: () => now,
+    limits: { maxCrashesInWindow: 2, initialBackoffMs: 1_000 },
   });
 
   await host.start(descriptor);
   // The child's own fatal report can be recorded as a failure before its exit
-  // schedules the restart, so wait for the restart to be due, not the failure.
-  await waitFor(() => diagnostics.of("restart-scheduled").length >= 1, "first death missing");
-  await waitFor(() => host.status().restartAt <= Date.now(), "restart backoff never elapsed");
+  // schedules the restart, so wait for the restart to be scheduled.
+  await diagnostics.until(() => diagnostics.of("restart-scheduled").length >= 1);
+  const { restartAt } = diagnostics.first("restart-scheduled");
+  assert.equal(restartAt, now + 1_000);
+  now = restartAt - 1;
+  await assert.rejects(host.start(descriptor), /backoff is active/u, "not before the backoff ends");
+  now = restartAt;
   await host.start(descriptor);
-  await waitFor(() => host.status().state === "quarantined", "second death did not quarantine");
+  await diagnostics.until(() => diagnostics.first("quarantined") !== undefined);
+  assert.equal(host.status().state, "quarantined", "the second death quarantines");
   assert.equal(host.status().consecutiveCrashes, 2, "each death counts once, and two is the threshold");
 });
 
@@ -230,7 +245,7 @@ test("the exit status the system reported survives host teardown", async () => {
     onDiagnostic: diagnostics.onDiagnostic,
   });
   await host.start(descriptor);
-  await waitFor(() => diagnostics.first("child-exited") !== undefined, "no exit was recorded");
+  await diagnostics.until(() => diagnostics.first("child-exited") !== undefined);
 
   assert.equal(diagnostics.first("child-exited").exitCode, 42, "the real exit code is kept");
   await host.stop();

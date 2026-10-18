@@ -173,35 +173,29 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 	child.stdio[3].end('test-vault-passphrase\n');
 
 	let output = '';
-	// Startup failures are reported on stderr. Carry them into the timeout so a
-	// failure names its cause instead of only saying readiness timed out.
+	// Startup failures are reported on stderr. Carry them into the failure so
+	// it names its cause.
 	let errorOutput = '';
 	child.stderr.on('data', (chunk) => {
 		errorOutput += chunk.toString();
 	});
+	// Readiness is the first line on stdout. The CLI either prints it or exits;
+	// both are events, so nothing here waits on a clock.
 	const line = new Promise((resolve, reject) => {
-		const timeout = setTimeout(
-			() =>
-				reject(
-					new Error(
-						`CLI readiness timed out${errorOutput.trim() === '' ? '' : `: ${errorOutput.trim()}`}`,
-					),
-				),
-			// Ready in about a second alone, and up to eight on a loaded CI
-			// runner; the sibling settings-migration test allows the same.
-			30_000,
-		);
 		child.stdout.on('data', (chunk) => {
 			output += chunk.toString();
 			const newline = output.indexOf('\n');
 			if (newline < 0) return;
-			clearTimeout(timeout);
 			resolve(JSON.parse(output.slice(0, newline)));
 		});
-		child.once('error', (error) => {
-			clearTimeout(timeout);
-			reject(error);
-		});
+		child.once('error', reject);
+		child.once('exit', (code, signal) =>
+			reject(
+				new Error(
+					`CLI exited before readiness (${code ?? signal})${errorOutput.trim() === '' ? '' : `: ${errorOutput.trim()}`}`,
+				),
+			),
+		);
 	});
 
 	try {

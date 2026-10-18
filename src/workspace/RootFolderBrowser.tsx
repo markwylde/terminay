@@ -11,8 +11,8 @@ import {
 } from './rootFolderCompletion';
 import {
 	listedFolder,
-	RootFolderNavigator,
 	type RootFolderListing,
+	RootFolderNavigator,
 } from './rootFolderNavigator';
 import './projectStart.css';
 
@@ -43,21 +43,25 @@ export function RootFolderBrowser({
 		state: 'loading',
 	});
 	const [typedPath, setTypedPath] = useState('');
+	// Until the person goes into the path field, it shows the folder the
+	// server last listed. This is worked out when rendering, never written
+	// when a listing lands: a write queued by a landing listing could commit
+	// after the field took focus and before the first keystroke or paste,
+	// putting the listed path in front of what was typed.
+	const [followsListing, setFollowsListing] = useState(true);
+	const shownPath =
+		followsListing && listing.state === 'ready'
+			? listing.folder.path
+			: typedPath;
 	const [suggestions, setSuggestions] = useState<readonly FolderSuggestion[]>(
 		[],
 	);
 	const [highlighted, setHighlighted] = useState(-1);
 	const navigatorRef = useRef<RootFolderNavigator | null>(null);
 	const completerRef = useRef<RootFolderCompleter | null>(null);
-	// A path typed while a listing loads is kept when that listing lands.
-	const pathEditedRef = useRef(false);
 
 	useEffect(() => {
-		const navigator = new RootFolderNavigator(browse, (next) => {
-			setListing(next);
-			if (next.state === 'ready' && !pathEditedRef.current)
-				setTypedPath(next.folder.path);
-		});
+		const navigator = new RootFolderNavigator(browse, setListing);
 		navigatorRef.current = navigator;
 		// Opens at the server account's home.
 		void navigator.open();
@@ -86,23 +90,32 @@ export function RootFolderBrowser({
 		>
 			<RootFolderBrowserView
 				listing={listing}
-				typedPath={typedPath}
+				typedPath={shownPath}
 				suggestions={suggestions}
 				highlighted={highlighted}
+				onPathFocus={() => {
+					// The field keeps exactly what it shows as the person
+					// enters it; no later listing replaces it.
+					setTypedPath(shownPath);
+					setFollowsListing(false);
+				}}
 				onTypedPathChange={(path) => {
-					pathEditedRef.current = true;
+					setFollowsListing(false);
 					setTypedPath(path);
 					completerRef.current?.update(path);
 				}}
 				onHighlight={setHighlighted}
 				onAcceptSuggestion={(suggestion) => {
-					pathEditedRef.current = true;
+					setFollowsListing(false);
 					setTypedPath(suggestion.path);
 					completerRef.current?.clear();
 				}}
 				onDismissSuggestions={() => completerRef.current?.clear()}
 				onOpen={(path) => {
-					pathEditedRef.current = false;
+					// The path gone to stays in the field while it loads, and the
+					// folder the server lists replaces it when it lands.
+					setTypedPath(path);
+					setFollowsListing(true);
 					completerRef.current?.clear();
 					void navigatorRef.current?.open(path);
 				}}
@@ -121,6 +134,8 @@ export type RootFolderBrowserViewProps = Readonly<{
 	suggestions?: readonly FolderSuggestion[];
 	/** The suggestion the arrow keys are on, or -1. */
 	highlighted?: number;
+	/** The person went into the path field. */
+	onPathFocus?: () => void;
 	onTypedPathChange: (path: string) => void;
 	onHighlight?: (index: number) => void;
 	onAcceptSuggestion?: (suggestion: FolderSuggestion) => void;
@@ -137,6 +152,7 @@ export function RootFolderBrowserView({
 	typedPath,
 	suggestions = [],
 	highlighted = -1,
+	onPathFocus,
 	onTypedPathChange,
 	onHighlight,
 	onAcceptSuggestion,
@@ -187,6 +203,7 @@ export function RootFolderBrowserView({
 								? `${suggestionsId}-${highlighted}`
 								: undefined
 						}
+						onFocus={() => onPathFocus?.()}
 						onChange={(event) => onTypedPathChange(event.target.value)}
 						onBlur={() => onDismissSuggestions?.()}
 						onKeyDown={(event) => {
@@ -334,7 +351,9 @@ export function RootFolderBrowserView({
 									className="root-folder-browser__entry"
 									disabled={loading}
 									title={childFolderPath(folder.path, entry.name)}
-									onClick={() => onOpen(childFolderPath(folder.path, entry.name))}
+									onClick={() =>
+										onOpen(childFolderPath(folder.path, entry.name))
+									}
 									data-terminay-root-folder-entry={entry.name}
 								>
 									<Folder size={14} aria-hidden="true" />
@@ -349,8 +368,8 @@ export function RootFolderBrowserView({
 						className="root-folder-browser__message"
 						data-terminay-root-folder-truncated="true"
 					>
-						Showing the first {listing.folder.entries.length} folders. Type a path
-						to go to one not listed.
+						Showing the first {listing.folder.entries.length} folders. Type a
+						path to go to one not listed.
 					</div>
 				) : null}
 			</div>
