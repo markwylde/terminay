@@ -21,6 +21,27 @@ const envelope = (operation, payload) => ({
 	body: new Uint8Array(),
 });
 
+/** Re-checks every waiter whenever `changed` is called. */
+function changes() {
+	const waiters = new Set();
+	return {
+		changed: () => {
+			for (const waiter of [...waiters]) waiter();
+		},
+		until(check) {
+			if (check()) return Promise.resolve();
+			return new Promise((resolve) => {
+				const waiter = () => {
+					if (!check()) return;
+					waiters.delete(waiter);
+					resolve();
+				};
+				waiters.add(waiter);
+			});
+		},
+	};
+}
+
 async function repository() {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-git-insights-'));
 	const git = (args) =>
@@ -48,7 +69,11 @@ test('worktree listings carry published properties and sign-in prompts to their 
 	try {
 		const git = new GitService({ statusPollIntervalMs: false });
 		const announced = [];
-		git.subscribe((event) => announced.push(event));
+		const observed = changes();
+		git.subscribe((event) => {
+			announced.push(event);
+			observed.changed();
+		});
 		const vault = new Map();
 		const insights = new WorktreeInsightService({
 			vault: {
@@ -65,7 +90,7 @@ test('worktree listings carry published properties and sign-in prompts to their 
 			onContributionsChanged: () => () => {},
 			async startWorktreeInsightSource() {},
 			async stopWorktreeInsightSource() {},
-			async setWorktreeInsightContexts(_sourceId, live) { contexts.push(structuredClone(live)); },
+			async setWorktreeInsightContexts(_sourceId, live) { contexts.push(structuredClone(live)); observed.changed(); },
 			async notifyWorktreeCredential() {},
 		});
 		const roots = { 'project-a': rootA, 'project-b': rootB };
@@ -84,8 +109,10 @@ test('worktree listings carry published properties and sign-in prompts to their 
 
 		const first = await list('project-a');
 		await list('project-b');
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		const liveA = contexts.at(-1).find((live) => live.repositoryRoot.endsWith(rootA.split('/').at(-1)));
+		// Listing a project gives the running source its repository context.
+		const isA = (live) => live.repositoryRoot.endsWith(rootA.split('/').at(-1));
+		await observed.until(() => contexts.at(-1)?.some(isA) === true);
+		const liveA = contexts.at(-1).find(isA);
 		assert.ok(liveA, 'project A has a context');
 		assert.deepEqual(liveA.remotes, [{ name: 'origin', url: 'ssh://git@git.example.net:4222/owner/repo.git' }]);
 		assert.deepEqual(liveA.worktrees[0].upstream, { remote: 'origin', branch: 'main' });
@@ -124,8 +151,10 @@ test('worktree listings carry published properties and sign-in prompts to their 
 			/outside the authorized scope/,
 		);
 
+		// A prompt, once admitted, is announced as a change to the project it concerns.
+		const beforePrompt = announced.length;
 		insights.requestSignIn({ extensionId: 'com.example.forge', sourceId: 'com.example.forge/forge', request: { origin: ORIGIN, provider: 'Forge' } });
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		await observed.until(() => announced.slice(beforePrompt).some((event) => event.projectId === 'project-a' && event.worktreeId === null));
 		const prompted = await list('project-a');
 		assert.deepEqual(prompted.signIn, { extensionId: 'com.example.forge', origin: ORIGIN, provider: 'Forge' });
 		await assert.rejects(
