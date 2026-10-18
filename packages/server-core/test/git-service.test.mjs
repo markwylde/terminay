@@ -111,7 +111,9 @@ test("GitService reports effective worktree changes against the default branch",
 
     const service = new GitService();
     const binding = await service.bindProject("project", project);
-    const unmerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    // Each listing follows a commit made outside the service, so it is measured
+    // rather than answered from a cache the watch has yet to invalidate.
+    const unmerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId, fresh: true });
     const unmergedFeature = unmerged.worktrees.find((worktree) => !worktree.isMain);
     assert.equal(unmergedFeature.aheadOfDefaultBranchCount, 1);
     assert.equal(unmergedFeature.hasCommittedChanges, true);
@@ -122,7 +124,7 @@ test("GitService reports effective worktree changes against the default branch",
     await git(["add", "feature.txt"], project);
     await git(["commit", "-m", "squash feature"], project);
 
-    const squashMerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const squashMerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId, fresh: true });
     const squashMergedFeature = squashMerged.worktrees.find((worktree) => !worktree.isMain);
     assert.equal(squashMergedFeature.aheadOfDefaultBranchCount, 1);
     assert.equal(squashMergedFeature.hasCommittedChanges, false);
@@ -154,8 +156,11 @@ test("GitService reports a worktree's unpushed work apart from what the default 
 
     const service = new GitService();
     const binding = await service.bindProject("project", project);
+    // Every step changes the repository with Git outside the service, so each
+    // listing is measured rather than answered from a cache the watch has yet
+    // to invalidate.
     const list = async () => {
-      const result = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+      const result = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId, fresh: true });
       return {
         main: result.worktrees.find((worktree) => worktree.isMain),
         feature: result.worktrees.find((worktree) => !worktree.isMain),
@@ -314,7 +319,8 @@ test("GitService removes confirmed dirty or unmerged non-main worktrees", async 
       (error) => error instanceof GitServiceError && error.code === "stale-revision",
     );
 
-    const withDirty = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    // Reviewed again after the commit made outside the service.
+    const withDirty = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId, fresh: true });
     const dirtySummary = withDirty.worktrees.find((worktree) => worktree.path.endsWith("/dirty"));
     const featureAfter = withDirty.worktrees.find((worktree) => worktree.path.endsWith("/feature"));
     assert.ok(dirtySummary);
@@ -368,10 +374,12 @@ test("GitService removes a stale worktree registration after its directory disap
 
     await rm(feature, { recursive: true, force: true });
 
+    // Measured, not answered from a cache the watch has yet to invalidate.
     const stale = await service.worktrees({
       projectId: "project",
       repositoryId: binding.repositoryId,
       worktreeId: selected.id,
+      fresh: true,
     });
     assert.equal(stale.state, "ready");
     assert.equal(stale.worktrees.find((worktree) => worktree.id === selected.id)?.isPrunable, true);

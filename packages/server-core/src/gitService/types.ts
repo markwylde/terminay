@@ -481,6 +481,19 @@ export interface GitServiceOptions {
 	/** How long counted changes that raised no measurement wait before they
 	 *  are reported on their own. Defaults to five seconds. */
 	readonly observationFlushMs?: number;
+	/**
+	 * The clock behind the refresh ramp and the change-report flush. Defaults
+	 * to the host's timers. Tests pass one they advance themselves.
+	 */
+	readonly timers?: GitServiceTimers;
+}
+
+/** The only timers the Git service arms: the refresh ramp's pending run and
+ *  the change-report flush. Neither runs Git on its own (ADR-0028). */
+export interface GitServiceTimers {
+	now(): number;
+	setTimeout(callback: () => void, delayMs: number): unknown;
+	clearTimeout(timer: unknown): void;
 }
 
 /** What changed, reduced to a fixed vocabulary. Never a path or a ref name. */

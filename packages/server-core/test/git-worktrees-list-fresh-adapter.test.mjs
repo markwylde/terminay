@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { createCountingRunner, createFakeWatcher, createRepository, eventually } from "./fixtures/git-observation.mjs";
+import { createCountingRunner, createFakeWatcher, createRepository } from "./fixtures/git-observation.mjs";
 
 /**
  * `git.worktrees.list` accepts an optional boolean `fresh`. Set, the listing is
@@ -19,7 +19,7 @@ async function adapterOverObservedRepository(t) {
   const git = new GitService({ runner, watcher, refreshRampMs: [0] });
   t.after(() => git.close());
   await git.bindProject("project-a", fixture.main);
-  await eventually(() => watcher.isWatching(fixture.gitDir), "Git directory watch was not established");
+  await watcher.opened(fixture.gitDir);
   const adapter = new ServerGitAdapter({ serverId: "server-a", git });
   const list = (payload) =>
     adapter.operations().queries[GIT_OPERATIONS.listWorktrees]({

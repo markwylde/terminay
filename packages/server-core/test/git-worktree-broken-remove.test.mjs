@@ -130,7 +130,9 @@ for (const breakage of BREAKAGES) {
       await breakage.break({ root, path: broken });
       await rm(stale, { recursive: true, force: true });
 
-      const listing = await list();
+      // Broken outside the service: measured, not answered from a cache the
+      // watch has yet to invalidate.
+      const listing = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId, fresh: true });
       assert.equal(listing.state, "ready");
       const lost = byPath(listing, broken);
       assert.ok(lost, "the lost worktree is still listed");
