@@ -119,34 +119,32 @@ test(
 
 			const inactivity = await mainWindow.evaluate(async (sessionId) => {
 				let output = '';
-				let lastDataAt = 0;
-				let printed;
-				const ended = new Promise((resolveEnded) => {
-					printed = resolveEnded;
+				let sawEnd;
+				const ended = new Promise((resolveEnd) => {
+					sawEnd = resolveEnd;
 				});
 				const dispose = window.terminay.onTerminalData((message) => {
-					if (message.id === sessionId) {
-						output += message.data;
-						lastDataAt = Date.now();
-						if (/(?:^|\n)PACKAGED_QUIET:end(?:\n|$)/.test(output.replaceAll('\r', '')))
-							printed();
-					}
+					if (message.id !== sessionId) return;
+					output += message.data;
+					if (/(?:^|\n)PACKAGED_QUIET:end(?:\n|$)/.test(output.replaceAll('\r', '')))
+						sawEnd();
 				});
 				window.terminayTest.writeServerTerminal(
 					sessionId,
 					"printf 'PACKAGED_QUIET:start\\n'; printf 'PACKAGED_QUIET:end\\n'\r",
 				);
-				// The quiet is measured from the last output, once it has all arrived.
+				// The packaged wait is asked once the output has finished, so it is
+				// answered by the terminal going quiet, not by how quickly this machine
+				// printed. Its window is the server's to keep (terminal-inactivity-hold).
 				await ended;
 				await window.terminay.waitForTerminalInactivity(sessionId, 180);
 				dispose();
-				return { output, quietMs: Date.now() - lastDataAt };
+				return { output };
 			}, interactiveId);
 			assert.match(
 				inactivity.output.replaceAll('\r', ''),
 				/(?:^|\n)PACKAGED_QUIET:end(?:\n|$)/,
 			);
-			assert.ok(inactivity.quietMs >= 140);
 
 			const interactive = await mainWindow.evaluate(
 				async (sessionId) =>
@@ -280,6 +278,13 @@ test(
 					}),
 				cleanupId,
 			);
+			// The descendant never exits by itself; a run that fails before cleanup
+			// kills it here rather than leaving it behind.
+			t.after(() => {
+				try {
+					process.kill(descendantPid, 'SIGKILL');
+				} catch {}
+			});
 			await mainWindow.evaluate(
 				(sessionId) => window.terminay.killTerminal(sessionId),
 				cleanupId,
@@ -290,7 +295,6 @@ test(
 				JSON.stringify({
 					cleanup: true,
 					foreground: 'generic:foreground',
-					inactivityQuietMs: inactivity.quietMs,
 					mainPid,
 					resize: { cols: 99, rows: 33 },
 					signal: signalExit.signal,

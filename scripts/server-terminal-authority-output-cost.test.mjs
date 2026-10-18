@@ -11,9 +11,14 @@ import { build } from 'esbuild';
  * hundreds of small output events a second for hours, so observing one of
  * them has to cost the size of that event, not the size of everything already
  * retained.
+ *
+ * The cost is counted, not timed: every retained chunk records each read of
+ * its bytes, and assembling or re-measuring what is retained on each event
+ * would read every retained chunk.
  */
 
-const { ServerTerminalAuthority, TerminalService } = await importAuthority();
+const { BoundedChunkQueue, ServerTerminalAuthority, TerminalService } =
+	await importAuthority();
 
 const MEBIBYTE = 1024 * 1024;
 const MEASURED_EVENTS = 1_500;
@@ -68,26 +73,37 @@ async function authorityRetaining(maxReplayBytes) {
 		rows: 24,
 	});
 	const emit = (data) => pty.processes[0].emitData(data);
+	// The first output creates the authority's recent output for the session.
+	// From then on every chunk it retains counts each read of its bytes, so
+	// work proportional to what is retained shows up as reads, not time.
+	emit('\u001b[H');
+	const recent = authority.buffers.get('tui');
+	assert.ok(recent instanceof BoundedChunkQueue, 'recent output is held in the bounded queue');
+	assert.equal(recent.maxBytes, maxReplayBytes);
+	const reads = { count: 0 };
+	const push = recent.push.bind(recent);
+	recent.push = (chunk) => {
+		const { bytes } = chunk;
+		push({
+			get bytes() {
+				reads.count += 1;
+				return bytes;
+			},
+		});
+	};
 	// Past the bound, so the measurement is of the steady state a long-lived
 	// terminal spends its life in rather than of the first megabyte.
 	const fill = 'x'.repeat(32 * 1024);
 	for (let sent = 0; sent <= maxReplayBytes; sent += fill.length) emit(fill);
-	return { authority, emit };
+	return { authority, emit, recent, reads };
 }
 
-/** Best of several rounds, so one collection pause cannot decide the result. */
-function perEventMicroseconds(emit) {
+/** Reads of retained output per observed event, in the steady state. */
+function readsPerEvent({ emit, reads }) {
 	const frame = `\u001b[H\u001b[2J${'y'.repeat(57)}\n`;
-	let best = Number.POSITIVE_INFINITY;
-	for (let round = 0; round < 5; round += 1) {
-		const startedAt = performance.now();
-		for (let index = 0; index < MEASURED_EVENTS; index += 1) emit(frame);
-		best = Math.min(
-			best,
-			((performance.now() - startedAt) * 1000) / MEASURED_EVENTS,
-		);
-	}
-	return best;
+	reads.count = 0;
+	for (let index = 0; index < MEASURED_EVENTS; index += 1) emit(frame);
+	return reads.count / MEASURED_EVENTS;
 }
 
 test('observing terminal output costs the same however much replay the authority retains', async (t) => {
@@ -96,14 +112,18 @@ test('observing terminal output costs the same however much replay the authority
 	t.after(() =>
 		Promise.all([little.authority.shutdown(), full.authority.shutdown()]),
 	);
+	// Same events observed; only what is already retained differs, by
+	// hundreds of chunks.
+	const retainingLittle = readsPerEvent(little);
+	const retainingFull = readsPerEvent(full);
+	assert.ok(full.recent.byteLength > 100 * little.recent.byteLength);
 
-	const retainingLittle = perEventMicroseconds(little.emit);
-	const retainingFull = perEventMicroseconds(full.emit);
-
+	// An event reads its own chunk and whichever chunks it evicts: a handful,
+	// never a share of what is retained.
 	assert.ok(
-		retainingFull <= retainingLittle * 4,
-		`an output event cost ${retainingFull.toFixed(1)}µs with a full 1 MiB replay against ` +
-			`${retainingLittle.toFixed(1)}µs with a 4 KiB one; observing output must not scale with what is retained`,
+		retainingFull <= 8 && retainingLittle <= 8,
+		`an output event read ${retainingFull} retained chunks with a full 1 MiB replay and ` +
+			`${retainingLittle} with a 4 KiB one; observing output must not scale with what is retained`,
 	);
 });
 
@@ -170,6 +190,7 @@ async function importAuthority() {
 				contents: [
 					`export { ServerTerminalAuthority } from ${JSON.stringify(new URL('../electron/serverTerminalAuthority.ts', import.meta.url).pathname)}`,
 					`export { TerminalService } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/service.ts', import.meta.url).pathname)}`,
+					`export { BoundedChunkQueue } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/index.ts', import.meta.url).pathname)}`,
 				].join('\n'),
 				loader: 'ts',
 				resolveDir: process.cwd(),

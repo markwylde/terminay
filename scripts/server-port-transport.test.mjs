@@ -266,7 +266,11 @@ test('the renderer connector aborts a server handshake that never replies', asyn
   }
 })
 
-test('application handshake stops promptly when its recovery attempt is superseded', async () => {
+test('application handshake stops promptly when its recovery attempt is superseded', async (t) => {
+  // The handshake's deadline is armed on a clock that never moves here, so
+  // the attempt can only end because the abort ended it, never because it
+  // waited out a timer.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const { port1, port2 } = new MessageChannel()
   const signal = new TestAbortSignal()
   try {
@@ -287,7 +291,6 @@ test('application handshake stops promptly when its recovery attempt is supersed
         (error?.message === 'connection handshake failed' &&
           error.cause?.message === 'recovery attempt superseded'),
     )
-    // The abort, not the 15 s deadline, ended it: the rejection names it.
     assert.equal(signal.addedListeners, signal.removedListeners)
   } finally {
     port1.close()
@@ -456,7 +459,10 @@ test('application handshake context is promoted without reconnecting its live tr
   assert.equal(closed, 1)
 })
 
-test('superseded feature setup rejects promptly, reports failure, and closes the fresh client', async () => {
+test('superseded feature setup rejects promptly, reports failure, and closes the fresh client', async (t) => {
+  // The setup deadline is armed on a clock that never moves here, so the
+  // rejection can only come from the abort, never from the timeout.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   let closed = 0
   const signal = new TestAbortSignal()
   const phases = []
@@ -473,7 +479,7 @@ test('superseded feature setup rejects promptly, reports failure, and closes the
         applicationClient,
         clientId: 'client',
         dispose: () => applicationClient.close(),
-        serverHello: { clientId: 'client', serverId: 'desktop-local' },
+        serverHello: { capabilities: [], clientId: 'client', serverId: 'desktop-local' },
         serverId: 'desktop-local',
       },
       {
@@ -489,7 +495,6 @@ test('superseded feature setup rejects promptly, reports failure, and closes the
     ),
     /recovery attempt superseded/u,
   )
-  // The abort, not the 15 s deadline, ended it: the rejection names it.
   assert.equal(closed, 1)
   assert.ok(
     phases.some(

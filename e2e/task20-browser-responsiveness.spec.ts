@@ -1,8 +1,18 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import {
+  expectEffectAheadOfBackground,
+  readBackgroundProbe,
+  runBackgroundFrames,
+} from './support/background-pressure'
+import { holdRendererClock } from './support/renderer-clock'
+import {
   startSharedWebShellFixture,
   type SharedWebShellFixture,
 } from './support/shared-web-shell-fixture'
+
+type PressureProbe = { frames: number; running: boolean }
+const PROBE = '__terminayTask20Pressure'
+const PRESSURE_FRAMES = 120
 
 let fixture: SharedWebShellFixture
 
@@ -22,31 +32,40 @@ for (const viewport of [
     await page.setViewportSize(viewport)
     await page.goto(fixture.url)
     await page.getByLabel('Viewport width model').fill(String(viewport.width))
-    await expect(page.locator('[data-shared-ui="responsive-workspace"]')).toBeVisible()
+    const shell = page.locator('[data-shared-ui="responsive-workspace"]')
+    await expect(shell).toBeVisible()
 
+    // The background stream does one frame per step of the held clock, so
+    // each input below lands with the stream provably mid-flight, however
+    // long the runner takes to deliver it.
+    await holdRendererClock(page)
     await startBackgroundPressure(page)
-    const elapsedMs: number[] = []
+    const framesAtInput: number[] = []
     for (const route of ['Connections', 'Settings', 'Recordings', 'Macros', 'File', 'Git', 'Workspace']) {
-      const startedAt = await page.evaluate(() => performance.now())
-      await page.getByRole('tab', { name: route, exact: true }).click()
-      await expect(page.locator('[data-shared-ui="responsive-workspace"]')).toHaveAttribute(
-        'data-shared-route',
-        route.toLowerCase(),
+      await runBackgroundFrames(page, 10)
+      const at = await expectEffectAheadOfBackground<PressureProbe>(
+        page,
+        PROBE,
+        () => page.getByRole('tab', { name: route, exact: true }).click(),
+        () => expect(shell).toHaveAttribute('data-shared-route', route.toLowerCase()),
       )
-      elapsedMs.push(await page.evaluate(started => performance.now() - started, startedAt))
+      framesAtInput.push(at.frames)
     }
 
-    const inputStartedAt = await page.evaluate(() => performance.now())
-    await page.getByLabel('Viewport width model').fill(String(viewport.width - 1))
-    await expect(page.locator('[data-shared-ui="responsive-workspace"]')).toHaveClass(
-      new RegExp(`workspace-shell--${viewport.width - 1 < 720 ? 'narrow' : 'wide'}`),
+    await runBackgroundFrames(page, 10)
+    const at = await expectEffectAheadOfBackground<PressureProbe>(
+      page,
+      PROBE,
+      () => page.getByLabel('Viewport width model').fill(String(viewport.width - 1)),
+      () =>
+        expect(shell).toHaveClass(
+          new RegExp(`workspace-shell--${viewport.width - 1 < 720 ? 'narrow' : 'wide'}`),
+        ),
     )
-    elapsedMs.push(await page.evaluate(started => performance.now() - started, inputStartedAt))
+    framesAtInput.push(at.frames)
 
-    const result = await waitForPressure(page)
-    expect(result?.running).toBe(false)
-    expect(result?.frames).toBeGreaterThanOrEqual(90)
-    expect(Math.max(...elapsedMs)).toBeLessThan(500)
+    expectInterleaved(framesAtInput)
+    expect(await finishPressure(page)).toEqual({ frames: PRESSURE_FRAMES, running: false })
   })
 }
 
@@ -59,20 +78,23 @@ test('touch-mobile browser remains responsive during bounded background pressure
     const shell = page.locator('[data-shared-ui="responsive-workspace"]')
     await expect(shell).toBeVisible()
     await expect(shell).toHaveClass(/workspace-shell--narrow/)
+    await holdRendererClock(page)
     await startBackgroundPressure(page)
 
-    const latencies: number[] = []
+    const framesAtInput: number[] = []
     for (const route of ['Settings', 'Recordings', 'Workspace'] as const) {
-      const startedAt = await page.evaluate(() => performance.now())
-      await page.getByRole('tab', { name: route, exact: true }).tap()
-      await expect(shell).toHaveAttribute('data-shared-route', route.toLowerCase())
-      latencies.push(await page.evaluate(started => performance.now() - started, startedAt))
+      await runBackgroundFrames(page, 10)
+      const at = await expectEffectAheadOfBackground<PressureProbe>(
+        page,
+        PROBE,
+        () => page.getByRole('tab', { name: route, exact: true }).tap(),
+        () => expect(shell).toHaveAttribute('data-shared-route', route.toLowerCase()),
+      )
+      framesAtInput.push(at.frames)
     }
 
-    const result = await waitForPressure(page)
-    expect(result?.running).toBe(false)
-    expect(result?.frames).toBeGreaterThanOrEqual(90)
-    expect(Math.max(...latencies)).toBeLessThan(500)
+    expectInterleaved(framesAtInput)
+    expect(await finishPressure(page)).toEqual({ frames: PRESSURE_FRAMES, running: false })
   } finally {
     await context.close()
   }
@@ -86,52 +108,40 @@ function createMobileContext(browser: Browser) {
   })
 }
 
-async function waitForPressure(page: Page) {
-  // 120 rAF frames can take longer than two seconds on a loaded CI runner,
-  // especially after a fresh mobile context. Keep the interactivity bounds
-  // and only wait for the probe to finish.
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const probe = (
-            window as typeof window & {
-              __terminayTask20Pressure?: { frames: number; running: boolean }
-            }
-          ).__terminayTask20Pressure
-          return probe?.running === false
-        }),
-      { timeout: 10_000 },
-    )
-    .toBe(true)
+/**
+ * The stream advanced between every pair of inputs: they were handled
+ * interleaved with it, not all before it started or after it finished.
+ */
+function expectInterleaved(framesAtInput: readonly number[]) {
+  for (let index = 1; index < framesAtInput.length; index += 1)
+    expect(framesAtInput[index]).toBeGreaterThan(framesAtInput[index - 1])
+}
 
-  return page.evaluate(() => {
-    return (
-      window as typeof window & {
-        __terminayTask20Pressure?: { frames: number; running: boolean }
-      }
-    ).__terminayTask20Pressure
-  })
+/** Run the rest of the stream on the held clock and read what it did. */
+async function finishPressure(page: Page): Promise<PressureProbe> {
+  const { frames } = await readBackgroundProbe<PressureProbe>(page, PROBE)
+  await runBackgroundFrames(page, PRESSURE_FRAMES - frames + 1)
+  return readBackgroundProbe<PressureProbe>(page, PROBE)
 }
 
 async function startBackgroundPressure(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  await page.evaluate(({ frameCount, probeName }) => {
     const target = document.createElement('output')
     target.setAttribute('aria-hidden', 'true')
     target.hidden = true
     document.body.append(target)
     const streamNames = ['terminal-output', 'agent-events', 'file-watch', 'transfer-progress']
     const probe = { frames: 0, running: true }
-    ;(window as typeof window & { __terminayTask20Pressure?: typeof probe }).__terminayTask20Pressure = probe
+    ;(window as unknown as Record<string, typeof probe>)[probeName] = probe
 
     const runFrame = () => {
       probe.frames += 1
       const values = streamNames.map((name, index) => `${name}:${probe.frames * (index + 1)}`)
       // Coalescing mirrors the stream boundary: each source yields one latest value per frame.
       target.textContent = values.join('|')
-      if (probe.frames < 120) requestAnimationFrame(runFrame)
+      if (probe.frames < frameCount) requestAnimationFrame(runFrame)
       else probe.running = false
     }
     requestAnimationFrame(runFrame)
-  })
+  }, { frameCount: PRESSURE_FRAMES, probeName: PROBE })
 }

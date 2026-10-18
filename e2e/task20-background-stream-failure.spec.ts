@@ -1,8 +1,18 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
+  expectEffectAheadOfBackground,
+  readBackgroundProbe,
+  runBackgroundFrames,
+} from './support/background-pressure'
+import { holdRendererClock } from './support/renderer-clock'
+import {
   startSharedWebShellFixture,
   type SharedWebShellFixture,
 } from './support/shared-web-shell-fixture'
+
+type FailingStreamProbe = { frames: number; running: boolean; handled: boolean }
+const PROBE = '__terminayTask20BackgroundFailure'
+const FRAMES_BEFORE_FAILURE = 40
 
 let fixture: SharedWebShellFixture
 
@@ -25,34 +35,41 @@ for (const viewport of [
     await page.setViewportSize(viewport)
     await page.goto(fixture.url)
     await page.getByLabel('Viewport width model').fill(String(viewport.width))
-    await expect(page.locator('[data-shared-ui="responsive-workspace"]')).toBeVisible()
+    const shell = page.locator('[data-shared-ui="responsive-workspace"]')
+    await expect(shell).toBeVisible()
 
+    // The stream writes one frame per step of the held clock: each route
+    // switch lands with it mid-flight and must be on screen before its next
+    // frame, however long the runner takes to deliver the click.
+    await holdRendererClock(page)
     await startFailingBackgroundStream(page)
 
-    const routeLatencies: number[] = []
+    const framesAtInput: number[] = []
     for (const route of ['Settings', 'Workspace', 'Connections'] as const) {
-      const startedAt = await page.evaluate(() => performance.now())
-      await page.getByRole('tab', { name: route, exact: true }).click()
-      await expect(page.locator('[data-shared-ui="responsive-workspace"]')).toHaveAttribute(
-        'data-shared-route',
-        route.toLowerCase(),
+      await runBackgroundFrames(page, 10)
+      const at = await expectEffectAheadOfBackground<FailingStreamProbe>(
+        page,
+        PROBE,
+        () => page.getByRole('tab', { name: route, exact: true }).click(),
+        () => expect(shell).toHaveAttribute('data-shared-route', route.toLowerCase()),
       )
-      routeLatencies.push(await page.evaluate(started => performance.now() - started, startedAt))
+      framesAtInput.push(at.frames)
     }
+    for (let index = 1; index < framesAtInput.length; index += 1)
+      expect(framesAtInput[index]).toBeGreaterThan(framesAtInput[index - 1])
 
-    const result = await page.evaluate(async () => {
-      const deadline = performance.now() + 2_000
-      const probe = window as typeof window & {
-        __terminayTask20BackgroundFailure?: { frames: number; settled: boolean; handled: boolean }
-      }
-      while (!probe.__terminayTask20BackgroundFailure?.settled && performance.now() < deadline) {
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-      }
-      return probe.__terminayTask20BackgroundFailure
+    // Run the stream on to its failure, then use the shell once more: the
+    // failure is contained, and the shell is as responsive after it.
+    const { frames } = await readBackgroundProbe<FailingStreamProbe>(page, PROBE)
+    await runBackgroundFrames(page, FRAMES_BEFORE_FAILURE - frames + 1)
+    expect(await readBackgroundProbe<FailingStreamProbe>(page, PROBE)).toEqual({
+      frames: FRAMES_BEFORE_FAILURE,
+      running: false,
+      handled: true,
     })
+    await page.getByRole('tab', { name: 'Settings', exact: true }).click()
+    await expect(shell).toHaveAttribute('data-shared-route', 'settings')
 
-    expect(result).toEqual({ frames: 40, settled: true, handled: true })
-    expect(Math.max(...routeLatencies)).toBeLessThan(500)
     expect(pageErrors).toEqual([])
     await expect(page.locator('[data-task20-background-failure] script')).toHaveCount(0)
     await expect(page.locator('[data-task20-background-failure] img')).toHaveCount(0)
@@ -60,22 +77,22 @@ for (const viewport of [
 }
 
 async function startFailingBackgroundStream(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  await page.evaluate(({ failAfter, probeName }) => {
     const target = document.createElement('output')
     target.hidden = true
     target.setAttribute('aria-hidden', 'true')
     target.setAttribute('data-task20-background-failure', 'true')
     document.body.append(target)
 
-    const probe = { frames: 0, settled: false, handled: false }
-    ;(window as typeof window & { __terminayTask20BackgroundFailure?: typeof probe }).__terminayTask20BackgroundFailure = probe
+    const probe = { frames: 0, running: true, handled: false }
+    ;(window as unknown as Record<string, typeof probe>)[probeName] = probe
 
     const stream = new ReadableStream<string>({
       start(controller) {
         let frame = 0
         const writeFrame = () => {
           frame += 1
-          if (frame > 40) {
+          if (frame > failAfter) {
             controller.error(new Error('simulated background stream failure'))
             return
           }
@@ -99,8 +116,8 @@ async function startFailingBackgroundStream(page: Page): Promise<void> {
       } catch {
         probe.handled = true
       } finally {
-        probe.settled = true
+        probe.running = false
       }
     })()
-  })
+  }, { failAfter: FRAMES_BEFORE_FAILURE, probeName: PROBE })
 }
