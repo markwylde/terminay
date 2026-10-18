@@ -522,18 +522,25 @@ async function composed(run, { claims } = {}) {
   }
 }
 
-/** Collects one client's title events, and lets a test wait for the next. */
+/** Collects one client's title events; `until` settles once a check holds, re-checked as each arrives. */
 async function titleEvents(client) {
   const seen = [];
-  let wake = () => {};
+  const waiters = new Set();
   const subscription = await client.subscribe(TERMINAL_TITLE_OPERATIONS.event);
-  subscription.onEvent((event) => { seen.push(event.payload); wake(); });
-  const until = async (predicate) => {
-    const deadline = Date.now() + 2_000;
-    while (!predicate()) {
-      if (Date.now() > deadline) throw new Error(`timed out; saw ${JSON.stringify(seen)}`);
-      await new Promise((resolve) => { wake = resolve; setTimeout(resolve, 20); });
-    }
+  subscription.onEvent((event) => {
+    seen.push(event.payload);
+    for (const waiter of [...waiters]) waiter();
+  });
+  const until = (predicate) => {
+    if (predicate()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        if (!predicate()) return;
+        waiters.delete(waiter);
+        resolve();
+      };
+      waiters.add(waiter);
+    });
   };
   return { seen, until };
 }
@@ -595,6 +602,7 @@ test("composed server: a project-scoped connection learns only its own project's
     const inB = await owner.command("terminal.create", { projectId: "project-b", cwd: "/repo/b", cols: 80, rows: 24 }, { commandId: "create-b" });
     const panelOf = (sessionId) => Object.values(store.state.panels).find((candidate) => candidate.sessionId === sessionId).id;
     const events = await titleEvents(scoped);
+    // Project B's title is coalesced first, so anything of it would arrive ahead of A's.
     ptyFactory.processes[1].emit("\x1b]2;secret\x07");
     ptyFactory.processes[0].emit("\x1b]2;mine\x07");
     await events.until(() => events.seen.some((event) => event.title === "mine"));
