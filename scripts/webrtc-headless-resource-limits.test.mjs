@@ -54,10 +54,10 @@ test('multi-peer asset pressure stays proportional to the fixed per-peer ACK win
     }))
   }
 
-  await waitFor(() => runtimes.every(({ apiChannel }) => (
-    apiChannel.sent.some((raw) => JSON.parse(raw).type === 'api-response')
+  await Promise.all(runtimes.map(({ apiChannel }) => (
+    apiChannel.sentMatching((raw) => JSON.parse(raw).type === 'api-response')
   )))
-  await waitFor(() => runtimes.every(({ asset }) => asset.acknowledged.size === ASSET_CHUNK_COUNT))
+  await Promise.all(runtimes.map(({ asset }) => asset.allAcknowledged(ASSET_CHUNK_COUNT)))
 
   assert.equal(runtimes.every(({ asset }) => asset.maximumOutstanding <= ASSET_WINDOW), true)
   assert.equal(
@@ -96,7 +96,7 @@ test('a slow consumer can be cancelled without starving API or terminal traffic'
 		archiveFormatVersion: 1,
     type: 'asset:get-bundle',
   }))
-  await waitFor(() => asset.binaryChunkMessages.length === ASSET_WINDOW)
+  await asset.sentMatching(() => asset.binaryChunkMessages.length === ASSET_WINDOW)
 
   apiChannel.dispatchMessage(JSON.stringify({
     body: {},
@@ -105,12 +105,13 @@ test('a slow consumer can be cancelled without starving API or terminal traffic'
     type: 'api-request',
   }))
   terminal.dispatchMessage(JSON.stringify({ data: 'terminal-during-slow-consumer', type: 'write' }))
-  await waitFor(() => apiChannel.sent.some((raw) => JSON.parse(raw).id === 'api-during-slow-consumer'))
+  await apiChannel.sentMatching((raw) => JSON.parse(raw).id === 'api-during-slow-consumer')
   assert.equal(api.terminalMessages.length, 1)
 
   asset.dispatchMessage(JSON.stringify({ id: 'slow-asset', type: 'asset:bundle-cancel' }))
-  await waitFor(() => asset.sent.some((raw) => isControl(raw, 'asset:bundle-error') && /cancelled/.test(JSON.parse(raw).message ?? '')))
-  await settle()
+  await asset.sentMatching((raw) => isControl(raw, 'asset:bundle-error') && /cancelled/.test(JSON.parse(raw).message ?? ''))
+  // Nothing acknowledges this consumer's window, so no chunk past it can
+  // ever be sent, before the cancel or after.
   assert.equal(asset.binaryChunkMessages.length, ASSET_WINDOW)
 
   cleanup()
@@ -127,7 +128,7 @@ test('relay loss, peer failure, and revocation remain isolated and shut down det
     roomId: createHostConfig(30).roomId,
     type: 'error',
   })
-  await waitFor(() => first.api.statusMessages.some(({ detail }) => detail === 'relay transport lost'))
+  await first.api.statusReported(({ detail }) => detail === 'relay transport lost')
   assert.equal(first.peer.connectionState, 'new')
   assert.equal(second.peer.connectionState, 'new')
 
@@ -177,7 +178,8 @@ async function createRuntime(index) {
 function createHostConfig(index) {
   return {
     appOrigin: `https://session-${index}.terminay.com`,
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    // An instant past any clock, so the room cannot expire mid-test.
+    expiresAt: '2999-01-01T00:00:00.000Z',
     iceServers: [],
     relayJoinTokenHash: `relay-token-hash-${index}`,
     roomId: `room-${index}`,
@@ -194,6 +196,7 @@ function createHostApi() {
   const closeRequestListeners = new Set()
   const signalListeners = new Set()
   const terminalMessageListeners = new Set()
+  const statusWaiters = new Set()
   return {
     attachedChannelId: null,
     closedTerminals: [],
@@ -241,6 +244,19 @@ function createHostApi() {
     },
     updateStatus(message) {
       this.statusMessages.push(message)
+      for (const waiter of [...statusWaiters]) waiter()
+    },
+    /** Resolves once a reported status satisfies `predicate`. */
+    statusReported(predicate) {
+      return new Promise((resolve) => {
+        const check = () => {
+          if (!this.statusMessages.some(predicate)) return
+          statusWaiters.delete(check)
+          resolve()
+        }
+        statusWaiters.add(check)
+        check()
+      })
     },
     waitForAttach: () => attachPromise,
   }
@@ -253,6 +269,20 @@ class MockDataChannel extends EventTarget {
     this.label = label
     this.readyState = 'open'
     this.sent = []
+    this.sendWaiters = new Set()
+  }
+
+  /** Resolves once a message this channel has sent satisfies `predicate`. */
+  sentMatching(predicate) {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!this.sent.some(predicate)) return
+        this.sendWaiters.delete(check)
+        resolve()
+      }
+      this.sendWaiters.add(check)
+      check()
+    })
   }
 
   get binaryChunkMessages() {
@@ -273,6 +303,7 @@ class MockDataChannel extends EventTarget {
 
   send(message) {
     this.sent.push(message)
+    for (const waiter of [...this.sendWaiters]) waiter()
   }
 }
 
@@ -284,6 +315,20 @@ class AutoAckDataChannel extends MockDataChannel {
     this.maximumOutstanding = 0
     this.onOutstandingChange = onOutstandingChange
     this.outstanding = 0
+    this.ackWaiters = new Set()
+  }
+
+  /** Resolves once `count` chunks have been acknowledged. */
+  allAcknowledged(count) {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.acknowledged.size < count) return
+        this.ackWaiters.delete(check)
+        resolve()
+      }
+      this.ackWaiters.add(check)
+      check()
+    })
   }
 
   send(raw) {
@@ -298,6 +343,8 @@ class AutoAckDataChannel extends MockDataChannel {
     this.outstanding += 1
     this.maximumOutstanding = Math.max(this.maximumOutstanding, this.outstanding)
     this.onOutstandingChange(1)
+    // The fake peer's own latency: each chunk is acknowledged a few
+    // milliseconds later, and the test waits on the acknowledgements.
     setTimeout(() => {
       if (this.closed) return
       this.outstanding -= 1
@@ -308,6 +355,7 @@ class AutoAckDataChannel extends MockDataChannel {
 			index,
 			type: 'asset:bundle-ack',
       }))
+      for (const waiter of [...this.ackWaiters]) waiter()
     }, this.ackDelayMs)
   }
 }
@@ -359,19 +407,6 @@ class MockPeerConnection extends EventTarget {
     this.remoteDescription = description
     return Promise.resolve()
   }
-}
-
-async function waitFor(predicate, timeoutMs = 2_000) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error('Timed out waiting for the WebRTC resource condition.')
-}
-
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 30))
 }
 
 function fixtureArchive(bundleId, compressedBytes) {
