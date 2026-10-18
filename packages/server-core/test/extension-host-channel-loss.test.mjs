@@ -22,14 +22,15 @@ process.on('message', (frame) => {
   }
   if (frame.kind === 'agent.source.start') {
     process.send({ protocolVersion: 1, kind: 'result', id: frame.id });
-    // Publish more than the crash threshold, then die with them all in flight.
+    // Publish more than the crash threshold, then die with them all in flight:
+    // once the channel has written the last of them, not before.
+    let written = 0;
     for (let index = 0; index < 10; index += 1) {
       process.send({ protocolVersion: 1, kind: 'agent.source.publish', id: 'publication-' + index, payload: {
         sourceId: '${PROVIDER}',
         upserts: [{ id: 'session-' + index, harness: 'fixture', pid: 100 + index, cwd: '/work', title: 'Publication ' + index }],
-      } });
+      } }, () => { written += 1; if (written === 10) process.exit(9); });
     }
-    setTimeout(() => process.exit(9), 30);
     return;
   }
 });
@@ -59,40 +60,56 @@ async function fixture() {
   };
 }
 
-async function waitFor(predicate, message) {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.fail(message);
+/** Diagnostics as the host reports them; `until` re-checks as each arrives. */
+function diagnostics() {
+  const records = [];
+  const waiters = new Set();
+  return {
+    records,
+    onDiagnostic(record) {
+      records.push(record);
+      for (const waiter of [...waiters]) waiter();
+    },
+    until(check) {
+      if (check()) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiter = () => {
+          if (!check()) return;
+          waiters.delete(waiter);
+          resolve();
+        };
+        waiters.add(waiter);
+      });
+    },
+  };
 }
 
 test("a child dying with publications in flight counts one death, not one per acknowledgement", async () => {
   const value = await fixture();
-  const records = [];
+  const { records, onDiagnostic, until } = diagnostics();
   let release;
   const held = new Promise((resolve) => { release = resolve; });
+  let owed = 0;
   const host = new ExtensionHost(value.descriptor.extensionId, {
     broker: { async request() {} },
     childEntrypoint: value.childEntrypoint,
-    onDiagnostic: (record) => records.push(record),
+    onDiagnostic,
     limits: { maxCrashesInWindow: 5 },
     // Hold every publication open, so all ten acknowledgements are still owed
     // when the child dies — the recorded incident's exact shape.
     agents: {
-      async publish() { await held; return { ok: true }; },
+      async publish() { owed += 1; await held; return { ok: true }; },
     },
   });
 
   await host.start(value.descriptor);
   await host.startSessionSource(PROVIDER, ["fixture"]);
 
-  await waitFor(
-    () => records.some((record) => record.transition === "child-exited"),
-    "the child never died",
-  );
+  await until(() => records.some((record) => record.transition === "child-exited"));
   release();
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Each owed acknowledgement finds the channel closed and says so: once all
+  // of them have, every discovery of the death has been made.
+  await until(() => records.filter((record) => record.transition === "channel-closed").length >= owed);
 
   const counted = records.filter(
     (record) => record.transition === "failed" && record.afterChildGone !== true,
@@ -116,11 +133,11 @@ test("a child dying with publications in flight counts one death, not one per ac
 
 test("a write refused after the child has gone and repeated child errors never become uncaught", async () => {
   const value = await fixture();
-  const records = [];
+  const { records, onDiagnostic, until } = diagnostics();
   const host = new ExtensionHost(value.descriptor.extensionId, {
     broker: { async request() {} },
     childEntrypoint: value.childEntrypoint,
-    onDiagnostic: (record) => records.push(record),
+    onDiagnostic,
     agents: { async publish() { return { ok: true }; } },
   });
   await host.start(value.descriptor);
@@ -128,15 +145,22 @@ test("a write refused after the child has gone and repeated child errors never b
   // The incident: the channel still reads as connected, the peer has died, and
   // the operating system refuses each queued write with EPIPE. Node reports
   // that on the callback when there is one, or as an `error` event otherwise.
+  let refusedWrites = 0;
+  let allRefused;
+  const refusedAll = new Promise((resolve) => { allRefused = resolve; });
   child.send = (_frame, callback) => {
     const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE", errno: -32, syscall: "write" });
-    if (typeof callback === "function") process.nextTick(callback, error);
-    else process.nextTick(() => child.emit("error", error));
+    const refuse = typeof callback === "function" ? () => callback(error) : () => child.emit("error", error);
+    process.nextTick(() => {
+      refuse();
+      refusedWrites += 1;
+      if (refusedWrites === 5) allRefused();
+    });
     return true;
   };
   for (let index = 0; index < 5; index += 1)
     host["send"]({ protocolVersion: 1, kind: "agent.source.ack", id: `ack-${index}`, payload: {} });
-  await new Promise((resolve) => setImmediate(resolve));
+  await refusedAll;
 
   // A ChildProcess emits `error` once per failed write or kill. An emitter
   // with no listener throws, which in Terminay's main process is an abort.
@@ -157,10 +181,7 @@ test("a write refused after the child has gone and repeated child errors never b
   );
 
   process.kill(child.pid, "SIGKILL");
-  await waitFor(
-    () => records.some((record) => record.transition === "child-exited"),
-    "the child never exited",
-  );
+  await until(() => records.some((record) => record.transition === "child-exited"));
   const exited = records.find((record) => record.transition === "child-exited");
   assert.equal(exited.failedWrites, 5, "the exit record carries how many writes the child never received");
   assert.equal(typeof exited.pendingCalls, "number");
