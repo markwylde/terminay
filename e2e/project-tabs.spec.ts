@@ -1,6 +1,16 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { openMacroLauncher, sendAppCommand } from './support/app';
+import {
+	activeStartChooser,
+	chooseProjectStart,
+	createStartedProject,
+} from './support/project-start';
 import {
 	holdTornOffProjectTab,
 	setCursorScreenPoint,
@@ -9,18 +19,17 @@ import {
 } from './support/project-tab-drag';
 import { submitTerminalCommand } from './support/terminal';
 import { typeInVisibleTerminal } from './support/terminal-input';
-import { settledTerminalSessionId } from './support/terminal-session';
+import {
+	activeTerminalPanel,
+	settledTerminalSessionId,
+	terminalPanelForSession,
+} from './support/terminal-session';
 import {
 	cancelEditWindow,
 	longPress,
 	openProjectEditWindow,
 	submitEditWindow,
 } from './support/ui';
-import {
-	activeStartChooser,
-	chooseProjectStart,
-	createStartedProject,
-} from './support/project-start';
 
 async function readCssVariableFromStyle(
 	locator: Locator,
@@ -562,7 +571,9 @@ test.describe('project tabs', () => {
 
 		await closeNativePageWindow(electronApp, popoutWindow);
 		await expect.poll(badgeTotal).toBe(0);
-		await expect(mainWindow.locator('[data-terminay-app-component]')).toBeVisible();
+		await expect(
+			mainWindow.locator('[data-terminay-app-component]'),
+		).toBeVisible();
 	});
 
 	test('closing a busy torn-off project window leaves its sibling window alive', async ({
@@ -701,9 +712,7 @@ test.describe('project tabs', () => {
 	test('new project tabs do not reuse palette colours until the palette is exhausted', async ({
 		mainWindow,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel(
-			'Create project',
-		);
+		const addProjectButton = mainWindow.getByLabel('Create project');
 
 		for (let index = 0; index < 19; index += 1) {
 			await addProjectButton.click();
@@ -728,9 +737,7 @@ test.describe('project tabs', () => {
 		mainWindow,
 		electronApp,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel(
-			'Create project',
-		);
+		const addProjectButton = mainWindow.getByLabel('Create project');
 		for (let index = 0; index < 11; index += 1) {
 			await addProjectButton.click();
 		}
@@ -841,9 +848,7 @@ test.describe('project tabs', () => {
 		mainWindow,
 		electronApp,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel(
-			'Create project',
-		);
+		const addProjectButton = mainWindow.getByLabel('Create project');
 		for (let index = 0; index < 11; index += 1) {
 			await addProjectButton.click();
 		}
@@ -878,14 +883,38 @@ test.describe('project tabs', () => {
 		await expect(
 			activeWorkspace.locator('.terminal-panel:visible'),
 		).toHaveCount(1);
+		const firstSessionId = await settledTerminalSessionId(
+			activeTerminalPanel(mainWindow),
+		);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(terminalTabs).toHaveCount(2);
 		await terminalTabs.filter({ hasText: 'Terminal 2' }).click();
-		await submitTerminalCommand(
-			mainWindow,
-			"sleep 1.1; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'\r",
-		);
-		await terminalTabs.filter({ hasText: 'Terminal 1' }).click();
+		// A plain shell's finish in the terminal the user is typing in is not
+		// news, so the command must finish only once focus is on Terminal 1.
+		// It blocks on a FIFO the test opens after that, not on a clock.
+		const fifoDir = mkdtempSync(path.join(tmpdir(), 'terminay-badge-'));
+		const release = path.join(fifoDir, 'release');
+		execFileSync('mkfifo', [release]);
+		try {
+			await submitTerminalCommand(
+				mainWindow,
+				`cat '${release}' >/dev/null; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'\r`,
+			);
+			await terminalTabs.filter({ hasText: 'Terminal 1' }).click();
+			// Focusing the helper textarea and announcing the focus to the
+			// workspace happen in one frame callback, so once it is the active
+			// element the workspace treats Terminal 1 as focused.
+			await expect(
+				terminalPanelForSession(mainWindow, firstSessionId).locator(
+					'.xterm-helper-textarea',
+				),
+			).toBeFocused();
+			// Opening the FIFO for writing waits for `cat` to open it, so the
+			// command is released exactly once, wherever the shell is.
+			await writeFile(release, '\n');
+		} finally {
+			rmSync(fifoDir, { force: true, recursive: true });
+		}
 
 		const badge = mainWindow.locator(
 			'.project-tab--active .project-tab-activity-dot',
@@ -927,9 +956,7 @@ test.describe('project tabs', () => {
 		const rowBadge = activeRow.locator('.project-tab-activity-dot');
 		try {
 			await expect(rowBadge).toHaveCount(1);
-			await expect(rowBadge).toHaveClass(
-				/project-tab-activity-dot--unviewed/,
-			);
+			await expect(rowBadge).toHaveClass(/project-tab-activity-dot--unviewed/);
 			await expect(
 				mainWindow.locator(
 					'.project-switcher-menu__item .project-tab-activity-dot',
@@ -1037,9 +1064,7 @@ test.describe('project tabs', () => {
 			'data-terminay-selected-view',
 			'home',
 		);
-		await expect(
-			mainWindow.locator('[data-terminay-home-tabs]'),
-		).toBeVisible();
+		await expect(mainWindow.locator('[data-terminay-home-tabs]')).toBeVisible();
 
 		// With no project there is still a Command Bar, listing only what
 		// needs none.
@@ -1091,9 +1116,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel(
-			'Create project',
-		);
+		const addProjectButton = mainWindow.getByLabel('Create project');
 		for (let index = 0; index < 5; index += 1) {
 			await addProjectButton.click();
 		}
@@ -1157,7 +1180,9 @@ test.describe('project tabs', () => {
 			name: 'Switch terminal',
 		});
 		await expect(switcher).toBeVisible();
-		await longPress(switcher.locator('[data-compact-switcher-project]').first());
+		await longPress(
+			switcher.locator('[data-compact-switcher-project]').first(),
+		);
 		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
 		).toBeVisible();
