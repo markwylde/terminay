@@ -210,18 +210,7 @@ test('Codex starts an ephemeral read-only thread with only the host MCP server',
 	await chat.prompt('hello');
 	assert.equal(chat.text(), 'On it.\n\nyou said hello');
 	assert.deepEqual(chat.violations(), []);
-	// The fake asks its three questions and ends the turn in one write, so the
-	// turn can end before the answers have reached it. Wait for them.
-	const answered = (entries) =>
-		entries.filter(
-			(entry) => entry.stdin?.method === undefined && entry.stdin?.id >= 900,
-		).length;
-	const deadline = Date.now() + 10_000;
-	let entries = await log();
-	while (answered(entries) < 3 && Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		entries = await log();
-	}
+	const entries = await log();
 	assert.deepEqual(entries[0].argv, [...CODEX_ARGUMENTS]);
 	const sent = entries
 		.filter((entry) => entry.stdin)
