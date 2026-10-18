@@ -127,6 +127,105 @@ test("Gitea CI uses its compatible shared-image transport", () => {
   assert.match(giteaE2e, /retention-days: 7/u);
 });
 
+const WATCHDOG_SHELL = "shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}";
+
+function jobNames(workflow) {
+  return [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]);
+}
+
+function steps(block) {
+  return block.split(/\n(?= {6}- name: )/u).slice(1);
+}
+
+test("every CI test job explains itself before its timeout", async () => {
+  const { leadMs } = await import("./ci-watchdog.mjs");
+  const benchmarks = await read(".gitea/workflows/benchmarks.yml");
+  const playwrightConfig = await read("playwright.config.ts");
+  const watched = [
+    ...jobNames(giteaCi).filter((name) => name !== "e2e-image").map((name) => [giteaCi, name]),
+    ...jobNames(benchmarks).map((name) => [benchmarks, name]),
+  ];
+  for (const [workflow, name] of watched) {
+    const block = job(workflow, name);
+    const timeout = /^ {4}timeout-minutes: (\d+)$/mu.exec(block)?.[1];
+    assert.ok(timeout, `${name} declares a timeout`);
+    // The watchdog reads the job's budget; it must be the job's own.
+    assert.match(block, new RegExp(`^ {4}env:\\n {6}TERMINAY_CI_JOB_TIMEOUT_MINUTES: ${timeout}$`, "mu"), `${name} tells the watchdog its timeout`);
+    const [first, ...rest] = steps(block);
+    assert.match(first, /- name: Arm the timeout watchdog\n {8}run: echo "TERMINAY_CI_JOB_STARTED_AT=\$\(date \+%s\)" >> "\$GITHUB_ENV"/u,
+      `${name} records when it started before anything else`);
+    // Every step that installs, builds, or tests runs under the watchdog.
+    for (const step of rest) {
+      if (!/npm ci|npm run|node --test|node scripts\/|docker (?:build|pull)/u.test(step)) continue;
+      if (/node scripts\/e2e-(?:base-)?image(?:-cache)?-key\.mjs|prune-ci-docker-images/u.test(step)) continue;
+      assert.ok(step.includes(`\n        ${WATCHDOG_SHELL}\n`), `${name}: "${step.split("\n")[0].trim()}" runs under the watchdog`);
+    }
+  }
+  assert.ok((giteaCi.match(new RegExp(WATCHDOG_SHELL.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "gu")) ?? []).length >= 15);
+
+  // Playwright stops a CI shard itself, reports the tests it interrupted,
+  // and writes its artifacts well before the watchdog and the job timeout.
+  const globalTimeout = /globalTimeout: process\.env\.CI \? (\d+) \* 60_000 : 0/u.exec(playwrightConfig)?.[1];
+  assert.ok(globalTimeout, "CI shards carry a Playwright global timeout");
+  const e2eTimeoutMinutes = Number(/^ {4}timeout-minutes: (\d+)$/mu.exec(job(giteaCi, "e2e-test"))[1]);
+  const setupAndSalvageMinutes = 2;
+  assert.ok(
+    Number(globalTimeout) * 60_000 + setupAndSalvageMinutes * 60_000 <= e2eTimeoutMinutes * 60_000 - leadMs(e2eTimeoutMinutes * 60_000),
+    "the shard's own budget, its setup, and its artifact copy fit before the watchdog fires",
+  );
+  const e2eSteps = steps(job(giteaCi, "e2e-test"));
+  const upload = e2eSteps.findIndex((step) => step.includes("name: Upload Playwright artifacts"));
+  assert.match(e2eSteps[upload], /if: \$\{\{ always\(\) \}\}/u);
+  assert.ok(upload > e2eSteps.findIndex((step) => step.includes("name: Run end-to-end test shard")));
+  const runner = await read("scripts/run-e2e-container.sh");
+  assert.match(runner, /cleanup\(\) \{\n {2}if docker container inspect "\$container" >\/dev\/null 2>&1; then\n {4}copy_artifacts/u,
+    "a cancelled container run copies its artifacts out before the container is removed");
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /- name: Upload packaged smoke diagnostics\n {8}if: \$\{\{ always\(\) \}\}/u);
+});
+
+test("benchmarks that measure the machine run apart from every gate", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const benchmarks = await read(".gitea/workflows/benchmarks.yml");
+  const scripts = JSON.parse(packageJson).scripts;
+  // Weekly and on demand only: never a pull request or a push.
+  const triggers = benchmarks.slice(benchmarks.indexOf("\non:\n") + 5, benchmarks.indexOf("\npermissions:"));
+  assert.deepEqual([...triggers.matchAll(/^ {2}([a-z_]+):/gmu)].map((match) => match[1]), ["workflow_dispatch", "schedule"]);
+  assert.match(triggers, /- cron: "[^"]+"/u);
+  for (const name of jobNames(benchmarks)) {
+    assert.match(job(benchmarks, name), /^ {4}continue-on-error: true$/mu, `${name} never fails the workflow`);
+  }
+  const loadTest = "scripts/task20-secure-werift-multi-peer-load.test.mjs";
+  assert.match(scripts["benchmark:webrtc-multi-peer-load"], new RegExp(`TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT=[^ ]+ node --test ${loadTest.replaceAll(".", "\\.")}$`, "u"));
+  assert.match(job(benchmarks, "webrtc-multi-peer-load"), /run: npm run benchmark:webrtc-multi-peer-load/u);
+  assert.match(job(benchmarks, "webrtc-multi-peer-load"), /TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT: \$\{\{ github\.workspace \}\}\/build\/webrtc-runtime/u);
+
+  // No gating path reaches a benchmark: not a gating workflow, and not any
+  // npm script those workflows run, followed through every npm run.
+  const gating = (await readdir(new URL("../.gitea/workflows/", import.meta.url)))
+    .filter((name) => name !== "benchmarks.yml" && /\.ya?ml$/u.test(name));
+  const reached = new Set();
+  const visit = (text) => {
+    for (const [, name] of text.matchAll(/npm run ([\w:.-]+)/gu)) {
+      if (reached.has(name) || !scripts[name]) continue;
+      reached.add(name);
+      visit(scripts[name]);
+    }
+  };
+  const gatingText = [];
+  for (const name of gating) {
+    const workflow = await read(`.gitea/workflows/${name}`);
+    gatingText.push(workflow);
+    visit(workflow);
+  }
+  for (const name of reached) gatingText.push(scripts[name]);
+  assert.ok(reached.has("smoke") && reached.has("test:real-webrtc"), "the gating scripts are followed");
+  for (const text of gatingText) {
+    assert.doesNotMatch(text, /task20-secure-werift-multi-peer-load|TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT|benchmark:/u);
+  }
+  // Nor does a gating test run pick the file up by a glob.
+  for (const text of gatingText) assert.doesNotMatch(text, /node --test[^&\n]*scripts\/\*/u);
+});
+
 test("the server image is published only for a release tag or a dispatched beta, never from a pull request", async () => {
   assert.doesNotMatch(serverImage, /^ {2}pull_request/mu);
   assert.doesNotMatch(serverImage, /^ {4}branches:/mu);
