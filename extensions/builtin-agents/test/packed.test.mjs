@@ -152,6 +152,6 @@ test('the packed extension activates and reports a real process until it exits',
 		// Without the native watch the library notices on the next change to its index.
 		await driver.remove(id);
 	}
-	await harness.waitFor((h) => h.sessions().length === 0, 10_000);
+	await harness.waitFor((h) => h.sessions().length === 0);
 	harness.assertConformant();
 });
