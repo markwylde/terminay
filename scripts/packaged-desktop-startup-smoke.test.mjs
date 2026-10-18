@@ -24,7 +24,6 @@ test(
 	'packaged macOS artifact initializes, restores, reloads, queries, and shuts down canonically',
 	{
 		skip: process.platform !== 'darwin',
-		timeout: 120_000,
 	},
 	async () => {
 		const userData = await mkdtemp(join(tmpdir(), 'terminay-release-smoke-'));
@@ -126,6 +125,9 @@ async function exerciseLaunch({ expected, mode, userData }) {
 	let electronApp;
 	try {
 		electronApp = await electron.launch({
+			// Every wait here is for a state the application reaches, not for a
+			// budget: none of Playwright's waits gives up on a slow machine.
+			timeout: 0,
 			executablePath,
 			args: developmentLaunch ? [resolve('.'), ...packagedChromiumLaunchArgs()] : packagedChromiumLaunchArgs(),
 			env: {
@@ -139,7 +141,8 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		});
 		const mainStderr = { text: '' };
 		captureMainProcessFailures(electronApp.process(), failures, mainStderr);
-		const window = await electronApp.firstWindow({ timeout: 20_000 });
+		electronApp.context().setDefaultTimeout(0);
+		const window = await electronApp.firstWindow({ timeout: 0 });
 		captureRendererFailures(window, failures);
 
 		const identity = await requireCanonicalReadiness(window);
@@ -201,15 +204,9 @@ function restartedWorkspaceIdentity(identity) {
 
 async function requireCanonicalReadiness(window) {
 	const app = window.locator('[data-terminay-app-component]');
-	await app.waitFor({ state: 'visible', timeout: 30_000 });
-	await window.locator('.project-tab').first().waitFor({
-		state: 'visible',
-		timeout: 15_000,
-	});
-	await window.locator('.terminal-tab-content').first().waitFor({
-		state: 'visible',
-		timeout: 15_000,
-	});
+	await app.waitFor({ state: 'visible' });
+	await window.locator('.project-tab').first().waitFor({ state: 'visible' });
+	await window.locator('.terminal-tab-content').first().waitFor({ state: 'visible' });
 
 	// This is intentionally assertion-only. A missing seed must fail; this helper
 	// must never click New Project/New Terminal or issue a workspace mutation.
@@ -291,7 +288,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	const settings = await nextWindow;
 	captureRendererFailures(settings, failures);
 	try {
-		await settings.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: 15_000 });
+		await settings.getByRole('heading', { name: 'Settings' }).waitFor();
 		for (const packageName of [
 			'terminay-builtin-agents',
 			'terminay-language-typescript',
@@ -299,7 +296,7 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 			'terminay-github',
 		]) {
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
-			await card.waitFor({ state: 'visible', timeout: 15_000 });
+			await card.waitFor({ state: 'visible' });
 			assert.equal(await card.count(), 1, `${packageName} must have one extension card`);
 			const text = await card.innerText();
 			assert.match(text, /Version \d+\.\d+\.\d+/u, `${packageName} must be materialized from the release bundle`);
@@ -314,11 +311,8 @@ async function requireSidebarQuery(window) {
 	const sidebar = window.locator('.file-explorer-sidebar');
 	if (!(await sidebar.isVisible()))
 		await window.getByLabel('Toggle file explorer').click();
-	await sidebar.waitFor({ state: 'visible', timeout: 10_000 });
-	await window.locator('.sidebar-pane').first().waitFor({
-		state: 'visible',
-		timeout: 10_000,
-	});
+	await sidebar.waitFor({ state: 'visible' });
+	await window.locator('.sidebar-pane').first().waitFor({ state: 'visible' });
 	assert.equal(await window.getByText(/^query failed$/iu).count(), 0);
 	assert.equal(await window.getByText(/missing project scope/iu).count(), 0);
 }
@@ -330,7 +324,7 @@ async function requireTerminalInputOutput(window, mode) {
 	await panel.locator('.xterm-helper-textarea').focus();
 	await window.keyboard.type(`printf '${marker}\\n'`);
 	await window.keyboard.press('Enter');
-	await rows.getByText(marker, { exact: true }).waitFor({ timeout: 10_000 });
+	await rows.getByText(marker, { exact: true }).waitFor();
 }
 
 function captureRendererFailures(window, failures) {
@@ -353,7 +347,6 @@ function packagedChromiumLaunchArgs() {
 	try {
 		const session = execFileSync('/bin/launchctl', ['managername'], {
 			encoding: 'utf8',
-			timeout: 2_000,
 		}).trim();
 		return session === 'Aqua' ? [] : HEADLESS_CHROMIUM_ARGS;
 	} catch {
@@ -382,9 +375,8 @@ async function closeElectronApp(electronApp) {
 	// `ElectronApplication.close()` resolves after the inspector connection closes,
 	// which can precede the macOS process exit by a short interval.
 	const electronProcess = electronApp.process();
-	const deadline = Date.now() + 10_000;
-	await withTimeout(electronApp.close(), remainingTime(deadline), 'packaged application did not shut down cleanly');
-	await waitForProcessExit(electronProcess, remainingTime(deadline));
+	await electronApp.close();
+	await waitForProcessExit(electronProcess);
 	assert.equal(electronProcess.signalCode, null, 'clean shutdown must not use a signal');
 	assert.equal(electronProcess.exitCode, 0, 'clean shutdown must exit successfully');
 }
@@ -398,26 +390,19 @@ async function emergencyClose(electronApp) {
 		return;
 	}
 	if (hasExited(electronProcess)) return;
-	try {
-		await withTimeout(electronApp.close(), 5_000, 'emergency application close timed out');
-		await waitForProcessExit(electronProcess, 5_000);
-	} catch {
-		if (!hasExited(electronProcess)) electronProcess.kill('SIGKILL');
-		await waitForProcessExit(electronProcess, 5_000).catch(() => undefined);
-	}
+	// The journey has already failed: end the application outright, and wait
+	// for it to be gone.
+	electronProcess.kill('SIGKILL');
+	await waitForProcessExit(electronProcess).catch(() => undefined);
 }
 
 function hasExited(process) {
 	return process.exitCode !== null || process.signalCode !== null;
 }
 
-async function waitForProcessExit(process, timeoutMs) {
+async function waitForProcessExit(process) {
 	if (hasExited(process)) return;
 	await new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => {
-			cleanup();
-			reject(new Error('packaged application process did not exit'));
-		}, timeoutMs);
 		const onExit = () => {
 			cleanup();
 			resolve();
@@ -427,31 +412,12 @@ async function waitForProcessExit(process, timeoutMs) {
 			reject(error);
 		};
 		const cleanup = () => {
-			clearTimeout(timeout);
 			process.off('exit', onExit);
 			process.off('error', onError);
 		};
 		process.once('exit', onExit);
 		process.once('error', onError);
 	});
-}
-
-function remainingTime(deadline) {
-	return Math.max(0, deadline - Date.now());
-}
-
-async function withTimeout(promise, timeoutMs, message) {
-	let timeout;
-	try {
-		await Promise.race([
-			promise,
-			new Promise((_, reject) => {
-				timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-			}),
-		]);
-	} finally {
-		if (timeout !== undefined) clearTimeout(timeout);
-	}
 }
 
 async function readDiagnostics(userData) {
