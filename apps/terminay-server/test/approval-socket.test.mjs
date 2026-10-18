@@ -287,19 +287,35 @@ test('approval and denial responses wait for the consumed pairing room refresh',
 		let refreshFinished = false;
 		const pendingAuthority = authority();
 		const method = op === 'approve' ? 'approveEnrollment' : 'denyEnrollment';
-		const result = await handleApprovalSocketRequest(
+		let asked;
+		const refreshing = new Promise((resolve) => {
+			asked = resolve;
+		});
+		let finishRefresh;
+		const refreshed = new Promise((resolve) => {
+			finishRefresh = resolve;
+		});
+		const response = handleApprovalSocketRequest(
 			{ op, approvalId: 'approval-1' },
 			{
 				...pendingAuthority,
 				[method]: async (approvalId) => {
 					const resolved = pendingAuthority[method](approvalId);
-					await new Promise((resolve) => setTimeout(resolve, 5));
+					asked();
+					// The room refresh finishes only when the test lets it.
+					await refreshed;
 					refreshFinished = true;
 					return resolved;
 				},
 			},
 		);
+		await refreshing;
+		finishRefresh();
+		const result = await response;
 		assert.equal(result.ok, true, op);
 		assert.equal(refreshFinished, true, op);
+		// What the refresh resolved to is what is answered, so the answer was
+		// made after it.
+		assert.equal(result.deviceName, 'Phone', op);
 	}
 });
