@@ -377,7 +377,9 @@ test('the arrow keys move round the suggestions, and other keys do not', () => {
 	assert.equal(suggestionHighlightMove('ArrowDown', -1, 0), null);
 });
 
-test('completion asks for a parent once, drops a stale answer, and suggests nothing for a missing one', async () => {
+test('completion asks for a parent once, drops a stale answer, and suggests nothing for a missing one', async (t) => {
+	// The completer's pause before it asks is the test's to end.
+	t.mock.timers.enable({ apis: ['setTimeout'] });
 	const tree: Record<string, BrowseRootFoldersResult> = {
 		'/home/mark': { path: '/home/mark', parent: '/home', entries: [{ name: 'code' }, { name: 'config' }, { name: 'notes' }], truncated: false },
 		'/srv': { path: '/srv', parent: '/', entries: [{ name: 'cache' }], truncated: false },
@@ -385,6 +387,10 @@ test('completion asks for a parent once, drops a stale answer, and suggests noth
 	const asked: (string | undefined)[] = [];
 	const pending: Array<() => void> = [];
 	const seen: string[][] = [];
+	let heard: (() => void) | undefined;
+	const nextSuggestions = () => new Promise<void>((resolve) => {
+		heard = resolve;
+	});
 	const completer = new RootFolderCompleter(
 		(path) => {
 			asked.push(path);
@@ -396,34 +402,41 @@ test('completion asks for a parent once, drops a stale answer, and suggests noth
 				});
 			});
 		},
-		(suggestions) => seen.push(suggestions.map((suggestion) => suggestion.name)),
+		(suggestions) => {
+			seen.push(suggestions.map((suggestion) => suggestion.name));
+			heard?.();
+		},
 		0,
 	);
-	const settle = async () => {
-		await new Promise((resolve) => setTimeout(resolve, 5));
+	/** End the pause, then answer what it asked and wait for the suggestions. */
+	const answered = async () => {
+		t.mock.timers.tick(0);
+		const suggested = nextSuggestions();
 		for (const answer of pending.splice(0)) answer();
-		await new Promise((resolve) => setTimeout(resolve, 5));
+		await suggested;
 	};
 
 	completer.update('/home/mark/co');
-	await settle();
+	await answered();
 	assert.deepEqual(seen.at(-1), ['code', 'config']);
 	// Typing on inside the same folder filters what is already listed.
 	completer.update('/home/mark/con');
 	assert.deepEqual(seen.at(-1), ['config']);
 	assert.deepEqual(asked, ['/home/mark']);
 
-	// A slower answer for a parent already left never lands.
+	// A slower answer for a parent already left never lands: the next answer,
+	// given after it, is the next thing suggested.
 	completer.update('/srv/c');
-	await new Promise((resolve) => setTimeout(resolve, 5));
+	t.mock.timers.tick(0);
+	assert.deepEqual(asked, ['/home/mark', '/srv']);
 	completer.update('/home/mark/n');
 	assert.deepEqual(seen.at(-1), ['notes']);
-	await settle();
-	assert.deepEqual(seen.at(-1), ['notes']);
+	const stale = pending.splice(0);
+	for (const answer of stale) answer();
 
 	completer.update('/missing/x');
-	await settle();
-	assert.deepEqual(seen.at(-1), []);
+	await answered();
+	assert.deepEqual(seen.slice(-2), [['notes'], []]);
 	completer.update('no-parent');
 	assert.deepEqual(seen.at(-1), []);
 	completer.dispose();
