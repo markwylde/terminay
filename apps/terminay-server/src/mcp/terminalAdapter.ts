@@ -53,6 +53,11 @@ export interface ServerTerminalControlAdapterOptions {
 	readonly workspace?: WorkspaceRepositoryType;
 	readonly maxReadBytes?: number;
 	readonly maxWaitSeconds?: number;
+	/** What schedules a wait's deadline. Defaults to the global timers. */
+	readonly waitTimers?: Readonly<{
+		setTimeout: (handler: () => void, ms: number) => unknown;
+		clearTimeout: (handle: unknown) => void;
+	}>;
 	readonly renameTerminal?: (
 		params: RenameTerminalParams,
 		context: ControlRequestContext,
@@ -79,6 +84,13 @@ type AdapterOptions = ServerTerminalControlAdapterOptions & {
 };
 
 const DEFAULT_MAX_READ_BYTES = 256 * 1024;
+const GLOBAL_WAIT_TIMERS: NonNullable<
+	ServerTerminalControlAdapterOptions['waitTimers']
+> = {
+	setTimeout: (handler, ms) => setTimeout(handler, ms),
+	clearTimeout: (handle) =>
+		clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 const DEFAULT_MAX_WAIT_SECONDS = 15 * 60;
 
 /**
@@ -820,6 +832,7 @@ function waitForActivity(
 		projectId: session.projectId,
 		sessionId: session.sessionId,
 	};
+	const timers = options.waitTimers ?? GLOBAL_WAIT_TIMERS;
 	const initial = activity.get(identity);
 	if (initial !== undefined && predicate(initial))
 		return Promise.resolve({
@@ -835,7 +848,7 @@ function waitForActivity(
 			settled = true;
 			unsubscribe();
 			removeExitSubscription();
-			clearTimeout(timer);
+			timers.clearTimeout(timer);
 			signal.removeEventListener('abort', onAbort);
 			callback();
 		};
@@ -876,7 +889,7 @@ function waitForActivity(
 			},
 		);
 		const removeExitSubscription = options.terminal.onEvent(removeExit);
-		const timer = setTimeout(
+		const timer = timers.setTimeout(
 			() => finish(() => resolve({ ...timedOut, timedOut: true })),
 			Math.min(timeoutSeconds, maxSafeWaitSeconds(options)) * 1_000,
 		);

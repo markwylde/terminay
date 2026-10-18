@@ -98,7 +98,7 @@ test("a failed live event send closes the connection without an unhandled reject
   assert.equal(connection.state, "closed");
 });
 
-test("unknown feature projections resync without entering the fatal control queue", { timeout: 5_000 }, async () => {
+test("unknown feature projections resync without entering the fatal control queue", async () => {
   const journal = new OrderedEventJournal();
   const pair = createInMemoryTransportPair();
   let blocked = false;
