@@ -17,6 +17,14 @@ import {
 	tabBarScreenPoints,
 	tearOffProjectTab,
 } from './support/project-tab-drag';
+import {
+	commandArrived,
+	commandGate,
+	endSettlePeriod,
+	HELD_SERVER_CLOCK,
+	INPUT_WINDOW_MS,
+	serverClock,
+} from './support/server-clock';
 import { submitTerminalCommand } from './support/terminal';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import {
@@ -520,10 +528,12 @@ test.describe('project tabs', () => {
 		]);
 	});
 
-	test('closing a torn-off window takes its notifications off the application icon', async ({
-		electronApp,
-		mainWindow,
-	}) => {
+	test('closing a torn-off window takes its notifications off the application icon', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		// The bell is judged, and its notification held, on the server's clock.
+		const clock = serverClock(electronApp);
+		const bell = await commandGate(userDataDir);
 		const badgeTotal = () =>
 			electronApp.evaluate(
 				() =>
@@ -560,11 +570,28 @@ test.describe('project tabs', () => {
 		);
 		await sendAppCommand(popoutWindow, 'new-terminal');
 		await expect(tabs).toHaveCount(2);
-		await submitTerminalCommand(
-			popoutWindow,
-			"sleep 1.1; printf 'ding\\007\\n'\r",
+		const ringing = await settledTerminalSessionId(
+			popoutWindow.locator(
+				'.project-workspace--active .terminal-panel:visible',
+			),
 		);
+		// The bell rings once the test opens its gate: long after the typing,
+		// with the popout back on Terminal 1.
+		const command = `${bell.wait}; printf 'ding\\007\\n'`;
+		await submitTerminalCommand(popoutWindow, `${command}\r`);
+		await commandArrived(electronApp, ringing, command);
 		await tabs.filter({ hasText: 'Terminal 1' }).click();
+		await expect(
+			popoutWindow.locator(
+				'.project-workspace--active .terminal-panel:visible .xterm-helper-textarea',
+			),
+		).toBeFocused();
+		await clock.advance(INPUT_WINDOW_MS);
+		await bell.open();
+		await expect
+			.poll(async () => (await clock.notifications()).pending)
+			.toBe(1);
+		await endSettlePeriod(electronApp);
 		await expect(popoutWindow.locator('.notifications-count')).toHaveText('1');
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 		await expect.poll(badgeTotal).toBe(1);
@@ -1182,10 +1209,8 @@ test.describe('project tabs', () => {
 		await expect(switcher).toBeVisible();
 		await longPress(
 			switcher.locator('[data-compact-switcher-project]').first(),
-		);
-		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
-		).toBeVisible();
+		);
 		await cancelEditWindow(mainWindow);
 		// Editing closed the switcher; the breadcrumb opens it again.
 		await expect(switcher).toHaveCount(0);
@@ -1225,10 +1250,10 @@ test.describe('project tabs', () => {
 			await otherItem.locator('.project-switcher-menu__title').textContent()
 		)?.trim();
 		if (!otherTitle) throw new Error('Expected a project row to edit');
-		await longPress(otherItem);
-		await expect(
+		await longPress(
+			otherItem,
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),
-		).toBeVisible();
+		);
 		await expect(mainWindow.getByPlaceholder('Project name')).toHaveValue(
 			otherTitle,
 		);
