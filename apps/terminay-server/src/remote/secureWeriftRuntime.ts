@@ -19,6 +19,12 @@ const SELECTED_PATCHES = [
 		purpose:
 			'Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock.',
 	},
+	{
+		path: 'scripts/patches/werift-0.24.1-ice-consent-recovery.patch',
+		sha256: '5ba80ab247c2c1be0a799202185eab7be476fb8722be9a71b80feef44a1e47a6',
+		purpose:
+			'Retransmit ICE consent checks and keep checking after a miss so a slow path stays connected and a recovered one is reported connected again.',
+	},
 ] as const;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 

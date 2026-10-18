@@ -190,6 +190,7 @@ function assertSelectedWebRtcRuntime(selection) {
 const GOVERNED_WEBRTC_PATCH_SHA256 = Object.freeze([
   '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211',
   '298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b',
+  '5ba80ab247c2c1be0a799202185eab7be476fb8722be9a71b80feef44a1e47a6',
 ])
 
 function hasExactGovernedPatches(patches) {
