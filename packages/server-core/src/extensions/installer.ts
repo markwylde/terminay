@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+	cp,
+	mkdir,
+	readFile,
+	rename,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
 	EXTENSION_API_VERSION,
@@ -648,6 +656,11 @@ export class ExtensionInstaller {
 	): Promise<ExtensionRegistrySnapshot> {
 		if (artifact.source !== 'built-in')
 			throw new Error('built-in artifact source is invalid');
+		// The release artifact is already this extension's slot, and that slot
+		// is selected (or an external override is). Materializing it again on
+		// every start would copy and hash the whole tree only to discard the
+		// copy and leave the registry exactly as it is.
+		if (await this.builtInAlreadySelected(artifact, state)) return state;
 		return this.installResolved(
 			artifact,
 			(staging) => {
@@ -659,6 +672,42 @@ export class ExtensionInstaller {
 			},
 			state,
 		);
+	}
+
+	private async builtInAlreadySelected(
+		artifact: BuiltInExtensionArtifact,
+		state: ExtensionRegistrySnapshot,
+	): Promise<boolean> {
+		const record = state.extensions[artifact.extensionId];
+		if (
+			record === undefined ||
+			record.packageName !== artifact.packageName ||
+			record.activeSlotId === undefined
+		)
+			return false;
+		const slot = Object.values(record.slots).find(
+			({ receipt }) =>
+				receipt.source === 'built-in' &&
+				receipt.extensionId === artifact.extensionId &&
+				receipt.packageName === artifact.packageName &&
+				receipt.version === artifact.version &&
+				receipt.integrity === artifact.integrity &&
+				receipt.inventoryHash === artifact.inventoryHash &&
+				receipt.lockHash === artifact.lockHash,
+		);
+		if (slot === undefined) return false;
+		const active = record.slots[record.activeSlotId];
+		if (active === undefined) return false;
+		if (active.slotId !== slot.slotId && active.receipt.source === 'built-in')
+			return false;
+		// A slot directory that has gone missing is restored by materializing.
+		try {
+			return (
+				await stat(join(this.slotPackageRoot(slot), 'package.json'))
+			).isFile();
+		} catch {
+			return false;
+		}
 	}
 
 	private async installResolved(
