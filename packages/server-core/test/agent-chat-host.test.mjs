@@ -55,12 +55,28 @@ const REQUEST = {
   mcpServer: { name: "terminay_chat", command: "/usr/bin/true", args: [], env: { TERMINAY_CONTROL_TOKEN: "t" } },
 };
 
-async function eventually(check, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error("condition never held");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+/** Records a session's events; `until` settles once they satisfy a check, re-checked as each arrives. */
+function recorder() {
+  const events = [];
+  const waiters = new Set();
+  return {
+    events,
+    push(event) {
+      events.push(event);
+      for (const waiter of [...waiters]) waiter();
+    },
+    until(check) {
+      if (check(events)) return Promise.resolve();
+      return new Promise((resolve) => {
+        const waiter = () => {
+          if (!check(events)) return;
+          waiters.delete(waiter);
+          resolve();
+        };
+        waiters.add(waiter);
+      });
+    },
+  };
 }
 
 test("a chat provider reports availability and streams a turn's validated events", async (t) => {
@@ -69,10 +85,10 @@ test("a chat provider reports availability and streams a turn's validated events
   await host.start(await fixture(EXTENSION));
   assert.deepEqual(host.status().agentChatProviders.map((provider) => provider.id), [PROVIDER_ID]);
   assert.deepEqual(await host.chatAvailability(PROVIDER_ID), { available: true, detail: "echo 1.0" });
-  const events = [];
-  await host.openChatSession(PROVIDER_ID, REQUEST, (event) => events.push(event));
+  const { events, push, until } = recorder();
+  await host.openChatSession(PROVIDER_ID, REQUEST, push);
   await host.promptChat("s-1", "hello");
-  await eventually(() => events.length >= 4);
+  await until(() => events.length >= 4);
   assert.deepEqual(events, [
     { type: "tool", tool: { callId: "t1", server: "terminay_chat", name: "read_terminal", state: "running" } },
     { type: "text", delta: "you said " },
@@ -87,10 +103,10 @@ test("cancel ends a waiting turn without a deadline firing", async (t) => {
   const host = new ExtensionHost("example.chat", { broker: { async request() {} } });
   t.after(() => host.stop());
   await host.start(await fixture(EXTENSION));
-  const events = [];
-  await host.openChatSession(PROVIDER_ID, REQUEST, (event) => events.push(event));
+  const { events, push, until } = recorder();
+  await host.openChatSession(PROVIDER_ID, REQUEST, push);
   const turn = host.promptChat("s-1", "wait");
-  await eventually(() => events.some((event) => event.type === "text"));
+  await until(() => events.some((event) => event.type === "text"));
   await host.cancelChat("s-1");
   await turn;
   assert.equal(events.filter((event) => event.type === "text").length, 1);
@@ -100,10 +116,10 @@ test("a child that dies mid-turn ends its sessions with an exit", async (t) => {
   const host = new ExtensionHost("example.chat", { broker: { async request() {} }, limits: { initialBackoffMs: 60_000 } });
   t.after(() => host.stop());
   await host.start(await fixture(EXTENSION));
-  const events = [];
-  await host.openChatSession(PROVIDER_ID, REQUEST, (event) => events.push(event));
+  const { events, push, until } = recorder();
+  await host.openChatSession(PROVIDER_ID, REQUEST, push);
   await assert.rejects(host.promptChat("s-1", "crash"));
-  await eventually(() => events.some((event) => event.type === "exit"));
+  await until(() => events.some((event) => event.type === "exit"));
   await assert.rejects(host.promptChat("s-1", "again"), /not open|unavailable/);
 });
 
@@ -124,10 +140,10 @@ test("the manager lists chat providers and binds sessions to their owner", async
   const manager = new ExtensionHostManager({ broker: { async request() {} } });
   await manager.start(await fixture(EXTENSION));
   assert.deepEqual(manager.chatProviderContributions().map(({ contribution }) => contribution.id), [PROVIDER_ID]);
-  const events = [];
-  const session = await manager.openChatSession(PROVIDER_ID, REQUEST, (event) => events.push(event));
+  const { events, push, until } = recorder();
+  const session = await manager.openChatSession(PROVIDER_ID, REQUEST, push);
   await session.prompt("hi");
-  await eventually(() => events.filter((event) => event.type === "text").length === 2);
+  await until(() => events.filter((event) => event.type === "text").length === 2);
   await manager.shutdown();
   assert.equal(events.at(-1).type, "exit");
 });
