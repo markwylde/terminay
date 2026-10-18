@@ -1,11 +1,19 @@
+import { execFile } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { contextMenuItem } from './support/ui';
 import { createStartedProject } from './support/project-start';
+import { waitUntilBusy } from './support/busy-terminals';
+import { afterRendererTasks, nextAnimationFrame } from './support/renderer-clock';
+
+const execFileAsync = promisify(execFile);
+
 
 /**
  * Quitting Terminay and opening it again brings back the same terminals.
@@ -115,14 +123,18 @@ test('quitting and relaunching brings back the same terminal, its output, and it
 		await typeLine(mainWindow, sessionId, `printf 'before-%s\\n' restart`);
 		await expect(rows).toContainText('before-restart', { timeout: 10_000 });
 
-		// Work that outlives the application: it prints only after Terminay has
-		// quit, and then keeps a foreground process running.
+		// Work that outlives the application: it prints only once the test
+		// opens its gate, after Terminay has quit, says when it has, and then
+		// keeps a foreground process running.
+		const gate = path.join(tempDir, 'while-away.fifo');
+		const printed = path.join(tempDir, 'while-away.printed');
+		await execFileAsync('mkfifo', [gate]);
 		await typeLine(
 			mainWindow,
 			sessionId,
-			`sh -c 'sleep 4; printf "while-%s\\n" away; sleep 600'`,
+			`sh -c 'cat ${gate} >/dev/null; printf "while-%s\\n" away; : > ${printed}; sleep 600'`,
 		);
-		await mainWindow.waitForTimeout(1_000);
+		await waitUntilBusy(electronApp, mainWindow);
 
 		// The shell lives in the holder, not in the application.
 		await expect
@@ -136,8 +148,10 @@ test('quitting and relaunching brings back the same terminal, its output, and it
 			true,
 		);
 
-		// Long enough for the command to print with nothing attached.
-		await new Promise((resolve) => setTimeout(resolve, 5_000));
+		// The command prints with nothing attached. Opening the FIFO for writing
+		// waits for the command to open it.
+		await writeFile(gate, '\n');
+		await expect.poll(() => existsSync(printed)).toBe(true);
 
 		relaunched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
 		const window = await prepareWindow(await relaunched.electronApp.firstWindow());
@@ -180,7 +194,7 @@ test('quitting and relaunching brings back the same terminal, its output, and it
 		// Quitting with work running and choosing to end the terminals leaves
 		// nothing behind.
 		await typeLine(window, sessionId, 'sleep 600');
-		await window.waitForTimeout(2_500);
+		await waitUntilBusy(relaunched.electronApp, window);
 		await quitChoosing(relaunched.electronApp, 'end');
 		await expect
 			.poll(() => isAlive(holder.pid), { timeout: 15_000 })
@@ -350,7 +364,9 @@ test('a terminal that ended while Terminay was closed comes back with its last o
 		// Typing into it goes nowhere.
 		await panel.locator('.xterm-helper-textarea').focus();
 		await window.keyboard.type('typed-after-end');
-		await window.waitForTimeout(500);
+		// The keys have been handled, and the terminal has drawn since.
+		await afterRendererTasks(window);
+		await nextAnimationFrame(window);
 		await expect(panel.locator('.xterm-rows')).not.toContainText(
 			'typed-after-end',
 		);
