@@ -75,7 +75,8 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
       await task.catch(() => undefined);
     });
     if (attach) await client.command("terminal.attach", { clientId, identity, fromPosition: 0 });
-    return { client, hello };
+    // `closed` settles once the server has finished with this connection.
+    return { client, hello, closed: task.catch(() => undefined) };
   };
   await composition.start();
   await settings.update({ terminayMcp: { enabled: true, permissions } });
@@ -101,6 +102,68 @@ const open = (server, overrides = {}) =>
 
 async function rejectsWith(promise, code) {
   await assert.rejects(promise, (error) => { assert.equal(error.code, code); return true; });
+}
+
+/** Settles once `check` holds, re-checked each time `subscribe` reports a change. */
+function when(subscribe, check) {
+  if (check()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = subscribe(() => {
+      if (!check()) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+const text = (body) => new TextDecoder().decode(body ?? new Uint8Array());
+
+/**
+ * One subscription's events, in arrival order. `until` settles once they
+ * satisfy a check, re-checked as each arrives.
+ */
+async function listen(client, event) {
+  const seen = [];
+  const waiters = new Set();
+  const fences = new Set();
+  const subscription = await client.subscribe(event);
+  subscription.onEvent((entry) => {
+    if (entry.payload?.fence !== undefined) fences.add(entry.payload.fence);
+    else seen.push(entry.body === undefined ? entry.payload : { ...entry.payload, data: text(entry.body) });
+    for (const waiter of [...waiters]) waiter();
+  });
+  const until = (check) => {
+    if (check()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        if (!check()) return;
+        waiters.delete(waiter);
+        resolve();
+      };
+      waiters.add(waiter);
+    });
+  };
+  // Not enumerable, so the list still compares equal to a plain array.
+  Object.defineProperties(seen, {
+    event: { value: event },
+    until: { value: until },
+    fenced: { value: (fence) => until(() => fences.has(fence)) },
+    unsubscribe: { value: () => subscription.unsubscribe() },
+  });
+  return seen;
+}
+
+let nextFence = 0;
+/**
+ * Settles once everything the server has already sent these subscriptions has
+ * arrived: a marker published now travels behind it on each one's own lane. It
+ * carries a body so that no event, nor the marker, stands in for another.
+ */
+async function fenced(server, ...lists) {
+  const fence = ++nextFence;
+  for (const event of new Set(lists.map((list) => list.event)))
+    server.composition.eventJournal.publishTransient(event, { fence }, new Uint8Array(1));
+  await Promise.all(lists.map((list) => list.fenced(fence)));
 }
 
 test("the server advertises app windows only when they are composed", async () => {
@@ -253,7 +316,7 @@ test("Ask Permission for Window Messages prompts with the window and the full te
     const window = open(server);
     const sending = client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "Deploy api to eu-west-1" });
     const approvals = server.composition.mcpApprovals;
-    for (let attempt = 0; attempt < 50 && approvals.list().length === 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+    await when((listener) => approvals.subscribe(listener), () => approvals.list().length > 0);
     const [approval] = approvals.list();
     assert.equal(approval.group, "windowMessages");
     assert.equal(approval.groupLabel, "Window Messages");
@@ -288,12 +351,10 @@ test("clients are told a window changed without being sent its title or document
   const server = await composed();
   try {
     const { client } = await server.connect("desktop");
-    const seen = [];
-    const subscription = await client.subscribe(APP_WINDOW_EVENTS.changed);
-    subscription.onEvent((event) => seen.push(event.payload));
+    const seen = await listen(client, APP_WINDOW_EVENTS.changed);
     const window = open(server, { title: "Secret plans", html: "<p>secret</p>" });
-    for (let attempt = 0; attempt < 50 && seen.length === 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
-    await subscription.unsubscribe().catch(() => undefined);
+    await fenced(server, seen);
+    await seen.unsubscribe().catch(() => undefined);
     assert.equal(seen.at(-1).windows[0].id, window.id);
     assert.equal(JSON.stringify(seen).includes("Secret"), false);
     assert.equal(JSON.stringify(seen).includes("secret"), false);
@@ -333,9 +394,10 @@ test("a terminal's windows end when its process exits", async () => {
     await server.connect("desktop");
     open(server);
     assert.equal(server.composition.appWindows.list().length, 1);
+    const windows = server.composition.appWindows;
     server.process().emitExit();
-    for (let attempt = 0; attempt < 50 && server.composition.appWindows.list().length > 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(server.composition.appWindows.list().length, 0);
+    await when((listener) => windows.subscribe(listener), () => windows.list().length === 0);
+    assert.equal(windows.list().length, 0);
   } finally {
     await server.close();
   }
@@ -343,16 +405,7 @@ test("a terminal's windows end when its process exits", async () => {
 
 // --- the view mirror relay (ADR-0039) ---
 
-const settle = async () => { for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve)); };
 const bytes = (text) => new TextEncoder().encode(text);
-const text = (body) => new TextDecoder().decode(body ?? new Uint8Array());
-
-async function listen(client, event) {
-  const seen = [];
-  const subscription = await client.subscribe(event);
-  subscription.onEvent((entry) => seen.push(entry.body === undefined ? entry.payload : { ...entry.payload, data: text(entry.body) }));
-  return seen;
-}
 
 /** A desktop that controls the terminal, a phone that observes it, and one window. */
 async function mirrored() {
@@ -392,13 +445,13 @@ test("a recording from the controlling client reaches the clients watching that 
     assert.equal((await publish(desktop)).result.delivered, 0);
 
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.deepEqual(wanted, [{ clientId: "desktop", terminalSessionId: identity.sessionId, wanted: true }]);
     assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, true);
 
     assert.equal((await publish(desktop)).result.delivered, 1);
     await publish(desktop, { seq: 1, kind: "events" }, "[\"change\"]");
-    await settle();
+    await fenced(server, data, bystanderData, holderData);
     assert.deepEqual(data.map(({ windowId, contentRevision, epoch, seq, kind, data: recording }) => ({ windowId, contentRevision, epoch, seq, kind, recording })), [
       { windowId: window.id, contentRevision: window.contentRevision, epoch: 1, seq: 0, kind: "snapshot", recording: "[\"snapshot\"]" },
       { windowId: window.id, contentRevision: window.contentRevision, epoch: 1, seq: 1, kind: "events", recording: "[\"change\"]" },
@@ -409,7 +462,7 @@ test("a recording from the controlling client reaches the clients watching that 
 
     // Unwatching stops the recording.
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.unwatch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.deepEqual(wanted.at(-1), { clientId: "desktop", terminalSessionId: identity.sessionId, wanted: false });
     assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
   } finally {
@@ -432,10 +485,10 @@ test("only the controlling client may publish a recording, before and after cont
     // The roles swap: the desktop watches, and the phone is asked to record.
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.unwatch, session);
     await desktop.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, phoneWanted);
     assert.deepEqual(phoneWanted.at(-1), { clientId: "phone", terminalSessionId: identity.sessionId, wanted: true });
     await publish(phone, {}, "[\"from the phone\"]");
-    await settle();
+    await fenced(server, desktopData, data);
     assert.deepEqual(desktopData.map((entry) => entry.data), ["[\"from the phone\"]"]);
     assert.deepEqual(data, []);
   } finally {
@@ -464,17 +517,17 @@ test("a recording is bounded, and the server keeps none of it", async () => {
     await rejectsWith(publish(desktop, { seq: 1, kind: "events", parts: 2 }), "validation");
     await rejectsWith(publish(desktop, { seq: -1 }), "validation");
     await rejectsWith(publish(desktop, { windowId: "win_missing" }), "not_found");
-    await settle();
+    await fenced(server, data);
     assert.deepEqual(data.map((entry) => entry.data.length), [large.length, full.length]);
     // A snapshot in three parts arrives as three messages, each saying so.
     for (const seq of [0, 1, 2]) await publish(desktop, { epoch: 9, seq, parts: 3 }, `part-${seq}`);
-    await settle();
+    await fenced(server, data);
     assert.deepEqual(data.slice(-3).map(({ seq, parts, data: recording }) => [seq, parts, recording]), [[0, 3, "part-0"], [1, 3, "part-1"], [2, 3, "part-2"]]);
 
     // Nothing of a delivered batch stays in the relay.
     const marker = `KEPT-NOWHERE-${"z".repeat(64)}`;
     await publish(desktop, { epoch: 4 }, JSON.stringify([marker]));
-    await settle();
+    await fenced(server, data);
     assert.equal(data.at(-1).data.includes(marker), true);
     const seen = new Set();
     const holds = (value) => {
@@ -498,33 +551,33 @@ test("snapshot requests from several watchers are one request, and a repeated on
     // Only a watcher may ask.
     await rejectsWith(phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session), "forbidden");
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.length, 1);
     // A second watcher arriving while that snapshot is outstanding adds nothing.
     const tablet = await server.connect("tablet");
     await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.length, 1);
 
     // Once the snapshot has been sent, two watchers asking for the next one are one request.
     await publish(desktop);
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
     await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.length, 2);
     assert.deepEqual(wanted.at(-1), { clientId: "desktop", terminalSessionId: identity.sessionId, wanted: true });
 
     // A watcher that asks again has waited and got nothing: its request goes
     // through, so a request the controlling client missed cannot strand it.
     await phone.command(APP_WINDOW_MIRROR_OPERATIONS.resync, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.length, 3);
 
     // A later watcher needs a snapshot too, once the last one has been sent.
     await publish(desktop, { epoch: 2 });
     const laptop = await server.connect("laptop");
     await laptop.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.length, 4);
   } finally {
     await server.close();
@@ -536,16 +589,18 @@ test("a watcher that disconnects stops the recording, and a client that cannot s
   try {
     const old = await server.connect("old-phone", { mirror: false });
     await rejectsWith(old.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session), "unavailable");
-    await settle();
+    await fenced(server, wanted);
     assert.deepEqual(wanted, []);
     await rejectsWith(desktop.command(APP_WINDOW_MIRROR_OPERATIONS.watch, { terminalSessionId: "no-such-session" }), "not_found");
 
     const tablet = await server.connect("tablet");
     await tablet.client.command(APP_WINDOW_MIRROR_OPERATIONS.watch, session);
-    await settle();
+    await fenced(server, wanted);
     assert.equal(wanted.at(-1).wanted, true);
     await tablet.client.close();
-    for (let attempt = 0; attempt < 50 && wanted.at(-1).wanted; attempt += 1) await settle();
+    // The server forgets the watch as it finishes with the connection.
+    await tablet.closed;
+    await fenced(server, wanted);
     assert.equal(wanted.at(-1).wanted, false);
     assert.equal((await desktop.query(APP_WINDOW_MIRROR_OPERATIONS.status, session)).result.wanted, false);
   } finally {
@@ -606,7 +661,7 @@ test("a recording goes to the connection that asked to watch, not to another tha
     const shadow = await server.connect("phone", { attach: false });
     const shadowData = await listen(shadow.client, APP_WINDOW_MIRROR_EVENTS.data);
     const published = await publish(desktop, {}, "[\"private\"]");
-    await settle();
+    await fenced(server, shadowData);
     assert.equal(published.result.delivered, 1);
     assert.deepEqual(shadowData, []);
   } finally {
@@ -664,15 +719,12 @@ async function refusedWith(promise, code) {
   await assert.rejects(promise, (error) => { assert.equal((error.cause ?? error).code, code); return true; });
 }
 const reader = (bytes) => async (_file, offset, length) => bytes.subarray(offset, offset + length);
-const moment = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 test("the server advertises attachments with app windows, and a photo sent with an answer is typed as a path the shell can open", async () => {
   await withAttachments({}, async ({ server, attachmentDirectory, files }) => {
     const { client, hello } = await server.connect("desktop");
     assert.ok(hello.capabilities.includes("app-window-attachments.v1"));
-    const seen = [];
-    const subscription = await client.subscribe(APP_WINDOW_EVENTS.changed);
-    subscription.onEvent((event) => seen.push(event.payload));
+    const seen = await listen(client, APP_WINDOW_EVENTS.changed);
     const window = open(server);
     const bytes = photo(300 * 1024);
     const progress = [];
@@ -686,13 +738,15 @@ test("the server advertises attachments with app windows, and a photo sent with 
     assert.deepEqual(progress, [256 * 1024, 300 * 1024]);
     assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
     // No client is ever told where the file went.
-    await moment();
-    await subscription.unsubscribe().catch(() => undefined);
+    await fenced(server, seen);
+    await seen.unsubscribe().catch(() => undefined);
     assert.equal(JSON.stringify(seen).includes("terminay-attachments"), false);
     assert.equal(JSON.stringify(seen).includes(name), false);
     // The file outlives its terminal.
+    const windows = server.composition.appWindows;
     server.process().emitExit();
-    await moment();
+    await when((listener) => windows.subscribe(listener), () => windows.list(identity.sessionId).length === 0);
+    await windows.uploadsRemoved();
     assert.equal(server.composition.appWindows.list(identity.sessionId).length, 0);
     assert.deepEqual(await files(), [name]);
   });
@@ -701,8 +755,8 @@ test("the server advertises attachments with app windows, and a photo sent with 
 test("with bracketed paste the message and its attachment lines are one paste", async () => {
   await withAttachments({}, async ({ server, attachmentDirectory, files }) => {
     const { client } = await server.connect("desktop");
+    // Typing settles the terminal's output first, so the mode is known by then.
     server.process().emitData("\u001b[?2004h");
-    await moment();
     const window = open(server);
     await featureClient(client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 2 }, { name: "b.txt", size: 0 }], reader(photo(2)));
     const names = await files();
@@ -729,7 +783,7 @@ test("Never Allow and a declined prompt upload nothing; an allowed prompt names 
     const { client } = await server.connect("desktop");
     const approvals = server.composition.mcpApprovals;
     const prompted = async () => {
-      for (let attempt = 0; attempt < 50 && approvals.list().length === 0; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+      await when((listener) => approvals.subscribe(listener), () => approvals.list().length > 0);
       return approvals.list()[0];
     };
     const attachments = [{ name: "screenshot.png", size: 2 * 1024 * 1024 }, { name: "notes\u001b[2J.txt", size: 12 }];
@@ -782,8 +836,8 @@ test("an observer cannot attach, and a takeover part way through removes what ha
       }
       return bytes.subarray(offset, offset + length);
     });
+    // The refused part answers once what had arrived is removed.
     await refusedWith(interrupted, "forbidden");
-    await moment();
     assert.deepEqual(await files(), []);
     assert.deepEqual(server.process().writes, []);
     // The window is the new holder's to send from.
@@ -795,7 +849,7 @@ test("an observer cannot attach, and a takeover part way through removes what ha
 
 test("a connection that drops part way through an upload leaves no partial file", async () => {
   await withAttachments({}, async ({ server, files }) => {
-    const { client } = await server.connect("desktop");
+    const { client, closed } = await server.connect("desktop");
     const window = open(server);
     const bytes = photo(600 * 1024);
     let parts = 0;
@@ -805,7 +859,9 @@ test("a connection that drops part way through an upload leaves no partial file"
       return bytes.subarray(offset, offset + length);
     });
     await assert.rejects(dropped);
-    for (let attempt = 0; attempt < 50 && (await files()).length > 0; attempt += 1) await moment();
+    // The server abandons the upload as it finishes with the connection.
+    await closed;
+    await server.composition.appWindows.uploadsRemoved();
     assert.deepEqual(await files(), []);
     assert.deepEqual(server.process().writes, []);
   });
