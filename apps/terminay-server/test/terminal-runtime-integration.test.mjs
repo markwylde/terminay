@@ -9,27 +9,34 @@ import { createNodePtyFactory, TerminalService } from "@terminay/server-core";
 
 const decoder = new TextDecoder();
 
-function waitFor(predicate, label, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      try {
-        if (predicate()) {
+/**
+ * Waits re-checked whenever something happens: `notify` is called for every
+ * event a subscription or the terminal service delivers.
+ */
+function changes() {
+  const checks = new Set();
+  return {
+    notify() {
+      for (const check of [...checks]) check();
+    },
+    until(predicate) {
+      return new Promise((resolve, reject) => {
+        const check = () => {
+          try {
+            if (!predicate()) return;
+          } catch (error) {
+            checks.delete(check);
+            reject(error);
+            return;
+          }
+          checks.delete(check);
           resolve();
-          return;
-        }
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      if (Date.now() >= deadline) {
-        reject(new Error(`timed out waiting for ${label}`));
-        return;
-      }
-      setTimeout(check, 10);
-    };
-    check();
-  });
+        };
+        checks.add(check);
+        check();
+      });
+    },
+  };
 }
 
 function outputText(events) {
@@ -58,6 +65,7 @@ test("standalone and embedded compositions create bounded server-owned real shel
     let runtime;
     let session;
     const subscriptions = [];
+    const changed = changes();
 
     try {
       runtime = createServer({
@@ -89,6 +97,8 @@ test("standalone and embedded compositions create bounded server-owned real shel
       await runtime.start();
       const terminal = runtime.services.terminal;
       assert.ok(terminal instanceof TerminalService);
+      // Output a detached session produces reaches no subscription, only the service.
+      subscriptions.push({ close: terminal.onEvent(() => changed.notify()) });
 
       session = await terminal.createSession({
         projectId: `task8-project-${runtimeMode}`,
@@ -117,27 +127,32 @@ test("standalone and embedded compositions create bounded server-owned real shel
       const initial = terminal.subscribe(session.identity, {
         authorization: readAuthorization,
         fromPosition: 0,
-        onEvent: (event) => events.push(event),
+        onEvent: (event) => {
+          events.push(event);
+          changed.notify();
+        },
       });
       subscriptions.push(initial);
-      await waitFor(() => outputText(events).includes(`${shellMarker}_READY`), `${runtimeMode} shell readiness`);
+      await changed.until(() => outputText(events).includes(`${shellMarker}_READY`));
 
       const detachedAt = session.outputPosition;
       initial.close();
       assert.equal(session.status, "running");
       await terminal.input(session.identity, `${shellInput}\n`, writeAuthorization);
-      await waitFor(() => session.outputPosition > detachedAt, `${runtimeMode} detached shell output`);
+      await changed.until(() => session.outputPosition > detachedAt);
 
       const resumedEvents = [];
       const resumed = terminal.subscribe(session.identity, {
         authorization: readAuthorization,
         fromPosition: detachedAt,
-        onEvent: (event) => resumedEvents.push(event),
+        onEvent: (event) => {
+          resumedEvents.push(event);
+          changed.notify();
+        },
       });
       subscriptions.push(resumed);
-      await waitFor(
+      await changed.until(
         () => session.status === "exited" && outputText([...events, ...resumedEvents]).includes(`${shellMarker}_ECHO:${shellInput}`),
-        `${runtimeMode} shell output and exit`,
       );
 
       assert.equal(session.exit.reason, "exit");
