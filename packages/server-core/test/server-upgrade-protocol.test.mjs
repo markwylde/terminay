@@ -66,7 +66,18 @@ function fakeUpgrader(initial) {
 	return upgrader;
 }
 
-const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
+/** Settles once this client holds a status that satisfies `predicate`. */
+function statusWhere(upgrade, predicate) {
+	if (upgrade.status !== undefined && predicate(upgrade.status))
+		return Promise.resolve(upgrade.status);
+	return new Promise((resolve) => {
+		const off = upgrade.store.subscribe((status) => {
+			if (status === undefined || !predicate(status)) return;
+			off();
+			resolve(status);
+		});
+	});
+}
 
 /** A composed server and a way to attach feature clients to it. */
 async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
@@ -96,7 +107,27 @@ async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
 			clientId: hello.clientId,
 			authScope: scopeFor(hello.clientId),
 		}),
+		// Called once the server has let go of the connection, upgrade
+		// attachment included.
+		onConnectionClosed: (_connectionId, clientId) => {
+			closeWaiters.get(clientId)?.();
+		},
 	});
+	/** Start the server and settle once its first release check is in. */
+	async function start() {
+		const checked =
+			service === undefined
+				? undefined
+				: new Promise((resolve) => {
+						const off = service.subscribe(() => {
+							off();
+							resolve();
+						});
+					});
+		await composition.start();
+		await checked;
+	}
+	const closeWaiters = new Map();
 	const closers = [];
 	t.after(async () => {
 		for (const close of closers) await close();
@@ -114,6 +145,9 @@ async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
 			await client.close().catch(() => undefined);
 			await serverTask.catch(() => undefined);
 		};
+		const serverReleased = new Promise((resolve) =>
+			closeWaiters.set(clientId, resolve),
+		);
 		closers.push(close);
 		await pair.open();
 		const hello = await client.connect();
@@ -129,9 +163,19 @@ async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
 				return () => void subscription.unsubscribe().catch(() => undefined);
 			},
 		});
-		return { client, hello, upgrade, close };
+		return {
+			client,
+			hello,
+			upgrade,
+			close,
+			/** Close, and settle once the server has released the connection. */
+			disconnect: async () => {
+				await close();
+				await serverReleased;
+			},
+		};
 	}
-	return { composition, connect, intervals };
+	return { composition, connect, intervals, start };
 }
 
 const rejectedWith = (code, reason) => (error) => {
@@ -162,9 +206,8 @@ test('both sides agree on the operation names, and each belongs to the upgrade c
 
 test('every attached client receives the same status, and again when it changes', async (t) => {
 	const upgrader = fakeUpgrader(report({ available: null }));
-	const { composition, connect } = await served(t, { upgrader });
-	await composition.start();
-	await settled();
+	const { composition, connect, start } = await served(t, { upgrader });
+	await start();
 	const desktop = await connect('desktop');
 	const browser = await connect('browser');
 	const phone = await connect('phone');
@@ -176,7 +219,11 @@ test('every attached client receives the same status, and again when it changes'
 	// A later check finds a newer release while all three are attached.
 	upgrader.current = report();
 	await composition.serverUpgrade.check();
-	await settled();
+	await Promise.all(
+		[desktop, browser, phone].map((each) =>
+			statusWhere(each.upgrade, (status) => status.available !== undefined),
+		),
+	);
 	const expected = {
 		version: '5.1.1',
 		channel: 'tag',
@@ -195,34 +242,33 @@ test('every attached client receives the same status, and again when it changes'
 
 test('the release check is owned by attached clients over the wire', async (t) => {
 	const upgrader = fakeUpgrader(report());
-	const { composition, connect, intervals } = await served(t, { upgrader });
-	await composition.start();
-	await settled();
+	const { connect, intervals, start } = await served(t, { upgrader });
+	await start();
 	assert.equal(upgrader.checks, 1, 'one check at server start');
 	assert.equal(intervals.size, 0, 'no poll while nobody is attached');
 	const first = await connect('first');
 	const second = await connect('second');
 	assert.equal(intervals.size, 1);
-	await first.close();
-	await settled();
+	await first.disconnect();
 	assert.equal(intervals.size, 1);
-	await second.close();
-	await settled();
+	await second.disconnect();
 	assert.equal(intervals.size, 0, 'the poll outlived the last client');
 });
 
 test('a paired device starts the upgrade and every device sees it in progress', async (t) => {
 	const upgrader = fakeUpgrader(report());
-	const { composition, connect } = await served(t, { upgrader });
-	await composition.start();
-	await settled();
+	const { connect, start } = await served(t, { upgrader });
+	await start();
 	const first = await connect('first');
 	const second = await connect('second');
 	await first.upgrade.subscribe();
 	await second.upgrade.subscribe();
 	const status = await first.upgrade.startServerUpgrade('in-place');
 	assert.equal(status.upgrade.state, 'in-progress');
-	await settled();
+	await statusWhere(
+		second.upgrade,
+		(seen) => seen.upgrade.state === 'in-progress',
+	);
 	assert.deepEqual(second.upgrade.status.upgrade, status.upgrade);
 	assert.deepEqual(upgrader.handovers, [
 		{ environment: 'user', mode: 'in-place', trigger: { kind: 'spawn' } },
@@ -237,9 +283,8 @@ test('a paired device starts the upgrade and every device sees it in progress', 
 
 test('a request that names anything but an offered mode is rejected and starts nothing', async (t) => {
 	const upgrader = fakeUpgrader(report());
-	const { composition, connect } = await served(t, { upgrader });
-	await composition.start();
-	await settled();
+	const { connect, start } = await served(t, { upgrader });
+	await start();
 	const { client, upgrade } = await connect('device');
 	const send = (payload) =>
 		client.command(SERVER_UPGRADE_OPERATIONS.start, payload);
@@ -267,9 +312,8 @@ test('a request that names anything but an offered mode is rejected and starts n
 
 test('a request with nothing available is rejected', async (t) => {
 	const upgrader = fakeUpgrader(report({ available: null }));
-	const { composition, connect } = await served(t, { upgrader });
-	await composition.start();
-	await settled();
+	const { connect, start } = await served(t, { upgrader });
+	await start();
 	const { upgrade } = await connect('device');
 	await assert.rejects(
 		upgrade.startServerUpgrade('in-place'),
@@ -280,7 +324,7 @@ test('a request with nothing available is rejected', async (t) => {
 
 test('only an administrative connection may start an upgrade; any reader may see the status', async (t) => {
 	const upgrader = fakeUpgrader(report());
-	const { composition, connect } = await served(t, {
+	const { connect, start } = await served(t, {
 		upgrader,
 		scopeFor: (clientId) =>
 			clientId.startsWith('reader')
@@ -289,8 +333,7 @@ test('only an administrative connection may start an upgrade; any reader may see
 					? 'write'
 					: 'admin',
 	});
-	await composition.start();
-	await settled();
+	await start();
 	for (const clientId of ['reader', 'writer']) {
 		const { upgrade } = await connect(clientId);
 		assert.deepEqual((await upgrade.refresh()).available, { version: '5.2.0' });
@@ -306,7 +349,6 @@ test('a server composed without an upgrader reports that no upgrade is offered a
 	// The embedded Local server, and a standalone one run from a checkout.
 	const { composition, connect } = await served(t);
 	await composition.start();
-	await settled();
 	assert.equal(composition.serverUpgrade.enabled, false);
 	const { hello, upgrade } = await connect('window');
 	assert.equal(serverPublishesUpgradeStatus(hello.capabilities), true);

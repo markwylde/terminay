@@ -42,10 +42,6 @@ function request(operation, payload, commandId, clientId = "client-a") {
   };
 }
 
-function nextTurn() {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 const SOURCE = { serverId: "server-a", projectId: "project-a", sessionId: "session-a" };
 const TARGET = { ...SOURCE, projectId: "project-b" };
 
@@ -85,8 +81,8 @@ async function fixture() {
 test("a re-homed terminal keeps its PTY, session id, and output position under the target project", async () => {
   const value = await fixture();
   try {
+    // PTY output is committed inside the PTY's data callback.
     value.pty.processes[0].emitData("before the move");
-    await nextTurn();
     const before = value.service.getSession("session-a");
 
     assert.deepEqual(value.rehome(), SOURCE);
@@ -100,7 +96,6 @@ test("a re-homed terminal keeps its PTY, session id, and output position under t
     assert.equal(value.service.listSessions().length, 1);
 
     value.pty.processes[0].emitData(" and after");
-    await nextTurn();
     assert.equal(value.service.getSession("session-a").outputPosition, before.outputPosition + " and after".length);
   } finally {
     await value.service.shutdown();
@@ -168,7 +163,6 @@ test("a client attaches again under the target identity and resumes from retaine
     const first = await value.dispatcher.command(request("terminal.attach", { clientId: "client-a", identity: SOURCE, fromPosition: 0 }, "attach-source"));
     assert.equal(first.ok, true);
     value.pty.processes[0].emitData("retained");
-    await nextTurn();
 
     value.rehome();
 
@@ -184,7 +178,6 @@ test("a client attaches again under the target identity and resumes from retaine
 
     const input = await value.dispatcher.command(request("terminal.input", { clientId: "client-a", identity: TARGET, attachmentId: again.result.attachmentId, dataBase64: "aGk=" }, "input-target"));
     assert.equal(input.ok, true);
-    await nextTurn();
     assert.equal(value.pty.processes[0].writes.length, 1);
   } finally {
     await value.service.shutdown();

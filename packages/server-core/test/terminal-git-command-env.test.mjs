@@ -88,8 +88,9 @@ test("a terminal that ends gives up its token", async () => {
     await create();
     await create();
     assert.equal(commands.sessionCount, 2);
+    // The exit is committed, and the token released, inside the PTY's exit
+    // callback.
     exits[0]({ exitCode: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(commands.sessionCount, 1);
   } finally {
     commands.close();

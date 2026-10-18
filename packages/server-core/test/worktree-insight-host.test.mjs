@@ -47,22 +47,27 @@ export function activate(context) {
 
 function recordingBroker() {
   const calls = { published: [], signIns: [], stopped: [], rejected: [] };
+  const waiters = new Set();
+  const record = (kind, value) => {
+    calls[kind].push(value);
+    for (const waiter of [...waiters]) {
+      if (waiter.kind !== kind || calls[kind].length < waiter.count) continue;
+      waiters.delete(waiter);
+      waiter.resolve();
+    }
+  };
   return {
     calls,
-    publish(request) { calls.published.push(structuredClone(request)); },
-    requestSignIn(request) { calls.signIns.push(structuredClone(request)); },
+    /** Settles once the broker has been called `count` times for `kind`. */
+    received: (kind, count) => calls[kind].length >= count
+      ? Promise.resolve()
+      : new Promise((resolve) => waiters.add({ kind, count, resolve })),
+    publish(request) { record("published", structuredClone(request)); },
+    requestSignIn(request) { record("signIns", structuredClone(request)); },
     async token() { return "secret-token"; },
-    async rejectToken(request) { calls.rejected.push(request.origin); },
-    sourceStopped(request) { calls.stopped.push(request.sourceId); },
+    async rejectToken(request) { record("rejected", request.origin); },
+    sourceStopped(request) { record("stopped", request.sourceId); },
   };
-}
-
-async function eventually(check, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error("condition never held");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 const CONTEXT = {
@@ -79,17 +84,17 @@ test("a started insight source receives contexts, resolves credentials, and publ
   await host.start(await fixture(EXTENSION));
   assert.deepEqual(host.status().worktreeInsightSources.map((source) => source.id), [SOURCE_ID]);
   await host.startWorktreeInsightSource(SOURCE_ID, []);
-  await eventually(() => worktrees.calls.signIns.length === 1);
+  await worktrees.received("signIns", 1);
   assert.deepEqual(worktrees.calls.signIns[0].request, { origin: "https://forge.example", provider: "Forge" });
   await host.setWorktreeInsightContexts(SOURCE_ID, [CONTEXT]);
-  await eventually(() => worktrees.calls.published.length === 1);
+  await worktrees.received("published", 1);
   const [published] = worktrees.calls.published;
   assert.equal(published.extensionId, "example.forge");
   assert.equal(published.contextId, "ctx-1");
   assert.equal(published.worktreeId, "wt-1");
   assert.equal(published.properties.pullRequest.title, "secret-token");
   await host.notifyWorktreeCredential(SOURCE_ID, "https://forge.example");
-  await eventually(() => worktrees.calls.published.length === 2);
+  await worktrees.received("published", 2);
   assert.equal(worktrees.calls.published[1].properties.pullRequest.state, "draft");
   await host.stopWorktreeInsightSource(SOURCE_ID);
   assert.deepEqual(worktrees.calls.stopped, [SOURCE_ID]);
@@ -115,8 +120,8 @@ test("publications from a source the host has not started are dropped", async (t
   await host.start(await fixture(EXTENSION));
   await host.startWorktreeInsightSource(SOURCE_ID, []);
   await host.stopWorktreeInsightSource(SOURCE_ID);
+  // A stopped source is not sent the contexts, so nothing can be on its way.
   await host.setWorktreeInsightContexts(SOURCE_ID, [CONTEXT]);
-  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(worktrees.calls.published.length, 0);
 });
 
@@ -126,7 +131,7 @@ test("the manager lists insight sources only after activation and routes calls t
   await manager.start(await fixture(EXTENSION));
   assert.deepEqual(manager.worktreeInsightContributions().map(({ contribution }) => contribution.id), [SOURCE_ID]);
   await manager.startWorktreeInsightSource(SOURCE_ID, [CONTEXT]);
-  await eventually(() => worktrees.calls.published.length === 1);
+  await worktrees.received("published", 1);
   await manager.shutdown();
   assert.deepEqual(worktrees.calls.stopped, [SOURCE_ID]);
 });

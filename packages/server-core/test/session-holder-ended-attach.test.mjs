@@ -157,8 +157,9 @@ test("without a session holder an ended project terminal is still not readable",
   const { client } = await connect(composition, "viewer");
   try {
     const created = await client.command("terminal.create", { projectId: "project-a", cwd: "/repo/a", cols: 80, rows: 24 }, { commandId: "create" });
+    // The service commits the exit inside the PTY's exit callback.
     ptys.at(-1).exit(0);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(composition.terminal.getSession(created.result.sessionId).status, "exited");
     await assert.rejects(attachReadOnly(client, created.result.sessionId, "view"), /exited/);
   } finally {
     await client.close?.();

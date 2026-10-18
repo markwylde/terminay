@@ -49,19 +49,39 @@ async function publishAgentLifecycle(agents, identity, steps) {
   }
 }
 
-async function eventually(read, message = "condition did not become true") {
-  const deadline = Date.now() + 2_000;
-  for (;;) {
-    if (await read()) return;
-    if (Date.now() >= deadline) throw new Error(message);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+/**
+ * Records a subscription's payloads; `received(count)` settles once that many
+ * have arrived.
+ */
+function recordEvents(subscription) {
+  const payloads = [];
+  const waiters = new Set();
+  const remove = subscription.onEvent((event) => {
+    payloads.push(event.payload);
+    for (const waiter of [...waiters]) waiter();
+  });
+  const received = (count) => new Promise((resolve) => {
+    const check = () => {
+      if (payloads.length < count) return;
+      waiters.delete(check);
+      resolve();
+    };
+    waiters.add(check);
+    check();
+  });
+  return { payloads, remove, received };
 }
 
 function createPtyFactory() {
   const processes = [];
+  const spawnWaiters = new Set();
   return {
     processes,
+    /** Settles once this many PTYs have been spawned. */
+    spawned: (count) => new Promise((resolve) => {
+      if (processes.length >= count) return resolve();
+      spawnWaiters.add({ count, resolve });
+    }),
     spawn(options) {
       const dataListeners = new Set();
       const exitListeners = new Set();
@@ -79,6 +99,11 @@ function createPtyFactory() {
         emitData(value) { for (const listener of dataListeners) listener(value); },
       };
       processes.push(process);
+      for (const waiter of [...spawnWaiters]) {
+        if (processes.length < waiter.count) continue;
+        spawnWaiters.delete(waiter);
+        waiter.resolve();
+      }
       return process;
     },
   };
@@ -552,7 +577,8 @@ test("thousands of pre-provider PTY callbacks remain one semantic activity trans
     assert.equal(activity.revision, 1, "raw throughput publishes only idle-to-working");
     assert.equal(activity.get(identity).updatedAt, 1);
     const create = client.command("terminal.create", { projectId: "project-a", cwd: "/repo/a", cols: 80, rows: 24 });
-    await new Promise((resolve) => setImmediate(resolve));
+    // The server has handled the create while every write it makes is held.
+    await pty.spawned(2);
     assert.equal(connection.state, "open");
     releaseServerWrites();
     blockServerWrites = false;
@@ -752,23 +778,24 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   };
   const first = await connect("agent-client-one");
   const second = await connect("agent-client-two");
-  const firstEvents = [];
-  const secondEvents = [];
   const firstSubscription = await first.client.subscribe("agent");
   const secondSubscription = await second.client.subscribe("agent");
-  const removeFirst = firstSubscription.onEvent((event) => firstEvents.push(event.payload));
-  const removeSecond = secondSubscription.onEvent((event) => secondEvents.push(event.payload));
+  const firstRecord = recordEvents(firstSubscription);
+  const secondRecord = recordEvents(secondSubscription);
+  const { payloads: firstEvents, remove: removeFirst } = firstRecord;
+  const { payloads: secondEvents, remove: removeSecond } = secondRecord;
   try {
     await publishAgentLifecycle(agents, identity, [
       { kind: "session.started", title: "Agent session" },
       { kind: "wait.started", waitId: "wait-1", state: "waiting", reason: "approval" },
     ]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.all([firstRecord.received(2), secondRecord.received(2)]);
+    const firstSnapshot = await first.client.query("agent.snapshot");
+    const secondSnapshot = await second.client.query("agent.snapshot");
+    // Each snapshot reply is ordered after any further event on its connection.
     assert.equal(firstEvents.length, 2);
     assert.deepEqual(firstEvents, secondEvents);
     assert.doesNotMatch(JSON.stringify(firstEvents), /agent-sequence-token|fingerprint|fixture/);
-    const firstSnapshot = await first.client.query("agent.snapshot");
-    const secondSnapshot = await second.client.query("agent.snapshot");
     assert.deepEqual(firstSnapshot.result, secondSnapshot.result);
 
     await first.client.close();
@@ -859,16 +886,16 @@ test("project-scoped clients receive only their own agent snapshots and live eve
   };
   const a = await connect("project-a-client");
   const b = await connect("project-b-client");
-  const aEvents = [];
-  const bEvents = [];
   const aSubscription = await a.client.subscribe("agent");
   const bSubscription = await b.client.subscribe("agent");
-  const removeA = aSubscription.onEvent((event) => aEvents.push(event.payload));
-  const removeB = bSubscription.onEvent((event) => bEvents.push(event.payload));
+  const aRecord = recordEvents(aSubscription);
+  const bRecord = recordEvents(bSubscription);
+  const { payloads: aEvents, remove: removeA } = aRecord;
+  const { payloads: bEvents, remove: removeB } = bRecord;
   try {
     await publishAgentLifecycle(agents, projectA, [{ kind: "session.started", title: "Project A" }]);
     await publishAgentLifecycle(agents, projectB, [{ kind: "session.started", title: "Project B" }]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.all([aRecord.received(1), bRecord.received(1)]);
     const snapshotA = await a.client.query("agent.snapshot");
     const snapshotB = await b.client.query("agent.snapshot");
     assert.deepEqual(Object.values(snapshotA.result.entries).map((entry) => entry.activationTerminalSessionId), ["session-a"]);

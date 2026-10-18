@@ -154,6 +154,7 @@ export class ServerConnection implements ServerConnectionLike {
 			},
 			(error, snapshot) => this.handleOutboundFailure(error, snapshot),
 			(congestion) => this.handleTerminalCongestion(congestion),
+			options.terminalDeliveryNow,
 		);
 		this.outbound.setDiagnosticLabel(this.connectionId);
 	}

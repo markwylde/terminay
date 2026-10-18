@@ -47,21 +47,24 @@ async function served(run, { claims = {}, storeOptions = {} } = {}) {
     await client.connect();
     open.push({ client, serverTask });
     const events = [];
-    let wake = () => {};
+    const waiters = new Set();
     const subscription = await client.subscribe(WORKSPACE_EVENT);
-    subscription.onEvent((event) => { events.push(event.payload); wake(); });
+    subscription.onEvent((event) => {
+      events.push(event.payload);
+      for (const waiter of [...waiters]) {
+        if (event.payload.revision !== waiter.revision) continue;
+        waiters.delete(waiter);
+        waiter.resolve(event.payload);
+      }
+    });
     return {
       client,
       events,
       /** The event for `revision`, once it has arrived. */
-      event: async (revision) => {
-        const deadline = Date.now() + 2_000;
-        for (;;) {
-          const found = events.find((payload) => payload.revision === revision);
-          if (found !== undefined) return found;
-          if (Date.now() > deadline) throw new Error(`no event for revision ${revision}; saw ${JSON.stringify(events)}`);
-          await new Promise((resolve) => { wake = resolve; setTimeout(resolve, 20); });
-        }
+      event: (revision) => {
+        const found = events.find((payload) => payload.revision === revision);
+        if (found !== undefined) return Promise.resolve(found);
+        return new Promise((resolve) => waiters.add({ revision, resolve }));
       },
       delta: async (revision) => (await client.query(WORKSPACE_OPERATIONS.delta, { revision, cursor: String(revision) })).result,
       snapshot: async () => (await client.query(WORKSPACE_OPERATIONS.snapshot, {})).result,

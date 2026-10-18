@@ -133,15 +133,14 @@ function createPtyFactory() {
   };
 }
 
-function waitFor(predicate, timeoutMs = 2_000) {
-  const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (predicate()) return resolve();
-      if (Date.now() - started >= timeoutMs) return reject(new Error("timed out waiting for condition"));
-      setTimeout(check, 5);
-    };
-    check();
+function journalReaches(journal, revision) {
+  if (journal.revision >= revision) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = journal.subscribe(() => {
+      if (journal.revision < revision) return;
+      unsubscribe();
+      resolve();
+    });
   });
 }
 
@@ -266,8 +265,9 @@ test("server-core composition dispatches terminal operations through a MessagePo
     assert.equal(resized.ok, true);
     assert.deepEqual(pty.processes[0].resizes, [{ cols: 100, rows: 30 }]);
 
+    const terminalEventJournaled = journalReaches(eventJournal, 2);
     pty.processes[0].emitData("server-owned");
-    await waitFor(() => eventJournal.revision >= 2);
+    await terminalEventJournaled;
     assert.equal(eventJournal.replay(0).events.at(-1).event, "terminal");
 
     const listed = await client.query("terminal.list", { projectId: "project-a" });
