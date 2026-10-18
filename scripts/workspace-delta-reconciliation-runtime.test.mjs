@@ -146,7 +146,9 @@ test('coalesces changes arriving during refresh and cannot publish a regressing 
 	store.close()
 })
 
-test('command convergence refreshes authority when the workspace change notification is lost', async () => {
+test('command convergence refreshes authority when the workspace change notification is lost', async (t) => {
+	// The wait's own give-up timer is held, so only convergence can settle it.
+	t.mock.timers.enable({ apis: ['setTimeout'] })
 	const client = fakeClient({
 		snapshots: [state(1)],
 		deltas: [delta(1, 2, ['panel-a', 'panel-b'])],
@@ -173,10 +175,13 @@ test('resync preserves stale state until a full authorized snapshot is published
 	const client = fakeClient({ snapshots: [state(1), state(2, ['panel-a', 'panel-b'])], deltas: [] })
 	const store = new WorkspaceSnapshotStore({ client, serverId: 'server-a' })
 	await store.start()
+	const published = new Promise((resolve) => {
+		const stop = store.subscribeAny(() => { stop(); resolve() })
+	})
 	client.emitResync()
 	assert.equal(store.snapshot.revision, 1)
 	assert.equal(store.status.state, 'stale')
-	await new Promise((resolve) => setTimeout(resolve, 0))
+	await published
 	assert.equal(store.snapshot.revision, 2)
 	assert.equal(store.status.state, 'current')
 	store.close()
