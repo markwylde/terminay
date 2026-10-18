@@ -318,7 +318,8 @@ function createManualClock() {
     now: () => now,
     timers: {
       setTimeout(handler, ms) {
-        const timer = { id: (nextId += 1), at: now + ms, handler };
+        nextId += 1;
+        const timer = { id: nextId, at: now + ms, handler };
         timers.set(timer.id, timer);
         return timer;
       },
