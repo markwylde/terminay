@@ -1,5 +1,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import {
+	afterRendererTasks,
+	nextAnimationFrame,
+} from './support/renderer-clock';
 import { runShellCommand } from './support/terminal-input';
 import { openTerminalEditWindow, submitEditWindow } from './support/ui';
 
@@ -17,6 +21,13 @@ function activeTabTitle(page: Page) {
 	return page.locator(
 		'.project-workspace--active .terminal-tab-content--active .terminal-tab-title',
 	);
+}
+
+/** A frame drawn, and the effects and tasks queued around it run. */
+async function settleRenderer(page: Page): Promise<void> {
+	await afterRendererTasks(page);
+	await nextAnimationFrame(page);
+	await afterRendererTasks(page);
 }
 
 /** Start recording the renderer's own diagnostics from now. */
@@ -134,7 +145,12 @@ test('renaming a terminal does not load the explorer again or measure Git', asyn
 }) => {
 	const title = activeTabTitle(mainWindow);
 	await expect(title).toHaveText('Terminal 1');
-	await mainWindow.waitForTimeout(1_500);
+	// The project has finished starting, and what its explorer did on being
+	// shown it has done: it loads and measures from effects of the render
+	// that settles the project, and those have run once a frame is drawn and
+	// the tasks queued behind it have run.
+	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+	await settleRenderer(mainWindow);
 	await recordDiagnostics(mainWindow);
 
 	const editWindow = await openTerminalEditWindow(mainWindow);
@@ -147,7 +163,9 @@ test('renaming a terminal does not load the explorer again or measure Git', asyn
 	await expect
 		.poll(() => countDiagnostics(mainWindow, 'projection'))
 		.toBeGreaterThan(0);
-	await mainWindow.waitForTimeout(500);
+	// A load or a measure the rename set off would be started from the render
+	// that applied it, whose effects have run by now.
+	await settleRenderer(mainWindow);
 
 	expect(
 		await countDiagnostics(mainWindow, 'explorer'),
