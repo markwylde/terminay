@@ -92,7 +92,10 @@ test("TerminalService observes live cwd without mutating immutable spawn cwd", a
   assert.equal(session.snapshot().cwd, "/spawn");
 });
 
-test("TerminalService aborts a cwd observer when its bounded deadline expires", async () => {
+test("TerminalService aborts a cwd observer when its bounded deadline expires", async (t) => {
+  // The deadline runs on the test's clock; it is armed as the observation
+  // starts, before currentCwd returns its promise.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
   const session = await service.createSession({ projectId: "project-a", cwd: "/spawn", cols: 80, rows: 24 });
@@ -103,13 +106,20 @@ test("TerminalService aborts a cwd observer when its bounded deadline expires", 
       resolve(null);
     }, { once: true });
   });
-  assert.deepEqual(await service.currentCwd(session.snapshot(), {
+  const observed = service.currentCwd(session.snapshot(), {
     serverId: "server-a", projectId: "project-a", sessionId: session.sessionId, scope: "read",
-  }, 5), { cwd: "/spawn", source: "spawn", observationError: "timeout" });
+  }, 5);
+  t.mock.timers.tick(4);
+  assert.equal(aborted, false, "the observer was abandoned before its deadline");
+  t.mock.timers.tick(1);
+  assert.deepEqual(await observed, { cwd: "/spawn", source: "spawn", observationError: "timeout" });
   assert.equal(aborted, true);
 });
 
-test("TerminalService close observation is session-scoped, bounded, and capability-limited", async () => {
+test("TerminalService close observation is session-scoped, bounded, and capability-limited", async (t) => {
+  // Observation deadlines run on the test's clock. Each is armed as its
+  // observation starts, before the call returns its promise.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
   const idle = await service.createSession({ projectId: "project-a", sessionId: "idle", cols: 80, rows: 24 });
@@ -137,20 +147,23 @@ test("TerminalService close observation is session-scoped, bounded, and capabili
   };
   pty.processes[2].refreshForegroundProcess = () => new Promise(() => {});
 
-  const started = Date.now();
+  // An idle session must not wait for a sibling observer: with the clock never
+  // moved, no deadline can pass, so this settles on its own observation.
   const observedIdle = await service.observeForegroundProcess(idle.snapshot(), auth("idle"), 30);
-  const elapsed = Date.now() - started;
   assert.equal(observedIdle.observation, "available");
   assert.equal(observedIdle.foregroundBusy, false);
   assert.equal(noisyCalls, 0);
-  assert.ok(elapsed < 200, "an idle session must not wait for a sibling observer");
 
-  const timedOut = await service.observeForegroundProcess(noisy.snapshot(), auth("noisy"), 20);
+  const observingNoisy = service.observeForegroundProcess(noisy.snapshot(), auth("noisy"), 20);
+  t.mock.timers.tick(20);
+  const timedOut = await observingNoisy;
   assert.equal(timedOut.observation, "limited");
   assert.equal(timedOut.observationError, "timeout");
   assert.equal(noisyCalls, 1);
 
-  const project = await service.observeProjectForegroundProcesses("project-a", { serverId: "server-a", projectId: "project-a", scope: "read" }, 20);
+  const observingProject = service.observeProjectForegroundProcesses("project-a", { serverId: "server-a", projectId: "project-a", scope: "read" }, 20);
+  t.mock.timers.tick(20);
+  const project = await observingProject;
   assert.deepEqual(project.map((entry) => entry.sessionId).sort(), ["idle", "noisy"]);
   assert.equal(project.some((entry) => entry.sessionId === "other"), false);
   await service.shutdown();
@@ -192,24 +205,6 @@ function identity(sessionId = "session-a", projectId = "project-a") {
 
 function writeAuthorization(projectId = "project-a", sessionId = "session-a") {
   return { serverId: "server-a", projectId, sessionId, scope: "write" };
-}
-
-function waitFor(predicate, timeoutMs = 4_000) {
-  const startedAt = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (predicate()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        reject(new Error("timed out waiting for terminal state"));
-        return;
-      }
-      setTimeout(check, 10);
-    };
-    check();
-  });
 }
 
 function outputText(events) {
@@ -373,7 +368,7 @@ test("TerminalService resolves inactivity waits on exit and abort cleans up only
   assert.equal(timer.size, 0);
 });
 
-test("TerminalService incrementally drains one multi-megabyte PTY callback into checkpoints", { timeout: 5_000 }, async () => {
+test("TerminalService incrementally drains one multi-megabyte PTY callback into checkpoints", async () => {
   const pty = createPtyFactory();
   const pending = [];
   const admitted = [];
@@ -665,19 +660,34 @@ test("node-pty adapter supervises a real shell and preserves server-owned exit/o
     rows: 24,
   });
   const transcript = [];
+  const waiters = new Set();
+  /** Settles once the shell's output includes `text`. */
+  const printed = (text) => transcript.join("").includes(text)
+    ? Promise.resolve()
+    : new Promise((resolve) => waiters.add({ text, resolve }));
+  let reportExit;
+  const exited = new Promise((resolve) => { reportExit = resolve; });
   const subscription = service.subscribe(session.identity, {
     authorization: { ...session.identity, scope: "read", clientId: "real-shell-reader" },
     onEvent: (event) => {
-      if (event.type === "output") transcript.push(new TextDecoder().decode(event.bytes));
+      if (event.type === "exit") reportExit();
+      if (event.type !== "output") return;
+      transcript.push(new TextDecoder().decode(event.bytes));
+      for (const waiter of [...waiters]) {
+        if (!transcript.join("").includes(waiter.text)) continue;
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
     },
   });
   const write = { ...session.identity, scope: "write", clientId: "real-shell-writer" };
 
   try {
-    await waitFor(() => transcript.join("").includes("REAL_SHELL_READY"));
+    await printed("REAL_SHELL_READY");
     await service.input(session.identity, "hello-from-client\n", write);
-    await waitFor(() => transcript.join("").includes("REAL_SHELL_ECHO:hello-from-client"));
-    await waitFor(() => session.status === "exited");
+    await printed("REAL_SHELL_ECHO:hello-from-client");
+    await exited;
+    assert.equal(session.status, "exited");
     assert.equal(session.exit?.reason, "exit");
     assert.equal(transcript.join("").includes("REAL_SHELL_READY"), true);
     assert.equal(transcript.join("").includes("REAL_SHELL_ECHO:hello-from-client"), true);
