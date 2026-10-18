@@ -77,11 +77,21 @@ function manualTimers() {
 		clearTimeout(id) {
 			pending.delete(id);
 		},
-		/** Resolves with the first `ms` deadline that is, or becomes, pending. */
-		armed(ms) {
+		/**
+		 * Resolves with the first `ms` deadline that is, or becomes, pending.
+		 * Rejects if `during`, what would set it, settles first: then it never
+		 * will be.
+		 */
+		armed(ms, during) {
 			for (const [id, timer] of pending)
 				if (timer.ms === ms) return Promise.resolve(id);
-			return new Promise((resolve) => watchers.push({ ms, resolve }));
+			return new Promise((resolve, reject) => {
+				watchers.push({ ms, resolve });
+				during?.then(
+					() => reject(new Error(`settled without a ${ms} ms deadline`)),
+					reject,
+				);
+			});
 		},
 		/** That deadline's time comes. */
 		fire(id) {
@@ -90,9 +100,9 @@ function manualTimers() {
 			pending.delete(id);
 			timer.handler();
 		},
-		/** The first `ms` deadline set from now on comes due as soon as it is set. */
-		async expire(ms) {
-			this.fire(await this.armed(ms));
+		/** The first `ms` deadline `during` sets comes due as soon as it is set. */
+		async expire(ms, during) {
+			this.fire(await this.armed(ms, during));
 		},
 	};
 }
@@ -370,7 +380,7 @@ test('a socket nothing answers on is not usable, and is given up on at its deadl
 		const timers = manualTimers();
 		const probe = probeDockerSocket(docker.socketPath, 150, timers);
 		// The one deadline the probe sets is what gives up on it.
-		await timers.expire(150);
+		await timers.expire(150, probe);
 		assert.deepEqual(await probe, {
 			usable: false,
 			cause: 'unresponsive',
@@ -439,7 +449,7 @@ test('a container whose socket does not answer is offered in-place only', async 
 	await withEngine({}, async ({ check, docker, timers }) => {
 		docker.state.silent = true;
 		const report = check();
-		await timers.expire(200);
+		await timers.expire(200, report);
 		assert.deepEqual((await report).modes, ['in-place']);
 	});
 });
@@ -797,7 +807,7 @@ test('a replacement that never reports healthy is given up on at the deadline', 
 		{ health: () => 'starting', settings: { healthTimeoutMs: 150 } },
 		async ({ recreate, docker, container, outcome, timers }) => {
 			const recreated = recreate();
-			await timers.expire(150);
+			await timers.expire(150, recreated);
 			await assert.rejects(recreated, UpgradeError);
 			assert.equal(named(docker, 'terminay').Id, container.Id);
 			assert.equal(named(docker, 'terminay').State.Running, true);
@@ -884,7 +894,7 @@ test('a replacement with no health check is kept once it has stayed up', async (
 		async ({ recreate, docker, newImage, outcome, timers }) => {
 			const recreated = recreate();
 			// The grace period passes with the replacement still running.
-			await timers.expire(30);
+			await timers.expire(30, recreated);
 			await recreated;
 			const replacement = named(docker, 'terminay');
 			assert.equal(replacement.Image, newImage.Id);
@@ -919,8 +929,16 @@ test('the wait for health is one subscription and one look, never a repeated que
 			const recreated = recreate();
 			// The wait runs from the start until its deadline: anything that
 			// asked again would have done so in between.
-			const deadline = await timers.armed(400);
-			await replacementStarted;
+			const deadline = await timers.armed(400, recreated);
+			// Or the recreate failed before it got that far.
+			await Promise.race([
+				replacementStarted,
+				recreated.then(() => {
+					throw new Error(
+						'the recreate finished without starting a replacement',
+					);
+				}),
+			]);
 			timers.fire(deadline);
 			await assert.rejects(recreated, UpgradeError);
 			const replacement = docker.calls.findIndex((call) =>
@@ -1064,7 +1082,7 @@ test('recreate refuses without a usable socket, and outside a container', async 
 		);
 		docker.state.silent = true;
 		const unanswered = recreate({ probeTimeoutMs: 150 });
-		await timers.expire(150);
+		await timers.expire(150, unanswered);
 		await assert.rejects(unanswered, /no Docker daemon answered/u);
 		docker.state.silent = false;
 		await assert.rejects(
