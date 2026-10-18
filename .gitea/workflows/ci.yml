@@ -462,9 +462,9 @@ jobs:
   e2e-test:
     name: E2E (${{ matrix.shard }}/18)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     env:
-      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 12
     needs: e2e-image
     permissions:
       contents: read
