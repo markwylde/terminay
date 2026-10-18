@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { connect as connectSocket, type Socket } from 'node:net';
 import {
 	existsSync,
 	type FSWatcher,
@@ -81,6 +82,28 @@ export interface SessionHolderLaunchedProcess {
 	off(event: 'error', listener: (error: Error) => void): unknown;
 	/** Ends a holder whose launch was abandoned before it became ready. */
 	kill(): unknown;
+	/**
+	 * A `ChildProcess`'s stdio. When entry 3 is a stream, the holder closes it
+	 * once it is ready (`SESSION_HOLDER_ENV.readyFd`), and that close is heard.
+	 */
+	readonly stdio?: readonly unknown[];
+}
+
+interface ReadinessStream {
+	once(event: 'close', listener: () => void): unknown;
+	on(event: 'error', listener: () => void): unknown;
+	off(event: 'close', listener: () => void): unknown;
+	resume(): unknown;
+}
+
+function readinessOf(
+	child: SessionHolderLaunchedProcess,
+): ReadinessStream | undefined {
+	const stream = child.stdio?.[3] as Partial<ReadinessStream> | undefined;
+	return typeof stream?.once === 'function' &&
+		typeof stream.resume === 'function'
+		? (stream as ReadinessStream)
+		: undefined;
 }
 
 export type SessionHolderLauncher = (
@@ -155,8 +178,20 @@ export function createSessionHolderPtyFactory(
 	const incompatible: string[] = [];
 	let current: SessionHolderClient | undefined;
 	let launching: Promise<SessionHolderClient> | undefined;
-	/** Ends a launch still waiting for its holder when this server leaves. */
-	let launchAbort: AbortController | undefined;
+	/**
+	 * Waits on a holder that only the holder can end: a launch, a connect, a
+	 * holder asked to go. The server leaving ends them; no clock does.
+	 */
+	const waits = new Set<AbortController>();
+	const waitUntilLeaving = (): AbortController => {
+		const wait = new AbortController();
+		waits.add(wait);
+		return wait;
+	};
+	const leave = (reason: string): void => {
+		for (const wait of waits) wait.abort(new Error(reason));
+		waits.clear();
+	};
 	let limitMs = options.limitMs;
 	let detaching = false;
 	/** Sessions whose saved tail this server has read and may need to delete. */
@@ -279,82 +314,91 @@ export function createSessionHolderPtyFactory(
 		if (started !== undefined) return started;
 		started = (async () => {
 			const held: HeldSessionSummary[] = [];
-			for (const record of readHolderRecords(dataRoot)) {
-				const holder: SessionHolderIdentity = {
-					pid: record.pid,
-					startedAt: record.startedAt,
-				};
-				if (!processIsAlive(record.pid)) {
-					removeHolderFiles(dataRoot, record.generation);
-					observe({ kind: 'record-removed', holder });
-					continue;
-				}
-				let client: SessionHolderClient;
-				try {
-					client = await SessionHolderClient.connect(record);
-				} catch (error) {
-					if (
-						error instanceof SessionHolderRefusedError &&
-						error.reason === 'version'
-					) {
-						// Nothing this server can say to it. SIGTERM is the one request
-						// every holder honours: it saves tails and ends its sessions.
-						incompatible.push(record.generation);
-						observe({ kind: 'incompatible', holder, signal: 'SIGTERM' });
-						// Wait for it to finish, so the tails it saves are there to
-						// be read by the restore that follows.
-						const gone = holderRecordRemoved(dataRoot, record.generation);
-						try {
-							process.kill(record.pid, 'SIGTERM');
-						} catch {
-							/* already gone */
-						}
-						await gone;
-					} else
-						observe({
-							kind: 'unreachable',
-							holder,
-							reason:
-								error instanceof SessionHolderRefusedError
-									? error.reason
-									: error instanceof Error
-										? error.message
-										: String(error),
+			const wait = waitUntilLeaving();
+			try {
+				for (const record of readHolderRecords(dataRoot)) {
+					const holder: SessionHolderIdentity = {
+						pid: record.pid,
+						startedAt: record.startedAt,
+					};
+					if (!processIsAlive(record.pid)) {
+						removeHolderFiles(dataRoot, record.generation);
+						observe({ kind: 'record-removed', holder });
+						continue;
+					}
+					let client: SessionHolderClient;
+					try {
+						// A holder that ends while this waits closes the socket, which
+						// ends the wait; one alive but silent is ended by the server leaving.
+						client = await SessionHolderClient.connect(record, {
+							signal: wait.signal,
 						});
-					continue;
-				}
-				track(client, record.startedAt);
-				const sameBuild = client.buildId === options.buildId;
-				const wasDraining = client.draining;
-				if (sameBuild && !wasDraining) current ??= client;
-				else if (!wasDraining) client.drain();
-				const sessions = await client.list();
-				for (const session of sessions) {
-					owners.set(session.sessionId, client);
-					held.push({ ...session, generation: client.generation });
-					noteSession(
-						client,
+					} catch (error) {
+						if (
+							error instanceof SessionHolderRefusedError &&
+							error.reason === 'version'
+						) {
+							// Nothing this server can say to it. SIGTERM is the one request
+							// every holder honours: it saves tails and ends its sessions.
+							incompatible.push(record.generation);
+							observe({ kind: 'incompatible', holder, signal: 'SIGTERM' });
+							// Wait for it to finish, so the tails it saves are there to
+							// be read by the restore that follows.
+							const gone = holderGone(dataRoot, record, wait.signal);
+							try {
+								process.kill(record.pid, 'SIGTERM');
+							} catch {
+								/* already gone */
+							}
+							await gone;
+						} else
+							observe({
+								kind: 'unreachable',
+								holder,
+								reason:
+									error instanceof SessionHolderRefusedError
+										? error.reason
+										: error instanceof Error
+											? error.message
+											: String(error),
+							});
+						continue;
+					}
+					track(client, record.startedAt);
+					const sameBuild = client.buildId === options.buildId;
+					const wasDraining = client.draining;
+					if (sameBuild && !wasDraining) current ??= client;
+					else if (!wasDraining) client.drain();
+					const sessions = await client.list();
+					for (const session of sessions) {
+						owners.set(session.sessionId, client);
+						held.push({ ...session, generation: client.generation });
+						noteSession(
+							client,
+							holder,
+							session,
+							// A holder saves a tail with an exit only for a session that
+							// ended with no server watching it.
+							session.exit !== undefined &&
+								readSessionTail(dataRoot, session.sessionId)?.exit !== undefined,
+						);
+					}
+					const liveSessions = liveSessionsOf(client);
+					observe({
+						kind: 'attached',
 						holder,
-						session,
-						// A holder saves a tail with an exit only for a session that
-						// ended with no server watching it.
-						session.exit !== undefined &&
-							readSessionTail(dataRoot, session.sessionId)?.exit !== undefined,
-					);
+						buildId: client.buildId,
+						sameBuild,
+						draining: wasDraining,
+						liveSessions,
+						endedSessions: sessions.length - liveSessions,
+						limitMs,
+					});
+					if (!sameBuild && !wasDraining)
+						observe({ kind: 'drained', holder, cause: 'build-mismatch' });
 				}
-				const liveSessions = liveSessionsOf(client);
-				observe({
-					kind: 'attached',
-					holder,
-					buildId: client.buildId,
-					sameBuild,
-					draining: wasDraining,
-					liveSessions,
-					endedSessions: sessions.length - liveSessions,
-					limitMs,
-				});
-				if (!sameBuild && !wasDraining)
-					observe({ kind: 'drained', holder, cause: 'build-mismatch' });
+			} finally {
+				waits.delete(wait);
 			}
 			reportUnheardCloses();
 			return held;
@@ -367,19 +411,41 @@ export function createSessionHolderPtyFactory(
 		if (current !== undefined && !current.closed) return current;
 		launching ??= (async () => {
 			const launchStartedAt = Date.now();
-			const abort = new AbortController();
-			launchAbort = abort;
+			const abort = waitUntilLeaving();
+			let child: SessionHolderLaunchedProcess | undefined;
+			// The holder dying while it is being spoken to ends that too.
+			const exited = (): void =>
+				abort.abort(new Error('session holder exited before it answered'));
+			const abandon = (): void => {
+				try {
+					child?.kill();
+				} catch {
+					/* already gone */
+				}
+			};
 			try {
 				const generation = randomBytes(8).toString('hex');
 				if (!socketPathFits(sessionHolderSocketPath(dataRoot, generation)))
 					throw new Error('session holder socket path is too long');
 				const record = await launchSessionHolder(
-					options,
+					{
+						...options,
+						launch: (request) => {
+							child = options.launch(request);
+							return child;
+						},
+					},
 					generation,
 					limitMs,
 					abort.signal,
 				);
-				const client = await SessionHolderClient.connect(record);
+				// Abandoning the launch itself ends its process; from here on so
+				// does abandoning the connect.
+				abort.signal.addEventListener('abort', abandon, { once: true });
+				child?.once('exit', exited);
+				const client = await SessionHolderClient.connect(record, {
+					signal: abort.signal,
+				});
 				track(client, record.startedAt);
 				current = client;
 				observe({
@@ -398,7 +464,9 @@ export function createSessionHolderPtyFactory(
 				throw error;
 			} finally {
 				launching = undefined;
-				if (launchAbort === abort) launchAbort = undefined;
+				waits.delete(abort);
+				abort.signal.removeEventListener('abort', abandon);
+				child?.off('exit', exited);
 			}
 		})();
 		return launching;
@@ -562,7 +630,7 @@ export function createSessionHolderPtyFactory(
 		},
 		async endAll() {
 			// A holder still starting would be left running with nobody to end it.
-			launchAbort?.abort(new Error('the server ended every session'));
+			leave('the server ended every session');
 			await start();
 			await Promise.all(
 				[...clients.values()].map(async (client) => {
@@ -589,7 +657,7 @@ export function createSessionHolderPtyFactory(
 		},
 		async detach() {
 			detaching = true;
-			launchAbort?.abort(new Error('the server is leaving'));
+			leave('the server is leaving');
 			for (const client of clients.values()) leaving.add(client);
 			await Promise.all([...clients.values()].map((client) => client.close()));
 		},
@@ -622,8 +690,12 @@ export function launchDetachedSessionHolder(
 ): ChildProcess {
 	const child = spawnChild(execPath, [...args], {
 		detached: true,
-		stdio: ['ignore', 'ignore', 'ignore'],
-		env: { ...env } as NodeJS.ProcessEnv,
+		// Descriptor 3 is closed by the holder once it is ready.
+		stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+		env: {
+			...env,
+			[SESSION_HOLDER_ENV.readyFd]: '3',
+		} as Record<string, string | undefined> as NodeJS.ProcessEnv,
 	});
 	child.unref();
 	return child;
@@ -698,30 +770,50 @@ function processIsAlive(pid: number): boolean {
 	}
 }
 
-const HOLDER_EXIT_TIMEOUT_MS = 5_000;
-
-/** Resolves when a holder has removed its record, which it does last. */
-function holderRecordRemoved(
+/**
+ * Resolves once a holder asked to go has gone: its record removed, which it
+ * does last, or its socket closing on a connection that never greets it,
+ * which it does only after saving tails, and which its process ending always
+ * does. Ending the wait early would let the restore that follows miss those
+ * tails, so only an event ends it, or the server leaving.
+ */
+function holderGone(
 	dataRoot: string,
-	generation: string,
+	record: SessionHolderRecordFile,
+	signal: AbortSignal,
 ): Promise<void> {
-	const recordPath = sessionHolderRecordPath(dataRoot, generation);
+	const recordPath = sessionHolderRecordPath(dataRoot, record.generation);
 	return new Promise((resolve) => {
-		if (!existsSync(recordPath)) {
-			resolve();
-			return;
-		}
+		let watcher: FSWatcher | undefined;
+		let probe: Socket | undefined;
+		let done = false;
 		const finish = (): void => {
-			clearTimeout(timer);
-			watcher.close();
+			if (done) return;
+			done = true;
+			watcher?.close();
+			probe?.destroy();
+			signal.removeEventListener('abort', finish);
 			resolve();
 		};
-		const watcher = watch(sessionHolderDirectory(dataRoot), () => {
-			if (!existsSync(recordPath)) finish();
-		});
-		// A holder that will not go is not allowed to hold start-up hostage.
-		const timer = setTimeout(finish, HOLDER_EXIT_TIMEOUT_MS);
-		watcher.on('error', finish);
+		if (signal.aborted || !existsSync(recordPath)) {
+			finish();
+			return;
+		}
+		signal.addEventListener('abort', finish, { once: true });
+		probe = connectSocket(record.socketPath);
+		// A refused or failed connection is followed by its close.
+		probe.on('error', () => undefined);
+		probe.once('close', finish);
+		try {
+			watcher = watch(sessionHolderDirectory(dataRoot), () => {
+				if (!existsSync(recordPath)) finish();
+			});
+			// The probe still hears the holder end.
+			watcher.on('error', () => watcher?.close());
+		} catch {
+			/* the probe still hears the holder end */
+		}
+		if (!existsSync(recordPath)) finish();
 	});
 }
 
@@ -747,6 +839,7 @@ export function launchSessionHolder(
 	return new Promise((resolve, reject) => {
 		let settled = false;
 		let child: SessionHolderLaunchedProcess | undefined;
+		let ready: ReadinessStream | undefined;
 		let watcher: FSWatcher | undefined;
 		const onExit = (
 			code: number | null,
@@ -779,6 +872,7 @@ export function launchSessionHolder(
 			signal?.removeEventListener('abort', onAbort);
 			child?.off('exit', onExit);
 			child?.off('error', onError);
+			ready?.off('close', check);
 		};
 		function fail(error: Error): void {
 			if (settled) return;
@@ -821,6 +915,12 @@ export function launchSessionHolder(
 		// after the launcher returns.
 		child.once('exit', onExit);
 		child.once('error', onError);
+		// The holder closing its end says its record is in place; a holder
+		// that dies closes it too, and its exit follows.
+		ready = readinessOf(child);
+		ready?.on('error', () => undefined);
+		ready?.once('close', check);
+		ready?.resume();
 		try {
 			watcher = watch(directory, check);
 		} catch (error) {

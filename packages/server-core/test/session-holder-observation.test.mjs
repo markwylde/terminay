@@ -49,6 +49,13 @@ function launchHolder(entry, env) {
   return child;
 }
 
+/** Settles once a holder this file launched says it is ready (its record is in place). */
+function holderReady(child) {
+  const ready = child.stdio[3];
+  ready.resume();
+  return new Promise((resolve) => ready.once("close", resolve));
+}
+
 /** Settles once a holder this file launched has exited. */
 function holderExited(pid) {
   const holder = holders.get(pid);
@@ -241,11 +248,8 @@ test("a record whose process is gone and a holder that cannot be spoken to are t
     sessionHolderRecordPath(dataRoot, "aaaaaaaaaaaaaaaa"),
     JSON.stringify({ generation: "aaaaaaaaaaaaaaaa", pid: gone, buildId: "build-a", versions: [1], credential: "c", startedAt: 10 }),
   );
-  launchHolder(FUTURE_ENTRY, { TEST_HOLDER_DATA_ROOT: dataRoot });
-  const future = await whenWritten(
-    sessionHolderDirectory(dataRoot),
-    () => readHolderRecords(dataRoot).find((record) => record.versions.includes(99)),
-  );
+  await holderReady(launchHolder(FUTURE_ENTRY, { TEST_HOLDER_DATA_ROOT: dataRoot }));
+  const future = readHolderRecords(dataRoot).find((record) => record.versions.includes(99));
 
   const next = server(dataRoot);
   await next.factory.start();

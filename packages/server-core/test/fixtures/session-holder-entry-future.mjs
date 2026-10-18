@@ -1,7 +1,8 @@
 // A holder from a future build: it speaks only a protocol version no current
 // server knows. It holds one real shell so a test can see what becomes of it.
+import { closeSync } from "node:fs";
 import * as nodePty from "node-pty";
-import { SessionHolder } from "../../dist/index.js";
+import { SESSION_HOLDER_ENV, SessionHolder } from "../../dist/index.js";
 
 const holder = await SessionHolder.start({
   dataRoot: process.env.TEST_HOLDER_DATA_ROOT,
@@ -13,3 +14,6 @@ const holder = await SessionHolder.start({
   onClosed: () => process.exit(0),
 });
 process.on("SIGTERM", () => void holder.close("signal"));
+// Ready, as a real holder says it: close the descriptor the launcher holds.
+const readyFd = Number(process.env[SESSION_HOLDER_ENV.readyFd]);
+if (readyFd > 2) closeSync(readyFd);

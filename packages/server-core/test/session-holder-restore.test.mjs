@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, watch } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createInitialWorkspace,
@@ -14,7 +14,6 @@ import {
   readHolderRecords,
   reattachHeldSessions,
   SessionHolderClient,
-  sessionHolderDirectory,
   sessionTailPath,
   TerminalService,
   WorkspaceStore,
@@ -46,6 +45,13 @@ function launchHolder(entry, env) {
   return child;
 }
 
+/** Settles once a holder this file launched says it is ready (its record is in place). */
+function holderReady(child) {
+  const ready = child.stdio[3];
+  ready.resume();
+  return new Promise((resolve) => ready.once("close", resolve));
+}
+
 /** Settles once a holder this file launched has exited. */
 function holderExited(pid) {
   const holder = holders.get(pid);
@@ -63,33 +69,6 @@ async function removeDataRoot(dataRoot) {
     if (holders.has(record.pid)) await holderExited(record.pid);
   }
   rmSync(dataRoot, { recursive: true, force: true });
-}
-
-/**
- * Settles with `read()`'s value once it is truthy, re-reading whenever an entry
- * in `directory` changes: holders and the server write and remove these files
- * by name, so a watch sees each change.
- */
-function whenWritten(directory, read) {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const check = () => {
-      if (done) return;
-      const value = read();
-      if (!value) return;
-      done = true;
-      watcher.close();
-      resolve(value);
-    };
-    const watcher = watch(directory, check);
-    watcher.on("error", (error) => {
-      done = true;
-      watcher.close();
-      reject(error);
-    });
-    check();
-  });
 }
 
 /** Settles once a terminal's live output includes `value`. */
@@ -405,12 +384,28 @@ test("panels, order, and layout are untouched, and only a project with no termin
 });
 
 function realServer(dataRoot, workspace, buildId = "build-a") {
-  const holder = createSessionHolderPtyFactory({
+  const factory = createSessionHolderPtyFactory({
     dataRoot,
     buildId,
     limitMs: 60_000,
     launch: ({ env }) => launchHolder(ENTRY, env),
   });
+  // Ending a session, tail and all, is heard when the factory finishes it.
+  const ends = new Map();
+  const ended = (sessionId) => {
+    if (!ends.has(sessionId)) {
+      let resolve;
+      ends.set(sessionId, { promise: new Promise((settle) => { resolve = settle; }), resolve: () => resolve() });
+    }
+    return ends.get(sessionId);
+  };
+  const holder = {
+    ...factory,
+    end: async (sessionId) => {
+      await factory.end(sessionId);
+      ended(sessionId).resolve();
+    },
+  };
   let counter = 0;
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
@@ -440,7 +435,7 @@ function realServer(dataRoot, workspace, buildId = "build-a") {
       },
     },
   });
-  return { composition, holder };
+  return { composition, holder, ended: (sessionId) => ended(sessionId).promise };
 }
 
 test("a composed server restarts onto its running terminals, and ending them is explicit", async (t) => {
@@ -547,7 +542,7 @@ test("a saved tail becomes the panel's output and is deleted when the panel clos
   // A tail whose panel no longer exists has nothing to belong to.
   writeSessionTail(dataRoot, { sessionId: "forgotten", bufferedFrom: 0, outputPosition: 1, savedAt: 5, bytes: bytesOf("x") });
 
-  const { composition } = realServer(dataRoot, workspace);
+  const { composition, ended } = realServer(dataRoot, workspace);
   await composition.start();
   t.after(async () => {
     await composition.endAllTerminalSessions();
@@ -563,7 +558,8 @@ test("a saved tail becomes the panel's output and is deleted when the panel clos
 
   const closed = composition.workspaceOperations.applyHostCommand("close", { type: "panel.close", panelId: "panel-gone" }, workspace.state.revision);
   assert.equal(closed.ok, true, closed.ok ? undefined : closed.conflict.message);
-  await whenWritten(dirname(sessionTailPath(dataRoot, "gone")), () => !existsSync(sessionTailPath(dataRoot, "gone")));
+  await ended("gone");
+  assert.equal(existsSync(sessionTailPath(dataRoot, "gone")), false);
 });
 
 test("a holder this server cannot speak to has its sessions ended and shown as ended", async (t) => {
@@ -571,11 +567,8 @@ test("a holder this server cannot speak to has its sessions ended and shown as e
   t.after(() => removeDataRoot(dataRoot));
 
   const futureEntry = fileURLToPath(new URL("./fixtures/session-holder-entry-future.mjs", import.meta.url));
-  launchHolder(futureEntry, { TEST_HOLDER_DATA_ROOT: dataRoot });
-  const [future] = await whenWritten(sessionHolderDirectory(dataRoot), () => {
-    const records = readHolderRecords(dataRoot);
-    return records.length === 1 ? records : undefined;
-  });
+  await holderReady(launchHolder(futureEntry, { TEST_HOLDER_DATA_ROOT: dataRoot }));
+  const [future] = readHolderRecords(dataRoot);
   assert.deepEqual(future.versions, [99]);
 
   // Something from the future started a shell in it.
