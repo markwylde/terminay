@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, watch } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   createInitialWorkspace,
   createServerCoreComposition,
@@ -13,6 +14,7 @@ import {
   readHolderRecords,
   reattachHeldSessions,
   SessionHolderClient,
+  sessionHolderDirectory,
   sessionTailPath,
   TerminalService,
   WorkspaceStore,
@@ -34,14 +36,96 @@ function isAlive(pid) {
   }
 }
 
-async function until(predicate, label, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await predicate();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await delay(25);
+/** Every holder this file launched, by pid. */
+const holders = new Map();
+
+/** Launch a holder the way a host does, keeping its process to hear it exit. */
+function launchHolder(entry, env) {
+  const child = launchDetachedSessionHolder(process.execPath, [entry], { ...process.env, ...env });
+  holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
+  return child;
+}
+
+/** Settles once a holder this file launched has exited. */
+function holderExited(pid) {
+  const holder = holders.get(pid);
+  assert.ok(holder, `holder ${pid} was not launched by this test`);
+  // The holder is unreferenced so it never keeps a test alive; waiting on it
+  // does, until it exits.
+  holder.child.ref();
+  return holder.exited;
+}
+
+/** Kill whatever holders a failed test left, then remove its data root. */
+async function removeDataRoot(dataRoot) {
+  for (const record of readHolderRecords(dataRoot)) {
+    try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
+    if (holders.has(record.pid)) await holderExited(record.pid);
   }
+  rmSync(dataRoot, { recursive: true, force: true });
+}
+
+/**
+ * Settles with `read()`'s value once it is truthy, re-reading whenever an entry
+ * in `directory` changes: holders and the server write and remove these files
+ * by name, so a watch sees each change.
+ */
+function whenWritten(directory, read) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const check = () => {
+      if (done) return;
+      const value = read();
+      if (!value) return;
+      done = true;
+      watcher.close();
+      resolve(value);
+    };
+    const watcher = watch(directory, check);
+    watcher.on("error", (error) => {
+      done = true;
+      watcher.close();
+      reject(error);
+    });
+    check();
+  });
+}
+
+/** Settles once a terminal's live output includes `value`. */
+function outputIncludes(terminal, sessionId, value) {
+  let output = "";
+  let subscription;
+  return new Promise((resolve) => {
+    subscription = terminal.subscribe(sessionId, {
+      onEvent: (event) => {
+        if (event.type !== "output") return;
+        output += text(event.bytes);
+        if (output.includes(value)) resolve();
+      },
+    });
+  }).finally(() => subscription.close());
+}
+
+/**
+ * Have a shell hold the write end of a FIFO for as long as it lives. The open
+ * returned settles once the shell holds it; reading it to the end settles
+ * once the shell has exited, because exiting is what closes that end.
+ */
+async function lifeline(terminal, sessionId, dataRoot) {
+  const path = join(dataRoot, `life-${sessionId}`);
+  assert.equal(spawnSync("mkfifo", [path]).status, 0, "mkfifo");
+  await terminal.write(sessionId, bytesOf(`exec 3> '${path}'\n`));
+  const handle = await open(path, "r");
+  return {
+    ended: (async () => {
+      try {
+        await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+    })(),
+  };
 }
 
 /** A workspace with two projects; `default` has a split of terminals and a file. */
@@ -325,7 +409,7 @@ function realServer(dataRoot, workspace, buildId = "build-a") {
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env }),
+    launch: ({ env }) => { launchHolder(ENTRY, env); },
   });
   let counter = 0;
   const composition = createServerCoreComposition({
@@ -361,13 +445,7 @@ function realServer(dataRoot, workspace, buildId = "build-a") {
 
 test("a composed server restarts onto its running terminals, and ending them is explicit", async (t) => {
   const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), "th-")));
-  t.after(async () => {
-    for (const record of readHolderRecords(dataRoot)) {
-      try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
-    }
-    await delay(50);
-    rmSync(dataRoot, { recursive: true, force: true });
-  });
+  t.after(() => removeDataRoot(dataRoot));
 
   // First life: nothing restored, so each project is seeded with a terminal.
   const firstWorkspace = seededWorkspace([]);
@@ -377,8 +455,11 @@ test("a composed server restarts onto its running terminals, and ending them is 
   assert.equal(seeded.length, 2);
   const [keptId, closedId] = seeded;
   const pids = Object.fromEntries(seeded.map((id) => [id, first.composition.terminal.getSession(id).pid]));
+  const [holder] = readHolderRecords(dataRoot);
+  const closedShell = await lifeline(first.composition.terminal, closedId, dataRoot);
+  const answered = outputIncludes(first.composition.terminal, keptId, "kept-23");
   await first.composition.terminal.write(keptId, bytesOf("echo kept-$((20+3))\n"));
-  await until(() => text(first.composition.terminal.readRetainedOutput(keptId, { maxBytes: 65536 }).bytes).includes("kept-23"), "the first command");
+  await answered;
   const panelsBefore = structuredClone(firstWorkspace.state.panels);
 
   // Shutting down lets go: no exit is recorded and both shells keep running.
@@ -404,13 +485,16 @@ test("a composed server restarts onto its running terminals, and ending them is 
     panelId: `panel-${closedId}`,
   }, secondWorkspace.state.revision);
   assert.equal(closed.ok, true, closed.ok ? undefined : closed.conflict.message);
-  await until(() => !isAlive(pids[closedId]), "the closed terminal's shell to end");
+  await closedShell.ended;
   assert.equal(isAlive(pids[keptId]), true);
 
-  // Ending everything leaves no shell, no panel, and no holder.
+  // Ending everything leaves no shell, no panel, and no holder. The holder
+  // exits once its shells have, and removes its record before it does.
   await second.composition.endAllTerminalSessions();
   await second.composition.shutdown();
-  await until(() => !isAlive(pids[keptId]) && readHolderRecords(dataRoot).length === 0, "everything to end");
+  await holderExited(holder.pid);
+  assert.equal(isAlive(pids[keptId]), false);
+  assert.deepEqual(readHolderRecords(dataRoot), []);
   assert.deepEqual(Object.keys(secondWorkspace.state.terminalSessions), []);
   assert.deepEqual(Object.values(secondWorkspace.state.panels).map((panel) => panel.type), ["file"]);
 });
@@ -479,25 +563,19 @@ test("a saved tail becomes the panel's output and is deleted when the panel clos
 
   const closed = composition.workspaceOperations.applyHostCommand("close", { type: "panel.close", panelId: "panel-gone" }, workspace.state.revision);
   assert.equal(closed.ok, true, closed.ok ? undefined : closed.conflict.message);
-  await until(() => !existsSync(sessionTailPath(dataRoot, "gone")), "the tail to be deleted");
+  await whenWritten(dirname(sessionTailPath(dataRoot, "gone")), () => !existsSync(sessionTailPath(dataRoot, "gone")));
 });
 
 test("a holder this server cannot speak to has its sessions ended and shown as ended", async (t) => {
   const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), "th-")));
-  t.after(async () => {
-    for (const record of readHolderRecords(dataRoot)) {
-      try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
-    }
-    await delay(50);
-    rmSync(dataRoot, { recursive: true, force: true });
-  });
+  t.after(() => removeDataRoot(dataRoot));
 
   const futureEntry = fileURLToPath(new URL("./fixtures/session-holder-entry-future.mjs", import.meta.url));
-  launchDetachedSessionHolder(process.execPath, [futureEntry], { ...process.env, TEST_HOLDER_DATA_ROOT: dataRoot });
-  const [future] = await until(() => {
+  launchHolder(futureEntry, { TEST_HOLDER_DATA_ROOT: dataRoot });
+  const [future] = await whenWritten(sessionHolderDirectory(dataRoot), () => {
     const records = readHolderRecords(dataRoot);
     return records.length === 1 ? records : undefined;
-  }, "the future holder");
+  });
   assert.deepEqual(future.versions, [99]);
 
   // Something from the future started a shell in it.
@@ -506,9 +584,14 @@ test("a holder this server cannot speak to has its sessions ended and shown as e
     sessionId: "from-the-future", projectId: "default", shellPath: "/bin/sh", args: [], cwd: dataRoot, cols: 80, rows: 24,
   });
   let seen = "";
-  stream.onData((_position, bytes) => { seen += text(bytes); });
+  const answered = new Promise((resolve) => {
+    stream.onData((_position, bytes) => {
+      seen += text(bytes);
+      if (seen.includes("future-99")) resolve();
+    });
+  });
   futureServer.write("from-the-future", bytesOf("echo future-$((90+9))\n"));
-  await until(() => seen.includes("future-99"), "the future shell to answer");
+  await answered;
   await futureServer.close();
 
   const workspace = reloaded(seededWorkspace(["from-the-future"]));
@@ -520,8 +603,11 @@ test("a holder this server cannot speak to has its sessions ended and shown as e
   });
 
   assert.deepEqual(holder.incompatibleGenerations(), ["ffffffffffffffff"]);
-  assert.equal(isAlive(future.pid), false, "the unreachable holder is still running");
+  // Start waited for the holder to remove its record, which it does only
+  // after its shells have ended; the process itself exits just after.
+  assert.equal(readHolderRecords(dataRoot).some((entry) => entry.pid === future.pid), false, "the unreachable holder is still serving");
   assert.equal(isAlive(record.pid), false, "its shell is still running");
+  await holderExited(future.pid);
   const ended = composition.terminal.getSession("from-the-future");
   assert.equal(ended.status, "interrupted");
   assert.equal(workspace.state.terminalSessions["from-the-future"].status, "interrupted");
