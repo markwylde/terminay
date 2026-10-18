@@ -1,0 +1,31 @@
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -8475,6 +8475,7 @@
+ var ICE_FAILED = 2;
+ var CONSENT_INTERVAL = 5;
+ var CONSENT_FAILURES = 6;
++var CONSENT_RETRANSMISSIONS = 5;
+ var CandidatePairState = /* @__PURE__ */ ((CandidatePairState2) => {
+   CandidatePairState2[CandidatePairState2["FROZEN"] = 0] = "FROZEN";
+   CandidatePairState2[CandidatePairState2["WAITING"] = 1] = "WAITING";
+@@ -9185,7 +9186,7 @@
+               request,
+               nominated.remoteAddr,
+               Buffer.from(this.remotePassword, "utf8"),
+-              0,
++              CONSENT_RETRANSMISSIONS,
+               (attempt) => {
+                 if (attempt > 0) {
+                   nominated.retransmissionsSent++;
+@@ -9201,8 +9202,9 @@
+             if (nominated.id === this.nominated?.id) {
+               log23("no stun response");
+               failures++;
+-              this.setState("disconnected");
+-              break;
++              if (this.state !== "disconnected") {
++                this.setState("disconnected");
++              }
+             }
+           }
+           if (failures >= CONSENT_FAILURES) {
