@@ -500,8 +500,8 @@ if (process.argv[2] === '--child') {
       holdingWriter = spawnCheckpointChild(databasePath, 'writer-hold')
       await holdingWriter.checkpoint
 
-      // With no busy timeout, a reader that had to wait for the writer would
-      // fail with SQLITE_BUSY instead of reading.
+      // No busy timeout: a reader that had to wait for the uncommitted writer
+      // would fail with SQLITE_BUSY at once instead of reading.
       const reader = openConnection(databasePath, 0)
       const visible = reader
         .prepare('SELECT revision, value FROM workspace_state WHERE id = ?')
@@ -515,6 +515,13 @@ if (process.argv[2] === '--child') {
       // The writer is held until the test kills it, so a busy result at all
       // is the bounded timeout expiring: an unbounded wait would never end.
       const competingWriter = openConnection(databasePath, 75)
+      // The bound a contending writer waits for is the connection's own busy
+      // timeout, read back from SQLite rather than timed.
+      assert.deepEqual(
+        { ...competingWriter.prepare('PRAGMA busy_timeout').get() },
+        { timeout: 75 },
+        'writer contention must respect the bounded busy timeout',
+      )
       assert.throws(
         () => competingWriter.exec('BEGIN IMMEDIATE'),
         isSqliteBusy,
