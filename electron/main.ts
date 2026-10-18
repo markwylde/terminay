@@ -1611,6 +1611,12 @@ if (process.env.TERMINAY_TEST === '1') {
 			value: getRunningTerminalCountForWindow,
 		},
 	);
+	// The revision of the workspace the embedded server holds now, so a test
+	// can wait until a window has drawn everything committed so far.
+	Object.defineProperty(globalThis, '__terminayTestWorkspaceRevision', {
+		configurable: true,
+		value: () => serverTerminalAuthority?.workspace.state.revision ?? 0,
+	});
 }
 
 // macOS Dock tile, and on Linux the launcher count of desktops that read one.

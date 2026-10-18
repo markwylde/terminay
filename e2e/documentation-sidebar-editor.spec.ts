@@ -1,7 +1,17 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from './fixtures';
+import {
+	advanceRendererClock,
+	holdRendererClock,
+	installRendererClock,
+	releaseRendererClock,
+} from './support/renderer-clock';
 import { openDocumentationSidebar, setProjectRoot } from './support/ui';
+
+/** How long the editor takes what it reports after a change of views as the
+ * change of views, not an edit (DocumentationEditor), and a little more. */
+const VIEW_CHANGE_QUIET_MS = 300;
 
 test('Documentation groups Markdown by folder and opens the rich document surface', async ({
 	createWorkspace,
@@ -88,7 +98,17 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	await mainWindow.keyboard.press('End');
 	await mainWindow.keyboard.type(' Focus stays here.');
 	await expect(richText).toBeFocused();
-	await mainWindow.waitForTimeout(1_200);
+	// The autosave has written the edit and the editor has taken in its
+	// answer, and the focus is still where the user left it.
+	await expect
+		.poll(() =>
+			readFile(
+				path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
+				'utf8',
+			),
+		)
+		.toContain('Focus stays here.');
+	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 	await expect(richText).toBeFocused();
 	await expect(editor.locator('.documentation-editor__status')).toHaveCount(0);
 	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
@@ -127,13 +147,15 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 	);
 	await expect(editor).toBeVisible();
 	await expect(mainWindow.locator('.project-workspace--active')).toBeVisible();
-	await mainWindow.waitForTimeout(1_200);
-	expect(
-		await readFile(
+	const onDisk = () =>
+		readFile(
 			path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
 			'utf8',
-		),
-	).toContain(':::info');
+		);
+	await expect.poll(onDisk).toContain(':::info');
+	// Changing views quiets the editor's change reports for a moment of the
+	// renderer's time; the test's clock is on it from here.
+	await installRendererClock(mainWindow);
 	await editor.getByRole('radio', { name: 'Source mode' }).click();
 	await expect(editor.getByText('Source mode', { exact: true })).toBeVisible();
 	await expect(editor.locator('.cm-sourceView')).toHaveCSS(
@@ -147,15 +169,25 @@ test('Documentation groups Markdown by folder and opens the rich document surfac
 		.all()) {
 		await expect(pane).toHaveCSS('background-color', 'rgb(13, 16, 20)');
 	}
-	await mainWindow.waitForTimeout(1_200);
-	expect(
-		await readFile(
-			path.join(workspace.rootDir, 'docs/guides/getting-started.md'),
-			'utf8',
-		),
-	).toContain(':::info');
+	// Changing views is not an edit; whether it lost the admonition is read
+	// off the next save, below, which comes after anything it saved.
 
 	await editor.getByRole('radio', { name: 'Rich text', exact: true }).click();
+	// An edit is one again once that moment is over.
+	await holdRendererClock(mainWindow);
+	await advanceRendererClock(mainWindow, VIEW_CHANGE_QUIET_MS);
+	await releaseRendererClock(mainWindow);
+	// Saves are made one after another, so the one that carries this edit
+	// comes after any the change of views made, and the admonition is in it.
+	await richText.locator('h1').first().click();
+	await mainWindow.keyboard.press('End');
+	await mainWindow.keyboard.type(' after-views');
+	await expect
+		.poll(async () => {
+			const text = await onDisk();
+			return { info: text.includes(':::info'), edit: text.includes('after-views') };
+		})
+		.toEqual({ info: true, edit: true });
 	await editor.getByRole('button', { name: 'Insert Table' }).click();
 	const richTable = editor.locator('table[class*="_tableEditor_"]');
 	await expect(richTable).toBeVisible();
@@ -492,6 +524,9 @@ test('Documentation does not rewrite a document that was only read', async ({
 	});
 	await setProjectRoot(mainWindow, workspace.rootDir);
 	await openDocumentationSidebar(mainWindow);
+	// The autosave delay is the renderer's time: the test's clock is on it
+	// from before the document opens.
+	await installRendererClock(mainWindow);
 	await mainWindow.getByRole('treeitem', { name: /^Readme$/i }).click();
 	const editor = mainWindow.locator('.documentation-editor');
 	await expect(
@@ -503,10 +538,15 @@ test('Documentation does not rewrite a document that was only read', async ({
 	// Collapsing a soft line break changes what the editor holds, and the editor
 	// reports that normalization the moment it parses the document. Opening a
 	// file must not be an edit: well past the one-second autosave delay, the
-	// bytes on disk are still the author's.
-	await mainWindow.waitForTimeout(2_500);
+	// bytes on disk are still the author's. A save that delay set off would
+	// still be under way, the panel dirty, or done, the file rewritten.
+	await holdRendererClock(mainWindow);
+	await advanceRendererClock(mainWindow, 2_500);
+	await releaseRendererClock(mainWindow);
+	expect(
+		await mainWindow.locator('.file-panel').getAttribute('data-dirty'),
+	).toBe('false');
 	expect(await workspace.readText('README.md')).toBe(handWrappedDocument);
-	await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'false');
 });
 
 test('Documentation keeps typed whitespace and the wrapping of untouched prose', async ({

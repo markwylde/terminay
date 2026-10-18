@@ -5,6 +5,7 @@ import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	activeTerminalSessionId,
 	settledTerminalSessionId,
+	terminalPanelForSession,
 } from './support/terminal-session';
 import {
 	contextMenuItem,
@@ -15,6 +16,14 @@ import {
 	submitEditWindow,
 } from './support/ui';
 import { createStartedProject } from './support/project-start';
+import {
+	commandArrived,
+	commandGate,
+	endSettlePeriod,
+	HELD_SERVER_CLOCK,
+	INPUT_QUIET_MS,
+	serverClock,
+} from './support/server-clock';
 
 const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
@@ -516,9 +525,13 @@ test.describe('workspace dashboard', () => {
 		).toContainText('project');
 	});
 
-	test('an untracked tab reads idle everywhere and sits in a collapsed Untracked column', async ({
-		mainWindow,
-	}) => {
+	test('an untracked tab reads idle everywhere and sits in a collapsed Untracked column', {
+		tag: HELD_SERVER_CLOCK,
+	}, async ({ electronApp, mainWindow, userDataDir }) => {
+		// Activity is judged on the server's clock, which the test holds.
+		const clock = serverClock(electronApp);
+		const bell = await commandGate(userDataDir);
+		const firstSessionId = await activeTerminalSessionId(mainWindow);
 		await sendAppCommand(mainWindow, 'new-terminal');
 		const tabs = mainWindow.locator(
 			'.project-workspace--active .terminal-tab-content',
@@ -529,22 +542,40 @@ test.describe('workspace dashboard', () => {
 
 		await quietTab.click();
 		const quietSessionId = await activeTerminalSessionId(mainWindow);
+		// A command that rings the bell and finishes once it is in the background:
+		// attention and finished activity, neither of which may show. It is typed
+		// now and goes on once the test opens its gate: after activity is turned
+		// off for the tab, long after the typing, with the user on the other tab;
+		// and then a whole settle period goes by.
+		const command = `${bell.wait}; printf '\\a'; printf 'quiet-%s\\n' rang`;
+		await typeInVisibleTerminal(mainWindow, `${command}\r`, quietSessionId);
+		await commandArrived(electronApp, quietSessionId, command);
+
 		await quietTab.click({ button: 'right' });
 		await contextMenuItem(mainWindow, 'Open Settings').click();
 		const trackActivity = mainWindow.getByLabel('Track activity');
 		await expect(trackActivity).toBeChecked();
 		await trackActivity.uncheck();
 		await submitEditWindow(mainWindow);
-
-		// A command that rings the bell and finishes once it is in the background:
-		// attention and finished activity, neither of which may show.
-		await typeInVisibleTerminal(
-			mainWindow,
-			"sleep 1.5; printf '\\a'\r",
-			quietSessionId,
-		);
+		// Closing the editor gives the terminal it edited its focus back; the
+		// user moves on from there.
+		await expect(
+			terminalPanelForSession(mainWindow, quietSessionId).locator(
+				'.xterm-helper-textarea',
+			),
+		).toBeFocused();
 		await firstTab.click();
-		await mainWindow.waitForTimeout(2_500);
+		await expect(
+			terminalPanelForSession(mainWindow, firstSessionId).locator(
+				'.xterm-helper-textarea',
+			),
+		).toBeFocused();
+		await clock.advance(INPUT_QUIET_MS);
+		await bell.open();
+		await expect.poll(() => clock.output(quietSessionId)).toContain('quiet-rang');
+		await clock.advance(INPUT_QUIET_MS);
+		await endSettlePeriod(electronApp);
+		expect(await clock.notifications()).toMatchObject({ published: 0 });
 
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);

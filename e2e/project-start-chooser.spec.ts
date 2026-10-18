@@ -412,13 +412,15 @@ test('a project still awaiting its start after a restart shows its chooser again
 		await expect(page.locator('.terminal-tab-content')).toHaveCount(1, {
 			timeout: READY_TIMEOUT_MS,
 		});
-		await page.waitForTimeout(1_500);
-		await expect(page.locator('.terminal-tab-content')).toHaveCount(1);
 		await expect(startChooserFor(page, projectId)).toBeVisible();
 
 		// It still starts as any awaiting project does.
 		await chooseProjectStart(page, 'home');
 		expect(await activeTerminalCwd(page)).toBe(await realpath(os.homedir()));
+		// The start came after everything the relaunch restored, and it made
+		// the one terminal: had the awaiting project been given one of its own
+		// on the way back, there would be three.
+		await expect(page.locator('.terminal-tab-content')).toHaveCount(2);
 	} finally {
 		await current.close();
 	}
