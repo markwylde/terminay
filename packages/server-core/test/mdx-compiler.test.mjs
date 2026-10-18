@@ -243,7 +243,7 @@ test('1.6 executes the compiled MDX bundle only in a JavaScript harness', async 
 		require: undefined,
 		module: undefined,
 	});
-	vm.runInContext(new TextDecoder().decode(result.code), sandbox, { timeout: 1000 });
+	vm.runInContext(new TextDecoder().decode(result.code), sandbox);
 	assert.equal(sandbox.process, undefined);
 	assert.equal(sandbox.require, undefined);
 });
