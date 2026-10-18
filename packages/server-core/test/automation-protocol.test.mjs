@@ -28,15 +28,48 @@ function createPtyFactory() {
   };
 }
 
-function waitFor(predicate, timeoutMs = 2_000) {
-  const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (predicate()) return resolve();
-      if (Date.now() - started >= timeoutMs) return reject(new Error("timed out waiting for automation condition"));
-      setTimeout(check, 5);
-    };
-    check();
+/**
+ * A list of what a callback received. `until(check)` settles once the check
+ * holds, re-checked as each entry is pushed.
+ */
+function recorded() {
+  const entries = [];
+  const waiters = new Set();
+  // Not enumerable, so the list still compares equal to a plain array.
+  Object.defineProperties(entries, {
+    push: {
+      value: (...values) => {
+        Array.prototype.push.apply(entries, values);
+        for (const waiter of [...waiters]) waiter();
+        return entries.length;
+      },
+    },
+    until: {
+      value: (check) => {
+        if (check()) return Promise.resolve();
+        return new Promise((resolve) => {
+          const waiter = () => {
+            if (!check()) return;
+            waiters.delete(waiter);
+            resolve();
+          };
+          waiters.add(waiter);
+        });
+      },
+    },
+  });
+  return entries;
+}
+
+/** Settles once `check` holds, re-checked on each change `subscribe` reports. */
+function when(subscribe, check) {
+  if (check()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = subscribe(() => {
+      if (!check()) return;
+      unsubscribe();
+      resolve();
+    });
   });
 }
 
@@ -168,16 +201,16 @@ test("definition, run, and missed-run events reach subscribers", async () => {
   try {
     const { automations: editor } = await fixture.connect("editor");
     const { automations: observer } = await fixture.connect("observer");
-    const changed = [];
-    const runs = [];
-    const missed = [];
+    const changed = recorded();
+    const runs = recorded();
+    const missed = recorded();
     observer.onChanged((state) => changed.push(state));
     observer.onRunChanged((entry) => runs.push(entry));
     observer.onMissedChanged((records) => missed.push(records));
 
     const initial = await editor.get();
     const saved = await editor.upsert(scheduled, { expectedRevision: initial.revision });
-    await waitFor(() => changed.length === 1);
+    await changed.until(() => changed.length >= 1);
     assert.equal(changed[0].revision, saved.revision);
     assert.deepEqual(changed[0].automations, [{ id: "hourly", enabled: true }], "change events carry ids and enabled state only");
 
@@ -191,7 +224,7 @@ test("definition, run, and missed-run events reach subscribers", async () => {
     );
 
     await fixture.runLog.recordMissed("hourly", 3, 1_000);
-    await waitFor(() => missed.length === 1);
+    await missed.until(() => missed.length >= 1);
     assert.deepEqual(missed[0], [{ automationId: "hourly", missedCount: 3, latestDueAt: 1_000 }]);
 
     // Running from the missed notice starts an ordinary user run and clears
@@ -201,7 +234,8 @@ test("definition, run, and missed-run events reach subscribers", async () => {
     assert.equal(started[0].startedBy, "user");
     assert.equal(started[0].automation.id, "hourly");
     assert.equal(started[0].actor.clientId, "editor");
-    await waitFor(() => runs.length === 1 && missed.length === 2);
+    await runs.until(() => runs.length >= 1);
+    await missed.until(() => missed.length >= 2);
     assert.equal(runs[0].runId, "run-1");
     assert.equal(runs[0].outputTail, undefined, "run events never carry terminal output");
     assert.equal(runs[0].status, "running");
@@ -214,7 +248,7 @@ test("definition, run, and missed-run events reach subscribers", async () => {
     await assert.rejects(() => editor.stop("run-unknown"), (error) => error.cause?.code === "not_found");
 
     const disabled = await editor.setEnabled("hourly", false);
-    await waitFor(() => changed.length === 2);
+    await changed.until(() => changed.length >= 2);
     assert.equal(changed[1].automations[0].enabled, false);
     assert.equal(disabled.automations[0].enabled, false);
 
@@ -228,7 +262,8 @@ test("definition, run, and missed-run events reach subscribers", async () => {
     );
 
     await editor.remove("hourly");
-    await waitFor(() => changed.length === 4);
+    await changed.until(() => changed.length >= 4);
+    assert.equal(changed.length, 4);
     assert.deepEqual(changed.at(-1).automations.map((automation) => automation.id), ["nudge"]);
     const journal = fixture.composition.eventJournal.replay().events.filter((event) => event.event.startsWith("automations."));
     assert.ok(journal.some((event) => event.event === AUTOMATION_EVENTS.missedChanged));
@@ -313,7 +348,7 @@ test("runs can be deleted and pruned, the prune choice is shared, and removals p
     await record(10);
     await record(40);
     await record(50, { status: "running", outcome: undefined });
-    const removedEvents = [];
+    const removedEvents = recorded();
     other.onRunsRemoved((event) => removedEvents.push(event));
 
     assert.equal((await editor.runs("hourly")).pruneChoice, undefined);
@@ -327,7 +362,7 @@ test("runs can be deleted and pruned, the prune choice is shared, and removals p
     assert.deepEqual(seen.pruneChoice, { olderThanDays: 7 }, "every client sees the remembered choice");
     assert.deepEqual(seen.runs.map((run) => run.runId), ["run-50"]);
 
-    await waitFor(() => removedEvents.length === 2);
+    await removedEvents.until(() => removedEvents.length >= 2);
     assert.deepEqual(removedEvents[0], { automationId: "hourly", runIds: ["run-1"] });
     assert.deepEqual([...removedEvents[1].runIds].sort(), ["run-10", "run-40"]);
     const journal = fixture.composition.eventJournal.replay().events.filter((event) => event.event === AUTOMATION_EVENTS.runsRemoved);
@@ -348,7 +383,8 @@ test("a shortened keep-history period removes old runs when the automation is sa
     assert.equal((await editor.runs("hourly")).runs.length, 2);
     const saved = await editor.upsert({ ...scheduled, settings: { keepHistoryDays: 7 } });
     assert.equal(saved.automations[0].settings.keepHistoryDays, 7);
-    await waitFor(() => fixture.runLog.snapshot().runs.hourly?.length === 1);
+    // Reads are fresh at once; the stored log is purged as the run log reports.
+    await when((listener) => fixture.runLog.subscribe(listener), () => fixture.runLog.snapshot().runs.hourly?.length === 1);
     assert.deepEqual((await editor.runs("hourly")).runs.map((run) => run.runId), ["run-2"]);
   } finally {
     await fixture.close();
