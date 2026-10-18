@@ -281,6 +281,11 @@ import {
 	embeddedNotificationSettleMsOverride,
 	embeddedTerminalReplayBytesOverride,
 } from './testTerminalLimits';
+import {
+	embeddedManualServerClock,
+	type ManualServerClock,
+} from './testServerClock';
+import { NOTIFICATION_SETTLE_MS } from '../packages/server-core/src/notifications/types';
 import { assertTrustedIpcSender } from './trustedIpcSender';
 import { resolveDesktopUserDataPath } from './userDataNamespace';
 import {
@@ -1622,6 +1627,72 @@ if (process.env.TERMINAY_TEST === '1') {
 	});
 }
 
+/**
+ * E2E-only: the embedded server's held clock, and what a test needs to see to
+ * know which period it is in. Nothing here acts on the workspace.
+ */
+function exposeTestServerClock(
+	authority: ServerTerminalAuthority,
+	clock: ManualServerClock,
+): void {
+	const decoder = new TextDecoder();
+	// What each terminal has been sent, in order. Activity hears each write
+	// before this does, so what is here has been judged as input.
+	const inputs = new Map<string, string>();
+	const inputDecoder = new TextDecoder();
+	authority.service.onInput((identity, bytes) => {
+		const previous = inputs.get(identity.sessionId) ?? '';
+		inputs.set(
+			identity.sessionId,
+			(previous + inputDecoder.decode(bytes)).slice(-65_536),
+		);
+	});
+	Object.defineProperty(globalThis, '__terminayTestServerClock', {
+		configurable: true,
+		value: Object.freeze({
+			advance: (milliseconds: number) => clock.advance(milliseconds),
+			notificationSettleMs: NOTIFICATION_SETTLE_MS,
+			notifications: () => {
+				const manager = authority.composition.notifications;
+				return {
+					pending: manager?.pendingCount ?? 0,
+					published: Object.keys(manager?.snapshot().notifications ?? {})
+						.length,
+					revision: manager?.revision ?? 0,
+				};
+			},
+			activity: (sessionId: string) => {
+				const snapshot = authority.activity.snapshot().sessions[sessionId];
+				return snapshot === undefined
+					? undefined
+					: {
+							acknowledged: snapshot.acknowledged,
+							attention: snapshot.attention,
+							revision: authority.activity.revision,
+							source: snapshot.source,
+							status: snapshot.status,
+						};
+			},
+			input: (sessionId: string) => inputs.get(sessionId) ?? '',
+			// The output the server has taken in. Activity reads each chunk in the
+			// same turn that retains it, so what is here has been judged.
+			output: (sessionId: string) => {
+				let text = '';
+				let fromPosition: number | undefined;
+				for (;;) {
+					const read = authority.service.readRetainedOutput(sessionId, {
+						maxBytes: 1 << 20,
+						...(fromPosition === undefined ? {} : { fromPosition }),
+					});
+					text += decoder.decode(read.bytes, { stream: read.hasMore });
+					if (!read.hasMore) return text;
+					fromPosition = read.nextPosition;
+				}
+			},
+		}),
+	});
+}
+
 function getOpenProjectWindowCount(): number {
 	let count = 0;
 	for (const window of appWindows) {
@@ -1943,8 +2014,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// E2E-only: a shorter notification settle period. Inert without the marker.
 	const notificationSettleOverride =
 		embeddedNotificationSettleMsOverride(process.env);
+	// E2E-only: activity and notifications keep the test's time. Inert without
+	// the marker.
+	const serverClock = embeddedManualServerClock(process.env);
 	const sessionHolderDiagnosticEvent = createSessionHolderDiagnostics();
 	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
+		...(serverClock === undefined ? {} : { clock: serverClock }),
 		serverId: embeddedServerId,
 		dataRoot: app.getPath('userData'),
 		...(sessionHolderEnabled()
@@ -2297,6 +2372,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		authority.initializeWorkspace(),
 	);
 	serverTerminalAuthority = authority;
+	if (serverClock !== undefined) exposeTestServerClock(authority, serverClock);
 	// An approval and a session grant live exactly as long as the calling
 	// terminal's capability: exit, move, disable, and restart all end them.
 	removeMcpApprovalRevocation?.();
