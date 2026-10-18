@@ -95,16 +95,22 @@ test('reading a document is not editing it', async () => {
 	);
 	// The editor reports its normalized parse of the document on load. Passing
 	// that on would mark the file dirty and rewrite it on disk for having been
-	// opened, which is the whole cost the collapse is meant not to have.
-	assert.match(editor, /if \(initial\) return;/u);
+	// opened, which is the whole cost the collapse is meant not to have. Which
+	// reports are edits is decided by documentationEditorChanges (its own tests
+	// cover the opening report); here, every report must go through it before
+	// anything is marked changed.
 	const handler = editor.slice(
 		editor.indexOf('const handleChange'),
 		editor.indexOf('const flush'),
 	);
+	assert.match(handler, /changes\.reported\(next, initial\)/u);
+	assert.match(handler, /if \(edit === undefined\) return;/u);
 	assert.ok(
-		handler.indexOf('if (initial) return;') < handler.indexOf('onChange(next)'),
-		'the initial normalization must return before reaching onChange',
+		handler.indexOf('if (edit === undefined) return;') <
+			handler.indexOf('onChange(edit)'),
+		'a report that is not an edit must return before reaching onChange',
 	);
+	assert.doesNotMatch(handler, /onChange\(next\)/u);
 });
 
 test('no stylesheet tries to collapse whitespace instead', async () => {
