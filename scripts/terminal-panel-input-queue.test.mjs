@@ -387,3 +387,154 @@ test('closed server-backed terminal input detaches a late attachment without wri
   assert.deepEqual(writes, [])
   assert.equal(detachCount, 1)
 })
+
+/** A panel attachment whose writes settle only when the test settles them. */
+function heldAttachment() {
+  const writes = []
+  const pending = []
+  return {
+    writes,
+    settleNext(error) {
+      const next = pending.shift()
+      if (next === undefined) throw new Error('no write is in flight')
+      if (error === undefined) next.resolve()
+      else next.reject(error)
+    },
+    attachment: {
+      write(data) {
+        writes.push(data)
+        return new Promise((resolve, reject) => pending.push({ resolve, reject }))
+      },
+      async detach() {},
+    },
+  }
+}
+
+function recordingAttachment() {
+  const writes = []
+  return {
+    writes,
+    attachment: {
+      async write(data) {
+        writes.push(data)
+      },
+      async detach() {},
+    },
+  }
+}
+
+const failWith = (code) => Object.assign(new Error(code), { code })
+
+test('input queued behind an in-flight write survives an attachment handoff and reaches the replacement once, in order', async () => {
+  const errors = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  const old = heldAttachment()
+  queue.attach(old.attachment)
+
+  for (const key of ['r', 'e', 'a', 'd']) queue.enqueue(key)
+  assert.deepEqual(old.writes, ['r'])
+
+  // Congestion recovery begins: the panel's attachment is being replaced.
+  queue.handoff()
+  // The user keeps typing while the replacement attaches.
+  for (const key of [' ', '_']) assert.equal(queue.enqueue(key), true)
+
+  const replacement = recordingAttachment()
+  queue.setPresentationRole('controller')
+  queue.attach(replacement.attachment)
+  await tick()
+  // Nothing overtakes the write still in flight on the old attachment.
+  assert.deepEqual(replacement.writes, [])
+
+  old.settleNext()
+  await tick()
+  assert.deepEqual(old.writes, ['r'])
+  assert.deepEqual(replacement.writes, ['e', 'a', 'd', ' ', '_'])
+  assert.deepEqual(errors, [])
+})
+
+test('a write the replaced attachment refused before the PTY is sent once by the replacement', async () => {
+  const errors = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  const old = heldAttachment()
+  queue.attach(old.attachment)
+  queue.enqueue('a')
+  queue.enqueue('b')
+
+  queue.handoff()
+  const replacement = recordingAttachment()
+  queue.setPresentationRole('controller')
+  queue.attach(replacement.attachment)
+
+  // The server had already replaced the attachment the write named.
+  old.settleNext(failWith('session_not_found'))
+  await tick()
+
+  assert.deepEqual(replacement.writes, ['a', 'b'])
+  assert.deepEqual(errors, [])
+})
+
+test('a write whose outcome is unknown on the replaced attachment is never sent twice', async () => {
+  const errors = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  const old = heldAttachment()
+  queue.attach(old.attachment)
+  queue.enqueue('a')
+  queue.enqueue('b')
+
+  queue.handoff()
+  const replacement = recordingAttachment()
+  queue.setPresentationRole('controller')
+  queue.attach(replacement.attachment)
+
+  old.settleNext(failWith('unknown_command_outcome'))
+  await tick()
+
+  assert.deepEqual(replacement.writes, ['b'])
+  assert.deepEqual(errors, [])
+})
+
+test('input held through a handoff is discarded, and further input refused, only when the replacement is read-only', async () => {
+  const queue = new ServerTerminalInputQueue(() => {})
+  queue.handoff()
+  assert.equal(queue.enqueue('typed-while-attaching'), true)
+
+  const replacement = recordingAttachment()
+  queue.setPresentationRole('read_only')
+  queue.attach(replacement.attachment)
+  assert.equal(queue.enqueue('typed-while-observing'), false)
+  await tick()
+  assert.deepEqual(replacement.writes, [])
+
+  // Taking control back sends only what is typed from then on.
+  queue.setPresentationRole('controller')
+  assert.equal(queue.enqueue('typed-in-control'), true)
+  await tick()
+  assert.deepEqual(replacement.writes, ['typed-in-control'])
+})
+
+test('a paste in progress resumes on the replacement attachment from its first unsent chunk', async () => {
+  const progress = []
+  const queue = new ServerTerminalInputQueue(() => {})
+  const old = heldAttachment()
+  const payload = 'x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES * 2)
+  queue.attach(old.attachment)
+  queue.enqueuePaste(payload, (update) => progress.push(update))
+  queue.enqueue('\r')
+  assert.equal(old.writes.length, 1)
+
+  queue.handoff()
+  const replacement = recordingAttachment()
+  queue.setPresentationRole('controller')
+  queue.attach(replacement.attachment)
+  old.settleNext()
+  for (let frame = 0; frame < 16; frame += 1) await tick()
+
+  assert.equal([...old.writes, ...replacement.writes].join(''), `${payload}\r`)
+  assert.equal(replacement.writes.at(-1), '\r')
+  assert.deepEqual(progress.at(-1), {
+    completedBytes: Buffer.byteLength(payload),
+    status: 'complete',
+    totalBytes: Buffer.byteLength(payload),
+  })
+})
