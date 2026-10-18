@@ -57,6 +57,10 @@ async function countDiagnostics(
 test('an animating title publishes no workspace change, loads no explorer, and measures no Git', async ({
 	mainWindow,
 }) => {
+	// Two paced loops of forty frames take twenty seconds on an idle machine,
+	// and a shell forking `sleep` on a loaded runner runs them several times
+	// slower. The default thirty seconds is not enough for both.
+	test.setTimeout(120_000);
 	const title = activeTabTitle(mainWindow);
 	await expect(title).toHaveText('Terminal 1');
 	// Let the launch settle, so what is counted is the titles' own cost.
@@ -74,7 +78,7 @@ test('an animating title publishes no workspace change, loads no explorer, and m
 		mainWindow,
 		`for i in $(seq 1 ${frames}); do printf 'tick %s\\n' "$i"; sleep 0.25; done; printf '\\033]2;printed\\007'`,
 	);
-	await expect(title).toHaveText('printed', { timeout: 30_000 });
+	await expect(title).toHaveText('printed', { timeout: 50_000 });
 	await mainWindow.waitForTimeout(1_000);
 	const rendersForOutputAlone = await countDiagnostics(
 		mainWindow,
@@ -88,7 +92,7 @@ test('an animating title publishes no workspace change, loads no explorer, and m
 		mainWindow,
 		`for i in $(seq 1 ${frames}); do printf '\\033]2;working %s\\007' "$i"; sleep 0.25; done`,
 	);
-	await expect(title).toHaveText(`working ${frames}`, { timeout: 30_000 });
+	await expect(title).toHaveText(`working ${frames}`, { timeout: 50_000 });
 
 	expect(
 		await countDiagnostics(mainWindow, 'projection'),

@@ -38,6 +38,8 @@ export const WERIFT_TURN_REFRESH_PATCH_SHA256 =
   '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211'
 export const WERIFT_ZERO_WINDOW_PROBE_PATCH_SHA256 =
   '298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b'
+export const WERIFT_ICE_CONSENT_RECOVERY_PATCH_SHA256 =
+  '5ba80ab247c2c1be0a799202185eab7be476fb8722be9a71b80feef44a1e47a6'
 
 /**
  * Governed patches, applied in this exact order. Each is pinned by hash and
@@ -57,6 +59,13 @@ export const WERIFT_PATCHES = Object.freeze([
     purpose:
       'Probe a zero receive window and serialize data-channel flush so outbound delivery cannot deadlock.',
     name: 'Terminay SCTP zero-window probe patch',
+  }),
+  Object.freeze({
+    path: 'scripts/patches/werift-0.24.1-ice-consent-recovery.patch',
+    sha256: WERIFT_ICE_CONSENT_RECOVERY_PATCH_SHA256,
+    purpose:
+      'Retransmit ICE consent checks and keep checking after a miss so a slow path stays connected and a recovered one is reported connected again.',
+    name: 'Terminay ICE consent recovery patch',
   }),
 ])
 

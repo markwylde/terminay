@@ -32,6 +32,13 @@ test('release evidence binds the exact fail-closed Secure-Werift selection', asy
 			sha256:
 				'298aa1ebb0f0eb45c673dd24907e7e8110bfef499524993d8203fd74ecaa6b2b',
 		},
+		{
+			path: 'scripts/patches/werift-0.24.1-ice-consent-recovery.patch',
+			purpose:
+				'Retransmit ICE consent checks and keep checking after a miss so a slow path stays connected and a recovered one is reported connected again.',
+			sha256:
+				'5ba80ab247c2c1be0a799202185eab7be476fb8722be9a71b80feef44a1e47a6',
+		},
 	]);
 	assert.equal(selection.runtimePolicy.fallback, 'disabled');
 	assert.equal(selection.runtimePolicy.legacyNodeDataChannelFallback, false);
