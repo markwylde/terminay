@@ -53,10 +53,6 @@ function createPtyFactory() {
   };
 }
 
-const settle = async (turns = 25) => {
-  for (let index = 0; index < turns; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-};
-
 async function harness() {
   const pty = createPtyFactory();
   const checkpoints = new TerminalPresentationCheckpointAuthority();
@@ -123,11 +119,24 @@ async function harness() {
   };
 }
 
-/** Collect rendered output for one attachment. */
+/**
+ * Collect rendered output for one attachment. Returns `seen(text)`, which
+ * settles once the attachment's output includes that text.
+ */
 function observe(attachment, sink) {
+  const waiters = new Set();
   attachment.onEvent((event) => {
-    if (event.type === "output") sink.push(new TextDecoder().decode(event.bytes));
+    if (event.type !== "output") return;
+    sink.push(new TextDecoder().decode(event.bytes));
+    for (const waiter of [...waiters]) {
+      if (!sink.join("").includes(waiter.text)) continue;
+      waiters.delete(waiter);
+      waiter.resolve();
+    }
   });
+  return (text) => sink.join("").includes(text)
+    ? Promise.resolve()
+    : new Promise((resolve) => waiters.add({ text, resolve }));
 }
 
 test("a read-only observer keeps streaming while another device holds the lease", async () => {
@@ -149,11 +158,12 @@ test("a read-only observer keeps streaming while another device holds the lease"
 
     const desktopOutput = [];
     const webOutput = [];
-    observe(desktopAttachment, desktopOutput);
-    observe(webAttachment, webOutput);
+    const desktopSeen = observe(desktopAttachment, desktopOutput);
+    const webSeen = observe(webAttachment, webOutput);
 
     h.pty.processes[0].emitData("STREAMED-TO-BOTH\n");
-    await settle();
+    // A read-only observer is still a display and must receive live output.
+    await Promise.all([desktopSeen("STREAMED-TO-BOTH"), webSeen("STREAMED-TO-BOTH")]);
 
     assert.equal(desktopOutput.join("").includes("STREAMED-TO-BOTH"), true,
       "the controlling device streams");
@@ -176,10 +186,10 @@ test("creating a second project does not stop an existing terminal from streamin
     const webFirst = await web.terminal.attach({ ...firstIdentity, clientId: "device-web", fromPosition: 0 });
 
     const webOutput = [];
-    observe(webFirst, webOutput);
+    const webSeen = observe(webFirst, webOutput);
 
     h.pty.processes[0].emitData("BEFORE-SECOND-PROJECT\n");
-    await settle();
+    await webSeen("BEFORE-SECOND-PROJECT");
     assert.equal(webOutput.join("").includes("BEFORE-SECOND-PROJECT"), true,
       "the terminal streams before the second project exists");
 
@@ -190,12 +200,13 @@ test("creating a second project does not stop an existing terminal from streamin
     await desktop.terminal.attach({ ...secondIdentity, clientId: "device-desktop", fromPosition: 0 });
     const webSecond = await web.terminal.attach({ ...secondIdentity, clientId: "device-web", fromPosition: 0 });
     const secondOutput = [];
-    observe(webSecond, secondOutput);
-    await settle();
+    const secondSeen = observe(webSecond, secondOutput);
 
     h.pty.processes[0].emitData("AFTER-SECOND-PROJECT\n");
     h.pty.processes[1].emitData("SECOND-PROJECT-OUTPUT\n");
-    await settle();
+    // The original terminal must keep streaming after a second project is
+    // created, and the new project's terminal streams too.
+    await Promise.all([secondSeen("SECOND-PROJECT-OUTPUT"), webSeen("AFTER-SECOND-PROJECT")]);
 
     assert.equal(secondOutput.join("").includes("SECOND-PROJECT-OUTPUT"), true,
       "the new project's terminal streams");
@@ -226,10 +237,11 @@ test("two windows of one device are two clients: both stream, and closing one le
 
     const mainOutput = [];
     const secondOutput = [];
-    observe(mainAttachment, mainOutput);
-    observe(secondAttachment, secondOutput);
+    const mainSeen = observe(mainAttachment, mainOutput);
+    const secondSeen = observe(secondAttachment, secondOutput);
     h.pty.processes[0].emitData("BOTH-WINDOWS\n");
-    await settle();
+    // The second window's attach did not end the first's.
+    await Promise.all([mainSeen("BOTH-WINDOWS"), secondSeen("BOTH-WINDOWS")]);
     assert.equal(mainOutput.join("").includes("BOTH-WINDOWS"), true);
     assert.equal(secondOutput.join("").includes("BOTH-WINDOWS"), true,
       "the second window's attach did not end the first's");
@@ -237,9 +249,10 @@ test("two windows of one device are two clients: both stream, and closing one le
     // The second window closes. Only what it owned is released.
     await second.client.close();
     await second.task;
-    await settle();
     h.pty.processes[0].emitData("AFTER-ONE-CLOSED\n");
-    await settle();
+    // The remaining window keeps its attachment and its stream; the closed
+    // one's connection is gone, so it can receive nothing more.
+    await mainSeen("AFTER-ONE-CLOSED");
     assert.equal(mainOutput.join("").includes("AFTER-ONE-CLOSED"), true,
       "the remaining window keeps its attachment and its stream");
     assert.equal(secondOutput.join("").includes("AFTER-ONE-CLOSED"), false);
