@@ -1,5 +1,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import {
+	holdRendererClock,
+	releaseRendererClock,
+} from './support/renderer-clock';
 import { settledTerminalSessionId } from './support/terminal-session';
 
 // A recovered Desktop connection rebuilds its bounded application bootstrap
@@ -75,10 +79,16 @@ test('a Local connection the server closes is noticed by the window without wait
 }) => {
 	test.setTimeout(45_000);
 	await activeSessionId(mainWindow);
-	// The window's heartbeat probes every 10 seconds and needs two misses, so
-	// anything it reports arrives 10-20 seconds after the close. A close the
-	// window observes on its endpoint arrives within a turn of the event loop.
-	const NOTICED_WITHOUT_HEARTBEAT_MS = 5_000;
+	// The window's heartbeat probes on a timer and needs two misses before it
+	// reports a loss. The window's clock is held across the close below, so
+	// no heartbeat can come due: a loss the window reports while it is held
+	// came from the close it observed on its endpoint, however long the runner
+	// takes to deliver it.
+	const heartbeatLosses: string[] = [];
+	mainWindow.on('console', (message) => {
+		if (message.text().includes('connection-heartbeat-lost'))
+			heartbeatLosses.push(message.text());
+	});
 
 	// The sidebar's panes query the server on their own schedule, which is
 	// what makes them the callers most likely to be caught mid-request.
@@ -110,46 +120,48 @@ test('a Local connection the server closes is noticed by the window without wait
 	await mainWindow.evaluate(() => {
 		const target = window as Window & {
 			__terminayServerClientState?: string;
-			__terminayServerClientStates?: { state: string; at: number }[];
+			__terminayServerClientStates?: string[];
 		};
 		let current = target.__terminayServerClientState;
-		const seen: { state: string; at: number }[] = [];
+		const seen: string[] = [];
 		target.__terminayServerClientStates = seen;
 		Object.defineProperty(target, '__terminayServerClientState', {
 			configurable: true,
 			get: () => current,
 			set: (state: string) => {
 				current = state;
-				seen.push({ state, at: performance.now() });
+				seen.push(state);
 			},
 		});
 	});
 
-	const closedAt = await mainWindow.evaluate(async () => {
+	// A heartbeat timer armed before the clock was installed may still run
+	// once on real time; it can miss only once, and every timer it arms after
+	// that is on the held clock.
+	await holdRendererClock(mainWindow);
+	await mainWindow.evaluate(async () => {
 		if (!window.terminayLocalConnectionFaultTest)
 			throw new Error('Local connection fault test seam is unavailable');
-		const at = performance.now();
 		const closed =
 			await window.terminayLocalConnectionFaultTest.closeServerConnection();
 		if (closed < 1) throw new Error('the server had no connection to close');
-		return at;
 	});
 
-	const firstLossAfterMs = async () =>
-		await mainWindow.evaluate((since) => {
-			const seen =
-				(
-					window as Window & {
-						__terminayServerClientStates?: { state: string; at: number }[];
-					}
-				).__terminayServerClientStates ?? [];
-			const loss = seen.find((entry) => entry.state !== 'connected');
-			return loss === undefined ? null : loss.at - since;
-		}, closedAt);
 	await expect
-		.poll(firstLossAfterMs, { timeout: 30_000 })
-		.not.toBeNull();
-	expect(await firstLossAfterMs()).toBeLessThan(NOTICED_WITHOUT_HEARTBEAT_MS);
+		.poll(
+			() =>
+				mainWindow.evaluate(() =>
+					(
+						(
+							window as Window & { __terminayServerClientStates?: string[] }
+						).__terminayServerClientStates ?? []
+					).some((state) => state !== 'connected'),
+				),
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	expect(heartbeatLosses).toEqual([]);
+	await releaseRendererClock(mainWindow);
 
 	await expect
 		.poll(

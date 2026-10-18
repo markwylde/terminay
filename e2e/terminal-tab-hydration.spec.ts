@@ -25,34 +25,56 @@ async function expectHydratedViewportGrid(panel: Locator): Promise<void> {
 	expect(geometry.cols).toBeGreaterThanOrEqual(Math.floor(geometry.width / 20));
 }
 
-async function monitorTerminalGridDuringTabSwitch(
+type GridSample = { cols: number; width: number };
+
+/**
+ * Sample a terminal's grid on every frame from now until it is stopped, so
+ * the observation spans the whole tab switch however long the switch takes.
+ */
+async function startTerminalGridMonitor(
 	page: Page,
 	sessionId: string,
-): Promise<Array<{ cols: number; width: number }>> {
-	return await page.evaluate(async (targetSessionId) => {
+): Promise<void> {
+	await page.evaluate((targetSessionId) => {
 		const root = document.querySelector<HTMLElement>(
 			`.terminal-panel[data-terminay-terminal-session-id="${CSS.escape(targetSessionId)}"] .terminal-panel-root`,
 		);
 		if (!root) throw new Error('The terminal root to monitor is unavailable.');
-
-		const samples: Array<{ cols: number; width: number }> = [];
-		const startedAt = performance.now();
-		await new Promise<void>((resolve) => {
-			const sample = () => {
-				samples.push({
-					cols: Number(root.dataset.terminalCols ?? 0),
-					width: root.clientWidth,
-				});
-				if (performance.now() - startedAt < 500) {
-					requestAnimationFrame(sample);
-					return;
-				}
-				resolve();
-			};
+		const monitor = {
+			samples: [] as Array<{ cols: number; width: number }>,
+			stopped: false,
+		};
+		(window as unknown as { __gridMonitor?: typeof monitor }).__gridMonitor =
+			monitor;
+		const sample = () => {
+			if (monitor.stopped) return;
+			monitor.samples.push({
+				cols: Number(root.dataset.terminalCols ?? 0),
+				width: root.clientWidth,
+			});
 			requestAnimationFrame(sample);
-		});
-		return samples;
+		};
+		sample();
 	}, sessionId);
+}
+
+/** Keep sampling for a number of drawn frames after the switch, then stop. */
+async function stopTerminalGridMonitor(
+	page: Page,
+	framesAfter: number,
+): Promise<GridSample[]> {
+	return await page.evaluate(async (frames) => {
+		for (let frame = 0; frame < frames; frame += 1)
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		const monitor = (
+			window as unknown as {
+				__gridMonitor?: { samples: GridSample[]; stopped: boolean };
+			}
+		).__gridMonitor;
+		if (!monitor) throw new Error('The terminal grid monitor is not running.');
+		monitor.stopped = true;
+		return monitor.samples;
+	}, framesAfter);
 }
 
 test('switching a tabbed terminal never claims its detached zero-width grid', async ({
@@ -71,12 +93,15 @@ test('switching a tabbed terminal never claims its detached zero-width grid', as
 	// Dockview detaches inactive content while retaining its xterm. Observe the
 	// detached root itself: a zero-width observation must not turn into xterm's
 	// two-column minimum grid or be forwarded as the terminal viewport.
-	const gridSamples = monitorTerminalGridDuringTabSwitch(
-		mainWindow,
-		secondSessionId,
-	);
+	// The monitor runs from before the switch until thirty frames after it, so
+	// what it saw covers the switch however long the runner took over it.
+	await startTerminalGridMonitor(mainWindow, secondSessionId);
 	await activateDockTab(mainWindow, 'Terminal 1');
-	const detachedGridSamples = await gridSamples;
+	const detachedGridSamples = await stopTerminalGridMonitor(mainWindow, 30);
+	expect(
+		detachedGridSamples.some((sample) => sample.width === 0),
+		'the monitor saw the root detached',
+	).toBe(true);
 	expect(
 		detachedGridSamples.some(
 			(sample) => sample.width === 0 && sample.cols <= 2,
