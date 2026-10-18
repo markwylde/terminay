@@ -19,11 +19,14 @@ test('before-quit waits for cleanup, coalesces repeat events, then permits the f
   let resolveShutdown
   const shutdown = new Promise((resolve) => { resolveShutdown = resolve })
   let cleanupCalls = 0
+  const cleanup = signal()
+  const quit = signal()
   let quitCalls = 0
   const handler = createGracefulQuitHandler({
-    app: { quit: () => { quitCalls += 1 } },
+    app: { quit: () => { quitCalls += 1; quit.fire() } },
     shutdown: async () => {
       cleanupCalls += 1
+      cleanup.fire()
       await shutdown
     },
   })
@@ -37,10 +40,12 @@ test('before-quit waits for cleanup, coalesces repeat events, then permits the f
   assert.equal(cleanupCalls, 0)
   assert.equal(quitCalls, 0)
 
-  await Promise.resolve()
+  await cleanup.fired
   assert.equal(cleanupCalls, 1)
+  assert.equal(quitCalls, 0)
   resolveShutdown()
-  await waitFor(() => quitCalls === 1)
+  await quit.fired
+  assert.equal(quitCalls, 1)
 
   const finalQuit = createEvent()
   handler(finalQuit.event)
@@ -50,15 +55,17 @@ test('before-quit waits for cleanup, coalesces repeat events, then permits the f
 
 test('before-quit logs cleanup failure but still completes the quit path', async () => {
   const errors = []
+  const quit = signal()
   let quitCalls = 0
   const handler = createGracefulQuitHandler({
-    app: { quit: () => { quitCalls += 1 } },
+    app: { quit: () => { quitCalls += 1; quit.fire() } },
     shutdown: async () => { throw new Error('close failed') },
     onShutdownError: (error) => errors.push(error),
   })
   const event = createEvent()
   handler(event.event)
-  await waitFor(() => quitCalls === 1)
+  await quit.fired
+  assert.equal(quitCalls, 1)
   assert.equal(event.prevented(), 1)
   assert.equal(errors.length, 1)
   assert.match(errors[0].message, /close failed/u)
@@ -72,12 +79,11 @@ function createEvent() {
   }
 }
 
-async function waitFor(predicate) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-  assert.fail('condition did not become true')
+/** A promise a fake settles when it is called. */
+function signal() {
+  let fire
+  const fired = new Promise((resolve) => { fire = resolve })
+  return { fire: () => fire(), fired }
 }
 
 async function importGracefulQuit() {
