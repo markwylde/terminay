@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +25,27 @@ import {
 
 const SERVER = "exec-server";
 const posix = process.platform !== "win32";
+
+/**
+ * End a shell and everything it started, as closing its terminal does. An
+ * interactive shell ignores SIGTERM and runs each job in a process group of its
+ * own, so neither a signal to the shell nor one to its group is enough: the
+ * shell is stopped so it cannot start more, then it and each descendant is killed.
+ */
+function killTree(pid) {
+  try { process.kill(pid, "SIGSTOP"); } catch { return; }
+  const parents = new Map();
+  for (const line of spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).stdout.split("\n")) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    if (Number.isSafeInteger(child) && Number.isSafeInteger(parent)) parents.set(child, parent);
+  }
+  const tree = [pid];
+  for (let index = 0; index < tree.length; index += 1)
+    for (const [child, parent] of parents) if (parent === tree[index]) tree.push(child);
+  for (const each of tree) {
+    try { process.kill(each, "SIGKILL"); } catch { /* already gone */ }
+  }
+}
 
 /** A real process behind the PtyProcess contract (pipes, not a TTY). */
 function processPtyFactory() {
@@ -58,8 +79,7 @@ function processPtyFactory() {
       child.stderr.on("close", closed);
       child.on("exit", (exitCode, signal) => {
         code = { exitCode: exitCode ?? 128 + 15, signal: signal === null ? null : 15 };
-        // A killed group may leave nothing holding the pipes; don't wait on them.
-        setTimeout(() => { open = 0; finish(); }, 200).unref();
+        // Exit is reported once the pipes have closed too, so it follows all output.
         finish();
       });
       child.on("error", () => { code = { exitCode: 127, signal: null }; open = 0; finish(); });
@@ -67,7 +87,7 @@ function processPtyFactory() {
         pid: child.pid,
         write: (bytes) => new Promise((resolve) => child.stdin.write(Buffer.from(bytes), () => resolve())),
         resize() {},
-        kill: () => { try { process.kill(-child.pid, "SIGTERM"); } catch { child.kill("SIGTERM"); } },
+        kill: () => killTree(child.pid),
         onData(listener) { data.add(listener); return () => data.delete(listener); },
         onExit(listener) {
           exits.add(listener);
@@ -132,6 +152,31 @@ async function harness(t, options = {}) {
   const marks = [];
   const inputs = [];
   terminal.onInput((identity, bytes) => inputs.push({ sessionId: identity.sessionId, text: new TextDecoder().decode(bytes) }));
+  // Every terminal's output and exit, re-checked by whoever waits on them as each arrives.
+  const output = new Map();
+  const exited = new Set();
+  const waiters = new Set();
+  terminal.onEvent((event) => {
+    if (event.type === "output") output.set(event.sessionId, (output.get(event.sessionId) ?? "") + new TextDecoder().decode(event.bytes));
+    else if (event.type === "exit") exited.add(event.sessionId);
+    else return;
+    for (const waiter of [...waiters]) waiter();
+  });
+  const until = (check) => {
+    if (check()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        if (!check()) return;
+        waiters.delete(waiter);
+        resolve();
+      };
+      waiters.add(waiter);
+    });
+  };
+  /** Settles once the session has written output matching `pattern`. */
+  const printed = (sessionId, pattern) => until(() => pattern.test(output.get(sessionId) ?? ""));
+  /** Settles once the session's process has exited. */
+  const exitedSession = (sessionId) => until(() => exited.has(sessionId));
   const executor = new AutomationExecutor({
     serverId: SERVER,
     runLog,
@@ -149,17 +194,41 @@ async function harness(t, options = {}) {
     await terminal.shutdown().catch(() => undefined);
     await rm(home, { recursive: true, force: true });
   });
-  return { home, workspace, workspaceOperations, terminal, runLog, audit, executor, marks, inputs };
+  return { home, workspace, workspaceOperations, terminal, runLog, audit, executor, marks, inputs, printed, exitedSession };
 }
 
-async function finished(runLog, runId, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const entry = runLog.get(runId);
-    if (entry?.status === "finished") return entry;
-    if (Date.now() > deadline) throw new Error(`run ${runId} did not finish: ${JSON.stringify(entry)}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+/** Settles with the run's entry once the run log records it finished. */
+function finished(runLog, runId) {
+  const done = () => (runLog.get(runId)?.status === "finished" ? runLog.get(runId) : undefined);
+  if (done() !== undefined) return Promise.resolve(done());
+  return new Promise((resolve) => {
+    const unsubscribe = runLog.subscribe(() => {
+      const entry = done();
+      if (entry === undefined) return;
+      unsubscribe();
+      resolve(entry);
+    });
+  });
+}
+
+/** Timers the test fires itself: the run's max-duration timer never runs on the wall clock. */
+function manualTimers() {
+  const pending = new Set();
+  return {
+    setTimer: (callback, ms) => {
+      const timer = { callback, ms };
+      pending.add(timer);
+      return timer;
+    },
+    clearTimer: (timer) => pending.delete(timer),
+    /** Run the one pending timer due after `ms`, as though that much time had passed. */
+    fire(ms) {
+      const due = [...pending].filter((timer) => timer.ms === ms);
+      assert.equal(due.length, 1, `one timer is due after ${ms} ms`);
+      pending.delete(due[0]);
+      due[0].callback();
+    },
+  };
 }
 
 /** A live subject terminal in project-a, with its panel. */
@@ -282,11 +351,14 @@ test("terminals a run opens through MCP are recorded on the run, transitively, a
 });
 
 test("run command: the max-duration timer closes the terminal and logs timed out; stop logs stopped", { skip: !posix }, async (t) => {
-  const h = await harness(t, { setTimer: (callback, ms) => setTimeout(callback, ms / 20) });
+  const timers = manualTimers();
+  const h = await harness(t, { setTimer: timers.setTimer, clearTimer: timers.clearTimer });
   const timed = await h.executor.start({
     automation: definition({ action: { kind: "runCommand", command: "echo started; sleep 30", maxDurationSeconds: 2 } }),
     startedBy: "trigger", firedAt: 1,
   });
+  await h.printed(timed.sessionId, /started/);
+  timers.fire(2_000);
   const done = await finished(h.runLog, timed.runId);
   assert.equal(done.outcome, "timedOut");
   assert.match(done.reason, /maximum duration/);
@@ -399,7 +471,7 @@ test("subject actions skip with subjectGone for a closed or replaced subject and
   assert.equal(replaced.skipReason, "subjectGone");
 
   await h.terminal.kill("agent-3");
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await h.exitedSession("agent-3");
   const closed = await h.executor.start({ automation, startedBy: "trigger", firedAt: 2, event: "agent.needsInput", subject });
   assert.equal(closed.skipReason, "subjectGone");
   const macro = await h.executor.start({ automation: definition({ trigger: automation.trigger, action: { kind: "runMacro", macroId: "m", fieldValues: {} } }), startedBy: "trigger", firedAt: 3, event: "agent.needsInput", subject });
@@ -497,11 +569,14 @@ test("prompt agent: the prompt reaches the command verbatim as PROMPT and is nev
 });
 
 test("prompt agent: the max-duration timer applies as it does to a command", { skip: !posix }, async (t) => {
-  const h = await harness(t, { setTimer: (callback, ms) => setTimeout(callback, ms / 20) });
+  const timers = manualTimers();
+  const h = await harness(t, { setTimer: timers.setTimer, clearTimer: timers.clearTimer });
   const timed = await h.executor.start({
     automation: definition({ action: { kind: "promptAgent", command: "echo started; sleep 30", prompt: "wait", maxDurationSeconds: 2 } }),
     startedBy: "trigger", firedAt: 1,
   });
+  await h.printed(timed.sessionId, /started/);
+  timers.fire(2_000);
   const done = await finished(h.runLog, timed.runId);
   assert.equal(done.outcome, "timedOut");
   assert.match(done.reason, /maximum duration of 2 s/);
