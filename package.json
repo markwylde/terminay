@@ -47,6 +47,7 @@
 		"build:workspaces": "turbo run build --filter=!terminay-* && turbo run compile --filter=terminay-*",
 		"build:server-ui": "turbo run build --filter=@terminay/web && npm run build:server-ui:bundle",
 		"build:server-ui:bundle": "vite build --config vite.server-ui.config.ts",
+		"benchmark:webrtc-multi-peer-load": "node scripts/stage-selected-secure-werift-runtime.mjs --reuse-validated && npm run build:shared && npm run build:application-graph && npm run build:server-postcompile && TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT=\"${TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT:-$PWD/build/webrtc-runtime}\" node --test scripts/task20-secure-werift-multi-peer-load.test.mjs",
 		"benchmark:server-ui-archive": "npm run build:server-ui && node scripts/server-ui-archive-benchmark.mjs --renderer-directory dist-web --entry-path server.html",
 		"build:web": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/client-core && npm run build --workspace @terminay/responsive-ui && npm run build:server-ui",
 		"build:applications": "turbo run build --filter=@terminay/server --filter=@terminay/desktop --filter=@terminay/web --filter=terminay",
