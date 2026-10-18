@@ -91,6 +91,8 @@ async function withPage(viewport, run) {
 	const browser = await chromium.launch({ headless: true });
 	try {
 		const page = await browser.newPage({ viewport });
+		// Waits are for the state itself, never against a budget.
+		page.setDefaultTimeout(0);
 		await run(page, browser);
 	} finally {
 		await browser.close();
