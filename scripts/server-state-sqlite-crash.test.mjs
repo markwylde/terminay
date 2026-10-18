@@ -500,7 +500,8 @@ if (process.argv[2] === '--child') {
       holdingWriter = spawnCheckpointChild(databasePath, 'writer-hold')
       await holdingWriter.checkpoint
 
-      const readerStartedAt = Date.now()
+      // With no busy timeout, a reader that had to wait for the writer would
+      // fail with SQLITE_BUSY instead of reading.
       const reader = openConnection(databasePath, 0)
       const visible = reader
         .prepare('SELECT revision, value FROM workspace_state WHERE id = ?')
@@ -510,21 +511,14 @@ if (process.argv[2] === '--child') {
         revision: 1,
         value: 'revision-1',
       })
-      assert.ok(
-        Date.now() - readerStartedAt < 1_000,
-        'a WAL reader must not wait for the uncommitted writer',
-      )
 
+      // The writer is held until the test kills it, so a busy result at all
+      // is the bounded timeout expiring: an unbounded wait would never end.
       const competingWriter = openConnection(databasePath, 75)
-      const busyStartedAt = Date.now()
       assert.throws(
         () => competingWriter.exec('BEGIN IMMEDIATE'),
         isSqliteBusy,
         'a second writer must receive a bounded SQLITE_BUSY result',
-      )
-      assert.ok(
-        Date.now() - busyStartedAt < 2_000,
-        'writer contention must respect the bounded busy timeout',
       )
       competingWriter.close()
 
