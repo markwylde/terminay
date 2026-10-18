@@ -5,16 +5,17 @@ import test from "node:test";
 import {
   createCountingRunner,
   createFakeWatcher,
+  createManualTimers,
+  createReportLog,
   createRepository,
-  eventually,
   git,
-  settle,
 } from "./fixtures/git-observation.mjs";
 
 /**
  * The Git service reports its observation lifecycle to its host. These drive
  * events through a fake watcher so each report can be tied to the exact event
- * that raised it; the real watcher is covered separately.
+ * that raised it; the real watcher is covered separately. The service's timers
+ * are held by the test, and each wait is on the report that ends it.
  */
 const LINKED_BRANCH = "feature-zebra";
 const LINKED_DIRECTORY = "sibling-tree";
@@ -26,21 +27,23 @@ async function reportingService(t, { flushMs = 20, onObservation, wrapRunner, re
   const counting = createCountingRunner(NodeGitCommandRunner);
   const runner = wrapRunner === undefined ? counting : wrapRunner(counting);
   const watcher = createFakeWatcher();
-  const reports = [];
+  const timers = createManualTimers();
+  const log = createReportLog();
   const service = new GitService({
     runner,
     watcher,
+    timers,
     refreshRampMs,
     observationFlushMs: flushMs,
-    onObservation: onObservation ?? ((report) => reports.push(report)),
+    onObservation: onObservation ?? ((report) => log.onObservation(report)),
   });
   t.after(() => service.close());
-  return { service, runner: counting, watcher, fixture, reports };
+  return { service, runner: counting, watcher, timers, log, fixture, reports: log.reports };
 }
 
 async function bindAndList(context, projectId = "project-a") {
   await context.service.bindProject(projectId, context.fixture.main);
-  await eventually(() => context.watcher.isWatching(context.fixture.gitDir), "Git directory watch was not established");
+  await context.watcher.opened(context.fixture.gitDir);
   return context.service.worktrees({ projectId });
 }
 
@@ -72,12 +75,12 @@ test("every watch reports when it opens and when it closes", async (t) => {
   const linked = join(context.fixture.root, LINKED_DIRECTORY);
   await git(["worktree", "add", "-b", LINKED_BRANCH, linked], context.fixture.main);
   context.watcher.emit(context.fixture.gitDir, `worktrees/${LINKED_DIRECTORY}`);
-  await eventually(() => context.watcher.isWatching(linked), "the new worktree was not watched");
+  await context.watcher.opened(linked);
   assert.equal(of(context.reports, "watch.opened").length, 3);
 
   await git(["worktree", "remove", linked], context.fixture.main);
   context.watcher.emit(context.fixture.gitDir, "worktrees");
-  await eventually(() => !context.watcher.isWatching(linked), "the removed worktree stayed watched");
+  await context.watcher.closed(linked);
   assert.equal(of(context.reports, "watch.closed").length, 1);
   assert.equal(last(context.reports, "watch.closed").watch, "working-tree");
 
@@ -115,11 +118,10 @@ test("an observer that throws changes no result", async (t) => {
     await addLinkedWorktree(context.fixture);
     await bindAndList(context);
     await git(["merge", "--ff-only", LINKED_BRANCH], context.fixture.main);
+    // The event starts its refresh at once, and a listing waits on it.
     context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
-    await eventually(async () => {
-      const listing = await context.service.worktrees({ projectId: "project-a" });
-      return listing.worktrees.every((worktree) => worktree.lineAdditions === 0);
-    }, "the default-branch move was not measured");
+    const listing = await context.service.worktrees({ projectId: "project-a" });
+    assert.ok(listing.worktrees.every((worktree) => worktree.lineAdditions === 0), "the default-branch move was measured");
   }
   const shape = async (context) =>
     (await context.service.worktrees({ projectId: "project-a" })).worktrees.map((worktree) => ({
@@ -135,16 +137,19 @@ test("an observer that throws changes no result", async (t) => {
 test("changes that invalidate nothing are reported once, as counts, without running Git", async (t) => {
   const context = await reportingService(t, { flushMs: 60 });
   await bindAndList(context);
-  await settle(120);
+  // Whatever binding left to report is reported first.
+  context.timers.advance(60);
+  assert.deepEqual(context.timers.pending(), []);
   context.reports.length = 0;
   context.runner.calls.length = 0;
 
   for (const entry of ["index.lock", "refs/heads/main.lock", "HEAD.lock", "objects/ab/cd", "logs/HEAD"])
     context.watcher.emit(context.fixture.gitDir, entry);
   assert.deepEqual(context.reports, [], "a burst is not reported event by event");
+  assert.deepEqual(context.timers.pending(), [60], "one report is due for the whole burst");
 
-  await eventually(() => of(context.reports, "changes").length > 0, "the counted changes were never reported");
-  await settle(120);
+  context.timers.advance(60);
+  assert.deepEqual(context.timers.pending(), [], "nothing more is due to be reported");
   assert.equal(context.reports.length, 1);
   assert.deepEqual(context.reports[0].changes, {
     byClass: { lock: 3, inert: 2 },
@@ -172,10 +177,10 @@ test("a default-branch move reports its class, its scope, and every worktree re-
   const before = of(context.reports, "measurement.completed").length;
 
   await git(["merge", "--ff-only", LINKED_BRANCH], context.fixture.main);
+  const measured = context.log.next("measurement.completed");
   context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
-  await eventually(() => of(context.reports, "measurement.completed").length > before, "the move raised no measurement");
-
-  const moved = last(context.reports, "measurement.completed");
+  const moved = await measured;
+  assert.equal(of(context.reports, "measurement.completed").length, before + 1);
   assert.equal(moved.raisedBy, "watch");
   assert.equal(moved.claim, "all");
   assert.equal(moved.trusted, true);
@@ -208,10 +213,10 @@ test("an edit in one worktree reports the others carried forward", async (t) => 
   const before = of(context.reports, "measurement.completed").length;
 
   await writeFile(join(linked, "c.txt"), "c\n");
+  const measured = context.log.next("measurement.completed");
   context.watcher.emit(linked, "c.txt");
-  await eventually(() => of(context.reports, "measurement.completed").length > before, "the edit raised no measurement");
-
-  const edited = last(context.reports, "measurement.completed");
+  const edited = await measured;
+  assert.equal(of(context.reports, "measurement.completed").length, before + 1);
   assert.equal(edited.claim, "scoped");
   assert.equal(edited.remeasured, 1);
   assert.equal(edited.carried, 1);
@@ -244,7 +249,7 @@ test("a change that arrives during a measurement is reported by the measurement 
     context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
   };
   context.watcher.emit(context.fixture.gitDir, "index");
-  await eventually(() => of(context.reports, "measurement.completed").length >= 2, "the ref move was never measured");
+  await context.log.until((reports) => of(reports, "measurement.completed").length >= 2);
 
   const [first, second] = of(context.reports, "measurement.completed");
   assert.deepEqual({ claim: first.claim, carried: first.carried }, { claim: "scoped", carried: 1 });
@@ -268,10 +273,12 @@ test("a listing that names one worktree does not narrow a claim on every worktre
   context.reports.length = 0;
 
   await git(["merge", "--ff-only", LINKED_BRANCH], context.fixture.main);
+  const indexMeasured = context.log.next("measurement.completed");
   context.watcher.emit(context.fixture.gitDir, "index");
-  await eventually(() => of(context.reports, "measurement.completed").length === 1, "the index change was never measured");
-  assert.equal(last(context.reports, "measurement.completed").claim, "scoped");
+  assert.equal((await indexMeasured).claim, "scoped");
+  assert.equal(of(context.reports, "measurement.completed").length, 1);
   context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
+  assert.ok(context.timers.pending().includes(60_000), "the watch's own refresh waits out its interval");
 
   const listing = await context.service.worktrees({ projectId: "project-a", worktreeId: main.id });
 
@@ -306,9 +313,9 @@ test("a failed measurement reports that its claim was handed back", async (t) =>
   context.reports.length = 0;
 
   failList = true;
+  const reported = context.log.next("measurement.failed");
   context.watcher.emit(context.fixture.gitDir, "refs/heads/main");
-  await eventually(() => of(context.reports, "measurement.failed").length > 0, "the failure was not reported");
-  const failed = last(context.reports, "measurement.failed");
+  const failed = await reported;
   assert.equal(failed.claim, "all");
   assert.equal(failed.restored, true);
   assert.equal(failed.error.code, "command-error");
@@ -334,13 +341,13 @@ test("a measurement overtaken by a release reports that it was abandoned", async
   await bindAndList(context);
   context.reports.length = 0;
 
+  const reported = context.log.next("measurement.abandoned");
   context.watcher.emit(context.fixture.main, "a.txt");
   release = () => {
     release = undefined;
     context.service.releaseProject("project-a");
   };
-  await eventually(() => of(context.reports, "measurement.abandoned").length > 0, "the abandonment was not reported");
-  const abandoned = last(context.reports, "measurement.abandoned");
+  const abandoned = await reported;
   assert.equal(abandoned.restored, true);
   assert.equal(of(context.reports, "measurement.completed").length, 0);
 });
@@ -391,12 +398,14 @@ test("no report carries a path, a branch name, a canonical id, or a project id",
   context.watcher.emit(linked, "c.txt");
   context.watcher.emit(context.fixture.gitDir, `refs/heads/${LINKED_BRANCH}`);
   context.watcher.emit(context.fixture.gitDir, `worktrees/${LINKED_DIRECTORY}/HEAD`);
-  await settle();
+  // The events' refreshes run one after another, and a listing waits on them.
+  await context.service.worktrees({ projectId: "project-a" });
   await context.service.worktrees({ projectId: "project-a" });
   // With the cache settled, the default branch moves unobserved.
   await git(["merge", "--ff-only", LINKED_BRANCH], context.fixture.main);
   await context.service.worktrees({ projectId: "project-a", fresh: true });
-  await settle(120);
+  // Whatever was counted meanwhile is reported.
+  context.timers.advance(20);
   context.watcher.fail(context.fixture.gitDir, Object.assign(new Error("watch limit"), { code: "ENOSPC" }));
   context.service.releaseProject("project-a");
 

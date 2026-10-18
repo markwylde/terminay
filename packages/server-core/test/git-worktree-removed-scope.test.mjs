@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
+import { createFakeWatcher, createReportLog } from './fixtures/git-observation.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -67,14 +68,32 @@ test('a listing scoped to a worktree removed outside the service still lists the
 	const fixture = await repositoryWithTwoWorktrees();
 	t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
-	const service = new GitService();
+	// The watch is driven by hand, so the refresh below is the one raised by
+	// the removed worktree's own deletions rather than whatever the host's
+	// watch happened to deliver first.
+	const watcher = createFakeWatcher();
+	const log = createReportLog();
+	const service = new GitService({
+		watcher,
+		onObservation: (report) => log.onObservation(report),
+	});
+	t.after(() => service.close());
 	await service.bindProject('project-a', fixture.main);
+	await watcher.opened(join(fixture.main, '.git'));
 	const before = await service.worktrees({ projectId: 'project-a' });
 	const removed = before.worktrees.find((worktree) => !worktree.isMain);
 	assert.ok(removed !== undefined);
 
 	// An agent in a terminal, not the Git pane, removes the worktree.
 	await fixture.run(['worktree', 'remove', '--force', fixture.second], fixture.main);
+	const refreshed = log.next('measurement.completed', (report) => report.raisedBy === 'watch');
+	watcher.emit(fixture.second, 'a.txt');
+	const refresh = await refreshed;
+	assert.equal(refresh.claim, 'scoped', 'the refresh is scoped to the removed worktree');
+	assert.equal(
+		log.reports.some((report) => report.kind === 'measurement.failed'),
+		false,
+	);
 
 	const after = await service.worktrees({
 		projectId: 'project-a',

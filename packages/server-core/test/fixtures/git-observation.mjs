@@ -30,6 +30,20 @@ export async function createRepository(prefix = "terminay-git-observe-") {
  */
 export function createFakeWatcher() {
   const entries = [];
+  const waiters = new Set();
+  const notify = () => {
+    for (const waiter of [...waiters])
+      if (waiter.ready()) {
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
+  };
+  const until = (ready) =>
+    new Promise((resolvePromise) => {
+      const waiter = { ready, resolve: resolvePromise };
+      waiters.add(waiter);
+      notify();
+    });
   return {
     entries,
     open() {
@@ -41,12 +55,24 @@ export function createFakeWatcher() {
     isWatching(path) {
       return this.open().some((entry) => entry.path === resolve(path));
     },
+    /** Resolves once a watch on `path` is open: the service opening it is the event. */
+    opened(path) {
+      return until(() => this.isWatching(path));
+    },
+    /** Resolves once no watch on `path` is open. */
+    closed(path) {
+      return until(() => !this.isWatching(path));
+    },
     watch(path, options) {
       const entry = { path: resolve(path), options, closed: false };
       entries.push(entry);
+      // The service finishes what it does around opening a watch (such as
+      // recording the Git directory) in the same turn, so waiters run after it.
+      queueMicrotask(notify);
       return {
         close() {
           entry.closed = true;
+          queueMicrotask(notify);
         },
       };
     },
@@ -79,6 +105,79 @@ export function createCountingRunner(Runner) {
     run(args, cwd, options) {
       calls.push({ args: [...args], cwd });
       return inner.run(args, cwd, options);
+    },
+  };
+}
+
+/**
+ * Collects the service's observation reports and resolves a wait on the
+ * report that ends it, so a test waits on what the service did rather than on
+ * a clock. `until` also accepts a report that already arrived.
+ */
+export function createReportLog() {
+  const reports = [];
+  const waiters = new Set();
+  return {
+    reports,
+    onObservation(report) {
+      reports.push(report);
+      for (const waiter of [...waiters])
+        if (waiter.ready(reports)) {
+          waiters.delete(waiter);
+          waiter.resolve(report);
+        }
+    },
+    until(ready) {
+      if (ready(reports)) return Promise.resolve(reports.at(-1));
+      return new Promise((resolvePromise) => waiters.add({ ready, resolve: resolvePromise }));
+    },
+    /** The next report of `kind` (and matching `match`) to arrive from now on. */
+    next(kind, match = () => true) {
+      const from = reports.length;
+      return new Promise((resolvePromise) =>
+        waiters.add({
+          ready: (all) => all.slice(from).some((report) => report.kind === kind && match(report)),
+          resolve: () => resolvePromise(reports.slice(from).find((report) => report.kind === kind && match(report))),
+        }),
+      );
+    },
+  };
+}
+
+/**
+ * The Git service's timers, held by the test. Nothing fires until the test
+ * fires it, so "nothing is scheduled" is an assertion on `pending()`.
+ */
+export function createManualTimers() {
+  let now = 0;
+  let nextId = 0;
+  const timers = new Map();
+  return {
+    now: () => now,
+    setTimeout(callback, delayMs) {
+      const id = ++nextId;
+      timers.set(id, { callback, at: now + delayMs, delayMs });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    /** Delays of the timers armed and not yet fired or cleared. */
+    pending() {
+      return [...timers.values()].map((timer) => timer.delayMs);
+    },
+    /** Move the clock forward, firing every timer that falls due, in order. */
+    advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= until).sort(([, a], [, b]) => a.at - b.at)[0];
+        if (due === undefined) break;
+        const [id, timer] = due;
+        timers.delete(id);
+        now = timer.at;
+        timer.callback();
+      }
+      now = until;
     },
   };
 }

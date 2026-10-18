@@ -61,6 +61,7 @@ import {
 	type GitServiceOperation,
 	type GitServiceOptions,
 	type GitServiceReplay,
+	type GitServiceTimers,
 	type GitStateWatcher,
 	type GitStatusChangeEvent,
 	type GitStatusEntry,
@@ -109,7 +110,7 @@ interface RepositoryObservation {
 	>;
 	/** Changes counted since the last report. */
 	changes: ChangeCounters;
-	flushTimer: ReturnType<typeof setTimeout> | undefined;
+	flushTimer: unknown;
 	readonly schedule: RefreshSchedule;
 	/** Aborts this observation's own refreshes when it is disposed. */
 	readonly abort: AbortController;
@@ -150,6 +151,19 @@ interface MeasurementOrigin {
 	readonly raisedBy: GitObservationRaisedBy;
 	readonly fresh: boolean;
 }
+
+/** The host's timers. Neither keeps the process alive. */
+const HOST_TIMERS: GitServiceTimers = {
+	now: () => Date.now(),
+	setTimeout(callback, delayMs) {
+		const timer = setTimeout(callback, delayMs);
+		timer.unref?.();
+		return timer;
+	},
+	clearTimeout(timer) {
+		clearTimeout(timer as ReturnType<typeof setTimeout>);
+	},
+};
 
 /** Re-measured worktrees named in one measurement report. */
 const MAX_REPORTED_WORKTREES = 32;
@@ -210,6 +224,7 @@ export class GitService {
 		| ((report: GitObservationReport) => void)
 		| undefined;
 	private readonly observationFlushMs: number;
+	private readonly timers: GitServiceTimers;
 	/** Process-local names for repositories and worktrees in reports. The
 	 *  canonical ids authorize requests, so reports never carry them. */
 	private readonly diagnosticRepositoryIds = new Map<string, string>();
@@ -256,6 +271,7 @@ export class GitService {
 		this.refreshRampMs = options.refreshRampMs ?? REFRESH_RAMP_MS;
 		this.onObservation = options.onObservation;
 		this.observationFlushMs = options.observationFlushMs ?? 5_000;
+		this.timers = options.timers ?? HOST_TIMERS;
 		if (!Number.isFinite(this.observationFlushMs) || this.observationFlushMs < 0)
 			throw new RangeError('observationFlushMs must be non-negative');
 	}
@@ -2730,13 +2746,10 @@ export class GitService {
 			schedule: createRefreshSchedule({
 				rampMs: this.refreshRampMs,
 				run: () => this.refreshObservation(observation),
-				setTimer: (callback, delayMs) => {
-					const timer = setTimeout(callback, delayMs);
-					timer.unref?.();
-					return timer;
-				},
-				clearTimer: (timer) =>
-					clearTimeout(timer as ReturnType<typeof setTimeout>),
+				now: () => this.timers.now(),
+				setTimer: (callback, delayMs) =>
+					this.timers.setTimeout(callback, delayMs),
+				clearTimer: (timer) => this.timers.clearTimeout(timer),
 			}),
 			abort: new AbortController(),
 			dirty: new Set(),
@@ -3072,7 +3085,7 @@ export class GitService {
 		const taken = observation.changes;
 		observation.changes = emptyChanges();
 		if (observation.flushTimer !== undefined) {
-			clearTimeout(observation.flushTimer);
+			this.timers.clearTimeout(observation.flushTimer);
 			observation.flushTimer = undefined;
 		}
 		return taken;
@@ -3104,7 +3117,7 @@ export class GitService {
 	private armChangeFlush(observation: RepositoryObservation): void {
 		if (this.onObservation === undefined) return;
 		if (observation.flushTimer !== undefined || observation.closed) return;
-		observation.flushTimer = setTimeout(() => {
+		observation.flushTimer = this.timers.setTimeout(() => {
 			observation.flushTimer = undefined;
 			// A measurement that is running re-arms this when it completes, and
 			// one that is owed takes these counts with its claim.
@@ -3116,7 +3129,6 @@ export class GitService {
 				return;
 			this.flushChanges(observation);
 		}, this.observationFlushMs);
-		observation.flushTimer.unref?.();
 	}
 
 	private flushChanges(observation: RepositoryObservation): void {

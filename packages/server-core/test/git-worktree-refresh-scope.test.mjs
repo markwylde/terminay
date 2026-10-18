@@ -31,12 +31,26 @@ async function repositoryWithTwoWorktrees() {
 	return { root, main, second };
 }
 
+/**
+ * A host that cannot watch: every watch fails as it opens, before any listing
+ * is asked for. These tests are about the scoping a listing gets from the
+ * worktree its caller names, which is all there is with no live watch.
+ * Leaving the real watch in place would let a listing be answered from its
+ * cache or scoped by events, depending on when the watch came up.
+ */
+const unwatchedHost = {
+	watch(_path, options) {
+		queueMicrotask(() => options.onError(new Error('watching is unavailable')));
+		return { close() {} };
+	},
+};
+
 /** Wraps the default runner so commands can be counted per worktree. */
 async function countingService(GitService, DefaultRunner) {
 	const inner = new DefaultRunner();
 	const calls = [];
 	const service = new GitService({
-		
+		watcher: unwatchedHost,
 		runner: {
 			run: (args, cwd, options) => {
 				calls.push({ args: [...args], cwd });

@@ -17,8 +17,7 @@ import {
   createCountingRunner,
   createFakeWatcher,
   createRepository,
-  eventually,
-  settle,
+  createManualTimers,
 } from "./fixtures/git-observation.mjs";
 
 const SERVER_ID = "project-close-server";
@@ -59,10 +58,13 @@ async function composedServer(t, { released = [] } = {}) {
 
   const runner = createCountingRunner(NodeGitCommandRunner);
   const watcher = createFakeWatcher();
-  const git = new GitService({ runner, watcher, refreshRampMs: [0] });
+  // Held by the test, so whatever the service arms is visible rather than
+  // waited out.
+  const timers = createManualTimers();
+  const git = new GitService({ runner, watcher, timers, refreshRampMs: [0] });
   // The embedded Electron authority binds every project it opens.
   await git.bindProject("project-a", fixture.main);
-  await eventually(() => watcher.isWatching(fixture.gitDir), "Git directory watch was not established");
+  await watcher.opened(fixture.gitDir);
   const adapter = new ServerGitAdapter({
     serverId: SERVER_ID,
     git,
@@ -91,7 +93,7 @@ async function composedServer(t, { released = [] } = {}) {
     await composition.shutdown();
     git.close();
   });
-  return { fixture, workspace, runner, watcher, git, adapter, pty, client };
+  return { fixture, workspace, runner, watcher, timers, git, adapter, pty, client };
 }
 
 test("closing a project kills its terminals and stops all Git for it", async (t) => {
@@ -100,10 +102,12 @@ test("closing a project kills its terminals and stops all Git for it", async (t)
     await server.client.command("terminal.create", { projectId: "project-a", cwd: server.fixture.main, cols: 80, rows: 24 });
   assert.equal(server.pty.processes.length, TERMINALS);
 
-  // While open and idle, nothing runs once the first listing is cached.
+  // While open and idle, nothing runs once the first listing is cached: no
+  // watch event arrives, and nothing is armed to run later.
   await server.git.worktrees({ projectId: "project-a" });
   server.runner.calls.length = 0;
-  await settle();
+  await server.git.worktrees({ projectId: "project-a" });
+  assert.deepEqual(server.timers.pending(), [], "nothing is armed to run Git");
   assert.deepEqual(server.runner.calls, [], "an open idle project runs no Git");
 
   await server.client.command("workspace.command", {
@@ -116,9 +120,8 @@ test("closing a project kills its terminals and stops all Git for it", async (t)
 
   assert.equal(server.git.getBinding("project-a"), undefined, "the Git binding is released");
   assert.deepEqual(server.watcher.openPaths(), [], "every watch is closed");
-  server.runner.calls.length = 0;
-  await settle();
-  assert.deepEqual(server.runner.calls, [], "Git kept running for a closed project");
+  // With every watch closed, only an armed timer could run Git again.
+  assert.deepEqual(server.timers.pending(), [], "Git is left armed for a closed project");
 });
 
 test("closing a project with no terminals still releases its resources", async (t) => {
