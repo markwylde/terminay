@@ -829,6 +829,11 @@ export class AgentChatService {
 			await session.handle.close().catch(() => undefined);
 			// The exit event normally arrives during close; make sure it is final.
 			this.sessionExited(chat, session.sessionId, { code: null, signal: null });
+			// Ending a session ends what it kept on disk: whoever awaited this
+			// close must find nothing of the conversation left behind.
+			await rm(session.workingDirectory, { recursive: true, force: true }).catch(
+				() => undefined,
+			);
 		}
 		this.options.mcp?.revoke(chat.id);
 	}
