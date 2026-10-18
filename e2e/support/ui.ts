@@ -1,13 +1,19 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect } from '../fixtures'
 
-export async function longPress(locator: Locator, durationMs = 600): Promise<void> {
+/**
+ * Press and hold `locator` until the long press has done what it does,
+ * `opened` being on screen, then let go. A long press acts while it is held,
+ * so the release comes after the hold has run out whatever the machine's
+ * speed.
+ */
+export async function longPress(locator: Locator, opened: Locator): Promise<void> {
   const box = await locator.boundingBox()
   if (!box) throw new Error('Expected a layout box for long-press')
   const page = locator.page()
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
-  await page.waitForTimeout(durationMs)
+  await expect(opened).toBeVisible()
   await page.mouse.up()
 }
 
