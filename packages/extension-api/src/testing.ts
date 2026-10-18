@@ -258,7 +258,9 @@ export interface AgentExtensionHarness {
 	assertConformant(): void;
 	/**
 	 * Resolves once `predicate` holds for the published state, re-checked after
-	 * every publication; rejects after `timeoutMs`.
+	 * every publication. With `timeoutMs` it also rejects after that long;
+	 * without one it waits on publications alone, so how fast the machine is
+	 * cannot fail it.
 	 */
 	waitFor(
 		predicate: (harness: AgentExtensionHarness) => boolean,
@@ -654,7 +656,7 @@ export async function createAgentExtensionHarness(
 					violations.flatMap((violation) => violation.issues),
 				);
 		},
-		waitFor(predicate, timeoutMs = 5_000) {
+		waitFor(predicate, timeoutMs) {
 			if (predicate(harness)) return Promise.resolve();
 			return new Promise((resolve, reject) => {
 				const check = (): void => {
@@ -663,10 +665,13 @@ export async function createAgentExtensionHarness(
 					clearTimeout(timer);
 					resolve();
 				};
-				const timer = setTimeout(() => {
-					waiters.delete(check);
-					reject(new Error(`waitFor timed out after ${timeoutMs} ms`));
-				}, timeoutMs);
+				const timer =
+					timeoutMs === undefined
+						? undefined
+						: setTimeout(() => {
+								waiters.delete(check);
+								reject(new Error(`waitFor timed out after ${timeoutMs} ms`));
+							}, timeoutMs);
 				waiters.add(check);
 			});
 		},
