@@ -1,5 +1,6 @@
 import { expect, test } from './fixtures';
 import { openChildWindow, presentNativeRoute } from './support/app';
+import { afterRendererTasks } from './support/renderer-clock';
 
 const ROUTE = '/?auxiliary=performance-log';
 
@@ -45,10 +46,15 @@ test('the Performance Log window is reused rather than duplicated', async ({
 	});
 	await expect(first.getByRole('heading', { name: 'Startup' })).toBeVisible();
 
-	const before = electronApp.windows().length;
+	const windowCount = () =>
+		electronApp.evaluate(
+			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+		);
+	const before = await windowCount();
+	// The request is answered once the host has presented the route, so a
+	// window it made for it is there by the time it returns.
 	await presentNativeRoute(mainWindow, ROUTE, 'performance-log');
-	await mainWindow.waitForTimeout(500);
-	expect(electronApp.windows().length).toBe(before);
+	expect(await windowCount()).toBe(before);
 });
 
 test('a startup sub-phase expands to its recorded detail', async ({
@@ -88,9 +94,32 @@ test('live samples arrive without enabling the opt-in collector', async ({
 		.locator('tbody tr');
 	await expect(processRows.first()).toBeVisible({ timeout: 10_000 });
 
-	// A second sample must replace the first rather than accumulate.
+	// A second sample must replace the first rather than accumulate. The
+	// window is sent each sample as it is taken; once two more have come and
+	// been drawn, the table is the latest one's.
 	const firstCount = await processRows.count();
-	await performanceWindow.waitForTimeout(2_500);
+	await performanceWindow.evaluate(() => {
+		const state = window as unknown as { samplesSeen: number };
+		state.samplesSeen = 0;
+		(
+			window.terminayHost as unknown as {
+				subscribeEvent(
+					listener: (message: { event: { type: string } }) => void,
+				): void;
+			}
+		).subscribeEvent((message) => {
+			if (message.event.type === 'diagnostics.performance-snapshot.changed')
+				state.samplesSeen += 1;
+		});
+	});
+	await expect
+		.poll(() =>
+			performanceWindow.evaluate(
+				() => (window as unknown as { samplesSeen: number }).samplesSeen,
+			),
+		)
+		.toBeGreaterThanOrEqual(2);
+	await afterRendererTasks(performanceWindow);
 	expect(await processRows.count()).toBe(firstCount);
 });
 
