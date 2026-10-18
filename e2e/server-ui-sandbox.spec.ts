@@ -287,6 +287,56 @@ test('server UI cannot open windows or gain permissions', async () => {
 	).resolves.toBe('denied');
 });
 
+/**
+ * Note every navigation the host is asked to allow in a page, frame or
+ * window, and whether it refused it. The host's own policy listens first, so
+ * by the time this one hears of a navigation the decision has been made.
+ * Returns a reader for the decisions about navigations to one origin.
+ */
+async function watchNavigations(
+	page: Page,
+): Promise<(origin: string) => Promise<boolean[]>> {
+	await (await app.browserWindow(page)).evaluate((window) => {
+		const seen: { url: string; refused: boolean }[] = [];
+		(globalThis as { __terminayNavigations?: typeof seen }).__terminayNavigations =
+			seen;
+		const note = (event: Electron.Event & { url?: string }, url?: unknown) => {
+			seen.push({
+				url: event.url ?? (typeof url === 'string' ? url : ''),
+				refused: event.defaultPrevented,
+			});
+		};
+		window.webContents.on('will-frame-navigate', note);
+		window.webContents.on('will-navigate', note);
+	});
+	return (origin) =>
+		app.evaluate(
+			(_electron, wanted) =>
+				(
+					(
+						globalThis as {
+							__terminayNavigations?: { url: string; refused: boolean }[];
+						}
+					).__terminayNavigations ?? []
+				)
+					.filter((entry) => entry.url.startsWith(wanted))
+					.map((entry) => entry.refused),
+			origin,
+		);
+}
+
+/** What the host decided about the navigations to `origin` after the first
+ * `from` of them: nothing yet, all refused, or one let through. */
+async function decided(
+	refused: (origin: string) => Promise<boolean[]>,
+	origin: string,
+	from: number,
+): Promise<'pending' | 'refused' | 'allowed'> {
+	const decisions = (await refused(origin)).slice(from);
+	if (decisions.length === 0) return 'pending';
+	return decisions.every(Boolean) ? 'refused' : 'allowed';
+}
+
 test('opaque profiles isolate storage while navigation, downloads, and subframe bridges stay blocked', async () => {
 	const [profileA, profileB] = pagesByTitle();
 	await profileA.evaluate(
@@ -313,10 +363,13 @@ test('opaque profiles isolate storage while navigation, downloads, and subframe 
 		local: null,
 	});
 
+	const refused = await watchNavigations(profileA);
 	await profileA.locator('#foreign-frame').evaluate((frame, origin) => {
 		(frame as HTMLIFrameElement).src = origin;
 	}, foreignOrigin);
-	await profileA.waitForTimeout(100);
+	// The host was asked to let the frame go there, and refused.
+	await expect.poll(() => decided(refused, foreignOrigin, 0)).toBe('refused');
+	const decidedForFrame = (await refused(foreignOrigin)).length;
 	expect(
 		profileA.frames().some((frame) => frame.url().startsWith(foreignOrigin)),
 	).toBe(false);
@@ -434,7 +487,10 @@ test('opaque profiles isolate storage while navigation, downloads, and subframe 
 	await profileA.evaluate((target) => {
 		window.location.assign(target);
 	}, foreignOrigin);
-	await profileA.waitForTimeout(100);
+	// The host was asked to let the window go there, and refused.
+	await expect
+		.poll(() => decided(refused, foreignOrigin, decidedForFrame))
+		.toBe('refused');
 	const profileAUrl = await app.evaluate(({ BrowserWindow }) => {
 		const target = BrowserWindow.getAllWindows().find((window) =>
 			window.webContents.getURL().includes('profile=a'),
