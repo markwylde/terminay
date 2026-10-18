@@ -51,9 +51,11 @@ test('a vanished process yields a chain of itself', async () => {
 	assert.deepEqual(await ancestry.chain(77), [77]);
 });
 
-test('the default reader spawns nothing until asked', async () => {
+test('the default reader spawns nothing until asked', async (t) => {
 	// Constructing the reader and holding cached chains must not touch the
-	// process table; reads happen only inside `chain()`.
+	// process table; reads happen only inside `chain()`. Time is the test's:
+	// anything the reader scheduled would run when the clock is advanced.
+	t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'setImmediate'] });
 	let reads = 0;
 	const ancestry = new ProcessAncestry({
 		readParent: async () => {
@@ -61,8 +63,10 @@ test('the default reader spawns nothing until asked', async () => {
 			return undefined;
 		},
 	});
-	await new Promise((resolve) => setTimeout(resolve, 50));
+	t.mock.timers.tick(24 * 60 * 60 * 1000);
+	await Promise.resolve();
 	assert.equal(reads, 0);
+	t.mock.timers.reset();
 	await ancestry.chain(5);
 	assert.equal(reads, 1);
 });
