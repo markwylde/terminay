@@ -187,7 +187,9 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 						`CLI readiness timed out${errorOutput.trim() === '' ? '' : `: ${errorOutput.trim()}`}`,
 					),
 				),
-			10_000,
+			// Ready in about a second alone, and up to eight on a loaded CI
+			// runner; the sibling settings-migration test allows the same.
+			30_000,
 		);
 		child.stdout.on('data', (chunk) => {
 			output += chunk.toString();
