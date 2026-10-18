@@ -24,6 +24,19 @@ function chatContext(overrides = {}) {
   };
 }
 
+/** Resolves once an approval is waiting, as the service publishes it. */
+function approvalRequested(approvals) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (approvals.list().length === 0) return;
+      stop();
+      resolve();
+    };
+    const stop = approvals.subscribe(check);
+    check();
+  });
+}
+
 test("a workspace chat capability resolves to the chat with workspace reach and no terminal", () => {
   const store = new ControlCapabilityStore();
   const lease = store.mintChat("c1", { kind: "workspace" });
@@ -123,8 +136,9 @@ test("a chat's approval names the chat, carries its id, and reports how it ended
     describe: async () => ({ agent: "Claude", terminalTitle: "a terminal", summary: "run `npm test` in api", details: [] }),
     chatAgentName: (chatId) => (chatId === "c1" ? "Pixel (Claude Code)" : undefined),
   });
+  const requested = approvalRequested(approvals);
   const pending = gate.authorize({ op: "run_command", group: "terminalsManage", params: {}, context: chatContext() });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await requested;
   const [view] = approvals.list();
   assert.equal(view.chatId, "c1");
   assert.equal(view.agent, "Pixel (Claude Code)");
@@ -147,8 +161,9 @@ test("a chat approval ended by cancellation reports ended and runs nothing", asy
   approvals.onSettled((_view, outcome) => settled.push(outcome));
   const controller = new AbortController();
   const gate = createMcpPermissionGate({ approvals, describe: async () => ({ agent: "x", terminalTitle: "", summary: "s", details: [] }) });
+  const requested = approvalRequested(approvals);
   const pending = gate.authorize({ op: "write_terminal", group: "terminalsManage", params: {}, context: chatContext({ signal: controller.signal }) });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await requested;
   controller.abort();
   const refusal = await pending;
   assert.equal(refusal.ok, false);

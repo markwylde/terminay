@@ -57,8 +57,6 @@ class FakeWeriftPeer {
 	}
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-
 test('selected Werift peer publishes offers and normalized ICE through the hardened peer shape', async () => {
 	const module = createSecureWeriftCompatibilityModule({
 		RTCPeerConnection: FakeWeriftPeer,
@@ -69,12 +67,19 @@ test('selected Werift peer publishes offers and normalized ICE through the harde
 	});
 	const descriptions = [];
 	const candidates = [];
-	peer.onLocalDescription((sdp, type) => descriptions.push({ sdp, type }));
+	let described;
+	const offered = new Promise((resolve) => {
+		described = resolve;
+	});
+	peer.onLocalDescription((sdp, type) => {
+		descriptions.push({ sdp, type });
+		described();
+	});
 	peer.onLocalCandidate((candidate, mid) =>
 		candidates.push({ candidate, mid }),
 	);
 	const channel = peer.createDataChannel('application', { ordered: true });
-	await tick();
+	await offered;
 	assert.deepEqual(descriptions, [{ sdp: 'werift-offer', type: 'offer' }]);
 	assert.equal(
 		FakeWeriftPeer.instances.at(-1).configuration.maxMessageSize,
@@ -102,10 +107,17 @@ test('selected Werift answerer and binary channel preserve exact response identi
 	const peer = new Peer('peer-b');
 	const descriptions = [];
 	const channels = [];
-	peer.onLocalDescription((sdp, type) => descriptions.push({ sdp, type }));
+	let described;
+	const answered = new Promise((resolve) => {
+		described = resolve;
+	});
+	peer.onLocalDescription((sdp, type) => {
+		descriptions.push({ sdp, type });
+		described();
+	});
 	peer.onDataChannel((channel) => channels.push(channel));
 	peer.setRemoteDescription('browser-offer', 'offer');
-	await tick();
+	await answered;
 	assert.deepEqual(descriptions, [{ sdp: 'werift-answer', type: 'answer' }]);
 
 	const native = new FakeWeriftChannel('assets');
