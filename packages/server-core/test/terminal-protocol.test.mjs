@@ -46,9 +46,18 @@ function request(operation, payload, commandId, authScope = "write", clientId = 
   };
 }
 
-function nextTurn() {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+/** Settles with the next event the journal publishes that matches. */
+function nextPublished(journal, predicate) {
+  return new Promise((resolve) => {
+    const unsubscribe = journal.subscribe((event) => {
+      if (!predicate(event)) return;
+      unsubscribe();
+      resolve(event);
+    });
+  });
 }
+
+const isOutput = (event) => event.event === "terminal" && event.payload.type === "output";
 
 test("terminal operation registry binds the client contract to one server-owned session", async () => {
   const pty = createPtyFactory();
@@ -67,8 +76,9 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(attachment.position, 0);
   assert.equal(attachment.presentation.role, "controller");
 
+  const helloPublished = nextPublished(journal, isOutput);
   pty.processes[0].emitData("hello");
-  await nextTurn();
+  await helloPublished;
   assert.equal(journal.revision, 1);
   const outputEvent = liveEvents.find((event) => event.payload.type === "output");
   assert.equal(outputEvent.payload.clientId, "client-a");
@@ -142,14 +152,13 @@ test("congestion suppression stops publishing raw output without stopping the PT
       if (event.event === "terminal" && event.payload.type === "output") published.push(event.payload.nextPosition);
     });
 
+    const firstPublished = nextPublished(journal, isOutput);
     pty.processes[0].emitData("published");
-    await nextTurn();
+    await firstPublished;
     assert.equal(published.length, 1, "live output is published before suppression");
 
     registry.suppressOutput(attachmentId, "connection-client-a");
     pty.processes[0].emitData(new Uint8Array(64 * 1024));
-    await nextTurn();
-    assert.equal(published.length, 1, "suppressed output never reaches the shared event journal");
     assert.equal(service.getSession(identity).outputPosition, 64 * 1024 + 9, "the server-owned PTY stream continues advancing");
 
     const input = await dispatcher.command(request(
@@ -171,8 +180,6 @@ test("congestion suppression stops publishing raw output without stopping the PT
     ));
     assert.equal(acknowledged.ok, true, JSON.stringify(acknowledged));
     pty.processes[0].emitData("still-muted");
-    await nextTurn();
-    assert.equal(published.length, 1, "an acknowledgement cannot unmute a suppressed attachment");
 
     // Replacing the attachment is what recovery actually does, and it is the
     // only thing that resumes the stream.
@@ -184,9 +191,15 @@ test("congestion suppression stops publishing raw output without stopping the PT
     assert.equal(replacement.ok, true, JSON.stringify(replacement));
     assert.equal(replacement.result.replacedAttachmentId, attachmentId,
       "the superseded attachment is named so its delivery lane can be retired");
+    const resumedPublished = nextPublished(journal, isOutput);
     pty.processes[0].emitData("resumed");
-    await nextTurn();
-    assert.equal(published.length, 2, "the replacement attachment streams live output again");
+    const resumed = await resumedPublished;
+    assert.equal(resumed.payload.nextPosition, service.getSession(identity).outputPosition,
+      "the replacement attachment streams live output again");
+    // Output is published in order, so anything published while suppressed
+    // would have come before this.
+    assert.equal(published.length, 2,
+      "suppressed output never reaches the shared event journal, and an acknowledgement cannot unmute it");
     unsubscribe();
   } finally {
     await service.shutdown();
@@ -214,9 +227,10 @@ test("high terminal output stays live without evicting retained workspace events
     if (event.event === "terminal" && event.payload.type === "output") outputEvents.push(event);
   });
 
+  const framePublished = nextPublished(journal, isOutput);
   for (let index = 0; index < 10_000; index += 1) pty.processes[0].emitData("x");
 
-  await nextTurn();
+  await framePublished;
   unsubscribe();
   assert.equal(outputEvents.length, 1, "small PTY callbacks share one live frame");
   assert.equal(outputEvents[0].body.byteLength, 10_000);

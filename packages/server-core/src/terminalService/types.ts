@@ -398,6 +398,9 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
 	readonly generateSessionId?: (projectId: string) => string;
 	/** Optional host-neutral timer implementation for inactivity supervision. */
 	readonly inactivityTimer?: TerminalInactivityTimer;
+	/** What bounds how long a fresh presentation waits for the checkpoint
+	 * authority to drain. Defaults to the global timers, unreferenced. */
+	readonly presentationSettleTimer?: TerminalInactivityTimer;
 	/** Optional hold consulted before a quiet period resolves a wait. */
 	readonly inactivityHold?: TerminalInactivityHold;
 	readonly onEvent?: TerminalEventListener;

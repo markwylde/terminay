@@ -181,6 +181,9 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	 * presentation is derived from this so a lowered host limit cannot
 	 * hydrate into congestion. */
 	readonly maxTerminalUnconfirmedBytes?: number;
+	/** Clock a presentation lane's unconfirmed-age bound is measured against.
+	 * Defaults to `Date.now`. */
+	readonly terminalDeliveryNow?: () => number;
 
 	/** Optional server-owned projection applied immediately before a journal
 	 * event is replayed or sent to an authenticated client. */

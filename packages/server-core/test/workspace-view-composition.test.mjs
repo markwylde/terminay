@@ -87,15 +87,35 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
 }
 
 
-/** A window that answers view requests, recording what it was asked. */
-function serve(client, name, asked) {
-  return serveWorkspaceView(new TerminayClientFacade(client), async (request) => {
+/**
+ * The facade a window serves view requests over. `ready()` settles once every
+ * subscription and command it has sent so far has been answered, so a window
+ * that has started serving is then subscribed and attached on the server.
+ */
+function windowFacade(client) {
+  const sent = [];
+  const track = (pending) => {
+    sent.push(pending.catch(() => undefined));
+    return pending;
+  };
+  const facade = new TerminayClientFacade({
+    query: (...args) => client.query(...args),
+    command: (...args) => track(client.command(...args)),
+    subscribe: (...args) => track(client.subscribe(...args)),
+  });
+  return { facade, ready: () => Promise.all(sent) };
+}
+
+/** A window that answers view requests, recording what it was asked. Settles
+ * once the window is serving. */
+async function serve(client, name, asked) {
+  const { facade, ready } = windowFacade(client);
+  serveWorkspaceView(facade, async (request) => {
     asked.push([name, request.op, request.params]);
     return { layout: { projectId: request.params.projectId ?? "project-a", answeredBy: name } };
   });
+  await ready();
 }
-
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 test("a terminal's view requests reach only the window holding its presentation, and its answer comes back", async () => {
   const server = await composed();
@@ -103,9 +123,8 @@ test("a terminal's view requests reach only the window holding its presentation,
     const holder = await server.connect("desktop");
     const watcher = await server.connect("laptop", { attach: false });
     const asked = [];
-    serve(holder.client, "desktop", asked);
-    serve(watcher.client, "laptop", asked);
-    await settle();
+    await serve(holder.client, "desktop", asked);
+    await serve(watcher.client, "laptop", asked);
     const { relay, targetFor } = server.composition.workspaceView;
     const target = targetFor({ terminalSessionId: identity.sessionId, projectId: identity.projectId });
     assert.equal(target.clientId, "desktop");
@@ -132,12 +151,19 @@ test("a window that closes fails the request it was asked and is never asked aga
   const server = await composed();
   try {
     const holder = await server.connect("desktop");
-    serveWorkspaceView(new TerminayClientFacade(holder.client), () => new Promise(() => {}));
-    await settle();
+    const { facade, ready } = windowFacade(holder.client);
+    let reachedWindow;
+    const asked = new Promise((resolve) => { reachedWindow = resolve; });
+    serveWorkspaceView(facade, () => {
+      reachedWindow();
+      return new Promise(() => {});
+    });
+    await ready();
     const { relay, targetFor } = server.composition.workspaceView;
     const target = targetFor({ terminalSessionId: identity.sessionId, projectId: identity.projectId });
     const pending = relay.request(target, "layout", {}, "project-a");
-    await settle();
+    // The window has been asked, and never answers.
+    await asked;
     await holder.client.close();
     await assert.rejects(pending, (error) => error.code === "unavailable");
     await assert.rejects(relay.request(target, "layout", {}, "project-a"), (error) => error.code === "unavailable");
@@ -151,8 +177,7 @@ test("a window bound to another project is never asked about this one", async ()
   try {
     const bound = await server.connect("bound-window", { attach: false });
     const asked = [];
-    serve(bound.client, "bound", asked);
-    await settle();
+    await serve(bound.client, "bound", asked);
     await assert.rejects(
       server.composition.workspaceView.relay.request({ clientId: "bound-window" }, "layout", {}, "project-a"),
       (error) => error.code === "unavailable",

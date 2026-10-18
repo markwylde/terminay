@@ -78,7 +78,6 @@ async function setup(extra = {}) {
 }
 
 const identity = (projectId, sessionId) => ({ serverId: SERVER, projectId, sessionId });
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 const decode = (base64) => new TextDecoder().decode(Buffer.from(base64, "base64"));
 
 async function close(composition, ...connections) {
@@ -95,8 +94,8 @@ test("a client panel move leaves every server component agreeing on the target p
     const sessionId = created.result.sessionId;
     const panelId = Object.values(workspace.state.panels).find((panel) => panel.sessionId === sessionId).id;
     const attached = await mover.client.command("terminal.attach", { identity: identity("project-a", sessionId), clientId: "mover", fromPosition: 0 }, { commandId: "attach-a" });
+    // PTY output and exit are committed inside the PTY's callbacks.
     ptyFactory.ptys[0].emit("long running output\r\n");
-    await settle();
     const before = composition.terminal.getSession(sessionId);
     assert.equal(activity.projectIdForSession(sessionId), "project-a");
 
@@ -126,7 +125,6 @@ test("a client panel move leaves every server component agreeing on the target p
 
     // Activity keeps flowing under the new identity instead of being refused.
     ptyFactory.ptys[0].emit("more\r\n");
-    await settle();
     assert.equal(composition.terminal.getSession(sessionId).outputPosition, before.outputPosition + "more\r\n".length);
   } finally {
     await close(composition, mover);
@@ -163,7 +161,6 @@ test("another client's attachment ends with the move and it attaches under the t
     const panelId = Object.values(workspace.state.panels).find((panel) => panel.sessionId === sessionId).id;
     const observed = await observer.client.command("terminal.attach", { identity: identity("project-a", sessionId), clientId: "observer", fromPosition: 0 }, { commandId: "observe-a" });
     ptyFactory.ptys[0].emit("seen by both\r\n");
-    await settle();
 
     await new WorkspaceClient(mover.client).movePanel({ panelId, targetProjectId: "project-b" });
 
@@ -184,7 +181,6 @@ test("an exited terminal's panel still moves, and the server keeps one answer fo
     const sessionId = created.result.sessionId;
     const panelId = Object.values(workspace.state.panels).find((panel) => panel.sessionId === sessionId).id;
     ptyFactory.ptys[0].exit(0);
-    await settle();
     if (workspace.state.panels[panelId] === undefined) return;
 
     await new WorkspaceClient(mover.client).movePanel({ panelId, targetProjectId: "project-b" });

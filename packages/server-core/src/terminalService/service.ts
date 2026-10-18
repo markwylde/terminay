@@ -323,6 +323,7 @@ export class TerminalService {
 	private readonly eventListener: TerminalEventListener | undefined;
 	private readonly sessionLifecycle: TerminalSessionLifecycle | undefined;
 	private readonly inactivityTimer: TerminalInactivityTimer;
+	private readonly presentationSettleTimer: TerminalInactivityTimer;
 	private readonly inactivityHold: TerminalInactivityHold | undefined;
 	private inactivityHoldUnsubscribe: (() => void) | undefined;
 	private readonly presentationCheckpoints:
@@ -372,6 +373,8 @@ export class TerminalService {
 		this.eventListener = options.onEvent;
 		this.sessionLifecycle = options.sessionLifecycle;
 		this.inactivityTimer = options.inactivityTimer ?? defaultInactivityTimer;
+		this.presentationSettleTimer =
+			options.presentationSettleTimer ?? defaultPresentationSettleTimer;
 		this.inactivityHold = options.inactivityHold;
 		this.inactivityHoldUnsubscribe = this.inactivityHold?.subscribe(
 			(sessionId) => this.inactivityHoldChanged(sessionId),
@@ -1222,10 +1225,12 @@ export class TerminalService {
 		const replay = mutable.adoptionReplay;
 		if (replay !== undefined && deadlineMs === undefined)
 			return new Promise<void>((resolve) => {
-				const timer = setTimeout(resolve, ADOPTION_SETTLE_DEADLINE_MS);
-				timer.unref?.();
+				const timer = this.presentationSettleTimer.setTimeout(
+					resolve,
+					ADOPTION_SETTLE_DEADLINE_MS,
+				);
 				void replay.done.then(() => {
-					clearTimeout(timer);
+					this.presentationSettleTimer.clearTimeout(timer);
 					resolve();
 				});
 			}).then(() => this.settlePresentation(mutable.identity, waitMs));
@@ -1236,10 +1241,9 @@ export class TerminalService {
 				done = true;
 				resolve();
 			};
-			const timer = setTimeout(finish, waitMs);
-			timer.unref?.();
+			const timer = this.presentationSettleTimer.setTimeout(finish, waitMs);
 			void this.waitForPresentationDrain(mutable).then(() => {
-				clearTimeout(timer);
+				this.presentationSettleTimer.clearTimeout(timer);
 				finish();
 			});
 		});
@@ -2394,6 +2398,16 @@ function normalizeUnsubscribe(
 }
 const defaultInactivityTimer: TerminalInactivityTimer = {
 	setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+	clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
+/** A settle deadline is a bound on an optimisation; it never holds a host's
+ * event loop open. */
+const defaultPresentationSettleTimer: TerminalInactivityTimer = {
+	setTimeout: (callback, delayMs) => {
+		const timer = setTimeout(callback, delayMs);
+		timer.unref?.();
+		return timer;
+	},
 	clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
 };
 function abortReason(signal: AbortSignal): unknown {

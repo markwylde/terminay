@@ -1,4 +1,4 @@
-import { spawn as spawnChild } from 'node:child_process';
+import { type ChildProcess, spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
 	existsSync,
@@ -575,18 +575,21 @@ export function createSessionHolderPtyFactory(
  * Start a detached holder with `execPath` and wait for nothing: the caller
  * learns it is ready from its record file. `detached` puts it in its own
  * session, so it has no controlling terminal and is not in this process group.
+ * The child is unreferenced, so it never keeps this process alive; it is
+ * returned for a caller that wants to hear it exit.
  */
 export function launchDetachedSessionHolder(
 	execPath: string,
 	args: readonly string[],
 	env: Readonly<Record<string, string | undefined>>,
-): void {
+): ChildProcess {
 	const child = spawnChild(execPath, [...args], {
 		detached: true,
 		stdio: ['ignore', 'ignore', 'ignore'],
 		env: { ...env } as NodeJS.ProcessEnv,
 	});
 	child.unref();
+	return child;
 }
 
 /** Every holder record in a data root, whether or not its process is alive. */

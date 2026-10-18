@@ -55,29 +55,64 @@ function createPtyFactory() {
   };
 }
 
-const settle = async (turns = 25) => {
-  for (let index = 0; index < turns; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-};
+/**
+ * A set of predicates, each re-checked whenever the test reports a change.
+ * `when(predicate)` settles once it holds. Every wait in this file is on
+ * something the client or server did, never on time passing.
+ */
+function changes() {
+  const waiters = new Set();
+  return {
+    changed() {
+      for (const waiter of [...waiters]) {
+        if (!waiter.predicate()) continue;
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
+    },
+    when(predicate) {
+      if (predicate()) return Promise.resolve();
+      return new Promise((resolve) => waiters.add({ predicate, resolve }));
+    },
+  };
+}
 
 /**
- * Wait for a condition instead of for a fixed number of event-loop turns.
- *
- * Recovery crosses real timers - a fresh presentation waits for the checkpoint
- * drain within a deadline - so counting turns measures how loaded the machine
- * is rather than whether the terminal recovered. Returns false on timeout so
- * the caller can assert with a useful message.
+ * The recovery retry clock. It moves only when the test moves it, so the
+ * cadence is measured in time the test controls.
  */
-const waitUntil = async (predicate, timeoutMs = 15_000) => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  return predicate();
-};
+function createManualClock() {
+  let now = 0;
+  let nextId = 0;
+  const timers = new Map();
+  return {
+    now: () => now,
+    schedule(run, delayMs) {
+      nextId += 1;
+      const id = nextId;
+      timers.set(id, { at: now + delayMs, run });
+      return () => timers.delete(id);
+    },
+    advance(ms) {
+      const target = now + ms;
+      for (;;) {
+        const next = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= target)
+          .sort(([leftId, left], [rightId, right]) => left.at - right.at || leftId - rightId)[0];
+        if (next === undefined) break;
+        const [id, timer] = next;
+        timers.delete(id);
+        now = timer.at;
+        timer.run();
+      }
+      now = target;
+    },
+  };
+}
 
 async function harness(options = {}) {
   const pty = createPtyFactory();
+  const progress = changes();
   const checkpoints = new TerminalPresentationCheckpointAuthority({
     ...(options.maxPinsPerSession === undefined ? {} : { maxPinsPerSession: options.maxPinsPerSession }),
   });
@@ -111,9 +146,13 @@ async function harness(options = {}) {
     ...(options.maxTerminalUnconfirmedBytes === undefined
       ? {}
       : { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
+    // The unconfirmed-age bound is measured on a clock that never moves, so
+    // only the bytes bound - which the tests drive - can congest a lane.
+    terminalDeliveryNow: () => 0,
     onTerminalCongestion: (attachmentId, clientId, connectionId) => {
       congestion.push({ attachmentId, clientId, connectionId });
       registry.suppressOutput(attachmentId, connectionId);
+      progress.changed();
     },
   }).accept(pair.server);
   const task = connection.start().catch(() => undefined);
@@ -128,7 +167,7 @@ async function harness(options = {}) {
   await pair.open();
   await client.connect();
   return {
-    checkpoints, congestion, client, connection, identity: {
+    checkpoints, congestion, client, connection, progress, identity: {
       serverId: "server-congestion",
       projectId: "project-congestion",
       sessionId: session.sessionId,
@@ -146,6 +185,7 @@ test("a congested terminal streams again once the client re-attaches", async () 
     });
 
     const rendered = [];
+    const { changed, when } = h.progress;
     let skips = 0;
     let recovered = false;
     // A renderer acknowledges what it has painted. `stalled` models the moment
@@ -156,6 +196,7 @@ test("a congested terminal streams again once the client re-attaches", async () 
         if (event.type === "output") {
           rendered.push(new TextDecoder().decode(event.bytes));
           if (!stalled) void target.ack(event.nextPosition).catch(() => undefined);
+          changed();
         }
         if (event.type === "skip") {
           skips += 1;
@@ -171,6 +212,7 @@ test("a congested terminal streams again once the client re-attaches", async () 
             if (replacement !== undefined) {
               observe(replacement);
               recovered = true;
+              changed();
             }
           })();
         }
@@ -179,11 +221,8 @@ test("a congested terminal streams again once the client re-attaches", async () 
     observe(attachment);
 
     h.pty.processes[0].emitData("BEFORE\n");
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("BEFORE")),
-      true,
-      "the attachment streams before congestion",
-    );
+    // The attachment streams before congestion.
+    await when(() => rendered.join("").includes("BEFORE"));
 
     // Push past the unconfirmed budget without acknowledging, exactly as a
     // renderer that has briefly stopped rendering does.
@@ -191,27 +230,21 @@ test("a congested terminal streams again once the client re-attaches", async () 
     stalled = true;
     // Past the 256 KiB unconfirmed-bytes bound the pump enforces by default.
     for (let index = 0; index < 400; index += 1) h.pty.processes[0].emitData("x".repeat(1024));
-    assert.equal(
-      await waitUntil(() => h.congestion.length > 0),
-      true,
-      "the lane congests once the unconfirmed budget is exceeded",
-    );
+    // The lane congests once the unconfirmed budget is exceeded.
+    await when(() => h.congestion.length > 0);
 
     // The renderer catches up and acknowledges everything it has, which is all
     // a real client can do once no further output arrives.
     stalled = false;
-    // Recovery is asynchronous: the skip only starts it, and the replacement
-    // attach waits for the checkpoint drain within a deadline. Wait for the
+    // Recovery is asynchronous: the skip only starts it. Wait for the
     // replacement to be in place, or this asserts against the gap in between.
-    assert.equal(await waitUntil(() => recovered), true, "the client re-attaches after congestion");
+    await when(() => recovered);
 
     h.pty.processes[0].emitData("AFTER-CONGESTION\n");
 
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("AFTER-CONGESTION")),
-      true,
-      `a congested attachment must stream again; it stayed muted (skips=${skips}, frames=${rendered.length}, before=${before})`,
-    );
+    // A congested attachment must stream again rather than stay muted.
+    await when(() => rendered.join("").includes("AFTER-CONGESTION"));
+    assert.ok(skips > 0 && rendered.length > before, `skips=${skips}, frames=${rendered.length}, before=${before}`);
   } finally {
     await h.client.close().catch(() => undefined);
     await h.task;
@@ -230,7 +263,21 @@ test("a congested terminal streams again once the client re-attaches", async () 
  */
 test("a terminal that never stops producing still converges after congestion", async () => {
   const h = await harness();
-  let ticker;
+  const { changed, when } = h.progress;
+  const pty = h.pty.processes[0];
+  // The producer answers the stream: every frame the client receives, and
+  // every checkpoint a re-attach pins, is followed by more output. It never
+  // falls silent while `producing`, and moves at the pace of the stream
+  // rather than of a timer.
+  let producing = false;
+  const produce = () => { if (producing) pty.emitData("y".repeat(4096)); };
+  const prepare = h.checkpoints.prepare.bind(h.checkpoints);
+  // A re-attach hydrates from a checkpoint the PTY has already moved past.
+  h.checkpoints.prepare = async (...args) => {
+    const prepared = await prepare(...args);
+    produce();
+    return prepared;
+  };
   try {
     const attachment = await h.terminal.attach({
       ...h.identity,
@@ -241,52 +288,53 @@ test("a terminal that never stops producing still converges after congestion", a
     const rendered = [];
     let stalled = false;
     let recoveries = 0;
-    const observe = (target) => {
+    let recoveredFrames = 0;
+    const observe = (target, recovered) => {
       target.onEvent((event) => {
         if (event.type === "output") {
           rendered.push(new TextDecoder().decode(event.bytes));
+          if (recovered) recoveredFrames += 1;
           if (!stalled) void target.ack(event.nextPosition).catch(() => undefined);
+          produce();
+          changed();
         }
         // A hydration boundary is not a reason to hydrate again; only a live
         // display that fell behind recovers.
         if (event.type === "skip" && event.reason !== "hydration") {
           recoveries += 1;
+          changed();
           if (recoveries > 25) return;
           void h.terminal
             .attach({ ...h.identity, clientId: "device-web", fromPosition: 0, freshPresentation: true })
-            .then((replacement) => { if (replacement !== undefined) observe(replacement); })
+            .then((replacement) => { if (replacement !== undefined) observe(replacement, true); })
             .catch(() => undefined);
         }
       });
     };
-    observe(attachment);
-
-    ticker = setInterval(() => h.pty.processes[0].emitData("y".repeat(4096)), 2);
+    observe(attachment, false);
 
     stalled = true;
-    assert.equal(await waitUntil(() => h.congestion.length > 0), true, "the lane congests");
+    producing = true;
+    produce();
+    // The lane congests.
+    await when(() => h.congestion.length > 0);
     stalled = false;
-    assert.equal(await waitUntil(() => recoveries > 0), true, "the client begins recovering");
+    // The client begins recovering.
+    await when(() => recoveries > 0);
 
     // Keep producing right through recovery, which is when a checkpoint chase
-    // would show up as a terminal that never catches its own tail. Waiting for
-    // repeated recoveries exercises that far more reliably than sleeping for a
-    // fixed period does on a loaded machine.
-    await waitUntil(() => recoveries >= 3, 5_000);
+    // would show up as a terminal that never catches its own tail: a
+    // recovered display must paint frame after frame while output continues.
+    await when(() => recoveredFrames >= 20);
 
-    clearInterval(ticker);
-    ticker = undefined;
-    await settle(20);
-    h.pty.processes[0].emitData("CONVERGED\n");
+    producing = false;
+    pty.emitData("CONVERGED\n");
 
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("CONVERGED")),
-      true,
-      `a continuously producing terminal must converge (recoveries=${recoveries})`,
-    );
+    // A continuously producing terminal must converge.
+    await when(() => rendered.join("").includes("CONVERGED"));
     assert.equal(recoveries < 25, true, `recovery must be bounded (recoveries=${recoveries})`);
   } finally {
-    if (ticker !== undefined) clearInterval(ticker);
+    producing = false;
     await h.client.close().catch(() => undefined);
     await h.task;
     await h.service.shutdown();
@@ -297,16 +345,24 @@ test("a terminal that never stops producing still converges after congestion", a
  * Permanent overload on a slow link must skip and recover at the panel's
  * retry cadence, not spin so fast that checkpoint pins exhaust.
  *
- * The producer never yields. Acknowledgements are delayed to model a slow
- * link. Recovery uses the same 100ms retry delay as TerminalPanel. Pins are
- * capped well below the default so a leak fails this test.
+ * The producer never yields: every lane it is given is driven past its
+ * unconfirmed budget, and it keeps writing while the display waits to
+ * recover. Nothing is acknowledged, modelling a link too slow to confirm.
+ * Recovery uses the same 100ms retry delay as TerminalPanel, on a clock the
+ * test moves. Pins are capped well below the default so a leak fails this
+ * test.
  */
 test("permanent overload on a slow link recovers at the retry cadence without exhausting pins", async () => {
   const RETRY_DELAY_MS = 100;
   const MAX_PINS = 3;
-  const CYCLES = 2;
+  const CYCLES = 5;
   const h = await harness({ maxPinsPerSession: MAX_PINS });
-  let producer;
+  const { changed, when } = h.progress;
+  const clock = createManualClock();
+  const pty = h.pty.processes[0];
+  // Well past the 256 KiB unconfirmed-bytes bound.
+  const overload = () => { for (let index = 0; index < 40; index += 1) pty.emitData("z".repeat(8192)); };
+  let recovery;
   try {
     const attachment = await h.terminal.attach({
       ...h.identity,
@@ -320,6 +376,8 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
     const pinSamples = [];
     let pinHighWater = 0;
     let pinErrors = 0;
+    let attached = 0;
+    let failed = 0;
 
     const samplePins = () => {
       const pins = h.checkpoints.session(h.identity)?.pins ?? 0;
@@ -327,17 +385,18 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
       if (pins > pinHighWater) pinHighWater = pins;
     };
 
-    let recovery;
     const observe = (target) => {
       target.onEvent((event) => {
         if (event.type === "output") {
           rendered.push(new TextDecoder().decode(event.bytes));
+          changed();
         }
         if (event.type === "skip") {
           recovery.noteEvent(event);
           if (event.reason === "congestion") {
-            skipStartedAt.push(Date.now());
+            skipStartedAt.push(clock.now());
             samplePins();
+            changed();
           }
         }
       });
@@ -345,12 +404,10 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
 
     recovery = new TerminalRecoveryController({
       retryDelayMs: RETRY_DELAY_MS,
-      schedule: (run, delayMs) => {
-        const timer = setTimeout(run, delayMs);
-        return () => clearTimeout(timer);
-      },
+      schedule: clock.schedule,
+      now: clock.now,
       reattach: () => {
-        reattachAt.push(Date.now());
+        reattachAt.push(clock.now());
         samplePins();
         void h.terminal
           .attach({
@@ -362,53 +419,45 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
           .then((replacement) => {
             recovery.noteAttached();
             observe(replacement);
+            attached += 1;
+            changed();
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             if (message.includes("checkpoint_limit") || message.includes("pin")) pinErrors += 1;
             recovery.noteAttachFailed();
+            failed += 1;
+            changed();
           });
         return "attaching";
       },
     });
     observe(attachment);
 
-    producer = setInterval(() => h.pty.processes[0].emitData("z".repeat(8192)), 1);
-    assert.equal(
-      await waitUntil(() => skipStartedAt.length >= CYCLES && reattachAt.length >= CYCLES, 8_000),
-      true,
-      `overload must skip and recover repeatedly (skips=${skipStartedAt.length}, reattaches=${reattachAt.length})`,
-    );
-
-    clearInterval(producer);
-    producer = undefined;
-    samplePins();
-
-    const paired = Math.min(skipStartedAt.length, reattachAt.length);
-    const skipToRetry = [];
-    for (let index = 0; index < paired; index += 1) {
-      skipToRetry.push(reattachAt[index] - skipStartedAt[index]);
+    for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
+      overload();
+      // Overload must skip...
+      await when(() => skipStartedAt.length >= cycle);
+      // ...and the producer keeps writing while the display waits.
+      overload();
+      // Recovery waits the retry cadence rather than spinning...
+      clock.advance(RETRY_DELAY_MS - 1);
+      assert.equal(reattachAt.length, cycle - 1, `recovery ${cycle} re-attached before the retry delay`);
+      // ...and does not stall past it.
+      clock.advance(1);
+      assert.equal(reattachAt.length, cycle, `recovery ${cycle} did not re-attach at the retry delay`);
+      await when(() => attached + failed >= cycle);
     }
+
+    samplePins();
+    const skipToRetry = reattachAt.map((at, index) => at - skipStartedAt[index]);
+    assert.deepEqual(skipToRetry, Array(CYCLES).fill(RETRY_DELAY_MS), `recovery must keep the retry cadence (cadenceMs=${skipToRetry.join(",")})`);
     assert.equal(pinErrors, 0, `checkpoint pins must not exhaust (errors=${pinErrors}, highWater=${pinHighWater}, samples=${pinSamples.join(",")})`);
+    assert.equal(failed, 0, "every re-attach must succeed");
     assert.equal(
       pinHighWater <= MAX_PINS,
       true,
       `pin churn must stay within the session cap (highWater=${pinHighWater}, cap=${MAX_PINS}, samples=${pinSamples.join(",")})`,
-    );
-    assert.equal(
-      skipToRetry.length >= CYCLES,
-      true,
-      `every started recovery must wait the retry delay (cadenceMs=${skipToRetry.join(",")})`,
-    );
-    assert.equal(
-      skipToRetry.every((delay) => delay >= RETRY_DELAY_MS - 25),
-      true,
-      `recovery must wait the retry cadence rather than spinning (cadenceMs=${skipToRetry.join(",")})`,
-    );
-    assert.equal(
-      skipToRetry.every((delay) => delay < RETRY_DELAY_MS * 8),
-      true,
-      `recovery must not stall past the retry cadence (cadenceMs=${skipToRetry.join(",")})`,
     );
     assert.equal(
       (h.checkpoints.session(h.identity)?.pins ?? 0) <= MAX_PINS,
@@ -416,15 +465,11 @@ test("permanent overload on a slow link recovers at the retry cadence without ex
       "live pins after overload must still be within the cap",
     );
 
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS + 400));
-    h.pty.processes[0].emitData("OVERLOAD-CONVERGED\n");
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("OVERLOAD-CONVERGED")),
-      true,
-      `overload must still converge once the producer yields (skips=${skipStartedAt.length}, pins=${pinHighWater})`,
-    );
+    // Once the producer yields, the last recovered display streams again.
+    pty.emitData("OVERLOAD-CONVERGED\n");
+    await when(() => rendered.join("").includes("OVERLOAD-CONVERGED"));
   } finally {
-    clearInterval(producer);
+    recovery?.dispose();
     await h.client.close().catch(() => undefined);
     await h.task;
     await h.service.shutdown();
@@ -447,19 +492,19 @@ test("a lowered unconfirmed-bytes limit cannot hydrate into congestion", async (
   assert.equal(TARGET_GAP <= OLD_CONSTANT, true);
 
   const h = await harness({ maxTerminalUnconfirmedBytes: UNCONFIRMED });
-  let ticker;
+  const { changed, when } = h.progress;
+  const pty = h.pty.processes[0];
+  // The terminal produces TARGET_GAP more output while the attach is in
+  // flight, between its checkpoint being pinned and its stream starting: the
+  // catch-up gap the fresh presentation has to cross.
+  const prepare = h.checkpoints.prepare.bind(h.checkpoints);
+  h.checkpoints.prepare = async (...args) => {
+    const prepared = await prepare(...args);
+    pty.emitData("x".repeat(TARGET_GAP));
+    return prepared;
+  };
   try {
-    const gap = () => {
-      const live = h.service.getSession(h.identity)?.outputPosition ?? 0;
-      const checkpoint = h.checkpoints.session(h.identity)?.outputPosition ?? 0;
-      return Math.max(0, live - checkpoint);
-    };
-    const topUp = () => {
-      const need = TARGET_GAP - gap();
-      if (need > 0) h.pty.processes[0].emitData("x".repeat(need));
-    };
-    topUp();
-    ticker = setInterval(topUp, 0);
+    pty.emitData("x".repeat(TARGET_GAP));
 
     const skips = [];
     const attachment = await h.terminal.attach({
@@ -468,20 +513,24 @@ test("a lowered unconfirmed-bytes limit cannot hydrate into congestion", async (
       fromPosition: 0,
       freshPresentation: true,
     });
-    clearInterval(ticker);
-    ticker = undefined;
 
+    const received = [];
     attachment.onEvent((event) => {
       if (event.type === "skip") skips.push(event);
+      if (event.type === "output") received.push(new TextDecoder().decode(event.bytes));
+      changed();
     });
     for (const event of attachment.initialEvents) {
       if (event.type === "skip") skips.push(event);
     }
 
     // Catch-up replay of TARGET_GAP through a 32 KiB lane would congest
-    // immediately if the old 128 KiB constant still governed the bound.
-    // Give in-flight frames a moment to trip that, then freeze the producer.
-    await settle(40);
+    // immediately if the old 128 KiB constant still governed the bound. Output
+    // written now is admitted behind everything already in flight, so once it
+    // arrives - or the lane congests instead - every earlier frame has had its
+    // chance to trip that. Nothing is acknowledged in between.
+    pty.emitData("FENCE\n");
+    await when(() => received.join("").includes("FENCE") || h.congestion.length > 0);
     assert.equal(
       h.congestion.length,
       0,
@@ -503,16 +552,13 @@ test("a lowered unconfirmed-bytes limit cannot hydrate into congestion", async (
       if (event.type === "output") {
         rendered.push(new TextDecoder().decode(event.bytes));
         void attachment.ack(event.nextPosition).catch(() => undefined);
+        changed();
       }
     });
-    h.pty.processes[0].emitData("LOWERED-LIMIT-LIVE\n");
-    assert.equal(
-      await waitUntil(() => rendered.join("").includes("LOWERED-LIMIT-LIVE")),
-      true,
-      "a display that skipped catch-up must still stream live output",
-    );
+    pty.emitData("LOWERED-LIMIT-LIVE\n");
+    // A display that skipped catch-up must still stream live output.
+    await when(() => rendered.join("").includes("LOWERED-LIMIT-LIVE"));
   } finally {
-    if (ticker !== undefined) clearInterval(ticker);
     await h.client.close().catch(() => undefined);
     await h.task;
     await h.service.shutdown();

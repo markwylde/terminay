@@ -107,7 +107,8 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 	private suppressed = new Set<string>();
 	private preferencesLoaded: Promise<void> | undefined;
 	private reconciling: Promise<void> = Promise.resolve();
-	private pushScheduled = false;
+	/** The context push scheduled for the next microtask, while it is. */
+	private scheduledPush: Promise<void> | undefined;
 	private readonly unsubscribe: Array<() => void> = [];
 	private disposed = false;
 
@@ -129,7 +130,8 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 	/**
 	 * Called with each Git worktree listing. A project's context is issued on
 	 * its first listing and re-issued when its worktrees, branches, upstreams,
-	 * heads, or remotes change.
+	 * heads, or remotes change. Settles once any context it issued has been
+	 * sent to the running sources.
 	 */
 	async observeListing(listing: GitWorktreeListResult): Promise<void> {
 		const isOpen = this.options.isProjectOpen;
@@ -183,14 +185,15 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		if (previous !== undefined && previous.context.id !== contextId)
 			this.contextProjects.delete(previous.context.id);
 		this.dropDepartedWorktrees(listing.projectId, context);
-		this.schedulePush();
+		await this.schedulePush();
 	}
 
 	/**
 	 * Re-mark contexts after the set of active projects changed. A project
 	 * that becomes active is re-issued, which its sources treat as focus.
+	 * Settles once any re-issued context has been sent.
 	 */
-	refreshActivity(): void {
+	refreshActivity(): Promise<void> {
 		let changed = false;
 		for (const [projectId, project] of this.contexts) {
 			const active = this.isActive(projectId);
@@ -203,7 +206,7 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 			});
 			changed = true;
 		}
-		if (changed) this.schedulePush();
+		return changed ? this.schedulePush() : Promise.resolve();
 	}
 
 	private isActive(projectId: string): boolean {
@@ -218,7 +221,7 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		this.contextProjects.delete(previous.context.id);
 		if (this.properties.delete(projectId))
 			this.options.onProjectChanged?.(projectId, null);
-		this.schedulePush();
+		void this.schedulePush();
 	}
 
 	/** Keep only the listed projects' contexts. */
@@ -360,15 +363,18 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		this.options.onProjectChanged?.(projectId, worktreeId);
 	};
 
-	requestSignIn: ExtensionWorktreeBroker['requestSignIn'] = (request) => {
+	/** Settles once the request has been admitted as a prompt, or refused. */
+	requestSignIn = (
+		request: Parameters<ExtensionWorktreeBroker['requestSignIn']>[0],
+	): Promise<void> => {
 		const validated = validateWorktreeSignInRequest(request.request);
 		if (!validated.ok) {
 			this.options.onError?.(
 				`worktree insight ${request.sourceId}: ${validated.reason}`,
 			);
-			return;
+			return Promise.resolve();
 		}
-		void this.admitPrompt(
+		return this.admitPrompt(
 			request.extensionId,
 			request.sourceId,
 			validated.value,
@@ -445,21 +451,27 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		}
 	}
 
-	private schedulePush(): void {
-		if (this.pushScheduled) return;
-		this.pushScheduled = true;
-		queueMicrotask(() => {
-			this.pushScheduled = false;
-			this.reconciling = this.reconciling
-				.catch(() => undefined)
-				.then(async () => {
-					const contexts = this.liveContexts();
-					for (const sourceId of this.running)
-						await this.hosts
-							?.setWorktreeInsightContexts(sourceId, contexts)
-							.catch(() => undefined);
-				});
+	/** Send every running source the live contexts, once for every change made
+	 * in this turn. Settles once that push has been sent. */
+	private schedulePush(): Promise<void> {
+		if (this.scheduledPush !== undefined) return this.scheduledPush;
+		const pushed = new Promise<void>((resolve) => {
+			queueMicrotask(() => {
+				this.scheduledPush = undefined;
+				this.reconciling = this.reconciling
+					.catch(() => undefined)
+					.then(async () => {
+						const contexts = this.liveContexts();
+						for (const sourceId of this.running)
+							await this.hosts
+								?.setWorktreeInsightContexts(sourceId, contexts)
+								.catch(() => undefined);
+					});
+				void this.reconciling.then(resolve, resolve);
+			});
 		});
+		this.scheduledPush = pushed;
+		return pushed;
 	}
 
 	private liveContexts(): RepositoryContext[] {
