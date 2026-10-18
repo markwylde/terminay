@@ -663,31 +663,51 @@ test("server terminal adapter waits on canonical activity transitions with bound
     sessionId: handle.sessionId,
   };
   activity.register(identity);
+  // Each wait's deadline is the test's to fire, and each signal is sent only
+  // once the wait is listening, so neither can race the other.
+  const deadlines = new Set();
+  const waitTimers = {
+    setTimeout(handler) {
+      const deadline = { handler };
+      deadlines.add(deadline);
+      return deadline;
+    },
+    clearTimeout(deadline) {
+      deadlines.delete(deadline);
+    },
+  };
+  let listening;
+  const subscribe = activity.subscribe.bind(activity);
+  activity.subscribe = (listener) => {
+    const unsubscribe = subscribe(listener);
+    listening?.();
+    return unsubscribe;
+  };
+  const once = () => new Promise((resolve) => { listening = resolve; });
   const dispatch = createTerminalControlAdapter({
     adapter: createServerTerminalControlAdapter({
       terminal,
       launchResolver: createLaunchResolver(),
       activity,
       maxWaitSeconds: 2,
+      waitTimers,
     }),
   });
   const request = (id, op, params) => dispatch({ id, version: 1, op, params }, { ...context(), requestId: id });
 
   activity.ingestSignal(identity, { kind: "command", phase: "executing" });
+  let subscribed = once();
   const idlePending = request("idle", "wait_for_idle", {
     terminal: "caller",
     seconds: 1,
     timeout: 1,
   });
-  setTimeout(
-    () =>
-      activity.ingestSignal(identity, {
-        kind: "command",
-        phase: "finished",
-        exitCode: 7,
-      }),
-    5,
-  );
+  await subscribed;
+  activity.ingestSignal(identity, {
+    kind: "command",
+    phase: "finished",
+    exitCode: 7,
+  });
   assert.deepEqual(await idlePending, {
     terminal: "caller",
     idle: true,
@@ -695,18 +715,18 @@ test("server terminal adapter waits on canonical activity transitions with bound
     exitCode: 7,
   });
 
+  subscribed = once();
   const commandPending = request("command", "wait_for_command", {
     terminal: "caller",
     timeout: 1,
   });
-  setTimeout(() => {
-    activity.ingestSignal(identity, { kind: "command", phase: "executing" });
-    activity.ingestSignal(identity, {
-      kind: "command",
-      phase: "finished",
-      exitCode: 3,
-    });
-  }, 5);
+  await subscribed;
+  activity.ingestSignal(identity, { kind: "command", phase: "executing" });
+  activity.ingestSignal(identity, {
+    kind: "command",
+    phase: "finished",
+    exitCode: 3,
+  });
   assert.deepEqual(await commandPending, {
     terminal: "caller",
     completed: true,
@@ -714,11 +734,13 @@ test("server terminal adapter waits on canonical activity transitions with bound
     exitCode: 3,
   });
 
+  subscribed = once();
   const attentionPending = request("attention", "wait_for_attention", {
     terminal: "caller",
     timeout: 1,
   });
-  setTimeout(() => activity.ingestSignal(identity, { kind: "bell" }), 5);
+  await subscribed;
+  activity.ingestSignal(identity, { kind: "bell" });
   assert.deepEqual(await attentionPending, {
     terminal: "caller",
     attention: true,
@@ -734,13 +756,20 @@ test("server terminal adapter waits on canonical activity transitions with bound
     }),
     { terminal: "caller", idle: true, timedOut: false, exitCode: 3 },
   );
-  assert.deepEqual(
-    await request("timeout", "wait_for_attention", {
-      terminal: "caller",
-      timeout: 0.01,
-    }),
-    { terminal: "caller", attention: false, timedOut: true },
-  );
+  // Nothing arrives, and the deadline the wait armed is fired.
+  subscribed = once();
+  const timingOut = request("timeout", "wait_for_attention", {
+    terminal: "caller",
+    timeout: 0.01,
+  });
+  await subscribed;
+  assert.equal(deadlines.size, 1, "the wait armed exactly one deadline");
+  for (const deadline of [...deadlines]) deadline.handler();
+  assert.deepEqual(await timingOut, {
+    terminal: "caller",
+    attention: false,
+    timedOut: true,
+  });
 });
 
 test("run_command frames with bracketed paste only when the program enabled it", async () => {
