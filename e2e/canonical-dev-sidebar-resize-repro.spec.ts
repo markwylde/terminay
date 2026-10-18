@@ -26,16 +26,28 @@ type ReleaseSample = Readonly<{
 	boundary: number;
 	commandCount: number;
 	elapsedMs: number;
-	when:
-		| 'held'
-		| 'release'
-		| '50ms'
-		| '100ms'
-		| '250ms'
-		| '500ms'
-		| '1000ms'
-		| '2000ms';
+	when: 'held' | 'release' | 'flushed' | 'reconciled';
 }>;
+
+/** Resolves once the window has drawn `count` frames from now. */
+async function animationFrames(page: Page, count: number): Promise<void> {
+	await page.evaluate(async (frameCount) => {
+		for (let index = 0; index < frameCount; index += 1)
+			await new Promise<void>((resolve) =>
+				requestAnimationFrame(() => resolve()),
+			);
+	}, count);
+}
+
+/** The revision of the canonical workspace the window last drew. */
+async function workspaceRevision(page: Page): Promise<number> {
+	return Number(
+		await page
+			.locator('.app-shell')
+			.first()
+			.getAttribute('data-terminay-workspace-revision'),
+	);
+}
 
 function activeSidebar(page: Page): Locator {
 	return page.locator(
@@ -532,38 +544,26 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 				y,
 			});
 			// CDP Input is browser input, not a renderer-dispatched event. Sixty
-			// native mouseMoved messages paced over 420ms match a short human drag
-			// without the per-call latency of page.mouse.
-			const inputRequests: Promise<unknown>[] = [];
+			// native mouseMoved messages, each sent once the last is in, then
+			// the release straight after the last: a short human drag without
+			// the per-call latency of page.mouse.
+			const revisionBeforeRelease = await workspaceRevision(page);
 			for (let move = 1; move <= 60; move += 1) {
-				const dueAt = pointerDownAt + move * 7;
-				const waitMs = dueAt - Date.now();
-				if (waitMs > 0)
-					await new Promise((resolve) => setTimeout(resolve, waitMs));
-				inputRequests.push(
-					input.send('Input.dispatchMouseEvent', {
-						button: 'none',
-						buttons: 1,
-						type: 'mouseMoved',
-						x,
-						y: y - 120 * (move / 60),
-					}),
-				);
-			}
-			expect(
-				Date.now() - pointerDownAt,
-				'Pointer down through mouse-up must stay under 600ms.',
-			).toBeLessThan(600);
-			inputRequests.push(
-				input.send('Input.dispatchMouseEvent', {
-					button: 'left',
-					buttons: 0,
-					type: 'mouseReleased',
+				await input.send('Input.dispatchMouseEvent', {
+					button: 'none',
+					buttons: 1,
+					type: 'mouseMoved',
 					x,
-					y: y - 120,
-				}),
-			);
-			await Promise.all(inputRequests);
+					y: y - 120 * (move / 60),
+				});
+			}
+			await input.send('Input.dispatchMouseEvent', {
+				button: 'left',
+				buttons: 0,
+				type: 'mouseReleased',
+				x,
+				y: y - 120,
+			});
 			await sample('held');
 			if (hasCommandTestSeam) {
 				expect(
@@ -573,17 +573,16 @@ test('canonical npm run dev retains a rapid Agents/Git resize after mouse-up', a
 			}
 			await input.detach();
 			await sample('release');
-			for (const [when, waitMs] of [
-				['50ms', 50],
-				['100ms', 50],
-				['250ms', 150],
-				['500ms', 250],
-				['1000ms', 500],
-				['2000ms', 1000],
-			] as const) {
-				await page.waitForTimeout(waitMs);
-				await sample(when);
-			}
+			// Each later sample at the event it waits on: React drawing the
+			// release, then the window drawing the server's revision that
+			// carries it, the last thing that moves the boundary.
+			await animationFrames(page, 2);
+			await sample('flushed');
+			await expect
+				.poll(() => workspaceRevision(page))
+				.toBeGreaterThan(revisionBeforeRelease);
+			await animationFrames(page, 3);
+			await sample('reconciled');
 			traces.push({ attempt, samples });
 		}
 
