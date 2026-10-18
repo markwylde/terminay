@@ -5,13 +5,13 @@ import path from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
+import { createStartedProject } from './support/project-start';
 import {
 	holdTornOffProjectTab,
 	setCursorScreenPoint,
 	tabBarScreenPoints,
 } from './support/project-tab-drag';
 import { submitTerminalCommand } from './support/terminal';
-import { createStartedProject } from './support/project-start';
 
 type StandaloneServer = Readonly<{
 	pairingUrl: string;
@@ -184,7 +184,9 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 			.first();
 		await expect(async () => {
 			if (!(await secondMenu.isVisible().catch(() => false)))
-				await second.getByRole('button', { name: /Open connection menu/ }).click();
+				await second
+					.getByRole('button', { name: /Open connection menu/ })
+					.click();
 			await expect(
 				secondMenu.getByRole('menuitemradio', {
 					name: serverHost,
@@ -211,14 +213,20 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 /** Pair a standalone server from Remote Control and wait until the workspace
  * window is showing it. */
 async function pairAndLand(
-	appHarness: { openChildWindow: (action: () => Promise<void>) => Promise<Page> },
+	appHarness: {
+		openChildWindow: (action: () => Promise<void>) => Promise<Page>;
+	},
 	mainWindow: Page,
 	server: { pairingUrl: string },
 ) {
 	const serverHost = new URL(server.pairingUrl).host;
 	const manager = await appHarness.openChildWindow(async () => {
-		await mainWindow.getByRole('button', { name: /Open connection menu/ }).click();
-		await mainWindow.getByRole('button', { name: 'Manage connections' }).click();
+		await mainWindow
+			.getByRole('button', { name: /Open connection menu/ })
+			.click();
+		await mainWindow
+			.getByRole('button', { name: 'Manage connections' })
+			.click();
 	});
 	await manager.getByRole('button', { name: 'Add connection…' }).click();
 	await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
@@ -456,66 +464,70 @@ test('a project tab dropped on a window showing another server stays where it wa
 });
 
 for (const closed of ['opened', 'switched'] as const) {
-test(`closing the ${closed} one of two windows on a server leaves the other connected`, async ({
-	appHarness,
-	electronApp,
-	mainWindow,
-	tempDir,
-}) => {
-	test.setTimeout(300_000);
-	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
-	const server = await startStandaloneServer(tempDir);
-	try {
-		const serverHost = await pairAndLand(appHarness, mainWindow, server);
-		// Two windows on the one server, each holding a project of its own.
-		await switchTo(mainWindow, 'Local');
-		const first = await appHarness.openChildWindow(async () => {
-			const menu = await openConnectionMenu(mainWindow);
-			await menu
-				.getByRole('button', { name: `Open ${serverHost} in new window` })
-				.click();
-		});
-		await expectShowing(first, serverHost);
-		await switchTo(mainWindow, serverHost);
-		await mainWindow.keyboard.press('Escape');
-		await first.keyboard.press('Escape');
-		for (const window of [first, mainWindow]) {
-			if ((await projectIds(window)).length > 0) continue;
-			await createStartedProject(window);
-			await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
-			await expect(window.locator('[data-pending-project-id]')).toHaveCount(0);
-		}
-		const [closing, kept] =
-			closed === 'opened' ? [first, mainWindow] : [mainWindow, first];
-		const rows = kept.locator(
-			'.project-workspace--active .terminal-panel:visible .xterm-rows',
-		);
-		await submitTerminalCommand(kept, 'echo before-$((40+2))');
-		await expect(rows).toContainText('before-42', { timeout: 15_000 });
+	test(`closing the ${closed} one of two windows on a server leaves the other connected`, async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+		tempDir,
+	}) => {
+		test.setTimeout(300_000);
+		await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+		const server = await startStandaloneServer(tempDir);
+		try {
+			const serverHost = await pairAndLand(appHarness, mainWindow, server);
+			// Two windows on the one server, each holding a project of its own.
+			await switchTo(mainWindow, 'Local');
+			const first = await appHarness.openChildWindow(async () => {
+				const menu = await openConnectionMenu(mainWindow);
+				await menu
+					.getByRole('button', { name: `Open ${serverHost} in new window` })
+					.click();
+			});
+			await expectShowing(first, serverHost);
+			await switchTo(mainWindow, serverHost);
+			await mainWindow.keyboard.press('Escape');
+			await first.keyboard.press('Escape');
+			for (const window of [first, mainWindow]) {
+				if ((await projectIds(window)).length > 0) continue;
+				await createStartedProject(window);
+				await expect(window.locator('.project-tab[role="tab"]')).toHaveCount(1);
+				await expect(window.locator('[data-pending-project-id]')).toHaveCount(
+					0,
+				);
+			}
+			const [closing, kept] =
+				closed === 'opened' ? [first, mainWindow] : [mainWindow, first];
+			const rows = kept.locator(
+				'.project-workspace--active .terminal-panel:visible .xterm-rows',
+			);
+			await submitTerminalCommand(kept, 'echo before-$((40+2))');
+			await expect(rows).toContainText('before-42', { timeout: 15_000 });
 
-		const closingNativeWindow = await electronApp.browserWindow(closing);
-		await closingNativeWindow.evaluate((window) => window.close());
-		await expect.poll(() => closing.isClosed(), { timeout: 15_000 }).toBe(true);
+			const closingNativeWindow = await electronApp.browserWindow(closing);
+			await closingNativeWindow.evaluate((window) => window.close());
+			await expect
+				.poll(() => closing.isClosed(), { timeout: 15_000 })
+				.toBe(true);
 
-		// The window left behind never loses its connection, and its terminal
-		// still answers.
-		const reconnecting = kept.locator('.session-workspace__reconnecting');
-		for (let elapsed = 0; elapsed < 45_000; elapsed += 250) {
-			expect(await reconnecting.count()).toBe(0);
-			await kept.waitForTimeout(250);
+			// The window left behind never loses its connection, and its terminal
+			// still answers.
+			const reconnecting = kept.locator('.session-workspace__reconnecting');
+			for (let elapsed = 0; elapsed < 45_000; elapsed += 250) {
+				expect(await reconnecting.count()).toBe(0);
+				await kept.waitForTimeout(250);
+			}
+			await submitTerminalCommand(kept, 'echo after-$((40+2))');
+			await expect(rows).toContainText('after-42', { timeout: 15_000 });
+			await expectShowing(kept, serverHost);
+			await expect(
+				connectionMenu(kept)
+					.locator('[data-connection-phase="ready"]')
+					.filter({ hasText: serverHost }),
+			).toContainText('Connected');
+		} finally {
+			await server.stop();
 		}
-		await submitTerminalCommand(kept, 'echo after-$((40+2))');
-		await expect(rows).toContainText('after-42', { timeout: 15_000 });
-		await expectShowing(kept, serverHost);
-		await expect(
-			connectionMenu(kept)
-				.locator('[data-connection-phase="ready"]')
-				.filter({ hasText: serverHost }),
-		).toContainText('Connected');
-	} finally {
-		await server.stop();
-	}
-});
+	});
 }
 
 /** Quit the way the Quit menu item does and wait for the process to go. */
@@ -543,17 +555,26 @@ async function quitDesktop(electronApp: ElectronApplication): Promise<void> {
 }
 
 /** Record every workspace document a launch loads. The loading document is a
- * `data:` URL, so anything else is a workspace being mounted. */
+ * `data:` URL, so anything else is a workspace being mounted.
+ *
+ * The recorder is installed after launch, and a window may already have
+ * loaded its workspace by then. So what each window has already loaded is
+ * read from its history, and later loads are watched, in the same main-process
+ * turn: nothing can land between the two, however fast the launch was. */
 async function recordWorkspaceLoads(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ app, BrowserWindow }) => {
 		const loads: string[] = [];
 		(globalThis as { __workspaceLoads?: string[] }).__workspaceLoads = loads;
+		const record = (url: string) => {
+			if (!url.startsWith('data:')) loads.push(url);
+		};
 		const watch = (contents: Electron.WebContents) =>
-			contents.on('did-navigate', (_event, url) => {
-				if (!url.startsWith('data:')) loads.push(url);
-			});
-		for (const window of BrowserWindow.getAllWindows())
+			contents.on('did-navigate', (_event, url) => record(url));
+		for (const window of BrowserWindow.getAllWindows()) {
+			for (const entry of window.webContents.navigationHistory.getAllEntries())
+				record(entry.url);
 			watch(window.webContents);
+		}
 		app.on('web-contents-created', (_event, contents) => watch(contents));
 	});
 	return () =>
@@ -578,7 +599,9 @@ test('Desktop reopens straight onto the server its window last showed', async ({
 		const launched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
 		launches.push(launched);
 		const workspaceLoads = await recordWorkspaceLoads(launched.electronApp);
-		const window = await prepareWindow(await launched.electronApp.firstWindow());
+		const window = await prepareWindow(
+			await launched.electronApp.firstWindow(),
+		);
 		return { launched, window, workspaceLoads };
 	};
 	try {
