@@ -1,11 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   createSessionHolderPtyFactory,
   launchDetachedSessionHolder,
@@ -15,6 +14,7 @@ import {
   SessionHolderClient,
   sessionHolderDirectory,
   sessionHolderRecordPath,
+  sessionTailPath,
   TerminalService,
   writeHolderCloseRecord,
 } from "../dist/index.js";
@@ -38,14 +38,51 @@ function isAlive(pid) {
   }
 }
 
-async function until(predicate, label, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await predicate();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await delay(25);
-  }
+/** Every holder this file launched, by pid. */
+const holders = new Map();
+
+/** Launch a holder the way a host does, keeping its process to hear it exit. */
+function launchHolder(entry, env) {
+  const child = launchDetachedSessionHolder(process.execPath, [entry], { ...process.env, ...env });
+  holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
+  return child;
+}
+
+/** Settles once a holder this file launched has exited. */
+function holderExited(pid) {
+  const holder = holders.get(pid);
+  assert.ok(holder, `holder ${pid} was not launched by this test`);
+  // The holder is unreferenced so it never keeps a test alive; waiting on it
+  // does, until it exits.
+  holder.child.ref();
+  return holder.exited;
+}
+
+/**
+ * Settles with `read()`'s value once it is truthy, re-reading whenever an entry
+ * in `directory` changes. Holders write their records and tails by rename, so
+ * a watch sees each one land.
+ */
+function whenWritten(directory, read) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const check = () => {
+      if (done) return;
+      const value = read();
+      if (!value) return;
+      done = true;
+      watcher.close();
+      resolve(value);
+    };
+    const watcher = watch(directory, check);
+    watcher.on("error", (error) => {
+      done = true;
+      watcher.close();
+      reject(error);
+    });
+    check();
+  });
 }
 
 function dataRootFor(t) {
@@ -53,8 +90,8 @@ function dataRootFor(t) {
   t.after(async () => {
     for (const record of readHolderRecords(dataRoot)) {
       try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
+      if (holders.has(record.pid)) await holderExited(record.pid);
     }
-    await delay(50);
     rmSync(dataRoot, { recursive: true, force: true });
   });
   return dataRoot;
@@ -62,17 +99,29 @@ function dataRootFor(t) {
 
 function server(dataRoot, buildId = "build-a", options = {}) {
   const reports = [];
+  const waiters = new Set();
+  const of = (kind) => reports.filter((report) => report.kind === kind);
   const factory = createSessionHolderPtyFactory({
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env }),
-    onObservation: (report) => reports.push(report),
+    launch: ({ env }) => { launchHolder(ENTRY, env); },
+    onObservation: (report) => {
+      reports.push(report);
+      for (const waiter of [...waiters]) {
+        if (of(waiter.kind).length < waiter.count) continue;
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
+    },
     ...options,
   });
   const service = new TerminalService({ serverId: SERVER_ID, ptyFactory: factory });
-  const of = (kind) => reports.filter((report) => report.kind === kind);
-  return { factory, service, reports, of };
+  /** Settles once `count` reports of this kind have been made. */
+  const reported = (kind, count) => of(kind).length >= count
+    ? Promise.resolve()
+    : new Promise((resolve) => waiters.add({ kind, count, resolve }));
+  return { factory, service, reports, of, reported };
 }
 
 const create = (service, sessionId, dataRoot) =>
@@ -191,10 +240,10 @@ test("a record whose process is gone and a holder that cannot be spoken to are t
     sessionHolderRecordPath(dataRoot, "aaaaaaaaaaaaaaaa"),
     JSON.stringify({ generation: "aaaaaaaaaaaaaaaa", pid: gone, buildId: "build-a", versions: [1], credential: "c", startedAt: 10 }),
   );
-  launchDetachedSessionHolder(process.execPath, [FUTURE_ENTRY], { ...process.env, TEST_HOLDER_DATA_ROOT: dataRoot });
-  const future = await until(
+  launchHolder(FUTURE_ENTRY, { TEST_HOLDER_DATA_ROOT: dataRoot });
+  const future = await whenWritten(
+    sessionHolderDirectory(dataRoot),
     () => readHolderRecords(dataRoot).find((record) => record.versions.includes(99)),
-    "the future holder",
   );
 
   const next = server(dataRoot);
@@ -232,8 +281,17 @@ test("a launch that fails is reported with its error, and an observer that throw
   assert.equal(broken.of("launch-failed").length, 1);
   assert.equal(broken.of("launch-failed")[0].error, "no such runtime");
 
-  const silent = server(dataRoot, "build-a", { launch: () => {}, launchTimeoutMs: 100 });
-  await assert.rejects(silent.factory.spawn(spawnOptions("s2", dataRoot)));
+  // The launch deadline runs on the test's clock: the launcher is called once
+  // it is armed, and the clock is moved past it.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let launched;
+  const armed = new Promise((resolve) => { launched = resolve; });
+  const silent = server(dataRoot, "build-a", { launch: () => launched(), launchTimeoutMs: 100 });
+  const silentSpawn = silent.factory.spawn(spawnOptions("s2", dataRoot));
+  await armed;
+  t.mock.timers.tick(100);
+  await assert.rejects(silentSpawn);
+  t.mock.timers.reset();
   assert.equal(silent.of("launch-failed")[0].error, "session holder did not start");
 
   const hostile = server(dataRoot, "build-a", { onObservation: () => { throw new Error("observer failed"); } });
@@ -250,7 +308,7 @@ test("a holder signalled while attached says so, once, and its sessions are coun
   const identity = { pid: holder.pid, startedAt: holder.startedAt };
 
   process.kill(holder.pid, "SIGTERM");
-  await until(() => first.of("connection-closed").length === 1, "the connection to close");
+  await first.reported("connection-closed", 1);
 
   const [closed] = first.of("closed");
   assert.equal(first.of("closed").length, 1);
@@ -284,7 +342,7 @@ test("a connection lost without a word is an unrequested, unannounced close", as
   const [holder] = readHolderRecords(dataRoot);
 
   process.kill(holder.pid, "SIGKILL");
-  await until(() => first.of("connection-closed").length === 1, "the connection to close");
+  await first.reported("connection-closed", 1);
   assert.deepEqual(first.of("connection-closed"), [{
     kind: "connection-closed",
     holder: { pid: holder.pid, startedAt: holder.startedAt },
@@ -304,7 +362,7 @@ test("a holder that closes with nobody attached is reported late by the next ser
   await leave(first);
 
   process.kill(holder.pid, "SIGTERM");
-  await until(() => !isAlive(holder.pid), "the holder to exit");
+  await holderExited(holder.pid);
   const [record] = readHolderCloseRecords(dataRoot);
   assert.equal(record.notice.reason, "signal");
   assert.equal(record.notice.signal, "SIGTERM");
@@ -360,7 +418,7 @@ test("a session ending is reported with who asked for it", async (t) => {
 
   // Something else hangs one up.
   process.kill(first.service.getSession("hung-up").pid, "SIGHUP");
-  await until(() => first.of("session-ended").length === 2, "the hung-up session to be reported");
+  await first.reported("session-ended", 2);
   const hungUp = first.of("session-ended")[1];
   assert.equal(hungUp.session, 2);
   assert.equal(hungUp.requested, false);
@@ -369,7 +427,7 @@ test("a session ending is reported with who asked for it", async (t) => {
 
   // The server signals one itself.
   await first.service.kill("signalled", undefined, "SIGKILL");
-  await until(() => first.of("session-ended").length === 3, "the signalled session to be reported");
+  await first.reported("session-ended", 3);
   assert.equal(first.of("session-ended")[2].requested, true);
   assert.equal(first.of("session-ended")[2].signal, 9);
 
@@ -387,8 +445,9 @@ test("a session that ended with nobody watching is reported when it is adopted",
   const pid = first.service.getSession("s1").pid;
   await leave(first);
 
+  const saved = whenWritten(dirname(sessionTailPath(dataRoot, "s1")), () => readSessionTail(dataRoot, "s1")?.exit !== undefined);
   process.kill(pid, "SIGHUP");
-  await until(() => readSessionTail(dataRoot, "s1")?.exit !== undefined, "the unattended exit to be saved");
+  await saved;
 
   const second = server(dataRoot);
   t.after(async () => { await second.service.shutdown(); await second.factory.endAll(); });
@@ -399,8 +458,12 @@ test("a session that ended with nobody watching is reported when it is adopted",
 
   const adopted = await second.factory.adopt("s1");
   const exits = [];
-  adopted.process.onExit((exit) => exits.push(exit));
-  await until(() => exits.length === 1, "the saved exit to be replayed");
+  const replayed = new Promise((resolve) => adopted.process.onExit((exit) => {
+    exits.push(exit);
+    resolve();
+  }));
+  await replayed;
+  assert.equal(exits.length, 1);
   const ended = second.of("session-ended");
   assert.equal(ended.length, 1);
   assert.equal(ended[0].endedUnattached, true);
@@ -416,7 +479,7 @@ test("a server that asks for everything to end is not surprised when it does", a
   const [holder] = readHolderRecords(dataRoot);
   await first.service.shutdown();
   await first.factory.endAll();
-  await until(() => !isAlive(holder.pid), "the holder to exit");
+  await holderExited(holder.pid);
 
   assert.equal(first.of("closed")[0].reason, "end-all");
   assert.equal(first.of("connection-closed")[0].requested, true);
