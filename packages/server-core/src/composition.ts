@@ -305,6 +305,11 @@ export interface ServerCoreCompositionOptions
 		readonly enrolments: PushEnrolmentStore;
 		readonly origin: string | (() => string | undefined);
 		readonly transport?: PushTransport;
+		/** The sender's clock, for a host that runs notifications on its own
+		 * (as `notifications` does). The wall clock by default. */
+		readonly now?: () => number;
+		readonly setTimeout?: (handler: () => void, milliseconds: number) => unknown;
+		readonly clearTimeout?: (handle: unknown) => void;
 	};
 	/** The server's own upgrade (ADR-0062). A standalone host supplies the
 	 * service built around its release's upgrader. Without one the composition
@@ -1432,6 +1437,13 @@ export function createServerCoreComposition(
 					...(options.push.transport === undefined
 						? {}
 						: { transport: options.push.transport }),
+					...(options.push.now === undefined ? {} : { now: options.push.now }),
+					...(options.push.setTimeout === undefined
+						? {}
+						: { setTimeout: options.push.setTimeout }),
+					...(options.push.clearTimeout === undefined
+						? {}
+						: { clearTimeout: options.push.clearTimeout }),
 					describe: (record) => {
 						const state = options.workspace?.state;
 						if (state === undefined)
