@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -105,7 +106,7 @@ function server(dataRoot, buildId = "build-a", options = {}) {
     dataRoot,
     buildId,
     limitMs: 60_000,
-    launch: ({ env }) => { launchHolder(ENTRY, env); },
+    launch: ({ env }) => launchHolder(ENTRY, env),
     onObservation: (report) => {
       reports.push(report);
       for (const waiter of [...waiters]) {
@@ -281,18 +282,19 @@ test("a launch that fails is reported with its error, and an observer that throw
   assert.equal(broken.of("launch-failed").length, 1);
   assert.equal(broken.of("launch-failed")[0].error, "no such runtime");
 
-  // The launch deadline runs on the test's clock: the launcher is called once
-  // it is armed, and the clock is moved past it.
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  // A holder that dies before it is ready fails the launch on its exit, and
+  // the report says so, with how long the launch had been waiting.
+  const dying = new EventEmitter();
+  dying.kill = () => {};
   let launched;
   const armed = new Promise((resolve) => { launched = resolve; });
-  const silent = server(dataRoot, "build-a", { launch: () => launched(), launchTimeoutMs: 100 });
+  const silent = server(dataRoot, "build-a", { launch: () => { launched(); return dying; } });
   const silentSpawn = silent.factory.spawn(spawnOptions("s2", dataRoot));
   await armed;
-  t.mock.timers.tick(100);
+  dying.emit("exit", 1, null);
   await assert.rejects(silentSpawn);
-  t.mock.timers.reset();
-  assert.equal(silent.of("launch-failed")[0].error, "session holder did not start");
+  assert.equal(silent.of("launch-failed")[0].error, "session holder exited before it was ready (exit code 1)");
+  assert.ok(Number.isSafeInteger(silent.of("launch-failed")[0].durationMs));
 
   const hostile = server(dataRoot, "build-a", { onObservation: () => { throw new Error("observer failed"); } });
   t.after(async () => { await hostile.service.shutdown(); await hostile.factory.endAll(); });

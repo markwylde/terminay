@@ -2,6 +2,7 @@ import { type ChildProcess, spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
 	existsSync,
+	type FSWatcher,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -62,18 +63,43 @@ export interface SessionHolderLaunchRequest {
 	readonly env: Readonly<Record<string, string>>;
 }
 
+/**
+ * The process a launcher started, as much of it as a launch listens to. A
+ * `ChildProcess` is one. Its `exit` or `error` before the holder's record
+ * appears is the launch failing; there is no deadline.
+ */
+export interface SessionHolderLaunchedProcess {
+	once(
+		event: 'exit',
+		listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+	): unknown;
+	once(event: 'error', listener: (error: Error) => void): unknown;
+	off(
+		event: 'exit',
+		listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+	): unknown;
+	off(event: 'error', listener: (error: Error) => void): unknown;
+	/** Ends a holder whose launch was abandoned before it became ready. */
+	kill(): unknown;
+}
+
+export type SessionHolderLauncher = (
+	request: SessionHolderLaunchRequest,
+) => SessionHolderLaunchedProcess;
+
 export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	readonly dataRoot: string;
 	/** Identifies this build. A holder started by another build is drained. */
 	readonly buildId: string;
 	/**
 	 * Start a detached holder process. The host knows which runtime and entry
-	 * point it ships; server-core only says what the holder must be told.
+	 * point it ships; server-core only says what the holder must be told. It
+	 * returns the process it started, so a holder that dies before it is ready
+	 * fails the launch at once.
 	 */
-	readonly launch: (request: SessionHolderLaunchRequest) => void;
+	readonly launch: SessionHolderLauncher;
 	/** Unattached limit sent to every holder. `null` means no limit. */
 	readonly limitMs: number | null;
-	readonly launchTimeoutMs?: number;
 	/**
 	 * Metadata-only observer for holder lifecycle and held sessions ending.
 	 * Called on transitions, never for output, and never able to fail one.
@@ -119,8 +145,6 @@ export interface SessionHolderPtyFactory {
 	readonly hadPriorState: () => boolean;
 }
 
-const DEFAULT_LAUNCH_TIMEOUT_MS = 10_000;
-
 export function createSessionHolderPtyFactory(
 	options: SessionHolderPtyFactoryOptions,
 ): SessionHolderPtyFactory {
@@ -131,6 +155,8 @@ export function createSessionHolderPtyFactory(
 	const incompatible: string[] = [];
 	let current: SessionHolderClient | undefined;
 	let launching: Promise<SessionHolderClient> | undefined;
+	/** Ends a launch still waiting for its holder when this server leaves. */
+	let launchAbort: AbortController | undefined;
 	let limitMs = options.limitMs;
 	let detaching = false;
 	/** Sessions whose saved tail this server has read and may need to delete. */
@@ -341,11 +367,18 @@ export function createSessionHolderPtyFactory(
 		if (current !== undefined && !current.closed) return current;
 		launching ??= (async () => {
 			const launchStartedAt = Date.now();
+			const abort = new AbortController();
+			launchAbort = abort;
 			try {
 				const generation = randomBytes(8).toString('hex');
 				if (!socketPathFits(sessionHolderSocketPath(dataRoot, generation)))
 					throw new Error('session holder socket path is too long');
-				const record = await launchHolder(options, generation, limitMs);
+				const record = await launchSessionHolder(
+					options,
+					generation,
+					limitMs,
+					abort.signal,
+				);
 				const client = await SessionHolderClient.connect(record);
 				track(client, record.startedAt);
 				current = client;
@@ -365,6 +398,7 @@ export function createSessionHolderPtyFactory(
 				throw error;
 			} finally {
 				launching = undefined;
+				if (launchAbort === abort) launchAbort = undefined;
 			}
 		})();
 		return launching;
@@ -527,6 +561,8 @@ export function createSessionHolderPtyFactory(
 			}
 		},
 		async endAll() {
+			// A holder still starting would be left running with nobody to end it.
+			launchAbort?.abort(new Error('the server ended every session'));
 			await start();
 			await Promise.all(
 				[...clients.values()].map(async (client) => {
@@ -553,6 +589,7 @@ export function createSessionHolderPtyFactory(
 		},
 		async detach() {
 			detaching = true;
+			launchAbort?.abort(new Error('the server is leaving'));
 			for (const client of clients.values()) leaving.add(client);
 			await Promise.all([...clients.values()].map((client) => client.close()));
 		},
@@ -688,46 +725,81 @@ function holderRecordRemoved(
 	});
 }
 
-/** A holder is ready once its record file exists; a watch, not a poll, sees it. */
-function launchHolder(
-	options: SessionHolderPtyFactoryOptions,
+/**
+ * Start a holder and settle on what it does, never on a clock. It is ready once
+ * its record file exists, which a watch, not a poll, sees. It has failed when
+ * its process exits or cannot be started before then, when the watch fails,
+ * or when `signal` aborts. A slow machine only makes this wait longer.
+ *
+ * @internal Exported for the tests that drive a launch event by event.
+ */
+export function launchSessionHolder(
+	options: Pick<
+		SessionHolderPtyFactoryOptions,
+		'dataRoot' | 'buildId' | 'launch'
+	>,
 	generation: string,
 	limitMs: number | null,
+	signal?: AbortSignal,
 ): Promise<SessionHolderRecordFile> {
 	const directory = sessionHolderDirectory(options.dataRoot);
 	mkdirSync(directory, { recursive: true, mode: 0o700 });
-	const recordPath = sessionHolderRecordPath(options.dataRoot, generation);
 	return new Promise((resolve, reject) => {
 		let settled = false;
-		const finish = (error?: Error): void => {
-			if (settled) return;
-			if (error === undefined) {
-				const record = readHolderRecord(options.dataRoot, generation);
-				// The record is renamed into place, so it is complete once visible.
-				if (record === undefined) return;
-				settled = true;
-				cleanup();
-				resolve(record);
-				return;
+		let child: SessionHolderLaunchedProcess | undefined;
+		let watcher: FSWatcher | undefined;
+		const onExit = (
+			code: number | null,
+			exitSignal: NodeJS.Signals | null,
+		): void =>
+			fail(
+				new Error(
+					`session holder exited before it was ready (${
+						exitSignal === null ? `exit code ${code}` : `signal ${exitSignal}`
+					})`,
+				),
+			);
+		const onError = (error: Error): void =>
+			fail(new Error(`session holder could not be started: ${error.message}`));
+		const onAbort = (): void => {
+			fail(
+				signal?.reason instanceof Error
+					? signal.reason
+					: new Error('session holder launch was abandoned'),
+			);
+			try {
+				child?.kill();
+			} catch {
+				/* already gone */
 			}
+		};
+		const cleanup = (): void => {
 			settled = true;
+			watcher?.close();
+			signal?.removeEventListener('abort', onAbort);
+			child?.off('exit', onExit);
+			child?.off('error', onError);
+		};
+		function fail(error: Error): void {
+			if (settled) return;
 			cleanup();
 			reject(error);
+		}
+		const check = (): void => {
+			if (settled) return;
+			// The record is renamed into place, so it is complete once visible.
+			const record = readHolderRecord(options.dataRoot, generation);
+			if (record === undefined) return;
+			cleanup();
+			resolve(record);
 		};
-		const watcher = watch(directory, () => {
-			if (existsSync(recordPath)) finish();
-		});
-		const timer = setTimeout(
-			() => finish(new Error('session holder did not start')),
-			options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS,
-		);
-		const cleanup = (): void => {
-			clearTimeout(timer);
-			watcher.close();
-		};
-		watcher.on('error', (error) => finish(error));
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		signal?.addEventListener('abort', onAbort, { once: true });
 		try {
-			options.launch({
+			child = options.launch({
 				env: {
 					[SESSION_HOLDER_ENV.dataRoot]: options.dataRoot,
 					[SESSION_HOLDER_ENV.generation]: generation,
@@ -737,10 +809,27 @@ function launchHolder(
 				},
 			});
 		} catch (error) {
-			finish(error instanceof Error ? error : new Error(String(error)));
+			fail(error instanceof Error ? error : new Error(String(error)));
 			return;
 		}
-		if (existsSync(recordPath)) finish();
+		if (typeof child?.once !== 'function') {
+			child = undefined;
+			fail(new Error('session holder launcher returned no process'));
+			return;
+		}
+		// A process emits these asynchronously, so none is missed by listening
+		// after the launcher returns.
+		child.once('exit', onExit);
+		child.once('error', onError);
+		try {
+			watcher = watch(directory, check);
+		} catch (error) {
+			fail(error instanceof Error ? error : new Error(String(error)));
+			return;
+		}
+		watcher.on('error', (error) => fail(error));
+		// A record written before the watch began produces no event for it.
+		check();
 	});
 }
 
