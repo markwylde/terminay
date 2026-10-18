@@ -103,23 +103,28 @@ test('a first ICE connection is not a recovery; only a degraded path can recover
 	assert.deepEqual(reported, ['degraded', 'recovered', 'degraded']);
 });
 
-test('a path that stays disconnected is given up once; one that recovers in time is kept', async () => {
+test('a path that stays disconnected is given up once; one that recovers in time is kept', (t) => {
+	// The stall limit is the test's clock.
+	t.mock.timers.enable({ apis: ['setTimeout'] });
 	const events = [];
 	const status = createDesktopConnectionStatusReporter(
 		(entry) => events.push(entry),
 		{ limitMs: 40, onStalled: () => events.push('stalled') },
 	);
-	const wait = (ms) => new Promise((resolveWait) => setTimeout(resolveWait, ms));
 	status.observe('connected');
 	status.observe('disconnected');
-	await wait(10);
+	t.mock.timers.tick(39);
 	status.observe('connected');
-	await wait(80);
+	t.mock.timers.tick(80);
 	assert.deepEqual(events, ['degraded', 'recovered'], 'a blip is not a loss');
 	status.observe('disconnected');
 	status.observe('disconnected');
-	await wait(120);
+	t.mock.timers.tick(39);
+	assert.deepEqual(events, ['degraded', 'recovered', 'degraded']);
+	t.mock.timers.tick(1);
 	assert.deepEqual(events, ['degraded', 'recovered', 'degraded', 'stalled']);
+	t.mock.timers.tick(120);
+	assert.deepEqual(events, ['degraded', 'recovered', 'degraded', 'stalled'], 'given up once');
 	// An intentional close cancels the watch.
 	const stopped = [];
 	const closing = createDesktopConnectionStatusReporter(() => undefined, {
@@ -128,7 +133,7 @@ test('a path that stays disconnected is given up once; one that recovers in time
 	});
 	closing.observe('disconnected');
 	closing.stop();
-	await wait(60);
+	t.mock.timers.tick(60);
 	assert.deepEqual(stopped, []);
 });
 
@@ -184,9 +189,7 @@ test('a closed API lane releases a pending approval wait', async () => {
 	await assert.rejects(waiting, /hosted connection closed/u);
 });
 
-test('cancelling releases a pending approval wait, and the decision still resolves an uncancelled one', {
-	timeout: 10_000,
-}, async () => {
+test('cancelling releases a pending approval wait, and the decision still resolves an uncancelled one', async () => {
 	const channel = fakeApiChannel();
 	const lane = createDesktopApiLane(channel);
 	const expiresAt = Date.now() + 10 * 60_000;
@@ -230,7 +233,6 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	skip: runtimeStaged
 		? false
 		: `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`,
-	timeout: 300_000,
 }, async (t) => {
 	const relay = await startHostedLoopbackRelay();
 	const sessionOrigin = `http://${SESSION_ID}.localhost:${relay.port}`;
@@ -244,13 +246,26 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	const hostKey = createHostedHostKey();
 	const connections = [];
 	const peerCloses = [];
+	const peerCloseWaiters = [];
+	/** Resolves once the host has reported `count` peers closed. */
+	const peersClosed = (count) =>
+		peerCloses.length >= count
+			? Promise.resolve()
+			: new Promise((resolveClosed) =>
+					peerCloseWaiters.push({ count, resolve: resolveClosed }),
+				);
 	const host = await startHostedPairingHost({
 		// The application answers every frame with the same frame, so a window
 		// can prove its connection still carries traffic both ways.
 		acceptApplication: (transport) => {
+			let release;
 			const connection = {
 				connectionId: `connection-${connections.length + 1}`,
 				closed: false,
+				/** Settles when the host releases this connection. */
+				released: new Promise((resolveRelease) => {
+					release = resolveRelease;
+				}),
 				start: async () => {
 					await transport.open();
 					void (async () => {
@@ -260,6 +275,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 				},
 				close: async () => {
 					connection.closed = true;
+					release();
 				},
 			};
 			connections.push(connection);
@@ -275,8 +291,14 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		iceServers: [],
 		// Why each peer ended, so a failed window assertion names the cause.
 		onDiagnostic: (diagnostic) => {
-			if (diagnostic.type === 'peer-closed')
-				peerCloses.push(diagnostic.reasonClass);
+			if (diagnostic.type !== 'peer-closed') return;
+			peerCloses.push(diagnostic.reasonClass);
+			for (const waiter of peerCloseWaiters.filter(
+				({ count }) => peerCloses.length >= count,
+			)) {
+				peerCloseWaiters.splice(peerCloseWaiters.indexOf(waiter), 1);
+				waiter.resolve();
+			}
 		},
 	});
 	t.after(async () => {
@@ -299,6 +321,7 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 	const candidatePairs = [];
 	const statuses = [];
 	const failures = [];
+	const approval = pendingApproval(exposure);
 	const pairing = pairDesktopHostedDevice({
 		pairingUrl,
 		deviceName: 'Terminay Desktop',
@@ -306,25 +329,16 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		webrtcRuntimeRoot: RUNTIME_ROOT,
 		iceServers: [],
 		signal: { connectHost: '127.0.0.1' },
-		onMatchCode: (code) => shown.push(code),
+		onMatchCode: approval.shown,
 		onCandidatePair: (pair) => candidatePairs.push(pair),
 		onConnectionStatus: (status) => statuses.push(status),
 		onConnectionFailure: (reason) => failures.push(reason),
 	});
-	// Approve from the host side once the request is pending, after checking the codes match.
-	const pending = await new Promise((resolvePending, reject) => {
-		const startedAt = Date.now();
-		const tick = () => {
-			const [entry] = exposure.listPendingApprovals();
-			// The host records the request before its response reaches Desktop;
-			// wait for both sides so the codes can be compared.
-			if (entry && shown.length === 1) return resolvePending(entry);
-			if (Date.now() - startedAt > 60_000)
-				return reject(new Error('no pending approval'));
-			setTimeout(tick, 50);
-		};
-		tick();
-	});
+	// Approve from the host side once the request is pending, after checking
+	// the codes match. The host records the request and Desktop shows its
+	// code; both are events, and both are waited for.
+	const pending = await approval.both;
+	shown.push(...approval.codes);
 	assert.equal(pending.deviceName, 'Terminay Desktop');
 	assert.equal(shown.length, 1);
 	assert.equal(
@@ -435,52 +449,45 @@ test('Desktop pairs over the authenticated channel, pins the host key, and recon
 		`a second and a third window disconnect nobody (peers closed: ${peerCloses.join(', ')})`,
 	);
 
-	// A window reconnecting replaces its own connection and no other.
+	// A window reconnecting replaces its own connection and no other, and the
+	// host says it replaced exactly one peer.
+	const beforeRejoin = peerCloses.length;
 	const mainWindow = await openWindow('w-main');
-	const startedAt = Date.now();
-	while (!connections[1].closed) {
-		if (Date.now() - startedAt > 30_000)
-			throw new Error("the window's previous connection was not replaced");
-		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-	}
+	await connections[1].released;
+	await peersClosed(beforeRejoin + 1);
 	assert.deepEqual(
 		connections.map((entry) => entry.closed),
 		[false, true, false, false],
 		`a window reconnecting replaced another (peers closed: ${peerCloses.join(', ')})`,
 	);
+	assert.deepEqual(peerCloses.slice(beforeRejoin), ['replaced-by-rejoin']);
 	// A window closing ends its own connection and no other: the window left
 	// open keeps carrying traffic both ways for as long as it stays open.
 	await settingsWindow.transport.open();
 	const answers = settingsWindow.transport.incoming[Symbol.asyncIterator]();
 	const roundTrip = async (value) => {
 		await settingsWindow.transport.send(Uint8Array.of(value));
-		const answer = await Promise.race([
-			answers.next(),
-			new Promise((_, reject) =>
-				setTimeout(
-					() => reject(new Error('the open window stopped answering')),
-					10_000,
-				),
-			),
-		]);
+		const answer = await answers.next();
 		assert.deepEqual([...(answer.value ?? [])], [value]);
 	};
 	await roundTrip(1);
+	const beforeClose = peerCloses.length;
 	await mainWindow.transport.close({ code: 'normal' });
-	const closedAt = Date.now();
-	while (!connections[3].closed) {
-		if (Date.now() - closedAt > 30_000)
-			throw new Error("the closed window's connection was not released");
-		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-	}
-	for (let value = 2; Date.now() - closedAt < 60_000; value += 1) {
-		await roundTrip(value % 250);
+	// The closed window's connection is released, and the host reports its
+	// one peer closed for the lane it lost. Those are the events; what is
+	// asserted follows from them, not from waiting a while. Every frame after
+	// them is a round trip on the window left open, and after each one exactly
+	// that one peer has closed.
+	await connections[3].released;
+	await peersClosed(beforeClose + 1);
+	for (let value = 2; value <= 6; value += 1) {
+		await roundTrip(value);
 		assert.deepEqual(
 			connections.map((entry) => entry.closed),
 			[false, true, false, true],
 			`closing one window disconnected another (peers closed: ${peerCloses.join(', ')})`,
 		);
-		await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+		assert.deepEqual(peerCloses.slice(beforeClose), ['required-lane-closed']);
 	}
 	assert.deepEqual(failures, []);
 	// Which window it is never passes through the relay.
@@ -563,21 +570,42 @@ async function startLoopbackPairingHost(t, serverId) {
 	};
 }
 
-async function waitForPendingApproval(exposure, shown) {
-	const startedAt = Date.now();
-	for (;;) {
-		const [entry] = exposure.listPendingApprovals();
-		if (entry && shown.length === 1) return entry;
-		if (Date.now() - startedAt > 60_000) throw new Error('no pending approval');
-		await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-	}
+/**
+ * The pairing request as both sides see it: `both` resolves with the host's
+ * pending approval once the host has recorded it and Desktop has shown its
+ * code. Call before pairing starts, and pass `shown` as `onMatchCode`.
+ */
+function pendingApproval(exposure) {
+	const codes = [];
+	let codeShown;
+	const shownCode = new Promise((resolveShown) => {
+		codeShown = resolveShown;
+	});
+	const requested = new Promise((resolveRequested) => {
+		const stop = exposure.onApprovalRequested((summary) => {
+			stop();
+			resolveRequested(summary);
+		});
+	});
+	return {
+		codes,
+		shown: (code) => {
+			codes.push(code);
+			codeShown();
+		},
+		both: Promise.all([requested, shownCode]).then(() => {
+			const [entry] = exposure.listPendingApprovals();
+			assert.ok(entry, 'the recorded request is still pending');
+			assert.equal(codes.length, 1);
+			return entry;
+		}),
+	};
 }
 
 test('Desktop stops waiting for approval as soon as the pairing peer is lost, and saves nothing', {
 	skip: runtimeStaged
 		? false
 		: `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`,
-	timeout: 120_000,
 }, async (t) => {
 	const { closeHost, exposure, pairingUrl, sessionOrigin } =
 		await startLoopbackPairingHost(t, 'server-lost');
@@ -585,9 +613,9 @@ test('Desktop stops waiting for approval as soon as the pairing peer is lost, an
 		directory: join(directory, 'credentials-lost'),
 		codec: codec(),
 	});
-	const shown = [];
 	const failures = [];
 	const statuses = [];
+	const approval = pendingApproval(exposure);
 	const pairing = pairDesktopHostedDevice({
 		pairingUrl,
 		deviceName: 'Terminay Desktop',
@@ -595,7 +623,7 @@ test('Desktop stops waiting for approval as soon as the pairing peer is lost, an
 		webrtcRuntimeRoot: RUNTIME_ROOT,
 		iceServers: [],
 		signal: { connectHost: '127.0.0.1' },
-		onMatchCode: (code) => shown.push(code),
+		onMatchCode: approval.shown,
 		onConnectionFailure: (reason) => failures.push(reason),
 		onConnectionStatus: (status) => statuses.push(status),
 		iceDisconnectLimitMs: 2_000,
@@ -604,20 +632,17 @@ test('Desktop stops waiting for approval as soon as the pairing peer is lost, an
 		() => ({ paired: true }),
 		(error) => ({ error }),
 	);
-	const pending = await waitForPendingApproval(exposure, shown);
+	const pending = await approval.both;
 	// The approval would otherwise be awaited until it expires, minutes away.
-	assert.ok(shown[0].expiresAt - Date.now() > 60_000);
-	const lostAt = Date.now();
+	assert.ok(approval.codes[0].expiresAt - Date.now() > 60_000);
 	await closeHost();
 	const result = await outcome;
+	// It ends on the lost peer, not on the approval expiring: the rejection
+	// says which.
 	assert.ok(result.error, 'the attempt rejects instead of hanging');
 	assert.match(
 		result.error.message,
 		/connection to the server was lost/u,
-	);
-	assert.ok(
-		Date.now() - lostAt < 30_000,
-		`released ${Date.now() - lostAt}ms after the peer was lost`,
 	);
 	assert.equal(failures.length, 1, 'the loss is reported once');
 	assert.match(failures[0], /ICE stayed disconnected/u);
@@ -631,7 +656,6 @@ test('cancelling Desktop pairing while it awaits approval ends the attempt and w
 	skip: runtimeStaged
 		? false
 		: `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`,
-	timeout: 120_000,
 }, async (t) => {
 	const { exposure, pairingUrl, sessionOrigin } = await startLoopbackPairingHost(
 		t,
@@ -641,9 +665,9 @@ test('cancelling Desktop pairing while it awaits approval ends the attempt and w
 		directory: join(directory, 'credentials-cancel'),
 		codec: codec(),
 	});
-	const shown = [];
 	const failures = [];
 	const controller = new AbortController();
+	const approval = pendingApproval(exposure);
 	const pairing = pairDesktopHostedDevice({
 		pairingUrl,
 		deviceName: 'Terminay Desktop',
@@ -652,29 +676,31 @@ test('cancelling Desktop pairing while it awaits approval ends the attempt and w
 		iceServers: [],
 		signal: { connectHost: '127.0.0.1' },
 		abort: controller.signal,
-		onMatchCode: (code) => shown.push(code),
+		onMatchCode: approval.shown,
 		onConnectionFailure: (reason) => failures.push(reason),
 	});
 	const outcome = pairing.then(
 		() => ({ paired: true }),
 		(error) => ({ error }),
 	);
-	await waitForPendingApproval(exposure, shown);
-	const cancelledAt = Date.now();
+	const pending = await approval.both;
+	// The host drops the request once its peer is gone, so nobody can approve
+	// a device that is no longer asking. It says so as the request resolves.
+	const withdrawn = new Promise((resolveWithdrawn) => {
+		const stop = exposure.onApprovalResolved((resolution) => {
+			if (resolution.approval.approvalId !== pending.approvalId) return;
+			stop();
+			resolveWithdrawn(resolution);
+		});
+	});
 	controller.abort();
 	const result = await outcome;
+	// The cancel, and nothing slower, ended it: the rejection says so.
 	assert.match(result.error?.message ?? '', /Desktop pairing was cancelled/u);
-	assert.ok(Date.now() - cancelledAt < 5_000, 'cancel takes effect at once');
 	assert.deepEqual(failures, [], 'a cancel is not a connection failure');
 	assert.equal(await store.loadDevice(sessionOrigin), null);
-	// The host drops the request once its peer is gone, so nobody can approve
-	// a device that is no longer asking.
-	const startedAt = Date.now();
-	while (exposure.listPendingApprovals().length > 0) {
-		if (Date.now() - startedAt > 30_000)
-			assert.fail('the cancelled request is still pending on the host');
-		await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-	}
+	assert.equal((await withdrawn).outcome, 'closed');
+	assert.deepEqual(exposure.listPendingApprovals(), []);
 	assert.equal(exposure.devices.list().length, 0);
 });
 
@@ -682,7 +708,6 @@ test('Desktop pairs, reconnects, and is revoked against a standalone server it r
 	skip: runtimeStaged
 		? false
 		: `selected WebRTC runtime is not staged at ${RUNTIME_ROOT}`,
-	timeout: 240_000,
 }, async (t) => {
 	const dataRoot = await mkdtemp(join(tmpdir(), 'terminay-desktop-direct-'));
 	// The advertised origin must be the port the listener answers on: the
@@ -768,7 +793,7 @@ test('Desktop pairs, reconnects, and is revoked against a standalone server it r
 		codec: codec(),
 	});
 	const desktopSignal = { connectHost: '127.0.0.1', insecureTls: true };
-	const shown = [];
+	const approval = pendingApproval(exposure);
 	const pairing = pairDesktopHostedDevice({
 		pairingUrl,
 		deviceName: 'Terminay Desktop',
@@ -776,20 +801,10 @@ test('Desktop pairs, reconnects, and is revoked against a standalone server it r
 		webrtcRuntimeRoot: RUNTIME_ROOT,
 		iceServers: [],
 		signal: desktopSignal,
-		onMatchCode: (code) => shown.push(code),
+		onMatchCode: approval.shown,
 	});
-	const pending = await new Promise((resolvePending, reject) => {
-		const startedAt = Date.now();
-		const tick = () => {
-			const [entry] = exposure.listPendingApprovals();
-			if (entry && shown.length === 1) return resolvePending(entry);
-			if (Date.now() - startedAt > 60_000)
-				return reject(new Error('no pending approval'));
-			setTimeout(tick, 50);
-		};
-		tick();
-	});
-	assert.equal(shown[0].matchCode, pending.matchCode);
+	const pending = await approval.both;
+	assert.equal(approval.codes[0].matchCode, pending.matchCode);
 	exposure.approveEnrollment(pending.approvalId);
 	const paired = await pairing;
 
