@@ -17,6 +17,8 @@ type Batch = { type: string; epoch: number; seq: number; kind: string; data: str
 const state = {
 	batches: [] as { epoch: number; seq: number; kind: string; bytes: number; parts?: number; reason?: string }[],
 	reports: [] as unknown[],
+	/** The test's pings the view has answered, in the order it answered them. */
+	echoes: [] as number[],
 	/** While true, batches are neither forwarded nor acknowledged. */
 	hold: false,
 };
@@ -55,6 +57,10 @@ function start(viewHtml: string): void {
 		const from = event.source === view.contentWindow ? view : event.source === replica.contentWindow ? replica : null;
 		if (from === null) return;
 		const data = event.data as Record<string, unknown> | null;
+		if (from === view && typeof data?.echo === 'number') {
+			state.echoes.push(data.echo);
+			return;
+		}
 		if (data?.method === READY) {
 			if (from === view) {
 				const built = buildViewDocument({ html: viewHtml, source: { kind: 'agent' } });
@@ -103,6 +109,7 @@ function start(viewHtml: string): void {
 	Object.assign(window, {
 		mirrorSpike: {
 			state,
+			ping: (id: number) => send(view, { echo: id }),
 			resnapshot: () => mirror(view, { type: 'start' }),
 			stop: () => mirror(view, { type: 'stop' }),
 			/** Give the replica a recording the view never made, as a hostile view could. */

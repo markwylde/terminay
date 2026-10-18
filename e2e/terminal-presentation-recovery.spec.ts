@@ -118,9 +118,6 @@ test('coalesces a Codex-style redraw storm from a window drag', async ({
 	await expect(panel).toContainText('synthetic-codex-ready', {
 		timeout: 30_000,
 	});
-	// Leave the initial inline history on screen long enough to inspect before
-	// the resize, matching the manual Codex reproduction.
-	await mainWindow.waitForTimeout(5_000);
 	await mainWindow.evaluate(() => {
 		const target = window as Window & {
 			__terminayResizeTriggeredRecovery?: boolean;
@@ -145,22 +142,30 @@ test('coalesces a Codex-style redraw storm from a window drag', async ({
 			'The mounted terminal did not publish its initial columns.',
 		);
 	}
-	await electronApp.evaluate(async ({ BrowserWindow }) => {
-		const window =
-			BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-		if (!window) throw new Error('The main BrowserWindow is unavailable');
-		const bounds = window.getBounds();
-		const targetWidth = Math.max(640, bounds.width - 280);
-		for (let step = 1; step <= 10; step += 1) {
+	// A drag in ten steps, each one taken in by the window before the next.
+	for (let step = 1; step <= 10; step += 1) {
+		const before = await mainWindow.evaluate(() => window.innerWidth);
+		await electronApp.evaluate(({ BrowserWindow }, at) => {
+			const window =
+				BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+			if (!window) throw new Error('The main BrowserWindow is unavailable');
+			const state = globalThis as typeof globalThis & {
+				__terminayDragFrom?: Electron.Rectangle;
+			};
+			state.__terminayDragFrom ??= window.getBounds();
+			const bounds = state.__terminayDragFrom;
+			const targetWidth = Math.max(640, bounds.width - 280);
 			window.setBounds({
 				...bounds,
 				width: Math.round(
-					bounds.width + ((targetWidth - bounds.width) * step) / 10,
+					bounds.width + ((targetWidth - bounds.width) * at) / 10,
 				),
 			});
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-	});
+		}, step);
+		await expect
+			.poll(() => mainWindow.evaluate(() => window.innerWidth))
+			.not.toBe(before);
+	}
 
 	await expect(terminalRoot).not.toHaveAttribute(
 		'data-terminal-cols',
@@ -182,7 +187,6 @@ test('coalesces a Codex-style redraw storm from a window drag', async ({
 			),
 		)
 		.toBe(false);
-	await mainWindow.waitForTimeout(2_000);
 });
 
 test('keeps a high-output local terminal interactive through sidebar, root, resize, and settings updates', async ({

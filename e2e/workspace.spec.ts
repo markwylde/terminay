@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { waitUntilBusy } from './support/busy-terminals';
 import { changesPane, folderRow } from './support/folders';
 import { settledTerminalSessionId } from './support/terminal-session';
 import {
@@ -139,6 +140,7 @@ test.describe('workspace shell', () => {
 
 	test('warns only when closing a terminal with a foreground process', async ({
 		appHarness,
+		electronApp,
 		mainWindow,
 	}) => {
 		const dialogs = await appHarness.dialogs(mainWindow);
@@ -151,11 +153,13 @@ test.describe('workspace shell', () => {
 		const foregroundStarted = `foreground-started-${Date.now()}`;
 		await writeToActiveTerminal(
 			mainWindow,
-			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+			`printf '${foregroundStarted}\\n'; sleep 30\n`,
 		);
 		await expect(
 			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
+		// The application sees the process before the close asks about it.
+		await waitUntilBusy(electronApp, mainWindow);
 		await dialogs.queueConfirm(false);
 		await closeButtons.last().click();
 		await expect
@@ -210,6 +214,7 @@ test.describe('workspace shell', () => {
 
 	test('closes an idle terminal promptly while another terminal has a foreground process', async ({
 		appHarness,
+		electronApp,
 		mainWindow,
 	}) => {
 		await appHarness.sendAppCommand('new-terminal');
@@ -220,11 +225,13 @@ test.describe('workspace shell', () => {
 		const foregroundStarted = `sibling-foreground-${Date.now()}`;
 		await writeToActiveTerminal(
 			mainWindow,
-			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+			`printf '${foregroundStarted}\\n'; sleep 30\n`,
 		);
 		await expect(
 			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
+		// The application sees the sibling's process before the idle one closes.
+		await waitUntilBusy(electronApp, mainWindow);
 
 		const idleTerminalClose = mainWindow
 			.locator('.dv-tab:visible')
@@ -457,7 +464,11 @@ test.describe('workspace shell', () => {
 		await appHarness.sendAppCommand(
 			'set-project-root-folder-to-working-directory',
 		);
-		await mainWindow.waitForTimeout(500);
+		// The project is rooted there before its editor reads the root.
+		await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute(
+			'data-terminay-project-root',
+			expectedRoot,
+		);
 
 		const editWindow = await openProjectEditWindow(mainWindow);
 		await expect(editWindow.getByPlaceholder('Enter folder path')).toHaveValue(

@@ -19,17 +19,33 @@ const installedWorkspace =
 
 type BoundarySample = Readonly<{
 	boundary: number;
-	when:
-		| 'start'
-		| 'held-before-release'
-		| 'release'
-		| '50ms'
-		| '100ms'
-		| '250ms'
-		| '500ms'
-		| '1000ms'
-		| '2000ms';
+	when: 'start' | 'held-before-release' | 'release' | 'flushed' | 'reconciled';
 }>;
+
+/** Resolves once the window has drawn `count` frames from now. */
+async function animationFrames(
+	page: import('@playwright/test').Page,
+	count: number,
+): Promise<void> {
+	await page.evaluate(async (frameCount) => {
+		for (let index = 0; index < frameCount; index += 1)
+			await new Promise<void>((resolve) =>
+				requestAnimationFrame(() => resolve()),
+			);
+	}, count);
+}
+
+/** The revision of the canonical workspace the window last drew. */
+async function workspaceRevision(
+	page: import('@playwright/test').Page,
+): Promise<number> {
+	return Number(
+		await page
+			.locator('.app-shell')
+			.first()
+			.getAttribute('data-terminay-workspace-revision'),
+	);
+}
 
 function pane(page: import('@playwright/test').Page, id: string) {
 	return page.locator(`[data-sidebar-panel-id="${id}"]`);
@@ -131,25 +147,23 @@ test('installed 3.2 sidebar: rapid Agents/Git mouse release does not bounce', as
 		};
 
 		await sample('start');
-		const startedAt = Date.now();
+		const revisionBeforeRelease = await workspaceRevision(page);
 		await page.mouse.move(x, y);
 		await page.mouse.down();
 		await page.mouse.move(x, y - 120, { steps: 1 });
 		await sample('held-before-release');
-		expect(Date.now() - startedAt).toBeLessThan(600);
 		await page.mouse.up();
 		await sample('release');
-		for (const [when, delay] of [
-			['50ms', 50],
-			['100ms', 50],
-			['250ms', 150],
-			['500ms', 250],
-			['1000ms', 500],
-			['2000ms', 1000],
-		] as const) {
-			await page.waitForTimeout(delay);
-			await sample(when);
-		}
+		// Each later sample at the event it waits on: React drawing the release,
+		// then the window drawing the server's revision that carries it, the
+		// last thing that moves the boundary.
+		await animationFrames(page, 2);
+		await sample('flushed');
+		await expect
+			.poll(() => workspaceRevision(page))
+			.toBeGreaterThan(revisionBeforeRelease);
+		await animationFrames(page, 3);
+		await sample('reconciled');
 
 		const held = samples.find((entry) => entry.when === 'held-before-release');
 		if (!held) throw new Error('The held resize position was not sampled.');

@@ -1,5 +1,9 @@
-import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import {
@@ -34,6 +38,16 @@ import {
 	setProjectRoot,
 } from './support/ui';
 import { chooseProjectStart, createStartedProject } from './support/project-start';
+import {
+	advanceRendererClock,
+	afterRendererTasks,
+	holdRendererClock,
+	installRendererClock,
+	nextAnimationFrame,
+	releaseRendererClock,
+} from './support/renderer-clock';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Folders within a project: General, plain folders, and the folder every Git
@@ -225,10 +239,27 @@ async function dragGripTo(
 			y: from.y + ((to.y - from.y) * step) / steps,
 		};
 		await page.mouse.move(pointer.x, pointer.y);
-		await page.waitForTimeout(20);
+		await nextAnimationFrame(page);
 		if (step === 6) await whileHeld?.(pointer);
 	}
 	await page.mouse.up();
+}
+
+/** How long a dropped order is shown while the server has not answered. */
+const PENDING_ORDER_MS = 3_000;
+/** Past the while a rename input takes its focus back from the terminal. */
+const RENAME_EXCHANGE_MS = 500;
+
+/**
+ * The order shown is the order held: it outlasts the drop's own preview. The
+ * renderer's clock, installed before the drop, is run past the preview's end.
+ */
+async function expectHeldOrder(page: Page, names: string[]): Promise<void> {
+	await expect(folderNames(page)).toHaveText(names);
+	await holdRendererClock(page);
+	await advanceRendererClock(page, PENDING_ORDER_MS);
+	await expect(folderNames(page)).toHaveText(names);
+	await releaseRendererClock(page);
 }
 
 const placeholder = (page: Page): Locator =>
@@ -425,11 +456,15 @@ test('a terminal in an unselected folder keeps running, and switching folders cl
 	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
 	const sessionId = await activeTerminalSessionId(mainWindow);
 
-	// Prints for about three seconds. The first tick is seen here; the last is
-	// printed while another folder is on screen.
+	// The first tick is seen here; the rest wait on a FIFO the test opens once
+	// another folder is on screen, and the loop says when it has finished.
+	const gateDir = await mkdtemp(join(tmpdir(), 'terminay-background-'));
+	const gate = join(gateDir, 'gate');
+	const finished = join(gateDir, 'finished');
+	await execFileAsync('mkfifo', [gate]);
 	await run(
 		mainWindow,
-		"for n in 1 2 3 4 5 6; do printf 'tick-%s-of-6\\n' \"$n\"; sleep 0.5; done",
+		`printf 'tick-%s-of-6\\n' 1; cat '${gate}' >/dev/null; for n in 2 3 4 5 6; do printf 'tick-%s-of-6\\n' "$n"; done; : > '${finished}'`,
 	);
 	await expect(terminalOutput(mainWindow)).toContainText('tick-1-of-6');
 	await expect(terminalOutput(mainWindow)).not.toContainText('tick-6-of-6');
@@ -440,8 +475,11 @@ test('a terminal in an unselected folder keeps running, and switching folders cl
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
 	await expect(terminalPanelForSession(mainWindow, sessionId)).toBeHidden();
-	// Long enough for the loop to finish with nobody looking.
-	await mainWindow.waitForTimeout(4_500);
+	// The loop finishes with nobody looking. Opening the FIFO for writing waits
+	// for the loop's `cat` to open it.
+	await writeFile(gate, '\n');
+	await expect.poll(() => existsSync(finished)).toBe(true);
+	await rm(gateDir, { recursive: true, force: true });
 	await expect(terminalPanelForSession(mainWindow, sessionId)).toBeHidden();
 
 	await selectFolder(mainWindow, 'General');
@@ -554,6 +592,7 @@ test('a terminal dragged into a new plain folder is still there after a reload, 
 test('folder context menus offer what each kind of folder can do, and Open shell in folder starts in the worktree', async ({
 	appHarness,
 	createWorkspace,
+	electronApp,
 	mainWindow,
 }) => {
 	const repo = await repository(createWorkspace, 'lf-menus', ['alpha']);
@@ -640,11 +679,29 @@ test('folder context menus offer what each kind of folder can do, and Open shell
 		'Reveal in OS',
 	]);
 	// The host is asked to show the folder by its id, and does not refuse.
+	// The host's file manager is stood in for, so each request is seen
+	// arriving rather than waited for.
+	await electronApp.evaluate(({ shell }) => {
+		const revealed: string[] = [];
+		(globalThis as { __terminayRevealed?: string[] }).__terminayRevealed =
+			revealed;
+		shell.showItemInFolder = (target: string) => {
+			revealed.push(target);
+		};
+	});
 	await openFolderMenu(mainWindow, 'General');
 	await contextMenuItem(mainWindow, 'Reveal in OS').click();
 	await openFolderMenu(mainWindow, 'Scratch');
 	await contextMenuItem(mainWindow, 'Reveal in OS').click();
-	await mainWindow.waitForTimeout(500);
+	await expect
+		.poll(() =>
+			electronApp.evaluate(
+				() =>
+					(globalThis as { __terminayRevealed?: string[] })
+						.__terminayRevealed?.length ?? 0,
+			),
+		)
+		.toBe(2);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -971,8 +1028,6 @@ test('a terminal that runs git worktree add is moved into the new folder with no
 	expect(await activeTerminalSessionId(mainWindow)).toBe(sessionId);
 	// The tree is what shows the move. Nothing announces it.
 	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
-	await mainWindow.waitForTimeout(1_000);
-	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 
 	// Dragged back onto General, it is in General, and it stays there: the
 	// terminal goes on running Git and is not moved again.
@@ -983,7 +1038,11 @@ test('a terminal that runs git worktree add is moved into the new folder with no
 	await expect(terminalPanelForSession(mainWindow, sessionId)).toBeVisible();
 	await run(mainWindow, "git status --short && printf 'still-%s\\n' here");
 	await expect(terminalOutput(mainWindow)).toContainText('still-here');
-	await mainWindow.waitForTimeout(2_000);
+	// The drag and the command both came back after the move was shown: an
+	// announcement of it would be on screen by now. It is still in General;
+	// that it stays there through later worktree changes is read once the
+	// next worktree's folder has appeared, below.
+	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'cap-one')).toHaveCount(0);
 
@@ -1067,8 +1126,6 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 		folderGroup(mainWindow, 'feat/outside').locator('.folders-tree__offer'),
 	).toHaveCount(0);
 	await expect(movedAnnouncement(mainWindow)).toHaveCount(0);
-	await mainWindow.waitForTimeout(1_500);
-	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(0);
 
 	// A terminal in the worktree's folder, with something still to say.
 	await selectFolder(mainWindow, 'feat/outside');
@@ -1076,6 +1133,12 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 		mainWindow,
 		appHarness.sendAppCommand,
 		'feat/outside',
+	);
+	// The server made this terminal after it had taken in the new worktree:
+	// had it moved General's terminal there, the folder would hold two.
+	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(1);
+	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
+		1,
 	);
 	await run(mainWindow, "cd / && printf 'before-%s\\n' removal");
 	await expect(terminalOutput(mainWindow)).toContainText('before-removal');
@@ -1198,6 +1261,9 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 	};
 	const tabMiddle = { x: tabBox.x + tabBox.width / 2, y: tabBox.y + tabBox.height / 2 };
 
+	// How long a rest is, is the renderer's time, and the test holds it.
+	await holdRendererClock(mainWindow);
+
 	// Passing over the tab without resting opens nothing.
 	await mainWindow.mouse.move(restingPlace.x, restingPlace.y);
 	await mainWindow.mouse.move(tabBox.x + 6, tabMiddle.y);
@@ -1205,17 +1271,19 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 		steps: 4,
 	});
 	await mainWindow.mouse.move(restingPlace.x, restingPlace.y);
-	await mainWindow.waitForTimeout(800);
+	await advanceRendererClock(mainWindow, 800);
 	await expect(peek).toHaveCount(0);
 
 	// The active tab has no peek.
 	await mainWindow.locator('.project-tab--active').hover();
-	await mainWindow.waitForTimeout(800);
+	await advanceRendererClock(mainWindow, 800);
 	await expect(peek).toHaveCount(0);
 
 	// Resting on the inactive tab shows its folders and their terminals.
 	await mainWindow.mouse.move(tabMiddle.x, tabMiddle.y);
+	await advanceRendererClock(mainWindow, 800);
 	await expect(peek).toBeVisible();
+	await releaseRendererClock(mainWindow);
 	const peekFolders = peek.locator(
 		'.folders-tree__row--folder .folders-tree__text > .folders-tree__name',
 	);
@@ -1284,9 +1352,11 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 		),
 	).toHaveText(['Project 2', 'Project']);
 	await expect(peek).toHaveCount(0);
+	await holdRendererClock(mainWindow);
 	await mainWindow.mouse.move(restingPlace.x, restingPlace.y);
-	await mainWindow.waitForTimeout(800);
+	await advanceRendererClock(mainWindow, 800);
 	await expect(peek).toHaveCount(0);
+	await releaseRendererClock(mainWindow);
 });
 
 test('at phone width there is no Folders column and the switcher lists the folders with their terminals', async ({
@@ -1633,7 +1703,6 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 	await expect(changesPane(mainWindow)).toContainText(
 		'Working tree is missing',
 	);
-	await mainWindow.waitForTimeout(1_500);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 
 	// Git forgets it, and the terminal is in General, still running.
@@ -1641,6 +1710,9 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 	await expect(folderRow(mainWindow, 'gamma')).toHaveCount(0, {
 		timeout: 15_000,
 	});
+	// A later listing has arrived since the directory went missing, and
+	// nothing about the missing directory was reported as a failure.
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 	await expect(terminalRowIn(mainWindow, 'General', stranded)).toHaveCount(1);
 	await terminalRowOf(mainWindow, stranded).click();
 	await typeInVisibleTerminal(
@@ -1924,6 +1996,7 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 	for (const name of ['alpha', 'beta', 'gamma'])
 		await createPlainFolder(mainWindow, name);
 	await selectFolder(mainWindow, 'General');
+	await installRendererClock(mainWindow);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'General',
 		'alpha',
@@ -1952,12 +2025,7 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 		const box = await cardBox(folder);
 		return { x: box.x + box.width / 2, y: box.y + fromTop };
 	};
-	/** The order shown is the order held: it outlasts the drop's own preview. */
-	const expectOrder = async (names: string[]) => {
-		await expect(folderNames(mainWindow)).toHaveText(names);
-		await mainWindow.waitForTimeout(3_500);
-		await expect(folderNames(mainWindow)).toHaveText(names);
-	};
+	const expectOrder = (names: string[]) => expectHeldOrder(mainWindow, names);
 
 	// The last folder, dropped over the top of the one above it.
 	await dragGripTo(mainWindow, 'gamma', await pointIn('beta', 2));
@@ -2010,7 +2078,7 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 	await mainWindow.mouse.move(name.x + 4, name.y + name.height / 2);
 	await mainWindow.mouse.down();
 	await mainWindow.mouse.move(name.x + 6, name.y + name.height / 2 + 3);
-	await mainWindow.waitForTimeout(40);
+	await nextAnimationFrame(mainWindow);
 	await mainWindow.mouse.up();
 	await expect(folderRow(mainWindow, 'alpha')).toHaveClass(
 		/folders-tree__row--selected/,
@@ -2033,7 +2101,7 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 	await mainWindow.mouse.down();
 	for (let step = 1; step <= 8; step += 1) {
 		await mainWindow.mouse.move(toggle.x + 4, toggle.y + step * 20);
-		await mainWindow.waitForTimeout(20);
+		await nextAnimationFrame(mainWindow);
 	}
 	await mainWindow.mouse.up();
 	await expect(folderNames(mainWindow)).toHaveText([
@@ -2043,6 +2111,14 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 		'General',
 	]);
 	await selectFolder(mainWindow, 'General');
+	// Selecting General hands focus to its terminal on a later frame; the
+	// keyboard takes a title only once that has happened, or the terminal
+	// would take the focus back from it.
+	await expect(
+		activeFolderWorkspace(mainWindow).locator(
+			'.terminal-panel:visible .xterm-helper-textarea',
+		),
+	).toBeFocused();
 
 	// From the keyboard: one place for each press, the title keeps focus, and
 	// either end of the order is as far as a folder goes.
@@ -2064,7 +2140,9 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 	]);
 	await expect(grip('beta')).toBeFocused();
 	await mainWindow.keyboard.press('Alt+ArrowUp');
-	await mainWindow.waitForTimeout(500);
+	// The key has been handled and drawn. A move it asked of the server would
+	// also show in the exact order the next real move leaves.
+	await afterRendererTasks(mainWindow);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
 		'gamma',
@@ -2074,7 +2152,7 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 	await expect(grip('beta')).toBeFocused();
 	await grip('General').focus();
 	await mainWindow.keyboard.press('Alt+ArrowDown');
-	await mainWindow.waitForTimeout(500);
+	await afterRendererTasks(mainWindow);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'beta',
 		'gamma',
@@ -2122,23 +2200,20 @@ test('a short card is carried past a tall one in both directions', async ({
 	};
 	const tall = await cardBox('General');
 	expect(tall.height).toBeGreaterThan((await cardBox('solo')).height * 1.5);
+	await installRendererClock(mainWindow);
 
 	await dragGripTo(mainWindow, 'solo', {
 		x: tall.x + tall.width / 2,
 		y: tall.y + 1,
 	});
-	await expect(folderNames(mainWindow)).toHaveText(['solo', 'General']);
-	await mainWindow.waitForTimeout(3_500);
-	await expect(folderNames(mainWindow)).toHaveText(['solo', 'General']);
+	await expectHeldOrder(mainWindow, ['solo', 'General']);
 
 	const below = await cardBox('General');
 	await dragGripTo(mainWindow, 'solo', {
 		x: below.x + below.width / 2,
 		y: below.y + below.height - 2,
 	});
-	await expect(folderNames(mainWindow)).toHaveText(['General', 'solo']);
-	await mainWindow.waitForTimeout(3_500);
-	await expect(folderNames(mainWindow)).toHaveText(['General', 'solo']);
+	await expectHeldOrder(mainWindow, ['General', 'solo']);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -2150,25 +2225,33 @@ test('cards slide to their new places, and take them at once where the device as
 	const grip = (folder: string) => folderRow(mainWindow, folder);
 	/**
 	 * Move a folder one place from the keyboard and read where the card it
-	 * passes is drawn: two frames after the key, and once everything is still.
+	 * passes is drawn: two frames after the key, and once its slide is over.
+	 * The slide runs on the browser's own frames, so it is read by frames and
+	 * by the card's own state, never by time.
 	 */
 	const moveAndWatch = async (folder: string, key: string, passed: string) => {
+		const card = folderGroup(mainWindow, passed);
 		await grip(folder).focus();
 		await mainWindow.keyboard.press(key);
-		const top = () =>
-			folderGroup(mainWindow, passed).evaluate(
-				(card) =>
-					new Promise<number>((resolve) =>
+		const early = await card.evaluate(
+			(element) =>
+				new Promise<number>((resolve) =>
+					requestAnimationFrame(() =>
 						requestAnimationFrame(() =>
-							requestAnimationFrame(() =>
-								resolve(card.getBoundingClientRect().top),
-							),
+							resolve(element.getBoundingClientRect().top),
 						),
 					),
-			);
-		const early = await top();
-		await mainWindow.waitForTimeout(600);
-		return { early, settled: await top() };
+				),
+		);
+		// Over once the card is drawn where it is laid out, with no transform
+		// of its own left.
+		await expect
+			.poll(() => card.evaluate((element) => getComputedStyle(element).transform))
+			.toBe('none');
+		const settled = await card.evaluate(
+			(element) => element.getBoundingClientRect().top,
+		);
+		return { early, settled };
 	};
 
 	// With motion, the passed card is still on its way two frames in.
@@ -2188,15 +2271,14 @@ test('cards slide to their new places, and take them at once where the device as
 	expect(Math.abs(still.early - still.settled)).toBeLessThan(0.5);
 
 	// Carried by its title, it ends where it would without the preference.
+	await installRendererClock(mainWindow);
 	const general = await folderGroup(mainWindow, 'General').boundingBox();
 	if (general === null) throw new Error('General is not on screen.');
 	await dragGripTo(mainWindow, 'beta', {
 		x: general.x + general.width / 2,
 		y: general.y + 1,
 	});
-	await expect(folderNames(mainWindow)).toHaveText(['beta', 'General', 'alpha']);
-	await mainWindow.waitForTimeout(3_500);
-	await expect(folderNames(mainWindow)).toHaveText(['beta', 'General', 'alpha']);
+	await expectHeldOrder(mainWindow, ['beta', 'General', 'alpha']);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -2301,19 +2383,23 @@ test('a worktree is named by its branch on one line, by its directory when detac
 		await expect(tooltip).toHaveCount(0);
 	};
 
+	// The delay is a second of the renderer's time, and the test holds it.
+	await holdRendererClock(mainWindow);
+
 	// Passing over a card shows nothing, however long ago it was.
 	await title('deep').hover();
-	await mainWindow.waitForTimeout(400);
+	await advanceRendererClock(mainWindow, 400);
 	await expect(tooltip).toHaveCount(0);
 	await away();
-	await mainWindow.waitForTimeout(1_200);
+	await advanceRendererClock(mainWindow, 1_200);
 	await expect(tooltip).toHaveCount(0);
 
 	// Resting on it does, after a second and not before.
 	await title('deep').hover();
-	await mainWindow.waitForTimeout(700);
+	await advanceRendererClock(mainWindow, 999);
 	await expect(tooltip).toHaveCount(0);
-	await expect(tooltip).toBeVisible({ timeout: 2_000 });
+	await advanceRendererClock(mainWindow, 1);
+	await expect(tooltip).toBeVisible();
 	await expect(tooltip.locator('dt')).toHaveText([
 		'Branch',
 		'Worktree',
@@ -2369,7 +2455,8 @@ test('a worktree is named by its branch on one line, by its directory when detac
 
 	// A detached worktree says where it is detached.
 	await title('bisect-tree').hover();
-	await expect(tooltip).toBeVisible({ timeout: 2_500 });
+	await advanceRendererClock(mainWindow, 1_000);
+	await expect(tooltip).toBeVisible();
 	await expect(tooltip.locator('dd').first()).toHaveText(
 		/^detached at [0-9a-f]{8}$/,
 	);
@@ -2386,17 +2473,19 @@ test('a worktree is named by its branch on one line, by its directory when detac
 
 	// General and its branch have no details to show.
 	await title('General').hover();
-	await mainWindow.waitForTimeout(1_500);
+	await advanceRendererClock(mainWindow, 1_500);
 	await expect(tooltip).toHaveCount(0);
 	await away();
 
 	// From the keyboard: focus resting on a card shows them, Escape closes.
 	await mainWindow.keyboard.press('Shift');
 	await folderRow(mainWindow, 'renamed').focus();
-	await expect(tooltip).toBeVisible({ timeout: 2_500 });
+	await advanceRendererClock(mainWindow, 1_000);
+	await expect(tooltip).toBeVisible();
 	await expect(tooltip.locator('dd').first()).toHaveText('renamed');
 	await mainWindow.keyboard.press('Escape');
 	await expect(tooltip).toHaveCount(0);
+	await releaseRendererClock(mainWindow);
 });
 
 test("double-clicking a terminal's row renames it in place: Enter and leaving the input save, Escape and a blank name do not", async ({
@@ -2414,7 +2503,22 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 	const original = (await name.textContent()) ?? '';
 	expect(original.length).toBeGreaterThan(0);
 	const rowHeight = (await row.boundingBox())?.height;
+	/** Open the input and see it through the activated terminal's grab for
+	 * focus, on the held clock. */
+	const openRename = async () => {
+		await holdRendererClock(mainWindow);
+		await row.dblclick();
+		await expect(input).toBeFocused();
+		await advanceRendererClock(mainWindow, RENAME_EXCHANGE_MS);
+		await expect(input).toBeFocused();
+		await releaseRendererClock(mainWindow);
+	};
 
+	// The terminal a double-click activates takes focus a frame later, and the
+	// input takes it back for a while. The renderer's clock is held for each
+	// rename, so that exchange is over, and the while is not, when the test
+	// goes on.
+	await holdRendererClock(mainWindow);
 	// The row of a terminal that is not the one in front: the double-click
 	// also activates it, and the input still keeps focus.
 	await row.dblclick();
@@ -2431,8 +2535,9 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 	expect((await row.boundingBox())?.height).toBe(rowHeight);
 	await expect(row).toHaveAttribute('draggable', 'false');
 	// Outliving the moment the activated terminal takes focus.
-	await mainWindow.waitForTimeout(500);
+	await advanceRendererClock(mainWindow, RENAME_EXCHANGE_MS);
 	await expect(input).toBeFocused();
+	await releaseRendererClock(mainWindow);
 
 	// Typing replaces the selected name, and a space does not activate the row.
 	await mainWindow.keyboard.type('api server');
@@ -2450,29 +2555,21 @@ test("double-clicking a terminal's row renames it in place: Enter and leaving th
 	// Escape leaves the name. The click that opened the input also activated
 	// the terminal, which takes focus a moment later and is given it back for
 	// a short while; a key pressed inside that exchange would reach the terminal.
-	await row.dblclick();
-	await expect(input).toBeFocused();
-	await mainWindow.waitForTimeout(500);
-	await expect(input).toBeFocused();
+	await openRename();
 	await mainWindow.keyboard.type('thrown away');
 	await mainWindow.keyboard.press('Escape');
 	await expect(input).toHaveCount(0);
 	await expect(name).toHaveText('api server');
 
 	// So does a blank name.
-	await row.dblclick();
-	await expect(input).toBeFocused();
-	await mainWindow.waitForTimeout(500);
-	await expect(input).toBeFocused();
+	await openRename();
 	await input.fill('   ');
 	await mainWindow.keyboard.press('Enter');
 	await expect(input).toHaveCount(0);
 	await expect(name).toHaveText('api server');
 
 	// Leaving the input saves what was typed.
-	await row.dblclick();
-	await expect(input).toBeFocused();
-	await mainWindow.waitForTimeout(500);
+	await openRename();
 	await input.fill('logs');
 	await folderRow(mainWindow, 'General').click();
 	await expect(input).toHaveCount(0);

@@ -10,6 +10,13 @@ import {
 	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
 } from '../packages/ui-bundle/src/index';
+import {
+	advanceRendererClock,
+	afterRendererTasks,
+	holdRendererClock,
+	installRendererClock,
+	releaseRendererClock,
+} from './support/renderer-clock';
 
 /**
  * The app-window layer in a browser host (terminal-app-windows).
@@ -136,6 +143,9 @@ addEventListener('message', (event) => {
 	document.getElementById('out').textContent = JSON.stringify(seen);
 })();
 </script></body></html>`;
+
+/** How long a mirror waits for a snapshot it asked for before it asks again. */
+const MIRROR_SNAPSHOT_WAIT_MS = 5_000;
 
 const card = (page: Page, title: string): Locator =>
 	page.locator('.app-window', { has: page.locator('.app-window__title', { hasText: title }) });
@@ -615,7 +625,8 @@ test('an observer sees the controlling client’s view live, read-only, and only
 		await observer.mouse.click(stage.x + 60, stage.y + 30);
 		await observer.mouse.click(stage.x + 40, stage.y + stage.height / 2);
 		await observer.keyboard.type('typed at the mirror');
-		await observer.waitForTimeout(300);
+		// Whatever the observer's page did with those keys it has done.
+		await afterRendererTasks(observer);
 		await expect(view(running).locator('#name')).toHaveValue('typed live');
 		await expect(view(running).locator('#list li')).toHaveCount(2);
 		expect(await named(observer, 'sendMessage')).toHaveLength(0);
@@ -634,6 +645,9 @@ test('an observer sees the controlling client’s view live, read-only, and only
 		await expect(mirrored).toHaveAttribute('data-placement', 'tab');
 		await expect(running).toHaveAttribute('data-placement', 'tab');
 		await expect.poll(async () => (await named(observer, 'unwatchMirror')).length).toBe(1);
+		// The observer's calls are made in order: had the keys typed at the
+		// mirror been sent on, that call would be ahead of this one.
+		expect(await named(observer, 'sendMessage')).toHaveLength(0);
 		const sent = (await mirrorLog(controller)).length;
 		await running.locator('.app-window__header').click();
 		await expect(running).toHaveAttribute('data-placement', 'window');
@@ -727,6 +741,9 @@ test('a mirror is scaled to fit a phone, a large view is streamed whole, and a c
 		expect((await mirrorLog(controller)).some((entry) => entry.kind === 'unavailable')).toBe(false);
 
 		// A connection that keeps losing part of each snapshot asks a few times, then says so and stops.
+		// How long it waits for a snapshot before asking again is the phone's
+		// time, and the test's clock is on it from here.
+		await installRendererClock(phone);
 		await phone.evaluate(() => (window as unknown as { harness: { setLossy(value: boolean): void } }).harness.setLossy(true));
 		await flood(400 * 1024);
 		await expect(sheet.locator('.app-window__mirror')).toHaveAttribute('data-status', 'unavailable', { timeout: 20_000 });
@@ -736,8 +753,10 @@ test('a mirror is scaled to fit a phone, a large view is streamed whole, and a c
 		// The view is unaffected where it runs.
 		await view(running).locator('#add').click();
 		await expect(view(running).locator('#list li')).toHaveCount(1);
-		// It does not keep asking.
-		await phone.waitForTimeout(500);
+		// It does not keep asking, however long it waits.
+		await holdRendererClock(phone);
+		await advanceRendererClock(phone, 3 * MIRROR_SNAPSHOT_WAIT_MS);
+		await releaseRendererClock(phone);
 		expect(await named(phone, 'resyncMirror')).toHaveLength(4);
 
 		// When a snapshot next arrives whole, the mirror is back.
@@ -868,6 +887,18 @@ test('a view cannot take the keyboard: keys typed for the terminal stay with the
 	await open(page);
 	const typed = () => page.evaluate(() => (window as unknown as { harness: { typed(): string } }).harness.typed());
 	const focused = () => page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName || '');
+	// The proxy's answers to the workspace's question whether a person has
+	// just acted in the view, noted after the workspace's own listener has
+	// handled each.
+	await page.evaluate(() => {
+		const answers: { active: boolean }[] = [];
+		(window as unknown as { activations: typeof answers }).activations = answers;
+		addEventListener('message', (event) => {
+			const answer = (event.data as { terminayProxy?: { type?: string; active?: boolean } } | null)?.terminayProxy;
+			if (answer?.type === 'activation') answers.push({ active: answer.active === true });
+		});
+	});
+	const activations = () => page.evaluate(() => [...(window as unknown as { activations: { active: boolean }[] }).activations]);
 	// The person is working in the terminal.
 	await page.locator('#terminal').click();
 	expect(await focused()).toBe('terminal');
@@ -876,7 +907,9 @@ test('a view cannot take the keyboard: keys typed for the terminal stay with the
 	// The view took the focus, and it was given back. (Nothing here looks
 	// inside the frame yet: to the browser that would be someone using it.)
 	await expect(thief.locator('.app-window__frame')).toBeVisible();
-	await page.waitForTimeout(600);
+	// The workspace asked the proxy whether a person had acted, heard no, and
+	// took the focus back.
+	await expect.poll(activations).toContainEqual({ active: false });
 	await expect.poll(focused).toBe('terminal');
 	await page.keyboard.type('hunter2');
 	expect(await typed()).toBe('hunter2');
@@ -886,8 +919,12 @@ test('a view cannot take the keyboard: keys typed for the terminal stay with the
 
 	// A person who clicks into the view is using it: it keeps the focus and gets the keys.
 	await settled(thief);
+	const asked = (await activations()).length;
 	await view(thief).locator('#grab').click();
-	await page.waitForTimeout(300);
+	// This time the answer is yes, and the workspace has heard it.
+	await expect
+		.poll(async () => (await activations()).slice(asked))
+		.toContainEqual({ active: true });
 	expect(await focused()).toBe('IFRAME');
 	await page.keyboard.type('a');
 	await expect(view(thief).locator('#grab')).toHaveValue('a');

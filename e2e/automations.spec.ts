@@ -4,6 +4,14 @@ import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import { frontHomeTab as front } from './support/home-tabs';
+import {
+	commandArrived,
+	commandGate,
+	endSettlePeriod,
+	HELD_SERVER_CLOCK,
+	INPUT_WINDOW_MS,
+	serverClock,
+} from './support/server-clock';
 import { submitTerminalCommand } from './support/terminal';
 import {
 	activeTerminalPanel,
@@ -168,28 +176,42 @@ const attention = seeded((outDir) => [
 
 attention(
 	'terminal needs attention runs a command with the subject’s context and no capability token',
-	async ({ mainWindow, outDir }) => {
+	{ tag: HELD_SERVER_CLOCK },
+	async ({ electronApp, mainWindow, outDir }) => {
+		// Activity is judged on the server's clock, which the test holds.
+		const clock = serverClock(electronApp);
+		const bell = await commandGate(outDir);
 		const projectTitle = (
 			await mainWindow
 				.locator('.project-tab--active .project-tab-title')
 				.innerText()
 		).trim();
+		const firstSessionId = await activeSessionId(mainWindow);
 		const subjectSessionId = await backgroundTerminal(mainWindow);
 		// Clear the tab-switch suppression window applied to the tab just left.
-		await mainWindow.waitForTimeout(1_100);
+		await clock.advance(INPUT_WINDOW_MS + 100);
 
-		// The subject records its own capability token, then rings the bell.
+		// The subject records its own capability token, then rings the bell
+		// once the test opens its gate: long after the typing, with the user
+		// back on Terminal 1.
 		const subjectToken = path.join(outDir, 'subject-token.txt');
 		await tabNamed(mainWindow, 'Terminal 2').click();
-		await submitTerminalCommand(
-			mainWindow,
-			`printf '%s' "$TERMINAY_CONTROL_TOKEN" > ${subjectToken}; sleep 1.1; printf 'ding\\007\\n'`,
-		);
+		const command = `printf '%s' "$TERMINAY_CONTROL_TOKEN" > ${subjectToken}; ${bell.wait}; printf 'ding\\007\\n'`;
+		await submitTerminalCommand(mainWindow, command);
+		await commandArrived(electronApp, subjectSessionId, command);
 		await tabNamed(mainWindow, 'Terminal 1').click();
+		await expect(
+			activeTerminalPanel(mainWindow).locator('.xterm-helper-textarea'),
+		).toBeFocused();
+		expect(await activeSessionId(mainWindow)).toBe(firstSessionId);
+		await clock.advance(INPUT_WINDOW_MS + 100);
+		await bell.open();
 		await expect(tabNamed(mainWindow, 'Terminal 2')).toHaveAttribute(
 			'data-terminal-activity',
 			'attention',
 		);
+		// Whatever is held for the settle period is let go.
+		await endSettlePeriod(electronApp);
 
 		const envFile = path.join(outDir, 'attention-env.txt');
 		await expect
@@ -277,8 +299,6 @@ finished(
 
 		// A repeated report of `done` is not a transition, so nothing is appended.
 		await done();
-		await mainWindow.waitForTimeout(1_500);
-		expect(await readLines(stats)).toHaveLength(1);
 
 		// The next finish appends again.
 		await publish({ status: 'running' });
@@ -289,6 +309,13 @@ finished(
 				'agent.finished|codex|done|Terminal 1',
 				'agent.finished|codex|done|Terminal 1',
 			]);
+		// A run is recorded as its event fires, and the repeated report came
+		// before the second finish: had it fired, there would be three runs.
+		const detail = await openAutomation(mainWindow, 'Count finished agents');
+		await expect(detail.locator('[data-terminay-automation-run]')).toHaveCount(
+			2,
+		);
+		expect(await readLines(stats)).toHaveLength(2);
 	},
 );
 
@@ -463,8 +490,6 @@ needsInput(
 		await expect
 			.poll(() => readLines(writes), { timeout: 20_000 })
 			.toEqual(['answered']);
-		await mainWindow.waitForTimeout(2_000);
-		expect(await readLines(writes)).toEqual(['answered']);
 
 		const detail = await openAutomation(mainWindow, 'Answer the agent');
 		const run = detail.locator('[data-terminay-automation-run]');
@@ -479,6 +504,8 @@ needsInput(
 		await expect(runDetail).toContainText(
 			'1 repeated event during the cooldown',
 		);
+		// The second request was taken in and held back, and wrote nothing.
+		expect(await readLines(writes)).toEqual(['answered']);
 		await expect(runDetail).toContainText('Terminal 1');
 	},
 );

@@ -1,9 +1,13 @@
-import { execFile } from 'node:child_process'
-import { writeFile } from 'node:fs/promises'
-import path from 'node:path'
-import { promisify } from 'node:util'
 import type { ElectronApplication, Locator, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import {
+  commandArrived,
+  commandGate,
+  endSettlePeriod,
+  INPUT_QUIET_MS,
+  INPUT_WINDOW_MS,
+  serverClock,
+} from './support/server-clock'
 import { settledTerminalSessionId, terminalPanelForSession } from './support/terminal-session'
 import { sendAppCommand } from './support/app'
 import { sendNotificationCommand } from './support/notifications'
@@ -19,78 +23,6 @@ import { createStartedProject } from './support/project-start'
  * opens, instead of sleeping and hoping the test is done by then.
  */
 
-/** What a terminal does within a second of the user's own input is theirs. */
-const INPUT_WINDOW_MS = 1_000
-
-/** A plain shell is reported finished once its input has been quiet this long. */
-const INPUT_QUIET_MS = 2_000
-
-type TestServerClock = {
-  advance(milliseconds: number): void
-  notificationSettleMs: number
-  notifications(): { pending: number; published: number; revision: number }
-  activity(sessionId: string):
-    | { acknowledged: boolean; attention: boolean; revision: number; source: string; status: string }
-    | undefined
-  output(sessionId: string): string
-  input(sessionId: string): string
-}
-
-type WithTestServerClock = typeof globalThis & { __terminayTestServerClock: TestServerClock }
-
-function serverClock(electronApp: ElectronApplication) {
-  return {
-    advance: (milliseconds: number) =>
-      electronApp.evaluate(
-        (_electron, ms) => (globalThis as WithTestServerClock).__terminayTestServerClock.advance(ms),
-        milliseconds,
-      ),
-    settleMs: () =>
-      electronApp.evaluate(
-        () => (globalThis as WithTestServerClock).__terminayTestServerClock.notificationSettleMs,
-      ),
-    notifications: () =>
-      electronApp.evaluate(() =>
-        (globalThis as WithTestServerClock).__terminayTestServerClock.notifications(),
-      ),
-    activity: (sessionId: string) =>
-      electronApp.evaluate(
-        (_electron, id) => (globalThis as WithTestServerClock).__terminayTestServerClock.activity(id),
-        sessionId,
-      ),
-    output: (sessionId: string) =>
-      electronApp.evaluate(
-        (_electron, id) => (globalThis as WithTestServerClock).__terminayTestServerClock.output(id),
-        sessionId,
-      ),
-    input: (sessionId: string) =>
-      electronApp.evaluate(
-        (_electron, id) => (globalThis as WithTestServerClock).__terminayTestServerClock.input(id),
-        sessionId,
-      ),
-  }
-}
-
-/**
- * The server has every keystroke of a typed command, Enter included. Typing
- * reaches the server on its own path, so until then the user is, as far as the
- * server's clock is concerned, still typing.
- */
-async function commandArrived(
-  electronApp: ElectronApplication,
-  sessionId: string,
-  command: string,
-): Promise<void> {
-  const typed = command.endsWith('\r') ? command : `${command}\r`
-  await expect.poll(() => serverClock(electronApp).input(sessionId)).toContain(typed)
-}
-
-/** Advance the server's clock through the whole notification settle period. */
-async function endSettlePeriod(electronApp: ElectronApplication): Promise<void> {
-  const clock = serverClock(electronApp)
-  await clock.advance(await clock.settleMs())
-}
-
 function appBadgeTotal(electronApp: ElectronApplication): Promise<number> {
   return electronApp.evaluate(
     () =>
@@ -100,26 +32,6 @@ function appBadgeTotal(electronApp: ElectronApplication): Promise<number> {
         }
       ).__terminayTestAppBadgeTotal?.() ?? -1,
   )
-}
-
-const execFileAsync = promisify(execFile)
-let gates = 0
-
-/**
- * A point a shell command waits at until the test opens it. `wait` is the shell
- * text that blocks on it; `open` lets the command go on.
- */
-async function commandGate(
-  directory: string,
-): Promise<{ wait: string; open: () => Promise<void> }> {
-  gates += 1
-  const fifo = path.join(directory, `terminal-signals-gate-${gates}.fifo`)
-  await execFileAsync('mkfifo', [fifo])
-  return {
-    wait: `read _ < '${fifo}'`,
-    // Opening a FIFO for writing completes once the waiting shell has it open.
-    open: () => writeFile(fifo, '\n'),
-  }
 }
 
 async function getActiveSessionId(page: Page): Promise<string> {

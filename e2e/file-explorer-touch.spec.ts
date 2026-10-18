@@ -2,8 +2,6 @@ import type { CDPSession, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { contextMenuItem, fileExplorerItem, openFileExplorer, selectFileView, setProjectRoot } from './support/ui'
 
-const HOLD_MS = 1_200
-
 type Point = { x: number; y: number }
 
 async function touchSession(page: Page): Promise<CDPSession> {
@@ -92,7 +90,7 @@ test('a touch held still for a second drags the entry to the tab bar', async ({ 
   const session = await touchSession(mainWindow)
   const start = await centerOf(mainWindow, 'touch-drag.txt')
   await touch(session, 'touchStart', start)
-  await mainWindow.waitForTimeout(HOLD_MS)
+  // Held long enough, the entry is armed to drag.
   await expect(item).toHaveClass(/file-explorer-tree-item--drag-armed/)
   const end = { x: tabBox.x + tabBox.width - 24, y: tabBox.y + tabBox.height / 2 }
   await touchMoveTo(session, start, end, 20)
@@ -117,7 +115,10 @@ test('a touch held still for a second and released opens the entry menu', async 
 
   const session = await touchSession(mainWindow)
   await touch(session, 'touchStart', await centerOf(mainWindow, 'touch-menu.txt'))
-  await mainWindow.waitForTimeout(HOLD_MS)
+  // Released only once the hold has armed the entry: a long press.
+  await expect(fileExplorerItem(mainWindow, 'touch-menu.txt')).toHaveClass(
+    /file-explorer-tree-item--drag-armed/,
+  )
   await touch(session, 'touchEnd')
 
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
