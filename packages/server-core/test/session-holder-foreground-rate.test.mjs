@@ -63,6 +63,14 @@ function createManualClock() {
   };
 }
 
+/** Every holder this file launched, by pid, with the promise of its exit. */
+const holders = new Map();
+
+function launchHolder(env) {
+  const child = launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env });
+  holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
+}
+
 function dataRootFor(t) {
   // realpath keeps the socket path short and stable on macOS, where the
   // temporary directory is reached through a symlink.
@@ -71,6 +79,9 @@ function dataRootFor(t) {
     // Whatever a failed assertion left behind must not outlive the test.
     for (const record of readHolderRecords(dataRoot)) {
       try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
+      const holder = holders.get(record.pid);
+      holder?.child.ref();
+      await holder?.exited;
     }
     rmSync(dataRoot, { recursive: true, force: true });
   });
@@ -85,7 +96,7 @@ test("a held terminal that repaints continuously is sampled at a bounded rate", 
     dataRoot,
     buildId: "build-a",
     limitMs: 60_000,
-    launch: ({ env }) => launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env }),
+    launch: ({ env }) => { launchHolder(env); },
     // Stands in for the host's `ps` walk and completes at once, so nothing but
     // the server's own pacing separates one sample from the next.
     resolveForegroundProcess: async () => { samples += 1; return "sh"; },

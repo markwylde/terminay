@@ -82,7 +82,7 @@ function dataRootFor(t) {
     // Whatever a failed assertion left behind must not outlive the test.
     for (const record of readHolderRecords(dataRoot)) {
       try { process.kill(record.pid, "SIGKILL"); } catch { /* already gone */ }
-      await holders.get(record.pid)?.exited;
+      if (holders.has(record.pid)) await holderExited(record.pid);
     }
     rmSync(dataRoot, { recursive: true, force: true });
   });
