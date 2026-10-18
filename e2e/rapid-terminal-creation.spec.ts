@@ -2,6 +2,7 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import { createStartedProject } from './support/project-start';
+import { synchronizeWorkspace } from './support/workspace-sync';
 
 /**
  * Creating terminals back to back, without ever using the terminals that
@@ -51,9 +52,7 @@ async function workspaceReport(page: Page): Promise<string> {
 			...document.querySelectorAll(
 				'.project-workspace--active .terminal-panel[data-terminay-terminal-session-id]',
 			),
-		].map((panel) =>
-			panel.getAttribute('data-terminay-terminal-session-id'),
-		);
+		].map((panel) => panel.getAttribute('data-terminay-terminal-session-id'));
 		const tabs = [
 			...document.querySelectorAll(
 				'.project-workspace--active .terminal-tab-title',
@@ -74,57 +73,82 @@ async function workspaceReport(page: Page): Promise<string> {
 async function expectTerminalCount(
 	page: Page,
 	expected: number,
-	settleMs = 15_000,
 ): Promise<void> {
-	const deadline = Date.now() + settleMs;
-	do {
-		if ((await terminalTabs(page).count()) === expected) return;
-		await page.waitForTimeout(200);
-	} while (Date.now() < deadline);
-	throw new Error(
-		`Expected ${expected} terminal tabs, found ${await terminalTabs(page).count()}.\n${await workspaceReport(page)}`,
-	);
+	try {
+		await expect(terminalTabs(page)).toHaveCount(expected, { timeout: 15_000 });
+	} catch (error) {
+		throw new Error(
+			`Expected ${expected} terminal tabs, found ${await terminalTabs(page).count()}.\n${await workspaceReport(page)}`,
+			{ cause: error },
+		);
+	}
 }
 
-/** A tab count that has to still hold after the workspace settles. */
+/**
+ * A tab count that still holds once the window has drawn every revision of
+ * the workspace the server has committed: a tab the workspace was going to
+ * take away would be gone by then, since only a revision reconciles it.
+ */
 async function expectStableTerminalCount(
+	electronApp: ElectronApplication,
 	page: Page,
 	expected: number,
-	holdMs = 2_500,
 ): Promise<void> {
-	const deadline = Date.now() + holdMs;
-	do {
-		const count = await terminalTabs(page).count();
-		if (count !== expected) {
-			throw new Error(
-				`Expected ${expected} terminal tabs, found ${count}.\n${await workspaceReport(page)}`,
-			);
-		}
-		await page.waitForTimeout(250);
-	} while (Date.now() < deadline);
+	await synchronizeWorkspace(electronApp, page);
+	const count = await terminalTabs(page).count();
+	if (count !== expected) {
+		throw new Error(
+			`Expected ${expected} terminal tabs, found ${count}.\n${await workspaceReport(page)}`,
+		);
+	}
+}
+
+/**
+ * Click the add-tab button `clicks` times. Where `wait` says so, the next
+ * click waits until the tab the last one asked for is in the strip: still
+ * starting, never used. Elsewhere it follows at once. Every click lands while
+ * a terminal from one before it is still being set up.
+ */
+async function addTabs(
+	page: Page,
+	from: number,
+	wait: readonly boolean[],
+): Promise<number> {
+	let expected = from;
+	for (const waitForTab of wait) {
+		await addTabButton(page).click();
+		expected += 1;
+		if (waitForTab) await expect(terminalTabs(page)).toHaveCount(expected);
+	}
+	return expected;
 }
 
 test('keeps every terminal added by repeated add-tab clicks', async ({
+	electronApp,
 	mainWindow,
 }) => {
 	await recordWorkspaceDiagnostics(mainWindow);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1);
 
-	// Every click lands while the terminal from the click before is still
-	// starting, and none of them is ever typed into.
-	const delaysMs = [0, 40, 120, 250, 40, 0, 160, 60];
-	let expected = 1;
-	for (const delayMs of delaysMs) {
-		await addTabButton(mainWindow).click();
-		expected += 1;
-		if (delayMs > 0) await mainWindow.waitForTimeout(delayMs);
-	}
+	// Some clicks follow at once, some once the last click's tab is in the
+	// strip, and none of the terminals is ever typed into.
+	const expected = await addTabs(mainWindow, 1, [
+		false,
+		true,
+		true,
+		true,
+		true,
+		false,
+		true,
+		true,
+	]);
 
 	await expectTerminalCount(mainWindow, expected);
-	await expectStableTerminalCount(mainWindow, expected);
+	await expectStableTerminalCount(electronApp, mainWindow, expected);
 });
 
 test('keeps both terminals when the add-tab button is clicked twice in a row', async ({
+	electronApp,
 	mainWindow,
 }) => {
 	await recordWorkspaceDiagnostics(mainWindow);
@@ -135,10 +159,11 @@ test('keeps both terminals when the add-tab button is clicked twice in a row', a
 	await addTabButton(mainWindow).click();
 
 	await expect(terminalTabs(mainWindow)).toHaveCount(3, { timeout: 15_000 });
-	await expectStableTerminalCount(mainWindow, 3);
+	await expectStableTerminalCount(electronApp, mainWindow, 3);
 });
 
 test('keeps both terminals when two add-tab clicks overlap', async ({
+	electronApp,
 	mainWindow,
 }) => {
 	await recordWorkspaceDiagnostics(mainWindow);
@@ -152,10 +177,11 @@ test('keeps both terminals when two add-tab clicks overlap', async ({
 	]);
 
 	await expect(terminalTabs(mainWindow)).toHaveCount(3, { timeout: 15_000 });
-	await expectStableTerminalCount(mainWindow, 3);
+	await expectStableTerminalCount(electronApp, mainWindow, 3);
 });
 
 test('keeps terminals added to a second project while the first still holds its own', async ({
+	electronApp,
 	mainWindow,
 }) => {
 	await recordWorkspaceDiagnostics(mainWindow);
@@ -172,13 +198,10 @@ test('keeps terminals added to a second project while the first still holds its 
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1, { timeout: 15_000 });
 
-	for (const delayMs of [0, 100, 0, 200]) {
-		await addTabButton(mainWindow).click();
-		if (delayMs > 0) await mainWindow.waitForTimeout(delayMs);
-	}
+	await addTabs(mainWindow, 1, [false, true, false, true]);
 
 	await expectTerminalCount(mainWindow, 5);
-	await expectStableTerminalCount(mainWindow, 5);
+	await expectStableTerminalCount(electronApp, mainWindow, 5);
 });
 
 async function waitForWorkspacePopout(
@@ -205,7 +228,8 @@ async function waitForWorkspacePopout(
 			{ timeout: 20_000 },
 		)
 		.toBe(true);
-	if (popout === undefined) throw new Error('Expected the project popout window');
+	if (popout === undefined)
+		throw new Error('Expected the project popout window');
 	return popout;
 }
 
@@ -231,14 +255,17 @@ test('keeps terminals created while another window presents a project', async ({
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
 	await expect(terminalTabs(mainWindow)).toHaveCount(1);
 
-	const delaysMs = [0, 60, 120, 0, 250, 40, 90, 0];
-	let expected = 1;
-	for (const delayMs of delaysMs) {
-		await addTabButton(mainWindow).click();
-		expected += 1;
-		if (delayMs > 0) await mainWindow.waitForTimeout(delayMs);
-	}
+	const expected = await addTabs(mainWindow, 1, [
+		false,
+		true,
+		true,
+		false,
+		true,
+		true,
+		true,
+		false,
+	]);
 
 	await expectTerminalCount(mainWindow, expected);
-	await expectStableTerminalCount(mainWindow, expected);
+	await expectStableTerminalCount(electronApp, mainWindow, expected);
 });
