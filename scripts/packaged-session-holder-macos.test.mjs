@@ -9,11 +9,13 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	watch,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
+
+import { SessionHolderClient } from '../packages/server-core/dist/index.js';
 
 /**
  * The packaged application, with terminals held by a session holder.
@@ -82,20 +84,54 @@ function holderRecords(userData) {
 		});
 }
 
-async function until(predicate, label, timeoutMs) {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await predicate();
-		if (value) return value;
-		if (Date.now() > deadline)
-			throw new Error(`timed out waiting for ${label}`);
-		await delay(200);
-	}
+/**
+ * Resolves with the first value `read` gives, asked now and again whenever
+ * anything under `paths` changes. What this waits for is written there: the
+ * holder's record, and the workspace the application saves once its seeded
+ * terminal exists (so after the holder has started that terminal's shell).
+ * `read` may throw to fail the wait.
+ */
+function onChangeUnder(paths, read) {
+	return new Promise((resolveValue, rejectValue) => {
+		const watchers = [];
+		let settled = false;
+		const finish = (callback, value) => {
+			if (settled) return;
+			settled = true;
+			for (const watcher of watchers) watcher.close();
+			callback(value);
+		};
+		const check = () => {
+			if (settled) return;
+			try {
+				const value = read();
+				if (value) finish(resolveValue, value);
+			} catch (error) {
+				finish(rejectValue, error);
+			}
+		};
+		for (const path of paths) {
+			const watcher = watch(path, { recursive: true }, check);
+			watcher.on('error', (error) => finish(rejectValue, error));
+			watchers.push(watcher);
+		}
+		check();
+	});
+}
+
+/** Resolves once a process this test did not start has exited, through the
+ * operating system's own notification (kqueue, via `caffeinate -w`). */
+function exitOf(pid) {
+	return new Promise((resolveExit, rejectExit) => {
+		const waiter = spawn('caffeinate', ['-w', String(pid)], { stdio: 'ignore' });
+		waiter.once('error', rejectExit);
+		waiter.once('exit', () => resolveExit());
+	});
 }
 
 test(
 	'the packaged application starts its terminal in a session holder that outlives it',
-	{ skip, timeout: 120_000 },
+	{ skip },
 	async (t) => {
 		// A short, real path: the holder's socket lives under it.
 		const userData = realpathSync(mkdtempSync(join(tmpdir(), 'th-')));
@@ -128,6 +164,7 @@ test(
 			},
 		);
 		closeSync(logFile);
+		const exited = new Promise((resolveExit) => app.once('exit', resolveExit));
 		t.after(async () => {
 			const holders = holderRecords(userData).map((record) => record.pid);
 			// The application's process group, then the holders, which left it.
@@ -138,19 +175,15 @@ test(
 					/* already gone */
 				}
 			}
-			await delay(300);
+			await Promise.all([exited, ...holders.map(exitOf)]);
 			rmSync(userData, { recursive: true, force: true });
 			rmSync(logDirectory, { recursive: true, force: true });
 		});
 
-		const [holder] = await until(
-			() => {
-				const records = holderRecords(userData);
-				return records.length === 1 ? records : undefined;
-			},
-			'the session holder to start',
-			60_000,
-		);
+		const [holder] = await onChangeUnder([userData], () => {
+			const records = holderRecords(userData);
+			return records.length === 1 ? records : undefined;
+		});
 		assert.notEqual(holder.pid, app.pid);
 		assert.match(
 			commandOf(holder.pid),
@@ -160,39 +193,32 @@ test(
 
 		// The seeded terminal: a shell that is the holder's child. This is the
 		// assertion a mis-located spawn helper fails.
-		const [shell] = await until(
-			() => {
-				const output = readOutput();
-				if (/posix_spawnp failed|spawn_failed/u.test(output))
-					throw new Error(
-						`the packaged holder could not start a shell:\n${output.slice(-1500)}`,
-					);
-				const children = childrenOf(holder.pid);
-				return children.length >= 1 ? children : undefined;
-			},
-			'a shell under the session holder',
-			45_000,
-		);
+		// A spawn failure is logged; the log is watched as well, so it fails the
+		// wait as soon as it is written.
+		const [shell] = await onChangeUnder([userData, logPath], () => {
+			const output = readOutput();
+			if (/posix_spawnp failed|spawn_failed/u.test(output))
+				throw new Error(
+					`the packaged holder could not start a shell:\n${output.slice(-1500)}`,
+				);
+			const children = childrenOf(holder.pid);
+			return children.length >= 1 ? children : undefined;
+		});
 		assert.equal(isAlive(shell), true);
 
 		// Quitting the application leaves the holder and its shell running.
-		const exited = new Promise((resolveExit) => app.once('exit', resolveExit));
 		app.kill('SIGTERM');
-		// The deadline is cancelled once the application has quit: a pending
-		// timer would keep this test process, and the job, alive until it fired.
-		const deadline = new AbortController();
-		try {
-			await Promise.race([
-				exited,
-				delay(30_000, undefined, { signal: deadline.signal }).then(() => {
-					throw new Error('the packaged application did not quit');
-				}),
-			]);
-		} finally {
-			deadline.abort();
-		}
-		await delay(500);
+		await exited;
 		assert.equal(isAlive(holder.pid), true, 'the holder ended with the app');
 		assert.equal(isAlive(shell), true, 'the shell ended with the app');
+		// Not merely still exiting: with the application gone the holder answers
+		// to its data-root credential, and still holds that shell, running.
+		const client = await SessionHolderClient.connect(holder);
+		const held = await client.list();
+		await client.close();
+		assert.deepEqual(
+			held.map((session) => [session.pid, session.exit]),
+			[[shell, undefined]],
+		);
 	},
 );
