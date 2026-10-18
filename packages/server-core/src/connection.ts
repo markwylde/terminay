@@ -32,6 +32,7 @@ import type {
 	AuthenticatedClient,
 	ConnectionOptions,
 	EventReplay,
+	HeartbeatTimers,
 	OrderedEvent,
 	OrderedEventJournalLike,
 	ServerConnectionLike,
@@ -55,6 +56,18 @@ export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 /** Upper bound on the lateness tolerated before a fired silence deadline is
  * read as a suspension of the server rather than silence from the client. */
 export const MAX_HEARTBEAT_SUSPEND_TOLERANCE_MS = 5_000;
+
+/** The process's own timers. The deadline never keeps the process alive. */
+const GLOBAL_HEARTBEAT_TIMERS: HeartbeatTimers = {
+	setTimeout(handler, ms) {
+		const timer = globalThis.setTimeout(handler, ms);
+		timer.unref?.();
+		return timer;
+	},
+	clearTimeout(handle) {
+		globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>);
+	},
+};
 
 interface InFlightRequest {
 	readonly controller: AbortController;
@@ -92,10 +105,11 @@ export class ServerConnection implements ServerConnectionLike {
 	private readonly inFlightRequests = new Map<string, InFlightRequest>();
 	private readonly eventSubscriptions = new Map<string, () => void>();
 	private connectionCleaned = false;
-	private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+	private heartbeatTimer: unknown;
 	private readonly heartbeatTimeoutMs: number;
 	private readonly heartbeatSuspendToleranceMs: number;
 	private readonly heartbeatNow: () => number;
+	private readonly heartbeatTimers: HeartbeatTimers;
 	private readonly onClosed: (() => void) | undefined;
 	private readonly onDeliveryDiagnostic: ConnectionOptions['onDeliveryDiagnostic'];
 	private closeTask: Promise<void> | undefined;
@@ -122,6 +136,7 @@ export class ServerConnection implements ServerConnectionLike {
 				this.heartbeatTimeoutMs / 2,
 			);
 		this.heartbeatNow = options.heartbeatNow ?? Date.now;
+		this.heartbeatTimers = options.heartbeatTimers ?? GLOBAL_HEARTBEAT_TIMERS;
 		this.dispatcher = createOperationDispatcher(options);
 		this.onClosed = connectionOptions.onClosed;
 		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
@@ -369,9 +384,10 @@ export class ServerConnection implements ServerConnectionLike {
 	}
 
 	private armHeartbeatDeadline(): void {
-		if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+		if (this.heartbeatTimer !== undefined)
+			this.heartbeatTimers.clearTimeout(this.heartbeatTimer);
 		const armedAt = this.heartbeatNow();
-		this.heartbeatTimer = globalThis.setTimeout(() => {
+		this.heartbeatTimer = this.heartbeatTimers.setTimeout(() => {
 			this.heartbeatTimer = undefined;
 			if (this.currentState !== 'open') return;
 			// A deadline that fires late came due while this process was not
@@ -391,7 +407,6 @@ export class ServerConnection implements ServerConnectionLike {
 				}),
 			).catch(() => undefined);
 		}, this.heartbeatTimeoutMs);
-		this.heartbeatTimer.unref?.();
 	}
 
 	private async handleQuery(
@@ -929,7 +944,8 @@ export class ServerConnection implements ServerConnectionLike {
 			request.detachConnectionAbort();
 		}
 		this.inFlightRequests.clear();
-		if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+		if (this.heartbeatTimer !== undefined)
+			this.heartbeatTimers.clearTimeout(this.heartbeatTimer);
 		this.heartbeatTimer = undefined;
 		for (const unsubscribe of this.eventSubscriptions.values()) unsubscribe();
 		this.eventSubscriptions.clear();
