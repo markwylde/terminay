@@ -74,7 +74,7 @@ const REPORTS = [
 	[{ kind: 'incompatible', holder, signal: 'SIGTERM' }, 'warning'],
 	[{ kind: 'unreachable', holder, reason: 'busy' }, 'warning'],
 	[{ kind: 'launched', holder: other, durationMs: 180, limitMs: null }, 'info'],
-	[{ kind: 'launch-failed', durationMs: 10_000, error: 'session holder did not start' }, 'warning'],
+	[{ kind: 'launch-failed', durationMs: 840, error: 'session holder exited before it was ready (exit code 1)' }, 'warning'],
 	[{ kind: 'drained', holder, cause: 'build-mismatch' }, 'info'],
 	[{ kind: 'limit-set', limitMs: 300_000, holders: 2 }, 'info'],
 	[{ kind: 'connection-closed', holder, requested: true, announced: false, liveSessions: 3 }, 'info'],

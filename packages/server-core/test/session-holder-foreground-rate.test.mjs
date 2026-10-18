@@ -69,6 +69,7 @@ const holders = new Map();
 function launchHolder(env) {
   const child = launchDetachedSessionHolder(process.execPath, [ENTRY], { ...process.env, ...env });
   holders.set(child.pid, { child, exited: new Promise((resolve) => child.once("exit", resolve)) });
+  return child;
 }
 
 function dataRootFor(t) {
@@ -96,7 +97,7 @@ test("a held terminal that repaints continuously is sampled at a bounded rate", 
     dataRoot,
     buildId: "build-a",
     limitMs: 60_000,
-    launch: ({ env }) => { launchHolder(env); },
+    launch: ({ env }) => launchHolder(env),
     // Stands in for the host's `ps` walk and completes at once, so nothing but
     // the server's own pacing separates one sample from the next.
     resolveForegroundProcess: async () => { samples += 1; return "sh"; },
