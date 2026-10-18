@@ -6356,8 +6356,12 @@ function App({
 					),
 		[terminalClientContext?.applicationClient],
 	);
-	const { settings, error: terminalSettingsError, settingsClient } =
-		useTerminalSettings(serverSettingsClient);
+	const {
+		settings,
+		error: terminalSettingsError,
+		isLoading: isTerminalSettingsLoading,
+		settingsClient,
+	} = useTerminalSettings(serverSettingsClient);
 	const settingsRef = useRef(settings);
 	useEffect(() => {
 		settingsRef.current = settings;
@@ -6690,6 +6694,9 @@ function App({
 		onProjectSidebarActiveGroupChange: persistProjectSidebarActiveGroup,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
+		// Sidebar visibility and group are this device's saved preferences: no
+		// project is presented, or can be toggled, until they have loaded.
+		sidebarSettingsKnown: !isTerminalSettingsLoading,
 		sidebarVisibilityScope: currentServerId,
 		// The main window shows the workspace's first view; it stays open on
 		// Home when its last project closes. A popped-out view's window does not.
