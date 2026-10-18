@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { eventually } from "./fixtures/git-observation.mjs";
+import { createReportLog } from "./fixtures/git-observation.mjs";
 
 const execFileAsync = promisify(execFile);
 const git = (args, cwd) => execFileAsync("git", args, { cwd });
@@ -56,62 +56,55 @@ async function mergedOnRemote(t) {
 
 async function observe(t, fixture) {
   const { GitService } = await import("../dist/gitService/index.js");
-  const reports = [];
-  const service = new GitService({ onObservation: (report) => reports.push(report) });
+  const log = createReportLog();
+  const service = new GitService({ onObservation: (report) => log.onObservation(report) });
   t.after(() => service.close());
   await service.bindProject("project-a", fixture.main);
-  await eventually(
-    () => reports.some((report) => report.kind === "watch.opened" && report.watch === "git-directory"),
-    "the real Git directory watch was not opened",
-  );
+  await log.until((reports) => reports.some((report) => report.kind === "watch.opened" && report.watch === "git-directory"));
   const first = await service.worktrees({ projectId: "project-a" });
   const linked = first.worktrees.find((worktree) => !worktree.isMain);
   assert.deepEqual(
     { ahead: linked.aheadOfDefaultBranchCount, additions: linked.lineAdditions },
     { ahead: 1, additions: 5 },
   );
-  return { service, reports, mainWorktree: first.worktrees.find((worktree) => worktree.isMain) };
+  return { service, log, mainWorktree: first.worktrees.find((worktree) => worktree.isMain) };
 }
 
-async function assertSiblingRemeasured(service, reports) {
-  // The listing is the ordinary, cache-eligible one: only a watch event can
+/** Resolves on the measurement that claimed the observed default-branch move.
+ *  Registered before the pull, so a move observed at once is not missed. */
+function defaultBranchMoveMeasured(log) {
+  return log.next("measurement.completed", (report) => (report.changes.byClass["default-branch-ref"] ?? 0) > 0);
+}
+
+async function assertSiblingRemeasured(service, reports, measured) {
+  // The watch delivers the move whenever the host gets round to it; this
+  // waits on the measurement the service makes when it does.
+  const moved = await measured;
+  assert.ok((moved.changes.byScope.all ?? 0) > 0, "the change invalidated every worktree");
+  const linkedMeasured = moved.worktrees.find((worktree) => worktree.role === "linked");
+  assert.ok(linkedMeasured, "the linked worktree was re-measured");
+  assert.equal(linkedMeasured.additions, 0);
+  // The listing is the ordinary, cache-eligible one: only the watch event can
   // have brought the linked worktree's delta to zero.
-  await eventually(
-    async () => {
-      const listing = await service.worktrees({ projectId: "project-a" });
-      const linked = listing.worktrees.find((worktree) => !worktree.isMain);
-      return linked.lineAdditions === 0 && linked.aheadOfDefaultBranchCount === 0;
-    },
-    "the linked worktree kept its pre-pull delta",
-    15_000,
-  );
-  const summaries = reports.filter((report) => report.kind === "measurement.completed" || report.kind === "changes");
-  assert.ok(
-    summaries.some((report) => (report.changes.byClass["default-branch-ref"] ?? 0) > 0),
-    "no default-branch change was observed",
-  );
-  assert.ok(
-    summaries.some((report) => (report.changes.byScope.all ?? 0) > 0),
-    "no change invalidated every worktree",
-  );
-  const settled = reports
-    .filter((report) => report.kind === "measurement.completed")
-    .findLast((report) => report.worktrees.some((worktree) => worktree.role === "linked"));
-  assert.equal(settled.worktrees.find((worktree) => worktree.role === "linked").additions, 0);
+  const listing = await service.worktrees({ projectId: "project-a" });
+  const linked = listing.worktrees.find((worktree) => !worktree.isMain);
+  assert.deepEqual({ additions: linked.lineAdditions, ahead: linked.aheadOfDefaultBranchCount }, { additions: 0, ahead: 0 });
   assert.equal(reports.filter((report) => report.kind === "watch.failed").length, 0);
   assert.equal(reports.filter((report) => report.kind === "cache.mismatch").length, 0);
 }
 
 test("pulling the default branch in the main checkout re-measures a nested linked worktree", async (t) => {
   const fixture = await mergedOnRemote(t);
-  const { service, reports } = await observe(t, fixture);
+  const { service, log } = await observe(t, fixture);
+  const measured = defaultBranchMoveMeasured(log);
   await git(["pull", "--ff-only"], fixture.main);
-  await assertSiblingRemeasured(service, reports);
+  await assertSiblingRemeasured(service, log.reports, measured);
 });
 
 test("pulling through the service's own pull re-measures a nested linked worktree", async (t) => {
   const fixture = await mergedOnRemote(t);
-  const { service, reports, mainWorktree } = await observe(t, fixture);
+  const { service, log, mainWorktree } = await observe(t, fixture);
+  const measured = defaultBranchMoveMeasured(log);
   const pulled = await service.pullWorktree({
     projectId: "project-a",
     repositoryId: mainWorktree.repositoryId,
@@ -119,5 +112,5 @@ test("pulling through the service's own pull re-measures a nested linked worktre
     expectedHead: mainWorktree.head,
   });
   assert.equal(pulled.applied, true);
-  await assertSiblingRemeasured(service, reports);
+  await assertSiblingRemeasured(service, log.reports, measured);
 });

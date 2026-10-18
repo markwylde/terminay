@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -192,6 +192,40 @@ test("Quick Push reports deterministic partial failure and still prevents replay
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("a listing after an approved Quick Push shows what it did, without waiting on a watch", async (t) => {
+  const { GitService, GitQuickPushService } = await import("../dist/gitService/index.js");
+  const { createFakeWatcher } = await import("./fixtures/git-observation.mjs");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "terminay-server-quick-push-listing-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initialise(root);
+  await writeFile(join(root, "file.txt"), "changed\n");
+  // The watch never reports the commit: only the server knowing that it ran
+  // one can keep the next listing from answering with what came before.
+  const watcher = createFakeWatcher();
+  const service = new GitService({ watcher });
+  t.after(() => service.close());
+  const binding = await service.bindProject("project", root);
+  await watcher.opened(join(root, ".git"));
+  const before = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+  assert.equal(before.worktrees[0].entries.length, 1);
+
+  const quickPush = new GitQuickPushService(
+    service,
+    { plan: () => ({ actions: [{ kind: "commit", target: "main", summary: "Commit", mutatesRevision: true }] }) },
+    { execute: async () => {
+      await git(["commit", "-am", "quick push"], root);
+      return { applied: true };
+    } },
+  );
+  const proposal = await quickPush.propose({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId, provider: "codex", targetBranch: "main" });
+  const result = await quickPush.approve({ proposalId: proposal.proposalId, revision: proposal.revision, actionDigest: proposal.actionDigest });
+  assert.equal(result.applied, true);
+
+  const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+  assert.notEqual(after.worktrees[0].head, before.worktrees[0].head, "the listing still shows the commit before the Quick Push");
+  assert.deepEqual(after.worktrees[0].entries, []);
 });
 
 async function initialise(root) {
