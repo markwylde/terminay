@@ -152,6 +152,12 @@ export type TerminayMcpPermissions = {
 	terminalsManage: TerminayMcpPermissionPolicy;
 	automationsRead: TerminayMcpPermissionPolicy;
 	automationsManage: TerminayMcpPermissionPolicy;
+	/** Projects and workspace windows. */
+	projectsWindows: TerminayMcpPermissionPolicy;
+	/** Reading server settings and shell profiles. */
+	settingsRead: TerminayMcpPermissionPolicy;
+	/** Changing server settings and shell profiles. */
+	settingsChange: TerminayMcpPermissionPolicy;
 	/** Showing and closing windows in the calling terminal. */
 	appWindows: TerminayMcpPermissionPolicy;
 	/** Sending and dismissing notifications of the calling terminal. */
