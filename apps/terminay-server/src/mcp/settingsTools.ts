@@ -123,7 +123,10 @@ export function parseSaveShellProfile(
 	const id = record.id;
 	if (id !== undefined && (typeof id !== 'string' || !PROFILE_ID.test(id)))
 		return badRequest('profile.id must be a shell profile id');
-	if (id === undefined && (record.name === undefined || record.target === undefined))
+	if (
+		id === undefined &&
+		(record.name === undefined || record.target === undefined)
+	)
 		return badRequest('a new profile needs a name and a target');
 	for (const key of ['name', 'startup_mode', 'icon', 'color'] as const)
 		if (record[key] !== undefined && typeof record[key] !== 'string')
@@ -172,7 +175,9 @@ export function parseShellProfileId(
 	const profileId = params.profile_id;
 	return typeof profileId === 'string' && PROFILE_ID.test(profileId)
 		? { profileId }
-		: badRequest('profile_id must be a shell profile id from list_shell_profiles');
+		: badRequest(
+				'profile_id must be a shell profile id from list_shell_profiles',
+			);
 }
 
 export function parseReorderShellProfiles(

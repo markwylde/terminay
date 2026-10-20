@@ -88,14 +88,22 @@ function workspaceFixture() {
 	let serial = 0;
 	const host = (command) => {
 		const applied = registry.applyHostCommand(`h${++serial}`, command);
-		if (!applied.ok) throw new Error(applied.error?.message ?? `refused ${command.type}`);
+		if (!applied.ok)
+			throw new Error(applied.error?.message ?? `refused ${command.type}`);
 	};
 	const view = workspace.state.viewOrder[0];
 	for (const [projectId, name] of [
 		['project-a', 'Alpha'],
 		['project-b', 'Beta'],
 	])
-		host({ type: 'project.create', projectId, viewId: view, root: `/work/${projectId}`, name, color: '#123456' });
+		host({
+			type: 'project.create',
+			projectId,
+			viewId: view,
+			root: `/work/${projectId}`,
+			name,
+			color: '#123456',
+		});
 	registry.ensureAutomationSpace('/work/automations');
 	const addTerminal = (sessionId, projectId) =>
 		host({
@@ -173,7 +181,12 @@ test('update_terminal applies icon, colour, note and activity tracking as the ta
 	assert.equal(panel.activityIndicatorsEnabled, false);
 	// An empty colour follows the project's again; a null note goes.
 	await dispatch(
-		{ id: 'u2', version: 1, op: 'update_terminal', params: { terminal: 'caller', color: '', note: null } },
+		{
+			id: 'u2',
+			version: 1,
+			op: 'update_terminal',
+			params: { terminal: 'caller', color: '', note: null },
+		},
 		context(),
 	);
 	const after = f.workspace.state.panels['p:caller'];
@@ -182,13 +195,23 @@ test('update_terminal applies icon, colour, note and activity tracking as the ta
 	assert.equal('note' in after, false);
 	// Another project's terminal is not addressable from a project terminal.
 	const refused = await dispatch(
-		{ id: 'u3', version: 1, op: 'update_terminal', params: { terminal: 'worker', icon: 'x' } },
+		{
+			id: 'u3',
+			version: 1,
+			op: 'update_terminal',
+			params: { terminal: 'worker', icon: 'x' },
+		},
 		context(),
 	);
 	assert.equal(refused.error.code, 'terminal_not_found');
 	assert.equal(f.workspace.state.panels['p:worker'].emoji, undefined);
 	const empty = await dispatch(
-		{ id: 'u4', version: 1, op: 'update_terminal', params: { terminal: 'caller' } },
+		{
+			id: 'u4',
+			version: 1,
+			op: 'update_terminal',
+			params: { terminal: 'caller' },
+		},
 		context(),
 	);
 	assert.equal(empty.error.code, 'bad_request');
@@ -209,7 +232,7 @@ function createPtyFactory() {
 	};
 }
 
-test("open_terminal with an unknown shell profile fails and creates no terminal; a known one launches with it", async () => {
+test('open_terminal with an unknown shell profile fails and creates no terminal; a known one launches with it', async () => {
 	// The refused open allocates an identity too, and never uses it.
 	const ids = ['caller', 'refused', 'opened'];
 	const terminal = new TerminalService({
@@ -229,7 +252,12 @@ test("open_terminal with an unknown shell profile fails and creates no terminal;
 				identity: intent.identity,
 				workspaceRevision: 1,
 				settingsRevision: 1,
-				profile: { id: intent.explicitProfileId ?? 'system', revision: 1, name: 'Bash', targetSummary: '/bin/bash' },
+				profile: {
+					id: intent.explicitProfileId ?? 'system',
+					revision: 1,
+					name: 'Bash',
+					targetSummary: '/bin/bash',
+				},
 				shellPath: '/bin/bash',
 				args: [],
 				cwd: '/work/project-a',
@@ -245,21 +273,36 @@ test("open_terminal with an unknown shell profile fails and creates no terminal;
 	});
 	const before = terminal.listSessions().length;
 	const refused = await dispatch(
-		{ id: 'o', version: 1, op: 'open_terminal', params: { shell_profile: 'no-such-profile' } },
+		{
+			id: 'o',
+			version: 1,
+			op: 'open_terminal',
+			params: { shell_profile: 'no-such-profile' },
+		},
 		context(),
 	);
 	assert.equal(refused.ok, false);
 	assert.equal(terminal.listSessions().length, before);
 	assert.equal(intents.at(-1).explicitProfileId, 'no-such-profile');
 	const opened = await dispatch(
-		{ id: 'o2', version: 1, op: 'open_terminal', params: { shell_profile: 'bash-profile' } },
+		{
+			id: 'o2',
+			version: 1,
+			op: 'open_terminal',
+			params: { shell_profile: 'bash-profile' },
+		},
 		context(),
 	);
 	assert.equal(opened.terminal, 'opened');
 	assert.equal(intents.at(-1).explicitProfileId, 'bash-profile');
 	assert.equal(terminal.listSessions().length, before + 1);
 	const invalid = await dispatch(
-		{ id: 'o3', version: 1, op: 'open_terminal', params: { shell_profile: '../x' } },
+		{
+			id: 'o3',
+			version: 1,
+			op: 'open_terminal',
+			params: { shell_profile: '../x' },
+		},
 		context(),
 	);
 	assert.equal(invalid.error.code, 'bad_request');
@@ -285,17 +328,25 @@ test('move_terminal_to_project re-homes a running terminal through the server mo
 		project: f.handle('project-b'),
 		moved: true,
 	});
-	assert.equal(f.workspace.state.terminalSessions.caller.projectId, 'project-b');
+	assert.equal(
+		f.workspace.state.terminalSessions.caller.projectId,
+		'project-b',
+	);
 	assert.equal(f.workspace.state.panels['p:caller'].projectId, 'project-b');
 	// The terminal itself followed, and nothing was closed: the PTY is kept.
 	assert.deepEqual(f.rehomed, [
-		{ sessionId: 'caller', sourceProjectId: 'project-a', targetProjectId: 'project-b' },
+		{
+			sessionId: 'caller',
+			sourceProjectId: 'project-a',
+			targetProjectId: 'project-b',
+		},
 	]);
 	assert.deepEqual(f.closed, []);
 	// The old identity no longer resolves: its old project cannot address it.
 	assert.throws(() => f.resolveTerminal(context(), 'caller'), /unavailable/);
 	assert.equal(
-		f.resolveTerminal(context({ projectId: 'project-b' }), moved.terminal).projectId,
+		f.resolveTerminal(context({ projectId: 'project-b' }), moved.terminal)
+			.projectId,
 		'project-b',
 	);
 });
@@ -315,11 +366,21 @@ test('move_terminal_to_project is refused for project reach and for the automati
 		}),
 		permissions: createMcpPermissionGate({
 			approvals,
-			describe: async () => ({ agent: 'a', terminalTitle: 't', summary: 's', details: [] }),
+			describe: async () => ({
+				agent: 'a',
+				terminalTitle: 't',
+				summary: 's',
+				details: [],
+			}),
 		}),
 	});
 	const projectReach = await dispatch(
-		{ id: 'm', version: 1, op: 'move_terminal_to_project', params: { terminal: 'caller', project: f.handle('project-b') } },
+		{
+			id: 'm',
+			version: 1,
+			op: 'move_terminal_to_project',
+			params: { terminal: 'caller', project: f.handle('project-b') },
+		},
 		context(),
 	);
 	assert.equal(projectReach.error.code, 'out_of_scope');
@@ -342,7 +403,10 @@ test('move_terminal_to_project is refused for project reach and for the automati
 		);
 		assert.equal(outcome.error.code, 'bad_request', JSON.stringify(params));
 	}
-	assert.equal(f.workspace.state.terminalSessions.caller.projectId, 'project-a');
+	assert.equal(
+		f.workspace.state.terminalSessions.caller.projectId,
+		'project-a',
+	);
 	assert.equal(
 		f.workspace.state.terminalSessions['home-terminal'].projectId,
 		AUTOMATION_SPACE_PROJECT_ID,
@@ -362,16 +426,24 @@ function viewFixture({ withClient = true } = {}) {
 				return op === 'showHome' ? { section: params.section ?? 'home' } : {};
 			},
 		},
-		targetFor: () => (withClient ? { clientId: 'window', connectionId: 'conn' } : undefined),
+		targetFor: () =>
+			withClient ? { clientId: 'window', connectionId: 'conn' } : undefined,
 		state: () => f.workspace.state,
 		apply: (command) => f.apply(command),
 		projectHandles: f.projectHandles,
 	});
-	const dispatch = createTerminalControlAdapter({ adapter: {}, workspaceView: adapter });
-	const call = (op, params, caller) => dispatch({ id: op, version: 1, op, params }, caller);
-	const folders = (projectId) => f.workspace.state.projects[projectId].folderIds;
+	const dispatch = createTerminalControlAdapter({
+		adapter: {},
+		workspaceView: adapter,
+	});
+	const call = (op, params, caller) =>
+		dispatch({ id: op, version: 1, op, params }, caller);
+	const folders = (projectId) =>
+		f.workspace.state.projects[projectId].folderIds;
 	const folder = (projectId, name) =>
-		folders(projectId).find((id) => f.workspace.state.folders[id].name === name);
+		folders(projectId).find(
+			(id) => f.workspace.state.folders[id].name === name,
+		);
 	return { ...f, requests, call, folders, folder };
 }
 
@@ -385,7 +457,11 @@ test('delete_folder removes an empty plain folder, and refuses General, a non-em
 		name: 'feature',
 		worktree: { repositoryId: 'repo-1', path: '/work/project-a-feature' },
 	});
-	f.host({ type: 'panel.moveToFolder', panelId: 'p:caller', folderId: f.folder('project-a', 'Busy') });
+	f.host({
+		type: 'panel.moveToFolder',
+		panelId: 'p:caller',
+		folderId: f.folder('project-a', 'Busy'),
+	});
 	const general = f.folder('project-a', 'General');
 	const refusals = [
 		[general, 'bad_request', /General/],
@@ -399,13 +475,20 @@ test('delete_folder removes an empty plain folder, and refuses General, a non-em
 		assert.ok(f.workspace.state.folders[folder], folder);
 	}
 	const scratch = f.folder('project-a', 'Scratch');
-	assert.deepEqual(await f.call('delete_folder', { folder: scratch }, context()), {
-		folder: scratch,
-		deleted: true,
-	});
+	assert.deepEqual(
+		await f.call('delete_folder', { folder: scratch }, context()),
+		{
+			folder: scratch,
+			deleted: true,
+		},
+	);
 	assert.equal(f.workspace.state.folders[scratch], undefined);
 	// Another project's folder is not found from a project terminal.
-	const other = await f.call('delete_folder', { folder: f.folder('project-b', 'General') }, context());
+	const other = await f.call(
+		'delete_folder',
+		{ folder: f.folder('project-b', 'General') },
+		context(),
+	);
 	assert.equal(other.error.code, 'not_found');
 });
 
@@ -414,42 +497,78 @@ test("reorder_folders sets one project's order, and refuses a list with another 
 	f.host({ type: 'folder.create', projectId: 'project-a', name: 'One' });
 	f.host({ type: 'folder.create', projectId: 'project-a', name: 'Two' });
 	const order = [...f.folders('project-a')].reverse();
-	assert.deepEqual(await f.call('reorder_folders', { folders: order }, context()), {
-		folders: order,
-		reordered: true,
-	});
+	assert.deepEqual(
+		await f.call('reorder_folders', { folders: order }, context()),
+		{
+			folders: order,
+			reordered: true,
+		},
+	);
 	assert.deepEqual(f.folders('project-a'), order);
 	const mixed = [...order.slice(1), f.folder('project-b', 'General')];
 	for (const caller of [context(), workspaceTerminal()]) {
 		const outcome = await f.call('reorder_folders', { folders: mixed }, caller);
 		assert.equal(outcome.error.code, 'not_found');
 	}
-	const partial = await f.call('reorder_folders', { folders: order.slice(1) }, context());
+	const partial = await f.call(
+		'reorder_folders',
+		{ folders: order.slice(1) },
+		context(),
+	);
 	assert.equal(partial.error.code, 'bad_request');
 	assert.deepEqual(f.folders('project-a'), order);
 });
 
 test("focus_home and focus_project for the automation space show Home on the agent's client", async () => {
 	const f = viewFixture();
-	assert.deepEqual(await f.call('focus_home', { section: 'tabs' }, chat({ reach: 'workspace' })), {
-		home: true,
-		section: 'tabs',
-	});
 	assert.deepEqual(
-		await f.call('focus_project', { project: f.handle(AUTOMATION_SPACE_PROJECT_ID) }, workspaceTerminal()),
-		{ project: f.handle(AUTOMATION_SPACE_PROJECT_ID), focused: true, home: true, section: 'automations' },
+		await f.call(
+			'focus_home',
+			{ section: 'tabs' },
+			chat({ reach: 'workspace' }),
+		),
+		{
+			home: true,
+			section: 'tabs',
+		},
 	);
 	assert.deepEqual(
-		f.requests.map((request) => [request.op, request.params, request.target.clientId]),
+		await f.call(
+			'focus_project',
+			{ project: f.handle(AUTOMATION_SPACE_PROJECT_ID) },
+			workspaceTerminal(),
+		),
+		{
+			project: f.handle(AUTOMATION_SPACE_PROJECT_ID),
+			focused: true,
+			home: true,
+			section: 'automations',
+		},
+	);
+	assert.deepEqual(
+		f.requests.map((request) => [
+			request.op,
+			request.params,
+			request.target.clientId,
+		]),
 		[
 			['showHome', { section: 'tabs' }, 'window'],
 			['showHome', { section: 'automations' }, 'window'],
 		],
 	);
 	// Project reach can neither show Home nor name the automation space.
-	assert.equal((await f.call('focus_home', {}, context())).error.code, 'out_of_scope');
 	assert.equal(
-		(await f.call('focus_project', { project: f.handle(AUTOMATION_SPACE_PROJECT_ID) }, context())).error.code,
+		(await f.call('focus_home', {}, context())).error.code,
+		'out_of_scope',
+	);
+	assert.equal(
+		(
+			await f.call(
+				'focus_project',
+				{ project: f.handle(AUTOMATION_SPACE_PROJECT_ID) },
+				context(),
+			)
+		).error.code,
 		'bad_request',
 	);
 	assert.equal(f.requests.length, 2);
@@ -495,7 +614,9 @@ async function automationFixture() {
 			firedAt: startedAt,
 			startedBy: 'trigger',
 			status,
-			...(status === 'finished' ? { outcome: 'succeeded', finishedAt: startedAt + 1 } : {}),
+			...(status === 'finished'
+				? { outcome: 'succeeded', finishedAt: startedAt + 1 }
+				: {}),
 			startedAt,
 			suppressedEvents: 0,
 		});
@@ -512,15 +633,17 @@ async function automationFixture() {
 	});
 	const actor = (caller) => ({ terminalSessionId: caller.terminalSessionId });
 	// As the Desktop host does, a service refusal becomes a public error.
-	const mapped = (work) => async (...args) => {
-		try {
-			return await work(...args);
-		} catch (error) {
-			const control = automationControlError(error);
-			if (control === undefined) throw error;
-			return { ok: false, error: control };
-		}
-	};
+	const mapped =
+		(work) =>
+		async (...args) => {
+			try {
+				return await work(...args);
+			} catch (error) {
+				const control = automationControlError(error);
+				if (control === undefined) throw error;
+				return { ok: false, error: control };
+			}
+		};
 	// As the Desktop host binds them.
 	const dispatch = createTerminalControlAdapter({
 		adapter: {},
@@ -529,7 +652,11 @@ async function automationFixture() {
 				operations.removeRun(params.runId, actor(caller)),
 			),
 			pruneAutomationRuns: mapped((params, caller) =>
-				operations.pruneRuns(params.automationId, params.olderThanDays, actor(caller)),
+				operations.pruneRuns(
+					params.automationId,
+					params.olderThanDays,
+					actor(caller),
+				),
 			),
 			dismissMissedRuns: mapped((params, caller) =>
 				operations.dismissMissed(params.automationId, actor(caller)),
@@ -544,7 +671,10 @@ async function automationFixture() {
 test('prune_automation_runs keeps a run in progress, and the audit names the MCP principal', async () => {
 	const f = await automationFixture();
 	assert.deepEqual(
-		await f.call('prune_automation_runs', { automation_id: 'nightly', older_than_days: 0 }),
+		await f.call('prune_automation_runs', {
+			automation_id: 'nightly',
+			older_than_days: 0,
+		}),
 		{ automation_id: 'nightly', removed: 2 },
 	);
 	assert.deepEqual(
@@ -558,7 +688,10 @@ test('prune_automation_runs keeps a run in progress, and the audit names the MCP
 		removed: 2,
 		actor: { clientId: 'mcp', connectionId: 'mcp:caller' },
 	});
-	const bad = await f.call('prune_automation_runs', { automation_id: 'nightly', older_than_days: -1 });
+	const bad = await f.call('prune_automation_runs', {
+		automation_id: 'nightly',
+		older_than_days: -1,
+	});
 	assert.equal(bad.error.code, 'bad_request');
 });
 
@@ -570,19 +703,33 @@ test('remove_automation_run deletes a finished run, refuses one in progress, and
 	});
 	assert.equal(f.audit.at(-1).operation, 'mcp.remove_automation_run');
 	assert.equal(f.audit.at(-1).actor.clientId, 'mcp');
-	const running = await f.call('remove_automation_run', { run_id: 'in-progress' });
+	const running = await f.call('remove_automation_run', {
+		run_id: 'in-progress',
+	});
 	assert.equal(running.error.code, 'bad_request');
 	assert.ok(f.runLog.get('in-progress'));
-	assert.equal((await f.call('remove_automation_run', { run_id: 'nope' })).error.code, 'not_found');
+	assert.equal(
+		(await f.call('remove_automation_run', { run_id: 'nope' })).error.code,
+		'not_found',
+	);
 	assert.equal(f.runLog.listMissed().length, 1);
-	assert.deepEqual(await f.call('dismiss_missed_runs', { automation_id: 'nightly' }), {
-		dismissed: true,
-	});
+	assert.deepEqual(
+		await f.call('dismiss_missed_runs', { automation_id: 'nightly' }),
+		{
+			dismissed: true,
+		},
+	);
 	assert.equal(f.runLog.listMissed().length, 0);
 	assert.equal(f.runLog.list('nightly').length, 2);
 	// The approval prompt says what would go.
 	assert.match(
-		(await f.operations.describe({ kind: 'pruneRuns', automationId: 'nightly', olderThanDays: 3 })).summary,
+		(
+			await f.operations.describe({
+				kind: 'pruneRuns',
+				automationId: 'nightly',
+				olderThanDays: 3,
+			})
+		).summary,
 		/older than 3 days/,
 	);
 });
@@ -624,53 +771,93 @@ async function notificationFixture() {
 		reaches: (caller, owner) =>
 			sessions.some(
 				(session) =>
-					session.sessionId === owner.sessionId && session.projectId === owner.projectId,
+					session.sessionId === owner.sessionId &&
+					session.projectId === owner.projectId,
 			) &&
 			(caller.reach === 'workspace' || owner.projectId === caller.projectId),
 	});
-	const dispatch = createTerminalControlAdapter({ adapter: {}, notifications: adapter });
-	const call = (op, params, caller) => dispatch({ id: op, version: 1, op, params }, caller);
+	const dispatch = createTerminalControlAdapter({
+		adapter: {},
+		notifications: adapter,
+	});
+	const call = (op, params, caller) =>
+		dispatch({ id: op, version: 1, op, params }, caller);
 	return { manager, acknowledged, call };
 }
 
-test("list_notifications lists only notifications of terminals the caller reaches", async () => {
+test('list_notifications lists only notifications of terminals the caller reaches', async () => {
 	const f = await notificationFixture();
 	const own = await f.call('list_notifications', {}, context());
 	assert.deepEqual(
 		own.notifications.map((row) => [row.terminal, row.kind]),
 		[['sibling', 'agent-finished']],
 	);
-	const all = await f.call('list_notifications', {}, chat({ reach: 'workspace' }));
-	assert.deepEqual(
-		all.notifications.map((row) => row.terminal).sort(),
-		['sibling', 'worker'],
+	const all = await f.call(
+		'list_notifications',
+		{},
+		chat({ reach: 'workspace' }),
 	);
+	assert.deepEqual(all.notifications.map((row) => row.terminal).sort(), [
+		'sibling',
+		'worker',
+	]);
 });
 
 test("a project caller cannot dismiss another project's notification; dismissing an activity one acknowledges its terminal", async () => {
 	const f = await notificationFixture();
-	const all = await f.call('list_notifications', {}, chat({ reach: 'workspace' }));
-	const handleOf = (terminal) => all.notifications.find((row) => row.terminal === terminal).notification;
-	const refused = await f.call('dismiss_notification', { notification: handleOf('worker') }, context());
+	const all = await f.call(
+		'list_notifications',
+		{},
+		chat({ reach: 'workspace' }),
+	);
+	const handleOf = (terminal) =>
+		all.notifications.find((row) => row.terminal === terminal).notification;
+	const refused = await f.call(
+		'dismiss_notification',
+		{ notification: handleOf('worker') },
+		context(),
+	);
 	assert.equal(refused.error.code, 'not_found');
 	assert.deepEqual(f.acknowledged, []);
 	assert.ok(f.manager.snapshot().notifications[handleOf('worker')]);
 	// A chat, which has no terminal, dismisses by reach.
 	assert.deepEqual(
-		await f.call('dismiss_notification', { notification: handleOf('worker') }, chat({ reach: 'workspace' })),
+		await f.call(
+			'dismiss_notification',
+			{ notification: handleOf('worker') },
+			chat({ reach: 'workspace' }),
+		),
 		{ notification: handleOf('worker'), dismissed: true },
 	);
-	assert.deepEqual(f.acknowledged, [{ projectId: 'project-b', sessionId: 'worker' }]);
-	assert.equal(f.manager.snapshot().notifications[handleOf('worker')], undefined);
+	assert.deepEqual(f.acknowledged, [
+		{ projectId: 'project-b', sessionId: 'worker' },
+	]);
+	assert.equal(
+		f.manager.snapshot().notifications[handleOf('worker')],
+		undefined,
+	);
 	// A project terminal dismisses its own project's activity notification.
-	await f.call('dismiss_notification', { notification: handleOf('sibling') }, context());
-	assert.deepEqual(f.acknowledged.at(-1), { projectId: 'project-a', sessionId: 'sibling' });
-	// What a terminal sent it can still dismiss before it is ever shown.
-	const sent = f.manager.send({ projectId: 'project-a', sessionId: 'caller' }, { body: 'hi' });
-	assert.deepEqual(await f.call('dismiss_notification', { notification: sent.id }, context()), {
-		notification: sent.id,
-		dismissed: true,
+	await f.call(
+		'dismiss_notification',
+		{ notification: handleOf('sibling') },
+		context(),
+	);
+	assert.deepEqual(f.acknowledged.at(-1), {
+		projectId: 'project-a',
+		sessionId: 'sibling',
 	});
+	// What a terminal sent it can still dismiss before it is ever shown.
+	const sent = f.manager.send(
+		{ projectId: 'project-a', sessionId: 'caller' },
+		{ body: 'hi' },
+	);
+	assert.deepEqual(
+		await f.call('dismiss_notification', { notification: sent.id }, context()),
+		{
+			notification: sent.id,
+			dismissed: true,
+		},
+	);
 });
 
 // --- 4.7 macros ---
@@ -678,7 +865,8 @@ test("a project caller cannot dismiss another project's notification; dismissing
 async function macroFixture() {
 	let persisted;
 	const repository = new MacroRepository({
-		load: async () => (persisted === undefined ? undefined : structuredClone(persisted)),
+		load: async () =>
+			persisted === undefined ? undefined : structuredClone(persisted),
 		commit: async (state) => {
 			persisted = structuredClone(state);
 		},
@@ -699,11 +887,42 @@ async function macroFixture() {
 		id: 'deploy',
 		title: 'Deploy',
 		fields: [
-			{ id: 'f1', name: 'env', label: 'Environment', type: 'select', required: true, options: [{ label: 'Staging', value: 'staging' }, { label: 'Production', value: 'production' }], defaultValue: '' },
-			{ id: 'f2', name: 'count', label: 'Count', type: 'number', required: false, defaultValue: 1 },
-			{ id: 'f3', name: 'reason', label: 'Reason', type: 'text', required: true, defaultValue: '' },
+			{
+				id: 'f1',
+				name: 'env',
+				label: 'Environment',
+				type: 'select',
+				required: true,
+				options: [
+					{ label: 'Staging', value: 'staging' },
+					{ label: 'Production', value: 'production' },
+				],
+				defaultValue: '',
+			},
+			{
+				id: 'f2',
+				name: 'count',
+				label: 'Count',
+				type: 'number',
+				required: false,
+				defaultValue: 1,
+			},
+			{
+				id: 'f3',
+				name: 'reason',
+				label: 'Reason',
+				type: 'text',
+				required: true,
+				defaultValue: '',
+			},
 		],
-		steps: [{ id: 's1', type: 'type', content: 'deploy {{env}} {{count}} {{reason}}' }],
+		steps: [
+			{
+				id: 's1',
+				type: 'type',
+				content: 'deploy {{env}} {{count}} {{reason}}',
+			},
+		],
 	});
 	await repository.upsert({
 		id: 'slow',
@@ -719,28 +938,39 @@ async function macroFixture() {
 	};
 	const adapter = createMacroControlAdapter({
 		query: async (operation, payload, signal) =>
-			registry.operations.queries[operation](mcpPrincipalQueryRequest(operation, payload, signal)),
+			registry.operations.queries[operation](
+				mcpPrincipalQueryRequest(operation, payload, signal),
+			),
 		command: async (operation, payload, signal) =>
-			registry.operations.commands[operation](mcpPrincipalCommandRequest(operation, payload, signal)),
+			registry.operations.commands[operation](
+				mcpPrincipalCommandRequest(operation, payload, signal),
+			),
 		resolveTerminal: (caller, reference) => {
 			const projectId = sessions[reference];
-			if (projectId === undefined || (caller.reach !== 'workspace' && projectId !== caller.projectId))
+			if (
+				projectId === undefined ||
+				(caller.reach !== 'workspace' && projectId !== caller.projectId)
+			)
 				throw notFound();
 			return { serverId: 'server-a', projectId, sessionId: reference };
 		},
 	});
-	const dispatch = createTerminalControlAdapter({ adapter: {}, macros: adapter });
-	const call = (op, params, caller = context()) => dispatch({ id: op, version: 1, op, params }, caller);
+	const dispatch = createTerminalControlAdapter({
+		adapter: {},
+		macros: adapter,
+	});
+	const call = (op, params, caller = context()) =>
+		dispatch({ id: op, version: 1, op, params }, caller);
 	return { registry, writes, call };
 }
 
 test('run_macro validates fields as the launch form does and runs in a terminal the caller reaches', async () => {
 	const f = await macroFixture();
 	const listed = await f.call('list_macros', {});
-	assert.deepEqual(
-		listed.macros.map((macro) => macro.id).sort(),
-		['deploy', 'slow'],
-	);
+	assert.deepEqual(listed.macros.map((macro) => macro.id).sort(), [
+		'deploy',
+		'slow',
+	]);
 	assert.deepEqual(
 		listed.macros.find((macro) => macro.id === 'deploy').fields[0].options,
 		['staging', 'production'],
@@ -752,7 +982,11 @@ test('run_macro validates fields as the launch form does and runs in a terminal 
 		[{ reason: 'r', count: 'two' }, /"Count" must be a number/],
 		[{ reason: 'r', extra: 'x' }, /no field named "extra"/],
 	]) {
-		const outcome = await f.call('run_macro', { macro_id: 'deploy', terminal: 'caller', values });
+		const outcome = await f.call('run_macro', {
+			macro_id: 'deploy',
+			terminal: 'caller',
+			values,
+		});
 		assert.equal(outcome.error.code, 'bad_request', JSON.stringify(values));
 		assert.match(outcome.error.message, message);
 	}
@@ -773,28 +1007,58 @@ test('run_macro validates fields as the launch form does and runs in a terminal 
 	assert.match(run.run_id, /^deploy:/);
 	await delay(20);
 	assert.deepEqual(f.writes, [
-		{ target: { serverId: 'server-a', projectId: 'project-a', sessionId: 'caller' }, text: 'deploy production 3 release' },
+		{
+			target: {
+				serverId: 'server-a',
+				projectId: 'project-a',
+				sessionId: 'caller',
+			},
+			text: 'deploy production 3 release',
+		},
 	]);
 });
 
 test("an MCP macro run has no launching client: it survives the caller's capability ending, and cancel_macro needs reach", async () => {
 	const f = await macroFixture();
-	const run = await f.call('run_macro', { macro_id: 'slow', terminal: 'caller' });
+	const run = await f.call('run_macro', {
+		macro_id: 'slow',
+		terminal: 'caller',
+	});
 	// The capability ends and every connection that could have launched it closes.
 	f.registry.closeConnection('system:mcp');
 	f.registry.closeConnection('local');
 	assert.equal(f.registry.runner.snapshot(run.run_id)?.status, 'running');
 	// Another project's terminal cannot reach the run.
-	const outside = await f.call('cancel_macro', { run_id: run.run_id }, context({ terminalSessionId: 'worker', projectId: 'project-b' }));
+	const outside = await f.call(
+		'cancel_macro',
+		{ run_id: run.run_id },
+		context({ terminalSessionId: 'worker', projectId: 'project-b' }),
+	);
 	assert.equal(outside.error.code, 'not_found');
 	await delay(300);
-	assert.deepEqual(f.writes.map((write) => write.text), ['done']);
+	assert.deepEqual(
+		f.writes.map((write) => write.text),
+		['done'],
+	);
 	// A run cancelled by a caller that reaches it stops.
-	const second = await f.call('run_macro', { macro_id: 'slow', terminal: 'caller' });
-	assert.deepEqual(await f.call('cancel_macro', { run_id: second.run_id }, workspaceTerminal()), {
-		run_id: second.run_id,
-		cancelled: true,
+	const second = await f.call('run_macro', {
+		macro_id: 'slow',
+		terminal: 'caller',
 	});
+	assert.deepEqual(
+		await f.call(
+			'cancel_macro',
+			{ run_id: second.run_id },
+			workspaceTerminal(),
+		),
+		{
+			run_id: second.run_id,
+			cancelled: true,
+		},
+	);
 	await delay(300);
-	assert.deepEqual(f.writes.map((write) => write.text), ['done']);
+	assert.deepEqual(
+		f.writes.map((write) => write.text),
+		['done'],
+	);
 });

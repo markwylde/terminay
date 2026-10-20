@@ -55,7 +55,8 @@ const ALLOWED_SETTING_KEYS = [
 export const MCP_REACHABLE_SETTING_PATHS: readonly string[] = Object.freeze(
 	ALLOWED_SETTING_KEYS.filter(
 		(key) =>
-			SETTING_AUTHORITY[key] === 'server' && !MCP_EXCLUDED_SETTING_KEYS.has(key),
+			SETTING_AUTHORITY[key] === 'server' &&
+			!MCP_EXCLUDED_SETTING_KEYS.has(key),
 	),
 );
 
