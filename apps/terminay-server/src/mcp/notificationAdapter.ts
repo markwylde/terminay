@@ -2,9 +2,13 @@ import {
 	type McpApprovalDetail,
 	type NotificationManager,
 	type NotificationManagerError,
+	type NotificationRecord,
 	plainText,
 } from '@terminay/server-core';
-import type { ControlOperation } from './controlEndpoint.js';
+import type {
+	ControlOperation,
+	ControlRequestContext,
+} from './controlEndpoint.js';
 import {
 	type NotificationControlAdapter,
 	notificationFailure as failure,
@@ -17,8 +21,26 @@ import {
 
 export interface NotificationControlAdapterOptions {
 	/** Structural, so a host may compose the manager from source or from dist. */
-	readonly notifications: Pick<NotificationManager, 'send' | 'dismissSent'>;
+	readonly notifications: Pick<
+		NotificationManager,
+		'send' | 'dismissSent' | 'snapshot'
+	>;
+	/**
+	 * Dismiss a published notification exactly as a user's dismissal from the
+	 * Notifications list does: an activity notification acknowledges its
+	 * terminal. Absent, only notifications the calling terminal sent can be
+	 * dismissed.
+	 */
+	readonly dismiss?: (record: NotificationRecord) => boolean | Promise<boolean>;
+	/** Whether the caller can address this terminal of this project. */
+	readonly reaches?: (
+		context: ControlRequestContext,
+		owner: { readonly projectId: string; readonly sessionId: string },
+	) => boolean;
 }
+
+/** Notifications one listing returns, newest first. */
+export const MAX_LISTED_NOTIFICATIONS = 100;
 
 /** Bind the notification tools to the server-owned notification manager. */
 export function createNotificationControlAdapter(
@@ -47,14 +69,56 @@ export function createNotificationControlAdapter(
 				return notificationFailureFor(error);
 			}
 		},
-		dismissNotification: (params, context) =>
-			notifications.dismissSent(context.terminalSessionId, params.notification)
-				? { notification: params.notification, dismissed: true }
-				: failure(
-						'not_found',
-						'This terminal sent no notification with that handle.',
-					),
+		dismissNotification: async (params, context) => {
+			// One this terminal sent goes whether or not it has been shown yet.
+			if (
+				context.chat === undefined &&
+				notifications.dismissSent(context.terminalSessionId, params.notification)
+			)
+				return { notification: params.notification, dismissed: true };
+			const record = reachable(context)[params.notification];
+			if (record === undefined || options.dismiss === undefined)
+				return failure(
+					'not_found',
+					'No notification you can reach has that handle. list_notifications lists them.',
+				);
+			await options.dismiss(record);
+			return { notification: params.notification, dismissed: true };
+		},
+		listNotifications: (_params, context) => {
+			const records = Object.values(reachable(context)).sort(
+				(left, right) => right.raisedAt - left.raisedAt,
+			);
+			const listed = records.slice(0, MAX_LISTED_NOTIFICATIONS);
+			return {
+				notifications: listed.map((record) => ({
+					notification: record.id,
+					kind: record.kind,
+					...(record.title === undefined ? {} : { title: record.title }),
+					...(record.body === undefined ? {} : { body: record.body }),
+					terminal: record.sessionId,
+					raised_at: new Date(record.raisedAt).toISOString(),
+				})),
+				...(listed.length < records.length ? { truncated: true } : {}),
+			};
+		},
 	};
+
+	/** The published notifications of terminals the caller can address. */
+	function reachable(
+		context: ControlRequestContext,
+	): Readonly<Record<string, NotificationRecord>> {
+		const all = notifications.snapshot().notifications;
+		const result: Record<string, NotificationRecord> = {};
+		for (const [id, record] of Object.entries(all))
+			if (
+				options.reaches?.(context, record) ??
+				(record.projectId === context.projectId &&
+					record.sessionId === context.terminalSessionId)
+			)
+				result[id] = record;
+		return result;
+	}
 }
 
 /**
@@ -62,11 +126,16 @@ export function createNotificationControlAdapter(
  * and body exactly as they would be shown.
  */
 export function describeNotificationRequest(
-	op: Extract<ControlOperation, 'send_notification' | 'dismiss_notification'>,
+	op: Extract<
+		ControlOperation,
+		'send_notification' | 'dismiss_notification' | 'list_notifications'
+	>,
 	params: Readonly<Record<string, unknown>>,
 ): { readonly summary: string; readonly details: readonly McpApprovalDetail[] } {
 	if (op === 'dismiss_notification')
-		return { summary: 'dismiss one of its notifications', details: [] };
+		return { summary: 'dismiss a notification', details: [] };
+	if (op === 'list_notifications')
+		return { summary: 'list your notifications', details: [] };
 	const title = typeof params.title === 'string' ? plainText(params.title) : '';
 	const body = typeof params.body === 'string' ? plainText(params.body) : '';
 	const text = title === '' ? `"${body}"` : `titled "${title}": "${body}"`;

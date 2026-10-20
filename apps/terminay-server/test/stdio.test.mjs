@@ -23,6 +23,8 @@ const expectedTools = [
 	'open_terminal',
 	'read_terminal',
 	'rename_terminal',
+	'update_terminal',
+	'move_terminal_to_project',
 	'run_command',
 	'search_terminal',
 	'split_terminal',
@@ -36,9 +38,12 @@ const expectedTools = [
 	'resize_pane',
 	'arrange_tabs',
 	'focus_project',
+	'focus_home',
 	'select_folder',
 	'create_folder',
 	'rename_folder',
+	'delete_folder',
+	'reorder_folders',
 	'move_tab_to_folder',
 	'open_file',
 	'close_tab',
@@ -51,6 +56,9 @@ const expectedTools = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'remove_automation_run',
+	'prune_automation_runs',
+	'dismiss_missed_runs',
 	'list_projects',
 	'create_project',
 	'update_project',
@@ -60,10 +68,21 @@ const expectedTools = [
 	'open_workspace_window',
 	'rename_workspace_window',
 	'close_workspace_window',
+	'get_settings',
+	'update_settings',
+	'list_shell_profiles',
+	'save_shell_profile',
+	'delete_shell_profile',
+	'reorder_shell_profiles',
+	'set_default_shell_profile',
+	'list_macros',
+	'run_macro',
+	'cancel_macro',
 	'show_window',
 	'close_window',
 	'list_windows',
 	'send_notification',
+	'list_notifications',
 	'dismiss_notification',
 ];
 
@@ -166,6 +185,9 @@ test('server-owned MCP stdio entry registers tools and uses the local control so
 			tools.tools.map((tool) => tool.name).sort(),
 			[...expectedTools].sort(),
 		);
+		// Every tool tells the agent what it does.
+		for (const tool of tools.tools)
+			assert.ok((tool.description ?? '').length >= 20, `${tool.name} has a description`);
 		const readTool = tools.tools.find((tool) => tool.name === 'read_terminal');
 		const readSchema = readTool?.inputSchema;
 		const searchTool = tools.tools.find((tool) => tool.name === 'search_terminal');

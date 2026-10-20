@@ -100,6 +100,10 @@ async function turn(text) {
 						: `Made a window but could not show it: ${opened.result.reason}.`,
 			);
 		}
+	} else if (text === 'show my automations') {
+		// Home, with its Automations section in front, on this client (ADR-0072).
+		const shown = await tool('focus_home', { section: 'automations' });
+		say(shown.ok ? `Showing Home: ${shown.result.section}.` : `I could not show Home: ${shown.error.code} (${shown.error.message}).`);
 	} else if (text === 'bring it back') {
 		const listed = await tool('list_workspace_windows', {});
 		const [first, second] = listed.ok ? listed.result.windows : [];

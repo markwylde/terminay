@@ -144,7 +144,7 @@ export function createAppControlAdapter(
 		try {
 			return await options.command(operation, payload, signal);
 		} catch (error) {
-			throw serverError(error);
+			throw serverControlError(error);
 		}
 	};
 
@@ -277,7 +277,7 @@ export function createAppControlAdapter(
 				params.root === '~'
 					? undefined
 					: await options.canonicalFolder(params.root).catch((error) => {
-							throw serverError(error);
+							throw serverControlError(error);
 						});
 			const projectId = `project-${randomUUID()}`;
 			await apply(
@@ -352,7 +352,7 @@ export function createAppControlAdapter(
 				params.root === undefined
 					? undefined
 					: await options.canonicalFolder(params.root).catch((error) => {
-							throw serverError(error);
+							throw serverControlError(error);
 						});
 			// As the project editor saves: the root first, which rebinds the
 			// project's file services, then its name, icon and colour.
@@ -599,7 +599,7 @@ function requireWorkspaceReach(context: ControlRequestContext): void {
 }
 
 /** A server operation's refusal, as a bounded public control error. */
-function serverError(error: unknown): ControlEndpointError {
+export function serverControlError(error: unknown): ControlEndpointError {
 	if (error instanceof ControlEndpointError) return error;
 	const record = isRecord(error) ? error : undefined;
 	const code =

@@ -8550,6 +8550,10 @@ function App({
 	// afresh for each request, so a request always sees what is on screen.
 	const isHomeSelectedRef = useRef(isHomeSelected);
 	isHomeSelectedRef.current = isHomeSelected;
+	// Defined further down; an agent's request to show Home reaches it here.
+	const openHomeSectionRef = useRef<
+		(section: 'home' | 'tabs' | 'automations') => void
+	>(() => undefined);
 	const workspaceViewWindow: WorkspaceViewWindow<ProjectWorkspaceHandle> = {
 		projectIds: () => projectsRef.current.map((project) => project.id),
 		shownProjectId: () =>
@@ -8594,6 +8598,11 @@ function App({
 					?.projectIds[0];
 			if (first !== undefined) activateProjectRef.current(first);
 		},
+		showHome: (section) => openHomeSectionRef.current(section),
+		shownHomeSection: () =>
+			isHomeSelectedRef.current
+				? (homeRef.current?.activeSection() ?? undefined)
+				: undefined,
 	};
 	const workspaceViewWindowRef = useRef(workspaceViewWindow);
 	workspaceViewWindowRef.current = workspaceViewWindow;
@@ -8727,6 +8736,7 @@ function App({
 		},
 		[openInHome, selectHome],
 	);
+	openHomeSectionRef.current = openHomeSection;
 	const automationsData = useMemo<AutomationsData>(
 		() => ({
 			automations: serverAutomations,

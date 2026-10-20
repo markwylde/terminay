@@ -248,13 +248,16 @@ test('tabs of two projects cannot be moved or arranged together', async () => {
 	assert.equal(requests.length, 0);
 });
 
-test('focus_project shows ordinary projects only, and only to workspace scope', async () => {
+test('focus_project shows a project, or the automation space through Home, and only to workspace scope', async () => {
 	const { view, requests, projectHandles, repository } = await fixture();
 	const signal = new AbortController().signal;
 	await view.focusProject({ project: projectHandles.handleFor('project-b') }, automation(), signal);
 	assert.deepEqual(requests.at(-1), { ...requests.at(-1), op: 'showProject', params: { projectId: 'project-b' } });
 	const space = Object.values(repository.workspace.state.projects).find((project) => project.id === AUTOMATION_SPACE_PROJECT_ID);
-	await rejects(view.focusProject({ project: projectHandles.handleFor(space.id) }, automation(), signal), 'bad_request');
+	// The automation space is shown through Home, with Automations in front (ADR-0072).
+	const shown = await view.focusProject({ project: projectHandles.handleFor(space.id) }, automation(), signal);
+	assert.equal(shown.home, true);
+	assert.deepEqual(requests.at(-1), { ...requests.at(-1), op: 'showHome', params: { section: 'automations' } });
 	await rejects(view.focusProject({ project: projectHandles.handleFor('project-b') }, context(), signal), 'bad_request');
 });
 

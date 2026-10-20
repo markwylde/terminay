@@ -30,6 +30,7 @@ export const WORKSPACE_VIEW_REQUEST_OPS = Object.freeze([
   "openFile",
   "closeTab",
   "presentView",
+  "showHome",
 ] as const);
 export type WorkspaceViewRequestOp = (typeof WORKSPACE_VIEW_REQUEST_OPS)[number];
 

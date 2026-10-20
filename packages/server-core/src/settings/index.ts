@@ -10,3 +10,4 @@ export * from './types.js';
 export * from './vault.js';
 export * from './vaultComposition.js';
 export * from './vaultImport.js';
+export * from './mcpReach.js';

@@ -299,8 +299,13 @@ test('capability reporting marks workspace-only tools unavailable to project rea
 					permission: 'allow',
 				})),
 			}),
+			updateTerminal: () => ({}),
+			moveTerminalToProject: () => ({}),
 		},
 		appControl: {},
+		settings: {},
+		macros: {},
+		workspaceView: {},
 	});
 	const report = async (caller) =>
 		Object.fromEntries(

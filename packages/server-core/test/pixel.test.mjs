@@ -85,6 +85,9 @@ test("the Pixel chat is one workspace chat with Pixel's instruction", async () =
   assert.equal(opened[0][1].instruction, PIXEL_INSTRUCTION);
   // Pixel is told to read the layout back rather than claim what it did.
   assert.match(PIXEL_INSTRUCTION, /get_layout/);
+  // Pixel holds workspace reach, so it is told it can manage the app.
+  for (const tool of ["create_project", "open_workspace_window", "update_settings"])
+    assert.match(PIXEL_INSTRUCTION, new RegExp(tool));
   assert.match(PIXEL_INSTRUCTION, /Never say you did something that a tool result does not show/);
   assert.equal(opened[0][1].mcpServer.name, "terminay_chat");
   assert.equal(pixel.state().chatId, chat.id);

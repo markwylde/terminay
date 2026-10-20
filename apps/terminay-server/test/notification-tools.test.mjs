@@ -60,13 +60,14 @@ test("the notification tools are their own permission group, Always Allow on a f
   assert.equal(CONTROL_PERMISSION_GROUPS.dismiss_notification, "notifications")
   assert.deepEqual(
     Object.entries(CONTROL_PERMISSION_GROUPS).filter(([, group]) => group === "notifications").map(([op]) => op),
-    ["send_notification", "dismiss_notification"],
+    ["send_notification", "list_notifications", "dismiss_notification"],
   )
   assert.equal(MCP_PERMISSION_GROUP_LABELS.notifications, "Notifications")
   assert.equal(DEFAULT_MCP_PERMISSIONS.notifications, "allow")
   assert.equal(mcpPermissionsFromSettings(undefined).notifications, "allow")
   assert.ok(CONTROL_TOOL_OPERATIONS.includes("send_notification"))
   assert.ok(CONTROL_TOOL_OPERATIONS.includes("dismiss_notification"))
+  assert.equal(CONTROL_PERMISSION_GROUPS.list_notifications, "notifications")
 })
 
 test("send_notification adds one pending notification to the calling terminal and returns its handle", async () => {
