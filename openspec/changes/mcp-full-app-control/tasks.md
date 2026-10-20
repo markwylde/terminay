@@ -28,7 +28,7 @@
 ## 4. Gap-fill tools
 
 - [x] 4.1 `update_terminal` over `panel.update` (icon, colour, note, activity tracking), and an optional shell profile for `open_terminal`. Verified by vitest: metadata applied, an unknown profile refused with no terminal created.
-- [x] 4.2 `move_terminal_to_project` over the server-committed terminal move, returning the new handle. Verified by vitest: the old handle no longer resolves, the PTY is kept, and project reach and the automation space are refused.
+- [x] 4.2 `move_terminal_to_project` over the server-committed terminal move, returning the same handle. Verified by vitest: the handle no longer resolves for a caller in the old project, the PTY is kept, and project reach and the automation space are refused.
 - [x] 4.3 `delete_folder` and `reorder_folders`. Verified by vitest: refusal of the General folder, a non-empty folder, a linked worktree folder, and a cross-project list.
 - [x] 4.4 `focus_home`, and `focus_project` for the automation-space handle, as view requests, with the renderer showing the named Home section. Verified by vitest for the reach refusal, and by an E2E through `npm run test:e2e` showing Home > Automations on the agent's client only.
 - [x] 4.5 `remove_automation_run`, `prune_automation_runs` and `dismiss_missed_runs` through the automation service's MCP principal. Verified by vitest: a run in progress survives a prune, and the audit names the MCP principal.
@@ -38,7 +38,7 @@
 
 ## 5. End-to-end and release
 
-- [ ] 5.1 E2E through `npm run test:e2e`: a workspace-reach chat creates a project at `~` and a terminal opens in it; a project terminal's `create_project` fails `out_of_scope`; `update_settings` under the default policy shows an approval in the chat. Verified by the suite passing in Docker.
+- [x] 5.1 E2E through `npm run test:e2e`: a workspace-reach chat creates a project at `~` and a terminal opens in it; a project terminal's `create_project` fails `out_of_scope`; `update_settings` under the default policy shows an approval in the chat. Verified by the suite passing in Docker.
 - [ ] 5.2 Update the mcp-server Purpose line at archive so it no longer says workspace callers cannot learn about other projects. Verified by `openspec validate --all --archived` passing after archive.
-- [ ] 5.3 Run `npm run test:ci` and `openspec validate --all`. Verified by both passing.
+- [x] 5.3 Run `npm run test:ci` and `openspec validate --all`. Verified by both passing.
 - [ ] 5.4 Open the pull request on `origin` with `tea` and read back every commit status. Verified by each being `success` or `skipped`.

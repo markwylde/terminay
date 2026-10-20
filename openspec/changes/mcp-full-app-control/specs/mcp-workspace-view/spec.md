@@ -2,12 +2,17 @@
 
 ### Requirement: Folder housekeeping tools
 
-`delete_folder` SHALL delete one empty plain folder of a project in scope. It SHALL fail for the General folder, for a folder that still holds a tab, and for a folder linked to a worktree, because removing a worktree is a Git action outside the MCP surface. `reorder_folders` SHALL set the order of all of one project's folders and SHALL fail when the list it is given is not exactly that project's folders. Both SHALL be workspace commands that every device observes, and neither SHALL widen or narrow the caller's scope.
+`delete_folder` SHALL delete one empty plain folder of a project in scope. It SHALL fail for the General folder, and for a folder linked to a worktree, because removing a worktree is a Git action outside the MCP surface. It SHALL fail with `conflict` for a folder that still holds a tab. `reorder_folders` SHALL set the order of all of one project's folders and SHALL fail when the list it is given is not exactly that project's folders. Both SHALL be workspace commands that every device observes, and neither SHALL widen or narrow the caller's scope.
 
 #### Scenario: Removing an emptied folder
 
 - **WHEN** an agent moves the last tab out of a plain folder and calls `delete_folder` for it
 - **THEN** the folder is removed on every device
+
+#### Scenario: Folder that still holds a tab
+
+- **WHEN** an agent calls `delete_folder` for a plain folder that still holds a tab
+- **THEN** the call fails with `conflict`, and the folder and its tab are unchanged
 
 #### Scenario: Worktree folder
 
