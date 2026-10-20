@@ -124,7 +124,10 @@ test("tools that need a calling terminal are unsupported for a chat and reported
     tools.map(({ tool, available }) => [tool, available]),
     [["list_terminals", true], ["show_window", false], ["send_notification", false]],
   );
-  assert.ok(CALLING_TERMINAL_OPERATIONS.has("dismiss_notification"));
+  // Listing and dismissing notifications are addressed by reach (ADR-0072).
+  assert.ok(CALLING_TERMINAL_OPERATIONS.has("send_notification"));
+  assert.equal(CALLING_TERMINAL_OPERATIONS.has("dismiss_notification"), false);
+  assert.equal(CALLING_TERMINAL_OPERATIONS.has("list_notifications"), false);
 });
 
 test("a chat's approval names the chat, carries its id, and reports how it ended", async () => {

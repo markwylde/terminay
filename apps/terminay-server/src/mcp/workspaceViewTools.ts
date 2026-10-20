@@ -47,6 +47,17 @@ export interface RenameFolderParams {
 	readonly folder: string;
 	readonly name: string;
 }
+export interface DeleteFolderParams {
+	readonly folder: string;
+}
+export interface ReorderFoldersParams {
+	/** Every folder of one project, in the new order. */
+	readonly folders: readonly string[];
+}
+export type HomeSection = 'home' | 'tabs' | 'automations';
+export interface FocusHomeParams {
+	readonly section?: HomeSection;
+}
 export interface MoveTabToFolderParams {
 	readonly tab: TabRef;
 	readonly folder: string;
@@ -88,6 +99,9 @@ export interface WorkspaceViewControlAdapter {
 	readonly selectFolder: Handler<SelectFolderParams>;
 	readonly createFolder: Handler<CreateFolderParams>;
 	readonly renameFolder: Handler<RenameFolderParams>;
+	readonly deleteFolder: Handler<DeleteFolderParams>;
+	readonly reorderFolders: Handler<ReorderFoldersParams>;
+	readonly focusHome: Handler<FocusHomeParams>;
 	readonly moveTabToFolder: Handler<MoveTabToFolderParams>;
 	readonly openFile: Handler<OpenFileParams>;
 	readonly closeTab: Handler<CloseTabParams>;
@@ -136,6 +150,9 @@ export const MAX_ARRANGED_TABS = 32;
 export const MIN_PANE_FRACTION = 0.05;
 export const MAX_PANE_FRACTION = 0.95;
 export const MAX_FOLDER_NAME_CHARS = 64;
+/** Folders one reorder may list. */
+export const MAX_REORDERED_FOLDERS = 256;
+const HOME_SECTIONS = new Set<HomeSection>(['home', 'tabs', 'automations']);
 export const MAX_OPEN_FILE_PATH_CHARS = 4096;
 
 export function isWorkspaceViewParamFailure(value: unknown): value is Failure {
@@ -271,6 +288,44 @@ export function parseRenameFolder(
 	const name = folderName(params.name);
 	if (isWorkspaceViewParamFailure(name)) return name;
 	return { folder, name };
+}
+
+export function parseDeleteFolder(
+	params: Record<string, unknown>,
+): Parsed<DeleteFolderParams> {
+	const folder = id(params.folder, 'folder');
+	return isWorkspaceViewParamFailure(folder) ? folder : { folder };
+}
+
+export function parseReorderFolders(
+	params: Record<string, unknown>,
+): Parsed<ReorderFoldersParams> {
+	const folders = params.folders;
+	if (
+		!Array.isArray(folders) ||
+		folders.length === 0 ||
+		folders.length > MAX_REORDERED_FOLDERS
+	)
+		return badRequest(
+			"folders must list every folder of one project, in the new order",
+		);
+	for (const folder of folders) {
+		const parsed = id(folder, 'folders');
+		if (isWorkspaceViewParamFailure(parsed)) return parsed;
+	}
+	if (new Set(folders).size !== folders.length)
+		return badRequest('folders lists a folder twice');
+	return { folders: folders as string[] };
+}
+
+export function parseFocusHome(
+	params: Record<string, unknown>,
+): Parsed<FocusHomeParams> {
+	const section = params.section;
+	if (section === undefined) return {};
+	return typeof section === 'string' && HOME_SECTIONS.has(section as HomeSection)
+		? { section: section as HomeSection }
+		: badRequest('section must be home, tabs, or automations');
 }
 
 export function parseMoveTabToFolder(

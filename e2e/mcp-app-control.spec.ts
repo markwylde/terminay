@@ -1,5 +1,6 @@
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { expectHomeSection } from './support/home-tabs';
 import { createStartedProject } from './support/project-start';
 
 /**
@@ -141,4 +142,55 @@ test('Pixel opens a workspace window holding a project, then moves the project b
 			`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
 		),
 	).toBeVisible({ timeout: 20_000 });
+});
+
+test("Pixel shows Home > Automations on the window it was asked from, and no other", async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+}) => {
+	test.setTimeout(150_000);
+	await createStartedProject(mainWindow);
+	await openPixel(appHarness, mainWindow);
+	// A second window, so there is another client that must not change.
+	await ask(mainWindow, 'pop this project out');
+	await expect(balloon(mainWindow)).toContainText('Opened a window for', {
+		timeout: 30_000,
+	});
+	let popout: Page | undefined;
+	await expect
+		.poll(
+			() => {
+				popout = otherWorkspaceWindows(electronApp, mainWindow)[0];
+				return popout !== undefined;
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	if (popout === undefined) throw new Error('Expected the presented window');
+	await expect(popout.locator('.app-shell')).not.toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
+	await expect(mainWindow.locator('.app-shell')).not.toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
+
+	await ask(mainWindow, 'show my automations');
+	await expect(balloon(mainWindow)).toContainText(
+		'Showing Home: automations.',
+		{ timeout: 30_000 },
+	);
+	await expect(balloon(mainWindow)).toContainText('✓ Showing Home');
+	await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
+	await expectHomeSection(mainWindow, 'automations');
+	// Home's state is this device's own: the other window is unchanged.
+	await expect(popout.locator('.app-shell')).not.toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
 });

@@ -369,6 +369,13 @@ function registerTools(
 				beside: terminal.optional(),
 				focus: z.boolean().optional(),
 				project: z.string().regex(PROJECT_HANDLE_PATTERN).optional(),
+				shell_profile: z
+					.string()
+					.regex(ID_PATTERN)
+					.optional()
+					.describe(
+						'A shell profile id from list_shell_profiles; the terminal launches with it. An unknown or unavailable profile fails and opens nothing.',
+					),
 			},
 		},
 		async (params, extra) => call('open_terminal', params, extra.signal),
@@ -413,6 +420,34 @@ function registerTools(
 			inputSchema: { terminal, name },
 		},
 		async (params, extra) => call('rename_terminal', params, extra.signal),
+	);
+	server.registerTool(
+		'update_terminal',
+		{
+			description:
+				"Change a terminal tab as the tab editor does, on every device: icon (an emoji; empty clears it), color (a colour; empty follows the project's colour), note (text shown with the tab; null removes it), and activity_tracking (whether the tab shows activity). Give at least one.",
+			inputSchema: {
+				terminal,
+				icon: z.string().max(64).optional(),
+				color: z.string().max(128).optional(),
+				note: z.string().max(1200).nullable().optional(),
+				activity_tracking: z.boolean().optional(),
+			},
+		},
+		async (params, extra) => call('update_terminal', params, extra.signal),
+	);
+	server.registerTool(
+		'move_terminal_to_project',
+		{
+			description: `Move a running terminal to another project, as dragging its tab there does: it keeps its program, output and scrollback, and lands in that project's General folder at position. It then belongs to the target project, so agents in its old project can no longer address it. The result carries the terminal's handle. Terminals never move into or out of the automation space. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {
+				terminal,
+				project: z.string().regex(PROJECT_HANDLE_PATTERN),
+				position: z.number().int().min(0).optional(),
+			},
+		},
+		async (params, extra) =>
+			call('move_terminal_to_project', params, extra.signal),
 	);
 	server.registerTool(
 		'split_terminal',
@@ -463,6 +498,8 @@ function registerTools(
 	registerWorkspaceViewTools(server, call);
 	registerAutomationTools(server, call);
 	registerAppControlTools(server, call);
+	registerSettingsTools(server, call);
+	registerMacroTools(server, call);
 	registerWindowTools(server, call);
 	registerNotificationTools(server, call);
 }
@@ -543,6 +580,16 @@ function registerWorkspaceViewTools(
 		async (params, extra) => call('focus_project', params, extra.signal),
 	);
 	server.registerTool(
+		'focus_home',
+		{
+			description: `Show Home in the window, with one of its sections in front: home (the overview), tabs (every tab on this server), or automations. The automation space's terminals are shown under Automations. ${WORKSPACE_REACH_NOTE} ${VIEW_NOTE}`,
+			inputSchema: {
+				section: z.enum(['home', 'tabs', 'automations']).optional(),
+			},
+		},
+		async (params, extra) => call('focus_home', params, extra.signal),
+	);
+	server.registerTool(
 		'select_folder',
 		{
 			description: `Show one of a project's folders (from get_layout's folders) in the window. ${VIEW_NOTE} ${LAYOUT_NOTE}`,
@@ -566,6 +613,25 @@ function registerWorkspaceViewTools(
 			inputSchema: { folder: id, name: folderName },
 		},
 		async (params, extra) => call('rename_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'delete_folder',
+		{
+			description:
+				'Delete an empty folder you or the user made. It fails for the General folder, for a folder that still holds a tab (move or close them first), and for a folder that stands for a Git worktree. Every device sees it.',
+			inputSchema: { folder: id },
+			annotations: { destructiveHint: true },
+		},
+		async (params, extra) => call('delete_folder', params, extra.signal),
+	);
+	server.registerTool(
+		'reorder_folders',
+		{
+			description:
+				"Set the order of a project's folders: folders lists every one of that project's folder ids (from get_layout) once, in the new order. Every device sees it.",
+			inputSchema: { folders: z.array(id).min(1).max(256) },
+		},
+		async (params, extra) => call('reorder_folders', params, extra.signal),
 	);
 	server.registerTool(
 		'move_tab_to_folder',
@@ -715,6 +781,151 @@ function registerAppControlTools(
 		},
 		async (params, extra) =>
 			call('close_workspace_window', params, extra.signal),
+	);
+}
+
+/** Server settings and shell profiles (ADR-0072). */
+function registerSettingsTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const profileId = z.string().regex(ID_PATTERN);
+	const target = z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('system') }),
+		z.object({
+			kind: z.literal('executable'),
+			executable: z.string().min(1).max(4096),
+		}),
+		z.object({
+			kind: z.literal('wsl'),
+			distribution: z.string().min(1).max(256),
+			shellPath: z.string().max(4096).optional(),
+		}),
+	]);
+	server.registerTool(
+		'get_settings',
+		{
+			description: `Read this server's settings, as Settings shows them, keyed as update_settings names them (e.g. scrollback, activityIndicators.greenDelaySeconds). Terminay MCP, Remote Access, recording, and shell settings are not included, nor is any credential; a device's own appearance settings (theme, font, shortcuts) are not server settings. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('get_settings', {}, extra.signal),
+	);
+	server.registerTool(
+		'update_settings',
+		{
+			description: `Change server settings for every device and terminal, as a change in Settings does. settings maps each setting's dotted path from get_settings to its new value, e.g. { "scrollback": 10000 }. The request applies whole or not at all: a setting MCP cannot reach (Terminay MCP, Remote Access, recording, shell), an unknown one, or a value Settings would not accept fails naming it and changes nothing. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: {
+				settings: z.record(z.string().min(1).max(256), z.unknown()),
+			},
+		},
+		async (params, extra) => call('update_settings', params, extra.signal),
+	);
+	server.registerTool(
+		'list_shell_profiles',
+		{
+			description:
+				'List the shell profiles new terminals can use, as Settings > Shell shows them: each id, name, kind, target, availability, and whether it is read-only, plus the default profile. Environment values and arguments are never shown, only how many there are. Pass a profile id to open_terminal as shell_profile.',
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_shell_profiles', {}, extra.signal),
+	);
+	server.registerTool(
+		'save_shell_profile',
+		{
+			description: `Create a shell profile, or with profile.id change one you or the user made, validated as Settings > Shell validates it. Fields you leave out of a change keep their values, including arguments and environment you cannot see; environment replaces the whole overlay when given (a value, or null to unset a variable). Never put a secret in a profile. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: {
+				profile: z.object({
+					id: profileId.optional(),
+					name: z.string().min(1).max(128).optional(),
+					target: target.optional(),
+					args: z.array(z.string().max(4096)).max(64).optional(),
+					startup_mode: z.enum(['default', 'login', 'non-login']).optional(),
+					environment: z
+						.record(z.string().min(1).max(256), z.string().max(16_384).nullable())
+						.optional(),
+					icon: z.string().max(64).optional(),
+					color: z.string().max(128).optional(),
+				}),
+			},
+		},
+		async (params, extra) => call('save_shell_profile', params, extra.signal),
+	);
+	server.registerTool(
+		'delete_shell_profile',
+		{
+			description: `Delete a shell profile you or the user made. It fails while it is the default, or a project's default; change those first. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: { profile_id: profileId },
+			annotations: { destructiveHint: true },
+		},
+		async (params, extra) => call('delete_shell_profile', params, extra.signal),
+	);
+	server.registerTool(
+		'reorder_shell_profiles',
+		{
+			description: `Set the order of the shell profiles you or the user made: profile_ids lists each once, in the new order. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: { profile_ids: z.array(profileId).max(64) },
+		},
+		async (params, extra) => call('reorder_shell_profiles', params, extra.signal),
+	);
+	server.registerTool(
+		'set_default_shell_profile',
+		{
+			description: `Set the shell profile new terminals use by default: system, or one you or the user made. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: { profile_id: profileId },
+		},
+		async (params, extra) =>
+			call('set_default_shell_profile', params, extra.signal),
+	);
+}
+
+/** Running macros (ADR-0072); creating and editing them is not MCP's. */
+function registerMacroTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	server.registerTool(
+		'list_macros',
+		{
+			description:
+				"List this server's macros: each id, name, category, and the fields it asks for (name, label, type, whether required, default, and a select field's options).",
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_macros', {}, extra.signal),
+	);
+	server.registerTool(
+		'run_macro',
+		{
+			description:
+				"Run a macro in a terminal you can address, with values for its fields by name; a field left out takes its default. Values are checked as the macro launch form checks them: required fields filled, numbers for number fields, booleans for checkboxes, and one of a select field's options. The server types the macro's steps into the terminal; the run continues until it finishes or is cancelled, whatever happens to you. Returns the run's id.",
+			inputSchema: {
+				macro_id: z.string().regex(ID_PATTERN),
+				terminal: z.string().min(1).max(MAX_TERMINAL_REF_CHARS),
+				values: z
+					.record(z.string().min(1).max(256), z.union([z.string(), z.number(), z.boolean()]))
+					.optional(),
+			},
+		},
+		async (params, extra) => call('run_macro', params, extra.signal),
+	);
+	server.registerTool(
+		'cancel_macro',
+		{
+			description:
+				'Cancel a macro run that run_macro started, in a terminal you can address.',
+			inputSchema: { run_id: z.string().regex(ID_PATTERN) },
+		},
+		async (params, extra) => call('cancel_macro', params, extra.signal),
 	);
 }
 
@@ -906,6 +1117,35 @@ function registerAutomationTools(
 		},
 		async (params, extra) => call('stop_automation_run', params, extra.signal),
 	);
+	server.registerTool(
+		'remove_automation_run',
+		{
+			description: `Delete one finished run from an automation's history. A run in progress cannot be deleted; stop it first. ${APPROVAL_NOTE}`,
+			inputSchema: { run_id: z.string().regex(ID_PATTERN) },
+			annotations: { destructiveHint: true, openWorldHint: false },
+		},
+		async (params, extra) => call('remove_automation_run', params, extra.signal),
+	);
+	server.registerTool(
+		'prune_automation_runs',
+		{
+			description: `Delete an automation's finished runs that started more than older_than_days whole days ago; 0 deletes every finished run. Runs in progress stay. ${APPROVAL_NOTE}`,
+			inputSchema: {
+				automation_id: automationId,
+				older_than_days: z.number().int().min(0).max(3650),
+			},
+			annotations: { destructiveHint: true, openWorldHint: false },
+		},
+		async (params, extra) => call('prune_automation_runs', params, extra.signal),
+	);
+	server.registerTool(
+		'dismiss_missed_runs',
+		{
+			description: `Clear the notice that an automation missed scheduled runs while Terminay was not running, for automation_id or, without it, for every automation. It runs nothing. ${APPROVAL_NOTE}`,
+			inputSchema: { automation_id: automationId.optional() },
+		},
+		async (params, extra) => call('dismiss_missed_runs', params, extra.signal),
+	);
 }
 
 function registerWindowTools(
@@ -1008,9 +1248,19 @@ function registerNotificationTools(
 		async (params, extra) => call('send_notification', params, extra.signal),
 	);
 	server.registerTool(
+		'list_notifications',
+		{
+			description:
+				"List the notifications shown to the user for terminals you can address: each one's handle, kind (agent-finished, agent-waiting, agent-blocked, command-finished, attention, or message), title and body where it has them, and its terminal's handle. From a project terminal that is your own project's terminals; from a terminal under Home or a chat, every terminal on this server.",
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_notifications', {}, extra.signal),
+	);
+	server.registerTool(
 		'dismiss_notification',
 		{
-			description: `Remove one notification you sent from the terminal you are running in, by the handle send_notification returned. One dismissed before the settle period ends is never shown to the user. ${NOTIFICATION_NOTE} ${APPROVAL_NOTE}`,
+			description: `Remove one notification by handle: one you sent from this terminal (send_notification's handle), or one list_notifications gave you. Dismissing a terminal's activity notification, such as an agent finishing, marks that terminal seen, as the user dismissing it does. A sent one dismissed before the settle period ends is never shown to the user. ${NOTIFICATION_NOTE} ${APPROVAL_NOTE}`,
 			inputSchema: { notification: handle },
 		},
 		async (params, extra) => call('dismiss_notification', params, extra.signal),

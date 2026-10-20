@@ -105,17 +105,24 @@ test("every operation but capability discovery has exactly one fixed permission 
     "wait_for_attention", "wait_for_command", "wait_for_idle",
   ])
   assert.deepEqual(byGroup.terminalsManage.sort(), [
-    "arrange_tabs", "close_tab", "close_terminal", "create_folder", "focus_project", "focus_tab",
-    "focus_terminal", "move_tab", "move_tab_to_folder", "open_file", "open_terminal",
-    "rename_folder", "rename_terminal", "resize_pane", "run_command", "select_folder",
-    "split_terminal", "write_terminal",
+    "arrange_tabs", "cancel_macro", "close_tab", "close_terminal", "create_folder", "delete_folder",
+    "focus_home", "focus_project", "focus_tab", "focus_terminal", "list_macros", "move_tab",
+    "move_tab_to_folder", "move_terminal_to_project", "open_file", "open_terminal",
+    "rename_folder", "rename_terminal", "reorder_folders", "resize_pane", "run_command", "run_macro",
+    "select_folder", "split_terminal", "update_terminal", "write_terminal",
   ])
   assert.deepEqual(byGroup.automationsRead.sort(), ["get_automation", "list_automation_runs", "list_automations"])
   assert.deepEqual(byGroup.automationsManage.sort(), [
-    "create_automation", "delete_automation", "run_automation", "set_automation_enabled",
-    "stop_automation_run", "update_automation",
+    "create_automation", "delete_automation", "dismiss_missed_runs", "prune_automation_runs",
+    "remove_automation_run", "run_automation", "set_automation_enabled", "stop_automation_run",
+    "update_automation",
   ])
-  assert.deepEqual(byGroup.notifications.sort(), ["dismiss_notification", "send_notification"])
+  assert.deepEqual(byGroup.notifications.sort(), ["dismiss_notification", "list_notifications", "send_notification"])
+  assert.deepEqual(byGroup.settingsRead.sort(), ["get_settings", "list_shell_profiles"])
+  assert.deepEqual(byGroup.settingsChange.sort(), [
+    "delete_shell_profile", "reorder_shell_profiles", "save_shell_profile",
+    "set_default_shell_profile", "update_settings",
+  ])
 })
 
 function gated(policies, handler = (params) => ({ ran: params })) {

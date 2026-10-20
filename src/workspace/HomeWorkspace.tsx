@@ -318,6 +318,8 @@ export type HomeWorkspaceHandle = Readonly<{
 	 * Close the tab in front as a person would. Returns whether there was one.
 	 */
 	requestCloseActiveTab: () => boolean;
+	/** The section of the tab in front, if any. */
+	activeSection: () => HomeSection | undefined;
 }>;
 
 export type HomeWorkspaceProps = Readonly<{
@@ -534,6 +536,10 @@ export const HomeWorkspace = forwardRef<
 				if (active === undefined) return false;
 				requestClose(active.id);
 				return true;
+			},
+			activeSection: () => {
+				const descriptor = parseHomeTabId(apiRef.current?.activePanel?.id);
+				return descriptor === undefined ? undefined : homeTabSection(descriptor);
 			},
 		}),
 		[openDescriptor, openTarget, requestClose],

@@ -28,6 +28,7 @@ import {
 	type TerminayHostConnectionProfile,
 	type TerminayHostContext,
 	type TerminayPairingProgressState,
+	type JsonValue,
 } from '@terminay/protocol';
 import {
 	app,
@@ -63,6 +64,14 @@ import {
 	CONTROL_TOOL_OPERATIONS,
 	createAppControlAdapter,
 	createAppWindowControlAdapter,
+	createMacroControlAdapter,
+	createSettingsControlAdapter,
+	createTerminalMetadataAdapter,
+	describeSettingsUpdate,
+	type MacroControlAdapter,
+	planSettingsUpdate,
+	type SettingsControlAdapter,
+	settingsState,
 	CONTROL_SOCKET_ENV,
 	CONTROL_TOKEN_ENV,
 	ControlCapabilityStore,
@@ -117,7 +126,11 @@ import {
 	agentIntegrationEnabledFromSettings,
 } from '../packages/server-core/src/extensions/sessionSources';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
-import { mcpPrincipalCommandRequest } from '../packages/server-core/src/mcpPrincipal';
+import {
+	mcpPrincipalCommandRequest,
+	mcpPrincipalQueryRequest,
+} from '../packages/server-core/src/mcpPrincipal';
+import { SETTINGS_OPERATIONS } from '../packages/server-core/src/settings/protocol';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -2555,6 +2568,7 @@ async function createServerOwnedTerminalSession(
 	projectRootOrigin?: 'explicit' | 'server-default',
 	activePanelId?: string,
 	folderId?: string,
+	profileId?: string,
 ): Promise<Awaited<ReturnType<ServerTerminalAuthority['create']>>> {
 	const id = randomUUID();
 	const settings = readTerminalSettings();
@@ -2566,6 +2580,7 @@ async function createServerOwnedTerminalSession(
 			...(projectRootOrigin === undefined ? {} : { projectRootOrigin }),
 			...(activePanelId === undefined ? {} : { activePanelId }),
 			...(folderId === undefined ? {} : { folderId }),
+			...(profileId === undefined ? {} : { profileId }),
 			env: getTerminalSpawnEnv(),
 			cols: 80,
 			rows: 24,
@@ -3295,6 +3310,8 @@ async function startMcpControlEndpoint(): Promise<void> {
 			notifications: createDesktopMcpNotificationAdapter(),
 			workspaceView: createDesktopMcpWorkspaceViewAdapter(),
 			appControl: createDesktopMcpAppControlAdapter(),
+			settings: createDesktopMcpSettingsAdapter(),
+			macros: createDesktopMcpMacroAdapter(),
 			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
@@ -3457,6 +3474,9 @@ function createDesktopMcpWorkspaceViewAdapter(): WorkspaceViewControlAdapter {
 		selectFolder: (p, c, s) => bound().selectFolder(p, c, s),
 		createFolder: (p, c, s) => bound().createFolder(p, c, s),
 		renameFolder: (p, c, s) => bound().renameFolder(p, c, s),
+		deleteFolder: (p, c, s) => bound().deleteFolder(p, c, s),
+		reorderFolders: (p, c, s) => bound().reorderFolders(p, c, s),
+		focusHome: (p, c, s) => bound().focusHome(p, c, s),
 		moveTabToFolder: (p, c, s) => bound().moveTabToFolder(p, c, s),
 		openFile: (p, c, s) => bound().openFile(p, c, s),
 		closeTab: (p, c, s) => bound().closeTab(p, c, s),
@@ -3555,6 +3575,160 @@ function createDesktopMcpAppControlAdapter(): AppControlAdapter {
 		openWorkspaceWindow: (p, c, s) => bound().openWorkspaceWindow(p, c, s),
 		renameWorkspaceWindow: (p, c, s) => bound().renameWorkspaceWindow(p, c, s),
 		closeWorkspaceWindow: (p, c, s) => bound().closeWorkspaceWindow(p, c, s),
+	};
+}
+
+/** One composed part of the MCP authority, or `unsupported_op` without it. */
+function requireMcpComposition<
+	K extends 'settingsOperations' | 'shellProfileOperations' | 'macroOperations',
+>(key: K): NonNullable<ServerTerminalAuthority['composition'][K]> {
+	const part = requireMcpAuthority().composition[key];
+	if (part === undefined)
+		throw new ControlEndpointError(
+			'unsupported_op',
+			'That is unavailable on this server.',
+		);
+	return part as NonNullable<ServerTerminalAuthority['composition'][K]>;
+}
+
+type McpOperationRegistries = NonNullable<
+	ServerTerminalAuthority['composition']['settingsOperations']
+>['operations'];
+
+function registryHandler(
+	handlers:
+		| ReadonlyMap<string, unknown>
+		| Readonly<Record<string, unknown>>
+		| undefined,
+	operation: string,
+): ((request: unknown) => unknown) | undefined {
+	const handler =
+		handlers instanceof Map
+			? handlers.get(operation)
+			: (handlers as Readonly<Record<string, unknown>> | undefined)?.[
+					operation
+				];
+	return typeof handler === 'function'
+		? (handler as (request: unknown) => unknown)
+		: undefined;
+}
+
+/** Run one server query as the MCP principal (ADR-0072). */
+async function runMcpRegistryQuery(
+	registries: McpOperationRegistries,
+	operation: string,
+	payload: JsonValue,
+	signal: AbortSignal,
+): Promise<unknown> {
+	const handler = registryHandler(registries.queries, operation);
+	if (handler === undefined)
+		throw new ControlEndpointError(
+			'unsupported_op',
+			`${operation} is unavailable on this server.`,
+		);
+	const outcome = await handler(
+		mcpPrincipalQueryRequest(operation, payload, signal),
+	);
+	return typeof outcome === 'object' &&
+		outcome !== null &&
+		'result' in outcome &&
+		!(outcome as { body?: unknown }).body
+		? (outcome as { result: unknown }).result
+		: outcome;
+}
+
+/** Run one server command as the MCP principal (ADR-0072). */
+async function runMcpRegistryCommand(
+	registries: McpOperationRegistries,
+	operation: string,
+	payload: JsonValue,
+	signal: AbortSignal,
+	expectedRevision?: number,
+): Promise<unknown> {
+	const handler = registryHandler(registries.commands, operation);
+	if (handler === undefined)
+		throw new ControlEndpointError(
+			'unsupported_op',
+			`${operation} is unavailable on this server.`,
+		);
+	const outcome = await handler(
+		mcpPrincipalCommandRequest(operation, payload, signal, expectedRevision),
+	);
+	return typeof outcome === 'object' && outcome !== null && 'result' in outcome
+		? (outcome as { result: unknown }).result
+		: outcome;
+}
+
+/** The settings and shell profile tools, bound to whichever authority is
+ * composed when called (ADR-0072). */
+function createDesktopMcpSettingsAdapter(): SettingsControlAdapter {
+	const bound = (): SettingsControlAdapter =>
+		createSettingsControlAdapter({
+			query: (operation, payload, signal) =>
+				runMcpRegistryQuery(
+					operation.startsWith('settings.')
+						? requireMcpComposition('settingsOperations').operations
+						: requireMcpComposition('shellProfileOperations').operations,
+					operation,
+					payload,
+					signal,
+				),
+			command: (operation, payload, signal, expectedRevision) =>
+				runMcpRegistryCommand(
+					operation.startsWith('settings.')
+						? requireMcpComposition('settingsOperations').operations
+						: requireMcpComposition('shellProfileOperations').operations,
+					operation,
+					payload,
+					signal,
+					expectedRevision,
+				),
+			state: () => requireMcpAuthority().workspace.state,
+			projectHandles: mcpProjectHandles,
+		});
+	return {
+		getSettings: (p, c, s) => bound().getSettings(p, c, s),
+		updateSettings: (p, c, s) => bound().updateSettings(p, c, s),
+		listShellProfiles: (p, c, s) => bound().listShellProfiles(p, c, s),
+		saveShellProfile: (p, c, s) => bound().saveShellProfile(p, c, s),
+		deleteShellProfile: (p, c, s) => bound().deleteShellProfile(p, c, s),
+		reorderShellProfiles: (p, c, s) => bound().reorderShellProfiles(p, c, s),
+		setDefaultShellProfile: (p, c, s) => bound().setDefaultShellProfile(p, c, s),
+	};
+}
+
+/** The macro tools, bound to whichever authority is composed when called
+ * (ADR-0072). */
+function createDesktopMcpMacroAdapter(): MacroControlAdapter {
+	const bound = (): MacroControlAdapter =>
+		createMacroControlAdapter({
+			query: (operation, payload, signal) =>
+				runMcpRegistryQuery(
+					requireMcpComposition('macroOperations').operations,
+					operation,
+					payload,
+					signal,
+				),
+			command: (operation, payload, signal) =>
+				runMcpRegistryCommand(
+					requireMcpComposition('macroOperations').operations,
+					operation,
+					payload,
+					signal,
+				),
+			resolveTerminal: (context, reference) => {
+				const target = resolveMcpTerminal(context, reference);
+				return {
+					serverId: requireMcpAuthority().service.serverId,
+					projectId: target.projectId,
+					sessionId: target.id,
+				};
+			},
+		});
+	return {
+		listMacros: (p, c, s) => bound().listMacros(p, c, s),
+		runMacro: (p, c, s) => bound().runMacro(p, c, s),
+		cancelMacro: (p, c, s) => bound().cancelMacro(p, c, s),
 	};
 }
 
@@ -3715,6 +3889,7 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				undefined,
 				callerPanel?.id,
 				callerPanel?.folderId,
+				params.shellProfile,
 			);
 			// An automation terminal's opens join the run that owns it, so the
 			// Automations section groups them under that run (ADR-0030).
@@ -3854,6 +4029,15 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				'Attention waiting is unavailable.',
 			);
 		},
+		...createTerminalMetadataAdapter({
+			state: () => requireMcpAuthority().workspace.state,
+			apply: (command, context) => applyMcpWorkspaceCommand(context, command),
+			resolveTerminal: (context, reference) => {
+				const target = terminal(context, reference);
+				return { sessionId: target.id, projectId: target.projectId };
+			},
+			projectHandles,
+		}),
 	};
 }
 
@@ -3870,8 +4054,28 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 	if (serverTerminalAuthority?.composition.appWindows === undefined)
 		for (const tool of ['show_window', 'close_window', 'list_windows'] as const)
 			unavailable.add(tool);
-	if (serverTerminalAuthority?.composition.notifications === undefined)
-		for (const tool of ['send_notification', 'dismiss_notification'] as const)
+	const composition = serverTerminalAuthority?.composition;
+	if (composition?.notifications === undefined)
+		for (const tool of [
+			'send_notification',
+			'list_notifications',
+			'dismiss_notification',
+		] as const)
+			unavailable.add(tool);
+	if (composition?.settingsOperations === undefined)
+		for (const tool of ['get_settings', 'update_settings'] as const)
+			unavailable.add(tool);
+	if (composition?.shellProfileOperations === undefined)
+		for (const tool of [
+			'list_shell_profiles',
+			'save_shell_profile',
+			'delete_shell_profile',
+			'reorder_shell_profiles',
+			'set_default_shell_profile',
+		] as const)
+			unavailable.add(tool);
+	if (composition?.macroOperations === undefined)
+		for (const tool of ['list_macros', 'run_macro', 'cancel_macro'] as const)
 			unavailable.add(tool);
 	return CONTROL_TOOL_OPERATIONS.map((tool) => {
 		const group = CONTROL_PERMISSION_GROUPS[tool];
@@ -3895,13 +4099,47 @@ function createDesktopMcpNotificationAdapter(): NotificationControlAdapter {
 				'unsupported_op',
 				'Notifications are unavailable on this server.',
 			);
-		return createNotificationControlAdapter({ notifications });
+		const operations =
+			serverTerminalAuthority?.composition.notificationOperations?.operations;
+		return createNotificationControlAdapter({
+			notifications,
+			// A user's own dismissal: an activity notification acknowledges its
+			// terminal.
+			...(operations === undefined
+				? {}
+				: {
+						dismiss: async (record) =>
+							(
+								(await runMcpRegistryCommand(
+									operations,
+									'notifications.dismiss',
+									{
+										id: record.id,
+										projectId: record.projectId,
+										sessionId: record.sessionId,
+									},
+									new AbortController().signal,
+								)) as { dismissed?: unknown } | null
+							)?.dismissed === true,
+					}),
+			reaches: (context, owner) =>
+				mcpReaches(context, owner.projectId) &&
+				requireMcpAuthority()
+					.list()
+					.some(
+						(entry) =>
+							entry.id === owner.sessionId &&
+							entry.projectId === owner.projectId,
+					),
+		});
 	};
 	return {
 		sendNotification: (params, context, signal) =>
 			bound().sendNotification(params, context, signal),
 		dismissNotification: (params, context, signal) =>
 			bound().dismissNotification(params, context, signal),
+		listNotifications: (params, context, signal) =>
+			bound().listNotifications(params, context, signal),
 	};
 }
 
@@ -4018,6 +4256,25 @@ function createDesktopMcpAutomationAdapter(): AutomationControlAdapter {
 		stopAutomationRun: (params, context) =>
 			automationMcpCall(() =>
 				requireAutomationMcp().stop(params.runId, actor(context)),
+			),
+		removeAutomationRun: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().removeRun(params.runId, actor(context)),
+			),
+		pruneAutomationRuns: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().pruneRuns(
+					params.automationId,
+					params.olderThanDays,
+					actor(context),
+				),
+			),
+		dismissMissedRuns: (params, context) =>
+			automationMcpCall(() =>
+				requireAutomationMcp().dismissMissed(
+					params.automationId,
+					actor(context),
+				),
 			),
 	};
 }
@@ -4229,8 +4486,156 @@ async function describeMcpOperation(
 		case 'list_windows':
 			return { summary: 'list the windows in this terminal', details: [] };
 		case 'send_notification':
+		case 'list_notifications':
 		case 'dismiss_notification':
 			return describeNotificationRequest(op, params);
+		case 'remove_automation_run':
+			return requireAutomationMcp().describe({
+				kind: 'removeRun',
+				runId: text(params.run_id),
+			});
+		case 'prune_automation_runs':
+			return requireAutomationMcp().describe({
+				kind: 'pruneRuns',
+				automationId: text(params.automation_id),
+				olderThanDays:
+					typeof params.older_than_days === 'number' ? params.older_than_days : 0,
+			});
+		case 'dismiss_missed_runs':
+			return requireAutomationMcp().describe({
+				kind: 'dismissMissed',
+				...(typeof params.automation_id === 'string'
+					? { automationId: params.automation_id }
+					: {}),
+			});
+		case 'get_settings':
+			return { summary: 'read the server settings', details: [] };
+		case 'update_settings': {
+			// The prompt is the whole request: every setting with its current
+			// and requested value. A request that could never apply is refused
+			// here, so nobody is asked to approve it.
+			const operations = requireMcpComposition('settingsOperations').operations;
+			const state = settingsState(
+				await runMcpRegistryQuery(
+					operations,
+					SETTINGS_OPERATIONS.get,
+					{},
+					new AbortController().signal,
+				),
+			);
+			return describeSettingsUpdate(
+				planSettingsUpdate(
+					typeof params.settings === 'object' && params.settings !== null
+						? (params.settings as Record<string, unknown>)
+						: {},
+					state,
+				),
+			);
+		}
+		case 'list_shell_profiles':
+			return { summary: 'list the shell profiles', details: [] };
+		case 'save_shell_profile': {
+			const profile =
+				typeof params.profile === 'object' && params.profile !== null
+					? (params.profile as Record<string, unknown>)
+					: {};
+			const target =
+				typeof profile.target === 'object' && profile.target !== null
+					? (profile.target as Record<string, unknown>)
+					: undefined;
+			return {
+				summary:
+					typeof profile.id === 'string'
+						? `change the shell profile ${profile.id}`
+						: `add the shell profile "${text(profile.name)}"`,
+				details: [
+					...(typeof profile.name === 'string'
+						? [{ label: 'Name', value: profile.name }]
+						: []),
+					...(target === undefined
+						? []
+						: [
+								{
+									label: 'Runs',
+									value:
+										target.kind === 'executable'
+											? text(target.executable)
+											: target.kind === 'wsl'
+												? `WSL ${text(target.distribution)}`
+												: 'System default shell',
+									code: true,
+								},
+							]),
+					...(Array.isArray(profile.args)
+						? [{ label: 'Arguments', value: profile.args.join(' '), code: true }]
+						: []),
+					...(typeof profile.environment === 'object' &&
+					profile.environment !== null
+						? [
+								{
+									label: 'Environment variables',
+									value: Object.keys(profile.environment).join(', '),
+									code: true,
+								},
+							]
+						: []),
+				],
+			};
+		}
+		case 'delete_shell_profile':
+			return {
+				summary: `delete the shell profile ${text(params.profile_id)}`,
+				details: [],
+			};
+		case 'reorder_shell_profiles':
+			return { summary: 'reorder the shell profiles', details: [] };
+		case 'set_default_shell_profile':
+			return {
+				summary: `make ${text(params.profile_id)} the default shell profile`,
+				details: [],
+			};
+		case 'list_macros':
+			return { summary: 'list the macros', details: [] };
+		case 'run_macro':
+			return {
+				summary: `run the macro ${text(params.macro_id)} in ${targetTitle()}`,
+				details: Object.entries(
+					typeof params.values === 'object' && params.values !== null
+						? (params.values as Record<string, unknown>)
+						: {},
+				).map(([field, value]) => ({
+					label: `Field ${field}`,
+					value: String(value),
+					code: true,
+				})),
+			};
+		case 'cancel_macro':
+			return { summary: 'cancel a macro run', details: [] };
+		case 'update_terminal':
+			return {
+				summary: `change ${targetTitle()}`,
+				details: (['icon', 'color', 'note'] as const).flatMap((field) =>
+					params[field] === undefined
+						? []
+						: [
+								{
+									label: field[0]!.toUpperCase() + field.slice(1),
+									value: params[field] === null ? 'None' : text(params[field]),
+								},
+							],
+				),
+			};
+		case 'move_terminal_to_project':
+			return {
+				summary: `move ${targetTitle()} to ${mcpProjectTitle(context, params.project) ?? 'another project'}`,
+				details: [],
+			};
+		case 'focus_home':
+			return { summary: 'show Home', details: [] };
+		case 'delete_folder':
+			return { summary: 'delete a folder', details: [] };
+		case 'reorder_folders':
+			return { summary: 'reorder folders', details: [] };
 		case 'list_projects':
 			return { summary: 'list your projects', details: [] };
 		case 'create_project':
