@@ -53,6 +53,7 @@ import {
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
 import {
+	type AppControlAdapter,
 	type AutomationControlAdapter,
 	assertAutomationSpaceCapacity,
 	automationControlError,
@@ -60,6 +61,7 @@ import {
 	ConnectedServerGateway,
 	CONTROL_PERMISSION_GROUPS,
 	CONTROL_TOOL_OPERATIONS,
+	createAppControlAdapter,
 	createAppWindowControlAdapter,
 	CONTROL_SOCKET_ENV,
 	CONTROL_TOKEN_ENV,
@@ -86,6 +88,7 @@ import {
 	resolveOpenTerminalProject,
 	type TerminalControlAdapter,
 	type WorkspaceViewControlAdapter,
+	WindowHandleCodec,
 	workspaceProjectFields,
 } from '../apps/terminay-server/src/index';
 import { createProtectedHostKeyStore } from '../apps/terminay-server/src/remote/hostedHostKey';
@@ -114,6 +117,7 @@ import {
 	agentIntegrationEnabledFromSettings,
 } from '../packages/server-core/src/extensions/sessionSources';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { mcpPrincipalCommandRequest } from '../packages/server-core/src/mcpPrincipal';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -125,7 +129,9 @@ import {
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
+import { RootFolderBrowser } from '../packages/server-core/src/rootFolderBrowser';
 import { commandSubmissionInput } from '../packages/server-core/src/terminalService/commandSubmission';
+import { nodeTerminalLaunchPathAuthority } from '../packages/server-core/src/terminalService/launchResolver';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
 import { isAutomationSpace } from '../packages/server-core/src/workspace';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
@@ -3288,6 +3294,7 @@ async function startMcpControlEndpoint(): Promise<void> {
 			appWindows: createDesktopMcpAppWindowAdapter(),
 			notifications: createDesktopMcpNotificationAdapter(),
 			workspaceView: createDesktopMcpWorkspaceViewAdapter(),
+			appControl: createDesktopMcpAppControlAdapter(),
 			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
@@ -3455,6 +3462,99 @@ function createDesktopMcpWorkspaceViewAdapter(): WorkspaceViewControlAdapter {
 		closeTab: (p, c, s) => bound().closeTab(p, c, s),
 		anchorFor: (r, c, s) => bound().anchorFor(r, c, s),
 		placeTerminal: (p, c, s) => bound().placeTerminal(p, c, s),
+	};
+}
+
+// Opaque workspace window handles (ADR-0072), one codec like the project
+// handles, so list_projects and list_workspace_windows agree.
+const mcpWindowHandles = new WindowHandleCodec(embeddedServerId);
+// The start chooser's folder validation, from the same verified home the
+// composition's chooser and terminals use. It canonicalises; it lists nothing.
+const mcpRootFolders = new RootFolderBrowser({
+	homeDirectory: nodeTerminalLaunchPathAuthority.homeDirectory,
+});
+
+/** The project and window tools, bound to whichever authority is composed
+ * when called (ADR-0072). Every change runs the server's own workspace
+ * operation as the MCP principal. */
+function createDesktopMcpAppControlAdapter(): AppControlAdapter {
+	const bound = (): AppControlAdapter => {
+		const authority = requireMcpAuthority();
+		const operations = authority.composition.workspaceOperations?.operations;
+		if (operations === undefined)
+			throw new ControlEndpointError(
+				'unsupported_op',
+				'Projects and windows are unavailable on this server.',
+			);
+		const { workspaceView } = authority.composition;
+		return createAppControlAdapter({
+			state: () => authority.workspace.state,
+			command: async (operation, payload, signal) => {
+				const handler = (
+					operations.commands as Record<
+						string,
+						((request: unknown) => unknown) | undefined
+					>
+				)?.[operation];
+				if (handler === undefined)
+					throw new ControlEndpointError(
+						'unsupported_op',
+						`${operation} is unavailable on this server.`,
+					);
+				const outcome = await handler(
+					mcpPrincipalCommandRequest(operation, payload, signal),
+				);
+				return typeof outcome === 'object' &&
+					outcome !== null &&
+					'result' in outcome
+					? (outcome as { result: unknown }).result
+					: outcome;
+			},
+			projectHandles: mcpProjectHandles,
+			windowHandles: mcpWindowHandles,
+			canonicalFolder: (root) => mcpRootFolders.canonicalDirectory(root),
+			openFirstTerminal: async (projectId) =>
+				(await createServerOwnedTerminalSession(projectId)).id,
+			busyTerminals: async (projectId, signal) =>
+				// A terminal whose program cannot be observed counts as busy.
+				(
+					await authority.service.observeProjectForegroundProcesses(
+						projectId,
+						undefined,
+						undefined,
+						signal,
+					)
+				).filter(
+					(observation) =>
+						observation.foregroundBusy || observation.observation === 'limited',
+				).length,
+			liveTerminals: (projectId) =>
+				authority
+					.list()
+					.filter(
+						(entry) =>
+							entry.projectId === projectId && entry.status === 'running',
+					).length,
+			...(workspaceView === undefined
+				? {}
+				: {
+						view: {
+							relay: workspaceView.relay,
+							targetFor: workspaceView.targetFor,
+						},
+					}),
+		});
+	};
+	return {
+		listProjects: (p, c, s) => bound().listProjects(p, c, s),
+		createProject: (p, c, s) => bound().createProject(p, c, s),
+		updateProject: (p, c, s) => bound().updateProject(p, c, s),
+		moveProject: (p, c, s) => bound().moveProject(p, c, s),
+		closeProject: (p, c, s) => bound().closeProject(p, c, s),
+		listWorkspaceWindows: (p, c, s) => bound().listWorkspaceWindows(p, c, s),
+		openWorkspaceWindow: (p, c, s) => bound().openWorkspaceWindow(p, c, s),
+		renameWorkspaceWindow: (p, c, s) => bound().renameWorkspaceWindow(p, c, s),
+		closeWorkspaceWindow: (p, c, s) => bound().closeWorkspaceWindow(p, c, s),
 	};
 }
 
@@ -4131,6 +4231,48 @@ async function describeMcpOperation(
 		case 'send_notification':
 		case 'dismiss_notification':
 			return describeNotificationRequest(op, params);
+		case 'list_projects':
+			return { summary: 'list your projects', details: [] };
+		case 'create_project':
+			return {
+				summary: `create a project${typeof params.name === 'string' ? ` named "${params.name}"` : ''}`,
+				details: [{ label: 'Folder', value: text(params.root), code: true }],
+			};
+		case 'update_project':
+			return {
+				summary: `change ${mcpProjectTitle(context, params.project) ?? 'a project'}`,
+				details: [
+					...(['name', 'icon', 'color', 'root'] as const).flatMap((field) =>
+						typeof params[field] === 'string'
+							? [{ label: field[0]!.toUpperCase() + field.slice(1), value: params[field] as string }]
+							: [],
+					),
+					...(params.shell_profile === undefined
+						? []
+						: [{ label: 'Default shell profile', value: text(params.shell_profile) || 'None' }]),
+				],
+			};
+		case 'move_project':
+			return {
+				summary: `move ${mcpProjectTitle(context, params.project) ?? 'a project'}`,
+				details: [],
+			};
+		case 'close_project':
+			return {
+				summary: `close ${mcpProjectTitle(context, params.project) ?? 'a project'}${params.force === true ? ', even with programs running' : ''}`,
+				details: [],
+			};
+		case 'list_workspace_windows':
+			return { summary: 'list your windows', details: [] };
+		case 'open_workspace_window':
+			return {
+				summary: `open a window${typeof params.name === 'string' ? ` named "${params.name}"` : ''}`,
+				details: [],
+			};
+		case 'rename_workspace_window':
+			return { summary: `rename a window to "${text(params.name)}"`, details: [] };
+		case 'close_workspace_window':
+			return { summary: 'close a window', details: [] };
 		case 'call_connected_tool':
 			// One call asks twice: to run the tool, then to show its view.
 			return group === 'appWindows'
@@ -4154,6 +4296,23 @@ async function describeMcpOperation(
 				details: [],
 			};
 	}
+}
+
+/** The name of a project a caller named by handle, if it reaches it. */
+function mcpProjectTitle(
+	context: ControlRequestContext,
+	handle: unknown,
+): string | undefined {
+	const state = requireMcpAuthority().workspace.state;
+	const projectId =
+		typeof handle === 'string'
+			? mcpProjectHandles.resolve(handle, state)
+			: reachOf(context) === 'workspace'
+				? undefined
+				: context.projectId;
+	if (projectId === undefined || !mcpReaches(context, projectId)) return undefined;
+	const name = state.projects[projectId]?.name;
+	return name === undefined ? undefined : `the project "${name}"`;
 }
 
 function buildMcpTerminalSearchResult(

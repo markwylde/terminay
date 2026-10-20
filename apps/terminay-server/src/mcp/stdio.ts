@@ -35,6 +35,7 @@ import {
 	MAX_SEARCH_MAX_MATCHES,
 	MAX_SEARCH_QUERY_CHARS,
 	PROJECT_HANDLE_PATTERN,
+	WINDOW_HANDLE_PATTERN,
 } from './dispatcher.js';
 import {
 	DEFAULT_AUTOMATION_RUNS_LIMIT,
@@ -79,6 +80,8 @@ const CONTROL_ERROR_CODES: ReadonlySet<ControlErrorCode> = new Set([
 	'permission_denied',
 	'permission_declined',
 	'approval_queue_full',
+	'out_of_scope',
+	'busy',
 	'internal',
 ]);
 const READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
@@ -459,6 +462,7 @@ function registerTools(
 	);
 	registerWorkspaceViewTools(server, call);
 	registerAutomationTools(server, call);
+	registerAppControlTools(server, call);
 	registerWindowTools(server, call);
 	registerNotificationTools(server, call);
 }
@@ -587,6 +591,130 @@ function registerWorkspaceViewTools(
 			inputSchema: { tab },
 		},
 		async (params, extra) => call('close_tab', params, extra.signal),
+	);
+}
+
+const WORKSPACE_REACH_NOTE =
+	'Only an agent in a terminal under Home, or a chat such as Pixel, can use it; from a project terminal it fails with out_of_scope.';
+
+/** Projects and workspace windows (ADR-0072). */
+function registerAppControlTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const project = z.string().regex(PROJECT_HANDLE_PATTERN);
+	const window = z.string().regex(WINDOW_HANDLE_PATTERN);
+	const root = z
+		.string()
+		.min(1)
+		.max(4096)
+		.describe(
+			'An absolute path, ~ for the home folder, or a path beginning ~/. It must be an existing folder on the server.',
+		);
+	const name = z.string().min(1).max(256);
+	const presentation = z.string().max(128);
+	server.registerTool(
+		'list_projects',
+		{
+			description:
+				'List projects with their opaque project handles, names, icons, colours, root folders (null when a project has none), default shell profiles, and the workspace window each is in with its position there. From a project terminal it lists only your own project; from a terminal under Home or a chat it lists every project and the automation space.',
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_projects', {}, extra.signal),
+	);
+	server.registerTool(
+		'create_project',
+		{
+			description: `Create a project, started at once, and open its first terminal. root ~ starts it in the home folder with no root folder; any other root becomes its folder and, without a name, names it. It goes into window, or else the window you are talking from, and that window shows it (shown says whether it did). Returns its project handle and first terminal. Nothing here lists or browses folders. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {
+				root,
+				name: name.optional(),
+				icon: presentation.optional(),
+				color: presentation.optional(),
+				window: window.optional(),
+			},
+		},
+		async (params, extra) => call('create_project', params, extra.signal),
+	);
+	server.registerTool(
+		'update_project',
+		{
+			description:
+				'Change a project: its name, icon, or colour, and, from a terminal under Home or a chat, its root folder (an existing folder) or default shell profile (an id, or null to clear it). From a project terminal, project may be omitted and only your own project\'s name, icon, and colour can change.',
+			inputSchema: {
+				project: project.optional(),
+				name: name.optional(),
+				icon: presentation.optional(),
+				color: presentation.optional(),
+				root: root.optional(),
+				shell_profile: z.string().regex(ID_PATTERN).nullable().optional(),
+			},
+		},
+		async (params, extra) => call('update_project', params, extra.signal),
+	);
+	server.registerTool(
+		'move_project',
+		{
+			description: `Move a project to position in its window, or into another workspace window. Its terminals keep running with their output. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {
+				project,
+				window: window.optional(),
+				position: z.number().int().min(0).optional(),
+			},
+		},
+		async (params, extra) => call('move_project', params, extra.signal),
+	);
+	server.registerTool(
+		'close_project',
+		{
+			description: `Close a project on every device, ending its terminals. When any of its terminals is running a program it fails with busy and how many, unless force is true. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: { project, force: z.boolean().optional() },
+			annotations: { destructiveHint: true },
+		},
+		async (params, extra) => call('close_project', params, extra.signal),
+	);
+	server.registerTool(
+		'list_workspace_windows',
+		{
+			description: `List workspace windows: each window's opaque handle, its name, and its projects' handles in order. A workspace window is the server's group of projects, not an app window shown in a terminal. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_workspace_windows', {}, extra.signal),
+	);
+	server.registerTool(
+		'open_workspace_window',
+		{
+			description: `Create a workspace window, optionally named and holding projects moved into it, and present it where you are talking from: a new window on Desktop, or the shown view in a browser. presented says whether it was. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {
+				name: name.optional(),
+				projects: z.array(project).max(32).optional(),
+			},
+		},
+		async (params, extra) => call('open_workspace_window', params, extra.signal),
+	);
+	server.registerTool(
+		'rename_workspace_window',
+		{
+			description: `Rename a workspace window. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: { window, name },
+		},
+		async (params, extra) =>
+			call('rename_workspace_window', params, extra.signal),
+	);
+	server.registerTool(
+		'close_workspace_window',
+		{
+			description: `Delete a workspace window. It must hold no projects (move or close them first) and must not be the last window. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: { window },
+		},
+		async (params, extra) =>
+			call('close_workspace_window', params, extra.signal),
 	);
 }
 

@@ -43,6 +43,7 @@ import {
 	resolveOpenTerminalProject,
 	workspaceProjectFields,
 } from './workspaceReach.js';
+import { APP_CONTROL_OPERATIONS } from './appControlTools.js';
 
 export interface ServerTerminalControlAdapterOptions {
 	readonly terminal: TerminalService;
@@ -226,14 +227,17 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			...AUTOMATION_TOOLS,
 			...WINDOW_TOOLS,
 			...NOTIFICATION_TOOLS,
+			...APP_CONTROL_OPERATIONS,
 		].map((tool) => ({
 			tool,
 			available:
 				// This adapter binds terminals only; a host that serves
-				// automations, app windows, or notifications binds them separately.
+				// automations, app windows, notifications, or projects and
+				// windows binds them separately.
 				AUTOMATION_TOOLS.includes(tool) ||
 				WINDOW_TOOLS.includes(tool) ||
-				NOTIFICATION_TOOLS.includes(tool)
+				NOTIFICATION_TOOLS.includes(tool) ||
+				(APP_CONTROL_OPERATIONS as readonly string[]).includes(tool)
 					? false
 					: tool === 'wait_for_idle' ||
 				tool === 'wait_for_command' ||

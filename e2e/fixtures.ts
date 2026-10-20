@@ -369,7 +369,9 @@ export async function launchDesktopApp(options: {
 					: {}),
 				// Pixel's Claude Code provider runs a fake that speaks the real
 				// streaming-JSON protocol, so no agent account is needed.
-				...(path.basename(testInfo.file) === 'pixel.spec.ts'
+				...(['pixel.spec.ts', 'mcp-app-control.spec.ts'].includes(
+					path.basename(testInfo.file),
+				)
 					? {
 							TERMINAY_CLAUDE_CODE_COMMAND: path.resolve(
 								'e2e/fixtures/fake-claude-chat.mjs',
