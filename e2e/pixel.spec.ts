@@ -229,3 +229,29 @@ test('a terminal Pixel opens in the automation space is listed in Tabs and opens
 	await row.click();
 	await expect(mainWindow.locator('[data-terminay-automation-terminal-page]')).toBeVisible();
 });
+
+test('on a phone Pixel docks in the header in place of the connection glyph', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+}) => {
+	await setPixel(appHarness, mainWindow, true);
+	const nativeWindow = await electronApp.browserWindow(mainWindow);
+	await nativeWindow.evaluate((window) => {
+		window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+	});
+	const row = mainWindow.locator('[data-compact-chrome="true"]');
+	const headerDock = row.locator('.pixel-dock--header');
+	await expect(headerDock).toBeVisible();
+	await expect(dock(mainWindow)).toHaveCount(1);
+	await expect(row.locator('[data-compact-connection="true"]')).toHaveCount(0);
+	await expect(mainWindow.locator('.pixel-dock--corner')).toHaveCount(0);
+
+	await headerDock.click();
+	await expect(balloon(mainWindow)).toBeVisible();
+
+	// Off again, the glyph comes back to the trailing edge.
+	await setPixel(appHarness, mainWindow, false);
+	await expect(dock(mainWindow)).toHaveCount(0);
+	await expect(row.locator('[data-compact-connection="true"]')).toBeVisible();
+});

@@ -23,6 +23,9 @@ import type { PixelServer } from './usePixelServer';
 type PixelProps = Readonly<{
 	serverId: string;
 	server: PixelServer;
+	/** The compact chrome row's dock slot; at phone width it wins over both
+	 * the status bar and the corner. */
+	headerDock: HTMLElement | null;
 	/** The status bar's dock slot, or null while the status bar is hidden. */
 	statusBarDock: HTMLElement | null;
 }>;
@@ -50,13 +53,15 @@ function chatHandlers(serverRef: { readonly current: PixelServer }) {
 }
 
 /**
- * Pixel: a dock in the status bar (or the corner when the bar is hidden) and
+ * Pixel: a dock in the compact header at phone width, otherwise in the status
+ * bar (or the corner when the bar is hidden), and
  * the animated pet that flies out of it with its chat balloon. Rendered only
  * while Pixel is on; unmounting removes the pet from the page.
  */
 export function PixelCompanion({
 	serverId,
 	server,
+	headerDock,
 	statusBarDock,
 }: PixelProps) {
 	const [pet, setPet] = useState<PetInstance | null>(null);
@@ -64,10 +69,13 @@ export function PixelCompanion({
 		null,
 	);
 	const [dockButton, setDockButton] = useState<HTMLButtonElement | null>(null);
+	const [headerButton, setHeaderButton] = useState<HTMLButtonElement | null>(
+		null,
+	);
 	const serverRef = useRef(server);
 	serverRef.current = server;
 	const dockRef = useRef<HTMLElement | null>(null);
-	dockRef.current = dockButton ?? fallbackDock;
+	dockRef.current = headerButton ?? dockButton ?? fallbackDock;
 
 	const { chat, state, providers, problem } = server;
 	const onboarding = state?.provider === PIXEL_PROVIDER_UNSET;
@@ -213,6 +221,11 @@ export function PixelCompanion({
 		</button>
 	);
 
+	if (headerDock !== null)
+		return createPortal(
+			dock(setHeaderButton, 'pixel-dock pixel-dock--header'),
+			headerDock,
+		);
 	return statusBarDock === null
 		? dock(setFallbackDock, 'pixel-dock pixel-dock--corner')
 		: createPortal(
