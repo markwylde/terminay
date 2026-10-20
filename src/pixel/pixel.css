@@ -91,3 +91,23 @@
 		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 	--mwpet-radius: 10px;
 }
+
+/* On a phone's compact row: Pixel in the slot the connection glyph gave up. */
+.pixel-dock--header {
+	flex: none;
+	width: 30px;
+	height: 30px;
+	padding: 3px 5px;
+	border-radius: 6px;
+}
+
+.pixel-dock--header:hover {
+	background: rgba(255, 255, 255, 0.09);
+}
+
+@media (max-width: 380px) {
+	.pixel-dock--header {
+		width: 27px;
+		padding: 3px 4px;
+	}
+}

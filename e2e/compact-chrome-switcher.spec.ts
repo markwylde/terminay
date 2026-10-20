@@ -16,6 +16,13 @@ async function resize(
 	}, bounds);
 }
 
+/** The compact row has no Home control; Home is reached through the switcher. */
+async function goHome(page: Page) {
+	await page.locator('[data-compact-breadcrumb="true"]').click();
+	await switcherOf(page).getByRole('button', { name: 'Home', exact: true }).click();
+	await expect(switcherOf(page)).toHaveCount(0);
+}
+
 const switcherOf = (page: Page) =>
 	page.getByRole('dialog', { name: 'Switch terminal' });
 
@@ -113,7 +120,6 @@ test.describe('compact chrome', () => {
 		expect(overflow).toBeLessThanOrEqual(1);
 		// Every control is still on the row.
 		await expect(mainWindow.getByLabel('Toggle file explorer')).toBeVisible();
-		await expect(mainWindow.getByRole('button', { name: 'Home', exact: true })).toBeVisible();
 		await expect(mainWindow.getByLabel('Open command bar')).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-compact-breadcrumb="true"]'),
@@ -121,6 +127,41 @@ test.describe('compact chrome', () => {
 		await expect(
 			mainWindow.locator('[data-compact-connection="true"]'),
 		).toBeVisible();
+	});
+
+	test('Home lives in the switcher, not on the row', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const row = mainWindow.locator('[data-compact-chrome="true"]');
+		await expect(row).toBeVisible();
+		await expect(
+			row.getByRole('button', { name: 'Home', exact: true }),
+		).toHaveCount(0);
+
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		const home = switcherOf(mainWindow).getByRole('button', {
+			name: 'Home',
+			exact: true,
+		});
+		await expect(home).not.toHaveAttribute('aria-current', 'page');
+		await home.click();
+		await expect(switcherOf(mainWindow)).toHaveCount(0);
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+
+		// It is still there while a filter narrows the list.
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		await switcherOf(mainWindow)
+			.getByRole('button', { name: 'Search terminals and projects' })
+			.click();
+		await mainWindow.keyboard.type('no such terminal');
+		await expect(
+			switcherOf(mainWindow).getByRole('button', { name: 'Home', exact: true }),
+		).toHaveAttribute('aria-current', 'page');
 	});
 
 	test('the command bar opens from the row, with no key to press', async ({
@@ -154,7 +195,7 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await goHome(mainWindow);
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
 			'data-terminay-selected-view',
 			'home',
@@ -571,7 +612,7 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await goHome(mainWindow);
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
 			'data-terminay-selected-view',
 			'home',
@@ -857,7 +898,7 @@ test.describe('compact chrome', () => {
 		await expect(switcher).toHaveCount(0);
 
 		// With the dashboard in front there is no project whose agents to show.
-		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await goHome(mainWindow);
 		await mainWindow.locator('[data-compact-connection="true"]').click();
 		await expect(switcher).toBeVisible();
 		await expect(switcher.getByRole('tab')).toHaveCount(0);

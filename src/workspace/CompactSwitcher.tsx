@@ -10,7 +10,7 @@
  * switcher never resizes a terminal and dismissing it never costs a relayout.
  */
 
-import { FolderPlus, Plus, Search, Server, X } from 'lucide-react';
+import { FolderPlus, House, Plus, Search, Server, X } from 'lucide-react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -41,6 +41,7 @@ export type CompactSwitcherProps = Readonly<{
 	 * because a filter can narrow the project in front out of the list. */
 	front?: CompactSwitcherFront;
 	groups: readonly CompactSwitcherConnectionGroup[];
+	isHomeSelected: boolean;
 	/** Choosing a folder heading shows that folder, with or without panels.
 	 * At this width it is the only way to an empty one. */
 	onActivateFolder?: (
@@ -68,6 +69,8 @@ export type CompactSwitcherProps = Readonly<{
 	/** Creates in the project in front; absent when no project is active. */
 	onNewTerminalHere?: () => void;
 	onQueryChange: (query: string) => void;
+	/** The compact row has no Home control; this is where a phone goes Home. */
+	onShowHome: () => void;
 	query: string;
 	/** The servers this window could show, Local first, where the host can
 	 * switch between them. At this width the header's connection menu is not
@@ -235,6 +238,7 @@ export function CompactSwitcher({
 	agents,
 	front,
 	groups,
+	isHomeSelected,
 	onActivateFolder,
 	onActivatePanel,
 	onAddConnection,
@@ -248,6 +252,7 @@ export function CompactSwitcher({
 	onNewTerminalHere,
 	onNewTerminalInFolder,
 	onQueryChange,
+	onShowHome,
 	onSwitchServer,
 	query,
 	serverUpgrades,
@@ -304,6 +309,20 @@ export function CompactSwitcher({
 					className={`compact-switcher__tools${isSearchOpen ? ' compact-switcher__tools--searching' : ''}`}
 				>
 					<span className="compact-switcher__grab" aria-hidden="true" />
+					{/* Home is a destination like any project, and the toolbar is
+					    drawn whatever the filter, so it is never filtered away. */}
+					<button
+						type="button"
+						className={`compact-switcher__home${isHomeSelected ? ' compact-switcher__home--active' : ''}`}
+						onClick={onShowHome}
+						aria-label="Home"
+						aria-current={isHomeSelected ? 'page' : undefined}
+						title="Home"
+						data-terminay-home-control="true"
+					>
+						<House size={15} aria-hidden="true" />
+						{isSearchOpen ? null : <span>Home</span>}
+					</button>
 					{isSearchOpen ? (
 						<div className="compact-switcher__search">
 							<Search size={15} aria-hidden="true" />
