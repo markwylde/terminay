@@ -307,7 +307,7 @@ export function parseReorderFolders(
 		folders.length > MAX_REORDERED_FOLDERS
 	)
 		return badRequest(
-			"folders must list every folder of one project, in the new order",
+			'folders must list every folder of one project, in the new order',
 		);
 	for (const folder of folders) {
 		const parsed = id(folder, 'folders');
@@ -323,7 +323,8 @@ export function parseFocusHome(
 ): Parsed<FocusHomeParams> {
 	const section = params.section;
 	if (section === undefined) return {};
-	return typeof section === 'string' && HOME_SECTIONS.has(section as HomeSection)
+	return typeof section === 'string' &&
+		HOME_SECTIONS.has(section as HomeSection)
 		? { section: section as HomeSection }
 		: badRequest('section must be home, tabs, or automations');
 }

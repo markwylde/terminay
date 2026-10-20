@@ -50,7 +50,11 @@ function context(overrides = {}) {
 	};
 }
 const projectTerminal = () =>
-	context({ terminalSessionId: 'caller', projectId: 'project-a', reach: undefined });
+	context({
+		terminalSessionId: 'caller',
+		projectId: 'project-a',
+		reach: undefined,
+	});
 
 async function fixture({ references = () => [] } = {}) {
 	// A stored file carrying a secret reference, as one from the vault does.
@@ -173,7 +177,10 @@ test('the reachable settings are exactly the allow-list, and none of the exclude
 		'aiTabMetadata.title.secretToken',
 	])
 		assert.equal(isMcpReachableSettingPath(path), false, path);
-	assert.equal(isMcpReachableSettingPath('activityIndicators.greenDelaySeconds'), true);
+	assert.equal(
+		isMcpReachableSettingPath('activityIndicators.greenDelaySeconds'),
+		true,
+	);
 });
 
 test('a setting added to SETTING_AUTHORITY later is unreachable until the allow-list names it', () => {
@@ -182,7 +189,10 @@ test('a setting added to SETTING_AUTHORITY later is unreachable until the allow-
 		assert.equal(SETTING_AUTHORITY.futureIntegration, 'server');
 		assert.equal(isMcpReachableSettingPath('futureIntegration'), false);
 		assert.equal(isMcpReachableSettingPath('futureIntegration.apiHost'), false);
-		assert.equal(MCP_REACHABLE_SETTING_PATHS.includes('futureIntegration'), false);
+		assert.equal(
+			MCP_REACHABLE_SETTING_PATHS.includes('futureIntegration'),
+			false,
+		);
 	} finally {
 		delete SETTING_AUTHORITY.futureIntegration;
 	}
@@ -193,7 +203,13 @@ test('get_settings returns the reachable settings and never a credential or secr
 	const result = await f.call('get_settings');
 	assert.equal(result.settings.scrollback, 5000);
 	assert.equal(result.settings.activityIndicators.greenDelaySeconds, 1);
-	for (const key of ['terminayMcp', 'remoteAccess', 'recording', 'shell', 'shellProfiles'])
+	for (const key of [
+		'terminayMcp',
+		'remoteAccess',
+		'recording',
+		'shell',
+		'shellProfiles',
+	])
 		assert.equal(key in result.settings, false, key);
 	const text = JSON.stringify(result);
 	assert.equal(text.includes(SECRET), false);
@@ -205,7 +221,9 @@ test('get_settings returns the reachable settings and never a credential or secr
 test('update_settings changes scrollback through settings.update, as the MCP principal', async () => {
 	const f = await fixture();
 	const before = f.journal.replay().events.length;
-	const result = await f.call('update_settings', { settings: { scrollback: 10000 } });
+	const result = await f.call('update_settings', {
+		settings: { scrollback: 10000 },
+	});
 	assert.deepEqual(result.updated, ['scrollback']);
 	assert.equal(result.settings.scrollback, 10000);
 	assert.equal(f.settings.settings.scrollback, 10000);
@@ -235,9 +253,15 @@ test('update_settings refuses the MCP policy and the Enable switch, naming them'
 		});
 		assert.equal(outcome.ok, false, path);
 		assert.equal(outcome.error.code, 'bad_request', path);
-		assert.match(outcome.error.message, new RegExp(path.replaceAll('.', '\\.')));
+		assert.match(
+			outcome.error.message,
+			new RegExp(path.replaceAll('.', '\\.')),
+		);
 	}
-	assert.equal(f.settings.settings.terminayMcp.permissions.automationsManage, 'ask');
+	assert.equal(
+		f.settings.settings.terminayMcp.permissions.automationsManage,
+		'ask',
+	);
 	assert.equal(f.settings.settings.terminayMcp.enabled, true);
 	assert.equal(f.settings.revision, 3);
 });
@@ -257,7 +281,10 @@ test('a batch with one bad setting is refused whole, naming it, and scrollback i
 		[{ scrollback: 'lots' }, /scrollback cannot be set/],
 		[{ scrollback: 5_000_000 }, /scrollback cannot be set/],
 		[{ 'recording.recordNewTerminals': true }, /recording\.recordNewTerminals/],
-		[{ 'shellProfiles.defaultProfileId': 'x' }, /shellProfiles\.defaultProfileId/],
+		[
+			{ 'shellProfiles.defaultProfileId': 'x' },
+			/shellProfiles\.defaultProfileId/,
+		],
 	]) {
 		const refused = await f.call('update_settings', { settings });
 		assert.equal(refused.error.code, 'bad_request', JSON.stringify(settings));
@@ -271,8 +298,8 @@ test('settings tools need workspace reach', async () => {
 	const f = await fixture();
 	for (const op of ['get_settings', 'update_settings'])
 		assert.equal(
-			(await f.call(op, { settings: { scrollback: 1 } }, projectTerminal())).error
-				.code,
+			(await f.call(op, { settings: { scrollback: 1 } }, projectTerminal()))
+				.error.code,
 			'out_of_scope',
 			op,
 		);
@@ -293,7 +320,10 @@ test("update_settings' approval shows each setting's current and requested value
 				agent: 'Pixel',
 				terminalTitle: 'Pixel',
 				...describeSettingsUpdate(
-					planSettingsUpdate(params.settings, settingsState(await f.settings.load())),
+					planSettingsUpdate(
+						params.settings,
+						settingsState(await f.settings.load()),
+					),
 				),
 			}),
 		}),
@@ -304,7 +334,10 @@ test("update_settings' approval shows each setting's current and requested value
 			version: 1,
 			op: 'update_settings',
 			params: {
-				settings: { scrollback: 10000, 'activityIndicators.showActiveTabs': true },
+				settings: {
+					scrollback: 10000,
+					'activityIndicators.showActiveTabs': true,
+				},
 			},
 		},
 		context(),
@@ -373,7 +406,10 @@ test('save_shell_profile adds a profile as the Settings > Shell editor does', as
 		profile: { id: saved.profile, environment: { API_TOKEN: 'x' } },
 	});
 	assert.equal(secretLike.error.code, 'bad_request');
-	assert.equal((await f.profiles.detail(saved.profile)).environment.API_TOKEN, undefined);
+	assert.equal(
+		(await f.profiles.detail(saved.profile)).environment.API_TOKEN,
+		undefined,
+	);
 	// The default and the order go through the editor's operations too.
 	assert.deepEqual(
 		await f.call('set_default_shell_profile', { profile_id: saved.profile }),
@@ -412,10 +448,15 @@ test('delete_shell_profile refuses a profile a project uses, and deletes one not
 		references: (profileId) => (referenced.has(profileId) ? ['project-a'] : []),
 	});
 	const saved = await f.call('save_shell_profile', {
-		profile: { name: 'Bash', target: { kind: 'executable', executable: '/bin/bash' } },
+		profile: {
+			name: 'Bash',
+			target: { kind: 'executable', executable: '/bin/bash' },
+		},
 	});
 	referenced = new Set([saved.profile]);
-	const refused = await f.call('delete_shell_profile', { profile_id: saved.profile });
+	const refused = await f.call('delete_shell_profile', {
+		profile_id: saved.profile,
+	});
 	assert.equal(refused.error.code, 'conflict');
 	assert.equal(refused.error.message.includes('project-a'), false);
 	assert.ok(await f.profiles.detail(saved.profile));
@@ -424,14 +465,19 @@ test('delete_shell_profile refuses a profile a project uses, and deletes one not
 		await f.call('delete_shell_profile', { profile_id: saved.profile }),
 		{ profile: saved.profile, deleted: true },
 	);
-	const unknown = await f.call('delete_shell_profile', { profile_id: saved.profile });
+	const unknown = await f.call('delete_shell_profile', {
+		profile_id: saved.profile,
+	});
 	assert.equal(unknown.error.code, 'not_found');
 });
 
 test('only list_shell_profiles is open to project reach', async () => {
 	const f = await fixture();
 	for (const [op, params] of [
-		['save_shell_profile', { profile: { name: 'x', target: { kind: 'system' } } }],
+		[
+			'save_shell_profile',
+			{ profile: { name: 'x', target: { kind: 'system' } } },
+		],
 		['delete_shell_profile', { profile_id: 'x' }],
 		['reorder_shell_profiles', { profile_ids: [] }],
 		['set_default_shell_profile', { profile_id: 'system' }],
@@ -441,5 +487,9 @@ test('only list_shell_profiles is open to project reach', async () => {
 			'out_of_scope',
 			op,
 		);
-	assert.ok(Array.isArray((await f.call('list_shell_profiles', {}, projectTerminal())).profiles));
+	assert.ok(
+		Array.isArray(
+			(await f.call('list_shell_profiles', {}, projectTerminal())).profiles,
+		),
+	);
 });

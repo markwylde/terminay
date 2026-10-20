@@ -64,7 +64,11 @@ export const MAX_LISTED_SHELL_PROFILES = 128;
 export function createSettingsControlAdapter(
 	options: SettingsControlAdapterOptions,
 ): SettingsControlAdapter {
-	const query = async (operation: string, payload: JsonValue, signal: AbortSignal) => {
+	const query = async (
+		operation: string,
+		payload: JsonValue,
+		signal: AbortSignal,
+	) => {
 		try {
 			return await options.query(operation, payload, signal);
 		} catch (error) {
@@ -78,7 +82,12 @@ export function createSettingsControlAdapter(
 		expectedRevision?: number,
 	) => {
 		try {
-			return await options.command(operation, payload, signal, expectedRevision);
+			return await options.command(
+				operation,
+				payload,
+				signal,
+				expectedRevision,
+			);
 		} catch (error) {
 			throw profileError(error);
 		}
@@ -220,7 +229,10 @@ export function planSettingsUpdate(
 	requested: Readonly<Record<string, unknown>>,
 	state: { readonly revision: number; readonly settings: SettingsObject },
 ): SettingsUpdatePlan {
-	const candidate = structuredClone(state.settings) as Record<string, JsonValue>;
+	const candidate = structuredClone(state.settings) as Record<
+		string,
+		JsonValue
+	>;
 	const patch: Record<string, JsonValue> = {};
 	const changes: SettingsUpdatePlan['changes'][number][] = [];
 	for (const [path, value] of Object.entries(requested)) {
@@ -403,7 +415,9 @@ function isJson(value: unknown): value is JsonValue {
 		return true;
 	if (typeof value === 'number') return Number.isFinite(value);
 	if (Array.isArray(value)) return value.every(isJson);
-	return isObject(value as JsonValue) && Object.values(value as object).every(isJson);
+	return (
+		isObject(value as JsonValue) && Object.values(value as object).every(isJson)
+	);
 }
 
 function isObject(

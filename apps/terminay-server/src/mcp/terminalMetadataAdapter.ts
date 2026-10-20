@@ -86,10 +86,7 @@ export function createTerminalMetadataAdapter(
 					? {}
 					: { activityIndicatorsEnabled: params.activityTracking }),
 			};
-			await apply(
-				{ type: 'panel.update', panelId: panel.id, patch },
-				context,
-			);
+			await apply({ type: 'panel.update', panelId: panel.id, patch }, context);
 			const after = (await options.state()).panels[panel.id];
 			return {
 				terminal: target.sessionId,
@@ -113,7 +110,8 @@ export function createTerminalMetadataAdapter(
 			const state = await options.state();
 			const panel = panelOf(state, target.sessionId);
 			const projectId = options.projectHandles.resolve(params.project, state);
-			const to = projectId === undefined ? undefined : state.projects[projectId];
+			const to =
+				projectId === undefined ? undefined : state.projects[projectId];
 			if (to === undefined)
 				throw new ControlEndpointError(
 					'not_found',

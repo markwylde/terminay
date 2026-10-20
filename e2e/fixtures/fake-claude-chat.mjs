@@ -113,6 +113,18 @@ async function turn(text) {
 			const closed = await tool('close_workspace_window', { window: second.window });
 			say(closed.ok ? 'Moved it back and closed the window.' : `I could not close it: ${closed.error.code} (${closed.error.message}).`);
 		}
+	} else if (text === 'make a project in my home folder') {
+		// A project at ~ with its first terminal, shown here (ADR-0072).
+		const created = await tool('create_project', { root: '~', name: 'Home from Pixel' });
+		say(
+			created.ok
+				? `Created ${created.result.name} with terminal ${created.result.terminal ?? 'none'}${created.result.shown ? ', on screen.' : '.'}`
+				: `I could not create it: ${created.error.code} (${created.error.message}).`,
+		);
+	} else if (text === 'set scrollback to 4321') {
+		// Change Settings is Ask by default, so this waits on the user.
+		const updated = await tool('update_settings', { settings: { scrollback: 4321 } });
+		say(updated.ok ? 'Scrollback is now 4321.' : `I could not change it: ${updated.error.code} (${updated.error.message}).`);
 	} else if (text.includes('2x2')) {
 		// What a careful agent does with "open three more and make a 2x2 grid":
 		// look, split three times, then look again and report what it saw.
