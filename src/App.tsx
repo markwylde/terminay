@@ -138,8 +138,10 @@ import {
 } from './hooks/useTerminalSettings';
 import {
 	checkForAppUpdate,
+	closeHostPresentation,
 	installAppUpdate,
 	openExternalUrl,
+	presentWorkspaceView,
 	setApplicationBadgeCount,
 } from './host/nativeActions';
 import {
@@ -6663,8 +6665,38 @@ function App({
 			unsubscribe();
 		};
 	}, [terminalClientContext?.workspaceSnapshotStore]);
+	// A workspace window deleted on the server (ADR-0072) ends this window's
+	// presentation of it: Desktop closes the window, and a presentation the
+	// host cannot close shows the server's first window instead. A view this
+	// window has not yet seen may be one it is still creating.
+	const [deletedPresentedViewId, setDeletedPresentedViewId] = useState<
+		string | null
+	>(null);
+	const presentedWorkspaceViewId =
+		requestedWorkspaceViewId !== null &&
+		requestedWorkspaceViewId === deletedPresentedViewId
+			? null
+			: requestedWorkspaceViewId;
+	const presentedViewSeenRef = useRef(false);
+	const presentedViewExists =
+		requestedWorkspaceViewId === null ||
+		workspaceSnapshot === null ||
+		workspaceSnapshot === undefined
+			? undefined
+			: workspaceSnapshot.views[requestedWorkspaceViewId] !== undefined;
+	useEffect(() => {
+		if (presentedViewExists === undefined) return;
+		if (presentedViewExists) {
+			presentedViewSeenRef.current = true;
+			return;
+		}
+		if (!presentedViewSeenRef.current || deletedPresentedViewId !== null)
+			return;
+		setDeletedPresentedViewId(requestedWorkspaceViewId);
+		if (hasNativeWindowControls) void closeHostPresentation();
+	}, [deletedPresentedViewId, hasNativeWindowControls, presentedViewExists]);
 	const boundWorkspaceViewId =
-		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
+		presentedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
 	const {
 		activeProjectId,
 		activeProjectIdRef,
@@ -6701,9 +6733,9 @@ function App({
 		// The main window shows the workspace's first view; it stays open on
 		// Home when its last project closes. A popped-out view's window does not.
 		stayOpenWhenEmpty:
-			requestedWorkspaceViewId === null ||
+			presentedWorkspaceViewId === null ||
 			requestedOwnWorkspaceView ||
-			requestedWorkspaceViewId === workspaceSnapshot?.viewOrder[0],
+			presentedWorkspaceViewId === workspaceSnapshot?.viewOrder[0],
 		// Only Desktop has several windows; a browser holds every view's projects.
 		presentsEveryView: !hasNativeWindowControls,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
@@ -6717,21 +6749,21 @@ function App({
 	const ownViewStore = terminalClientContext?.workspaceSnapshotStore;
 	const ownViewMissing =
 		requestedOwnWorkspaceView &&
-		requestedWorkspaceViewId !== null &&
+		presentedWorkspaceViewId !== null &&
 		workspaceSnapshot !== null &&
 		workspaceSnapshot !== undefined &&
-		workspaceSnapshot.views[requestedWorkspaceViewId] === undefined;
+		workspaceSnapshot.views[presentedWorkspaceViewId] === undefined;
 	useEffect(() => {
 		if (
 			!ownViewMissing ||
 			ownViewStore === undefined ||
-			requestedWorkspaceViewId === null ||
+			presentedWorkspaceViewId === null ||
 			ownViewRequestedRef.current
 		)
 			return;
 		ownViewRequestedRef.current = true;
 		void ownViewStore
-			.createView({ viewId: requestedWorkspaceViewId, name: 'Window' })
+			.createView({ viewId: presentedWorkspaceViewId, name: 'Window' })
 			.catch(() => {
 				// Another window may have made it first; if it is still missing
 				// the next snapshot asks again.
@@ -8550,6 +8582,18 @@ function App({
 			workspaceRefs.current.get(projectId, folderId),
 		showProject: (projectId) => activateProjectRef.current(projectId),
 		selectFolder,
+		presentView: async (viewId) => {
+			if (hasNativeWindowControls) {
+				await presentWorkspaceView(viewId, { x: 120, y: 120 });
+				return;
+			}
+			// A browser holds every window's projects: showing the window is
+			// showing its first project.
+			const first =
+				workspaceSnapshotStoreRef.current?.snapshot?.views[viewId]
+					?.projectIds[0];
+			if (first !== undefined) activateProjectRef.current(first);
+		},
 	};
 	const workspaceViewWindowRef = useRef(workspaceViewWindow);
 	workspaceViewWindowRef.current = workspaceViewWindow;

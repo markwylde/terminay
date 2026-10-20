@@ -75,6 +75,15 @@ export const CONTROL_OPERATIONS = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'list_projects',
+	'create_project',
+	'update_project',
+	'move_project',
+	'close_project',
+	'list_workspace_windows',
+	'open_workspace_window',
+	'rename_workspace_window',
+	'close_workspace_window',
 	'show_window',
 	'close_window',
 	'list_windows',
@@ -115,10 +124,11 @@ export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
 export type ControlOp = ControlOperation;
 export type ControlScope = 'none' | 'read' | 'write' | 'admin';
 /**
- * Which terminals a capability may address (ADR-0030). `project` reaches the
- * terminal's own project. `workspace` reaches every project and the automation
- * terminal space on the same server, and is held only by terminals in that
- * space. Reach never widens the operation set and never crosses servers.
+ * Which terminals a capability may address (ADR-0030), and which app-level
+ * tools it may use (ADR-0072). `project` reaches the terminal's own project.
+ * `workspace` reaches every project and the automation terminal space on the
+ * same server, is held only by terminals in that space and workspace chats,
+ * and alone may use the app-level tools. Reach never crosses servers.
  */
 export type ControlReach = 'project' | 'workspace';
 
@@ -291,6 +301,8 @@ export type ControlErrorCode =
 	| 'permission_denied'
 	| 'permission_declined'
 	| 'approval_queue_full'
+	| 'out_of_scope'
+	| 'busy'
 	| 'internal';
 
 export interface ControlError {
@@ -470,6 +482,8 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'permission_denied',
 	'permission_declined',
 	'approval_queue_full',
+	'out_of_scope',
+	'busy',
 	'internal',
 ]);
 const CONTROL_ERROR_MESSAGE_BYTES = 4 * 1024;

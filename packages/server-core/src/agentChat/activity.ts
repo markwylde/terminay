@@ -112,6 +112,28 @@ export function describeChatMcpCall(
 			return 'Running an automation';
 		case 'stop_automation_run':
 			return 'Stopping an automation run';
+		case 'list_projects':
+			return 'Looking at the projects';
+		case 'create_project': {
+			const project = quoted(params.name, 60);
+			return project === ''
+				? 'Creating a project'
+				: `Creating the project “${project}”`;
+		}
+		case 'update_project':
+			return 'Changing a project';
+		case 'move_project':
+			return 'Moving a project';
+		case 'close_project':
+			return 'Closing a project';
+		case 'list_workspace_windows':
+			return 'Looking at the windows';
+		case 'open_workspace_window':
+			return 'Opening a window';
+		case 'rename_workspace_window':
+			return 'Renaming a window';
+		case 'close_workspace_window':
+			return 'Closing a window';
 		default:
 			return `Using ${operation.replace(/[^\w.:-]/g, '').slice(0, 64)}`;
 	}

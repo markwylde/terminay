@@ -86,6 +86,29 @@ async function turn(text) {
 	} else if (text === 'open a background terminal') {
 		const opened = await tool('open_terminal', { name: 'Background job' });
 		say(opened.ok ? `Opened it in ${opened.result.project_title ?? 'your project'}.` : `I could not open it: ${opened.error.code} (${opened.error.message}).`);
+	} else if (text === 'pop this project out') {
+		// A workspace window of its own for the project in front (ADR-0072).
+		const layout = await tool('get_layout', {});
+		if (!layout.ok || layout.result.project === undefined) say(`I cannot see your project (${layout.ok ? 'no handle' : layout.error.code}).`);
+		else {
+			const opened = await tool('open_workspace_window', { name: 'Popped out', projects: [layout.result.project] });
+			say(
+				!opened.ok
+					? `I could not open a window: ${opened.error.code} (${opened.error.message}).`
+					: opened.result.presented
+						? `Opened a window for ${layout.result.project_title}.`
+						: `Made a window but could not show it: ${opened.result.reason}.`,
+			);
+		}
+	} else if (text === 'bring it back') {
+		const listed = await tool('list_workspace_windows', {});
+		const [first, second] = listed.ok ? listed.result.windows : [];
+		if (first === undefined || second === undefined) say('There is no second window.');
+		else {
+			for (const project of second.projects) await tool('move_project', { project, window: first.window });
+			const closed = await tool('close_workspace_window', { window: second.window });
+			say(closed.ok ? 'Moved it back and closed the window.' : `I could not close it: ${closed.error.code} (${closed.error.message}).`);
+		}
 	} else if (text.includes('2x2')) {
 		// What a careful agent does with "open three more and make a 2x2 grid":
 		// look, split three times, then look again and report what it saw.

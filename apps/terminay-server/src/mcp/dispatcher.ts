@@ -1,5 +1,20 @@
 import type { McpPermissionGroup } from '@terminay/server-core';
 import {
+	APP_CONTROL_OPERATIONS,
+	type AppControlAdapter,
+	isAppControlParamFailure,
+	PROJECT_REACH_UPDATE_PROJECT_FIELDS,
+	parseCloseProject,
+	parseCloseWorkspaceWindow,
+	parseCreateProject,
+	parseListProjects,
+	parseListWorkspaceWindows,
+	parseMoveProject,
+	parseOpenWorkspaceWindow,
+	parseRenameWorkspaceWindow,
+	parseUpdateProject,
+} from './appControlTools.js';
+import {
 	type AppWindowControlAdapter,
 	isAppWindowParamFailure,
 	parseCallConnectedTool,
@@ -236,6 +251,51 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly listProjects?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly createProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly updateProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly moveProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly listWorkspaceWindows?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly openWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly renameWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 	readonly showWindow?: (
 		params: Record<string, unknown>,
 		context: ControlRequestContext,
@@ -339,6 +399,15 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	set_automation_enabled: 'automationsManage',
 	run_automation: 'automationsManage',
 	stop_automation_run: 'automationsManage',
+	list_projects: 'projectsWindows',
+	create_project: 'projectsWindows',
+	update_project: 'projectsWindows',
+	move_project: 'projectsWindows',
+	close_project: 'projectsWindows',
+	list_workspace_windows: 'projectsWindows',
+	open_workspace_window: 'projectsWindows',
+	rename_workspace_window: 'projectsWindows',
+	close_workspace_window: 'projectsWindows',
 	show_window: 'appWindows',
 	close_window: 'appWindows',
 	list_windows: 'appWindows',
@@ -395,6 +464,8 @@ export interface OpenTerminalParams {
 
 /** Shape of an opaque project handle (see `workspaceReach.ts`). */
 export const PROJECT_HANDLE_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
+/** Shape of an opaque workspace window handle (see `workspaceReach.ts`). */
+export const WINDOW_HANDLE_PATTERN = /^win_[A-Za-z0-9_-]{22}$/;
 export interface WriteTerminalParams {
 	readonly terminal: TerminalRef;
 	readonly text: string;
@@ -516,6 +587,8 @@ export interface TerminalControlAdapterOptions {
 	readonly appWindows?: AppWindowControlAdapter;
 	/** Host binding for the notification tools. */
 	readonly notifications?: NotificationControlAdapter;
+	/** Host binding for the project and workspace window tools (ADR-0072). */
+	readonly appControl?: AppControlAdapter;
 	/**
 	 * The view of the client the agent is talking from (ADR-0070). With it,
 	 * `split_terminal`, `open_terminal`'s `split` and `focus`, and
@@ -574,6 +647,15 @@ const DEFAULT_SCOPES: Readonly<
 	set_automation_enabled: 'write',
 	run_automation: 'write',
 	stop_automation_run: 'write',
+	list_projects: 'read',
+	create_project: 'write',
+	update_project: 'write',
+	move_project: 'write',
+	close_project: 'write',
+	list_workspace_windows: 'read',
+	open_workspace_window: 'write',
+	rename_workspace_window: 'write',
+	close_workspace_window: 'write',
 	show_window: 'write',
 	close_window: 'write',
 	list_windows: 'read',
@@ -622,6 +704,15 @@ const HANDLER_BY_OPERATION: Readonly<
 	set_automation_enabled: 'setAutomationEnabled',
 	run_automation: 'runAutomation',
 	stop_automation_run: 'stopAutomationRun',
+	list_projects: 'listProjects',
+	create_project: 'createProject',
+	update_project: 'updateProject',
+	move_project: 'moveProject',
+	close_project: 'closeProject',
+	list_workspace_windows: 'listWorkspaceWindows',
+	open_workspace_window: 'openWorkspaceWindow',
+	rename_workspace_window: 'renameWorkspaceWindow',
+	close_workspace_window: 'closeWorkspaceWindow',
 	show_window: 'showWindow',
 	close_window: 'closeWindow',
 	list_windows: 'listWindows',
@@ -688,6 +779,10 @@ export function createServerControlDispatcher(
 				},
 			};
 		}
+		// Reach is decided before the policy, so a call the caller's reach
+		// cannot make never asks the user (ADR-0072).
+		const outOfReach = reachRefusal(request.op, params, context);
+		if (outOfReach !== undefined) return outOfReach;
 		// A chat has no terminal for a window to open in or a notification to be
 		// held for, so those tools are unavailable to it (ADR-0068).
 		if (
@@ -752,7 +847,13 @@ export function createServerControlDispatcher(
 							message: 'control operation get_mcp_capabilities is unavailable',
 						},
 					};
-				const reported = await capabilitiesHandler(context, context.signal);
+				// A tool the caller's reach cannot use is unavailable to it.
+				const reported = withAvailability(
+					await capabilitiesHandler(context, context.signal),
+					(tool) =>
+						context.reach === 'workspace' ||
+						!WORKSPACE_REACH_OPERATIONS.has(tool),
+				);
 				return context.chat === undefined
 					? reported
 					: withoutCallingTerminalTools(reported);
@@ -775,6 +876,89 @@ export function createServerControlDispatcher(
 		) => unknown | Promise<unknown>;
 		return operationHandler(retained, context, context.signal);
 	};
+}
+
+/**
+ * Operations only workspace reach may use (ADR-0072), fixed per operation and
+ * never inferred from parameters. Project reach may use every other one, and
+ * `update_project` for its own project's name, icon and colour only.
+ */
+export const WORKSPACE_REACH_OPERATIONS: ReadonlySet<ControlOperation> =
+	new Set<ControlOperation>([
+		'create_project',
+		'move_project',
+		'close_project',
+		'list_workspace_windows',
+		'open_workspace_window',
+		'rename_workspace_window',
+		'close_workspace_window',
+	]);
+
+/** Why the caller's reach cannot make this call, or undefined when it can. */
+export function reachRefusal(
+	op: ControlOperation,
+	params: Readonly<Record<string, unknown>>,
+	context: Pick<ControlRequestContext, 'reach'>,
+): ControlFailure | undefined {
+	if (context.reach === 'workspace') return undefined;
+	if (WORKSPACE_REACH_OPERATIONS.has(op))
+		return {
+			ok: false,
+			error: {
+				code: 'out_of_scope',
+				message: `${op} needs workspace reach. An agent in a project terminal acts only on its own project; run it from a terminal under Home or from Pixel.`,
+			},
+		};
+	if (
+		op === 'update_project' &&
+		Object.keys(params).some(
+			(field) => !PROJECT_REACH_UPDATE_PROJECT_FIELDS.has(field),
+		)
+	)
+		return {
+			ok: false,
+			error: {
+				code: 'out_of_scope',
+				message:
+					"From a project terminal, update_project changes only your own project's name, icon, and colour.",
+			},
+		};
+	return undefined;
+}
+
+/** Report each tool unavailable where `available` says so, whatever the host said. */
+function withAvailability(
+	reported: ControlDispatchResult,
+	available: (tool: ControlOperation) => boolean,
+): ControlDispatchResult {
+	const patch = (value: unknown): unknown => {
+		if (typeof value !== 'object' || value === null) return value;
+		const tools = (value as { tools?: unknown }).tools;
+		if (!Array.isArray(tools)) return value;
+		return {
+			...value,
+			tools: tools.map((entry) => {
+				if (typeof entry !== 'object' || entry === null) return entry;
+				const tool = (entry as { tool?: unknown }).tool;
+				return typeof tool === 'string' &&
+					Object.hasOwn(HANDLER_BY_OPERATION, tool) &&
+					!available(tool as ControlOperation)
+					? { ...entry, available: false }
+					: entry;
+			}),
+		};
+	};
+	if (
+		typeof reported === 'object' &&
+		reported !== null &&
+		(reported as { ok?: unknown }).ok === true &&
+		'result' in reported
+	)
+		return {
+			ok: true,
+			result: patch((reported as { result: unknown }).result),
+		};
+	return patch(reported);
 }
 
 /** Operations that act for, or in, the calling terminal itself. */
@@ -878,9 +1062,12 @@ export function createTerminalControlAdapter(
 			: {
 					getMcpCapabilities: (context, signal) =>
 						invoke(signal, async () =>
-							withViewAvailability(
-								await options.adapter.getMcpCapabilities!(context, signal),
-								options.workspaceView !== undefined,
+							withAppControlAvailability(
+								withViewAvailability(
+									await options.adapter.getMcpCapabilities!(context, signal),
+									options.workspaceView !== undefined,
+								),
+								options.appControl !== undefined,
 							),
 						),
 				}),
@@ -1253,6 +1440,41 @@ export function createTerminalControlAdapter(
 								: notifications.dismissNotification(parsed, context, signal);
 						}),
 				};
+	const appControl = options.appControl;
+	const appControlHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				adapter: AppControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isAppControlParamFailure(parsed)) return parsed;
+				return run(appControl!, parsed as P, context, signal);
+			});
+	const appControlHandlers: Partial<ServerControlHandlers> =
+		appControl === undefined
+			? {}
+			: {
+					listProjects: appControlHandler(parseListProjects, (a, p, c, s) => a.listProjects(p, c, s)),
+					createProject: appControlHandler(parseCreateProject, (a, p, c, s) => a.createProject(p, c, s)),
+					updateProject: appControlHandler(parseUpdateProject, (a, p, c, s) => a.updateProject(p, c, s)),
+					moveProject: appControlHandler(parseMoveProject, (a, p, c, s) => a.moveProject(p, c, s)),
+					closeProject: appControlHandler(parseCloseProject, (a, p, c, s) => a.closeProject(p, c, s)),
+					listWorkspaceWindows: appControlHandler(parseListWorkspaceWindows, (a, p, c, s) => a.listWorkspaceWindows(p, c, s)),
+					openWorkspaceWindow: appControlHandler(parseOpenWorkspaceWindow, (a, p, c, s) => a.openWorkspaceWindow(p, c, s)),
+					renameWorkspaceWindow: appControlHandler(parseRenameWorkspaceWindow, (a, p, c, s) => a.renameWorkspaceWindow(p, c, s)),
+					closeWorkspaceWindow: appControlHandler(parseCloseWorkspaceWindow, (a, p, c, s) => a.closeWorkspaceWindow(p, c, s)),
+				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
 		handlers: {
 			...handlers,
@@ -1260,6 +1482,7 @@ export function createTerminalControlAdapter(
 			...appWindowHandlers,
 			...notificationHandlers,
 			...workspaceViewHandlers,
+			...appControlHandlers,
 		},
 		...(options.permissions === undefined
 			? {}
@@ -1330,6 +1553,24 @@ function withViewAvailability(reported: unknown, available: boolean): unknown {
 			isRecord(entry) &&
 			WORKSPACE_VIEW_OPERATIONS.has(entry.tool as ControlOperation)
 				? { ...entry, available }
+				: entry,
+		),
+	};
+}
+
+/** Report the app-level tools available exactly when their adapter is bound. */
+function withAppControlAvailability(
+	reported: unknown,
+	available: boolean,
+): unknown {
+	if (available || !isRecord(reported) || !Array.isArray(reported.tools))
+		return reported;
+	const tools = new Set<string>(APP_CONTROL_OPERATIONS);
+	return {
+		...reported,
+		tools: reported.tools.map((entry) =>
+			isRecord(entry) && typeof entry.tool === 'string' && tools.has(entry.tool)
+				? { ...entry, available: false }
 				: entry,
 		),
 	};
@@ -1465,6 +1706,9 @@ function publicControlError(error: unknown): ControlError {
 		permission_declined: 'The user declined this request.',
 		approval_queue_full:
 			'This terminal already has the maximum number of requests waiting for approval.',
+		out_of_scope:
+			'This operation needs workspace reach; an agent in a project terminal acts only on its own project.',
+		busy: 'A terminal is running a program.',
 		internal: 'The control operation failed.',
 	};
 	return { code: publicCode, message: messageByCode[publicCode] };
@@ -1488,6 +1732,8 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'permission_denied' ||
 		value === 'permission_declined' ||
 		value === 'approval_queue_full' ||
+		value === 'out_of_scope' ||
+		value === 'busy' ||
 		value === 'internal'
 	);
 }

@@ -55,6 +55,12 @@ export type WorkspaceViewWindow<Workspace extends WorkspaceViewWorkspace> = {
 	readonly workspace: (projectId: string, folderId: string) => Workspace | undefined;
 	readonly showProject: (projectId: string) => void;
 	readonly selectFolder: (projectId: string, folderId: string) => void;
+	/**
+	 * Present a workspace window (ADR-0072): Desktop opens it as a native
+	 * window, through the path a tear-off takes; a browser, which holds every
+	 * window's projects, switches to it.
+	 */
+	readonly presentView: (viewId: string) => Promise<void>;
 };
 
 type Located<Workspace> = {
@@ -204,7 +210,12 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 		}
 		case 'showProject': {
 			const projectId = requireProject(projectParam);
-			requireHeld(window, projectId);
+			// A project the server has just created or moved here may not have
+			// reached this window yet.
+			await waitFor(
+				() => (window.projectIds().includes(projectId) ? true : undefined),
+				'That project is not open in this window. It may be the automation space, or open in another window.',
+			);
 			window.showProject(projectId);
 			await waitFor(
 				() => (window.shownProjectId() === projectId ? true : undefined),
@@ -239,6 +250,12 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 			if (tab === undefined)
 				throw new ViewRefusal('bad_request', "That path is not inside the project's folder.");
 			return { tab, layout: layoutOf(window, projectId, folderId) };
+		}
+		case 'presentView': {
+			const viewId = typeof params.viewId === 'string' ? params.viewId : undefined;
+			if (viewId === undefined) throw new ViewRefusal('bad_request', 'A window is required.');
+			await window.presentView(viewId);
+			return { presented: true };
 		}
 		case 'closeTab': {
 			const located = await locate(window, projectParam, tabTarget(params.tab));

@@ -15,6 +15,8 @@ export * from './embeddedAuthority.js';
 export * from './healthServer.js';
 export * from './localUiServer.js';
 export * from './releaseUpgrader.js';
+export * from './mcp/appControlAdapter.js';
+export * from './mcp/appControlTools.js';
 export * from './mcp/automationTools.js';
 export * from './mcp/appWindowTools.js';
 export * from './mcp/appWindowAdapter.js';

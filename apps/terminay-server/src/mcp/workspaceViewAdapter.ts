@@ -62,7 +62,7 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export function createWorkspaceViewAdapter(
 	options: WorkspaceViewAdapterOptions,
 ): WorkspaceViewControlAdapter {
-	const { relay, projectHandles } = options;
+	const { projectHandles } = options;
 
 	/** Whether the caller reaches a project of this server. */
 	const reaches = (
@@ -136,44 +136,14 @@ export function createWorkspaceViewAdapter(
 		};
 	};
 
-	const ask = async (
+	const ask = (
 		context: ControlRequestContext,
 		op: WorkspaceViewOp,
 		params: Record<string, JsonValue | undefined>,
 		projectId: string | undefined,
 		signal: AbortSignal,
-	): Promise<Record<string, unknown>> => {
-		const target = options.targetFor({
-			terminalSessionId: context.terminalSessionId,
-			projectId: context.projectId,
-			...(context.chat === undefined ? {} : { chatId: context.chat.chatId }),
-		});
-		if (target === undefined)
-			throw new ControlEndpointError(
-				'renderer_unavailable',
-				context.chat === undefined
-					? 'No Terminay window is showing your terminal, so there is no view to read or change.'
-					: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
-			);
-		let reply: JsonValue;
-		try {
-			reply = await relay.request(
-				target,
-				op,
-				withoutUndefined(params),
-				projectId,
-				signal,
-			);
-		} catch (error) {
-			throw viewError(error);
-		}
-		if (!isRecord(reply))
-			throw new ControlEndpointError(
-				'internal',
-				'The Terminay window gave an invalid answer.',
-			);
-		return reply;
-	};
+	): Promise<Record<string, unknown>> =>
+		requestAgentView(options, context, op, params, projectId, signal);
 
 	/** The agent's description of a layout the client reported. */
 	const describe = async (
@@ -525,6 +495,50 @@ export function createWorkspaceViewAdapter(
 			}
 		},
 	};
+}
+
+/**
+ * Ask the agent's client to apply one view operation, and answer with its
+ * reply. Fails with `renderer_unavailable` when the caller has no client.
+ */
+export async function requestAgentView(
+	options: Pick<WorkspaceViewAdapterOptions, 'relay' | 'targetFor'>,
+	context: ControlRequestContext,
+	op: WorkspaceViewOp,
+	params: Record<string, JsonValue | undefined>,
+	projectId: string | undefined,
+	signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+	const target = options.targetFor({
+		terminalSessionId: context.terminalSessionId,
+		projectId: context.projectId,
+		...(context.chat === undefined ? {} : { chatId: context.chat.chatId }),
+	});
+	if (target === undefined)
+		throw new ControlEndpointError(
+			'renderer_unavailable',
+			context.chat === undefined
+				? 'No Terminay window is showing your terminal, so there is no view to read or change.'
+				: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
+		);
+	let reply: JsonValue;
+	try {
+		reply = await options.relay.request(
+			target,
+			op,
+			withoutUndefined(params),
+			projectId,
+			signal,
+		);
+	} catch (error) {
+		throw viewError(error);
+	}
+	if (!isRecord(reply))
+		throw new ControlEndpointError(
+			'internal',
+			'The Terminay window gave an invalid answer.',
+		);
+	return reply;
 }
 
 /**
