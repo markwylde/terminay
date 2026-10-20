@@ -13,7 +13,7 @@
 - openspec/adr/0066-choosing-a-project-root-browses-server-directory-names-under-root-change-authority.md: `create_project` takes an explicit path, and browsing stays unreachable through MCP.
 - openspec/adr/0020-per-operation-canonical-roots.md: `create_project` and `update_project` canonicalise the root per operation.
 - openspec/adr/0003-vault-interface-and-key-protectors.md and openspec/adr/0057-nothing-written-into-a-terminal-is-a-secret.md: stored credentials stay outside every settings tool.
-- openspec/adr/0043-a-terminal-changes-project-by-retiring-its-identity.md: `move_terminal_to_project` returns the terminal's new handle.
+- openspec/adr/0043-a-terminal-changes-project-by-retiring-its-identity.md: `move_terminal_to_project` retires the terminal's old project identity; its MCP handle, a session id, stays the same.
 - openspec/adr/0048-a-connection-belongs-to-a-window-and-authority-to-a-device.md: MCP authority is not device authority, so the handlers use a server-internal principal.
 - openspec/adr/0061-a-notification-is-a-server-owned-record-published-after-a-settle-period.md: listing and dismissal act on published notifications only.
 - openspec/adr/0040-home-tabs-are-device-local-presentation-in-their-own-dockview.md: `focus_home` changes only the agent's client's Home.

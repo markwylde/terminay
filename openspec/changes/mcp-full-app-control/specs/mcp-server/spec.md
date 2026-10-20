@@ -2,7 +2,7 @@
 
 ### Requirement: Terminal metadata and project moves
 
-`update_terminal` SHALL change one terminal tab's icon, colour, note, and whether its activity is tracked. It SHALL apply them as the tab editor does, and every client SHALL observe the change. Both reaches SHALL be able to use it for any terminal they can address. `move_terminal_to_project` SHALL move one terminal to another project, through the same server-committed move a user's drag uses. The terminal SHALL keep its PTY and scrollback and SHALL take a new identity. The result SHALL carry the terminal's new handle. It SHALL require workspace reach and SHALL fail with `out_of_scope` for project reach. Neither tool SHALL move a terminal into or out of the automation terminal space.
+`update_terminal` SHALL change one terminal tab's icon, colour, note, and whether its activity is tracked. It SHALL apply them as the tab editor does, and every client SHALL observe the change. Both reaches SHALL be able to use it for any terminal they can address. `move_terminal_to_project` SHALL move one terminal to another project, through the same server-committed move a user's drag uses. The terminal SHALL keep its PTY and scrollback. It SHALL leave its old project's identity behind and take one in the target project, while its MCP handle stays the same. The result SHALL carry that handle. After the move, the terminal SHALL NOT be addressable by any caller whose reach covers the old project but not the target project. It SHALL require workspace reach and SHALL fail with `out_of_scope` for project reach. Neither tool SHALL move a terminal into or out of the automation terminal space.
 
 #### Scenario: Agent notes what a tab is for
 
@@ -12,7 +12,7 @@
 #### Scenario: Moving a terminal between projects
 
 - **WHEN** a workspace-reach caller calls `move_terminal_to_project` for a running terminal
-- **THEN** the terminal appears in the target project with its output intact, the result carries its new handle, and its old handle no longer resolves
+- **THEN** the terminal appears in the target project with its output intact, the result carries the same handle it had before the move, and a caller in the old project gets `terminal_not_found` for that handle
 
 #### Scenario: Project terminal moves a terminal out
 

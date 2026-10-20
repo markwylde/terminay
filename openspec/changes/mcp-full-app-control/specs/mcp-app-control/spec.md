@@ -196,9 +196,9 @@ The macro tools SHALL be:
 
 - `list_macros` returns the server's macros, each with its id, name, category and fields.
 - `run_macro` runs one macro against one terminal, with values for its fields.
-- `cancel_macro` cancels a macro run.
+- `cancel_macro` cancels a macro run started through MCP.
 
-The target terminal SHALL be one the caller can address. Field values SHALL be validated exactly as the macro launch modal validates them. The run SHALL execute on the server under the bounded macro run rules. A run started through MCP SHALL have no launching client. It SHALL therefore run until it finishes or is cancelled, and no client disconnect SHALL cancel it. `cancel_macro` SHALL cancel only a run whose target terminal the caller can address. These tools SHALL be available to both reaches. Creating, editing and deleting macros SHALL remain outside the MCP surface.
+The target terminal SHALL be one the caller can address. Field values SHALL be validated exactly as the macro launch modal validates them. The run SHALL execute on the server under the bounded macro run rules. A run started through MCP SHALL have no launching client. It SHALL therefore run until it finishes or is cancelled, and no client disconnect SHALL cancel it. `cancel_macro` SHALL cancel only a run that was started through MCP and whose target terminal the caller can address. A run a user started SHALL stay outside it. These tools SHALL be available to both reaches. Creating, editing and deleting macros SHALL remain outside the MCP surface.
 
 #### Scenario: Running a macro in its own project
 
@@ -209,3 +209,8 @@ The target terminal SHALL be one the caller can address. Field values SHALL be v
 
 - **WHEN** an agent in project "api" calls `run_macro` naming a terminal of project "web"
 - **THEN** the call fails as not found and nothing runs
+
+#### Scenario: Cancelling a run a user started
+
+- **WHEN** an agent calls `cancel_macro` for a run that a user launched from the macro launch modal
+- **THEN** the call fails and the run continues
