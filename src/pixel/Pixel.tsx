@@ -25,7 +25,7 @@ type PixelProps = Readonly<{
 	server: PixelServer;
 	/** The compact chrome row's dock slot; at phone width it wins over both
 	 * the status bar and the corner. */
-	headerDock: HTMLElement | null;
+	headerDock?: HTMLElement | null;
 	/** The status bar's dock slot, or null while the status bar is hidden. */
 	statusBarDock: HTMLElement | null;
 }>;
@@ -221,7 +221,7 @@ export function PixelCompanion({
 		</button>
 	);
 
-	if (headerDock !== null)
+	if (headerDock != null)
 		return createPortal(
 			dock(setHeaderButton, 'pixel-dock pixel-dock--header'),
 			headerDock,
