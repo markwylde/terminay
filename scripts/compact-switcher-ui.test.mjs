@@ -62,7 +62,7 @@ const row = (overrides) =>
 		}),
 	);
 
-test('the compact row holds its six controls in order', () => {
+test('the compact row holds its controls in order, with Home left to the switcher', () => {
 	const markup = row({
 		applicationMenu: React.createElement(
 			'button',
@@ -73,7 +73,6 @@ test('the compact row holds its six controls in order', () => {
 	const order = [
 		'connected-web-compact-menu__button',
 		'Toggle file explorer',
-		'aria-label="Home"',
 		'data-compact-command-bar',
 		'compact-breadcrumb',
 		'data-compact-connection',
@@ -84,6 +83,23 @@ test('the compact row holds its six controls in order', () => {
 		assert.ok(next > cursor, `${marker} is out of order`);
 		cursor = next;
 	}
+	assert.doesNotMatch(markup, /aria-label="Home"/);
+});
+
+test('with Pixel on, its slot takes the connection glyph\'s place and the breadcrumb carries the server warning', () => {
+	const markup = row({
+		pixelSlotRef: () => {},
+		connection: {
+			isExposed: true,
+			isReachable: false,
+			serverLabel: 'Local',
+			tone: '',
+		},
+	});
+	assert.match(markup, /data-compact-pixel-slot="true"/);
+	assert.doesNotMatch(markup, /data-compact-connection="true"/);
+	assert.match(markup, /data-compact-breadcrumb-alert="true"/);
+	assert.match(markup, /Local unreachable/);
 });
 
 test('a host with native menus contributes no menu control', () => {

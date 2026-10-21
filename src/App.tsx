@@ -8542,6 +8542,12 @@ function App({
 		automationEntries.find((entry) => entry.serverId === activeServerId),
 	);
 	const [pixelSlot, setPixelSlot] = useState<HTMLDivElement | null>(null);
+	// At phone width Pixel docks in the compact row instead, in the slot the
+	// connection glyph gives up for it.
+	const [compactPixelSlot, setCompactPixelSlot] =
+		useState<HTMLSpanElement | null>(null);
+	const isPixelShown =
+		pixelServer.state?.enabled === true && activeServerId !== undefined;
 	// Likewise one projection of app windows per server; the host below lays
 	// them out over the terminal panes that own them.
 	const serverAppWindows = useServerAppWindows(automationEntries);
@@ -9925,7 +9931,6 @@ function App({
 								? isHomeSidebarVisible
 								: activeProject?.isFileExplorerOpen === true
 						}
-						isHomeSelected={isHomeSelected}
 						isNotificationsOpen={isActivityMenuOpen}
 						isSwitcherOpen={isCompactSwitcherOpen}
 						notificationCount={notificationCount}
@@ -9936,8 +9941,8 @@ function App({
 							setIsActivityMenuOpen((current) => !current);
 						}}
 						onOpenSwitcher={openCompactSwitcher}
-						onShowDashboard={selectHome}
 						onToggleExplorer={toggleActiveProjectExplorer}
+						{...(isPixelShown ? { pixelSlotRef: setCompactPixelSlot } : {})}
 						projectTitle={
 							isHomeSelected
 								? 'Home'
@@ -10204,6 +10209,11 @@ function App({
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
 					groups={compactSwitcherFilteredGroups}
+					isHomeSelected={isHomeSelected}
+					onShowHome={() => {
+						closeCompactSwitcher();
+						selectHome();
+					}}
 					{...(settings.agentIntegration.enabled &&
 					!isHomeSelected &&
 					activeProject !== null
@@ -10541,12 +10551,15 @@ function App({
 					pixelSlotRef={setPixelSlot}
 				/>
 			) : null}
-			{pixelServer.state?.enabled === true &&
+			{isPixelShown &&
 			activeServerId !== undefined &&
-			(!isStatusBarVisible || pixelSlot !== null) ? (
+			(isCompactChrome
+				? compactPixelSlot !== null
+				: !isStatusBarVisible || pixelSlot !== null) ? (
 				<PixelCompanion
 					server={pixelServer}
 					serverId={activeServerId}
+					headerDock={isCompactChrome ? compactPixelSlot : null}
 					statusBarDock={isStatusBarVisible ? pixelSlot : null}
 				/>
 			) : null}
