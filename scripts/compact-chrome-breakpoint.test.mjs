@@ -189,19 +189,21 @@ test('the switcher overlays the workspace rather than taking height from it', as
 	assert.match(scrim, /inset: 0;/);
 });
 
-test('the compact row carries the Command Bar between dashboard and breadcrumb', async () => {
+test('the compact row carries the Command Bar before the breadcrumb, and Home lives in the switcher', async () => {
 	const row = await read('src/workspace/CompactChromeRow.tsx');
 	const order = [
 		...row.matchAll(
-			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-connection(?==)/g,
+			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-pixel-slot(?==)|data-compact-connection(?==)/g,
 		),
 	].map((match) => match[0]);
 	assert.deepEqual(order, [
-		'data-terminay-home-control',
 		'data-compact-command-bar',
 		'data-compact-breadcrumb',
+		'data-compact-pixel-slot',
 		'data-compact-connection',
 	]);
+	const switcher = await read('src/workspace/CompactSwitcher.tsx');
+	assert.match(switcher, /data-terminay-home-control="true"/);
 
 	// It names itself; the glyph alone says nothing about what it opens.
 	assert.match(row, /aria-label="Open command bar"/);
