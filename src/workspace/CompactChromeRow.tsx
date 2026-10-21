@@ -1,11 +1,16 @@
 /**
- * The compact workspace chrome: one row, six controls.
+ * The compact workspace chrome: one row, five controls.
  *
  * At phone width the three bands a wide window can afford — the application
  * menu, the project strip, the panel tab strip — cost more than the terminal
  * they frame. This row keeps what a one-handed user actually reaches for and
  * sends the rest to the unified switcher, which the breadcrumb and the
- * connection glyph both open.
+ * connection glyph both open. Home is one of the places the switcher goes, so
+ * it lives there rather than on the row.
+ *
+ * While Pixel is on it takes the glyph's trailing slot: docked in the header it
+ * covers nothing, where the corner dock sat on the terminal's last lines. The
+ * glyph's two warnings then ride on the breadcrumb, which opens the same sheet.
  *
  * The Command Bar control is the one door the collapse could not do without.
  * Every command the hidden bands used to carry — new terminal, split, clear,
@@ -19,14 +24,7 @@
  * landing in the right place.
  */
 
-import {
-	Bell,
-	ChevronDown,
-	House,
-	Search,
-	Server,
-	TriangleAlert,
-} from 'lucide-react';
+import { Bell, ChevronDown, Search, Server, TriangleAlert } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
@@ -51,7 +49,6 @@ export type CompactChromeRowProps = Readonly<{
 	connectionButtonRef?: RefObject<HTMLButtonElement | null>;
 	/** False on Home, where the command acts on no project. */
 	isExplorerOpen: boolean;
-	isHomeSelected: boolean;
 	isNotificationsOpen: boolean;
 	isSwitcherOpen: boolean;
 	breadcrumbButtonRef?: RefObject<HTMLButtonElement | null>;
@@ -61,8 +58,10 @@ export type CompactChromeRowProps = Readonly<{
 	onOpenCommandBar: () => void;
 	onToggleNotifications: () => void;
 	onOpenSwitcher: (source: 'breadcrumb' | 'connection') => void;
-	onShowDashboard: () => void;
 	onToggleExplorer: () => void;
+	/** Present while Pixel is on: the element Pixel docks into replaces the
+	 * connection glyph. */
+	pixelSlotRef?: (element: HTMLSpanElement | null) => void;
 	projectColor?: string;
 	projectTitle: string;
 	/** Absent when the active project has no terminal in front. */
@@ -79,7 +78,6 @@ export function CompactChromeRow({
 	connection,
 	connectionButtonRef,
 	isExplorerOpen,
-	isHomeSelected,
 	isNotificationsOpen,
 	isSwitcherOpen,
 	notificationCount,
@@ -87,8 +85,8 @@ export function CompactChromeRow({
 	onOpenCommandBar,
 	onOpenSwitcher,
 	onToggleNotifications,
-	onShowDashboard,
 	onToggleExplorer,
+	pixelSlotRef,
 	projectColor,
 	projectTitle,
 	terminalTitle,
@@ -96,6 +94,18 @@ export function CompactChromeRow({
 	updateAction,
 }: CompactChromeRowProps) {
 	const countLabel = formatActivityCount(notificationCount);
+	const breadcrumbAlert =
+		pixelSlotRef === undefined
+			? undefined
+			: !connection.isReachable
+				? `${connection.serverLabel} unreachable`
+				: connection.upgradeVersion === undefined
+					? undefined
+					: `Server upgrade ${connection.upgradeVersion} available`;
+	const breadcrumbLabel =
+		terminalTitle === undefined
+			? `Switch terminal — ${projectTitle}`
+			: `Switch terminal — ${projectTitle}, ${terminalTitle}`;
 	return (
 		<div className="compact-chrome" data-compact-chrome="true">
 			{applicationMenu}
@@ -125,17 +135,6 @@ export function CompactChromeRow({
 			</button>
 			<button
 				type="button"
-				className={`compact-chrome__icon${isHomeSelected ? ' compact-chrome__icon--active' : ''}`}
-				onClick={onShowDashboard}
-				aria-label="Home"
-				aria-pressed={isHomeSelected}
-				title="Home"
-				data-terminay-home-control="true"
-			>
-				<House size={14} aria-hidden="true" />
-			</button>
-			<button
-				type="button"
 				className="compact-chrome__icon"
 				onClick={onOpenCommandBar}
 				aria-label="Open command bar"
@@ -152,9 +151,9 @@ export function CompactChromeRow({
 				aria-haspopup="dialog"
 				aria-expanded={isSwitcherOpen}
 				aria-label={
-					terminalTitle === undefined
-						? `Switch terminal — ${projectTitle}`
-						: `Switch terminal — ${projectTitle}, ${terminalTitle}`
+					breadcrumbAlert === undefined
+						? breadcrumbLabel
+						: `${breadcrumbLabel} — ${breadcrumbAlert}`
 				}
 				data-compact-breadcrumb="true"
 				style={
@@ -186,11 +185,20 @@ export function CompactChromeRow({
 						</span>
 					</>
 				)}
-				<ChevronDown
-					className="compact-breadcrumb__chevron"
-					size={12}
-					aria-hidden="true"
-				/>
+				{breadcrumbAlert === undefined ? (
+					<ChevronDown
+						className="compact-breadcrumb__chevron"
+						size={12}
+						aria-hidden="true"
+					/>
+				) : (
+					<TriangleAlert
+						className="compact-breadcrumb__alert"
+						size={12}
+						aria-hidden="true"
+						data-compact-breadcrumb-alert="true"
+					/>
+				)}
 			</button>
 			{updateAction}
 			{/* The bell is the one place a phone lists what needs the user. A
@@ -217,31 +225,39 @@ export function CompactChromeRow({
 					</span>
 				) : null}
 			</button>
-			<button
-				ref={connectionButtonRef}
-				type="button"
-				className={`compact-chrome__icon compact-connection ${connection.tone}`.trim()}
-				onClick={() => onOpenSwitcher('connection')}
-				aria-haspopup="dialog"
-				aria-expanded={isSwitcherOpen}
-				aria-label={`Connections — ${connection.serverLabel}, ${connection.isExposed ? 'Exposed' : 'Offline'}${upgradeAvailableSuffix(connection.upgradeVersion)}`}
-				title={connection.serverLabel}
-				data-compact-connection="true"
-			>
-				<Server size={15} aria-hidden="true" />
-				{connection.upgradeVersion === undefined ? null : (
-					<TriangleAlert
-						className="compact-connection__upgrade"
-						size={10}
-						aria-hidden="true"
-						data-server-upgrade-indicator={connection.upgradeVersion}
-					/>
-				)}
+			{pixelSlotRef !== undefined ? (
 				<span
-					className={`compact-connection__dot${connection.isReachable ? '' : ' compact-connection__dot--unreachable'}`}
-					aria-hidden="true"
+					ref={pixelSlotRef}
+					className="compact-chrome__pixel-slot"
+					data-compact-pixel-slot="true"
 				/>
-			</button>
+			) : (
+				<button
+					ref={connectionButtonRef}
+					type="button"
+					className={`compact-chrome__icon compact-connection ${connection.tone}`.trim()}
+					onClick={() => onOpenSwitcher('connection')}
+					aria-haspopup="dialog"
+					aria-expanded={isSwitcherOpen}
+					aria-label={`Connections — ${connection.serverLabel}, ${connection.isExposed ? 'Exposed' : 'Offline'}${upgradeAvailableSuffix(connection.upgradeVersion)}`}
+					title={connection.serverLabel}
+					data-compact-connection="true"
+				>
+					<Server size={15} aria-hidden="true" />
+					{connection.upgradeVersion === undefined ? null : (
+						<TriangleAlert
+							className="compact-connection__upgrade"
+							size={10}
+							aria-hidden="true"
+							data-server-upgrade-indicator={connection.upgradeVersion}
+						/>
+					)}
+					<span
+						className={`compact-connection__dot${connection.isReachable ? '' : ' compact-connection__dot--unreachable'}`}
+						aria-hidden="true"
+					/>
+				</button>
+			)}
 		</div>
 	);
 }

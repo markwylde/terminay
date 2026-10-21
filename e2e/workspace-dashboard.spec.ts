@@ -330,17 +330,18 @@ test.describe('workspace dashboard', () => {
 		expect(new Set(orderAfter)).toEqual(new Set(orderBefore));
 
 		// Squeezing the bar until the project tabs overflow must not push the
-		// Home control out with them: it is chrome, not a tab.
+		// Home control out with them: it is chrome, not a tab. It stays above
+		// the compact breakpoint, where the row hands Home to the switcher.
 		await electronApp.evaluate(async ({ BrowserWindow }) => {
 			const [window] = BrowserWindow.getAllWindows();
 			const [, height] = window?.getSize() ?? [1200, 800];
-			window?.setSize(460, height ?? 800);
+			window?.setSize(700, height ?? 800);
 		});
 		await expect
 			.poll(async () =>
 				mainWindow.evaluate(() => Math.round(window.innerWidth)),
 			)
-			.toBeLessThan(600);
+			.toBeLessThan(720);
 
 		// The bar is laid out again as the window narrows, and on a busy runner
 		// that can still be under way once the width has settled: a box read

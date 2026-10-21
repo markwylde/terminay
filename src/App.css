@@ -4393,6 +4393,18 @@ body.project-tabbar-reordering .project-tabbar {
   position: relative;
 }
 
+.compact-chrome__pixel-slot {
+  flex: none;
+  display: inline-flex;
+}
+
+/* Without the connection glyph its warnings ride on the breadcrumb. */
+.compact-breadcrumb__alert {
+  flex: none;
+  margin-left: 4px;
+  color: #ffb454;
+}
+
 .compact-connection__dot {
   position: absolute;
   right: 3px;
@@ -4554,6 +4566,43 @@ body.project-tabbar-reordering .project-tabbar {
   border-radius: 8px;
   color: rgba(220, 226, 240, 0.5);
   cursor: pointer;
+}
+
+.compact-switcher__home {
+  all: unset;
+  box-sizing: border-box;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  margin-right: auto;
+  border-radius: 8px;
+  color: rgba(220, 226, 240, 0.7);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compact-switcher__tools--searching .compact-switcher__home {
+  margin-right: 6px;
+  padding: 0 8px;
+}
+
+.compact-switcher__home:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.compact-switcher__home--active {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--tab-text-selected, #fff);
+}
+
+.compact-switcher__home:focus-visible {
+  outline: 2px solid var(--accent, #4db5ff);
+  outline-offset: -2px;
 }
 
 .compact-switcher__search-open:hover {
