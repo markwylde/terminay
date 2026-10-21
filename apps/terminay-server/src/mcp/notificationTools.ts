@@ -5,9 +5,10 @@ import type {
 import type { ControlError, ControlRequestContext } from './controlEndpoint.js';
 
 /**
- * The MCP tools that send and dismiss notifications (ADR-0061). A notification
- * belongs to the calling terminal, which the capability fixes; no parameter
- * names a terminal or a project.
+ * The MCP notification tools (ADR-0061, ADR-0072). A sent notification belongs
+ * to the calling terminal, which the capability fixes; no parameter names a
+ * terminal or a project. Listing and dismissing are addressed by reach: a
+ * handle resolves only for a notification of a terminal the caller reaches.
  */
 
 // Type-only imports keep the stdio entry, which reaches this module through
@@ -27,6 +28,7 @@ export interface SendNotificationParams {
 export interface DismissNotificationParams {
 	readonly notification: string;
 }
+export type ListNotificationsParams = Record<string, never>;
 
 type Failure = { readonly ok: false; readonly error: ControlError };
 type Parsed<T> = T | Failure;
@@ -42,6 +44,7 @@ type Handler<P> = (
 export interface NotificationControlAdapter {
 	readonly sendNotification: Handler<SendNotificationParams>;
 	readonly dismissNotification: Handler<DismissNotificationParams>;
+	readonly listNotifications: Handler<ListNotificationsParams>;
 }
 
 export function isNotificationParamFailure(value: unknown): value is Failure {
@@ -90,6 +93,10 @@ export function parseDismissNotification(
 	if (!isHandle(params.notification))
 		return badRequest('notification must be a notification handle');
 	return { notification: params.notification };
+}
+
+export function parseListNotifications(): Parsed<ListNotificationsParams> {
+	return {};
 }
 
 export function notificationFailure(

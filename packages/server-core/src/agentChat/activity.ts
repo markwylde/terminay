@@ -112,6 +112,75 @@ export function describeChatMcpCall(
 			return 'Running an automation';
 		case 'stop_automation_run':
 			return 'Stopping an automation run';
+		case 'list_projects':
+			return 'Looking at the projects';
+		case 'create_project': {
+			const project = quoted(params.name, 60);
+			return project === ''
+				? 'Creating a project'
+				: `Creating the project “${project}”`;
+		}
+		case 'update_project':
+			return 'Changing a project';
+		case 'move_project':
+			return 'Moving a project';
+		case 'close_project':
+			return 'Closing a project';
+		case 'list_workspace_windows':
+			return 'Looking at the windows';
+		case 'open_workspace_window':
+			return 'Opening a window';
+		case 'rename_workspace_window':
+			return 'Renaming a window';
+		case 'close_workspace_window':
+			return 'Closing a window';
+		case 'update_terminal':
+			return `Changing ${terminal()}`;
+		case 'move_terminal_to_project':
+			return `Moving ${terminal()} to another project`;
+		case 'focus_home':
+			return 'Showing Home';
+		case 'delete_folder':
+			return 'Deleting a folder';
+		case 'reorder_folders':
+			return 'Reordering folders';
+		case 'remove_automation_run':
+			return 'Deleting an automation run';
+		case 'prune_automation_runs':
+			return 'Clearing old automation runs';
+		case 'dismiss_missed_runs':
+			return 'Dismissing missed automation runs';
+		case 'get_settings':
+			return 'Reading the settings';
+		case 'update_settings': {
+			const settings =
+				typeof params.settings === 'object' && params.settings !== null
+					? Object.keys(params.settings)
+					: [];
+			return settings.length === 1
+				? `Changing the setting ${quoted(settings[0], 60)}`
+				: 'Changing settings';
+		}
+		case 'list_shell_profiles':
+			return 'Looking at the shell profiles';
+		case 'save_shell_profile':
+			return 'Saving a shell profile';
+		case 'delete_shell_profile':
+			return 'Deleting a shell profile';
+		case 'reorder_shell_profiles':
+			return 'Reordering shell profiles';
+		case 'set_default_shell_profile':
+			return 'Changing the default shell profile';
+		case 'list_macros':
+			return 'Looking at the macros';
+		case 'run_macro':
+			return `Running a macro in ${terminal()}`;
+		case 'cancel_macro':
+			return 'Cancelling a macro';
+		case 'list_notifications':
+			return 'Looking at notifications';
+		case 'dismiss_notification':
+			return 'Dismissing a notification';
 		default:
 			return `Using ${operation.replace(/[^\w.:-]/g, '').slice(0, 64)}`;
 	}

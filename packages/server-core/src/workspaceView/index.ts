@@ -43,6 +43,11 @@ export const WORKSPACE_VIEW_OPS = Object.freeze([
 	'selectFolder',
 	'openFile',
 	'closeTab',
+	/** Present a workspace window (ADR-0072): a native window on Desktop, the
+	 * shown view in a browser. */
+	'presentView',
+	/** Show Home, with one of its sections in front (ADR-0072). */
+	'showHome',
 ] as const);
 export type WorkspaceViewOp = (typeof WORKSPACE_VIEW_OPS)[number];
 

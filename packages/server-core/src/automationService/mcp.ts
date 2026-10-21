@@ -65,6 +65,25 @@ export interface AutomationMcpOperations {
 		runId: string,
 		actor: AutomationMcpActor,
 	): Promise<{ readonly run_id: string; readonly stopped: boolean }>;
+	/** Delete one finished run from its automation's log; a run in progress
+	 * is refused, as the Automations section refuses it. */
+	removeRun(
+		runId: string,
+		actor: AutomationMcpActor,
+	): Promise<{ readonly run_id: string; readonly removed: number }>;
+	/** Delete an automation's finished runs started more than `olderThanDays`
+	 * whole days ago (0: every finished run). Runs in progress stay. */
+	pruneRuns(
+		automationId: string,
+		olderThanDays: number,
+		actor: AutomationMcpActor,
+	): Promise<{ readonly automation_id: string; readonly removed: number }>;
+	/** Clear the missed-schedule notice for one automation, or for all. Runs
+	 * nothing. */
+	dismissMissed(
+		automationId: string | undefined,
+		actor: AutomationMcpActor,
+	): Promise<{ readonly dismissed: boolean }>;
 	/**
 	 * What an approval prompt shows for one request: a summary completing
 	 * "<agent> in <terminal> wants to …" and every field it would apply.
@@ -92,7 +111,14 @@ export type AutomationMcpDescribeRequest =
 			readonly automationId: string;
 			readonly subjectTitle?: string;
 	  }
-	| { readonly kind: 'stop'; readonly runId: string };
+	| { readonly kind: 'stop'; readonly runId: string }
+	| { readonly kind: 'removeRun'; readonly runId: string }
+	| {
+			readonly kind: 'pruneRuns';
+			readonly automationId: string;
+			readonly olderThanDays: number;
+	  }
+	| { readonly kind: 'dismissMissed'; readonly automationId?: string };
 
 export interface AutomationMcpDescription {
 	readonly summary: string;
@@ -260,6 +286,19 @@ export function createAutomationMcpOperations(
 			revision,
 			actor: mcpActor(actor),
 		});
+	const auditRuns = (
+		operation: string,
+		automationId: string,
+		removed: number,
+		actor: AutomationMcpActor,
+	): void =>
+		options.onAudit?.({
+			type: 'runs',
+			operation: `mcp.${operation}`,
+			automationId,
+			removed,
+			actor: mcpActor(actor),
+		});
 	const auditRun = (
 		operation: string,
 		automationId: string,
@@ -405,6 +444,31 @@ export function createAutomationMcpOperations(
 			return { run_id: id, stopped };
 		},
 
+		async removeRun(runId, actor) {
+			const id = boundedId(runId, 'run id');
+			await runLog.load();
+			const entry = await runLog.remove(id);
+			auditRuns('remove_automation_run', entry.automationId, 1, actor);
+			return { run_id: id, removed: 1 };
+		},
+
+		async pruneRuns(automationId, olderThanDays, actor) {
+			const id = boundedId(automationId, 'automation id');
+			await repository.load();
+			if (repository.find(id) === undefined) throw notFound();
+			await runLog.load();
+			const result = await runLog.prune(id, olderThanDays);
+			auditRuns('prune_automation_runs', id, result.removed, actor);
+			return { automation_id: id, removed: result.removed };
+		},
+
+		async dismissMissed(automationId, _actor) {
+			const id =
+				automationId === undefined ? undefined : boundedId(automationId, 'automation id');
+			await runLog.load();
+			return { dismissed: await runLog.dismissMissed(id) };
+		},
+
 		async describe(request) {
 			switch (request.kind) {
 				case 'create': {
@@ -462,6 +526,41 @@ export function createAutomationMcpOperations(
 							{ label: 'Run started', value: iso(entry.startedAt) },
 							{ label: 'Status', value: entry.status },
 						],
+					};
+				}
+				case 'removeRun': {
+					const id = boundedId(request.runId, 'run id');
+					await runLog.load();
+					const entry = runLog.get(id);
+					if (entry === undefined)
+						throw new AutomationServiceError('run_not_found', 'automation run is unavailable');
+					await repository.load();
+					const name = repository.find(entry.automationId)?.name ?? entry.automationId;
+					return {
+						summary: `delete a run of the automation "${name}" from its history`,
+						details: [
+							{ label: 'Run started', value: iso(entry.startedAt) },
+							{ label: 'Status', value: entry.status },
+						],
+					};
+				}
+				case 'pruneRuns': {
+					const definition = await existing(boundedId(request.automationId, 'automation id'));
+					return {
+						summary:
+							request.olderThanDays === 0
+								? `delete every finished run of the automation "${definition.name}" from its history`
+								: `delete the finished runs of the automation "${definition.name}" older than ${request.olderThanDays} ${request.olderThanDays === 1 ? 'day' : 'days'}`,
+						details: [],
+					};
+				}
+				case 'dismissMissed': {
+					if (request.automationId === undefined)
+						return { summary: 'dismiss every missed-schedule notice', details: [] };
+					const definition = await existing(boundedId(request.automationId, 'automation id'));
+					return {
+						summary: `dismiss the missed-schedule notice of the automation "${definition.name}"`,
+						details: [],
 					};
 				}
 			}

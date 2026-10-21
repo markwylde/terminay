@@ -9,7 +9,7 @@ import {
 	ControlEndpointError,
 	type ControlReach,
 } from './controlEndpoint.js';
-import { PROJECT_HANDLE_PATTERN } from './dispatcher.js';
+import { PROJECT_HANDLE_PATTERN, WINDOW_HANDLE_PATTERN } from './dispatcher.js';
 
 /**
  * Workspace reach (ADR-0030) for MCP adapters. A capability's reach is fixed
@@ -83,6 +83,44 @@ export class ProjectHandleCodec {
 				this.handleFor(project.id) === handle
 			)
 				return project.id;
+		return undefined;
+	}
+}
+
+export function isWindowHandle(value: unknown): value is string {
+	return typeof value === 'string' && WINDOW_HANDLE_PATTERN.test(value);
+}
+
+/**
+ * Opaque workspace window handles (ADR-0072), keyed like project handles, so
+ * no view id crosses into an agent's context and a handle from another server
+ * or a previous run resolves to nothing.
+ */
+export class WindowHandleCodec {
+	private readonly key: Buffer;
+
+	constructor(
+		private readonly serverId: string,
+		key: Uint8Array = randomBytes(32),
+	) {
+		this.key = Buffer.from(key);
+	}
+
+	handleFor(viewId: string): string {
+		const digest = createHmac('sha256', this.key)
+			.update(this.serverId, 'utf8')
+			.update('\0view\0')
+			.update(viewId, 'utf8')
+			.digest('base64url');
+		return `win_${digest.slice(0, 22)}`;
+	}
+
+	/** The workspace window on this server a handle names, or undefined. */
+	resolve(handle: string, state: WorkspaceState): string | undefined {
+		if (!isWindowHandle(handle) || state.serverId !== this.serverId)
+			return undefined;
+		for (const viewId of state.viewOrder)
+			if (this.handleFor(viewId) === handle) return viewId;
 		return undefined;
 	}
 }
