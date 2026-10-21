@@ -43,6 +43,9 @@ import {
 	resolveOpenTerminalProject,
 	workspaceProjectFields,
 } from './workspaceReach.js';
+import { APP_CONTROL_OPERATIONS } from './appControlTools.js';
+import { MACRO_CONTROL_OPERATIONS } from './macroTools.js';
+import { SETTINGS_CONTROL_OPERATIONS } from './settingsTools.js';
 
 export interface ServerTerminalControlAdapterOptions {
 	readonly terminal: TerminalService;
@@ -178,6 +181,9 @@ const AUTOMATION_TOOLS: readonly string[] = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'remove_automation_run',
+	'prune_automation_runs',
+	'dismiss_missed_runs',
 ];
 
 const WINDOW_TOOLS: readonly string[] = [
@@ -188,7 +194,17 @@ const WINDOW_TOOLS: readonly string[] = [
 
 const NOTIFICATION_TOOLS: readonly string[] = [
 	'send_notification',
+	'list_notifications',
 	'dismiss_notification',
+];
+
+/** Tools a host binds separately from terminals (ADR-0072). */
+const SEPARATELY_BOUND_TOOLS: readonly string[] = [
+	...APP_CONTROL_OPERATIONS,
+	...SETTINGS_CONTROL_OPERATIONS,
+	...MACRO_CONTROL_OPERATIONS,
+	'update_terminal',
+	'move_terminal_to_project',
 ];
 
 function getMcpCapabilities(options: AdapterOptions): unknown {
@@ -214,9 +230,12 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			'resize_pane',
 			'arrange_tabs',
 			'focus_project',
+			'focus_home',
 			'select_folder',
 			'create_folder',
 			'rename_folder',
+			'delete_folder',
+			'reorder_folders',
 			'move_tab_to_folder',
 			'open_file',
 			'close_tab',
@@ -226,14 +245,17 @@ function getMcpCapabilities(options: AdapterOptions): unknown {
 			...AUTOMATION_TOOLS,
 			...WINDOW_TOOLS,
 			...NOTIFICATION_TOOLS,
+			...SEPARATELY_BOUND_TOOLS,
 		].map((tool) => ({
 			tool,
 			available:
 				// This adapter binds terminals only; a host that serves
-				// automations, app windows, or notifications binds them separately.
+				// automations, app windows, notifications, or projects and
+				// windows binds them separately.
 				AUTOMATION_TOOLS.includes(tool) ||
 				WINDOW_TOOLS.includes(tool) ||
-				NOTIFICATION_TOOLS.includes(tool)
+				NOTIFICATION_TOOLS.includes(tool) ||
+				SEPARATELY_BOUND_TOOLS.includes(tool)
 					? false
 					: tool === 'wait_for_idle' ||
 				tool === 'wait_for_command' ||
@@ -522,6 +544,9 @@ async function openTerminal(
 		state,
 		...(params.name === undefined ? {} : { name: params.name }),
 		...(params.cwd === undefined ? {} : { cwd: params.cwd }),
+		...(params.shellProfile === undefined
+			? {}
+			: { shellProfile: params.shellProfile }),
 	});
 }
 
@@ -580,6 +605,7 @@ async function createTerminal(
 		readonly state: WorkspaceState | undefined;
 		readonly name?: string;
 		readonly cwd?: string;
+		readonly shellProfile?: string;
 	},
 ): Promise<unknown> {
 	const workspaceReach = reachOf(context) === 'workspace';
@@ -591,6 +617,11 @@ async function createTerminal(
 		cols: 80,
 		rows: 24,
 		...(request.cwd === undefined ? {} : { explicitCwd: request.cwd }),
+		// Resolved as the New Terminal action resolves a chosen profile; an
+		// unknown or unavailable one fails here, before anything is created.
+		...(request.shellProfile === undefined
+			? {}
+			: { explicitProfileId: request.shellProfile }),
 		...(anchor === undefined
 			? {}
 			: { activePanelId: anchor.id, folderId: anchor.folderId }),

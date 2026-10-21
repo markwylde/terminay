@@ -48,6 +48,17 @@ export interface RunAutomationParams {
 export interface StopAutomationRunParams {
 	readonly runId: string;
 }
+export interface RemoveAutomationRunParams {
+	readonly runId: string;
+}
+export interface PruneAutomationRunsParams {
+	readonly automationId: string;
+	readonly olderThanDays: number;
+}
+export interface DismissMissedRunsParams {
+	/** Absent dismisses every automation's missed-schedule notice. */
+	readonly automationId?: string;
+}
 
 type Handler<P> = (
 	params: P,
@@ -70,6 +81,9 @@ export interface AutomationControlAdapter {
 	readonly setAutomationEnabled: Handler<SetAutomationEnabledParams>;
 	readonly runAutomation: Handler<RunAutomationParams>;
 	readonly stopAutomationRun: Handler<StopAutomationRunParams>;
+	readonly removeAutomationRun: Handler<RemoveAutomationRunParams>;
+	readonly pruneAutomationRuns: Handler<PruneAutomationRunsParams>;
+	readonly dismissMissedRuns: Handler<DismissMissedRunsParams>;
 }
 
 /** The Terminay events an automation can be triggered by. Kept free of a
@@ -87,6 +101,8 @@ export const MCP_AUTOMATION_EVENT_KINDS = [
 ] as const satisfies readonly AutomationEventKind[];
 
 export const DEFAULT_AUTOMATION_RUNS_LIMIT = 20;
+/** The longest history a prune may keep, as the Automations section allows. */
+export const MAX_AUTOMATION_PRUNE_DAYS = 3650;
 export const MAX_AUTOMATION_RUNS_LIMIT = 50;
 const AUTOMATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_TERMINAL_REF_CHARS = 256;
@@ -214,6 +230,38 @@ export function parseStopAutomationRun(
 ): Parsed<StopAutomationRunParams> {
 	const runId = id(params.run_id, 'run_id');
 	return typeof runId === 'string' ? { runId } : runId;
+}
+
+export function parseRemoveAutomationRun(
+	params: Record<string, unknown>,
+): Parsed<RemoveAutomationRunParams> {
+	return parseStopAutomationRun(params);
+}
+
+export function parsePruneAutomationRuns(
+	params: Record<string, unknown>,
+): Parsed<PruneAutomationRunsParams> {
+	const automationId = id(params.automation_id, 'automation_id');
+	if (typeof automationId !== 'string') return automationId;
+	const days = params.older_than_days;
+	if (
+		typeof days !== 'number' ||
+		!Number.isSafeInteger(days) ||
+		days < 0 ||
+		days > MAX_AUTOMATION_PRUNE_DAYS
+	)
+		return badRequest(
+			`older_than_days must be a whole number from 0 to ${MAX_AUTOMATION_PRUNE_DAYS}; 0 removes every finished run`,
+		);
+	return { automationId, olderThanDays: days };
+}
+
+export function parseDismissMissedRuns(
+	params: Record<string, unknown>,
+): Parsed<DismissMissedRunsParams> {
+	if (params.automation_id === undefined) return {};
+	const automationId = id(params.automation_id, 'automation_id');
+	return typeof automationId === 'string' ? { automationId } : automationId;
 }
 
 function definitionOf(params: Record<string, unknown>): AutomationDefinitionParams {

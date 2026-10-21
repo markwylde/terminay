@@ -50,6 +50,8 @@ export const CONTROL_OPERATIONS = [
 	'close_terminal',
 	'focus_terminal',
 	'rename_terminal',
+	'update_terminal',
+	'move_terminal_to_project',
 	'split_terminal',
 	'wait_for_idle',
 	'wait_for_command',
@@ -60,9 +62,12 @@ export const CONTROL_OPERATIONS = [
 	'resize_pane',
 	'arrange_tabs',
 	'focus_project',
+	'focus_home',
 	'select_folder',
 	'create_folder',
 	'rename_folder',
+	'delete_folder',
+	'reorder_folders',
 	'move_tab_to_folder',
 	'open_file',
 	'close_tab',
@@ -75,10 +80,33 @@ export const CONTROL_OPERATIONS = [
 	'set_automation_enabled',
 	'run_automation',
 	'stop_automation_run',
+	'remove_automation_run',
+	'prune_automation_runs',
+	'dismiss_missed_runs',
+	'list_projects',
+	'create_project',
+	'update_project',
+	'move_project',
+	'close_project',
+	'list_workspace_windows',
+	'open_workspace_window',
+	'rename_workspace_window',
+	'close_workspace_window',
+	'get_settings',
+	'update_settings',
+	'list_shell_profiles',
+	'save_shell_profile',
+	'delete_shell_profile',
+	'reorder_shell_profiles',
+	'set_default_shell_profile',
+	'list_macros',
+	'run_macro',
+	'cancel_macro',
 	'show_window',
 	'close_window',
 	'list_windows',
 	'send_notification',
+	'list_notifications',
 	'dismiss_notification',
 	'list_connected_tools',
 	'call_connected_tool',
@@ -115,10 +143,11 @@ export type ControlOperation = (typeof CONTROL_OPERATIONS)[number];
 export type ControlOp = ControlOperation;
 export type ControlScope = 'none' | 'read' | 'write' | 'admin';
 /**
- * Which terminals a capability may address (ADR-0030). `project` reaches the
- * terminal's own project. `workspace` reaches every project and the automation
- * terminal space on the same server, and is held only by terminals in that
- * space. Reach never widens the operation set and never crosses servers.
+ * Which terminals a capability may address (ADR-0030), and which app-level
+ * tools it may use (ADR-0072). `project` reaches the terminal's own project.
+ * `workspace` reaches every project and the automation terminal space on the
+ * same server, is held only by terminals in that space and workspace chats,
+ * and alone may use the app-level tools. Reach never crosses servers.
  */
 export type ControlReach = 'project' | 'workspace';
 
@@ -291,6 +320,8 @@ export type ControlErrorCode =
 	| 'permission_denied'
 	| 'permission_declined'
 	| 'approval_queue_full'
+	| 'out_of_scope'
+	| 'busy'
 	| 'internal';
 
 export interface ControlError {
@@ -470,6 +501,8 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'permission_denied',
 	'permission_declined',
 	'approval_queue_full',
+	'out_of_scope',
+	'busy',
 	'internal',
 ]);
 const CONTROL_ERROR_MESSAGE_BYTES = 4 * 1024;

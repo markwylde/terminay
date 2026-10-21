@@ -13,6 +13,7 @@ import {
 } from '@terminay/server-core';
 import {
 	CONTROL_TOOL_OPERATIONS,
+	WORKSPACE_REACH_OPERATIONS,
 	CONTROL_PROTOCOL_VERSION,
 	ControlCapabilityStore,
 	ProjectHandleCodec,
@@ -678,8 +679,16 @@ test('automation tools are the same for project and workspace reach, and unsuppo
 	).tools;
 	const projectTools = (await call(projectContext, 'get_mcp_capabilities'))
 		.tools;
-	// Workspace reach widens which terminals are addressable, never the tool set.
-	assert.deepEqual(workspaceTools, projectTools);
+	// Workspace reach widens which terminals are addressable; the app-level
+	// tools are its alone (ADR-0072), so project reach sees them unavailable.
+	assert.deepEqual(
+		projectTools,
+		workspaceTools.map((entry) =>
+			WORKSPACE_REACH_OPERATIONS.has(entry.tool)
+				? { ...entry, available: false }
+				: entry,
+		),
+	);
 	assert.deepEqual(
 		workspaceTools.map((entry) => entry.tool).sort(),
 		[...CONTROL_TOOL_OPERATIONS].sort(),

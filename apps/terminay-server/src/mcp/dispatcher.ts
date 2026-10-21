@@ -1,5 +1,20 @@
 import type { McpPermissionGroup } from '@terminay/server-core';
 import {
+	APP_CONTROL_OPERATIONS,
+	type AppControlAdapter,
+	isAppControlParamFailure,
+	PROJECT_REACH_UPDATE_PROJECT_FIELDS,
+	parseCloseProject,
+	parseCloseWorkspaceWindow,
+	parseCreateProject,
+	parseListProjects,
+	parseListWorkspaceWindows,
+	parseMoveProject,
+	parseOpenWorkspaceWindow,
+	parseRenameWorkspaceWindow,
+	parseUpdateProject,
+} from './appControlTools.js';
+import {
 	type AppWindowControlAdapter,
 	isAppWindowParamFailure,
 	parseCallConnectedTool,
@@ -16,9 +31,31 @@ import {
 	parseListAutomationRuns,
 	parseRunAutomation,
 	parseSetAutomationEnabled,
+	parseDismissMissedRuns,
+	parsePruneAutomationRuns,
+	parseRemoveAutomationRun,
 	parseStopAutomationRun,
 	parseUpdateAutomation,
 } from './automationTools.js';
+import {
+	isMacroParamFailure,
+	MACRO_CONTROL_OPERATIONS,
+	type MacroControlAdapter,
+	parseCancelMacro,
+	parseListMacros,
+	parseRunMacro,
+} from './macroTools.js';
+import {
+	isSettingsParamFailure,
+	parseGetSettings,
+	parseListShellProfiles,
+	parseReorderShellProfiles,
+	parseSaveShellProfile,
+	parseShellProfileId,
+	parseUpdateSettings,
+	SETTINGS_CONTROL_OPERATIONS,
+	type SettingsControlAdapter,
+} from './settingsTools.js';
 import type {
 	ControlDispatcher,
 	ControlDispatchResult,
@@ -38,6 +75,8 @@ import {
 	parseArrangeTabs,
 	parseCloseTab,
 	parseCreateFolder,
+	parseDeleteFolder,
+	parseFocusHome,
 	parseFocusProject,
 	parseFocusTab,
 	parseGetLayout,
@@ -46,6 +85,7 @@ import {
 	parseOpenFile,
 	parsePlacementFields,
 	parseRenameFolder,
+	parseReorderFolders,
 	parseResizePane,
 	parseSelectFolder,
 	type WorkspaceViewControlAdapter,
@@ -54,8 +94,16 @@ import {
 	isNotificationParamFailure,
 	type NotificationControlAdapter,
 	parseDismissNotification,
+	parseListNotifications,
 	parseSendNotification,
 } from './notificationTools.js';
+
+/** A host binding for one operation, already past reach and the gate. */
+type OperationHandler = (
+	params: Record<string, unknown>,
+	context: ControlRequestContext,
+	signal: AbortSignal,
+) => unknown | Promise<unknown>;
 
 export interface ServerControlHandlers {
 	readonly getMcpCapabilities?: (
@@ -236,6 +284,51 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly listProjects?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly createProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly updateProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly moveProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeProject?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly listWorkspaceWindows?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly openWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly renameWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	readonly closeWorkspaceWindow?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 	readonly showWindow?: (
 		params: Record<string, unknown>,
 		context: ControlRequestContext,
@@ -271,6 +364,25 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly updateTerminal?: OperationHandler;
+	readonly moveTerminalToProject?: OperationHandler;
+	readonly focusHome?: OperationHandler;
+	readonly deleteFolder?: OperationHandler;
+	readonly reorderFolders?: OperationHandler;
+	readonly removeAutomationRun?: OperationHandler;
+	readonly pruneAutomationRuns?: OperationHandler;
+	readonly dismissMissedRuns?: OperationHandler;
+	readonly getSettings?: OperationHandler;
+	readonly updateSettings?: OperationHandler;
+	readonly listShellProfiles?: OperationHandler;
+	readonly saveShellProfile?: OperationHandler;
+	readonly deleteShellProfile?: OperationHandler;
+	readonly reorderShellProfiles?: OperationHandler;
+	readonly setDefaultShellProfile?: OperationHandler;
+	readonly listMacros?: OperationHandler;
+	readonly runMacro?: OperationHandler;
+	readonly cancelMacro?: OperationHandler;
+	readonly listNotifications?: OperationHandler;
 }
 
 /**
@@ -317,6 +429,8 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	close_terminal: 'terminalsManage',
 	focus_terminal: 'terminalsManage',
 	rename_terminal: 'terminalsManage',
+	update_terminal: 'terminalsManage',
+	move_terminal_to_project: 'terminalsManage',
 	split_terminal: 'terminalsManage',
 	get_layout: 'terminalsRead',
 	focus_tab: 'terminalsManage',
@@ -324,9 +438,12 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	resize_pane: 'terminalsManage',
 	arrange_tabs: 'terminalsManage',
 	focus_project: 'terminalsManage',
+	focus_home: 'terminalsManage',
 	select_folder: 'terminalsManage',
 	create_folder: 'terminalsManage',
 	rename_folder: 'terminalsManage',
+	delete_folder: 'terminalsManage',
+	reorder_folders: 'terminalsManage',
 	move_tab_to_folder: 'terminalsManage',
 	open_file: 'terminalsManage',
 	close_tab: 'terminalsManage',
@@ -339,10 +456,33 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	set_automation_enabled: 'automationsManage',
 	run_automation: 'automationsManage',
 	stop_automation_run: 'automationsManage',
+	remove_automation_run: 'automationsManage',
+	prune_automation_runs: 'automationsManage',
+	dismiss_missed_runs: 'automationsManage',
+	list_projects: 'projectsWindows',
+	create_project: 'projectsWindows',
+	update_project: 'projectsWindows',
+	move_project: 'projectsWindows',
+	close_project: 'projectsWindows',
+	list_workspace_windows: 'projectsWindows',
+	open_workspace_window: 'projectsWindows',
+	rename_workspace_window: 'projectsWindows',
+	close_workspace_window: 'projectsWindows',
+	get_settings: 'settingsRead',
+	update_settings: 'settingsChange',
+	list_shell_profiles: 'settingsRead',
+	save_shell_profile: 'settingsChange',
+	delete_shell_profile: 'settingsChange',
+	reorder_shell_profiles: 'settingsChange',
+	set_default_shell_profile: 'settingsChange',
+	list_macros: 'terminalsManage',
+	run_macro: 'terminalsManage',
+	cancel_macro: 'terminalsManage',
 	show_window: 'appWindows',
 	close_window: 'appWindows',
 	list_windows: 'appWindows',
 	send_notification: 'notifications',
+	list_notifications: 'notifications',
 	dismiss_notification: 'notifications',
 	// Listing never prompts: a tool the policy refuses stays listed and
 	// refuses when called.
@@ -391,10 +531,32 @@ export interface OpenTerminalParams {
 	readonly focus?: boolean;
 	/** Opaque project handle from a workspace-reach `list_terminals` row. */
 	readonly project?: string;
+	/** A shell profile id from `list_shell_profiles`, resolved as the New
+	 * Terminal action resolves a chosen profile. */
+	readonly shellProfile?: string;
+}
+export interface UpdateTerminalParams {
+	readonly terminal: TerminalRef;
+	/** The tab's icon; empty clears it. */
+	readonly icon?: string;
+	/** The tab's colour; empty follows the project's colour. */
+	readonly color?: string;
+	/** The tab's note; null removes it. */
+	readonly note?: string | null;
+	/** Whether the tab shows activity. */
+	readonly activityTracking?: boolean;
+}
+export interface MoveTerminalToProjectParams {
+	readonly terminal: TerminalRef;
+	/** Opaque handle of the project it moves to. */
+	readonly project: string;
+	readonly position?: number;
 }
 
 /** Shape of an opaque project handle (see `workspaceReach.ts`). */
 export const PROJECT_HANDLE_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
+/** Shape of an opaque workspace window handle (see `workspaceReach.ts`). */
+export const WINDOW_HANDLE_PATTERN = /^win_[A-Za-z0-9_-]{22}$/;
 export interface WriteTerminalParams {
 	readonly terminal: TerminalRef;
 	readonly text: string;
@@ -506,6 +668,20 @@ export interface TerminalControlAdapter {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	/** A tab's icon, colour, note, and activity tracking; omitted hosts report
+	 * it unsupported. */
+	readonly updateTerminal?: (
+		params: UpdateTerminalParams,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
+	/** The server-committed move of a terminal to another project; omitted
+	 * hosts report it unsupported. */
+	readonly moveTerminalToProject?: (
+		params: MoveTerminalToProjectParams,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 }
 
 export interface TerminalControlAdapterOptions {
@@ -516,6 +692,12 @@ export interface TerminalControlAdapterOptions {
 	readonly appWindows?: AppWindowControlAdapter;
 	/** Host binding for the notification tools. */
 	readonly notifications?: NotificationControlAdapter;
+	/** Host binding for the project and workspace window tools (ADR-0072). */
+	readonly appControl?: AppControlAdapter;
+	/** Host binding for the settings and shell profile tools (ADR-0072). */
+	readonly settings?: SettingsControlAdapter;
+	/** Host binding for the macro tools (ADR-0072). */
+	readonly macros?: MacroControlAdapter;
 	/**
 	 * The view of the client the agent is talking from (ADR-0070). With it,
 	 * `split_terminal`, `open_terminal`'s `split` and `focus`, and
@@ -552,6 +734,8 @@ const DEFAULT_SCOPES: Readonly<
 	close_terminal: 'write',
 	focus_terminal: 'write',
 	rename_terminal: 'write',
+	update_terminal: 'write',
+	move_terminal_to_project: 'write',
 	split_terminal: 'write',
 	get_layout: 'read',
 	focus_tab: 'write',
@@ -559,9 +743,12 @@ const DEFAULT_SCOPES: Readonly<
 	resize_pane: 'write',
 	arrange_tabs: 'write',
 	focus_project: 'write',
+	focus_home: 'write',
 	select_folder: 'write',
 	create_folder: 'write',
 	rename_folder: 'write',
+	delete_folder: 'write',
+	reorder_folders: 'write',
 	move_tab_to_folder: 'write',
 	open_file: 'write',
 	close_tab: 'write',
@@ -574,10 +761,33 @@ const DEFAULT_SCOPES: Readonly<
 	set_automation_enabled: 'write',
 	run_automation: 'write',
 	stop_automation_run: 'write',
+	remove_automation_run: 'write',
+	prune_automation_runs: 'write',
+	dismiss_missed_runs: 'write',
+	list_projects: 'read',
+	create_project: 'write',
+	update_project: 'write',
+	move_project: 'write',
+	close_project: 'write',
+	list_workspace_windows: 'read',
+	open_workspace_window: 'write',
+	rename_workspace_window: 'write',
+	close_workspace_window: 'write',
+	get_settings: 'read',
+	update_settings: 'write',
+	list_shell_profiles: 'read',
+	save_shell_profile: 'write',
+	delete_shell_profile: 'write',
+	reorder_shell_profiles: 'write',
+	set_default_shell_profile: 'write',
+	list_macros: 'read',
+	run_macro: 'write',
+	cancel_macro: 'write',
 	show_window: 'write',
 	close_window: 'write',
 	list_windows: 'read',
 	send_notification: 'write',
+	list_notifications: 'read',
 	dismiss_notification: 'write',
 	list_connected_tools: 'read',
 	call_connected_tool: 'write',
@@ -597,6 +807,8 @@ const HANDLER_BY_OPERATION: Readonly<
 	close_terminal: 'closeTerminal',
 	focus_terminal: 'focusTerminal',
 	rename_terminal: 'renameTerminal',
+	update_terminal: 'updateTerminal',
+	move_terminal_to_project: 'moveTerminalToProject',
 	split_terminal: 'splitTerminal',
 	get_layout: 'getLayout',
 	focus_tab: 'focusTab',
@@ -604,9 +816,12 @@ const HANDLER_BY_OPERATION: Readonly<
 	resize_pane: 'resizePane',
 	arrange_tabs: 'arrangeTabs',
 	focus_project: 'focusProject',
+	focus_home: 'focusHome',
 	select_folder: 'selectFolder',
 	create_folder: 'createFolder',
 	rename_folder: 'renameFolder',
+	delete_folder: 'deleteFolder',
+	reorder_folders: 'reorderFolders',
 	move_tab_to_folder: 'moveTabToFolder',
 	open_file: 'openFile',
 	close_tab: 'closeTab',
@@ -622,10 +837,33 @@ const HANDLER_BY_OPERATION: Readonly<
 	set_automation_enabled: 'setAutomationEnabled',
 	run_automation: 'runAutomation',
 	stop_automation_run: 'stopAutomationRun',
+	remove_automation_run: 'removeAutomationRun',
+	prune_automation_runs: 'pruneAutomationRuns',
+	dismiss_missed_runs: 'dismissMissedRuns',
+	list_projects: 'listProjects',
+	create_project: 'createProject',
+	update_project: 'updateProject',
+	move_project: 'moveProject',
+	close_project: 'closeProject',
+	list_workspace_windows: 'listWorkspaceWindows',
+	open_workspace_window: 'openWorkspaceWindow',
+	rename_workspace_window: 'renameWorkspaceWindow',
+	close_workspace_window: 'closeWorkspaceWindow',
+	get_settings: 'getSettings',
+	update_settings: 'updateSettings',
+	list_shell_profiles: 'listShellProfiles',
+	save_shell_profile: 'saveShellProfile',
+	delete_shell_profile: 'deleteShellProfile',
+	reorder_shell_profiles: 'reorderShellProfiles',
+	set_default_shell_profile: 'setDefaultShellProfile',
+	list_macros: 'listMacros',
+	run_macro: 'runMacro',
+	cancel_macro: 'cancelMacro',
 	show_window: 'showWindow',
 	close_window: 'closeWindow',
 	list_windows: 'listWindows',
 	send_notification: 'sendNotification',
+	list_notifications: 'listNotifications',
 	dismiss_notification: 'dismissNotification',
 	list_connected_tools: 'listConnectedTools',
 	call_connected_tool: 'callConnectedTool',
@@ -688,6 +926,10 @@ export function createServerControlDispatcher(
 				},
 			};
 		}
+		// Reach is decided before the policy, so a call the caller's reach
+		// cannot make never asks the user (ADR-0072).
+		const outOfReach = reachRefusal(request.op, params, context);
+		if (outOfReach !== undefined) return outOfReach;
 		// A chat has no terminal for a window to open in or a notification to be
 		// held for, so those tools are unavailable to it (ADR-0068).
 		if (
@@ -752,7 +994,13 @@ export function createServerControlDispatcher(
 							message: 'control operation get_mcp_capabilities is unavailable',
 						},
 					};
-				const reported = await capabilitiesHandler(context, context.signal);
+				// A tool the caller's reach cannot use is unavailable to it.
+				const reported = withAvailability(
+					await capabilitiesHandler(context, context.signal),
+					(tool) =>
+						context.reach === 'workspace' ||
+						!WORKSPACE_REACH_OPERATIONS.has(tool),
+				);
 				return context.chat === undefined
 					? reported
 					: withoutCallingTerminalTools(reported);
@@ -777,14 +1025,105 @@ export function createServerControlDispatcher(
 	};
 }
 
-/** Operations that act for, or in, the calling terminal itself. */
+/**
+ * Operations only workspace reach may use (ADR-0072), fixed per operation and
+ * never inferred from parameters. Project reach may use every other one, and
+ * `update_project` for its own project's name, icon and colour only.
+ */
+export const WORKSPACE_REACH_OPERATIONS: ReadonlySet<ControlOperation> =
+	new Set<ControlOperation>([
+		'create_project',
+		'move_project',
+		'close_project',
+		'list_workspace_windows',
+		'open_workspace_window',
+		'rename_workspace_window',
+		'close_workspace_window',
+		'get_settings',
+		'update_settings',
+		'save_shell_profile',
+		'delete_shell_profile',
+		'reorder_shell_profiles',
+		'set_default_shell_profile',
+		'move_terminal_to_project',
+		'focus_home',
+	]);
+
+/** Why the caller's reach cannot make this call, or undefined when it can. */
+export function reachRefusal(
+	op: ControlOperation,
+	params: Readonly<Record<string, unknown>>,
+	context: Pick<ControlRequestContext, 'reach'>,
+): ControlFailure | undefined {
+	if (context.reach === 'workspace') return undefined;
+	if (WORKSPACE_REACH_OPERATIONS.has(op))
+		return {
+			ok: false,
+			error: {
+				code: 'out_of_scope',
+				message: `${op} needs workspace reach. An agent in a project terminal acts only on its own project; run it from a terminal under Home or from Pixel.`,
+			},
+		};
+	if (
+		op === 'update_project' &&
+		Object.keys(params).some(
+			(field) => !PROJECT_REACH_UPDATE_PROJECT_FIELDS.has(field),
+		)
+	)
+		return {
+			ok: false,
+			error: {
+				code: 'out_of_scope',
+				message:
+					"From a project terminal, update_project changes only your own project's name, icon, and colour.",
+			},
+		};
+	return undefined;
+}
+
+/** Report each tool unavailable where `available` says so, whatever the host said. */
+function withAvailability(
+	reported: ControlDispatchResult,
+	available: (tool: ControlOperation) => boolean,
+): ControlDispatchResult {
+	const patch = (value: unknown): unknown => {
+		if (typeof value !== 'object' || value === null) return value;
+		const tools = (value as { tools?: unknown }).tools;
+		if (!Array.isArray(tools)) return value;
+		return {
+			...value,
+			tools: tools.map((entry) => {
+				if (typeof entry !== 'object' || entry === null) return entry;
+				const tool = (entry as { tool?: unknown }).tool;
+				return typeof tool === 'string' &&
+					Object.hasOwn(HANDLER_BY_OPERATION, tool) &&
+					!available(tool as ControlOperation)
+					? { ...entry, available: false }
+					: entry;
+			}),
+		};
+	};
+	if (
+		typeof reported === 'object' &&
+		reported !== null &&
+		(reported as { ok?: unknown }).ok === true &&
+		'result' in reported
+	)
+		return {
+			ok: true,
+			result: patch((reported as { result: unknown }).result),
+		};
+	return patch(reported);
+}
+
+/** Operations that act for, or in, the calling terminal itself. Listing and
+ * dismissing notifications are addressed by reach, so a chat may use them. */
 export const CALLING_TERMINAL_OPERATIONS: ReadonlySet<ControlOperation> =
 	new Set<ControlOperation>([
 		'show_window',
 		'close_window',
 		'list_windows',
 		'send_notification',
-		'dismiss_notification',
 	]);
 
 /** Report the calling-terminal tools unavailable, whatever the host said. */
@@ -878,9 +1217,24 @@ export function createTerminalControlAdapter(
 			: {
 					getMcpCapabilities: (context, signal) =>
 						invoke(signal, async () =>
-							withViewAvailability(
-								await options.adapter.getMcpCapabilities!(context, signal),
-								options.workspaceView !== undefined,
+							withBoundAvailability(
+								withViewAvailability(
+									await options.adapter.getMcpCapabilities!(context, signal),
+									options.workspaceView !== undefined,
+								),
+								new Set<string>([
+									...(options.appControl === undefined ? APP_CONTROL_OPERATIONS : []),
+									...(options.settings === undefined
+										? SETTINGS_CONTROL_OPERATIONS
+										: []),
+									...(options.macros === undefined ? MACRO_CONTROL_OPERATIONS : []),
+									...(options.adapter.updateTerminal === undefined
+										? ['update_terminal']
+										: []),
+									...(options.adapter.moveTerminalToProject === undefined
+										? ['move_terminal_to_project']
+										: []),
+								]),
 							),
 						),
 				}),
@@ -1079,6 +1433,32 @@ export function createTerminalControlAdapter(
 					? parsed
 					: options.adapter.waitForAttention(parsed, context, signal);
 			}),
+		...(options.adapter.updateTerminal === undefined
+			? {}
+			: {
+					updateTerminal: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseUpdateTerminal(params);
+							return isControlFailure(parsed)
+								? parsed
+								: options.adapter.updateTerminal!(parsed, context, signal);
+						}),
+				}),
+		...(options.adapter.moveTerminalToProject === undefined
+			? {}
+			: {
+					moveTerminalToProject: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseMoveTerminalToProject(params);
+							return isControlFailure(parsed)
+								? parsed
+								: options.adapter.moveTerminalToProject!(
+										parsed,
+										context,
+										signal,
+									);
+						}),
+				}),
 	};
 	const automations = options.automations;
 	const automationHandlers: Partial<ServerControlHandlers> =
@@ -1142,6 +1522,27 @@ export function createTerminalControlAdapter(
 							return isAutomationParamFailure(parsed)
 								? parsed
 								: automations.stopAutomationRun(parsed, context, signal);
+						}),
+					removeAutomationRun: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseRemoveAutomationRun(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.removeAutomationRun(parsed, context, signal);
+						}),
+					pruneAutomationRuns: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parsePruneAutomationRuns(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.pruneAutomationRuns(parsed, context, signal);
+						}),
+					dismissMissedRuns: (params, context, signal) =>
+						invoke(signal, () => {
+							const parsed = parseDismissMissedRuns(params);
+							return isAutomationParamFailure(parsed)
+								? parsed
+								: automations.dismissMissedRuns(parsed, context, signal);
 						}),
 				};
 	const appWindows = options.appWindows;
@@ -1229,6 +1630,9 @@ export function createTerminalControlAdapter(
 		selectFolder: viewHandler(parseSelectFolder, (view, p, c, s) => view.selectFolder(p, c, s)),
 		createFolder: viewHandler(parseCreateFolder, (view, p, c, s) => view.createFolder(p, c, s)),
 		renameFolder: viewHandler(parseRenameFolder, (view, p, c, s) => view.renameFolder(p, c, s)),
+		deleteFolder: viewHandler(parseDeleteFolder, (view, p, c, s) => view.deleteFolder(p, c, s)),
+		reorderFolders: viewHandler(parseReorderFolders, (view, p, c, s) => view.reorderFolders(p, c, s)),
+		focusHome: viewHandler(parseFocusHome, (view, p, c, s) => view.focusHome(p, c, s)),
 		moveTabToFolder: viewHandler(parseMoveTabToFolder, (view, p, c, s) => view.moveTabToFolder(p, c, s)),
 		openFile: viewHandler(parseOpenFile, (view, p, c, s) => view.openFile(p, c, s)),
 		closeTab: viewHandler(parseCloseTab, (view, p, c, s) => view.closeTab(p, c, s)),
@@ -1252,6 +1656,111 @@ export function createTerminalControlAdapter(
 								? parsed
 								: notifications.dismissNotification(parsed, context, signal);
 						}),
+					listNotifications: (_params, context, signal) =>
+						invoke(signal, () =>
+							notifications.listNotifications(
+								parseListNotifications() as Record<string, never>,
+								context,
+								signal,
+							),
+						),
+				};
+	const appControl = options.appControl;
+	const appControlHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				adapter: AppControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isAppControlParamFailure(parsed)) return parsed;
+				return run(appControl!, parsed as P, context, signal);
+			});
+	const appControlHandlers: Partial<ServerControlHandlers> =
+		appControl === undefined
+			? {}
+			: {
+					listProjects: appControlHandler(parseListProjects, (a, p, c, s) => a.listProjects(p, c, s)),
+					createProject: appControlHandler(parseCreateProject, (a, p, c, s) => a.createProject(p, c, s)),
+					updateProject: appControlHandler(parseUpdateProject, (a, p, c, s) => a.updateProject(p, c, s)),
+					moveProject: appControlHandler(parseMoveProject, (a, p, c, s) => a.moveProject(p, c, s)),
+					closeProject: appControlHandler(parseCloseProject, (a, p, c, s) => a.closeProject(p, c, s)),
+					listWorkspaceWindows: appControlHandler(parseListWorkspaceWindows, (a, p, c, s) => a.listWorkspaceWindows(p, c, s)),
+					openWorkspaceWindow: appControlHandler(parseOpenWorkspaceWindow, (a, p, c, s) => a.openWorkspaceWindow(p, c, s)),
+					renameWorkspaceWindow: appControlHandler(parseRenameWorkspaceWindow, (a, p, c, s) => a.renameWorkspaceWindow(p, c, s)),
+					closeWorkspaceWindow: appControlHandler(parseCloseWorkspaceWindow, (a, p, c, s) => a.closeWorkspaceWindow(p, c, s)),
+				};
+	const settings = options.settings;
+	const settingsHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				adapter: SettingsControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isSettingsParamFailure(parsed)) return parsed;
+				return run(settings!, parsed as P, context, signal);
+			});
+	const settingsHandlers: Partial<ServerControlHandlers> =
+		settings === undefined
+			? {}
+			: {
+					getSettings: settingsHandler(parseGetSettings, (a, p, c, s) => a.getSettings(p, c, s)),
+					updateSettings: settingsHandler(parseUpdateSettings, (a, p, c, s) => a.updateSettings(p, c, s)),
+					listShellProfiles: settingsHandler(parseListShellProfiles, (a, p, c, s) => a.listShellProfiles(p, c, s)),
+					saveShellProfile: settingsHandler(parseSaveShellProfile, (a, p, c, s) => a.saveShellProfile(p, c, s)),
+					deleteShellProfile: settingsHandler(parseShellProfileId, (a, p, c, s) => a.deleteShellProfile(p, c, s)),
+					reorderShellProfiles: settingsHandler(parseReorderShellProfiles, (a, p, c, s) => a.reorderShellProfiles(p, c, s)),
+					setDefaultShellProfile: settingsHandler(parseShellProfileId, (a, p, c, s) => a.setDefaultShellProfile(p, c, s)),
+				};
+	const macros = options.macros;
+	const macroHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				adapter: MacroControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isMacroParamFailure(parsed)) return parsed;
+				return run(macros!, parsed as P, context, signal);
+			});
+	const macroHandlers: Partial<ServerControlHandlers> =
+		macros === undefined
+			? {}
+			: {
+					listMacros: macroHandler(parseListMacros, (a, p, c, s) => a.listMacros(p, c, s)),
+					runMacro: macroHandler(parseRunMacro, (a, p, c, s) => a.runMacro(p, c, s)),
+					cancelMacro: macroHandler(parseCancelMacro, (a, p, c, s) => a.cancelMacro(p, c, s)),
 				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
 		handlers: {
@@ -1260,6 +1769,9 @@ export function createTerminalControlAdapter(
 			...appWindowHandlers,
 			...notificationHandlers,
 			...workspaceViewHandlers,
+			...appControlHandlers,
+			...settingsHandlers,
+			...macroHandlers,
 		},
 		...(options.permissions === undefined
 			? {}
@@ -1313,9 +1825,12 @@ export const WORKSPACE_VIEW_OPERATIONS: ReadonlySet<ControlOperation> =
 		'resize_pane',
 		'arrange_tabs',
 		'focus_project',
+		'focus_home',
 		'select_folder',
 		'create_folder',
 		'rename_folder',
+		'delete_folder',
+		'reorder_folders',
 		'move_tab_to_folder',
 		'open_file',
 		'close_tab',
@@ -1330,6 +1845,24 @@ function withViewAvailability(reported: unknown, available: boolean): unknown {
 			isRecord(entry) &&
 			WORKSPACE_VIEW_OPERATIONS.has(entry.tool as ControlOperation)
 				? { ...entry, available }
+				: entry,
+		),
+	};
+}
+
+/** Report unavailable every tool whose host binding is absent. */
+function withBoundAvailability(
+	reported: unknown,
+	unbound: ReadonlySet<string>,
+): unknown {
+	if (unbound.size === 0 || !isRecord(reported) || !Array.isArray(reported.tools))
+		return reported;
+	const tools = unbound;
+	return {
+		...reported,
+		tools: reported.tools.map((entry) =>
+			isRecord(entry) && typeof entry.tool === 'string' && tools.has(entry.tool)
+				? { ...entry, available: false }
 				: entry,
 		),
 	};
@@ -1465,6 +1998,9 @@ function publicControlError(error: unknown): ControlError {
 		permission_declined: 'The user declined this request.',
 		approval_queue_full:
 			'This terminal already has the maximum number of requests waiting for approval.',
+		out_of_scope:
+			'This operation needs workspace reach; an agent in a project terminal acts only on its own project.',
+		busy: 'A terminal is running a program.',
 		internal: 'The control operation failed.',
 	};
 	return { code: publicCode, message: messageByCode[publicCode] };
@@ -1488,6 +2024,8 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'permission_denied' ||
 		value === 'permission_declined' ||
 		value === 'approval_queue_full' ||
+		value === 'out_of_scope' ||
+		value === 'busy' ||
 		value === 'internal'
 	);
 }
@@ -1623,12 +2161,96 @@ function parseOpenTerminal(
 	if (isControlFailure(placement)) return placement;
 	if (placement.beside !== undefined && split === undefined)
 		return badRequest('beside needs split, the side to open on');
+	const shellProfile = value.shell_profile;
+	if (
+		shellProfile !== undefined &&
+		(typeof shellProfile !== 'string' || !ID_PATTERN.test(shellProfile))
+	)
+		return badRequest(
+			'shell_profile must be a shell profile id from list_shell_profiles',
+		);
 	return {
 		...(name === undefined ? {} : { name }),
 		...(cwd === undefined ? {} : { cwd }),
+		...(shellProfile === undefined
+			? {}
+			: { shellProfile: shellProfile as string }),
 		...(split === undefined ? {} : { split: split as SplitDirection }),
 		...(project === undefined ? {} : { project }),
 		...placement,
+	};
+}
+
+/** The longest note a tab holds, as the tab editor allows. */
+export const MAX_TERMINAL_NOTE_CHARS = 1200;
+
+function parseUpdateTerminal(
+	value: Record<string, unknown>,
+): ParseResult<UpdateTerminalParams> {
+	const terminal = parseTerminalOnly(value);
+	if (isControlFailure(terminal)) return terminal;
+	for (const [key, max] of [
+		['icon', 64],
+		['color', 128],
+	] as const) {
+		const field = value[key];
+		if (
+			field !== undefined &&
+			(typeof field !== 'string' || field.length > max || field.includes('\0'))
+		)
+			return badRequest(`${key} must be at most ${max} characters`);
+	}
+	const note = value.note;
+	if (
+		note !== undefined &&
+		note !== null &&
+		(typeof note !== 'string' ||
+			note.length > MAX_TERMINAL_NOTE_CHARS ||
+			note.includes('\0'))
+	)
+		return badRequest(
+			`note must be at most ${MAX_TERMINAL_NOTE_CHARS} characters, or null to remove it`,
+		);
+	const tracking = optionalBoolean(value.activity_tracking, 'activity_tracking');
+	if (isControlFailure(tracking)) return tracking;
+	if (
+		value.icon === undefined &&
+		value.color === undefined &&
+		note === undefined &&
+		tracking === undefined
+	)
+		return badRequest('icon, color, note, or activity_tracking must be given');
+	return {
+		...terminal,
+		...(value.icon === undefined ? {} : { icon: value.icon as string }),
+		...(value.color === undefined ? {} : { color: value.color as string }),
+		...(note === undefined ? {} : { note: note as string | null }),
+		...(tracking === undefined ? {} : { activityTracking: tracking }),
+	};
+}
+
+function parseMoveTerminalToProject(
+	value: Record<string, unknown>,
+): ParseResult<MoveTerminalToProjectParams> {
+	const terminal = parseTerminalOnly(value);
+	if (isControlFailure(terminal)) return terminal;
+	if (
+		typeof value.project !== 'string' ||
+		!PROJECT_HANDLE_PATTERN.test(value.project)
+	)
+		return badRequest('project must be a project handle from list_projects');
+	const position = value.position;
+	if (
+		position !== undefined &&
+		(typeof position !== 'number' ||
+			!Number.isSafeInteger(position) ||
+			position < 0)
+	)
+		return badRequest('position must be a non-negative integer');
+	return {
+		...terminal,
+		project: value.project,
+		...(position === undefined ? {} : { position: position as number }),
 	};
 }
 

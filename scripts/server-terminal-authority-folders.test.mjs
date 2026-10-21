@@ -604,7 +604,7 @@ test('MCP open and split create the terminal in the folder of the terminal they 
 	);
 	assert.match(
 		main,
-		/openTerminal: async[\s\S]*?const callerPanel =\s*projectId === context\.projectId\s*\? mcpPanelFor\(context\.terminalSessionId, context\.projectId\)\s*: undefined;[\s\S]*?createServerOwnedTerminalSession\(\s*projectId,\s*params\.cwd,\s*undefined,\s*callerPanel\?\.id,\s*callerPanel\?\.folderId,\s*\)/u,
+		/openTerminal: async[\s\S]*?const callerPanel =\s*projectId === context\.projectId\s*\? mcpPanelFor\(context\.terminalSessionId, context\.projectId\)\s*: undefined;[\s\S]*?createServerOwnedTerminalSession\(\s*projectId,\s*params\.cwd,\s*undefined,\s*callerPanel\?\.id,\s*callerPanel\?\.folderId,\s*params\.shellProfile,\s*\)/u,
 	);
 	assert.match(
 		main,

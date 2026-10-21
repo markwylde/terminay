@@ -62,7 +62,7 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export function createWorkspaceViewAdapter(
 	options: WorkspaceViewAdapterOptions,
 ): WorkspaceViewControlAdapter {
-	const { relay, projectHandles } = options;
+	const { projectHandles } = options;
 
 	/** Whether the caller reaches a project of this server. */
 	const reaches = (
@@ -136,44 +136,14 @@ export function createWorkspaceViewAdapter(
 		};
 	};
 
-	const ask = async (
+	const ask = (
 		context: ControlRequestContext,
 		op: WorkspaceViewOp,
 		params: Record<string, JsonValue | undefined>,
 		projectId: string | undefined,
 		signal: AbortSignal,
-	): Promise<Record<string, unknown>> => {
-		const target = options.targetFor({
-			terminalSessionId: context.terminalSessionId,
-			projectId: context.projectId,
-			...(context.chat === undefined ? {} : { chatId: context.chat.chatId }),
-		});
-		if (target === undefined)
-			throw new ControlEndpointError(
-				'renderer_unavailable',
-				context.chat === undefined
-					? 'No Terminay window is showing your terminal, so there is no view to read or change.'
-					: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
-			);
-		let reply: JsonValue;
-		try {
-			reply = await relay.request(
-				target,
-				op,
-				withoutUndefined(params),
-				projectId,
-				signal,
-			);
-		} catch (error) {
-			throw viewError(error);
-		}
-		if (!isRecord(reply))
-			throw new ControlEndpointError(
-				'internal',
-				'The Terminay window gave an invalid answer.',
-			);
-		return reply;
-	};
+	): Promise<Record<string, unknown>> =>
+		requestAgentView(options, context, op, params, projectId, signal);
 
 	/** The agent's description of a layout the client reported. */
 	const describe = async (
@@ -198,6 +168,27 @@ export function createWorkspaceViewAdapter(
 	): Promise<Record<string, unknown>> => {
 		const reply = await ask(context, op, params, projectId, signal);
 		return { ...extra(reply), layout: await describe(context, reply) };
+	};
+
+	/** Show Home, and a section of it, on the agent's client. */
+	const showHome = async (
+		context: ControlRequestContext,
+		section: string | undefined,
+		signal: AbortSignal,
+		extra: Record<string, unknown>,
+	): Promise<Record<string, unknown>> => {
+		const reply = await ask(
+			context,
+			'showHome',
+			section === undefined ? {} : { section },
+			undefined,
+			signal,
+		);
+		return {
+			...extra,
+			home: true,
+			...(typeof reply.section === 'string' ? { section: reply.section } : {}),
+		};
 	};
 
 	const folderInScope = (
@@ -309,11 +300,13 @@ export function createWorkspaceViewAdapter(
 			const state = await options.state();
 			const projectId = namedProject(context, state, params.project);
 			if (projectId === undefined) throw new Error('unreachable');
+			// The automation space is shown through Home, in its Automations
+			// section; only workspace reach can name it.
 			if (isAutomationSpace(state.projects[projectId]))
-				throw new ControlEndpointError(
-					'bad_request',
-					'The automation space is shown in the Automations section, not as a project tab.',
-				);
+				return showHome(context, 'automations', signal, {
+					project: params.project,
+					focused: true,
+				});
 			return viewChange(
 				context,
 				'showProject',
@@ -375,6 +368,67 @@ export function createWorkspaceViewAdapter(
 				name: params.name,
 			});
 			return { folder: folder.id, name: params.name, renamed: true };
+		},
+		deleteFolder: async (params, context) => {
+			const state = await options.state();
+			const folder = folderInScope(context, state, params.folder);
+			if (folder.kind === 'general')
+				throw new ControlEndpointError(
+					'bad_request',
+					'The General folder cannot be deleted.',
+				);
+			if (folder.kind === 'linked')
+				throw new ControlEndpointError(
+					'bad_request',
+					'This folder stands for a Git worktree; removing a worktree is a Git action, which Terminay MCP does not do.',
+				);
+			if (folder.panelIds.length > 0)
+				throw new ControlEndpointError(
+					'conflict',
+					`This folder still holds ${folder.panelIds.length} ${folder.panelIds.length === 1 ? 'tab' : 'tabs'}. Move them with move_tab_to_folder or close them first.`,
+				);
+			await applyOrRefuse(options, context, {
+				type: 'folder.delete',
+				folderId: folder.id,
+			});
+			return { folder: folder.id, deleted: true };
+		},
+		reorderFolders: async (params, context) => {
+			const state = await options.state();
+			// Every folder must be one the caller reaches, and all of one project.
+			const folders = params.folders.map((folderId) =>
+				folderInScope(context, state, folderId),
+			);
+			const projectId = folders[0]?.projectId ?? '';
+			if (folders.some((folder) => folder.projectId !== projectId))
+				throw new ControlEndpointError(
+					'not_found',
+					'Every folder must belong to the same project.',
+				);
+			const project = state.projects[projectId];
+			if (
+				project === undefined ||
+				project.folderIds.length !== folders.length
+			)
+				throw new ControlEndpointError(
+					'bad_request',
+					`folders must list every folder of the project, all ${project?.folderIds.length ?? 0} of them.`,
+				);
+			await applyOrRefuse(options, context, {
+				type: 'folder.reorder',
+				projectId,
+				folderIds: [...params.folders],
+			});
+			return { folders: params.folders, reordered: true };
+		},
+		focusHome: async (params, context, signal) => {
+			if (reachOf(context) !== 'workspace')
+				// The dispatcher refuses this first; this never widens it.
+				throw new ControlEndpointError(
+					'out_of_scope',
+					'focus_home needs workspace reach.',
+				);
+			return showHome(context, params.section, signal, {});
 		},
 		moveTabToFolder: async (params, context) => {
 			const state = await options.state();
@@ -525,6 +579,50 @@ export function createWorkspaceViewAdapter(
 			}
 		},
 	};
+}
+
+/**
+ * Ask the agent's client to apply one view operation, and answer with its
+ * reply. Fails with `renderer_unavailable` when the caller has no client.
+ */
+export async function requestAgentView(
+	options: Pick<WorkspaceViewAdapterOptions, 'relay' | 'targetFor'>,
+	context: ControlRequestContext,
+	op: WorkspaceViewOp,
+	params: Record<string, JsonValue | undefined>,
+	projectId: string | undefined,
+	signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+	const target = options.targetFor({
+		terminalSessionId: context.terminalSessionId,
+		projectId: context.projectId,
+		...(context.chat === undefined ? {} : { chatId: context.chat.chatId }),
+	});
+	if (target === undefined)
+		throw new ControlEndpointError(
+			'renderer_unavailable',
+			context.chat === undefined
+				? 'No Terminay window is showing your terminal, so there is no view to read or change.'
+				: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
+		);
+	let reply: JsonValue;
+	try {
+		reply = await options.relay.request(
+			target,
+			op,
+			withoutUndefined(params),
+			projectId,
+			signal,
+		);
+	} catch (error) {
+		throw viewError(error);
+	}
+	if (!isRecord(reply))
+		throw new ControlEndpointError(
+			'internal',
+			'The Terminay window gave an invalid answer.',
+		);
+	return reply;
 }
 
 /**

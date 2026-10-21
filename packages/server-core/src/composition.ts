@@ -37,6 +37,7 @@ import { NotificationManager } from './notifications/manager.js';
 import {
 	createNotificationEventProjector,
 	createNotificationOperationRegistry,
+	type NotificationOperationRegistry,
 } from './notifications/protocol.js';
 import type { PushEnrolmentStore } from './push/enrolments.js';
 import { createPushOperationRegistry } from './push/protocol.js';
@@ -544,6 +545,9 @@ export interface ServerCoreComposition {
 	 * remote device connection. Drives the Remote device connected trigger. */
 	readonly onConnectionAdmitted: (admission: RemoteConnectionAdmission) => void;
 	readonly settingsOperations?: SettingsOperationRegistry;
+	/** The notifications' own operations, so a server-internal caller such as
+	 * MCP dismisses one exactly as a user's dismissal does. */
+	readonly notificationOperations?: NotificationOperationRegistry;
 	readonly shellProfileOperations?: ReturnType<
 		typeof createShellProfileOperationRegistry
 	>;
@@ -2030,6 +2034,9 @@ export function createServerCoreComposition(
 		onConnectionAdmitted,
 		...(settingsOperations === undefined ? {} : { settingsOperations }),
 		...(shellProfileOperations === undefined ? {} : { shellProfileOperations }),
+		...(notificationOperations === undefined
+			? {}
+			: { notificationOperations }),
 		start,
 		shutdown,
 		endAllTerminalSessions,

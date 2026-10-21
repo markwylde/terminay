@@ -46,6 +46,9 @@ test("defaults keep terminal tools frictionless and ask before managing automati
     terminalsManage: "allow",
     automationsRead: "allow",
     automationsManage: "ask",
+    projectsWindows: "allow",
+    settingsRead: "allow",
+    settingsChange: "ask",
     appWindows: "allow",
     notifications: "allow",
     connectedServerTools: "allow",
@@ -59,6 +62,16 @@ test("defaults keep terminal tools frictionless and ask before managing automati
   assert.deepEqual(
     { ...mcpPermissionsFromSettings({ terminayMcp: { permissions: { terminalsManage: "deny", automationsManage: "sometimes" } } }) },
     { ...DEFAULT_MCP_PERMISSIONS, terminalsManage: "deny" },
+  );
+  // A policy stored before the app-control groups existed gains their defaults.
+  const stored = mcpPermissionsFromSettings({ terminayMcp: { permissions: { terminalsRead: "ask", notifications: "deny" } } });
+  assert.equal(stored.projectsWindows, "allow");
+  assert.equal(stored.settingsRead, "allow");
+  assert.equal(stored.settingsChange, "ask");
+  assert.equal(stored.terminalsRead, "ask");
+  assert.equal(
+    mcpPermissionsFromSettings({ terminayMcp: { permissions: { settingsChange: "allow", projectsWindows: "ask" } } }).settingsChange,
+    "allow",
   );
 });
 
