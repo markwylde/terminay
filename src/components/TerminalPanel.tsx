@@ -3066,7 +3066,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	};
 
 	const terminalPanelStyle = {
-		'--terminal-panel-surface': settings.theme.background,
+		'--terminal-panel-surface': resolveTerminalTheme(
+			settings,
+			props.params.color,
+		).background,
 		'--terminal-note-color': props.params.color || settings.theme.cursor,
 	} as CSSProperties;
 
