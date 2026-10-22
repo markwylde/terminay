@@ -151,17 +151,17 @@
 	padding: 7px 10px;
 }
 
-.project-start__recent-open:hover:not([aria-disabled='true']),
+.project-start__recent-open:hover:not([aria-disabled="true"]),
 .project-start__recent-forget:hover:not(:disabled) {
 	background: rgba(255, 255, 255, 0.07);
 }
 
-.project-start__recent-open[aria-disabled='true'] {
+.project-start__recent-open[aria-disabled="true"] {
 	cursor: default;
 }
 
-.project-start__recent-open[aria-disabled='true'] .project-start__recent-name,
-.project-start__recent-open[aria-disabled='true'] .project-start__recent-path {
+.project-start__recent-open[aria-disabled="true"] .project-start__recent-name,
+.project-start__recent-open[aria-disabled="true"] .project-start__recent-path {
 	opacity: 0.5;
 }
 
@@ -216,8 +216,7 @@
 .project-start__action:focus-visible,
 .project-start__recent-open:focus-visible,
 .project-start__recent-forget:focus-visible,
-.no-root-folder__action:focus-visible,
-.root-folder-browser__entry:focus-visible {
+.no-root-folder__action:focus-visible {
 	outline: 2px solid rgba(120, 170, 255, 0.9);
 	outline-offset: 1px;
 }
@@ -245,7 +244,8 @@
 	min-height: 44px;
 }
 
-/* The server folder browser, inside the in-page window frame. */
+/* The server folder browser, inside the in-page window frame: one path
+   field, the folders matching it, and the actions. */
 .root-folder-browser {
 	display: flex;
 	flex-direction: column;
@@ -253,6 +253,8 @@
 	min-width: 0;
 	max-width: 100%;
 	box-sizing: border-box;
+	--root-folder-mono:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .root-folder-browser .sr-only {
@@ -264,87 +266,74 @@
 	white-space: nowrap;
 }
 
-.root-folder-browser__path {
-	display: flex;
-	gap: 8px;
-	min-width: 0;
-}
-
-.root-folder-browser__path-field {
+.root-folder-browser__field {
 	position: relative;
-	flex: 1;
-	min-width: 0;
 	display: flex;
-}
-
-.root-folder-browser__path input {
-	flex: 1;
 	min-width: 0;
 }
 
-/* Over the listing, so suggesting never changes the browser's height. */
-.root-folder-browser__suggestions {
+/* The ghost lies over the field in the field's own metrics: the typed text
+   invisible, then what Tab would add. */
+.root-folder-browser .root-folder-browser__field input[type="text"],
+.root-folder-browser__ghost {
+	box-sizing: border-box;
+	padding: 10px 12px;
+	border: 1px solid transparent;
+	font-family: var(--root-folder-mono);
+	font-size: 14px;
+	line-height: 20px;
+	letter-spacing: 0;
+}
+
+.root-folder-browser .root-folder-browser__field input[type="text"] {
+	flex: 1;
+	min-width: 0;
+	border-color: var(--tab-border);
+}
+
+.root-folder-browser .root-folder-browser__field input[type="text"]:focus {
+	outline: none;
+	border-color: #4db5ff;
+	box-shadow: 0 0 0 3px rgba(77, 181, 255, 0.18);
+}
+
+.root-folder-browser__ghost {
 	position: absolute;
-	top: calc(100% + 4px);
-	left: 0;
-	right: 0;
-	z-index: 2;
-	margin: 0;
-	padding: 4px;
-	max-height: 240px;
-	overflow-x: hidden;
-	overflow-y: auto;
-	list-style: none;
-	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 6px;
-	background: #1d2230;
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-
-.root-folder-browser__suggestion {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	padding: 5px 8px;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 13px;
-}
-
-.root-folder-browser__suggestion > span {
-	min-width: 0;
+	inset: 0;
+	z-index: 1;
 	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	white-space: pre;
+	pointer-events: none;
+	color: rgba(220, 226, 240, 0.38);
 }
 
-.root-folder-browser__suggestion[aria-selected='true'] {
-	background: rgba(59, 130, 246, 0.35);
+.root-folder-browser__ghost-typed {
+	color: transparent;
 }
 
-.root-folder-browser__location {
+.root-folder-browser__meta {
 	display: flex;
-	align-items: center;
-	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 4px 12px;
+	min-height: 18px;
 	min-width: 0;
-}
-
-.root-folder-browser__parent {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	padding: 4px 8px;
-}
-
-.root-folder-browser__current {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 	font-size: 12px;
-	color: rgba(220, 226, 240, 0.78);
+	color: rgba(220, 226, 240, 0.62);
+	overflow-wrap: anywhere;
+}
+
+.root-folder-browser__meta code {
+	font-family: var(--root-folder-mono);
+	color: rgba(220, 226, 240, 0.85);
+}
+
+.root-folder-browser__meta-hint {
+	color: rgba(220, 226, 240, 0.42);
+}
+
+.root-folder-browser__meta-error {
+	color: #f14c4c;
 }
 
 .root-folder-browser__body {
@@ -368,7 +357,6 @@
 }
 
 .root-folder-browser__entry {
-	all: unset;
 	box-sizing: border-box;
 	display: flex;
 	align-items: center;
@@ -376,20 +364,49 @@
 	width: 100%;
 	min-width: 0;
 	padding: 6px 8px;
-	border-radius: 4px;
+	border-radius: 5px;
 	cursor: pointer;
 	font-size: 13px;
+	color: rgba(220, 226, 240, 0.92);
 }
 
-.root-folder-browser__entry > span {
+.root-folder-browser__entry > svg {
+	flex: none;
+	color: rgba(220, 226, 240, 0.5);
+}
+
+.root-folder-browser__entry-name {
+	flex: 1;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.root-folder-browser__entry:hover:not(:disabled) {
-	background: rgba(255, 255, 255, 0.07);
+.root-folder-browser__entry-name mark {
+	background: transparent;
+	color: #7da2ff;
+	font-weight: 600;
+}
+
+.root-folder-browser__entry-key {
+	visibility: hidden;
+	font-family: var(--root-folder-mono);
+	font-size: 11px;
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.root-folder-browser__entry:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.root-folder-browser__entry[aria-selected="true"] {
+	background: rgba(76, 124, 240, 0.28);
+}
+
+.root-folder-browser__entry[aria-selected="true"]
+	.root-folder-browser__entry-key {
+	visibility: visible;
 }
 
 .root-folder-browser__message {
@@ -398,19 +415,59 @@
 	overflow-wrap: anywhere;
 }
 
-.root-folder-browser__message--error {
-	color: #f14c4c;
+.root-folder-browser .project-edit-actions {
+	align-items: center;
+}
+
+.root-folder-browser__keys {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	margin-right: auto;
+	min-width: 0;
+	font-size: 11.5px;
+	color: rgba(220, 226, 240, 0.42);
+}
+
+.root-folder-browser__keys kbd {
+	font-family: var(--root-folder-mono);
+	font-size: 10.5px;
+	padding: 0 4px;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+}
+
+/* Keys mean nothing on a touch screen. */
+@media (hover: none) {
+	.root-folder-browser__keys,
+	.root-folder-browser__entry-key {
+		display: none;
+	}
 }
 
 .root-folder-browser .project-edit-actions .root-folder-browser__choose {
+	max-width: 240px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	border-color: #3b82f6;
 	background: #3b82f6;
 	color: #fff;
 }
 
-.root-folder-browser .project-edit-actions .root-folder-browser__choose:hover:not(:disabled) {
+.root-folder-browser
+	.project-edit-actions
+	.root-folder-browser__choose:hover:not(:disabled) {
 	border-color: #2563eb;
 	background: #2563eb;
+}
+
+.root-folder-browser
+	.project-edit-actions
+	.root-folder-browser__choose:disabled {
+	opacity: 0.45;
+	cursor: default;
 }
 
 /* A sidebar pane of a project with no root folder. */

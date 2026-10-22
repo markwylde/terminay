@@ -192,22 +192,21 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	const parent = path.dirname(folder);
 	const name = path.basename(folder);
 
-	// Open a folder: the browser starts at home, goes where it is told, and
-	// enters and leaves folders by name.
+	// Open a folder: the browser starts at home with the path shown once, in
+	// its field, goes where it is typed, and enters folders by name.
 	const first = await createAwaitingProject(mainWindow);
 	await startChooserFor(mainWindow, first)
 		.locator('[data-terminay-start-action="folder"]')
 		.click();
 	const browser = rootFolderBrowser(mainWindow);
+	const field = browser.locator('[data-terminay-root-folder-path]');
 	await expect(browser).toBeVisible();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
-		await realpath(os.homedir()),
-	);
+	await expect(field).toBeFocused();
+	await expect(field).toHaveValue(`${await realpath(os.homedir())}/`);
 	await browseToFolder(mainWindow, parent);
 	await browser.locator(`[data-terminay-root-folder-entry="${name}"]`).click();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
-		folder,
-	);
+	await expect(field).toHaveValue(`${folder}/`);
+	await expect(field).toBeFocused();
 	await expect(
 		browser.locator('[data-terminay-root-folder-entry="inner"]'),
 	).toBeVisible();
@@ -215,15 +214,27 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	await expect(
 		browser.locator('[data-terminay-root-folder-entry="README.md"]'),
 	).toHaveCount(0);
-	await browser.locator('[data-terminay-root-folder-entry="inner"]').click();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
-		path.join(folder, 'inner'),
+
+	// Tab completes like a shell and keeps focus in the field; the segment
+	// delete chord takes it back off, and the parent chord goes up a folder.
+	await field.fill(`${folder}/in`);
+	await field.press('Tab');
+	await expect(field).toHaveValue(`${folder}/inner/`);
+	await expect(field).toBeFocused();
+	await field.press(
+		process.platform === 'darwin' ? 'Alt+Backspace' : 'Control+Backspace',
 	);
-	await browser.locator('[data-terminay-root-folder-parent]').click();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
-		folder,
+	await expect(field).toHaveValue(`${folder}/`);
+	await field.press(
+		process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Alt+ArrowUp',
 	);
-	await browser.locator('[data-terminay-root-folder-choose]').click();
+	await expect(field).toHaveValue(`${parent}/`);
+	await field.fill(`${folder}/`);
+	await expect(browser.locator('[data-terminay-root-folder-choose]')).toHaveText(
+		`Open “${name}”`,
+	);
+	// Enter chooses the folder the field names.
+	await field.press('Enter');
 	await expect(browser).toHaveCount(0);
 	await expect(startChooserFor(mainWindow, first)).toHaveCount(0);
 	await expect(
@@ -346,32 +357,35 @@ test('the folder browser keeps one height between folders and completes a typed 
 	await browseToFolder(mainWindow, path.join(base, 'sparse'));
 	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
 
-	// Typing a partial path suggests the typed parent's matching folders.
+	// Typing filters the listing to the typed parent's matching folders.
 	const field = browser.locator('[data-terminay-root-folder-path]');
+	const names = browser.locator('.root-folder-browser__entry-name');
 	await field.fill(`${base}/proj`);
-	const suggestions = browser.locator('[data-terminay-root-folder-suggestion]');
-	await expect(suggestions).toHaveText(['projects-a', 'projects-b']);
+	await expect(names).toHaveText(['projects-a', 'projects-b']);
 	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
-	// The arrows choose one and Tab takes it.
+	// Tab fills the common prefix, then cycles the matches, and focus never
+	// leaves the field.
+	await field.press('Tab');
+	await expect(field).toHaveValue(`${base}/projects-`);
+	await field.press('Tab');
+	await expect(field).toHaveValue(`${base}/projects-a/`);
+	await field.press('Tab');
+	await expect(field).toHaveValue(`${base}/projects-b/`);
+	await expect(field).toBeFocused();
+	// Escape undoes the cycle and leaves the browser open.
+	await field.press('Escape');
+	await expect(field).toHaveValue(`${base}/projects-`);
+	await expect(browser).toBeVisible();
+	// The arrows highlight one and Tab goes into it.
 	await field.press('ArrowDown');
 	await field.press('ArrowDown');
 	await field.press('Tab');
-	await expect(field).toHaveValue(path.join(base, 'projects-b'));
-	await expect(suggestions).toHaveCount(0);
-	// Escape closes the suggestions and leaves the browser open.
-	await field.fill(`${base}/sp`);
-	await expect(suggestions).toHaveText(['sparse']);
-	await field.press('Escape');
-	await expect(suggestions).toHaveCount(0);
-	await expect(browser).toBeVisible();
-	// A pointer takes one too.
+	await expect(field).toHaveValue(`${base}/projects-b/`);
+	// A pointer goes into one too, and the field keeps focus.
 	await field.fill(`${base}/ma`);
-	await suggestions.filter({ hasText: 'many' }).click();
-	await expect(field).toHaveValue(path.join(base, 'many'));
-	await browser.getByRole('button', { name: 'Go', exact: true }).click();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
-		path.join(base, 'many'),
-	);
+	await browser.locator('[data-terminay-root-folder-entry="many"]').click();
+	await expect(field).toHaveValue(`${base}/many/`);
+	await expect(field).toBeFocused();
 	await browser.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(browser).toHaveCount(0);
 	await expect(startChooserFor(mainWindow, projectId)).toBeVisible();
@@ -477,9 +491,7 @@ test('at phone width the chooser and the folder browser fit without horizontal o
 	await chooser.locator('[data-terminay-start-action="folder"]').click();
 	const browser = rootFolderBrowser(mainWindow);
 	await expect(browser).toBeVisible();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).not.toHaveText(
-		'Loading…',
-	);
+	await expect(browser.locator('[data-terminay-root-folder-listed]')).toBeVisible();
 	expect(await overflow('[data-in-page-window="root-folder-browser"]')).toEqual(
 		[],
 	);
