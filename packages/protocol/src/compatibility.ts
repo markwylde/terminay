@@ -37,6 +37,10 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** The title each terminal displays, published live as the server resolves
 	 * it rather than as a field of workspace state. */
 	terminalTitles: 'terminal-titles.v1',
+	/** The launchers a new terminal can start, such as an installed coding
+	 * agent, listed by `terminal.launchers` and named in `terminal.create`
+	 * (ADR-0073). */
+	terminalLaunchers: 'terminal-launchers.v1',
 	/** Notifications the server owns and publishes after a settle period,
 	 * instead of each client deriving them from terminal activity. */
 	notifications: 'notifications.v1',
@@ -82,6 +86,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 		optionalCapabilities: Object.freeze([
 			FEATURE_CAPABILITIES.workspaceChanges,
 			FEATURE_CAPABILITIES.terminalTitles,
+			FEATURE_CAPABILITIES.terminalLaunchers,
 			FEATURE_CAPABILITIES.notifications,
 			FEATURE_CAPABILITIES.push,
 			FEATURE_CAPABILITIES.serverUpgrade,

@@ -11,6 +11,11 @@ import {
 	validateAgentChatSessionRequest,
 } from './chat.js';
 import { EXTENSION_API_VERSION, EXTENSION_LIMITS } from './constants.js';
+import {
+	type TerminalLauncherResolution,
+	type TerminalLauncherRuntime,
+	validateTerminalLauncherResolution,
+} from './terminals.js';
 import type {
 	AgentSessionPublisher,
 	AgentSessionSnapshot,
@@ -290,6 +295,10 @@ export interface AgentExtensionHarness {
 		providerId: string,
 		request?: Partial<AgentChatSessionRequest>,
 	): Promise<ChatSessionHarness>;
+	/** Terminal launcher ids the extension registered, in registration order. */
+	registeredLauncherIds(): readonly string[];
+	/** Resolves a launcher as the host does, validated. */
+	resolveLauncher(launcherId: string): Promise<TerminalLauncherResolution>;
 	release(reason: ExtensionReleaseReason): Promise<void>;
 	dispose(): Promise<void>;
 }
@@ -367,6 +376,12 @@ export async function createAgentExtensionHarness(
 			(provider) => provider.id,
 		),
 	);
+	const launcherDeclarations = new Set(
+		(manifest?.contributes.terminalLaunchers ?? []).map(
+			(launcher) => launcher.id,
+		),
+	);
+	const launchers = new Map<string, TerminalLauncherRuntime>();
 	const sources = new Map<string, AgentSessionSourceRuntime>();
 	const targets = new Map<string, McpInstallTargetRuntime>();
 	const chatProviders = new Map<string, AgentChatProviderRuntime>();
@@ -432,6 +447,22 @@ export async function createAgentExtensionHarness(
 		worktrees: {
 			registerInsightSource() {
 				throw new Error('this harness serves agent extensions');
+			},
+		},
+		terminals: {
+			registerLauncher(launcherId, runtime) {
+				if (released) throw new Error('extension is deactivated');
+				if (manifest && !launcherDeclarations.has(launcherId))
+					throw new Error('terminal launcher registration is undeclared');
+				if (launchers.has(launcherId))
+					throw new Error(`Duplicate terminal launcher: ${launcherId}`);
+				launchers.set(launcherId, runtime);
+				return {
+					launcherId,
+					dispose(): void {
+						launchers.delete(launcherId);
+					},
+				};
 			},
 		},
 		mcp: {
@@ -571,6 +602,7 @@ export async function createAgentExtensionHarness(
 		sources.clear();
 		targets.clear();
 		chatProviders.clear();
+		launchers.clear();
 		await extension.deactivate?.();
 	}
 
@@ -702,6 +734,19 @@ export async function createAgentExtensionHarness(
 		registeredChatProviderIds() {
 			return [...chatProviders.keys()];
 		},
+		registeredLauncherIds() {
+			return [...launchers.keys()];
+		},
+		async resolveLauncher(launcherId) {
+			const runtime = launchers.get(launcherId);
+			if (!runtime) throw new Error(`Unknown terminal launcher: ${launcherId}`);
+			const result = validateTerminalLauncherResolution(
+				await runtime.resolve(new AbortController().signal),
+			);
+			if (!result.ok)
+				throw new Error(`resolution breached the contract: ${result.reason}`);
+			return result.value;
+		},
 		async chatAvailability(providerId) {
 			const runtime = chatProviders.get(providerId);
 			if (!runtime) throw new Error(`Unknown chat provider: ${providerId}`);
@@ -825,6 +870,13 @@ export async function createLanguageServerExtensionHarness(
 		worktrees: {
 			registerInsightSource() {
 				throw new Error('this harness serves language servers');
+			},
+		},
+		terminals: {
+			registerLauncher() {
+				throw new Error(
+					'this harness serves language servers; use createAgentExtensionHarness',
+				);
 			},
 		},
 		mcp: {

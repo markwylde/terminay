@@ -1,6 +1,7 @@
 import type { AgentChatProviderContribution } from './chat.js';
 import {
 	ENVIRONMENT_VARIABLE_NAME_PATTERN,
+	EXTENSION_ICONS,
 	EXTENSION_ID_PATTERN,
 	EXTENSION_LIMITS,
 	FILE_EXTENSION_PATTERN,
@@ -10,6 +11,7 @@ import {
 	PROVIDER_VAULT_BINDING_REF_PATTERN,
 	PROVIDER_VAULT_KEY_PATTERN,
 } from './constants.js';
+import type { TerminalLauncherContribution } from './terminals.js';
 import type {
 	AgentSessionSnapshot,
 	AgentSessionSourceContribution,
@@ -52,6 +54,7 @@ const permissions = new Set<ExtensionPermission>([
 	'mcp-registration',
 	'worktree-observation',
 	'agent-chat',
+	'agent-launch',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -241,6 +244,7 @@ export function validateExtensionManifest(
 				'languageServers',
 				'worktreeInsights',
 				'agentChatProviders',
+				'terminalLaunchers',
 			]),
 			'$.contributes',
 			out,
@@ -252,13 +256,15 @@ export function validateExtensionManifest(
 			languageServers,
 			worktreeInsights,
 			agentChatProviders,
+			terminalLaunchers,
 		} = value.contributes;
 		if (
 			agentSessionSources === undefined &&
 			mcpInstallTargets === undefined &&
 			languageServers === undefined &&
 			worktreeInsights === undefined &&
-			agentChatProviders === undefined
+			agentChatProviders === undefined &&
+			terminalLaunchers === undefined
 		) {
 			out.push({
 				path: '$.contributes',
@@ -304,6 +310,17 @@ export function validateExtensionManifest(
 				validateAgentChatProviderContribution,
 				out,
 			);
+		if (terminalLaunchers !== undefined) {
+			const harnesses = declaredHarnesses(agentSessionSources);
+			validateNamespacedContributions(
+				terminalLaunchers,
+				'terminalLaunchers',
+				EXTENSION_LIMITS.terminalLaunchers,
+				extensionId,
+				(item, id) => validateTerminalLauncherContribution(item, id, harnesses),
+				out,
+			);
+		}
 		// The permission array validator reports a malformed array itself.
 		if (Array.isArray(value.permissions)) {
 			if (
@@ -345,6 +362,16 @@ export function validateExtensionManifest(
 					path: '$.permissions',
 					code: 'missing_permission',
 					message: 'Chat providers require agent-chat',
+				});
+			if (
+				Array.isArray(terminalLaunchers) &&
+				terminalLaunchers.length > 0 &&
+				!value.permissions.includes('agent-launch')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'Terminal launchers require agent-launch',
 				});
 		}
 	}
@@ -603,7 +630,8 @@ function validateNamespacedContributions(
 		| 'agentSessionSources'
 		| 'mcpInstallTargets'
 		| 'worktreeInsights'
-		| 'agentChatProviders',
+		| 'agentChatProviders'
+		| 'terminalLaunchers',
 	maximum: number,
 	extensionId: string,
 	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
@@ -801,6 +829,86 @@ export function validateAgentChatProviderContribution(
 	validatePlatforms(value.platforms, '$.platforms', out);
 	return out.length === 0
 		? { ok: true, value: value as unknown as AgentChatProviderContribution }
+		: { ok: false, issues: out };
+}
+
+/** Each declared session source id with the harness ids it declares. */
+function declaredHarnesses(sources: unknown): ReadonlyMap<string, Set<string>> {
+	const map = new Map<string, Set<string>>();
+	if (!Array.isArray(sources)) return map;
+	for (const source of sources) {
+		if (!record(source) || typeof source.id !== 'string') continue;
+		const ids = new Set<string>();
+		if (Array.isArray(source.harnesses))
+			for (const harness of source.harnesses)
+				if (record(harness) && typeof harness.id === 'string')
+					ids.add(harness.id);
+		map.set(source.id, ids);
+	}
+	return map;
+}
+
+const icons = new Set<string>(EXTENSION_ICONS);
+
+/**
+ * Validates a standalone terminal launcher manifest contribution. A launcher
+ * that names a harness must name a session source and harness the same
+ * manifest declares; `harnesses` holds those, and is empty when validating a
+ * launcher on its own.
+ */
+export function validateTerminalLauncherContribution(
+	value: unknown,
+	extensionId: string,
+	harnesses: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): ValidationResult<TerminalLauncherContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set(['id', 'displayName', 'icon', 'platforms', 'harness']),
+		'$',
+		out,
+	);
+	namespacedContributionId(value.id, extensionId, out);
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (typeof value.icon !== 'string' || !icons.has(value.icon))
+		out.push({
+			path: '$.icon',
+			code: 'unknown_icon',
+			message: 'Icon must be an id from the Terminay icon allowlist',
+		});
+	validatePlatforms(value.platforms, '$.platforms', out);
+	if (value.harness !== undefined) {
+		if (!record(value.harness))
+			out.push({
+				path: '$.harness',
+				code: 'invalid_type',
+				message: 'Expected an object',
+			});
+		else {
+			closed(value.harness, new Set(['source', 'harness']), '$.harness', out);
+			const source = value.harness.source;
+			const harness = value.harness.harness;
+			if (
+				typeof source !== 'string' ||
+				typeof harness !== 'string' ||
+				harnesses.get(source)?.has(harness) !== true
+			)
+				out.push({
+					path: '$.harness',
+					code: 'undeclared_harness',
+					message:
+						'A launcher harness must be one a session source of this manifest declares',
+				});
+		}
+	}
+	return out.length === 0
+		? { ok: true, value: value as unknown as TerminalLauncherContribution }
 		: { ok: false, issues: out };
 }
 

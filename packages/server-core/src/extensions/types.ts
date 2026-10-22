@@ -4,6 +4,7 @@ import type {
 	ExtensionDependency,
 	LanguageServerContribution,
 	McpInstallTargetContribution,
+	TerminalLauncherContribution,
 	WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 
@@ -35,6 +36,8 @@ export interface ExtensionLaunchDescriptor {
 	readonly worktreeInsights?: readonly WorktreeInsightSourceContribution[];
 	/** Declared chat providers, checked the same way. */
 	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
+	/** Declared terminal launchers, checked the same way. */
+	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -49,6 +52,7 @@ export interface ExtensionHostStatus {
 	readonly languageServers?: readonly LanguageServerContribution[];
 	readonly worktreeInsightSources?: readonly WorktreeInsightSourceContribution[];
 	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
+	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 }
 
 export interface ExtensionInvocation {

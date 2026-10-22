@@ -160,6 +160,7 @@ export function createDefaultExtensionManagement(
 				languageServers: manifest.contributes.languageServers ?? [],
 				worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 				agentChatProviders: manifest.contributes.agentChatProviders ?? [],
+				terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -195,6 +196,7 @@ export function createDefaultExtensionManagement(
 			languageServers: descriptor.languageServers,
 			worktreeInsights: descriptor.worktreeInsights,
 			agentChatProviders: descriptor.agentChatProviders,
+			terminalLaunchers: descriptor.terminalLaunchers,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};

@@ -53,6 +53,7 @@ import { OrderedEventJournal } from './events.js';
 import {
 	createExtensionOperationHandlers,
 	type ExtensionOperationOptions,
+	OFFICIAL_EXTENSION_CATALOGUE,
 } from './extensions/index.js';
 import {
 	createFileObservationEventProjector,
@@ -140,6 +141,10 @@ import {
 import { TerminalServiceAdapter } from './terminalService/adapter.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import { TerminalInputSourceAdapter } from './terminalService/inputSources.js';
+import {
+	TERMINAL_LAUNCHER_EVENTS,
+	TerminalLauncherRegistry,
+} from './terminalService/launchers.js';
 import {
 	type ShellProfileLaunchAuthority,
 	type TerminalLaunchPathAuthority,
@@ -375,6 +380,13 @@ export interface ServerCoreCompositionOptions
 	 * that serves the MCP control socket asks for it; its policy is read from
 	 * `settings` when present. */
 	readonly mcpApprovals?: boolean;
+	/**
+	 * The terminal launchers this server offers (ADR-0073). Clients list them
+	 * with `terminal.launchers`, hear `terminal.launchers.changed`, and name
+	 * one in `terminal.create`. Without it, a server with extensions composes
+	 * its own from the extensions' contributions.
+	 */
+	readonly terminalLaunchers?: TerminalLauncherRegistry;
 	/**
 	 * Compose server-owned agent chats. The host supplies the chat providers
 	 * its extensions registered, where each session's working directory goes,
@@ -704,6 +716,39 @@ export function createServerCoreComposition(
 	}
 	/** Which folder a terminal that is being spawned belongs in. */
 	const sessionFolders = new Map<string, string>();
+	/** The title a terminal that is being spawned starts with, when it has one. */
+	const sessionTitles = new Map<string, string>();
+	// Terminal launchers (ADR-0073) come from the extensions this server runs,
+	// gated by the same harness switches as agent status.
+	const ownsTerminalLaunchers =
+		options.terminalLaunchers === undefined &&
+		options.extensions?.hosts !== undefined;
+	const terminalLaunchers =
+		options.terminalLaunchers ??
+		(options.extensions?.hosts === undefined
+			? undefined
+			: new TerminalLauncherRegistry({
+					builtInExtensionIds: OFFICIAL_EXTENSION_CATALOGUE.map(
+						(record) => record.extensionId,
+					),
+					...(options.agentSessions === undefined
+						? {}
+						: {
+								harnessSwitches:
+									options.agentSessions.supervisor.harnessSwitches(),
+							}),
+				}));
+	const unobserveTerminalLaunchers = terminalLaunchers?.observe(() => {
+		eventJournal.publishTransient(TERMINAL_LAUNCHER_EVENTS.changed, {});
+	});
+	const unfollowLauncherHarnesses =
+		terminalLaunchers === undefined
+			? undefined
+			: options.agentSessions?.supervisor.observeHarnessSwitches((switches) =>
+					terminalLaunchers.setHarnessSwitches(switches),
+				);
+	if (ownsTerminalLaunchers && options.extensions?.hosts !== undefined)
+		terminalLaunchers?.attach(options.extensions.hosts);
 	const unsubscribeGitEvents =
 		typeof options.git?.subscribeEvents === 'function'
 			? options.git.subscribeEvents((event) => {
@@ -1255,6 +1300,9 @@ export function createServerCoreComposition(
 		...(options.maxTerminalUnconfirmedBytes === undefined
 			? {}
 			: { maxTerminalUnconfirmedBytes: options.maxTerminalUnconfirmedBytes }),
+		...(terminalLaunchers === undefined
+			? {}
+			: { launchers: terminalLaunchers }),
 		// Automation terminal space (ADR-0030): visibility and live-terminal cap.
 		...(automationSpace === undefined
 			? {}
@@ -1282,6 +1330,10 @@ export function createServerCoreComposition(
 						if (folderId === undefined) sessionFolders.delete(sessionId);
 						else sessionFolders.set(sessionId, folderId);
 					},
+					nameSession: (sessionId: string, title: string | undefined) => {
+						if (title === undefined) sessionTitles.delete(sessionId);
+						else sessionTitles.set(sessionId, title);
+					},
 					onSessionCreated: (
 						session: import('./terminalService/types.js').TerminalSessionSnapshot,
 					): void => {
@@ -1289,6 +1341,8 @@ export function createServerCoreComposition(
 						// holds terminals that are being spawned right now.
 						const placedFolderId = sessionFolders.get(session.sessionId);
 						sessionFolders.delete(session.sessionId);
+						const namedTitle = sessionTitles.get(session.sessionId);
+						sessionTitles.delete(session.sessionId);
 						const workspace = options.workspace;
 						if (workspace === undefined) return;
 						let state = workspace.state;
@@ -1332,7 +1386,7 @@ export function createServerCoreComposition(
 									projectId: session.projectId,
 									...(folderId === undefined ? {} : { folderId }),
 									panelId: `p:${session.sessionId}`.slice(0, 128),
-									title: `Terminal ${panelCount + 1}`,
+									title: namedTitle ?? `Terminal ${panelCount + 1}`,
 									cwd: session.cwd,
 									createdAt: session.createdAt,
 									...(session.launch === undefined
@@ -1367,7 +1421,7 @@ export function createServerCoreComposition(
 										...(folderId === undefined ? {} : { folderId }),
 										type: 'terminal',
 										sessionId: session.sessionId,
-										title: `Terminal ${panelCount + 1}`,
+										title: namedTitle ?? `Terminal ${panelCount + 1}`,
 										cwd: session.cwd,
 										createdAt: session.createdAt,
 									},
@@ -1957,6 +2011,11 @@ export function createServerCoreComposition(
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());
 			await attempt(() => unsubscribeGitEvents?.());
+			await attempt(() => unobserveTerminalLaunchers?.());
+			await attempt(() => unfollowLauncherHarnesses?.());
+			await attempt(() => {
+				if (ownsTerminalLaunchers) terminalLaunchers?.dispose();
+			});
 			await attempt(() => options.git?.close?.());
 			await attempt(() => options.agents?.stop());
 			await attempt(() => activityOperations?.close());
@@ -2300,6 +2359,10 @@ function uniqueCapabilities(
 			...(options.activity === undefined || options.push === undefined
 				? []
 				: [FEATURE_CAPABILITIES.push]),
+			...(options.terminalLaunchers === undefined &&
+			options.extensions?.hosts === undefined
+				? []
+				: [FEATURE_CAPABILITIES.terminalLaunchers]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
 			...(options.automations === undefined
 				? []

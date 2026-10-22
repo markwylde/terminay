@@ -2,6 +2,11 @@ import type {
 	AgentChatProviderContribution,
 	AgentChatProviderRegistry,
 } from './chat.js';
+import type { EXTENSION_ICONS } from './constants.js';
+import type {
+	TerminalLauncherContribution,
+	TerminalLauncherRegistry,
+} from './terminals.js';
 import type {
 	WorktreeInsightSourceContribution,
 	WorktreeInsightSourceRegistry,
@@ -24,7 +29,8 @@ export type ExtensionPermission =
 	| 'agent-observation'
 	| 'mcp-registration'
 	| 'worktree-observation'
-	| 'agent-chat';
+	| 'agent-chat'
+	| 'agent-launch';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -108,19 +114,11 @@ export interface TerminayExtensionManifest {
 		languageServers?: LanguageServerContribution[];
 		worktreeInsights?: WorktreeInsightSourceContribution[];
 		agentChatProviders?: AgentChatProviderContribution[];
+		terminalLaunchers?: TerminalLauncherContribution[];
 	};
 }
 
-export type ExtensionIcon =
-	| 'terminal'
-	| 'server'
-	| 'cloud'
-	| 'key'
-	| 'folder'
-	| 'network'
-	| 'database'
-	| 'warning'
-	| 'info';
+export type ExtensionIcon = (typeof EXTENSION_ICONS)[number];
 
 export interface ProviderSecretRequest {
 	profileId: string;
@@ -248,6 +246,8 @@ export interface ExtensionContext {
 	mcp: McpInstallTargetRegistry;
 	/** Worktree insight sources are available only to manifests granted worktree-observation. */
 	worktrees: WorktreeInsightSourceRegistry;
+	/** Terminal launchers are available only to manifests granted agent-launch. */
+	terminals: TerminalLauncherRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
 	/**
