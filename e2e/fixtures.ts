@@ -369,7 +369,12 @@ export async function launchDesktopApp(options: {
 					: {}),
 				// Pixel's Claude Code provider runs a fake that speaks the real
 				// streaming-JSON protocol, so no agent account is needed.
-				...(['pixel.spec.ts', 'mcp-app-control.spec.ts'].includes(
+				// The terminal launcher spec starts the same fake bare in a terminal.
+				...([
+					'pixel.spec.ts',
+					'mcp-app-control.spec.ts',
+					'terminal-launchers.spec.ts',
+				].includes(
 					path.basename(testInfo.file),
 				)
 					? {
