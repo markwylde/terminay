@@ -101,6 +101,23 @@ function sidebarPane(page: Page, title: string | RegExp): Locator {
 }
 
 /** The Changes pane of the folder on screen. */
+/** The one dialog deleting a folder or a worktree asks. */
+export function deleteDialog(page: Page): Locator {
+	return page.getByRole('dialog', { name: /^Delete (Folder|Worktree)$/ });
+}
+
+/** Answer the delete dialog: choose what becomes of the panels, then Delete. */
+export async function confirmDelete(
+	page: Page,
+	panels?: 'Move to General' | 'Close them' | 'Close it',
+): Promise<void> {
+	if (panels !== undefined)
+		await deleteDialog(page)
+			.getByRole('radio', { name: new RegExp(`^${panels}`) })
+			.check();
+	await deleteDialog(page).getByRole('button', { name: 'Delete' }).click();
+}
+
 export function changesPane(page: Page): Locator {
 	return sidebarPane(page, 'Changes');
 }

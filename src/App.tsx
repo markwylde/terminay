@@ -205,7 +205,10 @@ import {
 	type TerminalActivityEvaluation,
 	TerminalActivityStore,
 } from './terminalActivityStore';
-import { defaultTerminalSettings } from './terminalSettings';
+import {
+	defaultTerminalSettings,
+	resolveTerminalTheme,
+} from './terminalSettings';
 import type {
 	AgentState,
 	AgentStatusEntry,
@@ -690,9 +693,13 @@ type ProjectWorkspaceHandle = {
 	/**
 	 * Close one of this workspace's panels as closing its tab does: with close
 	 * protection for a busy terminal and a save for an unsaved document. It
-	 * resolves once the panel has closed or the user has kept it.
+	 * resolves once the panel has closed or the user has kept it. `confirmed`
+	 * is for a caller that has already asked, and skips close protection.
 	 */
-	requestClosePanel: (panelId: string) => Promise<void>;
+	requestClosePanel: (
+		panelId: string,
+		options?: { confirmed?: boolean },
+	) => Promise<void>;
 	/** Create a terminal in this workspace's folder, starting in its root. */
 	openShellAtFolderRoot: () => Promise<void>;
 	/** The repository's worktree listing as this workspace last read it. */
@@ -799,6 +806,7 @@ type ProjectWorkspaceProps = {
 		projectId: string,
 		folderId: string,
 		panelId: string,
+		options?: { confirmed?: boolean },
 	) => Promise<void>;
 	onCommitProjectSidebar: (
 		projectId: string,
@@ -4231,7 +4239,7 @@ const ProjectWorkspace = memo(forwardRef<
 			toggleFileExplorerSidebar,
 		]);
 		const requestClosePanel = useCallback(
-			async (panelId: string) => {
+			async (panelId: string, options?: { confirmed?: boolean }) => {
 				window.terminayTest?.reportAppCommandStage(`close:${panelId}:started`);
 				const api = dockviewApiRef.current;
 				const panel = api?.getPanel(panelId);
@@ -4251,7 +4259,7 @@ const ProjectWorkspace = memo(forwardRef<
 					}
 				}
 				const sessionId = panelSessionMapRef.current.get(panelId);
-				if (sessionId !== undefined) {
+				if (sessionId !== undefined && options?.confirmed !== true) {
 					const preflight = await observeTerminalClosePreflight(
 						serverActivityClient,
 						{ projectId: project.id, sessionId },
@@ -5197,7 +5205,26 @@ const ProjectWorkspace = memo(forwardRef<
 			onRevealFolder: handleRevealFolder,
 			onOpenShell: (folderId) => onOpenShellInFolder(project.id, folderId),
 			onClosePanel: (folderId, panelId) =>
-				onCloseFolderPanel(project.id, folderId, panelId),
+				onCloseFolderPanel(project.id, folderId, panelId, { confirmed: true }),
+			onCountRunningTerminals: async (sessionIds) => {
+				const preflights = await Promise.all(
+					sessionIds.map((sessionId) =>
+						observeTerminalClosePreflight(serverActivityClient, {
+							projectId: project.id,
+							sessionId,
+						}),
+					),
+				);
+				return {
+					count: preflights.reduce(
+						(total, preflight) => total + preflight.runningSessionIds.length,
+						0,
+					),
+					limited: preflights.some(
+						(preflight) => preflight.observation === 'limited',
+					),
+				};
+			},
 			onError: setErrorText,
 		});
 		const folderNameModal = useDraggableModal(folderNameDialog !== null);
@@ -8111,13 +8138,18 @@ function App({
 	);
 	/** Close a panel through its own workspace, as closing its tab does. */
 	const closeFolderPanel = useCallback(
-		async (projectId: string, folderId: string, panelId: string) => {
+		async (
+			projectId: string,
+			folderId: string,
+			panelId: string,
+			options?: { confirmed?: boolean },
+		) => {
 			const workspace =
 				workspaceRefs.current.get(projectId, folderId) ??
 				workspaceOfPanel(projectId, panelId);
 			if (workspace === undefined)
 				throw new Error('That panel is not open on this device.');
-			await workspace.requestClosePanel(panelId);
+			await workspace.requestClosePanel(panelId, options);
 		},
 		[workspaceOfPanel],
 	);
@@ -9899,7 +9931,7 @@ function App({
 			}
 			style={
 				{
-					'--terminal-panel-surface': settings.theme.background,
+					'--terminal-panel-surface': resolveTerminalTheme(settings).background,
 					...(isHomeSelected
 						? { '--project-color': HOME_CHROME_COLOR }
 						: !displayedActiveProject?.color
