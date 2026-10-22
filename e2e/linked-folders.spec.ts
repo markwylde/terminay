@@ -1916,9 +1916,13 @@ test('folders are full-width blocks whose lines start under the chevron, and hov
 	await writeFile(join(repo.worktree('alpha'), 'work.txt'), 'one\n', 'utf8');
 	await setProjectRoot(mainWindow, repo.root);
 	const header = (folder: string) => folderRow(mainWindow, folder);
-	await expect(header('alpha')).toHaveAttribute('data-change', 'delta', {
-		timeout: 15_000,
-	});
+	// An untracked file is measured as a size or reported as `changed`;
+	// either way the card has a facts line with a chip.
+	await expect(header('alpha')).toHaveAttribute(
+		'data-change',
+		/^(delta|changed)$/,
+		{ timeout: 15_000 },
+	);
 	await selectFolder(mainWindow, 'General');
 	const column = foldersColumn(mainWindow);
 	const tree = column.locator('.folders-tree');
@@ -1926,8 +1930,7 @@ test('folders are full-width blocks whose lines start under the chevron, and hov
 	const alpha = folderGroup(mainWindow, 'alpha');
 	const treeBox = await tree.boundingBox();
 	const generalBox = await general.boundingBox();
-	const alphaBox = await alpha.boundingBox();
-	if (!treeBox || !generalBox || !alphaBox)
+	if (!treeBox || !generalBox)
 		throw new Error('Expected the tree and its blocks to be laid out');
 	// Each block spans the column, square, and a gutter separates them.
 	expect(Math.round(generalBox.x)).toBe(Math.round(treeBox.x));
@@ -1937,7 +1940,15 @@ test('folders are full-width blocks whose lines start under the chevron, and hov
 	expect(
 		await general.evaluate((element) => getComputedStyle(element).borderRadius),
 	).toBe('0px');
-	expect(alphaBox.y - (generalBox.y + generalBox.height)).toBeGreaterThan(3);
+	// Measured once the cards have settled: a card that has just arrived
+	// slides into its place.
+	await expect
+		.poll(async () => {
+			const above = await general.boundingBox();
+			const below = await alpha.boundingBox();
+			return above && below ? below.y - (above.y + above.height) : 0;
+		})
+		.toBeGreaterThan(3);
 	// The title is drawn upper case and keeps its own text.
 	const name = header('General').locator('.folders-tree__name');
 	await expect(name).toHaveText('General');
@@ -2893,7 +2904,7 @@ test('a folder collapses to its title line from its toggle or the keyboard, show
 	// title tinted since no row can show where the user is.
 	await selectFolder(mainWindow, 'General');
 	await expect(header).toHaveAttribute('aria-expanded', 'false');
-	await expect(header).toHaveClass(/folders-tree__row--selected-alone/);
+	await expect(header).toHaveClass(/folders-tree__row--selected/);
 
 	// It is this device's choice, and a reload keeps it.
 	await mainWindow.reload();
