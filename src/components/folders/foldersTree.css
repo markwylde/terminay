@@ -4,8 +4,11 @@
 	container: folders-tree / inline-size;
 	display: flex;
 	flex-direction: column;
+	/* The gutter between folders is the column's own background showing
+	   through, so each folder reads as one group. */
+	gap: 6px;
 	min-height: 0;
-	padding-block: 2px;
+	padding-block: 6px;
 	overflow-y: auto;
 	font-size: 13px;
 	line-height: 1.4;
@@ -22,22 +25,18 @@
 	border-radius: 10px;
 }
 
-/* A folder is a card: its title, branch, and facts, then its terminals. */
+/* A folder is a block the full width of the column: its header band, then its
+   rows, then New terminal. Square, with no side margin. */
 .folders-tree__folder {
 	display: flex;
 	flex: none;
 	flex-direction: column;
-	margin: 6px;
 	overflow: hidden;
-	/* The fill is the card, and its rows run to its edges. An outline is drawn
-	   only to say something: that a terminal can be dropped here, or that the
-	   card is in the hand. It takes no room, so nothing is inset to make way. */
-	border-radius: 5px;
-	background: rgba(255, 255, 255, 0.035);
-}
-
-.folders-tree__folder + .folders-tree__folder {
-	margin-top: 0;
+	/* An outline is drawn only to say something: that a terminal can be dropped
+	   here, or that the block is in the hand. It takes no room, so nothing is
+	   inset to make way. */
+	padding-bottom: 2px;
+	background: rgba(255, 255, 255, 0.025);
 }
 
 .folders-tree__folder--drop-target {
@@ -78,32 +77,36 @@
 	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.6);
 }
 
-/* The head of the card: three lines, each its own. */
+/* The head of the block: a band a step lighter than the rows, in the manner of
+   the right sidebar's pane titles. Its lines start at the band's leading edge,
+   the title's with the collapse control. */
 .folders-tree__row--folder {
 	flex-direction: column;
 	align-items: stretch;
-	gap: 5px;
-	padding: 8px 10px;
+	gap: 3px;
+	padding: 6px 6px 7px 8px;
+	background: rgba(255, 255, 255, 0.045);
 }
 
-.folders-tree__row--folder:not(:last-child) {
-	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+.folders-tree__row--folder:hover {
+	background: rgba(255, 255, 255, 0.065);
 }
 
-/* The selected folder's card is not marked: the active terminal's row is what
-   says where the user is. Only a selected folder with no such row is tinted. */
-.folders-tree__row--selected-alone,
-.folders-tree__row--selected-alone:hover {
+/* The selected folder's header band is tinted: it is the folder in front. */
+.folders-tree__row--selected,
+.folders-tree__row--selected:hover {
 	background: color-mix(
 		in srgb,
-		var(--project-color, #57b7ff) 12%,
-		transparent
+		var(--project-color, #57b7ff) 16%,
+		rgba(255, 255, 255, 0.045)
 	);
 }
 
+/* A row's status indicator, or the icon in its place, is centred under the
+   collapse control's chevron. */
 .folders-tree__row--panel {
-	height: 28px;
-	padding: 0 10px 0 12px;
+	height: 26px;
+	padding: 0 10px 0 8px;
 	color: rgba(220, 226, 240, 0.8);
 }
 
@@ -120,8 +123,25 @@
 .folders-tree__title {
 	display: flex;
 	align-items: center;
-	gap: 7px;
+	gap: 6px;
 	min-width: 0;
+	min-height: 22px;
+}
+
+/* How many tabs the folder holds, drawn as the right sidebar draws a pane's
+   count. */
+.folders-tree__count {
+	flex: none;
+	box-sizing: border-box;
+	min-width: 16px;
+	padding: 0 5px;
+	border-radius: 9px;
+	font-size: 11px;
+	line-height: 16px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	background: rgba(255, 255, 255, 0.16);
+	color: #ffffff;
 }
 
 /* Dragged to reorder the folders. */
@@ -132,10 +152,11 @@
 	flex: none;
 	display: inline-flex;
 	align-items: center;
-	margin: -4px -3px -4px -6px;
+	/* The chevron's left edge is the band's leading edge. */
+	margin: -4px 0 -4px -2px;
 	padding: 4px 2px;
 	border-radius: 3px;
-	color: rgba(220, 226, 240, 0.45);
+	color: rgba(255, 255, 255, 0.8);
 	cursor: pointer;
 }
 
@@ -172,8 +193,13 @@
 	text-overflow: ellipsis;
 }
 
+/* Set as the right sidebar sets a pane title. The text keeps its own case for
+   its accessible name and tooltip; only its drawing is upper case. */
 .folders-tree__row--folder .folders-tree__name {
+	font-size: 11px;
 	font-weight: 600;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
 	color: #fff;
 }
 
@@ -523,11 +549,11 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 20px;
-	height: 20px;
-	margin: -2px -4px -2px 0;
+	width: 22px;
+	height: 22px;
+	margin: -2px -2px -2px 0;
 	border-radius: 4px;
-	color: rgba(220, 226, 240, 0.45);
+	color: rgba(255, 255, 255, 0.72);
 }
 
 .folders-tree__menu:hover,
@@ -606,17 +632,35 @@
 	color: #fff;
 }
 
-/* The last row of every card: a terminal in this folder. */
+/* The last row of every open block: a terminal in this folder. Its label makes
+   one with the default shell; its trailing buttons, shown while the row is
+   hovered or holds focus, make one with the shell or with a launcher. */
+.folders-tree__new-terminal-row {
+	display: flex;
+	align-items: center;
+	height: 26px;
+	padding-right: 5px;
+}
+
+.folders-tree__new-terminal-row:hover,
+.folders-tree__new-terminal-row:focus-within {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+/* The plus is centred under the collapse control's chevron. */
 .folders-tree__new-terminal {
 	all: unset;
 	box-sizing: border-box;
 	display: flex;
+	flex: 1 1 auto;
 	align-items: center;
 	gap: 8px;
-	height: 26px;
-	padding: 0 10px 0 12px;
+	min-width: 0;
+	height: 100%;
+	padding: 0 8px 0 9px;
 	white-space: nowrap;
-	color: rgba(220, 226, 240, 0.4);
+	font-size: 12.5px;
+	color: rgba(220, 226, 240, 0.55);
 	cursor: pointer;
 }
 
@@ -624,10 +668,69 @@
 	flex: none;
 }
 
-.folders-tree__new-terminal:hover,
+.folders-tree__new-terminal-row:hover .folders-tree__new-terminal,
 .folders-tree__new-terminal:focus-visible {
 	color: #dce2f0;
-	background: rgba(255, 255, 255, 0.05);
+}
+
+.folders-tree__new-terminal:focus-visible {
+	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.6);
+}
+
+/* Present in the document always, so Tab reaches them, and drawn only while
+   the row is hovered or holds focus. */
+.folders-tree__launchers {
+	display: flex;
+	flex: none;
+	gap: 2px;
+	min-inline-size: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.folders-tree__new-terminal-row:hover .folders-tree__launchers,
+.folders-tree__new-terminal-row:focus-within .folders-tree__launchers {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* A device with no hover could never reveal them, so they are always shown. */
+@media (hover: none) {
+	.folders-tree__launchers {
+		opacity: 1;
+		pointer-events: auto;
+	}
+}
+
+.folders-tree__launcher {
+	all: unset;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 20px;
+	border-radius: 4px;
+	color: rgba(220, 226, 240, 0.85);
+	cursor: pointer;
+}
+
+.folders-tree__launcher:hover,
+.folders-tree__launcher:focus-visible {
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+}
+
+.folders-tree__launcher:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+	outline-offset: -1px;
+}
+
+.folders-tree__launcher .launcher-icon--agent-claude-code {
+	color: #e08a6d;
 }
 
 .folders-tree__new {
@@ -637,8 +740,8 @@
 	align-items: center;
 	gap: 8px;
 	height: 28px;
-	padding: 0 12px;
-	color: rgba(220, 226, 240, 0.5);
+	padding: 0 10px 0 8px;
+	color: rgba(220, 226, 240, 0.55);
 }
 
 .folders-tree__new:hover,
@@ -659,17 +762,13 @@
 	max-height: min(60vh, 520px);
 }
 
-/* --- A card's lines, where it has its collapse control ---------------------
+/* --- A block's lines, where it has its collapse control --------------------
  *
- * Every line under the title starts at the card's own leading edge: the
- * branch, the facts, each tab, and New terminal. Only the title is set in from
- * it, by the collapse control. The branch sits close under the title as its
- * quieter second line.
+ * Every line under the title starts where the collapse control does: the
+ * branch and the facts at the band's leading edge, and each row's indicator,
+ * like New terminal's plus, centred under the chevron. The branch sits close
+ * under the title as its quieter second line.
  */
-.folders-tree--tree .folders-tree__row--folder {
-	gap: 3px;
-	padding-block: 9px;
-}
 
 .folders-tree--tree .folders-tree__branch {
 	color: rgba(220, 226, 240, 0.62);

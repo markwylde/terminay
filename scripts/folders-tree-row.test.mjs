@@ -57,6 +57,9 @@ const presentation = await bundleModule(
 	'worktree-property-presentation.cjs',
 );
 
+const treeCssText = await readFile('src/components/folders/foldersTree.css', 'utf8');
+const treeCss = () => treeCssText;
+
 test.after(async () => {
 	await rm(testDirectory, { recursive: true, force: true });
 });
@@ -362,7 +365,7 @@ test('every card ends with New terminal where one can be made, and an empty fold
 	assert.match(markup, /aria-label="New terminal in feat\/one-project-one-window"/);
 	assert.equal(markup.includes('No terminals yet'), false);
 	// The row is the last thing in its card.
-	assert.match(markup, /<span>New terminal<\/span><\/button><\/div>/);
+	assert.match(markup, /<\/button><\/fieldset><\/div><\/div>(<div class="folders-tree__folder"|<\/div>$)/);
 	// Without a way to make one there is no row.
 	assert.equal(render([general()]).includes('New terminal'), false);
 });
@@ -444,24 +447,112 @@ test("a rename typed into a terminal's row saves the trimmed name, and nothing f
 	assert.equal(terminalRenameTitle('Terminal 1', ' Terminal 1 '), null);
 });
 
-test('the selected folder is tinted only when none of its terminals is the active one', () => {
+test("the selected folder's header band is tinted whether or not one of its rows is active", () => {
 	const withActive = render([
 		linked({
 			isSelected: true,
 			isEmpty: false,
 			panels: [terminalRow({ isActive: true })],
 		}),
+		general(),
 	]);
-	assert.match(withActive, /folders-tree__row--folder folders-tree__row--selected"/);
-	assert.equal(withActive.includes('folders-tree__row--selected-alone'), false);
+	assert.equal(withActive.match(/folders-tree__row--folder folders-tree__row--selected"/g)?.length, 1);
 	assert.match(withActive, /folders-tree__row--terminal folders-tree__row--active"/);
 
 	const alone = render([linked({ isSelected: true })]);
-	assert.match(
-		alone,
-		/folders-tree__row--folder folders-tree__row--selected folders-tree__row--selected-alone"/,
-	);
+	assert.match(alone, /folders-tree__row--folder folders-tree__row--selected"/);
 	assert.equal(alone.includes('folders-tree__row--active'), false);
+
+	const css = treeCss();
+	assert.match(css, /\.folders-tree__row--selected,\s*\.folders-tree__row--selected:hover\s*\{[^}]*--project-color/);
+	assert.equal(css.includes('selected-alone'), false);
+});
+
+test("a folder's title line ends with a count of all its tabs, then its menu", () => {
+	const markup = render(
+		[
+			general({
+				isEmpty: false,
+				panels: [
+					terminalRow({ panelId: 'a', sessionId: 'a' }),
+					terminalRow({ panelId: 'b', sessionId: 'b' }),
+					{ kind: 'file', panelId: 'f', title: 'README.md', isActive: false },
+				],
+			}),
+			linked({ panels: [terminalRow()], isEmpty: false }),
+			linked({ id: 'empty', panels: [], isEmpty: true }),
+		],
+		{ onFolderMenu: () => {} },
+	);
+	const counts = [...markup.matchAll(/class="folders-tree__count"[^>]*aria-label="([^"]+)"[^>]*>(\d+)</g)].map(
+		([, label, count]) => [label, count],
+	);
+	assert.deepEqual(counts, [
+		['3 tabs', '3'],
+		['1 tab', '1'],
+		['0 tabs', '0'],
+	]);
+	// The count sits on the title line, directly before the menu button.
+	assert.match(markup, /class="folders-tree__count"[^>]*>3<\/span><button type="button" class="folders-tree__menu"/);
+	// The title line has no button that makes a terminal: that is the last row's.
+	const titles = [...markup.matchAll(/<span class="folders-tree__title"[^>]*>(.*?)<\/span><\/div>/g)].join('');
+	assert.equal(titles.includes('New terminal'), false);
+});
+
+test('the New terminal row offers the shell first, then each launcher in order, and a peek has no row', () => {
+	const launchers = [
+		{ id: 'x/launch-claude-code', displayName: 'Claude Code', icon: 'agent-claude-code' },
+		{ id: 'x/launch-codex', displayName: 'Codex', icon: 'agent-codex' },
+		{ id: 'y/launch-other', displayName: 'Other', icon: 'not-on-the-allowlist' },
+	];
+	const markup = render([general()], {
+		onNewTerminal: () => {},
+		onLaunchTerminal: () => {},
+		launchers,
+	});
+	const buttons = [...markup.matchAll(/class="folders-tree__launcher" aria-label="([^"]+)" title="([^"]+)" data-launcher-id="([^"]+)"/g)].map(
+		([, label, title, id]) => [label, title, id],
+	);
+	assert.deepEqual(buttons, [
+		['Shell', 'New terminal', 'shell'],
+		['Claude Code', 'New Claude Code terminal', 'x/launch-claude-code'],
+		['Codex', 'New Codex terminal', 'x/launch-codex'],
+		['Other', 'New Other terminal', 'y/launch-other'],
+	]);
+	assert.match(markup, /<fieldset class="folders-tree__launchers" aria-label="New terminal in General with"/);
+	assert.match(markup, /launcher-icon--agent-claude-code/);
+	assert.match(markup, /launcher-icon--agent-codex/);
+	// An id the client does not know draws as a terminal.
+	assert.equal(markup.match(/launcher-icon--terminal/g)?.length, 2);
+
+	// With no way to launch, only the shell is offered.
+	const shellOnly = render([general()], { onNewTerminal: () => {}, launchers });
+	assert.equal(shellOnly.match(/class="folders-tree__launcher"/g)?.length, 1);
+
+	// A peek lists and offers nothing.
+	const peek = render([general()], { variant: 'peek', launchers });
+	assert.equal(peek.includes('folders-tree__launcher'), false);
+	assert.equal(peek.includes('New terminal'), false);
+
+	// The buttons are in the document always and revealed on hover or focus,
+	// and always shown where there is no hover.
+	const css = treeCss();
+	assert.match(css, /\.folders-tree__new-terminal-row:hover \.folders-tree__launchers,\s*\.folders-tree__new-terminal-row:focus-within \.folders-tree__launchers/);
+	assert.match(css, /@media \(hover: none\)\s*\{\s*\.folders-tree__launchers\s*\{\s*opacity: 1/);
+});
+
+test('folders are full-width square blocks with a gutter, and titles are drawn as pane titles', () => {
+	const css = treeCss();
+	const block = css.match(/\.folders-tree__folder \{([^}]*)\}/)[1];
+	assert.equal(/margin|border-radius/.test(block), false);
+	assert.match(css.match(/\.folders-tree \{([^}]*)\}/)[1], /gap: 6px/);
+	const title = css.match(/\.folders-tree__row--folder \.folders-tree__name \{([^}]*)\}/)[1];
+	assert.match(title, /font-size: 11px/);
+	assert.match(title, /font-weight: 600/);
+	assert.match(title, /text-transform: uppercase/);
+	assert.match(title, /letter-spacing: 0\.05em/);
+	// The upper case is drawing only: the text and its tooltip keep their case.
+	assert.match(render([general()]), /title="General">General</);
 });
 
 test('a card that only reports, as in a peek, shows the same facts with nothing to press', () => {
