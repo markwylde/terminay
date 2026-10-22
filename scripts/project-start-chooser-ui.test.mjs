@@ -168,115 +168,103 @@ test('the compact chooser is one column scrolled vertically alone', () => {
 	assert.doesNotMatch(css.slice(0, css.indexOf('.root-folder-browser {')), /(?:^|[^-])width:\s*[4-9]\d\dpx|min-width:\s*[1-9]\d{2,}px/mu);
 	assert.match(rule('.project-start__panel'), /min-width:\s*0/u);
 	assert.match(rule('.root-folder-browser__list'), /overflow-x:\s*hidden/u);
-	assert.match(rule('.root-folder-browser__current'), /text-overflow:\s*ellipsis/u);
+	assert.match(rule('.root-folder-browser__entry-name'), /text-overflow:\s*ellipsis/u);
 });
 
-const browserView = (listing, overrides = {}) =>
+const home = {
+	path: '/home/mark',
+	parent: '/home',
+	entries: [{ name: '.cache' }, { name: 'code' }, { name: 'config' }, { name: 'notes' }],
+	truncated: false,
+};
+const field = (value, extra = {}) => ({ value, highlight: -1, cycle: null, ...extra });
+const browserView = (value, listing = { state: 'ready', folder: home }, overrides = {}) =>
 	renderToStaticMarkup(
 		React.createElement(RootFolderBrowserView, {
+			field: field(value),
 			listing,
-			typedPath: listing.state === 'ready' ? listing.folder.path : '',
+			targetName: null,
 			onTypedPathChange: noop,
-			onOpen: noop,
+			onKey: noop,
+			onEnterFolder: noop,
+			onChooseEntered: noop,
 			onChoose: noop,
 			onCancel: noop,
 			...overrides,
 		}),
 	);
 
-test('the folder browser lists directories, a parent, a path field, and its two actions', () => {
-	const markup = browserView({
-		state: 'ready',
-		folder: {
-			path: '/home/mark',
-			parent: '/home',
-			entries: [{ name: 'code' }, { name: 'notes' }],
-			truncated: false,
-		},
-	});
+test('the folder browser shows the path once, in its field, with the folders in it', () => {
+	const markup = browserView('/home/mark/', undefined, { targetName: 'mark' });
 	assert.match(markup, /data-terminay-root-folder-browser="true"/u);
-	assert.match(markup, /data-terminay-root-folder-current="true"[^>]*>\/home\/mark</u);
+	assert.match(markup, /role="combobox"[^>]*data-terminay-root-folder-path="true" value="\/home\/mark\/"/u);
+	assert.equal(markup.split('/home/mark/').length - 1, 1, 'the typed path appears once');
+	assert.match(markup, /3 folders in <code data-terminay-root-folder-listed="true">\/home\/mark<\/code>/u);
 	assert.match(markup, /data-terminay-root-folder-entry="code"/u);
 	assert.match(markup, /data-terminay-root-folder-entry="notes"/u);
-	assert.match(markup, /data-terminay-root-folder-path="true" value="\/home\/mark"/u);
-	assert.doesNotMatch(
-		markup.match(/<button[^>]*data-terminay-root-folder-parent[^>]*>/u)[0],
-		/disabled/u,
-	);
+	assert.doesNotMatch(markup, /data-terminay-root-folder-entry="\.cache"/u, 'hidden folders wait for a dot');
+	assert.match(markup, /Type \. for hidden folders/u);
+	assert.doesNotMatch(markup, /data-terminay-root-folder-(?:current|parent)|>Go</u);
 	assert.match(markup, />Cancel</u);
-	assert.doesNotMatch(
-		markup.match(/<button[^>]*data-terminay-root-folder-choose[^>]*>/u)[0],
-		/disabled/u,
-	);
-	assert.match(markup, /Open this folder/u);
+	const choose = markup.match(/<button[^>]*data-terminay-root-folder-choose[^>]*>[^<]*/u)[0];
+	assert.doesNotMatch(choose, /disabled/u);
+	assert.match(choose, /Open “mark”/u);
 	assert.doesNotMatch(markup, /data-terminay-root-folder-truncated/u);
 });
 
-test('the folder browser suggests folders for a typed path as a listbox', () => {
-	const ready = {
-		state: 'ready',
-		folder: { path: '/Users/mark', parent: '/Users', entries: [{ name: 'Documents' }], truncated: false },
-	};
-	const markup = browserView(ready, {
-		typedPath: '/Users/mark/Doc',
-		suggestions: [
-			{ name: 'Documents', path: '/Users/mark/Documents' },
-			{ name: 'docs', path: '/Users/mark/docs' },
-		],
-		highlighted: 1,
+test('typing filters the folders, and a dot shows the hidden ones', () => {
+	const typed = browserView('/home/mark/co');
+	assert.match(typed, /2 folders in/u);
+	assert.match(typed, /role="listbox"/u);
+	assert.match(typed, /data-terminay-root-folder-entry="code"[^>]*>[\s\S]*?<mark>co<\/mark>de/u);
+	assert.doesNotMatch(typed, /data-terminay-root-folder-entry="notes"/u);
+	const dotted = browserView('/home/mark/.');
+	assert.match(dotted, /data-terminay-root-folder-entry="\.cache"/u);
+	assert.doesNotMatch(dotted, /Type \. for hidden folders/u);
+});
+
+test('the highlighted folder is the active option, and a Tab cycle lists its matches', () => {
+	const highlighted = browserView('/home/mark/', undefined, { field: field('/home/mark/', { highlight: 1 }) });
+	assert.match(highlighted, /aria-activedescendant="[^"]*-1"/u);
+	assert.match(highlighted, /aria-selected="true"[^>]*data-terminay-root-folder-entry="config"/u);
+	const cycling = browserView('/home/mark/code/', { state: 'loading' }, {
+		field: field('/home/mark/code/', { cycle: { head: '/home/mark/', names: ['code', 'config'], index: 0, original: '/home/mark/c' } }),
 	});
-	assert.match(markup, /role="combobox"[^>]*aria-expanded="true"/u);
-	assert.match(markup, /role="listbox"[^>]*data-terminay-root-folder-suggestions="true"/u);
-	assert.match(markup, /aria-selected="false"[^>]*title="\/Users\/mark\/Documents"[^>]*data-terminay-root-folder-suggestion="Documents"/u);
-	assert.match(markup, /aria-selected="true"[^>]*data-terminay-root-folder-suggestion="docs"/u);
-	assert.doesNotMatch(browserView(ready), /data-terminay-root-folder-suggestions/u);
+	assert.match(cycling, /aria-selected="true"[^>]*data-terminay-root-folder-entry="code"/u);
+	assert.match(cycling, /data-terminay-root-folder-entry="config"/u);
 });
 
 test('the folder browser holds one height and scrolls its listing inside it', () => {
-	const markup = browserView({ state: 'loading' });
+	const markup = browserView('/home/mark/', { state: 'loading' });
+	assert.match(markup, /Listing folders…/u);
 	assert.match(markup, /data-terminay-root-folder-body="true"/u);
 	assert.match(css, /\.root-folder-browser__body \{[^}]*\bheight: min\(50vh, 360px\);/u);
 	assert.match(css, /\.root-folder-browser__list \{[^}]*flex: 1;[^}]*overflow-y: auto;/u);
-	assert.match(css, /\.root-folder-browser__suggestions \{[^}]*position: absolute;/u);
+	assert.match(css, /\.root-folder-browser__ghost \{[^}]*position: absolute;[^}]*pointer-events: none;/u);
 });
 
 test('the folder browser marks a truncated listing', () => {
-	const markup = browserView({
+	const markup = browserView('/big/', {
 		state: 'ready',
-		folder: {
-			path: '/big',
-			parent: '/',
-			entries: [{ name: 'a' }, { name: 'b' }],
-			truncated: true,
-		},
+		folder: { path: '/big', parent: '/', entries: [{ name: 'a' }, { name: 'b' }], truncated: true },
 	});
 	assert.match(markup, /data-terminay-root-folder-truncated="true"[^>]*>Showing the first 2 folders/u);
 });
 
-test('the folder browser shows an error in place of a listing and cannot choose it', () => {
-	const markup = browserView({
-		state: 'error',
-		message: 'The server cannot read that folder.',
-		previous: { path: '/home/mark', parent: '/home', entries: [{ name: 'code' }], truncated: false },
-	});
-	assert.match(markup, /role="alert" data-terminay-root-folder-error="true">The server cannot read that folder\./u);
+test('a folder the server cannot list is said plainly, and nothing can be chosen', () => {
+	const markup = browserView('/missing/', { state: 'error', message: 'That folder does not exist on the server.' });
+	assert.match(markup, /role="alert" data-terminay-root-folder-error="true">That folder does not exist on the server\./u);
 	assert.doesNotMatch(markup, /data-terminay-root-folder-entry/u);
 	assert.match(markup.match(/<button[^>]*data-terminay-root-folder-choose[^>]*>/u)[0], /disabled/u);
-	// Going up from where it was still works.
-	assert.doesNotMatch(markup.match(/<button[^>]*data-terminay-root-folder-parent[^>]*>/u)[0], /disabled/u);
+	assert.match(browserView('/', { state: 'ready', folder: { path: '/', entries: [], truncated: false } }), /This folder holds no folders\./u);
+	assert.match(browserView('', undefined, { listing: undefined }), /Finding your home folder…/u);
 });
 
-test('the folder browser at a filesystem root has no parent, and says when it is still loading', () => {
-	const root = browserView({ state: 'ready', folder: { path: '/', entries: [], truncated: false } });
-	assert.match(root.match(/<button[^>]*data-terminay-root-folder-parent[^>]*>/u)[0], /disabled/u);
-	assert.match(root, /This folder holds no folders\./u);
-	assert.match(browserView({ state: 'loading' }), /role="status">Loading folders/u);
-});
-
-test('the browser is drawn in the one in-page window frame', async () => {
+test('the browser is drawn in the one in-page window frame and starts at home', async () => {
 	const source = await readFile('src/workspace/RootFolderBrowser.tsx', 'utf8');
 	assert.match(source, /<InPageWindow[\s\S]*name="root-folder-browser"/u);
-	assert.match(source, /void navigator\.open\(\);/u, 'opens at the server home');
+	assert.match(source, /browse\(\)\.then\(/u, 'opens at the server home');
+	assert.match(source, /browse\(target\)\.then\(\s*\(chosen\) => \{\s*if \(live\.current\) onChoose\(chosen\.path\)/u, 'chooses the canonical path');
 });
 
 test('each no-root pane says so and offers to open a folder', () => {
