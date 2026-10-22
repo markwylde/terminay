@@ -13,8 +13,8 @@
 
 ## 3. Built-in agents extension
 
-- [ ] 3.1 Declare the `agent-launch` permission and the two launchers in `extensions/builtin-agents/package.json`, Claude Code before Codex, each naming its harness. Verify with the extension's manifest test.
-- [ ] 3.2 Register both launchers in `extensions/builtin-agents/src/index.ts`, resolving through `chat/locate.ts`. Verify with extension tests for installed, not installed, and the `TERMINAY_*_COMMAND` override.
+- [x] 3.1 Declare the `agent-launch` permission and the two launchers in `extensions/builtin-agents/package.json`, Claude Code before Codex, each naming its harness. Verify with the extension's manifest test.
+- [x] 3.2 Register both launchers in `extensions/builtin-agents/src/index.ts`, resolving through `chat/locate.ts`. Verify with extension tests for installed, not installed, and the `TERMINAY_*_COMMAND` override.
 
 ## 4. Renderer: launcher list
 
