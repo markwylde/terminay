@@ -76,57 +76,65 @@ export function FolderDeleteDialog({
 						{title}
 					</h2>
 				</div>
-				<p className="folder-delete-dialog__text">
-					Delete <strong>{folderName}</strong>?
-				</p>
-				{worktree === undefined ? null : (
-					<>
-						<p className="folder-delete-dialog__path">{worktree.path}</p>
+				<div className="folder-delete-dialog__body">
+					<div className="folder-delete-dialog__subject">
+						<p className="folder-delete-dialog__text">
+							Delete <strong>{folderName}</strong>?
+						</p>
+						{worktree === undefined ? null : (
+							<p className="folder-delete-dialog__path">{worktree.path}</p>
+						)}
+					</div>
+					{worktree === undefined ? null : (
 						<p
 							className="folder-delete-dialog__warning"
 							data-folder-delete-warning=""
 						>
 							{worktree.warning}
 						</p>
-					</>
-				)}
-				{panelCount === 0 ? null : (
-					<fieldset className="folder-delete-dialog__panels">
-						<legend className="folder-delete-dialog__text">
-							It still holds {panels}. What should happen to {them}?
-						</legend>
-						<label className="folder-delete-dialog__option">
-							<input
-								type="radio"
-								name="folder-delete-panels"
-								value="move"
-								checked={outcome === 'move'}
-								onChange={() => setOutcome('move')}
-							/>
-							<span>
-								Move to General
-								<span className="folder-delete-dialog__hint">
-									Every terminal keeps running.
+					)}
+					{panelCount === 0 ? null : (
+						<fieldset className="folder-delete-dialog__panels">
+							<legend className="folder-delete-dialog__text">
+								It still holds {panels}. What should happen to {them}?
+							</legend>
+							<label className="folder-delete-dialog__option">
+								<input
+									type="radio"
+									name="folder-delete-panels"
+									value="move"
+									checked={outcome === 'move'}
+									onChange={() => setOutcome('move')}
+								/>
+								<span>
+									<span className="folder-delete-dialog__label">
+										Move to General
+									</span>
+									<span className="folder-delete-dialog__hint">
+										Every terminal keeps running.
+									</span>
 								</span>
-							</span>
-						</label>
-						<label className="folder-delete-dialog__option">
-							<input
-								type="radio"
-								name="folder-delete-panels"
-								value="close"
-								checked={outcome === 'close'}
-								onChange={() => setOutcome('close')}
-							/>
-							<span>
-								Close {them}
-								{outcome === 'close' ? (
-									<RunningNote running={running} />
-								) : null}
-							</span>
-						</label>
-					</fieldset>
-				)}
+							</label>
+							<label className="folder-delete-dialog__option">
+								<input
+									type="radio"
+									name="folder-delete-panels"
+									value="close"
+									checked={outcome === 'close'}
+									onChange={() => setOutcome('close')}
+								/>
+								<span>
+									<span className="folder-delete-dialog__label">
+										Close {them}
+									</span>
+									{outcome === 'close' ? (
+										<RunningNote running={running} />
+									) : null}
+								</span>
+							</label>
+						</fieldset>
+					)}
+				</div>
 				<div className="project-edit-actions">
 					<button
 						ref={cancelRef}
@@ -163,8 +171,8 @@ export function RunningNote({ running }: { running: RunningTerminals }) {
 	if (running.limited)
 		return (
 			<span className="folder-delete-dialog__hint folder-delete-dialog__hint--warning">
-				Terminay could not check whether these terminals are busy. Closing
-				stops anything running.
+				Terminay could not check whether these terminals are busy. Closing stops
+				anything running.
 			</span>
 		);
 	return null;
