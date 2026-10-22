@@ -37,6 +37,9 @@ export class SessionSourceSupervisor implements ExtensionAgentBroker {
 	private readonly running = new Map<string, readonly string[]>();
 	private reconciling: Promise<void> = Promise.resolve();
 	private readonly unsubscribe: Array<() => void> = [];
+	private readonly switchListeners = new Set<
+		(switches: AgentHarnessSwitches) => void
+	>();
 	private disposed = false;
 
 	constructor(options: SessionSourceSupervisorOptions) {
@@ -60,7 +63,27 @@ export class SessionSourceSupervisor implements ExtensionAgentBroker {
 
 	setHarnessSwitches(switches: AgentHarnessSwitches): void {
 		this.switches = { ...switches };
+		for (const listener of [...this.switchListeners]) {
+			try {
+				listener(this.harnessSwitches());
+			} catch {
+				/* a listener cannot stop the switches reaching the sources */
+			}
+		}
 		void this.reconcile();
+	}
+
+	/** The per-harness switches as last set. */
+	harnessSwitches(): AgentHarnessSwitches {
+		return Object.freeze({ ...this.switches });
+	}
+
+	/** Hear every change to the per-harness switches, such as terminal launchers do. */
+	observeHarnessSwitches(
+		listener: (switches: AgentHarnessSwitches) => void,
+	): () => void {
+		this.switchListeners.add(listener);
+		return () => this.switchListeners.delete(listener);
 	}
 
 	/** Start what should run, stop what should not, re-scope the rest. */

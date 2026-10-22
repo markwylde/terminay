@@ -213,7 +213,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(recordingOperations.queries),
       "settings.get",
       "server.upgrade.status",
-      "terminal.cwd", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
+      "terminal.cwd", "terminal.launchers", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
     ];
     const expectedCommands = [
       "ai.dictation.credential.clear", "ai.dictation.credential.set",

@@ -55,6 +55,7 @@ export async function extensionLaunchDescriptor(
 		languageServers: manifest.contributes.languageServers ?? [],
 		worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 		agentChatProviders: manifest.contributes.agentChatProviders ?? [],
+		terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});
 	return Object.freeze({ descriptor, manifest });
