@@ -201,7 +201,8 @@ export function PixelCompanion({
 		}
 		if (askedRef.current || document.visibilityState !== 'visible') return;
 		askedRef.current = true;
-		void pet.show().then(() => pet.chat.open());
+		// The balloon opens at once; Pixel flies in to it.
+		pet.chat.open();
 	}, [attention, pet]);
 
 	const openPixel = () => {
@@ -210,7 +211,7 @@ export function PixelCompanion({
 			pet.chat.close();
 			return;
 		}
-		void pet.show().then(() => pet.chat.open());
+		pet.chat.open();
 	};
 
 	const label = pixelDockLabel(dockState);
