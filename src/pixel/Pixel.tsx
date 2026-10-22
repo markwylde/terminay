@@ -156,6 +156,21 @@ export function PixelCompanion({
 		});
 	}, [chatOptions, pet]);
 
+	// While Pixel is out (from its leap until it lands back), the dock is its
+	// empty home and shows only a ghost of it.
+	const [isOut, setIsOut] = useState(false);
+	useEffect(() => {
+		if (pet === null) return;
+		const sync = () => setIsOut(pet.state !== 'hidden');
+		sync();
+		const observer = new MutationObserver(sync);
+		observer.observe(pet.element, {
+			attributes: true,
+			attributeFilter: ['data-state'],
+		});
+		return () => observer.disconnect();
+	}, [pet]);
+
 	// Stay clear of the status bar while it is shown.
 	useEffect(() => {
 		pet?.set({ insets: { bottom: statusBarDock === null ? 0 : 26 } });
@@ -207,6 +222,7 @@ export function PixelCompanion({
 			aria-label={label}
 			className={className}
 			data-state={dockState}
+			data-out={isOut ? 'true' : undefined}
 			data-testid="pixel-dock"
 			onClick={openPixel}
 			onMouseDown={(event) => event.stopPropagation()}
