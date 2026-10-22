@@ -1,6 +1,9 @@
 import { type ReactNode, useCallback, useRef, useState } from 'react';
 import { FolderMenu } from '../components/folders/FolderMenu';
-import { FolderPanelsQuestion } from '../components/folders/FolderPanelsQuestion';
+import {
+	FolderDeleteDialog,
+	type RunningTerminals,
+} from '../components/folders/FolderDeleteDialog';
 import { writeClipboardText } from '../host/nativeActions';
 import { getPathRelativeToRoot } from '../pathUtils';
 import type { ServerWorkspaceSnapshot } from '../shared/serverWorkspaceReconciliation';
@@ -10,6 +13,7 @@ import {
 	deleteFolderAndItsPanels,
 	type FolderPanelsAnswer,
 	panelsHeldByFolder,
+	worktreeRemovalWarning,
 } from './folderDeleteFlow';
 import { type FolderMenuActionId, folderMenuEntries } from './folderMenuModel';
 import { generalFolderIdOf } from './folderTreeModel';
@@ -43,22 +47,29 @@ type Options = {
 	) => void;
 	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
-	/** Asks its own question, then removes the worktree. */
+	/** Removes the worktree. The delete dialog has already confirmed it. */
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => Promise<void>;
 	/** Show a folder's directory in the file manager. The server is told the
 	 * folder and decides the directory, so this needs no repository. */
 	onRevealFolder: (folderId: string) => void;
 	/** Create a terminal in a folder, starting in that folder's root. */
 	onOpenShell: (folderId: string) => void;
-	/** Close a panel as closing its tab does, with every question that asks. */
+	/** Close a panel as closing its tab does, but without close protection:
+	 * the delete dialog has already said what closing stops. */
 	onClosePanel: (folderId: string, panelId: string) => Promise<void>;
+	/** How many of these terminal sessions have a non-shell process running. */
+	onCountRunningTerminals: (
+		sessionIds: readonly string[],
+	) => Promise<RunningTerminals>;
 	onError: (message: string) => void;
 };
 
 type PanelsQuestion = {
 	folderName: string;
-	deletesWorktree: boolean;
+	/** The worktree deleting removes, for a linked folder. */
+	worktree?: { path: string; warning: string };
 	panelCount: number;
+	running: RunningTerminals;
 	resolve: (answer: FolderPanelsAnswer) => void;
 };
 
@@ -210,21 +221,45 @@ export function useFolderMenuController(options: Options) {
 					);
 				else await shownAsLeft(panelId);
 			};
+			const what = folder.kind === 'linked' ? 'worktree' : 'folder';
 			try {
-				await deleteFolderAndItsPanels({
+				const outcome = await deleteFolderAndItsPanels({
 					panelIds: () => held().map((panel) => panel.panelId),
-					ask: (panelCount) =>
-						new Promise<FolderPanelsAnswer>((resolve) =>
+					alwaysAsk: folder.kind === 'linked',
+					ask: async (panelIds) => {
+						// Everything the user is told is gathered first, so the
+						// dialog never changes under the pointer.
+						const snapshotPanels = store.snapshot?.panels ?? {};
+						const sessionIds = panelIds.flatMap((panelId) => {
+							const panel = snapshotPanels[panelId];
+							return panel?.type === 'terminal' &&
+								typeof panel.sessionId === 'string'
+								? [panel.sessionId]
+								: [];
+						});
+						const running =
+							sessionIds.length === 0
+								? { count: 0, limited: false }
+								: await latest.current.onCountRunningTerminals(sessionIds);
+						return new Promise<FolderPanelsAnswer>((resolve) =>
 							setPanelsQuestion({
 								folderName: folderNameFromStatus(
 									folder,
 									latest.current.worktreeStatus,
 								),
-								deletesWorktree: folder.kind === 'linked',
-								panelCount,
+								worktree:
+									folder.kind === 'linked' && worktree !== undefined
+										? {
+												path: worktree.path,
+												warning: worktreeRemovalWarning(worktree),
+											}
+										: undefined,
+								panelCount: panelIds.length,
+								running,
 								resolve,
 							}),
-						),
+						);
+					},
 					movePanel: async (panelId) => {
 						// The server holds no panel to move for a file opened on this
 						// device, and its workspace goes with the folder: it is closed
@@ -256,9 +291,13 @@ export function useFolderMenuController(options: Options) {
 							await latest.current.onDeleteWorktree(worktree);
 					},
 				});
+				if (outcome === 'panels-remain')
+					latest.current.onError(
+						`A panel is still in ${folderNameFromStatus(folder, latest.current.worktreeStatus)}, so the ${what} was not deleted.`,
+					);
 			} catch (error) {
 				latest.current.onError(
-					`Unable to delete ${folder.kind === 'linked' ? 'the worktree' : 'the folder'}: ${messageOf(error)}`,
+					`Unable to delete the ${what}: ${messageOf(error)}`,
 				);
 			}
 		},
@@ -352,10 +391,11 @@ export function useFolderMenuController(options: Options) {
 			<>
 				{folderMenuElement}
 				{panelsQuestion === null ? null : (
-					<FolderPanelsQuestion
+					<FolderDeleteDialog
 						folderName={panelsQuestion.folderName}
-						deletesWorktree={panelsQuestion.deletesWorktree}
+						worktree={panelsQuestion.worktree}
 						panelCount={panelsQuestion.panelCount}
+						running={panelsQuestion.running}
 						onAnswer={answerPanelsQuestion}
 					/>
 				)}

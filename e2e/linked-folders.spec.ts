@@ -10,7 +10,9 @@ import {
 	activeFolderWorkspace,
 	changesPane,
 	contextMenuLabels,
+	confirmDelete,
 	createPlainFolder,
+	deleteDialog,
 	filesPane,
 	folderGroup,
 	folderNames,
@@ -38,6 +40,7 @@ import {
 	setProjectRoot,
 } from './support/ui';
 import { chooseProjectStart, createStartedProject } from './support/project-start';
+import { waitUntilBusy } from './support/busy-terminals';
 import {
 	advanceRendererClock,
 	afterRendererTasks,
@@ -278,9 +281,6 @@ async function newTerminalHere(
 	await expect(terminalRowIn(page, folder, sessionId)).toHaveCount(1);
 	return sessionId;
 }
-
-const panelsQuestion = (page: Page): Locator =>
-	page.getByRole('dialog').filter({ hasText: 'still holds' });
 
 const sessionsUnder = async (page: Page, folder: string): Promise<string[]> =>
 	(
@@ -705,7 +705,7 @@ test('folder context menus offer what each kind of folder can do, and Open shell
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('deleting a plain folder that holds terminals asks to move them, close them, or cancel', async ({
+test('deleting a plain folder that holds terminals asks once whether to move or close them', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -728,9 +728,12 @@ test('deleting a plain folder that holds terminals asks to move them, close them
 	const askToDelete = async (folder: string): Promise<void> => {
 		await openFolderMenu(mainWindow, folder);
 		await contextMenuItem(mainWindow, 'Delete folder').click();
-		await expect(panelsQuestion(mainWindow)).toBeVisible();
-		await expect(panelsQuestion(mainWindow)).toContainText(
-			`${folder} still holds 2 panels`,
+		await expect(deleteDialog(mainWindow)).toBeVisible();
+		await expect(deleteDialog(mainWindow)).toContainText(
+			`Delete ${folder}?`,
+		);
+		await expect(deleteDialog(mainWindow)).toContainText(
+			'It still holds 2 panels',
 		);
 	};
 
@@ -744,10 +747,10 @@ test('deleting a plain folder that holds terminals asks to move them, close them
 
 	// Cancel: nothing has changed.
 	await askToDelete('Movers');
-	await panelsQuestion(mainWindow)
+	await deleteDialog(mainWindow)
 		.getByRole('button', { name: 'Cancel' })
 		.click();
-	await expect(panelsQuestion(mainWindow)).toHaveCount(0);
+	await expect(deleteDialog(mainWindow)).toHaveCount(0);
 	await expect(folderNames(mainWindow)).toHaveText([
 		'General',
 		'Movers',
@@ -759,9 +762,10 @@ test('deleting a plain folder that holds terminals asks to move them, close them
 	// Move to General: both terminals are in General, running, and the folder
 	// is gone.
 	await askToDelete('Movers');
-	await panelsQuestion(mainWindow)
-		.getByRole('button', { name: 'Move to General' })
-		.click();
+	await expect(
+		deleteDialog(mainWindow).getByRole('radio', { name: /^Move to General/ }),
+	).toBeChecked();
+	await confirmDelete(mainWindow);
 	await expect(folderRow(mainWindow, 'Movers')).toHaveCount(0);
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'Closers']);
 	await expect
@@ -782,9 +786,7 @@ test('deleting a plain folder that holds terminals asks to move them, close them
 
 	// Close them: both terminals are closed and the folder is gone.
 	await askToDelete('Closers');
-	await panelsQuestion(mainWindow)
-		.getByRole('button', { name: 'Close them' })
-		.click();
+	await confirmDelete(mainWindow, 'Close them');
 	await expect(folderRow(mainWindow, 'Closers')).toHaveCount(0);
 	await expect(folderNames(mainWindow)).toHaveText(['General']);
 	for (const sessionId of closed) {
@@ -797,7 +799,7 @@ test('deleting a plain folder that holds terminals asks to move them, close them
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('deleting a worktree whose folder holds a terminal asks about the terminal first', async ({
+test('deleting a worktree whose folder holds a terminal asks one question and nothing more', async ({
 	appHarness,
 	createWorkspace,
 	mainWindow,
@@ -817,21 +819,23 @@ test('deleting a worktree whose folder holds a terminal asks about the terminal 
 	// Leave the worktree directory, so nothing but the question is in the way.
 	await run(mainWindow, `cd "${repo.root}"`);
 
-	// Cancel the question: the worktree's own confirmation is never reached.
+	// Cancel the question: nothing changes and nothing else is asked.
 	await dialogs.clearCalls();
 	await openFolderMenu(mainWindow, 'alpha');
 	await contextMenuItem(mainWindow, 'Delete worktree').click();
-	await expect(panelsQuestion(mainWindow)).toBeVisible();
-	await expect(panelsQuestion(mainWindow)).toContainText(
-		'alpha still holds 1 panel',
+	await expect(deleteDialog(mainWindow)).toBeVisible();
+	await expect(deleteDialog(mainWindow)).toContainText(
+		'It still holds 1 panel',
 	);
+	await expect(deleteDialog(mainWindow)).toContainText(repo.worktree('alpha'));
+	await expect(deleteDialog(mainWindow)).toContainText('permanently removes');
 	await expect(
-		panelsQuestion(mainWindow).getByRole('button', { name: 'Close them' }),
+		deleteDialog(mainWindow).getByRole('radio', { name: /^Close it/ }),
 	).toBeVisible();
-	await panelsQuestion(mainWindow)
+	await deleteDialog(mainWindow)
 		.getByRole('button', { name: 'Cancel' })
 		.click();
-	await expect(panelsQuestion(mainWindow)).toHaveCount(0);
+	await expect(deleteDialog(mainWindow)).toHaveCount(0);
 	expect(
 		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
 	).toHaveLength(0);
@@ -840,22 +844,67 @@ test('deleting a worktree whose folder holds a terminal asks about the terminal 
 		repo.worktree('alpha'),
 	);
 
-	// Move the terminal, then confirm the removal: the terminal is in General
-	// and the worktree and its folder are gone.
+	// Move the terminal and Delete: the terminal is in General and the
+	// worktree and its folder are gone, with no other question asked.
 	await dialogs.clearCalls();
-	await dialogs.queueConfirm(true);
 	await openFolderMenu(mainWindow, 'alpha');
 	await contextMenuItem(mainWindow, 'Delete worktree').click();
-	await panelsQuestion(mainWindow)
-		.getByRole('button', { name: 'Move to General' })
-		.click();
+	await confirmDelete(mainWindow, 'Move to General');
 	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0, {
 		timeout: 10_000,
 	});
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	expect(
 		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
-	).toHaveLength(1);
+	).toHaveLength(0);
+	expect(
+		await git(repo.root, 'worktree', 'list', '--porcelain'),
+	).not.toContain(repo.worktree('alpha'));
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('closing a busy terminal while deleting its worktree is said once, in the dialog', async ({
+	appHarness,
+	createWorkspace,
+	electronApp,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-delete-busy-worktree', [
+		'alpha',
+	]);
+	const dialogs = await appHarness.dialogs();
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await selectFolder(mainWindow, 'alpha');
+	const sessionId = await newTerminalHere(
+		mainWindow,
+		appHarness.sendAppCommand,
+		'alpha',
+	);
+	// The terminal leaves the worktree and runs something that keeps it busy.
+	await run(mainWindow, `cd "${repo.root}"; printf 'busy-%s\\n' started; sleep 600`);
+	await expect(terminalOutput(mainWindow)).toContainText('busy-started');
+	await waitUntilBusy(electronApp, mainWindow);
+
+	await dialogs.clearCalls();
+	await openFolderMenu(mainWindow, 'alpha');
+	await contextMenuItem(mainWindow, 'Delete worktree').click();
+	await expect(deleteDialog(mainWindow)).toBeVisible();
+	await deleteDialog(mainWindow)
+		.getByRole('radio', { name: /^Close it/ })
+		.check();
+	await expect(deleteDialog(mainWindow)).toContainText(
+		'1 terminal has a process running. Closing stops it.',
+	);
+	await confirmDelete(mainWindow);
+
+	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0, {
+		timeout: 10_000,
+	});
+	await expect(terminalRowOf(mainWindow, sessionId)).toHaveCount(0);
+	expect(
+		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
+	).toHaveLength(0);
 	expect(
 		await git(repo.root, 'worktree', 'list', '--porcelain'),
 	).not.toContain(repo.worktree('alpha'));
@@ -901,12 +950,19 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 		});
 	});
 
-	await dialogs.queueConfirm(true);
+	// A worktree with no panels is asked about once, with no choice to make.
+	await dialogs.clearCalls();
 	await openFolderMenu(mainWindow, 'alpha');
 	await contextMenuItem(mainWindow, 'Delete worktree').click();
+	await expect(deleteDialog(mainWindow)).toBeVisible();
+	await expect(deleteDialog(mainWindow).getByRole('radio')).toHaveCount(0);
+	await confirmDelete(mainWindow);
 	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0, {
 		timeout: 10_000,
 	});
+	expect(
+		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
+	).toHaveLength(0);
 
 	const seen = await mainWindow.evaluate(
 		() => (window as unknown as { __deletingCards: string[] }).__deletingCards,
