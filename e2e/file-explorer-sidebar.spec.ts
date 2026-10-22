@@ -14,6 +14,7 @@ import {
 import {
   activeFolderWorkspace,
   changesPane,
+  deleteDialog,
   folderGroup,
   folderNames,
   folderRow,
@@ -631,12 +632,14 @@ test('deleting a sibling worktree does not request its parent through Explorer',
   // The Explorer's refreshes wait a moment after a change; that moment is
   // the renderer's time, and the test's clock is on it from here.
   await installRendererClock(mainWindow)
+  await dialogs.clearCalls()
   await openFolderMenu(mainWindow, 'delete-sibling-worktree')
   await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
-  await dialogs.queueConfirm(true)
   await contextMenuItem(mainWindow, 'Delete worktree').click()
+  await deleteDialog(mainWindow).getByRole('button', { name: 'Delete' }).click()
 
   await expect(linked).toHaveCount(0, { timeout: 6000 })
+  expect((await dialogs.getCalls()).filter((call) => call.kind === 'confirm')).toHaveLength(0)
   // Worktree removal publishes Git status before the follow-up Explorer
   // refresh settles. Its file-operation diagnostic is durable even if another
   // successful Explorer request immediately clears the visible banner. Every
@@ -706,13 +709,12 @@ test('deletes a locked agent worktree whose folder was already removed', async (
   await openFolderMenu(mainWindow, 'agent-session')
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeDisabled()
   await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeEnabled()
-  await dialogs.queueConfirm(true)
   await contextMenuItem(mainWindow, 'Delete worktree').click()
+  await expect(deleteDialog(mainWindow)).toContainText('nothing on disk is deleted')
+  await deleteDialog(mainWindow).getByRole('button', { name: 'Delete' }).click()
 
   await expect(lost).toHaveCount(0, { timeout: 6000 })
-  const confirms = (await dialogs.getCalls()).filter((call) => call.kind === 'confirm')
-  expect(confirms).toHaveLength(1)
-  expect(confirms[0].message).toContain('nothing on disk is deleted')
+  expect((await dialogs.getCalls()).filter((call) => call.kind === 'confirm')).toHaveLength(0)
   await expect(mainWindow.locator('.error-banner')).toHaveCount(0)
   const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: mainRepo.rootDir })
   expect(stdout).not.toContain('agent-session')

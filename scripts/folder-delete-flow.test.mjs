@@ -3,19 +3,24 @@ import test from 'node:test';
 import {
 	deleteFolderAndItsPanels,
 	panelsHeldByFolder,
+	worktreeRemovalWarning,
 } from '../src/workspace/folderDeleteFlow.ts';
 
 /**
  * A folder holding `panels`, with every step recorded. `keeps` are panels
- * whose close the user declines, as Keep Running does for a busy terminal.
+ * whose close does not take, as a panel this device cannot reach does.
  */
-function folder(panels, { answer = 'cancel', keeps = [], refuses = [] } = {}) {
+function folder(
+	panels,
+	{ answer = 'cancel', keeps = [], refuses = [], alwaysAsk = false } = {},
+) {
 	const held = [...panels];
 	const log = [];
 	const steps = {
+		alwaysAsk,
 		panelIds: () => [...held],
-		ask: async (count) => {
-			log.push(`ask:${count}`);
+		ask: async (panelIds) => {
+			log.push(`ask:${panelIds.length}`);
 			return answer;
 		},
 		movePanel: async (panelId) => {
@@ -52,7 +57,51 @@ test('Close them closes every panel through the close path, then deletes', async
 	assert.deepEqual(two.log, ['ask:2', 'close:a', 'close:b', 'remove']);
 });
 
-test('a terminal kept running stays, and nothing is deleted', async () => {
+test('a worktree with no panels is asked about once, and Delete removes it', async () => {
+	const empty = folder([], { answer: 'move', alwaysAsk: true });
+	assert.equal(await deleteFolderAndItsPanels(empty.steps), 'removed');
+	assert.deepEqual(empty.log, ['ask:0', 'remove']);
+});
+
+test('a worktree with no panels is kept when its question is cancelled', async () => {
+	const empty = folder([], { answer: 'cancel', alwaysAsk: true });
+	assert.equal(await deleteFolderAndItsPanels(empty.steps), 'cancelled');
+	assert.deepEqual(empty.log, ['ask:0']);
+});
+
+test('a panel that arrives while an empty worktree is asked about stops the delete', async () => {
+	const empty = folder([], { answer: 'close', alwaysAsk: true });
+	const ask = empty.steps.ask;
+	empty.steps.ask = async (panelIds) => {
+		empty.held.push('late');
+		return ask(panelIds);
+	};
+	assert.equal(await deleteFolderAndItsPanels(empty.steps), 'panels-remain');
+	assert.deepEqual(empty.log, ['ask:0']);
+	assert.deepEqual(empty.held, ['late']);
+});
+
+test('the question is asked once however many panels are closed', async () => {
+	const three = folder(['a', 'b', 'c'], { answer: 'close', alwaysAsk: true });
+	assert.equal(await deleteFolderAndItsPanels(three.steps), 'removed');
+	assert.deepEqual(three.log, [
+		'ask:3',
+		'close:a',
+		'close:b',
+		'close:c',
+		'remove',
+	]);
+});
+
+test('the removal warning says what is deleted on disk', () => {
+	assert.match(worktreeRemovalWarning({ isPrunable: false }), /permanently/);
+	assert.match(
+		worktreeRemovalWarning({ isPrunable: true }),
+		/nothing on disk is deleted/,
+	);
+});
+
+test('a panel that does not close stays, and nothing is deleted', async () => {
 	const busy = folder(['idle', 'busy'], { answer: 'close', keeps: ['busy'] });
 	assert.equal(await deleteFolderAndItsPanels(busy.steps), 'panels-remain');
 	assert.deepEqual(busy.log, ['ask:2', 'close:idle', 'close:busy']);

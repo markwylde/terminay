@@ -771,19 +771,72 @@
 	flex: 1 1 auto;
 }
 
-/* --- Deleting a folder that still holds panels ----------------------------- */
+/* --- Deleting a folder or worktree --------------------------------------- */
 
-.folder-panels-question__text,
-.folder-panels-question__hint {
+.folder-delete-dialog__text,
+.folder-delete-dialog__path,
+.folder-delete-dialog__warning,
+.folder-delete-dialog__hint {
 	margin: 0;
 	font-size: 13px;
 	line-height: 1.45;
 	overflow-wrap: anywhere;
 }
 
-.folder-panels-question__hint {
+.folder-delete-dialog__path {
+	color: rgba(220, 226, 240, 0.6);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+}
+
+.folder-delete-dialog__warning,
+.folder-delete-dialog__hint--warning {
+	color: #ff9b9b;
+}
+
+.folder-delete-dialog__panels {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.folder-delete-dialog__panels > legend {
+	padding: 0;
+	margin-bottom: 4px;
+}
+
+.folder-delete-dialog__option {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.folder-delete-dialog__option input {
+	margin-top: 3px;
+}
+
+.folder-delete-dialog__hint {
+	display: block;
 	color: rgba(220, 226, 240, 0.6);
 	font-size: 12px;
+}
+
+/* Outranks the modal's blue submit button, whichever stylesheet loads last. */
+.folder-delete-dialog .project-edit-actions button.folder-delete-dialog__delete {
+	background: #b3261e;
+	border-color: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.folder-delete-dialog
+	.project-edit-actions
+	button.folder-delete-dialog__delete:hover {
+	background: #d0362d;
 }
 
 /* --- A project tab's peek --------------------------------------------------- */
