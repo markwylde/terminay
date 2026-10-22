@@ -771,19 +771,102 @@
 	flex: 1 1 auto;
 }
 
-/* --- Deleting a folder that still holds panels ----------------------------- */
+/* --- Deleting a folder or worktree --------------------------------------- */
 
-.folder-panels-question__text,
-.folder-panels-question__hint {
+.folder-delete-dialog__text,
+.folder-delete-dialog__path,
+.folder-delete-dialog__warning,
+.folder-delete-dialog__hint {
 	margin: 0;
 	font-size: 13px;
 	line-height: 1.45;
 	overflow-wrap: anywhere;
 }
 
-.folder-panels-question__hint {
+.folder-delete-dialog__path {
+	color: rgba(220, 226, 240, 0.6);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+}
+
+.folder-delete-dialog__warning,
+.folder-delete-dialog__hint--warning {
+	color: #ff9b9b;
+}
+
+.folder-delete-dialog__panels {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.folder-delete-dialog__panels > legend {
+	padding: 0;
+	margin-bottom: 4px;
+}
+
+.folder-delete-dialog__body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding-top: 16px;
+}
+
+.folder-delete-dialog__subject {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+/* A choice row, not the modal's stacked field label. */
+.project-edit-modal label.folder-delete-dialog__option {
+	flex-direction: row;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.project-edit-modal label.folder-delete-dialog__option:has(input:checked) {
+	border-color: rgba(77, 181, 255, 0.5);
+	background: rgba(77, 181, 255, 0.06);
+}
+
+.folder-delete-dialog__option input {
+	margin: 2px 0 0;
+	flex: none;
+}
+
+.folder-delete-dialog__label {
+	display: block;
+	color: #d6e3f0;
+	font-size: 13px;
+}
+
+.folder-delete-dialog__hint {
+	display: block;
+	margin-top: 2px;
 	color: rgba(220, 226, 240, 0.6);
 	font-size: 12px;
+	font-weight: 400;
+}
+
+/* Outranks the modal's blue submit button, whichever stylesheet loads last. */
+.folder-delete-dialog .project-edit-actions button.folder-delete-dialog__delete {
+	background: #b3261e;
+	border-color: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.folder-delete-dialog
+	.project-edit-actions
+	button.folder-delete-dialog__delete:hover {
+	background: #d0362d;
 }
 
 /* --- A project tab's peek --------------------------------------------------- */

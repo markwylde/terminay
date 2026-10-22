@@ -80,6 +80,8 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 		await expect(claudeChip).toBeVisible({ timeout: 2_000 });
 	}).toPass({ timeout: 30_000 });
 	await expect(balloon(mainWindow)).toContainText('Which agent should I use?');
+	// While Pixel is out, its dock shows only a ghost of it.
+	await expect(statusBarDock).toHaveAttribute('data-out', 'true');
 	await claudeChip.click();
 	await expect(balloon(mainWindow).locator('.mwpet-chat-status')).toContainText('Claude Code');
 
@@ -106,6 +108,11 @@ test('Pixel is off until enabled, asks for its agent, chats, acts through MCP, a
 	await expect(activeTerminalPanel(mainWindow)).toContainText('pixel-asked-first');
 	await expect(balloon(mainWindow).getByRole('button', { name: 'Allow One Time' })).toHaveCount(0);
 	expect(await fakeClaudeRunning()).toBe(true);
+
+	// Closing the balloon sends Pixel home, and its dock is whole again.
+	await balloon(mainWindow).locator('.mwpet-chat-close').click();
+	await expect(balloon(mainWindow)).toBeHidden();
+	await expect(statusBarDock).not.toHaveAttribute('data-out', 'true');
 
 	// Turning Pixel off removes it everywhere and ends its agent.
 	await setPixel(appHarness, mainWindow, false);
