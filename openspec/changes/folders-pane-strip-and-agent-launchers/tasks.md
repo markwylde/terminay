@@ -19,17 +19,17 @@
 ## 4. Renderer: launcher list
 
 - [x] 4.1 Add a launcher store in `src/workspace/` that reads `terminal.launchers` for the selected server, follows its change event, and treats a failed read as an empty list. Verify with unit tests for initial load, a change, and an older server.
-- [ ] 4.2 Thread a launcher id through `useTerminalCreationController.ts` to `terminal.create`, and add `onLaunch(folderId, launcherId)` from the project workspace through `FoldersColumn.tsx` to `FoldersTree`. Verify with a unit test that a launch creates in the right folder, selects it, and focuses the new terminal.
+- [x] 4.2 Thread a launcher id through `useTerminalCreationController.ts` to `terminal.create`, and add `onLaunch(folderId, launcherId)` from the project workspace through `FoldersColumn.tsx` to `FoldersTree`. Verify with a unit test that a launch creates in the right folder, selects it, and focuses the new terminal.
 
 ## 5. Folders tree: pane strip
 
-- [ ] 5.1 Restyle blocks in `foldersTree.css`: full width, no margin or radius, 6px gutter in the column background, header band lighter than rows, selected header tinted with the project colour, no tint on other headers. Verify against board 1 of the mock-up and with an E2E screenshot assertion.
-- [ ] 5.2 Restyle the title line in `FoldersTree.tsx`: chevron first with no grip, icon, uppercase 11px semibold label via CSS only, unmerged mark, count pill counting every panel, menu button; keep the press-travel carry and `Reorder` untouched. Verify with the existing carry, collapse, and keyboard-move tests passing unchanged, and a unit test for the count.
-- [ ] 5.3 Remove the left indent from the branch and facts lines and set panel rows so the status indicator sits under the chevron. Verify with an E2E that measures the facts line's first chip and a terminal's indicator against the chevron's left edge.
-- [ ] 5.4 Rebuild the New terminal row: label creates a default-shell terminal; on `:hover`, `:focus-within`, and `@media (hover: none)` show the default shell button then one button per listed launcher, each with icon, accessible name, and tooltip; none in a peek. Verify with unit tests for the button list and an E2E that hovers the row, sees the buttons, and launches a stub launcher.
+- [x] 5.1 Restyle blocks in `foldersTree.css`: full width, no margin or radius, 6px gutter in the column background, header band lighter than rows, selected header tinted with the project colour, no tint on other headers. Verify against board 1 of the mock-up and with an E2E screenshot assertion.
+- [x] 5.2 Restyle the title line in `FoldersTree.tsx`: chevron first with no grip, icon, uppercase 11px semibold label via CSS only, unmerged mark, count pill counting every panel, menu button; keep the press-travel carry and `Reorder` untouched. Verify with the existing carry, collapse, and keyboard-move tests passing unchanged, and a unit test for the count.
+- [x] 5.3 Remove the left indent from the branch and facts lines and set panel rows so the status indicator sits under the chevron. Verify with an E2E that measures the facts line's first chip and a terminal's indicator against the chevron's left edge.
+- [x] 5.4 Rebuild the New terminal row: label creates a default-shell terminal; on `:hover`, `:focus-within`, and `@media (hover: none)` show the default shell button then one button per listed launcher, each with icon, accessible name, and tooltip; none in a peek. Verify with unit tests for the button list and an E2E that hovers the row, sees the buttons, and launches a stub launcher.
 
 ## 6. End to end and docs
 
-- [ ] 6.1 Add an Electron E2E with a test extension contributing a launcher whose executable is a stub script: choosing it creates a terminal in the folder, the stub runs with no arguments, the tab reads the launcher name, and quitting the stub leaves the shell. Verify by running `npm run test:e2e` for that spec.
+- [x] 6.1 Add an Electron E2E with a test extension contributing a launcher whose executable is a stub script: choosing it creates a terminal in the folder, the stub runs with no arguments, the tab reads the launcher name, and quitting the stub leaves the shell. Verify by running `npm run test:e2e` for that spec.
 - [x] 6.2 Document the `terminalLaunchers` contribution and `agent-launch` permission in `packages/extension-api/README.md`. Verify the README example passes manifest validation in a unit test.
-- [ ] 6.3 Run `openspec validate folders-pane-strip-and-agent-launchers`, `npm run typecheck`, `npm test`, and the full `npm run test:e2e`. Verify all pass.
+- [x] 6.3 Run `openspec validate folders-pane-strip-and-agent-launchers`, `npm run typecheck`, `npm test`, and the full `npm run test:e2e`. Verify all pass.
