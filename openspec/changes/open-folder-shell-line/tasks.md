@@ -16,4 +16,4 @@
 
 - [x] 3.1 Update `e2e/support/project-start.ts` `browseToFolder` to type the path with a trailing separator and assert that the primary button names the folder. Update `e2e/project-start-chooser.spec.ts` to cover Tab completion keeping focus, entering a folder by click, and Enter choosing. Verify: passes under `npm run test:e2e`.
 - [x] 3.2 Run `openspec validate --all`, `npm run lint`, `npm test`, and typecheck. Verify: all clean.
-- [ ] 3.3 Open the PR on Gitea (`origin`), then read back every commit status on the head SHA. Verify: every status is `success` or `skipped`.
+- [x] 3.3 Open the PR on Gitea (`origin`), then read back every commit status on the head SHA. Verify: every status is `success` or `skipped`.
