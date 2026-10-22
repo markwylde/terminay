@@ -797,16 +797,10 @@ export function useFileExplorerController({
 		},
 		[gitClient, onSetError, onOperationError, requestFileExplorerName],
 	);
+	// The user has already confirmed: the folder's delete dialog states
+	// `worktreeRemovalWarning`, and nothing here asks again.
 	const handleDeleteWorktree = useCallback(
 		async (worktree: GitWorktreeStatus) => {
-			if (
-				!window.confirm(
-					worktree.isPrunable
-						? `Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nIts working tree is already gone. This removes Git's record of it; nothing on disk is deleted.`
-						: `Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nThis permanently removes this worktree folder, including uncommitted and untracked files.`,
-				)
-			)
-				return;
 			setDeletingWorktreePaths((current) =>
 				new Set(current).add(worktree.path),
 			);
