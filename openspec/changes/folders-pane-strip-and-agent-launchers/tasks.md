@@ -18,7 +18,7 @@
 
 ## 4. Renderer: launcher list
 
-- [ ] 4.1 Add a launcher store in `src/workspace/` that reads `terminal.launchers` for the selected server, follows its change event, and treats a failed read as an empty list. Verify with unit tests for initial load, a change, and an older server.
+- [x] 4.1 Add a launcher store in `src/workspace/` that reads `terminal.launchers` for the selected server, follows its change event, and treats a failed read as an empty list. Verify with unit tests for initial load, a change, and an older server.
 - [ ] 4.2 Thread a launcher id through `useTerminalCreationController.ts` to `terminal.create`, and add `onLaunch(folderId, launcherId)` from the project workspace through `FoldersColumn.tsx` to `FoldersTree`. Verify with a unit test that a launch creates in the right folder, selects it, and focuses the new terminal.
 
 ## 5. Folders tree: pane strip
@@ -31,5 +31,5 @@
 ## 6. End to end and docs
 
 - [ ] 6.1 Add an Electron E2E with a test extension contributing a launcher whose executable is a stub script: choosing it creates a terminal in the folder, the stub runs with no arguments, the tab reads the launcher name, and quitting the stub leaves the shell. Verify by running `npm run test:e2e` for that spec.
-- [ ] 6.2 Document the `terminalLaunchers` contribution and `agent-launch` permission in `packages/extension-api/README.md`. Verify the README example passes manifest validation in a unit test.
+- [x] 6.2 Document the `terminalLaunchers` contribution and `agent-launch` permission in `packages/extension-api/README.md`. Verify the README example passes manifest validation in a unit test.
 - [ ] 6.3 Run `openspec validate folders-pane-strip-and-agent-launchers`, `npm run typecheck`, `npm test`, and the full `npm run test:e2e`. Verify all pass.

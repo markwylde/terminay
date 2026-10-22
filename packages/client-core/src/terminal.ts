@@ -80,6 +80,9 @@ export interface TerminalClientCreateRequest {
 	 * project's General folder. A folder is named by id only; the server
 	 * decides the directory a linked folder starts a terminal in. */
 	readonly folderId?: string;
+	/** A launcher the server lists in `terminal.launchers`. The server decides
+	 * what it starts; the client names it by id only (ADR-0073). */
+	readonly launcherId?: string;
 	readonly cwd?: string;
 	readonly cols?: number;
 	readonly rows?: number;
@@ -390,6 +393,7 @@ export class TerminayTerminalClient {
 			['profileId', request.profileId],
 			['activePanelId', request.activePanelId],
 			['folderId', request.folderId],
+			['launcherId', request.launcherId],
 		] as const) {
 			if (
 				value !== undefined &&
@@ -419,6 +423,9 @@ export class TerminayTerminalClient {
 				...(request.folderId === undefined
 					? {}
 					: { folderId: request.folderId }),
+				...(request.launcherId === undefined
+					? {}
+					: { launcherId: request.launcherId }),
 				...(request.cwd === undefined ? {} : { cwd: request.cwd }),
 				...(dimensions === undefined ? {} : dimensions),
 			},

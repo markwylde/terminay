@@ -62,6 +62,8 @@ import {
 } from './workspace/WorkspaceStatusBar';
 import { PixelCompanion } from './pixel/Pixel';
 import { usePixelServer } from './pixel/usePixelServer';
+import type { TerminalLauncherView } from './types/terminalLaunchers';
+import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
@@ -702,6 +704,9 @@ type ProjectWorkspaceHandle = {
 	) => Promise<void>;
 	/** Create a terminal in this workspace's folder, starting in its root. */
 	openShellAtFolderRoot: () => Promise<void>;
+	/** Create a terminal in this workspace's folder that starts a launcher's
+	 * program, as New terminal does otherwise (ADR-0073). */
+	launchTerminal: (launcherId: string) => Promise<void>;
 	/** The repository's worktree listing as this workspace last read it. */
 	worktreeStatus: () => WorktreePanelStatus | null;
 	/** This workspace's panes, for an MCP agent's view request (ADR-0070). */
@@ -801,6 +806,14 @@ type ProjectWorkspaceProps = {
 	onOpenShellInFolder: (projectId: string, folderId: string) => void;
 	/** Create a terminal in a folder of this project as New terminal does. */
 	onNewTerminalInFolder: (projectId: string, folderId: string) => void;
+	/** The launchers this project's server offers on a folder's New terminal row. */
+	terminalLaunchers: readonly TerminalLauncherView[];
+	/** Create a terminal in a folder of this project that starts a launcher. */
+	onLaunchTerminalInFolder: (
+		projectId: string,
+		folderId: string,
+		launcherId: string,
+	) => void;
 	/** Close a panel of another folder's workspace the ordinary way. */
 	onCloseFolderPanel: (
 		projectId: string,
@@ -1482,6 +1495,8 @@ const ProjectWorkspace = memo(forwardRef<
 			onCloseFolderPanel,
 			onDropTerminalOnFolder,
 			onNewTerminalInFolder,
+			terminalLaunchers,
+			onLaunchTerminalInFolder,
 			onOpenShellInFolder,
 			onEditProject,
 			onFoldersColumnTabChange,
@@ -4554,6 +4569,10 @@ const ProjectWorkspace = memo(forwardRef<
 					setErrorText(null);
 					await addTerminal({ atFolderRoot: true });
 				},
+				launchTerminal: async (launcherId: string) => {
+					setErrorText(null);
+					await addTerminal({ launcherId });
+				},
 				worktreeStatus: () => worktreePanelStatusRef.current,
 				viewApi: () => dockviewApiRef.current,
 				openFileTab,
@@ -5637,6 +5656,10 @@ const ProjectWorkspace = memo(forwardRef<
 								onCreateFolder={requestNewFolder}
 								onNewTerminal={(folderId) =>
 									onNewTerminalInFolder(project.id, folderId)
+								}
+								launchers={terminalLaunchers}
+								onLaunchTerminal={(folderId, launcherId) =>
+									onLaunchTerminalInFolder(project.id, folderId, launcherId)
 								}
 								onReorderFolders={reorderFolders}
 								onFolderMenu={openFolderMenu}
@@ -8136,6 +8159,14 @@ function App({
 			}),
 		[runInFolderWorkspace],
 	);
+	/** As New terminal in a folder, starting a launcher's program in it. */
+	const launchTerminalInFolder = useCallback(
+		(projectId: string, folderId: string, launcherId: string) =>
+			runInFolderWorkspace(projectId, folderId, (workspace) => {
+				void workspace.launchTerminal(launcherId);
+			}),
+		[runInFolderWorkspace],
+	);
 	/** Close a panel through its own workspace, as closing its tab does. */
 	const closeFolderPanel = useCallback(
 		async (
@@ -8573,6 +8604,10 @@ function App({
 	const pixelServer = usePixelServer(
 		automationEntries.find((entry) => entry.serverId === activeServerId),
 	);
+	// The launchers a folder's New terminal row offers come from the server
+	// this window shows (ADR-0073).
+	const terminalLaunchersFor = useServerTerminalLaunchers(automationEntries);
+	const terminalLaunchers = terminalLaunchersFor(activeServerId);
 	const [pixelSlot, setPixelSlot] = useState<HTMLDivElement | null>(null);
 	// At phone width Pixel docks in the compact row instead, in the slot the
 	// connection glyph gives up for it.
@@ -10538,6 +10573,8 @@ function App({
 							onAnswerFolderOffer={answerFolderOffer}
 							onOpenShellInFolder={openShellInFolder}
 							onNewTerminalInFolder={newTerminalInFolder}
+							terminalLaunchers={terminalLaunchers}
+							onLaunchTerminalInFolder={launchTerminalInFolder}
 							onCloseFolderPanel={closeFolderPanel}
 							isCompactChrome={isCompactChrome}
 							sharedTerminalContextReaders={sharedTerminalContextReadersRef}

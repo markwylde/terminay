@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   EXTENSION_ICONS,
@@ -153,6 +154,15 @@ test("registering a launcher twice is refused", async () => {
     ),
     /Duplicate/,
   );
+});
+
+test("the README's launcher example passes manifest validation", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const section = readme.slice(readme.indexOf("## Terminal launchers"));
+  const start = section.indexOf("```json") + "```json".length;
+  const example = JSON.parse(section.slice(start, section.indexOf("```", start)));
+  const result = validateExtensionManifest({ ...validManifestFixture, id: "com.example.agents", ...example });
+  assert.equal(result.ok, true, JSON.stringify(result.issues));
 });
 
 test("registering after deactivation is refused", async () => {
