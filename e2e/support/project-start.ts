@@ -32,9 +32,10 @@ export function rootFolderBrowser(page: Page): Locator {
 export async function browseToFolder(page: Page, folder: string): Promise<void> {
 	const browser = rootFolderBrowser(page);
 	await expect(browser).toBeVisible();
-	await browser.locator('[data-terminay-root-folder-path]').fill(folder);
-	await browser.getByRole('button', { name: 'Go', exact: true }).click();
-	await expect(browser.locator('[data-terminay-root-folder-current]')).toHaveText(
+	await browser
+		.locator('[data-terminay-root-folder-path]')
+		.fill(folder.endsWith('/') ? folder : `${folder}/`);
+	await expect(browser.locator('[data-terminay-root-folder-listed]')).toHaveText(
 		folder,
 	);
 }
