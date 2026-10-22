@@ -205,7 +205,10 @@ import {
 	type TerminalActivityEvaluation,
 	TerminalActivityStore,
 } from './terminalActivityStore';
-import { defaultTerminalSettings } from './terminalSettings';
+import {
+	defaultTerminalSettings,
+	resolveTerminalTheme,
+} from './terminalSettings';
 import type {
 	AgentState,
 	AgentStatusEntry,
@@ -9899,7 +9902,7 @@ function App({
 			}
 			style={
 				{
-					'--terminal-panel-surface': settings.theme.background,
+					'--terminal-panel-surface': resolveTerminalTheme(settings).background,
 					...(isHomeSelected
 						? { '--project-color': HOME_CHROME_COLOR }
 						: !displayedActiveProject?.color
