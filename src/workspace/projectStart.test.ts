@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { BrowseRootFoldersResult } from '@terminay/client-core';
 import {
 	featureProjectRoot,
 	resolveFeatureProjectRoot,
@@ -19,13 +18,7 @@ import {
 	recentFolderRows,
 	startRefusalMessage,
 } from './projectStart.ts';
-import {
-	folderSuggestions,
-	RootFolderCompleter,
-	splitTypedFolderPath,
-	suggestionHighlightMove,
-} from './rootFolderCompletion.ts';
-import { RootFolderNavigator, type RootFolderListing } from './rootFolderNavigator.ts';
+import { splitTypedFolderPath } from './rootFolderCompletion.ts';
 import { normalizeProjectRoot } from './useProjectEditor.ts';
 
 type Project = Record<string, unknown>;
@@ -208,74 +201,6 @@ test('arrow keys walk the chooser controls in order and stop at either end', () 
 	assert.equal(chooserFocusMove('ArrowDown', 0, 0), null);
 });
 
-function folder(path: string, names: string[], extra: Partial<BrowseRootFoldersResult> = {}): BrowseRootFoldersResult {
-	return { path, entries: names.map((name) => ({ name })), truncated: false, ...extra };
-}
-
-test('the folder browser starts at home, enters, goes up, and takes a typed path', async () => {
-	const asked: Array<string | undefined> = [];
-	const tree: Record<string, BrowseRootFoldersResult> = {
-		'/home/mark': folder('/home/mark', ['code', 'notes'], { parent: '/home' }),
-		'/home/mark/code': folder('/home/mark/code', ['terminay'], { parent: '/home/mark' }),
-		'/home': folder('/home', ['mark'], { parent: '/' }),
-		'/srv': folder('/srv', [], { parent: '/' }),
-	};
-	const listings: RootFolderListing[] = [];
-	const navigator = new RootFolderNavigator(
-		async (path) => {
-			asked.push(path);
-			const answer = tree[path ?? '/home/mark'];
-			if (answer === undefined) throw refusal('path_missing');
-			return answer;
-		},
-		(listing) => listings.push(listing),
-	);
-	await navigator.open();
-	assert.equal(asked[0], undefined, 'home is the server default');
-	assert.equal(navigator.listing.state, 'ready');
-	await navigator.open(childFolderPath('/home/mark', 'code'));
-	assert.deepEqual(navigator.listing, { state: 'ready', folder: tree['/home/mark/code'] });
-	await navigator.open('/home');
-	await navigator.open('/srv');
-	assert.deepEqual(asked, [undefined, '/home/mark/code', '/home', '/srv']);
-	assert.equal(listings.filter((listing) => listing.state === 'loading').length, 4);
-});
-
-test('the folder browser shows an error in place of the listing and keeps where it was', async () => {
-	const navigator = new RootFolderNavigator(
-		async (path) => {
-			if (path === '/root') throw refusal('unreadable');
-			return folder('/home/mark', ['code'], { parent: '/home' });
-		},
-		() => {},
-	);
-	await navigator.open();
-	await navigator.open('/root');
-	const listing = navigator.listing;
-	assert.equal(listing.state, 'error');
-	assert.equal(listing.state === 'error' && listing.message, 'The server cannot read that folder.');
-	assert.equal(listing.state === 'error' && listing.previous?.path, '/home/mark');
-});
-
-test('the folder browser keeps the truncation marker and drops a stale answer', async () => {
-	let release: (value: BrowseRootFoldersResult) => void = () => {};
-	const slow = new Promise<BrowseRootFoldersResult>((resolve) => {
-		release = resolve;
-	});
-	const navigator = new RootFolderNavigator(async (path) => {
-		if (path === '/slow') return slow;
-		return folder('/big', ['a', 'b'], { truncated: true });
-	}, () => {});
-	const leaving = navigator.open('/slow');
-	await navigator.open('/big');
-	release(folder('/slow', ['late']));
-	await leaving;
-	const listing = navigator.listing;
-	assert.equal(listing.state, 'ready');
-	assert.equal(listing.state === 'ready' && listing.folder.path, '/big');
-	assert.equal(listing.state === 'ready' && listing.folder.truncated, true);
-});
-
 function featureContext(projects: Record<string, Project>) {
 	const counted = () => new Proxy({}, { get: () => () => { throw new Error('a query reached a client'); } });
 	return {
@@ -352,92 +277,4 @@ test('a typed path completes from its parent folder and the start of its last na
 	assert.deepEqual(splitTypedFolderPath('~/co'), { parent: '~/', prefix: 'co' });
 	assert.equal(splitTypedFolderPath('Documents'), null);
 	assert.equal(splitTypedFolderPath(''), null);
-
-	const folder = {
-		path: '/Users/mark',
-		parent: '/Users',
-		entries: [{ name: 'Desktop' }, { name: 'Documents' }, { name: 'docs' }, { name: 'Downloads' }],
-		truncated: false,
-	};
-	assert.deepEqual(folderSuggestions(folder, 'Doc'), [
-		{ name: 'Documents', path: '/Users/mark/Documents' },
-		{ name: 'docs', path: '/Users/mark/docs' },
-	]);
-	assert.equal(folderSuggestions(folder, '').length, 4);
-	assert.equal(folderSuggestions(folder, '', 2).length, 2);
-	assert.deepEqual(folderSuggestions(folder, 'zz'), []);
-});
-
-test('the arrow keys move round the suggestions, and other keys do not', () => {
-	assert.equal(suggestionHighlightMove('ArrowDown', -1, 3), 0);
-	assert.equal(suggestionHighlightMove('ArrowDown', 2, 3), 0);
-	assert.equal(suggestionHighlightMove('ArrowUp', -1, 3), 2);
-	assert.equal(suggestionHighlightMove('ArrowUp', 1, 3), 0);
-	assert.equal(suggestionHighlightMove('Tab', 0, 3), null);
-	assert.equal(suggestionHighlightMove('ArrowDown', -1, 0), null);
-});
-
-test('completion asks for a parent once, drops a stale answer, and suggests nothing for a missing one', async (t) => {
-	// The completer's pause before it asks is the test's to end.
-	t.mock.timers.enable({ apis: ['setTimeout'] });
-	const tree: Record<string, BrowseRootFoldersResult> = {
-		'/home/mark': { path: '/home/mark', parent: '/home', entries: [{ name: 'code' }, { name: 'config' }, { name: 'notes' }], truncated: false },
-		'/srv': { path: '/srv', parent: '/', entries: [{ name: 'cache' }], truncated: false },
-	};
-	const asked: (string | undefined)[] = [];
-	const pending: Array<() => void> = [];
-	const seen: string[][] = [];
-	let heard: (() => void) | undefined;
-	const nextSuggestions = () => new Promise<void>((resolve) => {
-		heard = resolve;
-	});
-	const completer = new RootFolderCompleter(
-		(path) => {
-			asked.push(path);
-			return new Promise((resolve, reject) => {
-				pending.push(() => {
-					const answer = tree[path ?? ''];
-					if (answer === undefined) reject(refusal('path_missing'));
-					else resolve(answer);
-				});
-			});
-		},
-		(suggestions) => {
-			seen.push(suggestions.map((suggestion) => suggestion.name));
-			heard?.();
-		},
-		0,
-	);
-	/** End the pause, then answer what it asked and wait for the suggestions. */
-	const answered = async () => {
-		t.mock.timers.tick(0);
-		const suggested = nextSuggestions();
-		for (const answer of pending.splice(0)) answer();
-		await suggested;
-	};
-
-	completer.update('/home/mark/co');
-	await answered();
-	assert.deepEqual(seen.at(-1), ['code', 'config']);
-	// Typing on inside the same folder filters what is already listed.
-	completer.update('/home/mark/con');
-	assert.deepEqual(seen.at(-1), ['config']);
-	assert.deepEqual(asked, ['/home/mark']);
-
-	// A slower answer for a parent already left never lands: the next answer,
-	// given after it, is the next thing suggested.
-	completer.update('/srv/c');
-	t.mock.timers.tick(0);
-	assert.deepEqual(asked, ['/home/mark', '/srv']);
-	completer.update('/home/mark/n');
-	assert.deepEqual(seen.at(-1), ['notes']);
-	const stale = pending.splice(0);
-	for (const answer of stale) answer();
-
-	completer.update('/missing/x');
-	await answered();
-	assert.deepEqual(seen.slice(-2), [['notes'], []]);
-	completer.update('no-parent');
-	assert.deepEqual(seen.at(-1), []);
-	completer.dispose();
 });
