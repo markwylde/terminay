@@ -19,12 +19,21 @@
 	display: block;
 	width: 100%;
 	height: 100%;
+	transition:
+		opacity 0.2s ease,
+		filter 0.2s ease;
 }
 
 .pixel-dock__icon svg {
 	display: block;
 	width: 100%;
 	height: 100%;
+}
+
+/* Pixel is out: its dock keeps only a ghost of it. */
+.pixel-dock[data-out="true"] .pixel-dock__icon {
+	opacity: 0.35;
+	filter: grayscale(1);
 }
 
 /* In the status bar: a small Pixel that never changes the bar's height. */
@@ -81,6 +90,10 @@
 @media (prefers-reduced-motion: reduce) {
 	.pixel-dock[data-state="working"] .pixel-dock__badge {
 		animation: none;
+	}
+
+	.pixel-dock__icon {
+		transition: none;
 	}
 }
 
