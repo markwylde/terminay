@@ -24,6 +24,8 @@ export type TerminalServiceErrorCode =
 	| 'project_awaiting_start'
 	| 'profile_not_found'
 	| 'profile_unavailable'
+	/** The named terminal launcher is unknown or not offered now. */
+	| 'launcher_unavailable'
 	| 'unsupported_startup_mode'
 	| 'invalid_environment'
 	| 'service_shutdown';

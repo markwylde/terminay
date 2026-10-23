@@ -9,7 +9,9 @@ export type TerminalInputSource =
 	| 'macro'
 	| 'dictation'
 	| 'mcp'
-	| 'remote';
+	| 'remote'
+	/** The start command a terminal launcher types into a new shell (ADR-0073). */
+	| 'launcher';
 export type TerminalResizeMode = 'claim' | 'update' | 'release';
 export type TerminalViewport = 'wide' | 'narrow' | 'mobile';
 
@@ -119,6 +121,7 @@ const SOURCES: readonly TerminalInputSource[] = [
 	'dictation',
 	'mcp',
 	'remote',
+	'launcher',
 ];
 const VIEWPORTS: readonly TerminalViewport[] = ['wide', 'narrow', 'mobile'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -327,7 +330,8 @@ export class TerminalInputSourceAdapter {
 		this.resizeOwners.delete(key);
 		const prefix = `${key}\u0000`;
 		for (const sequenceKey of [...this.lastSequences.keys()])
-			if (sequenceKey.startsWith(prefix)) this.lastSequences.delete(sequenceKey);
+			if (sequenceKey.startsWith(prefix))
+				this.lastSequences.delete(sequenceKey);
 	}
 
 	getResizeOwnership(

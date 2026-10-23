@@ -6,9 +6,10 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * observation broker, the lifecycle publisher, and the driver toolkit with
  * machine-wide agent session sources, and added MCP install targets, so every
  * extension declaring `^2.x` is incompatible with this host. 3.1 added
- * worktree insight sources. 3.2 added chat providers.
+ * worktree insight sources. 3.2 added chat providers. 3.3 added terminal
+ * launchers and the agent icon marks.
  */
-export const EXTENSION_API_VERSION = '3.2.0' as const;
+export const EXTENSION_API_VERSION = '3.3.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -77,7 +78,29 @@ export const EXTENSION_LIMITS = Object.freeze({
 	chatToolCallIdLength: 256,
 	chatToolNameLength: 256,
 	chatDetailLength: 1_024,
+	/** Terminal launchers and what their resolution may report. */
+	terminalLaunchers: 8,
+	launcherExecutablePathLength: 4_096,
+	launcherDetailLength: 1_024,
 } as const);
+
+/**
+ * Terminay's icon allowlist. A contribution names an icon by one of these ids;
+ * Terminay draws it, and an extension never supplies artwork.
+ */
+export const EXTENSION_ICONS = Object.freeze([
+	'terminal',
+	'server',
+	'cloud',
+	'key',
+	'folder',
+	'network',
+	'database',
+	'warning',
+	'info',
+	'agent-claude-code',
+	'agent-codex',
+] as const);
 
 /** A language id such as `typescriptreact`; never a path or a selector. */
 export const LANGUAGE_ID_PATTERN = /^[a-z][a-z0-9+#._-]{0,63}$/;

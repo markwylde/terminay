@@ -1782,7 +1782,7 @@ test('a worktree moved from a shell keeps its folder and terminal, and one whose
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('a folder card colours its branch only when its checkout is dirty, keeps its facts on one line at any width, and tints a selected folder that has no active terminal', async ({
+test("a folder card colours its branch only when its checkout is dirty, keeps its facts on one line at any width, and tints the selected folder's header", async ({
 	createWorkspace,
 	mainWindow,
 }, testInfo) => {
@@ -1881,28 +1881,126 @@ test('a folder card colours its branch only when its checkout is dirty, keeps it
 		});
 	}
 
-	// General holds the focused terminal: its row is what is highlighted, and
-	// no card is marked.
+	// General holds the focused terminal: its row is highlighted and its
+	// header band is the one tinted.
 	const activeRows = foldersColumn(mainWindow).locator(
 		'.folders-tree__row--active',
 	);
 	const tinted = foldersColumn(mainWindow).locator(
-		'.folders-tree__row--selected-alone',
+		'.folders-tree__row--folder.folders-tree__row--selected',
 	);
-	await expect(activeRows).toHaveCount(1);
-	await expect(tinted).toHaveCount(0);
-	// An empty folder has no row to highlight, so its title is tinted instead.
-	await selectFolder(mainWindow, 'beta');
-	await expect(header('beta')).toHaveClass(/folders-tree__row--selected-alone/);
-	await expect(activeRows).toHaveCount(0);
 	const background = (folder: string) =>
 		header(folder).evaluate(
 			(element) => getComputedStyle(element).backgroundColor,
 		);
+	await expect(activeRows).toHaveCount(1);
+	await expect(tinted).toHaveCount(1);
+	await expect(header('General')).toHaveClass(/folders-tree__row--selected/);
+	expect(await background('General')).not.toBe(await background('alpha'));
+	// An empty folder has no row to highlight; its header band is tinted.
+	await selectFolder(mainWindow, 'beta');
+	await expect(header('beta')).toHaveClass(/folders-tree__row--selected/);
+	await expect(tinted).toHaveCount(1);
+	await expect(activeRows).toHaveCount(0);
 	expect(await background('beta')).not.toBe(await background('alpha'));
 	await selectFolder(mainWindow, 'General');
-	await expect(tinted).toHaveCount(0);
+	await expect(tinted).toHaveCount(1);
 	await expect(activeRows).toHaveCount(1);
+});
+
+test('folders are full-width blocks whose lines start under the chevron, and hovering New terminal shows the launchers', async ({
+	createWorkspace,
+	mainWindow,
+}) => {
+	const repo = await repository(createWorkspace, 'lf-strip', ['alpha']);
+	await writeFile(join(repo.worktree('alpha'), 'work.txt'), 'one\n', 'utf8');
+	await setProjectRoot(mainWindow, repo.root);
+	const header = (folder: string) => folderRow(mainWindow, folder);
+	// An untracked file is measured as a size or reported as `changed`;
+	// either way the card has a facts line with a chip.
+	await expect(header('alpha')).toHaveAttribute(
+		'data-change',
+		/^(delta|changed)$/,
+		{ timeout: 15_000 },
+	);
+	await selectFolder(mainWindow, 'General');
+	const column = foldersColumn(mainWindow);
+	const tree = column.locator('.folders-tree');
+	const general = folderGroup(mainWindow, 'General');
+	const alpha = folderGroup(mainWindow, 'alpha');
+	const treeBox = await tree.boundingBox();
+	const generalBox = await general.boundingBox();
+	if (!treeBox || !generalBox)
+		throw new Error('Expected the tree and its blocks to be laid out');
+	// Each block spans the column, square, and a gutter separates them.
+	expect(Math.round(generalBox.x)).toBe(Math.round(treeBox.x));
+	expect(Math.round(generalBox.width)).toBeGreaterThanOrEqual(
+		Math.round(treeBox.width) - 8,
+	);
+	expect(
+		await general.evaluate((element) => getComputedStyle(element).borderRadius),
+	).toBe('0px');
+	// Measured once the cards have settled: a card that has just arrived
+	// slides into its place.
+	await expect
+		.poll(async () => {
+			const above = await general.boundingBox();
+			const below = await alpha.boundingBox();
+			return above && below ? below.y - (above.y + above.height) : 0;
+		})
+		.toBeGreaterThan(3);
+	// The title is drawn upper case and keeps its own text.
+	const name = header('General').locator('.folders-tree__name');
+	await expect(name).toHaveText('General');
+	expect(
+		await name.evaluate((element) => getComputedStyle(element).textTransform),
+	).toBe('uppercase');
+	await expect(header('General').locator('.folders-tree__count')).toHaveText(
+		'1',
+	);
+
+	// The branch line, the facts line, and each terminal's indicator start
+	// under the chevron.
+	const chevronOf = (folder: string) =>
+		header(folder).locator('.folders-tree__toggle svg').boundingBox();
+	const chevron = await chevronOf('General');
+	const alphaChevron = await chevronOf('alpha');
+	const branch = await header('General')
+		.locator('.folders-tree__branch > svg')
+		.boundingBox();
+	const firstChip = await header('alpha')
+		.locator('.folders-tree__facts .folders-tree__chip')
+		.first()
+		.boundingBox();
+	const status = await general
+		.locator('.folders-tree__row--terminal .folders-tree__status')
+		.first()
+		.boundingBox();
+	if (!chevron || !alphaChevron || !branch || !firstChip || !status)
+		throw new Error('Expected the chevrons, lines, and status to be laid out');
+	expect(Math.abs(branch.x - chevron.x)).toBeLessThanOrEqual(2);
+	expect(Math.abs(firstChip.x - alphaChevron.x)).toBeLessThanOrEqual(2);
+	const centre = (box: { x: number; width: number }) => box.x + box.width / 2;
+	expect(Math.abs(centre(status) - centre(chevron))).toBeLessThanOrEqual(2);
+
+	// Hovering New terminal reveals the shell's button, which makes a terminal.
+	const row = general.locator('.folders-tree__new-terminal-row');
+	const launchers = row.locator('.folders-tree__launchers');
+	expect(
+		await launchers.evaluate((element) => getComputedStyle(element).opacity),
+	).toBe('0');
+	await row.hover();
+	await expect
+		.poll(() =>
+			launchers.evaluate((element) => getComputedStyle(element).opacity),
+		)
+		.toBe('1');
+	const shell = row.getByRole('button', { name: 'Shell', exact: true });
+	await expect(shell).toHaveAttribute('title', 'New terminal');
+	await shell.click();
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(2, {
+		timeout: 10_000,
+	});
 });
 
 test('a pushed branch is not dirty and still shows the commits the default branch lacks, and a push from a shell clears a dirty card', async ({
@@ -2806,7 +2904,7 @@ test('a folder collapses to its title line from its toggle or the keyboard, show
 	// title tinted since no row can show where the user is.
 	await selectFolder(mainWindow, 'General');
 	await expect(header).toHaveAttribute('aria-expanded', 'false');
-	await expect(header).toHaveClass(/folders-tree__row--selected-alone/);
+	await expect(header).toHaveClass(/folders-tree__row--selected/);
 
 	// It is this device's choice, and a reload keeps it.
 	await mainWindow.reload();

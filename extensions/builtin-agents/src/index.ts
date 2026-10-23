@@ -6,6 +6,7 @@ import type { CodexChatOptions } from './chat/codex.js';
 import { createCodexChatProvider } from './chat/codex.js';
 import type { LocatorOptions } from './chat/locate.js';
 import { createAgentLocator } from './chat/locate.js';
+import { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
 import type { McpInstallTargetOptions } from './mcp/targets.js';
 import { createMcpInstallTargets } from './mcp/targets.js';
 import type { SessionSourceOptions } from './source.js';
@@ -15,6 +16,8 @@ export const EXTENSION_ID = 'com.terminay.builtin-agents';
 export const SESSION_SOURCE_ID = `${EXTENSION_ID}/agents`;
 export const CLAUDE_CODE_CHAT_PROVIDER_ID = `${EXTENSION_ID}/claude-code`;
 export const CODEX_CHAT_PROVIDER_ID = `${EXTENSION_ID}/codex`;
+export const CLAUDE_CODE_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.claude}`;
+export const CODEX_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.codex}`;
 
 export type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
 export {
@@ -28,6 +31,7 @@ export {
 	createCodexChatProvider,
 } from './chat/codex.js';
 export type { AgentLocator, LocatorOptions } from './chat/locate.js';
+export { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
 export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
 
 export type {
@@ -44,7 +48,7 @@ export { createSessionSource, HARNESSES } from './source.js';
 export type BuiltInAgentsOptions = {
 	source?: SessionSourceOptions;
 	mcp?: McpInstallTargetOptions;
-	/** How the chat providers find `claude` and `codex`. */
+	/** How the chat providers and terminal launchers find `claude` and `codex`. */
 	locator?: LocatorOptions;
 	claudeCode?: Partial<ClaudeCodeChatOptions>;
 	codex?: Partial<CodexChatOptions>;
@@ -80,6 +84,19 @@ export function createBuiltInAgentsExtension(
 						locate: () => locator.locate('codex'),
 						...options.codex,
 					}),
+				),
+			);
+			// Claude Code is listed before Codex, so it is offered first.
+			context.subscriptions.add(
+				context.terminals.registerLauncher(
+					CLAUDE_CODE_LAUNCHER_ID,
+					createAgentLauncher(locator, 'claude'),
+				),
+			);
+			context.subscriptions.add(
+				context.terminals.registerLauncher(
+					CODEX_LAUNCHER_ID,
+					createAgentLauncher(locator, 'codex'),
 				),
 			);
 			for (const target of createMcpInstallTargets(options.mcp)) {
