@@ -45,6 +45,7 @@ export const HOST_FRAME_KINDS = [
 	'agent.chat.prompt',
 	'agent.chat.cancel',
 	'agent.chat.close',
+	'terminal.launcher.resolve',
 ] as const;
 export type HostFrameKind = (typeof HOST_FRAME_KINDS)[number];
 

@@ -37,6 +37,7 @@ import {
 	folderOrderAfterMove,
 	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
+import type { TerminalLauncherView } from '../../types/terminalLaunchers';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
 import {
 	FolderDetailsTooltip,
@@ -54,6 +55,7 @@ import {
 	unmergedMark,
 	shownCheckItems,
 } from './worktreePropertyPresentation';
+import { LauncherIcon } from './launcherIcons';
 import './foldersTree.css';
 
 type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
@@ -78,6 +80,74 @@ const SLIDE = { duration: 0.18, ease: [0.2, 0, 0, 1] } as const;
 /** No slide, and no settling, where the device asks for reduced motion. */
 const NO_SLIDE = { duration: 0 } as const;
 const NO_SETTLE = { bounceStiffness: 1_000_000, bounceDamping: 10_000_000 };
+const NO_LAUNCHERS: readonly TerminalLauncherView[] = [];
+
+/** What a folder's count pill says it counts. */
+function panelCountLabel(count: number): string {
+	return `${count} ${count === 1 ? 'tab' : 'tabs'}`;
+}
+
+/**
+ * The last row of a folder's card. Its label makes a terminal with the
+ * default shell. Its trailing buttons, revealed while the row is hovered or
+ * holds focus, make one with the shell or with each launcher the server
+ * offers. The buttons are always in the document, so Tab reaches them.
+ */
+function NewTerminalRow({
+	folderName,
+	launchers,
+	onNewTerminal,
+	onLaunch,
+}: Readonly<{
+	folderName: string;
+	launchers: readonly TerminalLauncherView[];
+	onNewTerminal: () => void;
+	onLaunch?: (launcherId: string) => void;
+}>) {
+	return (
+		<div className="folders-tree__new-terminal-row">
+			<button
+				type="button"
+				className="folders-tree__new-terminal"
+				aria-label={`New terminal in ${folderName}`}
+				onClick={onNewTerminal}
+			>
+				<Plus size={12} aria-hidden="true" />
+				<span>New terminal</span>
+			</button>
+			<fieldset
+				className="folders-tree__launchers"
+				aria-label={`New terminal in ${folderName} with`}
+			>
+				<button
+					type="button"
+					className="folders-tree__launcher"
+					aria-label="Shell"
+					title="New terminal"
+					data-launcher-id="shell"
+					onClick={onNewTerminal}
+				>
+					<LauncherIcon icon="terminal" />
+				</button>
+				{onLaunch === undefined
+					? null
+					: launchers.map((launcher) => (
+							<button
+								key={launcher.id}
+								type="button"
+								className="folders-tree__launcher"
+								aria-label={launcher.displayName}
+								title={`New ${launcher.displayName} terminal`}
+								data-launcher-id={launcher.id}
+								onClick={() => onLaunch(launcher.id)}
+							>
+								<LauncherIcon icon={launcher.icon} />
+							</button>
+						))}
+			</fieldset>
+		</div>
+	);
+}
 
 export type FoldersTreeProps = {
 	folders: readonly FolderTreeFolderRow[];
@@ -92,6 +162,14 @@ export type FoldersTreeProps = {
 	onCreateFolder?: () => void;
 	/** Creates a terminal in a folder. Absent where a card only lists. */
 	onNewTerminal?: (folderId: string) => void;
+	/**
+	 * What the server offers to start in a new terminal besides the default
+	 * shell, in the order it lists them. Each gets a button on the New terminal
+	 * row, after the shell's.
+	 */
+	launchers?: readonly TerminalLauncherView[];
+	/** Creates a terminal in a folder that starts one of `launchers`. */
+	onLaunchTerminal?: (folderId: string, launcherId: string) => void;
 	/**
 	 * Asks the server for a new folder order. Absent where folders cannot be
 	 * reordered, such as in a peek: the cards then have no grip. A rejection
@@ -146,6 +224,8 @@ export function FoldersTree({
 	onToggleFolderCollapsed,
 	onCreateFolder,
 	onNewTerminal,
+	launchers = NO_LAUNCHERS,
+	onLaunchTerminal,
 	onReorderFolders,
 	onFolderMenu,
 	onAnswerOffer,
@@ -425,15 +505,17 @@ export function FoldersTree({
 						</div>
 					) : null}
 					{onNewTerminal === undefined || collapsed ? null : (
-						<button
-							type="button"
-							className="folders-tree__new-terminal"
-							aria-label={`New terminal in ${folder.name}`}
-							onClick={() => onNewTerminal(folder.id)}
-						>
-							<Plus size={12} aria-hidden="true" />
-							<span>New terminal</span>
-						</button>
+						<NewTerminalRow
+							folderName={folder.name}
+							launchers={launchers}
+							onNewTerminal={() => onNewTerminal(folder.id)}
+							{...(onLaunchTerminal === undefined
+								? {}
+								: {
+										onLaunch: (launcherId: string) =>
+											onLaunchTerminal(folder.id, launcherId),
+									})}
+						/>
 					)}
 				</>
 				);
@@ -663,12 +745,6 @@ function FolderHeader({
 			pullRequest !== undefined ||
 			noPullRequest ||
 			checkCount > 0);
-	// The active terminal's row is what shows where the user is. A selected
-	// folder with no such row is tinted instead, so the selection is not lost.
-	// A collapsed folder shows no rows, so its title carries both.
-	const isSelectedAlone =
-		folder.isSelected &&
-		(collapsed || !folder.panels.some((panel) => panel.isActive));
 	// What its hidden terminals are doing, as the one most urgent state.
 	const attention = collapsed ? folderAttentionState(folder.panels) : undefined;
 	// A press on a control in the header is that control's, never the header's.
@@ -698,9 +774,11 @@ function FolderHeader({
 					tooltip.end();
 					onMenu(event);
 				};
+	// The selected folder's header band is tinted whether or not one of its
+	// rows is the active one, so the folder in front reads as one group.
 	return (
 		<div
-			className={`folders-tree__row folders-tree__row--folder${folder.isSelected ? ' folders-tree__row--selected' : ''}${isSelectedAlone ? ' folders-tree__row--selected-alone' : ''}`}
+			className={`folders-tree__row folders-tree__row--folder${folder.isSelected ? ' folders-tree__row--selected' : ''}`}
 			role="treeitem"
 			aria-selected={folder.isSelected}
 			aria-expanded={!collapsed}
@@ -820,6 +898,14 @@ function FolderHeader({
 						className="folders-tree__status folders-tree__attention"
 					/>
 				)}
+				<span
+					className="folders-tree__count"
+					role="img"
+					aria-label={panelCountLabel(folder.panels.length)}
+					title={panelCountLabel(folder.panels.length)}
+				>
+					{folder.panels.length}
+				</span>
 				{openMenu === undefined ? null : (
 					<button
 						type="button"

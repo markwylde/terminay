@@ -10,6 +10,7 @@ export * from "./connections.js";
 export * from "./compatibility.js";
 export * from "./queryCommand.js";
 export * from "./terminal.js";
+export * from "./terminalLaunchers.js";
 export * from "./terminalPanel.js";
 export * from "./dictation.js";
 export * from "./agentChat.js";

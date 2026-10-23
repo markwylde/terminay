@@ -12,12 +12,15 @@ import {
 	type LanguageServerContribution,
 	type McpInstallTargetContribution,
 	type McpServerCommand,
+	type TerminalLauncherContribution,
+	type TerminalLauncherResolution,
 	validateAgentChatAvailability,
 	validateAgentChatEvent,
 	validateAgentChatSessionRequest,
 	validateMcpInstallTargetActionResult,
 	validateMcpInstallTargetStatus,
 	validateMcpServerCommand,
+	validateTerminalLauncherResolution,
 	type WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
@@ -109,6 +112,13 @@ const DEFAULTS = Object.freeze({
 	maxBackoffMs: 30_000,
 });
 
+/**
+ * How long a launcher may take to say where its program is. Locating an agent
+ * may read the login shell's PATH once, which the built-in launchers bound at
+ * a few seconds of their own.
+ */
+const LAUNCHER_RESOLVE_TIMEOUT_MS = 10_000;
+
 const INHERITED_CHILD_ENV = Object.freeze([
 	'PATH',
 	'HOME',
@@ -181,6 +191,8 @@ export class ExtensionHost {
 		Object.freeze([]);
 	private agentChatProviders: readonly AgentChatProviderContribution[] =
 		Object.freeze([]);
+	private terminalLaunchers: readonly TerminalLauncherContribution[] =
+		Object.freeze([]);
 	/** Chat sessions the host opened and has not yet seen end. */
 	private readonly chatSessions = new Map<
 		string,
@@ -218,6 +230,7 @@ export class ExtensionHost {
 			languageServers: this.languageServers,
 			worktreeInsightSources: this.worktreeInsightSources,
 			agentChatProviders: this.agentChatProviders,
+			terminalLaunchers: this.terminalLaunchers,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -304,6 +317,10 @@ export class ExtensionHost {
 						this.descriptor.agentChatProviders === undefined
 							? []
 							: structuredClone(this.descriptor.agentChatProviders),
+					terminalLaunchers:
+						this.descriptor.terminalLaunchers === undefined
+							? []
+							: structuredClone(this.descriptor.terminalLaunchers),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -340,6 +357,13 @@ export class ExtensionHost {
 				this.descriptor,
 				'agent-chat',
 				'chat provider',
+			);
+			this.terminalLaunchers = validateRegistrations(
+				record(activated)?.terminalLaunchers,
+				this.descriptor.terminalLaunchers ?? [],
+				this.descriptor,
+				'agent-launch',
+				'terminal launcher',
 			);
 			this.setState({
 				extensionId: this.extensionId,
@@ -444,6 +468,7 @@ export class ExtensionHost {
 		this.languageServers = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
+		this.terminalLaunchers = Object.freeze([]);
 	}
 
 	/**
@@ -636,6 +661,34 @@ export class ExtensionHost {
 			this.limits.shutdownTimeoutMs,
 		).catch(() => undefined);
 		this.chatSessionEnded(sessionId, { code: null, signal: null });
+	}
+
+	terminalLauncherContributions(): readonly TerminalLauncherContribution[] {
+		return this.terminalLaunchers;
+	}
+
+	/**
+	 * Ask a registered launcher where its program is installed. The answer is
+	 * validated here as well as in the child, so a launcher can only ever name
+	 * a bounded absolute path.
+	 */
+	async resolveTerminalLauncher(
+		launcherId: string,
+		signal?: AbortSignal,
+	): Promise<TerminalLauncherResolution> {
+		if (!this.terminalLaunchers.some((launcher) => launcher.id === launcherId))
+			throw unavailable('terminal launcher is unavailable');
+		const result = validateTerminalLauncherResolution(
+			await this.call(
+				'terminal.launcher.resolve',
+				{ launcherId },
+				Math.min(this.limits.invocationTimeoutMs, LAUNCHER_RESOLVE_TIMEOUT_MS),
+				signal,
+			),
+		);
+		if (!result.ok)
+			throw new Error('terminal launcher returned an invalid resolution');
+		return result.value;
 	}
 
 	private requireChatProvider(providerId: string): void {
@@ -1526,6 +1579,7 @@ export class ExtensionHost {
 		this.mcpInstallTargets = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
+		this.terminalLaunchers = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
 		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);

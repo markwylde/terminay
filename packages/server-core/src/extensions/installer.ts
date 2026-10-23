@@ -582,6 +582,7 @@ export class ExtensionInstaller {
 			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
 			worktreeInsights: readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[];
 			agentChatProviders: readonly import('@terminay/extension-api').AgentChatProviderContribution[];
+			terminalLaunchers: readonly import('@terminay/extension-api').TerminalLauncherContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -618,6 +619,11 @@ export class ExtensionInstaller {
 			agentChatProviders: Object.freeze(
 				structuredClone(
 					slot.receipt.manifest.contributes.agentChatProviders ?? [],
+				),
+			),
+			terminalLaunchers: Object.freeze(
+				structuredClone(
+					slot.receipt.manifest.contributes.terminalLaunchers ?? [],
 				),
 			),
 			manifest: slot.receipt.manifest,

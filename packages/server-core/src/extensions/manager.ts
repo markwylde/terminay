@@ -7,6 +7,8 @@ import type {
 	LanguageServerContribution,
 	McpInstallTargetContribution,
 	McpServerCommand,
+	TerminalLauncherContribution,
+	TerminalLauncherResolution,
 	WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
@@ -71,6 +73,11 @@ export interface WorktreeInsightSourceProvider {
 export interface ChatProviderEntry {
 	readonly extensionId: string;
 	readonly contribution: AgentChatProviderContribution;
+}
+
+export interface TerminalLauncherEntry {
+	readonly extensionId: string;
+	readonly contribution: TerminalLauncherContribution;
 }
 
 /** One open provider session, bound to the extension child that runs it. */
@@ -188,6 +195,7 @@ export class ExtensionHostManager {
 					...(status.mcpInstallTargets ?? []),
 					...(status.worktreeInsightSources ?? []),
 					...(status.agentChatProviders ?? []),
+					...(status.terminalLaunchers ?? []),
 				])
 					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -334,6 +342,30 @@ export class ExtensionHostManager {
 						)
 					: [],
 			),
+		);
+	}
+
+	/** Every terminal launcher registered by a running, published extension. */
+	terminalLauncherContributions(): readonly TerminalLauncherEntry[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.terminalLaunchers ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	async resolveTerminalLauncher(
+		launcherId: string,
+		signal?: AbortSignal,
+	): Promise<TerminalLauncherResolution> {
+		return this.ownerHost(launcherId).resolveTerminalLauncher(
+			launcherId,
+			signal,
 		);
 	}
 
@@ -514,6 +546,7 @@ export class ExtensionHostManager {
 			...(status.mcpInstallTargets ?? []),
 			...(status.worktreeInsightSources ?? []),
 			...(status.agentChatProviders ?? []),
+			...(status.terminalLaunchers ?? []),
 		]) {
 			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)

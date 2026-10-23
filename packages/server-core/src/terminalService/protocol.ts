@@ -20,6 +20,10 @@ import {
 	type TerminalInputSource,
 	TerminalInputSourceAdapter,
 } from './inputSources.js';
+import {
+	launcherCommandLine,
+	type TerminalLauncherRegistry,
+} from './launchers.js';
 import type { TerminalLaunchResolver } from './launchResolver.js';
 import type {
 	TerminalPresentationCheckpointAuthority,
@@ -100,6 +104,14 @@ export interface TerminalOperationRegistryOptions {
 	readonly retainsExitedSession?: (identity: TerminalIdentity) => boolean;
 	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
 	readonly clipboardScratchDirectory?: string;
+	/**
+	 * The launchers this server offers (ADR-0073). Without it a create that
+	 * names a launcher is refused and the launcher list is empty.
+	 */
+	readonly launchers?: Pick<TerminalLauncherRegistry, 'list' | 'target'>;
+	/** Remember, until `onSessionCreated` reads it, the title a terminal about
+	 * to be spawned starts with. `undefined` forgets it. */
+	readonly nameSession?: (sessionId: string, title: string | undefined) => void;
 }
 
 /** Spawn a resolved terminal, telling the host first which folder its panel
@@ -231,6 +243,11 @@ export function createTerminalOperationRegistry(
 	};
 	const queries = {
 		'terminal.list': (request: QueryRequest) => list(request),
+		'terminal.launchers': async () => ({
+			launchers: ((await options.launchers?.list()) ?? []).map((launcher) => ({
+				...launcher,
+			})),
+		}),
 		'terminal.cwd': (request: QueryRequest) => currentCwd(request),
 		'terminal.wait-inactivity': (request: QueryRequest) =>
 			waitForInactivity(request),
@@ -244,6 +261,7 @@ export function createTerminalOperationRegistry(
 			commands,
 			policies: {
 				'terminal.list': { scope: 'read' },
+				'terminal.launchers': { scope: 'read' },
 				'terminal.cwd': { scope: 'read' },
 				'terminal.wait-inactivity': { scope: 'read' },
 				[TERMINAL_PRESENTATION_CHECKPOINT_OPERATION]: { scope: 'read' },
@@ -507,6 +525,19 @@ export function createTerminalOperationRegistry(
 			);
 		}
 		const profileId = optionalId(payload.profileId, 'shell profile id');
+		const launcherId =
+			payload.launcherId === undefined
+				? undefined
+				: launcherIdOf(payload.launcherId);
+		const launcher =
+			launcherId === undefined
+				? undefined
+				: await options.launchers?.target(launcherId);
+		if (launcherId !== undefined && launcher === undefined)
+			throw new TerminalServiceError(
+				'launcher_unavailable',
+				'terminal launcher is not available',
+			);
 		const activePanelId = optionalId(payload.activePanelId, 'active panel id');
 		const folderId = optionalId(payload.folderId, 'folder id');
 		const cols =
@@ -522,29 +553,43 @@ export function createTerminalOperationRegistry(
 				'canonical terminal launch resolution is unavailable',
 			);
 		}
-		const session =
+		const resolved =
 			options.launchResolver === undefined
-				? await options.service.createSession({
-						projectId,
-						...(cwd === undefined ? {} : { cwd }),
+				? undefined
+				: await options.launchResolver.resolve({
+						identity: options.service.allocateIdentity(projectId),
+						...(profileId === undefined
+							? {}
+							: { explicitProfileId: profileId }),
+						...(cwd === undefined ? {} : { explicitCwd: cwd }),
+						...(activePanelId === undefined ? {} : { activePanelId }),
+						...(folderId === undefined ? {} : { folderId }),
 						cols,
 						rows,
-					})
-				: await createPlacedSession(
-						options,
-						await options.launchResolver.resolve({
-							identity: options.service.allocateIdentity(projectId),
-							...(profileId === undefined
-								? {}
-								: { explicitProfileId: profileId }),
-							...(cwd === undefined ? {} : { explicitCwd: cwd }),
-							...(activePanelId === undefined ? {} : { activePanelId }),
-							...(folderId === undefined ? {} : { folderId }),
+					});
+		if (launcher !== undefined && resolved === undefined)
+			throw new TerminalServiceError(
+				'launcher_unavailable',
+				'terminal launcher needs canonical launch resolution',
+			);
+		if (launcher !== undefined && resolved !== undefined)
+			options.nameSession?.(resolved.identity.sessionId, launcher.displayName);
+		let session: Awaited<ReturnType<TerminalService['createSession']>>;
+		try {
+			session =
+				resolved === undefined
+					? await options.service.createSession({
+							projectId,
+							...(cwd === undefined ? {} : { cwd }),
 							cols,
 							rows,
-						}),
-						folderId,
-					);
+						})
+					: await createPlacedSession(options, resolved, folderId);
+		} catch (error) {
+			if (resolved !== undefined)
+				options.nameSession?.(resolved.identity.sessionId, undefined);
+			throw error;
+		}
 		const snapshot = session.snapshot();
 		reserveInitialPresentation(
 			snapshot,
@@ -557,7 +602,22 @@ export function createTerminalOperationRegistry(
 			releaseInitialPresentationReservation(snapshot, false);
 			await options.service.kill(snapshot);
 			throw error;
+		} finally {
+			options.nameSession?.(snapshot.sessionId, undefined);
 		}
+		// The shell reads the line once it is up; the PTY holds it until then.
+		// It goes to the shell, never to the program it starts (ADR-0073).
+		if (launcher !== undefined && resolved !== undefined)
+			await inputSources.write({
+				identity: {
+					serverId: snapshot.serverId,
+					projectId: snapshot.projectId,
+					sessionId: snapshot.sessionId,
+				},
+				clientId: request.context.clientId,
+				source: 'launcher',
+				data: launcherCommandLine(launcher.executable, resolved.shellPath),
+			});
 		return {
 			serverId: snapshot.serverId,
 			projectId: snapshot.projectId,
@@ -1406,7 +1466,11 @@ export function createTerminalOperationRegistry(
 			throw new TerminalServiceError(
 				'session_not_found',
 				'terminal session was not found',
-				{ serverId: identity.serverId, projectId: identity.projectId, sessionId: identity.sessionId },
+				{
+					serverId: identity.serverId,
+					projectId: identity.projectId,
+					sessionId: identity.sessionId,
+				},
 			);
 		if (typeof payload.mimeType !== 'string')
 			throw new TerminalServiceError(
@@ -1841,6 +1905,18 @@ function positiveDimension(value: JsonValue | undefined, name: string): number {
 		value > 1_000
 	)
 		throw new TerminalServiceError('invalid_dimensions', `${name} is invalid`);
+	return value;
+}
+
+const LAUNCHER_ID_PATTERN =
+	/^[a-z0-9][a-z0-9.-]{0,126}\/[a-z][a-z0-9-]{0,63}$/u;
+
+function launcherIdOf(value: unknown): string {
+	if (typeof value !== 'string' || !LAUNCHER_ID_PATTERN.test(value))
+		throw new TerminalServiceError(
+			'invalid_identity',
+			'terminal launcher id is invalid',
+		);
 	return value;
 }
 

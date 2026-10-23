@@ -44,7 +44,7 @@
 		"@markwylde/all-your-agents": "1.4.4"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^3.2.0"
+		"@terminay/extension-api": "^3.3.0"
 	},
 	"peerDependenciesMeta": {
 		"@terminay/extension-api": {
@@ -52,7 +52,7 @@
 		}
 	},
 	"devDependencies": {
-		"@terminay/extension-api": "^3.2.0",
+		"@terminay/extension-api": "^3.3.0",
 		"@types/node": "^24.0.0",
 		"typescript": "^6.0.0"
 	},
@@ -60,8 +60,8 @@
 		"manifestVersion": 1,
 		"id": "com.terminay.builtin-agents",
 		"displayName": "Built-in Agents",
-		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, and runs Claude Code and Codex chats.",
-		"api": "^3.2.0",
+		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, runs Claude Code and Codex chats, and starts Claude Code and Codex in new terminals.",
+		"api": "^3.3.0",
 		"engines": {
 			"terminay": ">=1.0.0",
 			"node": ">=24"
@@ -74,7 +74,8 @@
 		"permissions": [
 			"agent-observation",
 			"mcp-registration",
-			"agent-chat"
+			"agent-chat",
+			"agent-launch"
 		],
 		"contributes": {
 			"agentSessionSources": [
@@ -136,6 +137,34 @@
 						"darwin",
 						"linux"
 					]
+				}
+			],
+			"terminalLaunchers": [
+				{
+					"id": "com.terminay.builtin-agents/launch-claude-code",
+					"displayName": "Claude Code",
+					"icon": "agent-claude-code",
+					"platforms": [
+						"darwin",
+						"linux"
+					],
+					"harness": {
+						"source": "com.terminay.builtin-agents/agents",
+						"harness": "claude-code"
+					}
+				},
+				{
+					"id": "com.terminay.builtin-agents/launch-codex",
+					"displayName": "Codex",
+					"icon": "agent-codex",
+					"platforms": [
+						"darwin",
+						"linux"
+					],
+					"harness": {
+						"source": "com.terminay.builtin-agents/agents",
+						"harness": "codex"
+					}
 				}
 			],
 			"mcpInstallTargets": [

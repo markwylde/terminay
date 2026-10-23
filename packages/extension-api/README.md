@@ -130,6 +130,45 @@ user's installed agent and never downloads one. Terminay keeps the
 conversation, mints the MCP capability, and shows approvals; a provider cannot
 read or change any of them.
 
+## Terminal launchers
+
+A terminal launcher puts a button on every folder's New terminal row that
+starts an installed program, such as a coding agent, in a new terminal
+(API 3.3). Declare it under `contributes.terminalLaunchers`, require the
+`agent-launch` permission, and register it with
+`context.terminals.registerLauncher(id, runtime)`.
+
+```json
+{
+  "permissions": ["agent-launch"],
+  "contributes": {
+    "terminalLaunchers": [
+      {
+        "id": "com.example.agents/launch-example",
+        "displayName": "Example Agent",
+        "icon": "terminal",
+        "platforms": ["darwin", "linux"]
+      }
+    ]
+  }
+}
+```
+
+- `icon` is an id from the Terminay icon allowlist (`EXTENSION_ICONS`);
+  extensions never supply artwork.
+- `harness` (`{ source, harness }`) optionally names a harness of a session
+  source the same package declares. While the user has that harness switched
+  off, the launcher is not offered and is not asked anything.
+- `resolve(signal)` returns `{ available: true, executable }` with the
+  absolute path of the program, or `{ available: false, reason, detail? }`
+  with `reason` one of `not_installed` or `unsupported_platform`.
+
+A launcher only says where its program is. Terminay creates the terminal in
+the folder the user chose, with the default shell profile and working
+directory, and types the quoted path into the shell with no arguments,
+environment, or input of the launcher's. When the program exits the user is
+back at the shell. A launcher cannot read or write the terminal.
+
 ## Testing agent extensions
 
 `createAgentExtensionHarness(extension, { manifest })` activates an extension
@@ -142,6 +181,8 @@ and `stop()` drive a session source; `sessions()`, `publications()`,
 `openChatSession(providerId, request?)` drive a chat provider with
 `fixtureChatSessionRequest` overridden by what you pass; the returned session
 records its validated `events()`, any `violations()`, and the reply `text()`.
+`registeredLauncherIds()` and `resolveLauncher(launcherId)` drive a terminal
+launcher, validating its resolution.
 [`fixtures/session-source`](fixtures/session-source) is an independent,
 packable third-party source.
 
