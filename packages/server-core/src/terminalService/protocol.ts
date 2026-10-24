@@ -109,8 +109,8 @@ export interface TerminalOperationRegistryOptions {
 	 * names a launcher is refused and the launcher list is empty.
 	 */
 	readonly launchers?: Pick<TerminalLauncherRegistry, 'list' | 'target'>;
-	/** Remember, until `onSessionCreated` reads it, the title a terminal about
-	 * to be spawned starts with. `undefined` forgets it. */
+	/** Remember, until `onSessionCreated` reads it, the default name a terminal
+	 * about to be spawned starts with. `undefined` forgets it. */
 	readonly nameSession?: (sessionId: string, title: string | undefined) => void;
 }
 
