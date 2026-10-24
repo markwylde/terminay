@@ -176,6 +176,23 @@ test("a terminal created with a name carries it as its named title", () => {
   assert.deepEqual(titles(store, "panel-d"), { title: "Terminal 4", defaultTitle: "Terminal 4" });
 });
 
+test("a terminal created with a default name shows a program title over it", () => {
+  const store = workspace();
+  const timers = fakeTimers();
+  const service = new TerminalTitleService({ workspace: store, enabled: () => true, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout });
+  assert.equal(apply(store, { type: "terminal.createPanel", sessionId: "session-a", projectId: "project-a", panelId: "panel-a", defaultTitle: "Claude Code", cwd: "/tmp", createdAt: 1 }).ok, true);
+  assert.deepEqual(titles(store, "panel-a"), { title: "Claude Code", defaultTitle: "Claude Code" });
+  assert.equal(service.displayedTitle("panel-a"), "Claude Code");
+
+  service.observe("session-a", "✳ Fix the build");
+  assert.equal(service.displayedTitle("panel-a"), "✳ Fix the build");
+
+  timers.elapse();
+  service.observe("session-a", "");
+  assert.equal(service.displayedTitle("panel-a"), "Claude Code");
+  validateWorkspace(store.state);
+});
+
 test("title sources are server-assigned, and no command sets a program title", () => {
   const store = workspace();
   const panelId = openTerminal(store, "a", "Terminal 1");

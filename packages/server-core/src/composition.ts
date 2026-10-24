@@ -716,7 +716,8 @@ export function createServerCoreComposition(
 	}
 	/** Which folder a terminal that is being spawned belongs in. */
 	const sessionFolders = new Map<string, string>();
-	/** The title a terminal that is being spawned starts with, when it has one. */
+	/** The default name a terminal that is being spawned starts with, when it
+	 * has one: a program title outranks it, where a named title would not. */
 	const sessionTitles = new Map<string, string>();
 	// Terminal launchers (ADR-0073) come from the extensions this server runs,
 	// gated by the same harness switches as agent status.
@@ -1341,7 +1342,7 @@ export function createServerCoreComposition(
 						// holds terminals that are being spawned right now.
 						const placedFolderId = sessionFolders.get(session.sessionId);
 						sessionFolders.delete(session.sessionId);
-						const namedTitle = sessionTitles.get(session.sessionId);
+						const defaultTitle = sessionTitles.get(session.sessionId);
 						sessionTitles.delete(session.sessionId);
 						const workspace = options.workspace;
 						if (workspace === undefined) return;
@@ -1386,7 +1387,9 @@ export function createServerCoreComposition(
 									projectId: session.projectId,
 									...(folderId === undefined ? {} : { folderId }),
 									panelId: `p:${session.sessionId}`.slice(0, 128),
-									title: namedTitle ?? `Terminal ${panelCount + 1}`,
+									...(defaultTitle === undefined
+										? { title: `Terminal ${panelCount + 1}` }
+										: { defaultTitle }),
 									cwd: session.cwd,
 									createdAt: session.createdAt,
 									...(session.launch === undefined
@@ -1421,7 +1424,7 @@ export function createServerCoreComposition(
 										...(folderId === undefined ? {} : { folderId }),
 										type: 'terminal',
 										sessionId: session.sessionId,
-										title: namedTitle ?? `Terminal ${panelCount + 1}`,
+										title: `Terminal ${panelCount + 1}`,
 										cwd: session.cwd,
 										createdAt: session.createdAt,
 									},
