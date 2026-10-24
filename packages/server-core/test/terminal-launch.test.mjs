@@ -128,6 +128,10 @@ test("a launched terminal starts with the default profile and types the agent's 
     assert.equal(spawned.options.cwd, "/project");
     assert.deepEqual(spawned.writes, ["'/Users/me/.local/bin/claude'\r"]);
     assert.equal(panelOf(made.sessionId).title, "Claude Code");
+    // The launcher names the tab by default, not as a name a person gave it,
+    // so the agent's own title can replace it.
+    assert.equal(panelOf(made.sessionId).defaultTitle, "Claude Code");
+    assert.equal(panelOf(made.sessionId).namedTitle, undefined);
     assert.equal(JSON.stringify(panelOf(made.sessionId)).includes(LAUNCHER), false, "the launcher id is not stored with the terminal");
   } finally {
     await composition.shutdown?.();

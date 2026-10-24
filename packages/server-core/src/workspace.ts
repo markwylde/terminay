@@ -689,6 +689,9 @@ export type WorkspaceCommand =
 			readonly folderId?: ProtocolId;
 			readonly panelId: ProtocolId;
 			readonly title?: string;
+			/** The terminal's default name in place of `Terminal N`, e.g. the
+			 * launcher that started it. A program title outranks it. */
+			readonly defaultTitle?: string;
 			readonly cwd?: string;
 			readonly createdAt?: number;
 			readonly launch?: TerminalLaunchMetadata;
@@ -1439,21 +1442,23 @@ function terminalTitleSources(
 }
 
 /** The title a terminal is created with: a `Terminal N` or no title at all is
- * its default name, anything else is a name it was asked to carry. */
+ * its default name, anything else is a name it was asked to carry. An explicit
+ * default name stands in for `Terminal N` and is never a name. */
 function terminalTitlesAtCreation(
 	state: WorkspaceState,
 	projectId: ProtocolId,
 	title: string | undefined,
+	defaultName?: string,
 ): TerminalTitleSources {
-	if (title === undefined)
-		return { defaultTitle: nextDefaultTerminalTitle(state, projectId) };
+	const defaultTitle =
+		defaultName === undefined
+			? nextDefaultTerminalTitle(state, projectId)
+			: boundedName(defaultName);
+	if (title === undefined) return { defaultTitle };
 	const name = boundedName(title);
-	return DEFAULT_TERMINAL_TITLE.test(name)
+	return DEFAULT_TERMINAL_TITLE.test(name) && defaultName === undefined
 		? { defaultTitle: name }
-		: {
-				defaultTitle: nextDefaultTerminalTitle(state, projectId),
-				namedTitle: name,
-			};
+		: { defaultTitle, namedTitle: name };
 }
 
 function withTitleSources(
@@ -3042,7 +3047,12 @@ export class WorkspaceStore {
 							? {}
 							: { cwd: boundedPath(command.cwd) }),
 					},
-					terminalTitlesAtCreation(state, project.id, command.title),
+					terminalTitlesAtCreation(
+						state,
+						project.id,
+						command.title,
+						command.defaultTitle,
+					),
 				);
 				state.panels[panel.id] = panel;
 				state.folders[folder.id] = withFolderPanels(
