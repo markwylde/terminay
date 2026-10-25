@@ -271,8 +271,10 @@ export interface PersistedControlCapability {
 	readonly issuedAt: number;
 }
 
-/** Told the digest of each revoked capability and the terminal it was
- * minted for, so per-capability state (such as MCP approvals) ends with it. */
+/** Told the digest of each capability whose authority under its current scope
+ * ended, by revocation or by following its terminal to another project, and
+ * the terminal it belongs to, so per-scope state (such as MCP approvals and
+ * in-flight requests) ends with it. */
 export type CapabilityRevocationListener = (
 	tokenDigest: string,
 	terminalSessionId: string,
@@ -555,7 +557,8 @@ interface StoredCapability {
  *
  * A capability has no time limit. Its token reaches the terminal only through
  * the launch environment, which cannot be updated, so it lives exactly as long
- * as the terminal: revoked on exit, move, shutdown, or MCP disablement, and
+ * as the terminal: it follows the terminal to another project, is revoked on
+ * exit, shutdown, MCP disablement, or entering the automation space, and is
  * pruned when its terminal is found no longer running.
  */
 export class ControlCapabilityStore implements ControlCapabilityResolver {
@@ -755,17 +758,37 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	}
 
 	/**
-	 * Atomically removes a terminal's old capability and mints one for its new
-	 * canonical placement, so entering or leaving the automation space swaps
-	 * workspace and project reach with no window in which both are valid.
+	 * Re-scope a terminal's capability to the project it was moved to, under
+	 * the same token, because the token in its running shell cannot be
+	 * replaced (ADR-0074). Authority under the old scope ends first, so
+	 * in-flight requests and approvals made there do not survive, and no
+	 * instant has both scopes valid. A move never widens: following a project
+	 * terminal into workspace reach throws and leaves the capability as it was.
+	 * Returns false when the terminal holds no capability.
 	 */
-	moveTerminal(
+	followTerminal(
 		terminalSessionId: string,
 		projectId: string,
-		scope: ControlScope = 'write',
 		placement: ControlPlacement = {},
-	): ControlCapabilityLease {
-		return this.mint(terminalSessionId, projectId, scope, placement);
+	): boolean {
+		assertScopeId(projectId, 'project id');
+		const reach = controlReachForPlacement(projectId, placement);
+		let followed = false;
+		for (const [key, capability] of [...this.capabilities]) {
+			if (
+				capability.chat !== undefined ||
+				capability.terminalSessionId !== terminalSessionId
+			)
+				continue;
+			if (capability.reach === 'project' && reach === 'workspace')
+				throw new TypeError('a moved terminal capability cannot widen');
+			for (const listener of this.revocationListeners)
+				listener(key, terminalSessionId);
+			this.capabilities.set(key, { ...capability, projectId, reach });
+			followed = true;
+		}
+		if (followed) this.changed();
+		return followed;
 	}
 
 	setEnabled(enabled: boolean): void {

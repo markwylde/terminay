@@ -146,7 +146,10 @@ import { RootFolderBrowser } from '../packages/server-core/src/rootFolderBrowser
 import { commandSubmissionInput } from '../packages/server-core/src/terminalService/commandSubmission';
 import { nodeTerminalLaunchPathAuthority } from '../packages/server-core/src/terminalService/launchResolver';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
-import { isAutomationSpace } from '../packages/server-core/src/workspace';
+import {
+	AUTOMATION_SPACE_PROJECT_ID,
+	isAutomationSpace,
+} from '../packages/server-core/src/workspace';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
 	findCommandForKeyboardEvent,
@@ -2208,10 +2211,13 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		},
 		onEvent: handleServerTerminalEvent,
-		// A capability is scoped to the project its terminal was in when it was
-		// issued. The token lives in the running shell, so it cannot be replaced.
+		// The token lives in the running shell and cannot be replaced, so the
+		// capability follows its terminal to the new project (ADR-0074). Entering
+		// the automation space would widen it to workspace reach, so that revokes.
 		onTerminalRehomed: (move) => {
-			mcpCapabilities.revokeSession(move.sessionId);
+			if (move.targetProjectId === AUTOMATION_SPACE_PROJECT_ID)
+				mcpCapabilities.revokeSession(move.sessionId);
+			else mcpCapabilities.followTerminal(move.sessionId, move.targetProjectId);
 		},
 		// An extension host that dies is otherwise invisible: the child suppresses
 		// Node's own stack print so it can report the error itself, and a packaged
