@@ -191,20 +191,50 @@ test("invalid, copied, and forged credentials are rejected before dispatch", asy
   })
 })
 
-test("moving a calling terminal replaces its project capability and exit revokes the replacement", () => {
-  let next = 0
-  const capabilities = new ControlCapabilityStore({ tokenFactory: () => `move-token-${++next}` })
-  const original = capabilities.mint("caller", "project-a")
-  const moved = capabilities.moveTerminal("caller", "project-b")
+test("moving a calling terminal keeps its token, now scoped to the new project, and exit revokes it", () => {
+  const capabilities = new ControlCapabilityStore({ tokenFactory: () => "move-token-1" })
+  const lease = capabilities.mint("caller", "project-a")
+  const ended = []
+  capabilities.onRevoked((_digest, terminalSessionId) => ended.push(terminalSessionId))
 
-  assert.equal(capabilities.resolve(original.token), null)
-  assert.deepEqual(capabilities.resolve(moved.token), {
+  assert.equal(capabilities.followTerminal("caller", "project-b"), true)
+  assert.deepEqual(ended, ["caller"])
+  assert.deepEqual(capabilities.resolve(lease.token), {
     terminalSessionId: "caller",
     projectId: "project-b",
     scope: "write",
   })
+  assert.equal(capabilities.metadata().length, 1)
+  assert.equal(capabilities.followTerminal("elsewhere", "project-b"), false)
   assert.equal(capabilities.onTerminalExit("caller"), 1)
-  assert.equal(capabilities.resolve(moved.token), null)
+  assert.equal(capabilities.resolve(lease.token), null)
+})
+
+test("a terminal moving project ends requests in flight under its old scope and serves later ones in the new", async () => {
+  let dispatched
+  const active = new Promise((resolve) => { dispatched = resolve })
+  const seen = []
+  await withEndpoint({ dispatch: async (_request, { projectId, signal }) => {
+    seen.push(projectId)
+    if (seen.length > 1) return { projectId }
+    dispatched()
+    await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }))
+    return { reached: true }
+  } }, async ({ socketPath, capabilities }) => {
+    const lease = capabilities.mint("caller", "project-a")
+    const socket = await openSocket(socketPath)
+    const responses = collectResponses(socket)
+    socket.write(encodeControlMessage({ id: "active", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "list_terminals", params: {} }))
+    await active
+    capabilities.followTerminal("caller", "project-b")
+    const aborted = await responses.next()
+    assert.equal(aborted.id, "active")
+    assert.equal(aborted.ok, false)
+    socket.destroy()
+    const after = await request(socketPath, { id: "after", token: lease.token, version: CONTROL_PROTOCOL_VERSION, op: "list_terminals", params: {} })
+    assert.equal(after.ok, true, JSON.stringify(after))
+    assert.deepEqual(seen, ["project-a", "project-b"])
+  })
 })
 
 test("server MCP setting disables and revokes capabilities immediately", async () => {
