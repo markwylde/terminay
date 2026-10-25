@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TerminayClient, WorkspaceClient } from "@terminay/client-core";
+import { ActivityClient, TerminayClient, WorkspaceClient } from "@terminay/client-core";
 import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import {
   AgentStatusService,
@@ -29,11 +29,14 @@ function createPtyFactory() {
         writes: [],
         dataListeners: new Set(),
         exitListeners: new Set(),
+        foregroundListeners: new Set(),
         write(bytes) { pty.writes.push(new Uint8Array(bytes)); },
         resize() {},
         kill() {},
         onData(listener) { pty.dataListeners.add(listener); return () => pty.dataListeners.delete(listener); },
         onExit(listener) { pty.exitListeners.add(listener); return () => pty.exitListeners.delete(listener); },
+        onForegroundProcess(listener) { pty.foregroundListeners.add(listener); return () => pty.foregroundListeners.delete(listener); },
+        foreground(processName) { for (const listener of pty.foregroundListeners) listener({ processName, shellForeground: processName === "zsh", observation: "available" }); },
         emit(text) { for (const listener of pty.dataListeners) listener(encoder.encode(text)); },
         exit(exitCode) { for (const listener of pty.exitListeners) listener({ exitCode, signal: null }); },
       };
@@ -146,6 +149,37 @@ test("a terminal moved away and back is owned by its original project again", as
     assert.equal(activity.projectIdForSession(sessionId), "project-a");
     const attached = await mover.client.command("terminal.attach", { identity: identity("project-a", sessionId), clientId: "mover", fromPosition: 0 }, { commandId: "attach-a" });
     assert.equal(attached.result.presentation.role, "controller");
+  } finally {
+    await close(composition, mover);
+  }
+});
+
+test("a client's activity projection follows a moved terminal to its new project", async () => {
+  const { workspace, composition, ptyFactory } = await setup();
+  const mover = await connect(composition, "mover");
+  try {
+    const activityClient = new ActivityClient({
+      query: async (operation, payload, options) => (await mover.client.query(operation, payload, options)).result,
+      command: async (operation, payload, options) => (await mover.client.command(operation, payload, options)).result,
+      subscribe: () => () => {},
+    });
+    await activityClient.reload();
+    const created = await mover.client.command("terminal.create", { projectId: "project-a", cwd: "/repo/project-a", cols: 80, rows: 24 }, { commandId: "create" });
+    const sessionId = created.result.sessionId;
+    const panelId = Object.values(workspace.state.panels).find((panel) => panel.sessionId === sessionId).id;
+    ptyFactory.ptys[0].foreground("claude");
+    await activityClient.replay();
+    assert.equal(activityClient.store.snapshot.sessions[sessionId]?.projectId, "project-a");
+
+    await new WorkspaceClient(mover.client).movePanel({ panelId, targetProjectId: "project-b" });
+    await activityClient.replay();
+
+    // Close protection falls back to this projection when a fresh preflight
+    // cannot be taken. A terminal left under the project it moved out of makes
+    // closing that empty project warn about a process it no longer has.
+    const projected = activityClient.store.snapshot.sessions[sessionId];
+    assert.equal(projected?.projectId, "project-b");
+    assert.equal(projected?.foregroundBusy, true);
   } finally {
     await close(composition, mover);
   }
