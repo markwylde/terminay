@@ -75,3 +75,19 @@ test("activity client retains foreground busy state and defaults older snapshots
   });
   assert.equal(store.snapshot.sessions["session-a"].foregroundBusy, true);
 });
+
+test("activity client follows a session the server re-homed to another project", () => {
+  const global = new ActivitySnapshotStore();
+  const source = new ActivitySnapshotStore({ projectId: "project-a" });
+  const target = new ActivitySnapshotStore({ projectId: "project-b" });
+  for (const store of [global, source, target])
+    store.applySnapshot(snapshot(1, { "session-a": session("session-a", "project-a", { foregroundBusy: true }) }));
+  const moved = { revision: 2, cursor: "2", type: "activity.changed", sessionId: "session-a", snapshot: session("session-a", "project-b", { foregroundBusy: true, updatedAt: 2 }) };
+
+  assert.equal(global.applyEvent(moved).kind, "applied");
+  assert.equal(global.snapshot.sessions["session-a"].projectId, "project-b");
+  assert.equal(source.applyEvent(moved).kind, "applied");
+  assert.deepEqual(Object.keys(source.snapshot.sessions), []);
+  assert.equal(target.applyEvent(moved).kind, "applied");
+  assert.equal(target.snapshot.sessions["session-a"].projectId, "project-b");
+});

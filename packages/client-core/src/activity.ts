@@ -156,14 +156,18 @@ export class ActivitySnapshotStore {
       const normalized = this.normalizeSession(event.snapshot);
       const visible = this.projectId === undefined || normalized.projectId === this.projectId;
       const existing = sessions[event.sessionId];
-      // A session id is immutable. A cross-project event advances the global
-      // cursor but cannot retarget a visible session in this projection.
+      // A session id is immutable, but the server re-homes a terminal whose
+      // panel moved to another project. The session follows it: a projection
+      // scoped to the project it left drops it, every other one updates it.
       if (normalized.sessionId !== event.sessionId) throw new TypeError("activity event session mismatch");
-      if (visible && (existing === undefined || existing.projectId === normalized.projectId)) {
+      if (visible) {
         if (existing === undefined || JSON.stringify(existing) !== JSON.stringify(normalized)) {
           sessions[event.sessionId] = normalized;
           changed = true;
         }
+      } else if (existing !== undefined) {
+        delete sessions[event.sessionId];
+        changed = true;
       }
     } else if (sessions[event.sessionId] !== undefined) {
       delete sessions[event.sessionId];
