@@ -77,19 +77,21 @@ test('automation-space terminals receive workspace reach bound to the minting te
 	assert.equal(store.resolve(lease.token), null);
 });
 
-test('entering or leaving the automation space replaces the token atomically', () => {
+test('leaving the automation space narrows the same token to project reach, and a move never widens it', () => {
 	const store = new ControlCapabilityStore({ tokenFactory: tokens() });
-	const inSpace = store.mint('t', SPACE, 'write', AUTOMATION_PLACEMENT);
-	const inProject = store.moveTerminal('t', 'project-a');
-	assert.equal(store.resolve(inSpace.token), null);
-	assert.deepEqual(store.resolve(inProject.token), {
+	const lease = store.mint('t', SPACE, 'write', AUTOMATION_PLACEMENT);
+	assert.equal(store.followTerminal('t', 'project-a'), true);
+	assert.deepEqual(store.resolve(lease.token), {
 		terminalSessionId: 't',
 		projectId: 'project-a',
 		scope: 'write',
 	});
-	const back = store.moveTerminal('t', SPACE, 'write', AUTOMATION_PLACEMENT);
-	assert.equal(store.resolve(inProject.token), null);
-	assert.equal(store.resolve(back.token).reach, 'workspace');
+	assert.throws(
+		() => store.followTerminal('t', SPACE, AUTOMATION_PLACEMENT),
+		/cannot widen/,
+	);
+	assert.equal(store.resolve(lease.token).projectId, 'project-a');
+	assert.equal(store.resolve(lease.token).reach, undefined);
 	assert.equal(store.metadata().length, 1);
 });
 

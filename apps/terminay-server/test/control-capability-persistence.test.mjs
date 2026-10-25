@@ -32,6 +32,20 @@ test("a saved capability authorizes the same token under a new server process", 
   assert.equal(second.capabilities.authorize(lease.token, "write").terminalSessionId, "s1")
 })
 
+test("a terminal moved to another project keeps that scope under a new server process", () => {
+  const first = store()
+  let saves = 0
+  first.capabilities.onChanged(() => { saves += 1 })
+  const lease = first.capabilities.mint("s1", "p1", "write")
+  first.capabilities.followTerminal("s1", "p2")
+  assert.equal(saves, 2)
+  const saved = JSON.parse(JSON.stringify(first.capabilities.snapshot()))
+
+  const second = store()
+  assert.equal(second.capabilities.restore(saved, new Set(["s1"])), 1)
+  assert.deepEqual(second.capabilities.resolve(lease.token), { terminalSessionId: "s1", projectId: "p2", scope: "write" })
+})
+
 test("a snapshot carries digests and never a token", () => {
   const { capabilities } = store()
   const lease = capabilities.mint("s1", "p1", "write")
