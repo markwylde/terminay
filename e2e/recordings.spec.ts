@@ -297,7 +297,7 @@ test.describe('recordings in Home', () => {
     // Through its configurable shortcut.
     const isMac = await mainWindow.evaluate(() => navigator.userAgent.includes('Mac'))
     const shortcuts = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'keyboard-shortcuts' })
-    const row = shortcuts.locator('.settings-row').filter({ hasText: 'Open recordings timeline' })
+    const row = shortcuts.locator('.settings-row').filter({ hasText: /^Recordings/ })
     await row.getByRole('button', { name: 'Listen' }).click()
     await shortcuts.keyboard.press(isMac ? 'Meta+Shift+Y' : 'Control+Shift+Y')
     await expect(row.locator('input')).toHaveValue('CmdOrCtrl+Shift+Y')
