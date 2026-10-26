@@ -658,11 +658,11 @@
   min-height: 0;
 }
 
-.recordings-page__search {
+.recordings-page .recordings-page__search {
   max-width: 320px;
 }
 
-.recordings-page__search .workspace-dashboard__filter-input {
+.recordings-page .recordings-page__search .workspace-dashboard__filter-input {
   width: 240px;
 }
 
@@ -705,9 +705,10 @@
   color: rgba(220, 226, 240, 0.5);
 }
 
-/* Colour, title, where it ran, then the fixed-width time, length and state. */
-.recordings-page__row {
-  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) 56px 56px 96px;
+/* Colour, title, where it ran, then the fixed-width time, length and state.
+   Scoped under the page: the dashboard row it borrows starts with all: unset. */
+.recordings-page .recordings-page__row {
+  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) auto auto auto;
   gap: 12px;
   height: 36px;
 }
@@ -728,11 +729,16 @@
   text-align: right;
   color: rgba(220, 226, 240, 0.5);
   font-variant-numeric: tabular-nums;
+  min-width: 48px;
 }
 
 .recordings-page__state {
   display: flex;
   justify-content: flex-end;
+}
+
+.recordings-page__state:empty {
+  display: none;
 }
 
 .recordings-page__pill {
@@ -794,8 +800,8 @@
 }
 
 @media (max-width: 640px) {
-  .recordings-page__row {
-    grid-template-columns: 3px minmax(0, 1fr) 56px 96px;
+  .recordings-page .recordings-page__row {
+    grid-template-columns: 3px minmax(0, 1fr) auto auto;
   }
 
   .recordings-page__row .workspace-dashboard__row-detail,
