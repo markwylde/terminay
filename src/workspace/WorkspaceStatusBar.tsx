@@ -172,7 +172,8 @@ function PathBreadcrumb({ identity, path }: Readonly<PathBreadcrumbProps>) {
 						: undefined;
 					return (
 						<span className="workspace-status-bar__crumb-wrap" key={`${crumb.index}:${crumb.label}`}>
-							{position > 0 ? (
+							{/* The root crumb is itself a separator; another after it reads `/ /`. */}
+							{position > 0 && crumbs[position - 1].label !== '/' ? (
 								<span className="workspace-status-bar__sep" aria-hidden="true">
 									/
 								</span>

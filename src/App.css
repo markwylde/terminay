@@ -2965,7 +2965,7 @@ body.project-tabbar-reordering .project-tabbar {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   overflow: hidden;
 }
 
@@ -3031,7 +3031,7 @@ body.project-tabbar-reordering .project-tabbar {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   opacity: 0.95;
 }
 
@@ -3069,7 +3069,7 @@ body.project-tabbar-reordering .project-tabbar {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 2px 3px;
+  padding: 2px 0;
   opacity: 0.72;
 }
 
@@ -3086,6 +3086,7 @@ body.project-tabbar-reordering .project-tabbar {
 
 .workspace-status-bar__sep {
   flex: none;
+  padding: 0 5px;
   opacity: 0.4;
 }
 
