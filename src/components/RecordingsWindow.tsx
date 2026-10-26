@@ -489,25 +489,23 @@ export function RecordingsWindow({ client }: { readonly client: RecordingsClient
   return <RecordingsWindowContent client={client} />
 }
 
-function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
+/** One server's recordings, newest first, with search and date groups. */
+function useRecordingsLibrary(client: RecordingsClient) {
   const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
-  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [listErrorText, setListErrorText] = useState<string | null>(null)
 
-  const loadRecordings = useCallback(async () => {
+  const loadRecordings = useCallback(async (): Promise<TerminalRecordingListItem[]> => {
     setIsLoading(true)
     setListErrorText(null)
     try {
       const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
       setRecordings(nextRecordings)
-      setSelectedRecordingId((current) =>
-        current && nextRecordings.some((recording) => recording.recordingId === current)
-          ? current
-          : nextRecordings[0]?.recordingId ?? null)
+      return nextRecordings
     } catch (error) {
       setListErrorText(error instanceof Error ? error.message : String(error))
+      return []
     } finally {
       setIsLoading(false)
     }
@@ -516,8 +514,6 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
   useEffect(() => {
     void loadRecordings()
   }, [loadRecordings])
-
-  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
 
   const filteredRecordings = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -552,6 +548,23 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
     return [...groups.entries()]
   }, [filteredRecordings])
 
+  return { groupedRecordings, isLoading, listErrorText, loadRecordings, query, recordings, setQuery }
+}
+
+function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
+  const library = useRecordingsLibrary(client)
+  const { loadRecordings, recordings } = library
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSelectedRecordingId((current) =>
+      current && recordings.some((recording) => recording.recordingId === current)
+        ? current
+        : recordings[0]?.recordingId ?? null)
+  }, [recordings])
+
+  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
+
   const onDelete = async () => {
     if (!selectedRecordingId || !confirm('Delete this recording?')) {
       return
@@ -566,24 +579,128 @@ function RecordingsWindowContent({ client }: { readonly client: RecordingsClient
 
   return (
     <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
-        groupedRecordings={groupedRecordings}
-        isLoading={isLoading}
-        onQueryChange={setQuery}
+        groupedRecordings={library.groupedRecordings}
+        isLoading={library.isLoading}
+        onQueryChange={library.setQuery}
         onRefresh={() => void loadRecordings()}
         onSelect={setSelectedRecordingId}
-        query={query}
+        query={library.query}
         recordings={recordings}
         selectedRecordingId={selectedRecordingId}
         titleFor={getRecordingDisplayTitle}
         durationFor={formatDuration}
       />}>
-        {listErrorText ? <div className="recordings-error" role="alert">{listErrorText}</div> : null}
+        {library.listErrorText ? <div className="recordings-error" role="alert">{library.listErrorText}</div> : null}
         <RecordingsReplayPane
           client={client}
           onDelete={onDelete}
           selectedRecording={selectedRecording}
         />
     </SharedRecordingsRouteBody>
+  )
+}
+
+/**
+ * The recordings timeline as a list of its own: choosing a recording asks for
+ * its replay rather than showing it here, so the list stays as it was.
+ */
+export function RecordingsTimeline({
+  client,
+  headerAccessory,
+  isVisible,
+  onOpen,
+}: {
+  readonly client: RecordingsClient
+  /** Drawn in the header beside the refresh control, such as a server selector. */
+  readonly headerAccessory?: ReactNode
+  /** The timeline is read again each time it comes back on screen. */
+  readonly isVisible: boolean
+  readonly onOpen: (recording: Readonly<{ recordingId: string; title: string }>) => void
+}) {
+  const library = useRecordingsLibrary(client)
+  const { loadRecordings, recordings } = library
+  const wasVisible = useRef(isVisible)
+  useEffect(() => {
+    if (isVisible && !wasVisible.current) void loadRecordings()
+    wasVisible.current = isVisible
+  }, [isVisible, loadRecordings])
+
+  return (
+    <div className="recordings-timeline" data-terminay-recordings-timeline="true">
+      <SharedRecordingsLibraryPane
+        groupedRecordings={library.groupedRecordings}
+        headerAccessory={headerAccessory}
+        isLoading={library.isLoading}
+        onQueryChange={library.setQuery}
+        onRefresh={() => void loadRecordings()}
+        onSelect={(recordingId) => {
+          const recording = recordings.find((candidate) => candidate.recordingId === recordingId)
+          if (recording !== undefined) onOpen({ recordingId, title: getRecordingDisplayTitle(recording) })
+        }}
+        query={library.query}
+        recordings={recordings}
+        selectedRecordingId={null}
+        titleFor={getRecordingDisplayTitle}
+        durationFor={formatDuration}
+      />
+      {library.listErrorText ? <div className="recordings-error" role="alert">{library.listErrorText}</div> : null}
+    </div>
+  )
+}
+
+/** One recording's replay, on its own. Deleting it ends the replay. */
+export function RecordingReplay({
+  client,
+  onDeleted,
+  onTitle,
+  recordingId,
+}: {
+  readonly client: RecordingsClient
+  readonly onDeleted: () => void
+  readonly onTitle?: (title: string) => void
+  readonly recordingId: string
+}) {
+  const [recording, setRecording] = useState<TerminalRecordingListItem | null>(null)
+  const [errorText, setErrorText] = useState<string | null>(null)
+
+  useEffect(() => {
+    let current = true
+    setErrorText(null)
+    void client.list().then(
+      (result) => {
+        if (!current) return
+        const item = result.items.find((candidate) => candidate.recordingId === recordingId)
+        if (item === undefined) {
+          setRecording(null)
+          setErrorText('This recording is no longer on the server.')
+          return
+        }
+        setRecording(toRecordingMetadata(item))
+      },
+      (error: unknown) => {
+        if (current) setErrorText(error instanceof Error ? error.message : String(error))
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [client, recordingId])
+
+  useEffect(() => {
+    if (recording !== null) onTitle?.(getRecordingDisplayTitle(recording))
+  }, [onTitle, recording])
+
+  const onDelete = async () => {
+    if (recording === null || !confirm('Delete this recording?')) return
+    await client.delete(recording.recordingId)
+    onDeleted()
+  }
+
+  return (
+    <main className="recordings-main recordings-replay" data-terminay-recording-replay={recordingId}>
+      {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
+      <RecordingsReplayPane client={client} onDelete={onDelete} selectedRecording={recording} />
+    </main>
   )
 }
 

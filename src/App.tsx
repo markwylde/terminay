@@ -437,6 +437,7 @@ import {
 	HomeWorkspace,
 	type HomeWorkspaceHandle,
 } from './workspace/HomeWorkspace';
+import type { HomeSection } from './workspace/homeSection.ts';
 import {
 	type CommandBarItem,
 	CommandBarDialog,
@@ -724,6 +725,8 @@ type ProjectWorkspaceProps = {
 	macroCategories: readonly string[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
+	/** Recordings live in Home, so a project hands this one back up too. */
+	onShowRecordings: () => void;
 	/** Closing the tab in front with no tab open closes the project, when no
 	 * folder of it holds a panel either. */
 	onCloseActiveWithNoPanel: (projectId: string) => void;
@@ -1508,6 +1511,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onPopoutProject,
 			onTerminalTabDrag,
 			onShowDashboard,
+			onShowRecordings,
 			onCloseActiveWithNoPanel,
 			searchPlaces,
 			sidebarWidth,
@@ -4090,7 +4094,7 @@ const ProjectWorkspace = memo(forwardRef<
 					icon: <History size={18} strokeWidth={2.1} />,
 					id: 'open-recordings',
 					title: 'Open recordings timeline',
-					description: 'Browse and replay saved terminal recordings.',
+					description: 'Browse and replay saved terminal recordings in Home.',
 					searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
 					shortcutLabel: getCommandShortcutLabel(
 						settings.keyboardShortcuts,
@@ -4098,7 +4102,11 @@ const ProjectWorkspace = memo(forwardRef<
 						isMac,
 					),
 					onSelect: () => {
-						void auxiliaryRoutes.openRecordings();
+						// The project stays mounted behind Home, so its Command Bar
+						// has to close rather than wait to be seen again.
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						onShowRecordings();
 					},
 				},
 				{
@@ -4246,6 +4254,7 @@ const ProjectWorkspace = memo(forwardRef<
 			settings.keyboardShortcuts,
 			setProjectRootFolderToWorkingDirectory,
 			onShowDashboard,
+			onShowRecordings,
 			onToggleStatusBar,
 			isStatusBarVisible,
 			openProfileChooser,
@@ -4435,7 +4444,7 @@ const ProjectWorkspace = memo(forwardRef<
 						await startDictation();
 						break;
 					case 'open-recordings':
-						await auxiliaryRoutes.openRecordings();
+						onShowRecordings();
 						break;
 					case 'toggle-file-explorer-sidebar':
 						toggleFileExplorerSidebar();
@@ -4463,6 +4472,7 @@ const ProjectWorkspace = memo(forwardRef<
 				closeActivePanel,
 				onAddProject,
 				onShowDashboard,
+				onShowRecordings,
 				onToggleStatusBar,
 				openActiveTerminalSettings,
 				openProjectSettings,
@@ -8254,6 +8264,11 @@ function App({
 				selectHome();
 				return Promise.resolve();
 			}
+			// Recordings are a Home section, so they open there in any project.
+			if (command === 'open-recordings') {
+				openHomeSectionRef.current('recordings');
+				return Promise.resolve();
+			}
 			// The status bar belongs to the window, not to a project.
 			if (command === 'toggle-status-bar') {
 				toggleStatusBar();
@@ -8624,9 +8639,9 @@ function App({
 	const isHomeSelectedRef = useRef(isHomeSelected);
 	isHomeSelectedRef.current = isHomeSelected;
 	// Defined further down; an agent's request to show Home reaches it here.
-	const openHomeSectionRef = useRef<
-		(section: 'home' | 'tabs' | 'automations') => void
-	>(() => undefined);
+	const openHomeSectionRef = useRef<(section: HomeSection) => void>(
+		() => undefined,
+	);
 	const workspaceViewWindow: WorkspaceViewWindow<ProjectWorkspaceHandle> = {
 		projectIds: () => projectsRef.current.map((project) => project.id),
 		shownProjectId: () =>
@@ -8803,13 +8818,17 @@ function App({
 		[automationSectionServers, currentServerId, openInHome, selectHome],
 	);
 	const openHomeSection = useCallback(
-		(section: 'home' | 'tabs' | 'automations') => {
+		(section: HomeSection) => {
 			selectHome();
 			openInHome({ kind: 'section', section });
 		},
 		[openInHome, selectHome],
 	);
 	openHomeSectionRef.current = openHomeSection;
+	const showRecordings = useCallback(
+		() => openHomeSection('recordings'),
+		[openHomeSection],
+	);
 	const automationsData = useMemo<AutomationsData>(
 		() => ({
 			automations: serverAutomations,
@@ -9470,6 +9489,20 @@ function App({
 			},
 			{
 				group: 'Workspace',
+				icon: <History size={18} strokeWidth={2.1} />,
+				id: 'open-recordings',
+				title: 'Open recordings timeline',
+				description: 'Browse and replay saved terminal recordings in Home.',
+				searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'open-recordings',
+					isMac,
+				),
+				onSelect: run(() => openHomeSection('recordings')),
+			},
+			{
+				group: 'Workspace',
 				icon: <Sidebar size={18} strokeWidth={2.1} />,
 				id: 'toggle-home-sidebar',
 				title: isHomeSidebarVisible ? 'Hide sidebar' : 'Show sidebar',
@@ -9578,6 +9611,7 @@ function App({
 			);
 			if (
 				command !== 'show-dashboard' &&
+				command !== 'open-recordings' &&
 				command !== 'toggle-status-bar' &&
 				command !== 'open-command-bar' &&
 				command !== 'close-active' &&
@@ -10583,6 +10617,7 @@ function App({
 							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
+							onShowRecordings={showRecordings}
 							onCloseActiveWithNoPanel={closeProjectWithNoPanels}
 							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}

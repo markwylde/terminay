@@ -20,7 +20,7 @@ import {
 	type IDockviewPanelHeaderProps,
 	type IDockviewPanelProps,
 } from 'dockview';
-import { SquareTerminal, Workflow, X } from 'lucide-react';
+import { Film, SquareTerminal, Workflow, X } from 'lucide-react';
 import {
 	createContext,
 	forwardRef,
@@ -45,6 +45,11 @@ import {
 } from './automations/AutomationPanels';
 import type { AutomationForm } from './automations/automationsModel';
 import { HOME_SECTION_ICONS, HomeView } from './HomeView';
+import {
+	RecordingReplayPanel,
+	RecordingsListPanel,
+	type RecordingTabHost,
+} from './recordings/RecordingsPanels';
 import {
 	HOME_SECTION_LABELS,
 	HOME_SECTIONS,
@@ -80,6 +85,10 @@ type HomeTabsContextValue = Readonly<{
 	onOpenCommandBar: () => void;
 	openSection: (section: HomeSection) => void;
 	openTarget: (target: AutomationTabTarget, from?: string) => void;
+	openRecording: (
+		target: Readonly<{ serverId: string; recordingId: string }>,
+		from?: string,
+	) => void;
 	renderSection: (section: 'home' | 'tabs') => ReactNode;
 	requestClose: (id: string) => void;
 	setDirty: (id: string, dirty: boolean) => void;
@@ -99,6 +108,8 @@ function descriptorIcon(descriptor: HomeTabDescriptor): ReactNode {
 			return HOME_SECTION_ICONS[descriptor.section];
 		case 'automation-terminal':
 			return <SquareTerminal size={15} aria-hidden="true" />;
+		case 'recording':
+			return <Film size={15} aria-hidden="true" />;
 		default:
 			return <Workflow size={15} aria-hidden="true" />;
 	}
@@ -109,7 +120,14 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 	const home = useHomeTabs();
 	const { descriptor } = params;
 	const id = api.id;
-	const { forceClose, isCompact, openTarget, requestClose, setDirty } = home;
+	const {
+		forceClose,
+		isCompact,
+		openRecording,
+		openTarget,
+		requestClose,
+		setDirty,
+	} = home;
 	const host = useMemo<AutomationTabHost>(
 		() => ({
 			close: (why) => forceClose(id, why),
@@ -122,6 +140,14 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 			},
 		}),
 		[api, forceClose, id, isCompact, openTarget, requestClose, setDirty],
+	);
+	const recordingHost = useMemo<RecordingTabHost>(
+		() => ({
+			close: () => forceClose(id),
+			openRecording: (target) => openRecording(target, id),
+			setTitle: host.setTitle,
+		}),
+		[forceClose, host.setTitle, id, openRecording],
 	);
 	const data = home.automations;
 	// Every tab stays rendered; this says which are on screen.
@@ -137,12 +163,32 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 	let content: ReactNode;
 	switch (descriptor.kind) {
 		case 'section':
-			content =
-				descriptor.section === 'automations' ? (
-					<AutomationsListPanel data={data} host={host} />
-				) : (
-					home.renderSection(descriptor.section)
-				);
+			switch (descriptor.section) {
+				case 'automations':
+					content = <AutomationsListPanel data={data} host={host} />;
+					break;
+				case 'recordings':
+					content = (
+						<RecordingsListPanel
+							data={data}
+							host={recordingHost}
+							isVisible={isVisible}
+						/>
+					);
+					break;
+				default:
+					content = home.renderSection(descriptor.section);
+			}
+			break;
+		case 'recording':
+			content = (
+				<RecordingReplayPanel
+					data={data}
+					host={recordingHost}
+					serverId={descriptor.serverId}
+					recordingId={descriptor.recordingId}
+				/>
+			);
 			break;
 		case 'automation':
 			content = (
@@ -484,6 +530,22 @@ export const HomeWorkspace = forwardRef<
 		[openDescriptor],
 	);
 
+	const openRecording = useCallback(
+		(
+			target: Readonly<{ serverId: string; recordingId: string }>,
+			from?: string,
+		) =>
+			openDescriptor(
+				{
+					kind: 'recording',
+					serverId: target.serverId,
+					recordingId: target.recordingId,
+				},
+				from === undefined ? {} : { from },
+			),
+		[openDescriptor],
+	);
+
 	const openSection = useCallback(
 		(section: HomeSection) => openDescriptor({ kind: 'section', section }),
 		[openDescriptor],
@@ -639,6 +701,7 @@ export const HomeWorkspace = forwardRef<
 			forceClose,
 			isCompact,
 			onOpenCommandBar,
+			openRecording,
 			openSection,
 			openTarget,
 			renderSection,
@@ -655,6 +718,7 @@ export const HomeWorkspace = forwardRef<
 			forceClose,
 			isCompact,
 			onOpenCommandBar,
+			openRecording,
 			openSection,
 			openTarget,
 			renderSection,

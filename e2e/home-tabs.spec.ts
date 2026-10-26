@@ -19,7 +19,10 @@ import {
 
 const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
-const sectionTab = (page: Page, section: 'home' | 'tabs' | 'automations') =>
+const sectionTab = (
+	page: Page,
+	section: 'home' | 'tabs' | 'automations' | 'recordings',
+) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
 const field = (page: Page, name: string) =>
 	front(page).locator(`[data-terminay-automation-field="${name}"]`);

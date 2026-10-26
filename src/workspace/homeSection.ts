@@ -2,11 +2,16 @@
  * The sections Home's sidebar offers.
  *
  * Home is the one place in a workspace that is not a project, so it is where
- * workspace-wide things live: an overview, the tab dashboard, and automations.
- * The sidebar is a menu over exactly these three, in this order.
+ * workspace-wide things live: an overview, the tab dashboard, automations, and
+ * recordings. The sidebar is a menu over exactly these four, in this order.
  */
 
-export const HOME_SECTIONS = ['home', 'tabs', 'automations'] as const;
+export const HOME_SECTIONS = [
+	'home',
+	'tabs',
+	'automations',
+	'recordings',
+] as const;
 export type HomeSection = (typeof HOME_SECTIONS)[number];
 
 /** The overview. A device with no remembered section starts here. */
@@ -22,5 +27,6 @@ export function isHomeSection(value: unknown): value is HomeSection {
 export const HOME_SECTION_LABELS: Record<HomeSection, string> = {
 	automations: 'Automations',
 	home: 'Home',
+	recordings: 'Recordings',
 	tabs: 'Tabs',
 };
