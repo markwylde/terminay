@@ -14,6 +14,16 @@ const token = (page: Page, type: string) => page.locator(`.macro-token[data-step
 const categoryHeader = (page: Page, category: string) =>
   page.locator(`[data-macro-category="${category}"] .macro-library-category`)
 
+// Settings asks before it unloads with unsaved macros, and on Desktop that
+// question is a native dialog. Leave nothing pending for the app's teardown.
+test.afterEach(async ({ electronApp }) => {
+  for (const page of electronApp.windows()) {
+    if (page.isClosed() || !page.url().includes('auxiliary=settings')) continue
+    const discard = page.locator('.settings-detail-actions').getByRole('button', { name: 'Discard', exact: true })
+    if ((await discard.count()) > 0 && (await discard.isEnabled())) await discard.click()
+  }
+})
+
 async function newMacro(page: Page, title: string): Promise<void> {
   await page.getByRole('button', { name: 'New macro', exact: true }).click()
   await page.getByLabel('Macro name').fill(title)
@@ -788,6 +798,8 @@ test('opens Settings at a given macro', async ({ appHarness, mainWindow }) => {
 
 test('asks before closing Settings with pending macro edits', async ({ appHarness, electronApp, mainWindow }) => {
   const macros = await appHarness.openMacrosSettings(mainWindow)
+  // The native confirmation below answers the unload; Playwright must not.
+  macros.on('dialog', () => {})
   await newMacro(macros, 'Unsaved Close')
 
   // Answer the native confirmation without showing it: first keep editing,
