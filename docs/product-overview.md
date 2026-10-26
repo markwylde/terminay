@@ -56,6 +56,15 @@ and a VPS sit side by side in one tab strip.
 - **Settings, macros, and secrets** are classified by their server or client
   scope. Server state is available to every authorized client; device-local
   state and credentials remain on that client.
+- **Settings** is the one place Terminay and its servers are configured. Its
+  sidebar groups categories under General, Terminal, Connections, Automation,
+  Extensions, and System. A category that holds a list of things (Remote
+  Access, Macros, Extensions) adds a list column between the sidebar and the
+  detail. Remote Access holds this server's exposure and trusted devices and
+  the saved servers this device connects to. Workspace content a user opens
+  rather than configures, such as automations and recordings, lives in Home.
+- The first application menu is **Terminay**: New Terminal Tab, New Project,
+  and Settings. There is no File menu.
 
 ## Product pillars
 

@@ -1,5 +1,5 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
-import { SettingsListColumn } from '../../shared/SharedSettingsRouteBody'
+import { type SettingsCategoryParts, SettingsListColumn } from '../../shared/SharedSettingsRouteBody'
 import { SharedMacroLibraryPane } from '../../shared/SharedMacroLibraryPane'
 import { MacroInputsTable } from '../macros/MacroInputsTable'
 import { MacroPreview } from '../macros/MacroPreview'
@@ -7,13 +7,6 @@ import { MacroScriptEditor } from '../macros/MacroScriptEditor'
 import type { MacroEditor } from '../macros/useMacroEditor'
 
 const NEW_CATEGORY = '\u0000new'
-
-export type SettingsCategoryParts = Readonly<{
-  list: ReactNode
-  detail: ReactNode
-  detailTitle: ReactNode
-  detailActions?: ReactNode
-}>
 
 /**
  * The Macros category of Settings: the library in the list column and the
@@ -145,7 +138,7 @@ export function MacrosCategory({
         <>
           <section className="settings-section">
             <div className="settings-group">
-              <label className="settings-row">
+              <label className="settings-row settings-row--field">
                 <span className="settings-row-label">Name</span>
                 <input
                   ref={titleInput}
@@ -157,7 +150,7 @@ export function MacrosCategory({
                   placeholder="Macro name"
                 />
               </label>
-              <label className="settings-row">
+              <label className="settings-row settings-row--field">
                 <span className="settings-row-label">Description</span>
                 <input
                   className="settings-input-text"
@@ -169,7 +162,7 @@ export function MacrosCategory({
                 />
               </label>
               {canManageCategories ? (
-                <div className="settings-row macro-category-row">
+                <div className="settings-row settings-row--field macro-category-row">
                   <label className="settings-row-label" htmlFor="macro-category">Category</label>
                   {isNamingCategory ? (
                     <input

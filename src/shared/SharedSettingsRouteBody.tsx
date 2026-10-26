@@ -200,8 +200,9 @@ export function SharedSettingsRouteBody({
                       {category.icon === undefined ? null : <span className="settings-nav-icon">{category.icon}</span>}
                       <span className="settings-nav-label">{category.label}</span>
                       {category.count === undefined ? null : (
-                        <span className="settings-nav-count" aria-label={`${category.count} items`}>
+                        <span className="settings-nav-count">
                           {category.count}
+                          <span className="sr-only"> items</span>
                         </span>
                       )}
                     </span>
@@ -245,6 +246,14 @@ export function SharedSettingsRouteBody({
     </SettingsShellContext.Provider>
   )
 }
+
+/** What a collection category hands the Settings shell to draw. */
+export type SettingsCategoryParts = Readonly<{
+  list: ReactNode
+  detail: ReactNode
+  detailTitle: ReactNode
+  detailActions?: ReactNode
+}>
 
 export interface SettingsListItem {
   readonly id: string
@@ -297,9 +306,9 @@ export function SettingsListSections({
 }>) {
   const { showDetail } = useSettingsShellNavigation()
   return (
-    <div role="listbox" aria-label={label} className="settings-list-sections">
+    <nav aria-label={label} className="settings-list-sections">
       {sections.map((section) => (
-        <div key={section.id} className="settings-list-section" role="group" aria-label={section.label || undefined}>
+        <div key={section.id} className="settings-list-section">
           {section.label === '' ? null : <h3 className="settings-list-section-title">{section.label}</h3>}
           {section.items.length === 0 && section.emptyNote !== undefined ? (
             <p className="settings-list-empty">{section.emptyNote}</p>
@@ -310,8 +319,7 @@ export function SettingsListSections({
               <button
                 key={item.id}
                 type="button"
-                role="option"
-                aria-selected={selected}
+                aria-current={selected ? 'true' : undefined}
                 className={`settings-list-item${selected ? ' settings-list-item--active' : ''}`}
                 onClick={() => {
                   onSelect(item.id)
@@ -320,7 +328,11 @@ export function SettingsListSections({
               >
                 <span className="settings-list-item-label">
                   {item.label}
-                  {item.unsaved ? <span className="settings-list-item-unsaved" aria-label="Unsaved" /> : null}
+                  {item.unsaved ? (
+                    <span className="settings-list-item-unsaved">
+                      <span className="sr-only">Unsaved changes</span>
+                    </span>
+                  ) : null}
                 </span>
                 {item.status === undefined ? null : (
                   <span className="settings-list-item-status">
@@ -335,6 +347,6 @@ export function SettingsListSections({
           })}
         </div>
       ))}
-    </div>
+    </nav>
   )
 }

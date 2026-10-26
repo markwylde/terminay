@@ -43,10 +43,14 @@ import {
 	REMOTE_ACCESS_EXPOSURE_ID,
 } from '../shared/SharedConnectionsRouteBody';
 import { useConnections } from '../shared/connections/ConnectionsContext';
+import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
 import { useSettingsLeaveGuard } from '../shared/settingsLeaveGuard';
-import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
+import {
+	type SettingsCategoryParts,
+	SharedSettingsRouteBody,
+} from '../shared/SharedSettingsRouteBody';
 import { useMacroEditor } from './macros/useMacroEditor';
-import { MacrosCategory, type SettingsCategoryParts } from './settings/MacrosCategory';
+import { MacrosCategory } from './settings/MacrosCategory';
 import { groupSettingsCategories } from './settings/settingsCategoryGroups';
 import {
 	type CollectionSelection,
@@ -90,6 +94,7 @@ function toParakeetRuntimeStatus(status: {
 }
 
 import '../settings.css';
+import type { ExtensionSummaryDto } from './ExtensionManager';
 import { ExtensionSettingsSection } from './ExtensionSettingsSection';
 import { ConnectedMcpServersSettings } from './ConnectedMcpServersSettings';
 import { ShellProfilesSettings } from './ShellProfilesSettings';
@@ -626,6 +631,11 @@ export function SettingsWindow({
 			'',
 	);
 	const [query, setQuery] = useState('');
+	// Learned when Extensions is first shown; feeds its count and search.
+	const [knownExtensions, setKnownExtensions] = useState<
+		readonly ExtensionSummaryDto[] | undefined
+	>();
+	const extensionCount = knownExtensions?.length;
 	const [collectionSelection, setCollectionSelection] =
 		useState<CollectionSelection>(() =>
 			initialItemFromUrl === null || initialItemFromUrl === undefined
@@ -645,6 +655,41 @@ export function SettingsWindow({
 		macroSettingsClient ?? unavailableMacroSettingsClient,
 		activeCategoryId === 'macros',
 	);
+	// A command can ask an open Settings for another category or item (⌘; while
+	// Settings shows Appearance). The first request is the initial state above.
+	const lastRequest = useRef({ section: initialSectionId, item: initialItemId });
+	useEffect(() => {
+		const previous = lastRequest.current;
+		if (previous.section === initialSectionId && previous.item === initialItemId)
+			return;
+		lastRequest.current = { section: initialSectionId, item: initialItemId };
+		if (initialSectionId === undefined) return;
+		const categoryId =
+			initialSectionId === 'extensions' ||
+			initialSectionId === 'diagnostics' ||
+			initialSectionId === 'macros' ||
+			initialSectionId === 'remote'
+				? initialSectionId
+				: terminalSettingsSections.find((section) => section.id === initialSectionId)
+						?.categoryId;
+		if (categoryId === undefined) return;
+		setQuery('');
+		setActiveCategoryId(categoryId);
+		if (initialItemId !== undefined) {
+			if (categoryId === 'macros') {
+				if (macroEditor.draft.macros.some((macro) => macro.id === initialItemId))
+					macroEditor.selectMacro(initialItemId);
+				else pendingMacroId.current = initialItemId;
+			}
+			else setCollectionSelection((current) => rememberSelection(current, categoryId, initialItemId));
+		}
+		if (categoryId !== initialSectionId) {
+			setActiveSectionId(initialSectionId);
+			setTimeout(() => scrollToSection(initialSectionId), 0);
+		}
+		// Only a new request navigates; the editor's later changes do not.
+	}, [initialItemId, initialSectionId]);
+
 	// The editor holds the Macros selection itself. A macro named when Settings
 	// opened is selected once the library has arrived.
 	const pendingMacroId = useRef(
@@ -664,11 +709,20 @@ export function SettingsWindow({
 	const [leaveRequest, setLeaveRequest] = useState<{
 		resolve: (proceed: boolean) => void;
 	} | null>(null);
+	const pendingLeave = useRef<Promise<boolean> | null>(null);
 	const confirmLeave = useCallback((): Promise<boolean> => {
 		if (!macroEditor.isDirty) return Promise.resolve(true);
+		// A second close while the prompt is up waits on the same answer.
+		if (pendingLeave.current !== null) return pendingLeave.current;
 		setActiveCategoryId('macros');
 		setQuery('');
-		return new Promise((resolve) => setLeaveRequest({ resolve }));
+		const answer = new Promise<boolean>((resolve) =>
+			setLeaveRequest({ resolve }),
+		).finally(() => {
+			pendingLeave.current = null;
+		});
+		pendingLeave.current = answer;
+		return answer;
 	}, [macroEditor.isDirty]);
 	useSettingsLeaveGuard(confirmLeave);
 	const settleLeave = async (choice: 'save' | 'discard' | 'keep') => {
@@ -976,6 +1030,17 @@ export function SettingsWindow({
 					),
 		[normalizedQuery, renderRemoteAccess, savedServers],
 	);
+	const extensionMatches = useMemo(
+		() =>
+			!normalizedQuery
+				? []
+				: (knownExtensions ?? []).filter((extension) =>
+						`${extension.displayName} ${extension.packageName}`
+							.toLowerCase()
+							.includes(normalizedQuery),
+					),
+		[knownExtensions, normalizedQuery],
+	);
 	const macrosQueryMatches =
 		'macros automation snippets'.includes(normalizedQuery) ||
 		macroMatches.length > 0;
@@ -1001,11 +1066,14 @@ export function SettingsWindow({
 			...(diagnosticsAvailable && diagnosticsQueryMatches
 				? [diagnosticsSettingsCategory]
 				: []),
-			...(extensionsQueryMatches ? [extensionSettingsCategory] : []),
+			...(extensionsQueryMatches || extensionMatches.length > 0
+				? [extensionSettingsCategory]
+				: []),
 		];
 	}, [
 		diagnosticsAvailable,
 		diagnosticsQueryMatches,
+		extensionMatches.length,
 		extensionsQueryMatches,
 		filteredSections,
 		macrosAvailable,
@@ -1026,17 +1094,14 @@ export function SettingsWindow({
 					...(macrosAvailable && macroEditor.isReady
 						? { macros: macroEditor.draft.macros.length }
 						: {}),
-					...(renderRemoteAccess === undefined
-						? {}
-						: { remote: savedServers.length }),
+					...(extensionCount === undefined ? {} : { extensions: extensionCount }),
 				},
 			),
 		[
 			macroEditor.draft.macros.length,
 			macroEditor.isReady,
 			macrosAvailable,
-			renderRemoteAccess,
-			savedServers.length,
+			extensionCount,
 			visibleCategories,
 		],
 	);
@@ -2342,19 +2407,13 @@ export function SettingsWindow({
 
 	const leavePrompt =
 		leaveRequest === null ? undefined : (
-			<div className="settings-modal-backdrop">
-				<div
-					className="settings-modal settings-leave-prompt"
-					role="alertdialog"
-					aria-modal="true"
-					aria-labelledby="settings-leave-title"
-					onKeyDown={(event) => {
-						if (event.key === 'Escape') {
-							event.stopPropagation();
-							void settleLeave('keep');
-						}
-					}}
-				>
+			<InPageWindow
+				kind={{ resizable: false, width: 420 }}
+				name="settings-leave"
+				title="Unsaved Macros"
+				onClose={() => void settleLeave('keep')}
+			>
+				<div className="settings-leave-prompt" role="alertdialog" aria-labelledby="settings-leave-title">
 					<h2 id="settings-leave-title">Save changes to your macros?</h2>
 					<p>{macroEditor.saveState}. Unsaved edits are lost if you leave now.</p>
 					<div className="settings-inline-actions settings-modal-actions">
@@ -2382,7 +2441,7 @@ export function SettingsWindow({
 						</button>
 					</div>
 				</div>
-			</div>
+			</InPageWindow>
 		);
 
 	const statusText = isSaving
@@ -2410,10 +2469,13 @@ export function SettingsWindow({
 	};
 
 	/** Opens a collection category with one of its items selected. */
-	const openCollectionItem = (categoryId: 'macros' | 'remote', itemId: string) => {
+	const openCollectionItem = (
+		categoryId: 'macros' | 'remote' | 'extensions',
+		itemId: string,
+	) => {
 		openCategory(categoryId);
 		if (categoryId === 'macros') macroEditor.selectMacro(itemId);
-		else selectCollectionItem('remote', itemId);
+		else selectCollectionItem(categoryId, itemId);
 	};
 
 	const renderShell = (
@@ -2498,9 +2560,51 @@ export function SettingsWindow({
 		);
 	}
 
+	const onHarnessSwitchChange = (key: string, enabled: boolean) => {
+		const current = draftRef.current;
+		// Committed before it shows, like a shortcut: closing Settings
+		// must not abandon a switch that only looked saved.
+		void saveDraft(
+			{
+				...current,
+				agentIntegration: {
+					...current.agentIntegration,
+					harnesses: {
+						...current.agentIntegration.harnesses,
+						[key]: enabled,
+					},
+				},
+			},
+			false,
+		);
+	};
+
+	if (!normalizedQuery && activeCategoryId === 'extensions') {
+		return (
+			<ExtensionSettingsSection
+				applicationClient={applicationClient}
+				serverName={serverIdentity}
+				harnessSwitches={draft.agentIntegration.harnesses}
+				onHarnessSwitchChange={onHarnessSwitchChange}
+				collection={{
+					...(collectionSelection.extensions === undefined
+						? {}
+						: { selectedId: collectionSelection.extensions }),
+					onSelect: (id) => selectCollectionItem('extensions', id),
+					onExtensionsChange: setKnownExtensions,
+					render: ({ detail, ...parts }) =>
+						renderShell(detail, parts, 'Extensions'),
+				}}
+			/>
+		);
+	}
+
 	return renderShell(
 		<>
-			{normalizedQuery && (macroMatches.length > 0 || serverMatches.length > 0) ? (
+			{normalizedQuery &&
+			(macroMatches.length > 0 ||
+				serverMatches.length > 0 ||
+				extensionMatches.length > 0) ? (
 				<section className="settings-section" aria-label="Matching items">
 					<h3 className="settings-section-title">Items</h3>
 					<div className="settings-group">
@@ -2529,6 +2633,19 @@ export function SettingsWindow({
 									<span className="settings-row-description">
 										Remote Access · Saved servers
 									</span>
+								</span>
+							</button>
+						))}
+						{extensionMatches.map((extension) => (
+							<button
+								key={`extension:${extension.id}`}
+								type="button"
+								className="settings-row settings-row--button"
+								onClick={() => openCollectionItem('extensions', extension.id)}
+							>
+								<span className="settings-row-info">
+									<span className="settings-row-label">{extension.displayName}</span>
+									<span className="settings-row-description">Extensions</span>
 								</span>
 							</button>
 						))}
@@ -2571,21 +2688,7 @@ export function SettingsWindow({
 					applicationClient={applicationClient}
 					serverName={serverIdentity}
 					harnessSwitches={draft.agentIntegration.harnesses}
-					onHarnessSwitchChange={(key, enabled) => {
-						const current = draftRef.current;
-						// Committed before it shows, like a shortcut: closing Settings
-						// must not abandon a switch that only looked saved.
-						void saveDraft({
-							...current,
-							agentIntegration: {
-								...current.agentIntegration,
-								harnesses: {
-									...current.agentIntegration.harnesses,
-									[key]: enabled,
-								},
-							},
-						}, false);
-					}}
+					onHarnessSwitchChange={onHarnessSwitchChange}
 				/>
 			) : null}
 			{displayedCategories.map((cat) => {

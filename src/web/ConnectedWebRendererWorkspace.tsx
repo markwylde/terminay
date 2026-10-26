@@ -94,7 +94,7 @@ type BrowserAuxiliaryRoute = 'settings' | 'about';
 
 /** Which native title bar a Desktop auxiliary window draws over its content. */
 function nativeTitlebarKind(): 'mac' | 'overlay' | undefined {
-	if (window.terminayHost === undefined) return undefined;
+	if (!window.terminayHost) return undefined;
 	const platform = navigator.platform.toLowerCase();
 	if (platform.includes('mac')) return 'mac';
 	if (platform.includes('win')) return 'overlay';

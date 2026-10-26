@@ -8,7 +8,7 @@ test('canonical renderer contains no recording or macro compatibility adapter', 
   const [recordings, controller, macros, macroHook, browserAdapters, declarations] = await Promise.all([
     read('src/components/RecordingsWindow.tsx'),
     read('src/workspace/useTerminalRecordingController.ts'),
-    read('src/components/MacrosWindow.tsx'),
+    read('src/components/macros/useMacroEditor.ts'),
     read('src/hooks/useMacroSettings.ts'),
     read('src/web/browserRendererHostAdapters.ts'),
     read('src/vite-env.d.ts'),

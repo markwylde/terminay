@@ -239,7 +239,7 @@ test('runs customized app shortcuts from the keyboard', async ({ appHarness, mai
 })
 
 test('opens the macros window', async ({ appHarness, mainWindow }) => {
-  const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
+  const macrosWindow = await appHarness.openMacrosSettings(mainWindow)
 
   await expect(macrosWindow.getByRole('heading', { name: 'Macros' })).toBeVisible()
   await expect(macrosWindow.getByRole('button', { name: 'New macro', exact: true })).toBeVisible()
@@ -248,7 +248,7 @@ test('opens the macros window', async ({ appHarness, mainWindow }) => {
 })
 
 test('persists server-owned macro edits across child-window reopen', async ({ appHarness, mainWindow }) => {
-  const openMacros = () => appHarness.openMacrosWindow(mainWindow)
+  const openMacros = () => appHarness.openMacrosSettings(mainWindow)
   const title = `Persistent Macro ${Date.now()}`
   const firstWindow = await openMacros()
   await firstWindow.getByRole('button', { name: 'New macro', exact: true }).click()

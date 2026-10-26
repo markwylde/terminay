@@ -87,12 +87,13 @@ export async function presentNativeRoute(
 export async function openSettingsWindow(
   electronApp: ElectronApplication,
   page: Page,
-  options?: { sectionId?: string },
+  options?: { sectionId?: string; itemId?: string },
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
     const section = options?.sectionId
     const params = new URLSearchParams({ auxiliary: 'settings' })
     if (section) params.set('section', section)
+    if (options?.itemId) params.set('item', options.itemId)
     await presentNativeRoute(
       page,
       `/?${params.toString()}`,
@@ -101,29 +102,18 @@ export async function openSettingsWindow(
   })
 }
 
-export async function openRecordingsWindow(
+/** Settings › Macros, where macros are managed. */
+export async function openMacrosSettings(
   electronApp: ElectronApplication,
   page: Page,
 ): Promise<Page> {
-  return openChildWindow(electronApp, () =>
-    presentNativeRoute(page, '/?auxiliary=recordings', 'recordings'),
-  )
+  return openSettingsWindow(electronApp, page, { sectionId: 'macros' })
 }
 
-export async function openMacrosWindow(
+/** Settings › Remote Access, where exposure and saved servers are managed. */
+export async function openRemoteAccessSettings(
   electronApp: ElectronApplication,
   page: Page,
 ): Promise<Page> {
-  return openChildWindow(electronApp, () =>
-    presentNativeRoute(page, '/?auxiliary=macros', 'macros'),
-  )
-}
-
-export async function openRemoteControlWindow(
-  electronApp: ElectronApplication,
-  page: Page,
-): Promise<Page> {
-  return openChildWindow(electronApp, () =>
-    presentNativeRoute(page, '/?auxiliary=remote-control', 'remote-control'),
-  )
+  return openSettingsWindow(electronApp, page, { sectionId: 'remote' })
 }

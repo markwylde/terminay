@@ -36,6 +36,32 @@ export type ExtensionSummaryDto = Readonly<{
 	worktreeInsights?: readonly Readonly<{ id: string; displayName: string }>[];
 }>;
 
+/** The Install item of the Extensions list column. */
+export const EXTENSIONS_INSTALL_ID = '__install__';
+
+/** One line under an extension's name in the Extensions list column. */
+export function extensionListStatus(extension: ExtensionSummaryDto): {
+	status: string;
+	tone: 'ok' | 'warn' | 'off' | 'bad';
+} {
+	switch (extension.state) {
+		case 'installed':
+			return { status: 'On', tone: 'ok' };
+		case 'disabled':
+			return { status: 'Off', tone: 'off' };
+		case 'available':
+			return { status: 'Not installed', tone: 'off' };
+		case 'pending':
+			return { status: 'Working…', tone: 'warn' };
+		case 'incompatible':
+			return { status: 'Incompatible', tone: 'bad' };
+		case 'quarantined':
+			return { status: 'Quarantined', tone: 'bad' };
+		case 'failed':
+			return { status: 'Failed', tone: 'bad' };
+	}
+}
+
 /** Settings key of one harness switch: `<sourceId>/<harnessId>`. */
 export function harnessSwitchKey(sourceId: string, harnessId: string): string {
 	return `${sourceId}/${harnessId}`;
@@ -62,7 +88,10 @@ export function ExtensionManager({
 	onHarnessSwitchChange,
 	suppressedSignInPrompts,
 	onSignInPromptsChange,
+	selectedId,
 }: Readonly<{
+	/** In the Settings detail pane: the Install item, or one extension. Absent shows everything. */
+	selectedId?: string;
 	embedded?: boolean;
 	extensions: readonly ExtensionSummaryDto[];
 	serverName: string;
@@ -141,6 +170,51 @@ export function ExtensionManager({
 		}
 	};
 
+	const card = (extension: ExtensionSummaryDto) => (
+		<ExtensionCard
+			key={extension.id}
+			extension={extension}
+			busy={busy}
+			onInstall={() => void previewPackage(extension.packageName)}
+			onUpdate={() => void previewPackage(`${extension.packageName}@latest`, extension.id)}
+			onAction={(action) => void act(action, extension.id)}
+			harnessSwitches={harnessSwitches}
+			onHarnessSwitchChange={onHarnessSwitchChange}
+			signInPromptsEnabled={!suppressedSignInPrompts?.has(extension.id)}
+			onSignInPromptsChange={onSignInPromptsChange}
+		/>
+	);
+	const review = (
+		<>
+			{preview === null ? null : (
+				<ExtensionPreview
+					preview={preview}
+					serverName={serverName}
+					update={previewUpdateId !== null}
+					onCancel={() => {
+						setPreview(null);
+						setPreviewUpdateId(null);
+					}}
+					onConfirm={confirmPreview}
+				/>
+			)}
+			{completion ? <div className="settings-status-message" role="status">{completion}</div> : null}
+		</>
+	);
+	const selected =
+		selectedId === undefined || selectedId === EXTENSIONS_INSTALL_ID
+			? undefined
+			: extensions.find((extension) => extension.id === selectedId);
+	if (selected !== undefined) {
+		return (
+			<div className="extension-settings" aria-busy={busy}>
+				{review}
+				<section className="settings-section">{card(selected)}</section>
+			</div>
+		);
+	}
+	const installOnly = selectedId !== undefined;
+
 	return (
 		<div className="extension-settings" aria-busy={busy}>
 			<section className="settings-section">
@@ -194,21 +268,9 @@ export function ExtensionManager({
 				</div>
 			</section>
 
-			{preview === null ? null : (
-				<ExtensionPreview
-					preview={preview}
-					serverName={serverName}
-					update={previewUpdateId !== null}
-					onCancel={() => {
-						setPreview(null);
-						setPreviewUpdateId(null);
-					}}
-					onConfirm={confirmPreview}
-				/>
-			)}
-			{completion ? <div className="settings-status-message" role="status">{completion}</div> : null}
+			{review}
 
-			<section className="settings-section">
+			{installOnly ? null : <section className="settings-section">
 				<div className="settings-section-title-row">
 					<h3 className="settings-section-title">Installed extensions</h3>
 					<input
@@ -221,23 +283,10 @@ export function ExtensionManager({
 					/>
 				</div>
 				<div className="extension-card-list">
-					{filtered.map((extension) => (
-						<ExtensionCard
-							key={extension.id}
-							extension={extension}
-							busy={busy}
-							onInstall={() => void previewPackage(extension.packageName)}
-							onUpdate={() => void previewPackage(`${extension.packageName}@latest`, extension.id)}
-							onAction={(action) => void act(action, extension.id)}
-							harnessSwitches={harnessSwitches}
-							onHarnessSwitchChange={onHarnessSwitchChange}
-							signInPromptsEnabled={!suppressedSignInPrompts?.has(extension.id)}
-							onSignInPromptsChange={onSignInPromptsChange}
-						/>
-					))}
+					{filtered.map(card)}
 					{filtered.length === 0 ? <p className="settings-empty-state">No matching extensions.</p> : null}
 				</div>
-			</section>
+			</section>}
 		</div>
 	);
 }

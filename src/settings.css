@@ -579,13 +579,6 @@
   padding-inline: var(--settings-inset);
 }
 
-.macros-content {
-  max-width: none;
-  width: 100%;
-  margin: 0;
-  padding: 32px 64px;
-}
-
 .settings-hero {
   display: flex;
   align-items: flex-start;
@@ -1243,11 +1236,12 @@
   font-size: 11px;
 }
 
-@media (max-width: 1100px) {
+/* Rows stack when the detail pane, not the viewport, gets narrow. */
+@container settings-detail (max-width: 600px) {
   .settings-row {
     align-items: stretch;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--settings-space-3);
   }
 
   .settings-row-control {
@@ -1812,27 +1806,7 @@
   min-height: 0;
 }
 
-@media (max-width: 768px) {
-  .settings-shell {
-    flex-direction: column;
-  }
-
-  .settings-sidebar {
-    width: 100%;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--settings-border);
-  }
-
-  .settings-nav {
-    display: none;
-  }
-
-  .settings-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 16px;
-  }
+@container settings-detail (max-width: 520px) {
 
   .settings-remote-panel-header,
   .settings-remote-panel-header-actions,
@@ -1888,57 +1862,6 @@
 	font-size: 1.05em;
 	font-weight: 600;
 	letter-spacing: 0.2em;
-}
-
-/* Macros window: library, script editor, and a preview beside or below it. */
-.macros-shell {
-  container-type: inline-size;
-}
-
-.macros-workspace {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-}
-
-.macros-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.macros-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.macros-main .macros-content {
-  padding: 28px 40px;
-}
-
-.macros-aside {
-  width: 320px;
-  flex-shrink: 0;
-  overflow-y: auto;
-  padding: 28px 18px;
-  border-left: 1px solid var(--settings-border);
-  background: var(--settings-sidebar-bg);
-}
-
-@container (max-width: 1080px) {
-  .macros-workspace {
-    flex-direction: column;
-  }
-
-  .macros-aside {
-    width: auto;
-    max-height: 42%;
-    padding: 18px 40px;
-    border-left: 0;
-    border-top: 1px solid var(--settings-border);
-  }
 }
 
 .macro-library {
@@ -2536,13 +2459,11 @@
   color: var(--settings-accent);
 }
 
+/* The macro save state and its actions sit in the detail header band. */
 .macro-save-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 40px;
-  border-top: 1px solid var(--settings-border);
-  background: var(--settings-card-bg);
+  gap: var(--settings-space-2);
 }
 
 .macro-save-state {
@@ -2565,13 +2486,178 @@
   background: var(--settings-accent);
 }
 
-.macro-save-error {
-  flex: 1;
-  min-width: 0;
-  color: var(--settings-danger);
+
+
+/* Collection details: status pill, address, detail buttons, add action. */
+.settings-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--settings-space-2);
+  padding: 2px var(--settings-space-2);
+  border: 1px solid var(--settings-border);
+  border-radius: 999px;
+  color: var(--settings-text);
   font-size: 12px;
+  text-transform: capitalize;
+  white-space: nowrap;
 }
 
-.macro-save-bar .settings-inline-actions {
-  margin-left: auto;
+.settings-status-pill .settings-status-dot {
+  margin: 0;
+}
+
+.settings-code {
+  padding: 2px var(--settings-space-2);
+  border-radius: 4px;
+  background: var(--settings-code-bg, var(--settings-nav-hover));
+  color: var(--settings-code-text, var(--settings-text));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-detail-buttons {
+  margin-top: var(--settings-space-4);
+  flex-wrap: wrap;
+}
+
+.settings-list-add-button {
+  height: 28px;
+  padding: 0 var(--settings-space-3);
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--settings-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-list-add-button:hover:not(:disabled) {
+  background: var(--settings-nav-hover);
+}
+
+.settings-list-add-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Search results that open a collection item. */
+.settings-row--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-row--button:hover {
+  background: var(--settings-nav-hover);
+}
+
+.settings-search-category-title {
+  margin: var(--settings-space-5) 0 var(--settings-space-3);
+}
+
+/* Save, discard or keep editing before Settings closes. */
+.settings-leave-prompt {
+  padding: var(--settings-space-5);
+  color: var(--settings-text);
+}
+
+.settings-leave-prompt h2 {
+  margin: 0 0 var(--settings-space-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-leave-prompt p {
+  margin: 0;
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-modal-actions {
+  justify-content: flex-end;
+  margin-top: var(--settings-space-5);
+}
+
+/* The macro library inside the list column keeps the list's inset. */
+.macro-library--embedded {
+  padding: 0;
+}
+
+.macro-library--embedded .settings-list-toolbar {
+  padding: 0 0 var(--settings-space-2);
+}
+
+
+
+/* Readable device names; the full user agent on request. */
+.settings-remote-device-agent {
+  margin-top: var(--settings-space-1);
+  color: var(--settings-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.settings-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--settings-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-link-button:hover {
+  text-decoration: underline;
+}
+
+/* The detail pane is the container its rows respond to. */
+.settings-main {
+  container: settings-detail / inline-size;
+}
+
+/* Quiet scrollbars in every column. */
+.settings-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--settings-border) transparent;
+}
+
+/* A labelled field: the label keeps one width so inputs line up. */
+.settings-row--field {
+  justify-content: flex-start;
+}
+
+.settings-row--field > .settings-row-label {
+  flex: 0 0 112px;
+  margin: 0;
+}
+
+.settings-row--field > input,
+.settings-row--field > select {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row--field > select {
+  flex: 0 1 240px;
+}
+
+@container settings-detail (max-width: 600px) {
+  .settings-row.settings-row--field {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-row--field > .settings-row-label {
+    flex-basis: 88px;
+  }
 }
