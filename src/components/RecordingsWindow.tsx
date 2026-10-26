@@ -642,6 +642,7 @@ export function RecordingsTimeline({
         selectedRecordingId={null}
         titleFor={getRecordingDisplayTitle}
         durationFor={formatDuration}
+        layout="page"
       />
       {library.listErrorText ? <div className="recordings-error" role="alert">{library.listErrorText}</div> : null}
     </div>
