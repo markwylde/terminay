@@ -16,6 +16,7 @@ export interface GiteaPullRequest {
 	title?: unknown;
 	html_url?: unknown;
 	draft?: unknown;
+	merged?: unknown;
 	mergeable?: unknown;
 	head?: {
 		ref?: unknown;
@@ -33,10 +34,6 @@ export interface GiteaCommitStatus {
 }
 
 /**
- * The open pull request whose head is this worktree's upstream branch in
- * this repository. A fork's pull request with the same branch name is not it.
- */
-/**
  * The remote branch a worktree follows: its configured upstream, else the
  * same-named branch, as a pull without an upstream does. A detached worktree
  * follows nothing.
@@ -45,6 +42,12 @@ export function trackedBranch(worktree: RepositoryWorktree): string | undefined 
 	return worktree.upstream?.branch ?? worktree.branch ?? undefined;
 }
 
+/**
+ * The first pull request in `pulls` whose head is this worktree's tracked
+ * branch in this repository. A fork's pull request with the same branch name
+ * is not it. Callers list open pull requests before merged ones, so an open
+ * pull request wins.
+ */
 export function matchPullRequest(
 	pulls: readonly GiteaPullRequest[],
 	worktree: RepositoryWorktree,
@@ -79,7 +82,7 @@ export function toPullRequest(
 		number: pull.number as number,
 		title: pull.title.slice(0, 512),
 		url: pull.html_url,
-		state: draft ? 'draft' : 'open',
+		state: pull.merged === true ? 'merged' : draft ? 'draft' : 'open',
 		...(typeof pull.mergeable === 'boolean'
 			? { mergeable: pull.mergeable }
 			: {}),

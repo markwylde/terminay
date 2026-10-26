@@ -258,12 +258,22 @@ class GiteaInsightSession {
 		token: string,
 	): Promise<void> {
 		const base = `/repos/${encodeURIComponent(forge.owner)}/${encodeURIComponent(forge.repo)}`;
-		const pulls = await this.get(
-			forge.origin,
-			`${base}/pulls?state=open&limit=50`,
-			token,
-		);
-		const pullList = Array.isArray(pulls) ? (pulls as GiteaPullRequest[]) : [];
+		// Open pull requests come first so they win over a merged one for the
+		// same branch; closed pull requests that were not merged are not shown.
+		const [open, closed] = await Promise.all([
+			this.get(forge.origin, `${base}/pulls?state=open&limit=50`, token),
+			this.get(
+				forge.origin,
+				`${base}/pulls?state=closed&sort=recentupdate&limit=50`,
+				token,
+			),
+		]);
+		const pullList = [
+			...(Array.isArray(open) ? (open as GiteaPullRequest[]) : []),
+			...(Array.isArray(closed)
+				? (closed as GiteaPullRequest[]).filter((pull) => pull.merged === true)
+				: []),
+		];
 		const worktrees = watcher.context.worktrees;
 		const results = await Promise.all(
 			worktrees.map(async (worktree) => {
