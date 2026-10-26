@@ -640,27 +640,142 @@
   -webkit-app-region: no-drag;
 }
 
-/* Recordings as a Home section: the timeline fills its tab. */
+/* Recordings as a Home section: a full page in the Tabs and Automations voice. */
 .recordings-timeline {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  color: var(--settings-text);
-  background: var(--settings-bg);
-  font-family: var(--settings-font);
+  color: #dce2f0;
+  background: var(--terminal-panel-surface, #0f1318);
 }
 
-.recordings-timeline .recordings-sidebar {
+.recordings-page {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
-  border-right: 0;
-  background: transparent;
 }
 
-.recordings-timeline .recordings-header {
-  padding-top: 16px;
-  -webkit-app-region: no-drag;
+.recordings-page__search {
+  max-width: 320px;
+}
+
+.recordings-page__search .workspace-dashboard__filter-input {
+  width: 240px;
+}
+
+.recordings-page__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.recordings-page__refresh:hover {
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.recordings-page__refresh:focus-visible {
+  outline: 1px solid rgba(120, 170, 255, 0.75);
+  outline-offset: -1px;
+}
+
+.recordings-page__group + .recordings-page__group {
+  margin-top: 10px;
+}
+
+.recordings-page__group-head {
+  height: 28px;
+  margin: 0;
+  padding: 6px 10px 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(220, 226, 240, 0.5);
+}
+
+/* Colour, title, where it ran, then the fixed-width time, length and state. */
+.recordings-page__row {
+  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) 56px 64px 88px;
+  gap: 10px;
+  height: 32px;
+}
+
+.recordings-page__title {
+  font-weight: 600;
+}
+
+.recordings-page__time {
+  font-size: 11.5px;
+  text-align: right;
+  color: rgba(220, 226, 240, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.recordings-page__state {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.recordings-page__row .recordings-list-item__state {
+  text-transform: capitalize;
+}
+
+.recordings-page__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 420px;
+  margin: 72px auto 24px;
+  text-align: center;
+}
+
+.recordings-page__empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(220, 226, 240, 0.7);
+}
+
+.recordings-page__empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #dce2f0;
+}
+
+.recordings-page__empty-text {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(220, 226, 240, 0.55);
+}
+
+@media (max-width: 640px) {
+  .recordings-page__row {
+    grid-template-columns: 3px minmax(0, 1fr) 64px 88px;
+  }
+
+  .recordings-page__row .workspace-dashboard__row-detail,
+  .recordings-page__row .recordings-page__started {
+    display: none;
+  }
 }
 
 .recordings-replay {
@@ -670,12 +785,12 @@
 }
 
 .recordings-server-select {
-  min-height: 34px;
+  height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--settings-input-border);
+  border: 0;
   border-radius: 6px;
-  color: var(--settings-text);
-  background: var(--settings-input-bg);
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.06);
   font: inherit;
   font-size: 12px;
 }

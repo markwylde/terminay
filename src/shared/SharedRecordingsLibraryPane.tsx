@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { Film, RefreshCw, Search } from 'lucide-react'
 import type { TerminalRecordingListItem } from '../types/terminay'
 
 export type RecordingGroup = readonly [string, readonly TerminalRecordingListItem[]]
@@ -21,6 +21,7 @@ export function SharedRecordingsLibraryPane({
   selectedRecordingId,
   titleFor,
   durationFor,
+  layout = 'sidebar',
 }: Readonly<{
   groupedRecordings: readonly RecordingGroup[]
   /** Drawn in the header before the refresh control. */
@@ -34,7 +35,93 @@ export function SharedRecordingsLibraryPane({
   selectedRecordingId: string | null
   titleFor: (recording: TerminalRecordingListItem) => string
   durationFor: (durationMs: number | null) => string
+  /** `page` fills a Home tab, in the voice of the other Home pages; `sidebar` is a narrow list beside a replay. */
+  layout?: 'sidebar' | 'page'
 }>) {
+  if (layout === 'page')
+    return (
+      <section className="recordings-page" data-shared-route-body="recordings-library">
+        <header className="workspace-dashboard__header">
+          <div className="workspace-dashboard__header-top">
+            <div className="workspace-dashboard__heading-box">
+              <h2 className="workspace-dashboard__heading">Recordings</h2>
+              <p className="workspace-dashboard__subheading">
+                {recordings.length} saved session{recordings.length === 1 ? '' : 's'}. Open one to replay it in its own tab.
+              </p>
+            </div>
+            <div className="workspace-dashboard__controls">
+              <label className="workspace-dashboard__filter recordings-page__search">
+                <Search aria-hidden="true" size={13} />
+                <input
+                  aria-label="Search recordings"
+                  className="workspace-dashboard__filter-input"
+                  value={query}
+                  onChange={(event) => onQueryChange(event.target.value)}
+                  placeholder="Search recordings"
+                  type="search"
+                />
+              </label>
+              {headerAccessory}
+              <button type="button" className="recordings-page__refresh" onClick={onRefresh} aria-label="Refresh recordings">
+                <RefreshCw size={13} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </header>
+        <div className="workspace-dashboard__list recordings-page__list">
+          {isLoading && recordings.length === 0 ? (
+            <p className="workspace-dashboard__empty" role="status">Loading recordings…</p>
+          ) : null}
+          {!isLoading && recordings.length === 0 ? (
+            <div className="recordings-page__empty">
+              <div className="recordings-page__empty-icon" aria-hidden="true">
+                <Film size={20} />
+              </div>
+              <h3 className="recordings-page__empty-title">No recordings yet</h3>
+              <p className="recordings-page__empty-text">
+                Start recording from a terminal tab’s menu, or record every new terminal from Settings › Recording.
+              </p>
+            </div>
+          ) : null}
+          {!isLoading && recordings.length > 0 && groupedRecordings.length === 0 ? (
+            <p className="workspace-dashboard__empty">No recordings match “{query}”.</p>
+          ) : null}
+          {groupedRecordings.map(([date, items]) => (
+            <section key={date} className="recordings-page__group" aria-label={date}>
+              <h3 className="recordings-page__group-head">{date}</h3>
+              {items.map((recording) => (
+                <button
+                  key={recording.recordingId}
+                  type="button"
+                  className="workspace-dashboard__row recordings-list-item recordings-page__row"
+                  onClick={() => onSelect(recording.recordingId)}
+                >
+                  <span
+                    className="workspace-dashboard__swatch"
+                    style={recording.projectColor === null ? undefined : { ['--row-color' as string]: recording.projectColor }}
+                    aria-hidden="true"
+                  />
+                  <span className="workspace-dashboard__title recordings-page__title">{titleFor(recording)}</span>
+                  <span className="workspace-dashboard__row-detail">
+                    {[recording.projectTitle, recording.cwdLabel ?? 'Unknown folder', recording.shellName].filter(Boolean).join(' · ')}
+                  </span>
+                  <span className="recordings-page__time recordings-page__started">{formatStartTime(recording.startedAt)}</span>
+                  <span className="recordings-page__time">{durationFor(recording.durationMs)}</span>
+                  <span className="recordings-page__state">
+                    {recording.recordingState === 'completed' ? null : (
+                      <span className={`recordings-list-item__state recordings-list-item__state--${recording.recordingState}`}>
+                        {recording.recordingState}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </section>
+          ))}
+        </div>
+      </section>
+    )
+
   return (
     <aside className="recordings-sidebar" data-shared-route-body="recordings-library">
       <header className="recordings-header">
@@ -85,4 +172,9 @@ export function SharedRecordingsLibraryPane({
       </div>
     </aside>
   )
+}
+
+function formatStartTime(startedAt: string): string {
+  const date = new Date(startedAt)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
