@@ -1,27 +1,42 @@
 import { expect, test } from './fixtures';
 import { openRemoteMenu } from './support/ui';
 
-test('Electron opens Remote Control as a full auxiliary window', async ({
+test('Electron opens Remote Access as a category of the Settings window', async ({
 	appHarness,
 	mainWindow,
 }) => {
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	const manager = await appHarness.openRemoteAccessSettings(mainWindow);
-	await expect(manager.locator('.remote-control-window')).toBeVisible();
 	await expect(manager.locator('.settings-sidebar')).toBeVisible();
+	await expect(manager.locator('.settings-list-column')).toBeVisible();
 	await expect(manager.locator('.settings-content')).toBeVisible();
 	await expect(
-		manager.getByRole('heading', { name: 'Remote Control' }),
+		manager.getByRole('heading', { name: 'Settings', level: 1 }),
 	).toBeVisible();
-	await expect(manager.locator('[role="dialog"]')).toHaveCount(0);
-	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
-		'remote-control',
-	);
 	await expect(
-		manager.getByRole('listbox', { name: 'Saved Terminay servers' }),
-	).toHaveCount(1);
+		manager.locator('.settings-nav-item--active'),
+	).toContainText('Remote Access');
+	await expect(manager.locator('[role="dialog"]')).toHaveCount(0);
+	const url = new URL(manager.url()).searchParams;
+	expect(url.get('auxiliary')).toBe('settings');
+	expect(url.get('section')).toBe('remote');
+	const list = manager.getByRole('navigation', { name: 'Remote Access' });
+	await expect(list.locator('.settings-list-section-title')).toHaveText([
+		'This server',
+		'Saved servers',
+	]);
+	// This server is selected first, with its exposure and its options together.
+	await expect(list.locator('[aria-current="true"]')).toContainText('Not exposed');
+	await expect(
+		manager.getByRole('region', { name: 'Server exposure' }),
+	).toBeVisible();
+	await expect(manager.locator('#section-remote-access-host')).toBeVisible();
+	// No other Settings category draws the exposure options.
+	await manager.locator('.settings-nav-item', { hasText: 'Appearance' }).click();
+	await expect(manager.locator('#section-remote-access-host')).toHaveCount(0);
+	await manager.locator('.settings-nav-item', { hasText: 'Remote Access' }).click();
 
-	await manager.getByRole('button', { name: 'Add connection…' }).click();
+	await manager.getByRole('button', { name: 'Add server…' }).click();
 	await expect(
 		manager.locator('form[aria-label="Add connection"]'),
 	).toBeVisible();
@@ -45,7 +60,7 @@ test('Electron opens Remote Control as a full auxiliary window', async ({
 	).toBeVisible();
 });
 
-test('the header connection menu opens the Remote Control window', async ({
+test('the header connection menu opens Settings at Remote Access', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -61,10 +76,51 @@ test('the header connection menu opens the Remote Control window', async ({
 		await connectionMenu.click();
 		await mainWindow.getByRole('button', { name: 'Manage connections' }).click();
 	});
-	await expect(manager.locator('.remote-control-window')).toBeVisible();
-	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
-		'remote-control',
+	const url = new URL(manager.url()).searchParams;
+	expect(url.get('auxiliary')).toBe('settings');
+	expect(url.get('section')).toBe('remote');
+	await expect(
+		manager.getByRole('navigation', { name: 'Remote Access' }),
+	).toBeVisible();
+});
+
+test('the Remote Access command, as the pending-approval notification sends it, opens Settings at Remote Access', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const manager = await appHarness.openChildWindow(async () => {
+		await appHarness.sendAppCommand('open-remote-control', mainWindow);
+	});
+	expect(new URL(manager.url()).searchParams.get('section')).toBe('remote');
+	await expect(
+		manager.getByRole('navigation', { name: 'Remote Access' }),
+	).toBeVisible();
+});
+
+test('Create pairing link opens the pairing dialog over Settings, and Escape closes only it', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const manager = await appHarness.openRemoteAccessSettings(mainWindow);
+	const exposure = manager.getByRole('region', { name: 'Server exposure' });
+	const expose = exposure.getByRole('button', { name: 'Expose this server…' });
+	await expect(expose).toBeVisible();
+	test.skip(
+		await expose.isDisabled(),
+		'WebRTC exposure is unavailable in this build, so no pairing link can be made.',
 	);
+	await expose.click();
+	await exposure.getByRole('button', { name: 'Create pairing link' }).click();
+	const dialog = manager.getByRole('dialog');
+	await expect(dialog).toBeVisible();
+	await manager.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+	await expect(
+		manager.getByRole('navigation', { name: 'Remote Access' }),
+	).toBeVisible();
+	await exposure.getByRole('button', { name: 'Stop exposure' }).click();
 });
 
 test('the header connection menu lists Local and omits Switch connections', async ({
