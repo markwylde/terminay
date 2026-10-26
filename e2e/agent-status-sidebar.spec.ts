@@ -101,8 +101,10 @@ test('session status projects to the terminal indicator and Agents sidebar', asy
 			'.agents-sidebar__tree-item .agent-status-indicator[data-agent-state="working"]',
 		),
 	).toBeVisible();
-	// Active-tab indicators are off by default, for an agent as for a shell.
-	await expect(agentTab.locator('.agent-status-indicator')).toHaveCount(0);
+	// Active-tab indicators are on by default, for an agent as for a shell.
+	await expect(
+		agentTab.locator('.agent-status-indicator[data-agent-state="working"]'),
+	).toBeVisible();
 	await expect(mainWindow.locator('.agents-sidebar__name')).toContainText(
 		'Implement the stable agent status flow',
 	);
