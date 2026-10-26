@@ -6,10 +6,13 @@ import type {
 } from '../types/terminay';
 
 export type AuxiliaryRouteRequest =
-	| { readonly kind: 'settings'; readonly sectionId?: string }
-	| { readonly kind: 'macros' }
-	| { readonly kind: 'recordings' }
-	| { readonly kind: 'remote-control' }
+	| {
+			readonly kind: 'settings';
+			/** A category id, or a settings section that names its category. */
+			readonly sectionId?: string;
+			/** The item to select in a collection category. */
+			readonly itemId?: string;
+	  }
 	| { readonly kind: 'performance-log' }
 	| {
 			readonly kind: 'edit-tab';
@@ -27,10 +30,7 @@ export type AuxiliaryRouteRequestHandler = (
 ) => Promise<AuxiliaryRouteHandlerResult>;
 
 export type AuxiliaryRouteController = Readonly<{
-	openSettings: (sectionId?: string) => Promise<void>;
-	openMacros: () => Promise<void>;
-	openRecordings: () => Promise<void>;
-	openRemoteControl: () => Promise<void>;
+	openSettings: (sectionId?: string, itemId?: string) => Promise<void>;
 	openPerformanceLog: () => Promise<void>;
 	editProjectTab: (
 		state: Extract<EditWindowState, { readonly kind: 'project' }>,
@@ -56,17 +56,12 @@ export function createAuxiliaryRouteController({
 	};
 
 	return Object.freeze({
-		async openSettings(sectionId) {
-			await requestInPage({ kind: 'settings', sectionId });
-		},
-		async openMacros() {
-			await requestInPage({ kind: 'macros' });
-		},
-		async openRecordings() {
-			await requestInPage({ kind: 'recordings' });
-		},
-		async openRemoteControl() {
-			await requestInPage({ kind: 'remote-control' });
+		async openSettings(sectionId, itemId) {
+			await requestInPage({
+				kind: 'settings',
+				...(sectionId === undefined ? {} : { sectionId }),
+				...(itemId === undefined ? {} : { itemId }),
+			});
 		},
 		async openPerformanceLog() {
 			await requestInPage({ kind: 'performance-log' });

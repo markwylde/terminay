@@ -88,6 +88,7 @@ export function SharedMacroLibraryPane({
   onReorder,
   onReorderCategories,
   onSelect,
+  embedded = false,
 }: Readonly<{
   activeMacroId: string | null
   /** False against a server that does not store categories; the list is then flat. */
@@ -109,6 +110,8 @@ export function SharedMacroLibraryPane({
   /** The new category order, which is also the order the Command Bar lists them in. */
   onReorderCategories: (orderedCategories: readonly string[]) => void
   onSelect: (macroId: string) => void
+  /** Drawn inside a Settings list column, which owns the title and the New macro action. */
+  embedded?: boolean
 }>) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
@@ -208,12 +211,17 @@ export function SharedMacroLibraryPane({
   }
 
   return (
-    <section className="settings-nav-group macro-library" data-shared-route-body="macro-library">
-      <div className="settings-sidebar-header">
-        <div className="settings-brand macro-library-brand">
-          <h1>Macros</h1>
-          <span className="settings-status" title={`${macros.length} macros`}>{isLoading ? '' : macros.length}</span>
-        </div>
+    <section
+      className={`settings-nav-group macro-library${embedded ? ' macro-library--embedded' : ''}`}
+      data-shared-route-body="macro-library"
+    >
+      <div className={embedded ? 'settings-list-toolbar' : 'settings-sidebar-header'}>
+        {embedded ? null : (
+          <div className="settings-brand macro-library-brand">
+            <h1>Macros</h1>
+            <span className="settings-status" title={`${macros.length} macros`}>{isLoading ? '' : macros.length}</span>
+          </div>
+        )}
         <div className="settings-search-container">
           <input
             className="settings-search-input"
@@ -364,15 +372,17 @@ export function SharedMacroLibraryPane({
         ) : null}
       </div>
       <div className="settings-sidebar-footer macro-library-footer">
-        <button
-          type="button"
-          className="settings-secondary-button settings-secondary-button--small"
-          disabled={isLoading}
-          // A new macro starts beside the one being edited.
-          onClick={() => onCreate(macros.find((macro) => macro.id === activeMacroId)?.category ?? '')}
-        >
-          New macro
-        </button>
+        {embedded ? null : (
+          <button
+            type="button"
+            className="settings-secondary-button settings-secondary-button--small"
+            disabled={isLoading}
+            // A new macro starts beside the one being edited.
+            onClick={() => onCreate(macros.find((macro) => macro.id === activeMacroId)?.category ?? '')}
+          >
+            New macro
+          </button>
+        )}
         {canManageCategories ? (
           <button
             type="button"

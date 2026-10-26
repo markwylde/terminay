@@ -426,6 +426,16 @@ html.is-framed .responsive-workspace-shell {
 	background: #10151b;
 }
 
+/* Native window controls drawn over the page: macOS traffic lights and the
+   Windows title-bar overlay. Settings keeps its header band below them. */
+.connected-web-native-auxiliary[data-native-titlebar='mac'] {
+	--settings-chrome-top: 28px;
+}
+
+.connected-web-native-auxiliary[data-native-titlebar='overlay'] {
+	--settings-chrome-top: 38px;
+}
+
 /* The workspace, not this file, decides what "compact" means: it observes the
    bar it already measures and stamps the shell. The band reacts to that
    decision rather than measuring the viewport a second time and disagreeing.
