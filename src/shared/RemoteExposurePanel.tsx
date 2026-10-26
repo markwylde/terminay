@@ -6,6 +6,10 @@ import {
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { useRemoteAccessController } from '../workspace/useRemoteAccessController';
 import { RemotePairingModal } from './RemotePairingModal';
+import {
+	deviceDisplayName,
+	deviceNameIsAbbreviated,
+} from './deviceDisplayName';
 
 export function RemoteExposurePanel({
 	openSettings,
@@ -18,6 +22,7 @@ export function RemoteExposurePanel({
 	const [confirmReset, setConfirmReset] = useState(false);
 	const [busyDeviceId, setBusyDeviceId] = useState<string>();
 	const [busyConnectionId, setBusyConnectionId] = useState<string>();
+	const [revealedDeviceId, setRevealedDeviceId] = useState<string>();
 	const status = remote.status;
 	const pairedDevices = status?.pairedDevices ?? [];
 	const activeConnections = status?.connections ?? [];
@@ -59,6 +64,10 @@ export function RemoteExposurePanel({
 			<header className="settings-remote-panel-header">
 				<div>
 					<p className="settings-remote-kicker">
+						<span
+							className={`settings-status-dot settings-status-dot--${status?.isRunning ? 'ok' : webRtcUnavailable ? 'bad' : 'off'}`}
+							aria-hidden="true"
+						/>
 						Exposure · {status?.isRunning ? 'Active' : 'Stopped'}
 					</p>
 					<h4>{summary}</h4>
@@ -89,7 +98,8 @@ export function RemoteExposurePanel({
 					</button>
 				</div>
 			</header>
-			{remote.statusMessage ? (
+			{/* The header already shows an error that stopped exposure. */}
+			{remote.statusMessage && remote.statusMessage !== description ? (
 				<p className="settings-section-desc" role="status">
 					{remote.statusMessage}
 				</p>
@@ -105,23 +115,13 @@ export function RemoteExposurePanel({
 					</div>
 					<div className="settings-remote-exposure-actions">
 						<div className="settings-remote-stat">
-							<span>Trusted browsers</span>
+							<span>Trusted devices</span>
 							<strong>{pairedDevices.length}</strong>
 						</div>
 						<div className="settings-remote-stat">
 							<span>Live connections</span>
 							<strong>{activeConnections.length}</strong>
 						</div>
-						{status?.isRunning ? (
-							<button
-								type="button"
-								className="settings-secondary-button"
-								onClick={() => void remote.openPairingQr()}
-								disabled={remote.isToggling || webRtcUnavailable}
-							>
-								Create pairing link
-							</button>
-						) : null}
 					</div>
 				</section>
 				{pendingApprovals.length > 0 ? (
@@ -185,26 +185,54 @@ export function RemoteExposurePanel({
 					<header className="settings-remote-card-header">
 						<div>
 							<span className="settings-remote-card-label">
-								Trusted browsers
+								Trusted devices
 							</span>
 							<p className="settings-remote-card-subtitle">
-								Authorized devices that can open remote sessions.
+								Devices that can open remote sessions.
 							</p>
 						</div>
 					</header>
 					<div className="settings-remote-list">
 						{pairedDevices.length === 0 ? (
-							<p className="settings-remote-empty">No trusted browsers yet.</p>
+							<p className="settings-remote-empty">No trusted devices yet.</p>
 						) : (
 							pairedDevices.map((device) => (
 								<div key={device.deviceId} className="settings-remote-device">
 									<div className="settings-remote-device-main">
 										<div className="settings-remote-device-title-row">
-											<strong>{device.name}</strong>
+											<strong title={device.name}>
+												{deviceDisplayName(device.name)}
+											</strong>
 										</div>
 										<p className="settings-remote-device-details">
 											Last seen {formatSeen(device.lastSeenAt)}
+											{deviceNameIsAbbreviated(device.name) ? (
+												<>
+													{' · '}
+													<button
+														type="button"
+														className="settings-link-button"
+														aria-expanded={revealedDeviceId === device.deviceId}
+														onClick={() =>
+															setRevealedDeviceId((current) =>
+																current === device.deviceId
+																	? undefined
+																	: device.deviceId,
+															)
+														}
+													>
+														{revealedDeviceId === device.deviceId
+															? 'Hide details'
+															: 'Details'}
+													</button>
+												</>
+											) : null}
 										</p>
+										{revealedDeviceId === device.deviceId ? (
+											<p className="settings-remote-device-agent">
+												{device.name}
+											</p>
+										) : null}
 									</div>
 									<button
 										type="button"

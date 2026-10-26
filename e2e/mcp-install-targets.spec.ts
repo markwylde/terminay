@@ -27,6 +27,7 @@ test('lists the built-in agents extension install targets and explains when it i
   await expect(dialog).toHaveCount(0)
 
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
+  await settingsWindow.locator('.settings-list-item', { hasText: 'Built-in Agents' }).click()
   const agentsCard = settingsWindow.getByRole('article').filter({ hasText: 'terminay-builtin-agents' })
   await agentsCard.getByRole('button', { name: 'Disable' }).click()
   await expect(agentsCard.getByRole('button', { name: 'Enable' })).toBeVisible({ timeout: 30_000 })

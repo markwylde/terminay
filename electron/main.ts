@@ -320,6 +320,8 @@ import {
 	applyWindowMenus,
 	isMenuLessCopyInput,
 } from './windowMenuPolicy';
+import { canonicalAuxiliaryRequest } from './auxiliaryRouteAllowList';
+import { buildTerminayMenu } from './terminayMenu';
 import {
 	createEmbeddedWorkspaceStateBackend,
 	embeddedBuiltInExtensionArtifactRoot,
@@ -2501,7 +2503,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		onApprovalRequested: (approval) => {
 			const notification = new Notification({
 				title: `${approval.deviceName} wants to pair`,
-				body: `Match code ${approval.matchCode}. Open Remote Control to approve or deny.`,
+				body: `Match code ${approval.matchCode}. Open Settings › Remote Access to approve or deny.`,
 			});
 			notification.on('click', () => {
 				sendCommandToFocusedWindow('open-remote-control');
@@ -5017,63 +5019,12 @@ function createAppMenu(
 	settings: TerminalSettings = readTerminalSettings(),
 ): void {
 	const template: Electron.MenuItemConstructorOptions[] = [
-		...(process.platform === 'darwin'
-			? [
-					{
-						label: 'Terminay',
-						submenu: [
-							{ label: 'About Terminay', click: () => showAboutWindow() },
-							{ type: 'separator' },
-							{ role: 'services' },
-							{ type: 'separator' },
-							{ role: 'hide' },
-							{ role: 'hideOthers' },
-							{ role: 'unhide' },
-							{ type: 'separator' },
-							{ role: 'quit' },
-						],
-					} satisfies Electron.MenuItemConstructorOptions,
-				]
-			: []),
-		{
-			label: 'File',
-			submenu: [
-				{
-					label: 'Create a new terminal tab',
-					accelerator: getMenuShortcut(settings, 'new-terminal'),
-					click: () => sendCommandToFocusedWindow('new-terminal'),
-				},
-				{
-					label: 'Create a new project',
-					accelerator: getMenuShortcut(settings, 'new-project'),
-					click: () => sendCommandToFocusedWindow('new-project'),
-				},
-				{ type: 'separator' },
-				{
-					label: 'Remote Control',
-					click: () => sendCommandToFocusedWindow('open-remote-control'),
-				},
-				{
-					label: 'Extensions…',
-					click: () => sendCommandToFocusedWindow('open-extensions'),
-				},
-				{
-					label: 'Macros',
-					accelerator: 'CmdOrCtrl+;',
-					click: () => sendCommandToFocusedWindow('open-macros'),
-				},
-				{
-					label: 'Recordings',
-					accelerator: getMenuShortcut(settings, 'open-recordings'),
-					click: () => sendCommandToFocusedWindow('open-recordings'),
-				},
-				{
-					label: 'Settings',
-					accelerator: 'CmdOrCtrl+,',
-					click: () => sendCommandToFocusedWindow('open-settings'),
-				},
-			],
-		},
+		buildTerminayMenu({
+			platform: process.platform,
+			shortcut: (command) => getMenuShortcut(settings, command),
+			dispatch: (command) => sendCommandToFocusedWindow(command),
+			showAbout: () => showAboutWindow(),
+		}),
 		{
 			label: 'Terminal',
 			submenu: [
@@ -5267,45 +5218,6 @@ function createAppMenu(
 	});
 }
 
-const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
-	macros: 'Macros',
-	'performance-log': 'Performance Log',
-	recordings: 'Recordings',
-	'remote-control': 'Remote Control',
-	settings: 'Settings',
-});
-
-function canonicalAuxiliaryRequest(
-	action: Extract<
-		TerminayHostActionRequest['action'],
-		{ type: 'route.present' }
-	>,
-): Readonly<{ logicalViewId: string; route: string; title: string }> {
-	if (
-		action.disposition !== 'native-window' ||
-		action.logicalViewId === undefined
-	) {
-		throw new Error(
-			'Desktop auxiliary routes require a logical native-window identity.',
-		);
-	}
-	const requested = new URL(action.route, 'https://terminay.invalid');
-	const kind = requested.searchParams.get('auxiliary');
-	if (
-		requested.pathname !== '/' ||
-		kind === null ||
-		AUXILIARY_TITLES[kind] === undefined ||
-		action.logicalViewId !== kind
-	) {
-		throw new Error('The requested Desktop auxiliary route is unavailable.');
-	}
-	return Object.freeze({
-		logicalViewId: action.logicalViewId,
-		route: `${requested.pathname}${requested.search}`,
-		title: AUXILIARY_TITLES[kind],
-	});
-}
-
 async function presentCanonicalAuxiliaryRoute(
 	sourceWindow: BrowserWindow,
 	request: TerminayHostActionRequest,
@@ -5396,7 +5308,8 @@ async function presentCanonicalAuxiliaryRoute(
 		const requested = new URL(auxiliary.route, 'https://terminay.invalid');
 		if (current.search !== requested.search) {
 			current.search = requested.search;
-			await existing.loadURL(current.toString());
+			// Settings may keep its page to protect unsaved edits.
+			await existing.loadURL(current.toString()).catch(() => undefined);
 		}
 		if (existing.isMinimized()) existing.restore();
 		existing.show();
@@ -5667,6 +5580,22 @@ function createWindow(options?: {
 	// Capture the webContents id now; it's unreadable once the window is closed
 	// (accessing window.webContents after destruction throws).
 	const windowWebContentsId = window.webContents.id;
+	if (isAuxiliary) {
+		// Settings refuses to unload while it holds unsaved macro edits. Ask
+		// here, since a native window cannot draw the in-page confirmation.
+		window.webContents.on('will-prevent-unload', (event) => {
+			const choice = dialog.showMessageBoxSync(window, {
+				type: 'question',
+				buttons: ['Discard Changes', 'Keep Editing'],
+				defaultId: 1,
+				cancelId: 1,
+				message: 'Discard unsaved macro changes?',
+				detail: 'Your edits to macros have not been saved.',
+			});
+			// Preventing the event lets the unload go ahead.
+			if (choice === 0) event.preventDefault();
+		});
+	}
 	if (!isAuxiliary)
 		bindMainWindowCloseConfirmation({
 			window,

@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures'
+import { openChildWindow, openMacroLauncher } from './support/app'
 import {
   acceleratorFromKeyboardEvent,
   eventMatchesAccelerator,
@@ -107,4 +108,42 @@ test.describe('keyboard shortcut utilities', () => {
       ),
     ).toBe('start-dictation')
   })
+
+  test('opens Macros with CmdOrCtrl+; by default', () => {
+    expect(getCommandShortcut(undefined, 'open-macros')).toBe('CmdOrCtrl+;')
+    expect(
+      findCommandForKeyboardEvent(
+        { altKey: false, ctrlKey: true, key: ';', metaKey: false, shiftKey: false },
+        undefined,
+        false,
+      ),
+    ).toBe('open-macros')
+  })
+})
+
+test('the Macros shortcut opens Settings at Macros', async ({ electronApp, mainWindow }) => {
+  const isMac = await mainWindow.evaluate(() => navigator.userAgent.includes('Mac'))
+  await mainWindow.locator('.project-workspace--active .terminal-panel').first().click()
+  const settings = await openChildWindow(electronApp, () =>
+    mainWindow.keyboard.press(isMac ? 'Meta+;' : 'Control+;'),
+  )
+  await expect(settings.locator('.settings-nav-item--active')).toContainText('Macros')
+  await expect(settings.getByRole('button', { name: 'New macro', exact: true })).toBeVisible()
+})
+
+test('the Command Bar finds each Settings entry', async ({ mainWindow }) => {
+  await openMacroLauncher(mainWindow)
+  const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' })
+  const search = mainWindow.getByPlaceholder('Search commands...')
+  for (const [query, title] of [
+    ['settings', 'Settings'],
+    ['remote access', 'Remote Access'],
+    ['macros', 'Macros'],
+    ['extensions', 'Extensions'],
+  ] as const) {
+    await search.fill(query)
+    await expect(
+      commandBar.locator('.macro-launcher-item-title', { hasText: new RegExp(`^${title}$`) }).first(),
+    ).toBeVisible()
+  }
 })
