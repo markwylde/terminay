@@ -2,7 +2,7 @@
  * Home's shell: its sidebar, beside whatever Home is showing.
  *
  * Home is not a project, so its sidebar holds no Explorer, Documentation,
- * Agents, or Changes panes. It lists Home's three sections and opens each as a
+ * Agents, or Changes panes. It lists Home's four sections and opens each as a
  * tab. It reuses the project sidebar's geometry — the same split layout, width
  * separator, and narrow-layout drawer — so it inherits the drawer's focus and
  * dismissal rules rather than defining its own.
@@ -11,7 +11,7 @@
  * nothing typed into one of its tabs is lost by looking elsewhere.
  */
 
-import { House, LayoutList, Workflow } from 'lucide-react';
+import { Film, House, LayoutList, Workflow } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef } from 'react';
 import {
 	NARROW_LAYOUT_MEDIA_QUERY,
@@ -27,6 +27,7 @@ import './homeView.css';
 export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 	automations: <Workflow size={15} aria-hidden="true" />,
 	home: <House size={15} aria-hidden="true" />,
+	recordings: <Film size={15} aria-hidden="true" />,
 	tabs: <LayoutList size={15} aria-hidden="true" />,
 };
 

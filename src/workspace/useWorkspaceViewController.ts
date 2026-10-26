@@ -9,6 +9,7 @@
  * window's own.
  */
 
+import type { HomeSection } from './homeSection.ts';
 import {
 	serveWorkspaceView,
 	type TerminayClient,
@@ -64,7 +65,7 @@ export type WorkspaceViewWindow<Workspace extends WorkspaceViewWorkspace> = {
 	/** Show Home with one of its sections in front (ADR-0072). */
 	readonly showHome: (section: HomeViewSection) => void;
 	/** Whether Home is in front, and which of its sections. */
-	readonly shownHomeSection: () => HomeViewSection | undefined;
+	readonly shownHomeSection: () => HomeSection | undefined;
 };
 
 export type HomeViewSection = 'home' | 'tabs' | 'automations';
