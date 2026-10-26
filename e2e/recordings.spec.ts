@@ -254,7 +254,7 @@ async function recordTerminalOutput(
 const recordingsTab = (page: Page) =>
   page.locator('[data-terminay-home-tab-panel="section:recordings"]')
 const timelineItems = (page: Page) =>
-  recordingsTab(page).locator('.recordings-list-item')
+  recordingsTab(page).locator('[data-terminay-recording-row]')
 
 /** The timeline, once it lists at least one recording. */
 async function expectListedRecording(page: Page): Promise<void> {
