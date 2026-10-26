@@ -11,7 +11,6 @@ import { SharedAgentRouteBody } from '../../src/shared/SharedAgentRouteBody';
 import { SharedConnectionsRouteBody } from '../../src/shared/SharedConnectionsRouteBody';
 import { SharedFolderRouteBody } from '../../src/shared/SharedFolderRouteBody';
 import { SharedGitRouteBody } from '../../src/shared/SharedGitRouteBody';
-import { SharedMacroRouteBody } from '../../src/shared/SharedMacroRouteBody';
 import { SharedRecordingsRouteBody } from '../../src/shared/SharedRecordingsRouteBody';
 import { SharedSettingsRouteBody } from '../../src/shared/SharedSettingsRouteBody';
 import { SharedTerminalRouteBody } from '../../src/shared/SharedTerminalRouteBody';
@@ -860,16 +859,22 @@ function MobileMacrosWorkflow() {
 		void promise.then(setState);
 	const created = state.macros.find((macro) => macro.id === 'macro:mobile');
 	return (
-		<SharedMacroRouteBody
-			sidebar={
-				<aside aria-label="Mobile macro library">
-					<h1>Macros</h1>
-					{state.macros.map((macro) => (
-						<p key={macro.id}>{macro.title}</p>
-					))}
-				</aside>
-			}
+		<SharedSettingsRouteBody
+			title="Mobile macros"
+			query=""
+			categories={[{ id: 'macros', label: 'Macros' }]}
+			activeCategoryId="macros"
+			status="Saved"
+			onQueryChange={() => undefined}
+			onCategorySelect={() => undefined}
+			detailTitle="Macros"
 		>
+			<aside aria-label="Mobile macro library">
+				<h1>Macros</h1>
+				{state.macros.map((macro) => (
+					<p key={macro.id}>{macro.title}</p>
+				))}
+			</aside>
 			<section aria-label="Mobile macro editor">
 				<button
 					type="button"
@@ -924,7 +929,7 @@ function MobileMacrosWorkflow() {
 				</button>
 				<output aria-label="Macro revision">{state.revision}</output>
 			</section>
-		</SharedMacroRouteBody>
+		</SharedSettingsRouteBody>
 	);
 }
 const terminalClient = {

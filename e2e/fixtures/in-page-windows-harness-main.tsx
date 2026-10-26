@@ -1,8 +1,51 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { InPageWindow } from '../../src/shared/inPageWindow/InPageWindow';
+import {
+	SettingsListColumn,
+	SettingsListSections,
+	SharedSettingsRouteBody,
+} from '../../src/shared/SharedSettingsRouteBody';
+import '../../src/settings.css';
 
-type Open = 'settings' | 'recordings' | 'about' | 'edit-tab' | null;
+type Open = 'settings' | 'performance-log' | 'about' | 'edit-tab' | 'settings-columns' | null;
+
+/** The Settings default size in the connected browser workspace. */
+const SETTINGS_DEFAULT_SIZE = { width: 1480, height: 820 };
+
+const ITEMS = ['Deploy', 'Update OS', 'Say hello'];
+
+/** The real Settings shell with a collection category, for column geometry. */
+function SettingsColumns() {
+	const [selected, setSelected] = useState('Deploy');
+	return (
+		<SharedSettingsRouteBody
+			query=""
+			categories={[
+				{ id: 'appearance', label: 'Appearance' },
+				{ id: 'macros', label: 'Macros', count: ITEMS.length },
+			]}
+			activeCategoryId="macros"
+			status="Saved"
+			onQueryChange={() => undefined}
+			onCategorySelect={() => undefined}
+			listTitle="Macros"
+			listColumn={
+				<SettingsListColumn title="Macros">
+					<SettingsListSections
+						label="Macros"
+						selectedId={selected}
+						onSelect={setSelected}
+						sections={[{ id: 'all', label: '', items: ITEMS.map((id) => ({ id, label: id, status: 'Saved' })) }]}
+					/>
+				</SettingsListColumn>
+			}
+			detailTitle={selected}
+		>
+			<p>{selected} script</p>
+		</SharedSettingsRouteBody>
+	);
+}
 
 /** The real window frame around stand-in content, one opener per kind. */
 function Harness() {
@@ -11,7 +54,7 @@ function Harness() {
 	const close = () => setOpen(null);
 	return (
 		<main>
-			{(['settings', 'recordings', 'about', 'edit-tab'] as const).map((name) => (
+			{(['settings', 'performance-log', 'about', 'edit-tab', 'settings-columns'] as const).map((name) => (
 				<button key={name} type="button" data-open={name} onClick={() => setOpen(name)}>
 					{name}
 				</button>
@@ -19,11 +62,21 @@ function Harness() {
 			<button type="button" data-workspace-control>
 				workspace
 			</button>
-			{open === 'settings' || open === 'recordings' ? (
+			{open === 'settings-columns' ? (
+				<InPageWindow
+					kind={{ resizable: true, id: 'settings', defaultSize: SETTINGS_DEFAULT_SIZE }}
+					name="settings-columns"
+					title="Settings"
+					onClose={close}
+				>
+					<SettingsColumns />
+				</InPageWindow>
+			) : null}
+			{open === 'settings' || open === 'performance-log' ? (
 				<InPageWindow
 					kind={{ resizable: true, id: open, defaultSize: { width: 900, height: 600 } }}
 					name={open}
-					title={open === 'settings' ? 'Settings' : 'Recordings'}
+					title={open === 'settings' ? 'Settings' : 'Performance Log'}
 					onClose={close}
 				>
 					<div className="harness-content">
