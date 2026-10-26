@@ -4519,6 +4519,20 @@ const ProjectWorkspace = memo(forwardRef<
 					case 'open-recordings':
 						onShowRecordings();
 						break;
+					// Management lives in Settings; a key bound to one of its
+					// categories opens it there, as the Command Bar does.
+					case 'open-settings':
+						await auxiliaryRoutes.openSettings();
+						break;
+					case 'open-macros':
+						await auxiliaryRoutes.openSettings('macros');
+						break;
+					case 'open-remote-control':
+						await auxiliaryRoutes.openSettings('remote');
+						break;
+					case 'open-extensions':
+						await auxiliaryRoutes.openSettings('extensions');
+						break;
 					case 'toggle-file-explorer-sidebar':
 						toggleFileExplorerSidebar();
 						break;
