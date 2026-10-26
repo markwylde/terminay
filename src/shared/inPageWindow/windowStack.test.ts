@@ -17,7 +17,7 @@ test('one Escape closes only the topmost window, in reverse order of opening', (
 	const stack = createWindowStack();
 	const closed: string[] = [];
 	const removers = new Map<string, () => void>();
-	for (const name of ['remote-control', 'pairing']) {
+	for (const name of ['settings', 'pairing']) {
 		const entry = {
 			close: () => {
 				closed.push(name);
@@ -29,7 +29,7 @@ test('one Escape closes only the topmost window, in reverse order of opening', (
 	assert.equal(closeTopOnEscape(stack, escapeKey()), true);
 	assert.deepEqual(closed, ['pairing']);
 	assert.equal(closeTopOnEscape(stack, escapeKey()), true);
-	assert.deepEqual(closed, ['pairing', 'remote-control']);
+	assert.deepEqual(closed, ['pairing', 'settings']);
 	assert.equal(closeTopOnEscape(stack, escapeKey()), false);
 });
 

@@ -27,6 +27,7 @@ import {
 	Play,
 	Plug,
 	PanelBottom,
+	Radio,
 	RefreshCw,
 	Trash2,
 	Settings,
@@ -3958,7 +3959,7 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Terminal',
 					icon: <Terminal size={18} strokeWidth={2.1} />,
 					id: 'create-terminal-tab',
-					title: 'Create a new terminal tab',
+					title: 'New Terminal Tab',
 					description: 'Open a fresh terminal tab in the current project.',
 					searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
 					shortcutLabel: getCommandShortcutLabel(
@@ -4004,7 +4005,7 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Workspace',
 					icon: <FolderPlus size={18} strokeWidth={2.1} />,
 					id: 'create-project',
-					title: 'Create a new project',
+					title: 'New Project',
 					description: 'Add a new project tab and switch to it.',
 					searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
 					shortcutLabel: getCommandShortcutLabel(
@@ -4093,7 +4094,7 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Workspace',
 					icon: <History size={18} strokeWidth={2.1} />,
 					id: 'open-recordings',
-					title: 'Open recordings timeline',
+					title: 'Recordings',
 					description: 'Browse and replay saved terminal recordings in Home.',
 					searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
 					shortcutLabel: getCommandShortcutLabel(
@@ -4107,6 +4108,78 @@ const ProjectWorkspace = memo(forwardRef<
 						setIsMacroLauncherOpen(false);
 						setMacroQuery('');
 						onShowRecordings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'open-settings',
+					title: 'Settings',
+					description: 'Configure Terminay and the selected server.',
+					searchText: `open settings preferences configuration ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-settings',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Radio size={18} strokeWidth={2.1} />,
+					id: 'open-remote-control',
+					title: 'Remote Access',
+					description: 'Expose this server and manage saved servers.',
+					searchText: `remote access control connections pairing servers expose trusted devices ${getCommandShortcut(settings.keyboardShortcuts, 'open-remote-control')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-remote-control',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('remote');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Workflow size={18} strokeWidth={2.1} />,
+					id: 'open-macros',
+					title: 'Macros',
+					description: 'Manage reusable terminal macros.',
+					searchText: `macros commands snippets automation ${getCommandShortcut(settings.keyboardShortcuts, 'open-macros')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-macros',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('macros');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'open-extensions',
+					title: 'Extensions',
+					description: 'Manage extensions on the selected server.',
+					searchText: `extensions plugins npm providers ${getCommandShortcut(settings.keyboardShortcuts, 'open-extensions')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-extensions',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('extensions');
 					},
 				},
 				{
@@ -7228,15 +7301,6 @@ function App({
 			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
-	useEffect(() => {
-		const openExtensions = () => {
-			void auxiliaryRouteController.openSettings('extensions');
-		};
-		window.addEventListener('terminay-open-extensions', openExtensions);
-		return () => {
-			window.removeEventListener('terminay-open-extensions', openExtensions);
-		};
-	}, [auxiliaryRouteController]);
 	// A creation outlives the connection it began on. These let it read the
 	// connection that is current when it resumes, and be woken when that changes.
 	const creationConnectionRef = useRef({
@@ -8314,10 +8378,10 @@ function App({
 				return auxiliaryRouteController.openSettings();
 			}
 			if (command === 'open-macros') {
-				return auxiliaryRouteController.openMacros();
+				return auxiliaryRouteController.openSettings('macros');
 			}
 			if (command === 'open-remote-control') {
-				return auxiliaryRouteController.openRemoteControl();
+				return auxiliaryRouteController.openSettings('remote');
 			}
 			if (command === 'open-performance-log') {
 				return auxiliaryRouteController.openPerformanceLog();
@@ -9491,7 +9555,7 @@ function App({
 				group: 'Workspace',
 				icon: <History size={18} strokeWidth={2.1} />,
 				id: 'open-recordings',
-				title: 'Open recordings timeline',
+				title: 'Recordings',
 				description: 'Browse and replay saved terminal recordings in Home.',
 				searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
 				shortcutLabel: getCommandShortcutLabel(
@@ -9536,7 +9600,7 @@ function App({
 				group: 'Workspace',
 				icon: <Settings size={18} strokeWidth={2.1} />,
 				id: 'open-settings',
-				title: 'Open settings',
+				title: 'Settings',
 				description: 'Change how Terminay looks and behaves.',
 				searchText: `open settings preferences ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
 				shortcutLabel: getCommandShortcutLabel(

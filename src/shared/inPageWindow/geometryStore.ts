@@ -14,9 +14,6 @@ const STORAGE_KEY = 'terminay.view.in-page-window.v1';
 
 export const IN_PAGE_WINDOW_IDS = [
 	'settings',
-	'macros',
-	'recordings',
-	'remote-control',
 	'performance-log',
 ] as const;
 

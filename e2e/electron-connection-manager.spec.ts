@@ -6,7 +6,7 @@ test('Electron opens Remote Control as a full auxiliary window', async ({
 	mainWindow,
 }) => {
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
-	const manager = await appHarness.openRemoteControlWindow(mainWindow);
+	const manager = await appHarness.openRemoteAccessSettings(mainWindow);
 	await expect(manager.locator('.remote-control-window')).toBeVisible();
 	await expect(manager.locator('.settings-sidebar')).toBeVisible();
 	await expect(manager.locator('.settings-content')).toBeVisible();

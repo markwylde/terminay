@@ -75,7 +75,7 @@ test('shared renderer accepts auxiliary route controller for tab edit fallbacks'
 	assert.match(app, /auxiliaryRoutes\?:\s*AuxiliaryRouteController/u);
 	assert.match(app, /auxiliaryRoutes\s*\?\?\s*createAuxiliaryRouteController\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.editTerminalTab/u);
-	assert.match(app, /auxiliaryRoutes\.openRecordings/u);
+	assert.match(app, /auxiliaryRoutes\.openSettings\('macros'\)/u);
 	assert.match(projectEditor, /auxiliaryRoutes\.editProjectTab/u);
 	assert.doesNotMatch(projectEditor, /terminayProjectEditHost/u);
 });

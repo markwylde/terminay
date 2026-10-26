@@ -659,7 +659,7 @@ export function SharedConnectionsRouteBody({
 					canShowPair ? (
 						<button
 							type="button"
-							className="settings-primary-button settings-primary-button--small"
+							className="settings-list-add-button"
 							onClick={() => {
 								setShowPair(true);
 								setRename(undefined);

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const shared = await readFile(new URL('../src/shared/SharedMacroLibraryPane.tsx', import.meta.url), 'utf8')
-const desktop = await readFile(new URL('../src/components/MacrosWindow.tsx', import.meta.url), 'utf8')
+const desktop = await readFile(new URL('../src/components/settings/MacrosCategory.tsx', import.meta.url), 'utf8')
 const {
   groupMacroLibrary,
   moveCategory,
@@ -34,7 +34,7 @@ test('shared macro keyboard reorder is bounded and immutable', () => {
   assert.match(shared, /if \(nextIds\.every\(\(id, index\) => id === macros\[index\]\?\.id\)\) return/u)
 })
 
-test('desktop macros consumes the shared library rather than owning its sidebar', () => {
+test('Settings › Macros consumes the shared library rather than owning its list', () => {
   assert.match(desktop, /import \{ SharedMacroLibraryPane \}/u)
   assert.match(desktop, /<SharedMacroLibraryPane/u)
   assert.doesNotMatch(desktop, /function MacroItem\(/u)

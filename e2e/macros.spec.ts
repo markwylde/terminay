@@ -48,7 +48,7 @@ async function deliver(target: Locator, type: 'paste' | 'drop', data: Record<str
 }
 
 test('creates a prompt macro by typing and saving', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'E2E Prompt')
   await macros.getByLabel('Description').fill('Created by the macros e2e coverage pass.')
@@ -69,7 +69,7 @@ test('creates a prompt macro by typing and saving', async ({ appHarness, mainWin
 })
 
 test('shows a starter macro as text, inputs and a preview', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await libraryItem(macros, 'Say hello to person').getByRole('button').click()
   await expect(macros.getByLabel('Macro name')).toHaveValue('Say hello to person')
@@ -93,7 +93,7 @@ test('shows a starter macro as text, inputs and a preview', async ({ appHarness,
 })
 
 test('inserts a wait with the slash menu', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Slash Macro')
   await script(macros).first().click()
@@ -128,7 +128,7 @@ test('inserts a wait with the slash menu', async ({ appHarness, mainWindow }) =>
 })
 
 test('a slash command stays text', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Agent Command')
   await script(macros).first().click()
@@ -150,7 +150,7 @@ test('a slash command stays text', async ({ appHarness, mainWindow }) => {
 })
 
 test('typing a placeholder adds an input', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Placeholder Macro')
   await expect(macros.getByText('No inputs, so this macro runs straight away.')).toBeVisible()
@@ -181,7 +181,7 @@ test('typing a placeholder adds an input', async ({ appHarness, mainWindow }) =>
 })
 
 test('an edited input that is no longer referenced is kept as unused', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Unused Input Macro')
   await script(macros).first().fill('deploy {{env}}')
@@ -199,7 +199,7 @@ test('an edited input that is no longer referenced is kept as unused', async ({ 
 })
 
 test('preview follows the script and the form', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
   const terminalBefore = await mainWindow.locator('.terminal-tab-content').first().innerText()
 
   await newMacro(macros, 'Preview Macro')
@@ -225,7 +225,7 @@ test('preview follows the script and the form', async ({ appHarness, mainWindow 
 })
 
 test('saves choice options after raw text editing', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Eta Select Macro')
   await script(macros).first().fill(
@@ -249,7 +249,7 @@ test('saves choice options after raw text editing', async ({ appHarness, mainWin
 })
 
 test('saves parameterized wait steps in seconds', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Parameterized Wait Macro')
   await macros.getByRole('button', { name: 'Wait', exact: true }).click()
@@ -263,7 +263,7 @@ test('saves parameterized wait steps in seconds', async ({ appHarness, mainWindo
 })
 
 test('saves two edited macros with one save', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await libraryItem(macros, 'Update OS').getByRole('button').click()
   await macros.getByLabel('Description').fill('Edited first.')
@@ -286,7 +286,7 @@ test('saves two edited macros with one save', async ({ appHarness, mainWindow })
 })
 
 test('discard restores macros and categories', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await libraryItem(macros, 'Update OS').getByRole('button').click()
   await macros.getByLabel('Macro name').fill('Renamed')
@@ -305,7 +305,7 @@ test('discard restores macros and categories', async ({ appHarness, mainWindow }
 })
 
 test('a rejected save keeps the edits and says why', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'Broken Choice')
   await script(macros).first().fill('deploy {{env}}')
@@ -322,7 +322,7 @@ test('a rejected save keeps the edits and says why', async ({ appHarness, mainWi
 })
 
 test('creates, renames and removes a category', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await macros.getByRole('button', { name: 'New category' }).click()
   await macros.getByLabel('Category name').fill('Release')
@@ -355,7 +355,7 @@ test('creates, renames and removes a category', async ({ appHarness, mainWindow 
 })
 
 test('assigns a macro from the editor', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await libraryItem(macros, 'Update OS').getByRole('button').click()
   await macros.locator('#macro-category').selectOption({ label: 'New category…' })
@@ -374,7 +374,7 @@ test('assigns a macro from the editor', async ({ appHarness, mainWindow }) => {
 })
 
 test('drags a macro into a category and before another macro', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await macros.getByRole('button', { name: 'New category' }).click()
   await macros.getByLabel('Category name').fill('Agents')
@@ -407,7 +407,7 @@ test('drags a macro into a category and before another macro', async ({ appHarne
 })
 
 test('an empty category survives reopening the window', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await macros.getByRole('button', { name: 'New category' }).click()
   await macros.getByLabel('Category name').fill('Later')
@@ -455,7 +455,7 @@ const categoryOrder = (page: Page) =>
   page.locator('.macro-library-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-macro-category')))
 
 categorised('hovering a category shows its actions without moving anything', async ({ appHarness, mainWindow }, testInfo) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
   await expect(categoryHeader(macros, 'pr')).toBeVisible()
 
   const positions = () =>
@@ -495,7 +495,7 @@ categorised('hovering a category shows its actions without moving anything', asy
 })
 
 categorised('reorders categories by dragging, and the Command Bar follows that order', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
   await expect(categoryHeader(macros, 'spec')).toBeVisible()
   expect(await categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
 
@@ -540,7 +540,7 @@ categorised('reorders categories by dragging, and the Command Bar follows that o
 })
 
 test('the library filter matches names, categories and script text', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await macros.getByLabel('Filter macros').fill('apt-get upgrade')
   await expect(macros.locator('.macro-nav-item')).toHaveText(['Update OS'])
@@ -552,7 +552,7 @@ test('the library filter matches names, categories and script text', async ({ ap
 })
 
 test('a file field takes a typed path, a pasted file URL, and a dropped path', async ({ appHarness, mainWindow }) => {
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
 
   await newMacro(macros, 'File Macro')
   await script(macros).first().fill('cat {{file}}')
@@ -625,7 +625,7 @@ stored('a macro with an unsupported step is shown, cannot run, and runs once the
   await expect(mainWindow.locator('.error-banner__message')).toContainText('"Sudo deploy" contains a step Terminay cannot run')
   await expect(mainWindow.getByLabel(/Show macro queue/)).toHaveCount(0)
 
-  const macros = await appHarness.openMacrosWindow(mainWindow)
+  const macros = await appHarness.openMacrosSettings(mainWindow)
   await libraryItem(macros, 'Sudo deploy').getByRole('button').click()
   await expect(token(macros, 'unsupported')).toHaveText(/This step \(secret\) cannot run\. Remove it to use the macro\./)
   await expect(preview(macros).getByRole('status')).toContainText('will not run until the step marked as unable to run is removed')

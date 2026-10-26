@@ -98,7 +98,8 @@ export function RemoteExposurePanel({
 					</button>
 				</div>
 			</header>
-			{remote.statusMessage ? (
+			{/* The header already shows an error that stopped exposure. */}
+			{remote.statusMessage && remote.statusMessage !== description ? (
 				<p className="settings-section-desc" role="status">
 					{remote.statusMessage}
 				</p>

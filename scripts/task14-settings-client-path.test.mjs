@@ -6,7 +6,7 @@ const settingsWindow = await readFile('src/components/SettingsWindow.tsx', 'utf8
 const settingsHook = await readFile('src/hooks/useTerminalSettings.ts', 'utf8')
 const app = await readFile('src/App.tsx', 'utf8')
 const remoteAccessController = await readFile('src/workspace/useRemoteAccessController.ts', 'utf8')
-const macrosWindow = await readFile('src/components/MacrosWindow.tsx', 'utf8')
+const macrosWindow = await readFile('src/components/macros/useMacroEditor.ts', 'utf8')
 const task14 = await readFile('openspec/changes/archive/2026-07-27-server-settings-secrets-and-macros/tasks.md', 'utf8')
 
 test('production settings editor persists through the shared SettingsClient', () => {

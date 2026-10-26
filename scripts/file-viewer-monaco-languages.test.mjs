@@ -8,7 +8,7 @@ const codeHighlight = await read('src/components/file-viewer/codeHighlight.tsx')
 const runtime = await read('src/components/file-viewer/monacoRuntime.ts');
 const setup = await read('src/components/file-viewer/monacoSetup.ts');
 const textViewer = await read('src/components/file-viewer/modes/TextViewer.tsx');
-const macros = await read('src/components/MacrosWindow.tsx');
+const macros = await read('src/components/settings/MacrosCategory.tsx');
 
 /** Every language id `languageFromFilePath` can return. */
 function emittedLanguageIds() {

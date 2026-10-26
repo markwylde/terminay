@@ -2503,7 +2503,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 		onApprovalRequested: (approval) => {
 			const notification = new Notification({
 				title: `${approval.deviceName} wants to pair`,
-				body: `Match code ${approval.matchCode}. Open Remote Control to approve or deny.`,
+				body: `Match code ${approval.matchCode}. Open Settings › Remote Access to approve or deny.`,
 			});
 			notification.on('click', () => {
 				sendCommandToFocusedWindow('open-remote-control');
