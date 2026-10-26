@@ -1,6 +1,44 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
-import { type SettingsCategoryParts, SettingsListColumn } from '../../shared/SharedSettingsRouteBody'
+import { type SettingsCategoryParts, SettingsListColumn, useSettingsShellNavigation } from '../../shared/SharedSettingsRouteBody'
 import { SharedMacroLibraryPane } from '../../shared/SharedMacroLibraryPane'
+
+type LibraryProps = Parameters<typeof SharedMacroLibraryPane>[0]
+
+/** The library inside the list column: choosing a macro moves a narrow Settings to its detail. */
+function MacroLibraryColumn({ onSelect, onCreate, ...props }: LibraryProps) {
+  const { showDetail } = useSettingsShellNavigation()
+  return (
+    <SharedMacroLibraryPane
+      {...props}
+      onSelect={(macroId) => {
+        onSelect(macroId)
+        showDetail()
+      }}
+      onCreate={(category) => {
+        onCreate(category)
+        showDetail()
+      }}
+    />
+  )
+}
+
+/** New macro in the list header, which also moves a narrow Settings to the new macro. */
+function NewMacroButton({ disabled, onCreate }: Readonly<{ disabled: boolean; onCreate: () => void }>) {
+  const { showDetail } = useSettingsShellNavigation()
+  return (
+    <button
+      type="button"
+      className="settings-list-add-button"
+      onClick={() => {
+        onCreate()
+        showDetail()
+      }}
+      disabled={disabled}
+    >
+      New macro
+    </button>
+  )
+}
 import { MacroInputsTable } from '../macros/MacroInputsTable'
 import { MacroPreview } from '../macros/MacroPreview'
 import { MacroScriptEditor } from '../macros/MacroScriptEditor'
@@ -66,18 +104,9 @@ export function MacrosCategory({
   const list = (
     <SettingsListColumn
       title="Macros"
-      action={
-        <button
-          type="button"
-          className="settings-list-add-button"
-          onClick={() => editor.addMacro('')}
-          disabled={!isReady}
-        >
-          New macro
-        </button>
-      }
+      action={<NewMacroButton disabled={!isReady} onCreate={() => editor.addMacro('')} />}
     >
-      <SharedMacroLibraryPane
+      <MacroLibraryColumn
         embedded
         activeMacroId={selectedMacroId}
         canManageCategories={canManageCategories}
