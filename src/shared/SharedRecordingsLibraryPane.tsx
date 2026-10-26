@@ -89,29 +89,28 @@ export function SharedRecordingsLibraryPane({
             <p className="workspace-dashboard__empty">No recordings match “{query}”.</p>
           ) : null}
           {groupedRecordings.map(([date, items]) => (
-            <section key={date} className="recordings-page__group" aria-label={date}>
-              <h3 className="recordings-page__group-head">{date}</h3>
+            <section key={date} className="recordings-page__group" aria-label={formatGroupDate(date)}>
+              <h3 className="recordings-page__group-head">{formatGroupDate(date)}</h3>
               {items.map((recording) => (
                 <button
                   key={recording.recordingId}
                   type="button"
-                  className="workspace-dashboard__row recordings-list-item recordings-page__row"
+                  className="workspace-dashboard__row recordings-page__row"
+                  data-terminay-recording-row={recording.recordingId}
                   onClick={() => onSelect(recording.recordingId)}
                 >
                   <span
-                    className="workspace-dashboard__swatch"
-                    style={recording.projectColor === null ? undefined : { ['--row-color' as string]: recording.projectColor }}
+                    className="recordings-page__swatch"
+                    style={recording.projectColor === null ? undefined : { background: recording.projectColor }}
                     aria-hidden="true"
                   />
                   <span className="workspace-dashboard__title recordings-page__title">{titleFor(recording)}</span>
-                  <span className="workspace-dashboard__row-detail">
-                    {[recording.projectTitle, recording.cwdLabel ?? 'Unknown folder', recording.shellName].filter(Boolean).join(' · ')}
-                  </span>
+                  <span className="workspace-dashboard__row-detail">{recordingDetail(recording)}</span>
                   <span className="recordings-page__time recordings-page__started">{formatStartTime(recording.startedAt)}</span>
                   <span className="recordings-page__time">{durationFor(recording.durationMs)}</span>
                   <span className="recordings-page__state">
                     {recording.recordingState === 'completed' ? null : (
-                      <span className={`recordings-list-item__state recordings-list-item__state--${recording.recordingState}`}>
+                      <span className={`recordings-page__pill recordings-page__pill--${recording.recordingState}`}>
                         {recording.recordingState}
                       </span>
                     )}
@@ -179,4 +178,26 @@ export function SharedRecordingsLibraryPane({
 function formatStartTime(startedAt: string): string {
   const date = new Date(startedAt)
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function recordingDetail(recording: TerminalRecordingListItem): string {
+  return [recording.projectTitle, recording.cwdLabel, recording.shellName].filter(Boolean).join(' · ')
+}
+
+/** "Today", "Yesterday", or the weekday and date for a `YYYY-MM-DD` group. */
+function formatGroupDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date)
+  if (match === null) return date
+  const day = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const daysAgo = Math.round((today.getTime() - day.getTime()) / 86_400_000)
+  if (daysAgo === 0) return 'Today'
+  if (daysAgo === 1) return 'Yesterday'
+  return day.toLocaleDateString([], {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(day.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+  })
 }
