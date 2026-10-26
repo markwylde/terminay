@@ -105,8 +105,17 @@ test('browser menu omits Desktop-only update, window, and DevTools commands', as
 	);
 
 	assert.doesNotMatch(browserMenu, /updater\.check|toggleDevTools|windowMenu/);
-	for (const label of ['File', 'Edit', 'View', 'Help']) {
+	for (const label of ['Terminay', 'Edit', 'View', 'Help']) {
 		assert.match(workspace, new RegExp(`'${label}'`));
+	}
+	assert.doesNotMatch(workspace, /\bfile: 'File'/u);
+	for (const label of [
+		'Remote Control',
+		'Extensions…',
+		'Create a new terminal tab',
+		'Create a new project',
+	]) {
+		assert.doesNotMatch(browserMenu, new RegExp(`label: '${label}'`, 'u'));
 	}
 });
 
