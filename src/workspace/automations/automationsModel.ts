@@ -66,12 +66,16 @@ export function supportsAutomations(
 /**
  * Which server the section shows: the one a person chose, else the one the
  * window is working in, else the first that serves automations. Automations
- * are per server and never merged, so exactly one is shown.
+ * are per server and never merged, so exactly one is shown. Another per-server
+ * Home section (Recordings) chooses the same way with its own `supports`.
  */
 export function selectAutomationServer(
 	candidates: readonly AutomationServerCandidate[],
 	requested: string | undefined,
 	fallback: string | undefined,
+	supports: (
+		capabilities: readonly string[] | undefined,
+	) => boolean = supportsAutomations,
 ): AutomationServerSelection {
 	const choices: AutomationServerChoice[] = [];
 	const unsupported: AutomationServerChoice[] = [];
@@ -81,7 +85,7 @@ export function selectAutomationServer(
 			serverId: candidate.serverId,
 			label: candidate.label,
 		});
-		if (supportsAutomations(candidate.capabilities)) choices.push(choice);
+		if (supports(candidate.capabilities)) choices.push(choice);
 		else unsupported.push(choice);
 	}
 	const selected =

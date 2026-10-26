@@ -17,13 +17,13 @@ export type AppCommandMetadata = {
 export const appCommandMetadata: AppCommandMetadata[] = [
   {
     command: 'new-terminal',
-    title: 'Create a new terminal tab',
+    title: 'New Terminal Tab',
     description: 'Open a fresh terminal tab in the current project.',
     keywords: 'create new terminal tab open fresh terminal shell',
   },
   {
     command: 'new-project',
-    title: 'Create a new project',
+    title: 'New Project',
     description: 'Add a new project tab and switch to it.',
     keywords: 'create new project add project tab workspace',
   },
@@ -47,21 +47,21 @@ export const appCommandMetadata: AppCommandMetadata[] = [
   },
   {
     command: 'open-recordings',
-    title: 'Open recordings timeline',
-    description: 'Browse and replay saved terminal recordings.',
+    title: 'Recordings',
+    description: 'Browse and replay saved terminal recordings in Home.',
     keywords: 'open recordings timeline terminal session replay asciinema cast history',
   },
   {
     command: 'open-settings',
-    title: 'Open settings',
+    title: 'Settings',
     description: 'Configure Terminay and the selected server.',
     keywords: 'open settings preferences configuration',
   },
   {
     command: 'open-macros',
-    title: 'Open macros',
-    description: 'Manage reusable terminal macros.',
-    keywords: 'open macros commands snippets',
+    title: 'Macros',
+    description: 'Manage reusable terminal macros in Settings.',
+    keywords: 'open macros commands snippets automation settings',
   },
   {
     command: 'open-performance-log',
@@ -71,14 +71,14 @@ export const appCommandMetadata: AppCommandMetadata[] = [
   },
   {
     command: 'open-remote-control',
-    title: 'Open Remote Control',
-    description: 'Manage Terminay server connections for this workspace.',
-    keywords: 'remote control connections pairing servers manage',
+    title: 'Remote Access',
+    description: 'Expose this server and manage saved servers in Settings.',
+    keywords: 'remote access control connections pairing servers manage expose trusted devices',
   },
   {
     command: 'open-extensions',
-    title: 'Open Extensions',
-    description: 'Manage extensions on the selected Terminay Server.',
+    title: 'Extensions',
+    description: 'Manage extensions on the selected Terminay Server in Settings.',
     keywords: 'extensions plugins npm providers',
   },
   {
@@ -156,7 +156,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'clear-terminal': 'CmdOrCtrl+K',
   'open-recordings': '',
   'open-settings': '',
-  'open-macros': '',
+  'open-macros': 'CmdOrCtrl+;',
   'open-performance-log': '',
   'open-remote-control': '',
   'open-extensions': '',

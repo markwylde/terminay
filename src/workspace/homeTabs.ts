@@ -2,7 +2,7 @@
  * The tabs Home holds.
  *
  * A Home tab is this device's view of something — a section, an automation,
- * an editor, a run, an automation terminal. It is never a workspace panel: the
+ * an editor, a run, an automation terminal, a recording's replay. It is never a workspace panel: the
  * server does not know it exists, and closing one closes a view, not the thing
  * it shows (ADR-0040).
  *
@@ -37,7 +37,8 @@ export type HomeTabDescriptor =
 			kind: 'automation-terminal';
 			serverId: string;
 			panelId: string;
-	  }>;
+	  }>
+	| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>;
 
 export type HomeTabKind = HomeTabDescriptor['kind'];
 
@@ -62,6 +63,8 @@ export function homeTabId(descriptor: HomeTabDescriptor): string {
 			return `run:${encode(descriptor.serverId)}:${encode(descriptor.automationId)}:${encode(descriptor.runId)}`;
 		case 'automation-terminal':
 			return `automation-terminal:${encode(descriptor.serverId)}:${encode(descriptor.panelId)}`;
+		case 'recording':
+			return `recording:${encode(descriptor.serverId)}:${encode(descriptor.recordingId)}`;
 	}
 }
 
@@ -113,6 +116,10 @@ export function parseHomeTabId(id: unknown): HomeTabDescriptor | undefined {
 			return parts.length === 2 && first !== undefined && second !== undefined
 				? { kind: 'automation-terminal', serverId: first, panelId: second }
 				: undefined;
+		case 'recording':
+			return parts.length === 2 && first !== undefined && second !== undefined
+				? { kind: 'recording', serverId: first, recordingId: second }
+				: undefined;
 		default:
 			return undefined;
 	}
@@ -120,7 +127,14 @@ export function parseHomeTabId(id: unknown): HomeTabDescriptor | undefined {
 
 /** The sidebar section a tab belongs to. */
 export function homeTabSection(descriptor: HomeTabDescriptor): HomeSection {
-	return descriptor.kind === 'section' ? descriptor.section : 'automations';
+	switch (descriptor.kind) {
+		case 'section':
+			return descriptor.section;
+		case 'recording':
+			return 'recordings';
+		default:
+			return 'automations';
+	}
 }
 
 /** A tab's title before whatever it shows has loaded. */
@@ -138,6 +152,8 @@ export function defaultHomeTabTitle(descriptor: HomeTabDescriptor): string {
 			return 'Run';
 		case 'automation-terminal':
 			return 'Automation terminal';
+		case 'recording':
+			return 'Recording';
 	}
 }
 

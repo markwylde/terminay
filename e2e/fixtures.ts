@@ -23,9 +23,8 @@ import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-ar
 import {
 	openChildWindow,
 	openMacroLauncher,
-	openMacrosWindow,
-	openRecordingsWindow,
-	openRemoteControlWindow,
+	openMacrosSettings,
+	openRemoteAccessSettings,
 	openSettingsWindow,
 	prepareWindow,
 	sendAppCommand,
@@ -48,12 +47,12 @@ type ElectronFixtures = {
 			page?: Page,
 			options?: { attempts?: number },
 		) => Promise<void>;
-		openMacrosWindow: (page?: Page) => Promise<Page>;
-		openRecordingsWindow: (page?: Page) => Promise<Page>;
-		openRemoteControlWindow: (page?: Page) => Promise<Page>;
+		openMacrosSettings: (page?: Page) => Promise<Page>;
+		openRemoteAccessSettings: (page?: Page) => Promise<Page>;
 		openSettingsWindow: (options?: {
 			page?: Page;
 			sectionId?: string;
+			itemId?: string;
 		}) => Promise<Page>;
 		prepareWindow: (page: Page) => Promise<Page>;
 		sendAppCommand: (
@@ -526,15 +525,14 @@ export const test = base.extend<ElectronFixtures>({
 			openChildWindow: (action) => openChildWindow(electronApp, action),
 			openMacroLauncher: (page = mainWindow, options) =>
 				openMacroLauncher(page, options),
-			openMacrosWindow: (page = mainWindow) =>
-				openMacrosWindow(electronApp, page),
-			openRecordingsWindow: (page = mainWindow) =>
-				openRecordingsWindow(electronApp, page),
-			openRemoteControlWindow: (page = mainWindow) =>
-				openRemoteControlWindow(electronApp, page),
+			openMacrosSettings: (page = mainWindow) =>
+				openMacrosSettings(electronApp, page),
+			openRemoteAccessSettings: (page = mainWindow) =>
+				openRemoteAccessSettings(electronApp, page),
 			openSettingsWindow: (options) =>
 				openSettingsWindow(electronApp, options?.page ?? mainWindow, {
 					sectionId: options?.sectionId,
+					itemId: options?.itemId,
 				}),
 			prepareWindow,
 			sendAppCommand: (command, page = mainWindow) =>

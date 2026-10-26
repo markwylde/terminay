@@ -24,7 +24,7 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	assert.doesNotMatch(webWorkspaceCss, /html\.is-framed[^{]*\{[^}]*safe-area-inset-top/u);
 	assert.match(serverHtml, /viewport-fit=cover/);
 	assert.match(serverHtml, /documentElement\.classList\.add\('is-framed'\)/);
-	for (const label of ['File', 'Edit', 'View', 'Help']) {
+	for (const label of ['Terminay', 'Edit', 'View', 'Help']) {
 		assert.match(webWorkspace, new RegExp(`${label}`, 'u'));
 	}
 	assert.match(webWorkspace, /<InPageWindow\b[\s\S]*name=\{route\.kind\}/u);
@@ -75,7 +75,7 @@ test('shared renderer accepts auxiliary route controller for tab edit fallbacks'
 	assert.match(app, /auxiliaryRoutes\?:\s*AuxiliaryRouteController/u);
 	assert.match(app, /auxiliaryRoutes\s*\?\?\s*createAuxiliaryRouteController\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.editTerminalTab/u);
-	assert.match(app, /auxiliaryRoutes\.openRecordings/u);
+	assert.match(app, /auxiliaryRoutes\.openSettings\('macros'\)/u);
 	assert.match(projectEditor, /auxiliaryRoutes\.editProjectTab/u);
 	assert.doesNotMatch(projectEditor, /terminayProjectEditHost/u);
 });

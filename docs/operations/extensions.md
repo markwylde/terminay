@@ -58,7 +58,8 @@ rollback cannot silently replace external/provider state.
 
 ## Install procedure
 
-Use **File → Extensions…** on the exact selected server. The initiating device
+Use **Settings › Extensions** with the exact server chosen in the Settings
+server selector. The initiating device
 must have extension-management permission.
 
 For custom npm packages:

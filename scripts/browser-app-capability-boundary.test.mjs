@@ -56,7 +56,7 @@ test('browser composition omits native host authority instead of fabricating pre
 	}
 	assert.match(
 		webWorkspace,
-		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*onOpenConnectionManager: \(\) =>[\s\S]*auxiliaryRoutes\.openRemoteControl\(\),?[\s\S]*\}\)\}/u,
+		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*onOpenConnectionManager: \(\) =>[\s\S]*auxiliaryRoutes\.openSettings\('remote'\);?[\s\S]*\}\)\}/u,
 	);
 });
 
@@ -90,7 +90,7 @@ test('the compact application menu crosses the host boundary as a capability', a
 		/applicationMenu=\{hostPresentation\?\.renderCompactApplicationMenu\?\.\(\)\}/u,
 	);
 	// The browser's own menu vocabulary stays in the browser composition.
-	for (const command of ['Disconnect', 'Remote Control', 'Recordings']) {
+	for (const command of ['Disconnect', 'New Terminal Tab', 'New Project']) {
 		assert.ok(
 			webWorkspace.includes(command),
 			`${command} belongs to the browser composition`,

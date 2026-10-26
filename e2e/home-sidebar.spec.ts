@@ -10,7 +10,8 @@ import {
 import { createStartedProject } from './support/project-start';
 
 /**
- * Home's sidebar: Home, Tabs, and Automations, each opening as a Home tab. Its
+ * Home's sidebar: Home, Tabs, Automations, and Recordings, each opening as a
+ * Home tab. Its
  * visibility, and the tabs it opened, belong to this device and to no project.
  */
 
@@ -20,7 +21,9 @@ const sidebarToggle = (page: Page) => page.getByLabel('Toggle file explorer');
 const homeView = activeHome;
 const homeSidebar = (page: Page) =>
 	page.locator('[data-terminay-home-sidebar]');
-const sectionTab = (page: Page, section: 'home' | 'tabs' | 'automations') =>
+type Section = 'home' | 'tabs' | 'automations' | 'recordings';
+
+const sectionTab = (page: Page, section: Section) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
 const dashboard = (page: Page) => page.locator('[data-terminay-dashboard]');
 const panelRows = (page: Page) =>
@@ -41,7 +44,7 @@ async function activeProjectId(page: Page): Promise<string> {
 
 async function expectSection(
 	page: Page,
-	section: 'home' | 'tabs' | 'automations',
+	section: Section | 'none',
 ): Promise<void> {
 	await expect(homeView(page)).toHaveAttribute(
 		'data-terminay-home-view',
@@ -74,9 +77,9 @@ test.describe('Home sidebar', () => {
 		await expect(homeSidebar(mainWindow)).toBeVisible();
 		await expectSection(mainWindow, 'home');
 
-		// Exactly three sections, in order, and the one in front is current.
+		// Exactly four sections, in order, and the one in front is current.
 		const items = homeSidebar(mainWindow).getByRole('tab');
-		await expect(items).toHaveText(['Home', 'Tabs', 'Automations']);
+		await expect(items).toHaveText(['Home', 'Tabs', 'Automations', 'Recordings']);
 		await expect(sectionTab(mainWindow, 'home')).toHaveAttribute(
 			'aria-selected',
 			'true',
@@ -119,6 +122,8 @@ test.describe('Home sidebar', () => {
 		await expectSection(mainWindow, 'tabs');
 		await expect(dashboard(mainWindow)).toBeVisible();
 		await mainWindow.keyboard.press('End');
+		await expect(sectionTab(mainWindow, 'recordings')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowUp');
 		await expect(sectionTab(mainWindow, 'automations')).toBeFocused();
 		await mainWindow.keyboard.press('Enter');
 		await expectSection(mainWindow, 'automations');
@@ -127,10 +132,21 @@ test.describe('Home sidebar', () => {
 			'Tabs',
 			'Automations',
 		]);
+		await sectionTab(mainWindow, 'recordings').click();
+		await expectSection(mainWindow, 'recordings');
+		await expect(
+			frontHomeTab(mainWindow).locator('[data-terminay-recordings]'),
+		).toBeVisible();
+		await expect(homeTabChips(mainWindow)).toHaveText([
+			'Home',
+			'Tabs',
+			'Automations',
+			'Recordings',
+		]);
 		// A section that is already open comes to the front; it never opens twice.
 		await sectionTab(mainWindow, 'home').click();
 		await expectSection(mainWindow, 'home');
-		await expect(homeTabChips(mainWindow)).toHaveCount(3);
+		await expect(homeTabChips(mainWindow)).toHaveCount(4);
 	});
 
 	test('hidden visibility is remembered across leaving Home and a reload', async ({
@@ -228,7 +244,7 @@ test.describe('Home sidebar', () => {
 		const empty = mainWindow.locator('[data-terminay-home-empty]');
 		await expect(
 			empty.locator('[data-terminay-home-empty-section]'),
-		).toHaveText(['Home', 'Tabs', 'Automations']);
+		).toHaveText(['Home', 'Tabs', 'Automations', 'Recordings']);
 		await empty.locator('[data-terminay-home-empty-section="automations"]').click();
 		await expectSection(mainWindow, 'automations');
 		await expect(homeTabChips(mainWindow)).toHaveText(['Automations']);

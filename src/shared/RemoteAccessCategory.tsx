@@ -1,26 +1,32 @@
 import { type ReactNode, useEffect } from 'react';
 import { useConnections } from './connections/ConnectionsContext';
-import type { SharedConnectionsRouteBodyProps } from './SharedConnectionsRouteBody';
+import type {
+	ConnectionsSettingsPresentation,
+	SharedConnectionsRouteBodyProps,
+} from './SharedConnectionsRouteBody';
 import { SharedConnectionsRouteBody } from './SharedConnectionsRouteBody';
-import '../settings.css';
-import './RemoteControlWindow.css';
 
-/** Settings-family chrome for the shared connections route. */
-export function RemoteControlWindow(
-	props: Omit<
-		SharedConnectionsRouteBodyProps,
-		| 'state'
-		| 'embedded'
-		| 'presentation'
-		| 'servers'
-		| 'onRenameServer'
-		| 'onForgetServer'
-		| 'onServersChanged'
-	> &
-		Readonly<{ exposurePanel?: ReactNode }>,
-) {
+export type RemoteAccessRouteProps = Omit<
+	SharedConnectionsRouteBodyProps,
+	| 'state'
+	| 'embedded'
+	| 'presentation'
+	| 'servers'
+	| 'onRenameServer'
+	| 'onForgetServer'
+	| 'onServersChanged'
+	| 'settings'
+> &
+	Readonly<{ exposurePanel?: ReactNode }>;
+
+/** The Remote Access category of Settings: this server's exposure and the saved servers. */
+export function RemoteAccessCategory({
+	settings,
+	...props
+}: RemoteAccessRouteProps &
+	Readonly<{ settings: ConnectionsSettingsPresentation }>) {
 	// The saved servers are the host's remembered profiles: the same list the
-	// connection menu offers to attach.
+	// connection menu offers to attach. They do not follow the server selector.
 	const { profiles, refreshProfiles, renameProfile, forgetProfile } =
 		useConnections();
 	useEffect(() => {
@@ -28,8 +34,9 @@ export function RemoteControlWindow(
 	}, [refreshProfiles]);
 	return (
 		<SharedConnectionsRouteBody
-			presentation="management"
+			presentation="settings"
 			state="ready"
+			settings={settings}
 			{...(props.profileStore === undefined
 				? {
 						servers: profiles,

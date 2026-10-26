@@ -27,10 +27,9 @@ function memoryStorage(initial: Record<string, string> = {}) {
 test('geometry round-trips per window', () => {
 	withStorage(memoryStorage(), () => {
 		writeRememberedGeometry('settings', { x: 10.4, y: 20, width: 900, height: 600, maximized: false });
-		writeRememberedGeometry('macros', { x: 1, y: 2, width: 500, height: 400, maximized: true });
+		writeRememberedGeometry('performance-log', { x: 1, y: 2, width: 500, height: 400, maximized: true });
 		assert.deepEqual(readRememberedGeometry('settings'), { x: 10, y: 20, width: 900, height: 600, maximized: false });
-		assert.deepEqual(readRememberedGeometry('macros'), { x: 1, y: 2, width: 500, height: 400, maximized: true });
-		assert.equal(readRememberedGeometry('recordings'), null);
+		assert.deepEqual(readRememberedGeometry('performance-log'), { x: 1, y: 2, width: 500, height: 400, maximized: true });
 	});
 });
 
@@ -66,8 +65,8 @@ test('an unknown window id is dropped and does not disturb the others', () => {
 	const storage = memoryStorage({ [KEY]: JSON.stringify(stored) });
 	withStorage(storage, () => {
 		assert.deepEqual(readRememberedGeometry('settings'), stored.settings);
-		writeRememberedGeometry('macros', { x: 1, y: 2, width: 500, height: 400, maximized: false });
-		assert.deepEqual(Object.keys(JSON.parse(storage.items.get(KEY) ?? '{}')).sort(), ['macros', 'settings']);
+		writeRememberedGeometry('performance-log', { x: 1, y: 2, width: 500, height: 400, maximized: false });
+		assert.deepEqual(Object.keys(JSON.parse(storage.items.get(KEY) ?? '{}')).sort(), ['performance-log', 'settings']);
 	});
 });
 

@@ -27,6 +27,7 @@ import {
 	Play,
 	Plug,
 	PanelBottom,
+	Radio,
 	RefreshCw,
 	Trash2,
 	Settings,
@@ -437,6 +438,7 @@ import {
 	HomeWorkspace,
 	type HomeWorkspaceHandle,
 } from './workspace/HomeWorkspace';
+import type { HomeSection } from './workspace/homeSection.ts';
 import {
 	type CommandBarItem,
 	CommandBarDialog,
@@ -724,6 +726,8 @@ type ProjectWorkspaceProps = {
 	macroCategories: readonly string[];
 	onAddProject: () => Promise<void>;
 	onShowDashboard: () => void;
+	/** Recordings live in Home, so a project hands this one back up too. */
+	onShowRecordings: () => void;
 	/** Closing the tab in front with no tab open closes the project, when no
 	 * folder of it holds a panel either. */
 	onCloseActiveWithNoPanel: (projectId: string) => void;
@@ -1508,6 +1512,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onPopoutProject,
 			onTerminalTabDrag,
 			onShowDashboard,
+			onShowRecordings,
 			onCloseActiveWithNoPanel,
 			searchPlaces,
 			sidebarWidth,
@@ -3954,7 +3959,7 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Terminal',
 					icon: <Terminal size={18} strokeWidth={2.1} />,
 					id: 'create-terminal-tab',
-					title: 'Create a new terminal tab',
+					title: 'New Terminal Tab',
 					description: 'Open a fresh terminal tab in the current project.',
 					searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
 					shortcutLabel: getCommandShortcutLabel(
@@ -4000,7 +4005,7 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Workspace',
 					icon: <FolderPlus size={18} strokeWidth={2.1} />,
 					id: 'create-project',
-					title: 'Create a new project',
+					title: 'New Project',
 					description: 'Add a new project tab and switch to it.',
 					searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
 					shortcutLabel: getCommandShortcutLabel(
@@ -4089,8 +4094,8 @@ const ProjectWorkspace = memo(forwardRef<
 					group: 'Workspace',
 					icon: <History size={18} strokeWidth={2.1} />,
 					id: 'open-recordings',
-					title: 'Open recordings timeline',
-					description: 'Browse and replay saved terminal recordings.',
+					title: 'Recordings',
+					description: 'Browse and replay saved terminal recordings in Home.',
 					searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
 					shortcutLabel: getCommandShortcutLabel(
 						settings.keyboardShortcuts,
@@ -4098,7 +4103,83 @@ const ProjectWorkspace = memo(forwardRef<
 						isMac,
 					),
 					onSelect: () => {
-						void auxiliaryRoutes.openRecordings();
+						// The project stays mounted behind Home, so its Command Bar
+						// has to close rather than wait to be seen again.
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						onShowRecordings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'open-settings',
+					title: 'Settings',
+					description: 'Configure Terminay and the selected server.',
+					searchText: `open settings preferences configuration ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-settings',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Radio size={18} strokeWidth={2.1} />,
+					id: 'open-remote-control',
+					title: 'Remote Access',
+					description: 'Expose this server and manage saved servers.',
+					searchText: `remote access control connections pairing servers expose trusted devices ${getCommandShortcut(settings.keyboardShortcuts, 'open-remote-control')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-remote-control',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('remote');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Workflow size={18} strokeWidth={2.1} />,
+					id: 'open-macros',
+					title: 'Macros',
+					description: 'Manage reusable terminal macros.',
+					searchText: `macros commands snippets automation ${getCommandShortcut(settings.keyboardShortcuts, 'open-macros')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-macros',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('macros');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'open-extensions',
+					title: 'Extensions',
+					description: 'Manage extensions on the selected server.',
+					searchText: `extensions plugins npm providers ${getCommandShortcut(settings.keyboardShortcuts, 'open-extensions')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-extensions',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('extensions');
 					},
 				},
 				{
@@ -4246,6 +4327,7 @@ const ProjectWorkspace = memo(forwardRef<
 			settings.keyboardShortcuts,
 			setProjectRootFolderToWorkingDirectory,
 			onShowDashboard,
+			onShowRecordings,
 			onToggleStatusBar,
 			isStatusBarVisible,
 			openProfileChooser,
@@ -4435,7 +4517,21 @@ const ProjectWorkspace = memo(forwardRef<
 						await startDictation();
 						break;
 					case 'open-recordings':
-						await auxiliaryRoutes.openRecordings();
+						onShowRecordings();
+						break;
+					// Management lives in Settings; a key bound to one of its
+					// categories opens it there, as the Command Bar does.
+					case 'open-settings':
+						await auxiliaryRoutes.openSettings();
+						break;
+					case 'open-macros':
+						await auxiliaryRoutes.openSettings('macros');
+						break;
+					case 'open-remote-control':
+						await auxiliaryRoutes.openSettings('remote');
+						break;
+					case 'open-extensions':
+						await auxiliaryRoutes.openSettings('extensions');
 						break;
 					case 'toggle-file-explorer-sidebar':
 						toggleFileExplorerSidebar();
@@ -4463,6 +4559,7 @@ const ProjectWorkspace = memo(forwardRef<
 				closeActivePanel,
 				onAddProject,
 				onShowDashboard,
+				onShowRecordings,
 				onToggleStatusBar,
 				openActiveTerminalSettings,
 				openProjectSettings,
@@ -7218,15 +7315,6 @@ function App({
 			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
-	useEffect(() => {
-		const openExtensions = () => {
-			void auxiliaryRouteController.openSettings('extensions');
-		};
-		window.addEventListener('terminay-open-extensions', openExtensions);
-		return () => {
-			window.removeEventListener('terminay-open-extensions', openExtensions);
-		};
-	}, [auxiliaryRouteController]);
 	// A creation outlives the connection it began on. These let it read the
 	// connection that is current when it resumes, and be woken when that changes.
 	const creationConnectionRef = useRef({
@@ -8254,6 +8342,11 @@ function App({
 				selectHome();
 				return Promise.resolve();
 			}
+			// Recordings are a Home section, so they open there in any project.
+			if (command === 'open-recordings') {
+				openHomeSectionRef.current('recordings');
+				return Promise.resolve();
+			}
 			// The status bar belongs to the window, not to a project.
 			if (command === 'toggle-status-bar') {
 				toggleStatusBar();
@@ -8299,10 +8392,10 @@ function App({
 				return auxiliaryRouteController.openSettings();
 			}
 			if (command === 'open-macros') {
-				return auxiliaryRouteController.openMacros();
+				return auxiliaryRouteController.openSettings('macros');
 			}
 			if (command === 'open-remote-control') {
-				return auxiliaryRouteController.openRemoteControl();
+				return auxiliaryRouteController.openSettings('remote');
 			}
 			if (command === 'open-performance-log') {
 				return auxiliaryRouteController.openPerformanceLog();
@@ -8624,9 +8717,9 @@ function App({
 	const isHomeSelectedRef = useRef(isHomeSelected);
 	isHomeSelectedRef.current = isHomeSelected;
 	// Defined further down; an agent's request to show Home reaches it here.
-	const openHomeSectionRef = useRef<
-		(section: 'home' | 'tabs' | 'automations') => void
-	>(() => undefined);
+	const openHomeSectionRef = useRef<(section: HomeSection) => void>(
+		() => undefined,
+	);
 	const workspaceViewWindow: WorkspaceViewWindow<ProjectWorkspaceHandle> = {
 		projectIds: () => projectsRef.current.map((project) => project.id),
 		shownProjectId: () =>
@@ -8803,13 +8896,17 @@ function App({
 		[automationSectionServers, currentServerId, openInHome, selectHome],
 	);
 	const openHomeSection = useCallback(
-		(section: 'home' | 'tabs' | 'automations') => {
+		(section: HomeSection) => {
 			selectHome();
 			openInHome({ kind: 'section', section });
 		},
 		[openInHome, selectHome],
 	);
 	openHomeSectionRef.current = openHomeSection;
+	const showRecordings = useCallback(
+		() => openHomeSection('recordings'),
+		[openHomeSection],
+	);
 	const automationsData = useMemo<AutomationsData>(
 		() => ({
 			automations: serverAutomations,
@@ -9470,6 +9567,20 @@ function App({
 			},
 			{
 				group: 'Workspace',
+				icon: <History size={18} strokeWidth={2.1} />,
+				id: 'open-recordings',
+				title: 'Recordings',
+				description: 'Browse and replay saved terminal recordings in Home.',
+				searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'open-recordings',
+					isMac,
+				),
+				onSelect: run(() => openHomeSection('recordings')),
+			},
+			{
+				group: 'Workspace',
 				icon: <Sidebar size={18} strokeWidth={2.1} />,
 				id: 'toggle-home-sidebar',
 				title: isHomeSidebarVisible ? 'Hide sidebar' : 'Show sidebar',
@@ -9503,7 +9614,7 @@ function App({
 				group: 'Workspace',
 				icon: <Settings size={18} strokeWidth={2.1} />,
 				id: 'open-settings',
-				title: 'Open settings',
+				title: 'Settings',
 				description: 'Change how Terminay looks and behaves.',
 				searchText: `open settings preferences ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
 				shortcutLabel: getCommandShortcutLabel(
@@ -9578,6 +9689,7 @@ function App({
 			);
 			if (
 				command !== 'show-dashboard' &&
+				command !== 'open-recordings' &&
 				command !== 'toggle-status-bar' &&
 				command !== 'open-command-bar' &&
 				command !== 'close-active' &&
@@ -10583,6 +10695,7 @@ function App({
 							macroCategories={macroCategories}
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
+							onShowRecordings={showRecordings}
 							onCloseActiveWithNoPanel={closeProjectWithNoPanels}
 							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}

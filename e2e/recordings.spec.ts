@@ -1,6 +1,15 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { openMacroLauncher, sendAppCommand } from './support/app'
+import {
+  closeFrontHomeTab,
+  expectHomeSection,
+  frontHomeTab,
+  homeTabChip,
+  homeTabChips,
+} from './support/home-tabs'
 import { contextMenuItem } from './support/ui'
 import { TerminalRecordingService } from '../electron/recording/service'
 import {
@@ -210,126 +219,163 @@ test.describe('recording settings and service', () => {
   })
 })
 
-test.describe('recordings UI', () => {
-  test('starts and stops a terminal recording from the tab context menu and opens the timeline', async ({
+/**
+ * Records one terminal session that prints `marker`, into a directory of the
+ * test's own, and leaves the project in front.
+ */
+async function recordTerminalOutput(
+  appHarness: { openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page> },
+  page: Page,
+  recordingDir: string,
+  marker: string,
+): Promise<void> {
+  await mkdir(recordingDir, { recursive: true })
+  const settings = await appHarness.openSettingsWindow({ page, sectionId: 'recording-defaults' })
+  await settings.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
+  await settings.getByLabel('Open timeline after saving').uncheck()
+  await expect(settings.locator('.settings-status')).toContainText('Saved')
+  await settings.close()
+
+  const terminalTab = page.locator('.project-workspace--active .terminal-tab-content').first()
+  await terminalTab.click({ button: 'right' })
+  await contextMenuItem(page, 'Start Recording').click()
+  await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
+  await page.locator('.project-workspace--active .xterm').first().click()
+  const [first, rest] = [marker.slice(0, 3), marker.slice(3)]
+  // Typed in two halves so the echoed command line never matches the marker.
+  await page.keyboard.type(`printf '${first}%s\\n' ${rest}`)
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.project-workspace--active .terminal-panel:visible .xterm-rows')).toContainText(marker)
+  await terminalTab.click({ button: 'right' })
+  await contextMenuItem(page, 'Stop Recording').click()
+  await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
+}
+
+const recordingsTab = (page: Page) =>
+  page.locator('[data-terminay-home-tab-panel="section:recordings"]')
+const timelineItems = (page: Page) =>
+  recordingsTab(page).locator('[data-terminay-recording-row]')
+
+/** The timeline, once it lists at least one recording. */
+async function expectListedRecording(page: Page): Promise<void> {
+  await expect(async () => {
+    await recordingsTab(page).getByRole('button', { name: 'Refresh recordings' }).click()
+    await expect(timelineItems(page).first()).toBeVisible({ timeout: 1_000 })
+  }).toPass({ timeout: 10_000 })
+}
+
+test.describe('recordings in Home', () => {
+  test('the Recordings command selects Home and brings the timeline to the front', async ({
     appHarness,
     mainWindow,
     tempDir,
   }) => {
-    const recordingDir = path.join(tempDir, 'ui-recordings')
-    await mkdir(recordingDir, { recursive: true })
-    const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
-    await settings.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
-    await settings.getByLabel('Open timeline after saving').uncheck()
-    await expect(settings.locator('.settings-status')).toContainText('Saved')
-    await settings.close()
+    await recordTerminalOutput(appHarness, mainWindow, path.join(tempDir, 'open-recordings'), 'rec-open-output')
+    await expect(mainWindow.locator('.app-shell')).not.toHaveAttribute('data-terminay-selected-view', 'home')
 
-    const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
-    await terminalTab.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Start Recording').click()
+    // Through the Command Bar.
+    await openMacroLauncher(mainWindow)
+    await mainWindow.getByLabel('Search commands').fill('recordings')
+    await mainWindow.locator('[data-terminay-command-bar-item="open-recordings"]').click()
+    await expect(mainWindow.locator('.app-shell')).toHaveAttribute('data-terminay-selected-view', 'home')
+    await expectHomeSection(mainWindow, 'recordings')
+    await expect(frontHomeTab(mainWindow)).toHaveAttribute('data-terminay-home-section', 'recordings')
+    await expect(recordingsTab(mainWindow).getByRole('heading', { name: 'Recordings' })).toBeVisible()
+    await expect(recordingsTab(mainWindow).getByPlaceholder('Search recordings')).toBeVisible()
+    await expectListedRecording(mainWindow)
+    await expect(homeTabChip(mainWindow, 'section:recordings')).toHaveCount(1)
 
-    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
-    await mainWindow.keyboard.type('printf recording-ui-hit')
-    await mainWindow.keyboard.press('Enter')
+    // Through the menu command, from a project: the open tab comes to the front.
+    await mainWindow.locator('.project-tab').first().click()
+    await expect(mainWindow.locator('.app-shell')).not.toHaveAttribute('data-terminay-selected-view', 'home')
+    // The Command Bar closed when it sent the person to Home.
+    await expect(mainWindow.getByRole('dialog', { name: 'Command bar' })).toHaveCount(0)
+    await sendAppCommand(mainWindow, 'open-recordings')
+    await expectHomeSection(mainWindow, 'recordings')
+    await expect(homeTabChip(mainWindow, 'section:recordings')).toHaveCount(1)
 
-    await terminalTab.click({ button: 'right' })
-    await expect(contextMenuItem(mainWindow, 'Reveal Current Recording')).toBeVisible()
-    await contextMenuItem(mainWindow, 'Stop Recording').click()
-    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
-    await terminalTab.click({ button: 'right' })
-    await expect(contextMenuItem(mainWindow, 'Reveal Last Recording')).toBeVisible()
-    await mainWindow.keyboard.press('Escape')
-
-    const recordingsWindow = await appHarness.openRecordingsWindow(mainWindow)
-
-    await expect(recordingsWindow.getByRole('heading', { name: 'Recordings' })).toBeVisible()
-    expect(
-      await recordingsWindow.evaluate(async () => {
-        return {
-          canonicalHostPresent: typeof window.terminayHost?.requestAction === 'function',
-          nativeRecordingPreloadPresent: Reflect.has(window, 'terminayRecordingServiceHost'),
-          broadPreloadPresent: Reflect.has(window, 'terminay'),
-        }
-      }),
-    ).toEqual({
-      canonicalHostPresent: true,
-      nativeRecordingPreloadPresent: false,
-      broadPreloadPresent: false,
-    })
-    await expect(recordingsWindow.getByPlaceholder('Search recordings')).toBeVisible()
-    await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible()
-    await recordingsWindow.getByPlaceholder('Search recordings').fill('Terminal')
-    await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible()
-    await expect(recordingsWindow.getByRole('button', { name: 'Play replay' })).toBeEnabled()
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toBeVisible()
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('Fit')
-
-    await recordingsWindow.getByLabel('Zoom presets').click()
-    await expect(recordingsWindow.getByRole('option', { name: '125%' })).toBeVisible()
-    await recordingsWindow.getByRole('option', { name: '125%' }).click()
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('125%')
-    await recordingsWindow.getByLabel('Replay zoom').fill('10')
-    await recordingsWindow.getByLabel('Replay zoom').press('Enter')
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('10%')
-    await recordingsWindow.getByLabel('Replay zoom').fill('5')
-    await recordingsWindow.getByLabel('Replay zoom').press('Enter')
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('5%')
-    await recordingsWindow.getByLabel('Replay zoom').fill('6%')
-    await recordingsWindow.getByLabel('Replay zoom').press('Enter')
-    await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('6%')
-
-    await recordingsWindow.getByLabel('Replay palette').click()
-    await expect(recordingsWindow.getByRole('option', { name: 'Current' })).toBeVisible()
-    await recordingsWindow.getByRole('option', { name: 'Current' }).click()
-    await expect(recordingsWindow.getByLabel('Replay palette')).toContainText('Current')
-
-    await recordingsWindow.getByLabel('Playback speed').click()
-    await expect(recordingsWindow.getByRole('option', { name: '2x' })).toBeVisible()
-    await recordingsWindow.getByRole('option', { name: '2x' }).click()
-    await expect(recordingsWindow.getByLabel('Playback speed')).toContainText('2x')
+    // Through its configurable shortcut.
+    const isMac = await mainWindow.evaluate(() => navigator.userAgent.includes('Mac'))
+    const shortcuts = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'keyboard-shortcuts' })
+    const row = shortcuts.locator('.settings-row').filter({ hasText: /^Recordings/ })
+    await row.getByRole('button', { name: 'Listen' }).click()
+    await shortcuts.keyboard.press(isMac ? 'Meta+Shift+Y' : 'Control+Shift+Y')
+    await expect(row.locator('input')).toHaveValue('CmdOrCtrl+Shift+Y')
+    await expect(shortcuts.getByText('Saved', { exact: true })).toBeVisible()
+    await shortcuts.close()
+    await closeFrontHomeTab(mainWindow)
+    await expect(homeTabChip(mainWindow, 'section:recordings')).toHaveCount(0)
+    await mainWindow.locator('.project-tab').first().click()
+    await mainWindow.locator('.project-workspace--active .terminal-panel').first().click()
+    await mainWindow.keyboard.press(isMac ? 'Meta+Shift+Y' : 'Control+Shift+Y')
+    await expectHomeSection(mainWindow, 'recordings')
+    await expect(timelineItems(mainWindow).first()).toBeVisible()
   })
 
-  test('replays a recording into a visible, sanely sized terminal stage', async ({
+  test('a replay opens as its own Home tab, once, and closing it deletes nothing', async ({
     appHarness,
     mainWindow,
     tempDir,
   }) => {
-    const recordingDir = path.join(tempDir, 'replay-recordings')
-    await mkdir(recordingDir, { recursive: true })
-    const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
-    await settingsWindow.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
-    await settingsWindow.getByLabel('Open timeline after saving').uncheck()
-    await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
-    await settingsWindow.close()
+    await recordTerminalOutput(appHarness, mainWindow, path.join(tempDir, 'replay-recordings'), 'replay-visible-output')
+    await sendAppCommand(mainWindow, 'open-recordings')
+    await expectHomeSection(mainWindow, 'recordings')
+    await expectListedRecording(mainWindow)
+    const chipsBefore = await homeTabChips(mainWindow).count()
 
-    const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
-    await terminalTab.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Start Recording').click()
-    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
-    await mainWindow.locator('.project-workspace--active .xterm').first().click()
-    await mainWindow.keyboard.type("printf 'replay-%s\\n' visible-output")
-    await mainWindow.keyboard.press('Enter')
-    // The shell has printed the output before the recording is finalized.
-    await expect(mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-rows')).toContainText('replay-visible-output')
-    await terminalTab.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Stop Recording').click()
-    await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
+    // Replaying from the timeline: a new tab in front, titled for the
+    // recording, with the timeline still open behind it.
+    await recordingsTab(mainWindow).getByPlaceholder('Search recordings').fill('Terminal')
+    await timelineItems(mainWindow).first().click()
+    const replayChip = homeTabChip(mainWindow, 'recording:')
+    await expect(replayChip).toHaveCount(1)
+    await expect(replayChip).not.toHaveAttribute('title', 'Recording')
+    await expect(homeTabChips(mainWindow)).toHaveCount(chipsBefore + 1)
+    await expect(homeTabChip(mainWindow, 'section:recordings')).toHaveCount(1)
+    const replay = frontHomeTab(mainWindow)
+    await expect(replay).toHaveAttribute('data-terminay-home-tab-panel', /^recording:/)
+    // Replay belongs to Recordings: the sidebar keeps Recordings current.
+    await expectHomeSection(mainWindow, 'recordings')
+    await expect(mainWindow.locator('[data-terminay-home-section-tab="recordings"]')).toHaveAttribute('aria-selected', 'true')
 
-    const recordingsWindow = await appHarness.openRecordingsWindow(mainWindow)
-    await expect(async () => {
-      await recordingsWindow.getByRole('button', { name: 'Refresh recordings' }).click()
-      await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible({ timeout: 1_000 })
-    }).toPass({ timeout: 10_000 })
-    await recordingsWindow.locator('.recordings-list-item').first().click()
-    await expect(recordingsWindow.getByRole('button', { name: 'Play replay' })).toBeEnabled()
-    await expect(recordingsWindow.locator('.recordings-terminal .xterm-screen')).toBeVisible()
-    await recordingsWindow.getByRole('button', { name: 'Play replay' }).click()
-
-    await expect(recordingsWindow.locator('.recordings-terminal .xterm-rows')).toContainText('replay-visible-output', {
+    // The replay player, as it was in its own window.
+    await expect(replay.getByRole('button', { name: 'Play replay' })).toBeEnabled()
+    await expect(replay.getByLabel('Replay zoom')).toHaveValue('Fit')
+    await replay.getByLabel('Zoom presets').click()
+    await mainWindow.getByRole('option', { name: '125%' }).click()
+    await expect(replay.getByLabel('Replay zoom')).toHaveValue('125%')
+    await replay.getByLabel('Replay zoom').fill('6%')
+    await replay.getByLabel('Replay zoom').press('Enter')
+    await expect(replay.getByLabel('Replay zoom')).toHaveValue('6%')
+    await replay.getByLabel('Replay zoom').fill('Fit')
+    await replay.getByLabel('Replay zoom').press('Enter')
+    await replay.getByLabel('Replay palette').click()
+    await mainWindow.getByRole('option', { name: 'Current' }).click()
+    await expect(replay.getByLabel('Replay palette')).toContainText('Current')
+    await replay.getByLabel('Playback speed').click()
+    await mainWindow.getByRole('option', { name: '2x' }).click()
+    await expect(replay.getByLabel('Playback speed')).toContainText('2x')
+    await expect(replay.locator('.recordings-terminal .xterm-screen')).toBeVisible()
+    await replay.getByRole('button', { name: 'Play replay' }).click()
+    await expect(replay.locator('.recordings-terminal .xterm-rows')).toContainText('replay-visible-output', {
       timeout: 15_000,
     })
-    const stage = await recordingsWindow.locator('.recordings-terminal-stage').boundingBox()
+    const stage = await replay.locator('.recordings-terminal-stage').boundingBox()
     expect(stage?.width ?? 0).toBeGreaterThan(200)
     expect(stage?.height ?? 0).toBeGreaterThan(100)
+
+    // Replaying the same recording twice brings the one tab back.
+    await homeTabChip(mainWindow, 'section:recordings').click()
+    await expect(frontHomeTab(mainWindow)).toHaveAttribute('data-terminay-home-tab-panel', 'section:recordings')
+    await timelineItems(mainWindow).first().click()
+    await expect(frontHomeTab(mainWindow)).toHaveAttribute('data-terminay-home-tab-panel', /^recording:/)
+    await expect(replayChip).toHaveCount(1)
+
+    // Closing a replay leaves the recording in the timeline.
+    await closeFrontHomeTab(mainWindow)
+    await expect(replayChip).toHaveCount(0)
+    await expect(frontHomeTab(mainWindow)).toHaveAttribute('data-terminay-home-tab-panel', 'section:recordings')
+    await recordingsTab(mainWindow).getByRole('button', { name: 'Refresh recordings' }).click()
+    await expect(timelineItems(mainWindow).first()).toBeVisible()
   })
 })

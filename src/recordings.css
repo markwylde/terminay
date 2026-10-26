@@ -632,3 +632,197 @@
     flex-wrap: wrap;
   }
 }
+
+.recordings-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* Recordings as a Home section: a full page in the Tabs and Automations voice. */
+.recordings-home {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  color: #dce2f0;
+  background: var(--terminal-panel-surface, #0f1318);
+}
+
+.recordings-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.recordings-page .recordings-page__search {
+  max-width: 320px;
+}
+
+.recordings-page .recordings-page__search .workspace-dashboard__filter-input {
+  width: 240px;
+}
+
+.recordings-page__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.recordings-page__refresh:hover {
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.recordings-page__refresh:focus-visible {
+  outline: 1px solid rgba(120, 170, 255, 0.75);
+  outline-offset: -1px;
+}
+
+.recordings-page__group + .recordings-page__group {
+  margin-top: 14px;
+}
+
+.recordings-page__group-head {
+  height: 28px;
+  margin: 0;
+  padding: 6px 10px 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(220, 226, 240, 0.5);
+}
+
+/* Colour, title, where it ran, then the fixed-width time, length and state.
+   Scoped under the page: the dashboard row it borrows starts with all: unset. */
+.recordings-page .recordings-page__row {
+  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) auto auto auto;
+  gap: 12px;
+  height: 36px;
+}
+
+.recordings-page__swatch {
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.recordings-page__title {
+  font-weight: 600;
+}
+
+.recordings-page__time {
+  font-size: 11.5px;
+  text-align: right;
+  color: rgba(220, 226, 240, 0.5);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+
+.recordings-page__state {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.recordings-page__state:empty {
+  display: none;
+}
+
+.recordings-page__pill {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: capitalize;
+  color: rgba(220, 226, 240, 0.7);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.recordings-page__pill--recording {
+  color: #ff8a8a;
+  background: rgba(255, 99, 99, 0.12);
+}
+
+.recordings-page__pill--failed,
+.recordings-page__pill--interrupted {
+  color: #f0b45a;
+  background: rgba(240, 180, 90, 0.12);
+}
+
+.recordings-page__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 420px;
+  margin: 72px auto 24px;
+  text-align: center;
+}
+
+.recordings-page__empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(220, 226, 240, 0.7);
+}
+
+.recordings-page__empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #dce2f0;
+}
+
+.recordings-page__empty-text {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(220, 226, 240, 0.55);
+}
+
+@media (max-width: 640px) {
+  .recordings-page .recordings-page__row {
+    grid-template-columns: 3px minmax(0, 1fr) auto auto;
+  }
+
+  .recordings-page__row .workspace-dashboard__row-detail,
+  .recordings-page__row .recordings-page__started {
+    display: none;
+  }
+}
+
+.recordings-replay {
+  height: 100%;
+  color: var(--settings-text);
+  font-family: var(--settings-font);
+}
+
+.recordings-server-select {
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 12px;
+}
