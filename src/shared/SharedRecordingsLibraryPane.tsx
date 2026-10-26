@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { RefreshCw, Search } from 'lucide-react'
 import type { TerminalRecordingListItem } from '../types/terminay'
 
@@ -10,6 +11,7 @@ export type RecordingGroup = readonly [string, readonly TerminalRecordingListIte
  */
 export function SharedRecordingsLibraryPane({
   groupedRecordings,
+  headerAccessory,
   isLoading,
   onQueryChange,
   onRefresh,
@@ -21,6 +23,8 @@ export function SharedRecordingsLibraryPane({
   durationFor,
 }: Readonly<{
   groupedRecordings: readonly RecordingGroup[]
+  /** Drawn in the header before the refresh control. */
+  headerAccessory?: ReactNode
   isLoading: boolean
   onQueryChange: (query: string) => void
   onRefresh: () => void
@@ -38,9 +42,12 @@ export function SharedRecordingsLibraryPane({
           <h1>Recordings</h1>
           <p>{recordings.length} saved session{recordings.length === 1 ? '' : 's'}</p>
         </div>
-        <button type="button" className="recordings-icon-button" onClick={onRefresh} aria-label="Refresh recordings">
-          <RefreshCw size={16} />
-        </button>
+        <div className="recordings-header__actions">
+          {headerAccessory}
+          <button type="button" className="recordings-icon-button" onClick={onRefresh} aria-label="Refresh recordings">
+            <RefreshCw size={16} />
+          </button>
+        </div>
       </header>
       <label className="recordings-search">
         <Search size={15} />

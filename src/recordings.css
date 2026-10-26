@@ -632,3 +632,50 @@
     flex-wrap: wrap;
   }
 }
+
+.recordings-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* Recordings as a Home section: the timeline fills its tab. */
+.recordings-timeline {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--settings-text);
+  background: var(--settings-bg);
+  font-family: var(--settings-font);
+}
+
+.recordings-timeline .recordings-sidebar {
+  flex: 1;
+  min-height: 0;
+  border-right: 0;
+  background: transparent;
+}
+
+.recordings-timeline .recordings-header {
+  padding-top: 16px;
+  -webkit-app-region: no-drag;
+}
+
+.recordings-replay {
+  height: 100%;
+  color: var(--settings-text);
+  font-family: var(--settings-font);
+}
+
+.recordings-server-select {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--settings-input-border);
+  border-radius: 6px;
+  color: var(--settings-text);
+  background: var(--settings-input-bg);
+  font: inherit;
+  font-size: 12px;
+}
