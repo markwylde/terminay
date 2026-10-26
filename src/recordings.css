@@ -641,11 +641,12 @@
 }
 
 /* Recordings as a Home section: a full page in the Tabs and Automations voice. */
-.recordings-timeline {
+.recordings-home {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  width: 100%;
   color: #dce2f0;
   background: var(--terminal-panel-surface, #0f1318);
 }
