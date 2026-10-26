@@ -97,7 +97,7 @@ async function startStandaloneServer(root: string): Promise<StandaloneServer> {
 	}
 }
 
-test('Add connection pairs Desktop with a standalone server over loopback HTTP', async ({
+test('Add server pairs Desktop with a standalone server over loopback HTTP', async ({
 	appHarness,
 	mainWindow,
 	tempDir,
@@ -123,14 +123,14 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 				.getByRole('button', { name: 'Manage connections' })
 				.click();
 		});
-		await manager.getByRole('button', { name: 'Add connection…' }).click();
+		await manager.getByRole('button', { name: 'Add server…' }).click();
 		await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
 		await manager
 			.getByRole('button', { name: 'Continue pairing', exact: true })
 			.click();
 
 		// Pairing takes you there: the workspace window now shows the new
-		// server, and Remote Control is still Remote Control, listing it.
+		// server, and Settings › Remote Access lists it as a saved server.
 		const openMenu = async () => {
 			await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 			if (!(await menu.isVisible().catch(() => false)))
@@ -152,12 +152,14 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 		}).toPass({ timeout: 45_000 });
 		await expect(row('Local')).toHaveAttribute('aria-checked', 'false');
 		await expect(
-			manager.getByRole('heading', { name: 'Remote Control' }),
+			manager.getByRole('heading', { name: 'Settings', level: 1 }),
 		).toBeVisible();
 		await expect(
 			manager
-				.getByRole('listbox', { name: 'Saved Terminay servers' })
-				.getByRole('option', { name: serverHost }),
+				.getByRole('navigation', { name: 'Remote Access' })
+				.locator('.settings-list-section')
+				.filter({ hasText: 'Saved servers' })
+				.locator('.settings-list-item-label', { hasText: serverHost }),
 		).toBeVisible();
 
 		// Choosing Local shows Local in this window. Nothing is attached beside
@@ -211,7 +213,7 @@ test('Add connection pairs Desktop with a standalone server over loopback HTTP',
 	}
 });
 
-/** Pair a standalone server from Remote Control and wait until the workspace
+/** Pair a standalone server from Settings › Remote Access and wait until the workspace
  * window is showing it. */
 async function pairAndLand(
 	appHarness: {
@@ -229,7 +231,7 @@ async function pairAndLand(
 			.getByRole('button', { name: 'Manage connections' })
 			.click();
 	});
-	await manager.getByRole('button', { name: 'Add connection…' }).click();
+	await manager.getByRole('button', { name: 'Add server…' }).click();
 	await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
 	await manager
 		.getByRole('button', { name: 'Continue pairing', exact: true })
