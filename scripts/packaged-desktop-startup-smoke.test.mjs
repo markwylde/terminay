@@ -288,13 +288,15 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	const settings = await nextWindow;
 	captureRendererFailures(settings, failures);
 	try {
-		await settings.getByRole('heading', { name: 'Settings' }).waitFor();
-		for (const packageName of [
-			'terminay-builtin-agents',
-			'terminay-language-typescript',
-			'terminay-gitea',
-			'terminay-github',
+		await settings.getByRole('heading', { name: 'Settings', exact: true, level: 1 }).waitFor();
+		for (const [packageName, displayName] of [
+			['terminay-builtin-agents', 'Built-in Agents'],
+			['terminay-language-typescript', 'TypeScript'],
+			['terminay-gitea', 'Gitea'],
+			['terminay-github', 'GitHub'],
 		]) {
+			// Extensions is a Settings collection: each extension's card is its detail.
+			await settings.locator('.settings-list-item').filter({ hasText: displayName }).first().click();
 			const card = settings.locator('.extension-card').filter({ hasText: packageName });
 			await card.waitFor({ state: 'visible' });
 			assert.equal(await card.count(), 1, `${packageName} must have one extension card`);
