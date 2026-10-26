@@ -191,7 +191,7 @@ async function expectShowing(window: Page, label: string) {
 	}).toPass({ timeout: 45_000 });
 }
 
-/** Pair a standalone server from Remote Control and wait until the workspace
+/** Pair a standalone server from Settings › Remote Access and wait until the workspace
  * window is showing it. */
 async function pairAndLand(
 	appHarness: {
@@ -209,7 +209,7 @@ async function pairAndLand(
 			.getByRole('button', { name: 'Manage connections' })
 			.click();
 	});
-	await manager.getByRole('button', { name: 'Add connection…' }).click();
+	await manager.getByRole('button', { name: 'Add server…' }).click();
 	await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
 	await manager
 		.getByRole('button', { name: 'Continue pairing', exact: true })
