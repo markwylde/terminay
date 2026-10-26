@@ -11,6 +11,7 @@ import { friendlyPairingActionError } from './pairingActionError';
 import type { PairingAttemptProgress } from './pairingAttemptState';
 import { ServerInstallGuide } from './ServerInstallGuide';
 import {
+	useSettingsShellNavigation,
 	SettingsListColumn,
 	type SettingsListSection,
 	SettingsListSections,
@@ -657,17 +658,13 @@ export function SharedConnectionsRouteBody({
 				title="Remote Access"
 				action={
 					canShowPair ? (
-						<button
-							type="button"
-							className="settings-list-add-button"
+						<AddServerButton
 							onClick={() => {
 								setShowPair(true);
 								setRename(undefined);
 								setConfirm(undefined);
 							}}
-						>
-							Add server…
-						</button>
+						/>
 					) : undefined
 				}
 			>
@@ -876,5 +873,22 @@ export function SharedConnectionsRouteBody({
 		>
 			{pageInner}
 		</main>
+	);
+}
+
+/** Opens the pair form; a narrow Settings window moves on to the detail to show it. */
+function AddServerButton({ onClick }: Readonly<{ onClick: () => void }>) {
+	const { showDetail } = useSettingsShellNavigation();
+	return (
+		<button
+			type="button"
+			className="settings-list-add-button"
+			onClick={() => {
+				onClick();
+				showDetail();
+			}}
+		>
+			Add server…
+		</button>
 	);
 }
