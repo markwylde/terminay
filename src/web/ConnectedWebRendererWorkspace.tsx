@@ -726,7 +726,11 @@ function ConnectedBrowserMenuBar({
 					startsGroup: true,
 					onSelect: () => onOpenAuxiliaryRoute('settings'),
 				},
-				{ id: 'disconnect', label: 'Disconnect', startsGroup: true, onSelect: onBack },
+				// Only a session that can go back to the connection manager has
+				// somewhere to disconnect to.
+				...(canLeaveManagerSession()
+					? [{ id: 'disconnect', label: 'Disconnect', startsGroup: true, onSelect: onBack }]
+					: []),
 			],
 			help: [
 				{
