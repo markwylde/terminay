@@ -45,13 +45,19 @@ function response(status, body) {
 	return { status, ok: status >= 200 && status < 300, json: async () => body };
 }
 
-function fakeGitea({ tokens = ['tea-token'], statuses = {}, pulls } = {}) {
+function fakeGitea({
+	tokens = ['tea-token'],
+	statuses = {},
+	pulls,
+	closedPulls = [],
+} = {}) {
 	const calls = [];
 	const fetch = async (url, init) => {
 		calls.push({ url, authorization: init?.headers?.authorization });
 		const token = init?.headers?.authorization?.replace(/^token /, '');
 		if (!tokens.includes(token))
 			return response(401, { message: 'unauthorized' });
+		if (url.includes('/pulls?state=closed')) return response(200, closedPulls);
 		if (url.includes('/pulls?'))
 			return response(
 				200,
@@ -189,7 +195,7 @@ function harness({
 	};
 }
 
-test('one refresh is one pull request listing plus one status per worktree on a branch', async () => {
+test('one refresh is an open and a closed pull request listing plus one status per worktree on a branch', async () => {
 	const gitea = fakeGitea({
 		statuses: {
 			abc: [
@@ -205,7 +211,7 @@ test('one refresh is one pull request listing plus one status per worktree on a 
 	const run = harness({ gitea });
 	await flush();
 	const urls = gitea.calls.map((call) => call.url);
-	assert.equal(urls.filter((url) => url.includes('/pulls?')).length, 1);
+	assert.equal(urls.filter((url) => url.includes('/pulls?')).length, 2);
 	assert.equal(urls.filter((url) => url.includes('/status')).length, 3);
 	assert.ok(
 		urls.includes(
@@ -257,6 +263,39 @@ test('one refresh is one pull request listing plus one status per worktree on a 
 			},
 		},
 	]);
+	run.controller.abort();
+});
+
+const pull = (number, ref, extra = {}) => ({
+	number,
+	title: `PR ${number}`,
+	html_url: `${ORIGIN}/owner/repo/pulls/${number}`,
+	head: { ref, sha: `sha-${number}`, repo: { full_name: 'owner/repo' } },
+	...extra,
+});
+
+test('a merged pull request is published as merged, and an open one wins over it', async () => {
+	const gitea = fakeGitea({
+		pulls: [pull(300, 'local')],
+		closedPulls: [
+			pull(290, 'feat/about', { merged: true }),
+			pull(280, 'local', { merged: true }),
+			pull(270, 'main', { merged: false }),
+		],
+	});
+	const run = harness({ gitea });
+	await flush();
+	const states = Object.fromEntries(
+		run.published.map(({ worktreeId, properties }) => [
+			worktreeId,
+			properties?.pullRequest &&
+				`${properties.pullRequest.number} ${properties.pullRequest.state}`,
+		]),
+	);
+	assert.deepEqual(states, {
+		'wt-about': '290 merged',
+		'wt-local': '300 open',
+	});
 	run.controller.abort();
 });
 
