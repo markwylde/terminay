@@ -426,6 +426,13 @@
 	}
 }
 
+/* A merged pull request reads as done, in the forges' merged purple. */
+.folders-tree__pr--merged {
+	border-color: rgba(163, 113, 247, 0.45);
+	background: rgba(163, 113, 247, 0.16);
+	color: #c4a5fa;
+}
+
 /* The pull request opens in the browser and the checks open their list. */
 .folders-tree__pr--link,
 .folders-tree__checks--link {
