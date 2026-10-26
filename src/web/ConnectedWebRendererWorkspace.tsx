@@ -17,7 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'dockview/dist/styles/dockview.css';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
-import { MacrosWindow } from '../components/MacrosWindow';
 import { PerformanceLogWindow } from '../components/PerformanceLogWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
@@ -49,14 +48,21 @@ import {
 	sharedRouteForView,
 } from '../shared/ResponsiveWorkspaceEntry';
 import { SharedAgentRouteBody } from '../shared/SharedAgentRouteBody';
-import { type SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
+import {
+	type ConnectionsSettingsPresentation,
+	type SharedConnectionsRouteBodyProps,
+} from '../shared/SharedConnectionsRouteBody';
 import {
 	type SharedEditTabResult,
 	SharedEditTabRouteBody,
 } from '../shared/SharedEditTabRouteBody';
 import { SharedFolderRouteBody } from '../shared/SharedFolderRouteBody';
 import { SharedGitRouteBody } from '../shared/SharedGitRouteBody';
-import { RemoteControlWindow } from '../shared/RemoteControlWindow';
+import { RemoteAccessCategory } from '../shared/RemoteAccessCategory';
+import {
+	createSettingsLeaveGuardRegistry,
+	SettingsLeaveGuardProvider,
+} from '../shared/settingsLeaveGuard';
 import { RemoteExposurePanel } from '../shared/RemoteExposurePanel';
 import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
 import type { RemoteAccessStatus } from '../types/terminay';
@@ -84,29 +90,29 @@ export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	) => () => void;
 }>;
 
-type BrowserAuxiliaryRoute =
-	| 'settings'
-	| 'macros'
-	| 'recordings'
-	| 'remote-control'
-	| 'about';
+type BrowserAuxiliaryRoute = 'settings' | 'about';
+
+/** Which native title bar a Desktop auxiliary window draws over its content. */
+function nativeTitlebarKind(): 'mac' | 'overlay' | undefined {
+	if (window.terminayHost === undefined) return undefined;
+	const platform = navigator.platform.toLowerCase();
+	if (platform.includes('mac')) return 'mac';
+	if (platform.includes('win')) return 'overlay';
+	return undefined;
+}
 
 function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 	const params = new URLSearchParams(window.location.search);
 	switch (params.get('auxiliary')) {
 		case 'settings': {
 			const sectionId = params.get('section');
+			const itemId = params.get('item');
 			return {
 				kind: 'settings',
 				...(sectionId === null ? {} : { sectionId }),
+				...(itemId === null ? {} : { itemId }),
 			};
 		}
-		case 'macros':
-			return { kind: 'macros' };
-		case 'recordings':
-			return { kind: 'recordings' };
-		case 'remote-control':
-			return { kind: 'remote-control' };
 		case 'performance-log':
 			return { kind: 'performance-log' };
 		default:
@@ -121,10 +127,8 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 			params.set('auxiliary', 'settings');
 			if (request.sectionId !== undefined)
 				params.set('section', request.sectionId);
+			if (request.itemId !== undefined) params.set('item', request.itemId);
 			break;
-		case 'macros':
-		case 'recordings':
-		case 'remote-control':
 		case 'performance-log':
 			params.set('auxiliary', request.kind);
 			break;
@@ -172,6 +176,7 @@ export function ConnectedWebRendererWorkspace({
 	const hasNativeWindowControls =
 		hostContext?.capabilities.nativeWindows !== undefined;
 	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
+	const nativeTitlebar = useMemo(nativeTitlebarKind, []);
 	const requestedView = useMemo(() => {
 		// Canonical route presentations use the query form.  Retain fragment
 		// compatibility for documents opened by older Desktop versions rather
@@ -209,12 +214,18 @@ export function ConnectedWebRendererWorkspace({
 	// to one server. They select a connection — defaulting to the active tab's
 	// — and show only that server's state; they never merge two servers' rows.
 	const selectedServer = useSelectedServerConnection();
-	const serverSelector =
+	// Settings asks before the selector moves, so pending macro edits are
+	// never carried to another server.
+	const renderServerSelector = (beforeSelect: () => Promise<boolean>) =>
 		selectedServer.showsSelector ? (
 			<ServerSelector
 				label="Server"
 				connections={selectedServer.connections}
-				onSelect={selectedServer.select}
+				onSelect={(serverId) => {
+					void beforeSelect().then((proceed) => {
+						if (proceed) selectedServer.select(serverId);
+					});
+				}}
 				{...(selectedServer.connection?.serverId === undefined
 					? {}
 					: { selectedServerId: selectedServer.connection.serverId })}
@@ -223,14 +234,15 @@ export function ConnectedWebRendererWorkspace({
 	const applicationClient =
 		selectedServer.connection?.context?.applicationClient ??
 		terminalClientContext.applicationClient;
-	const macroSettingsClient = useMemo(() => {
-		if (applicationClient === undefined) {
-			throw new Error(
-				'Connected browser workspace requires its canonical application client',
-			);
-		}
-		return createBrowserMacroSettingsClient(applicationClient);
-	}, [applicationClient]);
+	// Macros act on the selected server only; with no client for it, Settings
+	// leaves the category out rather than reaching another server's macros.
+	const macroSettingsClient = useMemo(
+		() =>
+			applicationClient === undefined
+				? undefined
+				: createBrowserMacroSettingsClient(applicationClient),
+		[applicationClient],
+	);
 	const recordingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
 			throw new Error(
@@ -286,8 +298,20 @@ export function ConnectedWebRendererWorkspace({
 	);
 	const remoteAccessStatusClient =
 		remoteAccessClients?.status ?? createUnavailableRemoteAccessClient();
+	// Settings may hold pending macro edits; it is asked before anything
+	// replaces or closes it.
+	const settingsLeaveGuard = useMemo(createSettingsLeaveGuardRegistry, []);
+	const auxiliaryRouteRef = useRef(auxiliaryRoute);
+	auxiliaryRouteRef.current = auxiliaryRoute;
 	const handleAuxiliaryRouteRequest = useCallback<AuxiliaryRouteRequestHandler>(
 		async (request) => {
+			if (
+				auxiliaryRouteRef.current?.kind === 'settings' &&
+				request.kind !== 'settings' &&
+				!(await settingsLeaveGuard.confirm())
+			) {
+				return request.kind === 'edit-tab' ? null : undefined;
+			}
 			pendingEditRef.current?.resolve(null);
 			pendingEditRef.current = null;
 			auxiliaryFocusReturnRef.current =
@@ -300,7 +324,7 @@ export function ConnectedWebRendererWorkspace({
 				pendingEditRef.current = { request, resolve };
 			});
 		},
-		[],
+		[settingsLeaveGuard],
 	);
 	const auxiliaryRoutes = useMemo(
 		() =>
@@ -335,21 +359,25 @@ export function ConnectedWebRendererWorkspace({
 			}),
 		[handleAuxiliaryRouteRequest, hasNativeWindowControls, hostContext],
 	);
-	const remoteControlProps = useMemo(
-		() => ({
-			...connectionRoute,
-			...(remoteAccessClients === undefined
-				? {}
-				: {
-						exposurePanel: (
-							<RemoteExposurePanel
-								openSettings={auxiliaryRoutes.openSettings}
-								statusClient={remoteAccessClients.status}
-							/>
-						),
-					}),
-		}),
-		[auxiliaryRoutes.openSettings, connectionRoute, remoteAccessClients],
+	const exposurePanel = useMemo(
+		() =>
+			remoteAccessClients === undefined ? undefined : (
+				<RemoteExposurePanel
+					openSettings={auxiliaryRoutes.openSettings}
+					statusClient={remoteAccessClients.status}
+				/>
+			),
+		[auxiliaryRoutes.openSettings, remoteAccessClients],
+	);
+	const renderRemoteAccess = useCallback(
+		(settings: ConnectionsSettingsPresentation) => (
+			<RemoteAccessCategory
+				{...connectionRoute}
+				{...(exposurePanel === undefined ? {} : { exposurePanel })}
+				settings={settings}
+			/>
+		),
+		[connectionRoute, exposurePanel],
 	);
 	const restoreAuxiliaryFocus = useCallback(() => {
 		const target = auxiliaryFocusReturnRef.current;
@@ -364,15 +392,6 @@ export function ConnectedWebRendererWorkspace({
 				case 'settings':
 					void auxiliaryRoutes.openSettings();
 					break;
-				case 'macros':
-					void auxiliaryRoutes.openMacros();
-					break;
-				case 'recordings':
-					void auxiliaryRoutes.openRecordings();
-					break;
-				case 'remote-control':
-					void auxiliaryRoutes.openRemoteControl();
-					break;
 				case 'about':
 					setAboutOpen(true);
 					break;
@@ -386,6 +405,14 @@ export function ConnectedWebRendererWorkspace({
 		setAuxiliaryRoute(null);
 		restoreAuxiliaryFocus();
 	}, [restoreAuxiliaryFocus]);
+	const closeAuxiliaryWindow = useCallback(async () => {
+		if (
+			auxiliaryRouteRef.current?.kind === 'settings' &&
+			!(await settingsLeaveGuard.confirm())
+		)
+			return;
+		cancelAuxiliaryRoute();
+	}, [cancelAuxiliaryRoute, settingsLeaveGuard]);
 	const submitEditTabRoute = useCallback(
 		async (result: SharedEditTabResult) => {
 			const pending = pendingEditRef.current;
@@ -417,17 +444,15 @@ export function ConnectedWebRendererWorkspace({
 			/>
 		) : (
 			<TerminalSettingsClientProvider client={serverSettingsClient}>
-				{route.kind === 'performance-log' || route.kind === 'remote-control'
-					? null
-					: serverSelector}
 				{route.kind === 'settings' ? (
 					<SettingsWindow
 						applicationClient={applicationClient}
 						aiTabMetadataClient={aiMetadataClient}
 						initialSectionId={route.sectionId}
-						onOpenRemoteControl={() =>
-							void auxiliaryRoutes.openRemoteControl()
-						}
+						initialItemId={route.itemId}
+						renderServerSelector={renderServerSelector}
+						macroSettingsClient={macroSettingsClient}
+						renderRemoteAccess={renderRemoteAccess}
 						remoteAccessStatusClient={remoteAccessStatusClient}
 						settingsClient={serverSettingsClient}
 						shellProfilesClient={shellProfilesClient}
@@ -437,14 +462,8 @@ export function ConnectedWebRendererWorkspace({
 							terminalClientContext.serverId
 						}
 					/>
-				) : route.kind === 'macros' ? (
-					<MacrosWindow macroSettingsClient={macroSettingsClient} />
-				) : route.kind === 'remote-control' ? (
-					<RemoteControlWindow {...remoteControlProps} />
-				) : route.kind === 'performance-log' ? (
-					<PerformanceLogWindow />
 				) : (
-					<RecordingsWindow client={recordingsClient} />
+					<PerformanceLogWindow />
 				)}
 			</TerminalSettingsClientProvider>
 		);
@@ -458,7 +477,7 @@ export function ConnectedWebRendererWorkspace({
 	const sharedRouteContent = (() => {
 		switch (requestedView) {
 			case 'connections':
-				return <RemoteControlWindow {...remoteControlProps} />;
+				return auxiliaryContent({ kind: 'settings', sectionId: 'remote' });
 			case 'git':
 				return (
 					<SharedGitRouteBody
@@ -497,9 +516,9 @@ export function ConnectedWebRendererWorkspace({
 			case 'settings':
 				return auxiliaryContent({ kind: 'settings' });
 			case 'macros':
-				return auxiliaryContent({ kind: 'macros' });
+				return auxiliaryContent({ kind: 'settings', sectionId: 'macros' });
 			case 'recordings':
-				return auxiliaryContent({ kind: 'recordings' });
+				return <RecordingsWindow client={recordingsClient} />;
 			case 'performance-log':
 				return auxiliaryContent({ kind: 'performance-log' });
 			case 'edit-tab':
@@ -511,7 +530,7 @@ export function ConnectedWebRendererWorkspace({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
 							onOpenConnectionManager: () => {
-								void auxiliaryRoutes.openRemoteControl();
+								void auxiliaryRoutes.openSettings('remote');
 							},
 							onSwitchConnections:
 								hostContext === undefined && canLeaveManagerSession()
@@ -545,8 +564,13 @@ export function ConnectedWebRendererWorkspace({
 			<main
 				className="connected-web-native-auxiliary"
 				data-connected-native-auxiliary-route={nativeAuxiliaryDocument.kind}
+				{...(nativeTitlebar === undefined
+					? {}
+					: { 'data-native-titlebar': nativeTitlebar })}
 			>
-				{auxiliaryContent(nativeAuxiliaryDocument)}
+				<SettingsLeaveGuardProvider value={settingsLeaveGuard}>
+					{auxiliaryContent(nativeAuxiliaryDocument)}
+				</SettingsLeaveGuardProvider>
 			</main>
 		);
 	}
@@ -561,6 +585,7 @@ export function ConnectedWebRendererWorkspace({
 	);
 
 	return (
+		<SettingsLeaveGuardProvider value={settingsLeaveGuard}>
 		<div className="connected-web-renderer-workspace">
 			<TerminalSettingsClientProvider client={serverSettingsClient}>
 				
@@ -577,7 +602,7 @@ export function ConnectedWebRendererWorkspace({
 				<ConnectedBrowserAuxiliaryWindow
 					key={auxiliaryRoute.kind}
 					route={auxiliaryRoute}
-					onClose={cancelAuxiliaryRoute}
+					onClose={() => void closeAuxiliaryWindow()}
 				>
 					{auxiliaryContent(auxiliaryRoute)}
 				</ConnectedBrowserAuxiliaryWindow>
@@ -586,6 +611,7 @@ export function ConnectedWebRendererWorkspace({
 				<ConnectedBrowserAboutWindow onClose={() => setAboutOpen(false)} />
 			) : null}
 		</div>
+		</SettingsLeaveGuardProvider>
 	);
 }
 
@@ -1044,9 +1070,6 @@ const auxiliaryWindowSizes: Readonly<
 	Record<Exclude<AuxiliaryRouteRequest['kind'], 'edit-tab'>, WindowSize>
 > = Object.freeze({
 	settings: { width: 1480, height: 820 },
-	macros: { width: 1240, height: 820 },
-	recordings: { width: 1240, height: 820 },
-	'remote-control': { width: 1240, height: 820 },
 	'performance-log': { width: 1180, height: 820 },
 });
 
@@ -1119,12 +1142,6 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 	switch (route.kind) {
 		case 'settings':
 			return 'Settings';
-		case 'macros':
-			return 'Macros';
-		case 'recordings':
-			return 'Recordings';
-		case 'remote-control':
-			return 'Remote Control';
 		case 'performance-log':
 			return 'Performance Log';
 		case 'edit-tab':

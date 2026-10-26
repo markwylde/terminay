@@ -10,6 +10,11 @@ import {
 import { friendlyPairingActionError } from './pairingActionError';
 import type { PairingAttemptProgress } from './pairingAttemptState';
 import { ServerInstallGuide } from './ServerInstallGuide';
+import {
+	SettingsListColumn,
+	type SettingsListSection,
+	SettingsListSections,
+} from './SharedSettingsRouteBody';
 import './SharedProductionRoutes.css';
 
 interface ConnectionSummary {
@@ -92,9 +97,32 @@ export interface SharedConnectionsRouteBodyProps {
 	 * which image the install commands name. */
 	readonly appVersion?: string;
 	readonly embedded?: boolean;
-	readonly presentation?: 'page' | 'management';
+	readonly presentation?: 'page' | 'settings';
 	readonly exposurePanel?: ReactNode;
+	/** The Remote Access category of Settings: list column and detail. */
+	readonly settings?: ConnectionsSettingsPresentation;
 }
+
+export type ConnectionsSettingsParts = Readonly<{
+	list: ReactNode;
+	detail: ReactNode;
+	detailTitle: ReactNode;
+}>;
+
+export type ConnectionsSettingsPresentation = Readonly<{
+	/** The selected server's name; its exposure item is named after it. */
+	exposureLabel: string;
+	exposureStatus?: string;
+	exposureActive?: boolean;
+	/** Exposure options drawn under the exposure panel. */
+	exposureDetail?: ReactNode;
+	selectedId?: string;
+	onSelect: (id: string) => void;
+	render: (parts: ConnectionsSettingsParts) => ReactNode;
+}>;
+
+/** The id of the This server item in the Remote Access list column. */
+export const REMOTE_ACCESS_EXPOSURE_ID = '__exposure__';
 
 /** Host-neutral profile management; pairing credentials are handed off and never retained. */
 export function SharedConnectionsRouteBody({
@@ -125,6 +153,7 @@ export function SharedConnectionsRouteBody({
 	embedded = false,
 	presentation = 'page',
 	exposurePanel,
+	settings,
 }: SharedConnectionsRouteBodyProps) {
 	const [, setRevision] = useState(0);
 	const [busy, setBusy] = useState<string>();
@@ -140,8 +169,7 @@ export function SharedConnectionsRouteBody({
 	const [pairingUrl, setPairingUrl] = useState('');
 	const activePairingAttempt = useRef<string | null>(null);
 	const cancelledPairingAttempts = useRef(new Set<string>());
-	const [inspectId, setInspectId] = useState<string>();
-	const exposureId = '__exposure__';
+	const exposureId = REMOTE_ACCESS_EXPOSURE_ID;
 	const snapshot = profileStore?.snapshot();
 	const visibleConnections: readonly ServerRow[] =
 		snapshot !== undefined
@@ -170,17 +198,6 @@ export function SharedConnectionsRouteBody({
 	const canForget = (row: ServerRow) =>
 		!row.isLocal && (row.profile !== undefined || onForgetServer !== undefined);
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
-	const showingExposure =
-		exposurePanel !== undefined &&
-		!showPair &&
-		(inspectId === exposureId ||
-			(inspectId === undefined && visibleConnections.length === 0));
-	const inspectedId = showingExposure
-		? exposureId
-		: inspectId !== undefined &&
-				visibleConnections.some((connection) => connection.id === inspectId)
-			? inspectId
-			: (currentId ?? visibleConnections[0]?.id);
 	const canShowPair = canPair && onPairingHandoff !== undefined;
 	const profileActions =
 		canShowPair && !showPair ? (
@@ -362,7 +379,7 @@ export function SharedConnectionsRouteBody({
 
 	const emptyCopy =
 		visibleConnections.length === 0 && !showPair ? (
-			presentation === 'management' ? (
+			presentation === 'settings' ? (
 				<div className="settings-empty-hero">
 					<h2>No saved servers yet</h2>
 					<p>
@@ -577,50 +594,132 @@ export function SharedConnectionsRouteBody({
 		</>
 	);
 
-	if (presentation === 'management') {
+	if (presentation === 'settings' && settings !== undefined) {
+		const exposureAvailable = exposurePanel !== undefined;
+		const requested = settings.selectedId;
+		const selectedId = showPair
+			? undefined
+			: requested === exposureId && exposureAvailable
+				? exposureId
+				: requested !== undefined &&
+						visibleConnections.some((connection) => connection.id === requested)
+					? requested
+					: exposureAvailable
+						? exposureId
+						: visibleConnections[0]?.id;
 		const inspected = visibleConnections.find(
-			(connection) => connection.id === inspectedId,
+			(connection) => connection.id === selectedId,
 		);
-		const inspect = (id: string) => {
-			setInspectId(id);
+		const select = (id: string) => {
+			settings.onSelect(id);
 			setShowPair(false);
 			setRename(undefined);
 			setConfirm(undefined);
 		};
+		const sections: SettingsListSection[] = [
+			...(exposureAvailable
+				? [
+						{
+							id: 'this-server',
+							label: 'This server',
+							items: [
+								{
+									id: exposureId,
+									label: settings.exposureLabel,
+									...(settings.exposureStatus === undefined
+										? {}
+										: { status: settings.exposureStatus }),
+									tone: settings.exposureActive ? ('ok' as const) : ('off' as const),
+								},
+							],
+						},
+					]
+				: []),
+			{
+				id: 'saved-servers',
+				label: 'Saved servers',
+				emptyNote: 'Servers this computer connects to appear here.',
+				items: visibleConnections.map((connection) => ({
+					id: connection.id,
+					label: connection.label,
+					status: connection.status ?? 'Saved',
+					tone:
+						connection.status === undefined
+							? ('off' as const)
+							: connection.status === 'connected'
+								? ('ok' as const)
+								: ('warn' as const),
+				})),
+			},
+		];
+		const list = (
+			<SettingsListColumn
+				title="Remote Access"
+				action={
+					canShowPair ? (
+						<button
+							type="button"
+							className="settings-primary-button settings-primary-button--small"
+							onClick={() => {
+								setShowPair(true);
+								setRename(undefined);
+								setConfirm(undefined);
+							}}
+						>
+							Add server…
+						</button>
+					) : undefined
+				}
+			>
+				<SettingsListSections
+					label="Remote Access"
+					sections={sections}
+					selectedId={selectedId}
+					onSelect={select}
+				/>
+			</SettingsListColumn>
+		);
 		const renderServerDetail = (row: ServerRow) => {
 			const profile = row.profile;
 			const isCurrent = row.id === currentId;
-			const editing =
-				rename?.id === row.id || confirm?.row.id === row.id;
+			const editing = rename?.id === row.id || confirm?.row.id === row.id;
 			return (
-				<section className="remote-control-pane" aria-label={row.label}>
-					<header className="remote-control-pane__header">
-						<div className="remote-control-pane__title">
-							<h2>{row.label}</h2>
-							{isCurrent && (
-								<span className="shared-connection-card__current">Current</span>
-							)}
+				<section className="settings-section" aria-label={row.label}>
+					<div className="settings-group">
+						<div className="settings-row">
+							<div className="settings-row-info">
+								<span className="settings-row-label">Status</span>
+								<span className="settings-row-description">
+									{row.status === undefined
+										? 'Saved on this computer. Attach it to a window from the connection menu.'
+										: isCurrent
+											? 'The server this window is connected to.'
+											: 'Attach it to a window from the connection menu.'}
+								</span>
+							</div>
+							<div className="settings-row-control">
+								<span className="settings-status-pill">
+									<span
+										className={`settings-status-dot settings-status-dot--${row.status === undefined ? 'off' : row.status === 'connected' ? 'ok' : 'warn'}`}
+										aria-hidden="true"
+									/>
+									{row.status ?? 'Saved'}
+								</span>
+							</div>
 						</div>
 						{row.origin !== undefined && (
-							<p className="remote-control-pane__origin">{row.origin}</p>
+							<div className="settings-row">
+								<div className="settings-row-info">
+									<span className="settings-row-label">Address</span>
+								</div>
+								<div className="settings-row-control">
+									<code className="settings-code">{row.origin}</code>
+								</div>
+							</div>
 						)}
-						{row.status === undefined ? (
-							<p className="remote-control-pane__lede">
-								Saved on this computer. Attach it to a window from the
-								connection menu.
-							</p>
-						) : (
-							<p className="remote-control-pane__status">
-								<span
-									className={`remote-control-status-dot remote-control-status-dot--${row.status}`}
-									aria-hidden="true"
-								/>
-								{row.status}
-							</p>
-						)}
-					</header>
+					</div>
 					{!editing && (
-						<div className="remote-control-pane__actions">
+						<div className="settings-inline-actions settings-detail-buttons">
 							{profile !== undefined && onSelect !== undefined && (
 								<button
 									type="button"
@@ -703,121 +802,37 @@ export function SharedConnectionsRouteBody({
 				</section>
 			);
 		};
-		return (
-			<div
-				className="settings-shell remote-control-window shared-connections"
-				data-shared-route-body="connections"
-			>
-				<aside className="settings-sidebar" aria-label="Remote Control">
-					<header className="settings-sidebar-header">
-						<div className="settings-brand">
-							<h1>Remote Control</h1>
-							<p className="settings-sidebar-lede">
-								Servers this device connects to, and who can connect to this
-								one.
-							</p>
-						</div>
-						{canShowPair ? (
-							<button
-								type="button"
-								className="settings-primary-button"
-								onClick={() => {
-									setShowPair(true);
-									setRename(undefined);
-									setConfirm(undefined);
-								}}
-							>
-								Add connection…
-							</button>
-						) : null}
-					</header>
-					<nav className="settings-nav" aria-label="Remote Control sections">
-						<div className="settings-nav-section">
-							{exposurePanel !== undefined ? (
-								<div className="settings-nav-group">
-									<div className="settings-nav-group-title">This server</div>
-									<button
-										type="button"
-										className={`settings-nav-item${showingExposure ? ' settings-nav-item--active' : ''}`}
-										aria-pressed={showingExposure}
-										onClick={() => inspect(exposureId)}
-									>
-										<span className="settings-nav-item-inner">Exposure</span>
-									</button>
-								</div>
-							) : null}
-							<div className="settings-nav-group">
-								<div className="settings-nav-group-title">Servers</div>
-								<div role="listbox" aria-label="Saved Terminay servers">
-									{visibleConnections.map((connection) => {
-										const selected =
-											!showPair && connection.id === inspectedId;
-										return (
-											<button
-												key={connection.id}
-												type="button"
-												role="option"
-												aria-label={
-													connection.status === undefined
-														? connection.label
-														: `${connection.label} ${connection.status}`
-												}
-												aria-selected={selected}
-												className={`settings-nav-item${selected ? ' settings-nav-item--active' : ''}`}
-												onClick={() => inspect(connection.id)}
-											>
-												<span className="settings-nav-item-inner">
-													{connection.status !== undefined && (
-														<span
-															className={`remote-control-status-dot remote-control-status-dot--${connection.status}`}
-															aria-hidden="true"
-														/>
-													)}
-													<span className="remote-control-nav-label">
-														{connection.label}
-													</span>
-												</span>
-											</button>
-										);
-									})}
-								</div>
-								{visibleConnections.length === 0 ? (
-									<p className="settings-empty-state">No saved servers yet.</p>
-								) : null}
-							</div>
-						</div>
-					</nav>
-				</aside>
-				<main className="settings-main">
-					<div className="settings-content">
-						<div className="remote-control-notices">{statusBlocks}</div>
-						{state === 'ready' && !showingExposure && emptyCopy}
-						{state === 'ready' && showingExposure && !showPair && exposurePanel}
-						{state === 'ready' &&
-							inspected !== undefined &&
-							!showPair &&
-							!showingExposure &&
-							renderServerDetail(inspected)}
-						{showPair && (
-							<section
-								className="remote-control-pane"
-								aria-label="Add connection"
-							>
-								<header className="remote-control-pane__header">
-									<div className="remote-control-pane__title">
-										<h2>Add connection</h2>
-									</div>
-									<p className="remote-control-pane__lede">
-										Paste the pairing link from a Terminay server.
-									</p>
-								</header>
-								{pairPanel}
-							</section>
-						)}
-					</div>
-				</main>
+		const detail = (
+			<div className="shared-connections" data-shared-route-body="connections">
+				<div className="remote-control-notices">{statusBlocks}</div>
+				{showPair ? (
+					<section className="settings-section" aria-label="Add server">
+						<p className="settings-section-desc">
+							Paste the pairing link from a Terminay server.
+						</p>
+						{pairPanel}
+					</section>
+				) : selectedId === exposureId ? (
+					<>
+						{exposurePanel}
+						{settings.exposureDetail}
+					</>
+				) : inspected !== undefined ? (
+					renderServerDetail(inspected)
+				) : (
+					emptyCopy
+				)}
 			</div>
 		);
+		return settings.render({
+			list,
+			detail,
+			detailTitle: showPair
+				? 'Add server'
+				: selectedId === exposureId
+					? settings.exposureLabel
+					: (inspected?.label ?? 'Remote Access'),
+		});
 	}
 
 	const actionPanels = (

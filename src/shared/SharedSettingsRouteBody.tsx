@@ -1,9 +1,22 @@
-import type { ReactNode, Ref } from 'react'
+import {
+  createContext,
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 
 export interface SharedSettingsRouteCategory {
   readonly id: string
   readonly label: string
   readonly icon?: ReactNode
+  /** Number of items in a collection category, shown beside its name. */
+  readonly count?: number
 }
 
 /** A labelled group of settings-route categories.
@@ -31,11 +44,55 @@ export interface SharedSettingsRouteBodyProps {
   readonly onCategorySelect: (categoryId: string) => void
   readonly onResetAll?: () => void
   readonly sidebarAction?: ReactNode
+  /** The list column of a collection category. Absent for a plain page. */
+  readonly listColumn?: ReactNode
+  /** The list column's title, used to label the narrow back control. */
+  readonly listTitle?: string
+  /** The heading drawn in the detail pane's header band. */
+  readonly detailTitle?: ReactNode
+  /** Controls drawn at the trailing end of the detail pane's header band. */
+  readonly detailActions?: ReactNode
   readonly contentRef?: Ref<HTMLDivElement>
   readonly children: ReactNode
   readonly preview?: ReactNode
   readonly collapsedPreview?: ReactNode
   readonly modal?: ReactNode
+}
+
+/** Minimum column widths; the window shows one column at a time below their sum. */
+export const SETTINGS_SIDEBAR_WIDTH = 232
+export const SETTINGS_LIST_WIDTH = 264
+export const SETTINGS_DETAIL_MIN_WIDTH = 420
+
+type NarrowStage = 'sidebar' | 'list' | 'detail'
+
+type SettingsShellNavigation = Readonly<{
+  /** Called when a list item is chosen, so a narrow window moves to its detail. */
+  showDetail: () => void
+}>
+
+const SettingsShellContext = createContext<SettingsShellNavigation>({ showDetail: () => {} })
+
+export function useSettingsShellNavigation(): SettingsShellNavigation {
+  return useContext(SettingsShellContext)
+}
+
+function useElementWidth<T extends HTMLElement>(): [Ref<T>, number | null] {
+  const ref = useRef<T>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    setWidth(element.getBoundingClientRect().width)
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry !== undefined) setWidth(entry.contentRect.width)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, width]
 }
 
 /**
@@ -44,7 +101,9 @@ export interface SharedSettingsRouteBodyProps {
  * The caller still owns settings data, commands, persistence, preview
  * implementation, and host permissions. This component owns only reusable
  * settings-route layout, navigation semantics, and stable class names used by
- * both Desktop and the responsive server UI.
+ * both Desktop and the responsive server UI: the grouped sidebar, the list
+ * column of a collection category, the detail pane, and the narrow
+ * presentation that shows one of them at a time.
  */
 export function SharedSettingsRouteBody({
   title = 'Settings',
@@ -58,20 +117,60 @@ export function SharedSettingsRouteBody({
   onCategorySelect,
   onResetAll,
   sidebarAction,
+  listColumn,
+  listTitle,
+  detailTitle,
+  detailActions,
   contentRef,
   children,
   preview,
   collapsedPreview,
   modal,
 }: SharedSettingsRouteBodyProps) {
+  const [shellRef, width] = useElementWidth<HTMLDivElement>()
+  const hasList = listColumn !== undefined
+  const neededWidth = SETTINGS_SIDEBAR_WIDTH + (hasList ? SETTINGS_LIST_WIDTH : 0) + SETTINGS_DETAIL_MIN_WIDTH
+  const narrow = width !== null && width < neededWidth
+  const [stage, setStage] = useState<NarrowStage>('detail')
+
+  // A category without a list goes straight from the sidebar to its page.
+  useEffect(() => {
+    if (stage === 'list' && !hasList) setStage('detail')
+  }, [hasList, stage])
+
+  const navigation = useMemo<SettingsShellNavigation>(() => ({ showDetail: () => setStage('detail') }), [])
+  const selectCategory = useCallback(
+    (categoryId: string) => {
+      setStage('list')
+      onCategorySelect(categoryId)
+    },
+    [onCategorySelect],
+  )
+  const back = (to: NarrowStage, label: string) =>
+    narrow ? (
+      <button type="button" className="settings-back-button" onClick={() => setStage(to)}>
+        <span aria-hidden="true">‹</span> {label}
+      </button>
+    ) : null
+
+  const sections = categorySections ?? [{ id: 'default', label: '', categories }]
+
   return (
-    <>
-      <div className="settings-shell" data-shared-route-body="settings">
-        <aside className="settings-sidebar">
-          <header className="settings-sidebar-header">
+    <SettingsShellContext.Provider value={navigation}>
+      <div
+        ref={shellRef}
+        className="settings-shell"
+        data-shared-route-body="settings"
+        data-settings-layout={narrow ? 'narrow' : hasList ? 'columns' : 'page'}
+        data-settings-stage={narrow ? stage : undefined}
+      >
+        <aside className="settings-sidebar" hidden={narrow && stage !== 'sidebar'}>
+          <header className="settings-column-header settings-sidebar-header">
             <div className="settings-brand">
               <h1>{title}</h1>
             </div>
+          </header>
+          <div className="settings-sidebar-tools">
             {sidebarAction}
             <div className="settings-search-container">
               <input
@@ -83,33 +182,29 @@ export function SharedSettingsRouteBody({
                 onChange={(event) => onQueryChange(event.target.value)}
               />
             </div>
-          </header>
+          </div>
 
           <nav className="settings-nav" aria-label={`${title} categories`}>
-            {(categorySections ?? [{ id: 'default', label: '', categories }]).map((section) => (
+            {sections.map((section) => (
               <div className="settings-nav-section" key={section.id}>
-                {section.label === '' ? null : (
-                  <h2 className="settings-nav-section-title">{section.label}</h2>
-                )}
+                {section.label === '' ? null : <h2 className="settings-nav-section-title">{section.label}</h2>}
                 {section.categories.map((category) => (
                   <button
                     key={category.id}
                     className={`settings-nav-item ${activeCategoryId === category.id ? 'settings-nav-item--active' : ''}`}
                     aria-current={activeCategoryId === category.id ? 'true' : undefined}
                     type="button"
-                    onClick={() => onCategorySelect(category.id)}
+                    onClick={() => selectCategory(category.id)}
                   >
-                    <div className="settings-nav-item-inner" style={{ gap: 8 }}>
-                      {category.icon === undefined ? null : (
-                        <div
-                          className="settings-nav-icon"
-                          style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}
-                        >
-                          {category.icon}
-                        </div>
+                    <span className="settings-nav-item-inner">
+                      {category.icon === undefined ? null : <span className="settings-nav-icon">{category.icon}</span>}
+                      <span className="settings-nav-label">{category.label}</span>
+                      {category.count === undefined ? null : (
+                        <span className="settings-nav-count" aria-label={`${category.count} items`}>
+                          {category.count}
+                        </span>
                       )}
-                      <span>{category.label}</span>
-                    </div>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -126,7 +221,19 @@ export function SharedSettingsRouteBody({
           </footer>
         </aside>
 
-        <div className="settings-right-pane">
+        {hasList ? (
+          <div className="settings-list-column" hidden={narrow && stage !== 'list'}>
+            {back('sidebar', title)}
+            {listColumn}
+          </div>
+        ) : null}
+
+        <div className="settings-right-pane" hidden={narrow && stage !== 'detail'}>
+          <header className="settings-column-header settings-detail-header">
+            {back(hasList ? 'list' : 'sidebar', hasList ? (listTitle ?? title) : title)}
+            <h2 className="settings-detail-title">{detailTitle}</h2>
+            {detailActions === undefined ? null : <div className="settings-detail-actions">{detailActions}</div>}
+          </header>
           <main className="settings-main" ref={contentRef}>
             <div className="settings-content">{children}</div>
           </main>
@@ -135,6 +242,99 @@ export function SharedSettingsRouteBody({
         </div>
       </div>
       {modal}
-    </>
+    </SettingsShellContext.Provider>
+  )
+}
+
+export interface SettingsListItem {
+  readonly id: string
+  readonly label: string
+  readonly status?: ReactNode
+  /** A small state dot before the status line. */
+  readonly tone?: 'ok' | 'warn' | 'off' | 'bad'
+  /** Marks an item with unsaved changes. */
+  readonly unsaved?: boolean
+}
+
+export interface SettingsListSection {
+  readonly id: string
+  readonly label: string
+  readonly items: readonly SettingsListItem[]
+  /** Quiet copy shown under the label when the section has no items. */
+  readonly emptyNote?: ReactNode
+}
+
+/** The header, toolbar and body of a collection category's list column. */
+export function SettingsListColumn({
+  title,
+  action,
+  toolbar,
+  children,
+}: Readonly<{ title: string; action?: ReactNode; toolbar?: ReactNode; children: ReactNode }>) {
+  return (
+    <section className="settings-list" aria-label={title}>
+      <header className="settings-column-header settings-list-header">
+        <h2 className="settings-list-title">{title}</h2>
+        {action}
+      </header>
+      {toolbar === undefined ? null : <div className="settings-list-toolbar">{toolbar}</div>}
+      <div className="settings-list-body">{children}</div>
+    </section>
+  )
+}
+
+/** Grouped rows of a collection category: a name and one status line each. */
+export function SettingsListSections({
+  sections,
+  selectedId,
+  onSelect,
+  label,
+}: Readonly<{
+  sections: readonly SettingsListSection[]
+  selectedId: string | undefined
+  onSelect: (id: string) => void
+  label: string
+}>) {
+  const { showDetail } = useSettingsShellNavigation()
+  return (
+    <div role="listbox" aria-label={label} className="settings-list-sections">
+      {sections.map((section) => (
+        <div key={section.id} className="settings-list-section" role="group" aria-label={section.label || undefined}>
+          {section.label === '' ? null : <h3 className="settings-list-section-title">{section.label}</h3>}
+          {section.items.length === 0 && section.emptyNote !== undefined ? (
+            <p className="settings-list-empty">{section.emptyNote}</p>
+          ) : null}
+          {section.items.map((item) => {
+            const selected = item.id === selectedId
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`settings-list-item${selected ? ' settings-list-item--active' : ''}`}
+                onClick={() => {
+                  onSelect(item.id)
+                  showDetail()
+                }}
+              >
+                <span className="settings-list-item-label">
+                  {item.label}
+                  {item.unsaved ? <span className="settings-list-item-unsaved" aria-label="Unsaved" /> : null}
+                </span>
+                {item.status === undefined ? null : (
+                  <span className="settings-list-item-status">
+                    {item.tone === undefined ? null : (
+                      <span className={`settings-status-dot settings-status-dot--${item.tone}`} aria-hidden="true" />
+                    )}
+                    <span className="settings-list-item-status-text">{item.status}</span>
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      ))}
+    </div>
   )
 }

@@ -3,10 +3,6 @@ import type {
 	TerminayClient,
 } from '@terminay/client-core';
 import {
-	groupLiveConnectionsByDevice,
-	liveWindowsLabel,
-} from '../shared/liveConnectionsByDevice';
-import {
 	ConnectedServersClient,
 	TerminayAiClient,
 	TerminayClientFacade,
@@ -38,8 +34,24 @@ import {
 import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
-import { RemotePairingModal } from '../shared/RemotePairingModal';
+import {
+	type MacroSettingsClient,
+	MacroSettingsUnavailableError,
+} from '../hooks/useMacroSettings';
+import {
+	type ConnectionsSettingsPresentation,
+	REMOTE_ACCESS_EXPOSURE_ID,
+} from '../shared/SharedConnectionsRouteBody';
+import { useConnections } from '../shared/connections/ConnectionsContext';
+import { useSettingsLeaveGuard } from '../shared/settingsLeaveGuard';
 import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
+import { useMacroEditor } from './macros/useMacroEditor';
+import { MacrosCategory, type SettingsCategoryParts } from './settings/MacrosCategory';
+import { groupSettingsCategories } from './settings/settingsCategoryGroups';
+import {
+	type CollectionSelection,
+	rememberSelection,
+} from './settings/settingsSelection';
 import type { SettingsFieldDefinition } from '../terminalSettings';
 import {
 	buildTabThemeHueValue,
@@ -89,7 +101,13 @@ import {
 type CategoryId =
 	| (typeof terminalSettingsCategories)[number]['id']
 	| 'extensions'
-	| 'diagnostics';
+	| 'diagnostics'
+	| 'macros';
+
+const macrosSettingsCategory = Object.freeze({
+	id: 'macros' as const,
+	label: 'Macros',
+});
 
 const extensionSettingsCategory = Object.freeze({
 	id: 'extensions' as const,
@@ -99,6 +117,14 @@ const extensionSettingsCategory = Object.freeze({
 const diagnosticsSettingsCategory = Object.freeze({
 	id: 'diagnostics' as const,
 	label: 'Diagnostics',
+});
+
+/** Stands in when the selected server has no macro client: Macros is then not offered. */
+const unavailableMacroSettingsClient: MacroSettingsClient = Object.freeze({
+	getMacroLibrary: () => Promise.reject(new MacroSettingsUnavailableError()),
+	saveMacroLibrary: () => Promise.reject(new MacroSettingsUnavailableError()),
+	resetMacros: () => Promise.reject(new MacroSettingsUnavailableError()),
+	onMacrosChanged: () => () => {},
 });
 
 const DIAGNOSTICS_SEARCH_TERMS =
@@ -203,12 +229,6 @@ function normalizeCustomExtension(value: string): string {
 	return `.${trimmed.replace(/^\.+/, '')}`;
 }
 
-function formatDateTime(value: string | null | undefined): string {
-	if (!value) return 'Never';
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return 'Unknown';
-	return date.toLocaleString();
-}
 
 function TerminalPreview({ settings }: { settings: TerminalSettings }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -375,6 +395,15 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 
 function getCategoryIcon(id: CategoryId) {
 	switch (id) {
+		case 'macros':
+			return renderCategoryIcon(
+				'Macros',
+				<>
+					<rect x="3" y="5" width="18" height="14" rx="2" />
+					<path d="m7 10 2.5 2L7 14" />
+					<path d="M12 14h5" />
+				</>,
+			);
 		case 'remote':
 			return renderCategoryIcon(
 				'Remote Access',
@@ -508,7 +537,10 @@ export function SettingsWindow({
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
-	onOpenRemoteControl,
+	renderServerSelector,
+	macroSettingsClient,
+	renderRemoteAccess,
+	initialItemId,
 }: Readonly<{
 	applicationClient?: TerminayClient;
 	aiTabMetadataClient?: AiTabMetadataClient;
@@ -517,7 +549,14 @@ export function SettingsWindow({
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
-	onOpenRemoteControl?: () => void;
+	/** Draws the server selector above the search field; it calls `beforeSelect` first. */
+	renderServerSelector?: (beforeSelect: () => Promise<boolean>) => ReactNode;
+	/** The selected server's macros; absent when its connection is unavailable. */
+	macroSettingsClient?: MacroSettingsClient;
+	/** Draws the Remote Access category; absent where the host cannot manage it. */
+	renderRemoteAccess?: (settings: ConnectionsSettingsPresentation) => ReactNode;
+	/** The item to select in the initial collection category. */
+	initialItemId?: string;
 }>) {
 	const serverAiClient = useMemo(
 		() =>
@@ -554,12 +593,14 @@ export function SettingsWindow({
 	}, [aiTabMetadataClientOverride, serverAiClient]);
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
+	const initialItemFromUrl = initialItemId ?? searchParams.get('item');
 	const initialCategoryFromUrl: CategoryId =
-		initialSectionFromUrl === 'extensions'
-			? 'extensions'
-			: initialSectionFromUrl === 'diagnostics'
-				? 'diagnostics'
-				: (terminalSettingsSections.find(
+		initialSectionFromUrl === 'extensions' ||
+		initialSectionFromUrl === 'diagnostics' ||
+		initialSectionFromUrl === 'macros' ||
+		initialSectionFromUrl === 'remote'
+			? initialSectionFromUrl
+			: (terminalSettingsSections.find(
 						(section) => section.id === initialSectionFromUrl,
 					)?.categoryId ?? 'appearance');
 	const {
@@ -585,6 +626,74 @@ export function SettingsWindow({
 			'',
 	);
 	const [query, setQuery] = useState('');
+	const [collectionSelection, setCollectionSelection] =
+		useState<CollectionSelection>(() =>
+			initialItemFromUrl === null || initialItemFromUrl === undefined
+				? {}
+				: { [initialCategoryFromUrl]: initialItemFromUrl },
+		);
+	const selectCollectionItem = useCallback(
+		(categoryId: CategoryId, itemId: string | undefined) =>
+			setCollectionSelection((current) =>
+				rememberSelection(current, categoryId, itemId),
+			),
+		[],
+	);
+	// The macro change set lives as long as Settings, not as long as the
+	// Macros category is in view.
+	const macroEditor = useMacroEditor(
+		macroSettingsClient ?? unavailableMacroSettingsClient,
+		activeCategoryId === 'macros',
+	);
+	// The editor holds the Macros selection itself. A macro named when Settings
+	// opened is selected once the library has arrived.
+	const pendingMacroId = useRef(
+		initialCategoryFromUrl === 'macros' ? (initialItemFromUrl ?? undefined) : undefined,
+	);
+	const { selectMacro: selectEditorMacro, draft: macroDraft } = macroEditor;
+	useEffect(() => {
+		const pending = pendingMacroId.current;
+		if (pending === undefined) return;
+		if (!macroDraft.macros.some((macro) => macro.id === pending)) return;
+		pendingMacroId.current = undefined;
+		selectEditorMacro(pending);
+	}, [macroDraft.macros, selectEditorMacro]);
+
+	// Pending macro edits are confirmed before Settings closes or the server
+	// selector moves: save them, discard them, or keep editing.
+	const [leaveRequest, setLeaveRequest] = useState<{
+		resolve: (proceed: boolean) => void;
+	} | null>(null);
+	const confirmLeave = useCallback((): Promise<boolean> => {
+		if (!macroEditor.isDirty) return Promise.resolve(true);
+		setActiveCategoryId('macros');
+		setQuery('');
+		return new Promise((resolve) => setLeaveRequest({ resolve }));
+	}, [macroEditor.isDirty]);
+	useSettingsLeaveGuard(confirmLeave);
+	const settleLeave = async (choice: 'save' | 'discard' | 'keep') => {
+		const request = leaveRequest;
+		if (request === null) return;
+		if (choice === 'save') {
+			const saved = await macroEditor.save();
+			setLeaveRequest(null);
+			request.resolve(saved);
+			return;
+		}
+		if (choice === 'discard') macroEditor.discard();
+		setLeaveRequest(null);
+		request.resolve(choice === 'discard');
+	};
+	// A native window cannot draw the prompt above; it asks the host instead.
+	useEffect(() => {
+		if (!macroEditor.isDirty) return undefined;
+		const onBeforeUnload = (event: BeforeUnloadEvent) => {
+			event.preventDefault();
+			event.returnValue = '';
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	}, [macroEditor.isDirty]);
 	const [diagnosticsAvailable, setDiagnosticsAvailable] = useState(false);
 	const [performanceLoggingEnabled, setPerformanceLoggingEnabled] =
 		useState(false);
@@ -595,16 +704,6 @@ export function SettingsWindow({
 	const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(
 		null,
 	);
-	const [remoteActionError, setRemoteActionError] = useState<string | null>(
-		null,
-	);
-	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
-	const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false);
-	const [selectedDevicesToRevoke, setSelectedDevicesToRevoke] = useState<
-		Set<string>
-	>(new Set());
-	const [isRevokingSelected, setIsRevokingSelected] = useState(false);
-	const [isPairingQrModalOpen, setIsPairingQrModalOpen] = useState(false);
 	const [listeningShortcutKey, setListeningShortcutKey] = useState<
 		string | null
 	>(null);
@@ -800,21 +899,6 @@ export function SettingsWindow({
 		};
 	}, [loadDictationMicrophones, serverAiClient]);
 
-	const prevActiveConnectionCountRef = useRef<number | null>(null);
-	useEffect(() => {
-		const current = remoteStatus?.activeConnectionCount ?? null;
-		const prev = prevActiveConnectionCountRef.current;
-		if (
-			prev !== null &&
-			current !== null &&
-			current > prev &&
-			isPairingQrModalOpen
-		) {
-			setIsPairingQrModalOpen(false);
-		}
-		prevActiveConnectionCountRef.current = current;
-	}, [remoteStatus?.activeConnectionCount, isPairingQrModalOpen]);
-
 	useEffect(() => {
 		const host = window.terminayHost;
 		if (host === undefined) return undefined;
@@ -866,8 +950,39 @@ export function SettingsWindow({
 			normalizedQuery,
 		);
 
+	const macrosAvailable = macroSettingsClient !== undefined;
+	const { profiles: savedServers } = useConnections();
+	// Search reaches into collections: macro names, descriptions and script
+	// text, and saved server names.
+	const macroMatches = useMemo(() => {
+		if (!normalizedQuery || !macrosAvailable) return [];
+		return macroEditor.draft.macros.filter((macro) =>
+			[
+				macro.title,
+				macro.description,
+				...macro.steps.map((step) => (step.type === 'type' ? step.content : '')),
+			]
+				.join('\n')
+				.toLowerCase()
+				.includes(normalizedQuery),
+		);
+	}, [macroEditor.draft.macros, macrosAvailable, normalizedQuery]);
+	const serverMatches = useMemo(
+		() =>
+			!normalizedQuery || renderRemoteAccess === undefined
+				? []
+				: savedServers.filter((profile) =>
+						profile.label.toLowerCase().includes(normalizedQuery),
+					),
+		[normalizedQuery, renderRemoteAccess, savedServers],
+	);
+	const macrosQueryMatches =
+		'macros automation snippets'.includes(normalizedQuery) ||
+		macroMatches.length > 0;
+
 	const visibleCategories = useMemo(() => {
 		const extra = [
+			...(macrosAvailable ? [macrosSettingsCategory] : []),
 			...(diagnosticsAvailable ? [diagnosticsSettingsCategory] : []),
 			extensionSettingsCategory,
 		];
@@ -875,11 +990,14 @@ export function SettingsWindow({
 		const categoryIds = new Set(
 			filteredSections.map((section) => section.categoryId),
 		);
-		const settingsCategories = terminalSettingsCategories.filter((category) =>
-			categoryIds.has(category.id),
+		const settingsCategories = terminalSettingsCategories.filter(
+			(category) =>
+				categoryIds.has(category.id) ||
+				(category.id === 'remote' && serverMatches.length > 0),
 		);
 		return [
 			...settingsCategories,
+			...(macrosAvailable && macrosQueryMatches ? [macrosSettingsCategory] : []),
 			...(diagnosticsAvailable && diagnosticsQueryMatches
 				? [diagnosticsSettingsCategory]
 				: []),
@@ -890,8 +1008,38 @@ export function SettingsWindow({
 		diagnosticsQueryMatches,
 		extensionsQueryMatches,
 		filteredSections,
+		macrosAvailable,
+		macrosQueryMatches,
 		normalizedQuery,
+		serverMatches.length,
 	]);
+
+	const categoryGroups = useMemo(
+		() =>
+			groupSettingsCategories(
+				visibleCategories.map((category) => ({
+					id: category.id,
+					label: category.label,
+					icon: getCategoryIcon(category.id),
+				})),
+				{
+					...(macrosAvailable && macroEditor.isReady
+						? { macros: macroEditor.draft.macros.length }
+						: {}),
+					...(renderRemoteAccess === undefined
+						? {}
+						: { remote: savedServers.length }),
+				},
+			),
+		[
+			macroEditor.draft.macros.length,
+			macroEditor.isReady,
+			macrosAvailable,
+			renderRemoteAccess,
+			savedServers.length,
+			visibleCategories,
+		],
+	);
 
 	const displayedCategories = useMemo(() => {
 		if (normalizedQuery) {
@@ -2059,581 +2207,6 @@ export function SettingsWindow({
 		};
 	}, [listeningShortcutKey, updateShortcut]);
 
-	const toggleRemoteAccess = async () => {
-		setIsTogglingRemoteAccess(true);
-		setRemoteActionError(null);
-
-		try {
-			if (remoteStatus?.configurationIssue) {
-				setActiveCategoryId('remote');
-				setActiveSectionId('remote-access-host');
-				scrollToSection('remote-access-host');
-				return;
-			}
-
-			const nextStatus = await remoteAccessStatusClient.toggleServer();
-			setRemoteStatus(nextStatus);
-			setRemoteActionError(nextStatus.errorMessage);
-		} catch (error) {
-			const message =
-				error instanceof Error
-					? error.message
-					: 'Unable to start remote access.';
-			setRemoteActionError(message);
-			setRemoteStatus((current) =>
-				current ? { ...current, errorMessage: message } : current,
-			);
-		} finally {
-			setIsTogglingRemoteAccess(false);
-		}
-	};
-
-	const revokeDevice = async (deviceId: string) => {
-		setIsUpdatingRemoteDevices(true);
-		try {
-			const nextStatus = await remoteAccessStatusClient.revokeDevice(deviceId);
-			setRemoteStatus(nextStatus);
-		} finally {
-			setIsUpdatingRemoteDevices(false);
-		}
-	};
-
-	const closeConnection = async (connectionId: string) => {
-		setIsUpdatingRemoteDevices(true);
-		try {
-			const nextStatus =
-				await remoteAccessStatusClient.closeConnection(connectionId);
-			setRemoteStatus(nextStatus);
-		} finally {
-			setIsUpdatingRemoteDevices(false);
-		}
-	};
-
-	const renderRemoteManagement = () => {
-		if (!displayedCategories.some((category) => category.id === 'remote')) {
-			return null;
-		}
-
-		if (onOpenRemoteControl !== undefined) {
-			return (
-				<section
-					id="section-remote-access-management"
-					className="settings-section"
-				>
-					<header className="settings-remote-panel-header">
-						<div>
-							<p className="settings-remote-kicker">Remote access</p>
-							<h4>Manage exposure in Remote Control</h4>
-							<p>
-								Pairing links, trusted browsers, and live connections live in
-								Remote Control. PIN limits and signaling stay here.
-							</p>
-						</div>
-						<button
-							type="button"
-							className="settings-primary-button"
-							onClick={onOpenRemoteControl}
-						>
-							Open Remote Control
-						</button>
-					</header>
-				</section>
-			);
-		}
-
-		const remoteSummary = remoteStatus?.isRunning
-			? 'This server is ready for remote connections.'
-			: remoteActionError || remoteStatus?.errorMessage
-				? 'Remote access could not start.'
-				: 'Remote access is ready.';
-
-		const remoteDescription = remoteStatus?.isRunning
-			? 'Share the pairing link with a new browser or Desktop device, then manage authorized devices and live connections here.'
-			: remoteActionError || remoteStatus?.errorMessage
-				? (remoteActionError ?? remoteStatus?.errorMessage)
-				: 'Expose this server to create a secure WebRTC pairing link.';
-		const selectedPairingUrl = remoteStatus?.webRtcPairingUrl;
-		const selectedPairingQrCodeDataUrl =
-			remoteStatus?.webRtcStatus !== 'pairing-ready'
-				? null
-				: remoteStatus?.webRtcPairingQrCodeDataUrl;
-		const selectedPairingExpiresAt = remoteStatus?.webRtcPairingExpiresAt;
-		const pairedDevices = remoteStatus?.pairedDevices ?? [];
-		const activeConnections = remoteStatus?.connections ?? [];
-		const auditEvents = remoteStatus?.auditEvents ?? [];
-		const liveConnectionsByDevice = new Map<string, number>();
-		activeConnections.forEach((connection) => {
-			liveConnectionsByDevice.set(
-				connection.deviceId,
-				(liveConnectionsByDevice.get(connection.deviceId) ?? 0) + 1,
-			);
-		});
-
-		const toggleDeviceSelection = (deviceId: string) => {
-			setSelectedDevicesToRevoke((prev) => {
-				const next = new Set(prev);
-				if (next.has(deviceId)) next.delete(deviceId);
-				else next.add(deviceId);
-				return next;
-			});
-		};
-
-		const selectAllDevices = () => {
-			if (selectedDevicesToRevoke.size === pairedDevices.length) {
-				setSelectedDevicesToRevoke(new Set());
-			} else {
-				setSelectedDevicesToRevoke(
-					new Set(pairedDevices.map((d) => d.deviceId)),
-				);
-			}
-		};
-
-		const revokeSelectedDevices = async () => {
-			setIsRevokingSelected(true);
-			try {
-				for (const deviceId of selectedDevicesToRevoke) {
-					await remoteAccessStatusClient.revokeDevice(deviceId);
-				}
-				setSelectedDevicesToRevoke(new Set());
-				setRemoteStatus(await remoteAccessStatusClient.getStatus());
-			} finally {
-				setIsRevokingSelected(false);
-			}
-		};
-
-		return (
-			<section
-				id="section-remote-access-management"
-				className="settings-section"
-			>
-				<header className="settings-remote-panel-header">
-					<div>
-						<p className="settings-remote-kicker">
-							Remote access · {remoteStatus?.isRunning ? 'Active' : 'Stopped'}
-						</p>
-						<h4>{remoteSummary}</h4>
-						<p>{remoteDescription}</p>
-					</div>
-					<button
-						type="button"
-						className="settings-primary-button"
-						onClick={() => void toggleRemoteAccess()}
-						disabled={isTogglingRemoteAccess}
-					>
-						{isTogglingRemoteAccess
-							? 'Working…'
-							: remoteStatus?.isRunning
-								? 'Stop exposure'
-								: 'Expose this server…'}
-					</button>
-				</header>
-
-				<div className="settings-remote-stack">
-					<section className="settings-remote-card settings-remote-card--exposure">
-						<div>
-							<span className="settings-remote-card-label">
-								WebRTC exposure
-							</span>
-							<p className="settings-remote-card-subtitle">
-								Terminay uses an authenticated WebRTC connection. The pairing
-								link enrolls one device; later visits use that device’s
-								identity.
-							</p>
-						</div>
-						<div className="settings-remote-exposure-actions">
-							<div className="settings-remote-stat">
-								<span>Authorized devices</span>
-								<strong>{pairedDevices.length}</strong>
-							</div>
-							<div className="settings-remote-stat">
-								<span>Live connections</span>
-								<strong>{activeConnections.length}</strong>
-							</div>
-							{remoteStatus?.isRunning ? (
-								<button
-									type="button"
-									className="settings-secondary-button"
-									onClick={() => {
-										void remoteAccessStatusClient
-											.createPairingLink()
-											.then((next) => {
-												setRemoteStatus(next);
-												setIsPairingQrModalOpen(true);
-											});
-									}}
-								>
-									Show pairing link
-								</button>
-							) : null}
-						</div>
-					</section>
-
-					<div
-						className="settings-remote-card"
-						style={{ width: '100%', padding: 0, overflow: 'hidden' }}
-					>
-						<div
-							className="settings-remote-card-header"
-							style={{
-								padding: '16px 20px',
-								borderBottom: '1px solid var(--settings-border)',
-								display: 'flex',
-								justifyContent: 'space-between',
-								alignItems: 'center',
-								background: 'var(--settings-sidebar-bg)',
-							}}
-						>
-							<div>
-								<span
-									className="settings-remote-card-label"
-									style={{ color: 'var(--settings-text)', fontSize: '13px' }}
-								>
-									Trusted Browsers
-								</span>
-								<p
-									className="settings-remote-card-subtitle"
-									style={{ marginTop: '2px', fontSize: '12px' }}
-								>
-									Authorized devices that can initiate remote sessions.
-								</p>
-							</div>
-							{pairedDevices.length > 0 && (
-								<div
-									style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
-								>
-									<button
-										type="button"
-										className="settings-secondary-button"
-										style={{
-											border: 'none',
-											color: 'var(--settings-accent)',
-											padding: '4px 8px',
-											background: 'transparent',
-										}}
-										onClick={selectAllDevices}
-									>
-										{selectedDevicesToRevoke.size === pairedDevices.length
-											? 'Deselect All'
-											: 'Select All'}
-									</button>
-									<button
-										type="button"
-										className="settings-danger-button"
-										style={{
-											fontSize: '12px',
-											padding: '6px 14px',
-											whiteSpace: 'nowrap',
-										}}
-										onClick={() => void revokeSelectedDevices()}
-										disabled={
-											selectedDevicesToRevoke.size === 0 || isRevokingSelected
-										}
-									>
-										{isRevokingSelected
-											? 'Revoking...'
-											: `Revoke Selected (${selectedDevicesToRevoke.size})`}
-									</button>
-								</div>
-							)}
-						</div>
-						<div className="settings-remote-list" style={{ gap: 0 }}>
-							{pairedDevices.length === 0 ? (
-								<p
-									className="settings-remote-empty"
-									style={{
-										padding: '48px 24px',
-										textAlign: 'center',
-										opacity: 0.5,
-									}}
-								>
-									No trusted browsers found.
-								</p>
-							) : (
-								pairedDevices.map((device) => (
-									<div
-										key={device.deviceId}
-										className="settings-remote-device"
-										style={{
-											display: 'flex',
-											alignItems: 'center',
-											gap: '16px',
-											padding: '16px 20px',
-											borderBottom: '1px solid var(--settings-border)',
-											borderRadius: 0,
-											borderLeft: 'none',
-											borderRight: 'none',
-											background: selectedDevicesToRevoke.has(device.deviceId)
-												? 'var(--settings-nav-hover)'
-												: 'var(--settings-card-bg)',
-										}}
-									>
-										<input
-											type="checkbox"
-											style={{
-												cursor: 'pointer',
-												width: '16px',
-												height: '16px',
-												accentColor: 'var(--settings-danger)',
-											}}
-											checked={selectedDevicesToRevoke.has(device.deviceId)}
-											onChange={() => toggleDeviceSelection(device.deviceId)}
-										/>
-										<div
-											className="settings-remote-device-main"
-											style={{ flex: 1, minWidth: 0 }}
-										>
-											<div
-												className="settings-remote-device-title-row"
-												style={{
-													display: 'flex',
-													justifyContent: 'space-between',
-													alignItems: 'center',
-												}}
-											>
-												<div style={{ minWidth: 0 }}>
-													<strong style={{ fontSize: '14px' }}>
-														{device.name}
-													</strong>
-												</div>
-												<div
-													className="settings-remote-device-badges"
-													style={{ display: 'flex', gap: '8px', flexShrink: 0 }}
-												>
-													{liveConnectionsByDevice.has(device.deviceId) ? (
-														<span
-															className="settings-remote-badge"
-															style={{
-																color: 'var(--settings-success)',
-																borderColor: 'var(--settings-success)',
-																background: 'transparent',
-															}}
-														>
-															{liveConnectionsByDevice.get(device.deviceId)}{' '}
-															live
-														</span>
-													) : null}
-												</div>
-											</div>
-											<div
-												className="settings-remote-device-details"
-												style={{
-													marginTop: '8px',
-													fontSize: '12px',
-													color: 'var(--settings-text-muted)',
-													display: 'flex',
-													gap: '16px',
-												}}
-											>
-												<span>Added {formatDateTime(device.addedAt)}</span>
-												<span>
-													Last seen {formatDateTime(device.lastSeenAt)}
-												</span>
-											</div>
-										</div>
-										<button
-											type="button"
-											className="settings-danger-button"
-											style={{
-												padding: '6px 14px',
-												fontSize: '12px',
-												whiteSpace: 'nowrap',
-												background: 'transparent',
-											}}
-											disabled={isUpdatingRemoteDevices}
-											onClick={() => void revokeDevice(device.deviceId)}
-										>
-											Revoke
-										</button>
-									</div>
-								))
-							)}
-						</div>
-					</div>
-
-					<div
-						className="settings-remote-card"
-						style={{ width: '100%', padding: 0, overflow: 'hidden' }}
-					>
-						<div
-							className="settings-remote-card-header"
-							style={{
-								padding: '16px 20px',
-								borderBottom: '1px solid var(--settings-border)',
-								background: 'var(--settings-sidebar-bg)',
-							}}
-						>
-							<span
-								className="settings-remote-card-label"
-								style={{ color: 'var(--settings-text)', fontSize: '13px' }}
-							>
-								Active Connections
-							</span>
-							<p
-								className="settings-remote-card-subtitle"
-								style={{ marginTop: '2px', fontSize: '12px' }}
-							>
-								Live terminal sessions currently streaming to remote clients.
-							</p>
-						</div>
-						<div className="settings-remote-list" style={{ gap: 0 }}>
-							{activeConnections.length === 0 ? (
-								<p
-									className="settings-remote-empty"
-									style={{
-										padding: '48px 24px',
-										textAlign: 'center',
-										opacity: 0.5,
-									}}
-								>
-									No active remote connections.
-								</p>
-							) : (
-								groupLiveConnectionsByDevice(activeConnections).map((connection) => (
-									<div
-										key={connection.deviceId}
-										className="settings-remote-item"
-										style={{
-											padding: '16px 20px',
-											display: 'flex',
-											justifyContent: 'space-between',
-											alignItems: 'center',
-											borderBottom: '1px solid var(--settings-border)',
-											borderLeft: 'none',
-											borderRight: 'none',
-											borderRadius: 0,
-											background: 'var(--settings-card-bg)',
-										}}
-									>
-										<div>
-											<strong style={{ fontSize: '14px' }}>
-												{connection.deviceName}
-											</strong>
-											<p
-												style={{
-													margin: '4px 0 0',
-													fontSize: '12px',
-													color: 'var(--settings-text-muted)',
-												}}
-											>
-												{liveWindowsLabel(connection.windowCount) ||
-													`${connection.attachedSessionCount} attached session${connection.attachedSessionCount === 1 ? '' : 's'}`}
-											</p>
-										</div>
-										<button
-											type="button"
-											className="settings-secondary-button"
-											style={{ fontSize: '12px', padding: '6px 14px' }}
-											disabled={isUpdatingRemoteDevices}
-											onClick={() =>
-												void closeConnection(connection.connectionId)
-											}
-										>
-											Close Connection
-										</button>
-									</div>
-								))
-							)}
-						</div>
-					</div>
-
-					<div
-						className="settings-remote-card"
-						style={{ width: '100%', padding: 0, overflow: 'hidden' }}
-					>
-						<div
-							className="settings-remote-card-header"
-							style={{
-								padding: '16px 20px',
-								borderBottom: '1px solid var(--settings-border)',
-								background: 'var(--settings-sidebar-bg)',
-							}}
-						>
-							<span
-								className="settings-remote-card-label"
-								style={{ color: 'var(--settings-text)', fontSize: '13px' }}
-							>
-								Recent Audit Log
-							</span>
-							<p
-								className="settings-remote-card-subtitle"
-								style={{ marginTop: '2px', fontSize: '12px' }}
-							>
-								Security events related to remote access and pairing.
-							</p>
-						</div>
-						<div className="settings-remote-list" style={{ gap: 0 }}>
-							{auditEvents.length === 0 ? (
-								<p
-									className="settings-remote-empty"
-									style={{
-										padding: '48px 24px',
-										textAlign: 'center',
-										opacity: 0.5,
-									}}
-								>
-									No recent activity logged.
-								</p>
-							) : (
-								auditEvents.slice(0, 10).map((event) => (
-									<div
-										key={`${event.occurredAt}-${event.action}-${event.connectionId ?? 'none'}-${event.deviceId ?? 'none'}`}
-										className="settings-remote-item"
-										style={{
-											padding: '14px 20px',
-											borderBottom: '1px solid var(--settings-border)',
-											display: 'flex',
-											justifyContent: 'space-between',
-											alignItems: 'center',
-											borderLeft: 'none',
-											borderRight: 'none',
-											borderRadius: 0,
-											background: 'var(--settings-card-bg)',
-										}}
-									>
-										<div>
-											<strong
-												style={{
-													fontSize: '13px',
-													textTransform: 'capitalize',
-												}}
-											>
-												{event.action.replace(/-/g, ' ')}
-											</strong>
-											<p
-												style={{
-													margin: '2px 0 0',
-													fontSize: '11px',
-													color: 'var(--settings-text-muted)',
-												}}
-											>
-												{event.deviceName ? `${event.deviceName} · ` : ''}
-												{event.connectionId
-													? `ID: ${event.connectionId.slice(0, 8)}`
-													: ''}
-											</p>
-										</div>
-										<span style={{ fontSize: '11px', opacity: 0.5 }}>
-											{new Date(event.occurredAt).toLocaleString()}
-										</span>
-									</div>
-								))
-							)}
-						</div>
-					</div>
-				</div>
-				{isPairingQrModalOpen ? (
-					<RemotePairingModal
-						expiresAt={selectedPairingExpiresAt}
-						onClose={() => setIsPairingQrModalOpen(false)}
-						pairingUrl={selectedPairingUrl}
-						qrCodeDataUrl={selectedPairingQrCodeDataUrl}
-						statusMessage={remoteStatus?.webRtcStatusMessage}
-					/>
-				) : null}
-			</section>
-		);
-	};
-
 	const settingsPreview =
 		['appearance', 'cursor', 'theme'].includes(activeCategoryId) &&
 		showPreview ? (
@@ -2696,57 +2269,272 @@ export function SettingsWindow({
 		) : undefined;
 
 
-	return (
+	const renderSettingsSection = (section: (typeof terminalSettingsSections)[number]) => (
+		<section
+			key={section.id}
+			id={`section-${section.id}`}
+			className="settings-section"
+		>
+			<div className="settings-section-title-row">
+				<h3 className="settings-section-title">{section.title}</h3>
+				{section.id === 'keyboard-shortcuts' ? (
+					<button
+						type="button"
+						className="settings-secondary-button settings-secondary-button--small"
+						onClick={() => void resetAllShortcuts()}
+					>
+						Reset All
+					</button>
+				) : null}
+			</div>
+			<div
+				className={
+					section.id === 'shell-launch'
+						? 'settings-shell-profile-container'
+						: 'settings-group'
+				}
+			>
+				{section.id === 'shell-launch' ? (
+					shellProfilesClient ? (
+						<ShellProfilesSettings
+							client={shellProfilesClient}
+							serverIdentity={serverIdentity}
+						/>
+					) : (
+						<div
+							className="settings-group shell-profiles-loading"
+							role="status"
+						>
+							Connect to a server to manage shell profiles.
+						</div>
+					)
+				) : null}
+				{section.fields.filter(isFieldVisible).map((field) => (
+					<div
+						key={field.key}
+						className={`settings-row${field.input === 'textarea' ? ' settings-row--stacked' : ''}`}
+					>
+						<div className="settings-row-info">
+							<span className="settings-row-label">
+								{field.label}
+							</span>
+							<span className="settings-row-description">
+								{field.description}
+							</span>
+						</div>
+						<div className="settings-row-control">
+							{renderFieldControl(field)}
+						</div>
+					</div>
+				))}
+				{section.id === 'terminay-mcp' &&
+				connectedServersClient !== undefined ? (
+					<ConnectedMcpServersSettings client={connectedServersClient} />
+				) : null}
+				{section.id === 'file-viewer-refresh' ? (
+					<div className="settings-row settings-row--stacked">
+						{renderCustomFileExtensionDefaults()}
+					</div>
+				) : null}
+			</div>
+		</section>
+	);
+
+	const leavePrompt =
+		leaveRequest === null ? undefined : (
+			<div className="settings-modal-backdrop">
+				<div
+					className="settings-modal settings-leave-prompt"
+					role="alertdialog"
+					aria-modal="true"
+					aria-labelledby="settings-leave-title"
+					onKeyDown={(event) => {
+						if (event.key === 'Escape') {
+							event.stopPropagation();
+							void settleLeave('keep');
+						}
+					}}
+				>
+					<h2 id="settings-leave-title">Save changes to your macros?</h2>
+					<p>{macroEditor.saveState}. Unsaved edits are lost if you leave now.</p>
+					<div className="settings-inline-actions settings-modal-actions">
+						<button
+							type="button"
+							className="settings-secondary-button"
+							autoFocus
+							onClick={() => void settleLeave('keep')}
+						>
+							Keep editing
+						</button>
+						<button
+							type="button"
+							className="settings-danger-button"
+							onClick={() => void settleLeave('discard')}
+						>
+							Discard
+						</button>
+						<button
+							type="button"
+							className="settings-primary-button"
+							onClick={() => void settleLeave('save')}
+						>
+							Save
+						</button>
+					</div>
+				</div>
+			</div>
+		);
+
+	const statusText = isSaving
+		? 'Saving...'
+		: saveError
+			? `Not saved: ${saveError}`
+			: isLoading
+				? 'Loading...'
+				: 'Saved';
+
+	const openCategory = (categoryId: string) => {
+		setActiveCategoryId(categoryId as CategoryId);
+		setQuery('');
+		if (categoryId === 'extensions' || categoryId === 'diagnostics') {
+			setActiveSectionId(categoryId);
+			return;
+		}
+		const firstSection = terminalSettingsSections.find(
+			(s) => s.categoryId === categoryId,
+		);
+		if (firstSection) {
+			setActiveSectionId(firstSection.id);
+			setTimeout(() => scrollToSection(firstSection.id), 0);
+		}
+	};
+
+	/** Opens a collection category with one of its items selected. */
+	const openCollectionItem = (categoryId: 'macros' | 'remote', itemId: string) => {
+		openCategory(categoryId);
+		if (categoryId === 'macros') macroEditor.selectMacro(itemId);
+		else selectCollectionItem('remote', itemId);
+	};
+
+	const renderShell = (
+		children: ReactNode,
+		parts?: Omit<SettingsCategoryParts, 'detail'>,
+		listTitle?: string,
+	) => (
 		<SharedSettingsRouteBody
 			query={query}
-			categories={visibleCategories.map((cat) => ({
-				id: cat.id,
-				label: cat.label,
-				icon: getCategoryIcon(cat.id),
-			}))}
+			categories={[]}
+			categorySections={categoryGroups}
 			activeCategoryId={activeCategoryId}
-			status={
-				isSaving
-					? 'Saving...'
-					: saveError
-						? `Not saved: ${saveError}`
-						: isLoading
-							? 'Loading...'
-							: 'Saved'
-			}
+			status={statusText}
+			sidebarAction={renderServerSelector?.(confirmLeave)}
+			modal={leavePrompt}
 			onQueryChange={setQuery}
-			onCategorySelect={(categoryId) => {
-				setActiveCategoryId(categoryId as CategoryId);
-				if (categoryId === 'extensions') {
-					setActiveSectionId('extensions');
-					setQuery('');
-					return;
-				}
-				if (categoryId === 'diagnostics') {
-					setActiveSectionId('diagnostics');
-					setQuery('');
-					return;
-				}
-				const firstSection = filteredSections.find(
-					(s) => s.categoryId === categoryId,
-				);
-				if (firstSection) {
-					setActiveSectionId(firstSection.id);
-					setQuery('');
-					setTimeout(() => scrollToSection(firstSection.id), 0);
-				}
-			}}
+			onCategorySelect={openCategory}
 			onResetAll={
-				activeCategoryId === 'extensions'
+				activeCategoryId === 'extensions' ||
+				activeCategoryId === 'macros' ||
+				activeCategoryId === 'remote'
 					? undefined
 					: activeCategoryId === 'diagnostics'
 						? () => void resetDiagnostics()
 						: () => void resetAll()
 			}
+			{...(parts === undefined
+				? {
+						detailTitle: normalizedQuery
+							? 'Search results'
+							: visibleCategories.find((category) => category.id === activeCategoryId)
+									?.label,
+					}
+				: {
+						listColumn: parts.list,
+						detailTitle: parts.detailTitle,
+						...(listTitle === undefined ? {} : { listTitle }),
+						...(parts.detailActions === undefined
+							? {}
+							: { detailActions: parts.detailActions }),
+					})}
 			contentRef={contentRef}
 			preview={settingsPreview}
 			collapsedPreview={collapsedSettingsPreview}
 		>
+			{children}
+		</SharedSettingsRouteBody>
+	);
+
+	if (!normalizedQuery && activeCategoryId === 'macros' && macrosAvailable) {
+		return (
+			<MacrosCategory
+				editor={macroEditor}
+				render={({ detail, ...parts }) => renderShell(detail, parts, 'Macros')}
+			/>
+		);
+	}
+
+	if (
+		!normalizedQuery &&
+		activeCategoryId === 'remote' &&
+		renderRemoteAccess !== undefined
+	) {
+		const trustedCount = remoteStatus?.pairedDevices.length ?? 0;
+		return (
+			<>
+				{renderRemoteAccess({
+					exposureLabel: serverIdentity,
+					exposureStatus: remoteStatus?.isRunning
+						? `Exposed · ${trustedCount} trusted`
+						: 'Not exposed',
+					exposureActive: remoteStatus?.isRunning === true,
+					exposureDetail: filteredSections
+						.filter((section) => section.categoryId === 'remote')
+						.map(renderSettingsSection),
+					selectedId: collectionSelection.remote ?? REMOTE_ACCESS_EXPOSURE_ID,
+					onSelect: (id) => selectCollectionItem('remote', id),
+					render: ({ detail, ...parts }) =>
+						renderShell(detail, parts, 'Remote Access'),
+				})}
+			</>
+		);
+	}
+
+	return renderShell(
+		<>
+			{normalizedQuery && (macroMatches.length > 0 || serverMatches.length > 0) ? (
+				<section className="settings-section" aria-label="Matching items">
+					<h3 className="settings-section-title">Items</h3>
+					<div className="settings-group">
+						{macroMatches.map((macro) => (
+							<button
+								key={`macro:${macro.id}`}
+								type="button"
+								className="settings-row settings-row--button"
+								onClick={() => openCollectionItem('macros', macro.id)}
+							>
+								<span className="settings-row-info">
+									<span className="settings-row-label">{macro.title}</span>
+									<span className="settings-row-description">Macros</span>
+								</span>
+							</button>
+						))}
+						{serverMatches.map((profile) => (
+							<button
+								key={`server:${profile.id}`}
+								type="button"
+								className="settings-row settings-row--button"
+								onClick={() => openCollectionItem('remote', profile.id)}
+							>
+								<span className="settings-row-info">
+									<span className="settings-row-label">{profile.label}</span>
+									<span className="settings-row-description">
+										Remote Access · Saved servers
+									</span>
+								</span>
+							</button>
+						))}
+					</div>
+				</section>
+			) : null}
 			{displayedCategories.some((category) => category.id === 'diagnostics') ? (
 				<section id="section-diagnostics" className="settings-section">
 					<div className="settings-section-title-row">
@@ -2801,7 +2589,8 @@ export function SettingsWindow({
 				/>
 			) : null}
 			{displayedCategories.map((cat) => {
-				if (cat.id === 'extensions' || cat.id === 'diagnostics') return null;
+				if (cat.id === 'extensions' || cat.id === 'diagnostics' || cat.id === 'macros')
+					return null;
 				const sections = filteredSections.filter(
 					(s) => s.categoryId === cat.id,
 				);
@@ -2810,87 +2599,14 @@ export function SettingsWindow({
 				return (
 					<div key={cat.id}>
 						{query && (
-							<h3
-								className="settings-section-title"
-								style={{ marginTop: 24, marginBottom: 16 }}
-							>
+							<h3 className="settings-section-title settings-search-category-title">
 								{cat.label}
 							</h3>
 						)}
-						{sections.map((section) => (
-							<section
-								key={section.id}
-								id={`section-${section.id}`}
-								className="settings-section"
-							>
-								<div className="settings-section-title-row">
-									<h3 className="settings-section-title">{section.title}</h3>
-									{section.id === 'keyboard-shortcuts' ? (
-										<button
-											type="button"
-											className="settings-secondary-button settings-secondary-button--small"
-											onClick={() => void resetAllShortcuts()}
-										>
-											Reset All
-										</button>
-									) : null}
-								</div>
-								<div
-									className={
-										section.id === 'shell-launch'
-											? 'settings-shell-profile-container'
-											: 'settings-group'
-									}
-								>
-									{section.id === 'shell-launch' ? (
-										shellProfilesClient ? (
-											<ShellProfilesSettings
-												client={shellProfilesClient}
-												serverIdentity={serverIdentity}
-											/>
-										) : (
-											<div
-												className="settings-group shell-profiles-loading"
-												role="status"
-											>
-												Connect to a server to manage shell profiles.
-											</div>
-										)
-									) : null}
-									{section.fields.filter(isFieldVisible).map((field) => (
-										<div
-											key={field.key}
-											className={`settings-row${field.input === 'textarea' ? ' settings-row--stacked' : ''}`}
-										>
-											<div className="settings-row-info">
-												<span className="settings-row-label">
-													{field.label}
-												</span>
-												<span className="settings-row-description">
-													{field.description}
-												</span>
-											</div>
-											<div className="settings-row-control">
-												{renderFieldControl(field)}
-											</div>
-										</div>
-									))}
-									{section.id === 'terminay-mcp' &&
-									connectedServersClient !== undefined ? (
-										<ConnectedMcpServersSettings client={connectedServersClient} />
-									) : null}
-									{section.id === 'file-viewer-refresh' ? (
-										<div className="settings-row settings-row--stacked">
-											{renderCustomFileExtensionDefaults()}
-										</div>
-									) : null}
-								</div>
-							</section>
-						))}
-						{cat.id === 'remote' ? renderRemoteManagement() : null}
+						{sections.map(renderSettingsSection)}
 					</div>
 				);
 			})}
-		</SharedSettingsRouteBody>
+		</>,
 	);
 }
