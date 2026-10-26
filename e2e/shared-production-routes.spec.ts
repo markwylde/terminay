@@ -27,8 +27,14 @@ test('locally emulated touch-mobile Chromium saves and resets terminal settings'
 	const settings = page
 		.locator('[data-shared-route-body="settings"]')
 		.filter({ hasText: 'Mobile workflow' });
+	// A phone-width Settings shows one column; back returns to the sidebar.
+	await expect(settings).toHaveAttribute('data-settings-layout', 'narrow');
+	const back = settings.locator('.settings-back-button');
+	await back.tap();
 	await settings.getByLabel('Search Mobile workflow settings').fill('terminal');
 	await settings.getByRole('button', { name: 'Appearance', exact: true }).tap();
+	await expect(settings).toHaveAttribute('data-settings-stage', 'detail');
+	await back.tap();
 	await settings.getByRole('button', { name: 'Terminal', exact: true }).tap();
 	await settings.getByLabel('Terminal font size').fill('18');
 	await expect(settings.locator('.settings-status')).toHaveText('Not saved');
@@ -43,7 +49,9 @@ test('locally emulated touch-mobile Chromium saves and resets terminal settings'
 			),
 		)
 		.toEqual(['save:18']);
+	await back.tap();
 	await settings.getByRole('button', { name: 'Reset to defaults' }).tap();
+	await settings.getByRole('button', { name: 'Terminal', exact: true }).tap();
 	await expect(settings.getByLabel('Terminal font size')).toHaveValue('14');
 	await expect
 		.poll(() =>

@@ -281,7 +281,7 @@ test('geometry is remembered per window across a reload and refitted to the view
 	await page.keyboard.press('Escape');
 
 	// Another window has its own geometry: none yet, so it opens centred.
-	expect(await boxOf(await openWindow(page, 'recordings'))).toEqual(start);
+	expect(await boxOf(await openWindow(page, 'performance-log'))).toEqual(start);
 	await page.keyboard.press('Escape');
 
 	// The stored value is numbers and one flag, keyed by window id only.
@@ -370,4 +370,47 @@ test('a window appears without animation when reduced motion is preferred', asyn
 	await openHarness(page);
 	await openWindow(page, 'settings');
 	await expect(page.locator('.in-page-window-layer')).toHaveCSS('animation-name', 'none');
+});
+
+test('First open: Settings opens centred at its default size with three aligned columns', async ({ page }) => {
+	await openHarness(page, { width: 1600, height: 1000 });
+	const frame = await openWindow(page, 'settings-columns');
+	const box = await boxOf(frame);
+	// Centred at the Settings default where the viewport allows it.
+	expect(box.width).toBe(1480);
+	expect(Math.abs(box.x - (1600 - box.width) / 2)).toBeLessThanOrEqual(1);
+	expect(Math.abs(box.y - (1000 - box.height) / 2)).toBeLessThanOrEqual(1);
+	const shell = frame.locator('.settings-shell');
+	await expect(shell).toHaveAttribute('data-settings-layout', 'columns');
+
+	// One header line across sidebar, list column and detail.
+	const headers = shell.locator('.settings-column-header');
+	await expect(headers).toHaveCount(3);
+	const bands = await Promise.all((await headers.all()).map(boxOf));
+	expect(new Set(bands.map((band) => band.y)).size).toBe(1);
+	expect(new Set(bands.map((band) => band.height)).size).toBe(1);
+
+	// Choosing another item leaves every column where it was.
+	const columns = async () =>
+		Promise.all(
+			['.settings-sidebar', '.settings-list-column', '.settings-right-pane'].map((selector) =>
+				boxOf(shell.locator(selector)),
+			),
+		);
+	const before = await columns();
+	expect(before[0].width).toBe(232);
+	expect(before[1].width).toBe(264);
+	await shell.getByRole('button', { name: /Update OS/ }).click();
+	await expect(shell.locator('.settings-detail-title')).toHaveText('Update OS');
+	await expect(shell.getByRole('button', { name: /Update OS/ })).toHaveAttribute('aria-current', 'true');
+	expect(await columns()).toEqual(before);
+});
+
+test('First open: on a smaller viewport Settings is clamped inside it', async ({ page }) => {
+	await openHarness(page, { width: 1200, height: 760 });
+	const box = await boxOf(await openWindow(page, 'settings-columns'));
+	expect(box.x).toBeGreaterThanOrEqual(0);
+	expect(box.y).toBeGreaterThanOrEqual(0);
+	expect(box.x + box.width).toBeLessThanOrEqual(1200);
+	expect(box.y + box.height).toBeLessThanOrEqual(760);
 });
