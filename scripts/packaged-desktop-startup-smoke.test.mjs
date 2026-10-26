@@ -254,7 +254,7 @@ async function requireNativeMenu(electronApp, window) {
 	const labels = await electronApp.evaluate(({ Menu }) =>
 		(Menu.getApplicationMenu()?.items ?? []).map((item) => item.label),
 	);
-	for (const label of ['File', 'Edit', 'View', 'Help'])
+	for (const label of ['Terminay', 'Edit', 'View', 'Help'])
 		assert.ok(labels.includes(label), `native ${label} menu is required`);
 	assert.equal(
 		await window.locator('[data-terminay-browser-menu], .browser-menu-bar').count(),
