@@ -64,7 +64,7 @@ test('clean canonical development launch is ready without renderer self-healing'
 	const menu = await electronApp.evaluate(({ Menu }) =>
 		(Menu.getApplicationMenu()?.items ?? []).map((item) => item.label),
 	);
-	expect(menu).toEqual(expect.arrayContaining(['File', 'Edit', 'View', 'Help']));
+	expect(menu).toEqual(expect.arrayContaining(['Terminay', 'Edit', 'View', 'Help']));
 	expect(mainWindow.locator('[data-terminay-browser-menu]')).toHaveCount(0);
 
 	await mainWindow.getByLabel('Toggle file explorer').click();

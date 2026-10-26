@@ -320,6 +320,7 @@ import {
 	applyWindowMenus,
 	isMenuLessCopyInput,
 } from './windowMenuPolicy';
+import { buildTerminayMenu } from './terminayMenu';
 import {
 	createEmbeddedWorkspaceStateBackend,
 	embeddedBuiltInExtensionArtifactRoot,
@@ -5017,63 +5018,12 @@ function createAppMenu(
 	settings: TerminalSettings = readTerminalSettings(),
 ): void {
 	const template: Electron.MenuItemConstructorOptions[] = [
-		...(process.platform === 'darwin'
-			? [
-					{
-						label: 'Terminay',
-						submenu: [
-							{ label: 'About Terminay', click: () => showAboutWindow() },
-							{ type: 'separator' },
-							{ role: 'services' },
-							{ type: 'separator' },
-							{ role: 'hide' },
-							{ role: 'hideOthers' },
-							{ role: 'unhide' },
-							{ type: 'separator' },
-							{ role: 'quit' },
-						],
-					} satisfies Electron.MenuItemConstructorOptions,
-				]
-			: []),
-		{
-			label: 'File',
-			submenu: [
-				{
-					label: 'Create a new terminal tab',
-					accelerator: getMenuShortcut(settings, 'new-terminal'),
-					click: () => sendCommandToFocusedWindow('new-terminal'),
-				},
-				{
-					label: 'Create a new project',
-					accelerator: getMenuShortcut(settings, 'new-project'),
-					click: () => sendCommandToFocusedWindow('new-project'),
-				},
-				{ type: 'separator' },
-				{
-					label: 'Remote Control',
-					click: () => sendCommandToFocusedWindow('open-remote-control'),
-				},
-				{
-					label: 'Extensions…',
-					click: () => sendCommandToFocusedWindow('open-extensions'),
-				},
-				{
-					label: 'Macros',
-					accelerator: 'CmdOrCtrl+;',
-					click: () => sendCommandToFocusedWindow('open-macros'),
-				},
-				{
-					label: 'Recordings',
-					accelerator: getMenuShortcut(settings, 'open-recordings'),
-					click: () => sendCommandToFocusedWindow('open-recordings'),
-				},
-				{
-					label: 'Settings',
-					accelerator: 'CmdOrCtrl+,',
-					click: () => sendCommandToFocusedWindow('open-settings'),
-				},
-			],
-		},
+		buildTerminayMenu({
+			platform: process.platform,
+			shortcut: (command) => getMenuShortcut(settings, command),
+			dispatch: (command) => sendCommandToFocusedWindow(command),
+			showAbout: () => showAboutWindow(),
+		}),
 		{
 			label: 'Terminal',
 			submenu: [

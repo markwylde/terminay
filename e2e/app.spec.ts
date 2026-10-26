@@ -162,15 +162,15 @@ test('updates menu accelerators when command shortcuts are cleared and reset', a
   const terminalShortcutRow = settingsWindow.locator('.settings-row').filter({ hasText: 'Create a new terminal tab' })
   const shortcutInput = terminalShortcutRow.locator('input')
 
-  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBe('CmdOrCtrl+T')
+  await expect(getAppMenuItemAccelerator(electronApp, 'New Terminal Tab')).resolves.toBe('CmdOrCtrl+T')
 
   await terminalShortcutRow.getByRole('button', { name: 'Clear' }).click()
   await expect(shortcutInput).toHaveValue('')
-  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).toBeNull()
+  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'New Terminal Tab')).toBeNull()
 
   await settingsWindow.getByRole('button', { name: 'Reset All' }).click()
   await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
-  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).toBe('CmdOrCtrl+T')
+  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'New Terminal Tab')).toBe('CmdOrCtrl+T')
 })
 
 test('exposes a Window menu for multi-window management', async ({ electronApp }) => {
@@ -183,6 +183,30 @@ test('exposes a Window menu for multi-window management', async ({ electronApp }
   })
 
   expect(hasWindowMenu).toBe(true)
+})
+
+test('leads with a Terminay menu and has no File menu', async ({ electronApp, mainWindow }) => {
+  await expect(mainWindow.locator('.terminal-panel').first()).toBeVisible()
+  const readMenus = () => electronApp.evaluate(({ Menu }) => {
+    const items = Menu.getApplicationMenu()?.items ?? []
+    const first = items[0]
+    return {
+      labels: items.map((item) => item.label),
+      first: first?.label,
+      entries: (first?.submenu?.items ?? [])
+        .filter((item) => item.visible && item.type !== 'separator')
+        .map((item) => item.label),
+    }
+  })
+
+  // The application menu is set once the workspace window is up.
+  await expect.poll(async () => (await readMenus()).first).toBe('Terminay')
+  const menus = await readMenus()
+  expect(menus.labels).not.toContain('File')
+  expect(menus.entries).toEqual(expect.arrayContaining(['New Terminal Tab', 'New Project', 'Settings…']))
+  for (const removed of ['Remote Control', 'Extensions…', 'Macros', 'Recordings']) {
+    expect(menus.entries).not.toContain(removed)
+  }
 })
 
 test('runs customized app shortcuts from the keyboard', async ({ appHarness, mainWindow }) => {
