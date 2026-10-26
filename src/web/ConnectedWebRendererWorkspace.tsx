@@ -134,7 +134,7 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 	return `/?${params.toString()}`;
 }
 
-type BrowserMenuId = 'file' | 'edit' | 'view' | 'help';
+type BrowserMenuId = 'terminay' | 'edit' | 'view' | 'help';
 
 type BrowserMenuItem = Readonly<{
 	id: string;
@@ -145,12 +145,17 @@ type BrowserMenuItem = Readonly<{
 	checked?: boolean;
 }>;
 
-const menuOrder: readonly BrowserMenuId[] = ['file', 'edit', 'view', 'help'];
+const menuOrder: readonly BrowserMenuId[] = [
+	'terminay',
+	'edit',
+	'view',
+	'help',
+];
 
 const menuLabels: Readonly<Record<BrowserMenuId, string>> = Object.freeze({
 	edit: 'Edit',
-	file: 'File',
 	help: 'Help',
+	terminay: 'Terminay',
 	view: 'View',
 });
 
@@ -678,42 +683,21 @@ function ConnectedBrowserMenuBar({
 					onSelect: () => setTouchTextSelectionEnabled(!touchTextSelection),
 				},
 			],
-			file: [
+			terminay: [
 				{
 					id: 'new-terminal',
-					label: 'Create a new terminal tab',
+					label: 'New Terminal Tab',
 					onSelect: () => dispatchShortcut('t'),
 				},
 				{
 					id: 'new-project',
-					label: 'Create a new project',
+					label: 'New Project',
 					onSelect: () => dispatchShortcut('p'),
 				},
 				{
-					id: 'remote-control',
-					label: 'Remote Control',
-					startsGroup: true,
-					onSelect: () => onOpenAuxiliaryRoute('remote-control'),
-				},
-				{
-					id: 'extensions',
-					label: 'Extensions…',
-					onSelect: () =>
-						window.dispatchEvent(new Event('terminay-open-extensions')),
-				},
-				{
-					id: 'macros',
-					label: 'Macros',
-					onSelect: () => onOpenAuxiliaryRoute('macros'),
-				},
-				{
-					id: 'recordings',
-					label: 'Recordings',
-					onSelect: () => onOpenAuxiliaryRoute('recordings'),
-				},
-				{
 					id: 'settings',
-					label: 'Settings',
+					label: 'Settings…',
+					startsGroup: true,
 					onSelect: () => onOpenAuxiliaryRoute('settings'),
 				},
 				{ id: 'disconnect', label: 'Disconnect', startsGroup: true, onSelect: onBack },
@@ -929,7 +913,7 @@ function ConnectedBrowserMenuBar({
 					aria-label="Application menu"
 					title="Application menu"
 					onClick={() =>
-						setOpenMenu((current) => (current === null ? 'file' : null))
+						setOpenMenu((current) => (current === null ? 'terminay' : null))
 					}
 				>
 					<MenuIcon size={17} aria-hidden="true" />

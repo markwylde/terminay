@@ -24,7 +24,7 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	assert.doesNotMatch(webWorkspaceCss, /html\.is-framed[^{]*\{[^}]*safe-area-inset-top/u);
 	assert.match(serverHtml, /viewport-fit=cover/);
 	assert.match(serverHtml, /documentElement\.classList\.add\('is-framed'\)/);
-	for (const label of ['File', 'Edit', 'View', 'Help']) {
+	for (const label of ['Terminay', 'Edit', 'View', 'Help']) {
 		assert.match(webWorkspace, new RegExp(`${label}`, 'u'));
 	}
 	assert.match(webWorkspace, /<InPageWindow\b[\s\S]*name=\{route\.kind\}/u);
