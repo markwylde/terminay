@@ -1101,7 +1101,7 @@ test.describe('project tabs', () => {
 			commandBar.getByText('New project', { exact: true }),
 		).toBeVisible();
 		await expect(
-			commandBar.getByText('Create a new terminal tab', { exact: true }),
+			commandBar.getByText('New Terminal Tab', { exact: true }),
 		).toHaveCount(0);
 		await mainWindow.keyboard.press('Escape');
 		await expect(commandBar).toHaveCount(0);
