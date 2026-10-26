@@ -24,7 +24,10 @@ const AUTOMATION_SPACE_ID = 'system:automations';
 
 const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
-const sectionTab = (page: Page, section: 'home' | 'tabs' | 'automations') =>
+const sectionTab = (
+	page: Page,
+	section: 'home' | 'tabs' | 'automations' | 'recordings',
+) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
 const automations = (page: Page) =>
 	front(page).locator('[data-terminay-automations]');
