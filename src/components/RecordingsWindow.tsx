@@ -626,7 +626,7 @@ export function RecordingsTimeline({
   }, [isVisible, loadRecordings])
 
   return (
-    <div className="recordings-timeline" data-terminay-recordings-timeline="true">
+    <div className="recordings-home" data-terminay-recordings-timeline="true">
       <SharedRecordingsLibraryPane
         groupedRecordings={library.groupedRecordings}
         headerAccessory={headerAccessory}

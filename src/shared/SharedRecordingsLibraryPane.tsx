@@ -46,21 +46,23 @@ export function SharedRecordingsLibraryPane({
             <div className="workspace-dashboard__heading-box">
               <h2 className="workspace-dashboard__heading">Recordings</h2>
               <p className="workspace-dashboard__subheading">
-                {recordings.length} saved session{recordings.length === 1 ? '' : 's'}. Open one to replay it in its own tab.
+                Terminal sessions captured on this server. Open one to replay it in its own tab.
               </p>
             </div>
             <div className="workspace-dashboard__controls">
-              <label className="workspace-dashboard__filter recordings-page__search">
-                <Search aria-hidden="true" size={13} />
-                <input
-                  aria-label="Search recordings"
-                  className="workspace-dashboard__filter-input"
-                  value={query}
-                  onChange={(event) => onQueryChange(event.target.value)}
-                  placeholder="Search recordings"
-                  type="search"
-                />
-              </label>
+              {recordings.length === 0 && query === '' ? null : (
+                <label className="workspace-dashboard__filter recordings-page__search">
+                  <Search aria-hidden="true" size={13} />
+                  <input
+                    aria-label="Search recordings"
+                    className="workspace-dashboard__filter-input"
+                    value={query}
+                    onChange={(event) => onQueryChange(event.target.value)}
+                    placeholder="Search recordings"
+                    type="search"
+                  />
+                </label>
+              )}
               {headerAccessory}
               <button type="button" className="recordings-page__refresh" onClick={onRefresh} aria-label="Refresh recordings">
                 <RefreshCw size={13} aria-hidden="true" />
