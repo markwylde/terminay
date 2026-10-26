@@ -441,7 +441,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	activityIndicators: {
 		amberDelaySeconds: 0,
 		greenDelaySeconds: 1,
-		showActiveTabs: false,
+		showActiveTabs: true,
 		showFinishedTabs: true,
 		signalDetection: true,
 		progressStaleSeconds: 15,

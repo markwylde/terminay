@@ -336,7 +336,7 @@ test("update_settings' approval shows each setting's current and requested value
 			params: {
 				settings: {
 					scrollback: 10000,
-					'activityIndicators.showActiveTabs': true,
+					'activityIndicators.showActiveTabs': false,
 				},
 			},
 		},
@@ -350,7 +350,7 @@ test("update_settings' approval shows each setting's current and requested value
 		approval.details.map((detail) => [detail.label, detail.value]),
 		[
 			['scrollback', '5000 → 10000'],
-			['activityIndicators.showActiveTabs', 'false → true'],
+			['activityIndicators.showActiveTabs', 'true → false'],
 		],
 	);
 	// Nothing changes until a user allows it.
