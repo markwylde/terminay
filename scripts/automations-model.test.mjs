@@ -39,6 +39,32 @@ test('one server serving automations needs no selector', () => {
 	assert.equal(selection.selected?.serverId, 'local');
 });
 
+test('another per-server section chooses the same way, by its own capability', () => {
+	const recording = (capabilities) =>
+		capabilities?.includes('recording.v1') === true;
+	const candidates = [
+		{ serverId: 'local', label: 'Local', usable: true, capabilities: WITH },
+		{
+			serverId: 'box',
+			label: 'Build box',
+			usable: true,
+			capabilities: ['workspace.v1', 'recording.v1'],
+		},
+	];
+	const selection = selectAutomationServer(
+		candidates,
+		undefined,
+		'local',
+		recording,
+	);
+	assert.equal(selection.showsSelector, false);
+	assert.equal(selection.selected?.serverId, 'box');
+	assert.deepEqual(
+		selection.unsupported.map((choice) => choice.serverId),
+		['local'],
+	);
+});
+
 test('several servers serving automations offer a selector, defaulting to the working server', () => {
 	const candidates = [
 		{ serverId: 'local', label: 'Local', usable: true, capabilities: WITH },

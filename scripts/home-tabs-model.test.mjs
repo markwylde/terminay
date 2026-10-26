@@ -24,6 +24,8 @@ const descriptors = [
 	{ kind: 'automation-new', serverId: 'server-a', draftId: '4' },
 	{ kind: 'run', serverId: 'server-a', automationId: 'auto-1', runId: 'run-9' },
 	{ kind: 'automation-terminal', serverId: 'server-a', panelId: 'panel-2' },
+	{ kind: 'section', section: 'recordings' },
+	{ kind: 'recording', serverId: 'server-a', recordingId: 'rec-7' },
 ];
 
 test('every descriptor maps to one id and back', () => {
@@ -55,12 +57,13 @@ test('an id that names nothing Home knows is not a tab', () => {
 		'automation:server-a:',
 		'run:server-a:auto-1',
 		'terminal:server-a:panel-1',
+		'recording:server-a',
 		'automation:%E0%A4%A:x',
 	])
 		assert.equal(parseHomeTabId(id), undefined, String(id));
 });
 
-test('a tab belongs to its section, and everything automation-shaped to Automations', () => {
+test('a tab belongs to its section: automation-shaped to Automations, a replay to Recordings', () => {
 	assert.deepEqual(descriptors.map(homeTabSection), [
 		'home',
 		'tabs',
@@ -70,11 +73,16 @@ test('a tab belongs to its section, and everything automation-shaped to Automati
 		'automations',
 		'automations',
 		'automations',
+		'recordings',
+		'recordings',
 	]);
 	assert.equal(homeTabServerId(descriptors[0]), undefined);
 	assert.equal(homeTabServerId(descriptors[3]), 'server-a');
 	assert.equal(defaultHomeTabTitle(descriptors[1]), 'Tabs');
 	assert.equal(defaultHomeTabTitle(descriptors[5]), 'New automation');
+	assert.equal(defaultHomeTabTitle(descriptors[8]), 'Recordings');
+	assert.equal(homeTabServerId(descriptors[9]), 'server-a');
+	assert.equal(defaultHomeTabTitle(descriptors[9]), 'Recording');
 });
 
 const leaf = (views, activeView = views[0]) => ({
