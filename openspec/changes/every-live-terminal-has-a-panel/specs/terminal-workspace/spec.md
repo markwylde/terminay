@@ -10,6 +10,12 @@ Terminay Server SHALL keep every running terminal shown by a terminal panel in i
 - **THEN** the terminal appears again as a tab in its project's General folder
 - **AND** closing the project warns only about terminals that are shown
 
+#### Scenario: A closed tab whose shell is ended
+
+- **WHEN** a user closes a terminal tab and the server ends its shell
+- **THEN** the terminal is no longer running
+- **AND** it does not appear again as a tab
+
 #### Scenario: A terminal started without a panel
 
 - **WHEN** a terminal is running in a project and no panel shows it for 5 seconds

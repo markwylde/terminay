@@ -443,6 +443,19 @@ test("a session ending is reported with who asked for it", async (t) => {
   assertMetadataOnly(first.reports, dataRoot, ["asked", "hung-up", "signalled"]);
 });
 
+test("a session the server ends is no longer running in its terminal service", async (t) => {
+  const dataRoot = dataRootFor(t);
+  const first = server(dataRoot);
+  t.after(async () => { await first.service.shutdown(); await first.factory.endAll(); });
+  await create(first.service, "closed", dataRoot);
+
+  // Closing a held terminal's panel ends it in the holder, which reports no exit.
+  await first.factory.end("closed");
+
+  // Still `running`, a panel-less terminal is given its panel back.
+  assert.notEqual(first.service.getSession("closed").status, "running");
+});
+
 test("a session that ended with nobody watching is reported when it is adopted", async (t) => {
   const dataRoot = dataRootFor(t);
   const first = server(dataRoot);
