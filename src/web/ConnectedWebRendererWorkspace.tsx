@@ -79,6 +79,7 @@ import {
 } from '../shared/statusBarVisibility';
 import { isProjectEditCommitted } from './projectEditSettlement';
 import { canLeaveManagerSession } from './sessionTransportHost';
+import { subscribeWindowFullScreenState } from '../host/nativeEvents';
 
 export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	terminalClientContext: Omit<TerminalPanelClientContextValue, 'projectId'>;
@@ -176,7 +177,20 @@ export function ConnectedWebRendererWorkspace({
 	const hasNativeWindowControls =
 		hostContext?.capabilities.nativeWindows !== undefined;
 	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
-	const nativeTitlebar = useMemo(nativeTitlebarKind, []);
+	const nativeTitlebarKindValue = useMemo(nativeTitlebarKind, []);
+	// macOS hides the traffic lights in full screen, so the band they need goes.
+	const [isWindowFullScreen, setIsWindowFullScreen] = useState(false);
+	useEffect(
+		() =>
+			nativeTitlebarKindValue === 'mac'
+				? subscribeWindowFullScreenState(setIsWindowFullScreen)
+				: undefined,
+		[nativeTitlebarKindValue],
+	);
+	const nativeTitlebar =
+		nativeTitlebarKindValue === 'mac' && isWindowFullScreen
+			? undefined
+			: nativeTitlebarKindValue;
 	const requestedView = useMemo(() => {
 		// Canonical route presentations use the query form.  Retain fragment
 		// compatibility for documents opened by older Desktop versions rather
