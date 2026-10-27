@@ -99,3 +99,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0071](./0071-a-running-terminal-always-has-a-place-someone-can-see.md) | A running terminal always has a place someone can see | accepted | 2026-10-17 |
 | [0072](./0072-mcp-reach-is-the-authority-line-and-workspace-reach-controls-the-app.md) | MCP reach is the authority line, and workspace reach controls the app except for a fixed excluded set | accepted, supersedes 0068 | 2026-10-20 |
 | [0075](./0075-management-lives-in-one-settings-surface.md) | Management lives in one Settings surface; collections get a list column, workspace content lives in Home | accepted | 2026-10-26 |
+| [0076](./0076-app-window-records-are-server-data-that-last-as-long-as-their-session.md) | App window records are server data that last as long as their terminal session, across restarts | accepted | 2026-10-27 |
