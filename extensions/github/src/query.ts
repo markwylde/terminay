@@ -1,6 +1,8 @@
 /** Distinct branches asked about in one GraphQL request. */
 export const MAX_BRANCHES_PER_QUERY = 50;
 export const MAX_CHECK_ITEMS = 100;
+/** Recently merged pull requests asked about in each request. */
+export const MAX_MERGED_PULL_REQUESTS = 50;
 
 export interface GraphqlRequest {
 	query: string;
@@ -11,7 +13,9 @@ export interface GraphqlRequest {
 
 /**
  * One request for a repository's branches: per branch, its head commit's
- * check rollup and its open pull requests with theirs. Branch names travel
+ * check rollup and its open pull requests with theirs, plus the repository's
+ * recently merged pull requests, which outlive their deleted branches.
+ * Branch names travel
  * as variables, so no branch name can change the query. `counts: false`
  * leaves out the per-state totals for servers whose schema lacks them.
  */
@@ -37,6 +41,9 @@ export function buildQuery(
   rateLimit { remaining resetAt }
   repository(owner: $owner, name: $name) {
     nameWithOwner
+    mergedPullRequests: pullRequests(states: MERGED, first: ${MAX_MERGED_PULL_REQUESTS}, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url headRefName headRepository { nameWithOwner } }
+    }
     ${selections.join('\n    ')}
   }
 }

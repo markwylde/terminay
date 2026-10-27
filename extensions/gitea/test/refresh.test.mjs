@@ -299,6 +299,38 @@ test('a merged pull request is published as merged, and an open one wins over it
 	run.controller.abort();
 });
 
+test('a merged pull request whose branch was deleted matches on its head label', async () => {
+	// Gitea reports a deleted head branch as refs/pull/<n>/head; the label
+	// keeps the branch name. A fork's label is owner:branch.
+	const deleted = (number, label, fullName = 'owner/repo') => ({
+		...pull(number, `refs/pull/${number}/head`, { merged: true }),
+		head: {
+			ref: `refs/pull/${number}/head`,
+			label,
+			sha: `sha-${number}`,
+			repo: { full_name: fullName },
+		},
+	});
+	const gitea = fakeGitea({
+		pulls: [],
+		closedPulls: [
+			deleted(311, 'feat/about'),
+			deleted(305, 'someone:local', 'someone/repo'),
+		],
+	});
+	const run = harness({ gitea });
+	await flush();
+	const states = Object.fromEntries(
+		run.published.map(({ worktreeId, properties }) => [
+			worktreeId,
+			properties?.pullRequest &&
+				`${properties.pullRequest.number} ${properties.pullRequest.state}`,
+		]),
+	);
+	assert.deepEqual(states, { 'wt-about': '311 merged' });
+	run.controller.abort();
+});
+
 test('an idle project refreshes on the 45 second inactive floor and republishes only changes', async () => {
 	const run = harness();
 	await flush();
@@ -438,11 +470,19 @@ test('becoming active refreshes at once; becoming inactive only slows the next r
 	const calls = run.gitea.calls.length;
 	run.setContexts([context({ active: true })]);
 	await flush();
-	assert.equal(run.gitea.calls.length, calls * 2, 'focus refreshes immediately');
+	assert.equal(
+		run.gitea.calls.length,
+		calls * 2,
+		'focus refreshes immediately',
+	);
 	assert.deepEqual(run.clock.pending(), [ACTIVE_REFRESH_INTERVAL_MS]);
 	run.setContexts([context({ active: false })]);
 	await flush();
-	assert.equal(run.gitea.calls.length, calls * 2, 'losing focus makes no request');
+	assert.equal(
+		run.gitea.calls.length,
+		calls * 2,
+		'losing focus makes no request',
+	);
 	await run.clock.advance(ACTIVE_REFRESH_INTERVAL_MS);
 	await flush();
 	assert.deepEqual(run.clock.pending(), [INACTIVE_REFRESH_INTERVAL_MS]);
