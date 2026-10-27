@@ -62,7 +62,12 @@ const run = (name, conclusion) => ({
 });
 
 /** A GraphQL endpoint answering each aliased ref from `branches`. */
-function fakeGitHub({ tokens = ['cli-token'], branches, answer } = {}) {
+function fakeGitHub({
+	tokens = ['cli-token'],
+	branches,
+	merged = [],
+	answer,
+} = {}) {
 	const calls = [];
 	const data = branches ?? {
 		main: {
@@ -101,7 +106,10 @@ function fakeGitHub({ tokens = ['cli-token'], branches, answer } = {}) {
 		const token = init.headers.authorization.replace(/^bearer /, '');
 		if (!tokens.includes(token))
 			return response(401, { message: 'Bad credentials' });
-		const repository = { nameWithOwner: 'owner/repo' };
+		const repository = {
+			nameWithOwner: 'owner/repo',
+			mergedPullRequests: { nodes: merged },
+		};
 		for (const [name, value] of Object.entries(body.variables))
 			if (/^b\d+$/.test(name))
 				repository[name] = data[value.replace(/^refs\/heads\//, '')] ?? null;
@@ -279,6 +287,38 @@ test('worktrees publish their pull request and checks, others nothing', async ()
 		),
 		true,
 	);
+});
+
+test('a merged pull request is published as merged, even with its branch deleted', async () => {
+	const merged = (number, headRefName) => ({
+		number,
+		title: `PR ${number}`,
+		url: `https://github.com/owner/repo/pull/${number}`,
+		headRefName,
+		headRepository: { nameWithOwner: 'owner/repo' },
+	});
+	// `local` has no ref on GitHub; `feat/about` has an open pull request.
+	const h = harness({
+		github: fakeGitHub({
+			merged: [merged(51, 'local'), merged(40, 'feat/about')],
+		}),
+	});
+	await flush();
+	assert.equal(h.github.calls.length, 1);
+	const states = Object.fromEntries(
+		h.published.map(({ worktreeId, properties }) => [
+			worktreeId,
+			properties?.pullRequest &&
+				`${properties.pullRequest.number} ${properties.pullRequest.state}`,
+		]),
+	);
+	assert.deepEqual(states, {
+		'wt-main': undefined,
+		'wt-about': '42 open',
+		'wt-local': '51 merged',
+	});
+	const local = h.published.find((entry) => entry.worktreeId === 'wt-local');
+	assert.equal(local.properties.checks, undefined);
 });
 
 test('unchanged properties are not published again', async () => {
