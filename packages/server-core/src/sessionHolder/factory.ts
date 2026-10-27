@@ -175,6 +175,13 @@ export function createSessionHolderPtyFactory(
 	const polling = createForegroundPolling(options.foregroundPolling);
 	const clients = new Map<string, SessionHolderClient>();
 	const owners = new Map<string, SessionHolderClient>();
+	/**
+	 * How each process this server observes learns it was ended by `end`. A
+	 * holder reports no exit for a session it is told to end, so the process
+	 * reports it itself; otherwise its terminal would stay running with no
+	 * shell behind it.
+	 */
+	const endings = new Map<string, () => void>();
 	const incompatible: string[] = [];
 	let current: SessionHolderClient | undefined;
 	let launching: Promise<SessionHolderClient> | undefined;
@@ -503,6 +510,13 @@ export function createSessionHolderPtyFactory(
 				// Not a clean exit: nothing may treat this as a shell that finished.
 				listener({ exitCode: 1, signal: null, at: Date.now() });
 		});
+		const ended = (): void => {
+			if (exited || disposed) return;
+			exited = true;
+			for (const listener of [...exitListeners])
+				listener({ exitCode: null, signal: null, at: Date.now() });
+		};
+		endings.set(sessionId, ended);
 		return {
 			...(pid === undefined ? {} : { pid }),
 			write: (bytes) => client.write(sessionId, bytes),
@@ -554,6 +568,7 @@ export function createSessionHolderPtyFactory(
 			// shell: that is `kill`, `end`, or `endAll`.
 			dispose: () => {
 				disposed = true;
+				if (endings.get(sessionId) === ended) endings.delete(sessionId);
 				foreground.dispose();
 				releaseHolderClose();
 				exitListeners.clear();
@@ -622,11 +637,14 @@ export function createSessionHolderPtyFactory(
 					endedUnattached: false,
 				});
 			observed.delete(sessionId);
+			const ended = endings.get(sessionId);
+			endings.delete(sessionId);
 			try {
 				await client.end(sessionId);
 			} catch {
 				/* a holder that is already gone has nothing left to end */
 			}
+			ended?.();
 		},
 		async endAll() {
 			// A holder still starting would be left running with nobody to end it.
