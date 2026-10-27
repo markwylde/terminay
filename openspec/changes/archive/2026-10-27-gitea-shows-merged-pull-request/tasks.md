@@ -10,4 +10,4 @@
 ## 3. Delivery
 
 - [x] 3.1 Run `openspec validate gitea-shows-merged-pull-request --strict`, `npm run lint`, and `npx tsc --noEmit -p .`. Verified by all exiting zero.
-- [ ] 3.2 Open the pull request on `origin` with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 3.2 Open the pull request on `origin` with `tea` and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.

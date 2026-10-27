@@ -4,7 +4,12 @@ import type {
 	WorktreeInsightSourceStart,
 } from '@terminay/extension-api';
 import type { CliTokenStore } from './ghConfig.js';
-import { type GitHubRef, toProperties, trackedBranch } from './mapping.js';
+import {
+	type GitHubPullRequest,
+	type GitHubRef,
+	toProperties,
+	trackedBranch,
+} from './mapping.js';
 import type { FetchLike, GitHubProbe } from './probe.js';
 import { buildQuery, chunkBranches } from './query.js';
 import {
@@ -289,9 +294,11 @@ class GitHubInsightSession {
 			),
 		];
 		const refs = new Map<string, GitHubRef | null>();
+		let merged: readonly (GitHubPullRequest | null)[] = [];
 		for (const chunk of chunkBranches(branches)) {
 			const found = await this.queryBranches(forge, chunk, token);
-			for (const [branch, ref] of found) refs.set(branch, ref);
+			for (const [branch, ref] of found.refs) refs.set(branch, ref);
+			merged = found.merged;
 		}
 		for (const worktree of worktrees) {
 			const branch = trackedBranch(worktree);
@@ -300,17 +307,29 @@ class GitHubInsightSession {
 				worktree.id,
 				branch === undefined
 					? null
-					: toProperties(refs.get(branch), branch, forge.owner, forge.repo),
+					: toProperties(
+							refs.get(branch),
+							branch,
+							forge.owner,
+							forge.repo,
+							merged,
+						),
 			);
 		}
 	}
 
-	/** One GraphQL request for up to 50 branches; each branch's `ref`. */
+	/**
+	 * One GraphQL request for up to 50 branches; each branch's `ref`, and the
+	 * repository's recently merged pull requests.
+	 */
 	private async queryBranches(
 		forge: ForgeRepository,
 		branches: readonly string[],
 		token: string,
-	): Promise<Map<string, GitHubRef | null>> {
+	): Promise<{
+		refs: Map<string, GitHubRef | null>;
+		merged: readonly (GitHubPullRequest | null)[];
+	}> {
 		const counts = !this.withoutCounts.has(forge.origin);
 		const request = buildQuery(forge.owner, forge.repo, branches, { counts });
 		let data: unknown;
@@ -330,7 +349,13 @@ class GitHubInsightSession {
 		const refs = new Map<string, GitHubRef | null>();
 		for (const [branch, alias] of request.aliases)
 			refs.set(branch, (repository[alias] as GitHubRef | null) ?? null);
-		return refs;
+		const nodes = (
+			repository.mergedPullRequests as
+				| { nodes?: readonly (GitHubPullRequest | null)[] | null }
+				| null
+				| undefined
+		)?.nodes;
+		return { refs, merged: Array.isArray(nodes) ? nodes : [] };
 	}
 
 	private async credential(origin: string): Promise<Credential | undefined> {

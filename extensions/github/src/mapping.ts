@@ -79,8 +79,22 @@ export function matchPullRequest(
 	owner: string,
 	repo: string,
 ): GitHubPullRequest | undefined {
+	return findPullRequest(
+		ref?.associatedPullRequests?.nodes ?? [],
+		branch,
+		owner,
+		repo,
+	);
+}
+
+function findPullRequest(
+	pulls: readonly (GitHubPullRequest | null)[],
+	branch: string,
+	owner: string,
+	repo: string,
+): GitHubPullRequest | undefined {
 	const fullName = `${owner}/${repo}`.toLowerCase();
-	return (ref?.associatedPullRequests?.nodes ?? []).find(
+	return pulls.find(
 		(pull): pull is GitHubPullRequest =>
 			pull !== null &&
 			pull.headRefName === branch &&
@@ -91,6 +105,7 @@ export function matchPullRequest(
 
 export function toPullRequest(
 	pull: GitHubPullRequest,
+	merged = false,
 ): WorktreePullRequest | undefined {
 	if (
 		!Number.isSafeInteger(pull.number) ||
@@ -104,7 +119,7 @@ export function toPullRequest(
 		number: pull.number as number,
 		title: pull.title.slice(0, 512),
 		url: pull.url,
-		state: pull.isDraft === true ? 'draft' : 'open',
+		state: merged ? 'merged' : pull.isDraft === true ? 'draft' : 'open',
 		...(pull.mergeable === 'MERGEABLE'
 			? { mergeable: true }
 			: pull.mergeable === 'CONFLICTING'
@@ -233,20 +248,24 @@ function add(
 }
 
 /**
- * A branch's properties: its pull request, and the checks of the pull
- * request's head commit, else of the branch's head commit.
+ * A branch's properties: its open pull request, else the most recently
+ * updated merged one in `merged`, and the checks of the open pull request's
+ * head commit, else of the branch's head commit. A merged pull request is
+ * found even when its branch, and so `ref`, is gone.
  */
 export function toProperties(
 	ref: GitHubRef | null | undefined,
 	branch: string,
 	owner: string,
 	repo: string,
+	merged: readonly (GitHubPullRequest | null)[] = [],
 ): WorktreeProperties | null {
-	if (ref === null || ref === undefined) return null;
-	const pull = matchPullRequest(ref, branch, owner, repo);
-	const pullRequest = pull === undefined ? undefined : toPullRequest(pull);
-	const head = pull?.commits?.nodes?.at(-1)?.commit;
-	const checks = toChecks(head ?? ref.target);
+	const open = matchPullRequest(ref, branch, owner, repo);
+	const pull = open ?? findPullRequest(merged, branch, owner, repo);
+	const pullRequest =
+		pull === undefined ? undefined : toPullRequest(pull, open === undefined);
+	const head = open?.commits?.nodes?.at(-1)?.commit;
+	const checks = toChecks(head ?? ref?.target);
 	if (pullRequest === undefined && checks === undefined) return null;
 	return {
 		...(pullRequest === undefined ? {} : { pullRequest }),

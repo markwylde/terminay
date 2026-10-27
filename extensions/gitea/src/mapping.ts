@@ -20,6 +20,7 @@ export interface GiteaPullRequest {
 	mergeable?: unknown;
 	head?: {
 		ref?: unknown;
+		label?: unknown;
 		sha?: unknown;
 		repo?: { full_name?: unknown } | null;
 	} | null;
@@ -38,7 +39,9 @@ export interface GiteaCommitStatus {
  * same-named branch, as a pull without an upstream does. A detached worktree
  * follows nothing.
  */
-export function trackedBranch(worktree: RepositoryWorktree): string | undefined {
+export function trackedBranch(
+	worktree: RepositoryWorktree,
+): string | undefined {
 	return worktree.upstream?.branch ?? worktree.branch ?? undefined;
 }
 
@@ -46,7 +49,8 @@ export function trackedBranch(worktree: RepositoryWorktree): string | undefined 
  * The first pull request in `pulls` whose head is this worktree's tracked
  * branch in this repository. A fork's pull request with the same branch name
  * is not it. Callers list open pull requests before merged ones, so an open
- * pull request wins.
+ * pull request wins. Once a merged pull request's branch is deleted, Gitea
+ * reports its head ref as `refs/pull/<n>/head`; its label keeps the branch.
  */
 export function matchPullRequest(
 	pulls: readonly GiteaPullRequest[],
@@ -58,7 +62,7 @@ export function matchPullRequest(
 	if (branch === undefined) return undefined;
 	const fullName = `${owner}/${repo}`.toLowerCase();
 	return pulls.find((pull) => {
-		if (pull.head?.ref !== branch) return false;
+		if (pull.head?.ref !== branch && pull.head?.label !== branch) return false;
 		const headRepo = pull.head.repo?.full_name;
 		return typeof headRepo !== 'string' || headRepo.toLowerCase() === fullName;
 	});
@@ -162,7 +166,11 @@ export function toChecks(
 function targetUrl(value: unknown, origin?: string): { url?: string } {
 	if (typeof value !== 'string' || value.length === 0) return {};
 	let url: string = value;
-	if (origin !== undefined && value.startsWith('/') && !value.startsWith('//')) {
+	if (
+		origin !== undefined &&
+		value.startsWith('/') &&
+		!value.startsWith('//')
+	) {
 		try {
 			url = new URL(value, origin).href;
 		} catch {
