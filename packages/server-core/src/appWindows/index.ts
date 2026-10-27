@@ -16,16 +16,19 @@ import {
 	MAX_APP_WINDOW_ATTACHMENTS,
 } from './attachments.js';
 import { AppWindowMirrorRelay, NOT_CONTROLLER, withinClientBoundary } from './mirror.js';
+import { APP_WINDOW_RECORD_VERSION, AppWindowStore } from './store.js';
 
 export * from './attachments.js';
 export * from './mirror.js';
+export * from './store.js';
 
 /**
  * Server-owned app windows (ADR-0037).
  *
  * A window belongs to the terminal session whose MCP capability opened it. The
  * server holds the record; the client that holds that session's presentation
- * lease runs the view. Nothing here is persisted: a restart ends every window.
+ * lease runs the view. With a store, each record is written as it changes and
+ * a window lasts as long as its session, across server restarts (ADR-0076).
  */
 
 export const APP_WINDOW_OPERATIONS = Object.freeze({
@@ -216,6 +219,14 @@ export interface AppWindowServiceOptions {
 		/** Server-owned attachment scratch directory. Defaults to one under os.tmpdir(). */
 		readonly directory?: string;
 	};
+	/**
+	 * Where window records are written, so windows outlive a server restart
+	 * with their terminal session (ADR-0076). Without it they live in memory.
+	 */
+	readonly store?: {
+		readonly directory: string;
+		readonly onError?: (error: unknown, windowId: string | undefined) => void;
+	};
 	/** Forward an MCP App view's request to the server that supplied it. */
 	readonly viewRequest?: (
 		window: AppWindowView,
@@ -224,6 +235,31 @@ export interface AppWindowServiceOptions {
 		signal: AbortSignal,
 	) => Promise<JsonValue>;
 }
+
+/** What a restored window starts from. Nothing a view did since is kept. */
+interface StoredWindow {
+	readonly version: typeof APP_WINDOW_RECORD_VERSION;
+	readonly id: string;
+	readonly terminalSessionId: string;
+	readonly projectId: string;
+	readonly title: string;
+	readonly source: AppWindowSource;
+	readonly state: AppWindowState;
+	readonly html: string;
+	readonly data?: JsonValue;
+	readonly csp?: AppWindowCsp;
+	readonly permissions?: Readonly<Record<string, unknown>>;
+	readonly tool?: JsonValue;
+	readonly toolInput?: JsonValue;
+	readonly toolResult?: JsonValue;
+	readonly toolCancelled?: string;
+	readonly contentRevision: number;
+	readonly createdAt: number;
+}
+
+/** What a restored MCP App view is told of a tool call the old server never finished. */
+export const APP_WINDOW_RESTART_CANCELLATION =
+	'Terminay restarted before the tool call finished.';
 
 /** Model context a view left for the next tool result from its terminal. */
 export interface AppWindowModelContext {
@@ -249,9 +285,22 @@ export class AppWindowService {
 	private readonly removals = new Set<Promise<void>>();
 	/** Relays recorded views to the clients watching a terminal (ADR-0039). */
 	readonly mirror: AppWindowMirrorRelay | undefined;
+	private readonly store: AppWindowStore<StoredWindow> | undefined;
+	/** What was last written of each window, to write only what changed. */
+	private readonly written = new Map<string, string>();
 
 	constructor(private readonly options: AppWindowServiceOptions) {
 		this.viewRequest = options.viewRequest;
+		this.store =
+			options.store === undefined
+				? undefined
+				: new AppWindowStore<StoredWindow>({
+						directory: options.store.directory,
+						parse: storedWindow,
+						...(options.store.onError === undefined
+							? {}
+							: { onError: options.store.onError }),
+					});
 		const presentationHolder = options.presentationHolder;
 		this.mirror =
 			presentationHolder === undefined
@@ -312,8 +361,11 @@ export class AppWindowService {
 				`This terminal already has ${this.maxWindowsPerSession} windows. Close one before opening another.`,
 			);
 		this.minimiseSession(input.terminalSessionId);
+		let id = this.generateId();
+		// A restored window keeps the id an earlier server gave it.
+		while (this.windows.has(id)) id = this.generateId();
 		const window: MutableWindow = {
-			id: this.generateId(),
+			id,
 			terminalSessionId: input.terminalSessionId,
 			projectId: input.projectId,
 			title,
@@ -417,13 +469,79 @@ export class AppWindowService {
 		this.publish();
 	}
 
-	/** The server is stopping or MCP was disabled: everything ends. */
+	/** The server is stopping and its terminals end, or MCP was disabled: everything ends. */
 	endAll(): void {
 		this.mirror?.endAll();
 		if (this.windows.size === 0) return;
 		for (const window of this.windows.values()) void this.abandonUpload(window);
 		this.windows.clear();
 		this.publish();
+	}
+
+	/**
+	 * The server is stopping and its terminals go on running: let go of every
+	 * window without ending it, so the next server restores it. Settles once
+	 * every record is written.
+	 */
+	async release(): Promise<void> {
+		this.mirror?.endAll();
+		for (const window of this.windows.values()) void this.abandonUpload(window);
+		this.windows.clear();
+		this.written.clear();
+		await this.flush();
+	}
+
+	/** Settles once every record write and removal queued so far has finished. */
+	async flush(): Promise<void> {
+		await this.store?.flush();
+	}
+
+	/**
+	 * Bring back the windows written by an earlier server whose terminal session
+	 * is running again, and discard the rest. Run once, after held sessions are
+	 * reattached and before any window is opened.
+	 */
+	async restore(sessions: {
+		/** The session's current project while it is running; undefined otherwise. */
+		readonly runningProject: (terminalSessionId: string) => string | undefined;
+	}): Promise<void> {
+		if (this.store === undefined) return;
+		const records = [...(await this.store.load())].sort(
+			(left, right) => left.createdAt - right.createdAt,
+		);
+		let restored = false;
+		for (const record of records) {
+			const projectId = sessions.runningProject(record.terminalSessionId);
+			if (
+				projectId === undefined ||
+				this.windows.has(record.id) ||
+				this.forSession(record.terminalSessionId).length >=
+					this.maxWindowsPerSession
+			) {
+				this.store.remove(record.id);
+				continue;
+			}
+			const { version: _version, ...fields } = record;
+			const window: MutableWindow = {
+				...fields,
+				projectId,
+				// A view started from an earlier record is not this one.
+				contentRevision: record.contentRevision + 1,
+			};
+			// The agent's call ended with the server that was running it.
+			if (
+				window.source.kind === 'mcp-app' &&
+				window.toolResult === undefined &&
+				window.toolCancelled === undefined
+			)
+				window.toolCancelled = APP_WINDOW_RESTART_CANCELLATION;
+			// One open window per terminal: the newest open one stays open.
+			if (window.state === 'open')
+				this.minimiseSession(window.terminalSessionId);
+			this.windows.set(window.id, window);
+			restored = true;
+		}
+		if (restored) this.publish();
 	}
 
 	/**
@@ -874,12 +992,29 @@ export class AppWindowService {
 		);
 	}
 
+	/** Write each window that changed since it was last written, and remove each that ended. */
+	private persist(): void {
+		if (this.store === undefined) return;
+		for (const window of this.windows.values()) {
+			const fingerprint = `${window.state}|${window.contentRevision}|${window.projectId}|${window.title}`;
+			if (this.written.get(window.id) === fingerprint) continue;
+			this.written.set(window.id, fingerprint);
+			this.store.write(storedRecord(window));
+		}
+		for (const id of [...this.written.keys()]) {
+			if (this.windows.has(id)) continue;
+			this.written.delete(id);
+			this.store.remove(id);
+		}
+	}
+
 	private minimiseSession(terminalSessionId: string): void {
 		for (const window of this.forSession(terminalSessionId))
 			window.state = 'minimised';
 	}
 
 	private publish(): void {
+		this.persist();
 		// Journal events reach every subscriber whatever its authority, so they
 		// carry only ids and terminals; clients refetch through the operations.
 		this.options.eventJournal?.append(
@@ -910,6 +1045,177 @@ function view(window: MutableWindow): AppWindowView {
 		contentRevision: window.contentRevision,
 		createdAt: window.createdAt,
 	});
+}
+
+function storedRecord(window: MutableWindow): StoredWindow {
+	return {
+		version: APP_WINDOW_RECORD_VERSION,
+		id: window.id,
+		terminalSessionId: window.terminalSessionId,
+		projectId: window.projectId,
+		title: window.title,
+		source: window.source,
+		state: window.state,
+		html: window.html,
+		contentRevision: window.contentRevision,
+		createdAt: window.createdAt,
+		...(window.data === undefined ? {} : { data: window.data }),
+		...(window.csp === undefined ? {} : { csp: window.csp }),
+		...(window.permissions === undefined
+			? {}
+			: { permissions: window.permissions }),
+		...(window.tool === undefined ? {} : { tool: window.tool }),
+		...(window.toolInput === undefined ? {} : { toolInput: window.toolInput }),
+		...(window.toolResult === undefined
+			? {}
+			: { toolResult: window.toolResult }),
+		...(window.toolCancelled === undefined
+			? {}
+			: { toolCancelled: window.toolCancelled }),
+	};
+}
+
+const STORED_FIELDS = new Set([
+	'version',
+	'id',
+	'terminalSessionId',
+	'projectId',
+	'title',
+	'source',
+	'state',
+	'html',
+	'data',
+	'csp',
+	'permissions',
+	'tool',
+	'toolInput',
+	'toolResult',
+	'toolCancelled',
+	'contentRevision',
+	'createdAt',
+]);
+const CSP_FIELDS = [
+	'connectDomains',
+	'resourceDomains',
+	'frameDomains',
+	'baseUriDomains',
+] as const;
+
+/**
+ * A written record this server can restore, held to the limits `open` holds a
+ * new window to; undefined for anything else, including a record that carries
+ * more than what a view starts from.
+ */
+function storedWindow(value: unknown): StoredWindow | undefined {
+	const stored = record(value);
+	if (stored === undefined || stored.version !== APP_WINDOW_RECORD_VERSION)
+		return undefined;
+	if (Object.keys(stored).some((key) => !STORED_FIELDS.has(key)))
+		return undefined;
+	const {
+		id,
+		terminalSessionId,
+		projectId,
+		state,
+		contentRevision,
+		createdAt,
+		toolCancelled,
+	} = stored;
+	if (
+		typeof id !== 'string' ||
+		!AppWindowStore.isStorableId(id) ||
+		!nonEmptyString(terminalSessionId) ||
+		!nonEmptyString(projectId) ||
+		(state !== 'open' && state !== 'minimised') ||
+		!Number.isSafeInteger(contentRevision) ||
+		(contentRevision as number) < 1 ||
+		!Number.isFinite(createdAt) ||
+		(toolCancelled !== undefined &&
+			(typeof toolCancelled !== 'string' || toolCancelled.length > 1024))
+	)
+		return undefined;
+	const source = storedSource(stored.source);
+	const csp = storedCsp(stored.csp);
+	const permissions =
+		stored.permissions === undefined ? undefined : record(stored.permissions);
+	if (
+		source === undefined ||
+		csp === null ||
+		(stored.permissions !== undefined && permissions === undefined)
+	)
+		return undefined;
+	try {
+		const data = validData(stored.data as JsonValue | undefined);
+		return {
+			version: APP_WINDOW_RECORD_VERSION,
+			id,
+			terminalSessionId,
+			projectId,
+			title: validTitle(stored.title as string),
+			source,
+			state,
+			html: validHtml(stored.html as string, source),
+			contentRevision: contentRevision as number,
+			createdAt: createdAt as number,
+			...(data === undefined ? {} : { data }),
+			...(csp === undefined ? {} : { csp }),
+			...(permissions === undefined ? {} : { permissions }),
+			...(stored.tool === undefined ? {} : { tool: stored.tool as JsonValue }),
+			...(stored.toolInput === undefined
+				? {}
+				: { toolInput: stored.toolInput as JsonValue }),
+			...(stored.toolResult === undefined
+				? {}
+				: { toolResult: stored.toolResult as JsonValue }),
+			...(toolCancelled === undefined ? {} : { toolCancelled }),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+function storedSource(value: unknown): AppWindowSource | undefined {
+	const source = record(value);
+	if (source?.kind === 'agent' && Object.keys(source).length === 1)
+		return Object.freeze({ kind: 'agent' });
+	if (
+		source?.kind === 'mcp-app' &&
+		Object.keys(source).length === 4 &&
+		nonEmptyString(source.server) &&
+		nonEmptyString(source.tool) &&
+		nonEmptyString(source.resourceUri)
+	)
+		return Object.freeze({
+			kind: 'mcp-app',
+			server: source.server,
+			tool: source.tool,
+			resourceUri: source.resourceUri,
+		});
+	return undefined;
+}
+
+/** The policy as written; null when it is not one. */
+function storedCsp(value: unknown): AppWindowCsp | undefined | null {
+	if (value === undefined) return undefined;
+	const csp = record(value);
+	if (csp === undefined) return null;
+	const kept: Record<string, readonly string[]> = {};
+	for (const key of Object.keys(csp)) {
+		const domains = csp[key];
+		if (
+			!(CSP_FIELDS as readonly string[]).includes(key) ||
+			!Array.isArray(domains) ||
+			domains.length > 64 ||
+			!domains.every(nonEmptyString)
+		)
+			return null;
+		kept[key] = Object.freeze([...domains]);
+	}
+	return Object.freeze(kept) as AppWindowCsp;
+}
+
+function nonEmptyString(value: unknown): value is string {
+	return typeof value === 'string' && value.length > 0;
 }
 
 function validTitle(value: string): string {

@@ -111,6 +111,7 @@ import { loadOrCreateSessionOrigin } from '../apps/terminay-server/src/remote/se
 import type { McpServerCommand } from '../packages/extension-api/src/index';
 import { describeChatMcpCall } from '../packages/server-core/src/agentChat/activity';
 import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
+import { APP_WINDOW_STORE_DIRECTORY_NAME } from '../packages/server-core/src/appWindows/store';
 import {
 	createFilePushEnrolmentPersistence,
 	PushEnrolmentStore,
@@ -2188,6 +2189,13 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				authority?.composition.terminalTitles?.displayedTitleForSession(
 					terminalSessionId,
 				),
+			// Windows last as long as their terminals, across restarts (ADR-0076).
+			storeDirectory: path.join(
+				app.getPath('userData'),
+				APP_WINDOW_STORE_DIRECTORY_NAME,
+			),
+			onStoreError: (error, windowId) =>
+				console.warn('[app-windows] record not kept', windowId ?? '', error),
 		},
 		macros: {
 			repository: embeddedMacros,

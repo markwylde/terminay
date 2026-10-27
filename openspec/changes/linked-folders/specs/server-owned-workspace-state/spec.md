@@ -45,7 +45,8 @@ file and folder navigation and modes where they are part of the shared
 workspace; settings affecting shells, project services, terminal behaviour,
 recording, remote exposure, agents, AI providers, macros, and server automation;
 macros and server-held secrets; authoritative agent and activity state and
-acknowledgement; paired devices, public device keys, exposure state, and audit
+acknowledgement; the app window records of terminal sessions that are running;
+paired devices, public device keys, exposure state, and audit
 records; and schema and revision metadata needed for safe migration and resync.
 
 #### Scenario: Fresh client rebuilds the workspace
@@ -54,6 +55,13 @@ records; and schema and revision metadata needed for safe migration and resync.
   folders is reopened from a fresh client
 - **THEN** it reconnects using only server state, with every panel in the folder
   it was in
+
+#### Scenario: App windows of a running terminal are kept
+
+- **WHEN** the server restarts while a terminal session that owns app windows
+  keeps running
+- **THEN** the server publishes that session's windows again from what it
+  persisted
 
 #### Scenario: Agent and activity state is authoritative on the server
 
