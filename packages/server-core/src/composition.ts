@@ -412,6 +412,13 @@ export interface ServerCoreCompositionOptions
 		readonly terminalTitle?: (terminalSessionId: string) => string | undefined;
 		/** Where window message attachments are written. Defaults to a server-owned directory under os.tmpdir(). */
 		readonly attachmentDirectory?: string;
+		/**
+		 * Where window records are written, so a window outlives a server restart
+		 * with its terminal session (ADR-0076). Without it windows end with the server.
+		 */
+		readonly storeDirectory?: string;
+		/** A window record that could not be written, removed, or read back. */
+		readonly onStoreError?: (error: unknown, windowId: string | undefined) => void;
 	};
 	/** Compose the registry of user-connected MCP servers (ADR-0037). The host
 	 * that serves MCP supplies where the list is kept and the vault that holds
@@ -1165,6 +1172,16 @@ export function createServerCoreComposition(
 						await authorizeWindowMessage(window, text, [], signal);
 						await typeWindowMessage(window, text);
 					},
+					...(options.appWindows.storeDirectory === undefined
+						? {}
+						: {
+								store: {
+									directory: options.appWindows.storeDirectory,
+									...(options.appWindows.onStoreError === undefined
+										? {}
+										: { onError: options.appWindows.onStoreError }),
+								},
+							}),
 					attachments: {
 						authorize: authorizeWindowMessage,
 						type: (window, text) => typeWindowMessage(window, text),
@@ -1939,6 +1956,14 @@ export function createServerCoreComposition(
 				// Automations start last: a schedule that came due while the
 				// server was down is counted as missed, and nothing fires before
 				// the services a run needs are up.
+				// A window lasts as long as its terminal session (ADR-0076): the
+				// windows of every session that is running again come back.
+				await appWindows?.restore({
+					runningProject: (sessionId) => {
+						const session = terminal.getSession(sessionId);
+						return session?.status === 'running' ? session.projectId : undefined;
+					},
+				});
 				// Startup restore and reattach change the workspace without
 				// notifying it, so what they left is looked at once here.
 				liveTerminalPanels?.check();
@@ -2065,11 +2090,16 @@ export function createServerCoreComposition(
 				unbindAgentChatApprovals?.();
 				await agentChat?.shutdown();
 			});
-			await attempt(() => {
+			await attempt(async () => {
 				removeMcpPolicyObserver?.();
 				mcpApprovals?.revokeAll();
 				removeAppWindowExitObserver?.();
-				appWindows?.endAll();
+				// With a session holder the terminals go on running, and so do
+				// their windows: the next server restores them (ADR-0076).
+				if (options.sessionHolder === undefined) {
+					appWindows?.endAll();
+					await appWindows?.flush();
+				} else await appWindows?.release();
 				workspaceViewRelay?.endAll();
 			});
 			lifecycle = 'stopped';
