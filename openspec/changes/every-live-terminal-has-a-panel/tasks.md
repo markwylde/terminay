@@ -8,7 +8,12 @@
 - [x] 2.1 Add `packages/server-core/test/live-terminal-panels.test.mjs`. It covers: a closed tab whose shell keeps running comes back in General; a terminal spawned without a panel lands in General when General is not first; a terminal placed by its creator gets no second panel; a terminal that exits during the grace gets none; a terminal whose project is gone is ended. Verified by `node --test test/live-terminal-panels.test.mjs` (5 pass).
 - [x] 2.2 Run the whole server-core suite. Verified by `node --test test/*.test.mjs` in `packages/server-core` (1556 pass, 0 fail).
 
-## 3. Validation
+## 3. A held terminal the server ends stops running
 
-- [x] 3.1 Run `openspec validate --all`. Verified by it passing.
-- [ ] 3.2 Open a pull request on Gitea and read back every commit status as `success` or `skipped`.
+- [x] 3.1 A session holder reports no exit for a session the server ends, so a closed tab's terminal stayed `running` with no shell and was given its panel back every 5 seconds. In `packages/server-core/src/sessionHolder/factory.ts`, `end` now has the process it handed the terminal service report that exit. Verified by "a session the server ends is no longer running in its terminal service" in `test/session-holder-observation.test.mjs`, which fails without the fix.
+- [x] 3.2 Run the whole server-core suite. Verified by `node --test test/*.test.mjs` in `packages/server-core` (1557 pass, 0 fail).
+
+## 4. Validation
+
+- [x] 4.1 Run `openspec validate --all`. Verified by it passing.
+- [ ] 4.2 Open a pull request on Gitea and read back every commit status as `success` or `skipped`.
