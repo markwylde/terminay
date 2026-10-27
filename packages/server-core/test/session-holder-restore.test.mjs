@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import {
   createInitialWorkspace,
   createServerCoreComposition,
   createSessionHolderPtyFactory,
+  ServerSettingsRepository,
   launchDetachedSessionHolder,
   readHolderRecords,
   reattachHeldSessions,
@@ -383,7 +384,7 @@ test("panels, order, and layout are untouched, and only a project with no termin
   assert.deepEqual(created, ["other"]);
 });
 
-function realServer(dataRoot, workspace, buildId = "build-a") {
+function realServer(dataRoot, workspace, buildId = "build-a", extra = {}) {
   const factory = createSessionHolderPtyFactory({
     dataRoot,
     buildId,
@@ -414,6 +415,7 @@ function realServer(dataRoot, workspace, buildId = "build-a") {
     capabilities: [],
     sessionHolder: holder,
     workspace,
+    ...extra,
     workspaceStartup: {
       firstRun: false,
       createTerminal: async (request) => {
@@ -646,4 +648,56 @@ test("a restart registers Git reporting again for every running session it re-ad
   } finally {
     await composition.shutdown();
   }
+});
+
+test("a window lasts as long as its terminal: a restart keeps it, ending the terminals ends it", async (t) => {
+  const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), "th-")));
+  t.after(() => removeDataRoot(dataRoot));
+  const storeDirectory = join(dataRoot, "app-windows");
+  const windowed = () => ({
+    settings: new ServerSettingsRepository({ load: async () => undefined, commit: async () => {} }),
+    mcpApprovals: true,
+    appWindows: { storeDirectory },
+  });
+  const firstWorkspace = seededWorkspace([]);
+  const first = realServer(dataRoot, firstWorkspace, "build-a", windowed());
+  await first.composition.start();
+  const [keptId, endedId] = Object.keys(firstWorkspace.state.terminalSessions).sort();
+  const openIn = (sessionId, title) => first.composition.appWindows.open({
+    terminalSessionId: sessionId,
+    projectId: firstWorkspace.state.terminalSessions[sessionId].projectId,
+    title,
+    source: { kind: "agent" },
+    html: `<p>${title}</p>`,
+  });
+  const minimised = openIn(keptId, "Minimised");
+  const open = openIn(keptId, "Open");
+  openIn(endedId, "Gone");
+  const endedShell = await lifeline(first.composition.terminal, endedId, dataRoot);
+  const endedPid = first.composition.terminal.getSession(endedId).pid;
+  await first.composition.shutdown();
+  assert.equal(readdirSync(storeDirectory).length, 3, "shutting down with a holder ended a window");
+
+  // One terminal's shell ends while no server is running.
+  process.kill(endedPid, "SIGKILL");
+  await endedShell.ended;
+
+  const secondWorkspace = reloaded(firstWorkspace);
+  const second = realServer(dataRoot, secondWorkspace, "build-a", windowed());
+  await second.composition.start();
+  assert.notEqual(second.composition.terminal.getSession(endedId)?.status, "running");
+  assert.deepEqual(
+    second.composition.appWindows.list().map(({ id, state, title }) => ({ id, state, title })),
+    [
+      { id: minimised.id, state: "minimised", title: "Minimised" },
+      { id: open.id, state: "open", title: "Open" },
+    ],
+  );
+  await second.composition.appWindows.flush();
+  assert.deepEqual(readdirSync(storeDirectory).sort(), [`${minimised.id}.json`, `${open.id}.json`].sort());
+
+  // Ending the terminals ends their windows, and nothing is left to restore.
+  await second.composition.endAllTerminalSessions();
+  await second.composition.shutdown();
+  assert.deepEqual(readdirSync(storeDirectory), []);
 });

@@ -397,7 +397,10 @@ export async function launchDesktopApp(options: {
 					: { TERMINAY_TEST_NOTIFICATION_SETTLE_MS: '300' }),
 				// Terminals held outside the app, so they survive a relaunch
 				// (ADR-0035). Off everywhere else until the rollout turns it on.
-				...(path.basename(testInfo.file) === 'terminals-survive-restart.spec.ts'
+				...([
+					'terminals-survive-restart.spec.ts',
+					'app-windows-survive-restart.spec.ts',
+				].includes(path.basename(testInfo.file))
 					? { TERMINAY_SESSION_HOLDER: '1' }
 					: {}),
 				// A 16 KiB replay window so a sustained flood outruns it during the
