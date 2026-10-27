@@ -16,8 +16,8 @@ import {
 	parseRemoteUrl,
 	statusState,
 	toChecks,
-	toProperties,
 	tokenPageUrl,
+	toProperties,
 } from '../dist/index.js';
 
 const manifest = JSON.parse(
@@ -349,6 +349,10 @@ test('the query carries branch names as variables, one aliased ref each', () => 
 	assert.doesNotMatch(request.query, /quote/);
 	assert.match(request.query, /b1: ref\(qualifiedName: \$b1\)/);
 	assert.match(request.query, /checkRunCountsByState/);
+	assert.match(
+		request.query,
+		/mergedPullRequests: pullRequests\(states: MERGED, first: 50, orderBy: \{field: UPDATED_AT, direction: DESC\}\)/,
+	);
 	assert.doesNotMatch(
 		buildQuery('owner', 'repo', ['main'], { counts: false }).query,
 		/CountsByState/,
@@ -584,4 +588,47 @@ test('a branch without a pull request publishes its own checks; a missing branch
 		},
 	});
 	assert.equal(toProperties(null, 'gone', 'owner', 'repo'), null);
+});
+
+test('a merged pull request is matched when no open one is, even with its branch gone', () => {
+	const branch = {
+		target: {
+			statusCheckRollup: {
+				contexts: { nodes: [run('branch', 'COMPLETED', 'SUCCESS')] },
+			},
+		},
+		associatedPullRequests: { nodes: [] },
+	};
+	const merged = (number, overrides = {}) => ({
+		number,
+		title: `PR ${number}`,
+		url: `https://github.com/owner/repo/pull/${number}`,
+		headRefName: 'feat/x',
+		headRepository: { nameWithOwner: 'owner/repo' },
+		...overrides,
+	});
+	const fork = merged(9, { headRepository: { nameWithOwner: 'someone/repo' } });
+	const list = [fork, merged(51), merged(40)];
+	const present = toProperties(branch, 'feat/x', 'owner', 'repo', list);
+	assert.deepEqual(present.pullRequest, {
+		number: 51,
+		title: 'PR 51',
+		url: 'https://github.com/owner/repo/pull/51',
+		state: 'merged',
+	});
+	assert.equal(present.checks.passed, 1);
+	assert.deepEqual(toProperties(null, 'feat/x', 'owner', 'repo', list), {
+		pullRequest: {
+			number: 51,
+			title: 'PR 51',
+			url: 'https://github.com/owner/repo/pull/51',
+			state: 'merged',
+		},
+	});
+	const open = { ...branch, associatedPullRequests: { nodes: [pull()] } };
+	assert.equal(
+		toProperties(open, 'feat/x', 'owner', 'repo', list).pullRequest.state,
+		'open',
+	);
+	assert.equal(toProperties(null, 'feat/x', 'owner', 'repo', [fork]), null);
 });
