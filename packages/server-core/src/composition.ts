@@ -32,6 +32,7 @@ import {
 	createAgentChatOperationHandlers,
 } from './agentChat/index.js';
 import { PIXEL_EVENTS, PixelService, pixelSettingsFrom } from './pixel/index.js';
+import { bindLiveTerminalPanels } from './liveTerminalPanels.js';
 import { bindNotificationsToActivity } from './notifications/activityFeed.js';
 import { NotificationManager } from './notifications/manager.js';
 import {
@@ -283,6 +284,9 @@ export interface ServerCoreCompositionOptions
 	readonly terminalSystemDefaultStartupMode?: ShellStartupMode;
 	/** @internal Explicit escape hatch for low-level composition tests only. */
 	readonly allowUnresolvedTestSessions?: boolean;
+	/** @internal How long a running terminal may go without a panel before it
+	 * is given one. Tests shorten it. */
+	readonly liveTerminalPanelGraceMs?: number;
 	/** Optional adapters supplied by a host; defaults are server-owned. */
 	readonly terminalAttachments?: TerminalServiceAdapter;
 	readonly terminalInputSources?: TerminalInputSourceAdapter;
@@ -1935,6 +1939,9 @@ export function createServerCoreComposition(
 				// Automations start last: a schedule that came due while the
 				// server was down is counted as missed, and nothing fires before
 				// the services a run needs are up.
+				// Startup restore and reattach change the workspace without
+				// notifying it, so what they left is looked at once here.
+				liveTerminalPanels?.check();
 				await automationTriggers?.start();
 				await automationScheduler?.start();
 			} catch (error) {
@@ -1947,6 +1954,20 @@ export function createServerCoreComposition(
 		})();
 		return startPromise;
 	};
+	// A running terminal always has a panel, so none can run unseen.
+	const liveTerminalPanels =
+		options.workspace === undefined
+			? undefined
+			: bindLiveTerminalPanels({
+					workspace: options.workspace,
+					listSessions: () => terminal.listSessions(),
+					apply: (commandId, command) =>
+						workspaceOperations?.applyHostCommand(commandId, command),
+					kill: (sessionId) => terminal.kill(sessionId),
+					...(options.liveTerminalPanelGraceMs === undefined
+						? {}
+						: { graceMs: options.liveTerminalPanelGraceMs }),
+				});
 	// A session whose record leaves the workspace is one whose panel was
 	// closed. The holder must not keep its process, its ring, or its tail.
 	const unsubscribeHeldSessionRelease =
@@ -1958,6 +1979,7 @@ export function createServerCoreComposition(
 	const endAllTerminalSessions = async (): Promise<void> => {
 		await startPromise?.catch(() => undefined);
 		unsubscribeHeldSessionRelease?.();
+		liveTerminalPanels?.dispose();
 		await terminal.shutdown();
 		await options.sessionHolder?.endAll();
 		options.workspace?.discardStaleTerminalState();
@@ -1994,6 +2016,7 @@ export function createServerCoreComposition(
 			await attempt(() => options.agentSessions?.supervisor.dispose());
 			await attempt(() => options.agentSessions?.bridge.dispose());
 			await attempt(() => options.agentSessions?.scope.dispose());
+			await attempt(() => liveTerminalPanels?.dispose());
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
 			// With a session holder, shutting down is letting go: the shells keep
