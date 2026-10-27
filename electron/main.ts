@@ -48,6 +48,11 @@ import {
 	shell,
 	webContents,
 } from 'electron';
+import {
+	AUXILIARY_WINDOW_PREFERRED_SIZE,
+	closesAuxiliaryWindow,
+	fitAuxiliaryWindowBounds,
+} from './auxiliaryWindowPlacement';
 import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
 import {
 	type DesktopBundleLaunch,
@@ -900,6 +905,8 @@ const remoteProfileBindingsByWebContents = new Map<number, string>();
 const desktopWindowIds = new DesktopWindowIds();
 const desktopProfileConnects = createProfileConnectQueue();
 const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
+/** Settings-family windows, as opposed to torn-off workspace windows. */
+const auxiliaryWindows = new WeakSet<BrowserWindow>();
 const launchRecoveryWebContents = new Set<number>();
 const deferredCanonicalLaunches = new Map<number, () => Promise<void>>();
 
@@ -4931,7 +4938,20 @@ function sendCommandToWindow(
 function sendCommandToFocusedWindow(command: AppCommand): void {
 	const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
 	if (targetWindow === null) return;
+	if (closeAuxiliaryWindowForCommand(targetWindow, command)) return;
 	sendCommandToWindow(targetWindow, command);
+}
+
+/** Settings and its siblings have no terminal to close, so the close
+ * shortcut closes the window. Unsaved macro edits still ask first. */
+function closeAuxiliaryWindowForCommand(
+	window: BrowserWindow,
+	command: AppCommand,
+): boolean {
+	if (!closesAuxiliaryWindow(command) || !auxiliaryWindows.has(window))
+		return false;
+	window.close();
+	return true;
 }
 
 function isMacQuitInput(input: Electron.Input): boolean {
@@ -4985,6 +5005,8 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 		}
 
 		event.preventDefault();
+		const owner = BrowserWindow.fromWebContents(webContents);
+		if (owner && closeAuxiliaryWindowForCommand(owner, command)) return;
 		webContents.send('server-ui-host:event', {
 			type: 'menu.command',
 			command,
@@ -5317,11 +5339,15 @@ async function presentCanonicalAuxiliaryRoute(
 		return;
 	}
 	auxiliaryWindowsByPresentation.delete(presentationId);
+	const auxiliaryWorkArea = screen.getDisplayMatching(
+		sourceWindow.getBounds(),
+	).workArea;
 
 	let auxiliaryWindow: BrowserWindow | null;
 	if (context.profileId === embeddedLocalProfileId) {
 		auxiliaryWindow = createWindow({
 			auxiliary: { ...auxiliary, presentationId },
+			auxiliaryWorkArea,
 		});
 	} else {
 		loadRememberedRemoteConnections();
@@ -5334,6 +5360,7 @@ async function presentCanonicalAuxiliaryRoute(
 		try {
 			auxiliaryWindow = createWindow({
 				auxiliary: { ...auxiliary, presentationId },
+				auxiliaryWorkArea,
 				serverUiLaunch: await prepareCanonicalRemoteLaunch(profile, lanes),
 				serverUiTransport: lanes.transport,
 			});
@@ -5508,6 +5535,8 @@ function createWindow(options?: {
 		route: string;
 		title: string;
 	}>;
+	/** The work area an auxiliary window must fit inside. */
+	auxiliaryWorkArea?: Electron.Rectangle;
 	bounds?: { x: number; y: number };
 	initialServerConnection?: 'local' | 'deferred';
 	deferCanonicalLaunch?: boolean;
@@ -5527,16 +5556,29 @@ function createWindow(options?: {
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const windowIconPath = getWindowIconPath();
 	const isAuxiliary = options?.auxiliary !== undefined;
+	const auxiliaryBounds =
+		options?.auxiliaryWorkArea === undefined
+			? undefined
+			: fitAuxiliaryWindowBounds(
+					AUXILIARY_WINDOW_PREFERRED_SIZE,
+					options.auxiliaryWorkArea,
+				);
 
 	const window = new BrowserWindow({
 		backgroundColor: '#0d1117',
 		icon: windowIconPath,
-		width: isAuxiliary ? 1180 : 1400,
-		height: isAuxiliary ? 820 : 900,
+		...(auxiliaryBounds ?? {
+			width: isAuxiliary ? AUXILIARY_WINDOW_PREFERRED_SIZE.width : 1400,
+			height: isAuxiliary ? AUXILIARY_WINDOW_PREFERRED_SIZE.height : 900,
+		}),
 		minHeight: isAuxiliary ? undefined : MAIN_PROJECT_WINDOW_MIN_HEIGHT,
 		// Place a torn-off window's title bar near the drop point, like a browser.
-		x: options?.bounds ? Math.round(options.bounds.x) - 120 : undefined,
-		y: options?.bounds ? Math.round(options.bounds.y) - 12 : undefined,
+		...(options?.bounds
+			? {
+					x: Math.round(options.bounds.x) - 120,
+					y: Math.round(options.bounds.y) - 12,
+				}
+			: {}),
 		title: options?.auxiliary?.title ?? 'Terminay',
 		show: !isAuxiliary && options?.deferCanonicalLaunch !== true,
 		// Deliver the first click on an inactive window to the web contents instead of
@@ -5571,7 +5613,8 @@ function createWindow(options?: {
 		},
 	});
 	securePrimaryWindow(window);
-	if (!isAuxiliary) appWindows.add(window);
+	if (isAuxiliary) auxiliaryWindows.add(window);
+	else appWindows.add(window);
 	applyWindowMenu(window, {
 		isProjectHost: !isAuxiliary,
 		menu: Menu.getApplicationMenu(),
