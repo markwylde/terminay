@@ -3555,7 +3555,8 @@ body.project-tabbar-reordering .project-tabbar {
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: 2px;
+  /* The bottom inset keeps the last row off the status bar. */
+  margin: 2px 2px 8px;
   height: auto;
   overflow: hidden;
 }
