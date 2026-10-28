@@ -250,6 +250,21 @@ test.describe('terminal behavior', () => {
 		await expectTerminalInputFocused(mainWindow);
 	});
 
+	test('keeps the terminal clear of the status bar', async ({ mainWindow }) => {
+		const root = visibleTerminalRoot(mainWindow);
+		const statusBar = mainWindow.locator('.workspace-status-bar');
+		await expect(root).toBeVisible();
+		await expect(statusBar).toBeVisible();
+
+		const rootBox = await root.boundingBox();
+		const statusBarBox = await statusBar.boundingBox();
+		if (!rootBox || !statusBarBox) throw new Error('Expected both boxes');
+		// The last terminal row must not sit flush on the bar.
+		expect(
+			statusBarBox.y - (rootBox.y + rootBox.height),
+		).toBeGreaterThanOrEqual(8);
+	});
+
 	test('reorders terminal tabs when one is dragged and dropped', async ({
 		mainWindow,
 	}) => {
