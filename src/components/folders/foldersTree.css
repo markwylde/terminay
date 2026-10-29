@@ -918,7 +918,12 @@
 	display: flex;
 	flex-direction: column;
 	gap: 14px;
-	padding-top: 16px;
+	padding-top: 20px;
+}
+
+/* The same breathing room above the buttons as below them. */
+.folder-delete-dialog .project-edit-actions {
+	margin-top: 20px;
 }
 
 .folder-delete-dialog__subject {
