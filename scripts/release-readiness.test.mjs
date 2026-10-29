@@ -101,12 +101,17 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(release.slice(binariesIndex, notesIndex), /needs: release/)
   assert.match(release.slice(notesIndex), /needs: \[release, build-binaries, build-standalone-server\]/)
   const standaloneJob = release.slice(standaloneIndex, notesIndex)
-  const applicationBuild = standaloneJob.indexOf('npm run build:app')
-  const webrtcRuntime = standaloneJob.indexOf('node scripts/stage-selected-secure-werift-runtime.mjs')
-  const archive = standaloneJob.indexOf('node scripts/build-standalone-server-artifact.mjs')
+  // The archive is assembled in the GNU/Linux floor image by the shared
+  // archive script (ADR-0077); its order lives there.
+  const archiveBuild = await readFile(join(process.cwd(), 'scripts/build-linux-standalone-archive.sh'), 'utf8')
+  const applicationBuild = archiveBuild.indexOf('npm run build:app')
+  const webrtcRuntime = archiveBuild.indexOf('node scripts/stage-selected-secure-werift-runtime.mjs')
+  const archive = archiveBuild.indexOf('node scripts/build-standalone-server-artifact.mjs')
+  assert.ok(applicationBuild >= 0 && webrtcRuntime > applicationBuild && archive > webrtcRuntime,
+    'the archive must be assembled from a freshly built application graph and WebRTC runtime')
+  const build = standaloneJob.indexOf('sh scripts/build-linux-standalone-archive.sh')
   const probe = standaloneJob.indexOf('node scripts/probe-standalone-server-archive.mjs')
-  assert.ok(applicationBuild >= 0 && webrtcRuntime > applicationBuild && archive > webrtcRuntime && probe > archive,
-    'the archive must be assembled from a freshly built application graph and WebRTC runtime, then probed before publication')
+  assert.ok(build >= 0 && probe > build, 'the archive must be probed before publication')
   assert.doesNotMatch(release, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/)
   assert.match(packageJson.scripts['test:ci'], /test:release-evidence/)
   assert.match(release, /npm run test:release-evidence/)
