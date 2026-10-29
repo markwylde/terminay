@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1.7
+# The GNU/Linux floor build environment (ADR-0077). Every Linux artifact is
+# compiled, packaged, and staged here, so its native code links against glibc
+# 2.31 whatever runner hosts Docker. The base is pinned by digest and must be
+# LINUX_FLOOR_BUILD_IMAGE in scripts/linux-glibc-floor.mjs. Its buildpack-deps
+# layers already carry the compiler, Python, git, curl, and xz that node-gyp,
+# electron-builder, and the archive builder use.
+FROM node:24.15.0-bullseye@sha256:44aeb8a19d0a201cdcb18ea3b25de9249454e6fc3cd05731584659859022fefb
+
+ENV CI=1
+
+WORKDIR /workspace
+
+RUN npm install --global npm@12.2.0 \
+    && chown node:node /workspace
+
+# Dependencies install before the source is copied, so ordinary edits reuse
+# this layer. The list matches Dockerfile.e2e-base.
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node apps/terminay-cli/package.json apps/terminay-cli/package.json
+COPY --chown=node:node apps/terminay-desktop/package.json apps/terminay-desktop/package.json
+COPY --chown=node:node apps/terminay-server/package.json apps/terminay-server/package.json
+COPY --chown=node:node apps/terminay-web/package.json apps/terminay-web/package.json
+COPY --chown=node:node extensions/builtin-agents/package.json extensions/builtin-agents/package.json
+COPY --chown=node:node extensions/language-typescript/package.json extensions/language-typescript/package.json
+COPY --chown=node:node extensions/gitea/package.json extensions/gitea/package.json
+COPY --chown=node:node extensions/github/package.json extensions/github/package.json
+COPY --chown=node:node packages/client-core/package.json packages/client-core/package.json
+COPY --chown=node:node packages/cron/package.json packages/cron/package.json
+COPY --chown=node:node packages/extension-api/package.json packages/extension-api/package.json
+COPY --chown=node:node packages/protocol-conformance/package.json packages/protocol-conformance/package.json
+COPY --chown=node:node packages/protocol/package.json packages/protocol/package.json
+COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-ui/package.json
+COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json
+COPY --chown=node:node packages/ui-bundle/package.json packages/ui-bundle/package.json
+COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
+
+USER node
+RUN npm ci
+
+COPY --chown=node:node . .

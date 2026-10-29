@@ -32,7 +32,8 @@ test("release Desktop matrix binds each native artifact format to its matching O
   const linuxEntry = [
     "- os: ubuntu-latest",
     "label: Linux",
-    "script: npm run build:linux",
+    // Built in the GNU/Linux floor image (ADR-0077).
+    `script: "sh scripts/run-in-linux-floor.sh --output release -- sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && npm run build:linux'"`,
     "asset_templates: Terminay-Linux-%VERSION%.AppImage",
     "update_payload: Terminay-Linux-%VERSION%.AppImage",
     "update_metadata: latest-linux.yml",

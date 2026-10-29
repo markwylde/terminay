@@ -34,7 +34,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   // The official image is built and paired with on every pull request, by the
   // same client code Desktop ships, before a release can publish it.
@@ -64,6 +64,18 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(giteaPackagedLinux, /test "\$\(uname -m\)" = x86_64/u);
   assert.match(giteaPackagedLinux, /npm ci/u);
   assert.match(giteaPackagedLinux, /test:packaged-built-in-extension-runtime:linux -- linux-x64/u);
+  // Both x64 Linux artifacts are built in the floor image the release lanes
+  // use, checked against the glibc floor, and run on a clean floor host
+  // before a change can merge (ADR-0077).
+  const giteaGlibcFloor = job(giteaCi, "linux-glibc-floor");
+  assert.match(giteaGlibcFloor, /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
+  assert.match(giteaGlibcFloor, /sh scripts\/run-in-linux-floor\.sh --output release [^\n]*\\\n\s+sh -c '[^']*npm run build:linux && sh scripts\/build-linux-standalone-archive\.sh linux-x64 main /u);
+  assert.match(giteaGlibcFloor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 \\\n\s+release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage \\\n\s+release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
+  assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh appimage release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage/u);
+  assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh server-archive release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
+  assert.match(giteaGlibcFloor, /prune-ci-docker-images\.sh/u);
+  assert.doesNotMatch(giteaGlibcFloor, /npm ci/u, "the floor job installs nothing on the host it does not ship");
   const applicationGraphBuild = packagedBuiltIns.indexOf('npm run build:application-graph')
   const postcompile = packagedBuiltIns.indexOf('npm run build:server-postcompile')
   assert.ok(applicationGraphBuild >= 0 && postcompile > applicationGraphBuild,

@@ -86,10 +86,25 @@ test('tagged releases publish signed self-contained archives per architecture an
 	assert.match(job, /runs-on: \$\{\{ matrix\.runner \}\}/u);
 	assert.match(job, /- target: linux-x64\n\s+arch: x64\n\s+runner: ubuntu-latest/u);
 	assert.match(job, /- target: linux-arm64\n\s+arch: arm64\n\s+runner: ubuntu-24\.04-arm/u);
-	assert.match(job, /node scripts\/build-standalone-server-artifact\.mjs/u);
-	assert.match(job, /--channel tag/u);
-	assert.match(job, /--revision "\$EXPECTED_COMMIT"/u);
+	// Built in the GNU/Linux floor image by the shared archive script, then
+	// held to the glibc floor before it is checksummed or signed (ADR-0077).
+	assert.match(
+		job,
+		/sh scripts\/run-in-linux-floor\.sh --output "\$OUTPUT" -- sh scripts\/build-linux-standalone-archive\.sh "\$TARGET" tag "\$EXPECTED_COMMIT" "\$OUTPUT\/terminay-server-\$VERSION-\$TARGET\.tar\.gz"/u,
+	);
+	assert.doesNotMatch(job, /build-standalone-server-artifact\.mjs/u);
+	const archiveBuild = await readFile(
+		resolve(root, 'scripts/build-linux-standalone-archive.sh'),
+		'utf8',
+	);
+	assert.match(archiveBuild, /node scripts\/build-standalone-server-artifact\.mjs/u);
+	assert.match(archiveBuild, /--channel "\$channel"/u);
+	assert.match(archiveBuild, /--revision "\$revision"/u);
 	assert.match(job, /ARCHIVE="release\/\$VERSION\/terminay-server-\$VERSION-\$TARGET\.tar\.gz"/u);
+	const floorCheck = job.indexOf('node scripts/linux-glibc-floor.mjs check --target "$TARGET" "$ARCHIVE"');
+	const floorProbe = job.indexOf('sh scripts/probe-linux-glibc-floor.sh server-archive "$ARCHIVE"');
+	assert.ok(floorCheck >= 0 && floorProbe > floorCheck, 'the archive is checked and probed at the glibc floor');
+	assert.ok(floorProbe < job.indexOf('release-checksum.mjs write'), 'the floor gate runs before the checksum');
 	assert.match(job, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u);
 	assert.match(job, /release-signature\.mjs sign "\$ARCHIVE" "\$ARCHIVE\.sig"/u);
 	assert.match(job, /release-signature\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sig"/u);
@@ -193,7 +208,12 @@ test('the archive job builds and stages the server-served workspace UI', async (
 	// hosted archive loader can serve. Staging the Desktop renderer bundle
 	// instead ships an artifact that pairs a device and then serves a
 	// placeholder, with every transport signal green.
-	assert.match(job, /npm run build:app/u);
+	const archiveBuild = await readFile(
+		resolve(root, 'scripts/build-linux-standalone-archive.sh'),
+		'utf8',
+	);
+	assert.match(job, /sh scripts\/build-linux-standalone-archive\.sh/u);
+	assert.match(archiveBuild, /npm run build:app/u);
 
 	const builder = await readFile(
 		resolve(root, 'scripts/build-standalone-server-artifact.mjs'),

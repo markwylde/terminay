@@ -131,6 +131,7 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
     "Derive the beta version and release notes",
     "Sync package version to the beta version",
     "Build packaged beta app",
+    "Check the Linux beta AppImage against the glibc floor and run terminals from it there",
     "Verify exact beta asset selection",
     "Verify macOS signed and notarized beta zip",
     "Verify generated beta update metadata",
@@ -148,12 +149,21 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
   const build = mainPrereleaseStep(desktop, "Build packaged beta app")
   assert.match(build, /APPLE_ID: \$\{\{ matrix\.os == 'macos-latest' && vars\.APPLE_ID \|\| '' \}\}/u)
   assert.match(build, /CSC_IDENTITY_AUTO_DISCOVERY: \$\{\{ matrix\.os == 'macos-latest' && 'true' \|\| 'false' \}\}/u)
-  assert.match(build, /--publish never/u)
+  // macOS builds on its runner, where it signs; Linux builds in the GNU/Linux
+  // floor image (ADR-0077). Both run the same beta build.
+  assert.match(build, /sh scripts\/build-main-beta-desktop\.sh "\$PLATFORM" "\$TARGET" "\$ASSET" "\$RUNNER_TEMP\/beta-release-notes\.md"/u)
+  assert.match(build, /if \[ "\$PLATFORM" = linux \]; then\n\s+(?:#.*\n\s+)*sh scripts\/run-in-linux-floor\.sh --output release\/main-desktop --input "\$RUNNER_TEMP\/beta-release-notes\.md:beta-release-notes\.md" -- sh scripts\/build-main-beta-desktop\.sh "\$PLATFORM" "\$TARGET" "\$ASSET" beta-release-notes\.md\n/u)
+  const betaBuild = await readFile(new URL("./build-main-beta-desktop.sh", import.meta.url), "utf8")
+  assert.match(betaBuild, /--publish never/u)
   // The GitHub provider does not derive its channel from the version, so an
   // unnamed channel would write latest-*.yml onto the beta channel.
-  assert.match(build, /-c\.publish\.channel=beta/u)
-  assert.match(build, /"-c\.\$PLATFORM\.artifactName=\$ASSET"/u)
-  assert.match(build, /"-c\.releaseInfo\.releaseNotesFile=\$RUNNER_TEMP\/beta-release-notes\.md"/u)
+  assert.match(betaBuild, /-c\.publish\.channel=beta/u)
+  assert.match(betaBuild, /"-c\.\$platform\.artifactName=\$asset"/u)
+  assert.match(betaBuild, /"-c\.releaseInfo\.releaseNotesFile=\$notes"/u)
+  const floor = mainPrereleaseStep(desktop, "Check the Linux beta AppImage against the glibc floor and run terminals from it there")
+  assert.match(floor, /if: matrix\.platform == 'linux'/u)
+  assert.match(floor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 "release\/main-desktop\/\$ASSET"/u)
+  assert.match(floor, /sh scripts\/probe-linux-glibc-floor\.sh appimage "release\/main-desktop\/\$ASSET"/u)
   assert.match(mainPrereleaseStep(desktop, "Check macOS signing secrets"), /Refusing to publish an unsigned or unnotarized macOS beta/u)
 
   const zip = mainPrereleaseStep(desktop, "Verify macOS signed and notarized beta zip")

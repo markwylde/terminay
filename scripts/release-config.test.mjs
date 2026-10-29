@@ -216,7 +216,9 @@ test('the CLI inside the server archive must embed the key the npm package embed
   assert.match(probe, /assertBundledKeyMatches\(/)
   const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
   const archiveJob = workflow.slice(workflow.indexOf('  build-standalone-server:\n'), workflow.indexOf('  publish-cli:\n'))
-  assert.match(archiveJob, /node scripts\/build-standalone-server-artifact\.mjs/)
+  // The job builds through the shared archive script, which runs the builder.
+  assert.match(archiveJob, /sh scripts\/build-linux-standalone-archive\.sh/)
+  assert.match(readFileSync(resolve('scripts/build-linux-standalone-archive.sh'), 'utf8'), /node scripts\/build-standalone-server-artifact\.mjs/)
   assert.match(archiveJob, /node scripts\/probe-standalone-server-archive\.mjs/)
 })
 

@@ -186,9 +186,11 @@ jobs:
             asset_templates: Terminay-Mac-%VERSION%-Installer.dmg Terminay-Mac-%VERSION%.zip Terminay-Mac-%VERSION%.zip.blockmap
             update_payload: Terminay-Mac-%VERSION%.zip
             update_metadata: latest-mac.yml
+          # Linux is built in the GNU/Linux floor image, so its native code
+          # never needs a newer glibc than the oldest supported host (ADR-0077).
           - os: ubuntu-latest
             label: Linux
-            script: npm run build:linux
+            script: "sh scripts/run-in-linux-floor.sh --output release -- sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && npm run build:linux'"
             asset_templates: Terminay-Linux-%VERSION%.AppImage
             update_payload: Terminay-Linux-%VERSION%.AppImage
             update_metadata: latest-linux.yml
@@ -269,6 +271,16 @@ jobs:
           test ! -e release
           node scripts/stage-selected-secure-werift-runtime.mjs
           ${{ matrix.script }}
+
+      - name: Check the Linux AppImage against the glibc floor and run terminals from it there
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          APPIMAGE="release/$VERSION/Terminay-Linux-$VERSION.AppImage"
+          node scripts/linux-glibc-floor.mjs check --target linux-x64 "$APPIMAGE"
+          sh scripts/probe-linux-glibc-floor.sh appimage "$APPIMAGE"
 
       - name: Verify exact release asset selection
         id: asset_selection
@@ -602,32 +614,21 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           OUTPUT="release/$VERSION"
-          mkdir -p "$OUTPUT"
-          # The archive carries the compiled server, its workspace packages, and
-          # the UI bundle it serves, so the whole application graph is built here
-          # rather than compiling the server in isolation.
-          npm run build:app
-          npm run verify:built-in-extensions
-          node scripts/stage-selected-secure-werift-runtime.mjs
-          NODE_ARCHIVE_URL="$(node -e 'import("./scripts/pty-runtime-platforms.mjs").then((module) => process.stdout.write(module.getPtyRuntimePlatform(process.argv[1]).nodeArchive))' "$TARGET")"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            --output "$RUNNER_TEMP/node-runtime.tar.xz" "$NODE_ARCHIVE_URL"
-          # The builder re-verifies the pinned Node archive digest and the ELF
-          # machine of every native binary it stages, so a wrong download or a
-          # wrong runner architecture fails here rather than on an operator's box.
-          node scripts/build-standalone-server-artifact.mjs \
-            --target "$TARGET" \
-            --channel tag \
-            --revision "$EXPECTED_COMMIT" \
-            --node-archive "$RUNNER_TEMP/node-runtime.tar.xz" \
-            --runtime-modules node_modules \
-            --webrtc-runtime build/webrtc-runtime \
-            --output-dir "$RUNNER_TEMP/standalone" > "$RUNNER_TEMP/standalone-build.json"
-          BUILT="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).archivePath)' "$RUNNER_TEMP/standalone-build.json")"
-          test -f "$BUILT"
-          test ! -L "$BUILT"
-          mv "$BUILT" "$OUTPUT/terminay-server-$VERSION-$TARGET.tar.gz"
+          # Built in the GNU/Linux floor image on this runner's architecture,
+          # so the archive's native code never needs a newer glibc than the
+          # oldest supported host (ADR-0077).
+          sh scripts/run-in-linux-floor.sh --output "$OUTPUT" -- sh scripts/build-linux-standalone-archive.sh "$TARGET" tag "$EXPECTED_COMMIT" "$OUTPUT/terminay-server-$VERSION-$TARGET.tar.gz"
           test "$(find "$OUTPUT" -maxdepth 1 -type f -name '*.tar.gz' -print | wc -l | tr -d '[:space:]')" = 1
+
+      - name: Check the standalone server archive against the glibc floor and run terminals from it there
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          VERSION="${TAG#v}"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION-$TARGET.tar.gz"
+          node scripts/linux-glibc-floor.mjs check --target "$TARGET" "$ARCHIVE"
+          sh scripts/probe-linux-glibc-floor.sh server-archive "$ARCHIVE"
 
       - name: Probe the extracted standalone server archive
         env:
