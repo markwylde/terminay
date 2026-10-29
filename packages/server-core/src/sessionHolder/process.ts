@@ -1,4 +1,4 @@
-import { closeSync } from 'node:fs';
+import { closeSync, writeSync } from 'node:fs';
 import type { NodePtyModuleLike } from '../terminalService/nodePty.js';
 import { SessionHolder } from './holder.js';
 import { isSessionHolderGeneration } from './paths.js';
@@ -54,6 +54,7 @@ export async function runSessionHolderProcess(
 		onClosed: () => process.exit(0),
 	});
 	// The record is in place: say so, and leave no shell this descriptor.
+	readinessClosed = true;
 	if (Number.isSafeInteger(readyFd) && readyFd > 2)
 		try {
 			closeSync(readyFd);
@@ -67,6 +68,72 @@ export async function runSessionHolderProcess(
 	process.on('uncaughtExceptionMonitor', (error) => holder.recordCrash(error));
 	// A holder has no terminal of its own to hang up on.
 	process.on('SIGHUP', () => undefined);
+}
+
+/** Longest start-up failure reason sent to the launcher, in bytes. */
+export const SESSION_HOLDER_FAILURE_REASON_BYTES = 2048;
+
+// Once closed, the readiness descriptor's number may belong to anything.
+let readinessClosed = false;
+
+/**
+ * Tell the launcher why this holder cannot start, over the readiness
+ * descriptor it is waiting on. A detached holder's own output is read by no
+ * one, so this is how the reason reaches the server's diagnostics. `env` is the
+ * environment the holder was launched with: the launch variables are removed
+ * from `process.env` once start-up begins.
+ */
+export function reportSessionHolderStartupFailure(
+	reason: string,
+	env: NodeJS.ProcessEnv,
+): void {
+	const readyFd = Number(env[SESSION_HOLDER_ENV.readyFd]);
+	if (readinessClosed || !Number.isSafeInteger(readyFd) || readyFd <= 2)
+		return;
+	try {
+		writeSync(readyFd, boundedUtf8(reason, SESSION_HOLDER_FAILURE_REASON_BYTES));
+	} catch {
+		/* a launcher that has gone is told nothing */
+	}
+}
+
+/**
+ * Why a native module could not be loaded. A loader that searches several
+ * places often reports only the last one, which on Linux names a prebuild that
+ * was never shipped. The operating system's error for each addon that is
+ * present says what is actually wrong, such as a glibc version the host lacks.
+ */
+export function describeNativeModuleLoadFailure(
+	error: unknown,
+	load: (path: string) => unknown,
+	presentAddons: readonly string[],
+): string {
+	const reasons = [errorMessage(error)];
+	for (const addon of presentAddons) {
+		try {
+			load(addon);
+		} catch (addonError) {
+			const message = errorMessage(addonError);
+			if (!reasons.some((reason) => reason.includes(message)))
+				reasons.push(`${addon}: ${message}`);
+		}
+	}
+	return reasons.join('; ');
+}
+
+function errorMessage(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error))
+		.split('\n', 1)[0]
+		?.trim() ?? '';
+}
+
+function boundedUtf8(text: string, maxBytes: number): Buffer {
+	const bytes = Buffer.from(text, 'utf8');
+	if (bytes.length <= maxBytes) return bytes;
+	let end = maxBytes;
+	// Never cut inside a multi-byte character.
+	while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+	return bytes.subarray(0, end);
 }
 
 function parseLimit(value: string | undefined): number | null {

@@ -2,16 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createSessionHolderPtyFactory,
+  describeNativeModuleLoadFailure,
   launchDetachedSessionHolder,
   launchSessionHolder,
   readHolderRecords,
   SESSION_HOLDER_ENV,
+  SESSION_HOLDER_FAILURE_REASON_BYTES,
   sessionHolderRecordPath,
   TerminalService,
   TerminalServiceError,
@@ -25,6 +28,8 @@ import {
  */
 
 const ENTRY = fileURLToPath(new URL("./fixtures/session-holder-entry.mjs", import.meta.url));
+const FAILING_ENTRY = fileURLToPath(new URL("./fixtures/session-holder-entry-failing.mjs", import.meta.url));
+const GLIBC_REASON = "node-pty could not be loaded: Failed to load native module: pty.node; /opt/Terminay/pty.node: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.42' not found";
 const SERVER_ID = "srv";
 
 /** Every real holder this file launched, by pid. */
@@ -215,4 +220,82 @@ test("a holder says it is ready by closing the descriptor its launcher holds, on
   // Heard on the descriptor, with no watch: the record is already there.
   assert.deepEqual(readHolderRecords(dataRoot).map((record) => [record.generation, record.pid]), [[generation, real.pid]]);
   assert.equal(real.exitCode, null, "the holder ended instead of becoming ready");
+});
+
+/** A fake holder with a readiness descriptor the test writes and closes. */
+function holderWithReadiness() {
+  const child = fakeHolderProcess();
+  child.stdio = [null, null, null, new PassThrough()];
+  return child;
+}
+
+test("a holder that cannot start says why, and the launch failure carries the reason", async (t) => {
+  const dataRoot = dataRootFor(t);
+  const child = holderWithReadiness();
+  const { service, of } = server(dataRoot, () => child);
+
+  const creating = service.createResolvedSession(resolvedLaunch(service, "s1", dataRoot));
+  await new Promise((resolve) => setImmediate(resolve));
+  child.stdio[3].end(GLIBC_REASON);
+  await new Promise((resolve) => child.stdio[3].once("close", resolve));
+  child.emit("exit", 1, null);
+
+  const expected = `session holder exited before it was ready (exit code 1): ${GLIBC_REASON}`;
+  await assert.rejects(creating, (error) =>
+    error instanceof TerminalServiceError && error.details.reason.includes(expected));
+  assert.equal(of("launch-failed")[0].error, expected);
+});
+
+test("a holder whose exit is heard before its reason is waited for until the descriptor closes", async (t) => {
+  const dataRoot = dataRootFor(t);
+  const child = holderWithReadiness();
+  const launching = launchSessionHolder({ dataRoot, buildId: "build-a", launch: () => child }, "0a0b0c0d0e0f1011", null);
+
+  child.emit("exit", null, "SIGABRT");
+  assert.equal(await settledYet(launching), false, "the launch failed before the holder's reason could arrive");
+  child.stdio[3].write("holder environment is incomplete\n");
+  child.stdio[3].end();
+  await assert.rejects(launching, {
+    message: "session holder exited before it was ready (signal SIGABRT): holder environment is incomplete",
+  });
+});
+
+test("a real holder that cannot start reports a bounded reason to its launcher", async (t) => {
+  const dataRoot = dataRootFor(t);
+  // Longer than the bound, and made of two-byte characters so a cut could split one.
+  const reason = `${GLIBC_REASON} ${"é".repeat(SESSION_HOLDER_FAILURE_REASON_BYTES)}`;
+  const launch = ({ env }) => launchDetachedSessionHolder(process.execPath, [FAILING_ENTRY], {
+    ...process.env,
+    ...env,
+    TERMINAY_TEST_HOLDER_FAILURE: reason,
+  });
+  const failure = await launchSessionHolder({ dataRoot, buildId: "build-a", launch }, "1a2b3c4d5e6f7081", null).then(
+    () => assert.fail("a holder that could not start was reported ready"),
+    (error) => error,
+  );
+  const prefix = "session holder exited before it was ready (exit code 1): ";
+  assert.ok(failure.message.startsWith(prefix + GLIBC_REASON), failure.message);
+  const told = failure.message.slice(prefix.length);
+  assert.ok(Buffer.byteLength(told) <= SESSION_HOLDER_FAILURE_REASON_BYTES);
+  assert.ok(!told.includes("\uFFFD"), "the reason was cut inside a character");
+});
+
+test("a native module failure names the loader error of the addon that is present", () => {
+  const searched = new Error(
+    "Failed to load native module: pty.node, checked: build/Release, build/Debug, prebuilds/linux-x64: Error: Cannot find module './prebuilds/linux-x64//pty.node'\nRequire stack:\n- /opt/x/utils.js",
+  );
+  const load = (path) => {
+    throw new Error(`/lib/x86_64-linux-gnu/libc.so.6: version \`GLIBC_2.42' not found (required by ${path})`);
+  };
+  assert.equal(
+    describeNativeModuleLoadFailure(searched, load, ["/opt/x/build/Release/pty.node"]),
+    "Failed to load native module: pty.node, checked: build/Release, build/Debug, prebuilds/linux-x64: Error: Cannot find module './prebuilds/linux-x64//pty.node'; " +
+      "/opt/x/build/Release/pty.node: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.42' not found (required by /opt/x/build/Release/pty.node)",
+  );
+  // An addon that loads, or fails the same way as the search, adds nothing.
+  assert.equal(describeNativeModuleLoadFailure(new Error("broken"), () => undefined, ["/a.node"]), "broken");
+  assert.equal(
+    describeNativeModuleLoadFailure(new Error("x: broken"), () => { throw new Error("broken"); }, ["/a.node"]),
+    "x: broken",
+  );
 });

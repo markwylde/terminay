@@ -61,7 +61,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0031](./0031-mcp-authority-is-scope-times-user-permission-policy.md) | MCP authority is capability scope combined with a user permission policy, and MCP may manage automations behind it | accepted, supersedes 0030 (superseded by 0068) | 2026-09-27 |
 | [0033](./0033-pinned-node-runtime-baseline-on-npm-12-2.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.0 | accepted, supersedes 0001 | 2026-10-02 |
 | [0034](./0034-no-media-relay-reachability-from-candidates-and-routing-hints.md) | Terminay operates no media relay; reachability comes from candidates, routing hints, and the user's own network | accepted | 2026-10-03 |
-| [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 | 2026-10-03 |
+| [0035](./0035-detached-session-holder-owns-ptys.md) | A detached session holder owns PTYs, in frozen generations, so shells outlive the server | accepted, supersedes 0004 (superseded by 0077) | 2026-10-03 |
 | [0036](./0036-five-minute-ci-budget-with-parallel-gates-and-eighteen-shards.md) | CI has a five-minute budget, met by running independent work in separate jobs and eighteen E2E shards | accepted, supersedes 0032 | 2026-10-03 |
 | [0037](./0037-mcp-apps-reach-terminals-through-a-terminay-gateway.md) | MCP Apps and agent-authored UI reach a terminal through Terminay's own MCP server, acting as a gateway | accepted | 2026-10-04 |
 | [0038](./0038-app-views-run-in-a-self-sandboxing-proxy.md) | App views run in an opaque-origin frame inside a self-sandboxing proxy document | accepted | 2026-10-04 |
@@ -100,3 +100,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0072](./0072-mcp-reach-is-the-authority-line-and-workspace-reach-controls-the-app.md) | MCP reach is the authority line, and workspace reach controls the app except for a fixed excluded set | accepted, supersedes 0068 | 2026-10-20 |
 | [0075](./0075-management-lives-in-one-settings-surface.md) | Management lives in one Settings surface; collections get a list column, workspace content lives in Home | accepted | 2026-10-26 |
 | [0076](./0076-app-window-records-are-server-data-that-last-as-long-as-their-session.md) | App window records are server data that last as long as their terminal session, across restarts | accepted | 2026-10-27 |
+| [0077](./0077-linux-artifacts-are-built-and-verified-at-a-declared-glibc-floor.md) | Linux artifacts are built and verified at a declared glibc floor | accepted, supersedes 0035 | 2026-10-30 |

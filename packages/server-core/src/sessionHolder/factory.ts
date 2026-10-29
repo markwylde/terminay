@@ -44,7 +44,10 @@ import {
 	sessionTailsDirectory,
 	socketPathFits,
 } from './paths.js';
-import { SESSION_HOLDER_ENV } from './process.js';
+import {
+	SESSION_HOLDER_ENV,
+	SESSION_HOLDER_FAILURE_REASON_BYTES,
+} from './process.js';
 import type { HolderExitRecord, HolderSessionRecord } from './protocol.js';
 import {
 	deleteSessionTail,
@@ -92,7 +95,9 @@ export interface SessionHolderLaunchedProcess {
 interface ReadinessStream {
 	once(event: 'close', listener: () => void): unknown;
 	on(event: 'error', listener: () => void): unknown;
+	on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
 	off(event: 'close', listener: () => void): unknown;
+	off(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
 	resume(): unknown;
 }
 
@@ -859,17 +864,44 @@ export function launchSessionHolder(
 		let child: SessionHolderLaunchedProcess | undefined;
 		let ready: ReadinessStream | undefined;
 		let watcher: FSWatcher | undefined;
+		// A holder that cannot start writes why on its readiness descriptor
+		// before it exits. It has no other output anyone reads.
+		const reason: Buffer[] = [];
+		let reasonBytes = 0;
+		let readyClosed = false;
+		let exitStatus: string | undefined;
+		const onReadyData = (chunk: Buffer | string): void => {
+			const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+			const room = SESSION_HOLDER_FAILURE_REASON_BYTES - reasonBytes;
+			if (room <= 0) return;
+			reason.push(bytes.subarray(0, room));
+			reasonBytes += Math.min(room, bytes.length);
+		};
+		const failExited = (): void => {
+			const told = Buffer.concat(reason).toString('utf8').trim();
+			fail(
+				new Error(
+					`session holder exited before it was ready (${exitStatus})${
+						told === '' ? '' : `: ${told}`
+					}`,
+				),
+			);
+		};
 		const onExit = (
 			code: number | null,
 			exitSignal: NodeJS.Signals | null,
-		): void =>
-			fail(
-				new Error(
-					`session holder exited before it was ready (${
-						exitSignal === null ? `exit code ${code}` : `signal ${exitSignal}`
-					})`,
-				),
-			);
+		): void => {
+			exitStatus =
+				exitSignal === null ? `exit code ${code}` : `signal ${exitSignal}`;
+			// The descriptor closes when the holder dies, after whatever it
+			// wrote, so its reason is complete once the close is heard.
+			if (ready === undefined || readyClosed) failExited();
+		};
+		const onReadyClose = (): void => {
+			readyClosed = true;
+			check();
+			if (exitStatus !== undefined) failExited();
+		};
 		const onError = (error: Error): void =>
 			fail(new Error(`session holder could not be started: ${error.message}`));
 		const onAbort = (): void => {
@@ -890,7 +922,8 @@ export function launchSessionHolder(
 			signal?.removeEventListener('abort', onAbort);
 			child?.off('exit', onExit);
 			child?.off('error', onError);
-			ready?.off('close', check);
+			ready?.off('close', onReadyClose);
+			ready?.off('data', onReadyData);
 		};
 		function fail(error: Error): void {
 			if (settled) return;
@@ -937,7 +970,8 @@ export function launchSessionHolder(
 		// that dies closes it too, and its exit follows.
 		ready = readinessOf(child);
 		ready?.on('error', () => undefined);
-		ready?.once('close', check);
+		ready?.on('data', onReadyData);
+		ready?.once('close', onReadyClose);
 		ready?.resume();
 		try {
 			watcher = watch(directory, check);

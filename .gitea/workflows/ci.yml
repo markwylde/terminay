@@ -143,6 +143,62 @@ jobs:
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: npm run test:packaged-built-in-extension-runtime:linux -- linux-x64
 
+  # The bytes users install are built in the GNU/Linux floor image, so their
+  # native code never needs a newer glibc than the oldest supported host.
+  # This job builds both x64 Linux artifacts the way the release lanes do,
+  # checks every ELF file against the floor, and runs terminals from each on a
+  # clean glibc 2.31 host (ADR-0077).
+  linux-glibc-floor:
+    name: Linux glibc floor (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 45
+
+    steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Require an x64 Docker daemon
+        run: test "$(docker info --format '{{.Architecture}}')" = x86_64
+
+      - name: Build the AppImage and the standalone archive in the floor image
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        env:
+          TERMINAY_REVISION: ${{ github.sha }}
+        run: |
+          test ! -e release
+          sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION -- \
+            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && npm run build:linux && sh scripts/build-linux-standalone-archive.sh linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz'
+
+      - name: Check every ELF file against the glibc floor
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        run: |
+          node scripts/linux-glibc-floor.mjs check --target linux-x64 \
+            release/0.0.0/Terminay-Linux-0.0.0.AppImage \
+            release/standalone/terminay-server-main-linux-x64.tar.gz
+
+      - name: Run terminals from both artifacts on a clean glibc 2.31 host
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        run: |
+          sh scripts/probe-linux-glibc-floor.sh appimage release/0.0.0/Terminay-Linux-0.0.0.AppImage
+          sh scripts/probe-linux-glibc-floor.sh server-archive release/standalone/terminay-server-main-linux-x64.tar.gz
+
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        run: sh scripts/prune-ci-docker-images.sh
+
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest
