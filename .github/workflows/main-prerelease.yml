@@ -82,27 +82,19 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           OUTPUT="release/main"
-          mkdir -p "$OUTPUT"
-          npm run build:app
-          npm run verify:built-in-extensions
-          node scripts/stage-selected-secure-werift-runtime.mjs
-          NODE_ARCHIVE_URL="$(node -e 'import("./scripts/pty-runtime-platforms.mjs").then((module) => process.stdout.write(module.getPtyRuntimePlatform(process.argv[1]).nodeArchive))' "$TARGET")"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            --output "$RUNNER_TEMP/node-runtime.tar.xz" "$NODE_ARCHIVE_URL"
           # `main` is a channel, not a version: the manifest records the commit
-          # so an installer can tell whether the channel actually moved.
-          node scripts/build-standalone-server-artifact.mjs \
-            --target "$TARGET" \
-            --channel main \
-            --revision "$EXPECTED_COMMIT" \
-            --node-archive "$RUNNER_TEMP/node-runtime.tar.xz" \
-            --runtime-modules node_modules \
-            --webrtc-runtime build/webrtc-runtime \
-            --output-dir "$RUNNER_TEMP/standalone" > "$RUNNER_TEMP/standalone-build.json"
-          BUILT="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).archivePath)' "$RUNNER_TEMP/standalone-build.json")"
-          test -f "$BUILT"
-          test ! -L "$BUILT"
-          mv "$BUILT" "$OUTPUT/terminay-server-main-$TARGET.tar.gz"
+          # so an installer can tell whether the channel actually moved. Built
+          # in the GNU/Linux floor image on this runner's architecture
+          # (ADR-0077).
+          sh scripts/run-in-linux-floor.sh --output "$OUTPUT" -- sh scripts/build-linux-standalone-archive.sh "$TARGET" main "$EXPECTED_COMMIT" "$OUTPUT/terminay-server-main-$TARGET.tar.gz"
+
+      - name: Check the main channel archive against the glibc floor and run terminals from it there
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          node scripts/linux-glibc-floor.mjs check --target "$TARGET" "$ARCHIVE"
+          sh scripts/probe-linux-glibc-floor.sh server-archive "$ARCHIVE"
 
       - name: Probe the extracted main channel archive
         env:
@@ -258,18 +250,21 @@ jobs:
           ASSET: ${{ matrix.asset }}
         run: |
           test ! -e release
-          node scripts/stage-selected-secure-werift-runtime.mjs
-          npm run build:app
-          # The GitHub publish provider takes its channel from configuration,
-          # not from the version's prerelease component, so the beta channel is
-          # named explicitly: that is what makes electron-builder write
-          # beta-*.yml rather than latest-*.yml. The metadata references the
-          # fixed artifact name set here.
-          node_modules/.bin/electron-builder "--$PLATFORM" "$TARGET" --publish never \
-            -c.directories.output=release/main-desktop \
-            -c.publish.channel=beta \
-            "-c.$PLATFORM.artifactName=$ASSET" \
-            "-c.releaseInfo.releaseNotesFile=$RUNNER_TEMP/beta-release-notes.md"
+          if [ "$PLATFORM" = linux ]; then
+            # Built in the GNU/Linux floor image, so the AppImage's native code
+            # never needs a newer glibc than the oldest supported host (ADR-0077).
+            sh scripts/run-in-linux-floor.sh --output release/main-desktop --input "$RUNNER_TEMP/beta-release-notes.md:beta-release-notes.md" -- sh scripts/build-main-beta-desktop.sh "$PLATFORM" "$TARGET" "$ASSET" beta-release-notes.md
+          else
+            sh scripts/build-main-beta-desktop.sh "$PLATFORM" "$TARGET" "$ASSET" "$RUNNER_TEMP/beta-release-notes.md"
+          fi
+
+      - name: Check the Linux beta AppImage against the glibc floor and run terminals from it there
+        if: matrix.platform == 'linux'
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          node scripts/linux-glibc-floor.mjs check --target linux-x64 "release/main-desktop/$ASSET"
+          sh scripts/probe-linux-glibc-floor.sh appimage "release/main-desktop/$ASSET"
 
       - name: Verify exact beta asset selection
         env:

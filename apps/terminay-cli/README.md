@@ -22,8 +22,8 @@ to approve it after comparing the match code shown on both sides.
 
 ## Requirements
 
-64-bit GNU/Linux on x64 or arm64, with systemd, and a Debian 12-compatible
-userspace (glibc 2.36 or newer). The CLI refuses to run `daemon` commands
+64-bit GNU/Linux on x64 or arm64, with systemd, and glibc 2.31 or newer
+(Debian 11, Ubuntu 20.04, or anything newer). The CLI refuses to run `daemon` commands
 anywhere else, naming the requirement rather than failing part-way through.
 
 The CLI itself needs Node 20 or newer. The server does not need Node at all:

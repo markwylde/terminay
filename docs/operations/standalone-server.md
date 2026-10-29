@@ -2,7 +2,8 @@
 
 This guide describes the foreground `terminay-server` process and the
 operator boundaries around it. The server is a supported standalone artifact
-on GNU/Linux x64 and arm64 with a Debian 12-compatible userspace. It does not
+on GNU/Linux x64 and arm64 with glibc 2.31 or newer (Debian 11, Ubuntu 20.04,
+or anything newer). It does not
 daemonize itself, and a service manager must supervise the foreground process.
 
 The supported way to install, upgrade, and pair one is the `terminay`

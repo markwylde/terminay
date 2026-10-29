@@ -11,6 +11,7 @@ const workflows = new Map(await Promise.all(workflowNames.map(async (name) => [
   await readFile(new URL(name, workflowDirectory), "utf8"),
 ])));
 const giteaWorkflowDirectory = new URL("../.gitea/workflows/", import.meta.url);
+const linuxArchiveBuild = await readFile(new URL("./build-linux-standalone-archive.sh", import.meta.url), "utf8");
 const giteaWorkflowNames = (await readdir(giteaWorkflowDirectory))
   .filter((name) => /\.ya?ml$/u.test(name))
   .sort();
@@ -201,13 +202,15 @@ test("standalone server release artifact is built from the immutable tag and ver
     "standalone package must be built from the release tag rather than an advancing branch");
   assert.match(job, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_COMMIT"/u,
     "standalone package job must verify the checked-out immutable source commit");
-  assert.match(job, /node scripts\/build-standalone-server-artifact\.mjs/u,
-    "standalone job must assemble the self-contained release archive");
+  assert.match(job, /sh scripts\/run-in-linux-floor\.sh --output "\$OUTPUT" -- sh scripts\/build-linux-standalone-archive\.sh "\$TARGET" tag "\$EXPECTED_COMMIT" /u,
+    "standalone job must assemble the self-contained release archive in the GNU/Linux floor image");
+  assert.match(linuxArchiveBuild, /node scripts\/build-standalone-server-artifact\.mjs/u,
+    "the shared archive script must assemble the self-contained release archive");
   assert.match(job, /node scripts\/sync-package-version\.mjs "\$VERSION"/u,
     "standalone package manifest version must use the tested release-tag synchronizer");
   assert.match(job, /node scripts\/probe-standalone-server-archive\.mjs/u,
     "the extracted archive must pass manifest, architecture, and entrypoint inspection");
-  assert.match(job, /--revision "\$EXPECTED_COMMIT"/u,
+  assert.match(linuxArchiveBuild, /--revision "\$revision"/u,
     "the archive manifest must record the immutable release commit");
   assert.match(job, /\.version\)' "\$RUNNER_TEMP\/standalone-probe\.json"\)" = "\$VERSION"/u,
     "the probed archive version must match the release tag before publication");
