@@ -15,6 +15,7 @@ import type {
 } from '../terminalService/launchResolver.js';
 import { nodeTerminalLaunchPathAuthority } from '../terminalService/launchResolver.js';
 import { TerminalPresentationCheckpointAuthority } from '../terminalService/presentationCheckpoint.js';
+import { SHELL_INTEGRATION_ENVIRONMENT_NAMES } from '../terminalService/shellIntegration.js';
 import type { TerminalService } from '../terminalService/service.js';
 import type {
 	TerminalAuthorization,
@@ -1043,7 +1044,17 @@ export function nonInteractiveLaunch(
 		}
 	}
 	const env: Record<string, string | undefined> = {};
+	// A run is not an interactive shell, so it gets no shell integration
+	// (ADR-0082): its values go, and zsh reads the user's own ZDOTDIR again.
+	const integrated = resolved.shellIntegration === true;
+	const userZdotdir = resolved.env.TERMINAY_USER_ZDOTDIR;
 	for (const [name, value] of Object.entries(resolved.env)) {
+		if (
+			integrated &&
+			((SHELL_INTEGRATION_ENVIRONMENT_NAMES as readonly string[]).includes(name.toUpperCase()) ||
+				name === 'ZDOTDIR')
+		)
+			continue;
 		// Inherited automation context never leaks into a run.
 		if ((AUTOMATION_CONTEXT_VARIABLES as readonly string[]).includes(name.toUpperCase()))
 			continue;
@@ -1051,6 +1062,7 @@ export function nonInteractiveLaunch(
 		if (Object.hasOwn(variables, name.toUpperCase())) continue;
 		env[name] = value;
 	}
+	if (integrated && userZdotdir !== undefined) env.ZDOTDIR = userZdotdir;
 	for (const [name, value] of Object.entries(context)) env[name] = value;
 	for (const [name, value] of Object.entries(variables)) env[name] = value;
 	if (isWsl) {
@@ -1064,6 +1076,7 @@ export function nonInteractiveLaunch(
 		...resolved,
 		args: Object.freeze([...prefix, ...commandArgs(shell, command)]),
 		env: Object.freeze(env),
+		shellIntegration: false,
 	});
 }
 

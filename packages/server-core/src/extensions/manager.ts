@@ -7,6 +7,8 @@ import type {
 	LanguageServerContribution,
 	McpInstallTargetContribution,
 	McpServerCommand,
+	TerminalCommandDefaultContribution,
+	TerminalCommandDefaultResolution,
 	TerminalLauncherContribution,
 	TerminalLauncherResolution,
 	WorktreeInsightSourceContribution,
@@ -78,6 +80,11 @@ export interface ChatProviderEntry {
 export interface TerminalLauncherEntry {
 	readonly extensionId: string;
 	readonly contribution: TerminalLauncherContribution;
+}
+
+export interface TerminalCommandDefaultEntry {
+	readonly extensionId: string;
+	readonly contribution: TerminalCommandDefaultContribution;
 }
 
 /** One open provider session, bound to the extension child that runs it. */
@@ -196,6 +203,7 @@ export class ExtensionHostManager {
 					...(status.worktreeInsightSources ?? []),
 					...(status.agentChatProviders ?? []),
 					...(status.terminalLaunchers ?? []),
+					...(status.terminalCommandDefaults ?? []),
 				])
 					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -365,6 +373,30 @@ export class ExtensionHostManager {
 	): Promise<TerminalLauncherResolution> {
 		return this.ownerHost(launcherId).resolveTerminalLauncher(
 			launcherId,
+			signal,
+		);
+	}
+
+	/** Every terminal command default registered by a running, published extension. */
+	terminalCommandDefaultContributions(): readonly TerminalCommandDefaultEntry[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.terminalCommandDefaults ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	async resolveTerminalCommandDefault(
+		commandDefaultId: string,
+		signal?: AbortSignal,
+	): Promise<TerminalCommandDefaultResolution> {
+		return this.ownerHost(commandDefaultId).resolveTerminalCommandDefault(
+			commandDefaultId,
 			signal,
 		);
 	}
@@ -547,6 +579,7 @@ export class ExtensionHostManager {
 			...(status.worktreeInsightSources ?? []),
 			...(status.agentChatProviders ?? []),
 			...(status.terminalLaunchers ?? []),
+			...(status.terminalCommandDefaults ?? []),
 		]) {
 			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)

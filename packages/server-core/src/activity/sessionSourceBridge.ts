@@ -373,7 +373,26 @@ export class SessionSourceBridge {
 			refresh,
 		);
 		const shell = ProcessAncestry.owner(chain, new Set(shells.keys()));
-		return shell === undefined ? null : shells.get(shell)!.identity.sessionId;
+		return shell === undefined
+			? null
+			: this.boundTo(pid, shell, shells, refresh);
+	}
+
+	/**
+	 * A descendant of a shell binds to its terminal only while that terminal is
+	 * its controlling terminal; a detached server it spawned binds nowhere.
+	 */
+	private async boundTo(
+		pid: number,
+		shell: number,
+		shells: Map<number, AgentTerminal>,
+		refresh = false,
+	): Promise<string | null> {
+		const terminal = shells.get(shell);
+		if (terminal === undefined) return null;
+		return (await this.ancestry.sharesTerminal(pid, shell, refresh))
+			? terminal.identity.sessionId
+			: null;
 	}
 
 	private shellTerminals(): Map<number, AgentTerminal> {
@@ -563,7 +582,7 @@ export class SessionSourceBridge {
 	}
 
 	/** A new shell may be an ancestor of a session already reported. Cached
-	 * chains are re-matched; nothing is read. */
+	 * chains are re-matched; only a match reads controlling terminals. */
 	private terminalStarted(): void {
 		const shells = this.shellTerminals();
 		const shellPids = new Set(shells.keys());
@@ -577,7 +596,11 @@ export class SessionSourceBridge {
 							? undefined
 							: ProcessAncestry.owner(chain, shellPids);
 					if (shell !== undefined)
-						session.terminalSessionId = shells.get(shell)!.identity.sessionId;
+						session.terminalSessionId = await this.boundTo(
+							session.snapshot.pid,
+							shell,
+							shells,
+						);
 				}
 				this.commit(sourceId, source, new Map(source.sessions));
 				return { ok: true };

@@ -7,10 +7,20 @@ export const MAX_ANCESTRY_HOPS = 64;
 /** Reads one process's parent pid, or `undefined` when it has none or is gone. */
 export type ParentPidReader = (pid: number) => Promise<number | undefined>;
 
+/**
+ * Reads one process's controlling terminal: a device name or number, `null`
+ * when it has none, or `undefined` when it cannot be read.
+ */
+export type ControllingTerminalReader = (
+	pid: number,
+) => Promise<string | null | undefined>;
+
 export interface ProcessAncestryOptions {
 	readonly platform?: NodeJS.Platform;
 	/** Test seam; production reads `/proc` on Linux and `ps` elsewhere. */
 	readonly readParent?: ParentPidReader;
+	/** Test seam; production reads `/proc` on Linux and `ps` elsewhere. */
+	readonly readTerminal?: ControllingTerminalReader;
 	readonly maxHops?: number;
 }
 
@@ -24,7 +34,9 @@ export interface ProcessAncestryOptions {
  */
 export class ProcessAncestry {
 	private readonly readParent: ParentPidReader;
+	private readonly readTerminal: ControllingTerminalReader;
 	private readonly maxHops: number;
+	private readonly terminals = new Map<number, string | null | undefined>();
 	private readonly chains = new Map<number, readonly number[]>();
 	private readonly reads = new Map<number, Promise<readonly number[]>>();
 
@@ -33,6 +45,9 @@ export class ProcessAncestry {
 		this.readParent =
 			options.readParent ??
 			(platform === 'linux' ? readProcParent : readPsParent);
+		this.readTerminal =
+			options.readTerminal ??
+			(platform === 'linux' ? readProcTerminal : readPsTerminal);
 		this.maxHops = options.maxHops ?? MAX_ANCESTRY_HOPS;
 	}
 
@@ -74,20 +89,59 @@ export class ProcessAncestry {
 		return chain.find((pid) => shells.has(pid));
 	}
 
+	/**
+	 * Whether `pid` has the same controlling terminal as `shell`. A process
+	 * with no controlling terminal, such as a detached background server, or
+	 * one whose terminal cannot be read, shares it with no shell.
+	 */
+	async sharesTerminal(
+		pid: number,
+		shell: number,
+		refresh = false,
+	): Promise<boolean> {
+		const [own, shells] = await Promise.all([
+			this.terminal(pid, refresh),
+			this.terminal(shell, refresh),
+		]);
+		return typeof own === 'string' && own === shells;
+	}
+
 	/** Drop every cached chain that passes through `pid`. */
 	forgetThrough(pid: number): void {
 		for (const [key, chain] of this.chains)
-			if (chain.includes(pid)) this.chains.delete(key);
+			if (chain.includes(pid)) {
+				this.chains.delete(key);
+				this.terminals.delete(key);
+			}
+		this.terminals.delete(pid);
 	}
 
 	forget(pid: number): void {
 		this.chains.delete(pid);
+		this.terminals.delete(pid);
 	}
 
 	/** Keep only chains for `pids`. */
 	retain(pids: ReadonlySet<number>): void {
 		for (const key of this.chains.keys())
 			if (!pids.has(key)) this.chains.delete(key);
+	}
+
+	private async terminal(
+		pid: number,
+		refresh: boolean,
+	): Promise<string | null | undefined> {
+		if (!refresh && this.terminals.has(pid)) return this.terminals.get(pid);
+		let terminal: string | null | undefined;
+		try {
+			terminal = await this.readTerminal(pid);
+		} catch {
+			terminal = undefined;
+		}
+		// A failed read is not remembered, so the next edge tries again.
+		if (terminal === undefined) this.terminals.delete(pid);
+		else this.terminals.set(pid, terminal);
+		return terminal;
 	}
 
 	private async read(
@@ -135,6 +189,47 @@ function readPsParent(pid: number): Promise<number | undefined> {
 			},
 		);
 	});
+}
+
+async function readProcTerminal(
+	pid: number,
+): Promise<string | null | undefined> {
+	try {
+		return terminalFromProcStat(await readFile(`/proc/${pid}/stat`, 'utf8'));
+	} catch {
+		return undefined;
+	}
+}
+
+/** The controlling terminal in a Linux `/proc/<pid>/stat` line: `tty_nr`, 0 for none. */
+export function terminalFromProcStat(stat: string): string | null | undefined {
+	const close = stat.lastIndexOf(')');
+	if (close < 0) return undefined;
+	// The command name is parenthesised and may contain spaces, so the fields
+	// are read after its closing parenthesis; tty_nr is the fifth of them.
+	const device = stat.slice(close + 2).split(' ')[4];
+	if (device === undefined || !/^-?\d+$/u.test(device)) return undefined;
+	return device === '0' ? null : device;
+}
+
+function readPsTerminal(pid: number): Promise<string | null | undefined> {
+	return new Promise((resolve) => {
+		execFile(
+			'ps',
+			['-o', 'tty=', '-p', String(pid)],
+			{ timeout: 2_000, maxBuffer: 1024 },
+			(error, stdout) => {
+				resolve(error ? undefined : terminalFromPs(stdout));
+			},
+		);
+	});
+}
+
+/** The controlling terminal in `ps -o tty=` output: `??` (macOS) or `?` (procps) for none. */
+export function terminalFromPs(output: string): string | null | undefined {
+	const name = output.trim();
+	if (name.length === 0) return undefined;
+	return /^\?+$/u.test(name) ? null : name;
 }
 
 function positivePid(value: string | undefined): number | undefined {

@@ -1,0 +1,9 @@
+#!/bin/sh
+# A stand-in Codex for the shell integration spec. Its help lists
+# --no-daemon, as Codex 0.166 does; any other call prints its arguments.
+if [ "$1" = "--help" ]; then
+	printf '%s\n' 'Usage: codex [OPTIONS] [PROMPT]' '' 'Options:' \
+		'      --no-daemon  Run the app server in this process'
+	exit 0
+fi
+printf 'FAKE-CODEX ARGS:[%s]\n' "$*"

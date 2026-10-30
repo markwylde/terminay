@@ -22,6 +22,8 @@ const harnesses = [
  */
 async function fixture({
 	parents = {},
+	// pid → controlling terminal; every pid not listed shares one terminal.
+	terminals = {},
 	projects = { 'project-1': '/work/app' },
 	worktrees = {},
 	clock = { now: 1_000 },
@@ -36,6 +38,8 @@ async function fixture({
 			reads.push(pid);
 			return parents[pid];
 		},
+		readTerminal: async (pid) =>
+			pid in terminals ? terminals[pid] : 'ttys000',
 	});
 	const watchers = [];
 	const scope = new ProjectAgentScope({
@@ -132,6 +136,57 @@ test('two terminals in one directory each own the session their process tree hol
 	});
 	assert.equal(root('a').activationTerminalSessionId, 'terminal-1');
 	assert.equal(root('b').activationTerminalSessionId, 'terminal-2');
+});
+
+test('a detached server a terminal\'s agent spawned binds to no terminal', async () => {
+	// The shared Codex server: forked from an agent in terminal-1, then
+	// detached (setsid), so it has no controlling terminal.
+	const { terminal, publish, root } = await fixture({
+		parents: { 700: 500, 500: 300 },
+		terminals: { 300: 'ttys001', 500: 'ttys001', 700: null },
+	});
+	terminal('terminal-1', 'project-1', 300);
+	await publish({ reset: [session({ id: 'daemon', pid: 700 })] });
+	const entry = root('daemon');
+	assert.equal(entry.terminalSessionId, null);
+	assert.equal(entry.activationTerminalSessionId, null);
+	assert.equal(entry.external, true);
+});
+
+test('a descendant on another terminal device does not bind to the shell', async () => {
+	const { terminal, publish, root } = await fixture({
+		parents: { 500: 300 },
+		terminals: { 300: 'ttys001', 500: 'ttys009' },
+	});
+	terminal('terminal-1', 'project-1', 300);
+	await publish({ reset: [session()] });
+	assert.equal(root('session-1').terminalSessionId, null);
+});
+
+test('an unreadable controlling terminal binds nowhere', async () => {
+	const { terminal, publish, root } = await fixture({
+		parents: { 500: 300 },
+		terminals: { 500: undefined },
+	});
+	terminal('terminal-1', 'project-1', 300);
+	await publish({ reset: [session()] });
+	assert.equal(root('session-1').terminalSessionId, null);
+});
+
+test('sub-agents sharing their parent\'s pid stay bound to its terminal', async () => {
+	const { terminal, publish, root } = await fixture({
+		parents: { 500: 300 },
+		terminals: { 300: 'ttys001', 500: 'ttys001' },
+	});
+	terminal('terminal-1', 'project-1', 300);
+	await publish({
+		reset: [
+			session({ id: 'parent', pid: 500 }),
+			session({ id: 'sub-agent', pid: 500 }),
+		],
+	});
+	assert.equal(root('parent').terminalSessionId, 'terminal-1');
+	assert.equal(root('sub-agent').terminalSessionId, 'terminal-1');
 });
 
 test('a session no terminal owns is external: inert, never unread, still in its project', async () => {
