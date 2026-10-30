@@ -46,7 +46,8 @@ export interface ExtensionReceipt extends RegistryPackageResolution {
 	readonly extensionId: string;
 	readonly slotId: string;
 	readonly installedAt: string;
-	readonly npmVersion: string;
+	/** The npm library versions that materialized the slot. */
+	readonly installerVersion: string;
 	readonly lockHash: string;
 	readonly inventoryHash: string;
 	readonly permissions: readonly string[];
@@ -87,7 +88,7 @@ export interface ExtensionRegistryClient {
 }
 
 export interface ExtensionMaterializer {
-	readonly npmVersion: string;
+	readonly installerVersion: string;
 	materialize(
 		resolution: RegistryPackageResolution,
 		stagingRoot: string,

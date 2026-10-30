@@ -3,9 +3,8 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 
 const PACKAGE_NAME = '@terminay/server'
-const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js', 'dist/bundled-npm-evidence.json']
+const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js']
 const NODE_ENGINE = '24.15.0'
-const NPM_INSTALLER = '12.2.1'
 const REQUIRED_BINS = {
   'terminay-server': 'dist/cli.js',
   'terminay-mcp': 'dist/mcpEntry.js',
@@ -69,9 +68,10 @@ export async function inspectStandaloneArtifact(root, release) {
   if (packageJson?.name !== PACKAGE_NAME) fail(`package name must be ${PACKAGE_NAME}`)
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) fail('package version is missing')
   if (packageJson.engines?.node !== NODE_ENGINE) fail(`Node engine must be pinned to ${NODE_ENGINE}`)
-  if (packageJson.dependencies?.npm !== NPM_INSTALLER) fail(`bundled npm installer must be pinned to ${NPM_INSTALLER}`)
-  const npmEvidence = JSON.parse((await readRegularFile(root, 'dist/bundled-npm-evidence.json')).bytes.toString('utf8'))
-  if (npmEvidence?.schemaVersion !== 1 || npmEvidence?.version !== NPM_INSTALLER || !Number.isSafeInteger(npmEvidence?.packageCount) || npmEvidence.packageCount < 50 || !Array.isArray(npmEvidence.packages) || npmEvidence.packages.length !== npmEvidence.packageCount || !/^[a-f0-9]{64}$/u.test(npmEvidence.closureSha256)) fail('bundled npm closure evidence is invalid')
+  // The extension installer is npm's libraries (ADR-0080); the npm program
+  // is a build tool and never ships.
+  if (packageJson.dependencies?.npm !== undefined) fail('standalone artifact must not depend on the npm program')
+  if (await lstat(join(root, 'node_modules', 'npm')).then(() => true, (error) => error?.code !== 'ENOENT' ? Promise.reject(error) : false)) fail('standalone artifact must not contain the npm program')
   if (!Array.isArray(packageJson.files) || !packageJson.files.includes('dist')) fail('package files must include dist')
   if (!Object.entries(REQUIRED_BINS).every(([name, path]) => packageJson.bin?.[name] === path) || Object.keys(packageJson.bin ?? {}).length !== Object.keys(REQUIRED_BINS).length) {
     fail('standalone artifact must expose exactly the terminay-server and terminay-mcp bins')
@@ -96,7 +96,7 @@ export async function inspectStandaloneArtifact(root, release) {
     channel,
     revision,
     architecture,
-    package: { name: packageJson.name, version: packageJson.version, node: packageJson.engines.node, npm: packageJson.dependencies.npm },
+    package: { name: packageJson.name, version: packageJson.version, node: packageJson.engines.node },
     files,
     provenance: {
       generatedBy: 'scripts/standalone-artifact.mjs',
