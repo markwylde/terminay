@@ -56,7 +56,7 @@ jobs:
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: |
           mkdir -p "$HOME/.local"
-          npm install --global --prefix "$HOME/.local" npm@12.2.0
+          npm install --global --prefix "$HOME/.local" npm@12.2.1
           export PATH="$HOME/.local/bin:$PATH"
           hash -r
           npm ci
@@ -136,7 +136,7 @@ jobs:
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Build, extract, and exercise packaged built-ins offline
@@ -226,7 +226,7 @@ jobs:
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Build, lint, and run the fast gate
@@ -267,7 +267,7 @@ jobs:
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Build and test every workspace
@@ -305,7 +305,7 @@ jobs:
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       # The fast job leaves the selected WebRTC runtime unstaged, so every
@@ -364,7 +364,7 @@ jobs:
             --build-arg OCI_REVISION="${GITHUB_SHA}" \
             . >"$image_log" 2>&1 &
           image_build=$!
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
           npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
           if ! wait "$image_build"; then

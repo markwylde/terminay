@@ -1,4 +1,4 @@
-import type { DockviewApi, DockviewReadyEvent } from 'dockview';
+import type { DockviewApi, DockviewReadyEvent } from 'dockview-react';
 import {
 	type Dispatch,
 	type MutableRefObject,

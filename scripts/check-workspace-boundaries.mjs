@@ -1,7 +1,7 @@
 import { builtinModules } from 'node:module';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
-import ts from 'typescript';
+import ts from 'typescript-api';
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const BANNED_SHARED_MODULES = /^(?:node:|electron(?:\/|$)|ws(?:\/|$)|websocket(?:\/|$)|wrtc(?:\/|$)|@(?:roamhq|koush)\/wrtc(?:\/|$)|werift(?:\/|$)|node-datachannel(?:\/|$))/;

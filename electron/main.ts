@@ -596,50 +596,33 @@ function shellEscapePath(pathValue: string): string {
 	return `'${pathValue.replace(/'/g, `'\\''`)}'`;
 }
 
-function expandClipboardFormatCandidates(format: string): string[] {
-	const candidates = new Set<string>([format]);
-	if (format.includes('.') && !format.includes('/'))
-		candidates.add(format.replace('.', '/'));
-	if (format.includes('/') && !format.includes('.'))
-		candidates.add(format.replace('/', '.'));
-	return [...candidates];
-}
 
-function readClipboardFormatText(format: string): string | null {
-	for (const candidate of expandClipboardFormatCandidates(format)) {
-		try {
-			const text = clipboard.read(candidate);
-			if (text.length > 0) return text;
-		} catch {
-			// Try the next native format representation.
-		}
-		try {
-			const data = clipboard.readBuffer(candidate);
-			if (data.length > 0) return data.toString('utf8');
-		} catch {
-			// Try the next native format representation.
-		}
+async function readClipboardItemText(
+	item: Electron.ClipboardItem,
+	type: string,
+): Promise<string | null> {
+	if (!item.types.includes(type)) return null;
+	try {
+		const payload = await item.getType(type);
+		if (!(payload instanceof Blob)) return null;
+		const text = await payload.text();
+		return text.length > 0 ? text : null;
+	} catch {
+		return null;
 	}
-	return null;
 }
 
-function readClipboardFilePaths(): string[] {
-	const availableFormats = new Set(
-		clipboard.availableFormats().map((format) => format.toLowerCase()),
-	);
-	for (const format of [
-		'public.file-url',
-		'public/file-url',
-		'text/uri-list',
-		'nsfilenamespboardtype',
-	]) {
-		if (!availableFormats.has(format)) continue;
-		const value = readClipboardFormatText(format);
+async function readClipboardFilePaths(
+	items: Electron.ClipboardItem[],
+): Promise<string[]> {
+	for (const item of items) {
+		// Electron maps copied files to `text/uri-list` on every platform.
+		const value = await readClipboardItemText(item, 'text/uri-list');
 		if (!value) continue;
 		const paths = value
 			.split(/\r?\n/)
 			.map((entry) => entry.trim())
-			.filter((entry) => entry.length > 0)
+			.filter((entry) => entry.length > 0 && !entry.startsWith('#'))
 			.map((entry) => {
 				if (!entry.startsWith('file://')) return entry;
 				try {
@@ -654,8 +637,14 @@ function readClipboardFilePaths(): string[] {
 	return [];
 }
 
-function readClipboardImagePath(): string | null {
-	const imageBytes = clipboard.readImage().toPNG();
+async function readClipboardImagePath(
+	items: Electron.ClipboardItem[],
+): Promise<string | null> {
+	const item = items.find((candidate) => candidate.types.includes('image/png'));
+	if (!item) return null;
+	const payload = await item.getType('image/png').catch(() => null);
+	if (!(payload instanceof Blob)) return null;
+	const imageBytes = Buffer.from(await payload.arrayBuffer());
 	if (imageBytes.length === 0) return null;
 	const tempDir = path.join(app.getPath('temp'), 'terminay-clipboard');
 	mkdirSync(tempDir, { recursive: true });
@@ -664,12 +653,13 @@ function readClipboardImagePath(): string | null {
 	return filePath;
 }
 
-function readTerminalClipboard(): string {
-	const filePaths = readClipboardFilePaths();
+async function readTerminalClipboard(): Promise<string> {
+	const items = await clipboard.read();
+	const filePaths = await readClipboardFilePaths(items);
 	if (filePaths.length > 0) return filePaths.map(shellEscapePath).join(' ');
-	const text = clipboard.readText();
+	const text = await clipboard.readText();
 	if (text.length > 0) return text;
-	const imagePath = readClipboardImagePath();
+	const imagePath = await readClipboardImagePath(items);
 	return imagePath === null ? '' : shellEscapePath(imagePath);
 }
 
@@ -5981,7 +5971,7 @@ function createWindow(options?: {
 						cancelDesktopPairing(action.attemptId);
 						return;
 					case 'clipboard.write':
-						clipboard.writeText(action.text);
+						await clipboard.writeText(action.text);
 						return;
 					case 'file.choose': {
 						const result = await dialog.showOpenDialog(window, {
