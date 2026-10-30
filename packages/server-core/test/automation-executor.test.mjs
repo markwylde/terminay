@@ -597,3 +597,26 @@ test("a run's own variables replace inherited spellings, reach WSL, and are abse
   );
   assert.equal(wsl.env.WSLENV, "FOO/p:TERMINAY_EVENT:PROMPT");
 });
+
+test("a run gets no shell integration and reads the user's own ZDOTDIR", () => {
+  const resolved = {
+    shellPath: "/bin/zsh",
+    args: ["-l"],
+    shellIntegration: true,
+    env: {
+      PATH: "/bin",
+      ZDOTDIR: "/data/shell-integration/zsh",
+      TERMINAY_USER_ZDOTDIR: "/home/u/.config/zsh",
+      TERMINAY_SHELL_INTEGRATION: "1",
+      TERMINAY_COMMAND_DEFAULTS: "codex\u001f--no-daemon",
+      TERMINAY_MCP_SOCKET: "kept",
+    },
+  };
+  const run = nonInteractiveLaunch(resolved, "true", {});
+  assert.equal(run.shellIntegration, false);
+  assert.deepEqual(run.env, { PATH: "/bin", ZDOTDIR: "/home/u/.config/zsh", TERMINAY_MCP_SOCKET: "kept" });
+  const plain = nonInteractiveLaunch({ ...resolved, env: { ...resolved.env, TERMINAY_USER_ZDOTDIR: undefined } }, "true", {});
+  assert.equal("ZDOTDIR" in plain.env, false);
+  const untouched = nonInteractiveLaunch({ shellPath: "/bin/zsh", args: [], shellIntegration: false, env: { ZDOTDIR: "/mine" } }, "true", {});
+  assert.equal(untouched.env.ZDOTDIR, "/mine");
+});

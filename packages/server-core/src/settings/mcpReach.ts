@@ -10,8 +10,9 @@ import { isSettingsObject, type SettingsObject } from './types.js';
  *
  * Left out, whatever `SETTING_AUTHORITY` says: the Terminay MCP settings (the
  * Enable switch and every permission policy), Remote Access, recording (which
- * would be recording control in all but name), and the shell and shell profile
- * settings, which the shell profile tools manage. Device-local settings are
+ * would be recording control in all but name), the shell and shell profile
+ * settings, which the shell profile tools manage, and shell integration, which
+ * decides what runs in every new shell. Device-local settings are
  * never server-owned, so they cannot appear.
  */
 export const MCP_EXCLUDED_SETTING_KEYS: ReadonlySet<string> = new Set([
@@ -19,6 +20,7 @@ export const MCP_EXCLUDED_SETTING_KEYS: ReadonlySet<string> = new Set([
 	'remoteAccess',
 	'recording',
 	'shell',
+	'shellIntegration',
 	'shellProfiles',
 ]);
 

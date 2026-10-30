@@ -12,8 +12,11 @@ import {
 } from './chat.js';
 import { EXTENSION_API_VERSION, EXTENSION_LIMITS } from './constants.js';
 import {
+	type TerminalCommandDefaultResolution,
+	type TerminalCommandDefaultRuntime,
 	type TerminalLauncherResolution,
 	type TerminalLauncherRuntime,
+	validateTerminalCommandDefaultResolution,
 	validateTerminalLauncherResolution,
 } from './terminals.js';
 import type {
@@ -299,6 +302,12 @@ export interface AgentExtensionHarness {
 	registeredLauncherIds(): readonly string[];
 	/** Resolves a launcher as the host does, validated. */
 	resolveLauncher(launcherId: string): Promise<TerminalLauncherResolution>;
+	/** Terminal command default ids the extension registered, in registration order. */
+	registeredCommandDefaultIds(): readonly string[];
+	/** Resolves a command default as the host does, validated. */
+	resolveCommandDefault(
+		commandDefaultId: string,
+	): Promise<TerminalCommandDefaultResolution>;
 	release(reason: ExtensionReleaseReason): Promise<void>;
 	dispose(): Promise<void>;
 }
@@ -382,6 +391,12 @@ export async function createAgentExtensionHarness(
 		),
 	);
 	const launchers = new Map<string, TerminalLauncherRuntime>();
+	const commandDefaultDeclarations = new Set(
+		(manifest?.contributes.terminalCommandDefaults ?? []).map(
+			(commandDefault) => commandDefault.id,
+		),
+	);
+	const commandDefaults = new Map<string, TerminalCommandDefaultRuntime>();
 	const sources = new Map<string, AgentSessionSourceRuntime>();
 	const targets = new Map<string, McpInstallTargetRuntime>();
 	const chatProviders = new Map<string, AgentChatProviderRuntime>();
@@ -461,6 +476,24 @@ export async function createAgentExtensionHarness(
 					launcherId,
 					dispose(): void {
 						launchers.delete(launcherId);
+					},
+				};
+			},
+			registerCommandDefault(commandDefaultId, runtime) {
+				if (released) throw new Error('extension is deactivated');
+				if (manifest && !commandDefaultDeclarations.has(commandDefaultId))
+					throw new Error(
+						'terminal command default registration is undeclared',
+					);
+				if (commandDefaults.has(commandDefaultId))
+					throw new Error(
+						`Duplicate terminal command default: ${commandDefaultId}`,
+					);
+				commandDefaults.set(commandDefaultId, runtime);
+				return {
+					commandDefaultId,
+					dispose(): void {
+						commandDefaults.delete(commandDefaultId);
 					},
 				};
 			},
@@ -603,6 +636,7 @@ export async function createAgentExtensionHarness(
 		targets.clear();
 		chatProviders.clear();
 		launchers.clear();
+		commandDefaults.clear();
 		await extension.deactivate?.();
 	}
 
@@ -736,6 +770,22 @@ export async function createAgentExtensionHarness(
 		},
 		registeredLauncherIds() {
 			return [...launchers.keys()];
+		},
+		registeredCommandDefaultIds() {
+			return [...commandDefaults.keys()];
+		},
+		async resolveCommandDefault(commandDefaultId) {
+			const runtime = commandDefaults.get(commandDefaultId);
+			if (!runtime)
+				throw new Error(
+					`Unknown terminal command default: ${commandDefaultId}`,
+				);
+			const result = validateTerminalCommandDefaultResolution(
+				await runtime.resolve(new AbortController().signal),
+			);
+			if (!result.ok)
+				throw new Error(`resolution breached the contract: ${result.reason}`);
+			return result.value;
 		},
 		async resolveLauncher(launcherId) {
 			const runtime = launchers.get(launcherId);
@@ -874,6 +924,11 @@ export async function createLanguageServerExtensionHarness(
 		},
 		terminals: {
 			registerLauncher() {
+				throw new Error(
+					'this harness serves language servers; use createAgentExtensionHarness',
+				);
+			},
+			registerCommandDefault() {
 				throw new Error(
 					'this harness serves language servers; use createAgentExtensionHarness',
 				);

@@ -11,7 +11,11 @@ import {
 	PROVIDER_VAULT_BINDING_REF_PATTERN,
 	PROVIDER_VAULT_KEY_PATTERN,
 } from './constants.js';
-import type { TerminalLauncherContribution } from './terminals.js';
+import {
+	isTerminalCommandName,
+	type TerminalCommandDefaultContribution,
+	type TerminalLauncherContribution,
+} from './terminals.js';
 import type {
 	AgentSessionSnapshot,
 	AgentSessionSourceContribution,
@@ -55,6 +59,7 @@ const permissions = new Set<ExtensionPermission>([
 	'worktree-observation',
 	'agent-chat',
 	'agent-launch',
+	'terminal-command-defaults',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -245,6 +250,7 @@ export function validateExtensionManifest(
 				'worktreeInsights',
 				'agentChatProviders',
 				'terminalLaunchers',
+				'terminalCommandDefaults',
 			]),
 			'$.contributes',
 			out,
@@ -257,6 +263,7 @@ export function validateExtensionManifest(
 			worktreeInsights,
 			agentChatProviders,
 			terminalLaunchers,
+			terminalCommandDefaults,
 		} = value.contributes;
 		if (
 			agentSessionSources === undefined &&
@@ -264,7 +271,8 @@ export function validateExtensionManifest(
 			languageServers === undefined &&
 			worktreeInsights === undefined &&
 			agentChatProviders === undefined &&
-			terminalLaunchers === undefined
+			terminalLaunchers === undefined &&
+			terminalCommandDefaults === undefined
 		) {
 			out.push({
 				path: '$.contributes',
@@ -321,6 +329,18 @@ export function validateExtensionManifest(
 				out,
 			);
 		}
+		if (terminalCommandDefaults !== undefined) {
+			const harnesses = declaredHarnesses(agentSessionSources);
+			validateNamespacedContributions(
+				terminalCommandDefaults,
+				'terminalCommandDefaults',
+				EXTENSION_LIMITS.terminalCommandDefaults,
+				extensionId,
+				(item, id) =>
+					validateTerminalCommandDefaultContribution(item, id, harnesses),
+				out,
+			);
+		}
 		// The permission array validator reports a malformed array itself.
 		if (Array.isArray(value.permissions)) {
 			if (
@@ -372,6 +392,17 @@ export function validateExtensionManifest(
 					path: '$.permissions',
 					code: 'missing_permission',
 					message: 'Terminal launchers require agent-launch',
+				});
+			if (
+				Array.isArray(terminalCommandDefaults) &&
+				terminalCommandDefaults.length > 0 &&
+				!value.permissions.includes('terminal-command-defaults')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message:
+						'Terminal command defaults require terminal-command-defaults',
 				});
 		}
 	}
@@ -631,7 +662,8 @@ function validateNamespacedContributions(
 		| 'mcpInstallTargets'
 		| 'worktreeInsights'
 		| 'agentChatProviders'
-		| 'terminalLaunchers',
+		| 'terminalLaunchers'
+		| 'terminalCommandDefaults',
 	maximum: number,
 	extensionId: string,
 	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
@@ -883,33 +915,75 @@ export function validateTerminalLauncherContribution(
 			message: 'Icon must be an id from the Terminay icon allowlist',
 		});
 	validatePlatforms(value.platforms, '$.platforms', out);
-	if (value.harness !== undefined) {
-		if (!record(value.harness))
-			out.push({
-				path: '$.harness',
-				code: 'invalid_type',
-				message: 'Expected an object',
-			});
-		else {
-			closed(value.harness, new Set(['source', 'harness']), '$.harness', out);
-			const source = value.harness.source;
-			const harness = value.harness.harness;
-			if (
-				typeof source !== 'string' ||
-				typeof harness !== 'string' ||
-				harnesses.get(source)?.has(harness) !== true
-			)
-				out.push({
-					path: '$.harness',
-					code: 'undeclared_harness',
-					message:
-						'A launcher harness must be one a session source of this manifest declares',
-				});
-		}
-	}
+	validateContributionHarness(value.harness, harnesses, 'A launcher', out);
 	return out.length === 0
 		? { ok: true, value: value as unknown as TerminalLauncherContribution }
 		: { ok: false, issues: out };
+}
+
+/**
+ * Validates a standalone terminal command default manifest contribution. The
+ * command is fixed here, so a runtime can never point a default at another
+ * command; a harness, when named, follows the launcher rule.
+ */
+export function validateTerminalCommandDefaultContribution(
+	value: unknown,
+	extensionId: string,
+	harnesses: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): ValidationResult<TerminalCommandDefaultContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(value, new Set(['id', 'command', 'harness']), '$', out);
+	namespacedContributionId(value.id, extensionId, out);
+	if (!isTerminalCommandName(value.command))
+		out.push({
+			path: '$.command',
+			code: 'invalid_command',
+			message:
+				'Command must be one plain word that is not a shell builtin or reserved word',
+		});
+	validateContributionHarness(
+		value.harness,
+		harnesses,
+		'A command default',
+		out,
+	);
+	return out.length === 0
+		? {
+				ok: true,
+				value: value as unknown as TerminalCommandDefaultContribution,
+			}
+		: { ok: false, issues: out };
+}
+
+function validateContributionHarness(
+	value: unknown,
+	harnesses: ReadonlyMap<string, ReadonlySet<string>>,
+	subject: string,
+	out: SchemaIssue[],
+): void {
+	if (value === undefined) return;
+	if (!record(value)) {
+		out.push({
+			path: '$.harness',
+			code: 'invalid_type',
+			message: 'Expected an object',
+		});
+		return;
+	}
+	closed(value, new Set(['source', 'harness']), '$.harness', out);
+	const source = value.source;
+	const harness = value.harness;
+	if (
+		typeof source !== 'string' ||
+		typeof harness !== 'string' ||
+		harnesses.get(source)?.has(harness) !== true
+	)
+		out.push({
+			path: '$.harness',
+			code: 'undeclared_harness',
+			message: `${subject} harness must be one a session source of this manifest declares`,
+		});
 }
 
 function localId(value: unknown, path: string, out: SchemaIssue[]): void {

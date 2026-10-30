@@ -211,6 +211,9 @@ export type TerminalSettings = {
 	/** Server setting: a program names its tab with OSC 0 / OSC 2. A name a
 	 * person gave the tab always wins. */
 	programSetTabTitles: boolean;
+	/** Server setting: new zsh, bash, fish, and PowerShell terminals load
+	 * Terminay's shell integration after the user's startup files (ADR-0082). */
+	shellIntegration: boolean;
 	/** Device setting: which Terminay Desktop release channel this machine follows. */
 	updateChannel: 'stable' | 'beta';
 	convertEol: boolean;
