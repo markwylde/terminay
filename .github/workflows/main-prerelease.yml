@@ -145,10 +145,10 @@ jobs:
     # server archives: the channel then keeps its previous desktop set.
     timeout-minutes: 60
     outputs:
-      # Both platforms derive the same version from this commit and run number.
+      # Every platform derives the same version from this commit and run number.
       version: ${{ steps.beta_version.outputs.version }}
     strategy:
-      # Neither platform is published unless both were built from this commit.
+      # No platform is published unless every one was built from this commit.
       fail-fast: true
       matrix:
         include:
@@ -168,6 +168,13 @@ jobs:
             target: AppImage
             asset: terminay-desktop-main-linux-x86_64.AppImage
             metadata: beta-linux.yml
+            minimum_system_version: ''
+          - os: windows-latest
+            label: Windows
+            platform: win
+            target: nsis
+            asset: terminay-desktop-main-windows-x64-Setup.exe
+            metadata: beta.yml
             minimum_system_version: ''
 
     steps:
@@ -261,6 +268,27 @@ jobs:
             sh scripts/build-main-beta-desktop.sh "$PLATFORM" "$TARGET" "$ASSET" "$RUNNER_TEMP/beta-release-notes.md"
           fi
 
+      - name: Check every native file in the Windows beta is x64
+        if: matrix.platform == 'win'
+        run: node scripts/check-windows-pe-architecture.mjs release/main-desktop/win-unpacked
+
+      - name: Install the Windows beta installer and run terminals from it
+        if: matrix.platform == 'win'
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: ./scripts/probe-windows-desktop.ps1 -Installer "release/main-desktop/$env:ASSET" -Record "$env:RUNNER_TEMP/windows-probe.json"
+
+      - name: Preserve the Windows probe record
+        if: ${{ always() && matrix.platform == 'win' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-probe-main
+          path: |
+            ${{ runner.temp }}/windows-probe.json
+            ${{ runner.temp }}/windows-probe-failure.png
+          if-no-files-found: ignore
+
       - name: Check the Linux beta AppImage against the glibc floor and run terminals from it there
         if: matrix.platform == 'linux'
         env:
@@ -277,14 +305,14 @@ jobs:
           OUTPUT="release/main-desktop"
           test -f "$OUTPUT/$ASSET"
           test ! -L "$OUTPUT/$ASSET"
-          # The macOS zip also gets a blockmap. Beta clients never download
-          # differentially (the previous blockmap is overwritten every run), so
-          # it is expected here but never published.
+          # The macOS zip and the Windows installer also get a blockmap. Beta
+          # clients never download differentially (the previous blockmap is
+          # overwritten every run), so it is expected here but never published.
           EXPECTED_FILES="$OUTPUT/$ASSET"
-          if [ "$ASSET" = terminay-desktop-main-mac.zip ]; then
+          if [ "$ASSET" = terminay-desktop-main-mac.zip ] || [ "$ASSET" = terminay-desktop-main-windows-x64-Setup.exe ]; then
             EXPECTED_FILES="$(printf '%s\n' "$OUTPUT/$ASSET" "$OUTPUT/$ASSET.blockmap" | LC_ALL=C sort)"
           fi
-          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | LC_ALL=C sort)"
+          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | LC_ALL=C sort)"
           test "$ACTUAL_FILES" = "$EXPECTED_FILES"
           test -f "$OUTPUT/$METADATA"
           test ! -L "$OUTPUT/$METADATA"
@@ -431,8 +459,8 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           OUTPUT="release/main-desktop"
-          test "$(find "$OUTPUT" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$OUTPUT/beta-linux.yml $OUTPUT/beta-mac.yml $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage.sha256 $OUTPUT/terminay-desktop-main-mac.zip $OUTPUT/terminay-desktop-main-mac.zip.sha256 "
-          for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage; do
+          test "$(find "$OUTPUT" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$OUTPUT/beta-linux.yml $OUTPUT/beta-mac.yml $OUTPUT/beta.yml $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage.sha256 $OUTPUT/terminay-desktop-main-mac.zip $OUTPUT/terminay-desktop-main-mac.zip.sha256 $OUTPUT/terminay-desktop-main-windows-x64-Setup.exe $OUTPUT/terminay-desktop-main-windows-x64-Setup.exe.sha256 "
+          for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage terminay-desktop-main-windows-x64-Setup.exe; do
             test -f "$OUTPUT/$payload"
             test ! -L "$OUTPUT/$payload"
             test ! -L "$OUTPUT/$payload.sha256"
@@ -449,8 +477,14 @@ jobs:
             --assets-dir "$OUTPUT" \
             --expect-file terminay-desktop-main-linux-x86_64.AppImage \
             --require-release-notes)"
-          # Both platforms are one beta of this run, never a mixed pair.
+          WINDOWS_VERSION="$(node scripts/verify-update-metadata.mjs \
+            --metadata "$OUTPUT/beta.yml" \
+            --assets-dir "$OUTPUT" \
+            --expect-file terminay-desktop-main-windows-x64-Setup.exe \
+            --require-release-notes)"
+          # Every platform is one beta of this run, never a mixed set.
           test "$MAC_VERSION" = "$LINUX_VERSION"
+          test "$MAC_VERSION" = "$WINDOWS_VERSION"
           [[ "$MAC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
           test "${MAC_VERSION##*-beta.}" = "$RUN_NUMBER"
 
@@ -491,8 +525,11 @@ jobs:
               terminay-desktop-main-mac.zip.sha256 \
               terminay-desktop-main-linux-x86_64.AppImage \
               terminay-desktop-main-linux-x86_64.AppImage.sha256 \
+              terminay-desktop-main-windows-x64-Setup.exe \
+              terminay-desktop-main-windows-x64-Setup.exe.sha256 \
               beta-mac.yml \
-              beta-linux.yml; do
+              beta-linux.yml \
+              beta.yml; do
               cp "release/main-desktop/$NAME" "release/main-desktop/$NAME.incoming"
               gh release upload main-latest "release/main-desktop/$NAME.incoming" --repo "$GH_REPO" --clobber
             done
@@ -528,7 +565,9 @@ jobs:
               terminay-desktop-main-mac.zip \
               terminay-desktop-main-mac.zip.sha256 \
               terminay-desktop-main-linux-x86_64.AppImage \
-              terminay-desktop-main-linux-x86_64.AppImage.sha256; do
+              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
+              terminay-desktop-main-windows-x64-Setup.exe \
+              terminay-desktop-main-windows-x64-Setup.exe.sha256; do
               promote "$NAME"
             done
             # The beta metadata moves last. Until it does, clients keep reading
@@ -536,6 +575,7 @@ jobs:
             # bytes that fail its digest check and retries at the next check.
             promote beta-mac.yml
             promote beta-linux.yml
+            promote beta.yml
           fi
 
       - name: Verify the published main channel set
@@ -549,10 +589,13 @@ jobs:
           EXPECTED_ASSET_NAMES="$(cat <<EOF
           beta-linux.yml
           beta-mac.yml
+          beta.yml
           terminay-desktop-main-linux-x86_64.AppImage
           terminay-desktop-main-linux-x86_64.AppImage.sha256
           terminay-desktop-main-mac.zip
           terminay-desktop-main-mac.zip.sha256
+          terminay-desktop-main-windows-x64-Setup.exe
+          terminay-desktop-main-windows-x64-Setup.exe.sha256
           terminay-server-main-linux-arm64.tar.gz
           terminay-server-main-linux-arm64.tar.gz.sha256
           terminay-server-main-linux-arm64.tar.gz.sig
@@ -587,11 +630,14 @@ jobs:
               terminay-desktop-main-mac.zip.sha256 \
               terminay-desktop-main-linux-x86_64.AppImage \
               terminay-desktop-main-linux-x86_64.AppImage.sha256 \
+              terminay-desktop-main-windows-x64-Setup.exe \
+              terminay-desktop-main-windows-x64-Setup.exe.sha256 \
               beta-mac.yml \
-              beta-linux.yml; do
+              beta-linux.yml \
+              beta.yml; do
               gh release download main-latest --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$NAME"
             done
-            for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage; do
+            for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage terminay-desktop-main-windows-x64-Setup.exe; do
               node scripts/release-checksum.mjs verify "$PUBLISHED/$payload" "$PUBLISHED/$payload.sha256"
             done
             # Every file the published beta metadata sends a client to must be
@@ -608,10 +654,17 @@ jobs:
               --expect-file terminay-desktop-main-linux-x86_64.AppImage \
               --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
               --require-release-notes
+            node scripts/verify-update-metadata.mjs \
+              --metadata "$PUBLISHED/beta.yml" \
+              --assets-dir "$PUBLISHED" \
+              --expect-file terminay-desktop-main-windows-x64-Setup.exe \
+              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
+              --require-release-notes
             if [ "$DESKTOP_BETA" = success ]; then
               # The published metadata is this run's, not a survivor.
               cmp "$PUBLISHED/beta-mac.yml" release/main-desktop/beta-mac.yml
               cmp "$PUBLISHED/beta-linux.yml" release/main-desktop/beta-linux.yml
+              cmp "$PUBLISHED/beta.yml" release/main-desktop/beta.yml
             fi
           fi
 

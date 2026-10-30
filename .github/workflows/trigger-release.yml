@@ -197,6 +197,15 @@ jobs:
             update_payload: Terminay-Linux-%VERSION%.AppImage
             update_metadata: latest-linux.yml
             update_minimum_system_version: ''
+          # Windows ships an unsigned x64 NSIS installer, which also serves
+          # in-place updates through its blockmap (native-windows-desktop).
+          - os: windows-latest
+            label: Windows
+            script: npm run build:win
+            asset_templates: Terminay-Windows-%VERSION%-Setup.exe Terminay-Windows-%VERSION%-Setup.exe.blockmap
+            update_payload: Terminay-Windows-%VERSION%-Setup.exe
+            update_metadata: latest.yml
+            update_minimum_system_version: ''
 
     steps:
       - name: Check out code
@@ -285,6 +294,34 @@ jobs:
           node scripts/linux-glibc-floor.mjs check --target linux-x64 "$APPIMAGE"
           sh scripts/probe-linux-glibc-floor.sh appimage "$APPIMAGE"
 
+      - name: Check every native file in the Windows app is x64
+        if: matrix.os == 'windows-latest'
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: node scripts/check-windows-pe-architecture.mjs "release/${TAG#v}/win-unpacked"
+
+      # Installs the exact installer that will be published, runs PowerShell
+      # and Command Prompt terminals from it, restarts it with a held terminal,
+      # and uninstalls it (scripts/probe-windows-desktop.ps1).
+      - name: Install the Windows installer and run terminals from it
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          $version = $env:TAG.Substring(1)
+          ./scripts/probe-windows-desktop.ps1 -Installer "release/$version/Terminay-Windows-$version-Setup.exe" -Record "$env:RUNNER_TEMP/windows-probe.json"
+
+      - name: Preserve the Windows probe record
+        if: ${{ always() && matrix.os == 'windows-latest' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-probe
+          path: |
+            ${{ runner.temp }}/windows-probe.json
+            ${{ runner.temp }}/windows-probe-failure.png
+          if-no-files-found: ignore
+
       - name: Verify exact release asset selection
         id: asset_selection
         env:
@@ -312,9 +349,9 @@ jobs:
           # Every publishable payload electron-builder wrote must be one of the
           # reviewed names: a stale or unexpected payload fails packaging. The
           # unpacked app directories are not payloads and are not searched.
-          CANDIDATE_COUNT="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | wc -l | tr -d '[:space:]')"
+          CANDIDATE_COUNT="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | wc -l | tr -d '[:space:]')"
           test "$CANDIDATE_COUNT" = "$EXPECTED_COUNT"
-          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' \) -print | LC_ALL=C sort)"
+          ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | LC_ALL=C sort)"
           test "$ACTUAL_FILES" = "$EXPECTED_FILES"
 
           # Exactly one update-metadata file, for this lane's stable channel.
@@ -859,6 +896,10 @@ jobs:
           Terminay-Mac-${VERSION}.zip.blockmap
           Terminay-Mac-${VERSION}.zip.blockmap.sha256
           Terminay-Mac-${VERSION}.zip.sha256
+          Terminay-Windows-${VERSION}-Setup.exe
+          Terminay-Windows-${VERSION}-Setup.exe.blockmap
+          Terminay-Windows-${VERSION}-Setup.exe.blockmap.sha256
+          Terminay-Windows-${VERSION}-Setup.exe.sha256
           terminay-server-${VERSION}-linux-arm64.tar.gz
           terminay-server-${VERSION}-linux-arm64.tar.gz.sha256
           terminay-server-${VERSION}-linux-arm64.tar.gz.sig
@@ -892,6 +933,10 @@ jobs:
             "Terminay-Mac-${VERSION}.zip.blockmap.sha256" \
             "Terminay-Linux-${VERSION}.AppImage" \
             "Terminay-Linux-${VERSION}.AppImage.sha256" \
+            "Terminay-Windows-${VERSION}-Setup.exe" \
+            "Terminay-Windows-${VERSION}-Setup.exe.sha256" \
+            "Terminay-Windows-${VERSION}-Setup.exe.blockmap" \
+            "Terminay-Windows-${VERSION}-Setup.exe.blockmap.sha256" \
             "terminay-server-${VERSION}-linux-x64.tar.gz" \
             "terminay-server-${VERSION}-linux-x64.tar.gz.sha256" \
             "terminay-server-${VERSION}-linux-x64.tar.gz.sig" \
@@ -906,6 +951,8 @@ jobs:
             "$ASSET_DIR/Terminay-Mac-${VERSION}.zip" \
             "$ASSET_DIR/Terminay-Mac-${VERSION}.zip.blockmap" \
             "$ASSET_DIR/Terminay-Linux-${VERSION}.AppImage" \
+            "$ASSET_DIR/Terminay-Windows-${VERSION}-Setup.exe" \
+            "$ASSET_DIR/Terminay-Windows-${VERSION}-Setup.exe.blockmap" \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-x64.tar.gz" \
             "$ASSET_DIR/terminay-server-${VERSION}-linux-arm64.tar.gz"; do
             (
@@ -931,8 +978,8 @@ jobs:
           test -n "$TAG"
           VERSION="${TAG#v}"
           ASSET_DIR="release/$VERSION"
-          # Exactly the two stable-channel files, nothing smuggled beside them.
-          test "$(find "$METADATA_DIR" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$METADATA_DIR/latest-linux.yml $METADATA_DIR/latest-mac.yml "
+          # Exactly the three stable-channel files, nothing smuggled beside them.
+          test "$(find "$METADATA_DIR" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$METADATA_DIR/latest-linux.yml $METADATA_DIR/latest-mac.yml $METADATA_DIR/latest.yml "
           gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/release-asset-names"
           # Every file a client would download must be an asset of this
           # release, and its bytes as published must match the metadata digest.
@@ -949,6 +996,12 @@ jobs:
             --version "$VERSION" \
             --expect-file "Terminay-Linux-${VERSION}.AppImage" \
             --release-assets "$RUNNER_TEMP/release-asset-names"
+          node scripts/verify-update-metadata.mjs \
+            --metadata "$METADATA_DIR/latest.yml" \
+            --assets-dir "$ASSET_DIR" \
+            --version "$VERSION" \
+            --expect-file "Terminay-Windows-${VERSION}-Setup.exe" \
+            --release-assets "$RUNNER_TEMP/release-asset-names"
 
       - name: Append release asset summary
         env:
@@ -961,6 +1014,7 @@ jobs:
 
           - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Mac-${TAG#v}-Installer.dmg
           - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Linux-${TAG#v}.AppImage
+          - Windows installer (x64, unsigned): https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Windows-${TAG#v}-Setup.exe
           - Standalone server (linux-x64): https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}-linux-x64.tar.gz
           - Standalone server (linux-arm64): https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}-linux-arm64.tar.gz
           EOF
@@ -983,12 +1037,12 @@ jobs:
           METADATA_DIR: ${{ runner.temp }}/update-metadata
         run: |
           test -n "$TAG"
-          for metadata in latest-mac.yml latest-linux.yml; do
+          for metadata in latest-mac.yml latest-linux.yml latest.yml; do
             test -f "$METADATA_DIR/$metadata"
             test ! -L "$METADATA_DIR/$metadata"
           done
           # Deliberately omit --clobber, as for every other release asset.
-          gh release upload "$TAG" "$METADATA_DIR/latest-mac.yml" "$METADATA_DIR/latest-linux.yml" --repo "$GH_REPO"
+          gh release upload "$TAG" "$METADATA_DIR/latest-mac.yml" "$METADATA_DIR/latest-linux.yml" "$METADATA_DIR/latest.yml" --repo "$GH_REPO"
 
       - name: Verify the published update metadata
         env:
@@ -1000,7 +1054,7 @@ jobs:
           test -n "$TAG"
           PUBLISHED="$RUNNER_TEMP/published-update-metadata"
           mkdir -p "$PUBLISHED"
-          for metadata in latest-mac.yml latest-linux.yml; do
+          for metadata in latest-mac.yml latest-linux.yml latest.yml; do
             gh release download "$TAG" --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$metadata"
             cmp "$PUBLISHED/$metadata" "$METADATA_DIR/$metadata"
           done
