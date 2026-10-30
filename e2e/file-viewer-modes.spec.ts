@@ -63,11 +63,11 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await hexBytes.first().click()
   await hexBytes.nth(3).click({ modifiers: ['Shift'] })
   await expect(mainWindow.locator('.file-hex-viewer__selection')).toContainText('Selected 4 bytes')
-  await mainWindow.getByRole('tab', { name: 'Preview' }).click()
+  await mainWindow.getByRole('tab', { name: 'Preview', exact: true }).click()
   await expect(mainWindow.locator('.file-preview-text')).toContainText('switch me')
 
   await fileExplorerItem(mainWindow, 'diff-target.tsx').dblclick()
-  await mainWindow.getByRole('tab', { name: 'Diff' }).click()
+  await mainWindow.getByRole('tab', { name: 'Diff', exact: true }).click()
   await expect(mainWindow.locator('.file-diff-viewer')).toBeVisible()
   await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "new"')
   await expect(mainWindow.getByRole('button', { name: 'Unified' })).toBeVisible()
@@ -98,7 +98,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'section' }).first()).toBeVisible()
 
   await fileExplorerItem(mainWindow, 'large-diff.txt').dblclick()
-  await mainWindow.getByRole('tab', { name: 'Diff' }).click()
+  await mainWindow.getByRole('tab', { name: 'Diff', exact: true }).click()
   await expect(mainWindow.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true')
   await expect(mainWindow.locator('.file-diff-viewer__viewport')).toHaveAttribute('data-row-count', /[1-9]\d{2,}/)
   await expect.poll(() => mainWindow.locator('.file-viewer-virtual-surface__row').count()).toBeLessThan(100)
@@ -119,7 +119,7 @@ test('text mode colorizes syntax on open without needing a scroll', async ({ cre
 
   await fileExplorerItem(mainWindow, 'spec.md').dblclick()
   await leaveDocumentView(mainWindow)
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
 
   // Monaco renders every token as a span.mtk<N>; plaintext is entirely mtk1.
   // If markdown tokenization painted, there must be visible non-mtk1 tokens
