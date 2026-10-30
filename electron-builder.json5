@@ -81,6 +81,14 @@
   "win": {
     // A checked-in .ico, so packaging never converts the PNG at build time.
     "icon": "public/terminay.ico",
+    // The x64 payload carries only x64 native code; the packages ship every
+    // Windows architecture's prebuilds (scripts/check-windows-pe-architecture.mjs).
+    "files": [
+      "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
+      "!**/node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
+      "!**/node_modules/koffi/build/koffi/win32_arm64/**",
+      "!**/node_modules/koffi/build/koffi/win32_ia32/**"
+    ],
     "target": [
       {
         "target": "nsis",

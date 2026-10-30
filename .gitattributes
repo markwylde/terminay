@@ -1,0 +1,4 @@
+# Check out every file byte for byte on every platform. Release builds hash
+# their inputs (the Secure Werift patches, licences, integrity manifests), so a
+# Windows checkout with core.autocrlf must not rewrite line endings.
+* -text
