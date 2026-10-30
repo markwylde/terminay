@@ -32,7 +32,7 @@ test('File explorer opens MDX through the isolated preview surface', async ({
 	await expect(mainWindow.locator('.file-panel')).toBeVisible();
 	const previewTab = mainWindow
 		.locator('.file-panel')
-		.getByRole('tab', { name: 'Preview' });
+		.getByRole('tab', { name: 'Preview', exact: true });
 	await expect(previewTab).toBeVisible();
 	await previewTab.click();
 	await expect(mainWindow.locator('iframe[title="MDX preview"]')).toBeVisible({
