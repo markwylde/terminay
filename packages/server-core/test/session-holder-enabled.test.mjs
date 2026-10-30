@@ -26,7 +26,15 @@ test("a test harness gets no holder unless it asks for one", () => {
   assert.equal(on({ TERMINAY_TEST: "1", TERMINAY_SESSION_HOLDER: "0" }), false);
 });
 
+test("on Windows it is on with the user's SID, and has no path limit", () => {
+  const windows = { platform: "win32", userSid: "S-1-5-21-1-2-3-1001" };
+  assert.equal(on({}, { ...windows, dataRoot: "C:\\Users\\ada\\AppData\\Roaming\\Terminay" }), true);
+  assert.equal(on({}, { ...windows, dataRoot: `C:\\Users\\${"a".repeat(200)}\\Terminay` }), true);
+  assert.equal(on({ TERMINAY_SESSION_HOLDER: "0" }, windows), false);
+});
+
 test("it is off where it cannot work, whatever was asked", () => {
+  // A Windows holder's pipe is named for the user; without the SID there is no name.
   assert.equal(on({ TERMINAY_SESSION_HOLDER: "1" }, { platform: "win32" }), false);
   // The holder's socket lives under the data root, and a Unix socket path is
   // limited to about a hundred bytes. Terminals that end with the server are

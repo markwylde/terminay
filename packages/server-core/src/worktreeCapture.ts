@@ -7,6 +7,7 @@ import type {
 	FolderReconcilerOptions,
 	WorktreeAppeared,
 } from './folderReconciler.js';
+import { GitTraceDirectory } from './gitTraceDirectory.js';
 import type {
 	WorkspaceApplyResult,
 	WorkspaceCommand,
@@ -161,7 +162,9 @@ export type WorktreeCaptureReport =
 export type GitCommandSocketPlacement =
 	| 'data-directory'
 	| 'runtime-directory'
-	| 'per-run';
+	| 'per-run'
+	/** Windows: a directory Git writes one file per process into (ADR-0079). */
+	| 'trace-directory';
 
 /** The key file's name in the data directory. */
 export const GIT_TRACE_KEY_FILENAME = 'git-trace.key';
@@ -203,6 +206,12 @@ export interface GitCommandStreamOptions {
 	/** A Unix socket path the server owns. It must be short: socket paths are
 	 * capped near 104 bytes. */
 	readonly socketPath: string;
+	/** Windows: the directory Git writes its events into instead of a socket,
+	 * which Node cannot serve there (ADR-0079). Named, it replaces the socket. */
+	readonly traceDirectory?: string;
+	/** Close the trace directory to other users once it exists; false leaves
+	 * Git unreported. */
+	readonly prepareTraceDirectory?: (path: string) => boolean;
 	readonly onWorktreeAdd: (command: {
 		readonly sessionId: string;
 		readonly directoryName: string;
@@ -227,13 +236,30 @@ export class GitCommandStream {
 	private readonly sessions = new Map<string, string>();
 	private readonly connections = new Set<Socket>();
 	private server: Server | undefined;
+	private directory: GitTraceDirectory | undefined;
 
 	constructor(private readonly options: GitCommandStreamOptions) {}
+
+	private get listening(): boolean {
+		return this.server !== undefined || this.directory?.listening === true;
+	}
 
 	/** Start listening. Resolves false, leaving terminals unreported, when the
 	 * socket cannot be created. */
 	listen(): Promise<boolean> {
-		if (this.server !== undefined) return Promise.resolve(true);
+		if (this.listening) return Promise.resolve(true);
+		const traceDirectory = this.options.traceDirectory;
+		if (traceDirectory !== undefined) {
+			this.directory = new GitTraceDirectory({
+				path: traceDirectory,
+				maxLineBytes: MAX_TRACE_LINE_BYTES,
+				onLine: (line) => this.line(line),
+				...(this.options.prepareTraceDirectory === undefined
+					? {}
+					: { prepare: this.options.prepareTraceDirectory }),
+			});
+			return Promise.resolve(this.directory.start());
+		}
 		return new Promise((resolve) => {
 			try {
 				rmSync(this.options.socketPath, { force: true });
@@ -266,7 +292,7 @@ export class GitCommandStream {
 		sessionId: string,
 		existing: Readonly<Record<string, string | undefined>> = {},
 	): Readonly<Record<string, string>> {
-		if (this.server === undefined) return {};
+		if (!this.listening) return {};
 		if (
 			existing.GIT_TRACE2_EVENT !== undefined ||
 			existing.GIT_TRACE2 !== undefined ||
@@ -275,7 +301,9 @@ export class GitCommandStream {
 			return {};
 		const token = this.register(sessionId);
 		return {
-			GIT_TRACE2_EVENT: `af_unix:stream:${this.options.socketPath}`,
+			GIT_TRACE2_EVENT:
+				this.options.traceDirectory ??
+				`af_unix:stream:${this.options.socketPath}`,
 			GIT_TRACE2_EVENT_BRIEF: '1',
 			GIT_TRACE2_EVENT_NESTING: '1',
 			GIT_TRACE2_PARENT_SID: token,
@@ -318,11 +346,20 @@ export class GitCommandStream {
 		return this.sessions.size;
 	}
 
+	/** Files of the trace directory still being read; for asserting nothing
+	 * accumulates. Zero for a socket. */
+	get openTraceFiles(): number {
+		return this.directory?.openFiles ?? 0;
+	}
+
 	close(): void {
 		for (const connection of this.connections) connection.destroy();
 		this.connections.clear();
 		this.server?.close();
 		this.server = undefined;
+		this.directory?.stop();
+		this.directory = undefined;
+		if (this.options.traceDirectory !== undefined) return;
 		try {
 			rmSync(this.options.socketPath, { force: true });
 		} catch {
@@ -702,6 +739,10 @@ export interface CaptureTerminalSession {
 
 export interface WorktreeCaptureHostOptions {
 	readonly socketPath: string;
+	/** Windows: Git's events go to this directory, not to `socketPath`. */
+	readonly traceDirectory?: string;
+	/** Close `traceDirectory` to other users; false leaves Git unreported. */
+	readonly prepareTraceDirectory?: (path: string) => boolean;
 	/** Where `socketPath` is, for diagnostics. `per-run` when absent. */
 	readonly socketPlacement?: GitCommandSocketPlacement;
 	/** Make the socket's directory fit to use; false leaves Git unreported. */
@@ -767,6 +808,12 @@ export function createWorktreeCaptureHost(
 	});
 	const gitCommands = new GitCommandStream({
 		socketPath: options.socketPath,
+		...(options.traceDirectory === undefined
+			? {}
+			: { traceDirectory: options.traceDirectory }),
+		...(options.prepareTraceDirectory === undefined
+			? {}
+			: { prepareTraceDirectory: options.prepareTraceDirectory }),
 		onWorktreeAdd: (command) => capture.noteWorktreeAdd(command),
 		tokenFor: gitTraceTokenFor(
 			options.tokenKey ?? randomBytes(GIT_TRACE_KEY_BYTES),

@@ -15,7 +15,13 @@ async function executableHelper(path) {
 	return true;
 }
 
-export async function ensureNodePtyHelperMode(nodePtyRoot) {
+export async function ensureNodePtyHelperMode(
+	nodePtyRoot,
+	{ platform = process.platform } = {},
+) {
+	// ConPTY is in-process and ships its own DLLs; node-pty has no spawn-helper
+	// on Windows. Keep the host injectable so Linux CI can cover this decision.
+	if (platform === 'win32') return 0;
 	const root = resolve(nodePtyRoot);
 	const helpers = [join(root, 'build', 'Release', 'spawn-helper')];
 	const prebuilds = join(root, 'prebuilds');
@@ -42,7 +48,7 @@ if (invokedPath && resolve(invokedPath) === fileURLToPath(import.meta.url)) {
 	const nodePtyRoot =
 		process.argv[2] ?? join(process.cwd(), 'node_modules', 'node-pty');
 	const repaired = await ensureNodePtyHelperMode(nodePtyRoot);
-	if (repaired === 0) {
+	if (repaired === 0 && process.platform !== 'win32') {
 		throw new Error(
 			`No node-pty spawn helper found under ${resolve(nodePtyRoot)}`,
 		);

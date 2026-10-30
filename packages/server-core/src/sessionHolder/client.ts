@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { connect, type Socket } from 'node:net';
 import type { SessionHolderRecordFile } from './holder.js';
 import {
@@ -9,14 +10,23 @@ import {
 	type HolderServerMessage,
 	type HolderSessionRecord,
 	type HolderSpawnRequest,
+	holderHandshakeProof,
+	holderProofMatches,
+	isHolderNonce,
 	parseHolderCloseNotice,
 	SESSION_HOLDER_MAX_PAYLOAD_BYTES,
+	SESSION_HOLDER_MUTUAL_PROOF_VERSION,
+	SESSION_HOLDER_NONCE_BYTES,
 	SESSION_HOLDER_PROTOCOL_VERSIONS,
 } from './protocol.js';
 
-/** A holder turned this server away. `version` carries what it does speak. */
+/**
+ * A holder turned this server away. `version` carries what it does speak.
+ * `proof` means the other end could not prove it holds the credential, or this
+ * server would not present the credential to it: nothing was sent.
+ */
 export class SessionHolderRefusedError extends Error {
-	readonly reason: 'credential' | 'version' | 'busy' | 'closed';
+	readonly reason: 'credential' | 'version' | 'busy' | 'closed' | 'proof';
 	readonly versions: readonly number[] | undefined;
 	constructor(
 		reason: SessionHolderRefusedError['reason'],
@@ -65,6 +75,12 @@ type RequestBody<T extends RequestMessage['type']> = Omit<
 export interface SessionHolderConnectOptions {
 	readonly versions?: readonly number[];
 	/**
+	 * Never present the credential: connect only through the mutual proof, and
+	 * refuse a holder whose record does not offer it. On Windows, where a pipe
+	 * name can be taken by another user first (ADR-0081 §3).
+	 */
+	readonly requireMutualProof?: boolean;
+	/**
 	 * Gives up on a holder that is alive but does not answer. Nothing else
 	 * bounds a connect: it ends when the holder answers, refuses, or its
 	 * socket closes, which a holder process ending always does.
@@ -104,7 +120,8 @@ export class SessionHolderClient {
 	}
 
 	static connect(
-		record: Pick<SessionHolderRecordFile, 'socketPath' | 'credential'>,
+		record: Pick<SessionHolderRecordFile, 'socketPath' | 'credential'> &
+			Partial<Pick<SessionHolderRecordFile, 'versions'>>,
 		options: SessionHolderConnectOptions = {},
 	): Promise<SessionHolderClient> {
 		return new Promise((resolve, reject) => {
@@ -113,6 +130,23 @@ export class SessionHolderClient {
 				reject(abandoned(signal));
 				return;
 			}
+			const offered = options.versions ?? SESSION_HOLDER_PROTOCOL_VERSIONS;
+			// The holder's record says what it speaks. A holder that offers the
+			// mutual proof is always reached through it.
+			const proofVersions = offered.filter(
+				(version) =>
+					version >= SESSION_HOLDER_MUTUAL_PROOF_VERSION &&
+					(record.versions?.includes(version) ?? false),
+			);
+			const mutual = proofVersions.length > 0;
+			if (!mutual && options.requireMutualProof === true) {
+				reject(new SessionHolderRefusedError('proof'));
+				return;
+			}
+			const serverNonce = randomBytes(SESSION_HOLDER_NONCE_BYTES).toString(
+				'hex',
+			);
+			let proven = false;
 			const socket = connect(record.socketPath);
 			const frames = new HolderFrameDecoder();
 			let client: SessionHolderClient | undefined;
@@ -128,11 +162,17 @@ export class SessionHolderClient {
 			};
 			socket.once('connect', () => {
 				socket.write(
-					encodeHolderFrame({
-						type: 'hello',
-						credential: record.credential,
-						versions: options.versions ?? SESSION_HOLDER_PROTOCOL_VERSIONS,
-					}),
+					encodeHolderFrame(
+						mutual
+							? { type: 'challenge', versions: proofVersions, nonce: serverNonce }
+							: {
+									type: 'hello',
+									credential: record.credential,
+									versions: offered.filter(
+										(version) => version < SESSION_HOLDER_MUTUAL_PROOF_VERSION,
+									),
+								},
+					),
 				);
 			});
 			socket.on('error', () => {
@@ -165,6 +205,39 @@ export class SessionHolderClient {
 					if (message.type === 'refuse') {
 						fail(new SessionHolderRefusedError(message.reason, message.versions));
 						return;
+					}
+					if (mutual && !proven) {
+						// Nothing is sent to an end that has not proved itself.
+						if (
+							message.type !== 'proof' ||
+							!proofVersions.includes(message.version) ||
+							!isHolderNonce(message.nonce) ||
+							!holderProofMatches(
+								message.proof,
+								holderHandshakeProof(
+									record.credential,
+									'holder',
+									message.nonce,
+									serverNonce,
+								),
+							)
+						) {
+							fail(new SessionHolderRefusedError('proof'));
+							return;
+						}
+						proven = true;
+						socket.write(
+							encodeHolderFrame({
+								type: 'prove',
+								proof: holderHandshakeProof(
+									record.credential,
+									'server',
+									serverNonce,
+									message.nonce,
+								),
+							}),
+						);
+						continue;
 					}
 					if (message.type !== 'welcome') {
 						fail(new SessionHolderRefusedError('closed'));

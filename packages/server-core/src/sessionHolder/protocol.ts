@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 /**
  * Wire protocol between a Terminay Server and its detached session holder.
  *
@@ -9,9 +11,57 @@
  * A frame is `[u32 frameLength][u32 headerLength][header JSON][payload]`, all
  * lengths big-endian, `frameLength` counting everything after itself. Terminal
  * bytes travel only in the payload, never in the JSON header.
+ *
+ * Version 1 opens with `hello`, which carries the credential. Version 2 opens
+ * with `challenge`; the holder answers with its `proof`, and the server sends
+ * its own `prove` only once it has verified the holder's. Every frame after
+ * `welcome` is the same in both.
  */
 
-export const SESSION_HOLDER_PROTOCOL_VERSIONS: readonly number[] = [1];
+export const SESSION_HOLDER_PROTOCOL_VERSIONS: readonly number[] = [1, 2];
+
+/**
+ * Versions from which both ends prove the credential to each other instead of
+ * the server presenting it (ADR-0081 §3). Version 1 sends the credential in its
+ * `hello`, which is safe only where the socket's location is the owner's own;
+ * a Windows pipe name can be taken by anyone first.
+ */
+export const SESSION_HOLDER_MUTUAL_PROOF_VERSION = 2;
+
+/** Bytes of each side's handshake nonce. */
+export const SESSION_HOLDER_NONCE_BYTES = 32;
+
+/**
+ * What one side proves: an HMAC under the credential over both nonces, its own
+ * first, labelled with its role so neither proof can be reflected as the
+ * other's. The credential itself never crosses the channel.
+ */
+export function holderHandshakeProof(
+	credential: string,
+	role: 'holder' | 'server',
+	ownNonce: string,
+	peerNonce: string,
+): string {
+	return createHmac('sha256', credential)
+		.update(`terminay-session-holder-proof\0${role}\0${ownNonce}\0${peerNonce}`)
+		.digest('hex');
+}
+
+/** Constant-time comparison of two hex proofs. */
+export function holderProofMatches(offered: unknown, expected: string): boolean {
+	if (typeof offered !== 'string') return false;
+	const left = Buffer.from(offered, 'utf8');
+	const right = Buffer.from(expected, 'utf8');
+	return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
+export function isHolderNonce(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length === SESSION_HOLDER_NONCE_BYTES * 2 &&
+		/^[0-9a-f]+$/u.test(value)
+	);
+}
 
 /** Largest payload a single frame may carry. */
 export const SESSION_HOLDER_MAX_PAYLOAD_BYTES = 1024 * 1024;
@@ -146,6 +196,14 @@ export type HolderClientMessage =
 			readonly credential: string;
 			readonly versions: readonly number[];
 	  }
+	/** Opens a mutual-proof handshake (version 2 and later). */
+	| {
+			readonly type: 'challenge';
+			readonly versions: readonly number[];
+			readonly nonce: string;
+	  }
+	/** The server's proof, sent only after it has verified the holder's. */
+	| { readonly type: 'prove'; readonly proof: string }
 	| { readonly type: 'list'; readonly id: number }
 	| ({ readonly type: 'spawn'; readonly id: number } & HolderSpawnRequest)
 	| {
@@ -182,6 +240,13 @@ export type HolderClientMessage =
 
 /** Holder to server. */
 export type HolderServerMessage =
+	/** The holder's answer to a `challenge`: its nonce and its proof. */
+	| {
+			readonly type: 'proof';
+			readonly version: number;
+			readonly nonce: string;
+			readonly proof: string;
+	  }
 	| {
 			readonly type: 'welcome';
 			readonly version: number;

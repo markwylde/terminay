@@ -152,11 +152,23 @@ test('a runtime directory that is also too deep is a failure that carries what w
 	);
 });
 
-test('Windows uses its named pipe, which has no such limit', () => {
-	assert.deepEqual(resolve({ dataDirectory: LONG, platform: 'win32' }), {
-		location: 'named-pipe',
-		path: '\\\\.\\pipe\\terminay-control',
-	});
+const ADA = 'S-1-5-21-1004336348-1177238915-682003330-1001';
+const BOB = 'S-1-5-21-1004336348-1177238915-682003330-1002';
+const WINDOWS_ROOT = 'C:\\Users\\ada\\AppData\\Roaming\\Terminay';
+const pipe = (options) =>
+	resolve({ dataDirectory: WINDOWS_ROOT, platform: 'win32', userSid: ADA, ...options });
+
+test('Windows uses a named pipe, which has no such limit', () => {
+	const placement = pipe({ dataDirectory: `C:\\${'deep-directory\\'.repeat(20)}Terminay` });
+	assert.equal(placement.location, 'named-pipe');
+	assert.match(placement.path, /^\\\\\.\\pipe\\terminay-control-[0-9a-f]{24}$/);
+});
+
+test('the Windows pipe is named for the user and the data directory', () => {
+	assert.equal(pipe().path, pipe().path);
+	assert.notEqual(pipe({ userSid: BOB }).path, pipe().path, 'two users never collide');
+	assert.notEqual(pipe({ dataDirectory: 'D:\\Terminay' }).path, pipe().path, 'two data directories never collide');
+	assert.throws(() => pipe({ userSid: undefined }), /user SID/);
 });
 
 test('an absent runtime directory is created closed to everyone else', async () => {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const repositoryRoot = new URL("../", import.meta.url);
 const readJson = async (path) => JSON.parse(await readFile(new URL(path, repositoryRoot), "utf8"));
@@ -30,7 +31,7 @@ export async function writeBundledNpmEvidence(outputPath) {
   const evidence = await inspectBundledNpmEvidence(); await mkdir(dirname(outputPath), { recursive: true }); await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`); return evidence;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const output = process.argv[2]; if (!output) throw new Error("usage: bundled-npm-evidence.mjs <output>");
   await writeBundledNpmEvidence(resolve(output));
 }

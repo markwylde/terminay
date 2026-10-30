@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { stageBuiltInExtensions } from './stage-built-in-extensions.mjs'
 import { verifyBuiltInExtensionArtifacts } from './verify-built-in-extension-artifacts.mjs'
 
@@ -9,7 +10,7 @@ import { verifyBuiltInExtensionArtifacts } from './verify-built-in-extension-art
  * source checkout from silently reusing an old or absent `build/` directory.
  */
 export async function prepareDevelopmentBuiltInExtensions(options = {}) {
-	const root = resolve(options.root ?? new URL('..', import.meta.url).pathname)
+	const root = resolve(options.root ?? fileURLToPath(new URL('..', import.meta.url)))
 	const outputDirectory = resolve(root, options.outputDirectory ?? 'build/built-in-extensions')
 	const staged = await stageBuiltInExtensions({
 		root,

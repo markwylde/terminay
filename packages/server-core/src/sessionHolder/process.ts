@@ -1,7 +1,7 @@
 import { closeSync, writeSync } from 'node:fs';
 import type { NodePtyModuleLike } from '../terminalService/nodePty.js';
 import { SessionHolder } from './holder.js';
-import { isSessionHolderGeneration } from './paths.js';
+import { isSessionHolderGeneration, type SessionHolderAddressing } from './paths.js';
 
 /**
  * Environment a server passes to the holder process it starts. Everything a
@@ -13,6 +13,8 @@ export const SESSION_HOLDER_ENV = Object.freeze({
 	generation: 'TERMINAY_SESSION_HOLDER_GENERATION',
 	buildId: 'TERMINAY_SESSION_HOLDER_BUILD_ID',
 	limitMs: 'TERMINAY_SESSION_HOLDER_LIMIT_MS',
+	/** Windows: the user's SID, which names the holder's pipe. */
+	userSid: 'TERMINAY_SESSION_HOLDER_USER_SID',
 	/**
 	 * A descriptor the launcher holds the other end of. The holder closes it
 	 * once its record is in place, which is how the launcher hears it is
@@ -41,6 +43,7 @@ export async function runSessionHolderProcess(
 		buildId.length === 0
 	)
 		throw new Error('session holder environment is incomplete');
+	const addressing = holderAddressing(env[SESSION_HOLDER_ENV.userSid]);
 	const readyFd = Number(env[SESSION_HOLDER_ENV.readyFd]);
 	process.umask(0o077);
 	// The launch variables describe this holder, not the shells it starts.
@@ -51,6 +54,9 @@ export async function runSessionHolderProcess(
 		buildId,
 		nodePty,
 		limitMs: parseLimit(env[SESSION_HOLDER_ENV.limitMs]),
+		// A Windows pipe name can be taken first by anyone (ADR-0081 §3).
+		requireMutualProof: process.platform === 'win32',
+		addressing,
 		onClosed: () => process.exit(0),
 	});
 	// The record is in place: say so, and leave no shell this descriptor.
@@ -134,6 +140,20 @@ function boundedUtf8(text: string, maxBytes: number): Buffer {
 	// Never cut inside a multi-byte character.
 	while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
 	return bytes.subarray(0, end);
+}
+
+/**
+ * A Windows holder's pipe is named for its user. The launching server, which
+ * runs as the same user, says who that is, so the holder loads no Win32
+ * bindings of its own.
+ */
+function holderAddressing(
+	userSid: string | undefined,
+): SessionHolderAddressing {
+	if (process.platform !== 'win32') return { platform: process.platform };
+	if (userSid === undefined || userSid === '')
+		throw new Error('session holder environment is incomplete');
+	return { platform: 'win32', userSid };
 }
 
 function parseLimit(value: string | undefined): number | null {

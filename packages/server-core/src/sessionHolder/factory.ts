@@ -38,12 +38,14 @@ import {
 } from './observation.js';
 import {
 	isSessionHolderGeneration,
+	type SessionHolderAddressing,
+	sessionHolderAddress,
+	sessionHolderAddressFits,
 	sessionHolderDirectory,
 	sessionHolderRecordPath,
-	sessionHolderSocketPath,
 	sessionTailsDirectory,
-	socketPathFits,
 } from './paths.js';
+import { protectWindowsDirectory } from '../processObservation/windows.js';
 import {
 	SESSION_HOLDER_ENV,
 	SESSION_HOLDER_FAILURE_REASON_BYTES,
@@ -129,6 +131,18 @@ export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	/** Unattached limit sent to every holder. `null` means no limit. */
 	readonly limitMs: number | null;
 	/**
+	 * Reach holders only through the mutual proof, never presenting the
+	 * credential. True on Windows (ADR-0081 §3).
+	 */
+	readonly requireMutualProof?: boolean;
+	/**
+	 * Where holders run. Defaults to this process's platform; on Windows it
+	 * must carry the user's SID, which names each holder's pipe.
+	 */
+	readonly addressing?: SessionHolderAddressing;
+	/** Windows: close a directory to all but the user. Defaults to the Win32 call. */
+	readonly protectDirectory?: (path: string, userSid: string) => boolean;
+	/**
 	 * Metadata-only observer for holder lifecycle and held sessions ending.
 	 * Called on transitions, never for output, and never able to fail one.
 	 */
@@ -177,6 +191,7 @@ export function createSessionHolderPtyFactory(
 	options: SessionHolderPtyFactoryOptions,
 ): SessionHolderPtyFactory {
 	const { dataRoot } = options;
+	const addressing = options.addressing ?? { platform: process.platform };
 	const polling = createForegroundPolling(options.foregroundPolling);
 	const clients = new Map<string, SessionHolderClient>();
 	const owners = new Map<string, SessionHolderClient>();
@@ -328,13 +343,13 @@ export function createSessionHolderPtyFactory(
 			const held: HeldSessionSummary[] = [];
 			const wait = waitUntilLeaving();
 			try {
-				for (const record of readHolderRecords(dataRoot)) {
+				for (const record of readHolderRecords(dataRoot, addressing)) {
 					const holder: SessionHolderIdentity = {
 						pid: record.pid,
 						startedAt: record.startedAt,
 					};
 					if (!processIsAlive(record.pid)) {
-						removeHolderFiles(dataRoot, record.generation);
+						removeHolderFiles(dataRoot, record.generation, addressing);
 						observe({ kind: 'record-removed', holder });
 						continue;
 					}
@@ -344,6 +359,7 @@ export function createSessionHolderPtyFactory(
 						// ends the wait; one alive but silent is ended by the server leaving.
 						client = await SessionHolderClient.connect(record, {
 							signal: wait.signal,
+							requireMutualProof: options.requireMutualProof === true,
 						});
 					} catch (error) {
 						if (
@@ -437,7 +453,7 @@ export function createSessionHolderPtyFactory(
 			};
 			try {
 				const generation = randomBytes(8).toString('hex');
-				if (!socketPathFits(sessionHolderSocketPath(dataRoot, generation)))
+				if (!sessionHolderAddressFits(dataRoot, generation, addressing))
 					throw new Error('session holder socket path is too long');
 				const record = await launchSessionHolder(
 					{
@@ -457,6 +473,7 @@ export function createSessionHolderPtyFactory(
 				child?.once('exit', exited);
 				const client = await SessionHolderClient.connect(record, {
 					signal: abort.signal,
+					requireMutualProof: options.requireMutualProof === true,
 				});
 				track(client, record.startedAt);
 				current = client;
@@ -713,6 +730,8 @@ export function launchDetachedSessionHolder(
 ): ChildProcess {
 	const child = spawnChild(execPath, [...args], {
 		detached: true,
+		// Windows: a detached console process would otherwise open a window.
+		windowsHide: true,
 		// Descriptor 3 is closed by the holder once it is ready.
 		stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
 		env: {
@@ -727,6 +746,7 @@ export function launchDetachedSessionHolder(
 /** Every holder record in a data root, whether or not its process is alive. */
 export function readHolderRecords(
 	dataRoot: string,
+	addressing: SessionHolderAddressing = { platform: process.platform },
 ): readonly SessionHolderRecordFile[] {
 	const directory = sessionHolderDirectory(dataRoot);
 	let names: string[];
@@ -740,7 +760,7 @@ export function readHolderRecords(
 		if (!name.endsWith('.json')) continue;
 		const generation = name.slice(0, -'.json'.length);
 		if (!isSessionHolderGeneration(generation)) continue;
-		const record = readHolderRecord(dataRoot, generation);
+		const record = readHolderRecord(dataRoot, generation, addressing);
 		if (record !== undefined) records.push(record);
 	}
 	return records.sort((left, right) => left.startedAt - right.startedAt);
@@ -749,6 +769,7 @@ export function readHolderRecords(
 function readHolderRecord(
 	dataRoot: string,
 	generation: string,
+	addressing: SessionHolderAddressing,
 ): SessionHolderRecordFile | undefined {
 	try {
 		const value = JSON.parse(
@@ -771,7 +792,7 @@ function readHolderRecord(
 			credential: value.credential,
 			// The path is derived, never trusted from the file: a record cannot
 			// redirect this server to a socket outside its data root.
-			socketPath: sessionHolderSocketPath(dataRoot, generation),
+			socketPath: sessionHolderAddress({ ...addressing, dataRoot, generation }),
 			startedAt: value.startedAt,
 		};
 	} catch {
@@ -779,9 +800,17 @@ function readHolderRecord(
 	}
 }
 
-function removeHolderFiles(dataRoot: string, generation: string): void {
+function removeHolderFiles(
+	dataRoot: string,
+	generation: string,
+	addressing: SessionHolderAddressing,
+): void {
 	rmSync(sessionHolderRecordPath(dataRoot, generation), { force: true });
-	rmSync(sessionHolderSocketPath(dataRoot, generation), { force: true });
+	// A dead holder's pipe is already gone; only a socket file is left behind.
+	if (addressing.platform !== 'win32')
+		rmSync(sessionHolderAddress({ ...addressing, dataRoot, generation }), {
+			force: true,
+		});
 }
 
 function processIsAlive(pid: number): boolean {
@@ -851,7 +880,7 @@ function holderGone(
 export function launchSessionHolder(
 	options: Pick<
 		SessionHolderPtyFactoryOptions,
-		'dataRoot' | 'buildId' | 'launch'
+		'dataRoot' | 'buildId' | 'launch' | 'addressing' | 'protectDirectory'
 	>,
 	generation: string,
 	limitMs: number | null,
@@ -859,6 +888,20 @@ export function launchSessionHolder(
 ): Promise<SessionHolderRecordFile> {
 	const directory = sessionHolderDirectory(options.dataRoot);
 	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	const userSid =
+		options.addressing?.platform === 'win32'
+			? options.addressing.userSid
+			: undefined;
+	// Windows ignores modes: the records' credentials are kept by a DACL that
+	// admits only this user, SYSTEM and Administrators.
+	if (
+		options.addressing?.platform === 'win32' &&
+		(userSid === undefined ||
+			!(options.protectDirectory ?? protectWindowsDirectory)(directory, userSid))
+	)
+		return Promise.reject(
+			new Error('session holder directory could not be protected'),
+		);
 	return new Promise((resolve, reject) => {
 		let settled = false;
 		let child: SessionHolderLaunchedProcess | undefined;
@@ -933,7 +976,11 @@ export function launchSessionHolder(
 		const check = (): void => {
 			if (settled) return;
 			// The record is renamed into place, so it is complete once visible.
-			const record = readHolderRecord(options.dataRoot, generation);
+			const record = readHolderRecord(
+				options.dataRoot,
+				generation,
+				options.addressing ?? { platform: process.platform },
+			);
 			if (record === undefined) return;
 			cleanup();
 			resolve(record);
@@ -951,6 +998,9 @@ export function launchSessionHolder(
 					[SESSION_HOLDER_ENV.buildId]: options.buildId,
 					[SESSION_HOLDER_ENV.limitMs]:
 						limitMs === null ? 'none' : String(limitMs),
+					...(userSid === undefined
+						? {}
+						: { [SESSION_HOLDER_ENV.userSid]: userSid }),
 				},
 			});
 		} catch (error) {
