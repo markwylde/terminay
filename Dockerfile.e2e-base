@@ -52,7 +52,7 @@ USER root
 RUN npx playwright install-deps chromium
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth \
+    && apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth zsh \
     && rm -rf /var/lib/apt/lists/*
 
 USER node

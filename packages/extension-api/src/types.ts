@@ -4,8 +4,9 @@ import type {
 } from './chat.js';
 import type { EXTENSION_ICONS } from './constants.js';
 import type {
+	TerminalCommandDefaultContribution,
+	TerminalContributionRegistry,
 	TerminalLauncherContribution,
-	TerminalLauncherRegistry,
 } from './terminals.js';
 import type {
 	WorktreeInsightSourceContribution,
@@ -30,7 +31,8 @@ export type ExtensionPermission =
 	| 'mcp-registration'
 	| 'worktree-observation'
 	| 'agent-chat'
-	| 'agent-launch';
+	| 'agent-launch'
+	| 'terminal-command-defaults';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -115,6 +117,7 @@ export interface TerminayExtensionManifest {
 		worktreeInsights?: WorktreeInsightSourceContribution[];
 		agentChatProviders?: AgentChatProviderContribution[];
 		terminalLaunchers?: TerminalLauncherContribution[];
+		terminalCommandDefaults?: TerminalCommandDefaultContribution[];
 	};
 }
 
@@ -246,8 +249,11 @@ export interface ExtensionContext {
 	mcp: McpInstallTargetRegistry;
 	/** Worktree insight sources are available only to manifests granted worktree-observation. */
 	worktrees: WorktreeInsightSourceRegistry;
-	/** Terminal launchers are available only to manifests granted agent-launch. */
-	terminals: TerminalLauncherRegistry;
+	/**
+	 * Terminal launchers are available only to manifests granted agent-launch,
+	 * and command defaults only to manifests granted terminal-command-defaults.
+	 */
+	terminals: TerminalContributionRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
 	/**

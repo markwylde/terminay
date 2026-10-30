@@ -258,6 +258,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		const worktreeInsightSources: string[] = [];
 		const agentChatProviders: string[] = [];
 		const registeredLaunchers: string[] = [];
+		const registeredCommandDefaults: string[] = [];
 		stopAllSources();
 		sessionSources.clear();
 		mcpTargets.clear();
@@ -300,7 +301,10 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		const declaredTargets = declaredIds(payload.mcpInstallTargets);
 		worktreeInsights.reset([...declaredIds(payload.worktreeInsights)]);
 		await agentChats.reset([...declaredIds(payload.agentChatProviders)]);
-		terminalLaunchers.reset([...declaredIds(payload.terminalLaunchers)]);
+		terminalLaunchers.reset(
+			[...declaredIds(payload.terminalLaunchers)],
+			[...declaredIds(payload.terminalCommandDefaults)],
+		);
 		const result = await activate(
 			Object.freeze({
 				extensionId: payload.extensionId,
@@ -389,7 +393,10 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 					},
 				}),
 				worktrees: worktreeInsights.registry(worktreeInsightSources),
-				terminals: terminalLaunchers.registry(registeredLaunchers),
+				terminals: terminalLaunchers.registry(
+					registeredLaunchers,
+					registeredCommandDefaults,
+				),
 				registerLanguageServerProvider(registration: unknown) {
 					const value = object(registration);
 					const id = typeof value?.id === 'string' ? value.id : '';
@@ -474,6 +481,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				worktreeInsightSources,
 				agentChatProviders,
 				terminalLaunchers: registeredLaunchers,
+				terminalCommandDefaults: registeredCommandDefaults,
 			},
 		});
 	} catch (error) {

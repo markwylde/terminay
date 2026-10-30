@@ -12,6 +12,8 @@ import {
 	type LanguageServerContribution,
 	type McpInstallTargetContribution,
 	type McpServerCommand,
+	type TerminalCommandDefaultContribution,
+	type TerminalCommandDefaultResolution,
 	type TerminalLauncherContribution,
 	type TerminalLauncherResolution,
 	validateAgentChatAvailability,
@@ -20,6 +22,7 @@ import {
 	validateMcpInstallTargetActionResult,
 	validateMcpInstallTargetStatus,
 	validateMcpServerCommand,
+	validateTerminalCommandDefaultResolution,
 	validateTerminalLauncherResolution,
 	type WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
@@ -119,6 +122,13 @@ const DEFAULTS = Object.freeze({
  */
 const LAUNCHER_RESOLVE_TIMEOUT_MS = 10_000;
 
+/**
+ * How long a command default may take to say whether it applies. The built-in
+ * Codex default locates Codex and reads its `--help`, each bounded at a few
+ * seconds of its own.
+ */
+const COMMAND_DEFAULT_RESOLVE_TIMEOUT_MS = 15_000;
+
 const INHERITED_CHILD_ENV = Object.freeze([
 	'PATH',
 	'HOME',
@@ -193,6 +203,8 @@ export class ExtensionHost {
 		Object.freeze([]);
 	private terminalLaunchers: readonly TerminalLauncherContribution[] =
 		Object.freeze([]);
+	private terminalCommandDefaults: readonly TerminalCommandDefaultContribution[] =
+		Object.freeze([]);
 	/** Chat sessions the host opened and has not yet seen end. */
 	private readonly chatSessions = new Map<
 		string,
@@ -231,6 +243,7 @@ export class ExtensionHost {
 			worktreeInsightSources: this.worktreeInsightSources,
 			agentChatProviders: this.agentChatProviders,
 			terminalLaunchers: this.terminalLaunchers,
+			terminalCommandDefaults: this.terminalCommandDefaults,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -321,6 +334,10 @@ export class ExtensionHost {
 						this.descriptor.terminalLaunchers === undefined
 							? []
 							: structuredClone(this.descriptor.terminalLaunchers),
+					terminalCommandDefaults:
+						this.descriptor.terminalCommandDefaults === undefined
+							? []
+							: structuredClone(this.descriptor.terminalCommandDefaults),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -364,6 +381,13 @@ export class ExtensionHost {
 				this.descriptor,
 				'agent-launch',
 				'terminal launcher',
+			);
+			this.terminalCommandDefaults = validateRegistrations(
+				record(activated)?.terminalCommandDefaults,
+				this.descriptor.terminalCommandDefaults ?? [],
+				this.descriptor,
+				'terminal-command-defaults',
+				'terminal command default',
 			);
 			this.setState({
 				extensionId: this.extensionId,
@@ -469,6 +493,7 @@ export class ExtensionHost {
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
 		this.terminalLaunchers = Object.freeze([]);
+		this.terminalCommandDefaults = Object.freeze([]);
 	}
 
 	/**
@@ -688,6 +713,43 @@ export class ExtensionHost {
 		);
 		if (!result.ok)
 			throw new Error('terminal launcher returned an invalid resolution');
+		return result.value;
+	}
+
+	terminalCommandDefaultContributions(): readonly TerminalCommandDefaultContribution[] {
+		return this.terminalCommandDefaults;
+	}
+
+	/**
+	 * Ask a registered command default whether it applies. The answer is
+	 * validated here as well as in the child, so a default can only ever add
+	 * bounded flags to the command its manifest named.
+	 */
+	async resolveTerminalCommandDefault(
+		commandDefaultId: string,
+		signal?: AbortSignal,
+	): Promise<TerminalCommandDefaultResolution> {
+		if (
+			!this.terminalCommandDefaults.some(
+				(commandDefault) => commandDefault.id === commandDefaultId,
+			)
+		)
+			throw unavailable('terminal command default is unavailable');
+		const result = validateTerminalCommandDefaultResolution(
+			await this.call(
+				'terminal.commandDefault.resolve',
+				{ commandDefaultId },
+				Math.min(
+					this.limits.invocationTimeoutMs,
+					COMMAND_DEFAULT_RESOLVE_TIMEOUT_MS,
+				),
+				signal,
+			),
+		);
+		if (!result.ok)
+			throw new Error(
+				'terminal command default returned an invalid resolution',
+			);
 		return result.value;
 	}
 
@@ -1580,6 +1642,7 @@ export class ExtensionHost {
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
 		this.terminalLaunchers = Object.freeze([]);
+		this.terminalCommandDefaults = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the
 		// host-side error is usually just the exit that followed it.
 		const detail = this.reportedFatalDetail() ?? extensionErrorDetail(error);
