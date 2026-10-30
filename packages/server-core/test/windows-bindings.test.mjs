@@ -30,3 +30,17 @@ test("a SID is formatted in its string form", async () => {
   assert.equal(formatSid(new Uint8Array([1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0])), "S-1-5-18");
   assert.equal(formatSid(new Uint8Array([1, 2, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0])), null, "a truncated SID is refused");
 });
+
+test("a second copy of the bindings reuses koffi's named structs instead of failing", async () => {
+  const { koffiStruct } = await import("../dist/index.js");
+  const koffi = require("koffi");
+  const name = `TERMINAY_PROBE_${process.pid}`;
+  const definition = { dwSize: "uint32", th32ProcessID: "uint32" };
+  const first = koffiStruct(koffi, name, definition);
+  // A plain second declaration is what an application bundle with two copies
+  // of the module did, and koffi refuses it.
+  assert.throws(() => koffi.struct(name, definition), /Duplicate type name/u);
+  const second = koffiStruct(koffi, name, definition);
+  assert.equal(koffi.sizeof(second), koffi.sizeof(first));
+  assert.equal(koffi.sizeof(second), 8);
+});

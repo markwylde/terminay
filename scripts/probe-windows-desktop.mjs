@@ -6,7 +6,8 @@
 //   2. PowerShell: input and output, then a window resize the shell sees;
 //   3. parity: a split starts in the directory of the terminal it splits, a
 //      foreground `node` is reported busy, the MCP pipe answers from inside a
-//      terminal, and `git worktree add` moves its terminal into the new folder;
+//      terminal, every built-in extension is active, and `git worktree add`
+//      moves its terminal into the new folder;
 //   4. Command Prompt, opened from the shell profile chooser: input, output,
 //      and `exit` ending it, then closing its tab;
 //   5. quit with the PowerShell terminal held, relaunch, and find the same
@@ -64,12 +65,24 @@ async function step(name, run) {
 	}
 }
 
-/** A parity check: recorded like a step, but a failure lets the run go on. */
+/**
+ * A parity check: recorded like a step, but a failure lets the run go on. A
+ * failure keeps a screenshot and the text of the terminal on screen.
+ */
 async function check(name, run) {
 	try {
 		await step(name, run);
 	} catch {
-		// Recorded by step(); the run fails at the end.
+		const entry = steps.at(-1);
+		const slug = name.replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase();
+		await session?.window
+			.screenshot({ path: join(dirname(recordPath), `windows-probe-${slug}.png`), timeout: 10_000 })
+			.catch(() => {});
+		entry.screen = await session?.window
+			.locator('.terminal-panel:visible .xterm-rows')
+			.allInnerTexts()
+			.then((texts) => texts.join('\n---\n').slice(-4000))
+			.catch(() => undefined);
 	}
 }
 
@@ -228,6 +241,41 @@ socket.on('data', (chunk) => {
 socket.on('error', (error) => console.log('mcp-result=' + error.code));
 `;
 
+/** Every failure an extension registry in the data directory records. */
+async function registryFailures() {
+	const found = [];
+	const walk = async (directory, depth) => {
+		if (depth > 5) return;
+		for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory() && entry.name !== 'node_modules') await walk(path, depth + 1);
+			else if (entry.isFile() && entry.name.endsWith('.json')) {
+				const text = await readFile(path, 'utf8').catch(() => '');
+				for (const match of text.matchAll(/"extensionId":"([^"]+)"[^{}]*?"failureClass":"([^"]+)"/gu))
+					found.push(`${match[1]}: ${match[2]}`);
+				for (const match of text.matchAll(/"failureClass":\s*"([^"]+)"/gu)) found.push(`${entry.name}: ${match[1]}`);
+			}
+		}
+	};
+	await walk(dataDir, 0);
+	return [...new Set(found)].join('; ') || 'no failure recorded';
+}
+
+/** The application's log lines that match, newest last, bounded. */
+async function logLines(pattern) {
+	try {
+		const directory = join(dataDir, 'logs');
+		const files = (await readdir(directory)).filter((name) => name.endsWith('.jsonl')).sort();
+		const lines = (await Promise.all(files.map((name) => readFile(join(directory, name), 'utf8'))))
+			.join('\n')
+			.split('\n')
+			.filter((line) => pattern.test(line) && !line.includes('port-diagnostic'));
+		return lines.slice(-40).join('\n').slice(-6000);
+	} catch (error) {
+		return `no log (${error})`;
+	}
+}
+
 async function diagnostics() {
 	try {
 		const directory = join(dataDir, 'logs');
@@ -300,6 +348,8 @@ try {
 		await terminal(window).locator('.xterm-helper-textarea').focus();
 		await window.keyboard.press('Control+C');
 		await until(async () => (await runningTerminals(app, window)) === 0, 'the terminal stayed busy after node ended');
+		await type(window, 'Write-Output "after-busy-$(1+1)"');
+		await output(window, 'after-busy-2');
 	});
 
 	await check('the MCP pipe answers from inside a terminal', async () => {
@@ -312,6 +362,39 @@ try {
 		assert.match(socket, /^\/\/\.\/pipe\//u, 'the control endpoint must be a named pipe');
 		assert.equal(result, 'ok');
 		return { socket };
+	});
+
+	await check('every built-in extension is active', async () => {
+		const { app, window } = session;
+		// Settings › Extensions, from the command bar; it opens in its own window.
+		const opened = app.waitForEvent('window', { timeout: 30_000 }).catch(() => undefined);
+		await window.keyboard.press('Control+L');
+		await window.keyboard.type('Extensions');
+		await window
+			.getByRole('dialog', { name: 'Command bar' })
+			.locator('.macro-launcher-item-title', { hasText: /^Extensions$/u })
+			.first()
+			.click();
+		const settings = (await opened) ?? window;
+		// The built-in list reads "<name> <state>" per extension, between its
+		// BUILT-IN and CUSTOM headings.
+		const builtIns = async () => {
+			const text = await settings.locator('body').innerText();
+			const start = text.indexOf('BUILT-IN');
+			const end = text.indexOf('CUSTOM', start);
+			return start < 0 || end < 0 ? undefined : text.slice(start + 'BUILT-IN'.length, end).trim();
+		};
+		let listed;
+		await until(async () => {
+			listed = await builtIns();
+			return listed !== undefined && !/\b(Starting|Pending|Installing)\b/u.test(listed);
+		}, 'the built-in extensions never settled');
+		if (settings !== window) await settings.close();
+		const lines = listed.split('\n').map((line) => line.trim()).filter(Boolean);
+		if (lines.includes('Failed'))
+			throw new Error(`a built-in extension failed (${lines.join(' | ')}): ${await registryFailures()}`);
+		assert.ok(lines.includes('On'), `no built-in extension is on: ${lines.join(' | ')}`);
+		return { builtIns: lines };
 	});
 
 	await check('git worktree add moves its terminal into the new folder', async () => {
@@ -335,9 +418,37 @@ try {
 		await folder(window, 'General').locator('.folders-tree__branch').getByText('main', { exact: true }).waitFor();
 
 		await type(window, `Set-Location "${repository}"`);
+		await type(window, 'Write-Output "trace2=$env:GIT_TRACE2_EVENT"');
+		const trace2 = await printed(window, 'trace2');
+		await type(window, `Write-Output "tracedir=$(Test-Path '${join(dataDir, 'run', 'git-trace')}')"`);
+		const traceDirectory = await printed(window, 'tracedir');
 		await type(window, 'git worktree add ..\\probe-worktree -b probe-worktree');
+		const folders = () =>
+			window.locator('.project-workspace--active .folders-tree__row--folder .folders-tree__name').allInnerTexts();
+		try {
+			await folder(window, 'probe-worktree').waitFor();
+		} catch (error) {
+			throw new Error(`no probe-worktree folder (folders: ${(await folders()).join(', ')}; trace2: ${trace2})`, { cause: error });
+		}
 		// The project's one terminal is the one that ran Git.
-		await folder(window, 'probe-worktree').locator('.folders-tree__row--terminal').waitFor();
+		try {
+			await folder(window, 'probe-worktree').locator('.folders-tree__row--terminal').waitFor();
+		} catch (error) {
+			// Is Git reporting at all, or did the first terminal start before
+			// the stream was listening? A terminal opened now says.
+			await appCommand(window, 'new-terminal');
+			let fresh;
+			await until(async () => {
+				fresh = (await visibleSessions(window)).find((id) => id && id !== 'default');
+				return fresh !== undefined;
+			}, 'no new terminal');
+			await type(window, 'Write-Output "trace2=$env:GIT_TRACE2_EVENT"', fresh);
+			const freshTrace2 = await printed(window, 'trace2', fresh).catch(() => '?');
+			throw new Error(
+				`the folder appeared but its terminal was not moved (trace2: "${trace2}", in a new terminal: "${freshTrace2}", trace directory exists: ${traceDirectory}; log: ${await logLines(/worktree-capture|capture\.|stream\.listening|git-command|trace-directory/iu)})`,
+				{ cause: error },
+			);
+		}
 		await until(
 			async () => (await folder(window, 'General').locator('.folders-tree__row--terminal').count()) === 0,
 			'the terminal that ran git worktree add stayed in General',

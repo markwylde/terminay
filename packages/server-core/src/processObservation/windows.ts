@@ -59,6 +59,25 @@ function view(bytes: Uint8Array): DataView {
 	return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
+/**
+ * A named koffi struct, or the one already declared under that name. koffi
+ * keeps type names for the whole process, and an application bundle can hold
+ * more than one copy of this module, so a second declaration must reuse the
+ * first rather than fail and leave that copy without bindings.
+ * @internal
+ */
+export function koffiStruct(
+	koffi: typeof import('koffi'),
+	name: string,
+	definition: Record<string, import('koffi').TypeSpecWithAlignment>,
+): import('koffi').IKoffiCType {
+	try {
+		return koffi.resolve(name);
+	} catch {
+		return koffi.struct(name, definition);
+	}
+}
+
 function load(): Bindings | null {
 	if (bindings !== undefined) return bindings;
 	try {
@@ -68,7 +87,7 @@ function load(): Bindings | null {
 		const kernel32 = koffi.load('kernel32.dll');
 		const advapi32 = koffi.load('advapi32.dll');
 		const ntdll = koffi.load('ntdll.dll');
-		const entry = koffi.struct('TERMINAY_PROCESSENTRY32W', {
+		const entry = koffiStruct(koffi, 'TERMINAY_PROCESSENTRY32W', {
 			dwSize: 'uint32',
 			cntUsage: 'uint32',
 			th32ProcessID: 'uint32',
@@ -80,7 +99,7 @@ function load(): Bindings | null {
 			dwFlags: 'uint32',
 			szExeFile: koffi.array('char16_t', 260, 'String'),
 		});
-		const basic = koffi.struct('TERMINAY_PROCESS_BASIC_INFORMATION', {
+		const basic = koffiStruct(koffi, 'TERMINAY_PROCESS_BASIC_INFORMATION', {
 			ExitStatus: 'int32',
 			PebBaseAddress: 'uint64',
 			AffinityMask: 'uint64',
