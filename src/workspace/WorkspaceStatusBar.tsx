@@ -1,4 +1,4 @@
-import type { DockviewApi, IDockviewPanel } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { Folder, GitBranch, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useRef, useState } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';

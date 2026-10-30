@@ -48,7 +48,7 @@ jobs:
         env:
           npm_config_cache: ${{ runner.tool_cache }}/npm-cache
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Stage the WebRTC runtime and run the load benchmark

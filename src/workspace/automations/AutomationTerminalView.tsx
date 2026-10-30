@@ -13,7 +13,7 @@ import {
 	type DockviewApi,
 	DockviewReact,
 	type DockviewReadyEvent,
-} from 'dockview';
+} from 'dockview-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
 	TerminalPanel,
@@ -118,7 +118,7 @@ export function AutomationTerminalView({
 				if (detachingRef.current || followingRef.current.has(panel.id)) return;
 				callbacksRef.current.onClose(panel.id);
 			});
-			event.api.onDidActivePanelChange((panel) => {
+			event.api.onDidActivePanelChange(({ panel }) => {
 				if (panel !== undefined) callbacksRef.current.onSelect(panel.id);
 			});
 			sync();

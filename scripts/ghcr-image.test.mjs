@@ -44,7 +44,7 @@ workflows.set(
 
 test('server Dockerfile assembles the self-contained server and runs as a non-root user', () => {
 	assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim AS build/m);
-	assert.match(dockerfile, /npm install --global npm@12\.2\.0/u);
+	assert.match(dockerfile, /npm install --global npm@12\.2\.1/u);
 	assert.match(
 		dockerfile,
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,

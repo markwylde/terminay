@@ -80,7 +80,7 @@ export class NpmCliRegistryClient
 {
 	readonly npmVersion: string;
 	constructor(private readonly options: NpmCliOptions) {
-		this.npmVersion = options.npmVersion ?? '12.2.0';
+		this.npmVersion = options.npmVersion ?? '12.2.1';
 	}
 
 	async resolve(
@@ -167,7 +167,7 @@ export class NpmCliRegistryClient
 					? Object.keys(metadata.dependencies).length
 					: 0,
 			manifestMetadata: metadata.terminay,
-			provenance: 'unavailable',
+			provenance: 'unavailable' as const,
 		});
 	}
 

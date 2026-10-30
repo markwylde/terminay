@@ -45,6 +45,12 @@ function input(overrides = {}) {
 test('performance traces are recognized managed artifacts and unknown names stay user-owned', () => {
 	assert.deepEqual(
 		recognizeManagedArtifactName(
+			'terminay-performance-trace-v1-1800000000000-launch-id.pftrace',
+		),
+		{ kind: 'performance-trace', createdAt: 1_800_000_000_000 },
+	);
+	assert.deepEqual(
+		recognizeManagedArtifactName(
 			'terminay-performance-trace-v1-1800000000000-launch-id.json',
 		),
 		{ kind: 'performance-trace', createdAt: 1_800_000_000_000 },
