@@ -1,13 +1,16 @@
 import hljs from 'highlight.js/lib/common'
-import MarkdownIt from 'markdown-it'
-import { escapeHtml } from 'markdown-it/lib/common/utils.mjs'
-import type { RenderRule } from 'markdown-it/lib/renderer.mjs'
-import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import type Token from 'markdown-it/lib/token.mjs'
+import MarkdownIt, {
+  type MarkdownIt as MarkdownItInstance,
+  type RendererRule,
+  type StateCore,
+  type Token,
+} from 'markdown-it'
 import { type MouseEvent, useMemo } from 'react'
 import { openExternalUrl } from '../../../host/nativeActions'
 
-function taskListPlugin(md: MarkdownIt) {
+const { escapeHtml } = new MarkdownIt().utils
+
+function taskListPlugin(md: MarkdownItInstance) {
   md.core.ruler.after('inline', 'task_list_items', (state: StateCore) => {
     for (let index = 2; index < state.tokens.length; index += 1) {
       const token = state.tokens[index]
@@ -47,8 +50,8 @@ function taskListPlugin(md: MarkdownIt) {
   })
 }
 
-function tableWrapPlugin(md: MarkdownIt) {
-  const renderToken: RenderRule = (tokens, index, options, _env, self) =>
+function tableWrapPlugin(md: MarkdownItInstance) {
+  const renderToken: RendererRule = (tokens, index, options, _env, self) =>
     self.renderToken(tokens, index, options)
   const renderTableOpen = md.renderer.rules.table_open ?? renderToken
   const renderTableClose = md.renderer.rules.table_close ?? renderToken

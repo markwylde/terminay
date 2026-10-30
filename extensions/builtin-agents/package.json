@@ -54,7 +54,7 @@
 	"devDependencies": {
 		"@terminay/extension-api": "^3.3.0",
 		"@types/node": "^24.0.0",
-		"typescript": "^6.0.0"
+		"typescript": "^7.0.2"
 	},
 	"terminay": {
 		"manifestVersion": 1,

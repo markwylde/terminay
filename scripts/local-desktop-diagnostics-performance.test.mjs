@@ -171,7 +171,7 @@ test('performance logging stays off until enabled and then records samples and s
 		);
 		assert.match(
 			completed.fields.filename,
-			/^terminay-performance-trace-v1-\d+-launch-perf\.json$/u,
+			/^terminay-performance-trace-v1-\d+-launch-perf\.pftrace$/u,
 		);
 		assert.equal(
 			JSON.parse(

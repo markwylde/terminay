@@ -1,4 +1,4 @@
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { LANGUAGE_CAPABILITY, TerminayClientFacade } from '@terminay/client-core';
 import {
 	type CSSProperties,

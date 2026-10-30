@@ -63,7 +63,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Prepare integrity-pinned Secure Werift source mirror
@@ -160,12 +160,15 @@ jobs:
             target: zip
             asset: terminay-desktop-main-mac.zip
             metadata: beta-mac.yml
+            # Darwin 22 is macOS 13, Electron's floor; see ADR-0079.
+            minimum_system_version: 22.0.0
           - os: ubuntu-latest
             label: Linux
             platform: linux
             target: AppImage
             asset: terminay-desktop-main-linux-x86_64.AppImage
             metadata: beta-linux.yml
+            minimum_system_version: ''
 
     steps:
       - name: Check out code
@@ -192,7 +195,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Check macOS signing secrets
@@ -288,6 +291,16 @@ jobs:
           ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
           test "$ACTUAL_METADATA" = "$OUTPUT/$METADATA"
 
+      - name: Declare the macOS floor in the beta update metadata
+        if: matrix.minimum_system_version != ''
+        env:
+          METADATA: ${{ matrix.metadata }}
+          MINIMUM_SYSTEM_VERSION: ${{ matrix.minimum_system_version }}
+        run: |
+          # A client below the floor keeps its installed version rather than
+          # updating to one it cannot launch.
+          node scripts/declare-update-minimum-system-version.mjs "release/main-desktop/$METADATA" "$MINIMUM_SYSTEM_VERSION"
+
       - name: Verify macOS signed and notarized beta zip
         if: matrix.os == 'macos-latest'
         env:
@@ -321,13 +334,19 @@ jobs:
           VERSION: ${{ steps.beta_version.outputs.version }}
           ASSET: ${{ matrix.asset }}
           METADATA: ${{ matrix.metadata }}
+          MINIMUM_SYSTEM_VERSION: ${{ matrix.minimum_system_version }}
         run: |
+          FLOOR_ARGS=()
+          if [ -n "$MINIMUM_SYSTEM_VERSION" ]; then
+            FLOOR_ARGS=(--minimum-system-version "$MINIMUM_SYSTEM_VERSION")
+          fi
           node scripts/verify-update-metadata.mjs \
             --metadata "release/main-desktop/$METADATA" \
             --assets-dir release/main-desktop \
             --version "$VERSION" \
             --expect-file "$ASSET" \
-            --require-release-notes
+            --require-release-notes \
+            ${FLOOR_ARGS[@]+"${FLOOR_ARGS[@]}"}
 
       - name: Write and verify beta checksum
         env:
@@ -423,7 +442,8 @@ jobs:
             --metadata "$OUTPUT/beta-mac.yml" \
             --assets-dir "$OUTPUT" \
             --expect-file terminay-desktop-main-mac.zip \
-            --require-release-notes)"
+            --require-release-notes \
+            --minimum-system-version 22.0.0)"
           LINUX_VERSION="$(node scripts/verify-update-metadata.mjs \
             --metadata "$OUTPUT/beta-linux.yml" \
             --assets-dir "$OUTPUT" \

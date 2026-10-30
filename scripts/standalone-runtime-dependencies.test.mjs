@@ -3,6 +3,7 @@ import {
 	mkdir,
 	mkdtemp,
 	readFile,
+	realpath,
 	rm,
 	symlink,
 	writeFile,
@@ -127,6 +128,38 @@ test('standalone dependency staging skips optional packages absent on this platf
 			rootPackages: ['portable-root'],
 		});
 		assert.deepEqual(staged, ['portable-root', 'required-value']);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('a workspace that pins its own version of a hoisted package stages its own', async () => {
+	const root = await mkdtemp(
+		join(tmpdir(), 'terminay-standalone-runtime-deps-'),
+	);
+	try {
+		await writePackage(root, 'typescript', { version: '7.0.0' });
+		const extension = join(root, 'extensions', 'language');
+		const nested = await writePackage(extension, 'typescript', {
+			version: '6.0.0',
+		});
+		const sources = new Map();
+		const staged = await stageProductionDependencyClosure({
+			destinationModules: join(root, 'artifact', 'node_modules'),
+			runtimeModules: join(root, 'node_modules'),
+			rootPackages: ['typescript'],
+			rootFromDirectory: extension,
+			onStaged: (name, source) => sources.set(name, source),
+		});
+		assert.deepEqual(staged, ['typescript']);
+		const manifest = JSON.parse(
+			await readFile(
+				join(root, 'artifact/node_modules/typescript/package.json'),
+				'utf8',
+			),
+		);
+		assert.equal(manifest.version, '6.0.0');
+		assert.equal(sources.get('typescript'), await realpath(nested));
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

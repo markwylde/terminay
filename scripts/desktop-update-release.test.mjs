@@ -12,6 +12,7 @@ import {
   formatBetaReleaseNotes,
   getBetaVersion,
 } from './main-beta-version.mjs'
+import { declareMinimumSystemVersion } from './declare-update-minimum-system-version.mjs'
 import { UpdateMetadataError, parseUpdateMetadata, verifyUpdateMetadata } from './verify-update-metadata.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -155,6 +156,23 @@ test('rejects paths, symlinked payloads, mismatched legacy fields, and missing n
   await writeFile(join(dir, 'elsewhere', 'payload'), 'zip bytes')
   await symlink(join(dir, 'elsewhere', 'payload'), join(dir, 'terminay-desktop-main-mac.zip'))
   await rejects(verifyUpdateMetadata({ metadataPath, assetsDir: dir, expectedFiles: ['terminay-desktop-main-mac.zip'] }), /must be a regular file/u)
+})
+
+test('macOS metadata declares its Darwin floor, and the verifier requires it when asked', async (t) => {
+  const { dir, metadataPath } = await fixture(t)
+  const text = await readFile(metadataPath, 'utf8')
+  const options = { metadataPath, assetsDir: dir, expectedFiles: ['terminay-desktop-main-mac.zip'], minimumSystemVersion: '22.0.0' }
+
+  await rejects(verifyUpdateMetadata(options), /must declare minimum system version 22\.0\.0/u)
+
+  const declared = declareMinimumSystemVersion(text, '22.0.0')
+  assert.equal(parseUpdateMetadata(declared).other.get('minimumSystemVersion'), '22.0.0')
+  await writeFile(metadataPath, declared)
+  assert.equal(await verifyUpdateMetadata(options), '1.2.4-beta.7')
+  await rejects(verifyUpdateMetadata({ ...options, minimumSystemVersion: '23.0.0' }), /must declare minimum system version 23\.0\.0/u)
+
+  assert.throws(() => declareMinimumSystemVersion(declared, '22.0.0'), /already declares/u)
+  assert.throws(() => declareMinimumSystemVersion(text, '13.0'), /exact x\.y\.z/u)
 })
 
 test('the verifier CLI prints the verified version and fails closed', async (t) => {

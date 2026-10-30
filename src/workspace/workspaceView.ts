@@ -13,7 +13,7 @@ import type {
 	DockviewGroupPanel,
 	IDockviewPanel,
 	SerializedDockview,
-} from 'dockview';
+} from 'dockview-react';
 
 export type ViewPosition = 'right' | 'left' | 'above' | 'below' | 'center';
 export type TabArrangement = 'grid' | 'columns' | 'rows' | 'tabs';

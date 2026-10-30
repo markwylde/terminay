@@ -1,4 +1,4 @@
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 import {
 	type MutableRefObject,
 	useCallback,

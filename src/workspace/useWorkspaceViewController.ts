@@ -18,7 +18,7 @@ import {
 	WorkspaceViewRefusal,
 } from '@terminay/client-core';
 import { FEATURE_CAPABILITIES, type JsonValue } from '@terminay/protocol';
-import type { DockviewApi, IDockviewPanel } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react';
 import {
 	arrangeViewPanels,

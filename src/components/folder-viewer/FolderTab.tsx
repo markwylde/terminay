@@ -1,4 +1,4 @@
-import type { IDockviewPanelHeaderProps } from 'dockview';
+import type { IDockviewPanelHeaderProps } from 'dockview-react';
 import { CSSProperties, MouseEvent, useMemo } from 'react';
 import { DockTabChrome } from '../DockTabChrome';
 import type { FolderPanelInstanceParams } from './types';
