@@ -77,7 +77,7 @@ export interface SessionHolderConnectOptions {
 	/**
 	 * Never present the credential: connect only through the mutual proof, and
 	 * refuse a holder whose record does not offer it. On Windows, where a pipe
-	 * name can be taken by another user first (ADR-0081 §3).
+	 * name can be taken by another user first (ADR-0083 §3).
 	 */
 	readonly requireMutualProof?: boolean;
 	/**

@@ -9,8 +9,8 @@ import {
 	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
-import type { DockviewApi, IDockviewPanel } from 'dockview';
-import { DockviewReact } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
+import { DockviewReact } from 'dockview-react';
 import {
 	CircleStop,
 	Eraser,

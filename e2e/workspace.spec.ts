@@ -119,11 +119,13 @@ test.describe('workspace shell', () => {
 			'Terminal 3',
 			'Terminal 4',
 		].entries()) {
-			await mainWindow
+			const tab = mainWindow
 				.locator('.dv-tab:visible')
 				.filter({ hasText: title })
-				.first()
-				.click();
+				.first();
+			await tab.click();
+			// Dockview activates a clicked tab on the next frame.
+			await expect(tab).toHaveClass(/dv-active-tab/);
 			await appHarness.sendAppCommand('close-active');
 			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(
 				3 - index,

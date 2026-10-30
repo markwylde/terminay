@@ -132,7 +132,7 @@ export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	readonly limitMs: number | null;
 	/**
 	 * Reach holders only through the mutual proof, never presenting the
-	 * credential. True on Windows (ADR-0081 §3).
+	 * credential. True on Windows (ADR-0083 §3).
 	 */
 	readonly requireMutualProof?: boolean;
 	/**

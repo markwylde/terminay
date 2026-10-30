@@ -75,6 +75,9 @@ async function writeToBackgroundSession(
   data: string,
 ): Promise<void> {
   await terminals.tab.click()
+  // Dockview activates a clicked tab on the next frame; type only once the
+  // terminal behind it has focus, or the first keys reach the previous one.
+  await expectTerminalFocused(page, terminals.sessionId)
   await submitTerminalCommand(page, data)
   await commandArrived(electronApp, terminals.sessionId, data)
   await focusFirstTerminal(page, terminals)

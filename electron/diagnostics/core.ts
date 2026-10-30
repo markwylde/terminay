@@ -571,7 +571,7 @@ const SEGMENT_PATTERN =
 	/^terminay-diagnostics-v1-(\d{13})-([a-zA-Z0-9_-]{1,128})-(\d{4})\.jsonl$/;
 const CRASH_PATTERN = /^terminay-crash-v1-(\d{13})-[a-zA-Z0-9_-]{1,128}\.dmp$/;
 const PERFORMANCE_TRACE_PATTERN =
-	/^terminay-performance-trace-v1-(\d{13})-([a-zA-Z0-9_-]{1,128})\.json$/;
+	/^terminay-performance-trace-v1-(\d{13})-([a-zA-Z0-9_-]{1,128})\.(?:pftrace|json)$/;
 export const LAUNCH_MARKER_FILENAME = 'terminay-launch-v1.json';
 
 export type ManagedArtifactKind = 'segment' | 'crash' | 'performance-trace';

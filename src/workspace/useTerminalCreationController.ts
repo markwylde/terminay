@@ -1,4 +1,4 @@
-import type { Direction, DockviewApi, DockviewGroupPanel } from 'dockview';
+import type { Direction, DockviewApi, DockviewGroupPanel } from 'dockview-react';
 import { type MutableRefObject, useCallback } from 'react';
 import { releaseCreatedTerminalChromeFocus } from '../components/terminalFocusInteraction';
 import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';

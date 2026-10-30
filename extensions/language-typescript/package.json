@@ -41,8 +41,8 @@
     "pack": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack"
   },
   "dependencies": {
-    "typescript": "^5.9.2",
-    "typescript-language-server": "^5.0.0"
+    "typescript": "^6.0.3",
+    "typescript-language-server": "^6.0.2"
   },
   "peerDependencies": {
     "@terminay/extension-api": "^3.0.0"

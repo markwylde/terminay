@@ -29,7 +29,7 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.equal(scripts["test:e2e:host"], "npm run build:app && playwright test");
   assert.match(agents, /must run Electron end-to-end tests through `npm run test:e2e`/u);
   assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim$/mu);
-  assert.match(dockerfile, /npm install --global npm@12\.2\.0/u);
+  assert.match(dockerfile, /npm install --global npm@12\.2\.1/u);
   assert.match(dockerfile, /COPY --chown=node:node scripts\/ensure-node-pty-helper-mode\.mjs scripts\/ensure-node-pty-helper-mode\.mjs/u);
   assert.match(dockerfile, /USER node\nRUN npm ci \\\n\s+&& node node_modules\/electron\/install\.js \\\n\s+&& npx playwright install chromium/u);
   assert.match(dockerfile, /USER root\nRUN npx playwright install-deps chromium/u);
@@ -79,7 +79,7 @@ test("busy torn-off window E2E waits for a non-shell process the container can r
 
 test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const workflow = await text(".gitea/workflows/ci.yml");
-  assert.match(workflow, /npm install --global npm@12\.2\.0/u);
+  assert.match(workflow, /npm install --global npm@12\.2\.1/u);
 
   const e2eJob = job(workflow, "e2e-test");
   assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u, "Gitea E2E job must retain eighteen shards");
@@ -134,7 +134,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   const turbo = JSON.parse(turboJson);
   const cacheEnvironment = /TURBO_TEAM: wylde\n\s+TURBO_TOKEN: \$\{\{ secrets\.TURBO_TOKEN \}\}\n\s+TURBO_REMOTE_CACHE_SIGNATURE_KEY: \$\{\{ secrets\.TURBO_REMOTE_CACHE_SIGNATURE_KEY \}\}/u;
 
-  assert.equal(packageData.devDependencies.turbo, "2.10.12");
+  assert.equal(packageData.devDependencies.turbo, "2.11.10");
   assert.match(packageData.scripts["build:workspaces"], /^turbo run build --filter=!terminay-\* && turbo run compile --filter=terminay-\*$/u);
   assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=1$/u);
   assert.deepEqual(turbo.remoteCache, {

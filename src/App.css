@@ -3133,6 +3133,20 @@ body.project-tabbar-reordering .project-tabbar {
   flex: none;
 }
 
+.workspace-status-bar__git-count--dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-status-bar__git-count-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .workspace-status-bar__file-size,
 .workspace-status-bar__file-unsaved {
   flex: none;

@@ -7,6 +7,7 @@ import {
 	mkdtemp,
 	readdir,
 	readFile,
+	realpath,
 	rename,
 	rm,
 	writeFile,
@@ -34,6 +35,9 @@ const expectedIds = new Set([
  * they must never resolve a built-in from npm at runtime. */
 export async function stageBuiltInExtensions(options = {}) {
 	const root = resolve(options.root ?? repository);
+	// Staged sources are real paths, so lock keys are made relative to the
+	// real root.
+	const realRoot = await realpath(root);
 	const output = resolve(
 		root,
 		options.outputDirectory ?? 'build/built-in-extensions',
@@ -86,6 +90,10 @@ export async function stageBuiltInExtensions(options = {}) {
 			const optionalDependencies = Object.keys(
 				packageJson.optionalDependencies ?? {},
 			).sort();
+			// Each staged package is locked at the path it was copied from, which
+			// is the extension's own node_modules when its version differs from
+			// the hoisted one.
+			const lockPaths = new Map();
 			const copied =
 				dependencies.length + optionalDependencies.length === 0
 					? []
@@ -94,6 +102,13 @@ export async function stageBuiltInExtensions(options = {}) {
 							runtimeModules: join(root, 'node_modules'),
 							rootPackages: dependencies,
 							optionalRootPackages: optionalDependencies,
+							rootFromDirectory: join(root, 'extensions', entry.directory),
+							onStaged: (name, source) => {
+								lockPaths.set(
+									name,
+									relative(realRoot, source).split(sep).join('/'),
+								);
+							},
 						});
 			// npm pack applies ignore rules recursively, including to dependency
 			// trees nested below this package's dist directory. Strip npm's own
@@ -105,7 +120,7 @@ export async function stageBuiltInExtensions(options = {}) {
 			// workspace symlink or a server-level node_modules tree.
 			await writeFile(
 				join(artifactDirectory, 'package-lock.json'),
-				`${JSON.stringify(lockForArtifact(rootLock, packageJson, archive, sdk, copied), null, 2)}\n`,
+				`${JSON.stringify(lockForArtifact(rootLock, packageJson, archive, sdk, copied, lockPaths), null, 2)}\n`,
 			);
 			await signMacNativeModules(artifactDirectory);
 			const tree = await inventoryTree(artifactDirectory);
@@ -206,7 +221,7 @@ async function unpack(archive, modules, packageName) {
 	}
 }
 
-function lockForArtifact(rootLock, packageJson, pack, sdk, copied) {
+function lockForArtifact(rootLock, packageJson, pack, sdk, copied, lockPaths) {
 	const packages = { '': {} };
 	packages[`node_modules/${packageJson.name}`] = {
 		version: packageJson.version,
@@ -225,7 +240,8 @@ function lockForArtifact(rootLock, packageJson, pack, sdk, copied) {
 	};
 	for (const name of copied) {
 		if (name === SDK) continue;
-		const source = rootLock.packages?.[`node_modules/${name}`];
+		const source =
+			rootLock.packages?.[lockPaths.get(name) ?? `node_modules/${name}`];
 		if (
 			!source ||
 			typeof source.version !== 'string' ||

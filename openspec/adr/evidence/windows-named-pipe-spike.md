@@ -1,6 +1,6 @@
 # How libuv creates a named pipe on Windows
 
-Spike 1.1 of `native-windows-desktop`, for ADR-0078. Script:
+Spike 1.1 of `native-windows-desktop`, for ADR-0080. Script:
 `scripts/windows-spikes/named-pipe.mjs`.
 
 - Date: 2026-10-30
