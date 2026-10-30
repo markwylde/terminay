@@ -88,7 +88,6 @@ async function createFixture() {
 			version: '1.2.3',
 			files: ['dist'],
 			engines: { node: '24.15.0' },
-			dependencies: { npm: '12.2.1' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
@@ -107,7 +106,6 @@ async function createFixture() {
 		join(root, 'dist/mcpEntry.js'),
 		'#!/usr/bin/env node\nconsole.log("mcp ready")\n',
 	);
-	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.2.1', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
 }
 
@@ -130,7 +128,7 @@ test('standalone artifact manifest is deterministic and validates exact payload 
 			first.provenance.generatedBy,
 			'scripts/standalone-artifact.mjs',
 		);
-		assert.equal(first.files.length, 5);
+		assert.equal(first.files.length, 4);
 		assert.ok(first.files.every((file) => /^[a-f0-9]{64}$/u.test(file.sha256)));
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -250,6 +248,31 @@ test('standalone artifact inspection rejects Electron imports and unpinned Node 
 		await assert.rejects(
 			() => inspectStandaloneArtifact(root, RELEASE),
 			/Node engine must be pinned/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('standalone artifact inspection rejects a shipped npm program', async () => {
+	const root = await createFixture();
+	try {
+		const packageJson = JSON.parse(
+			await readFile(join(root, 'package.json'), 'utf8'),
+		);
+		await writeFile(
+			join(root, 'package.json'),
+			`${JSON.stringify({ ...packageJson, dependencies: { npm: '12.2.1' } })}\n`,
+		);
+		await assert.rejects(
+			() => inspectStandaloneArtifact(root, RELEASE),
+			/must not depend on the npm program/,
+		);
+		await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`);
+		await mkdir(join(root, 'node_modules', 'npm'), { recursive: true });
+		await assert.rejects(
+			() => inspectStandaloneArtifact(root, RELEASE),
+			/must not contain the npm program/,
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });

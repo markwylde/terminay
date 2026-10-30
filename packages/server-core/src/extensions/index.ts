@@ -9,6 +9,7 @@ export * from './installerTypes.js';
 export * from './manager.js';
 export * from './mcpInstallRouter.js';
 export * from './npmClient.js';
+export { installerLibraryOptions } from './installerWorker.js';
 export * from './npmPackArchive.js';
 export * from './operations.js';
 export * from './packageValidation.js';

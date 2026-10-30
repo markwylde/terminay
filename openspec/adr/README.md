@@ -101,5 +101,6 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0075](./0075-management-lives-in-one-settings-surface.md) | Management lives in one Settings surface; collections get a list column, workspace content lives in Home | accepted | 2026-10-26 |
 | [0076](./0076-app-window-records-are-server-data-that-last-as-long-as-their-session.md) | App window records are server data that last as long as their terminal session, across restarts | accepted | 2026-10-27 |
 | [0077](./0077-linux-artifacts-are-built-and-verified-at-a-declared-glibc-floor.md) | Linux artifacts are built and verified at a declared glibc floor | accepted, supersedes 0035 (superseded by 0079) | 2026-10-30 |
-| [0078](./0078-pinned-node-runtime-baseline-on-npm-12-2-1.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.1 | accepted, supersedes 0033 | 2026-10-30 |
+| [0078](./0078-pinned-node-runtime-baseline-on-npm-12-2-1.md) | Pin the Node runtime, toolchain, and compile targets across every lane, on npm 12.2.1 | accepted, supersedes 0033 (superseded by 0080) | 2026-10-30 |
 | [0079](./0079-desktop-macos-floor-follows-electron-to-macos-13.md) | Desktop's macOS floor follows Electron to macOS 13 | accepted, supersedes 0077 | 2026-10-30 |
+| [0080](./0080-extension-installer-is-built-from-npm-libraries.md) | Build the extension installer from npm's libraries, keep the pinned toolchain baseline | accepted, supersedes 0078 | 2026-10-30 |

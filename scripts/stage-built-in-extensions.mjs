@@ -20,7 +20,13 @@ import { stageProductionDependencyClosure } from './standalone-runtime-dependenc
 
 const runFile = promisify(execFile);
 const repository = resolve(new URL('..', import.meta.url).pathname);
-const npmCli = join(repository, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+// npm is the pinned build toolchain (ADR-0080), never a shipped dependency.
+// Prefer the exact CLI running this build; outside `npm run`, use PATH.
+const npmExecPath = process.env.npm_execpath;
+const npmCommand =
+	typeof npmExecPath === 'string' && /\.[cm]?js$/u.test(npmExecPath)
+		? { file: process.execPath, prefix: [npmExecPath] }
+		: { file: 'npm', prefix: [] };
 const SDK = '@terminay/extension-api';
 const expectedIds = new Set([
 	'com.terminay.builtin-agents',
@@ -180,9 +186,9 @@ async function testBuiltInExtensions(root, catalogue) {
 
 async function pack(root, workspace, destination) {
 	const { stdout } = await runFile(
-		process.execPath,
+		npmCommand.file,
 		[
-			npmCli,
+			...npmCommand.prefix,
 			'pack',
 			'--workspace',
 			workspace,
@@ -399,7 +405,7 @@ function sha256(value) {
 	return createHash('sha256').update(value).digest('hex');
 }
 function npm(cwd, argumentsValue) {
-	return runFile(process.execPath, [npmCli, ...argumentsValue], {
+	return runFile(npmCommand.file, [...npmCommand.prefix, ...argumentsValue], {
 		cwd,
 		maxBuffer: 16 * 1024 * 1024,
 	});

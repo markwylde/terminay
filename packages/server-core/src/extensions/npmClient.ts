@@ -1,17 +1,22 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type {
 	ExtensionMaterializer,
 	ExtensionRegistryClient,
 	RegistryPackageResolution,
 } from './installerTypes.js';
+import type {
+	InstallerWorkerRequest,
+	InstallerWorkerResult,
+} from './installerWorker.js';
 import { validateNpmLockfile } from './packageValidation.js';
 
 const executeFile = promisify(execFile);
-const PUBLIC_REGISTRY = 'https://registry.npmjs.org/';
+const WORKER_DEADLINE_MS = 120_000;
 const PACKAGE =
 	/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/u;
 const SELECTOR =
@@ -43,19 +48,22 @@ export function parsePublicNpmSpec(input: string): {
 	return { packageName, selector };
 }
 
-type NpmRunner = (
-	args: readonly string[],
+export type InstallerWorkerRunner = (
+	request: InstallerWorkerRequest,
 	options: {
 		readonly cwd: string;
 		readonly signal?: AbortSignal;
 		readonly env: NodeJS.ProcessEnv;
 	},
-) => Promise<{ stdout: string; stderr: string }>;
-export interface NpmCliOptions {
-	readonly npmCliPath?: string;
+) => Promise<InstallerWorkerResult>;
+export interface NpmRegistryClientOptions {
 	readonly workRoot: string;
-	readonly npmVersion?: string;
-	readonly runner?: NpmRunner;
+	/** The installer worker script. Desktop passes its bundled entry. */
+	readonly workerEntrypoint?: string;
+	readonly installerVersion?: string;
+	readonly runner?: InstallerWorkerRunner;
+	/** Injected only so tests need not wait for the production deadline. */
+	readonly workerDeadlineMs?: number;
 }
 
 export class NpmRegistryUnavailableError extends Error {
@@ -68,19 +76,42 @@ export class NpmRegistryUnavailableError extends Error {
 	}
 }
 
-export function bundledNpmCliPath(): string {
-	const entry = createRequire(import.meta.url).resolve('npm');
-	return join(dirname(entry), 'bin', 'npm-cli.js');
+const NETWORK_FAILURES = new Set([
+	'ENETUNREACH',
+	'ENOTFOUND',
+	'ECONNREFUSED',
+	'ECONNRESET',
+	'ETIMEDOUT',
+	'EAI_AGAIN',
+]);
+
+/** The npm library versions the installer runs, recorded in every receipt. */
+export function bundledInstallerVersion(): string {
+	const load = createRequire(import.meta.url);
+	const version = (id: string): string => {
+		const value = (load(`${id}/package.json`) as { version?: unknown })
+			.version;
+		if (typeof value !== 'string')
+			throw new Error(`installer library ${id} has no version`);
+		return value;
+	};
+	return `arborist@${version('@npmcli/arborist')} pacote@${version('pacote')}`;
 }
 
-/** npmjs-only adapter. npm executes through the server's bundled CLI with a
- * sterile home/cache/userconfig and never inherits registry credentials. */
-export class NpmCliRegistryClient
+/** npmjs-only adapter. npm's package libraries run in a bounded child process
+ * with a sterile home, cache, and environment, and never see registry
+ * credentials, proxies, or user npm configuration. */
+export class NpmRegistryClient
 	implements ExtensionRegistryClient, ExtensionMaterializer
 {
-	readonly npmVersion: string;
-	constructor(private readonly options: NpmCliOptions) {
-		this.npmVersion = options.npmVersion ?? '12.2.1';
+	private version: string | undefined;
+	constructor(private readonly options: NpmRegistryClientOptions) {
+		this.version = options.installerVersion;
+	}
+
+	get installerVersion(): string {
+		this.version ??= bundledInstallerVersion();
+		return this.version;
 	}
 
 	async resolve(
@@ -88,50 +119,22 @@ export class NpmCliRegistryClient
 		selector: string,
 		signal?: AbortSignal,
 	): Promise<RegistryPackageResolution> {
-		const spec = `${packageName}@${selector}`;
-		const versionResult = await this.run(
-			['view', spec, 'version', '--json'],
-			join(this.options.workRoot, 'resolve'),
-			signal,
-		);
-		let versionValue: unknown;
-		try {
-			versionValue = JSON.parse(versionResult.stdout);
-		} catch {
-			throw new Error('npm registry returned invalid version metadata');
-		}
-		const exactVersion = Array.isArray(versionValue)
-			? versionValue.at(-1)
-			: versionValue;
-		if (typeof exactVersion !== 'string')
-			throw new Error('npm registry did not resolve an exact version');
+		const cwd = join(this.options.workRoot, 'resolve');
 		const result = await this.run(
-			[
-				'view',
-				`${packageName}@${exactVersion}`,
-				'name',
-				'version',
-				'dist.integrity',
-				'dist.tarball',
-				'maintainers',
-				'repository',
-				'dependencies',
-				'terminay',
-				'--json',
-			],
-			join(this.options.workRoot, 'resolve'),
+			{ op: 'resolve', spec: `${packageName}@${selector}`, cache: this.cache },
+			cwd,
 			signal,
 		);
-		let metadata: Record<string, unknown>;
-		try {
-			metadata = JSON.parse(result.stdout) as Record<string, unknown>;
-		} catch {
-			throw new Error('npm registry returned invalid metadata');
-		}
+		const metadata = result.manifest;
+		const dist =
+			typeof metadata?.dist === 'object' && metadata.dist !== null
+				? (metadata.dist as Record<string, unknown>)
+				: {};
 		if (
+			metadata === undefined ||
 			metadata.name !== packageName ||
 			typeof metadata.version !== 'string' ||
-			typeof metadata['dist.integrity'] !== 'string'
+			typeof dist.integrity !== 'string'
 		)
 			throw new Error(
 				'npm registry response is missing exact integrity metadata',
@@ -140,9 +143,9 @@ export class NpmCliRegistryClient
 		return Object.freeze({
 			packageName,
 			version: metadata.version,
-			integrity: metadata['dist.integrity'],
-			...(typeof metadata['dist.tarball'] === 'string'
-				? { tarballUrl: metadata['dist.tarball'] }
+			integrity: dist.integrity,
+			...(typeof dist.tarball === 'string'
+				? { tarballUrl: dist.tarball }
 				: {}),
 			...(typeof repository === 'string'
 				? { repository }
@@ -177,108 +180,154 @@ export class NpmCliRegistryClient
 		signal?: AbortSignal,
 	): Promise<void> {
 		await mkdir(stagingRoot, { recursive: false });
-		const dependency =
-			resolution.source === 'uploaded'
-				? requiredArchivePath(resolution)
-				: resolution.version;
+		const uploaded = resolution.source === 'uploaded';
+		const dependency = uploaded
+			? requiredArchivePath(resolution)
+			: resolution.version;
 		await writeFile(
 			join(stagingRoot, 'package.json'),
 			`${JSON.stringify({ private: true, dependencies: { [resolution.packageName]: dependency } }, null, 2)}\n`,
 			{ flag: 'wx' },
 		);
 		await this.run(
-			[
-				'install',
-				...(resolution.source === 'uploaded'
-					? [dependency]
-					: [`${resolution.packageName}@${resolution.version}`]),
-				'--save-exact',
-				'--package-lock-only',
-				'--ignore-scripts',
-				'--omit=dev',
-				'--no-bin-links',
-				'--workspaces=false',
-				'--audit=false',
-				'--fund=false',
-			],
+			{
+				op: 'lock',
+				root: stagingRoot,
+				spec: uploaded
+					? dependency
+					: `${resolution.packageName}@${resolution.version}`,
+				uploaded,
+				cache: this.cache,
+			},
 			stagingRoot,
 			signal,
 		);
+		let lockText: string;
 		let lock: unknown;
 		try {
-			lock = JSON.parse(
-				await readFile(join(stagingRoot, 'package-lock.json'), 'utf8'),
-			);
+			lockText = await readFile(join(stagingRoot, 'package-lock.json'), 'utf8');
+			lock = JSON.parse(lockText);
 		} catch {
 			throw new Error('npm did not produce a valid exact lockfile');
 		}
 		validateNpmLockfile(lock, resolution);
 		await this.run(
-			[
-				'ci',
-				'--ignore-scripts',
-				'--omit=dev',
-				'--allow-git=none',
-				'--workspaces=false',
-				'--no-bin-links',
-				'--audit=false',
-				'--fund=false',
-			],
+			{ op: 'install', root: stagingRoot, uploaded, cache: this.cache },
 			stagingRoot,
 			signal,
 		);
+		// The install materializes the validated lock; it must not re-resolve.
+		const installed = await readFile(
+			join(stagingRoot, 'package-lock.json'),
+			'utf8',
+		).catch(() => undefined);
+		if (installed !== lockText)
+			throw new Error('npm install changed the validated lockfile');
+	}
+
+	private get cache(): string {
+		return join(this.options.workRoot, 'npm-runtime', 'cache');
 	}
 
 	private async run(
-		args: readonly string[],
+		request: InstallerWorkerRequest,
 		cwd: string,
 		signal?: AbortSignal,
-	): Promise<{ stdout: string; stderr: string }> {
+	): Promise<Extract<InstallerWorkerResult, { ok: true }>> {
 		await mkdir(cwd, { recursive: true });
 		const sterile = join(this.options.workRoot, 'npm-runtime');
-		await mkdir(join(sterile, 'home'), { recursive: true });
-		await mkdir(join(sterile, 'cache'), { recursive: true });
-		const userconfig = join(sterile, 'npmrc');
-		await writeFile(
-			userconfig,
-			`registry=${PUBLIC_REGISTRY}\nalways-auth=false\nignore-scripts=true\nbin-links=false\n`,
-			{ mode: 0o600 },
-		);
+		for (const directory of ['home', 'cache', 'tmp'])
+			await mkdir(join(sterile, directory), { recursive: true });
+		// Nothing from the server's environment: no npm_config_*, proxy,
+		// NODE_OPTIONS, or credentials reach the libraries.
+		const env = {
+			ELECTRON_RUN_AS_NODE: '1',
+			NODE_ENV: 'production',
+			HOME: join(sterile, 'home'),
+			TMPDIR: join(sterile, 'tmp'),
+			TERMINAY_INSTALLER_WORKER: '1',
+		} as unknown as NodeJS.ProcessEnv;
+		let result: InstallerWorkerResult;
 		try {
-			const env = {
-				ELECTRON_RUN_AS_NODE: '1',
-				NODE_ENV: 'production',
-				HOME: join(sterile, 'home'),
-				npm_config_cache: join(sterile, 'cache'),
-				npm_config_registry: PUBLIC_REGISTRY,
-				npm_config_userconfig: userconfig,
-			} as unknown as NodeJS.ProcessEnv;
-			if (this.options.runner !== undefined)
-				return await this.options.runner(args, { cwd, signal, env });
-			return await executeFile(
-				process.execPath,
-				[
-					this.options.npmCliPath ?? bundledNpmCliPath(),
-					...args,
-					'--registry',
-					PUBLIC_REGISTRY,
-					'--userconfig',
-					userconfig,
-				],
-				{ cwd, signal, timeout: 120_000, maxBuffer: 2 * 1024 * 1024, env },
-			);
+			result =
+				this.options.runner === undefined
+					? await runWorker(
+							this.options.workerEntrypoint ?? defaultWorkerEntrypoint(),
+							request,
+							{ cwd, env, ...(signal === undefined ? {} : { signal }) },
+							this.options.workerDeadlineMs ?? WORKER_DEADLINE_MS,
+						)
+					: await this.options.runner(request, { cwd, signal, env });
 		} catch (error) {
-			const code =
-				typeof error === 'object' && error !== null && 'code' in error
-					? String(error.code)
-					: 'unknown';
-			if (
-				['ENETUNREACH', 'ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT'].includes(code)
-			)
-				throw new NpmRegistryUnavailableError();
-			throw new Error(`bundled npm command failed (${code})`);
+			result = { ok: false, code: errorCode(error) };
 		}
+		if (result.ok) return result;
+		if (NETWORK_FAILURES.has(result.code))
+			throw new NpmRegistryUnavailableError();
+		throw new Error(`extension installer failed (${result.code})`);
 	}
+}
+
+function defaultWorkerEntrypoint(): string {
+	return fileURLToPath(new URL('./installerWorker.js', import.meta.url));
+}
+
+async function runWorker(
+	entrypoint: string,
+	request: InstallerWorkerRequest,
+	options: {
+		readonly cwd: string;
+		readonly env: NodeJS.ProcessEnv;
+		readonly signal?: AbortSignal;
+	},
+	deadlineMs: number,
+): Promise<InstallerWorkerResult> {
+	let stdout: string;
+	try {
+		({ stdout } = await executeFile(
+			process.execPath,
+			[entrypoint, JSON.stringify(request)],
+			{
+				...options,
+				timeout: deadlineMs,
+				killSignal: 'SIGKILL',
+				maxBuffer: 2 * 1024 * 1024,
+			},
+		));
+	} catch (error) {
+		// A failed request still reports its code on stdout.
+		const output =
+			typeof error === 'object' && error !== null && 'stdout' in error
+				? String((error as { stdout: unknown }).stdout)
+				: '';
+		const parsed = parseWorkerResult(output);
+		if (parsed !== undefined && !parsed.ok) return parsed;
+		throw error;
+	}
+	const parsed = parseWorkerResult(stdout);
+	if (parsed === undefined)
+		throw new Error('extension installer returned an invalid result');
+	return parsed;
+}
+
+function parseWorkerResult(output: string): InstallerWorkerResult | undefined {
+	try {
+		const value = JSON.parse(output) as unknown;
+		if (typeof value !== 'object' || value === null) return undefined;
+		const result = value as { ok?: unknown; code?: unknown };
+		if (result.ok === true) return value as InstallerWorkerResult;
+		if (result.ok === false && typeof result.code === 'string')
+			return value as InstallerWorkerResult;
+	} catch {
+		/* invalid output is reported by the caller */
+	}
+	return undefined;
+}
+
+function errorCode(error: unknown): string {
+	if (typeof error !== 'object' || error === null) return 'unknown';
+	if ('killed' in error && error.killed === true) return 'ETIMEDOUT_WORKER';
+	return 'code' in error ? String(error.code) : 'unknown';
 }
 
 function requiredArchivePath(resolution: RegistryPackageResolution): string {
