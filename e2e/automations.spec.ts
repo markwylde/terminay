@@ -196,6 +196,10 @@ attention(
 		// back on Terminal 1.
 		const subjectToken = path.join(outDir, 'subject-token.txt');
 		await tabNamed(mainWindow, 'Terminal 2').click();
+		await expect(activeTerminalPanel(mainWindow)).toHaveAttribute(
+			'data-terminay-terminal-session-id',
+			subjectSessionId,
+		);
 		const command = `printf '%s' "$TERMINAY_CONTROL_TOKEN" > ${subjectToken}; ${bell.wait}; printf 'ding\\007\\n'`;
 		await submitTerminalCommand(mainWindow, command);
 		await commandArrived(electronApp, subjectSessionId, command);
