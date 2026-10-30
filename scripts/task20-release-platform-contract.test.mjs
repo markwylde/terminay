@@ -38,16 +38,27 @@ test("release Desktop matrix binds each native artifact format to its matching O
     "update_payload: Terminay-Linux-%VERSION%.AppImage",
     "update_metadata: latest-linux.yml",
   ].join("\n            ");
+  const windowsEntry = [
+    "- os: windows-latest",
+    "label: Windows",
+    "script: npm run build:win",
+    "asset_templates: Terminay-Windows-%VERSION%-Setup.exe Terminay-Windows-%VERSION%-Setup.exe.blockmap",
+    "update_payload: Terminay-Windows-%VERSION%-Setup.exe",
+    "update_metadata: latest.yml",
+  ].join("\n            ");
 
   assert.match(binaries, new RegExp(macEntry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
   assert.match(binaries, new RegExp(linuxEntry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
-  assert.equal((binaries.match(/^ {10}- os:/gmu) ?? []).length, 2,
+  assert.match(binaries, new RegExp(windowsEntry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+  assert.equal((binaries.match(/^ {10}- os:/gmu) ?? []).length, 3,
     "release packaging must publish only the explicitly reviewed native OS lanes");
 });
 
 test("native package commands and artifact names agree with the release matrix", () => {
   assert.equal(scripts["build:mac"], "npm run build:app && electron-builder --mac dmg zip --publish never");
   assert.equal(scripts["build:linux"], "npm run build:app && electron-builder --linux AppImage --publish never");
+  // Windows ships x64 only (native-windows-desktop).
+  assert.equal(scripts["build:win"], "node scripts/stage-selected-secure-werift-runtime.mjs --reuse-validated && npm run build:app && electron-builder --win nsis --x64 --publish never");
   // The workflow uploads every asset itself; electron-builder never publishes.
   // (An unpacked --dir build produces no artifact to publish.)
   for (const [name, command] of Object.entries(scripts)) {
@@ -69,7 +80,7 @@ test("native package commands and artifact names agree with the release matrix",
 
   assert.match(binaries, /if: matrix\.os == 'macos-latest'/u,
     "macOS-only signing and notarization must never run for a Linux artifact");
-  assert.match(binaries, /-name '\*\.dmg' -o -name '\*\.zip' -o -name '\*\.blockmap' -o -name '\*\.AppImage'/u,
+  assert.match(binaries, /-name '\*\.dmg' -o -name '\*\.zip' -o -name '\*\.blockmap' -o -name '\*\.AppImage' -o -name '\*\.exe'/u,
     "the release lane must reject an artifact from the wrong native format");
 });
 

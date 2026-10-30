@@ -120,6 +120,7 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
   // Fixed names per platform, so each run replaces the last.
   assert.match(desktop, /- os: macos-latest\n\s+label: macOS\n\s+platform: mac\n\s+target: zip\n\s+asset: terminay-desktop-main-mac\.zip\n\s+metadata: beta-mac\.yml/u)
   assert.match(desktop, /- os: ubuntu-latest\n\s+label: Linux\n\s+platform: linux\n\s+target: AppImage\n\s+asset: terminay-desktop-main-linux-x86_64\.AppImage\n\s+metadata: beta-linux\.yml/u)
+  assert.match(desktop, /- os: windows-latest\n\s+label: Windows\n\s+platform: win\n\s+target: nsis\n\s+asset: terminay-desktop-main-windows-x64-Setup\.exe\n\s+metadata: beta\.yml/u)
   assert.match(desktop, /fetch-depth: 0\n\s+fetch-tags: true\n\s+persist-credentials: false/u,
     "the beta version is derived from the commits since the latest tag")
   assert.doesNotMatch(desktop, /^ {4}permissions:/mu, "the desktop build job must keep the read-only token")
@@ -131,6 +132,8 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
     "Derive the beta version and release notes",
     "Sync package version to the beta version",
     "Build packaged beta app",
+    "Check every native file in the Windows beta is x64",
+    "Install the Windows beta installer and run terminals from it",
     "Check the Linux beta AppImage against the glibc floor and run terminals from it there",
     "Verify exact beta asset selection",
     "Verify macOS signed and notarized beta zip",
@@ -164,6 +167,12 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
   assert.match(floor, /if: matrix\.platform == 'linux'/u)
   assert.match(floor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 "release\/main-desktop\/\$ASSET"/u)
   assert.match(floor, /sh scripts\/probe-linux-glibc-floor\.sh appimage "release\/main-desktop\/\$ASSET"/u)
+  const pe = mainPrereleaseStep(desktop, "Check every native file in the Windows beta is x64")
+  assert.match(pe, /if: matrix\.platform == 'win'/u)
+  assert.match(pe, /node scripts\/check-windows-pe-architecture\.mjs release\/main-desktop\/win-unpacked/u)
+  const windowsProbe = mainPrereleaseStep(desktop, "Install the Windows beta installer and run terminals from it")
+  assert.match(windowsProbe, /if: matrix\.platform == 'win'/u)
+  assert.match(windowsProbe, /\.\/scripts\/probe-windows-desktop\.ps1 -Installer "release\/main-desktop\/\$env:ASSET"/u)
   assert.match(mainPrereleaseStep(desktop, "Check macOS signing secrets"), /Refusing to publish an unsigned or unnotarized macOS beta/u)
 
   const zip = mainPrereleaseStep(desktop, "Verify macOS signed and notarized beta zip")
@@ -197,7 +206,7 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
 
   const upload = mainPrereleaseStep(publish, "Upload replacement assets under temporary names")
   assert.match(upload, /gh release upload main-latest "release\/main-desktop\/\$NAME\.incoming" --repo "\$GH_REPO" --clobber/u)
-  for (const name of ["terminay-desktop-main-mac.zip", "terminay-desktop-main-mac.zip.sha256", "terminay-desktop-main-linux-x86_64.AppImage", "terminay-desktop-main-linux-x86_64.AppImage.sha256", "beta-mac.yml", "beta-linux.yml"]) {
+  for (const name of ["terminay-desktop-main-mac.zip", "terminay-desktop-main-mac.zip.sha256", "terminay-desktop-main-linux-x86_64.AppImage", "terminay-desktop-main-linux-x86_64.AppImage.sha256", "terminay-desktop-main-windows-x64-Setup.exe", "terminay-desktop-main-windows-x64-Setup.exe.sha256", "beta-mac.yml", "beta-linux.yml", "beta.yml"]) {
     assert.ok(upload.includes(`${name} \\`) || upload.includes(`${name}; do`), `${name} must be uploaded as an incoming replacement`)
   }
 
@@ -208,24 +217,29 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
     rename.lastIndexOf('promote "terminay-server-main-$target.tar.gz$suffix"'),
     rename.lastIndexOf("terminay-desktop-main-mac.zip"),
     rename.lastIndexOf("terminay-desktop-main-linux-x86_64.AppImage.sha256"),
+    rename.lastIndexOf("terminay-desktop-main-windows-x64-Setup.exe.sha256"),
   ]
   const macMetadata = rename.indexOf("promote beta-mac.yml")
   const linuxMetadata = rename.indexOf("promote beta-linux.yml")
-  assert.ok(macMetadata >= 0 && linuxMetadata > macMetadata)
+  const windowsMetadata = rename.indexOf("promote beta.yml")
+  assert.ok(macMetadata >= 0 && linuxMetadata > macMetadata && windowsMetadata > linuxMetadata)
   for (const payload of payloadPromotions) {
     assert.ok(payload >= 0 && payload < macMetadata, "beta metadata must be renamed into place after every payload")
   }
-  assert.equal(rename.slice(macMetadata).match(/promote /gu).length, 2, "nothing may move after the beta metadata")
+  assert.equal(rename.slice(macMetadata).match(/promote /gu).length, 3, "nothing may move after the beta metadata")
 
   const verify = mainPrereleaseStep(publish, "Verify the published main channel set")
   const expected = verify.slice(verify.indexOf("<<EOF\n"), verify.indexOf("\n          EOF\n")).split("\n").slice(1).map((line) => line.trim())
   assert.deepEqual(expected, [
     "beta-linux.yml",
     "beta-mac.yml",
+    "beta.yml",
     "terminay-desktop-main-linux-x86_64.AppImage",
     "terminay-desktop-main-linux-x86_64.AppImage.sha256",
     "terminay-desktop-main-mac.zip",
     "terminay-desktop-main-mac.zip.sha256",
+    "terminay-desktop-main-windows-x64-Setup.exe",
+    "terminay-desktop-main-windows-x64-Setup.exe.sha256",
     "terminay-server-main-linux-arm64.tar.gz",
     "terminay-server-main-linux-arm64.tar.gz.sha256",
     "terminay-server-main-linux-arm64.tar.gz.sig",
