@@ -5,7 +5,7 @@
 //   1. launch with an isolated data directory and wait for the workspace;
 //   2. PowerShell: input and output, then a window resize the shell sees;
 //   3. Command Prompt, opened from the shell profile chooser: input, output,
-//      and `exit` closing its terminal;
+//      and `exit` ending it, then closing its tab;
 //   4. quit with the PowerShell terminal held, relaunch, and find the same
 //      terminal, with its earlier output, still answering.
 //
@@ -161,7 +161,10 @@ try {
 		await window.locator('.terminal-tab-content').nth(1).waitFor({ state: 'visible' });
 		await type(window, 'echo probe-cmd-%OS%');
 		await output(window, 'probe-cmd-Windows_NT');
+		// An ended terminal stays open, read-only, until its tab is closed.
 		await type(window, 'exit');
+		await terminal(window).locator('.xterm-rows').getByText(/\[process exited with /u).first().waitFor();
+		await window.locator('.dv-tab.dv-active-tab:visible').getByLabel('Close terminal').click();
 		await window.waitForFunction(() => document.querySelectorAll('.terminal-tab-content').length === 1);
 	});
 
