@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { bundledNpmCliPath, ExtensionInstaller, OFFICIAL_EXTENSION_CATALOGUE, parsePublicNpmSpec } from "../dist/extensions/index.js";
+import { bundledInstallerVersion, ExtensionInstaller, OFFICIAL_EXTENSION_CATALOGUE, parsePublicNpmSpec } from "../dist/extensions/index.js";
 
 const INTEGRITY = `sha512-${Buffer.alloc(64, 7).toString("base64")}`;
 function resolution(version = "1.0.0") { return { packageName: "fixture-extension", version, integrity: INTEGRITY, tarballUrl: `https://registry.npmjs.org/fixture-extension/-/fixture-extension-${version}.tgz`, provenance: "unavailable", manifestMetadata: packageJson(version).terminay }; }
@@ -14,7 +15,7 @@ function packageJson(version, extra = {}) { return {
 }; }
 
 class FixtureNpm {
-  npmVersion = "12.2.1";
+  installerVersion = "arborist@10.0.4 pacote@22.0.1";
   versions = new Map([["latest", "1.0.0"]]);
   extraPackage = {};
   /** Dependency packages materialized beside the extension, keyed by name. */
@@ -59,10 +60,27 @@ test("custom npm preview binds exact metadata and commits an immutable validated
     const state = await fixture.installer.confirm(preview.previewDigest);
     const installed = state.extensions["dev.example.fixture"];
     assert.equal(installed.state, "installed"); assert.equal(installed.enabled, true);
-    assert.equal(installed.slots[installed.activeSlotId].receipt.npmVersion, "12.2.1");
+    assert.equal(installed.slots[installed.activeSlotId].receipt.installerVersion, "arborist@10.0.4 pacote@22.0.1");
     assert.equal(installed.slots[installed.activeSlotId].receipt.integrity, INTEGRITY);
     assert.equal(fixture.audits.at(-1).kind, "extension.installed");
     assert.doesNotMatch(await readFile(join(fixture.dataRoot, "extensions", "registry.v1.json"), "utf8"), /trusted code/u);
+  } finally { await fixture.cleanup(); }
+});
+
+test("a receipt recorded by the npm CLI installer reads as that npm's installer version without being rewritten", async () => {
+  const fixture = await harness();
+  try {
+    const preview = await fixture.installer.preview("fixture-extension@latest");
+    await fixture.installer.confirm(preview.previewDigest);
+    const registry = join(fixture.dataRoot, "extensions", "registry.v1.json");
+    const stored = JSON.parse(await readFile(registry, "utf8"));
+    for (const slot of Object.values(stored.extensions["dev.example.fixture"].slots)) { delete slot.receipt.installerVersion; slot.receipt.npmVersion = "12.2.1"; }
+    const legacy = JSON.stringify(stored);
+    await writeFile(registry, legacy);
+    const installed = (await fixture.installer.snapshot()).extensions["dev.example.fixture"];
+    const receipt = installed.slots[installed.activeSlotId].receipt;
+    assert.equal(receipt.installerVersion, "npm@12.2.1"); assert.equal("npmVersion" in receipt, false);
+    assert.equal(await readFile(registry, "utf8"), legacy);
   } finally { await fixture.cleanup(); }
 });
 
@@ -155,8 +173,7 @@ test("official catalogue is hardcoded metadata without a privileged install path
   assert.ok(OFFICIAL_EXTENSION_CATALOGUE.every((item) => item.official));
 });
 
-test("the installer resolves the pinned bundled npm CLI instead of a PATH command", async () => {
-  const cli = bundledNpmCliPath();
-  assert.match(cli, /node_modules\/npm\/bin\/npm-cli\.js$/u);
-  assert.match(await readFile(cli, "utf8"), /lib\/cli\.js/u);
+test("the installer records the npm libraries it runs, never an npm program", () => {
+  assert.match(bundledInstallerVersion(), /^arborist@\d+\.\d+\.\d+ pacote@\d+\.\d+\.\d+$/u);
+  assert.throws(() => createRequire(import.meta.url).resolve("npm"), /Cannot find module/u);
 });

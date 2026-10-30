@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import test from "node:test";
-import { bundledNpmCliPath, createDefaultExtensionManagement, ExtensionInstaller, inspectNpmPackArchive, NpmCliRegistryClient } from "../dist/extensions/index.js";
+import { createDefaultExtensionManagement, ExtensionInstaller, inspectNpmPackArchive, NpmRegistryClient } from "../dist/extensions/index.js";
 
-const executeFile = promisify(execFile);
+const pacote = createRequire(import.meta.url)("pacote");
 const manifest = { manifestVersion: 1, id: "dev.example.uploaded", displayName: "Uploaded fixture", api: "^3.0.0", engines: { terminay: ">=1", node: ">=22" }, entrypoint: "dist/extension.js", permissions: ["agent-observation"], contributes: { agentSessionSources: [{ id: "dev.example.uploaded/cli", displayName: "Uploaded", harnesses: [{ id: "fixture", displayName: "Fixture" }] }] } };
 
 async function packedFixture() {
@@ -15,7 +14,7 @@ async function packedFixture() {
   await mkdir(join(source, "dist"), { recursive: true }); await mkdir(packs);
   await writeFile(join(source, "package.json"), JSON.stringify({ name: "terminay-unpublished-fixture", version: "1.2.3", type: "module", exports: { ".": "./dist/extension.js" }, terminay: manifest }));
   await writeFile(join(source, "dist", "extension.js"), "export function activate(context) { context.agents.registerSessionSource('dev.example.uploaded/cli', { start() {} }); }\n");
-  await executeFile(process.execPath, [bundledNpmCliPath(), "pack", source, "--pack-destination", packs, "--ignore-scripts"]);
+  await pacote.tarball.file(source, join(packs, "terminay-unpublished-fixture-1.2.3.tgz"), { Arborist: createRequire(import.meta.url)("@npmcli/arborist"), ignoreScripts: true, cache: join(root, "cache") });
   return { root, bytes: await readFile(join(packs, "terminay-unpublished-fixture-1.2.3.tgz")), cleanup: () => rm(root, { recursive: true, force: true }) };
 }
 
@@ -32,7 +31,7 @@ test("an npm pack archive previews as uploaded/unverified and installs through t
 });
 
 test("uploaded package inspection rejects invalid names and malformed or oversized bytes before preview", async () => {
-  const fixture = await packedFixture(); const dataRoot = join(fixture.root, "data"); const npm = new NpmCliRegistryClient({ workRoot: join(dataRoot, "npm") }); const installer = new ExtensionInstaller({ dataRoot, registryClient: npm, materializer: npm });
+  const fixture = await packedFixture(); const dataRoot = join(fixture.root, "data"); const npm = new NpmRegistryClient({ workRoot: join(dataRoot, "npm") }); const installer = new ExtensionInstaller({ dataRoot, registryClient: npm, materializer: npm });
   try {
     await installer.initialize(); await assert.rejects(installer.previewArchive("fixture.zip", fixture.bytes), /\.tgz/u);
     await assert.rejects(inspectNpmPackArchive(Buffer.from("not gzip")), /gzip/u);

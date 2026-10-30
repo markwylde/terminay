@@ -35,6 +35,7 @@
   ],
   "dependencies": {
     "@mdx-js/mdx": "^3.1.1",
+    "@npmcli/arborist": "10.0.4",
     "@terminay/cron": "1.0.0",
     "@terminay/extension-api": "^3.3.0",
     "@terminay/protocol": "1.0.0",
@@ -42,6 +43,7 @@
     "@xterm/addon-serialize": "0.15.0-beta.299",
     "@xterm/headless": "6.1.0-beta.301",
     "esbuild": "0.28.2",
+    "pacote": "22.0.1",
     "yaml": "^2.9.0"
   },
   "scripts": {
