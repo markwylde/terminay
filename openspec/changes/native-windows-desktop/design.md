@@ -144,7 +144,7 @@ set `PIPE_REJECT_REMOTE_CLIENTS`, and that Node gives the server no pipe handle
 to ask who connected. So a pipe cannot tell a client on this machine from one
 reaching it over the network as the same principal. Connecting admits
 neither: the holder answers only a peer that completes the proof below, and the
-control pipe serves only a capability token (ADR-0083).
+control pipe serves only a capability token (ADR-0084).
 
 The server, not the holder, closes `<dataRoot>\session-holder` to all but the
 user, SYSTEM and Administrators before it launches a holder. It passes the SID
@@ -226,7 +226,7 @@ So an interactive PowerShell that Terminay starts on Windows gets
 `-NoExit -EncodedCommand <hook>`. After the profiles load, the hook wraps the
 prompt so that each prompt sets `[Environment]::CurrentDirectory` to a
 filesystem location, then draws as before. The owner approved this as an
-exception to ADR-0051 (ADR-0084). The PEB read then needs no per-shell
+exception to ADR-0051 (ADR-0085). The PEB read then needs no per-shell
 handling.
 
 *Alternatives:*

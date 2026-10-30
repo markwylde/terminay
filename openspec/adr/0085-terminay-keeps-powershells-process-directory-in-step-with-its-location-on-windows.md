@@ -1,4 +1,4 @@
-# ADR-0084: Terminay keeps PowerShell's process directory in step with its location on Windows
+# ADR-0085: Terminay keeps PowerShell's process directory in step with its location on Windows
 
 Status: accepted
 Date: 2026-10-30
@@ -6,7 +6,7 @@ Date: 2026-10-30
 ## Context
 
 On Windows, Terminay reads a terminal's directory from its foreground
-process's PEB (ADR-0082). This is how a split starts in the right place, and
+process's PEB (ADR-0083). This is how a split starts in the right place, and
 how worktree capture and close protection work.
 
 PowerShell's `Set-Location` moves only the provider location, not the process's

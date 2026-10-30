@@ -11,7 +11,8 @@ user's current working directory.
 ## Runtime prerequisites
 
 Every supported Terminay Server artifact includes its pinned Node runtime and
-matching pinned npm installer. Operators do not install system Node/npm or a
+an extension installer built from npm's package libraries; it does not ship
+the npm program. Operators do not install system Node/npm or a
 compiler. Every release carries verified, packed offline artifacts for Codex,
 Claude Code, Cursor Agent, Grok, and omp. On first start Terminay copies those
 artifacts into ordinary immutable extension slots and enables them

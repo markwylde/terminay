@@ -100,8 +100,10 @@ export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   '@peculiar/asn1-x509-attr': '2.8.0',
   asn1js: '3.0.10',
   pvutils: '1.1.5',
+  // A lockless install otherwise takes whatever tslib published last; the
+  // copy beneath tsyringe stays on its own 1.x line.
   tslib: '2.8.1',
-  tsyringe: { '.': '4.10.0', tslib: '1.14.1' },
+  tsyringe: { tslib: '1.14.1' },
 }
 
 export { parseSingleNpmPackResult }

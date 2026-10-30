@@ -66,7 +66,7 @@ result.protect = core.protectWindowsDirectory(protectedDirectory, result.sid ?? 
 result.protectedAcl = execFileSync('icacls.exe', [protectedDirectory], { encoding: 'utf8' }).trim();
 
 for (const child of [cmd64, cmd32, pwshSetLocation, pwshEnvironment]) child.kill();
-// ADR-0084: an interactive PowerShell in a ConPTY, started with the arguments
+// ADR-0085: an interactive PowerShell in a ConPTY, started with the arguments
 // Terminay adds, keeps its process directory in step after `Set-Location`.
 async function hookedPowerShell(shell) {
 	const { createRequire } = await import('node:module');

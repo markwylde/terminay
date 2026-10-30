@@ -2106,6 +2106,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			},
 		},
 		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
+		installerWorkerEntrypoint: path.join(MAIN_DIST, 'installerWorkerEntry.js'),
 		builtInExtensionArtifactRoot: embeddedBuiltInExtensionArtifactRoot({
 			appRoot: process.env.APP_ROOT,
 			isPackaged: app.isPackaged,

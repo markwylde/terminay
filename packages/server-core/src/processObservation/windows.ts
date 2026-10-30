@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import type { WindowsProcessRow } from './windowsSelection.js';
 
 /**
- * Win32 calls Node does not expose, bound through `koffi` (ADR-0082). Every
+ * Win32 calls Node does not expose, bound through `koffi` (ADR-0083). Every
  * binding the server makes is declared in this module, with its types, and
  * `koffi` is loaded only when one of these functions is first called, which
  * happens only on Windows. A call that fails is an absent answer (`null`),
@@ -373,7 +373,7 @@ export function formatSid(sid: Uint8Array): string | null {
 
 /**
  * Give a directory a protected DACL that names only the user, SYSTEM, and
- * Administrators, replacing whatever it inherited (ADR-0081 §2). Applied on
+ * Administrators, replacing whatever it inherited (ADR-0082 §2). Applied on
  * every start, so a directory whose DACL was widened is closed again.
  */
 export function protectWindowsDirectory(

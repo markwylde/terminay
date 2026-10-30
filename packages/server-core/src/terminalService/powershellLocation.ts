@@ -5,7 +5,7 @@
  * Windows therefore runs one command after its profiles load. It wraps the
  * prompt the user has, so that each prompt first sets the process directory to
  * a filesystem location, and then draws exactly what it drew before
- * (ADR-0084, terminal-workspace).
+ * (ADR-0085, terminal-workspace).
  */
 
 const POWERSHELL_EXECUTABLES = new Set(['pwsh', 'powershell']);

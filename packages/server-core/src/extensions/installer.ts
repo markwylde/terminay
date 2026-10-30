@@ -780,7 +780,7 @@ export class ExtensionInstaller {
 					: {}),
 				...(resolution.tarballUrl ? { tarballUrl: resolution.tarballUrl } : {}),
 				installedAt: new Date((this.options.now ?? Date.now)()).toISOString(),
-				npmVersion: this.options.materializer.npmVersion,
+				installerVersion: this.options.materializer.installerVersion,
 				lockHash: validated.lockHash,
 				inventoryHash: validated.inventoryHash,
 				permissions: Object.freeze([...validated.manifest.permissions]),
@@ -1201,7 +1201,24 @@ function validateRegistry(value: unknown): ExtensionRegistrySnapshot {
 		(value as { extensions?: unknown }).extensions === null
 	)
 		throw new Error('extension registry is invalid');
-	return structuredClone(value) as ExtensionRegistrySnapshot;
+	const registry = structuredClone(value) as ExtensionRegistrySnapshot;
+	for (const record of Object.values(registry.extensions))
+		for (const slot of Object.values(record?.slots ?? {}))
+			readInstallerVersion(slot?.receipt);
+	return registry;
+}
+/** Receipts written by the npm CLI installer record `npmVersion`; read it as
+ * the installer version without rewriting the receipt on disk. */
+function readInstallerVersion(receipt: unknown): void {
+	if (typeof receipt !== 'object' || receipt === null) return;
+	const legacy = receipt as { npmVersion?: unknown; installerVersion?: unknown };
+	if (
+		legacy.installerVersion === undefined &&
+		typeof legacy.npmVersion === 'string'
+	) {
+		legacy.installerVersion = `npm@${legacy.npmVersion}`;
+		delete legacy.npmVersion;
+	}
 }
 function required(
 	state: ExtensionRegistrySnapshot,

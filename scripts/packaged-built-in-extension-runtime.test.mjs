@@ -52,7 +52,7 @@ class CorruptOneBuiltIn extends FilteredBuiltIns {
 class OverrideRegistry {
   constructor(manifest) {
     this.manifest = manifest
-    this.npmVersion = '12.2.1'
+    this.installerVersion = 'arborist@10.0.4 pacote@22.0.1'
   }
   async resolve(packageName, selector) {
     assert.equal(packageName, AGENTS_PACKAGE)

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { copyFile, cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -35,7 +36,10 @@ test(
 					join(userData, 'workspace.v4.json'),
 				);
 			}
-			if (!developmentLaunch) await requireCanonicalArtifactInventory();
+			if (!developmentLaunch) {
+				await requireCanonicalArtifactInventory();
+				await requirePackagedExtensionInstaller();
+			}
 			const fresh = await exerciseLaunch({ mode: 'fresh', userData });
 			evidence.push(fresh);
 			const restored = await exerciseLaunch({
@@ -84,6 +88,11 @@ async function requireCanonicalArtifactInventory() {
 	for (const required of [
 		'dist-web/server.html',
 		'dist-web/manifest.json',
+		// The extension installer is npm's libraries, not the npm program
+		// (ADR-0080).
+		'dist-electron/installerWorkerEntry.js',
+		'node_modules/pacote/package.json',
+		'node_modules/@npmcli/arborist/package.json',
 	]) {
 		assert.ok(entries.has(required), `packaged app.asar is missing ${required}`);
 	}
@@ -97,6 +106,7 @@ async function requireCanonicalArtifactInventory() {
 		'dist-electron/preload.mjs',
 		'dist-electron/serverUiPreload.js',
 		'dist-electron/rendererRuntime.js',
+		'node_modules/npm/package.json',
 	]) {
 		assert.equal(
 			entries.has(forbidden),
@@ -110,6 +120,74 @@ async function requireCanonicalArtifactInventory() {
 			/(?:^|\/)(?:rendererRuntime|legacyRenderer|renderer-bootstrap)(?:[-.].*)?\.(?:js|mjs)$/u,
 			`legacy renderer entry chunk must not ship: ${entry}`,
 		);
+	}
+}
+
+/** Install an uploaded archive offline through the packaged Electron, exactly
+ * as the embedded server's installer worker does. */
+async function requirePackagedExtensionInstaller() {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-packaged-installer-'));
+	try {
+		const source = join(root, 'source');
+		await mkdir(source);
+		await writeFile(
+			join(source, 'package.json'),
+			JSON.stringify({ name: 'packaged-installer-fixture', version: '1.0.0' }),
+		);
+		const archive = join(root, 'packaged-installer-fixture-1.0.0.tgz');
+		const load = createRequire(import.meta.url);
+		await load('pacote').tarball.file(source, archive, {
+			Arborist: load('@npmcli/arborist'),
+			ignoreScripts: true,
+			cache: join(root, 'pack-cache'),
+		});
+		const stage = join(root, 'stage');
+		await mkdir(stage);
+		await writeFile(
+			join(stage, 'package.json'),
+			JSON.stringify({
+				private: true,
+				dependencies: { 'packaged-installer-fixture': archive },
+			}),
+		);
+		const executable = join(appPath, 'Contents', 'MacOS', basename(appPath, '.app'));
+		const worker = join(
+			appPath,
+			'Contents',
+			'Resources',
+			'app.asar',
+			'dist-electron',
+			'installerWorkerEntry.js',
+		);
+		const cache = join(root, 'cache');
+		for (const request of [
+			{ op: 'lock', root: stage, spec: archive, uploaded: true, cache },
+			{ op: 'install', root: stage, uploaded: true, cache },
+		]) {
+			const { stdout } = await execFileAsync(
+				executable,
+				[worker, JSON.stringify(request)],
+				{
+					cwd: stage,
+					timeout: 60_000,
+					env: {
+						ELECTRON_RUN_AS_NODE: '1',
+						HOME: root,
+						TERMINAY_INSTALLER_WORKER: '1',
+					},
+				},
+			);
+			assert.deepEqual(JSON.parse(stdout), { ok: true }, `packaged installer ${request.op}`);
+		}
+		const installed = JSON.parse(
+			await readFile(
+				join(stage, 'node_modules', 'packaged-installer-fixture', 'package.json'),
+				'utf8',
+			),
+		);
+		assert.equal(installed.version, '1.0.0');
+	} finally {
+		await rm(root, { recursive: true, force: true });
 	}
 }
 

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-// ADR-0082: Win32 bindings are loaded only when a Windows function is first
+// ADR-0083: Win32 bindings are loaded only when a Windows function is first
 // called. Importing server-core on macOS or Linux must never load koffi.
 
 const require = createRequire(import.meta.url);

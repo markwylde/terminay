@@ -19,11 +19,10 @@
     "terminay-mcp": "dist/mcpEntry.js"
   },
   "dependencies": {
-    "@terminay/server-core": "1.0.0",
-    "@terminay/protocol": "1.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@terminay/protocol": "1.0.0",
+    "@terminay/server-core": "1.0.0",
     "node-pty": "^1.1.0",
-    "npm": "12.2.1",
     "selfsigned": "^5.5.0",
     "ws": "^8.21.0",
     "zod": "^4.3.6"
@@ -33,9 +32,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:postcompile": "npm run build:postcompile:evidence && node ../../scripts/stage-built-in-extensions.mjs && npm run build:postcompile:package",
-    "build:postcompile:reuse-extension-tests": "npm run build:postcompile:evidence && node ../../scripts/stage-built-in-extensions.mjs --skip-checks && npm run build:postcompile:package",
-    "build:postcompile:evidence": "node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json",
+    "build:postcompile": "node ../../scripts/stage-built-in-extensions.mjs && npm run build:postcompile:package",
+    "build:postcompile:reuse-extension-tests": "node ../../scripts/stage-built-in-extensions.mjs --skip-checks && npm run build:postcompile:package",
     "build:postcompile:package": "node ../../scripts/copy-built-in-extension-artifacts.mjs ../../build/built-in-extensions dist/built-in-extensions && node ./scripts/write-release-integrity-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
