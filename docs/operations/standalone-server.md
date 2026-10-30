@@ -13,7 +13,7 @@ its fallback, for hosts the CLI does not support.
 
 Server-installed extensions follow the canonical
 [extension operations](./extensions.md) runbook. Supported artifacts include
-the pinned internal npm installer; extension packages are fetched from npmjs.
+their own extension installer; extension packages are fetched from npmjs.
 Operators do not install system Node/npm or place packages in a project
 checkout. Extension packages, receipts, data, and encrypted secret references
 live under the configured server data root.

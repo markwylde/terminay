@@ -15,7 +15,7 @@ import type {
 	ExtensionRegistrySnapshot,
 } from './installerTypes.js';
 import { ExtensionHostManager } from './manager.js';
-import { NpmCliRegistryClient } from './npmClient.js';
+import { NpmRegistryClient } from './npmClient.js';
 import type { ExtensionOperationOptions } from './operations.js';
 import type {
 	ExtensionAgentBroker,
@@ -30,6 +30,8 @@ export interface DefaultExtensionManagementOptions {
 	readonly authorityLabel: string;
 	readonly broker?: ExtensionBroker;
 	readonly childEntrypoint?: string;
+	/** The extension installer worker script. Desktop passes its bundled entry. */
+	readonly installerWorkerEntrypoint?: string;
 	readonly secrets?: ExtensionSecretAccessBroker;
 	readonly agents?: ExtensionAgentBroker;
 	readonly worktrees?: ExtensionWorktreeBroker;
@@ -103,8 +105,11 @@ export function createDefaultExtensionManagement(
 			: { worktrees: options.worktrees }),
 		...(options.vault === undefined ? {} : { vault: options.vault.vault }),
 	});
-	const npm = new NpmCliRegistryClient({
+	const npm = new NpmRegistryClient({
 		workRoot: join(options.dataRoot, 'extensions', 'cache', 'npm'),
+		...(options.installerWorkerEntrypoint === undefined
+			? {}
+			: { workerEntrypoint: options.installerWorkerEntrypoint }),
 	});
 	let activateReconciled:
 		| ((
@@ -423,6 +428,7 @@ export function createProductionExtensionManagement(
 		dataRoot: string;
 		authorityLabel: string;
 		childEntrypoint?: string;
+		installerWorkerEntrypoint?: string;
 		vault: ServerVaultComposition;
 		agents?: ExtensionAgentBroker;
 		worktrees?: ExtensionWorktreeBroker;
@@ -439,6 +445,9 @@ export function createProductionExtensionManagement(
 		...(options.childEntrypoint === undefined
 			? {}
 			: { childEntrypoint: options.childEntrypoint }),
+		...(options.installerWorkerEntrypoint === undefined
+			? {}
+			: { installerWorkerEntrypoint: options.installerWorkerEntrypoint }),
 		...(options.agents === undefined ? {} : { agents: options.agents }),
 		...(options.worktrees === undefined
 			? {}

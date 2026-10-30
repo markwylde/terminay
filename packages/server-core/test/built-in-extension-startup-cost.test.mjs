@@ -123,7 +123,7 @@ test('a start whose built-in slot is already selected does not copy the release 
 		new ExtensionInstaller({
 			dataRoot,
 			registryClient: {},
-			materializer: { npmVersion: '0' },
+			materializer: { installerVersion: '0' },
 			builtIns,
 			probe: async ({ extensionId }) => {
 				probes.push(extensionId);
