@@ -83,7 +83,7 @@ export interface SessionHolderOptions {
 	/**
 	 * Refuse a version-1 `hello`, which presents the credential, and accept
 	 * only the mutual proof. On wherever the holder's address could be taken by
-	 * another user first, which is Windows (ADR-0083 §3).
+	 * another user first, which is Windows (ADR-0084 §3).
 	 */
 	readonly requireMutualProof?: boolean;
 	/**

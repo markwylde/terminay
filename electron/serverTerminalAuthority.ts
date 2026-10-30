@@ -280,6 +280,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly serverId: string;
 	readonly dataRoot?: string;
 	readonly extensionHostChildEntrypoint?: string;
+	/** The extension installer worker; it resolves npm's libraries from ASAR. */
+	readonly installerWorkerEntrypoint?: string;
 	/** Verified release resources, outside ASAR so extension children can run. */
 	readonly builtInExtensionArtifactRoot?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
@@ -825,6 +827,9 @@ export class ServerTerminalAuthority {
 							...(options.extensionHostChildEntrypoint === undefined
 								? {}
 								: { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.installerWorkerEntrypoint === undefined
+								? {}
+								: { installerWorkerEntrypoint: options.installerWorkerEntrypoint }),
 							...(options.builtInExtensionArtifactRoot === undefined
 								? {}
 								: { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),
@@ -841,6 +846,9 @@ export class ServerTerminalAuthority {
 							...(options.extensionHostChildEntrypoint === undefined
 								? {}
 								: { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.installerWorkerEntrypoint === undefined
+								? {}
+								: { installerWorkerEntrypoint: options.installerWorkerEntrypoint }),
 							...(options.builtInExtensionArtifactRoot === undefined
 								? {}
 								: { builtInArtifactRoot: options.builtInExtensionArtifactRoot }),

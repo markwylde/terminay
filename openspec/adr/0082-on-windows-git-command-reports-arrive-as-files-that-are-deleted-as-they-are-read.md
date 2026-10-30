@@ -1,4 +1,4 @@
-# ADR-0081: On Windows, Git command reports arrive as files in an owner-only directory and are deleted as they are read
+# ADR-0082: On Windows, Git command reports arrive as files in an owner-only directory and are deleted as they are read
 
 Status: accepted, supersedes ADR-0069
 Date: 2026-10-30
@@ -10,7 +10,7 @@ ADR-0069 has each terminal's Git send Trace2 events to a Unix socket at a fixed
 address for the data directory. Its decision 6 says that nothing from the
 stream is stored.
 
-Terminay Desktop now runs natively on Windows (ADR-0080). Node's `net` module
+Terminay Desktop now runs natively on Windows (ADR-0081). Node's `net` module
 serves only named pipes on Windows, and cannot accept on an AF_UNIX socket. Git
 for Windows has no named-pipe Trace2 target. Trace2 also accepts a directory as
 its target, and Git then writes one file per Git process into that directory.

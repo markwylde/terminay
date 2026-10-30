@@ -90,7 +90,7 @@ export function gitCommandSocketHostOptions(
 /**
  * Node cannot serve a Unix socket on Windows, and Git for Windows has no
  * named-pipe target, so Git writes its events into a directory instead
- * (ADR-0081). With a data directory it has a fixed address there, so a shell
+ * (ADR-0082). With a data directory it has a fixed address there, so a shell
  * kept across a restart reports to the next run; without one it lasts a run.
  */
 function windowsHostOptions(
@@ -130,7 +130,7 @@ function windowsHostOptions(
 	};
 }
 
-/** Only this user, SYSTEM and Administrators may write Git's events (ADR-0081). */
+/** Only this user, SYSTEM and Administrators may write Git's events (ADR-0082). */
 function protectTraceDirectory(path: string): boolean {
 	const userSid = currentWindowsUserSid();
 	return userSid !== null && protectWindowsDirectory(path, userSid);

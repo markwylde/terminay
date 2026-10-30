@@ -32,6 +32,10 @@ const nodeBuiltins = [
   'qrcode',
   'selfsigned',
   'ws',
+  // npm's libraries load lazily and by computed path; the installer worker
+  // resolves them from the packaged node_modules rather than a bundle.
+  'pacote',
+  '@npmcli/arborist',
 ]
 
 const appInput = {
@@ -41,6 +45,7 @@ const appInput = {
 const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
   extensionHostEntry: path.join(__dirname, 'packages/server-core/src/extensions/child.ts'),
+  installerWorkerEntry: path.join(__dirname, 'packages/server-core/src/extensions/installerWorker.ts'),
   // The Desktop MCP adapter is a renderer-free Node entry launched from the
   // packaged application's unpacked resources.
   serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/desktopMcpEntry.ts'),
