@@ -1,31 +1,23 @@
 // The workspace UI ships Monaco as an editor, not as a language service. This
 // module is the only Monaco entry in the bundle: it loads the editor core, the
 // standalone chrome, and the tokenizers for the languages the file viewer
-// names. It deliberately imports nothing from `vs/language/*`, so the
+// names. It deliberately imports nothing from `languages/features/*`, so the
 // TypeScript, CSS, HTML, and JSON language workers and their modes are never
 // emitted. Diagnostics, completions, and hovers are a server concern.
-import 'monaco-editor/esm/vs/editor/editor.all.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/iPadShowKeyboard/iPadShowKeyboard.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/inspectTokens/inspectTokens.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/quickAccess/standaloneHelpQuickAccess.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/quickAccess/standaloneGotoSymbolQuickAccess.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/quickAccess/standaloneCommandsQuickAccess.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/referenceSearch/standaloneReferenceSearch.js';
-import 'monaco-editor/esm/vs/editor/standalone/browser/toggleHighContrast/toggleHighContrast.js';
-import 'monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css';
-import 'monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon-modifiers.css';
+// Every editor feature, including the standalone quick-access, inspect-tokens,
+// high-contrast, and reference-search contributions, and the codicon styles.
+import 'monaco-editor/features/register.all.js';
 // Tokenizers only. Keep this list in step with `languageFromFilePath` in
 // `codeHighlight.tsx`; `scripts/file-viewer-monaco-languages.test.mjs` fails
 // when an emitted language id has no tokenizer here or in `monacoSetup.ts`.
-import 'monaco-editor/esm/vs/basic-languages/css/css.contribution.js';
-import 'monaco-editor/esm/vs/basic-languages/html/html.contribution.js';
-import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution.js';
-import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js';
-import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution.js';
-import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js';
+import 'monaco-editor/languages/definitions/css/register.js';
+import 'monaco-editor/languages/definitions/html/register.js';
+import 'monaco-editor/languages/definitions/javascript/register.js';
+import 'monaco-editor/languages/definitions/markdown/register.js';
+import 'monaco-editor/languages/definitions/shell/register.js';
+import 'monaco-editor/languages/definitions/typescript/register.js';
 import { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
+import * as monaco from 'monaco-editor/editor/editor.api.js';
 
 declare global {
 	interface Window {
@@ -40,7 +32,7 @@ declare global {
 window.MonacoEnvironment = {
 	getWorker: () =>
 		new Worker(
-			new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
+			new URL('monaco-editor/editor/editor.worker.js', import.meta.url),
 			{ type: 'module' },
 		),
 };

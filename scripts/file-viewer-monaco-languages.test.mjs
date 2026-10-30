@@ -17,10 +17,10 @@ function emittedLanguageIds() {
 	return [...body.slice(0, end).matchAll(/return '([a-z]+)'/gu)].map((match) => match[1]);
 }
 
-/** Ids whose tokenizer is a Monaco basic-languages contribution in the runtime module. */
+/** Ids whose tokenizer is a Monaco language definition in the runtime module. */
 function importedTokenizers() {
 	return new Set(
-		[...runtime.matchAll(/basic-languages\/([a-z]+)\/\1\.contribution\.js/gu)].map(
+		[...runtime.matchAll(/languages\/definitions\/([a-z]+)\/register\.js/gu)].map(
 			(match) => match[1],
 		),
 	);

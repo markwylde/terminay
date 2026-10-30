@@ -19,7 +19,7 @@ import {
 	type DockviewReadyEvent,
 	type IDockviewPanelHeaderProps,
 	type IDockviewPanelProps,
-} from 'dockview';
+} from 'dockview-react';
 import { Film, SquareTerminal, Workflow, X } from 'lucide-react';
 import {
 	createContext,
@@ -634,7 +634,7 @@ export const HomeWorkspace = forwardRef<
 				});
 			};
 			api.onDidLayoutChange(remember);
-			api.onDidActivePanelChange((panel) => {
+			api.onDidActivePanelChange(({ panel }) => {
 				setActiveId(panel?.id);
 				// Which tab is in front is part of what the device remembers.
 				remember();

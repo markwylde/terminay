@@ -59,6 +59,7 @@ jobs:
       - run: npm install -g npm@12.2.0
       - run: npm ci --no-audit --no-fund
       - run: node node_modules/electron/install.js
+      - run: node scripts/stage-selected-secure-werift-runtime.mjs --reuse-validated
       - run: npm run build:app
       - run: npx electron-builder --win nsis --x64 --publish never
         env:

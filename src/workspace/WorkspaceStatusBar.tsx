@@ -1,4 +1,4 @@
-import type { DockviewApi, IDockviewPanel } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { Folder, GitBranch, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useRef, useState } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
@@ -118,7 +118,8 @@ function BranchChip({ branch }: Readonly<{ branch: StatusBarBranch }>) {
 					className="workspace-status-bar__git-count workspace-status-bar__git-count--dirty"
 					title={`${branch.uncommittedCount} uncommitted changes`}
 				>
-					●{branch.uncommittedCount}
+					<span className="workspace-status-bar__git-count-dot" aria-hidden="true" />
+					<span>{branch.uncommittedCount}</span>
 				</span>
 			) : null}
 			{branch.aheadCount > 0 ? (

@@ -68,7 +68,7 @@ test('dirty file edits stay local until saved even after an external write', asy
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'conflict.txt').dblclick()
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await setMonacoValue(mainWindow, 'local draft\n')
   await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
@@ -134,7 +134,7 @@ test('large text files use bounded ranged editing in performant mode', async ({
   const chooser = mainWindow.locator('.large-file-open-chooser')
   await expect(chooser).toBeVisible()
   await chooser.getByRole('button', { name: 'Performant' }).click()
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
 
   const performant = mainWindow.locator('.file-performant-text-viewer')
   await expect(performant).toBeVisible()
@@ -152,7 +152,7 @@ test('large text files use bounded ranged editing in performant mode', async ({
   await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   await expect.poll(readDiskPrefix).toMatch(/^0123456789abcdef\n/)
 
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   const firstPage = mainWindow.getByLabel('Lines 1–128')
   await expect(firstPage).toHaveValue(/^0123456789abcdef\n0123456789abcdef\n/)
   const originalPage = await firstPage.inputValue()
@@ -191,7 +191,7 @@ test('large text files use bounded ranged editing in performant mode', async ({
   await expect(mainWindow.locator('.file-panel')).toHaveAttribute('data-dirty', 'true')
   await expect.poll(readDiskPrefix).toMatch(/^0123456789abcdef\n/)
 
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   const joinedFirstPage = mainWindow.getByLabel('Lines 1–128')
   await expect(joinedFirstPage).toHaveValue(/^Xhanged first line inserted snow 雪\njoined second line\n/)
   expect(await joinedFirstPage.inputValue()).toContain('01234A6789abcdef')

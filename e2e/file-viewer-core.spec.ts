@@ -29,7 +29,7 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await expect(fileSummary.locator('.workspace-status-bar__file-unsaved')).toHaveCount(0)
   await expect(mainWindow.locator('.file-status-bar')).toHaveCount(0)
 
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await setMonacoValue(mainWindow, 'saved through viewer\n')
   await expect(fileSummary.locator('.workspace-status-bar__file-unsaved')).toBeVisible()
@@ -98,7 +98,7 @@ test('HEX edits share dirty state and survive Text mode switches', async ({
   await mainWindow.getByLabel('Bytes per row').selectOption('8')
   await expect(mainWindow.locator('.file-hex-row__bytes').first().locator('input')).toHaveCount(8)
 
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   await expect
     .poll(() =>
       mainWindow.evaluate(() => {
@@ -161,13 +161,13 @@ test('yaml and yml files are highlighted in preview and text modes', async ({ cr
   await expect(mainWindow.locator('.file-preview-text .file-token--property', { hasText: 'services' }).first()).toBeVisible()
   await expect(mainWindow.locator('.file-preview-text .file-token--keyword', { hasText: 'true' }).first()).toBeVisible()
 
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect.poll(() => getActiveMonacoLanguage(mainWindow)).toBe('yaml')
   await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('services:')
 
   await fileExplorerItem(mainWindow, 'settings.yaml').dblclick()
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
   await expect.poll(() => getActiveMonacoLanguage(mainWindow)).toBe('yaml')
 })
 
@@ -210,14 +210,14 @@ test('unknown extensions with text content open in Text and keep HEX in the More
   await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('this extension is still text')
 
   // Views that cannot show the file are left out rather than greyed.
-  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
-  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toHaveCount(0)
-  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toHaveCount(0)
+  await expect(mainWindow.getByRole('tab', { name: 'Text', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('tab', { name: 'Preview', exact: true })).toHaveCount(0)
+  await expect(mainWindow.getByRole('tab', { name: 'HEX', exact: true })).toHaveCount(0)
 
   await selectFileView(mainWindow, 'HEX')
   await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
-  await mainWindow.getByRole('tab', { name: 'Text' }).click()
-  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toHaveCount(0)
+  await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
+  await expect(mainWindow.getByRole('tab', { name: 'HEX', exact: true })).toHaveCount(0)
 })
 
 test('a file opened for a diff it does not have opens in its default view', async ({
@@ -242,9 +242,9 @@ test('a file opened for a diff it does not have opens in its default view', asyn
 
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect(mainWindow.locator('.file-hex-viewer')).toHaveCount(0)
-  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
-  await expect(mainWindow.getByRole('tab', { name: 'Diff' })).toBeDisabled()
-  await expect(mainWindow.getByRole('tab', { name: 'Diff' })).toHaveAttribute('title', /Git/)
+  await expect(mainWindow.getByRole('tab', { name: 'Text', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('tab', { name: 'Diff', exact: true })).toBeDisabled()
+  await expect(mainWindow.getByRole('tab', { name: 'Diff', exact: true })).toHaveAttribute('title', /Git/)
 })
 
 test('custom extension defaults choose the first file viewer tab', async ({ appHarness, createWorkspace, mainWindow }) => {
@@ -271,7 +271,7 @@ test('custom extension defaults choose the first file viewer tab', async ({ appH
   await fileExplorerItem(mainWindow, 'notes.e2etext').dblclick()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('open me in text mode')
-  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
+  await expect(mainWindow.getByRole('tab', { name: 'Text', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(mainWindow.getByRole('button', { name: 'More views' })).toBeVisible()
 })
 

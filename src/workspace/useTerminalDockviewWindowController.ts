@@ -1,5 +1,5 @@
-import type { DockviewApi } from 'dockview';
-import { getPanelData } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
+import { getPanelData } from 'dockview-react';
 import { type MutableRefObject, useEffect } from 'react';
 import type { AiTabMetadataTarget } from '../types/terminay';
 import type { AddTerminalOptions } from './useTerminalCreationController';

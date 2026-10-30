@@ -1,4 +1,4 @@
-# ADR-0080: The server reaches Win32 APIs that Node does not expose through `koffi`, loaded only on Windows
+# ADR-0082: The server reaches Win32 APIs that Node does not expose through `koffi`, loaded only on Windows
 
 Status: accepted
 Date: 2026-10-30
@@ -22,7 +22,7 @@ ADR-0026 lets extensions ship prebuilt native modules, and the built-in agents
 extension already depends on `koffi`. `koffi` is an FFI library that ships
 prebuilt N-API binaries for every supported platform, and it loads with install
 scripts disabled. ADR-0026 says nothing about native modules in the server
-itself, where `node-pty` has been the only native module (ADR-0004, ADR-0078).
+itself, where `node-pty` has been the only native module (ADR-0004, ADR-0080).
 
 ## Decision
 

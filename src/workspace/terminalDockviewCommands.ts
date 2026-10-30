@@ -1,4 +1,4 @@
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 
 export type DockviewPanel = NonNullable<ReturnType<DockviewApi['getPanel']>>;
 

@@ -157,7 +157,7 @@ test('the CLI is published to npm only after the archives it installs are attach
 
 	// npm exchanges the OIDC token for a short-lived credential only from
 	// 11.5.1 onward; an older npm would fall back to looking for a token.
-	assert.match(job, /npm install --global npm@12\.2\.0/u);
+	assert.match(job, /npm install --global npm@12\.2\.1/u);
 
 	// The published version is the release tag, so `npx terminay@X.Y.Z` and
 	// release X.Y.Z are the same thing.

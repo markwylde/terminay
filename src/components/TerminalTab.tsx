@@ -1,5 +1,5 @@
 import type { TerminalClientIdentity } from '@terminay/client-core';
-import { IDockviewPanelHeaderProps } from 'dockview';
+import { IDockviewPanelHeaderProps } from 'dockview-react';
 import {
 	AlertCircle,
 	CheckCircle2,

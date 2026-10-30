@@ -5,7 +5,7 @@ import type {
 	FolderMarkdownTaskItem,
 	FolderMarkdownTaskSection,
 } from '@terminay/client-core';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { writeClipboardText } from '../../host/nativeActions';
 import {
 	Copy,

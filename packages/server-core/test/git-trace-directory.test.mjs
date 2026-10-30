@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { GitCommandStream, GitTraceDirectory, MAX_TRACE_FILE_BYTES } from "../dist/index.js";
 
-// ADR-0079: on Windows, Git writes one file per process into a directory the
+// ADR-0081: on Windows, Git writes one file per process into a directory the
 // server watches. The reader is plain filesystem code, so it is exercised here
 // on any host; only the DACL that closes the directory is Windows-only.
 
