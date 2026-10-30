@@ -4,7 +4,7 @@
 // file that is not a PE image is not checked. Usage:
 //   node scripts/check-windows-pe-architecture.mjs <directory>...
 import { closeSync, openSync, readdirSync, readSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** `IMAGE_FILE_MACHINE_*` values, in decimal: 0x14c, 0x8664, 0xaa64, 0x1c4. */
@@ -36,7 +36,34 @@ function readHead(path) {
 	}
 }
 
-/** Every PE image under `root` that is not x64, as `{ path, machine }`. */
+/**
+ * Images that are not x64 but load only into a process of their own
+ * architecture, matched against the path relative to the payload root.
+ */
+export const ALLOWED_NON_X64_IMAGES = Object.freeze([
+	// electron-builder's 32-bit elevation helper, started as its own process.
+	{ machine: 'x86', path: /^resources\/elevate\.exe$/u },
+	// Built-in extension trees are byte-identical in every release, so they
+	// carry each Windows architecture's koffi build; an x64 process loads only
+	// win32_x64.
+	{
+		machine: 'arm64',
+		path: /^resources\/built-in-extensions\/artifacts\/[^/]+\/node_modules\/koffi\/build\/koffi\/win32_arm64\/koffi\.node$/u,
+	},
+	{
+		machine: 'x86',
+		path: /^resources\/built-in-extensions\/artifacts\/[^/]+\/node_modules\/koffi\/build\/koffi\/win32_ia32\/koffi\.node$/u,
+	},
+]);
+
+function allowed(path, machine) {
+	const portable = path.split(sep).join('/');
+	return ALLOWED_NON_X64_IMAGES.some(
+		(entry) => entry.machine === machine && entry.path.test(portable),
+	);
+}
+
+/** Every PE image under `root` that is not x64 and not allowed, as `{ path, machine }`. */
 export function nonX64Images(root) {
 	const found = [];
 	const walk = (directory) => {
@@ -45,11 +72,12 @@ export function nonX64Images(root) {
 			if (entry.isDirectory()) walk(path);
 			else if (entry.isFile()) {
 				const machine = peMachine(readHead(path));
-				if (machine !== null && machine !== 0x8664)
-					found.push({
-						path: relative(root, path),
-						machine: PE_MACHINES[machine] ?? `0x${machine.toString(16)}`,
-					});
+				if (machine === null || machine === 0x8664) continue;
+				const image = {
+					path: relative(root, path),
+					machine: PE_MACHINES[machine] ?? `0x${machine.toString(16)}`,
+				};
+				if (!allowed(image.path, image.machine)) found.push(image);
 			}
 		}
 	};
