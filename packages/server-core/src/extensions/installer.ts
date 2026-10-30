@@ -583,6 +583,7 @@ export class ExtensionInstaller {
 			worktreeInsights: readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[];
 			agentChatProviders: readonly import('@terminay/extension-api').AgentChatProviderContribution[];
 			terminalLaunchers: readonly import('@terminay/extension-api').TerminalLauncherContribution[];
+			terminalCommandDefaults: readonly import('@terminay/extension-api').TerminalCommandDefaultContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -624,6 +625,11 @@ export class ExtensionInstaller {
 			terminalLaunchers: Object.freeze(
 				structuredClone(
 					slot.receipt.manifest.contributes.terminalLaunchers ?? [],
+				),
+			),
+			terminalCommandDefaults: Object.freeze(
+				structuredClone(
+					slot.receipt.manifest.contributes.terminalCommandDefaults ?? [],
 				),
 			),
 			manifest: slot.receipt.manifest,
@@ -1211,7 +1217,10 @@ function validateRegistry(value: unknown): ExtensionRegistrySnapshot {
  * the installer version without rewriting the receipt on disk. */
 function readInstallerVersion(receipt: unknown): void {
 	if (typeof receipt !== 'object' || receipt === null) return;
-	const legacy = receipt as { npmVersion?: unknown; installerVersion?: unknown };
+	const legacy = receipt as {
+		npmVersion?: unknown;
+		installerVersion?: unknown;
+	};
 	if (
 		legacy.installerVersion === undefined &&
 		typeof legacy.npmVersion === 'string'

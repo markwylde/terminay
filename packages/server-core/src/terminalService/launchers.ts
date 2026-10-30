@@ -3,7 +3,10 @@ import type {
 	TerminalLauncherContribution,
 	TerminalLauncherResolution,
 } from '@terminay/extension-api';
-import { isExecutablePath } from '@terminay/extension-api';
+import {
+	isExecutablePath,
+	isTerminalCommandDefaultArgs,
+} from '@terminay/extension-api';
 
 /**
  * The terminal launchers this server offers (ADR-0073). Extensions contribute
@@ -270,11 +273,13 @@ function currentPlatform(): ExtensionPlatform {
 
 /**
  * The line typed into a new terminal's shell to start a launcher's program:
- * its absolute path, quoted for that shell, with no arguments.
+ * its absolute path, then a matching command default's flags (ADR-0081), each
+ * quoted for that shell, and nothing else.
  */
 export function launcherCommandLine(
 	executable: string,
 	shellPath: string,
+	defaultArgs: readonly string[] = [],
 ): string {
 	const shell = shellPath
 		.replace(/\\/gu, '/')
@@ -282,8 +287,18 @@ export function launcherCommandLine(
 		.at(-1)
 		?.replace(/\.exe$/iu, '')
 		.toLocaleLowerCase('en-US');
-	if (shell === 'cmd') return `"${executable.replace(/"/gu, '')}"\r`;
+	// Flags are refused unless they pass the registry's rules, so a launcher
+	// line is never more than its path when something unexpected arrives.
+	const args = isTerminalCommandDefaultArgs(defaultArgs) ? defaultArgs : [];
+	if (shell === 'cmd') {
+		// cmd has no quoting that stops %VAR% expansion, so only plain flags go.
+		const plain = args.every((arg) => /^[-\w=.,:/+@]+$/u.test(arg));
+		return `${[executable, ...(plain ? args : [])].map((part) => `"${part.replace(/"/gu, '')}"`).join(' ')}\r`;
+	}
 	if (shell === 'pwsh' || shell === 'powershell')
-		return `& '${executable.replace(/'/gu, "''")}'\r`;
-	return `'${executable.replace(/'/gu, `'\\''`)}'\r`;
+		return `& ${[executable, ...args].map((part) => `'${part.replace(/'/gu, "''")}'`).join(' ')}\r`;
+	// fish reads \\ and \' inside single quotes; POSIX shells read neither.
+	if (shell === 'fish')
+		return `${[executable, ...args].map((part) => `'${part.replace(/[\\']/gu, '\\$&')}'`).join(' ')}\r`;
+	return `${[executable, ...args].map((part) => `'${part.replace(/'/gu, `'\\''`)}'`).join(' ')}\r`;
 }

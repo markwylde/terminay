@@ -1,6 +1,7 @@
 export * from './adapter.js';
 export * from './boundedChunkQueue.js';
 export * from './clipboardImage.js';
+export * from './commandDefaults.js';
 export * from './commandSubmission.js';
 export * from './consumers.js';
 export * from './errors.js';
@@ -12,4 +13,5 @@ export * from './presentationCheckpoint.js';
 export * from './presentationLease.js';
 export * from './protocol.js';
 export * from './service.js';
+export * from './shellIntegration.js';
 export * from './types.js';

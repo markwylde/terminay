@@ -29,5 +29,8 @@ RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs
 # after the container. The suite's shells keep the same prompt without it, so
 # a tab's title is whatever the test under way gave it.
 RUN printf '%s\n' "PS1='\\u@\\h:\\w\\\$ '" >> /home/node/.bashrc
+# zsh offers to write a ~/.zshrc when it finds none; the shell integration
+# spec starts zsh terminals, which need a quiet prompt.
+RUN printf '%s\n' "PS1='%n@%m:%~%# '" > /home/node/.zshrc
 
 ENTRYPOINT ["sh", "scripts/support/e2e-container-entrypoint.sh"]
