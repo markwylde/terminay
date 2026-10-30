@@ -803,10 +803,14 @@ test.describe('terminal behavior', () => {
 		const imagePng =
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==';
 
-		await electronApp.evaluate(({ clipboard, nativeImage }, png) => {
-			clipboard.writeImage(
-				nativeImage.createFromBuffer(Buffer.from(png, 'base64')),
-			);
+		await electronApp.evaluate(async ({ clipboard, ClipboardItem }, png) => {
+			await clipboard.write([
+				new ClipboardItem({
+					'image/png': new Blob([Buffer.from(png, 'base64')], {
+						type: 'image/png',
+					}),
+				}),
+			]);
 		}, imagePng);
 
 		await writeToTerminal(mainWindow, 'test -f ');

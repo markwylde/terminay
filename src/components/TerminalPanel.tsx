@@ -27,7 +27,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { IBufferRange, ILinkHandler } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { KeyboardOff, Lock } from 'lucide-react';
 import type {
 	ClipboardEvent as ReactClipboardEvent,

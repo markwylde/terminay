@@ -63,6 +63,10 @@ async function packageManifest(directory) {
  * resolved from the installed runtime modules and copied with links
  * dereferenced. This produces an isolated node_modules tree without relying
  * on npm workspace symlinks or a host-level node_modules directory.
+ *
+ * Root packages resolve as Node would from `rootFromDirectory`, so a workspace
+ * whose own node_modules holds a different version than the hoisted one gets
+ * its own. `onStaged` hears the directory each package was copied from.
  */
 export async function stageProductionDependencyClosure({
 	destinationModules,
@@ -70,6 +74,8 @@ export async function stageProductionDependencyClosure({
 	workspacePackages = {},
 	rootPackages,
 	optionalRootPackages = [],
+	rootFromDirectory,
+	onStaged,
 }) {
 	if (
 		!Array.isArray(rootPackages) ||
@@ -80,16 +86,20 @@ export async function stageProductionDependencyClosure({
 	}
 	const destination = resolve(destinationModules);
 	const runtimeRoot = await regularDirectory(runtimeModules, 'runtime modules');
+	const rootFrom =
+		rootFromDirectory === undefined
+			? runtimeRoot
+			: await regularDirectory(rootFromDirectory, 'root dependency parent');
 	await mkdir(destination, { recursive: true });
 	const required = new Set(rootPackages);
 	const pending = [
 		...[...required]
 			.sort()
-			.map((name) => ({ name, fromDirectory: runtimeRoot, optional: false })),
+			.map((name) => ({ name, fromDirectory: rootFrom, optional: false })),
 		...[...new Set(optionalRootPackages)]
 			.filter((name) => !required.has(name))
 			.sort()
-			.map((name) => ({ name, fromDirectory: runtimeRoot, optional: true })),
+			.map((name) => ({ name, fromDirectory: rootFrom, optional: true })),
 	];
 	const copied = new Set();
 	while (pending.length > 0) {
@@ -129,6 +139,7 @@ export async function stageProductionDependencyClosure({
 			force: true,
 		});
 		copied.add(packageName);
+		onStaged?.(packageName, source);
 		for (const dependency of Object.keys(manifest.dependencies ?? {}).sort()) {
 			if (!copied.has(dependency))
 				pending.push({

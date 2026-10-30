@@ -42,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       # Builds stage the built-in extensions without re-running their suites;
@@ -85,7 +85,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Record immutable release source and tag baseline
@@ -186,6 +186,8 @@ jobs:
             asset_templates: Terminay-Mac-%VERSION%-Installer.dmg Terminay-Mac-%VERSION%.zip Terminay-Mac-%VERSION%.zip.blockmap
             update_payload: Terminay-Mac-%VERSION%.zip
             update_metadata: latest-mac.yml
+            # Darwin 22 is macOS 13, Electron's floor; see ADR-0079.
+            update_minimum_system_version: 22.0.0
           # Linux is built in the GNU/Linux floor image, so its native code
           # never needs a newer glibc than the oldest supported host (ADR-0077).
           - os: ubuntu-latest
@@ -194,6 +196,7 @@ jobs:
             asset_templates: Terminay-Linux-%VERSION%.AppImage
             update_payload: Terminay-Linux-%VERSION%.AppImage
             update_metadata: latest-linux.yml
+            update_minimum_system_version: ''
 
     steps:
       - name: Check out code
@@ -224,7 +227,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Check macOS signing secrets
@@ -331,6 +334,16 @@ jobs:
             done
             echo "TERMINAY_RELEASE_ASSET_PATHS"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Declare the macOS floor in the update metadata
+        if: matrix.update_minimum_system_version != ''
+        env:
+          METADATA_FILE: ${{ steps.asset_selection.outputs.metadata }}
+          MINIMUM_SYSTEM_VERSION: ${{ matrix.update_minimum_system_version }}
+        run: |
+          # A client below the floor keeps its installed version rather than
+          # updating to one it cannot launch.
+          node scripts/declare-update-minimum-system-version.mjs "$METADATA_FILE" "$MINIMUM_SYSTEM_VERSION"
 
       - name: Verify macOS microphone entitlement
         if: matrix.os == 'macos-latest'
@@ -450,15 +463,21 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           UPDATE_PAYLOAD: ${{ matrix.update_payload }}
           METADATA_FILE: ${{ steps.asset_selection.outputs.metadata }}
+          MINIMUM_SYSTEM_VERSION: ${{ matrix.update_minimum_system_version }}
         run: |
           VERSION="${TAG#v}"
+          FLOOR_ARGS=()
+          if [ -n "$MINIMUM_SYSTEM_VERSION" ]; then
+            FLOOR_ARGS=(--minimum-system-version "$MINIMUM_SYSTEM_VERSION")
+          fi
           # Runs after the DMG is stapled, so metadata that still described a
           # rewritten payload would fail here rather than on a client.
           node scripts/verify-update-metadata.mjs \
             --metadata "$METADATA_FILE" \
             --assets-dir "release/$VERSION" \
             --version "$VERSION" \
-            --expect-file "${UPDATE_PAYLOAD//%VERSION%/$VERSION}"
+            --expect-file "${UPDATE_PAYLOAD//%VERSION%/$VERSION}" \
+            ${FLOOR_ARGS[@]+"${FLOOR_ARGS[@]}"}
 
       - name: Write release asset checksums
         env:
@@ -586,7 +605,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Sync package version to release tag
@@ -748,7 +767,7 @@ jobs:
         run: |
           # Trusted publishing needs npm 11.5.1 or newer, which is what
           # exchanges the OIDC token for a short-lived registry credential.
-          npm install --global npm@12.2.0
+          npm install --global npm@12.2.1
           npm ci
 
       - name: Sync package version to release tag
@@ -922,7 +941,8 @@ jobs:
             --assets-dir "$ASSET_DIR" \
             --version "$VERSION" \
             --expect-file "Terminay-Mac-${VERSION}.zip" \
-            --release-assets "$RUNNER_TEMP/release-asset-names"
+            --release-assets "$RUNNER_TEMP/release-asset-names" \
+            --minimum-system-version 22.0.0
           node scripts/verify-update-metadata.mjs \
             --metadata "$METADATA_DIR/latest-linux.yml" \
             --assets-dir "$ASSET_DIR" \

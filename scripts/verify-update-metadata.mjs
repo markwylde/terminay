@@ -139,6 +139,7 @@ export async function verifyUpdateMetadata({
   expectedFiles,
   releaseAssetNames,
   requireReleaseNotes = false,
+  minimumSystemVersion,
 }) {
   const info = await lstat(metadataPath)
   if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_METADATA_BYTES) {
@@ -157,6 +158,12 @@ export async function verifyUpdateMetadata({
   }
   if (requireReleaseNotes && !(metadata.other.get('releaseNotes') ?? '').trim()) {
     fail('metadata must carry release notes')
+  }
+  if (minimumSystemVersion !== undefined) {
+    const declared = metadata.other.get('minimumSystemVersion')
+    if (declared === undefined || parseScalar(declared, 'minimumSystemVersion') !== minimumSystemVersion) {
+      fail(`metadata must declare minimum system version ${minimumSystemVersion}`)
+    }
   }
 
   const urls = new Set()
@@ -229,12 +236,14 @@ function parseArguments(argv) {
     else if (flag === '--version') options.version = value
     else if (flag === '--expect-file') options.expectedFiles.push(value)
     else if (flag === '--release-assets') options.releaseAssetsPath = value
+    else if (flag === '--minimum-system-version') options.minimumSystemVersion = value
     else fail(`unknown argument: ${flag}`)
   }
   if (!options.metadataPath || !options.assetsDir || options.expectedFiles.length === 0) {
     fail(
       'usage: verify-update-metadata.mjs --metadata <yml> --assets-dir <dir> --expect-file <name>... ' +
-        '[--version <version>] [--release-assets <names file>] [--require-release-notes]',
+        '[--version <version>] [--release-assets <names file>] [--require-release-notes] ' +
+        '[--minimum-system-version <x.y.z>]',
     )
   }
   return options

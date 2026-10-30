@@ -124,7 +124,7 @@ function defaultClock(): PerformanceLoggingClock {
 
 function performanceTraceFilename(now: number, launchId: string): string {
 	const safeLaunchId = launchId.replace(/[^a-zA-Z0-9_-]/gu, '_').slice(0, 96);
-	return `terminay-performance-trace-v1-${now}-${safeLaunchId}.json`;
+	return `terminay-performance-trace-v1-${now}-${safeLaunchId}.pftrace`;
 }
 
 async function collectRendererStack(

@@ -122,7 +122,7 @@ test.describe('file viewer language intelligence', () => {
     await fileExplorerItem(mainWindow, 'src').click()
     await expect(fileExplorerItem(mainWindow, 'index.ts')).toBeVisible()
     await fileExplorerItem(mainWindow, 'index.ts').dblclick()
-    await mainWindow.getByRole('tab', { name: 'Text' }).click()
+    await mainWindow.getByRole('tab', { name: 'Text', exact: true }).click()
     await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
 
     // A language session starts on the first request and reads the project's
