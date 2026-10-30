@@ -27,7 +27,7 @@
 - [ ] 4.3 Implement the holder's Windows pipe transport: the per-SID pipe name, the server closing the holder directory with a DACL and passing the SID to the holder, and admission only through the mutual proof (ADR-0084). Verified by the Windows probe connecting, attaching, and refusing a second listener on the same name.
 - [ ] 4.4 Implement the per-build runtime copy (renamed `terminay-session-holder.exe`, renamed into place only when complete), launch from it with `detached` and `windowsHide`, and prune other builds' copies only when their executable can be deleted. Verified by the Windows probe running an in-place upgrade between two builds with a live PowerShell session that keeps running, and a later start removing the old copy.
 - [ ] 4.5 Implement the Trace2 directory target: protected DACL, `fs.watch` incremental reads, line and file bounds, deletion on `exit` or at the bound, and emptying on start. Verified by unit tests on the reader with recorded files, and the Windows probe moving a terminal into a worktree it created.
-- [ ] 4.6 Enable the holder on `win32` by removing the `false` short-circuit. Verified by the Windows probe's restart step keeping a terminal alive.
+- [x] 4.6 Enable the holder on `win32` by removing the `false` short-circuit. Verified by the Windows probe's restart step keeping a terminal alive.
 - [ ] 4.8 Start interactive PowerShell on Windows with the ADR-0085 location hook. Verified by unit tests of the launch arguments on Linux, and a ConPTY run on `windows-latest` showing the process directory following `Set-Location` and the prompt unchanged.
 - [ ] 4.7 Set the AppUserModelID and check single-instance behaviour in `electron/main.ts` for Windows. Verified by the probe launching the app twice and observing one main process and a focused existing window.
 
@@ -41,7 +41,7 @@
 
 ## 6. Windows probe
 
-- [ ] 6.1 Write `scripts/probe-windows-desktop.ps1`: a silent per-user install, launch with an isolated data directory, wait for holder readiness, run PowerShell and cmd (input, resize, output, exit), restart the server with a held terminal, then uninstall. It records the installer's SHA-256 with the result. Verified by the probe passing on a good build and failing, naming the step, when the holder entry is deliberately broken.
+- [x] 6.1 Write `scripts/probe-windows-desktop.ps1`: a silent per-user install, launch with an isolated data directory, wait for holder readiness, run PowerShell and cmd (input, resize, output, exit), restart the server with a held terminal, then uninstall. It records the installer's SHA-256 with the result. Verified by the probe passing on a good build and failing, naming the step, when the holder entry is deliberately broken.
 - [ ] 6.2 Extend the probe with the parity checks: split directory inheritance, foreground `node` busy, worktree capture, an MCP pipe reachable from the terminal and named per SID, and every built-in extension active with win32-x64 native modules. Verified by each check appearing in the probe record on a `main` run.
 - [ ] 6.3 Add the update step: install build N, serve build N+1's `beta.yml` from a local feed, choose Restart to update with a live terminal, and assert there is no UAC prompt, that build N+1 is running, and that the terminal is still alive. Verified by the step passing in the probe record.
 
