@@ -118,7 +118,8 @@ function BranchChip({ branch }: Readonly<{ branch: StatusBarBranch }>) {
 					className="workspace-status-bar__git-count workspace-status-bar__git-count--dirty"
 					title={`${branch.uncommittedCount} uncommitted changes`}
 				>
-					●{branch.uncommittedCount}
+					<span className="workspace-status-bar__git-count-dot" aria-hidden="true" />
+					<span>{branch.uncommittedCount}</span>
 				</span>
 			) : null}
 			{branch.aheadCount > 0 ? (
