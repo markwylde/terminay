@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, sign, verify } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import {
   cp,
   lstat,
@@ -83,8 +84,9 @@ export const DIRECT_RUNTIME_DEPENDENCIES = {
   tweetnacl: '1.0.3',
 }
 
-// Upstream allows a range for pvutils. Keep source-mirror acquisition on the
-// audited candidate graph even when npm publishes a newer compatible release.
+// Upstream allows a range for pvutils and tslib. Keep source-mirror acquisition
+// on the audited candidate graph even when npm publishes a newer compatible
+// release. tsyringe keeps the older tslib it retains beneath itself.
 export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   '@peculiar/asn1-cms': '2.8.0',
   '@peculiar/asn1-csr': '2.8.0',
@@ -98,6 +100,8 @@ export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   '@peculiar/asn1-x509-attr': '2.8.0',
   asn1js: '3.0.10',
   pvutils: '1.1.5',
+  tslib: '2.8.1',
+  tsyringe: { '.': '4.10.0', tslib: '1.14.1' },
 }
 
 export { parseSingleNpmPackResult }
@@ -223,7 +227,26 @@ async function verifySecureWeriftSourceMirror(mirrorRoot) {
   return { cache: path.join(mirrorRoot, 'npm-cache'), license }
 }
 
+// Node refuses to spawn a .cmd without a shell on Windows, so npm runs as its
+// own script under this Node instead of through npm.cmd.
+function windowsNpm(args) {
+  const cli = process.env.npm_execpath?.endsWith('.js')
+    ? process.env.npm_execpath
+    : path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  return [process.execPath, [cli, ...args]]
+}
+
+// Windows has no patch of its own; Git for Windows, which the build needs,
+// carries GNU patch beside its exec path.
+function windowsPatch() {
+  const execPath = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim()
+  const candidate = execPath && path.resolve(execPath, '..', '..', '..', 'usr', 'bin', 'patch.exe')
+  return candidate && existsSync(candidate) ? candidate : 'patch'
+}
+
 function run(command, args, options = {}) {
+  if (process.platform === 'win32' && command === 'npm.cmd') [command, args] = windowsNpm(args)
+  if (process.platform === 'win32' && command === 'patch') command = windowsPatch()
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       ...options,
