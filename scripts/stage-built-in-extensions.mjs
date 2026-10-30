@@ -13,12 +13,13 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parseSingleNpmPackResult } from './npm-pack-result.mjs';
 import { stageProductionDependencyClosure } from './standalone-runtime-dependencies.mjs';
 
 const runFile = promisify(execFile);
-const repository = resolve(new URL('..', import.meta.url).pathname);
+const repository = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const npmCli = join(repository, 'node_modules', 'npm', 'bin', 'npm-cli.js');
 const SDK = '@terminay/extension-api';
 const expectedIds = new Set([
@@ -389,7 +390,7 @@ function npm(cwd, argumentsValue) {
 	});
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const skipChecks = process.argv.includes('--skip-checks');
 	const index = process.argv.indexOf('--output-dir');
 	if (index !== -1 && process.argv[index + 1] === undefined)

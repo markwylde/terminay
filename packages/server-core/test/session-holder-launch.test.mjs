@@ -299,3 +299,38 @@ test("a native module failure names the loader error of the addon that is presen
     "x: broken",
   );
 });
+
+test("a Windows holder is launched into a directory closed to other users, and told whose it is", async (t) => {
+  const dataRoot = dataRootFor(t);
+  const { launch, launched, child } = controlledLauncher();
+  const protectedDirectories = [];
+  const addressing = { platform: "win32", userSid: "S-1-5-21-1-2-3-1001" };
+  const launching = launchSessionHolder({
+    dataRoot,
+    buildId: "build-a",
+    launch,
+    addressing,
+    protectDirectory: (path, sid) => { protectedDirectories.push([path, sid]); return true; },
+  }, "0123456789abcdef", null);
+  const request = await launched;
+  assert.deepEqual(protectedDirectories, [[join(dataRoot, "session-holder"), addressing.userSid]]);
+  assert.equal(request.env[SESSION_HOLDER_ENV.userSid], addressing.userSid);
+  child.emit("exit", 1, null);
+  await assert.rejects(launching);
+});
+
+test("a Windows holder is not launched where its directory cannot be closed", async (t) => {
+  const dataRoot = dataRootFor(t);
+  let launched = false;
+  await assert.rejects(
+    launchSessionHolder({
+      dataRoot,
+      buildId: "build-a",
+      launch: () => { launched = true; return fakeHolderProcess(); },
+      addressing: { platform: "win32", userSid: "S-1-5-21-1-2-3-1001" },
+      protectDirectory: () => false,
+    }, "0123456789abcdef", null),
+    { message: "session holder directory could not be protected" },
+  );
+  assert.equal(launched, false);
+});

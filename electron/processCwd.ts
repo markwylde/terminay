@@ -1,5 +1,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import {
+	windowsTerminalCwd,
+	windowsTerminalForegroundCommand,
+} from '../packages/server-core/src/processObservation/windowsTerminal'
 
 const execFileAsync = promisify(execFile)
 const PROCESS_TABLE_LINE =
@@ -8,6 +12,7 @@ const SESSION_PROCESS_LIMIT = 64
 
 export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return null
+	if (process.platform === 'win32') return windowsTerminalCwd(rootPid)
 	const deepestPid = await resolveDeepestProcessPid(rootPid, signal)
 	return (await resolveProcessCwd(deepestPid, signal))
 		?? (deepestPid === rootPid ? null : await resolveProcessCwd(rootPid, signal))
@@ -21,8 +26,9 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
  * snapshot so a bushy TUI cannot spend the close-observation deadline on
  * per-pid process walks. */
 export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
-	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
+	if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return null
 	throwIfAborted(signal)
+	if (process.platform === 'win32') return windowsTerminalForegroundCommand(rootPid)
 	const table = await readHostProcessTable(signal)
 	const rootCommand = commandName(table.get(rootPid)?.command) ?? await resolveProcessCommand(rootPid, signal)
 	const selected = selectForegroundProcessFromTable(rootPid, table, rootCommand)

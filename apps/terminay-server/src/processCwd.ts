@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { windowsTerminalCwd } from '@terminay/server-core';
 
 const execFileAsync = promisify(execFile);
 
@@ -8,6 +9,7 @@ export async function resolveTerminalProcessCwd(
 	signal?: AbortSignal,
 ): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return null;
+	if (process.platform === 'win32') return windowsTerminalCwd(rootPid);
 	const deepestPid = await resolveDeepestProcessPid(rootPid, signal);
 	return (
 		(await resolveProcessCwd(deepestPid, signal)) ??

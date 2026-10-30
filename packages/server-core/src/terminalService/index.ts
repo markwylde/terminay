@@ -13,3 +13,4 @@ export * from './presentationLease.js';
 export * from './protocol.js';
 export * from './service.js';
 export * from './types.js';
+export * from './powershellLocation.js';

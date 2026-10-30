@@ -79,7 +79,8 @@
     "writeUpdateInfo": false
   },
   "win": {
-    "icon": "public/terminay.png",
+    // A checked-in .ico, so packaging never converts the PNG at build time.
+    "icon": "public/terminay.ico",
     "target": [
       {
         "target": "nsis",
@@ -90,10 +91,14 @@
     ],
     "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
   },
+  // Per-user and one-click, so Terminay lives in %LOCALAPPDATA%\Programs,
+  // which the user owns: updates install silently, without elevation, into
+  // the directory they replace (native-windows-desktop, design decision 3).
   "nsis": {
-    "oneClick": false,
+    "oneClick": true,
     "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
+    "allowToChangeInstallationDirectory": false,
+    "include": "build/installer.nsh",
     "deleteAppDataOnUninstall": false
   },
   "linux": {

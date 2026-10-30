@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import {
 	SESSION_HOLDER_MAX_SOCKET_PATH_BYTES,
 	socketPathFits,
+	windowsPipeName,
 } from '@terminay/server-core';
 
 /**
@@ -26,7 +27,6 @@ export const GIT_COMMAND_SOCKET_FILENAMES: SocketFileNames = {
 	dataDirectory: 'terminay-git.sock',
 	runtimeDirectory: 'git.sock',
 };
-export const CONTROL_SOCKET_WINDOWS_PIPE = '\\\\.\\pipe\\terminay-control';
 /** One limit for every local socket: the one the session holder defines. */
 export const CONTROL_SOCKET_MAX_PATH_BYTES =
 	SESSION_HOLDER_MAX_SOCKET_PATH_BYTES;
@@ -61,6 +61,8 @@ export interface ControlSocketPlacementOptions {
 	readonly temporaryDirectory: string;
 	/** The user's runtime directory, `XDG_RUNTIME_DIR`, where there is one. */
 	readonly runtimeDirectory?: string;
+	/** The current user's SID. Required on Windows, where it names the pipe. */
+	readonly userSid?: string;
 }
 
 /** What was tried, for a message a person can act on. Never a token. */
@@ -111,8 +113,19 @@ export function controlSocketRuntimeDirectory(
 export function resolveControlSocketPlacement(
 	options: ControlSocketPlacementOptions,
 ): ControlSocketPlacement {
-	if (options.platform === 'win32')
-		return { location: 'named-pipe', path: CONTROL_SOCKET_WINDOWS_PIPE };
+	if (options.platform === 'win32') {
+		// The pipe namespace is machine-wide: the name is the user's and the data
+		// directory's own, so no other user or data directory collides with it.
+		if (options.userSid === undefined)
+			throw new TypeError('a Windows control pipe needs the user SID');
+		return {
+			location: 'named-pipe',
+			path: windowsPipeName('control', {
+				userSid: options.userSid,
+				dataRoot: options.dataDirectory,
+			}),
+		};
+	}
 	const names = options.fileNames ?? CONTROL_SOCKET_FILENAMES;
 	const socketPath = join(options.dataDirectory, names.dataDirectory);
 	if (socketPathFits(socketPath))
