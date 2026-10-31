@@ -13,7 +13,7 @@
 
 ## 3. One scrollbar style
 
-- [ ] 3.1 In the Windows VM, find the element that draws the stray arrow at the terminal's bottom right. Verified by a DevTools note in the PR.
+- [x] 3.1 In the Windows VM, find the element that draws the stray arrow at the terminal's bottom right. Verified by a DevTools note in the PR. Found: `.xterm .xterm-viewport`, whose `overflow-y: scroll` drew Chromium's native bar beside xterm's own; it is hidden with `::-webkit-scrollbar { display: none }`.
 - [x] 3.2 Add the global thin, arrowless `::-webkit-scrollbar` rule, remove `settings.css`'s standard `scrollbar-width` and `scrollbar-color`, and fold the per-pane rules into it. Verified by `npm run lint` and a VM screenshot of a scrolled terminal and the settings page with no arrows.
 
 ## 4. Native frame for Windows secondary windows
@@ -27,5 +27,5 @@
 ## 6. Verification
 
 - [x] 6.1 `npm run build`, `npm run lint`, the smoke unit tests, and `npm run test:e2e` for the switcher and menu specs. Verified by their output.
-- [ ] 6.2 In the Windows VM, run a built Terminay. Check that the menu button opens the full menu, bare Alt opens it, Alt+B reaches PowerShell, Ctrl+Tab switches terminals, and no scrollbar shows arrows. Verified by screenshots.
+- [x] 6.2 In the Windows VM, run a built Terminay. Check that the menu button opens the full menu, bare Alt opens it, Alt+B reaches PowerShell, Ctrl+Tab switches terminals, and no scrollbar shows arrows. Verified by screenshots.
 - [ ] 6.3 Open the PR on Gitea and read back every status as success or skipped. Verified by the status list.
