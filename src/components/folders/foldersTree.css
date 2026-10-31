@@ -110,14 +110,21 @@
 	color: rgba(220, 226, 240, 0.8);
 }
 
+/* The active row is tinted as its tab is in the tab strip. */
 .folders-tree__row--active,
 .folders-tree__row--active:hover {
 	background: color-mix(
 		in srgb,
-		var(--project-color, #57b7ff) 22%,
-		transparent
+		var(--tab-color, var(--project-color, #57b7ff)) 36%,
+		rgba(255, 255, 255, 0.1)
 	);
 	color: #fff;
+}
+
+/* A terminal coloured apart from its project carries that colour on its edge
+   while it is not the one in front. */
+.folders-tree__row--own-color:not(.folders-tree__row--active) {
+	box-shadow: inset 3px 0 0 var(--tab-color);
 }
 
 .folders-tree__title {
