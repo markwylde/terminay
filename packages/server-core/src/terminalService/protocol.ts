@@ -24,6 +24,7 @@ import {
 	launcherCommandLine,
 	type TerminalLauncherRegistry,
 } from './launchers.js';
+import type { TerminalCommandDefaultRegistry } from './commandDefaults.js';
 import type { TerminalLaunchResolver } from './launchResolver.js';
 import type {
 	TerminalPresentationCheckpointAuthority,
@@ -109,6 +110,14 @@ export interface TerminalOperationRegistryOptions {
 	 * names a launcher is refused and the launcher list is empty.
 	 */
 	readonly launchers?: Pick<TerminalLauncherRegistry, 'list' | 'target'>;
+	/**
+	 * The terminal command defaults this server applies (ADR-0081). A launcher
+	 * types the flags of the default whose command is its program's file name.
+	 */
+	readonly commandDefaults?: Pick<
+		TerminalCommandDefaultRegistry,
+		'argsForExecutable'
+	>;
 	/** Remember, until `onSessionCreated` reads it, the default name a terminal
 	 * about to be spawned starts with. `undefined` forgets it. */
 	readonly nameSession?: (sessionId: string, title: string | undefined) => void;
@@ -616,7 +625,11 @@ export function createTerminalOperationRegistry(
 				},
 				clientId: request.context.clientId,
 				source: 'launcher',
-				data: launcherCommandLine(launcher.executable, resolved.shellPath),
+				data: launcherCommandLine(
+					launcher.executable,
+					resolved.shellPath,
+					options.commandDefaults?.argsForExecutable(launcher.executable) ?? [],
+				),
 			});
 		return {
 			serverId: snapshot.serverId,

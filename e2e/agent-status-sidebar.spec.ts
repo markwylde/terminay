@@ -5,6 +5,7 @@ import type { Page } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { runShellCommand } from './support/terminal-input';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { openFileExplorer, selectSidebarGroup } from './support/ui';
 
@@ -245,6 +246,86 @@ test('a completed agent resumes working while a second running agent appears', a
 	await expect(
 		secondAgent.locator('.agent-status-indicator[data-agent-state="working"]'),
 	).toBeVisible();
+});
+
+test("a detached server spawned from a terminal shows as external and leaves the tab's dot alone", async ({
+	mainWindow,
+}) => {
+	test.setTimeout(60_000);
+	const terminalSessionId =
+		await createTerminalAndGetActiveSessionId(mainWindow);
+	const panel = mainWindow.locator(
+		`[data-terminay-terminal-session-id="${terminalSessionId}"]`,
+	);
+	// A background job in the terminal (it keeps the terminal) spawns a
+	// detached child: a descendant of the shell with no controlling terminal,
+	// as the shared Codex server is.
+	await runShellCommand(
+		mainWindow,
+		`node -e "const c=require('child_process').spawn('sleep',['600'],{detached:true,stdio:'ignore'});console.log('PIDS:'+process.pid+':'+c.pid+':');setInterval(()=>{},1e6)" &`,
+		terminalSessionId,
+	);
+	let pids: [number, number] | undefined;
+	await expect
+		.poll(
+			async () => {
+				const match = /PIDS:(\d+):(\d+):/u.exec(
+					await panel.locator('.xterm-rows').innerText(),
+				);
+				pids = match ? [Number(match[1]), Number(match[2])] : undefined;
+				return pids !== undefined;
+			},
+			{ timeout: 20_000 },
+		)
+		.toBe(true);
+	const [job, server] = pids!;
+	// The job and its detached child outlive a failed assertion unless killed.
+	const stop = () => {
+		for (const pid of [server, job])
+			try {
+				process.kill(pid, 'SIGKILL');
+			} catch {
+				/* already gone */
+			}
+	};
+	try {
+		const tab = mainWindow
+			.locator('.terminal-tab-content')
+			.filter({ hasText: 'Terminal 2' });
+		await mainWindow
+			.locator('.terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' })
+			.click();
+
+		// An unbound session shows only in a project that holds its directory.
+		const base = { harness: 'codex', cwd: os.homedir(), status: 'running' };
+		await publish(mainWindow, [
+			{ ...base, id: 'detached-server', pid: server, title: 'Detached server' },
+		]);
+		await selectSidebarGroup(mainWindow, 'agents');
+		const row = (title: string) =>
+			mainWindow.locator('.agents-sidebar__row').filter({ hasText: title });
+		await expect(row('Detached server')).toHaveAttribute(
+			'data-agent-external',
+			'true',
+		);
+		await expect(tab.locator('.agent-status-indicator')).toHaveCount(0);
+
+		// The job that spawned it still has the terminal, so it binds.
+		await publish(mainWindow, [
+			{ ...base, id: 'detached-server', pid: server, title: 'Detached server' },
+			{ ...base, id: 'terminal-job', pid: job, title: 'Terminal job' },
+		]);
+		await expect(row('Terminal job')).not.toHaveAttribute(
+			'data-agent-external',
+			'true',
+		);
+		await expect(
+			tab.locator('.agent-status-indicator[data-agent-state="working"]'),
+		).toBeVisible();
+	} finally {
+		stop();
+	}
 });
 
 test('agent integration setting disables and restores session status', async ({

@@ -166,8 +166,49 @@ starts an installed program, such as a coding agent, in a new terminal
 A launcher only says where its program is. Terminay creates the terminal in
 the folder the user chose, with the default shell profile and working
 directory, and types the quoted path into the shell with no arguments,
-environment, or input of the launcher's. When the program exits the user is
-back at the shell. A launcher cannot read or write the terminal.
+environment, or input of the launcher's, apart from the flags of a matching
+terminal command default. When the program exits the user is back at the
+shell. A launcher cannot read or write the terminal.
+
+## Terminal command defaults
+
+A terminal command default adds flags in front of the user's arguments when a
+command runs in a Terminay terminal (API 3.4). Each one is an exception to
+Terminay's rule that it observes agents and never changes how they run, and
+needs the repository owner's approval in an ADR. Declare it under
+`contributes.terminalCommandDefaults`, require the `terminal-command-defaults`
+permission, and register it with
+`context.terminals.registerCommandDefault(id, runtime)`.
+
+```json
+{
+  "permissions": ["terminal-command-defaults"],
+  "contributes": {
+    "terminalCommandDefaults": [
+      {
+        "id": "com.example.agents/example-defaults",
+        "command": "example"
+      }
+    ]
+  }
+}
+```
+
+- `command` is fixed by the manifest: one plain word that is not a builtin or
+  reserved word of zsh, bash, fish, or PowerShell.
+- `harness` (`{ source, harness }`) optionally names a harness of a session
+  source the same package declares. While it is switched off the default does
+  not apply and is not asked anything.
+- `resolve(signal)` returns `{ applies: true, args }`, where every argument is
+  a flag starting with `-`, or `{ applies: false, reason, detail? }` with
+  `reason` one of `not_installed`, `unsupported`, or `unavailable`.
+
+Terminay turns each default into a shell function in new terminals with shell
+integration, so typing `example run` runs `example <args> run`, and appends
+the flags when a launcher starts that command. An extension supplies data
+only; Terminay writes every line of shell code and quoting. A user's own alias
+or function of the same name wins, and two extensions claiming one command
+cancel each other out.
 
 ## Testing agent extensions
 
@@ -183,6 +224,8 @@ and `stop()` drive a session source; `sessions()`, `publications()`,
 records its validated `events()`, any `violations()`, and the reply `text()`.
 `registeredLauncherIds()` and `resolveLauncher(launcherId)` drive a terminal
 launcher, validating its resolution.
+`registeredCommandDefaultIds()` and `resolveCommandDefault(id)` drive a
+terminal command default the same way.
 [`fixtures/session-source`](fixtures/session-source) is an independent,
 packable third-party source.
 

@@ -8,6 +8,7 @@ import { createStandaloneServer } from "../dist/index.js";
 import {
   AgentStatusService,
   ExtensionHostManager,
+  ProcessAncestry,
   ProjectAgentScope,
   SessionSourceBridge,
   SessionSourceSupervisor,
@@ -80,7 +81,11 @@ test("a fixture session source runs in a real extension child and reaches the Ag
   t.after(() => scope.dispose());
   scope.setProject("project-a", project);
   await scope.settled();
-  const bridge = new SessionSourceBridge({ agents, scope });
+  // A PTY shell and the agent it starts share a controlling terminal; this
+  // test process, standing in for the shell, may have none (as under CI), so
+  // both report one. Ancestry is still read from the real process table.
+  const ancestry = new ProcessAncestry({ readTerminal: async (pid) => (pid === 1 ? null : "pts/fixture") });
+  const bridge = new SessionSourceBridge({ agents, scope, ancestry });
   const supervisor = new SessionSourceSupervisor({ bridge, agents });
   const hosts = new ExtensionHostManager({ broker: { async request() {} }, agents: supervisor });
   t.after(() => hosts.shutdown());

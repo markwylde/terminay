@@ -1135,6 +1135,13 @@ async function createServerComposition(
 		...(process.platform === 'darwin'
 			? { terminalSystemDefaultStartupMode: 'login' as const }
 			: {}),
+		shellIntegrationDirectory: join(options.dataRoot, 'shell-integration'),
+		onTerminalCommandDefaultConflicts: (conflicts) => {
+			for (const conflict of conflicts)
+				process.stderr.write(
+					`terminay-server: terminal command default "${conflict.command}" is claimed by ${conflict.contributionIds.join(', ')}; none of them applies\n`,
+				);
+		},
 		recordings,
 		extensions,
 		git,

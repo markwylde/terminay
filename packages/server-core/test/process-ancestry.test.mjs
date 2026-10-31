@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { ProcessAncestry } from '../dist/index.js';
+import {
+	ProcessAncestry,
+	terminalFromProcStat,
+	terminalFromPs,
+} from '../dist/index.js';
 
 test('a real child process descends from the shell pid that spawned it', async (t) => {
 	// This test process stands in for a PTY shell; the child is the agent.
@@ -69,4 +73,68 @@ test('the default reader spawns nothing until asked', async (t) => {
 	t.mock.timers.reset();
 	await ancestry.chain(5);
 	assert.equal(reads, 1);
+});
+
+test('a real child shares this process\'s controlling terminal, or neither has one', async (t) => {
+	const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+		stdio: 'ignore',
+	});
+	t.after(() => child.kill('SIGKILL'));
+	await new Promise((resolve) => child.once('spawn', resolve));
+	const shares = await new ProcessAncestry().sharesTerminal(
+		child.pid,
+		process.pid,
+	);
+	// Under a terminal the child inherits it; under CI neither has one, and a
+	// process with no terminal shares it with nobody.
+	assert.equal(shares, process.stdin.isTTY === true);
+});
+
+test('a detached child never shares the terminal of the shell that spawned it', async (t) => {
+	const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+		stdio: 'ignore',
+		detached: true,
+	});
+	t.after(() => child.kill('SIGKILL'));
+	await new Promise((resolve) => child.once('spawn', resolve));
+	const ancestry = new ProcessAncestry();
+	assert.equal(await ancestry.sharesTerminal(child.pid, process.pid), false);
+});
+
+test('controlling terminals are read from ps output', () => {
+	assert.equal(terminalFromPs('ttys003\n'), 'ttys003');
+	assert.equal(terminalFromPs('pts/2\n'), 'pts/2');
+	assert.equal(terminalFromPs('??\n'), null);
+	assert.equal(terminalFromPs('?\n'), null);
+	assert.equal(terminalFromPs(''), undefined);
+});
+
+test('controlling terminals are read from /proc stat, after the command name', () => {
+	const stat = (name, tty) =>
+		`4242 (${name}) S 4000 4242 4000 ${tty} 4242 4194560 1 0 0 0`;
+	assert.equal(terminalFromProcStat(stat('codex', 34818)), '34818');
+	assert.equal(terminalFromProcStat(stat('a ) b', 34818)), '34818');
+	assert.equal(terminalFromProcStat(stat('codex', 0)), null);
+	assert.equal(terminalFromProcStat('garbage'), undefined);
+});
+
+test('controlling terminals are cached and forgotten with the process', async () => {
+	let reads = 0;
+	const ancestry = new ProcessAncestry({
+		readParent: async () => undefined,
+		readTerminal: async (pid) => {
+			reads += 1;
+			return pid === 7 ? null : 'ttys001';
+		},
+	});
+	assert.equal(await ancestry.sharesTerminal(5, 3), true);
+	assert.equal(await ancestry.sharesTerminal(7, 3), false);
+	assert.equal(reads, 3);
+	await ancestry.sharesTerminal(5, 3);
+	assert.equal(reads, 3);
+	ancestry.forget(5);
+	await ancestry.sharesTerminal(5, 3);
+	assert.equal(reads, 4);
+	await ancestry.sharesTerminal(5, 3, true);
+	assert.equal(reads, 6);
 });
