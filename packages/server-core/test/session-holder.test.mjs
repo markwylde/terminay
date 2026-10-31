@@ -134,7 +134,7 @@ test("the holder directory, socket, and credential file are owner-only", async (
   const record = JSON.parse(readFileSync(recordPath, "utf8"));
   assert.equal(record.credential, holder.credential);
   assert.equal(record.generation, GENERATION);
-  assert.deepEqual(record.versions, [1]);
+  assert.deepEqual(record.versions, [1, 2]);
 });
 
 test("a peer without the credential is closed and learns nothing", async (t) => {

@@ -274,3 +274,15 @@ test("non-conformant and version-incompatible bundled metadata fail in isolation
     assert.equal(Object.keys(state.extensions[EXTENSION].slots).length, 0);
   } finally { await value.cleanup(); }
 });
+
+test("a built-in for other platforms is recorded as unavailable here, not failed", async () => {
+  const elsewhere = process.platform === "win32" ? ["darwin", "linux"] : ["win32"];
+  const value = await fixture({ ...manifest(), platforms: elsewhere });
+  try {
+    const state = await value.installer.initialize();
+    assert.equal(state.extensions[EXTENSION].state, "incompatible");
+    assert.equal(state.extensions[EXTENSION].failureClass, `extension_does_not_support_platform_${process.platform}`);
+    assert.equal(Object.keys(state.extensions[EXTENSION].slots).length, 0);
+    assert.deepEqual(await value.installer.enabledExtensionIds(), []);
+  } finally { await value.cleanup(); }
+});

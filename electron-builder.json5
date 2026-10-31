@@ -79,7 +79,16 @@
     "writeUpdateInfo": false
   },
   "win": {
-    "icon": "public/terminay.png",
+    // A checked-in .ico, so packaging never converts the PNG at build time.
+    "icon": "public/terminay.ico",
+    // The x64 payload carries only x64 native code; the packages ship every
+    // Windows architecture's prebuilds (scripts/check-windows-pe-architecture.mjs).
+    "files": [
+      "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
+      "!**/node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
+      "!**/node_modules/koffi/build/koffi/win32_arm64/**",
+      "!**/node_modules/koffi/build/koffi/win32_ia32/**"
+    ],
     "target": [
       {
         "target": "nsis",
@@ -90,10 +99,14 @@
     ],
     "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
   },
+  // Per-user and one-click, so Terminay lives in %LOCALAPPDATA%\Programs,
+  // which the user owns: updates install silently, without elevation, into
+  // the directory they replace (native-windows-desktop, design decision 3).
   "nsis": {
-    "oneClick": false,
+    "oneClick": true,
     "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
+    "allowToChangeInstallationDirectory": false,
+    "include": "build/installer.nsh",
     "deleteAppDataOnUninstall": false
   },
   "linux": {

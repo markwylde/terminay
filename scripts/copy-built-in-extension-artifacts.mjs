@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { verifyBuiltInExtensionArtifacts } from "./verify-built-in-extension-artifacts.mjs";
 
 export async function copyBuiltInExtensionArtifacts(source, destination) {
@@ -17,7 +18,7 @@ export async function copyBuiltInExtensionArtifacts(source, destination) {
   } catch (error) { await rm(next, { recursive: true, force: true }); throw error; }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [source, destination] = process.argv.slice(2);
   if (!source || !destination) throw new Error("usage: copy-built-in-extension-artifacts.mjs <source> <destination>");
   await copyBuiltInExtensionArtifacts(source, destination);

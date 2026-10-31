@@ -257,6 +257,30 @@ test("node-pty treats Debian dash as the configured POSIX sh shell", () => {
   assert.deepEqual(events, [{ processName: "dash", shellForeground: true, observation: "available" }]);
 });
 
+test("node-pty treats a Windows shell's command name as its configured executable", () => {
+  for (const [shellPath, idle] of [
+    ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell"],
+    ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "pwsh"],
+    ["C:\\Windows\\System32\\cmd.exe", "cmd"],
+    ["C:\\Windows\\System32\\CMD.EXE", "cmd"],
+  ]) {
+    const scheduler = createScheduler();
+    const child = createChild();
+    child.process = idle;
+    const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+    const process = factory.spawn({ shellPath, shell: shellPath, args: [], cwd: "C:\\", cols: 80, rows: 24 });
+    const events = [];
+    process.onForegroundProcess((event) => events.push(event));
+    scheduler.tick();
+    child.process = "node";
+    scheduler.tick();
+    assert.deepEqual(events, [
+      { processName: idle, shellForeground: true, observation: "available" },
+      { processName: "node", shellForeground: false, observation: "available" },
+    ], shellPath);
+  }
+});
+
 test("node-pty cwd observation forwards the service cancellation signal", async () => {
   const child = createChild();
   let observed;

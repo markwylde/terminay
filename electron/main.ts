@@ -119,6 +119,8 @@ import {
 import { pushOriginForSessionOrigin } from '../packages/server-core/src/push/sender';
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
+import { currentHolderAddressing } from './windowsUser';
+import { prepareHolderRuntime, pruneHolderRuntimes } from './sessionHolderRuntime';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
 import {
 	createAutomationFileBackends,
@@ -368,6 +370,18 @@ if (!app.requestSingleInstanceLock()) {
 	app.exit(1);
 	process.exit(1);
 }
+// Notifications and taskbar grouping are keyed by this id on Windows. It is
+// electron-builder's appId, which the installer's shortcut carries too.
+if (process.platform === 'win32') app.setAppUserModelId('com.terminay.app');
+// A second launch exits above; the first brings its window forward.
+app.on('second-instance', () => {
+	const window =
+		BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
+	if (window === undefined || window.isDestroyed()) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+});
 
 /** The settings files are read on nearly every host interaction. Re-reading
  * them from disk each time is invisible in this process's own CPU numbers but
@@ -2055,14 +2069,16 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			? {
 					sessionHolder: {
 						buildId: sessionHolderBuildId(),
-						launch: ({ env }) =>
-							launchDetachedSessionHolder(
-								process.execPath,
-								[getSessionHolderEntryPath()],
+						launch: ({ env }) => {
+							const runtime = sessionHolderRuntime();
+							return launchDetachedSessionHolder(
+								runtime.executablePath,
+								[runtime.entryPath],
 								// Electron's binary runs the holder as plain Node. The holder
 								// is not an application instance and opens no window.
 								{ ...process.env, ELECTRON_RUN_AS_NODE: '1', ...env },
-							),
+							);
+						},
 						limitMs: backgroundTerminalLimitMs(
 							embeddedServerSettings.settings.keepTerminalsAfterQuit,
 						),
@@ -2664,11 +2680,18 @@ let appUpdater: AppUpdater | null = null;
 
 function getAppUpdater(): AppUpdater {
 	if (appUpdater === null) {
+		// The Windows update probe serves the next build from a local Beta feed.
+		const testFeedUrl =
+			process.env.TERMINAY_TEST === '1'
+				? process.env.TERMINAY_TEST_UPDATE_FEED_URL
+				: undefined;
 		appUpdater = createAppUpdater({
 			currentVersion: app.getVersion(),
 			isPackaged: app.isPackaged,
 			platform: process.platform,
 			appImagePath: process.env.APPIMAGE,
+			executablePath: process.execPath,
+			localAppData: process.env.LOCALAPPDATA,
 			isWritable: (target) => {
 				try {
 					accessSync(target, fsConstants.W_OK);
@@ -2677,7 +2700,10 @@ function getAppUpdater(): AppUpdater {
 					return false;
 				}
 			},
-			channel: readTerminalSettings().updateChannel,
+			channel:
+				testFeedUrl === undefined
+					? readTerminalSettings().updateChannel
+					: 'beta',
 			loadUpdater: async () => {
 				const { default: electronUpdater } = await import('electron-updater');
 				return electronUpdater.autoUpdater;
@@ -2685,6 +2711,7 @@ function getAppUpdater(): AppUpdater {
 			fetch: (url, init) => fetch(url, { ...init, redirect: 'follow' }),
 			log: (message, error) => console.warn(message, error ?? ''),
 			onStatusChanged: () => broadcastAppUpdateStatusChanged(),
+			testFeedUrl,
 		});
 		setInterval(() => {
 			void appUpdater?.check({ force: true });
@@ -3157,11 +3184,11 @@ function getTerminalControlEnv(capability?: {
 function mcpControlSocketPlacementOptions() {
 	return {
 		dataDirectory: app.getPath('userData'),
-		platform: process.platform,
 		temporaryDirectory: os.tmpdir(),
 		...(process.env.XDG_RUNTIME_DIR
 			? { runtimeDirectory: process.env.XDG_RUNTIME_DIR }
 			: {}),
+		...currentHolderAddressing(),
 	};
 }
 
@@ -3186,7 +3213,7 @@ function sessionHolderEnabled(): boolean {
 	return isSessionHolderEnabled({
 		dataRoot: app.getPath('userData'),
 		env: process.env,
-		platform: process.platform,
+		...currentHolderAddressing(),
 	});
 }
 
@@ -3201,6 +3228,30 @@ function sessionHolderEnabled(): boolean {
  */
 function getSessionHolderEntryPath(): string {
 	return path.join(MAIN_DIST, 'sessionHolderEntry.js');
+}
+
+/**
+ * What a holder runs. An installed Windows build runs it from a copy in the
+ * data root, so the installation can be replaced while it holds terminals;
+ * copies of builds whose holders have gone are removed as this one is made.
+ * The copy is made once per build, on the first terminal after an update.
+ */
+function sessionHolderRuntime(): { executablePath: string; entryPath: string } {
+	if (process.platform !== 'win32' || !app.isPackaged)
+		return {
+			executablePath: process.execPath,
+			entryPath: getSessionHolderEntryPath(),
+		};
+	const dataRoot = app.getPath('userData');
+	const buildId = sessionHolderBuildId();
+	const runtime = prepareHolderRuntime({
+		executablePath: process.execPath,
+		resourcesPath: process.resourcesPath,
+		dataRoot,
+		buildId,
+	});
+	pruneHolderRuntimes(dataRoot, buildId);
+	return runtime;
 }
 
 /** Changes whenever the holder this build would start changes. */

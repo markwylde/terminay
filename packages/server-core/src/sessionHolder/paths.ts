@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, win32 } from 'node:path';
 
 /** Session ids are filenames here, so the server's id grammar is enforced. */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -20,6 +21,75 @@ export function sessionHolderSocketPath(
 ): string {
 	assertGeneration(generation);
 	return join(sessionHolderDirectory(dataRoot), `${generation}.sock`);
+}
+
+const WINDOWS_SID_PATTERN = /^S-1-\d+(?:-\d+)+$/;
+
+/**
+ * A named pipe for one user and one data root (ADR-0086). The pipe namespace is
+ * machine-wide, so the name carries the user's SID as well as the data root:
+ * two users, or two data roots, never share one. Windows paths compare without
+ * case, so the data root is normalised and lowercased before it is hashed.
+ */
+export function windowsPipeName(
+	kind: string,
+	owner: { readonly userSid: string; readonly dataRoot: string },
+	suffix?: string,
+): string {
+	if (!WINDOWS_SID_PATTERN.test(owner.userSid))
+		throw new TypeError('user SID is invalid');
+	const root = win32.resolve(owner.dataRoot).toLowerCase();
+	const digest = createHash('sha256')
+		.update(`${owner.userSid}\0${root}`)
+		.digest('hex')
+		.slice(0, 24);
+	return `\\\\.\\pipe\\terminay-${kind}-${digest}${suffix === undefined ? '' : `-${suffix}`}`;
+}
+
+export interface SessionHolderAddressOptions {
+	readonly dataRoot: string;
+	readonly generation: string;
+	readonly platform: string;
+	/** The current user's SID. Required on Windows. */
+	readonly userSid?: string;
+}
+
+/** The platform facts a holder's address depends on. */
+export interface SessionHolderAddressing {
+	readonly platform: string;
+	/** The current user's SID. Required on Windows. */
+	readonly userSid?: string;
+}
+
+/**
+ * Whether a generation's address can be listened on. A Unix socket path has a
+ * length limit; a pipe name does not.
+ */
+export function sessionHolderAddressFits(
+	dataRoot: string,
+	generation: string,
+	addressing: SessionHolderAddressing,
+): boolean {
+	return (
+		addressing.platform === 'win32' ||
+		socketPathFits(sessionHolderSocketPath(dataRoot, generation))
+	);
+}
+
+/** Where a holder generation listens: a Unix socket, or a named pipe on Windows. */
+export function sessionHolderAddress(
+	options: SessionHolderAddressOptions,
+): string {
+	if (options.platform !== 'win32')
+		return sessionHolderSocketPath(options.dataRoot, options.generation);
+	assertGeneration(options.generation);
+	if (options.userSid === undefined)
+		throw new TypeError('a Windows session holder address needs the user SID');
+	return windowsPipeName(
+		'holder',
+		{ userSid: options.userSid, dataRoot: options.dataRoot },
+		options.generation,
+	);
 }
 
 export function sessionHolderRecordPath(
@@ -72,6 +142,8 @@ export interface SessionHolderEnablement {
 	readonly dataRoot: string;
 	readonly env: Readonly<Record<string, string | undefined>>;
 	readonly platform: string;
+	/** The current user's SID, on Windows. */
+	readonly userSid?: string;
 }
 
 /**
@@ -83,18 +155,18 @@ export interface SessionHolderEnablement {
  * started it and a test harness that did not ask for one would leave shells
  * running after it finished.
  *
- * It is also off, whatever was asked, where it cannot work: on Windows, and for
- * a data root too deep for the holder's socket path. Terminals then live and
- * end with the server, which is better than terminals that cannot start.
+ * It is also off, whatever was asked, where it cannot work: on Windows without
+ * the user's SID, which names the holder's pipe, and for a data root too deep
+ * for the holder's socket path. Terminals then live and end with the server,
+ * which is better than terminals that cannot start.
  */
 export function sessionHolderEnabled(options: SessionHolderEnablement): boolean {
-	if (options.platform === 'win32') return false;
+	if (options.platform === 'win32' && options.userSid === undefined)
+		return false;
 	const requested = options.env.TERMINAY_SESSION_HOLDER;
 	if (requested === '0') return false;
 	if (requested !== '1' && options.env.TERMINAY_TEST === '1') return false;
-	return socketPathFits(
-		sessionHolderSocketPath(options.dataRoot, '0'.repeat(16)),
-	);
+	return sessionHolderAddressFits(options.dataRoot, '0'.repeat(16), options);
 }
 
 function assertGeneration(generation: string): void {

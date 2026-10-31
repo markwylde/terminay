@@ -31,12 +31,18 @@ A desktop terminal workspace that keeps shells, files, agents, and remote access
 
 ### Terminay Desktop
 
-The desktop app for macOS (arm64) and Linux (x64). It runs its own Terminay
-server, so it works on its own, and it can also connect to Terminay servers on
-other machines.
+The desktop app for macOS (arm64), Linux (x64), and Windows (x64). It runs its
+own Terminay server, so it works on its own, and it can also connect to
+Terminay servers on other machines.
 
-Download the DMG or AppImage from the
+Download the DMG, AppImage, or per-user Windows installer from the
 [latest release](https://github.com/markwylde/terminay/releases/latest).
+The first Windows install is unsigned, so SmartScreen may show an unknown
+publisher warning. Choose **More info → Run anyway** to continue.
+
+Windows terminals run PowerShell, Command Prompt, or a WSL distribution. WSL
+process activity is reported as `limited` because its processes run inside the
+Linux VM.
 
 <details>
 <summary>Verify the download</summary>

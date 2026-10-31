@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import {
+	currentWindowsUserSid,
 	loadGitTraceKey,
+	protectWindowsDirectory,
 	type WorktreeCaptureHostOptions,
 } from '@terminay/server-core';
 import {
@@ -31,7 +33,11 @@ export function gitCommandSocketHostOptions(
 	options: GitCommandSocketOptions,
 ): Pick<
 	WorktreeCaptureHostOptions,
-	'socketPath' | 'socketPlacement' | 'prepareSocket' | 'tokenKey'
+	| 'socketPath'
+	| 'traceDirectory'
+	| 'socketPlacement'
+	| 'prepareSocket'
+	| 'tokenKey'
 > {
 	const perRun = {
 		socketPath: join(
@@ -40,9 +46,8 @@ export function gitCommandSocketHostOptions(
 		),
 		socketPlacement: 'per-run' as const,
 	};
-	// Git's Trace2 socket target is a Unix socket, so a named pipe will not do.
-	if (options.dataDirectory === undefined || options.platform === 'win32')
-		return perRun;
+	if (options.platform === 'win32') return windowsHostOptions(options, perRun);
+	if (options.dataDirectory === undefined) return perRun;
 	let tokenKey: Buffer;
 	try {
 		tokenKey = loadGitTraceKey(options.dataDirectory);
@@ -80,4 +85,53 @@ export function gitCommandSocketHostOptions(
 		socketPlacement: 'data-directory',
 		tokenKey,
 	};
+}
+
+/**
+ * Node cannot serve a Unix socket on Windows, and Git for Windows has no
+ * named-pipe target, so Git writes its events into a directory instead
+ * (ADR-0084). With a data directory it has a fixed address there, so a shell
+ * kept across a restart reports to the next run; without one it lasts a run.
+ */
+function windowsHostOptions(
+	options: GitCommandSocketOptions,
+	perRun: { readonly socketPath: string },
+): Pick<
+	WorktreeCaptureHostOptions,
+	| 'socketPath'
+	| 'traceDirectory'
+	| 'prepareTraceDirectory'
+	| 'socketPlacement'
+	| 'tokenKey'
+> {
+	// Windows paths, whatever host computes them, so the choice is testable.
+	const runDirectory = {
+		socketPath: perRun.socketPath,
+		traceDirectory: win32.join(
+			options.temporaryDirectory,
+			win32.basename(perRun.socketPath, '.sock'),
+		),
+		prepareTraceDirectory: protectTraceDirectory,
+		socketPlacement: 'trace-directory' as const,
+	};
+	if (options.dataDirectory === undefined) return runDirectory;
+	let tokenKey: Buffer;
+	try {
+		tokenKey = loadGitTraceKey(options.dataDirectory);
+	} catch {
+		return runDirectory;
+	}
+	return {
+		socketPath: perRun.socketPath,
+		traceDirectory: win32.join(options.dataDirectory, 'run', 'git-trace'),
+		prepareTraceDirectory: protectTraceDirectory,
+		socketPlacement: 'trace-directory',
+		tokenKey,
+	};
+}
+
+/** Only this user, SYSTEM and Administrators may write Git's events (ADR-0084). */
+function protectTraceDirectory(path: string): boolean {
+	const userSid = currentWindowsUserSid();
+	return userSid !== null && protectWindowsDirectory(path, userSid);
 }

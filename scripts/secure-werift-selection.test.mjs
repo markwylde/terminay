@@ -48,6 +48,20 @@ test('release evidence binds the exact fail-closed Secure-Werift selection', asy
 	);
 });
 
+test('Windows desktop packaging stages the selected runtime before electron-builder', async () => {
+	const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+	assert.match(
+		packageJson.scripts['build:win'],
+		/^node scripts\/stage-selected-secure-werift-runtime\.mjs --reuse-validated && npm run build:app && electron-builder/u,
+	);
+	const workflow = await readFile('scripts/windows-spikes/workflow.yml', 'utf8');
+	const staging = workflow.indexOf('node scripts/stage-selected-secure-werift-runtime.mjs --reuse-validated');
+	const packaging = workflow.indexOf('npx electron-builder --win nsis --x64 --publish never');
+	assert.notEqual(staging, -1);
+	assert.notEqual(packaging, -1);
+	assert.ok(staging < packaging);
+});
+
 test('Desktop packaging carries the selection and staged runtime resource root', async () => {
 	const builder = await readFile('electron-builder.json5', 'utf8');
 	assert.match(builder, /"from": "build\/webrtc-runtime"/u);
