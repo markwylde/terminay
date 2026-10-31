@@ -388,3 +388,19 @@ test('a folder sums its terminals up as the most urgent state among them, and as
 	assert.equal(folderAttentionState([row('working'), row('waiting'), row('done')]), 'waiting');
 	assert.equal(folderAttentionState([row('waiting'), row('blocked'), row('working')]), 'blocked');
 });
+
+test("a terminal row carries its tab's colour, and says when it is not the project's", () => {
+	const colors = { dev: '#7C3AED', agent: '#22c55e' };
+	const rows = buildFolderTree({
+		...workspace(),
+		project: { ...workspace().project, color: '#7c3aed' },
+		panelFacts: (panelId) => (panelId in colors ? { status: 'idle', color: colors[panelId] } : undefined),
+	});
+	const [dev, agent] = byId(rows).general.panels;
+	assert.equal(dev.color, '#7C3AED');
+	assert.equal(dev.hasOwnColor, false);
+	assert.equal(agent.color, '#22c55e');
+	assert.equal(agent.hasOwnColor, true);
+	// A terminal whose tab colour is unknown carries none.
+	assert.equal(byId(rows).servers.panels[0].color, undefined);
+});

@@ -43,6 +43,7 @@ export function panelFactsFromInventory(
 		facts.set(entry.panelId, {
 			status: dashboardStatusFor(entry.status),
 			title: entry.title,
+			color: entry.color,
 		});
 	return (panelId) => facts.get(panelId);
 }
@@ -187,7 +188,9 @@ export function folderNameFromStatus(
 }
 
 export type ProjectFolderTreeInput = {
-	project: Pick<ServerWorkspaceProject, 'id' | 'folderIds' | 'root'> | undefined;
+	project:
+		| Pick<ServerWorkspaceProject, 'id' | 'folderIds' | 'root' | 'color'>
+		| undefined;
 	folders: Readonly<Record<string, ServerWorkspaceFolder>>;
 	panels: Readonly<Record<string, ServerWorkspacePanel>>;
 	selectedFolderId: string | undefined;
