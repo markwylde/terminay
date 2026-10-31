@@ -1,13 +1,9 @@
-import {
-	chmodSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+	loadRebuildableStateSync,
+	writeFileDurablySync,
+} from '../durableFile.js';
 import {
 	isHolderSessionId,
 	sessionTailPath,
@@ -58,63 +54,71 @@ export function writeSessionTail(dataRoot: string, tail: SessionTail): void {
 	new DataView(file.buffer).setUint32(0, header.byteLength, false);
 	file.set(header, 4);
 	file.set(tail.bytes, 4 + header.byteLength);
-	const target = sessionTailPath(dataRoot, tail.sessionId);
-	const temporary = `${target}.tmp`;
-	writeFileSync(temporary, file, { mode: 0o600 });
-	chmodSync(temporary, 0o600);
-	renameSync(temporary, target);
+	writeFileDurablySync(sessionTailPath(dataRoot, tail.sessionId), file, {
+		mode: 0o600,
+	});
 }
 
-/** A missing or unreadable tail is simply absent; it never fails a restore. */
+/** A missing or unreadable tail is simply absent; it never fails a restore.
+ * A corrupt one is set aside beside it, kept until its panel goes, and never
+ * read again (ADR-0088). */
 export function readSessionTail(
 	dataRoot: string,
 	sessionId: string,
 ): SessionTail | undefined {
 	if (!isHolderSessionId(sessionId)) return undefined;
-	let file: Buffer;
 	try {
-		file = readFileSync(sessionTailPath(dataRoot, sessionId));
+		return loadRebuildableStateSync(
+			sessionTailPath(dataRoot, sessionId),
+			'session-tail',
+			{
+				parse: (file) => file,
+				validate: (file) => decodeSessionTail(file as Buffer, sessionId),
+			},
+		);
 	} catch {
 		return undefined;
 	}
-	try {
-		if (file.byteLength < 4) return undefined;
-		const headerLength = new DataView(
-			file.buffer,
-			file.byteOffset,
-			file.byteLength,
-		).getUint32(0, false);
-		if (headerLength > file.byteLength - 4) return undefined;
-		const header = JSON.parse(
-			file.subarray(4, 4 + headerLength).toString('utf8'),
-		) as Record<string, unknown>;
-		if (header.sessionId !== sessionId) return undefined;
-		const bufferedFrom = header.bufferedFrom;
-		const outputPosition = header.outputPosition;
-		const savedAt = header.savedAt;
-		if (
-			!isPosition(bufferedFrom) ||
-			!isPosition(outputPosition) ||
-			!isPosition(savedAt)
-		)
-			return undefined;
-		const bytes = new Uint8Array(file.subarray(4 + headerLength));
-		if (bufferedFrom + bytes.byteLength !== outputPosition) return undefined;
-		const exit = parseExit(header.exit);
-		return {
-			sessionId,
-			bufferedFrom,
-			outputPosition,
-			...(exit === undefined ? {} : { exit }),
-			savedAt,
-			...(isDimension(header.cols) ? { cols: header.cols } : {}),
-			...(isDimension(header.rows) ? { rows: header.rows } : {}),
-			...(typeof header.cwd === 'string' ? { cwd: header.cwd } : {}),
-			bytes,
-		};
-	} catch {
+}
+
+function decodeSessionTail(
+	file: Buffer,
+	sessionId: string,
+): SessionTail | undefined {
+	if (file.byteLength < 4) return undefined;
+	const headerLength = new DataView(
+		file.buffer,
+		file.byteOffset,
+		file.byteLength,
+	).getUint32(0, false);
+	if (headerLength > file.byteLength - 4) return undefined;
+	const header = JSON.parse(
+		file.subarray(4, 4 + headerLength).toString('utf8'),
+	) as Record<string, unknown>;
+	if (header.sessionId !== sessionId) return undefined;
+	const bufferedFrom = header.bufferedFrom;
+	const outputPosition = header.outputPosition;
+	const savedAt = header.savedAt;
+	if (
+		!isPosition(bufferedFrom) ||
+		!isPosition(outputPosition) ||
+		!isPosition(savedAt)
+	)
 		return undefined;
-	}
+	const bytes = new Uint8Array(file.subarray(4 + headerLength));
+	if (bufferedFrom + bytes.byteLength !== outputPosition) return undefined;
+	const exit = parseExit(header.exit);
+	return {
+		sessionId,
+		bufferedFrom,
+		outputPosition,
+		...(exit === undefined ? {} : { exit }),
+		savedAt,
+		...(isDimension(header.cols) ? { cols: header.cols } : {}),
+		...(isDimension(header.rows) ? { rows: header.rows } : {}),
+		...(typeof header.cwd === 'string' ? { cwd: header.cwd } : {}),
+		bytes,
+	};
 }
 
 export function deleteSessionTail(dataRoot: string, sessionId: string): void {
@@ -125,14 +129,20 @@ export function deleteSessionTail(dataRoot: string, sessionId: string): void {
 export function listSessionTailIds(dataRoot: string): readonly string[] {
 	try {
 		return readdirSync(sessionTailsDirectory(dataRoot)).filter(
-			(name) => isHolderSessionId(name) && !name.endsWith('.tmp'),
+			(name) =>
+				isHolderSessionId(name) &&
+				!name.endsWith('.tmp') &&
+				!name.includes(CORRUPT_MARKER),
 		);
 	} catch {
 		return [];
 	}
 }
 
-/** Remove every saved tail whose session id is not in `keep`. */
+const CORRUPT_MARKER = '.corrupt-';
+
+/** Remove every saved tail whose session id is not in `keep`. A corrupt tail
+ * set aside for a kept session stays with it. */
 export function pruneSessionTails(
 	dataRoot: string,
 	keep: ReadonlySet<string>,
@@ -144,8 +154,11 @@ export function pruneSessionTails(
 	} catch {
 		return;
 	}
-	for (const name of names)
-		if (!keep.has(name)) rmSync(join(directory, name), { force: true });
+	for (const name of names) {
+		const marker = name.indexOf(CORRUPT_MARKER);
+		const owner = marker === -1 ? name : name.slice(0, marker);
+		if (!keep.has(owner)) rmSync(join(directory, name), { force: true });
+	}
 }
 
 function isPosition(value: unknown): value is number {

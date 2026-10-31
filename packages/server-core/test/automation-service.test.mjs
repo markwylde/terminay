@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,9 @@ import {
   AutomationRunLog,
   AutomationServiceError,
   createAutomationFileBackends,
+  createJsonFileBackend,
+  isStateUnreadableError,
+  takeStateRecoveryNotices,
 } from "../dist/index.js";
 
 function memoryBackend(initial) {
@@ -306,6 +309,41 @@ test("file backends restore definitions, enabled state, and the run log after a 
     assert.deepEqual(log.listMissed(), [{ automationId: "hourly", missedCount: 3, latestDueAt: 99 }]);
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("a corrupt automations, runs, or connected-servers file restores its .previous or stops naming its store (ADR-0088)", async () => {
+  const cases = [
+    { name: AUTOMATION_DEFINITIONS_FILE, store: "automations", backend: (root) => createAutomationFileBackends(root).definitions, first: { schemaVersion: 1, revision: 1, cursor: "1", automations: [] }, second: { schemaVersion: 1, revision: 2, cursor: "2", automations: [] } },
+    { name: AUTOMATION_RUNS_FILE, store: "automations", backend: (root) => createAutomationFileBackends(root).runs, first: { runs: {} , n: 1 }, second: { runs: {}, n: 2 } },
+    { name: "mcp-connected-servers.v1.json", store: "connected-servers", backend: (root) => createJsonFileBackend(join(root, "mcp-connected-servers.v1.json")), first: { servers: [], n: 1 }, second: { servers: [], n: 2 } },
+  ];
+  for (const entry of cases) {
+    const good = JSON.stringify(entry.second);
+    for (const [shape, bytes] of [["zero-filled", Buffer.alloc(good.length)], ["truncated", good.slice(0, 7)], ["invalid JSON", "{not json"], ["wrong shape", JSON.stringify({ automations: "x", runs: [], servers: {} })]]) {
+      const dataRoot = await mkdtemp(join(tmpdir(), "terminay-automations-corrupt-"));
+      try {
+        const path = join(dataRoot, entry.name);
+        const backend = entry.backend(dataRoot);
+        await backend.commit(entry.first);
+        await backend.commit(entry.second);
+        assert.deepEqual(JSON.parse(await readFile(`${path}.previous`, "utf8")), entry.first);
+        takeStateRecoveryNotices();
+        await writeFile(path, bytes);
+        assert.deepEqual(await entry.backend(dataRoot).load(), entry.first, `${entry.name} ${shape}`);
+        assert.deepEqual(takeStateRecoveryNotices(), [{ kind: "restored", store: entry.store }]);
+        assert.equal((await readdir(dataRoot)).filter((name) => name.startsWith(`${entry.name}.corrupt-`)).length, 1);
+
+        // With no good copy the load stops, and leaves both files untouched.
+        await writeFile(path, bytes);
+        await writeFile(`${path}.previous`, Buffer.alloc(32));
+        const before = (await readdir(dataRoot)).sort();
+        await assert.rejects(entry.backend(dataRoot).load(), (error) => isStateUnreadableError(error) && error.store === entry.store && !error.message.includes(dataRoot));
+        assert.deepEqual((await readdir(dataRoot)).sort(), before);
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    }
   }
 });
 

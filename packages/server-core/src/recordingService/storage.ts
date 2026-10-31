@@ -10,12 +10,12 @@ import {
 	readFileSync,
 	readSync,
 	realpathSync,
-	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { writeFileDurablySync } from '../durableFile.js';
 import {
 	DEFAULT_RECORDING_ROOT,
 	RECORDING_ID_PATTERN,
@@ -58,34 +58,10 @@ function privateFile(filePath: string): void {
 
 function atomicJsonWrite(filePath: string, value: unknown): void {
 	privateDirectory(path.dirname(filePath));
-	const temporaryPath = path.join(
-		path.dirname(filePath),
-		`.${path.basename(filePath)}.${randomUUID()}.tmp`,
-	);
-	let descriptor: number | undefined;
-	try {
-		descriptor = openSync(temporaryPath, 'wx', 0o600);
-		const bytes = Buffer.from(JSON.stringify(value, null, 2), 'utf8');
-		writeFileSync(descriptor, bytes);
-		fsyncSync(descriptor);
-		closeSync(descriptor);
-		descriptor = undefined;
-		renameSync(temporaryPath, filePath);
-		privateFile(filePath);
-		try {
-			const directoryDescriptor = openSync(path.dirname(filePath), 'r');
-			try {
-				fsyncSync(directoryDescriptor);
-			} finally {
-				closeSync(directoryDescriptor);
-			}
-		} catch {
-			/* directory fsync is unavailable on some hosts */
-		}
-	} finally {
-		if (descriptor !== undefined) closeSync(descriptor);
-		rmSync(temporaryPath, { force: true });
-	}
+	writeFileDurablySync(filePath, JSON.stringify(value, null, 2), {
+		mode: 0o600,
+	});
+	privateFile(filePath);
 }
 
 function isWithin(root: string, candidate: string): boolean {

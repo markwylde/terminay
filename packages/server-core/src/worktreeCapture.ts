@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { basename, join } from 'node:path';
 import type {
 	FolderReconcilerOptions,
 	WorktreeAppeared,
 } from './folderReconciler.js';
+import {
+	loadRebuildableStateSync,
+	writeFileDurablySync,
+} from './durableFile.js';
 import { GitTraceDirectory } from './gitTraceDirectory.js';
 import type {
 	WorkspaceApplyResult,
@@ -172,21 +176,23 @@ const GIT_TRACE_KEY_BYTES = 32;
 
 /**
  * The key a data directory's tokens are derived from (ADR-0069), created once
- * and readable only by its owner. A missing or malformed file is replaced: the
- * cost is that terminals kept from before are not recognised until reopened,
- * never that one is mistaken for another.
+ * and readable only by its owner. A missing or corrupt file (wrong length, or
+ * all zeros) is set aside and replaced (ADR-0088): the cost is that terminals
+ * kept from before are not recognised until reopened, never that one is
+ * mistaken for another. The key is derived, so it is rebuilt silently.
  */
 export function loadGitTraceKey(dataDirectory: string): Buffer {
 	const path = join(dataDirectory, GIT_TRACE_KEY_FILENAME);
-	try {
-		const key = readFileSync(path);
-		if (key.length === GIT_TRACE_KEY_BYTES) return key;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-	}
+	const existing = loadRebuildableStateSync<Buffer>(path, 'git-trace-key', {
+		parse: (bytes) => bytes,
+		validate: (bytes) =>
+			Buffer.isBuffer(bytes) && bytes.length === GIT_TRACE_KEY_BYTES
+				? bytes
+				: undefined,
+	});
+	if (existing !== undefined) return existing;
 	const key = randomBytes(GIT_TRACE_KEY_BYTES);
-	writeFileSync(path, key, { mode: 0o600 });
-	chmodSync(path, 0o600);
+	writeFileDurablySync(path, key, { mode: 0o600 });
 	return key;
 }
 

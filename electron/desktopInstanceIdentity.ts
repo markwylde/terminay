@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	closeSync,
-	existsSync,
 	fsyncSync,
 	linkSync,
 	mkdirSync,
@@ -12,6 +11,11 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import {
+	loadCanonicalStateSync,
+	PREVIOUS_SUFFIX,
+	writeFileDurablySync,
+} from '../packages/server-core/src/durableFile.ts';
 
 /** The historical embedded identity was shared by every Desktop profile. */
 export const LEGACY_EMBEDDED_SERVER_ID = 'desktop-local';
@@ -43,10 +47,31 @@ export function resolveDesktopInstanceIdentity(
 	} catch {
 		// Windows does not expose POSIX directory modes.
 	}
-	if (!existsSync(filePath)) writeNewIdentityFile(filePath);
+	// A corrupt id falls back to its `.previous` copy, or throws
+	// StateUnreadableError (store `desktop-identity`) and is left in place: a
+	// new id would orphan every store named for this data root (ADR-0088).
+	let id = readIdentityFile(filePath);
+	if (id === undefined) {
+		writeNewIdentityFile(filePath);
+		id = readIdentityFile(filePath);
+		if (id === undefined)
+			throw new Error('Desktop instance identity cannot be created.');
+	}
+	keepIdentityCopy(filePath);
+	return Object.freeze({ dataRoot: resolvedDataRoot, id });
+}
+
+/**
+ * A stand-in identity for a data root whose id cannot be read, so startup can
+ * reach the window that offers recovery. It is random, never written, and
+ * names nothing on disk.
+ */
+export function unreadableDesktopInstanceIdentity(
+	dataRoot: string,
+): DesktopInstanceIdentity {
 	return Object.freeze({
-		dataRoot: resolvedDataRoot,
-		id: readIdentityFile(filePath),
+		dataRoot: path.resolve(dataRoot),
+		id: `desktop-${randomBytes(32).toString('base64url')}`,
 	});
 }
 
@@ -179,24 +204,41 @@ function writeNewIdentityFile(filePath: string): void {
 	}
 }
 
-function readIdentityFile(filePath: string): string {
-	let value: unknown;
+/** The id is written once and never replaced, so its `.previous` copy is
+ * made here rather than by a later save: from the winning first write, or on
+ * the first start of a data root written before copies were kept. */
+function keepIdentityCopy(filePath: string): void {
+	const previousPath = `${filePath}${PREVIOUS_SUFFIX}`;
+	const current = readFileSync(filePath);
+	let copy: Buffer | undefined;
 	try {
-		value = JSON.parse(readFileSync(filePath, 'utf8'));
-	} catch (error) {
-		throw new Error('Desktop instance identity cannot be read.', {
-			cause: error,
-		});
+		copy = readFileSync(previousPath);
+	} catch {
+		copy = undefined;
 	}
+	// A copy that is missing, or that a crash damaged, is made again from the
+	// id just read and validated.
+	if (copy?.equals(current)) return;
+	writeFileDurablySync(previousPath, current, { mode: 0o600 });
+}
+
+/** The saved id, or undefined when the data root has none yet. */
+function readIdentityFile(filePath: string): string | undefined {
+	return loadCanonicalStateSync(filePath, 'desktop-identity', {
+		validate: identityFromRecord,
+		mode: 0o600,
+	});
+}
+
+function identityFromRecord(value: unknown): string | undefined {
 	if (
 		!record(value) ||
 		Object.keys(value).some((key) => !INSTANCE_FILE_KEYS.has(key))
 	)
-		throw new Error('Desktop instance identity is invalid.');
+		return undefined;
 	if (value.schemaVersion !== 1 || typeof value.id !== 'string')
-		throw new Error('Desktop instance identity is invalid.');
-	assertDesktopInstanceId(value.id);
-	return value.id;
+		return undefined;
+	return INSTANCE_ID.test(value.id) ? value.id : undefined;
 }
 
 function assertDesktopInstanceId(value: string): void {

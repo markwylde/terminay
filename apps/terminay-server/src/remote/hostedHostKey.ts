@@ -5,15 +5,13 @@ import {
 	type KeyObject,
 	sign,
 } from 'node:crypto';
-import {
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION } from '@terminay/protocol';
+import {
+	loadSecretStateSync,
+	writeFileDurablySync,
+} from '@terminay/server-core';
 
 /** Must stay identical to the hosted signaling relay's device-host proof payload. */
 export const DEVICE_HOST_PROOF_LABEL = 'terminay remote v1 device host';
@@ -68,21 +66,22 @@ export function serializeHostedHostKey(key: HostedHostKey): string {
 	})}\n`;
 }
 
+/** The host key is a credential (ADR-0088): a corrupt file is set aside and a
+ * new key is made, so every paired device must pair again. It never rolls
+ * back to an older key. */
 export function loadOrCreateHostedHostKey(file: string): HostedHostKey {
-	try {
-		return parseHostedHostKey(JSON.parse(readFileSync(file, 'utf8')));
-	} catch (error) {
-		if (!isMissingFile(error)) throw error;
-	}
-	const key = createHostedHostKey();
-	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-	const temporary = `${file}.tmp`;
-	writeFileSync(temporary, serializeHostedHostKey(key), {
-		encoding: 'utf8',
-		mode: 0o600,
+	const existing = loadSecretStateSync(file, 'host-key', {
+		validate: parseHostedHostKey,
 	});
-	renameSync(temporary, file);
+	if (existing !== undefined) return existing;
+	const key = createHostedHostKey();
+	writeHostKeyFile(file, serializeHostedHostKey(key));
 	return key;
+}
+
+function writeHostKeyFile(file: string, contents: string): void {
+	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+	writeFileDurablySync(file, contents, { mode: 0o600 });
 }
 
 /**
@@ -135,25 +134,16 @@ export function createProtectedHostKeyStore(options: {
 				.encrypt(serializeHostedHostKey(key))
 				.toString('base64'),
 		})}\n`;
-		const temporary = `${options.file}.tmp`;
-		writeFileSync(temporary, envelope, { encoding: 'utf8', mode: 0o600 });
-		renameSync(temporary, options.file);
+		writeHostKeyFile(options.file, envelope);
 	};
 	const readProtected = (): HostedHostKey | undefined => {
-		let raw: string;
-		try {
-			raw = readFileSync(options.file, 'utf8');
-		} catch (error) {
-			if (isMissingFile(error)) return undefined;
-			throw error;
-		}
-		const envelope = JSON.parse(raw) as Record<string, unknown>;
-		if (
-			envelope.schemaVersion !== 2 ||
-			typeof envelope.encrypted !== 'string'
-		) {
-			throw new Error('Protected host key record is invalid.');
-		}
+		// A torn or blank envelope is a corrupt credential: set aside, and a new
+		// key is made (ADR-0088). An envelope that is whole but will not decrypt
+		// still fails loudly, as before.
+		const envelope = loadSecretStateSync(options.file, 'host-key', {
+			validate: protectedEnvelope,
+		});
+		if (envelope === undefined) return undefined;
 		return parseHostedHostKey(
 			JSON.parse(
 				options.codec.decrypt(Buffer.from(envelope.encrypted, 'base64')),
@@ -196,14 +186,20 @@ export function createProtectedHostKeyStore(options: {
  * pin is a trust reset, never a silent rotation. */
 export function rotateHostedHostKey(file: string): HostedHostKey {
 	const key = createHostedHostKey();
-	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-	const temporary = `${file}.tmp`;
-	writeFileSync(temporary, serializeHostedHostKey(key), {
-		encoding: 'utf8',
-		mode: 0o600,
-	});
-	renameSync(temporary, file);
+	writeHostKeyFile(file, serializeHostedHostKey(key));
 	return key;
+}
+
+function protectedEnvelope(
+	value: unknown,
+): { readonly schemaVersion: 2; readonly encrypted: string } | undefined {
+	const envelope = value as Record<string, unknown> | null;
+	return typeof envelope === 'object' &&
+		envelope !== null &&
+		envelope.schemaVersion === 2 &&
+		typeof envelope.encrypted === 'string'
+		? (envelope as { schemaVersion: 2; encrypted: string })
+		: undefined;
 }
 
 export function deviceHostProofPayload(input: {

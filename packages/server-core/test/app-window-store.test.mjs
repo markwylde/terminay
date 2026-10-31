@@ -11,6 +11,9 @@ import {
 
 const temporaryDirectory = () => mkdtemp(join(tmpdir(), "app-window-store-"));
 const files = async (directory) => (await readdir(directory).catch(() => [])).sort();
+const liveFiles = async (directory) => (await files(directory)).filter((name) => !name.includes(".corrupt-"));
+const preservedIds = async (directory) =>
+  (await files(directory)).filter((name) => name.includes(".json.corrupt-")).map((name) => name.slice(0, name.indexOf(".json.corrupt-"))).sort();
 const readRecord = async (directory, id) => JSON.parse(await readFile(join(directory, `${id}.json`), "utf8"));
 
 function service(directory, overrides = {}) {
@@ -83,11 +86,18 @@ test("loading discards a damaged or foreign file and what an interrupted write l
   await writeFile(join(directory, "win_torn.json"), "{\"id\":\"win_to");
   await writeFile(join(directory, "win_bad.json"), JSON.stringify({ id: "win_bad", ok: false }));
   await writeFile(join(directory, "win_renamed.json"), JSON.stringify({ id: "win_other", ok: true }));
+  await writeFile(join(directory, "win_zero.json"), Buffer.alloc(64));
   await writeFile(join(directory, "win_good.json.abc.tmp"), "partial");
   const records = await store.load();
   assert.deepEqual(records.map((record) => record.id), ["win_good"]);
-  assert.deepEqual(errors.sort(), ["win_bad", "win_renamed", "win_torn"]);
-  assert.deepEqual(await files(directory), ["win_good.json"]);
+  assert.deepEqual(errors.sort(), ["win_bad", "win_renamed", "win_torn", "win_zero"]);
+  // Damaged records are set aside for diagnosis, never deleted (ADR-0088),
+  // and are not read again by the next load.
+  assert.deepEqual(await liveFiles(directory), ["win_good.json"]);
+  assert.deepEqual(await preservedIds(directory), ["win_bad", "win_renamed", "win_torn", "win_zero"]);
+  errors.length = 0;
+  assert.deepEqual((await store.load()).map((record) => record.id), ["win_good"]);
+  assert.deepEqual(errors, []);
 });
 
 test("a missing directory loads as no windows, and an id that is not a file name is never written", async () => {
@@ -230,5 +240,6 @@ test("a written record that carries more than a view starts from, or breaks a li
   await after.flush();
   assert.deepEqual(after.list().map((restored) => restored.id), [window.id]);
   assert.deepEqual(errors.map(({ id }) => id).sort(), Object.keys(variants).sort());
-  assert.deepEqual(await files(directory), [`${window.id}.json`]);
+  assert.deepEqual(await liveFiles(directory), [`${window.id}.json`]);
+  assert.deepEqual(await preservedIds(directory), Object.keys(variants).sort());
 });

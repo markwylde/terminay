@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { connect } from "node:net";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   encodeHolderFrame,
   HolderFrameDecoder,
+  listSessionTailIds,
+  pruneSessionTails,
   readSessionTail,
   SessionHolder,
   SessionHolderClient,
@@ -16,6 +18,7 @@ import {
   sessionHolderRecordPath,
   sessionTailPath,
   sessionTailsDirectory,
+  writeSessionTail,
 } from "../dist/index.js";
 
 const GENERATION = "0123456789abcdef";
@@ -505,4 +508,30 @@ test("a malformed frame from the attached server closes only that connection", a
 test("the holder uses no interval", () => {
   const source = readFileSync(new URL("../src/sessionHolder/holder.ts", import.meta.url), "utf8");
   assert.equal(/setInterval/.test(source), false);
+});
+
+test("a corrupt saved tail is set aside, kept with its panel, and never read again (ADR-0088)", () => {
+  const dataRoot = mkdtempSync(join(tmpdir(), "terminay-tail-corrupt-"));
+  try {
+    writeSessionTail(dataRoot, { sessionId: "good", bufferedFrom: 0, outputPosition: 3, savedAt: 1, bytes: bytesOf("abc") });
+    const good = readFileSync(sessionTailPath(dataRoot, "good"));
+    assert.equal(readdirSync(sessionTailsDirectory(dataRoot)).some((name) => name.endsWith(".tmp")), false);
+    const shapes = { zero: Buffer.alloc(good.length), half: good.subarray(0, good.length >> 1), junk: Buffer.from("{not a tail") };
+    for (const [sessionId, bytes] of Object.entries(shapes)) {
+      writeFileSync(sessionTailPath(dataRoot, sessionId), bytes);
+      assert.equal(readSessionTail(dataRoot, sessionId), undefined, sessionId);
+      assert.equal(existsSync(sessionTailPath(dataRoot, sessionId)), false, sessionId);
+      assert.equal(readSessionTail(dataRoot, sessionId), undefined, sessionId);
+    }
+    assert.equal(text(readSessionTail(dataRoot, "good").bytes), "abc");
+    assert.deepEqual([...listSessionTailIds(dataRoot)].sort(), ["good"]);
+    const corrupt = () => readdirSync(sessionTailsDirectory(dataRoot)).filter((name) => name.includes(".corrupt-")).sort();
+    assert.equal(corrupt().length, 3);
+    // A pruned panel takes its preserved tail with it; a kept one keeps it.
+    pruneSessionTails(dataRoot, new Set(["good", "zero"]));
+    assert.equal(corrupt().length, 1);
+    assert.ok(corrupt()[0].startsWith("zero.corrupt-"));
+  } finally {
+    rmSync(dataRoot, { recursive: true, force: true });
+  }
 });

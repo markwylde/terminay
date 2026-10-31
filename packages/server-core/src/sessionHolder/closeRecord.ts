@@ -1,11 +1,8 @@
+import { readdirSync, rmSync } from 'node:fs';
 import {
-	chmodSync,
-	readdirSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
+	loadRebuildableStateSync,
+	writeFileDurablySync,
+} from '../durableFile.js';
 import {
 	isSessionHolderGeneration,
 	SESSION_HOLDER_CLOSE_RECORD_SUFFIX,
@@ -36,11 +33,11 @@ export function writeHolderCloseRecord(
 	generation: string,
 	notice: HolderCloseNotice,
 ): void {
-	const target = sessionHolderCloseRecordPath(dataRoot, generation);
-	const temporary = `${target}.tmp`;
-	writeFileSync(temporary, JSON.stringify(notice), { mode: 0o600 });
-	chmodSync(temporary, 0o600);
-	renameSync(temporary, target);
+	writeFileDurablySync(
+		sessionHolderCloseRecordPath(dataRoot, generation),
+		JSON.stringify(notice),
+		{ mode: 0o600 },
+	);
 }
 
 /** Every readable close record, oldest close first. */
@@ -61,24 +58,18 @@ export function readHolderCloseRecords(
 			-SESSION_HOLDER_CLOSE_RECORD_SUFFIX.length,
 		);
 		if (!isSessionHolderGeneration(generation)) continue;
+		// A corrupt record is set aside under a name this loop never reads
+		// again, and kept for diagnosis (ADR-0088).
 		try {
-			const notice = parseHolderCloseNotice(
-				JSON.parse(
-					readFileSync(
-						sessionHolderCloseRecordPath(dataRoot, generation),
-						'utf8',
-					),
-				),
+			const notice = loadRebuildableStateSync(
+				sessionHolderCloseRecordPath(dataRoot, generation),
+				'holder-close-record',
+				{ validate: parseHolderCloseNotice },
 			);
-			if (notice !== undefined) {
-				records.push({ generation, notice });
-				continue;
-			}
+			if (notice !== undefined) records.push({ generation, notice });
 		} catch {
-			/* unreadable: removed below */
+			/* not even movable aside: skipped, startup continues */
 		}
-		// A record nobody can read would otherwise stay for ever.
-		deleteHolderCloseRecord(dataRoot, generation);
 	}
 	return records.sort(
 		(left, right) => left.notice.closedAt - right.notice.closedAt,

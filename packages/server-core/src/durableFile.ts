@@ -346,12 +346,22 @@ export type StateStoreName =
  * the user; nothing starts it fresh on its own. Carries no path or bytes. */
 export class StateUnreadableError extends Error {
 	readonly code = 'state_unreadable';
+	readonly store: StateStoreName;
+	readonly preservedAs: readonly string[];
+	/** The corrupt file, for the privileged host only. Never shown. */
+	readonly statePath: string | undefined;
+	// No parameter properties: Electron modules load this file under Node's
+	// type stripping in tests.
 	constructor(
-		readonly store: StateStoreName,
-		readonly preservedAs: readonly string[] = [],
+		store: StateStoreName,
+		preservedAs: readonly string[] = [],
+		statePath?: string,
 	) {
 		super(`Terminay could not read its saved ${store} state.`);
 		this.name = 'StateUnreadableError';
+		this.store = store;
+		this.preservedAs = preservedAs;
+		this.statePath = statePath;
 	}
 }
 
@@ -420,7 +430,7 @@ export function loadCanonicalStateSync<T>(
 			pendingNotices.push({ kind: 'restored', store });
 			return result.value;
 		case 'corrupt':
-			if (!acceptFresh) throw new StateUnreadableError(store);
+			if (!acceptFresh) throw new StateUnreadableError(store, [], path);
 			pendingNotices.push({ kind: 'started-fresh', store });
 			return undefined;
 	}
@@ -473,4 +483,21 @@ export async function loadRebuildableState<T>(
 	options: KindLoadOptions<T> = {},
 ): Promise<T | undefined> {
 	return loadRebuildableStateSync(path, label, options);
+}
+
+/**
+ * The user chose Start fresh for a store that failed to load: keep its
+ * corrupt file and any corrupt previous copy aside, so the next load, in this
+ * process or after a relaunch, finds no file and begins with first-run state.
+ * Only the privileged host calls this, and only from that user choice.
+ */
+export function startStateFresh(error: StateUnreadableError): readonly string[] {
+	acceptFreshStateStart(error.store);
+	const preserved: string[] = [];
+	if (error.statePath === undefined) return preserved;
+	for (const path of [error.statePath, `${error.statePath}${PREVIOUS_SUFFIX}`]) {
+		if (fs.existsSync(path)) preserved.push(preserveCorruptFile(path));
+	}
+	pendingNotices.push({ kind: 'started-fresh', store: error.store });
+	return preserved;
 }
