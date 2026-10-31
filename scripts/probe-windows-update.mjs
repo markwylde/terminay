@@ -126,6 +126,8 @@ async function launch(feedUrl) {
 
 async function type(window, line) {
 	await window.locator('.terminal-panel:visible').first().locator('.xterm-helper-textarea').focus();
+	// Escape clears whatever is on the line.
+	await window.keyboard.press('Escape');
 	await window.keyboard.type(line);
 	await window.keyboard.press('Enter');
 }
