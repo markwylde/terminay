@@ -6,6 +6,11 @@ import type { CodexChatOptions } from './chat/codex.js';
 import { createCodexChatProvider } from './chat/codex.js';
 import type { LocatorOptions } from './chat/locate.js';
 import { createAgentLocator } from './chat/locate.js';
+import type { CodexCommandDefaultOptions } from './commandDefaults.js';
+import {
+	COMMAND_DEFAULT_LOCAL_IDS,
+	createCodexCommandDefault,
+} from './commandDefaults.js';
 import { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
 import type { McpInstallTargetOptions } from './mcp/targets.js';
 import { createMcpInstallTargets } from './mcp/targets.js';
@@ -18,6 +23,7 @@ export const CLAUDE_CODE_CHAT_PROVIDER_ID = `${EXTENSION_ID}/claude-code`;
 export const CODEX_CHAT_PROVIDER_ID = `${EXTENSION_ID}/codex`;
 export const CLAUDE_CODE_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.claude}`;
 export const CODEX_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.codex}`;
+export const CODEX_COMMAND_DEFAULT_ID = `${EXTENSION_ID}/${COMMAND_DEFAULT_LOCAL_IDS.codex}`;
 
 export type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
 export {
@@ -31,6 +37,13 @@ export {
 	createCodexChatProvider,
 } from './chat/codex.js';
 export type { AgentLocator, LocatorOptions } from './chat/locate.js';
+export type { CodexCommandDefaultOptions, HelpProbe } from './commandDefaults.js';
+export {
+	CODEX_NO_DAEMON_ARGS,
+	COMMAND_DEFAULT_LOCAL_IDS,
+	createCodexCommandDefault,
+	readHelp,
+} from './commandDefaults.js';
 export { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
 export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
 
@@ -52,6 +65,7 @@ export type BuiltInAgentsOptions = {
 	locator?: LocatorOptions;
 	claudeCode?: Partial<ClaudeCodeChatOptions>;
 	codex?: Partial<CodexChatOptions>;
+	codexCommandDefault?: CodexCommandDefaultOptions;
 };
 
 /** Builds the extension. The default export uses the real library providers and home directory. */
@@ -97,6 +111,14 @@ export function createBuiltInAgentsExtension(
 				context.terminals.registerLauncher(
 					CODEX_LAUNCHER_ID,
 					createAgentLauncher(locator, 'codex'),
+				),
+			);
+			// In Terminay terminals Codex runs without its shared background
+			// server, so each conversation shows on its own terminal (ADR-0081).
+			context.subscriptions.add(
+				context.terminals.registerCommandDefault(
+					CODEX_COMMAND_DEFAULT_ID,
+					createCodexCommandDefault(locator, options.codexCommandDefault),
 				),
 			);
 			for (const target of createMcpInstallTargets(options.mcp)) {

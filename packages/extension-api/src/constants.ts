@@ -7,9 +7,9 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * machine-wide agent session sources, and added MCP install targets, so every
  * extension declaring `^2.x` is incompatible with this host. 3.1 added
  * worktree insight sources. 3.2 added chat providers. 3.3 added terminal
- * launchers and the agent icon marks.
+ * launchers and the agent icon marks. 3.4 added terminal command defaults.
  */
-export const EXTENSION_API_VERSION = '3.3.0' as const;
+export const EXTENSION_API_VERSION = '3.4.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -82,6 +82,12 @@ export const EXTENSION_LIMITS = Object.freeze({
 	terminalLaunchers: 8,
 	launcherExecutablePathLength: 4_096,
 	launcherDetailLength: 1_024,
+	/** Terminal command defaults and the arguments they may add. */
+	terminalCommandDefaults: 8,
+	commandNameLength: 64,
+	commandDefaultArgs: 8,
+	commandDefaultArgLength: 256,
+	commandDefaultDetailLength: 1_024,
 } as const);
 
 /**

@@ -54,6 +54,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'keepTerminalsAfterQuit',
 	'moveTerminalsIntoNewWorktreeFolders',
 	'programSetTabTitles',
+	'shellIntegration',
 	'recording',
 	'remoteAccess',
 	'rightClickSelectsWord',
@@ -451,6 +452,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	keepTerminalsAfterQuit: '5m',
 	moveTerminalsIntoNewWorktreeFolders: true,
 	programSetTabTitles: true,
+	shellIntegration: true,
 	updateChannel: 'stable',
 	convertEol: true,
 	cursorBlink: true,
@@ -1256,6 +1258,34 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		description:
 			'Choose defaults and manage profiles available on the connected server.',
 		fields: [],
+	},
+	{
+		id: 'shell-integration',
+		categoryId: 'shell',
+		title: 'Shell integration',
+		description:
+			'How Terminay prepares zsh, bash, fish, and PowerShell when a terminal starts.',
+		fields: [
+			makeField({
+				key: 'shellIntegration',
+				label: 'Shell integration',
+				description:
+					'After your own startup files run, new zsh, bash, fish, and PowerShell terminals load Terminay\'s integration, which lets agents such as Codex start with the options Terminay needs. Your startup files are never changed. Applies to terminals you open after changing it.',
+				sectionId: 'shell-integration',
+				categoryId: 'shell',
+				input: 'boolean',
+				keywords: [
+					'shell integration',
+					'zsh',
+					'bash',
+					'fish',
+					'powershell',
+					'codex',
+					'no-daemon',
+					'command defaults',
+				],
+			}),
+		],
 	},
 	{
 		id: 'shell-lifecycle',
@@ -2791,6 +2821,10 @@ export function normalizeTerminalSettings(
 			typeof input.programSetTabTitles === 'boolean'
 				? input.programSetTabTitles
 				: defaultTerminalSettings.programSetTabTitles,
+		shellIntegration:
+			typeof input.shellIntegration === 'boolean'
+				? input.shellIntegration
+				: defaultTerminalSettings.shellIntegration,
 		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
 		convertEol:
 			typeof input.convertEol === 'boolean'

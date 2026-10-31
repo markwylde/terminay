@@ -31,6 +31,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	scrollOnUserInput: 'server',
 	scrollSensitivity: 'server',
 	shell: 'server',
+	shellIntegration: 'server',
 	shellProfiles: 'server',
 	smoothScrollDuration: 'server',
 	tabStopWidth: 'server',

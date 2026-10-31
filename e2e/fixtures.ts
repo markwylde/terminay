@@ -382,6 +382,16 @@ export async function launchDesktopApp(options: {
 							),
 						}
 					: {}),
+				// Shell integration defines `codex` with --no-daemon only when a
+				// Codex that lists the option is installed; a fake one is on PATH.
+				...(path.basename(testInfo.file) === 'shell-integration.spec.ts'
+					? {
+							PATH: [
+								path.resolve('e2e/fixtures/fake-codex-bin'),
+								process.env.PATH ?? '',
+							].join(path.delimiter),
+						}
+					: {}),
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),

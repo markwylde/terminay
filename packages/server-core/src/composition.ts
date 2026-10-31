@@ -143,9 +143,14 @@ import { TerminalServiceAdapter } from './terminalService/adapter.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import { TerminalInputSourceAdapter } from './terminalService/inputSources.js';
 import {
+	type TerminalCommandDefaultConflict,
+	TerminalCommandDefaultRegistry,
+} from './terminalService/commandDefaults.js';
+import {
 	TERMINAL_LAUNCHER_EVENTS,
 	TerminalLauncherRegistry,
 } from './terminalService/launchers.js';
+import { ShellIntegration } from './terminalService/shellIntegration.js';
 import {
 	type ShellProfileLaunchAuthority,
 	type TerminalLaunchPathAuthority,
@@ -391,6 +396,18 @@ export interface ServerCoreCompositionOptions
 	 * its own from the extensions' contributions.
 	 */
 	readonly terminalLaunchers?: TerminalLauncherRegistry;
+	/**
+	 * The server's private directory for shell integration files (ADR-0082),
+	 * e.g. `<data root>/shell-integration`. Absent, no terminal is integrated.
+	 */
+	readonly shellIntegrationDirectory?: string;
+	/**
+	 * Hears each change to the commands two or more extensions claimed a
+	 * terminal command default for (ADR-0081); none of those applies.
+	 */
+	readonly onTerminalCommandDefaultConflicts?: (
+		conflicts: readonly TerminalCommandDefaultConflict[],
+	) => void;
 	/**
 	 * Compose server-owned agent chats. The host supplies the chat providers
 	 * its extensions registered, where each session's working directory goes,
@@ -658,10 +675,43 @@ export function createServerCoreComposition(
 			'workspace is required for canonical terminal launch resolution',
 		);
 	}
+	// Terminal command defaults (ADR-0081) come from the extensions this server
+	// runs, gated by the same harness switches as agent status.
+	const terminalCommandDefaults =
+		options.extensions?.hosts === undefined
+			? undefined
+			: new TerminalCommandDefaultRegistry({
+					...(options.agentSessions === undefined
+						? {}
+						: {
+								harnessSwitches:
+									options.agentSessions.supervisor.harnessSwitches(),
+							}),
+					...(options.onTerminalCommandDefaultConflicts === undefined
+						? {}
+						: { onConflicts: options.onTerminalCommandDefaultConflicts }),
+				});
+	const unfollowCommandDefaultHarnesses =
+		terminalCommandDefaults === undefined
+			? undefined
+			: options.agentSessions?.supervisor.observeHarnessSwitches((switches) =>
+					terminalCommandDefaults.setHarnessSwitches(switches),
+				);
+	if (options.extensions?.hosts !== undefined)
+		terminalCommandDefaults?.attach(options.extensions.hosts);
+	const shellIntegration =
+		options.shellIntegrationDirectory === undefined
+			? undefined
+			: new ShellIntegration({
+					directory: options.shellIntegrationDirectory,
+					enabled: () => options.settings?.settings.shellIntegration !== false,
+					commandDefaults: () => terminalCommandDefaults?.current() ?? [],
+				});
 	const terminalLaunchResolver =
 		options.terminalProfiles === undefined || options.workspace === undefined
 			? undefined
 			: new TerminalLaunchResolver({
+					...(shellIntegration === undefined ? {} : { shellIntegration }),
 					serverId: options.serverId,
 					profiles: options.terminalProfiles,
 					workspaceSnapshot: () =>
@@ -1325,6 +1375,9 @@ export function createServerCoreComposition(
 		...(terminalLaunchers === undefined
 			? {}
 			: { launchers: terminalLaunchers }),
+		...(terminalCommandDefaults === undefined
+			? {}
+			: { commandDefaults: terminalCommandDefaults }),
 		// Automation terminal space (ADR-0030): visibility and live-terminal cap.
 		...(automationSpace === undefined
 			? {}
@@ -2064,6 +2117,8 @@ export function createServerCoreComposition(
 			await attempt(() => unsubscribeGitEvents?.());
 			await attempt(() => unobserveTerminalLaunchers?.());
 			await attempt(() => unfollowLauncherHarnesses?.());
+			await attempt(() => unfollowCommandDefaultHarnesses?.());
+			await attempt(() => terminalCommandDefaults?.dispose());
 			await attempt(() => {
 				if (ownsTerminalLaunchers) terminalLaunchers?.dispose();
 			});

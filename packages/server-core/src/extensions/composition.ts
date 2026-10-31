@@ -166,6 +166,8 @@ export function createDefaultExtensionManagement(
 				worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 				agentChatProviders: manifest.contributes.agentChatProviders ?? [],
 				terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
+				terminalCommandDefaults:
+					manifest.contributes.terminalCommandDefaults ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -202,6 +204,7 @@ export function createDefaultExtensionManagement(
 			worktreeInsights: descriptor.worktreeInsights,
 			agentChatProviders: descriptor.agentChatProviders,
 			terminalLaunchers: descriptor.terminalLaunchers,
+			terminalCommandDefaults: descriptor.terminalCommandDefaults,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};

@@ -77,7 +77,7 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor, folderWorktreeRoot, available } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor, folderWorktreeRoot, available, shellIntegration } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
@@ -90,6 +90,7 @@ function resolver({ state = workspace(), entries = [profile("system")], catalogu
     environmentCaseInsensitive,
     systemDefaultStartupMode,
     environmentFor,
+    shellIntegration,
   });
 }
 
@@ -316,4 +317,64 @@ test("a folder of another project is refused, and a missing worktree falls back 
   await assert.rejects(resolver({ state, folderWorktreeRoot: broken }).resolve(intent({ folderId: "folder-wt" })), /listing exploded/);
   // A host that does not resolve folders starts everything at the project root.
   assert.equal((await resolver({ state }).resolve(intent({ folderId: "folder-wt" }))).cwd, "/project");
+});
+
+test("shell integration is added after the profile, never into it, and recorded on the launch", async () => {
+  const selected = profile("zsh", {
+    target: { kind: "executable", executable: "/bin/zsh" },
+    startupMode: "login",
+    environment: { ZDOTDIR: "/home/u/.config/zsh" },
+  });
+  const seen = [];
+  const launch = await resolver({
+    entries: [profile("system"), selected],
+    defaultEnvironment: { BASE: "host", TERMINAY_COMMAND_DEFAULTS: "stale", TERMINAY_SHELL_LOGIN: "1" },
+    shellIntegration: {
+      async inject(received) {
+        seen.push(received);
+        return { args: [...received.args], env: { TERMINAY_SHELL_INTEGRATION: "1", ZDOTDIR: "/data/shell-integration/zsh", TERMINAY_USER_ZDOTDIR: received.env.ZDOTDIR } };
+      },
+    },
+  }).resolve(intent({ explicitProfileId: "zsh" }));
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].args, ["-l"]);
+  assert.equal(seen[0].env.TERMINAY_COMMAND_DEFAULTS, undefined, "an inherited value never reaches integration");
+  assert.equal(launch.shellIntegration, true);
+  assert.deepEqual(launch.args, ["-l"]);
+  assert.equal(launch.env.ZDOTDIR, "/data/shell-integration/zsh");
+  assert.equal(launch.env.TERMINAY_USER_ZDOTDIR, "/home/u/.config/zsh");
+  assert.equal("TERMINAY_SHELL_LOGIN" in launch.env, false);
+  assert.deepEqual(selected.args, []);
+  assert.deepEqual(selected.environment, { ZDOTDIR: "/home/u/.config/zsh" });
+});
+
+test("a terminal without shell integration says so and carries no inherited integration values", async () => {
+  const launch = await resolver({
+    defaultEnvironment: { BASE: "host", TERMINAY_COMMAND_DEFAULTS: "stale", TERMINAY_USER_ZDOTDIR: "/x" },
+    shellIntegration: { inject: async () => undefined },
+  }).resolve(intent());
+  assert.equal(launch.shellIntegration, false);
+  assert.equal("TERMINAY_COMMAND_DEFAULTS" in launch.env, false);
+  assert.equal("TERMINAY_USER_ZDOTDIR" in launch.env, false);
+  const without = await resolver().resolve(intent());
+  assert.equal(without.shellIntegration, false);
+});
+
+test("a failing integration never stops a terminal from starting", async () => {
+  const launch = await resolver({
+    shellIntegration: { inject: async () => { throw new Error("disk full"); } },
+  }).resolve(intent());
+  assert.equal(launch.shellIntegration, false);
+  assert.deepEqual(launch.args, []);
+});
+
+test("a WSL profile is never integrated", async () => {
+  let asked = false;
+  const wsl = profile("wsl", { target: { kind: "wsl", distribution: "Ubuntu", shellPath: "/bin/bash" } });
+  const launch = await resolver({
+    entries: [profile("system"), wsl],
+    shellIntegration: { inject: async () => { asked = true; return { args: [], env: {} }; } },
+  }).resolve(intent({ explicitProfileId: "wsl" }));
+  assert.equal(asked, false);
+  assert.equal(launch.shellIntegration, false);
 });

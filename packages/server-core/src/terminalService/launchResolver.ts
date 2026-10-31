@@ -19,6 +19,10 @@ import {
 } from '../workspace.js';
 import { FolderRootError } from '../folderRoots.js';
 import { TerminalServiceError } from './errors.js';
+import {
+	SHELL_INTEGRATION_ENVIRONMENT_NAMES,
+	type ShellIntegration,
+} from './shellIntegration.js';
 import type { TerminalDimensions, TerminalIdentity } from './types.js';
 
 const MAX_CWD_LENGTH = 4_096;
@@ -70,6 +74,9 @@ export interface TerminalLaunchResolverOptions {
 	/** Host policy for the reserved System default profile. Explicit profile
 	 * startup modes remain authoritative. */
 	readonly systemDefaultStartupMode?: ShellStartupMode;
+	/** Server-managed shell integration (ADR-0082), added after profile
+	 * resolution. Absent, no terminal is integrated. */
+	readonly shellIntegration?: Pick<ShellIntegration, 'inject'>;
 	readonly now?: () => number;
 }
 
@@ -111,6 +118,8 @@ export interface TerminalResolvedLaunch extends TerminalDimensions {
 	readonly args: readonly string[];
 	readonly cwd: string;
 	readonly env: Readonly<Record<string, string | undefined>>;
+	/** Whether shell integration was added to this launch (ADR-0082). */
+	readonly shellIntegration: boolean;
 	readonly createdAt: number;
 }
 
@@ -239,6 +248,48 @@ export class TerminalLaunchResolver {
 			'truecolor',
 			this.options.environmentCaseInsensitive === true,
 		);
+		// Integration values come only from this resolution, never from the
+		// server's own environment.
+		for (const name of SHELL_INTEGRATION_ENVIRONMENT_NAMES)
+			removeEnvironment(
+				env,
+				name,
+				this.options.environmentCaseInsensitive === true,
+			);
+		let args: readonly string[] = [
+			...prefixArgs,
+			...startupArgs,
+			...resolvedProfile.definition.args,
+		];
+		let shellIntegration = false;
+		if (
+			resolvedProfile.target.kind === 'executable' &&
+			this.options.shellIntegration !== undefined
+		) {
+			const integration = await this.options.shellIntegration
+				.inject({ shellPath, args, env: Object.freeze({ ...env }) })
+				// Integration never stops a terminal from starting.
+				.catch(() => undefined);
+			if (integration !== undefined) {
+				args = integration.args;
+				for (const [name, value] of Object.entries(integration.env)) {
+					if (value === undefined)
+						removeEnvironment(
+							env,
+							name,
+							this.options.environmentCaseInsensitive === true,
+						);
+					else
+						setCanonicalEnvironment(
+							env,
+							name,
+							value,
+							this.options.environmentCaseInsensitive === true,
+						);
+				}
+				shellIntegration = true;
+			}
+		}
 		if (resolvedProfile.target.kind === 'wsl') {
 			const inheritedWslenv = environmentValue(
 				env,
@@ -274,13 +325,10 @@ export class TerminalLaunchResolver {
 			settingsRevision: resolvedProfile.settingsRevision,
 			profile,
 			shellPath,
-			args: Object.freeze([
-				...prefixArgs,
-				...startupArgs,
-				...resolvedProfile.definition.args,
-			]),
+			args: Object.freeze([...args]),
 			cwd,
 			env: Object.freeze({ ...env }),
+			shellIntegration,
 			cols: intent.cols,
 			rows: intent.rows,
 			createdAt,
@@ -311,8 +359,7 @@ export class TerminalLaunchResolver {
 				'invalid_identity',
 				'terminal project is unavailable',
 			);
-		const folderId =
-			requestedFolderId ?? generalFolderId(workspace, projectId);
+		const folderId = requestedFolderId ?? generalFolderId(workspace, projectId);
 		if (requestedFolderId !== undefined) {
 			const folder = workspace.folders[requestedFolderId];
 			if (folder === undefined || folder.projectId !== projectId)
@@ -558,6 +605,20 @@ function setCanonicalEnvironment(
 		}
 	}
 	environment[name] = value;
+}
+
+function removeEnvironment(
+	environment: Record<string, string | undefined>,
+	name: string,
+	caseInsensitive: boolean,
+): void {
+	for (const candidate of Object.keys(environment)) {
+		if (
+			candidate === name ||
+			(caseInsensitive && candidate.toUpperCase() === name.toUpperCase())
+		)
+			delete environment[candidate];
+	}
 }
 
 function environmentValue(

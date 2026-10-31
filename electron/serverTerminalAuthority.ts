@@ -1209,6 +1209,20 @@ export class ServerTerminalAuthority {
 								: { onDiagnostic: options.onAgentChatDiagnostic }),
 						},
 					}),
+			...(options.dataRoot === undefined
+				? {}
+				: {
+						shellIntegrationDirectory: join(
+							options.dataRoot,
+							'shell-integration',
+						),
+					}),
+			onTerminalCommandDefaultConflicts: (conflicts) => {
+				for (const conflict of conflicts)
+					console.warn(
+						`[terminay] terminal command default "${conflict.command}" is claimed by ${conflict.contributionIds.join(', ')}; none of them applies`,
+					);
+			},
 			...(options.appWindows === undefined
 				? {}
 				: { appWindows: options.appWindows }),
