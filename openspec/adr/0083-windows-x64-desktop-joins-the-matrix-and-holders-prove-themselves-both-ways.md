@@ -1,4 +1,4 @@
-# ADR-0081: Windows x64 Desktop joins the distribution matrix, and a holder and its server prove the credential to each other
+# ADR-0083: Windows x64 Desktop joins the distribution matrix, and a holder and its server prove the credential to each other
 
 Status: accepted, supersedes ADR-0077
 Date: 2026-10-30

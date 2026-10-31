@@ -11,7 +11,7 @@ import {
 import { join } from 'node:path';
 
 /**
- * Git's Trace2 events, when the target is a directory (ADR-0082). Git for
+ * Git's Trace2 events, when the target is a directory (ADR-0084). Git for
  * Windows writes one file per Git process into it. Each file is read as it
  * grows, its lines handed on one by one, and deleted once its process has
  * exited or it passes a bound, so the directory holds only the files of Git

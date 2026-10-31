@@ -13,7 +13,7 @@ import {
   SessionHolderRefusedError,
 } from "../dist/index.js";
 
-// Version 2's handshake (ADR-0084 §3): each end proves it holds the holder
+// Version 2's handshake (ADR-0086 §3): each end proves it holds the holder
 // credential, and the credential never crosses the channel. On Windows a pipe
 // name can be taken by another user first, so the server must learn whether it
 // is talking to its holder before it says anything that matters.

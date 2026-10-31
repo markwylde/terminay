@@ -54,7 +54,7 @@ export async function runSessionHolderProcess(
 		buildId,
 		nodePty,
 		limitMs: parseLimit(env[SESSION_HOLDER_ENV.limitMs]),
-		// A Windows pipe name can be taken first by anyone (ADR-0084 §3).
+		// A Windows pipe name can be taken first by anyone (ADR-0086 §3).
 		requireMutualProof: process.platform === 'win32',
 		addressing,
 		onClosed: () => process.exit(0),

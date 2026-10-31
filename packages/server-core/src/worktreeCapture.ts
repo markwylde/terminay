@@ -163,7 +163,7 @@ export type GitCommandSocketPlacement =
 	| 'data-directory'
 	| 'runtime-directory'
 	| 'per-run'
-	/** Windows: a directory Git writes one file per process into (ADR-0082). */
+	/** Windows: a directory Git writes one file per process into (ADR-0084). */
 	| 'trace-directory';
 
 /** The key file's name in the data directory. */
@@ -207,7 +207,7 @@ export interface GitCommandStreamOptions {
 	 * capped near 104 bytes. */
 	readonly socketPath: string;
 	/** Windows: the directory Git writes its events into instead of a socket,
-	 * which Node cannot serve there (ADR-0082). Named, it replaces the socket. */
+	 * which Node cannot serve there (ADR-0084). Named, it replaces the socket. */
 	readonly traceDirectory?: string;
 	/** Close the trace directory to other users once it exists; false leaves
 	 * Git unreported. */

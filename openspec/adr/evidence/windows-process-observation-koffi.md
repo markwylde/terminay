@@ -1,6 +1,6 @@
 # Windows process observation through koffi
 
-Spike 1.4 of `native-windows-desktop`, for ADR-0083. Script:
+Spike 1.4 of `native-windows-desktop`, for ADR-0085. Script:
 `scripts/windows-spikes/process-observation.mjs`, which calls the bindings in
 `packages/server-core/src/processObservation/windows.ts` as built.
 
@@ -54,7 +54,7 @@ The spike then read each one's current directory from its PEB. It also read:
   Command Prompt's directory. At 26 µs it is four orders of magnitude inside
   the budget.
 
-## The PowerShell location hook (ADR-0085)
+## The PowerShell location hook (ADR-0087)
 
 Run 41105425106. Windows PowerShell and PowerShell 7 were each started in a
 ConPTY through the packaged `node-pty` prebuild. Each was given

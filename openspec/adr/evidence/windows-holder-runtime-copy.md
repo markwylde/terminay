@@ -1,6 +1,6 @@
 # A holder run from its per-build copy survives a reinstall
 
-Spike 1.3 of `native-windows-desktop`, for ADR-0084 §2. Script:
+Spike 1.3 of `native-windows-desktop`, for ADR-0086 §2. Script:
 `scripts/windows-spikes/holder-survival.mjs`, bundled with esbuild and run as
 `node holder-survival.bundle.mjs <installer.exe>`.
 

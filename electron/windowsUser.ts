@@ -5,7 +5,7 @@ let cachedSid: string | null | undefined
 
 /**
  * The SID of the user Desktop runs as, on Windows. It names this user's holder
- * and control pipes (ADR-0084), and does not change while the process lives.
+ * and control pipes (ADR-0086), and does not change while the process lives.
  */
 export function currentUserSid(): string | undefined {
 	if (process.platform !== 'win32') return undefined
