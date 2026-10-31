@@ -159,6 +159,11 @@ Desktop adds native windows, embedded-server supervision, application updates,
 operating-system integration, and secure credential storage. It opens on the
 embedded server connection named **Local**, which is every window's primary
 connection, and attaches remembered remote connections into the same window.
+Desktop supports macOS arm64, Linux x64, and Windows x64. Windows uses a
+per-user installer and supports PowerShell, Command Prompt, and WSL terminals;
+WSL process activity is `limited` because those processes run inside the Linux
+VM. The first Windows installer is unsigned, so SmartScreen may show an
+unknown-publisher warning; choose **More info → Run anyway** to continue.
 The host owns every credential and every transport and hands the bundle one
 opaque byte endpoint per connection through a versioned `connections` host
 capability; the bundle never holds a device key. The host also persists each

@@ -16,9 +16,10 @@ import { writeHolderCloseRecord } from './closeRecord.js';
 import {
 	isHolderSessionId,
 	sessionHolderDirectory,
+	type SessionHolderAddressing,
+	sessionHolderAddress,
+	sessionHolderAddressFits,
 	sessionHolderRecordPath,
-	sessionHolderSocketPath,
-	socketPathFits,
 } from './paths.js';
 import {
 	encodeHolderFrame,
@@ -30,9 +31,21 @@ import {
 	type HolderServerMessage,
 	type HolderSessionRecord,
 	type HolderSpawnRequest,
+	holderHandshakeProof,
+	holderProofMatches,
+	isHolderNonce,
+	SESSION_HOLDER_MUTUAL_PROOF_VERSION,
+	SESSION_HOLDER_NONCE_BYTES,
 	SESSION_HOLDER_PROTOCOL_VERSIONS,
 	selectHolderProtocolVersion,
 } from './protocol.js';
+
+/** A `challenge` this holder has answered, awaiting the server's proof. */
+interface HolderChallenge {
+	readonly version: number;
+	readonly holderNonce: string;
+	readonly serverNonce: string;
+}
 import { deleteSessionTail, writeSessionTail } from './tails.js';
 
 /**
@@ -67,6 +80,17 @@ export interface SessionHolderOptions {
 	readonly maxBufferBytes?: number;
 	/** Protocol versions this holder speaks. Defaults to every known version. */
 	readonly versions?: readonly number[];
+	/**
+	 * Refuse a version-1 `hello`, which presents the credential, and accept
+	 * only the mutual proof. On wherever the holder's address could be taken by
+	 * another user first, which is Windows (ADR-0086 §3).
+	 */
+	readonly requireMutualProof?: boolean;
+	/**
+	 * Where the holder runs. Defaults to this process's platform; on Windows it
+	 * carries the user's SID, which names the pipe.
+	 */
+	readonly addressing?: SessionHolderAddressing;
 	readonly killGraceMs?: number;
 	readonly firstAttachTimeoutMs?: number;
 	readonly now?: () => number;
@@ -141,9 +165,11 @@ export class SessionHolder {
 	readonly credential: string;
 
 	private readonly dataRoot: string;
+	private readonly addressing: SessionHolderAddressing;
 	private readonly nodePty: NodePtyModuleLike;
 	private readonly maxBufferBytes: number;
 	private readonly versions: readonly number[];
+	private readonly requireMutualProof: boolean;
 	private readonly killGraceMs: number;
 	private readonly firstAttachTimeoutMs: number;
 	private readonly now: () => number;
@@ -174,6 +200,7 @@ export class SessionHolder {
 		this.limitMs = options.limitMs;
 		this.maxBufferBytes = options.maxBufferBytes ?? DEFAULT_HOLDER_BUFFER_BYTES;
 		this.versions = options.versions ?? SESSION_HOLDER_PROTOCOL_VERSIONS;
+		this.requireMutualProof = options.requireMutualProof ?? false;
 		this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
 		this.firstAttachTimeoutMs =
 			options.firstAttachTimeoutMs ?? HOLDER_FIRST_ATTACH_TIMEOUT_MS;
@@ -181,10 +208,12 @@ export class SessionHolder {
 		this.timers = options.timers ?? defaultTimers;
 		this.startedAt = this.now();
 		this.onClosed = options.onClosed;
-		this.socketPath = sessionHolderSocketPath(
-			options.dataRoot,
-			options.generation,
-		);
+		this.addressing = options.addressing ?? { platform: process.platform };
+		this.socketPath = sessionHolderAddress({
+			...this.addressing,
+			dataRoot: options.dataRoot,
+			generation: options.generation,
+		});
 		this.credential = randomBytes(32).toString('hex');
 		this.server = server;
 	}
@@ -197,9 +226,12 @@ export class SessionHolder {
 		chmodSync(directory, 0o700);
 		const server = createServer();
 		const holder = new SessionHolder(options, server);
-		if (!socketPathFits(holder.socketPath))
+		// On Windows the launching server has already closed the directory to
+		// other users; modes mean nothing there.
+		const windows = holder.addressing.platform === 'win32';
+		if (!sessionHolderAddressFits(options.dataRoot, options.generation, holder.addressing))
 			throw new Error('session holder socket path is too long');
-		rmSync(holder.socketPath, { force: true });
+		if (!windows) rmSync(holder.socketPath, { force: true });
 		server.on('connection', (socket) => holder.accept(socket));
 		await new Promise<void>((resolve, reject) => {
 			server.once('error', reject);
@@ -208,7 +240,7 @@ export class SessionHolder {
 				resolve();
 			});
 		});
-		chmodSync(holder.socketPath, 0o600);
+		if (!windows) chmodSync(holder.socketPath, 0o600);
 		holder.writeRecord();
 		// A holder nobody ever attaches to must not wait forever.
 		holder.limitTimer = holder.timers.setTimeout(
@@ -269,7 +301,9 @@ export class SessionHolder {
 			this.attached = undefined;
 			this.pending.clear();
 			await new Promise<void>((resolve) => this.server.close(() => resolve()));
-			rmSync(this.socketPath, { force: true });
+			// A pipe goes when its server closes; a socket file stays behind.
+			if (this.addressing.platform !== 'win32')
+				rmSync(this.socketPath, { force: true });
 			rmSync(sessionHolderRecordPath(this.dataRoot, this.generation), {
 				force: true,
 			});
@@ -358,6 +392,7 @@ export class SessionHolder {
 		this.pending.add(socket);
 		const frames = new HolderFrameDecoder();
 		let greeted = false;
+		let challenge: HolderChallenge | undefined;
 		socket.on('error', () => socket.destroy());
 		socket.on('close', () => {
 			this.pending.delete(socket);
@@ -377,7 +412,40 @@ export class SessionHolder {
 			for (const frame of decoded) {
 				const message = frame.message as HolderClientMessage;
 				if (!greeted) {
-					if (message.type !== 'hello' || !this.greet(socket, message)) {
+					if (challenge !== undefined) {
+						// The only frame after our proof is the server's.
+						if (
+							message.type !== 'prove' ||
+							!holderProofMatches(
+								message.proof,
+								holderHandshakeProof(
+									this.credential,
+									'server',
+									challenge.serverNonce,
+									challenge.holderNonce,
+								),
+							) ||
+							!this.admit(socket, challenge.version)
+						) {
+							socket.destroy();
+							return;
+						}
+						greeted = true;
+						continue;
+					}
+					if (message.type === 'challenge') {
+						challenge = this.answerChallenge(socket, message);
+						if (challenge === undefined) {
+							socket.destroy();
+							return;
+						}
+						continue;
+					}
+					if (
+						message.type !== 'hello' ||
+						this.requireMutualProof ||
+						!this.greet(socket, message)
+					) {
 						socket.destroy();
 						return;
 					}
@@ -409,8 +477,15 @@ export class SessionHolder {
 			socket.write(encodeHolderFrame(value));
 		};
 		if (!credentialMatches(message.credential, this.credential)) return false;
+		// A `hello` presents the credential, so it never negotiates a version
+		// whose handshake is the mutual proof.
 		const version = Array.isArray(message.versions)
-			? selectHolderProtocolVersion(message.versions, this.versions)
+			? selectHolderProtocolVersion(
+					message.versions,
+					this.versions.filter(
+						(supported) => supported < SESSION_HOLDER_MUTUAL_PROOF_VERSION,
+					),
+				)
 			: undefined;
 		if (version === undefined) {
 			reply({
@@ -420,6 +495,58 @@ export class SessionHolder {
 			});
 			return false;
 		}
+		return this.admit(socket, version);
+	}
+
+	/**
+	 * Answer a `challenge` with this holder's proof. Nothing about a session is
+	 * said until the server has proved itself in return.
+	 */
+	private answerChallenge(
+		socket: Socket,
+		message: Extract<HolderClientMessage, { type: 'challenge' }>,
+	): HolderChallenge | undefined {
+		if (!isHolderNonce(message.nonce)) return undefined;
+		const version = Array.isArray(message.versions)
+			? selectHolderProtocolVersion(
+					message.versions,
+					this.versions.filter(
+						(supported) => supported >= SESSION_HOLDER_MUTUAL_PROOF_VERSION,
+					),
+				)
+			: undefined;
+		if (version === undefined) {
+			socket.write(
+				encodeHolderFrame({
+					type: 'refuse',
+					reason: 'version',
+					versions: this.versions,
+				}),
+			);
+			return undefined;
+		}
+		const holderNonce = randomBytes(SESSION_HOLDER_NONCE_BYTES).toString('hex');
+		socket.write(
+			encodeHolderFrame({
+				type: 'proof',
+				version,
+				nonce: holderNonce,
+				proof: holderHandshakeProof(
+					this.credential,
+					'holder',
+					holderNonce,
+					message.nonce,
+				),
+			}),
+		);
+		return { version, holderNonce, serverNonce: message.nonce };
+	}
+
+	/** Attach a server that has authenticated, or refuse it as busy. */
+	private admit(socket: Socket, version: number): boolean {
+		const reply = (value: HolderServerMessage): void => {
+			socket.write(encodeHolderFrame(value));
+		};
 		if (this.attached !== undefined) {
 			reply({ type: 'refuse', reason: 'busy' });
 			return false;
@@ -443,6 +570,8 @@ export class SessionHolder {
 	private handle(message: HolderClientMessage, payload: Uint8Array): void {
 		switch (message.type) {
 			case 'hello':
+			case 'challenge':
+			case 'prove':
 				throw new Error('already attached');
 			case 'list':
 				this.result(message.id, [...this.sessions.values()].map(recordOf));

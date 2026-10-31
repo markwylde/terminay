@@ -42,3 +42,12 @@ test('clean install makes only regular node-pty spawn helpers executable', async
 		await rm(root, { force: true, recursive: true });
 	}
 });
+
+test('Windows ConPTY needs no node-pty spawn helper', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-node-pty-windows-'));
+	try {
+		assert.equal(await ensureNodePtyHelperMode(root, { platform: 'win32' }), 0);
+	} finally {
+		await rm(root, { force: true, recursive: true });
+	}
+});

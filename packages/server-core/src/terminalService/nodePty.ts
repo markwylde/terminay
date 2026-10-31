@@ -544,5 +544,14 @@ function isConfiguredShellProcess(
 		? processName.slice(1)
 		: processName;
 	if (normalized === configuredShell || normalized === 'login') return true;
+	// Windows names the foreground by its command (`powershell`), and the
+	// configured shell by its file (`powershell.exe`), in any case.
+	if (WINDOWS_EXECUTABLE.test(configuredShell))
+		return (
+			normalized.toLowerCase() ===
+			configuredShell.replace(WINDOWS_EXECUTABLE, '').toLowerCase()
+		);
 	return configuredShell === 'sh' && normalized === 'dash';
 }
+
+const WINDOWS_EXECUTABLE = /\.(exe|com|bat|cmd)$/iu;

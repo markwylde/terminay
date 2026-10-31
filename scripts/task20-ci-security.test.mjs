@@ -323,6 +323,10 @@ test("release notes accept exactly the verified release asset set", () => {
     "Terminay-Mac-X.zip.blockmap",
     "Terminay-Mac-X.zip.blockmap.sha256",
     "Terminay-Mac-X.zip.sha256",
+    "Terminay-Windows-X-Setup.exe",
+    "Terminay-Windows-X-Setup.exe.blockmap",
+    "Terminay-Windows-X-Setup.exe.blockmap.sha256",
+    "Terminay-Windows-X-Setup.exe.sha256",
     "terminay-server-X-linux-arm64.tar.gz",
     "terminay-server-X-linux-arm64.tar.gz.sha256",
     "terminay-server-X-linux-arm64.tar.gz.sig",
@@ -684,16 +688,17 @@ test("stable update metadata is verified against published bytes and attached on
   assert.match(job.slice(checksums, verify), /"\$ASSET_DIR\/Terminay-Mac-\$\{VERSION\}\.zip\.blockmap"; do|"\$ASSET_DIR\/Terminay-Mac-\$\{VERSION\}\.zip\.blockmap" \\/u);
 
   const verifyStep = job.slice(verify, edit);
-  assert.match(verifyStep, /\$METADATA_DIR\/latest-linux\.yml \$METADATA_DIR\/latest-mac\.yml /u,
-    "exactly the two stable metadata files may arrive from the build jobs");
+  assert.match(verifyStep, /\$METADATA_DIR\/latest-linux\.yml \$METADATA_DIR\/latest-mac\.yml \$METADATA_DIR\/latest\.yml /u,
+    "exactly the three stable metadata files may arrive from the build jobs");
   assert.match(verifyStep, /--metadata "\$METADATA_DIR\/latest-mac\.yml"[\s\S]*--expect-file "Terminay-Mac-\$\{VERSION\}\.zip"[\s\S]*--release-assets "\$RUNNER_TEMP\/release-asset-names"/u);
   assert.match(verifyStep, /--metadata "\$METADATA_DIR\/latest-linux\.yml"[\s\S]*--expect-file "Terminay-Linux-\$\{VERSION\}\.AppImage"[\s\S]*--release-assets "\$RUNNER_TEMP\/release-asset-names"/u);
-  assert.equal((verifyStep.match(/--version "\$VERSION"/gu) ?? []).length, 2);
+  assert.match(verifyStep, /--metadata "\$METADATA_DIR\/latest\.yml"[\s\S]*--expect-file "Terminay-Windows-\$\{VERSION\}-Setup\.exe"[\s\S]*--release-assets "\$RUNNER_TEMP\/release-asset-names"/u);
+  assert.equal((verifyStep.match(/--version "\$VERSION"/gu) ?? []).length, 3);
 
   // Nothing but the metadata is uploaded here, and nothing before the edit.
   assert.equal((job.match(/gh release upload/gu) ?? []).length, 1);
   const attachStep = job.slice(attach, published);
-  assert.match(attachStep, /gh release upload "\$TAG" "\$METADATA_DIR\/latest-mac\.yml" "\$METADATA_DIR\/latest-linux\.yml" --repo "\$GH_REPO"/u);
+  assert.match(attachStep, /gh release upload "\$TAG" "\$METADATA_DIR\/latest-mac\.yml" "\$METADATA_DIR\/latest-linux\.yml" "\$METADATA_DIR\/latest\.yml" --repo "\$GH_REPO"/u);
   assert.doesNotMatch(attachStep, /gh release upload[^\n]*--clobber/u);
   assert.match(attachStep, /test ! -L "\$METADATA_DIR\/\$metadata"/u);
   assert.match(job.slice(published), /cmp "\$PUBLISHED\/\$metadata" "\$METADATA_DIR\/\$metadata"/u);

@@ -1,3 +1,4 @@
+import { win32 } from 'node:path';
 import type { AppUpdater as ElectronAppUpdater } from 'electron-updater';
 import type {
 	AppReleaseNote,
@@ -57,6 +58,10 @@ export interface AppUpdaterOptions {
 	platform: NodeJS.Platform;
 	/** `process.env.APPIMAGE` on Linux. */
 	appImagePath?: string | undefined;
+	/** `process.execPath`, which on Windows says where the installer put it. */
+	executablePath?: string | undefined;
+	/** `process.env.LOCALAPPDATA` on Windows. */
+	localAppData?: string | undefined;
 	isWritable: (path: string) => boolean;
 	channel: AppUpdateChannel;
 	loadUpdater: () => Promise<UpdaterLike>;
@@ -65,6 +70,11 @@ export interface AppUpdaterOptions {
 	log?: (message: string, error?: unknown) => void;
 	/** Called when a download starts, finishes, or fails outside a check's own result. */
 	onStatusChanged?: () => void;
+	/**
+	 * A test-only Beta feed in place of the rolling prerelease. With it the
+	 * stable source is not read, so a probe sees only the build it serves.
+	 */
+	testFeedUrl?: string | undefined;
 }
 
 export interface AppUpdater {
@@ -241,15 +251,38 @@ export function canInstallInPlace(options: {
 	isPackaged: boolean;
 	platform: NodeJS.Platform;
 	appImagePath?: string | undefined;
+	executablePath?: string | undefined;
+	localAppData?: string | undefined;
 	isWritable: (path: string) => boolean;
 }): boolean {
 	if (!options.isPackaged) return false;
 	if (options.platform === 'darwin') return true;
+	if (options.platform === 'win32') return canInstallInPlaceOnWindows(options);
 	if (options.platform !== 'linux') return false;
 	const appImage = options.appImagePath;
 	if (!appImage?.startsWith('/')) return false;
 	const directory = appImage.slice(0, appImage.lastIndexOf('/')) || '/';
 	return options.isWritable(appImage) && options.isWritable(directory);
+}
+
+/**
+ * The per-user installer puts Terminay in `%LOCALAPPDATA%\Programs\Terminay`,
+ * which the user owns, so an update runs without elevation into the directory
+ * it replaces. A build that runs from anywhere else was not put there by the
+ * installer and is only told about updates.
+ */
+function canInstallInPlaceOnWindows(options: {
+	executablePath?: string | undefined;
+	localAppData?: string | undefined;
+	isWritable: (path: string) => boolean;
+}): boolean {
+	const { executablePath, localAppData } = options;
+	if (executablePath === undefined || localAppData === undefined) return false;
+	const installDirectory = win32.join(localAppData, 'Programs', 'Terminay');
+	const directory = win32.dirname(win32.resolve(executablePath));
+	if (directory.toLowerCase() !== win32.resolve(installDirectory).toLowerCase())
+		return false;
+	return options.isWritable(directory);
 }
 
 /**
@@ -261,12 +294,20 @@ type UpdateSource = AppUpdateChannel;
 function sourceMetadataUrl(
 	source: UpdateSource,
 	platform: NodeJS.Platform,
+	betaFeedUrl = BETA_FEED_URL,
 ): string | null {
+	// electron-updater's Windows metadata carries no platform suffix.
 	const suffix =
-		platform === 'darwin' ? '-mac' : platform === 'linux' ? '-linux' : null;
+		platform === 'darwin'
+			? '-mac'
+			: platform === 'linux'
+				? '-linux'
+				: platform === 'win32'
+					? ''
+					: null;
 	if (suffix === null) return null;
 	return source === 'beta'
-		? `${BETA_FEED_URL}beta${suffix}.yml`
+		? `${betaFeedUrl}beta${suffix}.yml`
 		: `${STABLE_FEED_URL}latest${suffix}.yml`;
 }
 
@@ -328,6 +369,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	const log = options.log ?? (() => {});
 	const currentVersion = versionString(options.currentVersion) ?? '0.0.0';
 	const installable = canInstallInPlace(options);
+	const betaFeedUrl = options.testFeedUrl ?? BETA_FEED_URL;
 
 	let channel = options.channel;
 	let generation = 0;
@@ -486,7 +528,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		if (source === 'beta') {
 			updater.setFeedURL({
 				provider: 'generic',
-				url: BETA_FEED_URL,
+				url: betaFeedUrl,
 				channel: 'beta',
 			});
 			// The rolling release replaces its payloads, so the previous
@@ -508,7 +550,9 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	}
 
 	async function probeVersion(source: UpdateSource): Promise<string> {
-		const url = sourceMetadataUrl(source, options.platform);
+		if (source === 'stable' && options.testFeedUrl !== undefined)
+			throw new Error('A test feed serves no stable source.');
+		const url = sourceMetadataUrl(source, options.platform, betaFeedUrl);
 		if (url === null)
 			throw new Error('This platform publishes no update metadata.');
 		const response = await options.fetch(url, {
@@ -575,7 +619,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	}
 
 	async function checkForNotice(): Promise<void> {
-		if (sourceMetadataUrl(channel, options.platform) === null) {
+		if (sourceMetadataUrl(channel, options.platform, betaFeedUrl) === null) {
 			state = 'idle';
 			return;
 		}

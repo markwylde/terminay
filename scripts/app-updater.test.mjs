@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
 	canInstallInPlace,
@@ -134,6 +135,65 @@ test('semantic version precedence covers beta prereleases', () => {
 	assert.ok(compareVersions('1.10.0', '1.9.0') > 0);
 });
 
+test('a Windows build installs in place only from the per-user install directory', () => {
+	const writable = () => true;
+	const localAppData = 'C:\\Users\\ada\\AppData\\Local';
+	const installed = { isPackaged: true, platform: 'win32', localAppData, isWritable: writable };
+	assert.equal(
+		canInstallInPlace({ ...installed, executablePath: 'C:\\Users\\ada\\AppData\\Local\\Programs\\Terminay\\Terminay.exe' }),
+		true,
+	);
+	// Windows paths compare without case.
+	assert.equal(
+		canInstallInPlace({ ...installed, executablePath: 'c:\\users\\ADA\\appdata\\local\\programs\\terminay\\Terminay.exe' }),
+		true,
+	);
+	assert.equal(canInstallInPlace({ ...installed, executablePath: 'C:\\Program Files\\Terminay\\Terminay.exe' }), false);
+	assert.equal(canInstallInPlace({ ...installed, executablePath: 'D:\\portable\\Terminay.exe' }), false);
+	assert.equal(canInstallInPlace({ ...installed, executablePath: undefined }), false);
+	assert.equal(
+		canInstallInPlace({
+			...installed,
+			executablePath: 'C:\\Users\\ada\\AppData\\Local\\Programs\\Terminay\\Terminay.exe',
+			isWritable: () => false,
+		}),
+		false,
+	);
+	assert.equal(
+		canInstallInPlace({
+			...installed,
+			isPackaged: false,
+			executablePath: 'C:\\Users\\ada\\AppData\\Local\\Programs\\Terminay\\Terminay.exe',
+		}),
+		false,
+	);
+});
+
+for (const [channel, metadata] of [
+	['stable', 'https://github.com/markwylde/terminay/releases/latest/download/latest.yml'],
+	['beta', 'https://github.com/markwylde/terminay/releases/download/main-latest/beta.yml'],
+]) {
+	test(`a Windows build on the ${channel} channel reads ${metadata.split('/').pop()}`, async () => {
+		const fetched = [];
+		const h = harness({
+			isPackaged: true,
+			platform: 'win32',
+			channel,
+			executablePath: 'D:\\portable\\Terminay.exe',
+			localAppData: 'C:\\Users\\ada\\AppData\\Local',
+			loadUpdater: async () => assert.fail('the updater must not be loaded'),
+			fetch: async (url) => {
+				fetched.push(url);
+				if (url.endsWith('.yml'))
+					return textResponse('version: 1.4.0\nfiles:\n  - url: Terminay-Windows-1.4.0-Setup.exe\n');
+				return jsonResponse([]);
+			},
+		});
+		await h.appUpdater.check();
+		assert.ok(fetched.includes(metadata), `fetched ${fetched.join(', ')}`);
+	});
+}
+
 test('only packaged macOS builds and writable AppImages install in place', () => {
 	const writable = () => true;
 	assert.equal(canInstallInPlace({ isPackaged: false, platform: 'darwin', isWritable: writable }), false);
@@ -152,7 +212,6 @@ test('only packaged macOS builds and writable AppImages install in place', () =>
 		}),
 		false,
 	);
-	assert.equal(canInstallInPlace({ isPackaged: true, platform: 'win32', isWritable: writable }), false);
 });
 
 test('stable notes list every skipped release, newest first, excluding drafts and prereleases', async () => {
@@ -530,6 +589,29 @@ test('beta with neither source readable fails through the updater and retries', 
 	assert.equal(h.updater.checks, 2);
 });
 
+test('a test feed replaces the rolling prerelease and the stable source is not read', async () => {
+	const feed = 'http://127.0.0.1:41234/';
+	const fetches = [];
+	const h = harness({
+		currentVersion: '1.3.0-beta.14',
+		channel: 'beta',
+		testFeedUrl: feed,
+		fetch: async (url) => {
+			fetches.push(url);
+			if (url.startsWith('https://api.github.com/')) return jsonResponse(releases);
+			return url === `${feed}beta-mac.yml`
+				? textResponse('version: 1.4.0-beta.3\nfiles: []\n')
+				: textResponse('version: 1.9.0\nfiles: []\n');
+		},
+	});
+	h.updater.onCheck = downloadsVersion('1.4.0-beta.3');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), { provider: 'generic', url: feed, channel: 'beta' });
+	assert.equal(fetches.includes(STABLE_METADATA_URL), false);
+	assert.equal(fetches.includes(BETA_METADATA_URL), false);
+	assert.equal(status.latestVersion, '1.4.0-beta.3');
+});
+
 test('the stable channel never reads the rolling prerelease', async () => {
 	const h = betaHarness({
 		currentVersion: '1.2.0',
@@ -630,4 +712,12 @@ test('release notes render untrusted markdown without script, handlers, or remot
 	assert.equal(releaseNoteLinkTarget('javascript:alert(1)'), null);
 	assert.equal(releaseNoteLinkTarget('file:///etc/passwd'), null);
 	assert.equal(releaseNoteLinkTarget(null), null);
+});
+
+test('the Windows installer is per-user and one-click, so updates never need elevation', () => {
+	const config = readFileSync(new URL('../electron-builder.json5', import.meta.url), 'utf8');
+	const nsis = /"nsis":\s*\{([^}]*)\}/u.exec(config)?.[1] ?? '';
+	assert.match(nsis, /"oneClick":\s*true/u);
+	assert.match(nsis, /"perMachine":\s*false/u);
+	assert.match(nsis, /"allowToChangeInstallationDirectory":\s*false/u);
 });

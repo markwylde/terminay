@@ -2,6 +2,7 @@ import { recordStreamDiagnostic } from '../streamDiagnostics.js';
 import { BoundedChunkQueue } from './boundedChunkQueue.js';
 import { TerminalServiceError } from './errors.js';
 import type { TerminalResolvedLaunch } from './launchResolver.js';
+import { shellLaunchArgs } from './powershellLocation.js';
 import type { TerminalPresentationCheckpointAuthority } from './presentationCheckpoint.js';
 import type {
 	PtyDataListener,
@@ -703,7 +704,11 @@ export class TerminalService {
 			sessionId,
 			shellPath,
 			shell: shellPath,
-			args: [...(options.args ?? defaultShellOptions?.args ?? [])],
+			args: shellLaunchArgs(
+				shellPath,
+				options.args ?? defaultShellOptions?.args ?? [],
+				process.platform,
+			),
 			cwd,
 			...(this.defaultEnvironment === undefined &&
 			options.env === undefined &&
@@ -833,7 +838,7 @@ export class TerminalService {
 			sessionId: launch.identity.sessionId,
 			shellPath: launch.shellPath,
 			shell: launch.shellPath,
-			args: [...launch.args],
+			args: shellLaunchArgs(launch.shellPath, launch.args, process.platform),
 			cwd: launch.cwd,
 			env: { ...launch.env, ...(lifecycleEnvironment ?? {}) },
 			...dimensions,

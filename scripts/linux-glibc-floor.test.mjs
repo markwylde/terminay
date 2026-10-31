@@ -324,8 +324,12 @@ test('the probe launches the holder with the environment the server gives it', a
 	);
 	const declared = (text) =>
 		Object.fromEntries([...text.matchAll(/^\t(\w+): '(TERMINAY_SESSION_HOLDER_\w+)',$/gmu)].map(([, key, name]) => [key, name]));
-	assert.deepEqual(declared(probe), declared(process));
-	assert.equal(Object.keys(declared(process)).length, 5);
+	const processEnvironment = declared(process);
+	const linuxEnvironment = Object.fromEntries(
+		Object.entries(processEnvironment).filter(([key]) => key !== 'userSid'),
+	);
+	assert.deepEqual(declared(probe), linuxEnvironment);
+	assert.equal(Object.keys(declared(probe)).length, 5);
 });
 
 test('the floor scripts reach Docker without bind-mounting the repository', async () => {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DirectoryBuiltInExtensionArtifactSource } from '../packages/server-core/dist/extensions/index.js';
 
 const expected = [
@@ -92,7 +93,7 @@ export async function verifyBuiltInExtensionArtifacts(root) {
 
 if (
 	process.argv[1] &&
-	resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)
+	resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
 	const root = process.argv[2];
 	if (!root)

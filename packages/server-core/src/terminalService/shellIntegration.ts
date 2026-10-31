@@ -5,6 +5,7 @@ import {
 	encodeCommandDefaults,
 	type TerminalCommandDefault,
 } from './commandDefaults.js';
+import { POWERSHELL_LOCATION_HOOK } from './powershellLocation.js';
 import { SHELL_INTEGRATION_SCRIPTS } from './shellIntegrationScripts.js';
 
 /**
@@ -191,7 +192,9 @@ export class ShellIntegration {
 						...plan.keptArgs,
 						'-NoExit',
 						'-Command',
-						`try { . ${powershellQuoted(join(directory, FILES.powershell))} } catch {}`,
+						// A PowerShell given a command gets no location hook of its own
+						// (ADR-0087), so on Windows this command runs it, after the script.
+						`try { . ${powershellQuoted(join(directory, FILES.powershell))} } catch {}${this.platform === 'win32' ? `; ${POWERSHELL_LOCATION_HOOK}` : ''}`,
 					]),
 					env: Object.freeze(env),
 				});

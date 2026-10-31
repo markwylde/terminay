@@ -1,0 +1,77 @@
+# Windows spikes for the native-windows-desktop change. Copied to
+# .github/workflows/ in the markwylde/terminay-windows-tests snapshot repository,
+# which exists only to run code on GitHub's Windows runners; nothing here runs
+# in the Terminay repository itself.
+name: windows-spikes
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  named-pipe:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: npm install --prefix "$env:RUNNER_TEMP\koffi" koffi@2.16.3 --no-audit --no-fund
+      - run: node scripts/windows-spikes/named-pipe.mjs
+        env:
+          KOFFI_DIR: ${{ runner.temp }}\koffi\node_modules
+
+  git-trace2-directory:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: node scripts/windows-spikes/git-trace2-directory.mjs
+
+  process-observation:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: npm install -g npm@12.2.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx turbo run build --filter=@terminay/server-core
+      - run: node scripts/windows-spikes/process-observation.mjs
+
+  package-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: npm install -g npm@12.2.0
+      - run: npm ci --no-audit --no-fund
+      - run: node node_modules/electron/install.js
+      - run: node scripts/stage-selected-secure-werift-runtime.mjs --reuse-validated
+      - run: npm run build:app
+      - run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - if: always()
+        shell: bash
+        run: ls -la release || true
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: windows-installer
+          path: |
+            release/*.exe
+            release/*.yml
+          retention-days: 7
