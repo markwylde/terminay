@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import test from 'node:test';
 
 /**
- * Pull-request CI has no Windows runner (pull-request-ci, ADR-0082 §9), so the
+ * Pull-request CI has no Windows runner (pull-request-ci, ADR-0084 §9), so the
  * only pre-merge Windows signal is a test that passes Windows inputs to an
  * injected-host decision. A test of such a decision that reads
  * `process.platform` would take its Windows branch only on Windows, which CI

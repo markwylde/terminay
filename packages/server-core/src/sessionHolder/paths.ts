@@ -26,7 +26,7 @@ export function sessionHolderSocketPath(
 const WINDOWS_SID_PATTERN = /^S-1-\d+(?:-\d+)+$/;
 
 /**
- * A named pipe for one user and one data root (ADR-0084). The pipe namespace is
+ * A named pipe for one user and one data root (ADR-0086). The pipe namespace is
  * machine-wide, so the name carries the user's SID as well as the data root:
  * two users, or two data roots, never share one. Windows paths compare without
  * case, so the data root is normalised and lowercased before it is hashed.

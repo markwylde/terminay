@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 /**
- * Where Git in a Windows terminal reports (ADR-0082): a directory, because Node
+ * Where Git in a Windows terminal reports (ADR-0084): a directory, because Node
  * cannot serve the Unix socket Git targets elsewhere.
  */
 

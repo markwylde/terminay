@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { encodePowerShellCommand, POWERSHELL_LOCATION_HOOK, shellLaunchArgs } from "../dist/index.js";
 
-// ADR-0085: an interactive PowerShell on Windows keeps its process directory
+// ADR-0087: an interactive PowerShell on Windows keeps its process directory
 // in step with its location; nothing else is changed.
 
 const hooked = (args) => [...args, "-NoExit", "-EncodedCommand", encodePowerShellCommand(POWERSHELL_LOCATION_HOOK)];

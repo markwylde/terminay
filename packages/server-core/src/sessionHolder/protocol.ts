@@ -22,7 +22,7 @@ export const SESSION_HOLDER_PROTOCOL_VERSIONS: readonly number[] = [1, 2];
 
 /**
  * Versions from which both ends prove the credential to each other instead of
- * the server presenting it (ADR-0084 §3). Version 1 sends the credential in its
+ * the server presenting it (ADR-0086 §3). Version 1 sends the credential in its
  * `hello`, which is safe only where the socket's location is the owner's own;
  * a Windows pipe name can be taken by anyone first.
  */

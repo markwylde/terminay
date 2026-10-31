@@ -397,3 +397,18 @@ test("PowerShell: the default applies after the user's profile", {
 	assert.ok(stdout.includes(EXPECTED), stdout);
 	assert.equal(existsSync(join(box.root, 'PWNED')), false);
 });
+
+test('Windows PowerShell integration also keeps the process directory in step with the location (ADR-0087)', async (t) => {
+	const { directory } = await sandbox(t);
+	const { POWERSHELL_LOCATION_HOOK } = await import('../dist/index.js');
+	const make = (platform) =>
+		new ShellIntegration({ directory, enabled: () => true, commandDefaults: () => DEFAULTS, platform });
+	const windows = await make('win32').inject({ shellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe', args: [], env: {} });
+	assert.ok(windows, 'PowerShell on Windows is integrated');
+	const command = windows.args.at(-1);
+	assert.ok(command.endsWith(`; ${POWERSHELL_LOCATION_HOOK}`), command);
+	assert.ok(command.indexOf('terminay.ps1') < command.indexOf('__TerminayPrompt'), 'the hook wraps the prompt after the script runs');
+	const linux = await make('linux').inject({ shellPath: '/usr/bin/pwsh', args: [], env: {} });
+	assert.ok(linux, 'PowerShell on Linux is integrated');
+	assert.doesNotMatch(linux.args.at(-1), /__TerminayPrompt/u, 'only Windows needs the hook');
+});
