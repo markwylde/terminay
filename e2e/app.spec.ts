@@ -93,6 +93,27 @@ test('opens and closes terminal tabs', async ({ mainWindow }) => {
   await expect(closeButtons).toHaveCount(1)
 })
 
+test('switches terminals with Ctrl+Tab from inside a terminal on Linux', async ({ mainWindow }) => {
+  const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
+  test.skip(isMac, 'macOS Desktop keeps Alt+Tab')
+  const tabs = mainWindow.locator('.project-workspace--active .dv-tab')
+  await mainWindow.locator('.terminay-add-tab-button').first().click()
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs.nth(1)).toHaveClass(/dv-active-tab/)
+  await mainWindow.locator('.project-workspace--active .terminal-panel:visible .xterm-helper-textarea').focus()
+
+  await mainWindow.keyboard.down('Control')
+  await mainWindow.keyboard.press('Tab')
+  const switcher = mainWindow.getByRole('dialog', { name: 'Terminal switcher' })
+  await expect(switcher).toBeVisible()
+  await expect(switcher.locator('.terminal-switcher-kicker')).toHaveText('Ctrl+Tab')
+  await expect(switcher.locator('.terminal-switcher-hint')).toHaveText('Release Ctrl to switch')
+  await mainWindow.keyboard.up('Control')
+
+  await expect(switcher).toHaveCount(0)
+  await expect(tabs.nth(0)).toHaveClass(/dv-active-tab/)
+})
+
 test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
   const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
   const toggleButton = mainWindow.getByLabel('Toggle file explorer')
@@ -207,6 +228,8 @@ test('leads with a Terminay menu and has no File menu', async ({ electronApp, ma
   for (const removed of ['Remote Control', 'Extensions…', 'Macros', 'Recordings']) {
     expect(menus.entries).not.toContain(removed)
   }
+  // A title-bar menu button is for Windows, whose window has no menu row.
+  await expect(mainWindow.getByRole('button', { name: 'Application menu' })).toHaveCount(0)
 })
 
 test('runs customized app shortcuts from the keyboard', async ({ appHarness, mainWindow }) => {

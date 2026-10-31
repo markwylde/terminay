@@ -77,6 +77,37 @@
   flex-shrink: 0;
 }
 
+/* Windows only: the window has no menu row, so the application menu opens
+ * from here, at the title bar's left end, before the sidebar toggle. */
+.project-tab-app-menu-box {
+  display: flex;
+  align-items: stretch;
+  padding: 5px 2px 5px 0;
+  -webkit-app-region: no-drag;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.project-tab-app-menu {
+  height: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  outline: none;
+  border-radius: 4px;
+  color: rgba(220, 226, 240, 0.55);
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.project-tab-app-menu:hover,
+.project-tab-app-menu:focus-visible {
+  color: rgba(220, 226, 240, 0.9);
+  background: rgba(220, 226, 240, 0.08);
+}
+
 /* Leading chrome, like the sidebar toggle beside it: never a project tab, so
  * it cannot be dragged, reordered, or pushed out by an overflowing tab bar. */
 .project-tab-home-box {

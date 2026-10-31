@@ -21,6 +21,12 @@ export type RendererHostAdapters = Readonly<{
 		 * learning a host-only command. Hosts with native menus omit it.
 		 */
 		renderCompactApplicationMenu?: () => ReactNode;
+		/**
+		 * Supplied by a host whose window has no menu row of its own (Desktop on
+		 * Windows): opens the host's application menu below a point, in CSS
+		 * pixels. It names no command. Resolves false when the host cannot.
+		 */
+		openApplicationMenu?: (point: { x: number; y: number }) => Promise<boolean>;
 	}>;
 	subscribeAppCommands?: (
 		listener: (command: AppCommand) => Promise<void> | void,
