@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ProtocolId } from '@terminay/protocol';
 import type {
@@ -14,6 +13,10 @@ import {
 	VAULT_ID_PATTERN,
 } from '../../packages/server-core/src/settings/vault';
 import type { SecretReference } from '../../packages/server-core/src/settings/types';
+import {
+	loadSecretState,
+	writeFileDurably,
+} from '../../packages/server-core/src/durableFile.ts';
 
 const FORMAT = 'terminay-electron-safe-storage-vault';
 const MAX_RECORD_BYTES = 2 * 1024 * 1024;
@@ -46,7 +49,13 @@ export interface SafeStorageVaultRepository {
 	commit(value: StoredVault): Promise<void>;
 }
 
-/** Atomic, owner-only persistence for ciphertext and non-secret metadata. */
+/**
+ * Owner-only persistence for ciphertext and non-secret metadata, replaced
+ * durably. The vault is a secret store (ADR-0088): an envelope that cannot be
+ * read or is not a vault record is set aside and the vault opens empty, with
+ * a reset notice. No older envelope is kept or ever read, so a rotated or
+ * removed secret cannot come back.
+ */
 export class FileSafeStorageVaultRepository
 	implements SafeStorageVaultRepository
 {
@@ -56,15 +65,17 @@ export class FileSafeStorageVaultRepository
 	}
 
 	async load(): Promise<unknown | undefined> {
-		try {
-			const serialized = await readFile(this.file, 'utf8');
-			if (Buffer.byteLength(serialized) > MAX_RECORD_BYTES)
-				throw new Error('encrypted vault record exceeds its size limit');
-			return JSON.parse(serialized) as unknown;
-		} catch (error) {
-			if ((error as { code?: string }).code === 'ENOENT') return undefined;
-			throw new Error('encrypted vault record could not be loaded');
-		}
+		return loadSecretState(this.file, 'vault', {
+			parse: (bytes) => {
+				if (bytes.byteLength > MAX_RECORD_BYTES)
+					throw new Error('encrypted vault record exceeds its size limit');
+				return JSON.parse(bytes.toString('utf8')) as unknown;
+			},
+			validate: (value) => {
+				parseStoredVault(value);
+				return value;
+			},
+		});
 	}
 
 	async commit(value: StoredVault): Promise<void> {
@@ -72,17 +83,7 @@ export class FileSafeStorageVaultRepository
 		if (Buffer.byteLength(serialized) > MAX_RECORD_BYTES)
 			throw new Error('encrypted vault record exceeds its size limit');
 		await mkdir(dirname(this.file), { recursive: true });
-		const temporary = `${this.file}.${randomUUID()}.tmp`;
-		try {
-			await writeFile(temporary, serialized, {
-				encoding: 'utf8',
-				flag: 'wx',
-				mode: 0o600,
-			});
-			await rename(temporary, this.file);
-		} finally {
-			await rm(temporary, { force: true }).catch(() => undefined);
-		}
+		await writeFileDurably(this.file, serialized, { mode: 0o600 });
 	}
 }
 

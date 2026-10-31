@@ -32,3 +32,21 @@ test("pending removal denies new leases and cleanup completes interrupted target
   release(); await active; await assert.rejects(vault.withSecret(owner,{binding:stored.binding,purpose:"authentication"},signal,()=>null),/unavailable/);
   await vault.cleanup(owner);
 });
+
+test("a corrupt provider-vault metadata file is kept aside and the scope opens with no bindings (ADR-0088)",async()=>{
+  const { readdir, readFile, writeFile } = await import("node:fs/promises");
+  const { takeStateRecoveryNotices } = await import("../dist/index.js");
+  const backing=service(); const owner=await principal(); const signal=new AbortController().signal;
+  const stored=await new ExtensionProviderVault(backing).put(owner,{bindingKey:"primary",purpose:"authentication",value:new Uint8Array([5]),idempotencyKey:"put-1"},signal);
+  const directory=join(owner.dataDirectory,"provider-vault"); const [name]=await readdir(directory); const file=join(directory,name);
+  const good=await readFile(file,"utf8");
+  for (const [shape,bytes] of [["zero-filled",Buffer.alloc(good.length)],["truncated",good.slice(0,good.length>>1)],["invalid JSON","{not json"]]) {
+    takeStateRecoveryNotices(); await writeFile(file,bytes);
+    const reopened=new ExtensionProviderVault(backing);
+    await assert.rejects(reopened.withSecret(owner,{binding:stored.binding,purpose:"authentication"},signal,()=>null),/unavailable/,shape);
+    assert.deepEqual(takeStateRecoveryNotices(),[{kind:"secret-reset",store:"provider-vault"}],shape);
+    const names=await readdir(directory);
+    assert.ok(names.some(entry=>entry.startsWith(`${name}.corrupt-`)),shape);
+    assert.equal(names.some(entry=>entry.endsWith(".previous")||entry.endsWith(".tmp")),false,shape);
+  }
+});

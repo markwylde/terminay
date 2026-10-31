@@ -514,3 +514,35 @@ test("a killed holder frees its data root with nothing to clear", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a corrupt workspace with no good copy stops the server, naming the store and not the path (ADR-0088)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-corrupt-state-"));
+  try {
+    const zeros = Buffer.alloc(2048);
+    await writeFile(join(root, "workspace.v3.json"), zeros);
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "--data-root", root, "--project-root", root],
+      { encoding: "utf8", timeout: 20_000 },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^Terminay server did not start: its saved workspace state is unreadable and has no good earlier copy\./);
+    assert.match(result.stderr, /Starting a corrupt store fresh/);
+    assert.doesNotMatch(result.stderr, /\n {4}at /);
+    assert.equal(result.stderr.includes(root), false);
+    // Nothing on disk changed: the operator decides.
+    assert.deepEqual(await readFile(join(root, "workspace.v3.json")), zeros);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the unreadable-state description names a store from either error shape", async () => {
+  const { StateUnreadableError, WorkspacePersistenceError } = await import("@terminay/server-core");
+  const { describeUnreadableState, unreadableStateStore } = await import("../dist/index.js");
+  assert.equal(unreadableStateStore(new StateUnreadableError("automations")), "automations");
+  assert.equal(unreadableStateStore(new WorkspacePersistenceError("persistence_unreadable", { cause: new StateUnreadableError("workspace") })), "workspace");
+  assert.equal(unreadableStateStore(new WorkspacePersistenceError("persistence_unreadable", { cause: new Error("EACCES /secret/path") })), undefined);
+  assert.equal(unreadableStateStore(new Error("other")), undefined);
+  assert.match(describeUnreadableState("extensions"), /saved extensions state/);
+});

@@ -234,10 +234,29 @@ test("the closing notice round-trips and anything else is not a notice", () => {
   assert.equal("cwd" in long, false);
 });
 
-test("a close record nobody can read is removed rather than kept", async (t) => {
+test("a close record nobody can read is set aside, kept, and not read again (ADR-0088)", async (t) => {
   const { dataRoot } = await startHolder(t);
-  const path = sessionHolderCloseRecordPath(dataRoot, "fedcba9876543210");
-  writeFileSync(path, "{not json");
+  for (const [generation, bytes] of [["fedcba9876543210", "{not json"], ["fedcba9876543211", Buffer.alloc(96)], ["fedcba9876543212", "{\"reason\":\"cra"]]) {
+    const path = sessionHolderCloseRecordPath(dataRoot, generation);
+    writeFileSync(path, bytes);
+    assert.deepEqual(readHolderCloseRecords(dataRoot), []);
+    assert.equal(existsSync(path), false);
+    const kept = readdirSync(sessionHolderDirectory(dataRoot)).filter((name) => name.startsWith(`${generation}.closed.corrupt-`));
+    assert.equal(kept.length, 1);
+  }
   assert.deepEqual(readHolderCloseRecords(dataRoot), []);
-  assert.equal(existsSync(path), false);
+});
+
+test("a zero-filled holder record is set aside and skipped, and the other holders still load (ADR-0088)", async (t) => {
+  const { dataRoot, holder } = await startHolder(t);
+  const directory = sessionHolderDirectory(dataRoot);
+  const before = readHolderRecords(dataRoot).map((record) => record.generation);
+  assert.deepEqual(before, [GENERATION]);
+  for (const [generation, bytes] of [["aaaaaaaaaaaaaaaa", Buffer.alloc(256)], ["bbbbbbbbbbbbbbbb", "{\"generation\":\"bbbb"], ["cccccccccccccccc", "[]"]]) {
+    writeFileSync(join(directory, `${generation}.json`), bytes);
+    assert.deepEqual(readHolderRecords(dataRoot).map((record) => record.generation), [GENERATION]);
+    assert.equal(existsSync(join(directory, `${generation}.json`)), false);
+    assert.equal(readdirSync(directory).filter((name) => name.startsWith(`${generation}.json.corrupt-`)).length, 1);
+  }
+  assert.ok(holder);
 });

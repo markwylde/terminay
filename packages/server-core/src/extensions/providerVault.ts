@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
 	ProviderVaultPutRequest,
@@ -8,6 +8,7 @@ import type {
 	ProviderVaultRemoveResult,
 	ProviderVaultWithSecretRequest,
 } from '@terminay/extension-api';
+import { loadSecretState, writeFileDurably } from '../durableFile.js';
 import type { ServerVaultService } from '../settings/vault.js';
 
 interface BindingRecord {
@@ -212,20 +213,18 @@ export class ExtensionProviderVault {
 		}
 		if (!state.loaded) {
 			state.loaded = true;
-			try {
-				const parsed = JSON.parse(
-					await readFile(state.file, 'utf8'),
-				) as ScopeFile;
-				if (parsed.version !== 1 || !Array.isArray(parsed.bindings))
-					throw new Error('invalid provider vault metadata');
-				for (const item of parsed.bindings)
-					if (validRecord(item)) {
-						state.records.set(item.bindingRef, item);
-						state.keys.set(item.bindingKey, item.bindingRef);
-					}
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			}
+			// A secret store (ADR-0088): a corrupt file is set aside and the scope
+			// opens with no bindings, never an older copy.
+			const parsed = await loadSecretState<ScopeFile>(
+				state.file,
+				'provider-vault',
+				{ validate: scopeFile },
+			);
+			for (const item of parsed?.bindings ?? [])
+				if (validRecord(item)) {
+					state.records.set(item.bindingRef, item);
+					state.keys.set(item.bindingKey, item.bindingRef);
+				}
 		}
 		return state;
 	}
@@ -242,13 +241,11 @@ export class ExtensionProviderVault {
 	private persist(state: ScopeState): Promise<void> {
 		const action = state.mutation.then(async () => {
 			await mkdir(dirname(state.file), { recursive: true });
-			const temporary = `${state.file}.tmp`;
-			await writeFile(
-				temporary,
+			await writeFileDurably(
+				state.file,
 				`${JSON.stringify({ version: 1, bindings: [...state.records.values()] } satisfies ScopeFile)}\n`,
 				{ mode: 0o600 },
 			);
-			await rename(temporary, state.file);
 		});
 		state.mutation = action.catch(() => undefined);
 		return action;
@@ -268,6 +265,16 @@ export class ExtensionProviderVault {
 	private available(signal: AbortSignal): void {
 		if (signal.aborted) throw new Error('provider dependency call cancelled');
 	}
+}
+
+function scopeFile(value: unknown): ScopeFile | undefined {
+	const parsed = value as Partial<ScopeFile> | null;
+	return typeof parsed === 'object' &&
+		parsed !== null &&
+		parsed.version === 1 &&
+		Array.isArray(parsed.bindings)
+		? (parsed as ScopeFile)
+		: undefined;
 }
 
 function validRecord(value: unknown): value is BindingRecord {

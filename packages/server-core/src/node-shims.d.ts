@@ -204,6 +204,8 @@ declare module 'node:fs/promises' {
 			length: number,
 			position: number,
 		): Promise<{ readonly bytesWritten: number }>;
+		writeFile(data: Uint8Array | string): Promise<void>;
+		sync(): Promise<void>;
 		close(): Promise<void>;
 	}
 	interface Dirent {

@@ -1,20 +1,13 @@
-import { randomBytes } from 'node:crypto';
-import {
-	mkdir,
-	readdir,
-	readFile,
-	rename,
-	rm,
-	writeFile,
-} from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { loadRebuildableState, writeFileDurably } from '../durableFile.js';
 
 /**
  * Where the server keeps the records of app windows (ADR-0076), so a window
  * lasts as long as its terminal session does, across server restarts.
  *
- * One file per window, named by its id. A write goes to a temporary file that
- * is renamed over the record, so a crash leaves the old record or the new one.
+ * One file per window, named by its id. A write is a durable replace
+ * (ADR-0088), so a crash leaves the old record or the new one.
  * Writes of one window run one at a time, and a write queued behind another is
  * replaced by a newer one: only the latest record is ever written.
  */
@@ -80,7 +73,8 @@ export class AppWindowStore<T extends StoredAppWindowRecord> {
 
 	/**
 	 * Every record written. A file that cannot be read, or holds no record this
-	 * server can restore, is removed and reported, and the rest still load.
+	 * server can restore, is set aside (kept as `*.corrupt-*`, ADR-0088) and
+	 * reported, and the rest still load.
 	 */
 	async load(): Promise<readonly T[]> {
 		await this.flush();
@@ -104,13 +98,17 @@ export class AppWindowStore<T extends StoredAppWindowRecord> {
 			const id = name.slice(0, -RECORD_SUFFIX.length);
 			let record: T | undefined;
 			try {
-				record = this.options.parse(JSON.parse(await readFile(path, 'utf8')));
+				record = await loadRebuildableState(path, 'app-window', {
+					validate: (value) => {
+						const parsed = this.options.parse(value);
+						return parsed?.id === id ? parsed : undefined;
+					},
+				});
 			} catch {
 				record = undefined;
 			}
-			if (record === undefined || record.id !== id) {
+			if (record === undefined) {
 				this.options.onError?.(new Error('window record is not valid'), id);
-				await rm(path, { force: true }).catch(() => undefined);
 				continue;
 			}
 			records.push(record);
@@ -151,15 +149,8 @@ export class AppWindowStore<T extends StoredAppWindowRecord> {
 			return;
 		}
 		await mkdir(this.options.directory, { recursive: true, mode: 0o700 });
-		const temporary = `${path}.${randomBytes(6).toString('hex')}${TEMPORARY_SUFFIX}`;
-		try {
-			await writeFile(temporary, JSON.stringify(operation.record), {
-				mode: 0o600,
-			});
-			await rename(temporary, path);
-		} catch (error) {
-			await rm(temporary, { force: true }).catch(() => undefined);
-			throw error;
-		}
+		await writeFileDurably(path, JSON.stringify(operation.record), {
+			mode: 0o600,
+		});
 	}
 }

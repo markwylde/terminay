@@ -392,6 +392,16 @@ export async function launchDesktopApp(options: {
 							].join(path.delimiter),
 						}
 					: {}),
+				// The corrupted-data suite relaunches the app itself after a
+				// recovery choice, and reads the vault across launches.
+				...(path.basename(testInfo.file) === 'corrupt-state.spec.ts'
+					? {
+							TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH: '1',
+							TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
+								.update(userDataDir)
+								.digest('hex'),
+						}
+					: {}),
 				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
 					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
 					: {}),
