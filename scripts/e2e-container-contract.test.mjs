@@ -252,7 +252,11 @@ test("CI image cleanup keeps the newest and the named E2E image and base, and ne
         `image rm ${baseRepository}:old2`,
       ],
     );
-    assert.equal(calls.at(-1), "image prune --force");
+    assert.deepEqual(calls.slice(-3), [
+      "image prune --force",
+      "builder prune --all --force",
+      "volume prune --force",
+    ], "build cache and anonymous volumes must not outlive the job either");
   } finally {
     await rm(bin, { recursive: true, force: true });
   }
