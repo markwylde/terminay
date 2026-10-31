@@ -132,6 +132,10 @@ import type {
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
 import {
+	currentTerminalSwitcherModifier,
+	terminalSwitcherLabels,
+} from './components/terminalSwitcherInteraction';
+import {
 	createServerMacroSettingsClient,
 	useMacroSettings,
 } from './hooks/useMacroSettings';
@@ -247,6 +251,7 @@ import {
 	decideTerminalNoteReconcile,
 	type TerminalNoteSync,
 } from './workspace/terminalNoteSync';
+import { ApplicationMenuButton } from './workspace/ApplicationMenuButton';
 import { CompactChromeRow } from './workspace/CompactChromeRow';
 import { CompactSwitcher } from './workspace/CompactSwitcher';
 import { serverRows } from './workspace/ConnectionsControl';
@@ -5972,9 +5977,11 @@ const ProjectWorkspace = memo(forwardRef<
 					>
 						<div className="terminal-switcher-panel">
 							<div className="terminal-switcher-header">
-								<p className="terminal-switcher-kicker">Alt+Tab</p>
+								<p className="terminal-switcher-kicker">
+									{terminalSwitcherHeading.chord}
+								</p>
 								<span className="terminal-switcher-hint">
-									Release Alt to switch
+									{terminalSwitcherHeading.hint}
 								</span>
 							</div>
 							<div className="terminal-switcher-list">
@@ -6286,6 +6293,11 @@ const requestedOwnWorkspaceView =
 	requestedWorkspaceViewId !== null &&
 	new URLSearchParams(window.location.search).get('ownView') === '1';
 
+/** The switcher's chord and release hint, as this platform's host spells them. */
+const terminalSwitcherHeading = terminalSwitcherLabels(
+	currentTerminalSwitcherModifier(),
+);
+
 export type AppProps = {
 	auxiliaryRoutes?: AuxiliaryRouteController;
 	hostPresentation?: Readonly<{
@@ -6297,6 +6309,8 @@ export type AppProps = {
 		 * host-only command. Absent on hosts with native menus.
 		 */
 		renderCompactApplicationMenu?: () => ReactNode;
+		/** See `RendererHostAdapters`: the host's own menu, below a point. */
+		openApplicationMenu?: (point: { x: number; y: number }) => Promise<boolean>;
 	}>;
 	subscribeAppCommands?: (
 		listener: (command: AppCommand) => Promise<void> | void,
@@ -10094,7 +10108,14 @@ function App({
 			>
 				{isCompactChrome ? (
 					<CompactChromeRow
-						applicationMenu={hostPresentation?.renderCompactApplicationMenu?.()}
+						applicationMenu={
+							hostPresentation?.renderCompactApplicationMenu?.() ??
+							(hostPresentation?.openApplicationMenu === undefined ? undefined : (
+								<ApplicationMenuButton
+									openApplicationMenu={hostPresentation.openApplicationMenu}
+								/>
+							))
+						}
 						breadcrumbButtonRef={compactBreadcrumbRef}
 						connection={{
 							isExposed: Boolean(remoteStatus?.isRunning),
@@ -10141,6 +10162,11 @@ function App({
 					/>
 				) : (
 					<>
+				{hostPresentation?.openApplicationMenu === undefined ? null : (
+					<ApplicationMenuButton
+						openApplicationMenu={hostPresentation.openApplicationMenu}
+					/>
+				)}
 				{/* The leading toggle answers for the column on the leading side: a
 				    project's Folders tree, or Home's own sidebar while Home is shown. */}
 				<div className="project-tab-sidebar-toggle-box">

@@ -516,6 +516,36 @@ test('application badge counts are bounded non-negative integers', () => {
 	);
 });
 
+test('a menu popup names only a point inside a window, never a command', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({ type: 'menu.popup', x: 0, y: 40.4 }),
+		{ type: 'menu.popup', x: 0, y: 40 },
+	);
+	for (const point of [
+		{ x: -1, y: 0 },
+		{ x: 0, y: 100_001 },
+		{ x: Number.NaN, y: 0 },
+		{ x: Infinity, y: 0 },
+		{ x: '0', y: 0 },
+		{ x: 0 },
+	])
+		assert.throws(() =>
+			parseTerminayHostAction({ type: 'menu.popup', ...point }),
+		);
+	assert.throws(() =>
+		parseTerminayHostAction({
+			type: 'menu.popup',
+			x: 0,
+			y: 0,
+			command: 'open-settings',
+		}),
+	);
+	assert.equal(
+		requiredTerminayHostCapability({ type: 'menu.popup', x: 0, y: 0 }),
+		'nativeMenus',
+	);
+});
+
 test('performance logging is a closed Desktop host action and bound event', () => {
 	assert.deepEqual(
 		parseTerminayHostAction({

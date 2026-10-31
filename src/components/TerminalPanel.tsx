@@ -146,7 +146,10 @@ import {
 import { buildTerminalPresentationOptions } from './terminalPresentationInteraction';
 import { getTerminalScrollbackAction } from './terminalScrollbackInteraction';
 import { isTerminalSearchShortcut } from './terminalSearchInteraction';
-import { getTerminalSwitcherDirection } from './terminalSwitcherInteraction';
+import {
+	currentTerminalSwitcherModifier,
+	getTerminalSwitcherDirection,
+} from './terminalSwitcherInteraction';
 import {
 	type AttachTerminalWebglRendererResult,
 	attachTerminalWebglRenderer,
@@ -1467,7 +1470,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				return false;
 			}
 
-			const terminalSwitcherDirection = getTerminalSwitcherDirection(event);
+			const terminalSwitcherDirection = getTerminalSwitcherDirection(
+				event,
+				currentTerminalSwitcherModifier(),
+			);
 			if (terminalSwitcherDirection !== null) {
 				event.preventDefault();
 				event.stopPropagation();
