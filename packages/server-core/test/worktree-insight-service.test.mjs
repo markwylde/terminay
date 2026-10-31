@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -230,6 +230,23 @@ test("prompt preferences round-trip through their file", async () => {
   await preferences.save(["com.terminay.gitea"]);
   assert.deepEqual(await preferences.load(), ["com.terminay.gitea"]);
   assert.match(await readFile(path, "utf8"), /suppressedExtensions/);
+});
+
+test("corrupt prompt preferences are set aside and read as none (ADR-0088)", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "terminay-insight-prefs-"));
+  const path = join(directory, "prefs.json");
+  const preferences = fileWorktreePromptPreferences(path);
+  await preferences.save(["com.terminay.gitea"]);
+  const good = await readFile(path, "utf8");
+  for (const bytes of [Buffer.alloc(good.length), good.slice(0, good.length >> 1), "{not json"]) {
+    await writeFile(path, bytes);
+    assert.deepEqual(await preferences.load(), []);
+  }
+  const names = await readdir(directory);
+  assert.equal(names.filter((name) => name.startsWith("prefs.json.corrupt-")).length, 3);
+  assert.equal(names.includes("prefs.json"), false);
+  await preferences.save(["com.terminay.gitea"]);
+  assert.deepEqual(await preferences.load(), ["com.terminay.gitea"]);
 });
 
 test("sources stop when their contribution disappears", async () => {

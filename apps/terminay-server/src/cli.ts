@@ -156,6 +156,10 @@ import {
 import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
 import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
 import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
+import {
+	describeUnreadableState,
+	unreadableStateStore,
+} from './stateUnreadable.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -218,6 +222,7 @@ else if (options.command === 'mcp') {
 			options = await resolveStandaloneServerIdentity(options);
 		} catch (error) {
 			await standaloneLease.release(options.dataRoot).catch(() => undefined);
+			exitOnUnreadableState(error);
 			throw error;
 		}
 	}
@@ -628,6 +633,7 @@ else if (options.command === 'mcp') {
 					await standaloneLease
 						?.release(options.dataRoot)
 						.catch(() => undefined);
+					exitOnUnreadableState(error);
 					process.stderr.write(
 						`${error instanceof Error ? error.message : 'server failed'}\n`,
 					);
@@ -666,9 +672,19 @@ else if (options.command === 'mcp') {
 			process.on('SIGTERM', shutdown);
 		} catch (error) {
 			await standaloneLease?.release(options.dataRoot).catch(() => undefined);
+			exitOnUnreadableState(error);
 			throw error;
 		}
 	}
+}
+
+/** A corrupt canonical store with no good copy stops a standalone server with
+ * the store's name and a non-zero exit, never a stack trace (ADR-0088). */
+function exitOnUnreadableState(error: unknown): void {
+	const store = unreadableStateStore(error);
+	if (store === undefined) return;
+	process.stderr.write(describeUnreadableState(store));
+	process.exit(1);
 }
 
 function createRuntime(

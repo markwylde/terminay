@@ -16,6 +16,7 @@ import {
   readStateFile,
   readStateFileSync,
   StateUnreadableError,
+  startStateFresh,
   writeFileDurably,
   writeFileDurablySync,
 } from "../dist/index.js";
@@ -267,4 +268,26 @@ test("rebuildable loads read as missing and report to the observer", () => {
   assert.equal(loadRebuildableStateSync(target, "session holder record"), undefined);
   assert.deepEqual(seen, [["session holder record", 1]]);
   observeRebuiltState(undefined);
+});
+
+test("starting fresh keeps the damaged file and its copy aside, so a relaunch begins empty", () => {
+  takeStateRecoveryNotices();
+  const directory = root();
+  const target = join(directory, "workspace.json");
+  writeFileSync(target, Buffer.alloc(80));
+  writeFileSync(`${target}.previous`, "{trunc");
+  let error;
+  try {
+    loadCanonicalStateSync(target, "workspace");
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error?.store, "workspace");
+  assert.equal(error.message.includes(directory), false, "the path never reaches the message");
+  const preserved = startStateFresh(error);
+  assert.equal(preserved.length, 2);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(fs.existsSync(`${target}.previous`), false);
+  assert.deepEqual(readStateFileSync(target, { kind: "canonical" }), { status: "missing" });
+  assert.deepEqual(takeStateRecoveryNotices(), [{ kind: "started-fresh", store: "workspace" }]);
 });

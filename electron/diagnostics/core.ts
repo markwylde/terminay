@@ -1,16 +1,10 @@
 import { type Dirent, constants as fsConstants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import {
-	chmod,
-	lstat,
-	mkdir,
-	open,
-	readdir,
-	readFile,
-	rename,
-	rm,
-	unlink,
-} from 'node:fs/promises';
-import { basename, join, resolve, sep } from 'node:path';
+	loadRebuildableState,
+	writeFileDurably,
+} from '../../packages/server-core/src/durableFile.ts';
 
 export const DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export const MAX_EVENT_BYTES = 16 * 1024;
@@ -59,6 +53,8 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'diagnostics.performance.trace-completed',
 	'diagnostics.performance.trace-failed',
 	'main.ready',
+	'main.state.recovered',
+	'main.holder-runtime.prepared',
 	'main.stdout',
 	'main.stderr',
 	'main.uncaught-exception',
@@ -1028,16 +1024,20 @@ async function readLaunchMarker(
 		const metadata = await lstat(path);
 		if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096)
 			return undefined;
-		const parsed = JSON.parse(
-			await readFile(path, 'utf8'),
-		) as Partial<LaunchMarker>;
-		if (
-			parsed.schemaVersion !== 1 ||
-			typeof parsed.launchId !== 'string' ||
-			(parsed.state !== 'active' && parsed.state !== 'clean')
-		)
-			return undefined;
-		return parsed as LaunchMarker;
+		// Rebuildable (ADR-0088): a damaged marker is set aside and reads as
+		// none, so the previous launch is not reported as interrupted.
+		return await loadRebuildableState<LaunchMarker>(path, 'launch-marker', {
+			validate: (value) => {
+				const parsed = value as Partial<LaunchMarker> | null;
+				return parsed !== null &&
+					typeof parsed === 'object' &&
+					parsed.schemaVersion === 1 &&
+					typeof parsed.launchId === 'string' &&
+					(parsed.state === 'active' || parsed.state === 'clean')
+					? (parsed as LaunchMarker)
+					: undefined;
+			},
+		});
 	} catch {
 		return undefined;
 	}
@@ -1047,33 +1047,12 @@ async function atomicWritePrivateJson(
 	path: string,
 	value: unknown,
 ): Promise<void> {
-	const directory = resolve(path, '..');
-	await ensurePrivateDiagnosticsDirectory(directory);
-	const temporaryPath = join(
-		directory,
-		`.${basename(path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
-	);
-	const flags =
-		fsConstants.O_CREAT |
-		fsConstants.O_EXCL |
-		fsConstants.O_WRONLY |
-		(typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0);
-	try {
-		const handle = await open(temporaryPath, flags, 0o600);
-		try {
-			await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-		const destination = await lstat(path).catch(() => undefined);
-		if (destination?.isSymbolicLink())
-			throw new Error('launch marker destination is a symbolic link');
-		await rename(temporaryPath, path);
-	} catch (error) {
-		await rm(temporaryPath, { force: true }).catch(() => undefined);
-		throw error;
-	}
+	await ensurePrivateDiagnosticsDirectory(resolve(path, '..'));
+	const destination = await lstat(path).catch(() => undefined);
+	if (destination?.isSymbolicLink())
+		throw new Error('launch marker destination is a symbolic link');
+	// The temporary file is created exclusively, so it never follows a link.
+	await writeFileDurably(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
 }
 
 export async function beginLaunchMarker(

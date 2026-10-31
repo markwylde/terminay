@@ -103,3 +103,36 @@ test("an envelope cannot be opened under a different server identity", async () 
 	await service.unlock({ secret: passphrase() });
 	await assert.rejects(HeadlessPassphraseVaultAdapter.open({ serverId: "server-other", storage }), /envelope is invalid/);
 });
+
+test("a corrupt envelope file opens an empty vault that cannot read old secrets, and is kept aside (ADR-0088)", async () => {
+	const { readdir, writeFile } = await import("node:fs/promises");
+	const { takeStateRecoveryNotices } = await import("../dist/index.js");
+	const directory = await mkdtemp(join(tmpdir(), "terminay-headless-vault-corrupt-"));
+	try {
+		const filePath = join(directory, "vault.json");
+		const storage = new FileVaultEnvelopeStorage(filePath);
+		const service = new ServerVaultService(await HeadlessPassphraseVaultAdapter.open({ serverId: "server-file", storage }));
+		await service.unlock({ secret: passphrase() });
+		await service.put({ id: "old-secret", value: new TextEncoder().encode("old-value") });
+		await service.put({ id: "newer-secret", value: new TextEncoder().encode("newer-value") });
+		const good = await readFile(filePath, "utf8");
+		assert.equal((await readdir(directory)).some((name) => name.endsWith(".previous")), false, "a secret store keeps no .previous");
+		for (const [shape, bytes] of [["zero-filled", Buffer.alloc(Buffer.byteLength(good))], ["truncated", good.slice(0, good.length >> 1)], ["invalid JSON", "{not json"]]) {
+			takeStateRecoveryNotices();
+			await writeFile(filePath, bytes);
+			// An older envelope beside it is never read.
+			await writeFile(`${filePath}.previous`, good);
+			const reopened = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-file", storage });
+			const reopenedService = new ServerVaultService(reopened);
+			await reopenedService.unlock({ secret: passphrase() });
+			assert.deepEqual(reopenedService.status().entries, [], shape);
+			await assert.rejects(reopenedService.withSecret("old-secret", () => undefined), shape);
+			assert.deepEqual(takeStateRecoveryNotices(), [{ kind: "secret-reset", store: "vault" }], shape);
+			const names = await readdir(directory);
+			assert.ok(names.some((name) => name.startsWith("vault.json.corrupt-")), shape);
+			assert.equal(await readFile(`${filePath}.previous`, "utf8"), good, shape);
+		}
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});

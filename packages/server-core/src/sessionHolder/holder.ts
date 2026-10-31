@@ -1,12 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import {
-	chmodSync,
-	mkdirSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
+import { writeFileDurablySync } from '../durableFile.js';
 import type {
 	NodePtyDisposable,
 	NodePtyModuleLike,
@@ -377,11 +372,11 @@ export class SessionHolder {
 			socketPath: this.socketPath,
 			startedAt: this.startedAt,
 		};
-		const target = sessionHolderRecordPath(this.dataRoot, this.generation);
-		const temporary = `${target}.tmp`;
-		writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
-		chmodSync(temporary, 0o600);
-		renameSync(temporary, target);
+		writeFileDurablySync(
+			sessionHolderRecordPath(this.dataRoot, this.generation),
+			JSON.stringify(record),
+			{ mode: 0o600 },
+		);
 	}
 
 	private accept(socket: Socket): void {

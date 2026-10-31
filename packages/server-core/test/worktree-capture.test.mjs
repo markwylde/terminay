@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -335,6 +335,17 @@ test("a data directory's key is made once, kept owner-only, and replaced when mi
   assert.notDeepEqual(second, first);
   await writeFile(join(directory, "git-trace.key"), "short");
   assert.equal(loadGitTraceKey(directory).length, 32);
+  // A key of zeros at the right length is what a lost flush leaves: it is
+  // corrupt, kept aside, and replaced, never used as a secret (ADR-0088).
+  await writeFile(join(directory, "git-trace.key"), Buffer.alloc(32));
+  const replaced = loadGitTraceKey(directory);
+  assert.equal(replaced.length, 32);
+  assert.notDeepEqual(replaced, Buffer.alloc(32));
+  assert.deepEqual(loadGitTraceKey(directory), replaced);
+  const names = await readdir(directory);
+  assert.equal(names.filter((name) => name.startsWith("git-trace.key.corrupt-")).length, 2);
+  assert.equal(names.some((name) => name.endsWith(".tmp") || name.endsWith(".previous")), false);
+  if (process.platform !== "win32") assert.equal((await stat(join(directory, "git-trace.key"))).mode & 0o777, 0o600);
 });
 
 test("a session's token is the same on every run with one key, differs between keys, and is unpredictable from the id", () => {

@@ -1,13 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { constants, mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import {
-	copyFile,
-	mkdir,
-	readFile,
-	rename,
-	writeFile,
-} from 'node:fs/promises';
+import { constants, mkdirSync } from 'node:fs';
+import { copyFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import {
+	isStateUnreadableError,
+	loadCanonicalState,
+	type StateStoreName,
+	writeFileDurably,
+	writeFileDurablySync,
+} from './durableFile.js';
 import type { WorkspaceState } from './workspace.js';
 import {
 	migrateWorkspaceState,
@@ -47,6 +47,10 @@ export type WorkspacePersistenceFailureCode =
  * renderer-facing message. */
 export class WorkspacePersistenceError extends Error {
 	readonly retryable: boolean;
+	/** Set when the stored workspace is corrupt with no good previous copy
+	 * (ADR-0088): the cause is a StateUnreadableError naming this store, and
+	 * the host may offer to start it fresh as well as retry. */
+	readonly store: StateStoreName | undefined;
 	constructor(
 		readonly code: WorkspacePersistenceFailureCode,
 		options: { readonly cause?: unknown } = {},
@@ -57,6 +61,9 @@ export class WorkspacePersistenceError extends Error {
 		);
 		this.name = 'WorkspacePersistenceError';
 		this.retryable = code !== 'persistence_invalid';
+		this.store = isStateUnreadableError(options.cause)
+			? options.cause.store
+			: undefined;
 	}
 }
 
@@ -231,19 +238,34 @@ function persistenceFailure(
 		: new WorkspacePersistenceError(code, { cause });
 }
 
-/** Atomic JSON backend shared by embedded Desktop and standalone servers. */
+/** A stored workspace is at least a JSON object. Its full shape, including
+ * older schemas and Desktop's compatibility transform, is checked by the
+ * repository after migration. */
+function storedWorkspaceObject(value: unknown): unknown | undefined {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? value
+		: undefined;
+}
+
+/** Durable JSON backend shared by embedded Desktop and standalone servers.
+ * Every commit keeps the last good file as `.previous`; a corrupt file loads
+ * that copy instead, or fails with StateUnreadableError('workspace') when
+ * there is none (ADR-0088). */
 export class FileWorkspaceStateBackend implements WorkspaceStateBackend {
-	constructor(private readonly filePath: string) {
+	constructor(
+		private readonly filePath: string,
+		private readonly validate: (
+			value: unknown,
+		) => unknown | undefined = storedWorkspaceObject,
+	) {
 		if (filePath.length === 0)
 			throw new TypeError('workspace state path is required');
 	}
 	async load(): Promise<unknown | undefined> {
-		try {
-			return JSON.parse(await readFile(this.filePath, 'utf8')) as unknown;
-		} catch (error) {
-			if ((error as { code?: string }).code === 'ENOENT') return undefined;
-			throw error;
-		}
+		return loadCanonicalState(this.filePath, 'workspace', {
+			validate: this.validate,
+			mode: 0o600,
+		});
 	}
 	async preserveBeforeUpgrade(fromSchemaVersion: number): Promise<void> {
 		try {
@@ -258,20 +280,17 @@ export class FileWorkspaceStateBackend implements WorkspaceStateBackend {
 	}
 	async commit(state: WorkspaceState): Promise<void> {
 		await mkdir(dirname(this.filePath), { recursive: true });
-		const temporary = `${this.filePath}.${randomUUID()}.tmp`;
-		await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-			flag: 'wx',
-			mode: 0o600,
-		});
-		await rename(temporary, this.filePath);
+		await writeFileDurably(
+			this.filePath,
+			`${JSON.stringify(state, null, 2)}\n`,
+			{ mode: 0o600, keepPrevious: true },
+		);
 	}
 	commitSync(state: WorkspaceState): void {
 		mkdirSync(dirname(this.filePath), { recursive: true });
-		const temporary = `${this.filePath}.${randomUUID()}.tmp`;
-		writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-			flag: 'wx',
+		writeFileDurablySync(this.filePath, `${JSON.stringify(state, null, 2)}\n`, {
 			mode: 0o600,
+			keepPrevious: true,
 		});
-		renameSync(temporary, this.filePath);
 	}
 }

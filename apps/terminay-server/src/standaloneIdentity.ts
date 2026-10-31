@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+	isStateUnreadableError,
+	loadCanonicalState,
+} from '@terminay/server-core';
 import { defaultRemoteOrigin, type ServerCliOptions } from './cliOptions.js';
 
 const IDENTITY_FILE = 'server-instance.v1.json';
@@ -60,24 +64,27 @@ export async function resolveStandaloneServerIdentity(
 async function readWorkspaceServerId(
 	dataRoot: string,
 ): Promise<string | undefined> {
-	let raw: string;
+	// The same canonical read the workspace repository makes (ADR-0088): a
+	// corrupt file falls back to its `.previous` copy, or stops startup with
+	// StateUnreadableError('workspace') and is left as it is.
+	let value: unknown;
 	try {
-		raw = await readFile(join(dataRoot, WORKSPACE_FILE), 'utf8');
+		value = await loadCanonicalState(
+			join(dataRoot, WORKSPACE_FILE),
+			'workspace',
+			{
+				validate: (parsed) => record(parsed),
+				mode: 0o600,
+			},
+		);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+		if (isStateUnreadableError(error)) throw error;
 		throw new Error(
 			'could not read the existing standalone workspace identity',
 			{ cause: error },
 		);
 	}
-	let value: unknown;
-	try {
-		value = JSON.parse(raw);
-	} catch (error) {
-		throw new Error('existing standalone workspace identity is invalid', {
-			cause: error,
-		});
-	}
+	if (value === undefined) return undefined;
 	const serverId = record(value)?.serverId;
 	if (!validServerId(serverId))
 		throw new Error(

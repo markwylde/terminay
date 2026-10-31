@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -178,3 +178,24 @@ test("a launch store preserves and enforces the current compatibility requiremen
 function hash(bytes) {
 	return createHash("sha256").update(bytes).digest("base64url");
 }
+
+test("a corrupt bundle pointer is set aside and the store reads as not installed (ADR-0088)", async () => {
+	const root = await mkdtemp(join(tmpdir(), "terminay-ui-bundle-store-"));
+	try {
+		const store = new UiBundleStore({ rootDirectory: root });
+		const first = fixture("1.0.0");
+		await store.install({ manifest: first.manifest, read: () => first.bytes });
+		const pointer = await readFile(join(root, "current.json"), "utf8");
+		for (const bytes of [Buffer.alloc(pointer.length), pointer.slice(0, pointer.length >> 1), "{not json", JSON.stringify({ schemaVersion: 1, bundleId: "../x" })]) {
+			await writeFile(join(root, "current.json"), bytes);
+			assert.equal(await store.open(), undefined);
+		}
+		assert.equal((await readdir(root)).filter((name) => name.startsWith("current.json.corrupt-")).length, 4);
+		// Installing again rebuilds the pointer.
+		await store.install({ manifest: first.manifest, read: () => first.bytes });
+		assert.equal((await store.open())?.manifest.bundleId, first.manifest.bundleId);
+		assert.equal((await readdir(root)).some((name) => name.endsWith(".tmp")), false);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

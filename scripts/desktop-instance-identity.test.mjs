@@ -233,3 +233,24 @@ function legacyWorkspace(projectId, sessionId) {
 		},
 	};
 }
+
+test('a zero-filled instance id restores its earlier copy instead of minting a new authority', async () => {
+	const root = await mkdtemp(join(directory, 'profile-zeroed-'));
+	const first = identity.resolveDesktopInstanceIdentity(root);
+	const file = join(root, identity.DESKTOP_INSTANCE_ID_FILE);
+	const saved = await readFile(file);
+	assert.deepEqual(await readFile(`${file}.previous`), saved);
+	await writeFile(file, Buffer.alloc(saved.length));
+	assert.equal(identity.resolveDesktopInstanceIdentity(root).id, first.id);
+	assert.deepEqual(await readFile(file), saved);
+
+	const unreadable = await mkdtemp(join(directory, 'profile-unreadable-'));
+	const unreadableFile = join(unreadable, identity.DESKTOP_INSTANCE_ID_FILE);
+	await writeFile(unreadableFile, Buffer.alloc(72));
+	assert.throws(
+		() => identity.resolveDesktopInstanceIdentity(unreadable),
+		(error) =>
+			error.code === 'state_unreadable' && error.store === 'desktop-identity',
+	);
+	assert.deepEqual(await readFile(unreadableFile), Buffer.alloc(72));
+});

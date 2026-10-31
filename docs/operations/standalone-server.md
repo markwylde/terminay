@@ -862,6 +862,27 @@ rollback command, or service-manager package. Those remain release gates in
 [Task 20](../tasks_completed/20-security-release-and-operations.md). The procedure above
 is the required operator runbook until those commands are packaged.
 
+### Starting a corrupt store fresh
+
+State files are replaced durably, and a crash or power loss should leave the
+old file or the new one (ADR-0088). If a file is still unreadable:
+
+- `<file>.previous` is the last good copy of a canonical file (workspace,
+  automations, extension registry). The server loads it on its own and keeps
+  the bad file as `<file>.corrupt-<timestamp>`.
+- Credentials and caches have no `.previous`. A corrupt one is kept as
+  `<file>.corrupt-<timestamp>` and starts empty: re-pair devices and enter
+  vault secrets again. Push re-enrols on its own.
+- A canonical file with no good `.previous` stops startup. The log names the
+  store, for example `its saved workspace state is unreadable`, and the
+  server exits with status 1 and changes nothing on disk.
+
+To start that store fresh, stop the server, back up the data root, then move
+the file and its `.previous` aside, for example
+`mv workspace.v3.json workspace.v3.json.corrupt-manual`, and start the server.
+It creates the store empty. Keep the moved files until you no longer need
+them for diagnosis.
+
 For incident diagnostics, collect:
 
 1. `terminay-server --status` output;
