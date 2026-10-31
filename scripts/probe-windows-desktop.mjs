@@ -6,7 +6,7 @@
 //   2. PowerShell: input and output, then a window resize the shell sees;
 //   3. parity: a split starts in the directory of the terminal it splits, a
 //      foreground `node` is reported busy, the MCP pipe answers from inside a
-//      terminal, every built-in extension is active, and `git worktree add`
+//      terminal, every built-in extension is on (or declared unavailable on Windows), and `git worktree add`
 //      moves its terminal into the new folder;
 //   4. Command Prompt, opened from the shell profile chooser: input, output,
 //      and `exit` ending it, then closing its tab;
@@ -373,7 +373,7 @@ try {
 		return { socket };
 	});
 
-	await check('every built-in extension is active', async () => {
+	await check('every built-in extension is on, or not available on Windows', async () => {
 		const { app, window } = session;
 		// Settings › Extensions, from the command bar; it opens in its own window.
 		const opened = app.waitForEvent('window', { timeout: 30_000 }).catch(() => undefined);
@@ -400,7 +400,9 @@ try {
 		}, 'the built-in extensions never settled');
 		if (settings !== window) await settings.close();
 		const lines = listed.split('\n').map((line) => line.trim()).filter(Boolean);
-		if (lines.includes('Failed'))
+		// A built-in that declares only other platforms reads "Not available on
+		// Windows"; anything else that is not on is a fault.
+		if (lines.some((line) => ['Failed', 'Incompatible', 'Quarantined'].includes(line)))
 			throw new Error(`a built-in extension failed (${lines.join(' | ')}): ${await registryFailures()}`);
 		assert.ok(lines.includes('On'), `no built-in extension is on: ${lines.join(' | ')}`);
 		return { builtIns: lines };

@@ -53,13 +53,35 @@ export function extensionListStatus(extension: ExtensionSummaryDto): {
 			return { status: 'Not installed', tone: 'off' };
 		case 'pending':
 			return { status: 'Working…', tone: 'warn' };
-		case 'incompatible':
-			return { status: 'Incompatible', tone: 'bad' };
+		case 'incompatible': {
+			const platform = unsupportedPlatform(extension);
+			return platform === undefined
+				? { status: 'Incompatible', tone: 'bad' }
+				: { status: `Not available on ${platform}`, tone: 'off' };
+		}
 		case 'quarantined':
 			return { status: 'Quarantined', tone: 'bad' };
 		case 'failed':
 			return { status: 'Failed', tone: 'bad' };
 	}
+}
+
+const PLATFORM_NAMES: Readonly<Record<string, string>> = {
+	darwin: 'macOS',
+	linux: 'Linux',
+	win32: 'Windows',
+};
+
+/** The platform an extension declared it does not run on, by name. */
+export function unsupportedPlatform(
+	extension: ExtensionSummaryDto,
+): string | undefined {
+	const platform = /^extension_does_not_support_platform_([a-z0-9]+)$/u.exec(
+		extension.failureMessage ?? '',
+	)?.[1];
+	return platform === undefined
+		? undefined
+		: (PLATFORM_NAMES[platform] ?? platform);
 }
 
 /** Settings key of one harness switch: `<sourceId>/<harnessId>`. */
@@ -414,7 +436,11 @@ function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction, harness
 					<div className="settings-chip-row">{extension.permissions.map((permission) => <span className="settings-chip" key={permission}>{permission}</span>)}</div>
 				</div>
 			)}
-			{extension.failureMessage === undefined ? null : (
+			{extension.failureMessage === undefined ? null : unsupportedPlatform(extension) !== undefined ? (
+				<div className="settings-group-footer extension-card-footer">
+					<span className="settings-row-description">This extension is not available on {unsupportedPlatform(extension)}. A server on another platform still provides it.</span>
+				</div>
+			) : (
 				<div className="settings-group-footer extension-card-footer" role="alert">
 					<span className="settings-row-description">{extension.failureMessage}</span>
 				</div>

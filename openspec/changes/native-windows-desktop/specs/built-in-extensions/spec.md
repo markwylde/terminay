@@ -22,4 +22,10 @@ Built-in extension artifacts SHALL be verified on the declared supported distrib
 #### Scenario: Windows built-ins
 
 - **WHEN** the packaged Windows build starts on the Windows release runner
-- **THEN** every built-in extension activates, and each native module it loads is the win32-x64 build
+- **THEN** every built-in extension that supports Windows activates, and each native module it loads is the win32-x64 build
+
+#### Scenario: A built-in for other platforms
+
+- **WHEN** a built-in extension's manifest declares platforms that exclude the server's platform
+- **THEN** the server records it as incompatible rather than failed, never activates it, and Settings shows it as not available on that platform
+- **AND** a desktop connected to a server on a supported platform still gets the extension from that server

@@ -127,20 +127,27 @@ export class ExtensionInstaller {
 					state = await this.installBuiltInExact(artifact, state, signal);
 				} catch (error) {
 					const existing = state.extensions[artifact.extensionId];
+					// A built-in that declares other platforms is not broken here,
+					// it is unavailable on this one.
+					const failedState = UNSUPPORTED_PLATFORM.test(
+						error instanceof Error ? error.message : '',
+					)
+						? 'incompatible'
+						: 'failed';
 					state = await this.commit(
 						state,
 						existing === undefined
 							? {
 									extensionId: artifact.extensionId,
 									packageName: artifact.packageName,
-									state: 'failed',
+									state: failedState,
 									enabled: true,
 									slots: {},
 									failureClass: safeFailure(error),
 								}
 							: {
 									...existing,
-									state: 'failed',
+									state: failedState,
 									failureClass: safeFailure(error),
 								},
 						'extension.built_in_failed',
@@ -1282,6 +1289,8 @@ function canonicalJson(value: unknown): string {
 			.join(',')}}`;
 	return JSON.stringify(value) ?? 'null';
 }
+const UNSUPPORTED_PLATFORM = /^extension does not support platform /u;
+
 function safeFailure(error: unknown): string {
 	const message =
 		error instanceof Error
