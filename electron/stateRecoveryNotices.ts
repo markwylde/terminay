@@ -1,7 +1,49 @@
-import type {
-	StateRecoveryNotice,
-	StateStoreName,
+import { rmSync } from 'node:fs';
+import {
+	loadRebuildableStateSync,
+	queueStateRecoveryNotices,
+	type StateRecoveryNotice,
+	type StateStoreName,
+	takeStateRecoveryNotices,
+	writeFileDurablySync,
 } from '../packages/server-core/src/durableFile.ts';
+
+/** Where notices wait across the relaunch a startup recovery performs. */
+export const CARRIED_NOTICES_FILE = 'state-recovery-notices.v1.json';
+
+const NOTICE_KINDS = new Set(['restored', 'started-fresh', 'secret-reset']);
+
+/**
+ * Before a recovery relaunch: keep what this run recovered, so the run that
+ * opens the workspace still tells the user (ADR-0088). Anything carried in
+ * earlier and not yet shown travels too.
+ */
+export function carryStateRecoveryNotices(file: string): void {
+	const notices = takeStateRecoveryNotices();
+	if (notices.length === 0) return;
+	writeFileDurablySync(file, JSON.stringify({ version: 1, notices }), { mode: 0o600 });
+}
+
+/** At startup: queue notices carried over a relaunch, then drop the file. */
+export function restoreCarriedStateRecoveryNotices(file: string): void {
+	const carried = loadRebuildableStateSync(file, 'state-recovery-notices', {
+		validate: (value) => {
+			const notices = (value as { notices?: unknown } | null)?.notices;
+			return Array.isArray(notices) ? notices : undefined;
+		},
+	});
+	if (carried !== undefined)
+		queueStateRecoveryNotices(
+			carried.filter(
+				(notice): notice is StateRecoveryNotice =>
+					typeof notice === 'object' &&
+					notice !== null &&
+					NOTICE_KINDS.has((notice as { kind?: unknown }).kind as string) &&
+					typeof (notice as { store?: unknown }).store === 'string',
+			),
+		);
+	rmSync(file, { force: true });
+}
 
 /** The store names a notice uses, in the user's words. */
 const STORE_WORDS: Record<StateStoreName, string> = {

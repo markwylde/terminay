@@ -15,7 +15,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { writeFileDurablySync } from '../durableFile.js';
+import { loadRebuildableStateSync, writeFileDurablySync } from '../durableFile.js';
 import {
 	DEFAULT_RECORDING_ROOT,
 	RECORDING_ID_PATTERN,
@@ -713,7 +713,14 @@ export class NodeRecordingStorage implements RecordingStorage {
 
 	private loadRoots(): void {
 		try {
-			const object = parseObject(readFileSync(this.indexPath, 'utf8'));
+			// A corrupt index is set aside, never overwritten (ADR-0088); the
+			// recordings themselves are untouched and the roots re-register.
+			const object = loadRebuildableStateSync(this.indexPath, 'recording-roots', {
+				validate: (value) =>
+					typeof value === 'object' && value !== null && Array.isArray((value as { roots?: unknown }).roots)
+						? (value as { roots: unknown[] })
+						: undefined,
+			});
 			if (!Array.isArray(object?.roots)) return;
 			for (const root of object.roots)
 				if (typeof root === 'string' && path.isAbsolute(root))

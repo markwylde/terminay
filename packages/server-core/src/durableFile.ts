@@ -395,6 +395,13 @@ export function takeStateRecoveryNotices(): StateRecoveryNotice[] {
 	return pendingNotices.splice(0, pendingNotices.length);
 }
 
+/** Queue notices again, e.g. ones carried over a recovery relaunch. */
+export function queueStateRecoveryNotices(
+	notices: readonly StateRecoveryNotice[],
+): void {
+	pendingNotices.push(...notices);
+}
+
 /** Diagnostics hook for silently rebuilt state. */
 export function observeRebuiltState(
 	observer: ((store: string, preservedAs: readonly string[]) => void) | undefined,

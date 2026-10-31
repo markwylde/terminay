@@ -157,3 +157,22 @@ test('the startup notice says what was restored or reset, in words, once', async
 	assert.match(mixed.detail, /macros started fresh/u);
 	assert.doesNotMatch(mixed.detail, /\//u, 'no paths');
 });
+
+test('notices survive the relaunch a recovery performs, and are told once', async (t) => {
+	const { carryStateRecoveryNotices, restoreCarriedStateRecoveryNotices } = await import('../electron/stateRecoveryNotices.ts');
+	const { queueStateRecoveryNotices, takeStateRecoveryNotices } = await import('../packages/server-core/src/durableFile.ts');
+	const root = mkdtempSync(join(tmpdir(), 'tlr-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const file = join(root, 'state-recovery-notices.v1.json');
+	takeStateRecoveryNotices();
+	queueStateRecoveryNotices([{ kind: 'restored', store: 'workspace' }]);
+	carryStateRecoveryNotices(file);
+	assert.deepEqual(takeStateRecoveryNotices(), []);
+	restoreCarriedStateRecoveryNotices(file);
+	assert.equal(existsSync(file), false);
+	assert.deepEqual(takeStateRecoveryNotices(), [{ kind: 'restored', store: 'workspace' }]);
+	writeFileSync(file, Buffer.alloc(64));
+	restoreCarriedStateRecoveryNotices(file);
+	assert.deepEqual(takeStateRecoveryNotices(), []);
+	assert.equal(existsSync(file), false);
+});

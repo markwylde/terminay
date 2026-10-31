@@ -200,7 +200,12 @@ import {
 	UPDATE_CHECK_INTERVAL_MS,
 } from './appUpdater';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
-import { stateRecoveryNoticeText } from './stateRecoveryNotices';
+import {
+	CARRIED_NOTICES_FILE,
+	carryStateRecoveryNotices,
+	restoreCarriedStateRecoveryNotices,
+	stateRecoveryNoticeText,
+} from './stateRecoveryNotices';
 import {
 	desktopEmbeddedStorePaths,
 	desktopLocalServerUiPartitionKey,
@@ -439,6 +444,16 @@ let terminalSettingsWatcher: FSWatcher | undefined;
  * file is never replaced by the in-memory stand-in used meanwhile.
  */
 const unreadableStartupStores = new Map<StateStoreName, StateUnreadableError>();
+
+function carriedStateRecoveryNoticesPath(): string {
+	return path.join(app.getPath('userData'), CARRIED_NOTICES_FILE);
+}
+// Notices a recovery relaunch carried over are told by this run, if it opens.
+try {
+	restoreCarriedStateRecoveryNotices(carriedStateRecoveryNoticesPath());
+} catch {
+	/* a lost notice never stops startup */
+}
 
 function holdStartupStateError(
 	error: unknown,
@@ -2062,6 +2077,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	raiseHeldStartupStateError();
 	loadRememberedRemoteConnections();
 	desktopWindowCompositions.load();
+	await embeddedMacros.load();
 	beginStartupPhase('workspace-restore');
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
@@ -7830,7 +7846,19 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 			// A failed main-process composition may have partially initialized native
 			// services. Relaunching is the bounded recovery boundary; it avoids
 			// reusing those services or presenting a blank native shell.
-			app.relaunch();
+			// E2E-only: the suite relaunches itself, so a process it does not
+			// own never holds the data directory. Inert without the marker.
+			// What this run already recovered is told by the run that opens.
+			try {
+				carryStateRecoveryNotices(carriedStateRecoveryNoticesPath());
+			} catch {
+				/* the recovery itself stands; only its notice is lost */
+			}
+			if (
+				process.env.TERMINAY_TEST !== '1' ||
+				process.env.TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH !== '1'
+			)
+				app.relaunch();
 			app.exit(0);
 		},
 		onDiagnostic: recordCanonicalRecoveryDiagnostic,
