@@ -216,7 +216,10 @@ async function unpack(archive, modules, packageName) {
 	const temporary = await mkdtemp(join(tmpdir(), 'terminay-built-in-unpack-'));
 	try {
 		await mkdir(modules, { recursive: true });
-		await runFile('tar', ['-xzf', archive, '-C', temporary]);
+		// A relative path: Git Bash's tar reads a drive letter (C:) as a remote host.
+		await runFile('tar', ['-xzf', relative(temporary, archive)], {
+			cwd: temporary,
+		});
 		await cp(
 			join(temporary, 'package'),
 			join(modules, ...packageName.split('/')),
