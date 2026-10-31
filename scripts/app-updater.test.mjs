@@ -589,6 +589,29 @@ test('beta with neither source readable fails through the updater and retries', 
 	assert.equal(h.updater.checks, 2);
 });
 
+test('a test feed replaces the rolling prerelease and the stable source is not read', async () => {
+	const feed = 'http://127.0.0.1:41234/';
+	const fetches = [];
+	const h = harness({
+		currentVersion: '1.3.0-beta.14',
+		channel: 'beta',
+		testFeedUrl: feed,
+		fetch: async (url) => {
+			fetches.push(url);
+			if (url.startsWith('https://api.github.com/')) return jsonResponse(releases);
+			return url === `${feed}beta-mac.yml`
+				? textResponse('version: 1.4.0-beta.3\nfiles: []\n')
+				: textResponse('version: 1.9.0\nfiles: []\n');
+		},
+	});
+	h.updater.onCheck = downloadsVersion('1.4.0-beta.3');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), { provider: 'generic', url: feed, channel: 'beta' });
+	assert.equal(fetches.includes(STABLE_METADATA_URL), false);
+	assert.equal(fetches.includes(BETA_METADATA_URL), false);
+	assert.equal(status.latestVersion, '1.4.0-beta.3');
+});
+
 test('the stable channel never reads the rolling prerelease', async () => {
 	const h = betaHarness({
 		currentVersion: '1.2.0',

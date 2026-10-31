@@ -272,12 +272,23 @@ jobs:
         if: matrix.platform == 'win'
         run: node scripts/check-windows-pe-architecture.mjs release/main-desktop/win-unpacked
 
-      - name: Install the Windows beta installer and run terminals from it
+      # Build N+1 for the update step: this run's app one patch version higher,
+      # with its beta.yml, outside release/ so nothing publishes it.
+      - name: Build the Windows update probe's next version
+        id: update_probe
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          next="$(sh scripts/build-windows-update-probe.sh "$(node -p "require('./package.json').version")" "$RUNNER_TEMP/update-probe")"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Install the Windows beta installer, run terminals from it, and update it in place
         if: matrix.platform == 'win'
         shell: pwsh
         env:
           ASSET: ${{ matrix.asset }}
-        run: ./scripts/probe-windows-desktop.ps1 -Installer "release/main-desktop/$env:ASSET" -Record "$env:RUNNER_TEMP/windows-probe.json"
+          UPDATE_VERSION: ${{ steps.update_probe.outputs.version }}
+        run: ./scripts/probe-windows-desktop.ps1 -Installer "release/main-desktop/$env:ASSET" -Record "$env:RUNNER_TEMP/windows-probe.json" -UpdateFeed "$env:RUNNER_TEMP/update-probe" -UpdateVersion $env:UPDATE_VERSION
 
       - name: Preserve the Windows probe record
         if: ${{ always() && matrix.platform == 'win' }}
@@ -286,7 +297,7 @@ jobs:
           name: windows-probe-main
           path: |
             ${{ runner.temp }}/windows-probe.json
-            ${{ runner.temp }}/windows-probe-failure.png
+            ${{ runner.temp }}/windows-probe-*.png
           if-no-files-found: ignore
 
       - name: Check the Linux beta AppImage against the glibc floor and run terminals from it there

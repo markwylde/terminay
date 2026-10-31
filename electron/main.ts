@@ -2680,6 +2680,11 @@ let appUpdater: AppUpdater | null = null;
 
 function getAppUpdater(): AppUpdater {
 	if (appUpdater === null) {
+		// The Windows update probe serves the next build from a local Beta feed.
+		const testFeedUrl =
+			process.env.TERMINAY_TEST === '1'
+				? process.env.TERMINAY_TEST_UPDATE_FEED_URL
+				: undefined;
 		appUpdater = createAppUpdater({
 			currentVersion: app.getVersion(),
 			isPackaged: app.isPackaged,
@@ -2695,7 +2700,10 @@ function getAppUpdater(): AppUpdater {
 					return false;
 				}
 			},
-			channel: readTerminalSettings().updateChannel,
+			channel:
+				testFeedUrl === undefined
+					? readTerminalSettings().updateChannel
+					: 'beta',
 			loadUpdater: async () => {
 				const { default: electronUpdater } = await import('electron-updater');
 				return electronUpdater.autoUpdater;
@@ -2703,6 +2711,7 @@ function getAppUpdater(): AppUpdater {
 			fetch: (url, init) => fetch(url, { ...init, redirect: 'follow' }),
 			log: (message, error) => console.warn(message, error ?? ''),
 			onStatusChanged: () => broadcastAppUpdateStatusChanged(),
+			testFeedUrl,
 		});
 		setInterval(() => {
 			void appUpdater?.check({ force: true });
