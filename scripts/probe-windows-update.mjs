@@ -177,13 +177,13 @@ async function holderRuntimes() {
 	return (await readdir(join(dataDir, 'holder-runtime')).catch(() => [])).filter((name) => !name.startsWith('.'));
 }
 
-/** Processes whose executable is under a directory. */
+/** Processes whose executable is under a directory, with their command lines. */
 function processesUnder(directory) {
-	const script = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${directory.replaceAll("'", "''")}\\', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`;
+	const script = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${directory.replaceAll("'", "''")}\\', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }`;
 	return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
-		.split(/\s+/u)
-		.filter(Boolean)
-		.map(Number);
+		.split(/\r?\n/u)
+		.map((line) => line.trim())
+		.filter(Boolean);
 }
 
 function installedVersion() {
@@ -292,7 +292,11 @@ try {
 	await step('ending the terminal lets a later start remove build N\'s holder copy', async () => {
 		await quitEnding(session);
 		// The old copy goes only once nothing runs it, and only when a holder starts.
-		await until(() => processesUnder(join(dataDir, 'holder-runtime', oldRuntimes[0])).length === 0, 'build N\'s holder kept running', 60_000);
+		const oldRuntime = join(dataDir, 'holder-runtime', oldRuntimes[0]);
+		await until(() => processesUnder(oldRuntime).length === 0, 'build N\'s holder kept running', 60_000).catch(async (error) => {
+			const closed = await readdir(join(dataDir, 'session-holder')).catch(() => []);
+			throw new Error(`${error.message}: ${JSON.stringify(processesUnder(oldRuntime))}; holder records: ${closed.join(', ')}`);
+		});
 		session = await launch(undefined);
 		await answer(session.window, 'fresh', '$(1+1)');
 		let runtimes;
