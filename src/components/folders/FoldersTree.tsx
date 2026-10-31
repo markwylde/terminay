@@ -15,6 +15,7 @@ import {
 	Plus,
 } from 'lucide-react';
 import {
+	type CSSProperties,
 	type DragEvent,
 	type KeyboardEvent,
 	type MouseEvent,
@@ -1091,7 +1092,10 @@ function PanelRow({
 	};
 	return (
 		<div
-			className={`folders-tree__row folders-tree__row--panel folders-tree__row--${panel.kind === 'folder' ? 'folder-tab' : panel.kind}${panel.isActive ? ' folders-tree__row--active' : ''}`}
+			className={`folders-tree__row folders-tree__row--panel folders-tree__row--${panel.kind === 'folder' ? 'folder-tab' : panel.kind}${panel.isActive ? ' folders-tree__row--active' : ''}${panel.kind === 'terminal' && panel.hasOwnColor ? ' folders-tree__row--own-color' : ''}`}
+			{...(panel.kind === 'terminal' && panel.color !== undefined
+				? { style: { '--tab-color': panel.color } as CSSProperties }
+				: {})}
 			role="treeitem"
 			aria-selected={panel.isActive}
 			tabIndex={0}

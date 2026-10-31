@@ -22,6 +22,8 @@ import type { AgentState } from '../types/agentStatus';
 export type FolderTreePanelFacts = {
 	status: AgentState;
 	title?: string;
+	/** The colour the panel's tab is drawn in. */
+	color?: string;
 };
 
 /**
@@ -114,6 +116,10 @@ export type FolderTreeTerminalRow = {
 	title: string;
 	status: AgentState;
 	isActive: boolean;
+	/** The colour the terminal's tab is drawn in, when known. */
+	color?: string;
+	/** True when that colour is not the project's. */
+	hasOwnColor?: boolean;
 	/** The worktree this terminal created, when it is not in that folder. */
 	createdWorktree?: string;
 };
@@ -187,7 +193,7 @@ export type FolderTreeFolderRow = {
 };
 
 export type FolderTreeInput = {
-	project: Pick<ServerWorkspaceProject, 'id' | 'folderIds' | 'root'>;
+	project: Pick<ServerWorkspaceProject, 'id' | 'folderIds' | 'root' | 'color'>;
 	folders: Readonly<Record<string, ServerWorkspaceFolder>>;
 	panels: Readonly<Record<string, ServerWorkspacePanel>>;
 	selectedFolderId?: string;
@@ -261,6 +267,7 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 			// A terminal with no session yet has nothing to show or activate.
 			if (panel.sessionId === undefined) continue;
 			const created = createdBy.get(panelId);
+			const color = input.panelFacts?.(panelId)?.color;
 			panels.push({
 				kind: 'terminal',
 				panelId,
@@ -268,6 +275,14 @@ export function buildFolderTree(input: FolderTreeInput): FolderTreeFolderRow[] {
 				title: titleOf(panel),
 				status: input.panelFacts?.(panelId)?.status ?? 'idle',
 				isActive,
+				...(color === undefined
+					? {}
+					: {
+							color,
+							hasOwnColor:
+								input.project.color !== undefined &&
+								color.toLowerCase() !== input.project.color.toLowerCase(),
+						}),
 				...(created === undefined || created.id === folder.id
 					? {}
 					: { createdWorktree: baseName(created.worktree?.path ?? '') }),
