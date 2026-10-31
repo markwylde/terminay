@@ -303,6 +303,10 @@ try {
 			throw new Error(`${error.message}: ${JSON.stringify(processesUnder(oldRuntime))}; holder records: ${closed.join(', ')}`);
 		});
 		session = await launch(undefined);
+		// The ended terminal comes back read-only; a new one starts a holder,
+		// which is when other builds' copies are removed.
+		await hostAction(session.window, { command: 'new-terminal', type: 'menu.invoke' });
+		await until(async () => (await session.window.locator('.terminal-tab-content').count()) === 2, 'no new terminal opened');
 		await answer(session.window, 'fresh', '$(1+1)');
 		let runtimes;
 		await until(async () => {
