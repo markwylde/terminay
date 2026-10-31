@@ -11,7 +11,7 @@
 //   4. Command Prompt, opened from the shell profile chooser: input, output,
 //      and `exit` ending it, then closing its tab;
 //   5. quit with the PowerShell terminal held, relaunch, and find the same
-//      terminal, with its earlier output, still answering.
+//      PowerShell, with its earlier output, still answering.
 //
 //   node scripts/probe-windows-desktop.mjs --executable <Terminay.exe> --data-dir <dir> --record <file>
 //
@@ -348,8 +348,17 @@ try {
 		await terminal(window).locator('.xterm-helper-textarea').focus();
 		await window.keyboard.press('Control+C');
 		await until(async () => (await runningTerminals(app, window)) === 0, 'the terminal stayed busy after node ended');
-		await type(window, 'Write-Output "after-busy-$(1+1)"');
-		await output(window, 'after-busy-2');
+		// PSReadLine drops what is typed while it redraws the prompt after an
+		// interrupt, so the shell is asked again until it answers.
+		for (let attempt = 0; ; attempt += 1) {
+			await type(window, `Write-Output "after-busy-${attempt}-$(1+1)"`);
+			try {
+				await terminal(window).locator('.xterm-rows').getByText(`after-busy-${attempt}-2`, { exact: true }).first().waitFor({ timeout: 10_000 });
+				break;
+			} catch (error) {
+				if (attempt === 2) throw error;
+			}
+		}
 	});
 
 	await check('the MCP pipe answers from inside a terminal', async () => {
@@ -474,11 +483,12 @@ try {
 	});
 
 	await step('server restart keeps the held terminal', async () => {
+		// Printed last before the quit, so it is on screen after the relaunch.
 		const pid = await answer(session.window, 'pid-before', '$PID');
 		await quit(session.app, 'keep');
 		session = await launch();
+		await output(session.window, `pid-before-${pid}`);
 		assert.equal(await answer(session.window, 'pid-after', '$PID'), pid, 'the same PowerShell must answer after the restart');
-		await output(session.window, `${marker}-42`);
 		await type(session.window, 'Write-Output "back-$(2+3)"');
 		await output(session.window, 'back-5');
 	});
