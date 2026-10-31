@@ -10,7 +10,9 @@
 //   3. wait for build N+1's installer to replace build N and relaunch it,
 //      watching that no UAC consent prompt appears;
 //   4. launch the installed build and find it is N+1, with the same PowerShell
-//      still answering.
+//      still answering;
+//   5. end that terminal, start again, and find build N's holder runtime copy
+//      removed now that nothing runs it.
 //
 //   node scripts/probe-windows-update.mjs --executable <Terminay.exe> --data-dir <dir> --feed <dir> --version <N+1> --record <file>
 import assert from 'node:assert/strict';
@@ -168,6 +170,20 @@ function installedProcesses() {
 		.map(Number);
 }
 
+/** The per-build holder runtime copies in the data directory. */
+async function holderRuntimes() {
+	return (await readdir(join(dataDir, 'holder-runtime')).catch(() => [])).filter((name) => !name.startsWith('.'));
+}
+
+/** Processes whose executable is under a directory. */
+function processesUnder(directory) {
+	const script = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${directory.replaceAll("'", "''")}\\', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`;
+	return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
+		.split(/\s+/u)
+		.filter(Boolean)
+		.map(Number);
+}
+
 function installedVersion() {
 	const script = `(Get-Item -LiteralPath '${executablePath.replaceAll("'", "''")}').VersionInfo.ProductVersion`;
 	return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' }).trim();
@@ -185,6 +201,17 @@ function watchForConsent() {
 	return { seen, stop: () => clearInterval(timer) };
 }
 
+/** Quits, ending the terminals. */
+async function quitEnding(running) {
+	await running.app.evaluate(({ dialog }) => {
+		dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 1 });
+	});
+	const child = running.app.process();
+	const exited = new Promise((resolve) => child.once('exit', resolve));
+	await running.app.evaluate(({ app }) => setImmediate(() => app.quit())).catch(() => undefined);
+	await exited;
+}
+
 let session;
 let feed;
 let failure;
@@ -198,8 +225,11 @@ try {
 	});
 
 	let pid;
+	let oldRuntimes;
 	await step('a running terminal and a downloaded update', async () => {
 		pid = await answer(session.window, 'pid-before', '$PID');
+		oldRuntimes = await holderRuntimes();
+		assert.equal(oldRuntimes.length, 1, `build N must run its holder from one copy, found ${oldRuntimes.join(', ')}`);
 		let status;
 		await until(async () => {
 			const response = await hostAction(session.window, { type: 'updater.check' });
@@ -253,14 +283,22 @@ try {
 		assert.equal(await answer(session.window, 'pid-after', '$PID'), pid, 'the same PowerShell must answer after the update');
 	});
 
+	await step('ending the terminal lets a later start remove build N\'s holder copy', async () => {
+		await quitEnding(session);
+		// The old copy goes only once nothing runs it, and only when a holder starts.
+		await until(() => processesUnder(join(dataDir, 'holder-runtime', oldRuntimes[0])).length === 0, 'build N\'s holder kept running', 60_000);
+		session = await launch(undefined);
+		await answer(session.window, 'fresh', '$(1+1)');
+		let runtimes;
+		await until(async () => {
+			runtimes = await holderRuntimes();
+			return !runtimes.some((name) => oldRuntimes.includes(name));
+		}, 'build N\'s holder copy was never removed', 60_000);
+		return { oldRuntimes, runtimes };
+	});
+
 	await step('quit', async () => {
-		await session.app.evaluate(({ dialog }) => {
-			dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 1 });
-		});
-		const child = session.app.process();
-		const exited = new Promise((resolve) => child.once('exit', resolve));
-		await session.app.evaluate(({ app }) => setImmediate(() => app.quit())).catch(() => undefined);
-		await exited;
+		await quitEnding(session);
 		session = undefined;
 	});
 } catch (error) {

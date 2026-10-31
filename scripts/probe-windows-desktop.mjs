@@ -2,14 +2,17 @@
 // The Windows Desktop probe's journey (native-windows-desktop, task 6.1), run
 // by scripts/probe-windows-desktop.ps1 against an installed Terminay.exe:
 //
-//   1. launch with an isolated data directory and wait for the workspace;
+//   1. launch with an isolated data directory and wait for the workspace; a
+//      second launch only brings the window forward, and a second listener
+//      cannot take the holder's pipe;
 //   2. PowerShell: input and output, then a window resize the shell sees;
 //   3. parity: a split starts in the directory of the terminal it splits, a
 //      foreground `node` is reported busy, the MCP pipe answers from inside a
 //      terminal, every built-in extension is on (or declared unavailable on Windows), and `git worktree add`
 //      moves its terminal into the new folder;
 //   4. Command Prompt, opened from the shell profile chooser: input, output,
-//      and `exit` ending it, then closing its tab;
+//      a foreground `node` reported busy, and `exit` ending it, then closing
+//      its tab;
 //   5. quit with the PowerShell terminal held, relaunch, and find the same
 //      PowerShell, with its earlier output, still answering.
 //
@@ -20,8 +23,9 @@
 // so one run reports every one; any other failure ends the run, with a
 // screenshot of the window beside the record.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { _electron as electron } from '@playwright/test';
 
@@ -276,6 +280,26 @@ async function logLines(pattern) {
 	}
 }
 
+/** Terminay main processes from this executable: Chromium's helpers carry `--type=`. */
+function mainProcesses() {
+	const script = `Get-CimInstance Win32_Process -Filter "Name = 'Terminay.exe'" | Where-Object { $_.ExecutablePath -ieq '${executablePath.replaceAll("'", "''")}' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
+	return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
+		.split(/\s+/u)
+		.filter(Boolean)
+		.map(Number);
+}
+
+/** The pipe the running holder listens on, from its record. */
+async function holderPipe() {
+	const directory = join(dataDir, 'session-holder');
+	for (const name of await readdir(directory).catch(() => [])) {
+		if (!name.endsWith('.json')) continue;
+		const record = JSON.parse(await readFile(join(directory, name), 'utf8').catch(() => '{}'));
+		if (typeof record.socketPath === 'string') return record.socketPath;
+	}
+	return undefined;
+}
+
 async function diagnostics() {
 	try {
 		const directory = join(dataDir, 'logs');
@@ -293,6 +317,44 @@ try {
 	await step('launch', async () => {
 		session = await launch();
 		assert.equal(await session.window.locator('.terminal-tab-content').count(), 1);
+	});
+
+	await check('a second launch brings the running window forward instead of starting', async () => {
+		const before = mainProcesses();
+		assert.equal(before.length, 1, `expected one main process, found ${before.length}`);
+		await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
+		await until(() => session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), 'the window never minimized');
+		const second = spawn(executablePath, [], {
+			env: { ...process.env, CI: '1', TERMINAY_TEST: '1', TERMINAY_SESSION_HOLDER: '1', TERMINAY_USER_DATA_DIR: dataDir },
+			stdio: 'ignore',
+		});
+		const code = await new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error('the second launch kept running')), 60_000);
+			second.once('exit', (exitCode) => {
+				clearTimeout(timer);
+				resolve(exitCode);
+			});
+		});
+		await until(
+			() => session.app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isMinimized()),
+			'the running window was not brought forward',
+		);
+		assert.deepEqual(mainProcesses(), before, 'a second main process is running');
+		return { secondLaunchExit: code };
+	});
+
+	await check('a second listener cannot take the holder pipe', async () => {
+		let pipe;
+		await until(async () => (pipe = await holderPipe()) !== undefined, 'no holder record names a pipe');
+		assert.match(pipe, /^\\\\\.\\pipe\\terminay-holder-[0-9a-f]{24}-[0-9a-f]+$/u);
+		const error = await new Promise((resolve) => {
+			const server = createServer();
+			server.once('error', resolve);
+			server.listen(pipe, () => server.close(() => resolve(undefined)));
+		});
+		assert.ok(error, 'a second server listened on the holder pipe');
+		assert.match(error.code, /^(EADDRINUSE|EACCES)$/u);
+		return { pipe, refused: error.code };
 	});
 
 	const marker = `probe-${Date.now()}`;
@@ -466,7 +528,7 @@ try {
 		);
 	});
 
-	await step('command prompt input, output, and exit', async () => {
+	await step('command prompt input and output', async () => {
 		const { window } = session;
 		await window.keyboard.press('Control+L');
 		await window.keyboard.type('New Terminal with Profile');
@@ -477,6 +539,20 @@ try {
 		await window.locator('.terminal-tab-content').nth(1).waitFor({ state: 'visible' });
 		await type(window, 'echo probe-cmd-%OS%');
 		await output(window, 'probe-cmd-Windows_NT');
+	});
+
+	await check('a foreground node under Command Prompt is reported busy', async () => {
+		const { app, window } = session;
+		await until(async () => (await runningTerminals(app, window)) === 0, 'an idle Command Prompt was reported busy');
+		await type(window, 'node -e "setTimeout(() => {}, 120000)"');
+		await until(async () => (await runningTerminals(app, window)) >= 1, 'a running node was never reported busy');
+		await terminal(window).locator('.xterm-helper-textarea').focus();
+		await window.keyboard.press('Control+C');
+		await until(async () => (await runningTerminals(app, window)) === 0, 'the terminal stayed busy after node ended');
+	});
+
+	await step('command prompt exit', async () => {
+		const { window } = session;
 		// An ended terminal stays open, read-only, until its tab is closed.
 		await type(window, 'exit');
 		await terminal(window).locator('.xterm-rows').getByText(/\[process exited with /u).first().waitFor();
