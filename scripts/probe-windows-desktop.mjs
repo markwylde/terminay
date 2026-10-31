@@ -280,7 +280,7 @@ async function logLines(pattern) {
 	}
 }
 
-/** Terminay main processes from this executable: Chromium's helpers carry `--type=`. */
+/** Terminay processes from this executable that are not Chromium helpers (`--type=`). */
 function mainProcesses() {
 	const script = `Get-CimInstance Win32_Process -Filter "Name = 'Terminay.exe'" | Where-Object { $_.ExecutablePath -ieq '${executablePath.replaceAll("'", "''")}' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
 	return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
@@ -320,8 +320,10 @@ try {
 	});
 
 	await check('a second launch brings the running window forward instead of starting', async () => {
-		const before = mainProcesses();
-		assert.equal(before.length, 1, `expected one main process, found ${before.length}`);
+		// Terminay's own node-mode children also run without `--type=`, so the
+		// set is compared, not counted.
+		const before = mainProcesses().sort();
+		assert.ok(before.includes(session.app.process().pid), 'the running app is not among its processes');
 		await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
 		await until(() => session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), 'the window never minimized');
 		const second = spawn(executablePath, [], {
@@ -339,8 +341,10 @@ try {
 			() => session.app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isMinimized()),
 			'the running window was not brought forward',
 		);
-		assert.deepEqual(mainProcesses(), before, 'a second main process is running');
-		return { secondLaunchExit: code };
+		const after = mainProcesses().sort();
+		assert.ok(!after.includes(second.pid), 'the second launch is still running');
+		assert.deepEqual(after.filter((id) => !before.includes(id)), [], 'a second launch left a process running');
+		return { secondLaunchExit: code, processes: before.length };
 	});
 
 	await check('a second listener cannot take the holder pipe', async () => {
