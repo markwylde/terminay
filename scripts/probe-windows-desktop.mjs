@@ -128,6 +128,24 @@ async function launch() {
 /** Chromium's own profile and non-state folders, left as they are. */
 const NOT_STATE = new Set(['Local Storage', 'Session Storage', 'IndexedDB', 'blob_storage', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Shared Dictionary', 'Crashpad', 'Service Worker', 'WebStorage', 'Partitions', 'Network', 'logs', 'recordings', 'temp']);
 
+/**
+ * Power is cut: nothing of Terminay is left running. Session holders outlive
+ * a quit by design and hold their runtime copy open, so stop every process
+ * started from this data directory before its files are rewritten.
+ */
+function cutPower() {
+	const root = dataDir.replaceAll("'", "''");
+	execFileSync(
+		'powershell.exe',
+		[
+			'-NoProfile',
+			'-Command',
+			`Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith('${root}', 'OrdinalIgnoreCase')) -or ($_.CommandLine -and $_.CommandLine.Contains('${root}')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+		],
+		{ stdio: 'inherit' },
+	);
+}
+
 /** Rewrite every state file, and every holder runtime file, as zeros. */
 async function zeroDataDirectory(directory = dataDir, inRuntime = false) {
 	let zeroed = 0;
@@ -656,7 +674,18 @@ try {
 	});
 
 	await step('power loss: zeroed state and holder runtime still reach PowerShell', async () => {
-		const zeroed = await zeroDataDirectory();
+		cutPower();
+		// A killed process's handles close shortly after it exits.
+		let zeroed = 0;
+		for (let attempt = 1; ; attempt += 1) {
+			try {
+				zeroed = await zeroDataDirectory();
+				break;
+			} catch (error) {
+				if (error?.code !== 'EBUSY' || attempt === 10) throw error;
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			}
+		}
 		log(`zeroed ${zeroed} files`);
 		assert.ok(zeroed > 5, 'the data directory held state to damage');
 		session = await launchThroughRecovery();
