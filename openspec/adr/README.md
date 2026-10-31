@@ -111,3 +111,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0085](./0085-the-server-reaches-win32-apis-through-koffi.md) | The server reaches Win32 APIs that Node does not expose through `koffi`, loaded only on Windows | accepted | 2026-10-30 |
 | [0086](./0086-a-windows-pipe-admits-only-the-users-principals-and-a-peer-that-proves-the-credential.md) | A Windows pipe admits only the user's principals for writing, and serves only a peer that proves its credential | accepted, supersedes 0083 | 2026-10-30 |
 | [0087](./0087-terminay-keeps-powershells-process-directory-in-step-with-its-location-on-windows.md) | Terminay keeps PowerShell's process directory in step with its location on Windows | accepted | 2026-10-30 |
+| [0088](./0088-terminay-state-files-are-replaced-durably-and-recovered-by-kind.md) | Terminay's state files are replaced durably and recovered according to their kind | accepted | 2026-10-31 |

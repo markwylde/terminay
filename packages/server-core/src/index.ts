@@ -7,6 +7,7 @@ export * from './connection.js';
 export * from './control/index.js';
 export * from './diagnostics.js';
 export * from './dispatcher.js';
+export * from './durableFile.js';
 export * from './events.js';
 export * from './extensions/index.js';
 export type {
