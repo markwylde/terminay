@@ -85,9 +85,11 @@ test('the compact application menu crosses the host boundary as a capability', a
 	// A host with native menus supplies nothing at all.
 	assert.match(webWorkspace, /\.\.\.\(hasNativeMenus\s*\?\s*\{\}/u);
 
+	// The compact row draws the in-page menu a browser host hands it, or else
+	// the button a Windows host offers to open its own native menu.
 	assert.match(
 		sharedApp,
-		/applicationMenu=\{hostPresentation\?\.renderCompactApplicationMenu\?\.\(\)\}/u,
+		/applicationMenu=\{\s*hostPresentation\?\.renderCompactApplicationMenu\?\.\(\) \?\?\s*\(hostPresentation\?\.openApplicationMenu === undefined/u,
 	);
 	// The browser's own menu vocabulary stays in the browser composition.
 	for (const command of ['Disconnect', 'New Terminal Tab', 'New Project']) {

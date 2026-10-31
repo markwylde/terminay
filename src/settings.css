@@ -2625,10 +2625,11 @@
   container: settings-detail / inline-size;
 }
 
-/* Quiet scrollbars in every column. */
-.settings-shell * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--settings-border) transparent;
+/* Quiet scrollbars in every column: the global thin style, in the
+   settings border colour. */
+.settings-shell ::-webkit-scrollbar-thumb {
+  background: var(--settings-border);
+  background-clip: padding-box;
 }
 
 /* A labelled field: the label keeps one width so inputs line up. */

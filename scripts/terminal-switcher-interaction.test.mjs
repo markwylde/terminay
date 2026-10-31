@@ -17,7 +17,12 @@ await build({
   platform: 'node',
 })
 
-const { getTerminalSwitcherDirection } = await import(pathToFileURL(outputPath).href)
+const {
+  getTerminalSwitcherDirection,
+  terminalSwitcherLabels,
+  terminalSwitcherModifier,
+  terminalSwitcherReleaseKey,
+} = await import(pathToFileURL(outputPath).href)
 
 test.after(async () => {
   await rm(outputDirectory, { force: true, recursive: true })
@@ -46,4 +51,32 @@ test('terminal switcher leaves repeated and extended-modifier chords alone', () 
   assert.equal(getTerminalSwitcherDirection(shortcut({ metaKey: true })), null)
   assert.equal(getTerminalSwitcherDirection(shortcut({ altKey: false })), null)
   assert.equal(getTerminalSwitcherDirection(shortcut({ key: 'Escape' })), null)
+})
+
+test('Desktop on Windows and Linux switches with Ctrl+Tab; macOS and browsers with Alt+Tab', () => {
+  assert.equal(terminalSwitcherModifier({ isDesktop: true, platform: 'Win32' }), 'ctrl')
+  assert.equal(terminalSwitcherModifier({ isDesktop: true, platform: 'Linux x86_64' }), 'ctrl')
+  assert.equal(terminalSwitcherModifier({ isDesktop: true, platform: 'MacIntel' }), 'alt')
+  assert.equal(terminalSwitcherModifier({ isDesktop: false, platform: 'Win32' }), 'alt')
+  assert.equal(terminalSwitcherModifier({ isDesktop: false, platform: 'MacIntel' }), 'alt')
+})
+
+test('the Ctrl chord claims Ctrl+Tab and Ctrl+Shift+Tab, and nothing with Alt or Meta', () => {
+  const ctrl = (overrides) => shortcut({ altKey: false, ctrlKey: true, ...overrides })
+  assert.equal(getTerminalSwitcherDirection(ctrl(), 'ctrl'), 1)
+  assert.equal(getTerminalSwitcherDirection(ctrl({ shiftKey: true }), 'ctrl'), -1)
+  assert.equal(getTerminalSwitcherDirection(ctrl({ altKey: true }), 'ctrl'), null)
+  assert.equal(getTerminalSwitcherDirection(ctrl({ metaKey: true }), 'ctrl'), null)
+  assert.equal(getTerminalSwitcherDirection(ctrl({ repeat: true }), 'ctrl'), null)
+  // Alt+Tab belongs to the operating system where Ctrl is the chord.
+  assert.equal(getTerminalSwitcherDirection(shortcut(), 'ctrl'), null)
+  // And Ctrl+Tab is a plain key where Alt is the chord.
+  assert.equal(getTerminalSwitcherDirection(ctrl(), 'alt'), null)
+})
+
+test('the switch commits on the chord modifier and the heading names it', () => {
+  assert.equal(terminalSwitcherReleaseKey('ctrl'), 'Control')
+  assert.equal(terminalSwitcherReleaseKey('alt'), 'Alt')
+  assert.deepEqual(terminalSwitcherLabels('ctrl'), { chord: 'Ctrl+Tab', hint: 'Release Ctrl to switch' })
+  assert.deepEqual(terminalSwitcherLabels('alt'), { chord: 'Alt+Tab', hint: 'Release Alt to switch' })
 })
