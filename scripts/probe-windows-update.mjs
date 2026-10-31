@@ -203,7 +203,7 @@ function watchForConsent() {
 	return { seen, stop: () => clearInterval(timer) };
 }
 
-/** Quits, ending the terminals. */
+/** Quits, answering a confirmation, if one is asked, by ending the terminals. */
 async function quitEnding(running) {
 	await running.app.evaluate(({ dialog }) => {
 		dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 1 });
@@ -290,6 +290,11 @@ try {
 	});
 
 	await step('ending the terminal lets a later start remove build N\'s holder copy', async () => {
+		// Quitting asks to end terminals only when one runs a program; an idle
+		// PowerShell is kept. So the shell is ended first, and its holder, with
+		// nothing left to hold, exits.
+		await type(session.window, 'exit');
+		await session.window.locator('.terminal-panel:visible').first().locator('.xterm-rows').getByText(/\[process exited with /u).first().waitFor();
 		await quitEnding(session);
 		// The old copy goes only once nothing runs it, and only when a holder starts.
 		const oldRuntime = join(dataDir, 'holder-runtime', oldRuntimes[0]);
