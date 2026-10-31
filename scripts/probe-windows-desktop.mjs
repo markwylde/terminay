@@ -134,13 +134,15 @@ const NOT_STATE = new Set(['Local Storage', 'Session Storage', 'IndexedDB', 'blo
  * started from this data directory before its files are rewritten.
  */
 function cutPower() {
-	const root = dataDir.replaceAll("'", "''");
+	// Only what runs from the holder runtime copy: the probe's own command
+	// line names the data directory too.
+	const root = join(dataDir, 'holder-runtime').replaceAll("'", "''");
 	execFileSync(
 		'powershell.exe',
 		[
 			'-NoProfile',
 			'-Command',
-			`Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith('${root}', 'OrdinalIgnoreCase')) -or ($_.CommandLine -and $_.CommandLine.Contains('${root}')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+			`Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith('${root}', 'OrdinalIgnoreCase')) -and $_.ProcessId -ne ${process.pid} } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
 		],
 		{ stdio: 'inherit' },
 	);
