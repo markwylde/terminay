@@ -31,8 +31,9 @@ export interface DesktopStateFile {
  * store is added here when it is added to the code, or the suite fails.
  *
  * Not listed: the holder runtime copy (`holder-runtime/`), which proves
- * itself with a manifest; recordings and their library indexes, which are
- * user documents with their own durable writer; the process lock; Chromium's
+ * itself with a manifest; recordings, which are user documents with their own
+ * durable writer; the write-once settings `.pre-migration.json` backup, which
+ * nothing reads; the process lock; Chromium's
  * own profile files; and the dead `macros.json`, `remote-host-key.v1.json`
  * and `remote-pairing-pin-verifier`, which are only migrated from or removed.
  */
@@ -183,6 +184,21 @@ export const DESKTOP_STATE_FILES: readonly DesktopStateFile[] = Object.freeze([
 		file: 'diagnostics-preferences.v1.json',
 		kind: 'rebuildable',
 		label: 'diagnostics-preferences',
+	},
+	{
+		file: 'recording-roots.json',
+		kind: 'rebuildable',
+		label: 'recording-roots',
+	},
+	{
+		file: 'server-recording-roots.v1.json',
+		kind: 'rebuildable',
+		label: 'recording-roots',
+	},
+	{
+		file: 'state-recovery-notices.v1.json',
+		kind: 'rebuildable',
+		label: 'state-recovery-notices',
 	},
 	// Under the app logs path, which E2E places at `<userData>/logs`.
 	{

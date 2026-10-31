@@ -14,7 +14,11 @@
 //      a foreground `node` reported busy, and `exit` ending it, then closing
 //      its tab;
 //   5. quit with the PowerShell terminal held, relaunch, and find the same
-//      PowerShell, with its earlier output, still answering.
+//      PowerShell, with its earlier output, still answering;
+//   6. power loss (durable-state-files 7.4): every state file and every file
+//      of the copied holder runtime rewritten as zeros at its own length, as an
+//      unclean shutdown left them, then a launch that must reach a working
+//      PowerShell, choosing Start fresh wherever recovery offers it.
 //
 //   node scripts/probe-windows-desktop.mjs --executable <Terminay.exe> --data-dir <dir> --record <file>
 //
@@ -24,7 +28,7 @@
 // screenshot of the window beside the record.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { _electron as electron } from '@playwright/test';
@@ -119,6 +123,66 @@ async function launch() {
 	await window.locator('[data-terminay-app-component]').waitFor({ state: 'visible' });
 	await window.locator('.terminal-tab-content').first().waitFor({ state: 'visible' });
 	return { app, window };
+}
+
+/** Chromium's own profile and non-state folders, left as they are. */
+const NOT_STATE = new Set(['Local Storage', 'Session Storage', 'IndexedDB', 'blob_storage', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Shared Dictionary', 'Crashpad', 'Service Worker', 'WebStorage', 'Partitions', 'Network', 'logs', 'recordings', 'temp']);
+
+/** Rewrite every state file, and every holder runtime file, as zeros. */
+async function zeroDataDirectory(directory = dataDir, inRuntime = false) {
+	let zeroed = 0;
+	for (const entry of await readdir(directory, { withFileTypes: true })) {
+		if (NOT_STATE.has(entry.name)) continue;
+		const path = join(directory, entry.name);
+		const runtime = inRuntime || entry.name === 'holder-runtime';
+		if (entry.isDirectory()) zeroed += await zeroDataDirectory(path, runtime);
+		else if (runtime || entry.name.endsWith('.json')) {
+			await writeFile(path, Buffer.alloc(Math.max(1, (await stat(path)).size)));
+			zeroed += 1;
+		}
+	}
+	return zeroed;
+}
+
+/** Launch, choosing Start fresh each time recovery offers it, until a
+ * terminal shows. Recovery that offers only Retry fails the probe. */
+async function launchThroughRecovery(rounds = 14) {
+	for (let round = 0; round < rounds; round += 1) {
+		const app = await electron.launch({
+			timeout: ACTION_TIMEOUT_MS,
+			executablePath,
+			env: {
+				...process.env,
+				CI: '1',
+				TERMINAY_TEST: '1',
+				TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH: '1',
+				TERMINAY_SESSION_HOLDER: '1',
+				TERMINAY_USER_DATA_DIR: dataDir,
+				VITE_DEV_SERVER_URL: '',
+			},
+		});
+		app.process().stdout?.on('data', (chunk) => process.stdout.write(`[app] ${chunk}`));
+		app.process().stderr?.on('data', (chunk) => process.stdout.write(`[app] ${chunk}`));
+		app.context().setDefaultTimeout(ACTION_TIMEOUT_MS);
+		const window = await app.firstWindow();
+		const workspace = window.locator('.terminal-tab-content').first();
+		const recovery = window.getByRole('alert');
+		await workspace.or(recovery).first().waitFor({ state: 'visible' });
+		if (await workspace.isVisible()) return { app, window };
+		const text = await recovery.innerText();
+		log(`recovery: ${text.replace(/\s+/g, ' ')}`);
+		const startFresh = recovery.getByRole('link', { name: 'Start fresh' });
+		assert.ok((await startFresh.count()) > 0, `recovery offered only Retry: ${text}`);
+		const child = app.process();
+		const exited = new Promise((resolve) => {
+			if (child.exitCode !== null || child.signalCode !== null) resolve('exited');
+			else child.once('exit', () => resolve('exited'));
+		});
+		await startFresh.evaluate((link) => link.click());
+		const next = await Promise.race([exited, workspace.waitFor({ state: 'visible' }).then(() => 'open')]);
+		if (next === 'open') return { app, window };
+	}
+	throw new Error(`no workspace after ${rounds} recovery rounds`);
 }
 
 /**
@@ -587,6 +651,17 @@ try {
 	});
 
 	await step('quit', async () => {
+		await quit(session.app, 'end');
+		session = undefined;
+	});
+
+	await step('power loss: zeroed state and holder runtime still reach PowerShell', async () => {
+		const zeroed = await zeroDataDirectory();
+		log(`zeroed ${zeroed} files`);
+		assert.ok(zeroed > 5, 'the data directory held state to damage');
+		session = await launchThroughRecovery();
+		await type(session.window, 'Write-Output "after-$(6*7)"');
+		await output(session.window, 'after-42');
 		await quit(session.app, 'end');
 		session = undefined;
 	});

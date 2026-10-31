@@ -16,7 +16,7 @@ import {
 } from 'node:fs'
 import { open, readdir } from 'node:fs/promises'
 import path from 'node:path'
-import { writeFileDurablySync } from '../../packages/server-core/src/durableFile.ts'
+import { loadRebuildableStateSync, writeFileDurablySync } from '../../packages/server-core/src/durableFile.ts'
 import { defaultTerminalSettings, resolveTerminalTheme } from '../../src/terminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../../src/types/settings'
 import type {
@@ -568,7 +568,13 @@ export class TerminalRecordingService {
 
   private loadRootIndex(): void {
     try {
-      const parsed = parseJsonObject(readFileSync(this.getLibraryIndexPath(), 'utf8'))
+      // A corrupt index is set aside, never overwritten (ADR-0088).
+      const parsed = loadRebuildableStateSync(this.getLibraryIndexPath(), 'recording-roots', {
+        validate: (value) =>
+          typeof value === 'object' && value !== null && Array.isArray((value as { roots?: unknown }).roots)
+            ? value as { roots: unknown[] }
+            : undefined,
+      })
       if (!Array.isArray(parsed?.roots)) return
       for (const root of parsed.roots) {
         if (typeof root === 'string' && path.isAbsolute(root)) {
