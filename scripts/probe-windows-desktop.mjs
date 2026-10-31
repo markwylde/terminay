@@ -199,7 +199,7 @@ async function launchThroughRecovery(rounds = 14) {
 			else child.once('exit', () => resolve('exited'));
 		});
 		await startFresh.evaluate((link) => link.click());
-		const next = await Promise.race([exited, workspace.waitFor({ state: 'visible' }).then(() => 'open')]);
+		const next = await Promise.race([exited, workspace.waitFor({ state: 'visible' }).then(() => 'open', () => 'exited')]);
 		if (next === 'open') return { app, window };
 	}
 	throw new Error(`no workspace after ${rounds} recovery rounds`);
