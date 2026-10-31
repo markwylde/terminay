@@ -349,7 +349,10 @@ try {
 
 	await check('a second listener cannot take the holder pipe', async () => {
 		let pipe;
-		await until(async () => (pipe = await holderPipe()) !== undefined, 'no holder record names a pipe');
+		await until(async () => {
+			pipe = await holderPipe();
+			return pipe !== undefined;
+		}, 'no holder record names a pipe');
 		assert.match(pipe, /^\\\\\.\\pipe\\terminay-holder-[0-9a-f]{24}-[0-9a-f]+$/u);
 		const error = await new Promise((resolve) => {
 			const server = createServer();
