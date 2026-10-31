@@ -223,6 +223,8 @@ try {
 		session = await launch(feed.url);
 		const current = await session.app.evaluate(({ app }) => app.getVersion());
 		assert.notEqual(current, nextVersion, 'build N must not already be the update');
+		// 0.0.0 is a development build, which never checks for updates.
+		assert.notEqual(current, '0.0.0', 'build N must carry a release version');
 		return { current, feed: [...(await readdir(feedDir))] };
 	});
 
