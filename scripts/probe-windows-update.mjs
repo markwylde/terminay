@@ -236,11 +236,13 @@ try {
 		assert.equal(oldRuntimes.length, 1, `build N must run its holder from one copy, found ${oldRuntimes.join(', ')}`);
 		let status;
 		await until(async () => {
-			const response = await hostAction(session.window, { type: 'updater.check' });
-			status = response?.result;
+			// The host answers with the update status itself.
+			status = await hostAction(session.window, { type: 'updater.check' });
 			if (status?.state === 'error') throw new Error(`the update check failed: ${status.errorMessage}`);
 			return status?.state === 'ready';
-		}, 'the update never finished downloading', 240_000);
+		}, 'the update never finished downloading', 240_000).catch((error) => {
+			throw new Error(`${error.message} (last status: ${JSON.stringify(status)})`);
+		});
 		assert.equal(status.canInstallInPlace, true, 'build N must install updates in place');
 		assert.equal(status.latestVersion, nextVersion);
 		return { pid, status: { state: status.state, latestVersion: status.latestVersion }, requests: feed.requests };
