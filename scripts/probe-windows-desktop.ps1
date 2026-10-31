@@ -121,7 +121,9 @@ try {
 
 		Invoke-Step 'update: install build N where the installer puts it' {
 			if (Test-Path (Join-Path $defaultInstallDir 'Terminay.exe')) { throw "Terminay is already installed in $defaultInstallDir" }
-			$process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
+			# Named, not defaulted: until the earlier uninstall's background copy has
+			# removed its registry entry, a silent install goes where that one was.
+			$process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$defaultInstallDir" -PassThru
 			if (-not $process.WaitForExit(300000)) { throw 'installer did not finish within 5 minutes' }
 			if ($process.ExitCode -ne 0) { throw "installer exited $($process.ExitCode)" }
 			if (-not (Test-Path (Join-Path $defaultInstallDir 'Terminay.exe'))) { throw "Terminay.exe is not in $defaultInstallDir" }
