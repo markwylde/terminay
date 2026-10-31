@@ -691,6 +691,17 @@ try {
 		log(`zeroed ${zeroed} files`);
 		assert.ok(zeroed > 5, 'the data directory held state to damage');
 		session = await launchThroughRecovery();
+		// The workspace comes back from its earlier save, and its terminal
+		// ended before the power cut, so a new PowerShell proves the runtime.
+		const { window } = session;
+		const before = await window.locator('.terminal-tab-content').count();
+		await commandBar(window);
+		await window.keyboard.type('New Terminal with Profile');
+		await window.keyboard.press('Enter');
+		const chooser = window.locator('.shell-profile-chooser');
+		await chooser.waitFor({ state: 'visible' });
+		await chooser.getByRole('button', { name: /PowerShell/u }).first().click();
+		await window.locator('.terminal-tab-content').nth(before).waitFor({ state: 'visible' });
 		await type(session.window, 'Write-Output "after-$(6*7)"');
 		await output(session.window, 'after-42');
 		await quit(session.app, 'end');
