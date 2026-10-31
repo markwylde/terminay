@@ -738,6 +738,23 @@ test("TerminalService disposal releases node-pty foreground polling when shutdow
   assert.equal(intervals.size, 0, "authoritative shutdown disposes the adapter poll without waiting for node-pty exit");
 });
 
+test("a resize to the session's current size does not reach the PTY", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
+  const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const write = { ...session.identity, clientId: "client-a", scope: "write" };
+
+  await service.resize(session.identity, { cols: 80, rows: 24 }, write);
+  assert.deepEqual(pty.processes[0].resizes, [], "ConPTY repaints on any resize, so the current size is not re-sent");
+  await service.resize(session.identity, { cols: 100, rows: 30 }, write);
+  await service.resize(session.identity, { cols: 100, rows: 30 }, write);
+  assert.deepEqual(pty.processes[0].resizes, [{ cols: 100, rows: 30 }]);
+  await assert.rejects(
+    () => service.resize({ ...session.identity, projectId: "project-other" }, { cols: 100, rows: 30 }, write),
+    (error) => error instanceof TerminalServiceError && error.code === "forbidden",
+  );
+});
+
 test("two authorized clients compete on one PTY while an explicit display cursor replays retained output", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });

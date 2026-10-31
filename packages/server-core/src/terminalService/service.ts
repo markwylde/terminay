@@ -1397,6 +1397,14 @@ export class TerminalService {
 				'session_exited',
 				'terminal process is unavailable',
 			);
+		// A POSIX kernel drops a same-size TIOCSWINSZ, but Windows ConPTY repaints
+		// the whole screen for it. Focus and controller claims re-send the current
+		// size, so that repaint would read as raw-output activity.
+		if (
+			next.cols === mutable.dimensions.cols &&
+			next.rows === mutable.dimensions.rows
+		)
+			return;
 		await mutable.process.resize(next);
 		mutable.dimensions.cols = next.cols;
 		mutable.dimensions.rows = next.rows;
