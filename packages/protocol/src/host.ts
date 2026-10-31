@@ -314,6 +314,11 @@ export type TerminayHostAction =
 	| Readonly<{ type: 'route.focus'; presentationId: string }>
 	| Readonly<{ type: 'route.close'; presentationId?: string }>
 	| Readonly<{ type: 'menu.invoke'; command: TerminayHostMenuCommand }>
+	/** Open the host's own application menu as a dropdown at this point, in
+	 * CSS pixels from the window's top left. It names no command: the host
+	 * shows the menu it already has. A host that draws no menu of its own
+	 * there, or does not know the action, refuses it. */
+	| Readonly<{ type: 'menu.popup'; x: number; y: number }>
 	| Readonly<{
 			type: 'menu.accelerators.update';
 			accelerators: readonly TerminayHostMenuAccelerator[];
@@ -424,6 +429,8 @@ const MAX_VERSION = 65_535;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 /** Largest per-window count `badge.count.set` accepts. */
 export const TERMINAY_HOST_MAX_BADGE_COUNT = 9_999;
+/** Larger than any window; a menu popup point beyond it is refused. */
+export const TERMINAY_HOST_MAX_MENU_POPUP_COORDINATE = 100_000;
 const CAPABILITY_NAMES = new Set<string>(TERMINAY_HOST_CAPABILITY_NAMES);
 const MENU_COMMANDS = new Set<string>(TERMINAY_HOST_MENU_COMMANDS);
 
@@ -1132,6 +1139,24 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				type: 'menu.invoke',
 				command: parseTerminayHostMenuCommand(action.command),
 			});
+		case 'menu.popup':
+			exactKeys(action, ['type', 'x', 'y'], 'menu popup action');
+			if (
+				typeof action.x !== 'number' ||
+				typeof action.y !== 'number' ||
+				!Number.isFinite(action.x) ||
+				!Number.isFinite(action.y) ||
+				action.x < 0 ||
+				action.y < 0 ||
+				action.x > TERMINAY_HOST_MAX_MENU_POPUP_COORDINATE ||
+				action.y > TERMINAY_HOST_MAX_MENU_POPUP_COORDINATE
+			)
+				throw new TypeError('menu popup point is invalid');
+			return Object.freeze({
+				type: 'menu.popup',
+				x: Math.round(action.x),
+				y: Math.round(action.y),
+			});
 		case 'menu.accelerators.update': {
 			exactKeys(action, ['type', 'accelerators'], 'menu accelerators action');
 			if (
@@ -1451,6 +1476,7 @@ export function requiredTerminayHostCapability(
 		case 'route.close':
 			return 'nativeWindows';
 		case 'menu.invoke':
+		case 'menu.popup':
 		case 'menu.accelerators.update':
 		case 'device.settings.update':
 			return 'nativeMenus';

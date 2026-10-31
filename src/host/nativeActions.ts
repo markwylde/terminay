@@ -235,6 +235,20 @@ export async function closeHostPresentation(): Promise<void> {
 	window.close();
 }
 
+/** Open the host's application menu as a dropdown below a point, in CSS
+ * pixels. False when there is no host, or it has no such menu to open. */
+export async function openApplicationMenu(point: {
+	x: number;
+	y: number;
+}): Promise<boolean> {
+	try {
+		return (await request({ type: 'menu.popup', x: point.x, y: point.y }))
+			.handled;
+	} catch {
+		return false;
+	}
+}
+
 export async function updateNativeMenuAccelerators(
 	accelerators: readonly TerminayHostMenuAccelerator[],
 ): Promise<void> {

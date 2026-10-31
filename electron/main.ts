@@ -328,6 +328,12 @@ import {
 	applyWindowMenus,
 	isMenuLessCopyInput,
 } from './windowMenuPolicy';
+import {
+	BARE_ALT_MENU_POINT,
+	clampMenuPopupPoint,
+	createBareAltTracker,
+	opensApplicationMenuPopup,
+} from './applicationMenuPopup';
 import { canonicalAuxiliaryRequest } from './auxiliaryRouteAllowList';
 import { buildTerminayMenu } from './terminayMenu';
 import {
@@ -2740,7 +2746,6 @@ function showAboutWindow(): void {
 		return;
 	}
 	const isMac = process.platform === 'darwin';
-	const usesOverlayTitlebar = process.platform === 'win32';
 	const window = new BrowserWindow({
 		width: 440,
 		height: 500,
@@ -2754,10 +2759,9 @@ function showAboutWindow(): void {
 		backgroundColor: '#0d1117',
 		icon: getWindowIconPath(),
 		autoHideMenuBar: true,
-		titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
-		titleBarOverlay: usesOverlayTitlebar
-			? { color: '#0d1117', symbolColor: '#9bb0c8', height: 32 }
-			: false,
+		// Windows and Linux give it an ordinary frame, like every window but a
+		// project window.
+		titleBarStyle: isMac ? 'hidden' : 'default',
 		trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
 		webPreferences: {
 			// An in-memory partition of its own, so its policy never touches a
@@ -5015,8 +5019,43 @@ function isMacQuitInput(input: Electron.Input): boolean {
 	);
 }
 
+/** Open the application menu as a dropdown in a Windows project window, at a
+ * point in CSS pixels. Any other window, or platform, has no such menu. */
+function popUpApplicationMenu(
+	window: BrowserWindow,
+	point: { x: number; y: number },
+): void {
+	if (
+		window.isDestroyed() ||
+		!opensApplicationMenuPopup(process.platform, appWindows.has(window))
+	)
+		return;
+	const menu = Menu.getApplicationMenu();
+	if (!menu) return;
+	const zoom = window.webContents.getZoomFactor();
+	const [width, height] = window.getContentSize();
+	const { x, y } = clampMenuPopupPoint(
+		{ x: point.x * zoom, y: point.y * zoom },
+		{ width, height },
+	);
+	menu.popup({ window, x, y });
+}
+
 function bindAppShortcuts(webContents: Electron.WebContents): void {
+	const bareAlt = createBareAltTracker();
 	webContents.on('before-input-event', (event, input) => {
+		if (bareAlt(input)) {
+			const owner = BrowserWindow.fromWebContents(webContents);
+			if (
+				owner &&
+				opensApplicationMenuPopup(process.platform, appWindows.has(owner))
+			) {
+				event.preventDefault();
+				// Outside the input handler: the dropdown runs a modal menu loop.
+				setImmediate(() => popUpApplicationMenu(owner, BARE_ALT_MENU_POINT));
+				return;
+			}
+		}
 		if (input.type === 'keyDown' && isMacQuitInput(input)) {
 			event.preventDefault();
 			app.quit();
@@ -5603,9 +5642,11 @@ function createWindow(options?: {
 	// renderer, preload, transport, or state owner is selected.
 	const preloadPath = path.join(__dirname, 'serverUiPreload.cjs');
 	const isMac = process.platform === 'darwin';
-	const usesOverlayTitlebar = process.platform === 'win32';
-	const windowIconPath = getWindowIconPath();
 	const isAuxiliary = options?.auxiliary !== undefined;
+	// On Windows a project window draws its own title bar over the tab row; an
+	// auxiliary window (Settings, Macros, editors) keeps the ordinary frame.
+	const usesOverlayTitlebar = process.platform === 'win32' && !isAuxiliary;
+	const windowIconPath = getWindowIconPath();
 	const auxiliaryBounds =
 		options?.auxiliaryWorkArea === undefined
 			? undefined
@@ -6072,6 +6113,16 @@ function createWindow(options?: {
 						return;
 					case 'menu.invoke':
 						sendCommandToWindow(window, action.command as AppCommand);
+						return;
+					case 'menu.popup':
+						if (
+							!opensApplicationMenuPopup(
+								process.platform,
+								appWindows.has(window),
+							)
+						)
+							throw new Error('This window has no application menu to open.');
+						popUpApplicationMenu(window, action);
 						return;
 					case 'menu.accelerators.update': {
 						const current = readTerminalSettings();

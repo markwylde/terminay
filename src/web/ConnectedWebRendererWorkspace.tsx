@@ -38,6 +38,7 @@ import {
 	type AuxiliaryRouteRequestHandler,
 	createAuxiliaryRouteController,
 } from '../shared/auxiliaryRoutes';
+import { openApplicationMenu } from '../host/nativeActions';
 import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
 import {
 	ServerSelector,
@@ -98,7 +99,16 @@ function nativeTitlebarKind(): 'mac' | 'overlay' | undefined {
 	if (!window.terminayHost) return undefined;
 	const platform = navigator.platform.toLowerCase();
 	if (platform.includes('mac')) return 'mac';
-	if (platform.includes('win')) return 'overlay';
+	// Windows draws its caption buttons over the page only where the host asked
+	// for a title-bar overlay: project windows. Other windows have a frame.
+	if (platform.includes('win'))
+		return (
+			navigator as Navigator & {
+				windowControlsOverlay?: { visible: boolean };
+			}
+		).windowControlsOverlay?.visible === true
+			? 'overlay'
+			: undefined;
 	return undefined;
 }
 
@@ -553,6 +563,11 @@ export function ConnectedWebRendererWorkspace({
 							presentation: Object.freeze({
 								nativeMenus: hasNativeMenus,
 								nativeWindowControls: hasNativeWindowControls,
+								// A Windows Desktop window draws its own title bar, so it has
+								// no menu row; its menu opens from a title-bar button instead.
+								...(hasNativeMenus && nativeTitlebarKindValue === 'overlay'
+									? { openApplicationMenu }
+									: {}),
 								...(hasNativeMenus
 									? {}
 									: {

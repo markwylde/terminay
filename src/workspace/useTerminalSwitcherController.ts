@@ -6,6 +6,11 @@ import {
 	useRef,
 	useState,
 } from 'react';
+import {
+	currentTerminalSwitcherModifier,
+	getTerminalSwitcherDirection,
+	terminalSwitcherReleaseKey,
+} from '../components/terminalSwitcherInteraction';
 
 export const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
 
@@ -188,16 +193,25 @@ export function useTerminalSwitcherController({
 			return;
 		}
 
+		const modifier = currentTerminalSwitcherModifier();
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented) {
 				return;
 			}
-			if (
-				event.altKey &&
-				!event.ctrlKey &&
-				!event.metaKey &&
-				event.key === 'Tab'
-			) {
+			// A held chord repeats; it is still claimed, and the repeat ignored below.
+			const isSwitcherChord =
+				getTerminalSwitcherDirection(
+					{
+						altKey: event.altKey,
+						ctrlKey: event.ctrlKey,
+						key: event.key,
+						metaKey: event.metaKey,
+						repeat: false,
+						shiftKey: event.shiftKey,
+					},
+					modifier,
+				) !== null;
+			if (isSwitcherChord) {
 				const target = event.target;
 				if (
 					target instanceof HTMLElement &&
@@ -226,7 +240,7 @@ export function useTerminalSwitcherController({
 			isOpen ? move(direction) : open(direction);
 		};
 		const onKeyUp = (event: KeyboardEvent) => {
-			if (isOpen && event.key === 'Alt') {
+			if (isOpen && event.key === terminalSwitcherReleaseKey(modifier)) {
 				event.preventDefault();
 				commit();
 			}
