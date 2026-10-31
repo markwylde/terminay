@@ -71,6 +71,8 @@ desktop app instead, paste the pairing URL it prints into **Add connection**.
 
 Full guides live at [terminay.com/docs](https://terminay.com/docs).
 
+Something not working? See [Troubleshooting](docs/troubleshooting.md).
+
 ## Contributing
 
 The best contribution you can make is telling me what isn't working. Report
