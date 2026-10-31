@@ -54,14 +54,14 @@ const gitStatus = (worktrees) => ({
 	worktrees,
 });
 
-test('a panel takes its status and title from the inventory the dashboard reads', () => {
+test('a panel takes its status, title and tab colour from the inventory the dashboard reads', () => {
 	const facts = panelFactsFromInventory([
 		entry('dev', { title: 'npm run dev', status: 'recent' }),
 		entry('agent', { isAgentStatus: true, status: 'waiting' }),
 		entry('quiet'),
 	]);
-	assert.deepEqual(facts('dev'), { status: 'working', title: 'npm run dev' });
-	assert.deepEqual(facts('agent'), { status: 'waiting', title: 'agent' });
+	assert.deepEqual(facts('dev'), { status: 'working', title: 'npm run dev', color: '#fff' });
+	assert.deepEqual(facts('agent'), { status: 'waiting', title: 'agent', color: '#fff' });
 	assert.equal(facts('quiet').status, 'idle');
 	// A panel in a folder with no mounted workspace is in no inventory.
 	assert.equal(facts('elsewhere'), undefined);
