@@ -33,8 +33,8 @@ The spike then read each one's current directory from its PEB. It also read:
 | A SYSTEM process | `null` (access denied, no throw) |
 | Process table | 156 rows; `cmd.exe`'s children are `conhost.exe` and `PING.EXE`; creation times are plausible |
 | Foreground under `cmd.exe` | `{ kind: 'process', command: 'PING' }` (conhost skipped) |
-| One cwd read | 26 µs |
-| One snapshot | 5 ms |
+| One cwd read (mean of 1,000) | 26 µs |
+| One snapshot (mean of 20) | 5 ms |
 | SID | equals `whoami /user` |
 | Protected directory | exactly the user, `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators`, each `(OI)(CI)(F)`, with no inherited entries |
 
@@ -50,9 +50,9 @@ The spike then read each one's current directory from its PEB. It also read:
   `[Environment]::CurrentDirectory` to the location whenever the location is a
   FileSystem path. The PEB read then needs no shell-specific handling (design
   decision 5).
-- The per-read cost is from a single timed read, not an average over many.
-  At 26 µs it is four orders of magnitude inside the budget, so no longer run
-  was made.
+- The per-read cost is the mean of 1,000 consecutive reads of the 64-bit
+  Command Prompt's directory. At 26 µs it is four orders of magnitude inside
+  the budget.
 
 ## The PowerShell location hook (ADR-0085)
 
