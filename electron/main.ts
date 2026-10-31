@@ -119,6 +119,7 @@ import { pushOriginForSessionOrigin } from '../packages/server-core/src/push/sen
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { currentHolderAddressing } from './windowsUser';
+import { singleInstanceRefusalMessage } from './singleInstanceRefusal';
 import { prepareHolderRuntime, pruneHolderRuntimes } from './sessionHolderRuntime';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
 import {
@@ -404,6 +405,8 @@ if (resolvedUserDataPath) {
 	app.setPath('userData', resolvedUserDataPath);
 }
 if (!app.requestSingleInstanceLock()) {
+	// Say why, so a launch that shows nothing is never silent.
+	console.error(singleInstanceRefusalMessage(app.getPath('userData')));
 	app.exit(1);
 	process.exit(1);
 }
