@@ -5,8 +5,9 @@
 # things fill it: the conformance and MCP CLI images are rebuilt every run
 # under a fixed ":local" tag, which strands the previous build as an untagged
 # image of a couple of gigabytes, and every commit adds a new
-# content-addressed E2E image. Left alone they grow a runner by hundreds of
-# gigabytes in a few days, until the node runs out of disk.
+# content-addressed E2E image. Builds also leave BuildKit cache and anonymous
+# volumes behind. Left alone they grow a runner by hundreds of gigabytes in a
+# day, until the node runs out of disk.
 #
 # The newest E2E image and dependency base survive, along with the ones named
 # by the first and second arguments, so the next pull on this runner reuses
@@ -40,3 +41,8 @@ prune_repository git.i.wylde.net/markwylde/terminay-e2e "$keep_image"
 prune_repository git.i.wylde.net/markwylde/terminay-e2e-base "$keep_base"
 
 docker image prune --force || true
+
+# Build cache is never reused across commits here: every build starts from a
+# pulled base or E2E image, whose layers survive above.
+docker builder prune --all --force >/dev/null || true
+docker volume prune --force >/dev/null || true
