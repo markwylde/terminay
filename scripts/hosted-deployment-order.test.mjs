@@ -133,7 +133,8 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
     "Sync package version to the beta version",
     "Build packaged beta app",
     "Check every native file in the Windows beta is x64",
-    "Install the Windows beta installer and run terminals from it",
+    "Build the Windows update probe's next version",
+    "Install the Windows beta installer, run terminals from it, and update it in place",
     "Check the Linux beta AppImage against the glibc floor and run terminals from it there",
     "Verify exact beta asset selection",
     "Verify macOS signed and notarized beta zip",
@@ -170,9 +171,13 @@ test("the rolling main prerelease publishes desktop betas beside the archives an
   const pe = mainPrereleaseStep(desktop, "Check every native file in the Windows beta is x64")
   assert.match(pe, /if: matrix\.platform == 'win'/u)
   assert.match(pe, /node scripts\/check-windows-pe-architecture\.mjs release\/main-desktop\/win-unpacked/u)
-  const windowsProbe = mainPrereleaseStep(desktop, "Install the Windows beta installer and run terminals from it")
+  const updateBuild = mainPrereleaseStep(desktop, "Build the Windows update probe's next version")
+  assert.match(updateBuild, /if: matrix\.platform == 'win'/u)
+  assert.match(updateBuild, /sh scripts\/build-windows-update-probe\.sh .+ "\$RUNNER_TEMP\/update-probe"\)/u,
+    "build N+1 is written outside release/, so no publish step can select it")
+  const windowsProbe = mainPrereleaseStep(desktop, "Install the Windows beta installer, run terminals from it, and update it in place")
   assert.match(windowsProbe, /if: matrix\.platform == 'win'/u)
-  assert.match(windowsProbe, /\.\/scripts\/probe-windows-desktop\.ps1 -Installer "release\/main-desktop\/\$env:ASSET"/u)
+  assert.match(windowsProbe, /\.\/scripts\/probe-windows-desktop\.ps1 -Installer "release\/main-desktop\/\$env:ASSET" -Record "[^"]+" -UpdateFeed "\$env:RUNNER_TEMP\/update-probe" -UpdateVersion \$env:UPDATE_VERSION/u)
   assert.match(mainPrereleaseStep(desktop, "Check macOS signing secrets"), /Refusing to publish an unsigned or unnotarized macOS beta/u)
 
   const zip = mainPrereleaseStep(desktop, "Verify macOS signed and notarized beta zip")

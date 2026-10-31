@@ -300,17 +300,29 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: node scripts/check-windows-pe-architecture.mjs "release/${TAG#v}/win-unpacked"
 
+      # Build N+1 for the update step: this run's app one patch version higher,
+      # with its beta.yml, outside release/ so nothing publishes it.
+      - name: Build the Windows update probe's next version
+        id: update_probe
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          next="$(sh scripts/build-windows-update-probe.sh "$(node -p "require('./package.json').version")" "$RUNNER_TEMP/update-probe")"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+
       # Installs the exact installer that will be published, runs PowerShell
       # and Command Prompt terminals from it, restarts it with a held terminal,
-      # and uninstalls it (scripts/probe-windows-desktop.ps1).
-      - name: Install the Windows installer and run terminals from it
+      # uninstalls it, then updates it in place to the build above with a
+      # terminal running (scripts/probe-windows-desktop.ps1).
+      - name: Install the Windows installer, run terminals from it, and update it in place
         if: matrix.os == 'windows-latest'
         shell: pwsh
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          UPDATE_VERSION: ${{ steps.update_probe.outputs.version }}
         run: |
           $version = $env:TAG.Substring(1)
-          ./scripts/probe-windows-desktop.ps1 -Installer "release/$version/Terminay-Windows-$version-Setup.exe" -Record "$env:RUNNER_TEMP/windows-probe.json"
+          ./scripts/probe-windows-desktop.ps1 -Installer "release/$version/Terminay-Windows-$version-Setup.exe" -Record "$env:RUNNER_TEMP/windows-probe.json" -UpdateFeed "$env:RUNNER_TEMP/update-probe" -UpdateVersion $env:UPDATE_VERSION
 
       - name: Preserve the Windows probe record
         if: ${{ always() && matrix.os == 'windows-latest' }}
@@ -319,7 +331,7 @@ jobs:
           name: windows-probe
           path: |
             ${{ runner.temp }}/windows-probe.json
-            ${{ runner.temp }}/windows-probe-failure.png
+            ${{ runner.temp }}/windows-probe-*.png
           if-no-files-found: ignore
 
       - name: Verify exact release asset selection
