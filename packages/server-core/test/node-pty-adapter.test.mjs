@@ -503,3 +503,23 @@ test("node-pty spaces output-driven samples by the shared ramp", () => {
   process.dispose();
   assert.equal(timers.length, 0, "disposing left a ramp timer armed");
 });
+
+test("Linux foreground argv0 paths identify Bash as idle and a command as busy", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "/bin/bash";
+  const process = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler }).spawn({
+    shellPath: "/bin/bash", shell: "/bin/bash", args: [], cwd: "/tmp", cols: 80, rows: 24,
+  });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+  scheduler.tick();
+  child.process = "/usr/bin/sleep";
+  scheduler.tick();
+  child.process = "/usr/bin/bash";
+  scheduler.tick();
+  assert.deepEqual(events.map((event) => [event.processName, event.shellForeground]), [
+    ["/bin/bash", true], ["/usr/bin/sleep", false], ["/usr/bin/bash", true],
+  ]);
+  process.dispose();
+});
