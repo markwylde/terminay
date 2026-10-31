@@ -543,8 +543,8 @@ jobs:
             # Sidecars are published next to their payload.  Do not embed the
             # runner-local release/ path: downloaded release assets must be
             # verifiable from any directory without recreating that path.
-            checksum="$(shasum -a 256 "$file" | awk '{ print $1 }')"
-            printf '%s  %s\n' "$checksum" "$(basename "$file")" > "$file.sha256"
+            # Node, not shasum: Git Bash on the Windows runner has no shasum.
+            node scripts/release-checksum.mjs write "$file" "$file.sha256"
             found=true
           done
           test "$found" = true
@@ -559,10 +559,7 @@ jobs:
             test -f "$file.sha256"
             test ! -L "$file"
             test ! -L "$file.sha256"
-            (
-              cd "$(dirname "$file")"
-              shasum -a 256 -c "$(basename "$file").sha256"
-            )
+            node scripts/release-checksum.mjs verify "$file" "$file.sha256"
             found=true
           done
           test "$found" = true
@@ -598,10 +595,7 @@ jobs:
             test -f "$file.sha256"
             test ! -L "$file"
             test ! -L "$file.sha256"
-            (
-              cd "$(dirname "$file")"
-              shasum -a 256 -c "$(basename "$file").sha256"
-            )
+            node scripts/release-checksum.mjs verify "$file" "$file.sha256"
             # Deliberately omit --clobber: a release asset name is immutable
             # once attached, and a retry must never silently replace its bytes.
             gh release upload "$TAG" "$file" "$file.sha256" --repo "$GH_REPO"
