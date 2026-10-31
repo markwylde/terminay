@@ -398,7 +398,7 @@ test("release workflow verifies every checksum sidecar before either upload path
     "checksum verification must reject a symlinked Desktop payload");
   assert.match(verificationStep, /test ! -L "\$file\.sha256"/u,
     "checksum verification must reject a symlinked checksum sidecar");
-  assert.match(verificationStep, /shasum -a 256 -c "\$\(basename "\$file"\)\.sha256"/u,
+  assert.match(verificationStep, /release-checksum\.mjs verify "\$file" "\$file\.sha256"/u,
     "checksum verification must validate each release asset against its sidecar");
 });
 
@@ -423,7 +423,7 @@ test("Desktop release upload rejects symlinked payloads or sidecars and re-verif
     "Desktop publication must reject a symlinked payload at the final handoff");
   assert.match(uploadStep, /test ! -L "\$file\.sha256"/u,
     "Desktop publication must reject a symlinked sidecar at the final handoff");
-  assert.match(uploadStep, /shasum -a 256 -c "\$\(basename "\$file"\)\.sha256"/u,
+  assert.match(uploadStep, /release-checksum\.mjs verify "\$file" "\$file\.sha256"/u,
     "Desktop publication must re-verify bytes after the workflow-artifact handoff");
 });
 
@@ -443,16 +443,16 @@ test("published release checksum sidecars are portable and are verified from the
   const desktopWriteStep = release.slice(desktopWrite, desktopVerify);
   const desktopVerifyStep = release.slice(desktopVerify, release.indexOf("- name: Upload workflow artifact", desktopVerify));
   const standaloneStep = release.slice(standaloneWrite, standaloneUpload);
-  assert.match(desktopWriteStep, /printf '%s {2}%s\\n' "\$checksum" "\$\(basename "\$[A-Za-z_]+"\)" > "\$[A-Za-z_]+\.sha256"/u,
-    "Desktop checksum sidecars must record only the portable payload basename");
+  assert.match(desktopWriteStep, /release-checksum\.mjs write "\$file" "\$file\.sha256"/u,
+    "Desktop checksum sidecars must be written by the basename-bound writer");
   assert.doesNotMatch(desktopWriteStep, /shasum -a 256 "\$[A-Za-z_]+" > "\$[A-Za-z_]+\.sha256"/u,
     "Desktop sidecars must not retain a runner-local release path");
   assert.match(standaloneStep, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
     "standalone checksum sidecars must be written by the basename-bound verifier");
   assert.match(standaloneStep, /release-checksum\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
     "standalone checksum sidecars must be verified by the regular-file verifier");
-  assert.match(desktopVerifyStep, /cd "\$\(dirname "\$file"\)"/u,
-    "Desktop checksum verification must run beside the payload");
+  assert.match(desktopVerifyStep, /release-checksum\.mjs verify "\$file" "\$file\.sha256"/u,
+    "Desktop checksum verification must check the sidecar against the payload's basename");
 });
 
 test("release workflow artifacts explicitly exclude hidden files", () => {
