@@ -20,8 +20,12 @@
 
 - [x] 4.1 Give auxiliary windows and About the ordinary frame on win32 (`titleBarOverlay` only on project windows), and make the renderer reserve a caption band only when `navigator.windowControlsOverlay.visible` reports one. Verified by `tsc` and a VM screenshot of Settings with the Windows title bar and no empty band.
 
-## 5. Verification
+## 5. Focus does not read as activity
 
-- [x] 5.1 `npm run build`, `npm run lint`, the smoke unit tests, and `npm run test:e2e` for the switcher and menu specs. Verified by their output.
-- [ ] 5.2 In the Windows VM, run a built Terminay. Check that the menu button opens the full menu, bare Alt opens it, Alt+B reaches PowerShell, Ctrl+Tab switches terminals, and no scrollbar shows arrows. Verified by screenshots.
-- [ ] 5.3 Open the PR on Gitea and read back every status as success or skipped. Verified by the status list.
+- [x] 5.1 Make `TerminalService.resize` skip the PTY when the requested size equals the session's size. Verified by `packages/server-core/test/terminal-service.test.mjs` ("a resize to the session's current size does not reach the PTY") and, in the Windows VM, by clicking between two idle PowerShell terminals with neither tab turning amber.
+
+## 6. Verification
+
+- [x] 6.1 `npm run build`, `npm run lint`, the smoke unit tests, and `npm run test:e2e` for the switcher and menu specs. Verified by their output.
+- [ ] 6.2 In the Windows VM, run a built Terminay. Check that the menu button opens the full menu, bare Alt opens it, Alt+B reaches PowerShell, Ctrl+Tab switches terminals, and no scrollbar shows arrows. Verified by screenshots.
+- [ ] 6.3 Open the PR on Gitea and read back every status as success or skipped. Verified by the status list.

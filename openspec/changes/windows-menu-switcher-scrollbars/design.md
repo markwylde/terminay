@@ -51,6 +51,12 @@ The `nativeMenus` capability version is not bumped. Bundles declare it as an opt
 
 A single rule in the renderer's base stylesheet sets `::-webkit-scrollbar` (8px), a transparent track, a rounded thumb using the theme's scrollbar colours, `::-webkit-scrollbar-button { display: none }` and a transparent `::-webkit-scrollbar-corner`. In Chromium, the standard `scrollbar-width` and `scrollbar-color` properties switch the webkit pseudo-elements off for that element, so the `settings.css` declarations are removed rather than layered on. Per-pane `::-webkit-scrollbar` rules that differ only in width or colour are folded into the global one. The element behind the stray arrow is identified in the Windows VM and covered by the same rule. A rule there that hides the native scrollbar outright (`scrollbar-width: none` or `display: none`) is kept if xterm's own bar already covers that element.
 
+### A same-size resize stops at the terminal service
+
+A terminal panel re-sends its size whenever it becomes the presentation that controls the terminal, which happens on focus. On macOS and Linux that is harmless: the kernel ignores a `TIOCSWINSZ` that does not change the size, so the shell gets no `SIGWINCH` and prints nothing. Windows ConPTY repaints the whole screen for every resize, even one that changes nothing (measured in the VM with node-pty: one full-screen repaint per call). That repaint arrives more than a second after the last keystroke, so the raw-output tier counts it as work, and the tab goes amber and then green. `TerminalService.resize` now authorizes the request as before but returns without touching the PTY or the presentation checkpoint when the size equals the session's recorded size. That gives every platform the POSIX behaviour.
+
+*Alternative:* treat output just after a resize like output just after input. Rejected because a real resize of a busy terminal would then hide real work, and the bug is the needless resize, not the repaint.
+
 ## Risks / Trade-offs
 
 - **Bare Alt opening a menu surprises a shell user who taps Alt** → This is the Windows convention, and tapping Alt does nothing useful in a terminal. Only a clean press and release triggers it, never a chord.

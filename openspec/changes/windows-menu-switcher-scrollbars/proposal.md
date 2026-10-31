@@ -8,6 +8,7 @@ On Windows, Terminay draws its own title bar, so the window has no menu row: Ter
 - On Windows and Linux Desktop, the terminal switcher opens with Ctrl+Tab and goes back with Ctrl+Shift+Tab; releasing Ctrl switches. macOS keeps Option+Tab. The switcher's heading names the chord the platform uses.
 - Every scrollbar in the Desktop and browser renderer uses one thin style with no arrow buttons.
 - On Windows, Settings, Macros, editors and About use the ordinary Windows frame; only project windows draw their own title bar, so secondary windows lose the empty band reserved for caption buttons.
+- Focusing or leaving a terminal no longer turns its tab amber on Windows. The panel re-sends its current size when it takes focus, and ConPTY repaints the whole screen for any resize, so the server now drops a resize to the size the PTY already has.
 - The Windows-only gap in "Native menu bar only on project windows" is closed: a project window on Windows reaches the menu through the button rather than a menu row.
 
 ## Capabilities
@@ -19,6 +20,7 @@ None.
 ### Modified Capabilities
 
 - `settings-shortcuts-and-desktop-integration`: the project window's menu on Windows is reached from a title-bar button and bare Alt; every scrollbar has one arrowless style.
+- `terminal-activity-signals`: a resize to a terminal's current size reaches no PTY, so focusing a terminal never reads as activity.
 - `workspace-and-project-tabs`: the keyboard terminal switcher's chord follows the platform: Ctrl+Tab on Windows and Linux Desktop, Option+Tab on macOS.
 
 ## Impact
@@ -29,3 +31,4 @@ None.
 - `src/components/terminalSwitcherInteraction.ts`, `src/workspace/useTerminalSwitcherController.ts`, `src/components/TerminalPanel.tsx`: the platform chord and its release key.
 - Global renderer CSS: one scrollbar style.
 - Browser hosts keep their in-page menu bar and their Alt+Tab switcher.
+- `packages/server-core/src/terminalService/service.ts`: `resize` returns early when the size is unchanged.
