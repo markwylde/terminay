@@ -612,7 +612,12 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
 
   const upstreamRoot = path.join(workRoot, 'upstream')
   await mkdir(upstreamRoot)
-  const extracted = await run('tar', ['-xzf', tarballPath, '-C', upstreamRoot])
+  // Relative paths: Git Bash's tar reads a drive letter (C:) as a remote host.
+  const extracted = await run(
+    'tar',
+    ['-xzf', path.relative(workRoot, tarballPath), '-C', path.relative(workRoot, upstreamRoot)],
+    { cwd: workRoot },
+  )
   assert.equal(extracted.signal, null)
   assert.equal(extracted.code, 0, extracted.stderr || extracted.stdout)
   for (const patch of WERIFT_PATCHES) {
