@@ -3,13 +3,13 @@ import {
 	createDecipheriv,
 	hkdfSync,
 	randomBytes,
-	randomUUID,
 	scrypt as scryptCallback,
 } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import type { ProtocolId } from '@terminay/protocol';
+import { loadSecretState, writeFileDurably } from '../durableFile.js';
 import type { SecretReference } from './types.js';
 import type {
 	SecretVaultAdapter,
@@ -56,7 +56,25 @@ export interface VaultEnvelopeStorage {
 	write(serialized: string): Promise<void>;
 }
 
-/** A production file store: mode 0600 and replace-by-rename, never plaintext. */
+/** The bytes of a stored envelope, when they are one. The envelope itself is
+ * checked (server identity, manifest seal) when the vault opens. */
+function storedEnvelopeText(bytes: Buffer): string {
+	if (bytes.byteLength > HEADLESS_VAULT_MAX_ENVELOPE_BYTES)
+		throw new Error('vault envelope exceeds its size limit');
+	const serialized = bytes.toString('utf8');
+	const parsed: unknown = JSON.parse(serialized);
+	if (
+		typeof parsed !== 'object' ||
+		parsed === null ||
+		(parsed as { format?: unknown }).format !== HEADLESS_VAULT_FORMAT
+	)
+		throw new Error('vault envelope is not one');
+	return serialized;
+}
+
+/** A production file store: mode 0600 and a durable replace, never plaintext.
+ * A secret store (ADR-0088): no `.previous` is kept, and a corrupt envelope is
+ * set aside so the vault opens empty and fails closed. */
 export class FileVaultEnvelopeStorage implements VaultEnvelopeStorage {
 	constructor(private readonly filePath: string) {
 		if (typeof filePath !== 'string' || filePath.length === 0) {
@@ -66,15 +84,10 @@ export class FileVaultEnvelopeStorage implements VaultEnvelopeStorage {
 
 	async read(): Promise<string | undefined> {
 		try {
-			const serialized = await readFile(this.filePath, 'utf8');
-			if (Buffer.byteLength(serialized) > HEADLESS_VAULT_MAX_ENVELOPE_BYTES) {
-				throw new Error('vault envelope exceeds its size limit');
-			}
-			return serialized;
-		} catch (error) {
-			if (isNodeError(error) && error.code === 'ENOENT') return undefined;
-			if (error instanceof Error && error.message.includes('size limit'))
-				throw error;
+			return await loadSecretState<string>(this.filePath, 'vault', {
+				parse: storedEnvelopeText,
+			});
+		} catch {
 			throw new Error('vault storage read failed');
 		}
 	}
@@ -86,20 +99,11 @@ export class FileVaultEnvelopeStorage implements VaultEnvelopeStorage {
 		) {
 			throw new Error('vault envelope exceeds its size limit');
 		}
-		const directory = dirname(this.filePath);
-		const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
 		try {
-			await mkdir(directory, { recursive: true, mode: 0o700 });
-			await writeFile(temporaryPath, serialized, {
-				encoding: 'utf8',
-				mode: 0o600,
-				flag: 'wx',
-			});
-			await rename(temporaryPath, this.filePath);
+			await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
+			await writeFileDurably(this.filePath, serialized, { mode: 0o600 });
 		} catch {
 			throw new Error('vault storage write failed');
-		} finally {
-			await unlink(temporaryPath).catch(() => undefined);
 		}
 	}
 }
@@ -523,10 +527,6 @@ function assertServerId(serverId: string): void {
 		serverId.length > 256
 	)
 		throw new TypeError('server id is invalid');
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-	return error instanceof Error && 'code' in error;
 }
 
 function deriveKey(passphrase: Buffer, salt: Buffer): Promise<Buffer> {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   PUSH_OPERATIONS,
   PushEnrolmentStore,
   PushSender,
+  takeStateRecoveryNotices,
   TerminalActivityService,
 } from "../dist/index.js";
 
@@ -446,6 +447,34 @@ test("enrolments survive a restart in an owner-only file and hold no subscriptio
   const second = new PushEnrolmentStore(createFilePushEnrolmentPersistence(file));
   assert.deepEqual(second.get("device-a"), device);
   assert.equal(second.get("device-b"), undefined);
+});
+
+test("a corrupt enrolment file is set aside and no device keeps an enrolment (ADR-0088)", () => {
+  const directory = mkdtempSync(join(tmpdir(), "terminay-push-corrupt-"));
+  try {
+    const file = join(directory, "push-enrolments.v1.json");
+    const good = JSON.stringify({ version: 1, enrolments: { "device-a": enrolment() } });
+    for (const [shape, bytes] of [
+      ["zero-filled", Buffer.alloc(good.length)],
+      ["truncated", good.slice(0, Math.floor(good.length / 2))],
+      ["invalid JSON", "{not json"],
+    ]) {
+      takeStateRecoveryNotices();
+      writeFileSync(file, bytes);
+      const store = new PushEnrolmentStore(createFilePushEnrolmentPersistence(file));
+      assert.deepEqual(store.deviceIds(), [], shape);
+      const names = readdirSync(directory);
+      assert.equal(names.includes("push-enrolments.v1.json"), false, shape);
+      assert.equal(names.filter((name) => name.startsWith("push-enrolments.v1.json.corrupt-")).length >= 1, true, shape);
+      assert.equal(names.some((name) => name.endsWith(".previous")), false, shape);
+      assert.deepEqual(takeStateRecoveryNotices(), [{ kind: "secret-reset", store: "push-enrolments" }], shape);
+    }
+    // A fresh save is durable and leaves no temporary file.
+    new PushEnrolmentStore(createFilePushEnrolmentPersistence(file)).set("device-b", enrolment());
+    assert.equal(readdirSync(directory).some((name) => name.endsWith(".tmp")), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("a malformed stored record is dropped without costing the others", () => {

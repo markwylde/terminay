@@ -1,19 +1,25 @@
 import { createHash, randomBytes } from 'node:crypto'
 import {
+	closeSync,
 	cpSync,
 	existsSync,
+	fsyncSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
+	readFileSync,
+	readSync,
 	renameSync,
 	rmSync,
 	statSync,
-	writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
+import { writeFileDurablySync } from '../packages/server-core/src/durableFile.ts'
 
 /** The renamed runtime, so it is never mistaken for Terminay or killed as it. */
 export const HOLDER_RUNTIME_EXECUTABLE = 'terminay-session-holder.exe'
 const COMPLETE_MARKER = '.complete'
+const MANIFEST = 'manifest.json'
 
 export interface HolderRuntimeOptions {
 	/** The installed `Terminay.exe`. */
@@ -27,6 +33,17 @@ export interface HolderRuntimeOptions {
 export interface HolderRuntime {
 	readonly executablePath: string
 	readonly entryPath: string
+	/** How this launch obtained the copy, and how long checking it took. */
+	readonly verification: {
+		readonly outcome: 'reused' | 'copied' | 'recopied-corrupt'
+		readonly durationMs: number
+	}
+}
+
+interface ManifestEntry {
+	readonly path: string
+	readonly size: number
+	readonly sha256: string
 }
 
 /**
@@ -39,27 +56,134 @@ export interface HolderRuntime {
  * final name and renamed into place, so a half-made copy is never run.
  */
 export function prepareHolderRuntime(options: HolderRuntimeOptions): HolderRuntime {
+	const started = Date.now()
 	const root = holderRuntimeRoot(options.dataRoot)
 	const target = join(root, holderRuntimeKey(options.buildId))
-	const runtime = {
+	const paths = {
 		executablePath: join(target, HOLDER_RUNTIME_EXECUTABLE),
 		entryPath: join(target, 'app', 'dist-electron', 'sessionHolderEntry.js'),
 	}
-	if (existsSync(join(target, COMPLETE_MARKER))) return runtime
+	const done = (outcome: HolderRuntime['verification']['outcome']): HolderRuntime => ({
+		...paths,
+		verification: { outcome, durationMs: Date.now() - started },
+	})
+	let outcome: HolderRuntime['verification']['outcome'] = 'copied'
+	if (existsSync(join(target, COMPLETE_MARKER))) {
+		// ADR-0088: a copy proves itself before it runs. After a power loss its
+		// files can be the right size and all zeros.
+		if (verifyHolderRuntime(target, options.buildId)) return done('reused')
+		renameSync(target, `${target}.corrupt-${Date.now()}`)
+		outcome = 'recopied-corrupt'
+	}
 	mkdirSync(root, { recursive: true })
 	const staging = `${target}.${randomBytes(4).toString('hex')}.tmp`
 	try {
 		copyHolderRuntime(options, staging)
-		writeFileSync(join(staging, COMPLETE_MARKER), options.buildId)
+		const files = listFiles(staging)
+		const manifest: ManifestEntry[] = files.map((path) => ({
+			path: relative(staging, path).split(sep).join('/'),
+			size: statSync(path).size,
+			sha256: hashFile(path),
+		}))
+		// Flush every copied file and directory before the copy is marked
+		// complete, so the marker can never outlive the bytes it vouches for.
+		for (const path of files) flushFile(path)
+		writeFileDurablySync(
+			join(staging, MANIFEST),
+			JSON.stringify({ buildId: options.buildId, files: manifest }),
+		)
+		writeFileDurablySync(join(staging, COMPLETE_MARKER), options.buildId)
+		flushDirectories(staging)
 		rmSync(target, { recursive: true, force: true })
 		renameSync(staging, target)
+		flushDirectory(root)
 	} catch (error) {
 		rmSync(staging, { recursive: true, force: true })
 		// Another server of this build finished first.
-		if (existsSync(join(target, COMPLETE_MARKER))) return runtime
+		if (verifyHolderRuntime(target, options.buildId)) return done('reused')
 		throw error
 	}
-	return runtime
+	return done(outcome)
+}
+
+/** True when every file the copy's manifest lists has its recorded size and
+ * digest. A missing or unreadable manifest fails, so the copy is made again. */
+export function verifyHolderRuntime(target: string, buildId: string): boolean {
+	let manifest: { buildId?: unknown; files?: unknown }
+	try {
+		manifest = JSON.parse(readFileSync(join(target, MANIFEST), 'utf8'))
+	} catch {
+		return false
+	}
+	if (manifest.buildId !== buildId || !Array.isArray(manifest.files)) return false
+	if (manifest.files.length === 0) return false
+	for (const entry of manifest.files as ManifestEntry[]) {
+		if (typeof entry?.path !== 'string' || entry.path.includes('..')) return false
+		const path = join(target, ...entry.path.split('/'))
+		try {
+			if (statSync(path).size !== entry.size) return false
+			if (hashFile(path) !== entry.sha256) return false
+		} catch {
+			return false
+		}
+	}
+	return true
+}
+
+function listFiles(directory: string): string[] {
+	const files: string[] = []
+	for (const entry of readdirSync(directory, { withFileTypes: true })) {
+		const path = join(directory, entry.name)
+		if (entry.isDirectory()) files.push(...listFiles(path))
+		else if (entry.isFile()) files.push(path)
+	}
+	return files.sort()
+}
+
+function hashFile(path: string): string {
+	const hash = createHash('sha256')
+	const fd = openSync(path, 'r')
+	try {
+		const buffer = Buffer.allocUnsafe(1 << 20)
+		for (;;) {
+			const read = readSync(fd, buffer, 0, buffer.length, null)
+			if (read === 0) break
+			hash.update(buffer.subarray(0, read))
+		}
+	} finally {
+		closeSync(fd)
+	}
+	return hash.digest('hex')
+}
+
+function flushFile(path: string): void {
+	// Windows flushes a file only through a handle that may write it.
+	const fd = openSync(path, 'r+')
+	try {
+		fsyncSync(fd)
+	} finally {
+		closeSync(fd)
+	}
+}
+
+function flushDirectory(directory: string): void {
+	if (process.platform === 'win32') return
+	try {
+		const fd = openSync(directory, 'r')
+		try {
+			fsyncSync(fd)
+		} finally {
+			closeSync(fd)
+		}
+	} catch {
+		/* a directory flush is not available everywhere */
+	}
+}
+
+function flushDirectories(directory: string): void {
+	for (const entry of readdirSync(directory, { withFileTypes: true }))
+		if (entry.isDirectory()) flushDirectories(join(directory, entry.name))
+	flushDirectory(directory)
 }
 
 /**

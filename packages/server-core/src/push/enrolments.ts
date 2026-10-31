@@ -1,12 +1,7 @@
-import {
-	chmodSync,
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	writeFileSync,
-} from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type PushEnrolment, parsePushEnrolment } from '@terminay/protocol';
+import { loadSecretStateSync, writeFileDurablySync } from '../durableFile.js';
 
 /** Where a host keeps enrolments between runs. */
 export interface PushEnrolmentPersistence {
@@ -95,37 +90,38 @@ export function createFilePushEnrolmentPersistence(
 	filePath: string,
 ): PushEnrolmentPersistence {
 	return {
-		load: () => {
-			let text: string;
-			try {
-				text = readFileSync(filePath, 'utf8');
-			} catch {
-				return undefined;
-			}
-			const parsed: unknown = JSON.parse(text);
-			if (
-				typeof parsed !== 'object' ||
-				parsed === null ||
-				(parsed as { version?: unknown }).version !== 1
-			)
-				return undefined;
-			const enrolments = (parsed as { enrolments?: unknown }).enrolments;
-			return typeof enrolments === 'object' &&
-				enrolments !== null &&
-				!Array.isArray(enrolments)
-				? (enrolments as Record<string, unknown>)
-				: undefined;
-		},
+		// A credential store (ADR-0088): a corrupt file is set aside and reads
+		// as no enrolments, so every device enrols again. Never an older copy.
+		load: () =>
+			loadSecretStateSync<Record<string, unknown>>(
+				filePath,
+				'push-enrolments',
+				{ validate: storedEnrolments },
+			),
 		save: (records) => {
 			mkdirSync(dirname(filePath), { recursive: true });
-			const temporary = `${filePath}.tmp`;
-			writeFileSync(
-				temporary,
+			writeFileDurablySync(
+				filePath,
 				`${JSON.stringify({ version: 1, enrolments: records })}\n`,
 				{ mode: 0o600 },
 			);
-			chmodSync(temporary, 0o600);
-			renameSync(temporary, filePath);
 		},
 	};
+}
+
+function storedEnrolments(
+	parsed: unknown,
+): Record<string, unknown> | undefined {
+	if (
+		typeof parsed !== 'object' ||
+		parsed === null ||
+		(parsed as { version?: unknown }).version !== 1
+	)
+		return undefined;
+	const enrolments = (parsed as { enrolments?: unknown }).enrolments;
+	return typeof enrolments === 'object' &&
+		enrolments !== null &&
+		!Array.isArray(enrolments)
+		? (enrolments as Record<string, unknown>)
+		: undefined;
 }

@@ -1,18 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import {
-	cp,
-	mkdir,
-	readFile,
-	rename,
-	rm,
-	stat,
-	writeFile,
-} from 'node:fs/promises';
+import { cp, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
 	EXTENSION_API_VERSION,
 	parseExtensionManifest,
 } from '@terminay/extension-api';
+import { loadCanonicalState, writeFileDurably } from '../durableFile.js';
 import { OFFICIAL_EXTENSION_CATALOGUE } from './catalog.js';
 import type {
 	BuiltInExtensionArtifact,
@@ -562,21 +555,14 @@ export class ExtensionInstaller {
 	}
 
 	async snapshot(): Promise<ExtensionRegistrySnapshot> {
-		try {
-			const parsed: unknown = JSON.parse(
-				await readFile(this.registryPath(), 'utf8'),
-			);
-			return validateRegistry(parsed);
-		} catch (error) {
-			if (
-				typeof error === 'object' &&
-				error !== null &&
-				'code' in error &&
-				error.code === 'ENOENT'
-			)
-				return EMPTY;
-			throw error;
-		}
+		// The registry holds the user's install and enable choices: canonical
+		// state with a `.previous` copy (ADR-0088).
+		return (
+			(await loadCanonicalState(this.registryPath(), 'extensions', {
+				validate: validateRegistry,
+				mode: 0o600,
+			})) ?? EMPTY
+		);
 	}
 
 	async launchDescriptor(extensionId: string): Promise<
@@ -1029,12 +1015,11 @@ export class ExtensionInstaller {
 		state: ExtensionRegistrySnapshot,
 	): Promise<ExtensionRegistrySnapshot> {
 		await mkdir(dirname(this.registryPath()), { recursive: true });
-		const temporary = `${this.registryPath()}.${randomUUID()}.tmp`;
-		await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-			flag: 'wx',
-			mode: 0o600,
-		});
-		await rename(temporary, this.registryPath());
+		await writeFileDurably(
+			this.registryPath(),
+			`${JSON.stringify(state, null, 2)}\n`,
+			{ mode: 0o600, keepPrevious: true },
+		);
 		return validateRegistry(state);
 	}
 	private async recoverStaging(): Promise<void> {

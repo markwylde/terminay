@@ -1,10 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	parseTerminayWorkspaceComposition,
 	type TerminayWorkspaceComposition,
 } from '@terminay/protocol';
+import {
+	loadCanonicalStateSync,
+	writeFileDurablySync,
+} from '../packages/server-core/src/durableFile.ts';
 
 /**
  * Device-local presentation state for a Desktop window: which servers it has
@@ -41,30 +44,27 @@ export class DesktopWindowCompositionStore {
 		this.persist();
 	}
 
-	private load(): void {
+	/**
+	 * Read the saved compositions once. The file is canonical (ADR-0088): a
+	 * corrupt one falls back to its earlier copy, or throws
+	 * StateUnreadableError and stays unloaded, so nothing overwrites it.
+	 */
+	load(): void {
 		if (this.loaded) return;
+		const raw = loadCanonicalStateSync(this.filePath, 'window-layout', {
+			validate: (value) =>
+				typeof value === 'object' &&
+				value !== null &&
+				!Array.isArray(value) &&
+				(value as { schemaVersion?: unknown }).schemaVersion === 1 &&
+				isPlainRecord((value as { windows?: unknown }).windows)
+					? (value as { windows: Record<string, unknown> })
+					: undefined,
+			mode: 0o600,
+		});
 		this.loaded = true;
-		let raw: unknown;
-		try {
-			raw = JSON.parse(readFileSync(this.filePath, 'utf8'));
-		} catch {
-			// A missing or malformed presentation record is an empty one. It holds
-			// no credentials and must never prevent a window from opening.
-			return;
-		}
-		if (
-			typeof raw !== 'object' ||
-			raw === null ||
-			Array.isArray(raw) ||
-			(raw as { schemaVersion?: unknown }).schemaVersion !== 1
-		)
-			return;
-		const windows = (raw as { windows?: unknown }).windows;
-		if (typeof windows !== 'object' || windows === null || Array.isArray(windows))
-			return;
-		for (const [key, value] of Object.entries(
-			windows as Record<string, unknown>,
-		)) {
+		if (raw === undefined) return;
+		for (const [key, value] of Object.entries(raw.windows)) {
 			if (!isCompositionKey(key)) continue;
 			try {
 				this.compositions.set(key, parseTerminayWorkspaceComposition(value));
@@ -80,14 +80,15 @@ export class DesktopWindowCompositionStore {
 			windows: Object.fromEntries(this.compositions),
 		});
 		mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-		const temporary = `${this.filePath}.${randomUUID()}.tmp`;
-		writeFileSync(temporary, body, {
-			encoding: 'utf8',
+		writeFileDurablySync(this.filePath, body, {
 			mode: 0o600,
-			flag: 'wx',
+			keepPrevious: true,
 		});
-		renameSync(temporary, this.filePath);
 	}
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const COMPOSITION_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;

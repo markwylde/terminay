@@ -8,13 +8,12 @@ import {
 	constants as fsConstants,
 	mkdirSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	statSync,
 	watch as watchFileSystemPath,
 	writeFileSync,
 } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -144,6 +143,13 @@ import {
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import {
+	isStateUnreadableError,
+	StateUnreadableError,
+	type StateStoreName,
+	takeStateRecoveryNotices,
+} from '../packages/server-core/src/durableFile.ts';
+import { RemoteDeviceAuthentication } from '../packages/server-core/src/remote/deviceAuthentication';
 import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import {
 	createNodeShellDiscoveryHost,
@@ -195,12 +201,37 @@ import {
 } from './appUpdater';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import {
+	CARRIED_NOTICES_FILE,
+	carryStateRecoveryNotices,
+	restoreCarriedStateRecoveryNotices,
+	stateRecoveryNoticeText,
+} from './stateRecoveryNotices';
+import {
 	desktopEmbeddedStorePaths,
 	desktopLocalServerUiPartitionKey,
 	migrateLegacyEmbeddedRecordingServerId,
 	migrateLegacyEmbeddedWorkspaceServerId,
 	resolveDesktopInstanceIdentity,
+	unreadableDesktopInstanceIdentity,
 } from './desktopInstanceIdentity';
+import {
+	commitDesktopMacros,
+	commitDesktopServerSettings,
+	loadDesktopMacros,
+	loadDesktopServerSettings,
+	loadMcpCapabilityDigests,
+	loadRemoteDeviceList,
+	readConnectionProfilesFile,
+	readDeviceSettingsFile,
+	readRemoteAccessSettingsFile,
+	readWindowServerMemory,
+	saveMcpCapabilityDigests,
+	saveRemoteDeviceList,
+	writeConnectionProfilesFile,
+	writeDeviceSettingsFile,
+	writeRemoteAccessSettingsFile,
+	writeWindowServerMemory,
+} from './desktopStateFiles';
 import {
 	DesktopWindowCompositionStore,
 	desktopWindowCompositionKey,
@@ -404,9 +435,60 @@ app.on('second-instance', () => {
 let cachedTerminalSettings: TerminalSettings | undefined;
 let terminalSettingsWatcher: FSWatcher | undefined;
 
-const embeddedDesktopInstance = resolveDesktopInstanceIdentity(
-	app.getPath('userData'),
-);
+/**
+ * Canonical stores read while this module is still evaluating: the instance
+ * id and the device and remote-access settings. A StateUnreadableError there
+ * would abort the main process before any window exists, so it is held here
+ * and raised by `prepareEmbeddedRuntime` once the startup window can show the
+ * recovery document. Until then nothing writes a held store, so a corrupt
+ * file is never replaced by the in-memory stand-in used meanwhile.
+ */
+const unreadableStartupStores = new Map<StateStoreName, StateUnreadableError>();
+
+function carriedStateRecoveryNoticesPath(): string {
+	return path.join(app.getPath('userData'), CARRIED_NOTICES_FILE);
+}
+// Notices a recovery relaunch carried over are told by this run, if it opens.
+try {
+	restoreCarriedStateRecoveryNotices(carriedStateRecoveryNoticesPath());
+} catch {
+	/* a lost notice never stops startup */
+}
+
+function holdStartupStateError(
+	error: unknown,
+	store: StateStoreName,
+): StateUnreadableError {
+	// Any other failure to read the store is held the same way: it must not
+	// abort module evaluation, and it must not stand in as saved state either.
+	const held = isStateUnreadableError(error)
+		? error
+		: new StateUnreadableError(store);
+	if (!unreadableStartupStores.has(held.store))
+		unreadableStartupStores.set(held.store, held);
+	return held;
+}
+
+function assertStartupStoreWritable(store: StateStoreName): void {
+	const held = unreadableStartupStores.get(store);
+	if (held !== undefined) throw held;
+}
+
+/** Raise the first held store error, so it reaches the bootstrap recovery. */
+function raiseHeldStartupStateError(): void {
+	for (const held of unreadableStartupStores.values()) throw held;
+}
+
+const embeddedDesktopInstance = (() => {
+	try {
+		return resolveDesktopInstanceIdentity(app.getPath('userData'));
+	} catch (error) {
+		holdStartupStateError(error, 'desktop-identity');
+		// Never written. Startup stops at recovery before anything is stored
+		// under it.
+		return unreadableDesktopInstanceIdentity(app.getPath('userData'));
+	}
+})();
 const embeddedServerId = embeddedDesktopInstance.id;
 const embeddedStorePaths = desktopEmbeddedStorePaths(embeddedDesktopInstance);
 const embeddedLocalProfileId =
@@ -940,15 +1022,15 @@ function rememberedRemoteConnectionsPath(): string {
 	return path.join(app.getPath('userData'), 'connection-profiles.json');
 }
 
+/** Throws StateUnreadableError when the profile list is corrupt and has no
+ * good earlier copy; it is then left unloaded, so nothing overwrites it. */
 function loadRememberedRemoteConnections(): void {
 	if (rememberedRemoteConnectionsLoaded) return;
+	const raw = readConnectionProfilesFile(rememberedRemoteConnectionsPath());
 	rememberedRemoteConnectionsLoaded = true;
-	try {
-		const raw = JSON.parse(
-			readFileSync(rememberedRemoteConnectionsPath(), 'utf8'),
-		) as unknown;
-		if (!Array.isArray(raw)) return;
-		for (const candidate of raw) {
+	if (raw === undefined) return;
+	for (const candidate of raw) {
+		try {
 			if (
 				typeof candidate !== 'object' ||
 				candidate === null ||
@@ -987,10 +1069,9 @@ function loadRememberedRemoteConnections(): void {
 					? { serverId: value.serverId }
 					: {}),
 			});
+		} catch {
+			// One malformed profile entry is skipped; the others still load.
 		}
-	} catch {
-		// A missing or malformed metadata file is an empty profile list. It
-		// contains no credentials and must never prevent Local from starting.
 	}
 }
 
@@ -1004,15 +1085,11 @@ function rememberRemoteConnection(profile: RememberedRemoteConnection): void {
 }
 
 function persistRememberedRemoteConnections(): void {
-	const destination = rememberedRemoteConnectionsPath();
-	mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-	const temporary = `${destination}.${randomUUID()}.tmp`;
-	writeFileSync(
-		temporary,
-		JSON.stringify([...rememberedRemoteConnections.values()]),
-		{ encoding: 'utf8', mode: 0o600, flag: 'wx' },
-	);
-	renameSync(temporary, destination);
+	// A list that could not be read is never replaced by a partial one.
+	loadRememberedRemoteConnections();
+	writeConnectionProfilesFile(rememberedRemoteConnectionsPath(), [
+		...rememberedRemoteConnections.values(),
+	]);
 }
 
 function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
@@ -1115,15 +1192,7 @@ function windowServerMemoryPath(): string {
  * state: a profile id and nothing else. */
 function rememberWindowServer(profileId: string): void {
 	try {
-		const destination = windowServerMemoryPath();
-		mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-		const temporary = `${destination}.${randomUUID()}.tmp`;
-		writeFileSync(temporary, JSON.stringify({ profileId }), {
-			encoding: 'utf8',
-			mode: 0o600,
-			flag: 'wx',
-		});
-		renameSync(temporary, destination);
+		writeWindowServerMemory(windowServerMemoryPath(), profileId);
 	} catch {
 		// Where the window reopens is a convenience; failing to record it must
 		// not fail the switch that just happened.
@@ -1132,11 +1201,9 @@ function rememberWindowServer(profileId: string): void {
 
 function readRememberedWindowServer(): string | undefined {
 	try {
-		const raw = JSON.parse(readFileSync(windowServerMemoryPath(), 'utf8')) as
-			| Record<string, unknown>
-			| undefined;
-		return typeof raw?.profileId === 'string' ? raw.profileId : undefined;
+		return readWindowServerMemory(windowServerMemoryPath());
 	} catch {
+		// A cache that cannot even be set aside reopens on Local.
 		return undefined;
 	}
 }
@@ -1807,17 +1874,14 @@ const embeddedServerSettingsPath = path.join(
 	'server-settings.v1.json',
 );
 const embeddedServerSettings = new ServerSettingsRepository({
-	load: async () => {
-		try {
-			return JSON.parse(
-				await readFile(embeddedServerSettingsPath, 'utf8'),
-			) as unknown;
-		} catch (error) {
-			if ((error as { code?: string }).code === 'ENOENT')
-				return readTerminalSettings();
-			throw error;
-		}
-	},
+	// A first run migrates from the device settings. Those must have been
+	// read, not stood in for: defaults are never migrated as the user's.
+	load: () =>
+		loadDesktopServerSettings(embeddedServerSettingsPath, () => {
+			assertStartupStoreWritable('device-settings');
+			assertStartupStoreWritable('remote-access-settings');
+			return readTerminalSettings();
+		}),
 	backup: async (source) => {
 		const backupPath = `${embeddedServerSettingsPath}.pre-migration.json`;
 		await mkdir(path.dirname(backupPath), { recursive: true, mode: 0o700 });
@@ -1831,23 +1895,8 @@ const embeddedServerSettings = new ServerSettingsRepository({
 			if ((error as { code?: string }).code !== 'EEXIST') throw error;
 		}
 	},
-	commit: async (state) => {
-		await mkdir(path.dirname(embeddedServerSettingsPath), {
-			recursive: true,
-			mode: 0o700,
-		});
-		const temporary = `${embeddedServerSettingsPath}.${randomUUID()}.tmp`;
-		try {
-			await writeFile(temporary, JSON.stringify(state), {
-				encoding: 'utf8',
-				flag: 'wx',
-				mode: 0o600,
-			});
-			await rename(temporary, embeddedServerSettingsPath);
-		} finally {
-			await rm(temporary, { force: true }).catch(() => undefined);
-		}
-	},
+	commit: (state) =>
+		commitDesktopServerSettings(embeddedServerSettingsPath, state),
 });
 
 /**
@@ -1865,32 +1914,27 @@ function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 	}).remoteAccess;
 }
 
-function loadEmbeddedRemoteDevices(dataRoot: string) {
-	const file = path.join(dataRoot, 'remote-devices.v1.json');
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-		return Array.isArray(parsed) ? parsed : [];
-	} catch (error) {
-		if (
-			typeof error === 'object' &&
-			error !== null &&
-			(error as { code?: unknown }).code === 'ENOENT'
-		) {
-			return [];
-		}
-		throw error;
-	}
+/** The paired devices. A list that is corrupt, or that the device registry
+ * would refuse, admits nobody: it is set aside and every device pairs again.
+ * It never stops startup (ADR-0088). */
+function loadEmbeddedRemoteDevices(
+	dataRoot: string,
+	serverId: string,
+): ReturnType<RemoteDeviceAuthentication['listDevices']> {
+	return loadRemoteDeviceList(
+		path.join(dataRoot, 'remote-devices.v1.json'),
+		(devices) =>
+			new RemoteDeviceAuthentication({
+				serverId,
+				sessionOrigin: 'https://restore-check.invalid',
+			}).restore(
+				devices as ReturnType<RemoteDeviceAuthentication['listDevices']>,
+			),
+	) as ReturnType<RemoteDeviceAuthentication['listDevices']>;
 }
 
 function saveEmbeddedRemoteDevices(dataRoot: string, records: unknown): void {
-	const file = path.join(dataRoot, 'remote-devices.v1.json');
-	mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-	const temporary = `${file}.tmp`;
-	writeFileSync(temporary, JSON.stringify(records), {
-		encoding: 'utf8',
-		mode: 0o600,
-	});
-	renameSync(temporary, file);
+	saveRemoteDeviceList(path.join(dataRoot, 'remote-devices.v1.json'), records);
 }
 
 const embeddedShellProfiles = new ShellProfileCatalogueService({
@@ -1910,32 +1954,9 @@ const embeddedMacroPath = path.join(
 	'server-macros.v1.json',
 );
 const embeddedMacros = new MacroRepository({
-	load: async () => {
-		try {
-			return JSON.parse(await readFile(embeddedMacroPath, 'utf8')) as unknown;
-		} catch (error) {
-			if ((error as { code?: string }).code === 'ENOENT')
-				return { macros: readMacros() };
-			throw error;
-		}
-	},
-	commit: async (state) => {
-		await mkdir(path.dirname(embeddedMacroPath), {
-			recursive: true,
-			mode: 0o700,
-		});
-		const temporary = `${embeddedMacroPath}.${randomUUID()}.tmp`;
-		try {
-			await writeFile(temporary, JSON.stringify(state), {
-				encoding: 'utf8',
-				flag: 'wx',
-				mode: 0o600,
-			});
-			await rename(temporary, embeddedMacroPath);
-		} finally {
-			await rm(temporary, { force: true }).catch(() => undefined);
-		}
-	},
+	load: () =>
+		loadDesktopMacros(embeddedMacroPath, () => ({ macros: readMacros() })),
+	commit: (state) => commitDesktopMacros(embeddedMacroPath, state),
 });
 
 // Automations: automations.v1.json + automation-runs.v1.json in userData.
@@ -1946,6 +1967,7 @@ const embeddedAutomationBackends = createAutomationFileBackends(
 // holds no credential; those are in the vault.
 const embeddedConnectedServersBackend = createJsonFileBackend<unknown>(
 	path.join(app.getPath('userData'), 'mcp-connected-servers.v1.json'),
+	{ store: 'connected-servers' },
 );
 /** Terminay's client side of the user's connected MCP servers (ADR-0037). */
 const mcpGateway = new ConnectedServerGateway({
@@ -2048,6 +2070,14 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	// phase, including this one, reveals its line with an inserted style rule.
 	startupPhaseWindow = embeddedStartupWindow;
 	revealStartupPhaseLine('first-paint');
+	// Canonical Desktop stores that are corrupt with no good earlier copy stop
+	// startup here, where the window can show recovery (ADR-0088): the ones
+	// read during module evaluation were held until now, and the lazily read
+	// ones are read now so they cannot fail later, mid-session.
+	raiseHeldStartupStateError();
+	loadRememberedRemoteConnections();
+	desktopWindowCompositions.load();
+	await embeddedMacros.load();
 	beginStartupPhase('workspace-restore');
 	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
 		embeddedStartupWindow,
@@ -2518,7 +2548,10 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				decrypt: (encrypted) => safeStorage.decryptString(encrypted),
 			},
 		}),
-		initialDevices: loadEmbeddedRemoteDevices(dataRoot),
+		initialDevices: loadEmbeddedRemoteDevices(
+			dataRoot,
+			authority.service.serverId,
+		),
 		persistDevices: (devices) => {
 			saveEmbeddedRemoteDevices(dataRoot, devices);
 			// A device that is no longer trusted is sent no further push.
@@ -2838,11 +2871,9 @@ function getRemoteAccessSettingsPath(): string {
 	return path.join(app.getPath('userData'), 'remote-access-settings.json');
 }
 
+/** Throws StateUnreadableError when the file is corrupt with no good copy. */
 function readRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
-	let candidate: unknown;
-	try {
-		candidate = JSON.parse(readFileSync(getRemoteAccessSettingsPath(), 'utf8'));
-	} catch {}
+	const candidate = readRemoteAccessSettingsFile(getRemoteAccessSettingsPath());
 	return normalizeTerminalSettings({
 		...defaultTerminalSettings,
 		remoteAccess: candidate,
@@ -2852,12 +2883,9 @@ function readRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 function writeRemoteAccessSettings(
 	settings: TerminalSettings['remoteAccess'],
 ): void {
-	const settingsPath = getRemoteAccessSettingsPath();
+	assertStartupStoreWritable('remote-access-settings');
 	invalidateTerminalSettingsCache();
-	mkdirSync(path.dirname(settingsPath), { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify(settings, null, 2), {
-		mode: 0o600,
-	});
+	writeRemoteAccessSettingsFile(getRemoteAccessSettingsPath(), settings);
 }
 
 function getMacrosPath(): string {
@@ -2916,46 +2944,52 @@ function readTerminalSettings(): TerminalSettings {
 	ensureTerminalSettingsWatcher();
 	if (cachedTerminalSettings !== undefined) return cachedTerminalSettings;
 	const settings = loadTerminalSettingsFromDisk();
-	if (terminalSettingsWatcher !== undefined) cachedTerminalSettings = settings;
+	if (
+		terminalSettingsWatcher !== undefined &&
+		!unreadableStartupStores.has('device-settings') &&
+		!unreadableStartupStores.has('remote-access-settings')
+	)
+		cachedTerminalSettings = settings;
 	return settings;
 }
 
+/**
+ * The device settings as saved. A file with no saved state yet gives the
+ * defaults. A corrupt one with no good earlier copy is held for the startup
+ * recovery document (ADR-0088): this is read during module evaluation, where
+ * throwing would abort the app, so the defaults stand in, in memory only and
+ * never written, until startup stops at recovery.
+ */
 function loadTerminalSettingsFromDisk(): TerminalSettings {
-	const settingsPath = getTerminalSettingsPath();
-	const remoteAccess = readRemoteAccessSettings();
-
+	let remoteAccess: TerminalSettings['remoteAccess'];
 	try {
-		if (!existsSync(settingsPath)) {
-			return {
-				...defaultTerminalSettings,
-				remoteAccess,
-			};
-		}
-
-		const fileContents = readFileSync(settingsPath, 'utf8');
-		const settings = normalizeTerminalSettings(JSON.parse(fileContents));
-		return {
-			...settings,
-			remoteAccess,
-		};
-	} catch {
-		return {
-			...defaultTerminalSettings,
-			remoteAccess,
-		};
+		remoteAccess = readRemoteAccessSettings();
+	} catch (error) {
+		holdStartupStateError(error, 'remote-access-settings');
+		remoteAccess = defaultTerminalSettings.remoteAccess;
 	}
+	let stored: unknown;
+	try {
+		stored = readDeviceSettingsFile(getTerminalSettingsPath());
+	} catch (error) {
+		holdStartupStateError(error, 'device-settings');
+	}
+	return {
+		...(stored === undefined
+			? defaultTerminalSettings
+			: normalizeTerminalSettings(stored)),
+		remoteAccess,
+	};
 }
 
 function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
+	assertStartupStoreWritable('device-settings');
 	const normalized = normalizeTerminalSettings(settings);
-	const settingsPath = getTerminalSettingsPath();
 	invalidateTerminalSettingsCache();
 	writeRemoteAccessSettings(normalized.remoteAccess);
-
-	mkdirSync(path.dirname(settingsPath), { recursive: true });
-	writeFileSync(
-		settingsPath,
-		JSON.stringify(selectDeviceTerminalSettings(normalized), null, 2),
+	writeDeviceSettingsFile(
+		getTerminalSettingsPath(),
+		selectDeviceTerminalSettings(normalized),
 	);
 	return normalized;
 }
@@ -3255,6 +3289,24 @@ function sessionHolderRuntime(): { executablePath: string; entryPath: string } {
 		buildId,
 	});
 	pruneHolderRuntimes(dataRoot, buildId);
+	// ADR-0088: the copy proved itself, or was made again; say which and how
+	// long the check took, so a slow disk or a recurring corruption shows.
+	void desktopDiagnostics
+		.record(
+			{
+				component: 'main',
+				event: 'main.holder-runtime.prepared',
+				fields: {
+					outcome: runtime.verification.outcome,
+					durationMs: runtime.verification.durationMs,
+				},
+				severity:
+					runtime.verification.outcome === 'recopied-corrupt' ? 'warning' : 'info',
+				source: 'session-holder-runtime',
+			},
+			{ channel: 'lifecycle' },
+		)
+		.catch(() => undefined);
 	return runtime;
 }
 
@@ -3275,14 +3327,11 @@ function getMcpCapabilityFilePath(): string {
 
 /** Digests only: nothing in this file can be presented to the endpoint. */
 function saveMcpCapabilities(): void {
-	const target = getMcpCapabilityFilePath();
-	const temporary = `${target}.tmp`;
 	try {
-		writeFileSync(temporary, JSON.stringify(mcpCapabilities.snapshot()), {
-			mode: 0o600,
-		});
-		chmodSync(temporary, 0o600);
-		renameSync(temporary, target);
+		saveMcpCapabilityDigests(
+			getMcpCapabilityFilePath(),
+			mcpCapabilities.snapshot(),
+		);
 	} catch (error) {
 		console.error('[mcp] saving terminal capabilities failed', error);
 	}
@@ -3300,13 +3349,15 @@ function runningTerminalSessionIds(
 }
 
 function restoreSavedMcpCapabilities(authority: ServerTerminalAuthority): void {
-	let saved: unknown;
+	// Digests are a credential store: a corrupt file restores none, and every
+	// running terminal must be granted again (ADR-0088).
+	let saved: unknown[] | undefined;
 	try {
-		saved = JSON.parse(readFileSync(getMcpCapabilityFilePath(), 'utf8'));
+		saved = loadMcpCapabilityDigests(getMcpCapabilityFilePath());
 	} catch {
 		return;
 	}
-	if (!Array.isArray(saved)) return;
+	if (saved === undefined) return;
 	mcpCapabilities.restore(saved, runningTerminalSessionIds(authority));
 }
 
@@ -5590,11 +5641,20 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 		return new Promise((resolve, reject) => {
 			const renderRecovery = async (cause: unknown): Promise<void> => {
 				console.error('[workspace] canonical persistence unavailable', cause);
+				// A damaged workspace with no good earlier copy is the user's call
+				// (ADR-0088): pass it through so the document offers Start fresh.
+				const unreadable = isStateUnreadableError(cause)
+					? cause
+					: isStateUnreadableError((cause as { cause?: unknown })?.cause)
+						? ((cause as { cause?: unknown }).cause as StateUnreadableError)
+						: undefined;
 				await showCanonicalLaunchRecovery({
 					window,
-					error: new Error(
-						'Terminay could not read or update its saved workspace. Retry after checking that application storage is available.',
-					),
+					error:
+						unreadable ??
+						new Error(
+							'Terminay could not read or update its saved workspace. Retry after checking that application storage is available.',
+						),
 					retry: async () => {
 						try {
 							resolve(await operation());
@@ -7695,6 +7755,7 @@ async function completeDesktopStartup(): Promise<void> {
 	desktopStartupTimeline.begin('ui-handoff');
 	await openStartupWindow(embeddedStartupWindow);
 	desktopStartupTimeline.end('ui-handoff');
+	presentStateRecoveryNotices(embeddedStartupWindow);
 	// Hosted signaling is a network round-trip, so it never delays the window.
 	void exposeOnStartup(
 		readEmbeddedRemoteAccessSettings().exposeOnStartup,
@@ -7702,6 +7763,50 @@ async function completeDesktopStartup(): Promise<void> {
 	).catch((error: unknown) => {
 		console.error('[main] Automatic remote exposure failed', error);
 	});
+}
+
+/** Notices shown this run, for E2E only. */
+const shownStateRecoveryNotices: { message: string; detail: string }[] = [];
+if (process.env.TERMINAY_TEST === '1') {
+	Object.defineProperty(globalThis, '__terminayTestStateRecoveryNotices', {
+		configurable: true,
+		value: () => [...shownStateRecoveryNotices],
+	});
+}
+
+/** Tell the user, once, what startup did about corrupt state (ADR-0088). The
+ * notice never blocks the workspace, which is already open behind it. */
+function presentStateRecoveryNotices(window: BrowserWindow): void {
+	const notices = takeStateRecoveryNotices();
+	const text = stateRecoveryNoticeText(notices);
+	if (text === undefined) return;
+	shownStateRecoveryNotices.push(text);
+	void desktopDiagnostics
+		.record(
+			{
+				component: 'main',
+				event: 'main.state.recovered',
+				fields: {
+					restored: notices.filter((notice) => notice.kind === 'restored').length,
+					startedFresh: notices.filter((notice) => notice.kind === 'started-fresh').length,
+					secretReset: notices.filter((notice) => notice.kind === 'secret-reset').length,
+				},
+				severity: 'warning',
+				source: 'state-recovery',
+			},
+			{ channel: 'lifecycle' },
+		)
+		.catch(() => undefined);
+	const options = {
+		type: 'info' as const,
+		buttons: ['OK'],
+		message: text.message,
+		detail: text.detail,
+	};
+	void (window.isDestroyed()
+		? dialog.showMessageBox(options)
+		: dialog.showMessageBox(window, options)
+	).catch(() => undefined);
 }
 
 async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
@@ -7723,12 +7828,16 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 	// given more room than the general message.
 	const placementFailure =
 		error instanceof ControlSocketPlacementError ? error : undefined;
+	// A corrupt store with no good copy is passed through as it is: the
+	// recovery document names the store and offers Start fresh (ADR-0088).
+	const unreadableState = isStateUnreadableError(error) ? error : undefined;
 	// The recovery state records the message it shows, which for this cause
 	// carries the paths, the lengths, and the reason.
 	await showCanonicalLaunchRecovery({
 		window,
 		error:
 			placementFailure ??
+			unreadableState ??
 			new Error(
 				'Terminay could not finish starting. Relaunch to retry. Technical details were recorded in Terminay diagnostics.',
 			),
@@ -7737,7 +7846,19 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 			// A failed main-process composition may have partially initialized native
 			// services. Relaunching is the bounded recovery boundary; it avoids
 			// reusing those services or presenting a blank native shell.
-			app.relaunch();
+			// E2E-only: the suite relaunches itself, so a process it does not
+			// own never holds the data directory. Inert without the marker.
+			// What this run already recovered is told by the run that opens.
+			try {
+				carryStateRecoveryNotices(carriedStateRecoveryNoticesPath());
+			} catch {
+				/* the recovery itself stands; only its notice is lost */
+			}
+			if (
+				process.env.TERMINAY_TEST !== '1' ||
+				process.env.TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH !== '1'
+			)
+				app.relaunch();
 			app.exit(0);
 		},
 		onDiagnostic: recordCanonicalRecoveryDiagnostic,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { UiBundleError, verifyUiBundle } from "./manifest.js";
 import type {
 	UiBundleAssetReader,
@@ -70,13 +70,24 @@ export class UiBundleStore {
 
 	/** Return the committed bundle, or undefined before the first install. */
 	async open(): Promise<VerifiedUiBundle | undefined> {
-		let pointer: CurrentPointer;
+		const pointerPath = join(this.rootDirectory, POINTER_FILE);
+		let bytes: Buffer;
 		try {
-			pointer = parsePointer(JSON.parse(await readFile(join(this.rootDirectory, POINTER_FILE), "utf8")));
+			bytes = await readFile(pointerPath);
 		} catch (error) {
 			if (isMissing(error)) return undefined;
-			if (error instanceof UiBundleError) throw error;
 			throw new UiBundleError("integrity", "committed UI bundle pointer is invalid");
+		}
+		let pointer: CurrentPointer;
+		try {
+			if (bytes.every((byte) => byte === 0)) throw new UiBundleError("integrity", "committed UI bundle pointer is blank");
+			pointer = parsePointer(JSON.parse(bytes.toString("utf8")));
+		} catch {
+			// The pointer is rebuildable (ADR-0088): a corrupt one is kept aside for
+			// diagnosis and the store reads as not yet installed, so the host
+			// installs a bundle again.
+			await rename(pointerPath, `${pointerPath}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`);
+			return undefined;
 		}
 		try {
 			return await this.readCommitted(pointer.bundleId);
@@ -100,20 +111,20 @@ export class UiBundleStore {
 		const bundleDirectory = join(this.rootDirectory, verified.manifest.bundleId);
 		try {
 			await mkdir(stagingDirectory, { recursive: true });
-			await writeFile(
-				join(stagingDirectory, "manifest.json"),
-				JSON.stringify(verified.manifest),
-				{ encoding: "utf8", mode: 0o600 },
-			);
+			await writeFlushed(join(stagingDirectory, "manifest.json"), Buffer.from(JSON.stringify(verified.manifest), "utf8"));
+			const assetDirectories = new Set<string>([stagingDirectory]);
 			for (const asset of verified.manifest.assets) {
 				const relativeAsset = asset.path.slice(`/remote-app/${verified.manifest.bundleId}/`.length);
 				const destination = safeChild(stagingDirectory, relativeAsset);
 				if (destination === null) throw new UiBundleError("validation", "UI bundle asset path escapes staging root");
 				await mkdir(resolve(destination, ".."), { recursive: true });
-				await writeFile(destination, verified.read(asset.path), { mode: 0o600 });
+				await writeFlushed(destination, verified.read(asset.path));
+				assetDirectories.add(dirname(destination));
 			}
+			for (const directory of assetDirectories) await flushDirectory(directory);
 			try {
 				await rename(stagingDirectory, bundleDirectory);
+				await flushDirectory(this.rootDirectory);
 			} catch (error) {
 				if (!isAlreadyExists(error)) throw error;
 				// Content-addressed bundle ids make an existing namespace safe to
@@ -207,13 +218,46 @@ function positiveTimeout(value: number): number {
 	return value;
 }
 
+/**
+ * A durable replace, as ADR-0088 requires of every Terminay state file: write
+ * a new temporary file, flush it, rename it over the target, then flush the
+ * directory where the platform allows. This mirrors `writeFileDurably` in
+ * `packages/server-core/src/durableFile.ts`; ui-bundle does not depend on
+ * server-core, so the few lines are repeated here rather than imported.
+ */
 async function atomicWrite(path: string, contents: string): Promise<void> {
 	const temporary = `${path}.${randomUUID()}.tmp`;
 	try {
-		await writeFile(temporary, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
+		await writeFlushed(temporary, Buffer.from(contents, "utf8"));
 		await rename(temporary, path);
+		await flushDirectory(dirname(path));
 	} finally {
 		await rm(temporary, { force: true }).catch(() => undefined);
+	}
+}
+
+/** Write a new owner-only file and flush it to stable storage. */
+async function writeFlushed(path: string, bytes: Uint8Array): Promise<void> {
+	const handle = await open(path, "wx", 0o600);
+	try {
+		await handle.writeFile(bytes);
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+
+async function flushDirectory(directory: string): Promise<void> {
+	if (process.platform === "win32") return;
+	try {
+		const handle = await open(directory, "r");
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		/* some filesystems refuse a directory flush; the files are durable */
 	}
 }
 
@@ -245,7 +289,9 @@ function isMissing(error: unknown): boolean {
 }
 
 function isAlreadyExists(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "EEXIST";
+	// Renaming a directory over a non-empty one is ENOTEMPTY on macOS and Linux.
+	const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+	return code === "EEXIST" || code === "ENOTEMPTY";
 }
 
 /**

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -70,7 +70,7 @@ test('a different host key cannot produce a valid proof for the original public 
 	assert.notEqual(attacker.publicKey, original.publicKey);
 });
 
-test('hosted host keys persist across load and reject a corrupt file', async () => {
+test('hosted host keys persist across load, and a corrupt file is kept aside and replaced', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-host-key-'));
 	const file = join(directory, 'remote-host-key.v1.json');
 	try {
@@ -83,8 +83,27 @@ test('hosted host keys persist across load and reject a corrupt file', async () 
 		const roundTrip = parseHostedHostKey(JSON.parse(serializeHostedHostKey(created)));
 		assert.equal(roundTrip.publicKey, created.publicKey);
 
-		await writeFile(file, '{"schemaVersion":1,"algorithm":"ed25519"}\n');
-		assert.throws(() => loadOrCreateHostedHostKey(file), /Hosted host key is invalid/);
+		// A corrupt key is a credential store failing closed (ADR-0088): it is
+		// kept aside, never rolled back, and a new key means devices pair again.
+		const good = await readFile(file, 'utf8');
+		for (const bytes of [
+			'{"schemaVersion":1,"algorithm":"ed25519"}\n',
+			Buffer.alloc(good.length),
+			good.slice(0, good.length >> 1),
+			'{not json',
+		]) {
+			await writeFile(file, bytes);
+			await writeFile(`${file}.previous`, good);
+			const replaced = loadOrCreateHostedHostKey(file);
+			assert.notEqual(replaced.publicKey, created.publicKey);
+			assert.equal(loadOrCreateHostedHostKey(file).publicKey, replaced.publicKey);
+		}
+		const names = await readdir(directory);
+		assert.equal(
+			names.filter((name) => name.startsWith('remote-host-key.v1.json.corrupt-')).length,
+			4,
+		);
+		assert.equal(names.some((name) => name.endsWith('.tmp')), false);
 
 		const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
 		assert.throws(

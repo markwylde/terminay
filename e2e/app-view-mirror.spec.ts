@@ -288,7 +288,10 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 
 	// A fresh snapshot starts a new epoch at sequence 0, and the replica redraws from it.
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.resnapshot());
-	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ epoch: 2, seq: 0, kind: 'snapshot' });
+	// Events may follow in the same epoch at once, so find the epoch's first batch.
+	await expect
+		.poll(async () => (await batches(page)).find((batch) => batch.epoch === 2 && batch.seq === 0))
+		.toMatchObject({ epoch: 2, seq: 0, kind: 'snapshot' });
 	await view.locator('#add').click();
 	await expect(replica.locator('#list li')).toHaveCount(6);
 
@@ -304,12 +307,16 @@ test('the recorder waits for acknowledgement, restarts from a snapshot on reques
 	await roundTrip(page);
 	expect((await batches(page)).length).toBe(stopped);
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.resnapshot());
-	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ epoch: 3, seq: 0, kind: 'snapshot' });
+	await expect
+		.poll(async () => (await batches(page)).find((batch) => batch.epoch === 3 && batch.seq === 0))
+		.toMatchObject({ epoch: 3, seq: 0, kind: 'snapshot' });
 	await expect(replica.locator('#list li')).toHaveCount(7);
 	await view.locator('#add').click();
 	await expect(replica.locator('#list li')).toHaveCount(8);
 	await page.evaluate(() => (window as unknown as SpikeWindow).mirrorSpike.resnapshot());
-	await expect.poll(async () => (await batches(page)).at(-1)).toMatchObject({ epoch: 4, seq: 0, kind: 'snapshot' });
+	await expect
+		.poll(async () => (await batches(page)).find((batch) => batch.epoch === 4 && batch.seq === 0))
+		.toMatchObject({ epoch: 4, seq: 0, kind: 'snapshot' });
 
 	// More than a batch may hold becomes a snapshot instead.
 	await view.locator('body').evaluate(() => (window as unknown as { flood(bytes: number): void }).flood(300 * 1024));

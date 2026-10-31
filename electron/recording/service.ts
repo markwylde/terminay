@@ -4,21 +4,19 @@ import {
   closeSync,
   createWriteStream,
   existsSync,
-  fsyncSync,
   mkdirSync,
   openSync,
   readSync,
   readFileSync,
   readdirSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
   type WriteStream,
 } from 'node:fs'
 import { open, readdir } from 'node:fs/promises'
 import path from 'node:path'
+import { loadRebuildableStateSync, writeFileDurablySync } from '../../packages/server-core/src/durableFile.ts'
 import { defaultTerminalSettings, resolveTerminalTheme } from '../../src/terminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../../src/types/settings'
 import type {
@@ -154,29 +152,11 @@ function ensurePrivateDirectory(directory: string): void {
 
 function writeJsonAtomically(filePath: string, value: unknown): void {
   ensurePrivateDirectory(path.dirname(filePath))
-  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`)
-  let descriptor: number | null = null
+  writeFileDurablySync(filePath, JSON.stringify(value, null, 2), { mode: 0o600 })
   try {
-    descriptor = openSync(temporaryPath, 'wx', 0o600)
-    writeFileSync(descriptor, JSON.stringify(value, null, 2), 'utf8')
-    fsyncSync(descriptor)
-    closeSync(descriptor)
-    descriptor = null
-    renameSync(temporaryPath, filePath)
-    try {
-      chmodSync(filePath, 0o600)
-      const directoryDescriptor = openSync(path.dirname(filePath), 'r')
-      try {
-        fsyncSync(directoryDescriptor)
-      } finally {
-        closeSync(directoryDescriptor)
-      }
-    } catch {
-      // Directory fsync and POSIX modes are not available on every platform.
-    }
-  } finally {
-    if (descriptor !== null) closeSync(descriptor)
-    rmSync(temporaryPath, { force: true })
+    chmodSync(filePath, 0o600)
+  } catch {
+    // Windows does not implement POSIX permission bits.
   }
 }
 
@@ -588,7 +568,13 @@ export class TerminalRecordingService {
 
   private loadRootIndex(): void {
     try {
-      const parsed = parseJsonObject(readFileSync(this.getLibraryIndexPath(), 'utf8'))
+      // A corrupt index is set aside, never overwritten (ADR-0088).
+      const parsed = loadRebuildableStateSync(this.getLibraryIndexPath(), 'recording-roots', {
+        validate: (value) =>
+          typeof value === 'object' && value !== null && Array.isArray((value as { roots?: unknown }).roots)
+            ? value as { roots: unknown[] }
+            : undefined,
+      })
       if (!Array.isArray(parsed?.roots)) return
       for (const root of parsed.roots) {
         if (typeof root === 'string' && path.isAbsolute(root)) {

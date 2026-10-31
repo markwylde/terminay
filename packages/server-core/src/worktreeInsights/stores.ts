@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { loadRebuildableState, writeFileDurably } from '../durableFile.js';
 import type { ServerVaultService } from '../settings/vault.js';
 import type {
 	WorktreeCredentialVault,
@@ -41,31 +42,33 @@ export function fileWorktreePromptPreferences(
 ): WorktreePromptPreferences {
 	return Object.freeze({
 		async load() {
+			// Rebuildable (ADR-0088): a corrupt file is set aside and the prompts
+			// show again.
 			try {
-				const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
-				const list =
-					typeof parsed === 'object' && parsed !== null
-						? (parsed as { suppressedExtensions?: unknown })
-								.suppressedExtensions
-						: undefined;
-				return Array.isArray(list)
-					? list.filter(
-							(id): id is string => typeof id === 'string' && id.length <= 128,
-						)
-					: [];
+				const list = await loadRebuildableState(path, 'worktree-prompts', {
+					validate: (parsed) => {
+						const value =
+							typeof parsed === 'object' && parsed !== null
+								? (parsed as { suppressedExtensions?: unknown })
+										.suppressedExtensions
+								: undefined;
+						return Array.isArray(value) ? value : undefined;
+					},
+				});
+				return (list ?? []).filter(
+					(id): id is string => typeof id === 'string' && id.length <= 128,
+				);
 			} catch {
 				return [];
 			}
 		},
 		async save(extensionIds: readonly string[]) {
 			await mkdir(dirname(path), { recursive: true });
-			const temporary = `${path}.${process.pid}.tmp`;
-			await writeFile(
-				temporary,
+			await writeFileDurably(
+				path,
 				`${JSON.stringify({ version: 1, suppressedExtensions: extensionIds }, null, 2)}\n`,
 				{ mode: 0o600 },
 			);
-			await rename(temporary, path);
 		},
 	});
 }

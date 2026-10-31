@@ -6,10 +6,10 @@ import {
 	type FSWatcher,
 	mkdirSync,
 	readdirSync,
-	readFileSync,
 	rmSync,
 	watch,
 } from 'node:fs';
+import { loadRebuildableStateSync } from '../durableFile.js';
 import {
 	cleanEnvironment,
 	createForegroundObserver,
@@ -772,18 +772,14 @@ function readHolderRecord(
 	addressing: SessionHolderAddressing,
 ): SessionHolderRecordFile | undefined {
 	try {
-		const value = JSON.parse(
-			readFileSync(sessionHolderRecordPath(dataRoot, generation), 'utf8'),
-		) as Partial<SessionHolderRecordFile>;
-		if (
-			value.generation !== generation ||
-			typeof value.pid !== 'number' ||
-			typeof value.buildId !== 'string' ||
-			typeof value.credential !== 'string' ||
-			typeof value.startedAt !== 'number' ||
-			!Array.isArray(value.versions)
-		)
-			return undefined;
+		// A corrupt record is set aside, kept for diagnosis, and skipped; the
+		// holder it named is treated as gone (ADR-0088).
+		const value = loadRebuildableStateSync(
+			sessionHolderRecordPath(dataRoot, generation),
+			'holder-record',
+			{ validate: (parsed) => holderRecordShape(parsed, generation) },
+		);
+		if (value === undefined) return undefined;
 		return {
 			generation,
 			pid: value.pid,
@@ -798,6 +794,22 @@ function readHolderRecord(
 	} catch {
 		return undefined;
 	}
+}
+
+function holderRecordShape(
+	parsed: unknown,
+	generation: string,
+): Omit<SessionHolderRecordFile, 'socketPath'> | undefined {
+	if (typeof parsed !== 'object' || parsed === null) return undefined;
+	const value = parsed as Partial<SessionHolderRecordFile>;
+	return value.generation === generation &&
+		typeof value.pid === 'number' &&
+		typeof value.buildId === 'string' &&
+		typeof value.credential === 'string' &&
+		typeof value.startedAt === 'number' &&
+		Array.isArray(value.versions)
+		? (value as Omit<SessionHolderRecordFile, 'socketPath'>)
+		: undefined;
 }
 
 function removeHolderFiles(

@@ -177,3 +177,34 @@ test("the installer records the npm libraries it runs, never an npm program", ()
   assert.match(bundledInstallerVersion(), /^arborist@\d+\.\d+\.\d+ pacote@\d+\.\d+\.\d+$/u);
   assert.throws(() => createRequire(import.meta.url).resolve("npm"), /Cannot find module/u);
 });
+
+test("a corrupt extension registry restores its .previous, or stops naming the store (ADR-0088)", async () => {
+  const { isStateUnreadableError, takeStateRecoveryNotices } = await import("../dist/index.js");
+  const { readdir } = await import("node:fs/promises");
+  const fixture = await harness();
+  try {
+    const directory = join(fixture.dataRoot, "extensions");
+    const registry = join(directory, "registry.v1.json");
+    await fixture.installer.confirm((await fixture.installer.preview("fixture-extension@latest")).previewDigest);
+    const installed = await fixture.installer.snapshot();
+    assert.ok(installed.extensions["dev.example.fixture"]);
+    await fixture.installer.disable("dev.example.fixture");
+    const previous = JSON.parse(await readFile(`${registry}.previous`, "utf8"));
+    assert.deepEqual(previous, installed);
+    const size = (await readFile(registry)).byteLength;
+    for (const [shape, bytes] of [["zero-filled", Buffer.alloc(size)], ["truncated", (await readFile(registry, "utf8")).slice(0, size >> 1)], ["invalid JSON", "{not json"]]) {
+      takeStateRecoveryNotices();
+      await writeFile(`${registry}.previous`, JSON.stringify(previous));
+      await writeFile(registry, bytes);
+      assert.deepEqual(await fixture.installer.snapshot(), previous, shape);
+      assert.deepEqual(takeStateRecoveryNotices(), [{ kind: "restored", store: "extensions" }], shape);
+      await writeFile(registry, bytes);
+      await writeFile(`${registry}.previous`, Buffer.alloc(64));
+      await assert.rejects(fixture.installer.snapshot(), (error) => isStateUnreadableError(error) && error.store === "extensions", shape);
+      assert.deepEqual(await readFile(registry), Buffer.from(bytes), shape);
+    }
+    assert.ok((await readdir(directory)).filter((name) => name.startsWith("registry.v1.json.corrupt-")).length >= 3);
+  } finally {
+    await fixture.cleanup();
+  }
+});

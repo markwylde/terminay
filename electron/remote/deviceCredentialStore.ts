@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
-import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { loadSecretState, writeFileDurably } from '../../packages/server-core/src/durableFile.ts'
 
 /**
  * Main-process-only device credentials for Remote Access.  This deliberately
@@ -282,16 +283,18 @@ export class DesktopDeviceCredentialStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
-    let envelope: { encrypted: string; schema: 2 }
-    try {
-      envelope = JSON.parse(await readFile(target, 'utf8')) as { encrypted: string; schema: 2 }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw new Error('Unable to read protected remote credentials.')
-    }
-    if (envelope?.schema !== 2 || typeof envelope.encrypted !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(envelope.encrypted)) {
-      throw new Error('Protected remote credential record is invalid.')
-    }
+    // A credential store (ADR-0088): an envelope that is unreadable or not an
+    // envelope is set aside and reads as unpaired, so this device pairs again.
+    // There is never an older copy to fall back to.
+    const envelope = await loadSecretState<{ encrypted: string; schema: 2 }>(target, 'remote-device-credential', {
+      validate: (value) => {
+        const candidate = value as { encrypted?: unknown; schema?: unknown } | null
+        return candidate?.schema === 2 && typeof candidate.encrypted === 'string' && /^[A-Za-z0-9+/=]+$/.test(candidate.encrypted)
+          ? (candidate as { encrypted: string; schema: 2 })
+          : undefined
+      },
+    })
+    if (envelope === undefined) return null
     try {
       return parseRecord(JSON.parse(this.options.codec.decrypt(Buffer.from(envelope.encrypted, 'base64'))) as unknown, origin)
     } catch {
@@ -309,19 +312,6 @@ export class DesktopDeviceCredentialStore {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
     const envelope = JSON.stringify({ schema: 2, encrypted: this.options.codec.encrypt(JSON.stringify(record)).toString('base64') })
-    const temporary = join(this.options.directory, `.${createHash('sha256').update(record.origin).digest('hex')}.${randomUUID()}.tmp`)
-    const handle = await open(temporary, 'wx', 0o600)
-    try {
-      await handle.writeFile(envelope, 'utf8')
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    try {
-      await rename(temporary, target)
-    } catch (error) {
-      await rm(temporary, { force: true })
-      throw error
-    }
+    await writeFileDurably(target, envelope, { mode: 0o600 })
   }
 }
