@@ -116,14 +116,18 @@
 	position: relative;
 	z-index: 3000;
 	flex: 0 0 auto;
-	min-height: calc(30px + env(safe-area-inset-top, 0px));
+	min-height: calc(28px + env(safe-area-inset-top, 0px));
 	height: auto;
 	display: flex;
 	align-items: stretch;
-	border-bottom: 1px solid #232b35;
-	background: #11161d;
-	color: #dce2f0;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	background: #090b0e;
+	color: rgba(220, 226, 240, 0.72);
 	padding-top: env(safe-area-inset-top, 0px);
+	font-family:
+		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	font-size: 13px;
+	line-height: 1;
 	user-select: none;
 }
 
@@ -131,7 +135,7 @@
    0. The manager already reserved the status bar and titlebar, so a framed
    workspace must not add that inset or size itself with 100dvh. */
 html.is-framed .connected-web-menubar {
-	min-height: 30px;
+	min-height: 28px;
 	padding-top: 0;
 }
 
@@ -143,11 +147,12 @@ html.is-framed .responsive-workspace-shell {
 	max-height: 100%;
 }
 
+/* Left inset lines the first label up with the project tab bar's icons. */
 .connected-web-menubar__menus {
 	display: flex;
 	align-items: stretch;
-	gap: 2px;
-	padding: 0 8px;
+	gap: 1px;
+	padding: 3px 6px;
 }
 
 .connected-web-menu {
@@ -162,68 +167,140 @@ html.is-framed .responsive-workspace-shell {
 	color: inherit;
 	font: inherit;
 	background: transparent;
+	cursor: default;
 }
 
 .connected-web-menu__button {
-	min-width: 44px;
-	padding: 0 10px;
-	text-align: center;
+	padding: 0 9px;
+	border-radius: 5px;
+	font-weight: 500;
+	transition:
+		background-color 120ms ease,
+		color 120ms ease;
+}
+
+/* The application menu reads as the app's name, as on a desktop menu bar. */
+.connected-web-menu:first-child .connected-web-menu__button {
+	color: #dce2f0;
+	font-weight: 700;
 }
 
 .connected-web-menu__button:hover,
-.connected-web-menu__button:focus-visible,
 .connected-web-menu__button[aria-expanded="true"] {
-	background: #26303b;
+	background: rgba(255, 255, 255, 0.08);
+	color: #ffffff;
+}
+
+.connected-web-menu__button:focus-visible {
 	outline: none;
+	background: rgba(255, 255, 255, 0.08);
+	color: #ffffff;
+	box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.6);
+}
+
+/* Shares its surface with the workspace's context menus. */
+.connected-web-menu__popup,
+.connected-web-compact-menu__popup {
+	z-index: 4000;
+	min-width: 220px;
+	padding: 4px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 8px;
+	background: rgba(18, 22, 28, 0.97);
+	backdrop-filter: blur(12px);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+	color: #dce2f0;
+	font-size: 13px;
+	line-height: 1.3;
+	animation: connected-web-menu-in 90ms ease-out;
 }
 
 .connected-web-menu__popup {
 	position: absolute;
-	top: 100%;
+	top: calc(100% + 4px);
 	left: 0;
-	z-index: 4000;
-	min-width: 240px;
-	padding: 6px;
-	border: 1px solid #303b47;
-	border-radius: 7px;
-	background: #151b23;
-	box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes connected-web-menu-in {
+	from {
+		opacity: 0;
+		transform: translateY(-3px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.connected-web-menu__popup,
+	.connected-web-compact-menu__popup {
+		animation: none;
+	}
 }
 
 .connected-web-menu__item {
+	position: relative;
 	width: 100%;
-	display: block;
-	padding: 7px 10px;
-	border-radius: 5px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border-radius: 4px;
 	text-align: left;
 	white-space: nowrap;
+}
+
+.connected-web-menu__label {
+	flex: 1 1 auto;
+}
+
+.connected-web-menu__shortcut {
+	flex: 0 0 auto;
+	margin-left: 24px;
+	color: rgba(220, 226, 240, 0.42);
+	font: inherit;
+	font-size: 12px;
+	letter-spacing: 0.04em;
 }
 
 /* A checkable item reserves its tick column whether or not it is ticked, so
    toggling it does not shift the label. */
 .connected-web-menu__item--checkable {
-	display: flex;
-	align-items: center;
-	gap: 6px;
+	padding-left: 6px;
+	gap: 4px;
 }
 
 .connected-web-menu__check {
 	flex: 0 0 auto;
-	width: 12px;
+	width: 14px;
+	color: #57b7ff;
 	text-align: center;
 }
 
+/* The separator sits in the gap above the item so the hover fill keeps the
+   item's own shape. */
 .connected-web-menu__item--group {
-	margin-top: 4px;
-	padding-top: 10px;
-	border-top: 1px solid #303b47;
-	border-radius: 0 0 5px 5px;
+	margin-top: 9px;
+}
+
+.connected-web-menu__item--group::before {
+	content: "";
+	position: absolute;
+	top: -5px;
+	left: 6px;
+	right: 6px;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.07);
+	pointer-events: none;
 }
 
 .connected-web-menu__item:hover,
 .connected-web-menu__item:focus-visible {
-	background: #2b3744;
+	background: rgba(255, 255, 255, 0.08);
+	color: #ffffff;
 	outline: none;
+}
+
+.connected-web-menu__item:hover .connected-web-menu__shortcut,
+.connected-web-menu__item:focus-visible .connected-web-menu__shortcut {
+	color: rgba(220, 226, 240, 0.65);
 }
 
 .connected-web-connection-backdrop {
@@ -458,14 +535,8 @@ html.is-framed .responsive-workspace-shell {
 	top: calc(100% + 4px);
 	left: 0;
 	z-index: 3000;
-	min-width: 232px;
 	max-height: 70vh;
 	overflow-y: auto;
-	padding: 5px;
-	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 10px;
-	background: #1b1f28;
-	box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
 }
 
 /* The four menus keep their names here: one control, still File, Edit, View
@@ -473,12 +544,12 @@ html.is-framed .responsive-workspace-shell {
 .connected-web-compact-menu__group + .connected-web-compact-menu__group {
 	margin-top: 4px;
 	padding-top: 4px;
-	border-top: 1px solid rgba(255, 255, 255, 0.1);
+	border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .connected-web-compact-menu__label {
-	padding: 6px 10px 3px;
-	color: rgba(220, 226, 240, 0.45);
+	padding: 8px 10px 4px;
+	color: #8d96a6;
 	font-size: 11px;
 	font-weight: 700;
 	letter-spacing: 0.08em;
