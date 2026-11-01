@@ -877,3 +877,63 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+
+/* --- Worktree facts ----------------------------------------------------- */
+
+/* The folder's pull request and checks, in the Folders row's own language. */
+.workspace-dashboard__worktree {
+	display: flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.workspace-dashboard__worktree:empty {
+	display: none;
+}
+
+.workspace-dashboard__chip {
+	box-sizing: border-box;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 5px;
+	padding: 1px 6px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.22);
+	color: rgba(220, 226, 240, 0.62);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.5;
+	white-space: nowrap;
+}
+
+.workspace-dashboard__chip > svg {
+	flex: none;
+}
+
+.workspace-dashboard__pr--merged {
+	border-color: rgba(163, 113, 247, 0.45);
+	background: rgba(163, 113, 247, 0.16);
+	color: #c4a5fa;
+}
+
+.workspace-dashboard__checks--passed {
+	color: #73c991;
+}
+
+.workspace-dashboard__checks--failed {
+	color: #f14c4c;
+}
+
+.workspace-dashboard__checks--pending {
+	color: #cca700;
+}
+
+.workspace-dashboard__row .workspace-dashboard__worktree {
+	flex: none;
+}

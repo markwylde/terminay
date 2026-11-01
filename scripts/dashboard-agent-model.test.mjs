@@ -19,6 +19,7 @@ import {
 	isDashboardViewMode,
 } from '../src/workspace/dashboardViewMode.ts';
 import { presentAgentForTracking } from '../src/agents/agentPresentation.ts';
+import { worktreeFactsFromProperties } from '../src/workspace/workspaceInventory.ts';
 
 const projects = [
 	{ color: '#336699', emoji: '🟩', id: 'p-a', title: 'Terminay' },
@@ -597,5 +598,40 @@ test('an untracked terminal and its agent go only in the Untracked column', () =
 	assert.deepEqual(
 		lanes.flatMap((lane) => lane.columns.untracked.map((item) => item.key)).sort(),
 		columns.untracked.map((item) => item.key).sort(),
+	);
+});
+
+test('every panel of a folder carries its worktree pull request and checks', () => {
+	const worktree = {
+		pullRequest: { number: 99, title: 'Delete', state: 'open' },
+		checks: { failed: 0, passed: 8, pending: 12, skipped: 0, total: 20 },
+	};
+	const [group] = buildDashboardGroups([projects[0]], {
+		'p-a': [
+			panel({ panelId: 'panel-1', sessionId: 's1', folderId: 'f1', worktree }),
+			panel({ panelId: 'panel-2', sessionId: 's2', folderId: 'f1', worktree }),
+			panel({ panelId: 'panel-3', sessionId: 's3', folderId: 'f2' }),
+		],
+	}, { 'p-a': [agent()] });
+	assert.deepEqual(group.panels[0].worktree, worktree);
+	assert.deepEqual(group.panels[1].worktree, worktree);
+	assert.equal(group.panels[2].worktree, undefined);
+	const items = buildDashboardBoardItems([{ key: 'x', serverId: 'srv', row: group }]);
+	const agentItem = items.find((item) => item.agent !== undefined);
+	assert.deepEqual(agentItem.panel.worktree, worktree);
+});
+
+test('worktree facts keep the counts and drop the check items', () => {
+	assert.equal(worktreeFactsFromProperties(undefined), undefined);
+	assert.equal(worktreeFactsFromProperties({}), undefined);
+	assert.deepEqual(
+		worktreeFactsFromProperties({
+			pullRequest: { number: 7, title: 'T', url: 'https://x/7', state: 'merged', mergeable: false },
+			checks: { failed: 1, passed: 2, pending: 0, skipped: 0, total: 3, url: 'u', items: [{ name: 'a', state: 'failed' }] },
+		}),
+		{
+			pullRequest: { number: 7, title: 'T', state: 'merged', mergeable: false },
+			checks: { failed: 1, passed: 2, pending: 0, skipped: 0, total: 3 },
+		},
 	);
 });
