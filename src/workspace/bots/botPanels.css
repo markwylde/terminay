@@ -1630,6 +1630,10 @@
 .bots-composer form:focus-within {
 	border-color: var(--bots-accent);
 }
+/* Outranks the shared `.bots-ui … :focus-visible` outline. */
+.bots-ui .bots-composer textarea:focus-visible {
+	outline: none;
+}
 .bots-composer textarea,
 .bots-composer textarea:focus,
 .bots-composer textarea:focus-visible {
