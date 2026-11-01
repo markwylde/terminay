@@ -68,9 +68,15 @@ else {
 		);
 	} else if (command[0] === 'events') {
 		fs.watch(process.env.BOT_ENGINE_CONFIG, () => {
-			const next = JSON.parse(
-				fs.readFileSync(process.env.BOT_ENGINE_CONFIG, 'utf8'),
-			);
+			let next;
+			try {
+				next = JSON.parse(
+					fs.readFileSync(process.env.BOT_ENGINE_CONFIG, 'utf8'),
+				);
+			} catch {
+				// The watch can fire mid-write; the write's next change reports the whole file.
+				return;
+			}
 			if (next.event) out(next.event);
 			if (next.eventsEnd) process.exit(0);
 		});
