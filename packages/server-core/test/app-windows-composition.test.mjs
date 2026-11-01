@@ -187,11 +187,17 @@ test("the server advertises app windows only when they are composed", async () =
 
 test("a window message from the controlling client is typed into the owning terminal and submitted once", async () => {
   const server = await composed();
+  const admitted = [];
+  const write = server.composition.terminalInputSources.write.bind(server.composition.terminalInputSources);
+  server.composition.terminalInputSources.write = request => { admitted.push(request); return write(request); };
   try {
     const { client } = await server.connect("desktop");
     const window = open(server);
     await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "Deploy api to eu-west-1" });
     assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1\r"]);
+    assert.equal(admitted.length, 1);
+    assert.equal(admitted[0].source, 'window_message');
+    assert.deepEqual(admitted[0].identity, identity);
     assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
   } finally {
     await server.close();

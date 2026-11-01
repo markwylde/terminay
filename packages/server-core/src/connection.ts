@@ -21,6 +21,7 @@ import {
 	type OperationDispatcher,
 } from './dispatcher.js';
 import { OrderedEventJournal } from './events.js';
+import { recordStreamDiagnostic } from './streamDiagnostics.js';
 import {
 	OutboundDeliveryError,
 	OutboundDeliveryPump,
@@ -69,6 +70,17 @@ const GLOBAL_HEARTBEAT_TIMERS: HeartbeatTimers = {
 	},
 };
 
+const MAX_IN_FLIGHT_FEATURES = 64;
+const MAX_PENDING_FEATURES = 256;
+interface PendingFeature {
+	readonly envelope: QueryEnvelope | CommandEnvelope;
+	readonly body: Uint8Array;
+	readonly bytes: number;
+	readonly resolve: () => void;
+	readonly deadline?: number;
+	timer?: ReturnType<typeof setTimeout>;
+}
+
 interface InFlightRequest {
 	readonly controller: AbortController;
 	readonly detachConnectionAbort: () => void;
@@ -103,6 +115,10 @@ export class ServerConnection implements ServerConnectionLike {
 	private readerTask: Promise<void> | undefined;
 	private readonly abortController = new AbortController();
 	private readonly inFlightRequests = new Map<string, InFlightRequest>();
+	private readonly pendingFeatures: PendingFeature[] = [];
+	private readonly pendingFeatureIds = new Map<string, PendingFeature>();
+	private pendingFeatureBytes = 0;
+	private activeFeatures = 0;
 	private readonly eventSubscriptions = new Map<string, () => void>();
 	private connectionCleaned = false;
 	private heartbeatTimer: unknown;
@@ -198,6 +214,7 @@ export class ServerConnection implements ServerConnectionLike {
 		await this.processEnvelope(
 			decoded.envelope,
 			body.byteLength === 0 ? decoded.body : body,
+			frame.byteLength + body.byteLength,
 		);
 	}
 
@@ -266,9 +283,9 @@ export class ServerConnection implements ServerConnectionLike {
 				inFlight.add(task);
 				void task.finally(() => inFlight.delete(task));
 				// A MessagePort may already have a populated queue when its transferred
-				// endpoint starts. Bound both concurrent dispatch and each microtask
+				// endpoint starts. Feature admission bounds dispatch; bound each microtask
 				// turn so Electron's main loop remains responsive under a frame storm.
-				if (inFlight.size >= 64) await Promise.race(inFlight);
+
 				framesThisTurn += 1;
 				if (framesThisTurn >= 128) {
 					framesThisTurn = 0;
@@ -287,6 +304,7 @@ export class ServerConnection implements ServerConnectionLike {
 				this.outbound.close(reason);
 				this.abortController.abort(new Error(reason.message));
 			}
+			this.clearPendingFeatures();
 			await Promise.all([...inFlight]);
 			if (disconnected && this.currentState !== 'closing') {
 				this.cleanupConnection();
@@ -304,6 +322,7 @@ export class ServerConnection implements ServerConnectionLike {
 	private async processEnvelope(
 		envelope: Envelope,
 		body: Uint8Array,
+		frameBytes: number,
 	): Promise<void> {
 		validateEnvelope(envelope);
 		if (this.currentState === 'handshaking') {
@@ -318,10 +337,97 @@ export class ServerConnection implements ServerConnectionLike {
 			return;
 		}
 		if (this.currentState !== 'open') return;
-		if (envelope.type === 'query') await this.handleQuery(envelope, body);
-		else if (envelope.type === 'command')
-			await this.handleCommand(envelope, body);
+		if (envelope.type === 'query' && envelope.operation === CONNECTION_PING_OPERATION)
+			await this.handleQuery(envelope, body);
+		else if (envelope.type === 'query' || envelope.type === 'command')
+			await this.admitFeature(envelope, body, frameBytes);
 		else if (envelope.type === 'cancel') this.cancelRequest(envelope);
+	}
+
+	private async admitFeature(envelope: QueryEnvelope | CommandEnvelope, body: Uint8Array, bytes: number): Promise<void> {
+		const correlation = envelope.type === 'query' ? envelope.queryId : envelope.correlationId;
+		if (this.pendingFeatureIds.has(correlation) || this.inFlightRequests.has(correlation)) {
+			await this.sendFeatureError(envelope, duplicateRequestError());
+			return;
+		}
+		if (this.activeFeatures < MAX_IN_FLIGHT_FEATURES && this.pendingFeatures.length === 0) {
+			await this.dispatchFeature(envelope, body);
+			return;
+		}
+		const maxBytes = this.options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes;
+		if (this.pendingFeatures.length >= MAX_PENDING_FEATURES || this.pendingFeatureBytes + bytes > maxBytes) {
+			recordStreamDiagnostic('transport', 'inbound_feature_queue_exhausted', { connectionId: this.connectionId, queuedBytes: this.pendingFeatureBytes, queuedFrames: this.pendingFeatures.length });
+			const error = new OutboundDeliveryError({ code: 'resource', message: 'connection inbound feature queue limit reached' });
+			this.outbound.close(error.reason);
+			await this.failConnection(error);
+			return;
+		}
+		await new Promise<void>(resolve => {
+			const item: PendingFeature = { envelope, body, bytes, resolve, ...(envelope.deadlineMs === undefined ? {} : { deadline: Date.now() + envelope.deadlineMs }) };
+			this.pendingFeatures.push(item);
+			this.pendingFeatureIds.set(correlation, item);
+			this.pendingFeatureBytes += bytes;
+			this.armPendingDeadline(item);
+		});
+	}
+
+	private async dispatchFeature(envelope: QueryEnvelope | CommandEnvelope, body: Uint8Array): Promise<void> {
+		this.activeFeatures++;
+		try {
+			if (envelope.type === 'query') await this.handleQuery(envelope, body);
+			else await this.handleCommand(envelope, body);
+		} finally {
+			this.activeFeatures--;
+			this.drainFeatures();
+		}
+	}
+
+	private drainFeatures(): void {
+		while (this.currentState === 'open' && !this.abortController.signal.aborted && this.activeFeatures < MAX_IN_FLIGHT_FEATURES && this.pendingFeatures.length > 0) {
+			const item = this.pendingFeatures[0]!;
+			this.removePendingFeature(item);
+			const remaining = item.deadline === undefined ? undefined : item.deadline - Date.now();
+			if (remaining !== undefined && remaining <= 0) {
+				void this.sendFeatureError(item.envelope, protocolError('deadline', 'operation deadline exceeded')).catch(() => undefined).finally(item.resolve);
+				continue;
+			}
+			const envelope = remaining === undefined ? item.envelope : { ...item.envelope, deadlineMs: remaining };
+			void this.dispatchFeature(envelope, item.body).catch(() => undefined).finally(item.resolve);
+		}
+	}
+
+	private removePendingFeature(item: PendingFeature): void {
+		const index = this.pendingFeatures.indexOf(item);
+		if (index < 0) return;
+		this.pendingFeatures.splice(index, 1);
+		this.pendingFeatureBytes -= item.bytes;
+		this.pendingFeatureIds.delete(item.envelope.type === 'query' ? item.envelope.queryId : item.envelope.correlationId);
+		if (item.timer !== undefined) clearTimeout(item.timer);
+	}
+
+	private armPendingDeadline(item: PendingFeature): void {
+		if (item.deadline === undefined) return;
+		item.timer = setTimeout(() => {
+			if (!this.pendingFeatures.includes(item)) return;
+			if (item.deadline! > Date.now()) { this.armPendingDeadline(item); return; }
+			this.removePendingFeature(item);
+			void this.sendFeatureError(item.envelope, protocolError('deadline', 'operation deadline exceeded')).catch(() => undefined).finally(item.resolve);
+		}, Math.max(0, Math.min(2147483647, item.deadline - Date.now())));
+	}
+
+	private clearPendingFeatures(): void {
+		for (const item of this.pendingFeatures.splice(0)) {
+			if (item.timer !== undefined) clearTimeout(item.timer);
+			item.resolve();
+		}
+		this.pendingFeatureIds.clear();
+		this.pendingFeatureBytes = 0;
+	}
+
+	private async sendFeatureError(envelope: QueryEnvelope | CommandEnvelope, error: ReturnType<typeof protocolError>): Promise<void> {
+		await this.send(envelope.type === 'query'
+			? { type: 'query_result', queryId: envelope.queryId, ok: false, error }
+			: { type: 'command_result', commandId: envelope.commandId, correlationId: envelope.correlationId, ok: false, error });
 	}
 
 	private async handleHello(hello: ClientHello): Promise<void> {
@@ -481,13 +587,13 @@ export class ServerConnection implements ServerConnectionLike {
 				await this.send(result);
 				return;
 			}
-			const result = await this.dispatcher.command({
+			const dispatched = await this.dispatcher.commandWithOutcome({
 				envelope: command,
 				body,
 				context: this.context(command, request.controller.signal),
 			});
-			this.applyTerminalDeliveryCommand(command, result);
-			await this.send(result);
+			if (dispatched.executed) this.applyTerminalDeliveryCommand(command, dispatched.envelope);
+			await this.send(dispatched.envelope);
 		} catch (error) {
 			await this.send({
 				type: 'command_result',
@@ -530,6 +636,11 @@ export class ServerConnection implements ServerConnectionLike {
 	}
 
 	private cancelRequest(cancel: CancelEnvelope): void {
+		const pending = this.pendingFeatureIds.get(cancel.correlationId);
+		if (pending !== undefined) {
+			this.removePendingFeature(pending);
+			void this.sendFeatureError(pending.envelope, protocolError('cancelled', 'operation cancelled')).catch(() => undefined).finally(pending.resolve);
+		}
 		this.inFlightRequests
 			.get(cancel.correlationId)
 			?.controller.abort(new Error('operation cancelled'));
@@ -940,6 +1051,7 @@ export class ServerConnection implements ServerConnectionLike {
 	private cleanupConnection(): void {
 		if (this.connectionCleaned) return;
 		this.connectionCleaned = true;
+		this.clearPendingFeatures();
 		for (const request of this.inFlightRequests.values()) {
 			request.controller.abort(this.abortController.signal.reason);
 			request.detachConnectionAbort();

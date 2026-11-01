@@ -3758,6 +3758,32 @@ body.project-tabbar-reordering .project-tabbar {
   pointer-events: auto;
 }
 
+.terminal-input-notice {
+  position: absolute;
+  inset-inline: 12px;
+  inset-block-end: 12px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--terminal-note-color, #d8b86e);
+  border-radius: 6px;
+  color: var(--text-primary, #eee);
+  background: var(--terminal-panel-surface, #111316);
+  font-size: 12px;
+}
+
+.terminal-input-notice button {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
 .terminal-paste-progress progress {
   inline-size: 56px;
   block-size: 5px;

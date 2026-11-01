@@ -10,6 +10,8 @@ export type TerminalInputSource =
 	| 'dictation'
 	| 'mcp'
 	| 'remote'
+	| 'automation'
+	| 'window_message'
 	/** The start command a terminal launcher types into a new shell (ADR-0073). */
 	| 'launcher';
 export type TerminalResizeMode = 'claim' | 'update' | 'release';
@@ -121,6 +123,8 @@ const SOURCES: readonly TerminalInputSource[] = [
 	'dictation',
 	'mcp',
 	'remote',
+	'automation',
+	'window_message',
 	'launcher',
 ];
 const VIEWPORTS: readonly TerminalViewport[] = ['wide', 'narrow', 'mobile'];

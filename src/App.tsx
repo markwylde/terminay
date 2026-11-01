@@ -2359,7 +2359,7 @@ const ProjectWorkspace = memo(forwardRef<
 		} = useTerminalActivityController({
 			acknowledgeAgent: (sessionId) => {
 				if (!settingsRef.current.agentIntegration.enabled) return;
-				void serverAgentStatusClient
+				return serverAgentStatusClient
 					?.acknowledge({ projectId: project.id, sessionId })
 					.catch(() => undefined);
 			},
@@ -2367,7 +2367,7 @@ const ProjectWorkspace = memo(forwardRef<
 				serverActivityClient === undefined
 					? undefined
 					: (sessionId) => {
-							void serverActivityClient
+							return serverActivityClient
 								.acknowledge(
 									{ projectId: project.id, sessionId },
 									{ fence: false },

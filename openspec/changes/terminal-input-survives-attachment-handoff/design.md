@@ -71,8 +71,9 @@ The pump awaits the write it already started. When it settles after a handoff:
   attachment the server already replaced, or the attachment-closed refusal
   before sending): it never reached the PTY, so it stays first and the
   replacement sends it once;
-- `unknown_command_outcome` or an unreadable reply: it may be in the PTY, so it
-  is treated as delivered and never sent again.
+- `unknown_command_outcome` or an unreadable reply: it may be in the PTY, so neither it nor its queued successors are sent again. The queue reports
+  an input interruption and accepts new input once a hydrated replacement
+  holds the presentation; output remains attached.
 
 An error on the *current* attachment keeps its existing meaning: an ownership
 refusal discards the stale queue; anything else closes the queue and fails the
@@ -80,12 +81,10 @@ panel visibly.
 
 ## Risks / Trade-offs
 
-- [A write whose outcome is unknown, on an attachment already replaced, may
-  not have reached the PTY, and later input still follows it] → This is the
-  rebind-after-transport-loss case. Before this change the later input was
-  discarded silently; now at most the one uncertain write can be missing and
-  everything typed after it arrives. The current-attachment case still fails
-  closed.
+- [An unknown in-flight write may be missing from the PTY] → Neither it nor
+  its queued successors is retried. The notice exposes the interruption and
+  new input resumes only on a hydrated controlling replacement. Successful
+  and definitively refused handoffs preserve their queued input.
 - [Input typed while a fresh panel attaches is delivered later than typed] →
   It is delivered in order once the panel holds control, which is what a
   local terminal does with type-ahead.
@@ -95,7 +94,7 @@ panel visibly.
 - `scripts/terminal-panel-input-queue.test.mjs` drives the queue through a
   handoff with writes the test settles: queued and newly typed input reaches
   the replacement once and in order; a refused in-flight write is resent once;
-  an unknown-outcome one is not; a read-only replacement refuses; a paste
+  an unknown-outcome one and its successors are not; a read-only replacement refuses; a paste
   resumes from its first unsent chunk.
 - `e2e/terminal-input-handoff.spec.ts` holds the first key's write at the
   embedded server, ends the stream as congested, keeps typing through the

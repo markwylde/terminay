@@ -17,6 +17,7 @@ import { nodeTerminalLaunchPathAuthority } from '../terminalService/launchResolv
 import { TerminalPresentationCheckpointAuthority } from '../terminalService/presentationCheckpoint.js';
 import { SHELL_INTEGRATION_ENVIRONMENT_NAMES } from '../terminalService/shellIntegration.js';
 import type { TerminalService } from '../terminalService/service.js';
+import { TerminalInputSourceAdapter } from '../terminalService/inputSources.js';
 import type {
 	TerminalAuthorization,
 	TerminalDimensions,
@@ -94,6 +95,7 @@ export interface AutomationExecutorOptions {
 	readonly serverId: string;
 	readonly runLog: AutomationRunLog;
 	readonly terminal: TerminalService;
+	readonly inputSources?: TerminalInputSourceAdapter;
 	readonly workspace: WorkspaceStore;
 	/** Host commands against the canonical workspace, published like any other
 	 * workspace change. */
@@ -172,9 +174,11 @@ export class AutomationExecutor implements AutomationRunController {
 	private registry: AutomationRunTerminalRegistry | undefined;
 	private readonly now: () => number;
 	private readonly maxConcurrentRuns: number;
+	private readonly inputSources: TerminalInputSourceAdapter;
 	private disposed = false;
 
 	constructor(private readonly options: AutomationExecutorOptions) {
+		this.inputSources = options.inputSources ?? new TerminalInputSourceAdapter(options.terminal);
 		this.now = options.now ?? (() => Date.now());
 		this.maxConcurrentRuns =
 			options.maxConcurrentRuns ?? AUTOMATION_MAX_CONCURRENT_RUNS;
@@ -654,14 +658,14 @@ export class AutomationExecutor implements AutomationRunController {
 						reason: 'the subject terminal was gone',
 					});
 				if (text.length > 0)
-					await this.options.terminal.input(target, text, authorization);
+					await this.inputSources.write({ identity: target, clientId: AUTOMATION_PRINCIPAL.clientId, source: 'automation', data: text, authorization });
 				if (automation.action.submit) {
 					if (!this.subjectIsCurrent(request))
 						return this.complete(run, {
 							outcome: 'failed',
 							reason: 'the subject terminal went away before submit',
 						});
-					await this.options.terminal.input(target, '\r', authorization);
+					await this.inputSources.write({ identity: target, clientId: AUTOMATION_PRINCIPAL.clientId, source: 'automation', data: '\r', authorization });
 				}
 				return this.complete(run, { outcome: 'succeeded' });
 			}

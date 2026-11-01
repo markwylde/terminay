@@ -990,8 +990,9 @@ export class ServerTerminalAuthority {
 						serverId: options.serverId,
 						authority: {
 							...aiTargetAuthority,
-							writeInput: (target, input) =>
-								this.service.input(target.sessionId, input),
+							writeInput: async (target, input) => {
+								await this.composition.terminalInputSources.write({ identity: { serverId: target.serverId, projectId: target.projectId, sessionId: target.sessionId }, clientId: 'dictation', source: 'dictation', data: input });
+							},
 						},
 						replay: aiReplay,
 						dictationProvider,
@@ -2085,7 +2086,13 @@ export class ServerTerminalAuthority {
 		authorization?: TerminalAuthorization,
 	): Promise<void> {
 		const session = this.requireSession(id);
-		await this.service.input(id, data, authorization);
+		await this.composition.terminalInputSources.write({
+			identity: { serverId: this.service.serverId, projectId: session.projectId, sessionId: id },
+			clientId: authorization?.clientId ?? 'embedded-host',
+			source: 'remote',
+			data,
+			...(authorization === undefined ? {} : { authorization }),
+		});
 		this.notifyAcceptedWrite({
 			serverId: this.service.serverId,
 			projectId: session.projectId,

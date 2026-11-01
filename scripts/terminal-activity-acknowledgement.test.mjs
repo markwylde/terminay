@@ -117,3 +117,42 @@ async function importAcknowledgement() {
 	});
 	return import(outputPath);
 }
+
+import { CoalescedSessionAcknowledgements } from '../src/workspace/coalescedAcknowledgements.ts';
+
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => { let resolve; let reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+
+test('an acknowledgement burst keeps one request in flight and one trailing per session', async () => {
+  const calls = []; const gates = [];
+  const queue = new CoalescedSessionAcknowledgements(sessionId => { calls.push(sessionId); const gate = deferred(); gates.push(gate); return gate.promise; });
+  for (let i = 0; i < 100; i++) queue.acknowledge('one');
+  queue.acknowledge('two');
+  assert.deepEqual(calls, ['one', 'two']);
+  gates[0].resolve(); await tick();
+  assert.deepEqual(calls, ['one', 'two', 'one']);
+  gates[1].resolve(); gates[2].resolve(); await tick();
+  assert.deepEqual(calls, ['one', 'two', 'one']);
+  queue.acknowledge('one'); assert.equal(calls.length, 4);
+  gates[3].resolve(); await tick();
+});
+
+test('acknowledgement kinds stay independent and a failed request retains its trailing interaction', async () => {
+  const first = deferred(); const calls = [];
+  const activity = new CoalescedSessionAcknowledgements(() => { calls.push('activity'); return calls.filter(kind => kind === 'activity').length === 1 ? first.promise : undefined; });
+  const agent = new CoalescedSessionAcknowledgements(() => { calls.push('agent'); });
+  activity.acknowledge('session'); activity.acknowledge('session'); agent.acknowledge('session');
+  assert.deepEqual(calls, ['activity', 'agent']);
+  first.reject(new Error('temporary failure')); await tick();
+  assert.deepEqual(calls, ['activity', 'agent', 'activity']);
+});
+
+test('view cleanup cancels unsent trailing work without suppressing later lifecycle interactions', async () => {
+  const first = deferred(); const calls = [];
+  const queue = new CoalescedSessionAcknowledgements(() => { calls.push('ack'); return calls.length === 1 ? first.promise : undefined; });
+  queue.acknowledge('session'); queue.acknowledge('session'); queue.clear();
+  queue.acknowledge('session'); first.resolve(); await tick();
+  assert.deepEqual(calls, ['ack', 'ack']);
+  queue.acknowledge('session'); await tick();
+  assert.equal(calls.length, 3);
+});

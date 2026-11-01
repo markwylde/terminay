@@ -1,3 +1,4 @@
+import { RequestAdmission } from './requestAdmission.js';
 import {
   decodeFrame,
   encodeFrame,
@@ -101,6 +102,10 @@ export class TerminayClient {
   private closed = false;
   private transportClosePromise: Promise<void> | undefined;
   private commandCounter = 0;
+  private readonly requestAdmission = new RequestAdmission(() => Math.min(
+    this.options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes,
+    this.current.server?.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes,
+  ));
   private serverCompatibilityRequirements: ServerCompatibilityRequirements | undefined;
 
   constructor(options: TerminayClientOptions) {
@@ -306,6 +311,7 @@ export class TerminayClient {
     this.closed = true;
     this.setState("closing");
     this.events.clear();
+    this.requestAdmission.clear();
     for (const pending of this.pending.values()) pending.reject(new ClientDisconnectedError("client is closing"));
     this.pending.clear();
     this.handshake?.reject(new ClientDisconnectedError("client is closing"));
@@ -334,10 +340,32 @@ export class TerminayClient {
   }
 
   private async sendRequest<T extends QueryResultEnvelope | CommandResultEnvelope>(envelope: Envelope, signal?: AbortSignal, body = new Uint8Array()): Promise<{ readonly envelope: T; readonly body: Uint8Array }> {
+    let frame = encodeFrame(envelope, body, this.options.limits ?? DEFAULT_PROTOCOL_LIMITS);
+    if (envelope.type === 'query' && envelope.operation === 'connection.ping')
+      return this.sendPreparedRequest<T>(envelope, frame, signal);
+    const deadline = (envelope.type === 'query' || envelope.type === 'command') && envelope.deadlineMs !== undefined ? Date.now() + envelope.deadlineMs : undefined;
+    const admission = this.requestAdmission.acquire(frame.byteLength, signal, deadline);
+    const waited = typeof admission !== 'function';
+    const release = typeof admission === 'function' ? admission : await admission;
+    try {
+      if (this.closed || this.current.state !== 'connected') throw new ClientError('unavailable', 'request was not sent before the connection ended');
+      if (waited && deadline !== undefined) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new ClientError('deadline', 'request deadline exceeded before send');
+        // Preserve the captured payload/body even if the caller mutated them
+        // while waiting; only the remaining attempt deadline changes.
+        const decoded = decodeFrame(frame, this.options.limits);
+        if (decoded.envelope.type === 'query' || decoded.envelope.type === 'command')
+          frame = encodeFrame({ ...decoded.envelope, deadlineMs: remaining }, decoded.body, this.options.limits ?? DEFAULT_PROTOCOL_LIMITS);
+      }
+      return await this.sendPreparedRequest<T>(envelope, frame, signal);
+    } finally { release(); }
+  }
+
+  private async sendPreparedRequest<T extends QueryResultEnvelope | CommandResultEnvelope>(envelope: Envelope, frame: Uint8Array, signal?: AbortSignal): Promise<{ readonly envelope: T; readonly body: Uint8Array }> {
     const key = envelope.type === "query" ? envelope.queryId : envelope.type === "command" ? envelope.correlationId : "";
     const pending = this.pendingPromise<{ readonly envelope: T; readonly body: Uint8Array }>();
     this.pending.set(key, pending as unknown as Pending<{ readonly envelope: QueryResultEnvelope | CommandResultEnvelope; readonly body: Uint8Array }>);
-    const frame = encodeFrame(envelope, body, this.options.limits ?? DEFAULT_PROTOCOL_LIMITS);
     let accepted = false;
     let cancellationSent = false;
     const sendCancellation = (): void => {
@@ -473,6 +501,7 @@ export class TerminayClient {
       message: "application protocol reader ended unexpectedly",
       cause,
     }).catch(() => undefined);
+    this.requestAdmission.clear();
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.handshake?.reject(error);

@@ -30,6 +30,7 @@ import {
 } from './types.js';
 
 interface ActiveRecording {
+	readonly outputDecoder: TextDecoder;
 	readonly sessionId: string;
 	readonly entry: RecordingStorageEntry;
 	metadata: RecordingMetadata;
@@ -341,6 +342,7 @@ export class RecordingService {
 		}
 		const initialSize = this.castSize(entry.castPath);
 		const active: ActiveRecording = {
+			outputDecoder: new TextDecoder(),
 			sessionId,
 			entry: {
 				...entry,
@@ -438,6 +440,15 @@ export class RecordingService {
 		this.appendData(sessionId, 'o', data);
 	}
 
+	/** PTY callbacks are byte boundaries, not UTF-8 character boundaries. */
+	appendOutputBytes(sessionId: string, bytes: Uint8Array): void {
+		const active = this.active.get(sessionId);
+		if (active === undefined || active.metadata.recordingState !== 'recording')
+			return;
+		const text = active.outputDecoder.decode(bytes, { stream: true });
+		if (text.length > 0) this.appendOutput(sessionId, text);
+	}
+
 	appendInput(sessionId: string, data: string): void {
 		const active = this.active.get(sessionId);
 		if (active === undefined || active.metadata.recordingState !== 'recording')
@@ -509,6 +520,12 @@ export class RecordingService {
 		if (active === undefined) return this.getState(sessionId);
 		if (active.metadata.recordingState !== 'recording')
 			return this.toState(active, 'failed');
+		const remaining = active.outputDecoder.decode();
+		if (remaining.length > 0) {
+			this.appendOutput(sessionId, remaining);
+			if (this.active.get(sessionId) !== active)
+				return this.getState(sessionId);
+		}
 		if (exitCode !== null && Number.isSafeInteger(exitCode)) {
 			this.appendData(sessionId, 'x', String(exitCode));
 			if (this.active.get(sessionId) !== active)

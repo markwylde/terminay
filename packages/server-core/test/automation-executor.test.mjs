@@ -413,6 +413,9 @@ test("recording starts before the command writes output and a failure never fail
 test("write text renders the Eta subset over event context, submits, and the loop guard suppresses the same terminal only", { skip: !posix }, async (t) => {
   let now = 1_000_000;
   const h = await harness(t, { now: () => now });
+  const admitted = [];
+  const write = h.executor.inputSources.write.bind(h.executor.inputSources);
+  h.executor.inputSources.write = request => { admitted.push(request); return write(request); };
   const subject = await subjectTerminal(h, "agent-1");
   const other = await subjectTerminal(h, "agent-2");
   const automation = definition({
@@ -423,6 +426,9 @@ test("write text renders the Eta subset over event context, submits, and the loo
   const request = { automation, startedBy: "trigger", firedAt: now, event: "agent.needsInput", subject, context: { agentState: "waiting" } };
   const first = await h.executor.start(request);
   assert.equal(first.outcome, "succeeded");
+  assert.equal(admitted.length, 2);
+  assert.deepEqual(admitted.map(input => input.source), ['automation', 'automation']);
+  assert.ok(admitted.every(input => input.clientId === AUTOMATION_PRINCIPAL.clientId));
   assert.deepEqual(h.inputs, [{ sessionId: "agent-1", text: "continue Agent tab!" }, { sessionId: "agent-1", text: "\r" }]);
 
   // Cooldown 0 is clamped to the 5 s subject-action minimum.

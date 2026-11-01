@@ -323,3 +323,33 @@ async function importBundled(relativePath) {
     await rm(temporaryDirectory, { force: true, recursive: true })
   }
 }
+
+
+test('byte output keeps UTF-8 decoder state only within the active desktop recording', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'terminay-desktop-recording-utf8-'));
+  const root = join(home, 'casts'); const { service } = createHarness(home, root);
+  const outputs = async recordingId => {
+    const paths = await findRecordingFiles(root, recordingId);
+    return (await readFile(paths.cast, 'utf8')).split('\n').filter(Boolean).slice(1).map(JSON.parse).filter(record => record[1] === 'o').map(record => record[2]).join('');
+  };
+  try {
+    for (const character of ['€', '😀']) {
+      const bytes = new TextEncoder().encode(character);
+      for (let split = 1; split < bytes.length; split++) {
+        const state = service.start('utf8');
+        service.appendOutputBytes('utf8', bytes.subarray(0, split));
+        service.appendOutputBytes('utf8', bytes.subarray(split));
+        await stop(service, 'utf8', 0);
+        assert.equal(await outputs(state.recordingId), character);
+      }
+    }
+    const first = service.start('utf8');
+    service.appendOutputBytes('utf8', Uint8Array.of(0xe2));
+    await stop(service, 'utf8');
+    assert.equal(await outputs(first.recordingId), '\ufffd');
+    const second = service.start('utf8');
+    service.appendOutputBytes('utf8', Uint8Array.of(0x82, 0xac));
+    await stop(service, 'utf8');
+    assert.equal(await outputs(second.recordingId), '\ufffd\ufffd');
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
