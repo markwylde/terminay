@@ -268,3 +268,77 @@ test("authorities clean up canonical emulator state on terminal exit", async () 
     (cause) => cause instanceof TerminalPresentationCheckpointError && cause.code === "checkpoint_not_found",
   );
 });
+
+// Query the restored emulator through its terminal protocol, avoiding a test
+// that merely inspects the serializer's generated escape sequences.
+async function mouseModeReply(terminal, mode) {
+  const replies = [];
+  const listener = terminal.onData((data) => replies.push(data));
+  await write(terminal, `\x1b[?${mode}$p`);
+  listener.dispose();
+  return replies.join('');
+}
+
+for (const tracking of [null, 9, 1000, 1002, 1003]) {
+  for (const encoding of [null, 1006, 1016]) {
+    test(`checkpoint restores mouse tracking ${tracking} and encoding ${encoding} over stale modes`, async () => {
+      const value = authority();
+      let position = await output(value, 0, Array.from({ length: 300 }, (_, i) => `history-${i}\r\n`).join(''));
+      position = await output(value, position, '\r' +
+        (tracking === null ? '' : `\x1b[?${tracking}h`) +
+        (encoding === null ? '' : `\x1b[?${encoding}h`));
+      const prepared = await value.prepare(identity, { clientId: 'client-a' });
+      value.bind(prepared.checkpointId, scope(prepared.checkpointId));
+      const checkpoint = value.fetch(scope(prepared.checkpointId));
+      const { terminal } = restore();
+      try {
+        await write(terminal, '\x1b[?1003h\x1b[?1016h');
+        await write(terminal, checkpoint.state);
+        for (const mode of [9, 1000, 1002, 1003, 1006, 1016]) {
+          assert.equal(await mouseModeReply(terminal, mode),
+            `\x1b[?${mode};${mode === tracking || mode === encoding ? 1 : 2}$y`);
+        }
+        // A later program mode change must still override restored state.
+        await write(terminal, '\x1b[?1000h\x1b[?1006h');
+        assert.equal(await mouseModeReply(terminal, 1006), '\x1b[?1006;1$y');
+        await write(terminal, '\x1b[?1000l\x1b[?1006l');
+        assert.equal(terminal.modes.mouseTrackingMode, 'none');
+      } finally {
+        terminal.dispose();
+        value.closeSession(identity);
+      }
+    });
+  }
+}
+
+test('initial checkpoint resets stale mouse state and ordered unsafe tail can disable tracking', async () => {
+  const value = authority();
+  const terminal = restore().terminal;
+  try {
+    let prepared = await value.prepare(identity, { clientId: 'client-a' });
+    value.bind(prepared.checkpointId, scope(prepared.checkpointId));
+    await write(terminal, '\x1b[?1003h\x1b[?1016h');
+    await write(terminal, value.fetch(scope(prepared.checkpointId)).state);
+    assert.equal(terminal.modes.mouseTrackingMode, 'none');
+    assert.equal(await mouseModeReply(terminal, 1016), '\x1b[?1016;2$y');
+    value.release(prepared.checkpointId, scope(prepared.checkpointId));
+    let position = await output(value, 0, '\x1b[?1000h\x1b[?1006h');
+    prepared = await value.prepare(identity, { clientId: 'client-a' });
+    value.bind(prepared.checkpointId, scope(prepared.checkpointId));
+    value.release(prepared.checkpointId, scope(prepared.checkpointId));
+    position = await output(value, position, '\x1b[?1000l\x1b[?1006l\x1b[');
+    prepared = await value.prepare(identity, { clientId: 'client-a' });
+    assert.ok(prepared.position < position);
+    value.bind(prepared.checkpointId, scope(prepared.checkpointId));
+    const checkpoint = value.fetch(scope(prepared.checkpointId));
+    await write(terminal, checkpoint.state);
+    assert.equal(terminal.modes.mouseTrackingMode, 'vt200');
+    for (const event of checkpoint.tail) if (event.type === 'output') await write(terminal, event.bytes);
+    await write(terminal, 'm');
+    assert.equal(terminal.modes.mouseTrackingMode, 'none');
+    assert.equal(await mouseModeReply(terminal, 1006), '\x1b[?1006;2$y');
+  } finally {
+    terminal.dispose();
+    value.closeSession(identity);
+  }
+});
