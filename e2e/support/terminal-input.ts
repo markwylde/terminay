@@ -21,6 +21,16 @@ export async function typeInVisibleTerminal(
 	const input = panel.locator('.xterm-helper-textarea');
 	await input.focus();
 	await expect(input).toBeFocused();
+	// A textarea can be the DOM active element while a native Settings window
+	// is still handing focus back to this BrowserWindow. Do not send CDP keys
+	// until Chromium actually owns window focus, or part of the line can vanish.
+	await expect.poll(() => input.evaluate(async (element) => {
+		if (!document.hasFocus() || document.activeElement !== element) return false;
+		// Native focus restoration and the terminal's deferred refocus/fit run
+		// across rendering turns. Require focus to survive that handoff too.
+		await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+		return document.hasFocus() && document.activeElement === element;
+	})).toBe(true);
 
 	const command = data.replace(/[\r\n]+$/u, '');
 	// xterm receives terminal bytes from keyboard events.  `insertText` only
