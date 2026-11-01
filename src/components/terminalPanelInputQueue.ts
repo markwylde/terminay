@@ -4,7 +4,7 @@ export const MAX_PANEL_INPUT_QUEUE_BYTES = 64 * 1024
 export const MAX_PANEL_PASTE_CHUNK_BYTES = 16 * 1024
 
 interface QueuedServerTerminalInput {
-	readonly data: string
+	readonly data: string | Uint8Array
 	readonly byteLength: number
 }
 
@@ -74,17 +74,22 @@ export class ServerTerminalInputQueue {
 	}
 
 	/** Returns whether the input was accepted for delivery. */
-	enqueue(data: string): boolean {
+	enqueue(data: string | Uint8Array): boolean {
 		if (this.closed || this.role === 'read_only') {
 			return false
 		}
 
-		const byteLength = this.encoder.encode(data).byteLength
+		const byteLength = typeof data === 'string'
+			? this.encoder.encode(data).byteLength
+			: data.byteLength
 		if (this.queuedBytes + byteLength > MAX_PANEL_INPUT_QUEUE_BYTES) {
 			return false
 		}
 
-		this.items.push({ data, byteLength })
+		this.items.push({
+			data: typeof data === 'string' ? data : new Uint8Array(data),
+			byteLength,
+		})
 		this.queuedBytes += byteLength
 		void this.pump()
 		return true
