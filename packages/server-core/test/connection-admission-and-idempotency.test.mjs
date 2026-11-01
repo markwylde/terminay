@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { TerminayClient, RequestNotSentError } from '@terminay/client-core';
+import { TerminayClient, RequestNotSentError, FileObservationClient, TerminayClientFacade } from '@terminay/client-core';
 import { encodeFrame } from '@terminay/protocol';
 import { createInMemoryTransportPair } from '@terminay/protocol-conformance';
 import { createOperationDispatcher, createServerCore } from '../dist/index.js';
@@ -719,3 +719,17 @@ test('client admission respects the advertised byte budget without disconnecting
     await cleanup;
   } finally { gate.resolve(); await Promise.all(pending); }
  });
+
+test('file watch and folder-size cleanup queued locally settle quietly on disconnect', async (t) => {
+ const gate = deferred(); let started = 0;
+ const { client } = await connected(t, { queries: { 'review.hold': async () => { started++; await gate.promise; return null; } } });
+ const observation = new FileObservationClient(new TerminayClientFacade(client));
+ const held = Array.from({ length: 128 }, () => settled(client.query('review.hold')));
+ try {
+  await until(() => started === 64);
+  const cleanup = Promise.all([observation.stopWatch('watch-1'), observation.cancelFolderSize('size-1')]);
+  await until(() => client.requestAdmission.waiting.length === 2);
+  await client.close(); await cleanup;
+  assert.equal(client.requestAdmission.waiting.length, 0);
+ } finally { gate.resolve(); await Promise.all(held); }
+});

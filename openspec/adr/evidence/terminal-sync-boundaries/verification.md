@@ -71,3 +71,10 @@ Follow-up verification (2026-11-01):
 - All 27 workspace type checks and root `tsc --noEmit`: passed.
 - Lint passed with existing warnings; OpenSpec all 99 items passed; strict change validation passed.
 - Actual SDK/renderer tests prove unsent input resends once after handoff and abort after admission grant sends no frame. Pending and read-only notices cannot continue until a controller attachment is ready.
+
+
+## Resumed review closure
+
+Claude's saved session reviewed the final cleanup and notice fixes and reported no actionable defects; both rounds are retained in `claude-closure-review.md`. One cause-aware classifier now serves SDK subscription teardown, file-observation cleanup, workspace teardown and project recovery. Generic unavailable/forbidden failures still propagate. Read-only observers hide retained interruption notices and restore them on gaining control; closing the queue clears its notice.
+
+Verification: 301 client/admission/input tests and 16 project recovery tests passed; containerized handoff E2E 2/2 passed without retries. All 27 workspace type checks, root type check, lint and OpenSpec validation (99/99) passed. Added the optional review test for an unknown write settling after a read-only replacement, proving it remains hidden until control returns and ambiguous input is never replayed.

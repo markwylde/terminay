@@ -1,3 +1,4 @@
+import { isClientConnectionLoss } from './connectionLoss.js';
 import { abortError } from './abort.js';
 import { RequestAdmission } from './requestAdmission.js';
 import {
@@ -78,12 +79,6 @@ function resultError(result: { readonly ok: boolean; readonly error?: { readonly
     ...(result.error.details === undefined ? {} : { details: result.error.details }),
     ...(result.error.retryable === undefined ? {} : { retryable: result.error.retryable }),
   });
-}
-
-function isExpectedDisconnect(error: unknown): boolean {
-  return error instanceof RequestNotSentError || error instanceof ClientDisconnectedError ||
-    error instanceof CommandOutcomeUnknownError ||
-    (error instanceof ClientError && error.code === "disconnected");
 }
 
 /** Transport-neutral application client. Hosts provide only a ByteTransport. */
@@ -272,7 +267,7 @@ export class TerminayClient {
       try {
         await this.command("events.unsubscribe", { subscriptionId }, { signal: options.signal });
       } catch (error) {
-        if (isExpectedDisconnect(error)) return;
+        if (isClientConnectionLoss(error)) return;
         throw error;
       }
     };

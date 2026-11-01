@@ -1,3 +1,4 @@
+import { isClientConnectionLoss } from '@terminay/client-core';
 /**
  * Carrying a project creation across a lost connection.
  *
@@ -28,24 +29,7 @@ export type InterruptedCreationDecision =
 
 /** The transport went away under a request; nothing was refused. Feature
  * clients wrap the transport's error, so the cause chain is searched too. */
-export function isConnectionLoss(error: unknown): boolean {
-	for (
-		let source = error, depth = 0;
-		source instanceof Error && depth < 4;
-		source = source.cause, depth += 1
-	) {
-		const code = (source as { code?: unknown }).code;
-		if (
-			source.name === 'CommandOutcomeUnknownError' ||
-			source.name === 'ClientDisconnectedError' ||
-			source.name === 'RequestNotSentError' ||
-			code === 'unknown_command_outcome' ||
-			code === 'disconnected'
-		)
-			return true;
-	}
-	return false;
-}
+export const isConnectionLoss = isClientConnectionLoss;
 
 /**
  * Decide what an interrupted step does next. `done` is whether the snapshot
