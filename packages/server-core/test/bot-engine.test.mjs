@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
 	BotEngine,
+	botId,
 	EngineProcess,
 	ownedResource,
 	validateEnginePin,
@@ -359,4 +360,10 @@ test('4.1 native Linux Podman pins an explicit socket URL on every operation', a
 			? 'unix:///run/podman/podman.sock'
 			: 'unix:///run/user/1234/podman/podman.sock',
 	);
+});
+
+test('the bot runs as the server account on Linux, but never as root', () => {
+	assert.equal(botId(1001), 1001);
+	assert.equal(botId(0), 1000);
+	assert.equal(botId(undefined), 1000);
 });

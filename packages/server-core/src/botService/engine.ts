@@ -273,6 +273,12 @@ interface Machine {
 }
 
 /** The caller persists pins with the server's durable state backend. No timer probes. */
+/** The bot runs as the server account's id on Linux, so home files share its
+ * owner, but never as root: a root server account gets the default 1000. */
+export function botId(serverAccountId: number | undefined): number {
+	return serverAccountId && serverAccountId > 0 ? serverAccountId : 1000;
+}
+
 export class BotEngine extends EventEmitter {
 	private driverValue?: EngineDriver;
 	private endEvents?: () => void;
@@ -460,8 +466,8 @@ export class BotEngine extends EventEmitter {
 						(connection
 							? '/run/podman/podman.sock'
 							: address.slice('unix://'.length))),
-			botUid: this.platform === 'linux' ? (process.getuid?.() ?? 1000) : 1000,
-			botGid: this.platform === 'linux' ? (process.getgid?.() ?? 1000) : 1000,
+			botUid: this.platform === 'linux' ? botId(process.getuid?.()) : 1000,
+			botGid: this.platform === 'linux' ? botId(process.getgid?.()) : 1000,
 		};
 	}
 	async discover(): Promise<
