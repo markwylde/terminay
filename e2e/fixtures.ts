@@ -97,6 +97,17 @@ async function printFailureDiagnostics(
 			.allTextContents()
 			.catch(() => []);
 		for (const banner of banners) lines.push(`error banner: ${banner}`);
+		// Lifecycle metadata pinpoints where a congested stream stopped without
+		// collecting terminal bytes. Read every renderer frame before teardown.
+		for (const frame of page.frames()) {
+			const stream = await frame.evaluate(() => {
+				const diagnostics = (globalThis as typeof globalThis & {
+					__terminayStream?: { snapshot(): unknown };
+				}).__terminayStream;
+				return diagnostics?.snapshot() ?? null;
+			}).catch(() => null);
+			if (stream !== null) lines.push(`terminal stream: ${JSON.stringify(stream)}`);
+		}
 		// What the terminal on screen last showed: whether a typed command ran.
 		const rows = await page
 			.locator(
