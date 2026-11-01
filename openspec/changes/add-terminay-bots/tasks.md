@@ -251,7 +251,7 @@ The engines are the Podman machine on this Mac, and rootful Docker on Linux. The
   - idle stop.
 
   Verify: a results checklist is in the PR description.
-- [ ] 8.4 Run `openspec validate add-terminay-bots` and `openspec validate --all`, open the PR on Gitea (`origin`), and read back every `.gitea/workflows/ci.yml` status. Verify: validation passes, and every status is `success` or `skipped`.
+- [x] 8.4 Run `openspec validate add-terminay-bots` and `openspec validate --all`, open the PR on Gitea (`origin`), and read back every `.gitea/workflows/ci.yml` status. Verify: validation passes, and every status is `success` or `skipped`.
 
 ## 9. Sign-in per bot (ADR-0091)
 
