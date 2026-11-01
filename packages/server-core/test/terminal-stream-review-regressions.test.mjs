@@ -121,3 +121,16 @@ test('holder retention does not revisit the retained replay on each small append
 		);
 	}
 });
+
+test('invalid holder buffer bounds fail before filesystem or PTY side effects', async () => {
+ const home = await mkdtemp(join(tmpdir(), 'terminay-holder-invalid-'));
+ let spawns = 0;
+ try {
+  for (const maxBufferBytes of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+   await assert.rejects(SessionHolder.start({ dataRoot: join(home, 'untouched'), generation: '0123456789abcdef', maxBufferBytes, nodePty: { spawn() { spawns++; throw new Error('must not spawn'); } } }), /positive safe integer/);
+  }
+  const { readdir } = await import('node:fs/promises');
+  assert.deepEqual(await readdir(home), []);
+  assert.equal(spawns, 0);
+ } finally { await rm(home, { recursive: true, force: true }); }
+});

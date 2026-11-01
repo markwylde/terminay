@@ -77,3 +77,7 @@ None blocking this bounded implementation. Restart screen preservation requires 
 ### Attention bursts retain one pending acknowledgement per kind
 
 Coalesce interactive activity and agent acknowledgements independently per session: one in flight and at most one trailing request. Never skip against a projection snapshot, merge passive acknowledgements, or rely on agent acknowledgement succeeding when the agent service is inactive. A quiet key may still generate both acknowledgements; measure burst request counts and do not promise one RPC per key universally.
+
+### Final review: pre-send failure and recoverable notices
+
+A connection ending before admission transmits a request produces a dedicated `RequestNotSentError` (`unavailable`, `sent: false`). Recovery and unsubscribe cleanup recognize it as connection loss without treating the command outcome as uncertain. Cancellation uses the same AbortError normalization before and after admission. The holder rejects non-positive retention bounds before creating resources or spawning a PTY. Input interruption notices remain visible with a waiting state until the current attachment can accept input; dismissal and overflow continuation use that same readiness gate. These refinements preserve command delivery and presentation authority.

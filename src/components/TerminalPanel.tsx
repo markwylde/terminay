@@ -3301,11 +3301,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			{terminalInputNotice ? (
 				<div className="terminal-input-notice" role="alert">
 					<span>{terminalInputNotice.message}</span>
-					<button type="button" onClick={() => {
-						if (terminalInputNotice.kind === 'overflow' && !resumeTerminalInputRef.current()) return;
+					<button type="button" disabled={!terminalInputNotice.canContinue} onClick={() => {
+						if (!resumeTerminalInputRef.current()) return;
 						setTerminalInputNotice(null);
 						terminalRef.current?.focus();
-					}}>{terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
+					}}>{!terminalInputNotice.canContinue ? 'Waiting for terminal' : terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
 				</div>
 			) : null}
 			{terminalPasteProgress ? (

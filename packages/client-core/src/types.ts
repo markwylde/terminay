@@ -86,6 +86,15 @@ export class CommandOutcomeUnknownError extends ClientError {
   }
 }
 
+/** Connection ended before transmission; this command cannot have executed. */
+export class RequestNotSentError extends ClientError {
+  readonly sent = false;
+  constructor() {
+    super("unavailable", "request was not sent before the connection ended", { retryable: true });
+    this.name = "RequestNotSentError";
+  }
+}
+
 export class ClientDisconnectedError extends ClientError {
   constructor(message = "client is not connected", cause?: unknown) {
     super("disconnected", message, {

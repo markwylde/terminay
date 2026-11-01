@@ -214,8 +214,8 @@ export class SessionHolder {
 	}
 
 	static async start(options: SessionHolderOptions): Promise<SessionHolder> {
-		if (!Number.isSafeInteger(options.maxBufferBytes ?? 1))
-			throw new TypeError('maxBufferBytes must be a safe integer');
+		if (!Number.isSafeInteger(options.maxBufferBytes ?? 1) || (options.maxBufferBytes ?? 1) <= 0)
+			throw new TypeError('maxBufferBytes must be a positive safe integer');
 		const directory = sessionHolderDirectory(options.dataRoot);
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
 		chmodSync(directory, 0o700);

@@ -22,3 +22,11 @@
 
 - [x] 4.1 Reconcile cursor comments/spec deltas and retain Claude's review plus qualified performance evidence; verify OpenSpec validation and report links.
 - [x] 4.2 Run affected builds, type/lint checks, focused protocol/runtime/renderer tests and containerized terminal E2E; fix regressions and record exact results.
+
+## 5. Final independent review
+
+- [x] 5.1 Distinguish unsent connection-loss errors and cover recovery and subscription cleanup.
+- [x] 5.2 Normalize abort reasons across local admission and cover cancellation races.
+- [x] 5.3 Reject invalid holder retention bounds before side effects and test invalid configurations.
+- [x] 5.4 Keep interruption notices visible until continuation is possible; cover pending and read-only replacements.
+- [x] 5.5 Run affected checks and retain final review evidence.

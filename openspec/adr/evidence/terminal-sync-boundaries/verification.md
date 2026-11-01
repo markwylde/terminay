@@ -57,3 +57,17 @@ The acknowledgement coalescer deterministically turns 100 interactions during on
 Screen preservation across server replacement is not solved here. A bounded raw suffix lacks prior terminal modes, cells, parser state and resize history; preserving a process does not preserve a screen. Correct continuity needs an authoritative presentation and its complete ordered output/resize tail to survive together, with a new architectural decision coherent with ADR-0086 and frozen holder generations. Adding another emulator or unbounded history without resource and state-equivalence proof would undermine this change's reliability/performance goals.
 
 Output ordering, exact attachment identities, presentation ownership, canonical checkpoints, cumulative output acknowledgements, fair output scheduling and congestion recovery remain intact.
+
+
+## Final Claude review follow-up
+
+The final read-only review is retained in `claude-final-review.md`, with disposition. Confirmed fixes add distinguishable unsent connection loss, consistent cancellation, early holder configuration validation, and readiness-aware interruption notices. No uncertain input replay or output acknowledgement behavior changed.
+
+Follow-up verification (2026-11-01):
+- Client suite plus admission/recording/queue regressions: 299 passed.
+- Project-creation recovery: 16 passed.
+- Holder suites: 115 passed.
+- Containerized `terminal-input-handoff.spec.ts`: 2 passed, one worker, zero retries.
+- All 27 workspace type checks and root `tsc --noEmit`: passed.
+- Lint passed with existing warnings; OpenSpec all 99 items passed; strict change validation passed.
+- Actual SDK/renderer tests prove unsent input resends once after handoff and abort after admission grant sends no frame. Pending and read-only notices cannot continue until a controller attachment is ready.
