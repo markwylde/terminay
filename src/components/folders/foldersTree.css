@@ -1021,14 +1021,31 @@
 	inset: 0;
 	display: flex;
 	flex-direction: column;
+	box-sizing: border-box;
+	text-align: center;
+	background: var(--terminal-panel-surface, #0f1318);
+	color: #dce2f0;
+}
+
+.folder-empty__tab-strip {
+	flex: 0 0 var(--panel-tab-strip-height);
+	background: var(--project-chrome);
+}
+
+.workspace--compact-chrome .folder-empty__tab-strip {
+	display: none;
+}
+
+.folder-empty__body {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
 	align-items: center;
 	justify-content: center;
 	gap: 10px;
 	padding: 24px;
 	box-sizing: border-box;
-	text-align: center;
-	background: var(--terminal-panel-surface, #0f1318);
-	color: #dce2f0;
 }
 
 .folder-empty__title {

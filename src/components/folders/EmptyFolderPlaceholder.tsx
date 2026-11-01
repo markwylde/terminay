@@ -31,34 +31,39 @@ export function EmptyFolderPlaceholder() {
 	if (folder === null) return null;
 	return (
 		<div className="folder-empty" data-terminay-folder-empty="true">
-			<h2 className="folder-empty__title" title={folder.name}>
-				{folder.name}
-			</h2>
-			<p className="folder-empty__text">
-				No terminals are open in this folder.
-			</p>
-			{folder.worktreePath === undefined ? null : (
+			{/* The panel tab strip, drawn even with no tabs, so the selected
+			    folder's chrome still runs from the sidebar across the pane. */}
+			<div className="folder-empty__tab-strip" aria-hidden="true" />
+			<div className="folder-empty__body">
+				<h2 className="folder-empty__title" title={folder.name}>
+					{folder.name}
+				</h2>
 				<p className="folder-empty__text">
-					A new terminal starts in{' '}
-					<code className="folder-empty__path" title={folder.worktreePath}>
-						{folder.worktreePath}
-					</code>
+					No terminals are open in this folder.
 				</p>
-			)}
-			<button
-				type="button"
-				className="folder-empty__action"
-				data-terminay-folder-empty-new-terminal="true"
-				onClick={folder.onNewTerminal}
-			>
-				<Plus size={14} aria-hidden="true" />
-				New terminal
-				{folder.newTerminalShortcutLabel ? (
-					<kbd className="folder-empty__key">
-						{folder.newTerminalShortcutLabel}
-					</kbd>
-				) : null}
-			</button>
+				{folder.worktreePath === undefined ? null : (
+					<p className="folder-empty__text">
+						A new terminal starts in{' '}
+						<code className="folder-empty__path" title={folder.worktreePath}>
+							{folder.worktreePath}
+						</code>
+					</p>
+				)}
+				<button
+					type="button"
+					className="folder-empty__action"
+					data-terminay-folder-empty-new-terminal="true"
+					onClick={folder.onNewTerminal}
+				>
+					<Plus size={14} aria-hidden="true" />
+					New terminal
+					{folder.newTerminalShortcutLabel ? (
+						<kbd className="folder-empty__key">
+							{folder.newTerminalShortcutLabel}
+						</kbd>
+					) : null}
+				</button>
+			</div>
 		</div>
 	);
 }
