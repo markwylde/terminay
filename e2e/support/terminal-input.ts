@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /** Drive terminal input through the same focused xterm control a user uses. */
 export async function typeInVisibleTerminal(
@@ -10,6 +10,14 @@ export async function typeInVisibleTerminal(
 		? `[data-terminay-terminal-session-id="${sessionId}"]`
 		: '.project-workspace--active .terminal-panel:visible';
 	const panel = page.locator(`${sessionSelector}:visible`).first();
+	await typeInTerminal(data, panel);
+}
+
+/** Type into a specific presentation after attachment and focus have settled. */
+export async function typeInTerminal(
+	data: string,
+	panel: Locator,
+): Promise<void> {
 	await expect(panel).toBeVisible();
 	// Keys typed while the terminal is still attaching are held and delivered
 	// once it holds the presentation, but a terminal that another attachment

@@ -23,7 +23,7 @@ function projectTab(page: Page, title: string) {
 
 async function activateProject(page: Page, title: string) {
 	await projectTab(page, title).click();
-	await expect(page.locator('.project-tab--active')).toContainText(title);
+	await expect(page.locator('.project-tab--active .project-tab-title')).toHaveText(title);
 }
 
 /** How many tabs titled `Move Me` each project presents, in project order. */
@@ -48,9 +48,18 @@ async function moveActiveProjectTabTo(page: Page, targetProject: string) {
 	await tab.click({ button: 'right' });
 	await contextMenuItem(page, 'Move to project').click();
 	await contextMenuItem(page, targetProject).click();
-	await expect(page.locator('.project-tab--active')).toContainText(
+	// A substring check for Project also accepts the source Project 2. Wait
+	// for the exact destination and its Dockview presentation before observing
+	// all projects; the shell's revision can render before its child tabs.
+	await expect(page.locator('.project-tab--active .project-tab-title')).toHaveText(
 		targetProject,
 	);
+	await expect(
+		page.locator('.project-workspace--active .terminal-tab-title').filter({ hasText: /^Move Me$/ }),
+	).toHaveCount(1);
+	await expect(
+		page.locator('.terminal-tab-title').filter({ hasText: /^Move Me$/ }),
+	).toHaveCount(1);
 }
 
 /** The moved terminal's task is still printing into the panel on screen. */
@@ -92,7 +101,7 @@ async function arrangeProjects(page: Page): Promise<string> {
 
 	for (const title of ['Project 2', 'Project 3']) {
 		await createStartedProject(page);
-		await expect(page.locator('.project-tab--active')).toContainText(title);
+		await expect(page.locator('.project-tab--active .project-tab-title')).toHaveText(title);
 		await typeInVisibleTerminal(page, LONG_RUNNING_TASK);
 	}
 
