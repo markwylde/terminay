@@ -1282,6 +1282,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					reason: event.reason,
 				});
 			},
+			onHydrationConvergenceExhausted: () => {
+				lastAttachRefused = true;
+				failServerTransport(new Error('Terminal presentation could not catch up. Retry the connection to continue.'));
+			},
 			onRecovered: (_attempt, durationMs) => {
 				reportTerminalRecovery('recovered', {
 					durationMs,
@@ -1875,6 +1879,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						// delivered during binary hydration from overtaking the tail.
 						let terminalRenderQueue = Promise.resolve();
 						const renderServerEvent = (event: TerminalStreamEvent) => {
+							if (dataReplayDisposed || panelAttachment !== attachment || !bindingFence.isCurrent(binding)) return;
+							recoveryController.noteStreamProgress(event);
 							terminalRenderQueue = terminalRenderQueue
 								.then(async () => {
 									if (
@@ -2015,7 +2021,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 							// A hydrated display is the definition of a completed recovery,
 							// and the only thing that returns the controller to streaming.
-							recoveryController.noteAttached();
+							recoveryController.noteAttached({ freshPresentation });
 							lastAttachRefused = false;
 
 							serverInputQueue?.attach(attachment);
@@ -2126,7 +2132,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// connection is dead. Recovering the host transport remounts every
 				// terminal and can leave live shells unattached. Retry this panel.
 				serverAttachmentFailed = false;
-				recoveryController.reset();
+				recoveryController.reset({ renewConvergenceBudget: true });
 				recoveryStartedAt = 0;
 				recoveryFailureReason = 'attach-error';
 				serverInputQueue?.close();
@@ -2136,7 +2142,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// A position the server already refused is not worth asking for
 				// again; after a refusal Retry requests a fresh presentation.
 				const refused = lastAttachRefused;
-				lastAttachRefused = false;
 				attachServerTerminal({
 					client: currentAttachClient,
 					clientId: currentAttachClientId,
@@ -2170,11 +2175,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				setServerTerminalError(null);
 				setPresentationUnavailable(false);
 				setIsTerminalHydrating(true);
+				const refused = lastAttachRefused;
 				attachServerTerminal({
 					client: replacementClient,
 					clientId: replacementClientId,
-					fromPosition: renderedPositionRef.current ?? 0,
-					freshPresentation: false,
+					fromPosition: refused ? 0 : (renderedPositionRef.current ?? 0),
+					freshPresentation: refused,
 					forceResume: true,
 					recovery: false,
 				});
