@@ -58,6 +58,8 @@ const STORE_WORDS: Record<StateStoreName, string> = {
 	'connection-profiles': 'saved connections',
 	'window-layout': 'window layout',
 	extensions: 'extension choices',
+	bots: 'bots',
+	'bot-sessions': 'bot sessions',
 };
 
 function list(items: readonly string[]): string {

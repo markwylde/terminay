@@ -411,8 +411,8 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
 	if (error instanceof TerminalServiceError) return terminalServiceError(error);
 	if (error instanceof FileServiceError) return fileServiceError(error);
 	if (error instanceof GitServiceError) return gitServiceError(error);
-	if (error instanceof Error)
-		return { code: 'internal', message: fallback, retryable: false };
+	// The client sees only the fallback; the operator needs the cause.
+	console.error(`[terminay] ${fallback}:`, error);
 	return { code: 'internal', message: fallback, retryable: false };
 }
 

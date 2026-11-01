@@ -165,6 +165,8 @@ export function createDefaultExtensionManagement(
 				languageServers: manifest.contributes.languageServers ?? [],
 				worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 				agentChatProviders: manifest.contributes.agentChatProviders ?? [],
+				botAgents: manifest.contributes.botAgents ?? [],
+				extensionName: manifest.displayName,
 				terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 				terminalCommandDefaults:
 					manifest.contributes.terminalCommandDefaults ?? [],
@@ -203,6 +205,8 @@ export function createDefaultExtensionManagement(
 			languageServers: descriptor.languageServers,
 			worktreeInsights: descriptor.worktreeInsights,
 			agentChatProviders: descriptor.agentChatProviders,
+			botAgents: descriptor.botAgents,
+			extensionName: descriptor.manifest.displayName,
 			terminalLaunchers: descriptor.terminalLaunchers,
 			terminalCommandDefaults: descriptor.terminalCommandDefaults,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],

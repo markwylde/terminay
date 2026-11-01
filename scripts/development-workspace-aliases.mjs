@@ -41,6 +41,10 @@ export function developmentWorkspaceAliases(repositoryRoot) {
 			replacement: source('packages', 'responsive-ui', 'src', 'index.ts'),
 		},
 		{
+			find: '@terminay/extension-api/testing',
+			replacement: source('packages', 'extension-api', 'src', 'testing.ts'),
+		},
+		{
 			find: '@terminay/extension-api',
 			replacement: source('packages', 'extension-api', 'src', 'index.ts'),
 		},

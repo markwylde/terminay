@@ -585,3 +585,105 @@
 	color: #f0d17c;
 	background: rgba(232, 185, 49, 0.16);
 }
+
+/* --- Bots roster --------------------------------------------------------- */
+
+.home-sidebar__bots {
+	--bots-main: var(--terminal-panel-surface, #1a1c20);
+	--bots-done-dot: #45c874;
+	--bots-need-dot: #ee6258;
+	--bots-work-dot: #e8b931;
+	--bots-idle-dot: #7f8794;
+	--bots-start: #9ec0ff;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 0 6px 8px;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.home-sidebar__heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 26px;
+	margin-top: 10px;
+	padding: 0 6px 0 10px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: rgba(220, 226, 240, 0.48);
+}
+
+.home-sidebar__heading button {
+	all: unset;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 4px;
+	color: rgba(220, 226, 240, 0.62);
+	cursor: pointer;
+}
+
+.home-sidebar__heading button:hover {
+	color: #ffffff;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.home-sidebar__heading button:focus-visible {
+	outline: 1px solid rgba(87, 183, 255, 0.7);
+}
+
+.home-sidebar__bot .bots-avatar {
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+	font-size: 9px;
+}
+
+.home-sidebar__bot .bots-avatar i {
+	width: 7px;
+	height: 7px;
+	right: -2px;
+	bottom: -2px;
+}
+
+.home-sidebar__meta {
+	margin-left: auto;
+	font-size: 11px;
+	color: rgba(220, 226, 240, 0.42);
+}
+
+.home-sidebar__empty {
+	margin: 2px 0 0;
+	padding: 0 10px;
+	font-size: 12px;
+	color: rgba(220, 226, 240, 0.42);
+}
+
+/* A bot tab shows the bot's own avatar, as the roster does. */
+.home-tab__bot {
+	--bots-main: var(--terminal-panel-surface, #1a1c20);
+	--bots-done-dot: #45c874;
+	--bots-need-dot: #ee6258;
+	--bots-work-dot: #e8b931;
+	--bots-idle-dot: #7f8794;
+	--bots-start: #9ec0ff;
+	display: inline-flex;
+}
+.home-tab__bot .bots-avatar {
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	font-size: 9px;
+}
+.home-tab__bot .bots-avatar i {
+	width: 6px;
+	height: 6px;
+	right: -2px;
+	bottom: -2px;
+}

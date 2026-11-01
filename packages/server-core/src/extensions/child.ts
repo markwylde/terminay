@@ -1,6 +1,11 @@
 import { pathToFileURL } from 'node:url';
-import { EXTENSION_API_VERSION } from '@terminay/extension-api';
+import {
+	type BotAgentContribution,
+	EXTENSION_API_VERSION,
+	EXTENSION_LIMITS,
+} from '@terminay/extension-api';
 import { AgentChatChild } from './agentChatChild.js';
+import { BotAgentChild } from './botAgentChild.js';
 import { parseExtensionLanguageRequest } from './languageProtocol.js';
 import {
 	type LanguageServerProviderLike,
@@ -68,6 +73,20 @@ const worktreeInsights = new WorktreeInsightChild({
 	failure: (id, error) => failure(id, error),
 });
 
+const botAgents = new BotAgentChild({
+	result: (id, payload) => {
+		send({ protocolVersion: 1, kind: 'result', id, payload });
+	},
+	failure,
+	disposed: (agentId) => {
+		send({
+			protocolVersion: 1,
+			kind: 'agent.bot.disposed',
+			id: `bot-dispose:${++sequence}`,
+			payload: { agentId },
+		});
+	},
+});
 const agentChats = new AgentChatChild({
 	send: (frame) => send(frame),
 	nextId: (prefix) => `${prefix}:${++sequence}`,
@@ -209,6 +228,7 @@ async function receive(message: unknown): Promise<void> {
 		return;
 	}
 	if (message.kind === 'deactivate') {
+		botAgents.deactivate();
 		for (const controller of invocations.values()) controller.abort();
 		await languageRuntime?.stopAll().catch(() => undefined);
 		await agentChats.closeAll().catch(() => undefined);
@@ -234,6 +254,7 @@ async function receive(message: unknown): Promise<void> {
 		await worktreeInsights.receive(message);
 	// A prompt runs for as long as the agent replies, so chat frames are not
 	// awaited here: a turn must never hold up a cancel or another session.
+	if (botAgents.handles(message.kind)) void botAgents.receive(message);
 	if (agentChats.handles(message.kind)) void agentChats.receive(message);
 	if (terminalLaunchers.handles(message.kind))
 		void terminalLaunchers.receive(message);
@@ -297,6 +318,16 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 							.filter((id): id is string => typeof id === 'string')
 					: [],
 			);
+		botAgents.reset(
+			(Array.isArray(payload.botAgents)
+				? payload.botAgents
+				: []) as BotAgentContribution[],
+			Array.isArray(payload.permissions) &&
+				payload.permissions.includes('agent-bots'),
+			typeof payload.botAgentDeadlineMs === 'number'
+				? payload.botAgentDeadlineMs
+				: EXTENSION_LIMITS.deadlineMs,
+		);
 		const declaredSources = declaredIds(payload.agentSessionSources);
 		const declaredTargets = declaredIds(payload.mcpInstallTargets);
 		worktreeInsights.reset([...declaredIds(payload.worktreeInsights)]);
@@ -357,6 +388,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 						});
 					},
 					...agentChats.registry(agentChatProviders),
+					...botAgents.registry(),
 				}),
 				mcp: Object.freeze({
 					registerInstallTarget(targetId: string, runtime: unknown) {
@@ -480,6 +512,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				languageServers,
 				worktreeInsightSources,
 				agentChatProviders,
+				botAgents: botAgents.ids(),
 				terminalLaunchers: registeredLaunchers,
 				terminalCommandDefaults: registeredCommandDefaults,
 			},

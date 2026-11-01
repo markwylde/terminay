@@ -20,7 +20,7 @@ import {
 	type IDockviewPanelHeaderProps,
 	type IDockviewPanelProps,
 } from 'dockview-react';
-import { Film, SquareTerminal, Workflow, X } from 'lucide-react';
+import { Bot, Film, SquareTerminal, Workflow, X } from 'lucide-react';
 import {
 	createContext,
 	forwardRef,
@@ -44,6 +44,8 @@ import {
 	AutomationTerminalPanel,
 } from './automations/AutomationPanels';
 import type { AutomationForm } from './automations/automationsModel';
+import { requestBotFocus } from './bots/botFocus';
+import type { BotTabHost, BotTabTarget } from './bots/botTabHost';
 import { HOME_SECTION_ICONS, HomeView } from './HomeView';
 import {
 	RecordingReplayPanel,
@@ -89,7 +91,16 @@ type HomeTabsContextValue = Readonly<{
 		target: Readonly<{ serverId: string; recordingId: string }>,
 		from?: string,
 	) => void;
+	openBot: (target: BotTabTarget, from?: string) => void;
 	renderSection: (section: 'home' | 'tabs') => ReactNode;
+	renderBots: (host: BotTabHost) => ReactNode;
+	renderBot: (
+		target: Readonly<{ serverId: string; botId: string }>,
+		host: BotTabHost,
+	) => ReactNode;
+	renderBotIcon?: (
+		target: Readonly<{ serverId: string; botId: string }>,
+	) => ReactNode;
 	requestClose: (id: string) => void;
 	setDirty: (id: string, dirty: boolean) => void;
 }>;
@@ -110,6 +121,8 @@ function descriptorIcon(descriptor: HomeTabDescriptor): ReactNode {
 			return <SquareTerminal size={15} aria-hidden="true" />;
 		case 'recording':
 			return <Film size={15} aria-hidden="true" />;
+		case 'bot':
+			return <Bot size={15} aria-hidden="true" />;
 		default:
 			return <Workflow size={15} aria-hidden="true" />;
 	}
@@ -150,7 +163,7 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 		[forceClose, host.setTitle, id, openRecording],
 	);
 	const data = home.automations;
-	// Every tab stays rendered; this says which are on screen.
+	const { openBot } = home;
 	const [isVisible, setIsVisible] = useState(api.isVisible);
 	useEffect(() => {
 		setIsVisible(api.isVisible);
@@ -159,6 +172,16 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 		);
 		return () => subscription.dispose();
 	}, [api]);
+	const botHost = useMemo<BotTabHost>(
+		() => ({
+			openBot: (target) => openBot(target, id),
+			setTitle: host.setTitle,
+			close: (why) => forceClose(id, why),
+			isVisible,
+			compact: isCompact,
+		}),
+		[forceClose, host.setTitle, id, isCompact, isVisible, openBot],
+	);
 
 	let content: ReactNode;
 	switch (descriptor.kind) {
@@ -166,6 +189,9 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 			switch (descriptor.section) {
 				case 'automations':
 					content = <AutomationsListPanel data={data} host={host} />;
+					break;
+				case 'bots':
+					content = home.renderBots(botHost);
 					break;
 				case 'recordings':
 					content = (
@@ -179,6 +205,12 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 				default:
 					content = home.renderSection(descriptor.section);
 			}
+			break;
+		case 'bot':
+			content = home.renderBot(
+				{ serverId: descriptor.serverId, botId: descriptor.botId },
+				botHost,
+			);
 			break;
 		case 'recording':
 			content = (
@@ -282,7 +314,9 @@ function HomeTabChip({ api, params }: IDockviewPanelHeaderProps<HomeTabParams>) 
 			}}
 		>
 			<span className="home-tab__icon">
-				{descriptorIcon(params.descriptor)}
+				{(params.descriptor.kind === 'bot'
+					? home.renderBotIcon?.(params.descriptor)
+					: undefined) ?? descriptorIcon(params.descriptor)}
 			</span>
 			<span className="home-tab__title">{title}</span>
 			{dirty ? (
@@ -383,7 +417,23 @@ export type HomeWorkspaceProps = Readonly<{
 	onSidebarWidthCommit: (width: number) => void;
 	/** The Home overview and the Tabs dashboard, which the window composes. */
 	renderSection: (section: 'home' | 'tabs') => ReactNode;
+	/** The Bots section and each bot's tab, which the window composes. */
+	renderBots: (host: BotTabHost) => ReactNode;
+	renderBot: (
+		target: Readonly<{ serverId: string; botId: string }>,
+		host: BotTabHost,
+	) => ReactNode;
 	sidebarWidth: number;
+	/** A bot tab's icon: the bot's own avatar. */
+	renderBotIcon?: (
+		target: Readonly<{ serverId: string; botId: string }>,
+	) => ReactNode;
+	/** The sidebar's bot roster, given the bot tab in front and how to open one. */
+	renderSidebarBots?: (args: {
+		activeBot: Readonly<{ serverId: string; botId: string }> | undefined;
+		openBot: (target: BotTabTarget) => void;
+		openBots: () => void;
+	}) => ReactNode;
 }>;
 
 export const HomeWorkspace = forwardRef<
@@ -400,8 +450,12 @@ export const HomeWorkspace = forwardRef<
 		onOpenCommandBar,
 		onSectionChosenInDrawer,
 		onSidebarWidthCommit,
+		renderBot,
+		renderBots,
 		renderSection,
 		sidebarWidth,
+		renderSidebarBots,
+		renderBotIcon,
 	},
 	ref,
 ) {
@@ -548,6 +602,18 @@ export const HomeWorkspace = forwardRef<
 
 	const openSection = useCallback(
 		(section: HomeSection) => openDescriptor({ kind: 'section', section }),
+		[openDescriptor],
+	);
+
+	const openBot = useCallback(
+		(target: BotTabTarget, from?: string) => {
+			openDescriptor(
+				{ kind: 'bot', serverId: target.serverId, botId: target.botId },
+				from === undefined ? {} : { from },
+			);
+			if (target.mode !== undefined || target.sessionId !== undefined)
+				requestBotFocus(target);
+		},
 		[openDescriptor],
 	);
 
@@ -701,9 +767,13 @@ export const HomeWorkspace = forwardRef<
 			forceClose,
 			isCompact,
 			onOpenCommandBar,
+			openBot,
 			openRecording,
 			openSection,
 			openTarget,
+			renderBot,
+			renderBotIcon,
+			renderBots,
 			renderSection,
 			requestClose,
 			setDirty,
@@ -718,9 +788,13 @@ export const HomeWorkspace = forwardRef<
 			forceClose,
 			isCompact,
 			onOpenCommandBar,
+			openBot,
 			openRecording,
 			openSection,
 			openTarget,
+			renderBot,
+			renderBotIcon,
+			renderBots,
 			renderSection,
 			requestClose,
 			setDirty,
@@ -736,6 +810,17 @@ export const HomeWorkspace = forwardRef<
 			onOpenSection={openSection}
 			onSidebarWidthCommit={onSidebarWidthCommit}
 			sidebarWidth={sidebarWidth}
+			sidebarExtra={renderSidebarBots?.({
+				activeBot:
+					activeDescriptor?.kind === 'bot'
+						? {
+								serverId: activeDescriptor.serverId,
+								botId: activeDescriptor.botId,
+							}
+						: undefined,
+				openBot: (target) => openBot(target),
+				openBots: () => openSection('bots'),
+			})}
 			{...(onSectionChosenInDrawer === undefined
 				? {}
 				: { onSectionChosenInDrawer })}

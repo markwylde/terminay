@@ -50,6 +50,7 @@ import {
 	createAiOperationHandlers,
 } from './aiService/index.js';
 import { createServerCore, type ServerCore } from './connection.js';
+import { createBotOperations, type BotService } from './botService/index.js';
 import { OrderedEventJournal } from './events.js';
 import {
 	createExtensionOperationHandlers,
@@ -112,6 +113,7 @@ import { AutomationExecutor } from './automationService/executor.js';
 // --- end automations: executor and audit ---
 // --- automations: scheduler and triggers (tasks 6.1-6.4) ---
 import { localTimeZone } from '@terminay/cron';
+import { EventFanout, ScheduleEngine } from './scheduleEngine/index.js';
 import { AutomationScheduler } from './automationService/scheduler.js';
 import { AutomationTriggers } from './automationService/triggers.js';
 import type { RemoteConnectionAdmission } from './remote/transport.js';
@@ -422,6 +424,8 @@ export interface ServerCoreCompositionOptions
 		readonly projectExists?: (projectId: string) => boolean;
 		readonly onDiagnostic?: (diagnostic: AgentChatDiagnostic) => void;
 	};
+	/** A host supplies the bot runtime and its engine/vault/helper seams. */
+	readonly bots?: BotService;
 	/** Compose server-owned app windows (ADR-0037). Needs `mcpApprovals`, whose
 	 * Window Messages policy gates what a view types into its terminal. */
 	readonly appWindows?: {
@@ -579,6 +583,9 @@ export interface ServerCoreComposition {
 	readonly automationAudit?: AutomationAuditLog;
 	/** The schedule trigger: one timer armed to the earliest due time. */
 	readonly automationScheduler?: AutomationScheduler;
+	/** Shared scheduling and event observation for server-owned consumers. */
+	readonly scheduleEngine: ScheduleEngine;
+	readonly eventFanout: EventFanout;
 	/** Event triggers. The executor registers each run terminal here with
 	 * `markRunTerminal` so a run never triggers on itself. */
 	readonly automationTriggers?: AutomationTriggers;
@@ -1294,15 +1301,45 @@ export function createServerCoreComposition(
 	// injection point, resolved at fire time.
 	const automationController = (): AutomationRunController | undefined =>
 		composedAutomationController;
+	const scheduleEngine = new ScheduleEngine({ timeZone: automationTimeZone });
 	const automationScheduler =
 		options.automations === undefined
 			? undefined
 			: new AutomationScheduler({
+					engine: scheduleEngine,
 					repository: options.automations.repository,
 					runLog: options.automations.runLog,
 					controller: automationController,
 					timeZone: automationTimeZone,
 				});
+	const eventFanout = new EventFanout({
+		serverId: options.serverId,
+		...(options.agents === undefined ? {} : { agents: options.agents }),
+		...(options.activity === undefined ? {} : { activity: options.activity }),
+		eventJournal,
+		describeTerminal: (sessionId) => {
+			const session = terminal.getSession(sessionId);
+			const state = options.workspace?.state;
+			const projectId =
+				session?.projectId ?? state?.terminalSessions[sessionId]?.projectId;
+			if (projectId === undefined) return undefined;
+			const panel = Object.values(state?.panels ?? {}).find(
+				(candidate) =>
+					candidate.type === 'terminal' && candidate.sessionId === sessionId,
+			);
+			const projectTitle = state?.projects[projectId]?.name;
+			const title =
+				terminalTitles?.displayedTitleForSession(sessionId) ?? panel?.title;
+			return {
+				projectId,
+				...(title === undefined ? {} : { title }),
+				...(projectTitle === undefined ? {} : { projectTitle }),
+				...(session === undefined
+					? {}
+					: { sessionCreatedAt: session.createdAt }),
+			};
+		},
+	});
 	const automationTriggers =
 		options.automations === undefined
 			? undefined
@@ -1311,38 +1348,10 @@ export function createServerCoreComposition(
 					repository: options.automations.repository,
 					runLog: options.automations.runLog,
 					controller: automationController,
-					...(options.agents === undefined ? {} : { agents: options.agents }),
-					...(options.activity === undefined
-						? {}
-						: { activity: options.activity }),
-					eventJournal,
-					describeTerminal: (sessionId) => {
-						const session = terminal.getSession(sessionId);
-						const state = options.workspace?.state;
-						const projectId =
-							session?.projectId ?? state?.terminalSessions[sessionId]?.projectId;
-						if (projectId === undefined) return undefined;
-						const panel = Object.values(state?.panels ?? {}).find(
-							(candidate) =>
-								candidate.type === 'terminal' &&
-								candidate.sessionId === sessionId,
-						);
-						const projectTitle = state?.projects[projectId]?.name;
-						const title =
-							terminalTitles?.displayedTitleForSession(sessionId) ??
-							panel?.title;
-						return {
-							projectId,
-							...(title === undefined ? {} : { title }),
-							...(projectTitle === undefined ? {} : { projectTitle }),
-							...(session === undefined
-								? {}
-								: { sessionCreatedAt: session.createdAt }),
-						};
-					},
+					fanout: eventFanout,
 				});
 	const onConnectionAdmitted = (admission: RemoteConnectionAdmission): void => {
-		automationTriggers?.deviceConnected(admission);
+		eventFanout.deviceConnected(admission);
 	};
 	// --- end automations: scheduler and triggers ---
 	// Automation terminal space (ADR-0030): withheld from connections without
@@ -1739,6 +1748,14 @@ export function createServerCoreComposition(
 						eventJournal.append('extensions.changed', payload);
 					},
 				});
+	const botOperations =
+		options.bots === undefined ? {} : mergeOperationRegistries(createBotOperations(options.bots), options.bots.additionalOperations());
+	const botChanged = ({ botId, revision }: { botId: string; revision: number }) => {
+		eventJournal.publishTransient('bots.changed', { botId, revision });
+	};
+	options.bots?.on('changed', botChanged);
+ const botEngineChanged = ({ revision }: { revision: number }) => { eventJournal.publishTransient('bots.engine.changed', { revision }); };
+ options.bots?.on('engine-changed', botEngineChanged);
 	const operations = mergeOperationRegistries(
 		mergeOperationRegistries(
 			mergeOperationRegistries(
@@ -1746,7 +1763,7 @@ export function createServerCoreComposition(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
 							mergeOperationRegistries(
-								options.operations ?? {},
+								mergeOperationRegistries(options.operations ?? {}, botOperations),
 								extensionOperations ?? {},
 							),
 							mergeOperationRegistries(
@@ -1836,6 +1853,7 @@ export function createServerCoreComposition(
 		appWindows?.closeConnection(connectionId);
 		workspaceViewRelay?.closeConnection(connectionId);
 		agentChat?.forgetViewerConnection(connectionId);
+		options.bots?.connections.revoke(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};
 	const coreOptions: ServerCoreOptions = {
@@ -1931,6 +1949,8 @@ export function createServerCoreComposition(
 					await options.extensions?.installer.initialize();
 					await options.extensions?.activateEnabled?.();
 				}
+				await options.bots?.reconcile();
+				await options.bots?.triggers.start(scheduleEngine, eventFanout, automationTimeZone);
 				await options.settings?.load();
 				// The unattached limit is a server setting; the holder is told it
 				// now and again whenever it changes.
@@ -2026,6 +2046,7 @@ export function createServerCoreComposition(
 				// notifying it, so what they left is looked at once here.
 				liveTerminalPanels?.check();
 				await automationTriggers?.start();
+				eventFanout.start();
 				await automationScheduler?.start();
 			} catch (error) {
 				// Including the window above, where this start had already
@@ -2086,8 +2107,11 @@ export function createServerCoreComposition(
 				}
 			};
 			await attempt(() => {
+				options.bots?.triggers.stop();
 				automationScheduler?.stop();
 				automationTriggers?.stop();
+				scheduleEngine.stop();
+				eventFanout.stop();
 			});
 			await attempt(() => automationExecutor?.dispose());
 			await attempt(() =>
@@ -2145,6 +2169,11 @@ export function createServerCoreComposition(
 			await attempt(() => options.activity?.shutdown());
 			await attempt(() => language?.dispose());
 			await attempt(() => automationOperations?.dispose());
+			await attempt(async () => {
+				options.bots?.off('changed', botChanged);
+ options.bots?.off('engine-changed', botEngineChanged);
+				await options.bots?.shutdown();
+			});
 			await attempt(async () => {
 				removePixelSettingsObserver?.();
 				unbindAgentChatApprovals?.();
@@ -2205,6 +2234,8 @@ export function createServerCoreComposition(
 		...(workspaceView === undefined ? {} : { workspaceView }),
 		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),
+		scheduleEngine,
+		eventFanout,
 		...(automationScheduler === undefined ? {} : { automationScheduler }),
 		...(automationTriggers === undefined ? {} : { automationTriggers }),
 		onConnectionAdmitted,
@@ -2454,7 +2485,7 @@ function uniqueCapabilities(
 ): readonly string[] {
 	return Object.freeze([
 		...new Set([
-			...options.capabilities,
+			...options.capabilities.filter((capability) => capability !== FEATURE_CAPABILITIES.bots || options.bots !== undefined),
 			FEATURE_CAPABILITIES.terminal,
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.
@@ -2480,6 +2511,7 @@ function uniqueCapabilities(
 			options.extensions?.hosts === undefined
 				? []
 				: [FEATURE_CAPABILITIES.terminalLaunchers]),
+			...(options.bots === undefined ? [] : [FEATURE_CAPABILITIES.bots]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
 			...(options.automations === undefined
 				? []

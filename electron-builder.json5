@@ -37,6 +37,7 @@
   // verified self-contained runtime beside it; the production loader fails
   // closed when that payload is absent or does not match the record.
   "extraResources": [
+    { "from": "docker/terminay-bot", "to": "bot-image" },
     {
       "from": "build/webrtc-runtime",
       "to": "webrtc-runtime"

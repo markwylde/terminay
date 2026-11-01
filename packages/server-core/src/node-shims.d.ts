@@ -132,6 +132,10 @@ declare module 'node:fs' {
 		isFile(): boolean;
 	}
 	interface Stats {
+		readonly dev: number;
+		readonly ino: number;
+		readonly nlink: number;
+		isSymbolicLink(): boolean;
 		readonly size: number;
 		readonly uid: number;
 		readonly birthtimeMs: number;
@@ -165,7 +169,7 @@ declare module 'node:fs' {
 	export function renameSync(oldPath: string, newPath: string): void;
 	export function rmSync(
 		path: string,
-		options?: { readonly force?: boolean },
+		options?: { readonly force?: boolean; readonly recursive?: boolean },
 	): void;
 	export function statSync(path: string): Stats;
 	export function writeFileSync(
@@ -183,6 +187,9 @@ declare module 'node:fs' {
 
 declare module 'node:fs/promises' {
 	interface Stats {
+		readonly dev: number;
+		readonly ino: number;
+		readonly nlink: number;
 		readonly size: number;
 		readonly uid: number;
 		readonly mtimeMs: number;

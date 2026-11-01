@@ -1,6 +1,12 @@
 import type {
 	AgentChatAvailability,
 	AgentChatEvent,
+	BotAgentContribution,
+	BotAgentLaunch,
+	BotAgentLaunchRequest,
+	BotAgentModel,
+	BotAgentResult,
+	BotAgentStatus,
 	AgentChatProviderContribution,
 	AgentChatSessionRequest,
 	AgentSessionSourceContribution,
@@ -14,6 +20,7 @@ import type {
 	WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
 import type { ServerVaultService } from '../settings/vault.js';
+import { botAgentInstalls } from '../botService/image.js';
 import type { ExtensionHostDiagnosticListener } from './diagnostics.js';
 import { ExtensionHost, type ExtensionLanguageInvocation } from './host.js';
 import type {
@@ -69,6 +76,13 @@ export interface SessionSourceProvider {
 export interface WorktreeInsightSourceProvider {
 	readonly extensionId: string;
 	readonly contribution: WorktreeInsightSourceContribution;
+}
+
+/** One bot agent a running extension registered. */
+export interface BotAgentEntry {
+	readonly extensionId: string;
+	readonly extensionName?: string;
+	readonly contribution: BotAgentContribution;
 }
 
 /** One chat provider a running extension registered. */
@@ -202,6 +216,7 @@ export class ExtensionHostManager {
 					...(status.mcpInstallTargets ?? []),
 					...(status.worktreeInsightSources ?? []),
 					...(status.agentChatProviders ?? []),
+					...(status.botAgents ?? []),
 					...(status.terminalLaunchers ?? []),
 					...(status.terminalCommandDefaults ?? []),
 				])
@@ -339,6 +354,58 @@ export class ExtensionHostManager {
 		return this.ownerHost(sourceId).notifyWorktreeCredential(sourceId, origin);
 	}
 
+	botAgentContributions(): readonly BotAgentEntry[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.botAgents ?? []).map((contribution) =>
+							Object.freeze({
+								extensionId: status.extensionId,
+								...(status.extensionName === undefined
+									? {}
+									: { extensionName: status.extensionName }),
+								contribution,
+							}),
+						)
+					: [],
+			),
+		);
+	}
+	/** Only declarations from running, published extensions enter the image. */
+	botAgentInstalls() {
+		return botAgentInstalls(
+			this.botAgentContributions().map((entry) => entry.contribution),
+		);
+	}
+	async botAgentModels(
+		agentId: string,
+	): Promise<BotAgentResult<BotAgentModel[]>> {
+		try {
+			return await this.ownerHost(agentId).botAgentModels(agentId);
+		} catch {
+			return { available: false, reason: 'unavailable' };
+		}
+	}
+	async botAgentStatus(
+		agentId: string,
+	): Promise<BotAgentResult<BotAgentStatus>> {
+		try {
+			return await this.ownerHost(agentId).botAgentStatus(agentId);
+		} catch {
+			return { available: false, reason: 'unavailable' };
+		}
+	}
+	async botAgentLaunch(
+		agentId: string,
+		request: BotAgentLaunchRequest,
+	): Promise<BotAgentResult<BotAgentLaunch>> {
+		try {
+			return await this.ownerHost(agentId).botAgentLaunch(agentId, request);
+		} catch {
+			return { available: false, reason: 'unavailable' };
+		}
+	}
 	/** Every chat provider registered by a running, published extension. */
 	chatProviderContributions(): readonly ChatProviderEntry[] {
 		return Object.freeze(
@@ -578,6 +645,7 @@ export class ExtensionHostManager {
 			...(status.mcpInstallTargets ?? []),
 			...(status.worktreeInsightSources ?? []),
 			...(status.agentChatProviders ?? []),
+			...(status.botAgents ?? []),
 			...(status.terminalLaunchers ?? []),
 			...(status.terminalCommandDefaults ?? []),
 		]) {

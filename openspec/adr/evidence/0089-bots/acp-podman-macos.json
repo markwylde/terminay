@@ -1,0 +1,480 @@
+{
+ "engine": "podman",
+ "image": "localhost/terminay-bot:local",
+ "engine_version": "podman version 6.1.4",
+ "models": {
+  "codex": "openai/gpt-6-luna",
+  "claude": "anthropic/claude-haiku-5.5"
+ },
+ "process_ownership": {
+  "unrelated_group_survived": true,
+  "stale_record_retired": true,
+  "bot_can_list_records": false,
+  "bot_can_read_vnc_password": false
+ },
+ "codex": {
+  "initialize": {
+   "protocolVersion": 1,
+   "agentCapabilities": {
+    "auth": {
+     "logout": {}
+    },
+    "providers": {},
+    "loadSession": true,
+    "promptCapabilities": {
+     "embeddedContext": true,
+     "image": true
+    },
+    "sessionCapabilities": {
+     "resume": {},
+     "list": {},
+     "close": {},
+     "delete": {},
+     "fork": {},
+     "additionalDirectories": {},
+     "subagents": {},
+     "systemPrompt": {}
+    },
+    "mcpCapabilities": {
+     "acp": false,
+     "http": true,
+     "sse": false
+    },
+    "_meta": {
+     "authStatus": {}
+    }
+   },
+   "authMethods": [
+    "api-key",
+    "chat-gpt"
+   ]
+  },
+  "set_mode": "agent-full-access",
+  "session_new_keys": [
+   "configOptions",
+   "models",
+   "modes",
+   "sessionId"
+  ],
+  "config_options": [
+   {
+    "id": "mode",
+    "category": "mode",
+    "current": "agent",
+    "values": [
+     "read-only",
+     "workspace-write",
+     "agent",
+     "agent-full-access"
+    ]
+   },
+   {
+    "id": "collaboration_mode",
+    "category": "collaboration_mode",
+    "current": "default",
+    "values": [
+     "default",
+     "plan"
+    ]
+   },
+   {
+    "id": "model",
+    "category": "model",
+    "current": "openai/gpt-6-luna",
+    "values": [
+     "openai/gpt-6-luna",
+     "gpt-6.1-sol",
+     "gpt-6-astra",
+     "gpt-6-sol",
+     "gpt-6-luna",
+     "gpt-5.6-sol",
+     "gpt-6.1-terra",
+     "gpt-5.6-terra",
+     "gpt-5.6-luna",
+     "gpt-5.5"
+    ]
+   }
+  ],
+  "models_field": "openai/gpt-6-luna[medium]",
+  "exposure_after_start": {
+   "host_process_args": false,
+   "container_inspect": false,
+   "engine_vm_process_args": false,
+   "exec_inspect_checked": 2,
+   "exec_inspect": false
+  },
+  "tool_prompt": {
+   "stopReason": "end_turn",
+   "seconds": 3.7,
+   "reply": "bot",
+   "tools": [
+    {
+     "kind": "execute",
+     "title": "echo spike-ok > /home/bot/spike-codex.txt && whoami",
+     "status": "in_progress"
+    },
+    {
+     "kind": null,
+     "title": null,
+     "status": "completed"
+    }
+   ],
+   "update_kinds": {
+    "other": 1,
+    "available_commands_update": 1,
+    "session_info_update": 3,
+    "tool_call": 1,
+    "tool_call_update": 1,
+    "usage_update": 2,
+    "agent_message_chunk": 1
+   }
+  },
+  "permission_requests": [],
+  "file_created": "spike-ok",
+  "client_requests_refused": [],
+  "cancel": {
+   "sleep_started": true,
+   "ack_seconds": 0.0,
+   "stopReason": "cancelled",
+   "sleep_still_running_after_cancel": true
+  },
+  "kill": {
+   "sleep_after_kill": false,
+   "agent_after_kill": false,
+   "record_retired": true
+  },
+  "load_after_restart": {
+   "ok": true,
+   "reply": "/home/bot/spike-codex.txt"
+  },
+  "bad_credential": {
+   "error": "session/prompt: {'code': -32000, 'message': 'Authentication required'}",
+   "stderr_tail": "p/dist/index.js:53047:14)\n    at async handle (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26828:24)\n    at async Object.handleMessage (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26338:16)\n    at async Connection.processIncomingMessage (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26167:24)\n"
+  },
+  "stderr_tail": ""
+ },
+ "claude": {
+  "initialize": {
+   "protocolVersion": 1,
+   "agentCapabilities": {
+    "_meta": {
+     "claudeCode": {
+      "promptQueueing": true
+     },
+     "authStatus": {}
+    },
+    "promptCapabilities": {
+     "image": true,
+     "embeddedContext": true
+    },
+    "mcpCapabilities": {
+     "http": true,
+     "sse": true
+    },
+    "auth": {
+     "logout": {}
+    },
+    "providers": {},
+    "loadSession": true,
+    "sessionCapabilities": {
+     "additionalDirectories": {},
+     "close": {},
+     "delete": {},
+     "fork": {},
+     "list": {},
+     "resume": {},
+     "systemPrompt": {
+      "mode": {
+       "override": {}
+      }
+     }
+    }
+   },
+   "authMethods": []
+  },
+  "session_new_keys": [
+   "configOptions",
+   "modes",
+   "sessionId"
+  ],
+  "config_options": [
+   {
+    "id": "mode",
+    "category": "mode",
+    "current": "default",
+    "values": [
+     "default",
+     "acceptEdits",
+     "plan",
+     "auto",
+     "bypassPermissions"
+    ]
+   },
+   {
+    "id": "model",
+    "category": "model",
+    "current": "opus",
+    "values": [
+     "default",
+     "opus",
+     "fable",
+     "sonnet",
+     "haiku"
+    ]
+   },
+   {
+    "id": "effort",
+    "category": "thought_level",
+    "current": "default",
+    "values": [
+     "default",
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max"
+    ]
+   },
+   {
+    "id": "ultracode",
+    "category": "model_config",
+    "current": "off",
+    "values": [
+     "on",
+     "off"
+    ]
+   }
+  ],
+  "models_field": null,
+  "exposure_after_start": {
+   "host_process_args": false,
+   "container_inspect": false,
+   "engine_vm_process_args": false,
+   "exec_inspect_checked": 3,
+   "exec_inspect": false
+  },
+  "tool_prompt": {
+   "stopReason": "end_turn",
+   "seconds": 3.2,
+   "reply": "bot",
+   "tools": [
+    {
+     "kind": "execute",
+     "title": "Terminal",
+     "status": "pending"
+    },
+    {
+     "kind": null,
+     "title": "echo spike-ok > /home/bot/spike-claude.txt && whoami",
+     "status": null
+    },
+    {
+     "kind": null,
+     "title": null,
+     "status": null
+    },
+    {
+     "kind": null,
+     "title": null,
+     "status": null
+    },
+    {
+     "kind": null,
+     "title": null,
+     "status": "completed"
+    }
+   ],
+   "update_kinds": {
+    "other": 1,
+    "available_commands_update": 2,
+    "usage_update": 5,
+    "tool_call": 1,
+    "tool_call_update": 4,
+    "agent_message_chunk": 2,
+    "session_info_update": 1
+   }
+  },
+  "permission_requests": [
+   {
+    "tool": "echo spike-ok > /home/bot/spike-claude.txt && whoami",
+    "options": [
+     "allow_once",
+     "allow_always",
+     "reject_once"
+    ]
+   }
+  ],
+  "file_created": "spike-ok",
+  "client_requests_refused": [],
+  "cancel": {
+   "sleep_started": true,
+   "ack_seconds": 0.0,
+   "stopReason": "cancelled",
+   "sleep_still_running_after_cancel": true
+  },
+  "kill": {
+   "sleep_after_kill": false,
+   "agent_after_kill": false,
+   "record_retired": false
+  },
+  "load_after_restart": {
+   "ok": true,
+   "reply": "/home/bot/spike-claude.txt"
+  },
+  "bad_credential": {
+   "error": "session/prompt timed out after 120s",
+   "stderr_tail": "ate] sessionId=dd5f7d50-d83e-461c-8f12-6e495c9afeb6 phase=modes durationMs=0 totalMs=112\n[session/create] sessionId=dd5f7d50-d83e-461c-8f12-6e495c9afeb6 phase=agents durationMs=0 totalMs=112\n[session/create] sessionId=dd5f7d50-d83e-461c-8f12-6e495c9afeb6 phase=ultracode durationMs=1 totalMs=113\n[session/create] sessionId=dd5f7d50-d83e-461c-8f12-6e495c9afeb6 phase=register durationMs=1 totalMs=114\n"
+  },
+  "stderr_tail": "0-d824-47b7-b1b5-2bf09ccb437a phase=set-model durationMs=2 model=opus outcome=success\n[session/create] sessionId=06b1ae10-d824-47b7-b1b5-2bf09ccb437a phase=models durationMs=3 totalMs=412\n[session/create] sessionId=06b1ae10-d824-47b7-b1b5-2bf09ccb437a phase=modes durationMs=0 totalMs=413\n[session/create] sessionId=06b1ae10-d824-47b7-b1b5-2bf09ccb437a phase=agents durationMs=0 totalMs=413\n[session/create] sessionId=06b1ae10-d824-47b7-b1b5-2bf09ccb437a phase=ultracode durationMs=1 totalMs=414\n[session/create] sessionId=06b1ae10-d824-47b7-b1b5-2bf09ccb437a phase=register durationMs=0 totalMs=414\n"
+ },
+ "codex_agent_mode": {
+  "initialize": {
+   "protocolVersion": 1,
+   "agentCapabilities": {
+    "auth": {
+     "logout": {}
+    },
+    "providers": {},
+    "loadSession": true,
+    "promptCapabilities": {
+     "embeddedContext": true,
+     "image": true
+    },
+    "sessionCapabilities": {
+     "resume": {},
+     "list": {},
+     "close": {},
+     "delete": {},
+     "fork": {},
+     "additionalDirectories": {},
+     "subagents": {},
+     "systemPrompt": {}
+    },
+    "mcpCapabilities": {
+     "acp": false,
+     "http": true,
+     "sse": false
+    },
+    "_meta": {
+     "authStatus": {}
+    }
+   },
+   "authMethods": [
+    "api-key",
+    "chat-gpt"
+   ]
+  },
+  "session_new_keys": [
+   "configOptions",
+   "models",
+   "modes",
+   "sessionId"
+  ],
+  "config_options": [
+   {
+    "id": "mode",
+    "category": "mode",
+    "current": "agent",
+    "values": [
+     "read-only",
+     "workspace-write",
+     "agent",
+     "agent-full-access"
+    ]
+   },
+   {
+    "id": "collaboration_mode",
+    "category": "collaboration_mode",
+    "current": "default",
+    "values": [
+     "default",
+     "plan"
+    ]
+   },
+   {
+    "id": "model",
+    "category": "model",
+    "current": "openai/gpt-6-luna",
+    "values": [
+     "openai/gpt-6-luna",
+     "gpt-6.1-sol",
+     "gpt-6-astra",
+     "gpt-6-sol",
+     "gpt-6-luna",
+     "gpt-5.6-sol",
+     "gpt-6.1-terra",
+     "gpt-5.6-terra",
+     "gpt-5.6-luna",
+     "gpt-5.5"
+    ]
+   }
+  ],
+  "models_field": "openai/gpt-6-luna[medium]",
+  "exposure_after_start": {
+   "host_process_args": false,
+   "container_inspect": false,
+   "engine_vm_process_args": false,
+   "exec_inspect_checked": 2,
+   "exec_inspect": false
+  },
+  "tool_prompt": {
+   "stopReason": "end_turn",
+   "seconds": 6.0,
+   "reply": "bwrap: Can't mount devpts on /newroot/dev/pts: Permission denied",
+   "tools": [],
+   "update_kinds": {
+    "other": 1,
+    "available_commands_update": 1,
+    "session_info_update": 3,
+    "agent_thought_chunk": 86,
+    "usage_update": 2,
+    "agent_message_chunk": 15
+   }
+  },
+  "permission_requests": [],
+  "file_created": "",
+  "client_requests_refused": [],
+  "cancel": {
+   "sleep_started": true,
+   "ack_seconds": 0.0,
+   "stopReason": "cancelled",
+   "sleep_still_running_after_cancel": true
+  },
+  "kill": {
+   "sleep_after_kill": false,
+   "agent_after_kill": false,
+   "record_retired": true
+  },
+  "load_after_restart": {
+   "ok": true,
+   "reply": "/home/bot/spike-codex.txt"
+  },
+  "bad_credential": {
+   "error": "session/prompt: {'code': -32000, 'message': 'Authentication required'}",
+   "stderr_tail": "p/dist/index.js:53047:14)\n    at async handle (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26828:24)\n    at async Object.handleMessage (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26338:16)\n    at async Connection.processIncomingMessage (file:///usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js:26167:24)\n"
+  },
+  "stderr_tail": ""
+ },
+ "claude_bad_credential_default_retries": {
+  "agent": "claude",
+  "bad_credential": {
+   "bad": true,
+   "max_retries": null,
+   "error": "session/prompt: {'code': -32000, 'message': 'Authentication required'}",
+   "seconds": 175.0
+  },
+  "recovered_with_valid": {
+   "bad": false,
+   "max_retries": null,
+   "stopReason": "end_turn",
+   "reply": "ok",
+   "seconds": 1.8
+  }
+ },
+ "adapter_versions": {
+  "codex-acp": "2.5.0",
+  "@openai/codex": "0.165.0",
+  "claude-agent-acp": "0.99.1",
+  "claude-agent-sdk": "0.3.312"
+ }
+}
