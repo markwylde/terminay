@@ -24,5 +24,5 @@
 
 ## 5. Final checks
 
-- [ ] 5.1 Run the affected server-core checkpoint/adapter/holder suites, renderer input queue tests, relevant client-core tests, workspace typechecks, and lint for changed files; verify all required checks pass and report any platform test that could not run.
+- [x] 5.1 Run the affected server-core checkpoint/adapter/holder suites, renderer input queue tests, relevant client-core tests, workspace typechecks, and lint for changed files; verify all required checks pass and report any platform test that could not run.
 - [x] 5.2 Run openspec validate --all --archived and validate this change; verify the change passes, distinguish unrelated existing failures, and confirm the final diff stays within the proposed terminal mouse repair and tests.
