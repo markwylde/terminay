@@ -7,6 +7,7 @@ export const MAX_PANEL_PENDING_PASTE_BYTES = 16 * 1024 * 1024
 export interface TerminalInputNotice {
 	readonly kind: 'overflow' | 'unknown_outcome'
 	readonly message: string
+	readonly canContinue: boolean
 }
 
 interface QueuedServerTerminalInput {
@@ -71,6 +72,7 @@ export class ServerTerminalInputQueue {
 	private activeItem: QueuedServerTerminalInputItem | null = null
 	private overflowPaused = false
 	private waitingForHydration = false
+	private notice: Omit<TerminalInputNotice, 'canContinue'> | null = null
 	private attachmentGeneration = 0
 	private pumping = false
 	private closed = false
@@ -177,6 +179,7 @@ export class ServerTerminalInputQueue {
 		this.attachment = null
 		this.attachmentGeneration += 1
 		this.role = 'pending'
+		this.publishNotice()
 	}
 
 	/**
@@ -216,6 +219,7 @@ export class ServerTerminalInputQueue {
 	resumeInput(): boolean {
 		if (this.closed || this.attachment === null || this.role !== 'controller' || this.waitingForHydration) return false
 		this.overflowPaused = false
+		this.notice = null
 		void this.pump()
 		return true
 	}
@@ -295,7 +299,8 @@ export class ServerTerminalInputQueue {
 						this.overflowPaused = false
 						this.discardPending()
 						this.resumeAfterHydration()
-						this.onNotice({ kind: 'unknown_outcome', message: 'Some input was not sent after the connection was interrupted. Check the command before continuing.' })
+						this.notice = { kind: 'unknown_outcome', message: 'Some input was not sent after the connection was interrupted. Check the command before continuing.' }
+						this.publishNotice()
 					}
 					// Otherwise the replaced attachment definitively refused the write
 					// before it reached the PTY. It stays first in line and is sent,
@@ -368,6 +373,11 @@ export class ServerTerminalInputQueue {
 
 	private resumeAfterHydration(): void {
 		if (this.attachment !== null && this.role === 'controller') this.waitingForHydration = false
+		this.publishNotice()
+	}
+
+	private publishNotice(): void {
+		if (this.notice) this.onNotice({ ...this.notice, canContinue: !this.closed && this.attachment !== null && this.role === 'controller' && !this.waitingForHydration })
 	}
 
 	private interruptOverflow(): void {
@@ -376,7 +386,8 @@ export class ServerTerminalInputQueue {
 		// in flight must still report a real current-attachment failure.
 		this.discardItems()
 		this.queuedBytes = 0
-		this.onNotice({ kind: 'overflow', message: 'Input paused because delivery could not keep up. Pending input was not sent. Check the command before continuing.' })
+		this.notice = { kind: 'overflow', message: 'Input paused because delivery could not keep up. Pending input was not sent. Check the command before continuing.' }
+		this.publishNotice()
 	}
 }
 

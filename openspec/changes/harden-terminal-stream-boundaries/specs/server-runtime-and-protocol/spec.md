@@ -52,3 +52,22 @@ A client SHALL bound outstanding feature requests and captured bytes below the c
 
 - **WHEN** a command ends before its frame is transmitted
 - **THEN** the frame is discarded and the outcome is a definitive pre-send refusal, not an unknown delivery outcome
+
+#### Scenario: Connection ends before local admission
+
+- **WHEN** a locally queued request loses its connection before transmission
+- **THEN** it reports a distinguishable unsent connection-loss error, project creation can recover, and subscription cleanup treats it as expected teardown without converting it to an unknown command outcome
+
+#### Scenario: Cancellation reason normalization
+
+- **WHEN** a request is aborted with a non-Error reason before transmission or while waiting for local admission
+- **THEN** it rejects with an AbortError consistently and transmits no frame
+
+### Requirement: Holder retention configuration is valid before resource creation
+
+A holder SHALL reject a retention byte bound that is not a positive safe integer before creating resources or spawning a PTY.
+
+#### Scenario: Non-positive retention capacity
+
+- **WHEN** holder startup receives zero or a negative retention byte bound
+- **THEN** startup fails before a PTY or holder resource is created

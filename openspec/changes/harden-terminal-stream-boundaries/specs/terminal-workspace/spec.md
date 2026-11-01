@@ -65,3 +65,14 @@ The transport-neutral `TerminalServiceAdapter` SHALL supply the attach, detach, 
 
 - **WHEN** input or resize is submitted for a session
 - **THEN** it reaches only that intended live PTY
+
+## ADDED Requirements
+
+### Requirement: Input interruption notices reflect readiness
+
+An input interruption notice SHALL remain visible while its current attachment cannot accept input. Its action SHALL indicate waiting until control and attachment hydration permit continuation. A read-only replacement SHALL NOT dismiss the interruption or enable typing.
+
+#### Scenario: Notice during replacement
+
+- **WHEN** an uncertain-outcome or overflow notice is visible before the replacement holds control
+- **THEN** the notice remains visible and continuation waits until a controller attachment is ready

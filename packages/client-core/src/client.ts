@@ -1,3 +1,4 @@
+import { abortError } from './abort.js';
 import { RequestAdmission } from './requestAdmission.js';
 import {
   decodeFrame,
@@ -15,6 +16,7 @@ import {
   type ServerHello,
 } from "@terminay/protocol";
 import {
+  RequestNotSentError,
   ClientDisconnectedError,
   ClientError,
   CommandOutcomeUnknownError,
@@ -59,11 +61,6 @@ function id(prefix: string): string {
   return `${prefix}-${random}`.slice(0, 128);
 }
 
-function abortError(signal?: AbortSignal): Error | undefined {
-  if (!signal?.aborted) return undefined;
-  return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
-}
-
 function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   const error = abortError(signal);
   if (error !== undefined) return Promise.reject(error);
@@ -84,7 +81,7 @@ function resultError(result: { readonly ok: boolean; readonly error?: { readonly
 }
 
 function isExpectedDisconnect(error: unknown): boolean {
-  return error instanceof ClientDisconnectedError ||
+  return error instanceof RequestNotSentError || error instanceof ClientDisconnectedError ||
     error instanceof CommandOutcomeUnknownError ||
     (error instanceof ClientError && error.code === "disconnected");
 }
@@ -348,7 +345,7 @@ export class TerminayClient {
     const waited = typeof admission !== 'function';
     const release = typeof admission === 'function' ? admission : await admission;
     try {
-      if (this.closed || this.current.state !== 'connected') throw new ClientError('unavailable', 'request was not sent before the connection ended');
+      if (this.closed || this.current.state !== 'connected') throw new RequestNotSentError();
       if (waited && deadline !== undefined) {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new ClientError('deadline', 'request deadline exceeded before send');

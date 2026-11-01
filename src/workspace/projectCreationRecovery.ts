@@ -38,6 +38,7 @@ export function isConnectionLoss(error: unknown): boolean {
 		if (
 			source.name === 'CommandOutcomeUnknownError' ||
 			source.name === 'ClientDisconnectedError' ||
+			source.name === 'RequestNotSentError' ||
 			code === 'unknown_command_outcome' ||
 			code === 'disconnected'
 		)

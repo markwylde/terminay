@@ -1,4 +1,5 @@
-import { ClientError } from './types.js';
+import { abortError } from './abort.js';
+import { ClientError, RequestNotSentError } from './types.js';
 
 const MAX_OUTSTANDING_REQUESTS = 128;
 const MAX_WAITING_REQUESTS = 4096;
@@ -28,8 +29,7 @@ export class RequestAdmission {
 	): (() => void) | Promise<() => void> {
 		if (signal?.aborted)
 			return Promise.reject(
-				signal.reason ??
-					new ClientError('cancelled', 'request cancelled before send'),
+				abortError(signal),
 			);
 		if (deadline !== undefined && deadline <= Date.now())
 			return Promise.reject(
@@ -76,8 +76,7 @@ export class RequestAdmission {
 			};
 			const abort = () =>
 				remove(
-					signal?.reason ??
-						new ClientError('cancelled', 'request cancelled before send'),
+					abortError(signal),
 				);
 			const armDeadline = () => {
 				if (deadline === undefined) return;
@@ -109,10 +108,7 @@ export class RequestAdmission {
 		for (const entry of this.waiting.splice(0)) {
 			entry.cleanup();
 			entry.reject(
-				new ClientError(
-					'unavailable',
-					'request was not sent before the connection ended',
-				),
+				new RequestNotSentError(),
 			);
 		}
 		this.waitingBytes = 0;

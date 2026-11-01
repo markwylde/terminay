@@ -1,3 +1,4 @@
+import { RequestNotSentError } from '@terminay/client-core';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -253,4 +254,11 @@ test('an awaiting creation lost after the server applied it is not sent again', 
 	});
 	assert.equal(sessionId, null);
 	assert.deepEqual(server.calls, ['create', 'resync']);
+});
+
+test('definitively unsent disconnects participate in project recovery', () => {
+ const error = new RequestNotSentError();
+ assert.equal(isConnectionLoss(error), true);
+ assert.equal(isConnectionLoss(new Error('wrapped', { cause: error })), true);
+ assert.equal(isConnectionLoss(Object.assign(new Error('server unavailable'), { code: 'unavailable' })), false);
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { TerminayClient } from '@terminay/client-core';
+import { TerminayClient, RequestNotSentError } from '@terminay/client-core';
 import { encodeFrame } from '@terminay/protocol';
 import { createInMemoryTransportPair } from '@terminay/protocol-conformance';
 import { createOperationDispatcher, createServerCore } from '../dist/index.js';
@@ -571,7 +571,8 @@ test('closing a connection rejects a locally queued command as definitively unse
 		const queued = settled(client.command('review.mutate'));
 		await until(() => client.requestAdmission.waiting.length === 1);
 		await client.close();
-		assert.equal((await queued).error.code, 'unavailable');
+		assert.ok((await queued).error instanceof RequestNotSentError);
+		assert.equal((await queued).error.sent, false);
 		assert.equal(mutations, 0);
 		assert.equal(client.requestAdmission.waiting.length, 0);
 	} finally {
@@ -609,8 +610,8 @@ test('locally queued cancellation and deadlines send no command frames', async (
 			client.command('review.mutate', {}, { signal: controller.signal }),
 		);
 		await until(() => client.requestAdmission.waiting.length === 1);
-		controller.abort();
-		await cancelled;
+		controller.abort('custom reason');
+		assert.equal((await cancelled).error.name, 'AbortError');
 		await assert.rejects(
 			client.command('review.mutate', {}, { deadlineMs: 10 }),
 			(error) => error.code === 'deadline',
@@ -704,3 +705,17 @@ test('client admission respects the advertised byte budget without disconnecting
 		await Promise.all(pending);
 	}
 });
+
+ test('queued subscription cleanup tolerates an unsent disconnect', async (t) => {
+  const gate = deferred(); let started = 0;
+  const { client } = await connected(t, { queries: { 'review.hold': async () => { started++; await gate.promise; return null; } } });
+  const subscription = await client.subscribe('review.event');
+  const pending = Array.from({ length: 128 }, () => settled(client.query('review.hold')));
+  try {
+    await until(() => started === 64);
+    const cleanup = subscription.unsubscribe();
+    await until(() => client.requestAdmission.waiting.length === 1);
+    await client.close();
+    await cleanup;
+  } finally { gate.resolve(); await Promise.all(pending); }
+ });
