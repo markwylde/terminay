@@ -540,9 +540,10 @@ function isConfiguredShellProcess(
 	processName: string,
 	configuredShell: string,
 ): boolean {
-	const normalized = processName.startsWith('-')
-		? processName.slice(1)
-		: processName;
+	// Linux node-pty reports argv[0], which may be an absolute path;
+	// macOS reports the executable name. Compare the name on both hosts.
+	const name = shellName(processName);
+	const normalized = name.startsWith('-') ? name.slice(1) : name;
 	if (normalized === configuredShell || normalized === 'login') return true;
 	// Windows names the foreground by its command (`powershell`), and the
 	// configured shell by its file (`powershell.exe`), in any case.
