@@ -70,9 +70,14 @@ The transport-neutral `TerminalServiceAdapter` SHALL supply the attach, detach, 
 
 ### Requirement: Input interruption notices reflect readiness
 
-An input interruption notice SHALL remain visible while its current attachment cannot accept input. Its action SHALL indicate waiting until control and attachment hydration permit continuation. A read-only replacement SHALL NOT dismiss the interruption or enable typing.
+An input interruption notice SHALL remain visible while a replacement attachment is pending, with continuation disabled until hydration and control permit it. A read-only observer SHALL hide the notice without clearing the interruption state or enabling input; regaining control SHALL restore the notice. Closing the queue SHALL clear its displayed notice.
 
 #### Scenario: Notice during replacement
 
 - **WHEN** an uncertain-outcome or overflow notice is visible before the replacement holds control
-- **THEN** the notice remains visible and continuation waits until a controller attachment is ready
+- **THEN** a pending replacement keeps the notice visible with continuation disabled, a read-only replacement hides it, and regaining control restores it before explicit continuation
+
+#### Scenario: Queue closes with an interruption notice
+
+- **WHEN** a terminal input queue closes while an interruption notice is displayed
+- **THEN** its notice clears rather than retaining an enabled action against a closed queue

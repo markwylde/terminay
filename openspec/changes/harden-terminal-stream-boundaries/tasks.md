@@ -30,3 +30,9 @@
 - [x] 5.3 Reject invalid holder retention bounds before side effects and test invalid configurations.
 - [x] 5.4 Keep interruption notices visible until continuation is possible; cover pending and read-only replacements.
 - [x] 5.5 Run affected checks and retain final review evidence.
+
+## 6. Follow-up review closure
+
+- [x] 6.1 Share connection-loss classification across cleanup/recovery paths; cover queued file-watch and folder-size cleanup at disconnect and genuine refusal propagation.
+- [x] 6.2 Hide retained notices for read-only observers, restore on control, and clear on close; cover both interruption kinds.
+- [x] 6.3 Repeat affected local checks, resume Claude review, and retain review evidence.

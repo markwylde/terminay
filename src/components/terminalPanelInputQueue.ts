@@ -81,7 +81,7 @@ export class ServerTerminalInputQueue {
 		private readonly onError: (error: unknown) => void,
 		private readonly waitForNextPasteChunk: TerminalPasteChunkScheduler =
 			async () => {},
-		private readonly onNotice: (notice: TerminalInputNotice) => void = () => {},
+		private readonly onNotice: (notice: TerminalInputNotice | null) => void = () => {},
 	) {}
 
 	get isClosed(): boolean {
@@ -202,6 +202,8 @@ export class ServerTerminalInputQueue {
 
 	close(): void {
 		this.closed = true
+		this.notice = null
+		this.onNotice(null)
 		this.attachmentGeneration += 1
 		this.attachment = null
 		this.discardItems()
@@ -377,7 +379,7 @@ export class ServerTerminalInputQueue {
 	}
 
 	private publishNotice(): void {
-		if (this.notice) this.onNotice({ ...this.notice, canContinue: !this.closed && this.attachment !== null && this.role === 'controller' && !this.waitingForHydration })
+		if (this.notice) this.onNotice(this.role === 'read_only' ? null : { ...this.notice, canContinue: !this.closed && this.attachment !== null && this.role === 'controller' && !this.waitingForHydration })
 	}
 
 	private interruptOverflow(): void {

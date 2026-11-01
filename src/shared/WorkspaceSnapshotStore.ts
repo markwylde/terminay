@@ -1,4 +1,4 @@
-import { WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type ProjectStartRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
+import { isClientConnectionLoss, WorkspaceClient, type FolderCreateRequest, type FolderRenameRequest, type FolderReorderRequest, type PanelActivationRequest, type PanelFolderMoveRequest, type PanelMoveRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type ProjectSidebarUpdateRequest, type ProjectStartRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	type ServerWorkspaceSnapshot,
@@ -439,7 +439,7 @@ export class WorkspaceSnapshotStore {
 		if (this.closed) return
 		this.closed = true
 		void this.unsubscribeEvents?.().catch((error) => {
-			if (!isExpectedDisconnect(error)) {
+			if (!isClientConnectionLoss(error)) {
 				console.warn('workspace snapshot subscription cleanup failed', error)
 			}
 		})
@@ -459,14 +459,4 @@ function isWorkspaceChange(value: unknown, serverId: string): value is { readonl
 		&& Number.isSafeInteger((value as { revision?: unknown }).revision)
 		&& ((value as { revision: number }).revision >= 0)
 		&& (value as { cursor?: unknown }).cursor === String((value as { revision: number }).revision)
-}
-
-function isExpectedDisconnect(error: unknown): boolean {
-	return error instanceof Error
-		&& (
-			error.name === 'ClientDisconnectedError'
-			|| error.name === 'CommandOutcomeUnknownError'
-			|| (error as { code?: unknown }).code === 'disconnected'
-			|| (error as { code?: unknown }).code === 'unknown_command_outcome'
-		)
 }

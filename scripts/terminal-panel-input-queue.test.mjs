@@ -715,7 +715,7 @@ for (const kind of ['overflow', 'unknown_outcome']) {
   const writes = [];
   queue.setPresentationRole('read_only');
   queue.attach({ write: async data => writes.push(data), detach: async () => {} });
-  assert.equal(notices.at(-1).canContinue, false);
+  assert.equal(notices.at(-1), null);
   assert.equal(queue.resumeInput(), false);
   assert.equal(queue.enqueue('ignored'), false);
   queue.setPresentationRole('controller');
@@ -767,4 +767,30 @@ test('abort after admission grants a slot but before send transmits nothing', as
  await rejection;
  assert.equal(transport.frames.filter(frame => frame.envelope.operation === 'review.never').length, 0);
  await client.close(); await Promise.all(held);
+});
+
+for (const kind of ['overflow', 'unknown_outcome']) {
+ test(`${kind} notice clears when its queue closes`, async () => {
+  const notices = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment); queue.enqueue('old');
+  if (kind === 'overflow') { queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES + 1)); old.settleNext(); }
+  else { queue.handoff(); old.settleNext(failWith('unknown_command_outcome')); }
+  await tick(); assert.equal(notices.at(-1).kind, kind);
+  queue.close(); assert.equal(notices.at(-1), null); assert.equal(queue.resumeInput(), false);
+ });
+}
+
+test('an unknown write settling after a read-only replacement keeps its warning hidden until control returns', async () => {
+ const notices = []; const old = heldAttachment(); const replacement = recordingAttachment();
+ const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+ queue.attach(old.attachment); queue.enqueue('uncertain'); queue.enqueue('discard');
+ queue.handoff(); queue.setPresentationRole('read_only'); queue.attach(replacement.attachment);
+ old.settleNext(failWith('unknown_command_outcome')); await tick();
+ assert.equal(notices.at(-1), null); assert.equal(queue.enqueue('refused'), false);
+ queue.setPresentationRole('controller');
+ assert.equal(notices.at(-1).kind, 'unknown_outcome'); assert.equal(notices.at(-1).canContinue, true);
+ assert.deepEqual(replacement.writes, []);
+ assert.equal(queue.resumeInput(), true); queue.enqueue('fresh'); await tick();
+ assert.deepEqual(replacement.writes, ['fresh']); queue.close();
 });
