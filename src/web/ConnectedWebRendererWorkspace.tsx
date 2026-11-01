@@ -1253,9 +1253,9 @@ function BrowserMenuItemContent({
 			{item.shortcut === undefined ? null : (
 				// The keystroke is announced through aria-keyshortcuts, so the
 				// visible hint stays out of the item's accessible name.
-				<kbd className="connected-web-menu__shortcut" aria-hidden="true">
+				<span className="connected-web-menu__shortcut" aria-hidden="true">
 					{formatShortcut(item.shortcut, isMac)}
-				</kbd>
+				</span>
 			)}
 		</>
 	);
