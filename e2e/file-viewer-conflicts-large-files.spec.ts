@@ -1,4 +1,4 @@
-import { appendFile, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { appendFile, open, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 import { activateDockTab, fileExplorerItem, openFileExplorer, selectFileView, setMonacoValue, setProjectRoot, leaveDocumentView } from './support/ui'
@@ -124,8 +124,18 @@ test('large text files use bounded ranged editing in performant mode', async ({
 	while ((await stat(workspace.path('large.txt'))).size < targetSize) {
     await appendFile(workspace.path('large.txt'), chunk, 'utf8')
   }
-	const readDiskPrefix = async () =>
-		(await readFile(workspace.path('large.txt'))).subarray(0, 128).toString('utf8')
+  // Poll only the bytes asserted below, rather than allocating the entire
+  // 100 MiB fixture again for every observation.
+  const readDiskPrefix = async () => {
+    const file = await open(workspace.path('large.txt'), 'r')
+    try {
+      const buffer = Buffer.alloc(128)
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0)
+      return buffer.subarray(0, bytesRead).toString('utf8')
+    } finally {
+      await file.close()
+    }
+  }
 
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
