@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TerminayClient, TerminayClientFacade, TerminayTerminalClient } from "@terminay/client-core";
+import { TerminayClient, TerminayClientFacade, TerminayTerminalClient, TerminalRecoveryController } from "@terminay/client-core";
 import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import {
   createServerCore,
@@ -54,7 +54,7 @@ function createPtyFactory() {
   };
 }
 
-async function harness() {
+async function harness(presentationSettleTimer) {
   const pty = createPtyFactory();
   const checkpoints = new TerminalPresentationCheckpointAuthority();
   const service = new TerminalService({
@@ -64,7 +64,7 @@ async function harness() {
     presentationCheckpoints: checkpoints,
     // Settle deadlines never pass: a fresh presentation waits for the
     // checkpoint authority to drain, however long the machine takes.
-    presentationSettleTimer: { setTimeout: () => undefined, clearTimeout: () => undefined },
+    presentationSettleTimer: presentationSettleTimer ?? { setTimeout: () => undefined, clearTimeout: () => undefined },
   });
   const session = await service.createSession({ projectId: "project-hydration", cols: 80, rows: 24 });
   const journal = new OrderedEventJournal();
@@ -195,4 +195,37 @@ test("hydrating a stale checkpoint does not re-trigger its own recovery", async 
     await h.task;
     await h.service.shutdown();
   }
+});
+
+test('a forced stale hydration converges to the final checkpoint after output stops', async () => {
+ let forceStale = true;
+ const h = await harness({ setTimeout: (finish) => { if (forceStale) queueMicrotask(finish); }, clearTimeout: () => {} });
+ const timers = []; const refreshes = []; const screens = []; let attachment;
+ const controller = new TerminalRecoveryController({ retryDelayMs: 100, schedule: run => { const timer = { run, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; }, reattach: () => { refreshes.push(open()); return 'attaching'; } });
+ const fire = () => { for (const timer of timers.splice(0)) if (!timer.cancelled) timer.run(); };
+ const gaps = [];
+ async function open() {
+  attachment = await h.terminal.attach({ ...h.identity, clientId: 'device-web', fromPosition: 0, freshPresentation: true });
+  const handle = event => {
+   controller.noteStreamProgress(event);
+   if (event.type === 'skip') gaps.push(event);
+   if (event.type === 'checkpoint') screens.push(new TextDecoder().decode(event.bytes));
+  };
+  attachment.onEvent(handle); for (const event of attachment.initialEvents) handle(event);
+  controller.noteAttached();
+ }
+ try {
+  for (let i = 0; i < 400; i++) h.pty.processes[0].emitData('x'.repeat(1024));
+  h.pty.processes[0].emitData('\r\nQUIET-FINAL-MARKER\r\n');
+  await open();
+  // Event routing may finish in the next microtask after the command result.
+  for (let i = 0; i < 100 && !gaps.length; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(gaps.some(event => event.reason === 'hydration'));
+  assert.equal(screens[0].includes('QUIET-FINAL-MARKER'), false);
+  forceStale = false;
+  fire(); fire(); await Promise.all(refreshes);
+  assert.equal(refreshes.length, 1);
+  assert.ok(screens.at(-1).includes('QUIET-FINAL-MARKER'));
+  assert.equal(gaps.length, 1);
+ } finally { controller.dispose(); await h.client.close(); await h.task; await h.service.shutdown(); }
 });

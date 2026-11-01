@@ -58,6 +58,7 @@ export interface TerminalRecoveryOptions {
 	) => void;
 	readonly onRecovered?: (attempt: number, elapsedMs: number) => void;
 	readonly now?: () => number;
+	readonly onHydrationConvergenceExhausted?: () => void;
 }
 
 export class TerminalRecoveryController {
@@ -66,6 +67,11 @@ export class TerminalRecoveryController {
 	private startedAt = 0;
 	private cancelScheduled: (() => void) | undefined;
 	private readonly now: () => number;
+	private hydrationGap: TerminalStreamSkipEvent | undefined;
+	private convergenceAttempts = 0;
+	private cancelConvergence: (() => void) | undefined;
+	private attached = false;
+	private sawHydrationGap = false;
 
 	constructor(private readonly options: TerminalRecoveryOptions) {
 		this.now = options.now ?? (() => Date.now());
@@ -94,8 +100,45 @@ export class TerminalRecoveryController {
 		return this.beginRecovery(event as TerminalStreamSkipEvent);
 	}
 
+	/** Observe current-binding arrivals before renderer work, so ongoing output
+	 * defers convergence even while xterm is still rendering prior chunks. */
+	noteStreamProgress(event: TerminalStreamEvent): void {
+		if (this.stateValue === 'disposed') return;
+		if (event.type === 'exit') { this.clearConvergence(); return; }
+		if (event.type === 'skip' && event.reason === 'hydration') { this.hydrationGap = event; this.sawHydrationGap = true; }
+		else if (event.type !== 'output') return;
+		this.scheduleConvergence();
+	}
+
+	private scheduleConvergence(): void {
+		this.cancelConvergence?.();
+		this.cancelConvergence = undefined;
+		if (!this.attached || this.stateValue !== 'streaming') return;
+		if (!this.hydrationGap) {
+			if (this.convergenceAttempts > 0) this.cancelConvergence = this.options.schedule(() => {
+				this.cancelConvergence = undefined;
+				if (!this.hydrationGap && this.attached && this.stateValue === 'streaming') this.convergenceAttempts = 0;
+			}, 500);
+			return;
+		}
+		this.cancelConvergence = this.options.schedule(() => {
+			this.cancelConvergence = undefined;
+			const gap = this.hydrationGap;
+			if (!gap || !this.attached || this.stateValue !== 'streaming') return;
+			if (this.convergenceAttempts >= 3) {
+				this.hydrationGap = undefined;
+				recordTerminalStreamDiagnostic('hydration_convergence_exhausted');
+				this.options.onHydrationConvergenceExhausted?.();
+				return;
+			}
+			this.convergenceAttempts += 1;
+			recordTerminalStreamDiagnostic('hydration_convergence_refresh', { attempt: this.convergenceAttempts });
+			this.beginRecovery(gap);
+		}, 500 * (2 ** this.convergenceAttempts));
+	}
+
 	/** The caller's attach completed and the display is live again. */
-	noteAttached(): void {
+	noteAttached(options: { readonly freshPresentation?: boolean } = {}): void {
 		if (this.stateValue === 'disposed') return;
 		this.cancelPending();
 		if (this.attemptValue > 0) {
@@ -108,6 +151,9 @@ export class TerminalRecoveryController {
 		this.stateValue = 'streaming';
 		this.attemptValue = 0;
 		this.startedAt = 0;
+		this.attached = true;
+		if (options.freshPresentation !== false && !this.sawHydrationGap) this.hydrationGap = undefined;
+		this.scheduleConvergence();
 	}
 
 	/**
@@ -124,20 +170,39 @@ export class TerminalRecoveryController {
 	}
 
 	/** Transport-level restarts own the attachment outright; recovery yields. */
-	reset(): void {
+	reset(options: { readonly renewConvergenceBudget?: boolean } = {}): void {
 		if (this.stateValue === 'disposed') return;
 		this.cancelPending();
+		if (options.renewConvergenceBudget) this.convergenceAttempts = 0;
 		this.stateValue = 'streaming';
 		this.attemptValue = 0;
 		this.startedAt = 0;
+		this.cancelConvergence?.();
+		this.cancelConvergence = undefined;
+		this.attached = false;
+		this.sawHydrationGap = false;
 	}
 
 	dispose(): void {
 		this.cancelPending();
+		this.clearConvergence();
 		this.stateValue = 'disposed';
 	}
 
+	private clearConvergence(): void {
+		this.cancelConvergence?.();
+		this.cancelConvergence = undefined;
+		this.hydrationGap = undefined;
+		this.convergenceAttempts = 0;
+		this.attached = false;
+		this.sawHydrationGap = false;
+	}
+
 	private beginRecovery(event: TerminalStreamSkipEvent): boolean {
+		this.cancelConvergence?.();
+		this.cancelConvergence = undefined;
+		this.sawHydrationGap = false;
+		this.attached = false;
 		if (this.attemptValue === 0) this.startedAt = this.now();
 		this.attemptValue += 1;
 		this.stateValue = 'recovering';

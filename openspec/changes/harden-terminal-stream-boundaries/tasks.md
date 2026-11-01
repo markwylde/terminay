@@ -36,3 +36,9 @@
 - [x] 6.1 Share connection-loss classification across cleanup/recovery paths; cover queued file-watch and folder-size cleanup at disconnect and genuine refusal propagation.
 - [x] 6.2 Hide retained notices for read-only observers, restore on control, and clear on close; cover both interruption kinds.
 - [x] 6.3 Repeat affected local checks, resume Claude review, and retain review evidence.
+
+## 7. CI-proven quiet-output convergence
+
+- [x] 7.1 Retain hydration gap debt and add bounded quiet-period checkpoint refresh through the existing recovery controller.
+- [x] 7.2 Test silence, continued output, budget exhaustion, clean hydration, reset/disposal and attachment fencing; run affected Docker E2E.
+- [x] 7.3 Review the convergence fix with Claude and retain its final review and local verification evidence.
