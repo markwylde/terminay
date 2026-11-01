@@ -540,7 +540,7 @@ test("server PTY adapter has no window owner and detach/resume reuses one proces
 
   await handle.input(new Uint8Array([0x68, 0x69]));
   await handle.resize({ cols: 100, rows: 30 });
-  assert.deepEqual(child.writes, ["hi"]);
+  assert.deepEqual(child.writes, [Buffer.from("hi")]);
   assert.deepEqual(child.resizes, [{ cols: 100, rows: 30 }]);
 
   // The service foreground observer polls while a terminal is live.  This

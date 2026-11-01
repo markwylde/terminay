@@ -196,6 +196,8 @@ test("spawn, write, resize, signal, and exit reach the PTY and come back", async
   child.emitData("hello ");
   child.emitData("world");
   client.write("s1", bytesOf("ls\n"));
+  client.write("s1", Uint8Array.of(27, 91, 77, 32, 128, 255));
+  client.write("s1", bytesOf("é 🐱\r"));
   client.resize("s1", 120, 40);
   client.signal("s1", "SIGINT");
   // Wait for the round trip itself, not for a fixed time: the exit is the last
@@ -204,7 +206,7 @@ test("spawn, write, resize, signal, and exit reach the PTY and come back", async
 
   assert.equal(seen.text(), "hello world");
   assert.deepEqual(seen.chunks.map((chunk) => chunk.position), [0, 6]);
-  assert.deepEqual(child.writes, ["ls\n"]);
+  assert.deepEqual(child.writes, [Buffer.from("ls\n"), Buffer.from([27, 91, 77, 32, 128, 255]), Buffer.from("é 🐱\r")]);
   assert.deepEqual(child.resizes, [[120, 40]]);
   assert.deepEqual(child.kills, ["SIGINT"]);
   assert.equal(seen.exits.length, 1);

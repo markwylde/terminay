@@ -76,7 +76,7 @@ export interface NodePtyProcessLike {
 			readonly signal?: number;
 		}) => void,
 	) => NodePtyDisposable | undefined;
-	readonly write: (data: string) => void;
+	readonly write: (data: string | Buffer) => void;
 	readonly resize: (cols: number, rows: number) => void;
 	readonly kill: (signal?: number | string) => void;
 	readonly pause?: () => void;
@@ -168,7 +168,7 @@ export function createNodePtyFactory(
 			});
 			return {
 				...(typeof child.pid === 'number' ? { pid: child.pid } : {}),
-				write: (bytes) => child.write(new TextDecoder().decode(bytes)),
+				write: (bytes) => child.write(Buffer.from(bytes)),
 				resize: (dimensions) => child.resize(dimensions.cols, dimensions.rows),
 				kill: (signal) => child.kill(signal),
 				...(typeof child.pause === 'function'

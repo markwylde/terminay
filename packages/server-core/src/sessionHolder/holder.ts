@@ -151,7 +151,6 @@ const defaultTimers: SessionHolderTimers = {
 };
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 export class SessionHolder {
 	readonly generation: string;
@@ -578,7 +577,7 @@ export class SessionHolder {
 				this.attach(message.id, message.sessionId, message.from);
 				return;
 			case 'write':
-				this.live(message.sessionId).child.write(decoder.decode(payload));
+				this.live(message.sessionId).child.write(Buffer.from(payload));
 				return;
 			case 'resize': {
 				const session = this.live(message.sessionId);
