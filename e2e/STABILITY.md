@@ -37,6 +37,29 @@ Other useful examples:
   repeated runs described below did not reproduce them; no speculative tab
   activation retry was added.
 
+## Follow-up during PR validation
+
+Current main's [run 22724](https://git.i.wylde.net/markwylde/terminay/actions/runs/22724),
+job 66715, failed the terminal-move-back journey. Repeating that journey locally
+without retries reproduced it once in ten executions: immediately after moving
+back, the tab-count snapshot was `[0, 0, 0]`; the later failure snapshot showed
+the correct destination tab. The helper's `toContainText('Project')` also accepts
+`Project 2`, so it can return before the destination is active. The workspace
+revision barrier does not prove Dockview has drawn its child tabs.
+
+The switch helper now checks the exact project title. The move helper also
+waits for the moved tab in the active destination and for exactly one such tab
+across all projects. The tests retain their immediate distribution assertions
+after subsequent workspace synchronization, and still verify live terminal
+output.
+
+Additional regression command:
+
+```sh
+npm run test:e2e -- e2e/terminal-move-between-projects.spec.ts \
+  --repeat-each=10 --retries=0
+```
+
 ## Changes
 
 - Share terminal attachment, presentation ownership, DOM/native focus, rendering
@@ -89,7 +112,7 @@ The image's application build and TypeScript checks passed. Biome lint passed
 for all four changed TypeScript files; `git diff --check` passed; and
 `openspec validate --all` reported 97 passed, zero failed, with existing warnings.
 
-These runs used Linux arm64 containers locally. Gitea uses Linux amd64 E2E
-runners; the uncommitted patch has not been run there. The remaining renderer
+These local runs used Linux arm64 containers. Gitea uses Linux amd64 E2E
+runners; see PR 473's head checks for its current CI results. The remaining renderer
 crash cause needs CI evidence if it recurs; this patch removes unnecessary
 allocation in the test without claiming to establish that cause.
