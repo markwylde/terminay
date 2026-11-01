@@ -523,3 +523,19 @@ test("Linux foreground argv0 paths identify Bash as idle and a command as busy",
   ]);
   process.dispose();
 });
+
+test('node-pty writes input bytes without UTF-8 replacement or aliasing', () => {
+  const child = createChild();
+  const received = [];
+  child.write = (bytes) => received.push(bytes);
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: '/bin/sh', shell: '/bin/sh', args: [], cwd: '/tmp', cols: 200, rows: 24,
+  });
+  const mouse = Uint8Array.of(27, 91, 77, 32, 128, 255);
+  const expected = Buffer.from(mouse);
+  process.write(mouse);
+  mouse.fill(0);
+  process.write(new TextEncoder().encode('é 🐱\r'));
+  assert.deepEqual(received, [expected, Buffer.from('é 🐱\r')]);
+  process.dispose();
+});
