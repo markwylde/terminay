@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { processEnded } from './fixtures/process-ended.mjs';
 import { runtime, until } from './fixtures/bot-test-runtime.mjs';
 
 async function setup(t, options) {
@@ -147,10 +148,7 @@ test('5.3 cancel acknowledgement cannot leave a tool child running', async (t) =
 		.updates.find((u) => u.toolCallId === 'child').rawOutput.pid;
 	process.kill(pid, 0);
 	await r.service.stop(r.bot.id, first.sessionId);
-	assert.throws(
-		() => process.kill(pid, 0),
-		(e) => e.code === 'ESRCH',
-	);
+	assert.equal(await processEnded(pid), true);
 });
 test('5.3 an ignored cancel is killed after the 10-second deadline', {
 	timeout: 20000,

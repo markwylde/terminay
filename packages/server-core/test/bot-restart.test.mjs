@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { processEnded } from './fixtures/process-ended.mjs';
 
 test('5.6 kill the server mid-turn, restart: kill-all, interrupted approvals, not-sent messages, skipped firings, helper cleanup and idle arming', {
 	timeout: 15000,
@@ -60,9 +61,6 @@ test('5.6 kill the server mid-turn, restart: kill-all, interrupted approvals, no
 	assert.equal(trigger.reason, 'server restarted');
 	assert.ok(restored.calls.some((c) => c[0] === 'remove-helpers'));
 	assert.deepEqual(restored.activity.at(-1), [ready.botId, 0, 0]);
-	assert.throws(
-		() => process.kill(pid, 0),
-		(e) => e.code === 'ESRCH',
-	);
+	assert.equal(await processEnded(pid), true);
 	pid = undefined;
 });

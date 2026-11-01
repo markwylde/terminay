@@ -19,7 +19,19 @@ test('narrow release builds materialize their workspace dependencies through Tur
 		['github', 'terminay-github'],
 	];
 
-	assert.equal(serverCorePackage.scripts.build, 'tsc -p tsconfig.json');
+	// server-core also stages the bot image context into its dist, so its
+	// cached build must hash that context too.
+	assert.equal(
+		serverCorePackage.scripts.build,
+		'tsc -p tsconfig.json && node ../../scripts/stage-bot-image.mjs',
+	);
+	const serverCoreBuild = turbo.tasks['@terminay/server-core#build'];
+	assert.deepEqual(serverCoreBuild.dependsOn, ['^build']);
+	assert.equal(serverCoreBuild.outputs.includes('dist/**'), true);
+	assert.equal(
+		serverCoreBuild.inputs.includes('$TURBO_ROOT$/docker/terminay-bot/**'),
+		true,
+	);
 	assert.deepEqual(turbo.tasks.build.dependsOn, ['^build']);
 	assert.equal(turbo.tasks.build.outputs.includes('dist/**'), true);
 	assert.equal(rootPackage.scripts['build:built-in-extension-workspaces'], 'turbo run compile --filter=terminay-*');
