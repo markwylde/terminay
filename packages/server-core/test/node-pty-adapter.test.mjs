@@ -503,3 +503,19 @@ test("node-pty spaces output-driven samples by the shared ramp", () => {
   process.dispose();
   assert.equal(timers.length, 0, "disposing left a ramp timer armed");
 });
+
+test('node-pty writes input bytes without UTF-8 replacement or aliasing', () => {
+  const child = createChild();
+  const received = [];
+  child.write = (bytes) => received.push(bytes);
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: '/bin/sh', shell: '/bin/sh', args: [], cwd: '/tmp', cols: 200, rows: 24,
+  });
+  const mouse = Uint8Array.of(27, 91, 77, 32, 128, 255);
+  const expected = Buffer.from(mouse);
+  process.write(mouse);
+  mouse.fill(0);
+  process.write(new TextEncoder().encode('é 🐱\r'));
+  assert.deepEqual(received, [expected, Buffer.from('é 🐱\r')]);
+  process.dispose();
+});
