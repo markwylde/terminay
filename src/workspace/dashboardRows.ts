@@ -23,6 +23,7 @@ import type {
 	WorkspaceInventoryEntry,
 	WorkspaceInventoryPanelKind,
 	WorkspaceInventoryStatus,
+	WorkspaceInventoryWorktreeFacts,
 } from './workspaceInventory';
 
 /** The status vocabulary shared with the terminal tab and activity surfaces. */
@@ -97,6 +98,9 @@ export type DashboardPanelRow = {
 	title: string;
 	/** Track activity is off: always idle, and on the Board, Untracked. */
 	untracked?: true;
+	/** The pull request and checks of the panel's folder, as its Folders row
+	 * shows them. */
+	worktree?: WorkspaceInventoryWorktreeFacts;
 };
 
 export type DashboardRow = DashboardProjectRow | DashboardPanelRow;
@@ -344,6 +348,7 @@ export function buildDashboardGroups(
 				title: entry.title,
 				...(entry.untracked ? { untracked: true as const } : {}),
 				...(entry.folderId === undefined ? {} : { folderId: entry.folderId }),
+				...(entry.worktree === undefined ? {} : { worktree: entry.worktree }),
 				...(entry.sessionId === undefined
 					? {}
 					: { sessionId: entry.sessionId }),

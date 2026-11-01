@@ -377,6 +377,8 @@ import {
 	type PanelTabAppearance,
 	selectNotableEntries,
 	type WorkspaceInventoryEntry,
+	type WorkspaceInventoryWorktreeFacts,
+	worktreeFactsFromProperties,
 } from './workspace/workspaceInventory';
 import {
 	activateTerminalPanel,
@@ -2267,6 +2269,11 @@ const ProjectWorkspace = memo(forwardRef<
 			setErrorText,
 		});
 
+		// The pull request and checks of this folder's worktree. Set once the
+		// explorer has listed the worktree, below; every panel here carries them.
+		const folderWorktreeFactsRef = useRef<
+			WorkspaceInventoryWorktreeFacts | undefined
+		>(undefined);
 		const getWorkspaceInventoryItems =
 			useCallback((): WorkspaceInventoryEntry[] => {
 				const api = dockviewApiRef.current;
@@ -2300,7 +2307,14 @@ const ProjectWorkspace = memo(forwardRef<
 						id: project.id,
 						title: project.title,
 					},
-				}).map((entry) => ({ ...entry, folderId: folder.id }));
+				}).map((entry) => {
+					const worktree = folderWorktreeFactsRef.current;
+					return {
+						...entry,
+						folderId: folder.id,
+						...(worktree === undefined ? {} : { worktree }),
+					};
+				});
 			}, [
 				folder.id,
 				project.color,
@@ -2951,6 +2965,25 @@ const ProjectWorkspace = memo(forwardRef<
 			() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
 			[folder, project.rootFolder, worktreePanelStatus],
 		);
+		// The dashboard shows a folder's pull request and checks on each of its
+		// panels, so a change to them is published with the inventory. Keyed by
+		// value: a fresh listing with the same facts publishes nothing.
+		const folderWorktreeFacts =
+			changes.kind === 'worktree'
+				? worktreeFactsFromProperties(changes.worktree.properties)
+				: undefined;
+		const folderWorktreeFactsKey =
+			folderWorktreeFacts === undefined
+				? ''
+				: JSON.stringify(folderWorktreeFacts);
+		folderWorktreeFactsRef.current = folderWorktreeFacts;
+		const publishedWorktreeFactsKeyRef = useRef('');
+		useEffect(() => {
+			if (publishedWorktreeFactsKeyRef.current === folderWorktreeFactsKey)
+				return;
+			publishedWorktreeFactsKeyRef.current = folderWorktreeFactsKey;
+			publishWorkspaceInventory();
+		}, [folderWorktreeFactsKey, publishWorkspaceInventory]);
 		const isWorktreeMissing =
 			changes.kind === 'worktree' && changes.worktree.isPrunable === true;
 		worktreeMissingRef.current = isWorktreeMissing;
