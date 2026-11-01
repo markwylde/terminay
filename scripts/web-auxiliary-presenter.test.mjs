@@ -18,7 +18,7 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	assert.match(webWorkspace, /className="connected-web-menubar"/u);
 	assert.match(webWorkspace, /role="menubar"/u);
 	assert.match(webWorkspaceCss, /padding-top:\s*env\(safe-area-inset-top, 0px\)/u);
-	assert.match(webWorkspaceCss, /html\.is-framed \.connected-web-menubar \{\n\tmin-height: 30px;\n\tpadding-top: 0;/u);
+	assert.match(webWorkspaceCss, /html\.is-framed \.connected-web-menubar \{\n\tmin-height: 28px;\n\tpadding-top: 0;/u);
 	assert.match(webWorkspaceCss, /html\.is-framed \.connected-web-renderer-workspace/u);
 	assert.match(webWorkspaceCss, /height: 100%;/u);
 	assert.doesNotMatch(webWorkspaceCss, /html\.is-framed[^{]*\{[^}]*safe-area-inset-top/u);

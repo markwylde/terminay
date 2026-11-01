@@ -158,6 +158,8 @@ type BrowserMenuItem = Readonly<{
 	startsGroup?: boolean;
 	/** Present only on items that toggle; renders and announces as a check. */
 	checked?: boolean;
+	/** The keystroke that already runs this command, shown as a hint. */
+	shortcut?: Readonly<{ key: string; shift?: boolean }>;
 }>;
 
 const menuOrder: readonly BrowserMenuId[] = [
@@ -702,31 +704,37 @@ function ConnectedBrowserMenuBar({
 			edit: [
 				{
 					id: 'undo',
+					shortcut: { key: 'Z' },
 					label: 'Undo',
 					onSelect: () => document.execCommand('undo'),
 				},
 				{
 					id: 'redo',
+					shortcut: { key: 'Z', shift: true },
 					label: 'Redo',
 					onSelect: () => document.execCommand('redo'),
 				},
 				{
 					id: 'cut',
+					shortcut: { key: 'X' },
 					label: 'Cut',
 					onSelect: () => document.execCommand('cut'),
 				},
 				{
 					id: 'copy',
+					shortcut: { key: 'C' },
 					label: 'Copy',
 					onSelect: () => document.execCommand('copy'),
 				},
 				{
 					id: 'paste',
+					shortcut: { key: 'V' },
 					label: 'Paste',
 					onSelect: () => document.execCommand('paste'),
 				},
 				{
 					id: 'select-all',
+					shortcut: { key: 'A' },
 					label: 'Select All',
 					onSelect: () => document.execCommand('selectAll'),
 				},
@@ -741,11 +749,13 @@ function ConnectedBrowserMenuBar({
 			terminay: [
 				{
 					id: 'new-terminal',
+					shortcut: { key: 'T' },
 					label: 'New Terminal Tab',
 					onSelect: () => dispatchShortcut('t'),
 				},
 				{
 					id: 'new-project',
+					shortcut: { key: 'P' },
 					label: 'New Project',
 					onSelect: () => dispatchShortcut('p'),
 				},
@@ -777,6 +787,7 @@ function ConnectedBrowserMenuBar({
 			view: [
 				{
 					id: 'show-dashboard',
+					shortcut: { key: '0' },
 					label: 'Show Dashboard',
 					onSelect: () => dispatchShortcut('0'),
 				},
@@ -804,12 +815,14 @@ function ConnectedBrowserMenuBar({
 				},
 				{
 					id: 'set-project-root',
+					shortcut: { key: 'R' },
 					startsGroup: true,
 					label: 'Set Project Root to Working Directory',
 					onSelect: () => dispatchShortcut('r'),
 				},
 				{
 					id: 'toggle-file-explorer',
+					shortcut: { key: 'O' },
 					label: 'Toggle File Explorer Sidebar',
 					onSelect: () => dispatchShortcut('o'),
 				},
@@ -994,7 +1007,7 @@ function ConnectedBrowserMenuBar({
 									<button
 										key={item.id}
 										type="button"
-										className="connected-web-menu__item"
+										className={`connected-web-menu__item${item.checked === undefined ? '' : ' connected-web-menu__item--checkable'}`}
 										role={
 											item.checked === undefined
 												? 'menuitem'
@@ -1003,20 +1016,20 @@ function ConnectedBrowserMenuBar({
 										{...(item.checked === undefined
 											? {}
 											: { 'aria-checked': item.checked })}
+										{...(item.shortcut === undefined
+											? {}
+											: {
+													'aria-keyshortcuts': ariaKeyShortcut(
+														item.shortcut,
+														isMac,
+													),
+												})}
 										onClick={() => {
 											setOpenMenu(null);
 											item.onSelect();
 										}}
 									>
-										{item.checked === undefined ? null : (
-											<span
-												className="connected-web-menu__check"
-												aria-hidden="true"
-											>
-												{item.checked ? '✓' : ''}
-											</span>
-										)}
-										{item.label}
+										<BrowserMenuItemContent item={item} isMac={isMac} />
 									</button>
 								))}
 							</div>
@@ -1044,6 +1057,13 @@ function ConnectedBrowserMenuBar({
 							aria-expanded={openMenu === menuId}
 							onClick={() =>
 								setOpenMenu((current) => (current === menuId ? null : menuId))
+							}
+							onPointerEnter={() =>
+								// Once a menu is open, sliding across the bar opens its
+								// neighbours, as a desktop menu bar does.
+								setOpenMenu((current) =>
+									current === null || current === menuId ? current : menuId,
+								)
 							}
 							onKeyDown={(event) => onMenuButtonKeyDown(event, menuId)}
 						>
@@ -1073,20 +1093,20 @@ function ConnectedBrowserMenuBar({
 										{...(item.checked === undefined
 											? {}
 											: { 'aria-checked': item.checked })}
+										{...(item.shortcut === undefined
+											? {}
+											: {
+													'aria-keyshortcuts': ariaKeyShortcut(
+														item.shortcut,
+														isMac,
+													),
+												})}
 										onClick={() => activateItem(menuId, item)}
 										onKeyDown={(event) =>
 											onMenuItemKeyDown(event, menuId, index)
 										}
 									>
-										{item.checked === undefined ? null : (
-											<span
-												className="connected-web-menu__check"
-												aria-hidden="true"
-											>
-												{item.checked ? '✓' : ''}
-											</span>
-										)}
-										{item.label}
+										<BrowserMenuItemContent item={item} isMac={isMac} />
 									</button>
 								))}
 							</div>
@@ -1216,4 +1236,46 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 		subscribe: () => () => undefined,
 		toggleServer: getStatus,
 	});
+}
+
+function BrowserMenuItemContent({
+	item,
+	isMac,
+}: Readonly<{ item: BrowserMenuItem; isMac: boolean }>) {
+	return (
+		<>
+			{item.checked === undefined ? null : (
+				<span className="connected-web-menu__check" aria-hidden="true">
+					{item.checked ? '✓' : ''}
+				</span>
+			)}
+			<span className="connected-web-menu__label">{item.label}</span>
+			{item.shortcut === undefined ? null : (
+				// The keystroke is announced through aria-keyshortcuts, so the
+				// visible hint stays out of the item's accessible name.
+				<kbd className="connected-web-menu__shortcut" aria-hidden="true">
+					{formatShortcut(item.shortcut, isMac)}
+				</kbd>
+			)}
+		</>
+	);
+}
+
+function formatShortcut(
+	shortcut: NonNullable<BrowserMenuItem['shortcut']>,
+	isMac: boolean,
+): string {
+	if (isMac) return `${shortcut.shift === true ? '⇧' : ''}⌘${shortcut.key}`;
+	return `Ctrl+${shortcut.shift === true ? 'Shift+' : ''}${shortcut.key}`;
+}
+
+function ariaKeyShortcut(
+	shortcut: NonNullable<BrowserMenuItem['shortcut']>,
+	isMac: boolean,
+): string {
+	return [
+		isMac ? 'Meta' : 'Control',
+		...(shortcut.shift === true ? ['Shift'] : []),
+		shortcut.key,
+	].join('+');
 }
