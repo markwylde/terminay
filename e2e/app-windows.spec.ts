@@ -163,18 +163,20 @@ test('an agent shows its own HTML in a window that minimises to an edge tab', as
 	await expect(hello).toHaveAttribute('data-placement', 'window');
 	await expect(view(hello).locator('#greeting')).toHaveText('Hello world');
 
-	// Bottom-left of the pane, at most 440 wide, sized to its content.
-	const pane = await boxOf(activeTerminalPanel(mainWindow));
-	await expect
-		.poll(async () => (await boxOf(hello)).height)
-		.toBeLessThan(pane.height * 0.6);
-	const open = await boxOf(hello);
-	expect(Math.round(open.x - pane.x)).toBe(12);
-	expect(open.width).toBeLessThanOrEqual(440);
-	expect(Math.round(pane.y + pane.height - (open.y + open.height))).toBe(12);
-	// A static document sizes the window to its content, not to a default.
-	expect(open.height).toBeGreaterThan(60);
-	expect(open.height).toBeLessThan(200);
+	// Content sizing animates from the initial frame. The 60% cap alone can
+	// pass mid-animation, before the short document reaches its own height.
+	// Observe the complete geometry together, keeping every existing bound.
+	await expect(async () => {
+		const pane = await boxOf(activeTerminalPanel(mainWindow));
+		const open = await boxOf(hello);
+		expect(open.height).toBeLessThan(pane.height * 0.6);
+		expect(Math.round(open.x - pane.x)).toBe(12);
+		expect(open.width).toBeLessThanOrEqual(440);
+		expect(Math.round(pane.y + pane.height - (open.y + open.height))).toBe(12);
+		// A static document sizes the window to its content, not to a default.
+		expect(open.height).toBeGreaterThan(60);
+		expect(open.height).toBeLessThan(200);
+	}).toPass({ timeout: 5_000 });
 
 	// The terminal tab is badged; the status bar says nothing about windows.
 	await expect(mainWindow.getByRole('img', { name: '1 app window' }).first()).toBeVisible();
