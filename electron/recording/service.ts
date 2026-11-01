@@ -81,6 +81,7 @@ type PersistedRecordingMetadata = {
 }
 
 type ActiveRecording = {
+  outputDecoder: TextDecoder
   bytesWritten: number
   castPath: string
   cols: number
@@ -274,6 +275,7 @@ export class TerminalRecordingService {
     const startedAt = now.toISOString()
     const stream = createWriteStream(castPath, { encoding: 'utf8', flags: 'wx', mode: 0o600 })
     const active: ActiveRecording = {
+      outputDecoder: new TextDecoder(),
       bytesWritten: 0,
       castPath,
       cols,
@@ -341,6 +343,13 @@ export class TerminalRecordingService {
     this.appendEvent(active, 'o', data)
   }
 
+  appendOutputBytes(sessionId: string, bytes: Uint8Array): void {
+    const active = this.activeRecordings.get(sessionId)
+    if (!active || active.errorMessage) return
+    const text = active.outputDecoder.decode(bytes, { stream: true })
+    if (text.length > 0) this.appendOutput(sessionId, text)
+  }
+
   appendInput(sessionId: string, data: string): void {
     const active = this.activeRecordings.get(sessionId)
     if (!active || active.errorMessage) return
@@ -375,6 +384,10 @@ export class TerminalRecordingService {
   ): TerminalRecordingState {
     const active = this.activeRecordings.get(sessionId)
     if (!active) return this.getState(sessionId)
+    if (!active.errorMessage) {
+      const remaining = active.outputDecoder.decode()
+      if (remaining.length > 0) this.appendOutput(sessionId, remaining)
+    }
     if (!active.errorMessage && exitCode !== null) this.appendEvent(active, 'x', String(exitCode))
     const endedAtMs = Date.now()
     active.metadata = {

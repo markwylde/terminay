@@ -343,9 +343,9 @@ interface MutableAttachment {
  * Transport-neutral terminal client contract.
  *
  * A local socket, browser transport, and remote WebRTC transport all expose
- * the same command/subscription surface to this class. The implementation
- * keeps per-client/session high-water marks so a stale reconnect cursor cannot
- * replay bytes already delivered by an earlier attachment.
+ * the same command/subscription surface to this class. Each attachment resumes from
+ * the position the display confirmed or a fresh checkpoint. No cursor from a
+ * retired attachment substitutes for what the current display rendered.
  */
 export class TerminayTerminalClient {
 	private readonly attachments = new Map<string, MutableAttachment>();

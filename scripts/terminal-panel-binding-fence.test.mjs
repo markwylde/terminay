@@ -83,7 +83,9 @@ test('retiring the mounted binding fences unmount completions until a new bindin
 	assert.equal(fence.isCurrent(replacement), true);
 });
 
-test('retry is actionable for a failed live attach, not an unavailable presentation', () => {
-	assert.equal(isTerminalRetryActionable(false), true);
-	assert.equal(isTerminalRetryActionable(true), false);
+test('retry is actionable for a refused presentation but not an ended session', () => {
+	assert.equal(isTerminalRetryActionable({ presentationUnavailable: false, sessionEnded: false }), true);
+	assert.equal(isTerminalRetryActionable({ presentationUnavailable: true, sessionEnded: false }), true);
+	assert.equal(isTerminalRetryActionable({ presentationUnavailable: false, sessionEnded: true }), false);
+	assert.equal(isTerminalRetryActionable({ presentationUnavailable: true, sessionEnded: true }), false);
 });

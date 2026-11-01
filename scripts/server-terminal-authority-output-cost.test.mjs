@@ -204,3 +204,16 @@ async function importAuthority() {
 		await rm(directory, { recursive: true, force: true });
 	}
 }
+
+
+test('desktop host writes enter the composition input-source boundary', async t => {
+  const { authority } = await authorityRetaining(64 * 1024);
+  t.after(() => authority.shutdown());
+  const admitted = []; const input = authority.composition.terminalInputSources;
+  const write = input.write.bind(input);
+  input.write = request => { admitted.push(request); return write(request); };
+  await authority.write('tui', 'host-input');
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0].source, 'remote');
+  assert.deepEqual(admitted[0].identity, { serverId: 'output-cost', projectId: 'output-cost-project', sessionId: 'tui' });
+});

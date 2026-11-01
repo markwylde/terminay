@@ -83,3 +83,14 @@ test("a folder-scoped observation client names its folder on watch and folder-si
   assert.equal(project.forFolder(undefined), project);
   assert.throws(() => project.forFolder("../escape"), /folderId is invalid/);
 });
+
+test('observation cleanup accepts wrapped unsent disconnects but preserves actual refusals', async () => {
+ const { RequestNotSentError, ClientError, TerminayClientFacade } = await import('../dist/index.js');
+ for (const error of [new RequestNotSentError(), new ClientError('unavailable', 'service unavailable'), new ClientError('forbidden', 'not owned')]) {
+  const client = new FileObservationClient(new TerminayClientFacade({ command: async () => { throw error; }, query: async () => null }));
+  for (const cleanup of [() => client.stopWatch('watch-1'), () => client.cancelFolderSize('size-1')]) {
+   if (error instanceof RequestNotSentError) await cleanup();
+   else await assert.rejects(cleanup, failure => failure.cause === error);
+  }
+ }
+});

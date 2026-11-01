@@ -177,3 +177,85 @@ test("reset abandons an in-flight recovery so a transport rebind can take over",
 	assert.equal(controller.attempt, 0);
 	assert.equal(controller.noteEvent(skip()), true, "recovery is available again");
 });
+
+test('a hydration gap followed by silence refreshes only after hydration completes', () => {
+ const h = harness();
+ h.controller.noteStreamProgress(skip('hydration', 100, 300));
+ assert.equal(h.pending(), 0);
+ h.controller.noteAttached(); assert.equal(h.pending(), 1);
+ h.fire(); assert.equal(h.controller.state, 'recovering'); assert.deepEqual(h.attempts, []);
+ h.fire(); assert.deepEqual(h.attempts, [1]);
+ // The refreshed checkpoint contains the final screen; no new gap.
+ h.controller.noteAttached(); h.fire(); assert.deepEqual(h.attempts, [1]); assert.equal(h.pending(), 0);
+});
+
+test('continued output defers hydration convergence instead of creating an attach loop', () => {
+ const callbacks = []; let refreshes = 0;
+ const controller = new TerminalRecoveryController({ retryDelayMs: 100, schedule: (run, delay) => { const timer = { run, delay, cancelled: false }; callbacks.push(timer); return () => { timer.cancelled = true; }; }, reattach: () => { refreshes++; return 'attaching'; } });
+ controller.noteStreamProgress(skip('hydration')); controller.noteAttached();
+ for (let i = 0; i < 20; i++) {
+  const previous = callbacks.at(-1); controller.noteStreamProgress(output(i * 8, (i + 1) * 8));
+  assert.equal(previous.cancelled, true); assert.equal(refreshes, 0);
+ }
+ assert.equal(callbacks.filter(timer => !timer.cancelled).length, 1);
+ assert.equal(callbacks.at(-1).delay, 500);
+ controller.dispose(); assert.equal(callbacks.at(-1).cancelled, true);
+});
+
+test('repeated incomplete quiet refreshes stop with a visible failure callback', () => {
+ let failures = 0;
+ const h = harness({ onHydrationConvergenceExhausted: () => { failures++; } });
+ h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ for (let i = 0; i < 3; i++) {
+  h.fire(); h.fire();
+  h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ }
+ h.fire(); h.fire();
+ assert.equal(h.attempts.length, 3); assert.equal(failures, 1); assert.equal(h.pending(), 0);
+});
+
+for (const action of ['reset', 'dispose']) test(`${action} cancels the pending hydration convergence timer`, () => {
+ const h = harness(); h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ h.controller[action](); h.fire(); assert.deepEqual(h.attempts, []); assert.equal(h.pending(), 0);
+});
+
+test('a clean hydration resets the convergence budget for a later independent gap', () => {
+ let failures = 0; const h = harness({ onHydrationConvergenceExhausted: () => { failures++; } });
+ for (let i = 0; i < 5; i++) {
+  h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached(); h.fire(); h.fire();
+  h.controller.noteAttached(); h.fire();
+ }
+ assert.equal(h.attempts.length, 5); assert.equal(failures, 0); assert.equal(h.pending(), 0);
+});
+
+test('exit after a hydration gap cancels convergence without reattaching the ended session', () => {
+ const h = harness(); h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ h.controller.noteStreamProgress({ ...identity, type: 'exit', exitCode: 0 }); h.fire();
+ assert.deepEqual(h.attempts, []); assert.equal(h.pending(), 0);
+});
+
+test('a reconnect resume retains unresolved hydration debt', () => {
+ const h = harness(); h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ h.controller.reset(); h.fire(); assert.deepEqual(h.attempts, []);
+ h.controller.noteAttached({ freshPresentation: false }); h.fire(); h.fire();
+ assert.equal(h.attempts.length, 1);
+});
+
+test('a hydration skip arriving after noteAttached cannot reset the convergence budget', () => {
+ let failures = 0; const h = harness({ onHydrationConvergenceExhausted: () => { failures++; } });
+ h.controller.noteAttached(); h.controller.noteStreamProgress(skip('hydration'));
+ for (let i = 0; i < 3; i++) {
+  h.fire(); h.fire(); h.controller.noteAttached(); h.controller.noteStreamProgress(skip('hydration'));
+ }
+ h.fire(); assert.equal(h.attempts.length, 3); assert.equal(failures, 1);
+});
+
+test('an explicit retry after convergence exhaustion receives a full new budget', () => {
+ let failures = 0; const h = harness({ onHydrationConvergenceExhausted: () => { failures++; } });
+ h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached();
+ for (let i = 0; i < 3; i++) { h.fire(); h.fire(); h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached(); }
+ h.fire(); assert.equal(failures, 1);
+ h.controller.reset({ renewConvergenceBudget: true });
+ h.controller.noteStreamProgress(skip('hydration')); h.controller.noteAttached(); h.fire(); h.fire();
+ assert.equal(h.attempts.length, 4); assert.equal(failures, 1);
+});

@@ -961,8 +961,9 @@ async function createServerComposition(
 					),
 				getSession: (sessionId) => composition.terminal.getSession(sessionId),
 			}),
-			writeInput: (target, input) =>
-				composition.terminal.input(target.sessionId, input),
+			writeInput: async (target, input) => {
+				await composition.terminalInputSources.write({ identity: { serverId: target.serverId, projectId: target.projectId, sessionId: target.sessionId }, clientId: 'dictation', source: 'dictation', data: input });
+			},
 		},
 		replay: new TerminalReplayRegistry(),
 		dictationProvider: {
@@ -1199,14 +1200,12 @@ async function createServerComposition(
 				};
 				return {
 					target,
-					write: (_candidate, bytes) =>
-						composition.terminal.input(target, bytes, authorization),
-					key: (_candidate, key) =>
-						composition.terminal.input(
-							target,
-							macroKeyBytes(key),
-							authorization,
-						),
+					write: async (_candidate, bytes) => {
+						await composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: bytes, authorization });
+					},
+					key: async (_candidate, key) => {
+						await composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: macroKeyBytes(key), authorization });
+					},
 					waitForInactivity: (_candidate, milliseconds, signal) =>
 						composition.terminal.waitForInactivity(target, milliseconds, {
 							authorization,

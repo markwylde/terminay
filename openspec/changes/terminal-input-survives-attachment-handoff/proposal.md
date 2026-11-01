@@ -23,8 +23,9 @@ replacing its *own* attachment, and the panel treats that like a failure.
   was typed, once each, when the replacement holds the presentation lease.
 - A write already in flight on the attachment being replaced settles first,
   so nothing overtakes it. If the server refused it before the PTY, the
-  replacement sends it once; if its outcome is unknown, it is never sent
-  again.
+  replacement sends it once; if its outcome is unknown, it and its queued successors are never sent
+  again, the interruption is visible, and new input resumes after replacement
+  hydration.
 - Input typed before a panel's first attachment has reported its presentation
   is held the same way rather than dropped.
 - Unchanged: a read-only observer refuses input, and its control bar says
