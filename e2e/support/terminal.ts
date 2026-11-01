@@ -1,4 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
+import { typeInTerminal } from './terminal-input';
 
 /** Submit a shell command through the same visible xterm input used by a user. */
 export async function submitTerminalCommand(
@@ -6,8 +7,5 @@ export async function submitTerminalCommand(
 	command: string,
 	panel: Locator = page.locator('.terminal-panel:visible'),
 ): Promise<void> {
-	const input = panel.locator('.xterm-helper-textarea');
-	await input.focus();
-	await page.keyboard.type(command.replace(/\r$/u, ''));
-	await page.keyboard.press('Enter');
+	await typeInTerminal(`${command.replace(/[\r\n]+$/u, '')}\n`, panel);
 }

@@ -151,8 +151,14 @@ test.describe('file viewer language intelligence', () => {
     expect(modelUris).toContain(typeError?.resource)
 
     await mainWindow.locator('.monaco-editor .view-lines').first().click()
-    await mainWindow.keyboard.press('Control+End')
-    await mainWindow.keyboard.type('\nutil.')
+    // Target Monaco's editing input explicitly: deferred terminal focus must not
+    // consume the editor shortcut or part of the completion expression.
+    const editorInput = mainWindow.locator(
+      '.monaco-editor .native-edit-context, .monaco-editor textarea.inputarea',
+    )
+    await expect(editorInput).toBeFocused()
+    await editorInput.press('Control+End')
+    await editorInput.pressSequentially('\nutil.', { delay: 20 })
     const suggestions = mainWindow.locator('.suggest-widget .monaco-list-row')
     await expect(suggestions.filter({ hasText: 'greet' }).first()).toBeVisible({
       timeout: 30_000,
