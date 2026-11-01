@@ -88,3 +88,36 @@ test('keys typed while a terminal hands its attachment over all reach the shell,
 		.toMatch(/(?:^|\W)echo handed-over-ok\r$/u);
 	await expect(panel.locator('.xterm-rows')).toContainText('handed-over-ok');
 });
+
+test('input overflow is visible and pauses typing without replacing the output stream', async ({ electronApp, mainWindow }) => {
+	const handoff = server(electronApp);
+	const sessionId = await activeTerminalSessionId(mainWindow);
+	const panel = terminalPanelForSession(mainWindow, sessionId);
+	const input = panel.locator('.xterm-helper-textarea');
+	await expect(panel.locator('.terminal-panel-loading')).toHaveCount(0);
+	await expect(panel.locator('.terminal-presentation-control')).toHaveCount(0);
+	const streamsBefore = await handoff.streams(sessionId);
+	await input.focus();
+	await expect(input).toBeFocused();
+	await handoff.holdInput(sessionId);
+	try {
+		await input.press('a');
+		await expect.poll(() => handoff.heldInputs(sessionId)).toBe(1);
+		await mainWindow.keyboard.insertText('x'.repeat(64 * 1024));
+		await expect(panel.locator('.terminal-input-notice')).toContainText('Input paused');
+		await expect(panel.locator('.terminal-panel-connection-error')).toHaveCount(0);
+		await handoff.releaseInput(sessionId);
+		await expect.poll(() => handoff.input(sessionId)).toMatch(/a$/u);
+		await input.press('b');
+		await expect.poll(() => handoff.input(sessionId)).toMatch(/a$/u);
+		expect(await handoff.streams(sessionId)).toBe(streamsBefore);
+		await panel.getByRole('button', { name: 'Continue typing' }).click();
+		await expect(panel.locator('.terminal-input-notice')).toHaveCount(0);
+		await expect(input).toBeFocused();
+		await input.pressSequentially('fresh');
+		await expect.poll(() => handoff.input(sessionId)).toMatch(/afresh$/u);
+		await input.press('Control+u');
+	} finally {
+		await handoff.releaseInput(sessionId);
+	}
+});

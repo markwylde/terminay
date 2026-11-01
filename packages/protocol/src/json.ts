@@ -4,7 +4,6 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export function encodeCanonicalJson(value: unknown): Uint8Array {
-  assertJsonValue(value);
   return textEncoder.encode(canonicalize(value));
 }
 
@@ -20,11 +19,16 @@ export function decodeCanonicalJson(bytes: Uint8Array): JsonValue {
 
 export function canonicalize(value: unknown): string {
   assertJsonValue(value);
+  return serializeValidatedJson(value);
+}
+
+/** The public boundary validates the whole tree once, including its depth. */
+function serializeValidatedJson(value: JsonValue): string {
   if (value === null) return "null";
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+  if (Array.isArray(value)) return `[${value.map(serializeValidatedJson).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${serializeValidatedJson(value[key]!)}`).join(",")}}`;
 }
 
 export function assertJsonValue(value: unknown, depth = 0): asserts value is JsonValue {
@@ -49,14 +53,15 @@ class StrictJsonParser {
   private offset = 0;
   constructor(private readonly text: string) {}
   parse(): JsonValue {
-    const result = this.parseValue();
+    const result = this.parseValue(0);
     if (this.offset !== this.text.length) throw new TypeError("trailing JSON data");
     return result;
   }
-  private parseValue(): JsonValue {
+  private parseValue(depth: number): JsonValue {
+    if (depth > 32) throw new RangeError("JSON nesting limit");
     const c = this.text[this.offset];
-    if (c === "{") return this.parseObject();
-    if (c === "[") return this.parseArray();
+    if (c === "{") return this.parseObject(depth);
+    if (c === "[") return this.parseArray(depth);
     if (c === '"') return this.parseString();
     if (c === "t" && this.take("true")) return true;
     if (c === "f" && this.take("false")) return false;
@@ -64,7 +69,7 @@ class StrictJsonParser {
     if (c === "-" || (c >= "0" && c <= "9")) return this.parseNumber();
     throw new TypeError(`invalid JSON at ${this.offset}`);
   }
-  private parseObject(): { [key: string]: JsonValue } {
+  private parseObject(depth: number): { [key: string]: JsonValue } {
     this.offset++; const result: { [key: string]: JsonValue } = {}; const seen = new Set<string>();
     this.ws(); if (this.text[this.offset] === "}") { this.offset++; return result; }
     while (true) {
@@ -72,16 +77,16 @@ class StrictJsonParser {
       const key = this.parseString();
       if (seen.has(key)) throw new TypeError(`duplicate key ${key}`); seen.add(key);
       this.ws(); if (this.text[this.offset++] !== ":") throw new TypeError("missing colon");
-      this.ws(); result[key] = this.parseValue(); this.ws();
+      this.ws(); result[key] = this.parseValue(depth + 1); this.ws();
       if (this.text[this.offset] === "}") { this.offset++; return result; }
       if (this.text[this.offset++] !== ",") throw new TypeError("missing comma"); this.ws();
     }
   }
-  private parseArray(): JsonValue[] {
+  private parseArray(depth: number): JsonValue[] {
     this.offset++; const result: JsonValue[] = []; this.ws();
     if (this.text[this.offset] === "]") { this.offset++; return result; }
     while (true) {
-      this.ws(); result.push(this.parseValue()); this.ws();
+      this.ws(); result.push(this.parseValue(depth + 1)); this.ws();
       if (this.text[this.offset] === "]") { this.offset++; return result; }
       if (this.text[this.offset++] !== ",") throw new TypeError("missing comma");
     }

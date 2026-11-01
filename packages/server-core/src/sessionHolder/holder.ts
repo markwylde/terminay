@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { writeFileDurablySync } from '../durableFile.js';
+import { BoundedChunkQueue } from '../terminalService/boundedChunkQueue.js';
 import type {
 	NodePtyDisposable,
 	NodePtyModuleLike,
@@ -129,7 +130,7 @@ interface HeldSession {
 	readonly cwd: string;
 	readonly createdAt: number;
 	readonly child: NodePtyProcessLike;
-	readonly ring: RingChunk[];
+	readonly ring: BoundedChunkQueue<RingChunk>;
 	cols: number;
 	rows: number;
 	ringBytes: number;
@@ -663,7 +664,7 @@ export class SessionHolder {
 			cwd: request.cwd,
 			createdAt: this.now(),
 			child,
-			ring: [],
+			ring: new BoundedChunkQueue(this.maxBufferBytes, 'within-bound-keep-last'),
 			cols: request.cols,
 			rows: request.rows,
 			ringBytes: 0,
@@ -758,17 +759,10 @@ export class SessionHolder {
 			);
 			const position = session.outputPosition;
 			session.ring.push({ position, bytes: part });
-			session.ringBytes += part.byteLength;
+			session.ringBytes = session.ring.byteLength;
 			session.outputPosition = position + part.byteLength;
-			while (
-				session.ringBytes > this.maxBufferBytes &&
-				session.ring.length > 1
-			) {
-				const dropped = session.ring.shift();
-				if (dropped !== undefined) session.ringBytes -= dropped.bytes.byteLength;
-			}
 			session.bufferedFrom =
-				session.ring[0]?.position ?? session.outputPosition;
+				session.ring.first?.position ?? session.outputPosition;
 			if (session.streaming && this.attached !== undefined)
 				this.sendData(session, position, part);
 		}

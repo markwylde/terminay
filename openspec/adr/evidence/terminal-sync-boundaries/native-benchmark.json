@@ -1,0 +1,446 @@
+{
+  "node": "v24.15.0",
+  "flags": [],
+  "samples": [
+    {
+      "name": "baseline",
+      "workload": "small terminal frame encode/decode",
+      "trial": 0,
+      "loops": 5000,
+      "elapsedMs": 46.309167,
+      "cpuMicros": {
+        "user": 55784,
+        "system": 507
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 0,
+      "loops": 5000,
+      "elapsedMs": 15.421540999999934,
+      "cpuMicros": {
+        "user": 23499,
+        "system": 1024
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 0,
+      "loops": 2000,
+      "elapsedMs": 0.35533300000008694,
+      "cpuMicros": {
+        "user": 1272,
+        "system": 25
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 0,
+      "loops": 2000,
+      "elapsedMs": 20.012000000000057,
+      "cpuMicros": {
+        "user": 25384,
+        "system": 49
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "small terminal frame encode/decode",
+      "trial": 0,
+      "loops": 5000,
+      "elapsedMs": 47.70516699999996,
+      "cpuMicros": {
+        "user": 59914,
+        "system": 5526
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 0,
+      "loops": 5000,
+      "elapsedMs": 26.699375000000032,
+      "cpuMicros": {
+        "user": 34313,
+        "system": 2303
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 0,
+      "loops": 2000,
+      "elapsedMs": 0.38229200000000674,
+      "cpuMicros": {
+        "user": 774,
+        "system": 29
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 0,
+      "loops": 2000,
+      "elapsedMs": 0.2964590000000271,
+      "cpuMicros": {
+        "user": 519,
+        "system": 24
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "small terminal frame encode/decode",
+      "trial": 1,
+      "loops": 5000,
+      "elapsedMs": 52.610457999999994,
+      "cpuMicros": {
+        "user": 117911,
+        "system": 4057
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 1,
+      "loops": 5000,
+      "elapsedMs": 28.13225,
+      "cpuMicros": {
+        "user": 39388,
+        "system": 435
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 1,
+      "loops": 2000,
+      "elapsedMs": 0.2150419999999258,
+      "cpuMicros": {
+        "user": 312,
+        "system": 7
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 1,
+      "loops": 2000,
+      "elapsedMs": 0.15745800000001964,
+      "cpuMicros": {
+        "user": 167,
+        "system": 8
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "small terminal frame encode/decode",
+      "trial": 1,
+      "loops": 5000,
+      "elapsedMs": 48.014583000000016,
+      "cpuMicros": {
+        "user": 74223,
+        "system": 1222
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 1,
+      "loops": 5000,
+      "elapsedMs": 13.66583300000002,
+      "cpuMicros": {
+        "user": 13558,
+        "system": 298
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 1,
+      "loops": 2000,
+      "elapsedMs": 0.20308399999998983,
+      "cpuMicros": {
+        "user": 167,
+        "system": 24
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 1,
+      "loops": 2000,
+      "elapsedMs": 19.94870800000001,
+      "cpuMicros": {
+        "user": 21426,
+        "system": 167
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "small terminal frame encode/decode",
+      "trial": 2,
+      "loops": 5000,
+      "elapsedMs": 47.65045799999996,
+      "cpuMicros": {
+        "user": 62043,
+        "system": 3033
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 2,
+      "loops": 5000,
+      "elapsedMs": 14.100417000000107,
+      "cpuMicros": {
+        "user": 25168,
+        "system": 419
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 2,
+      "loops": 2000,
+      "elapsedMs": 0.12400000000002365,
+      "cpuMicros": {
+        "user": 121,
+        "system": 7
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 2,
+      "loops": 2000,
+      "elapsedMs": 18.968124999999986,
+      "cpuMicros": {
+        "user": 19088,
+        "system": 78
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "small terminal frame encode/decode",
+      "trial": 2,
+      "loops": 5000,
+      "elapsedMs": 40.853207999999995,
+      "cpuMicros": {
+        "user": 48357,
+        "system": 2762
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 2,
+      "loops": 5000,
+      "elapsedMs": 24.195875,
+      "cpuMicros": {
+        "user": 36522,
+        "system": 565
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 2,
+      "loops": 2000,
+      "elapsedMs": 0.0881249999999909,
+      "cpuMicros": {
+        "user": 89,
+        "system": 0
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 2,
+      "loops": 2000,
+      "elapsedMs": 0.1057500000000573,
+      "cpuMicros": {
+        "user": 108,
+        "system": 1
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "small terminal frame encode/decode",
+      "trial": 3,
+      "loops": 5000,
+      "elapsedMs": 41.30266599999993,
+      "cpuMicros": {
+        "user": 56587,
+        "system": 2247
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 3,
+      "loops": 5000,
+      "elapsedMs": 24.492999999999938,
+      "cpuMicros": {
+        "user": 24969,
+        "system": 419
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 3,
+      "loops": 2000,
+      "elapsedMs": 0.08391600000004473,
+      "cpuMicros": {
+        "user": 85,
+        "system": 1
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 3,
+      "loops": 2000,
+      "elapsedMs": 0.09487500000000182,
+      "cpuMicros": {
+        "user": 97,
+        "system": 1
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "small terminal frame encode/decode",
+      "trial": 3,
+      "loops": 5000,
+      "elapsedMs": 44.49099999999987,
+      "cpuMicros": {
+        "user": 60262,
+        "system": 3049
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 3,
+      "loops": 5000,
+      "elapsedMs": 12.724874999999884,
+      "cpuMicros": {
+        "user": 14174,
+        "system": 309
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 3,
+      "loops": 2000,
+      "elapsedMs": 0.0909159999998792,
+      "cpuMicros": {
+        "user": 89,
+        "system": 4
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 3,
+      "loops": 2000,
+      "elapsedMs": 18.08916700000009,
+      "cpuMicros": {
+        "user": 18069,
+        "system": 21
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "small terminal frame encode/decode",
+      "trial": 4,
+      "loops": 5000,
+      "elapsedMs": 42.57791599999996,
+      "cpuMicros": {
+        "user": 51335,
+        "system": 2558
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 4,
+      "loops": 5000,
+      "elapsedMs": 12.86591599999997,
+      "cpuMicros": {
+        "user": 12695,
+        "system": 174
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 4,
+      "loops": 2000,
+      "elapsedMs": 0.10774999999989632,
+      "cpuMicros": {
+        "user": 100,
+        "system": 9
+      }
+    },
+    {
+      "name": "baseline",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 4,
+      "loops": 2000,
+      "elapsedMs": 18.35287500000004,
+      "cpuMicros": {
+        "user": 18989,
+        "system": 42
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "small terminal frame encode/decode",
+      "trial": 4,
+      "loops": 5000,
+      "elapsedMs": 39.410499999999956,
+      "cpuMicros": {
+        "user": 47600,
+        "system": 2324
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "terminal input dispatch with completed-ledger eviction",
+      "trial": 4,
+      "loops": 5000,
+      "elapsedMs": 22.321249999999964,
+      "cpuMicros": {
+        "user": 22631,
+        "system": 297
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 4096-byte chunks",
+      "trial": 4,
+      "loops": 2000,
+      "elapsedMs": 0.0896660000000793,
+      "cpuMicros": {
+        "user": 91,
+        "system": 0
+      }
+    },
+    {
+      "name": "changed",
+      "workload": "holder retains 1 MiB in 16-byte chunks",
+      "trial": 4,
+      "loops": 2000,
+      "elapsedMs": 0.10320799999999508,
+      "cpuMicros": {
+        "user": 103,
+        "system": 4
+      }
+    }
+  ]
+}

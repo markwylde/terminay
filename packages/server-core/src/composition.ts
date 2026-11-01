@@ -528,6 +528,7 @@ export interface ServerCoreComposition {
 	readonly operations: CompleteServerCoreOperationRegistry;
 	readonly eventJournal: OrderedEventJournalLike;
 	readonly terminal: TerminalService;
+	readonly terminalInputSources: TerminalInputSourceAdapter;
 	readonly terminalLaunchResolver?: TerminalLaunchResolver;
 	readonly workspace?: WorkspaceStore;
 	readonly activity?: TerminalActivityService;
@@ -633,6 +634,8 @@ export function createServerCoreComposition(
 					},
 				}),
 	});
+	const terminalInputSources =
+		options.terminalInputSources ?? new TerminalInputSourceAdapter(terminal);
 	if (terminal.serverId !== options.serverId) {
 		throw new TypeError(
 			'terminal service server id does not match server core identity',
@@ -960,6 +963,7 @@ export function createServerCoreComposition(
 					serverId: options.serverId,
 					runLog: options.automations.runLog,
 					terminal,
+					inputSources: terminalInputSources,
 					workspace: options.workspace,
 					workspaceOperations,
 					...(terminalTitles === undefined
@@ -1178,8 +1182,11 @@ export function createServerCoreComposition(
 			window.terminalSessionId,
 			authorization,
 		);
-		await terminal.input(
-			window.terminalSessionId,
+		await terminalInputSources.write({
+			identity: { serverId: options.serverId, projectId: window.projectId, sessionId: window.terminalSessionId },
+			clientId: 'app-window',
+			source: 'window_message',
+			data:
 			// Without bracketed paste every line break would submit a line
 			// of its own; a window message is submitted once.
 			commandSubmissionInput(
@@ -1190,7 +1197,7 @@ export function createServerCoreComposition(
 				bracketed,
 			),
 			authorization,
-		);
+		});
 	};
 	const appWindows =
 		options.appWindows === undefined || mcpApprovals === undefined
@@ -1513,9 +1520,7 @@ export function createServerCoreComposition(
 		...(options.terminalAttachments === undefined
 			? {}
 			: { attachments: options.terminalAttachments }),
-		...(options.terminalInputSources === undefined
-			? {}
-			: { inputSources: options.terminalInputSources }),
+		inputSources: terminalInputSources,
 	});
 	const activity = options.activity;
 	const notifications =
@@ -1703,9 +1708,9 @@ export function createServerCoreComposition(
 	if (options.recordings !== undefined) {
 		terminal.onEvent((event) => {
 			if (event.type === 'output' && !event.replay) {
-				options.recordings?.service.appendOutput(
+				options.recordings?.service.appendOutputBytes(
 					event.sessionId,
-					new TextDecoder().decode(event.bytes),
+					event.bytes,
 				);
 			} else if (event.type === 'exit') {
 				options.recordings?.service.finalize(
@@ -2170,6 +2175,7 @@ export function createServerCoreComposition(
 		operations: completeOperations,
 		eventJournal,
 		terminal,
+		terminalInputSources,
 		...(options.workspace === undefined
 			? {}
 			: { workspace: options.workspace }),

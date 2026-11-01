@@ -2,11 +2,11 @@
 
 ### Requirement: Input survives an attachment handoff
 
-A terminal panel MAY replace its own attachment while it stays mounted: when its stream recovers from a skip, when a resume is refused, when its connection is replaced, and when it first attaches. That replacement SHALL NOT discard input. Input typed into the panel while the replacement attaches, and input already queued and not yet sent, SHALL be held and delivered to the PTY in the order it was typed, once each, when the replacement attachment holds the interactive presentation lease. A write already sent on the attachment being replaced SHALL settle before any later input is sent: if the server or the client refused it before it reached the PTY, the replacement SHALL send it once; if its outcome is unknown, it SHALL NOT be sent again. If the replacement attachment is a read-only observer, the held input SHALL be discarded and further input refused, as for any read-only presentation.
+A mounted terminal panel SHALL hold ordered input through its own attachment replacement until a hydrated replacement controls presentation. A definitively refused write SHALL be sent once; confirmed writes SHALL NOT be repeated. An uncertain write and its queued successors SHALL NOT be sent again, and the interruption SHALL be visible. Read-only replacements SHALL discard held input and refuse further input.
 
 #### Scenario: Typing through congestion recovery
 
-- **WHEN** a terminal's stream is ended as congested while keys are queued behind a write in flight and the user keeps typing during the recovery
+- **WHEN** a terminal's stream is ended as congested while keys are queued behind a write in flight and the user keeps typing during recovery and the in-flight write confirms delivery
 - **THEN** after the replacement attachment hydrates, the PTY receives every key once, in the order typed
 
 #### Scenario: Typing before the first presentation is known
@@ -22,7 +22,7 @@ A terminal panel MAY replace its own attachment while it stays mounted: when its
 #### Scenario: A write whose outcome is unknown
 
 - **WHEN** a write sent on an attachment that has since been replaced fails with an unknown outcome
-- **THEN** it is not sent again and later input is delivered in order
+- **THEN** it is not sent again, queued successors are discarded, an input interruption notice is shown, and new input is accepted only after the replacement hydrates and controls presentation
 
 #### Scenario: The replacement is a read-only observer
 

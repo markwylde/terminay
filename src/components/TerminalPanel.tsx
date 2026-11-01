@@ -131,6 +131,7 @@ import {
 import {
 	isTerminalPresentationOwnershipError,
 	ServerTerminalInputQueue,
+	type TerminalInputNotice,
 	type TerminalPasteProgress,
 } from './terminalPanelInputQueue';
 import type { TerminalClipboardContents } from './terminalPasteInteraction';
@@ -657,6 +658,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [serverTerminalError, setServerTerminalError] = useState<string | null>(
 		null,
 	);
+	const [terminalInputNotice, setTerminalInputNotice] = useState<TerminalInputNotice | null>(null);
+	const resumeTerminalInputRef = useRef<() => boolean>(() => false);
 	const [presentationUnavailable, setPresentationUnavailable] = useState(false);
 	// An exited or interrupted terminal has nothing to retry; a refused
 	// presentation does.
@@ -1202,6 +1205,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			setIsTerminalHydrating(false);
 		} else if (useServerTerminal) {
 			setServerTerminalError(null);
+			setTerminalInputNotice(null);
 			setPresentationUnavailable(false);
 			setTerminalSessionEnded(false);
 			setTerminalPresentation(null);
@@ -1712,6 +1716,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// replacement attach keeps what is queued and what is typed while
 				// it attaches; only a failure or disposal closes the queue.
 				if (serverInputQueue === null || serverInputQueue.isClosed) {
+					setTerminalInputNotice(null);
 					serverInputQueue = new ServerTerminalInputQueue(
 						// Only a write on the current attachment reports here; one
 						// that fails on a replaced attachment settles in the queue.
@@ -1720,11 +1725,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							new Promise((resolve) =>
 								window.requestAnimationFrame(() => resolve()),
 							),
+						setTerminalInputNotice,
 					);
 				} else {
 					serverInputQueue.handoff();
 				}
 				cancelTerminalPasteRef.current = () => serverInputQueue?.cancelPaste();
+				resumeTerminalInputRef.current = () => serverInputQueue?.resumeInput() ?? false;
 				const attachmentClient = client ?? currentAttachClient;
 				const nextRequest = {
 					...request,
@@ -2851,6 +2858,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			terminalPresentationActionRef.current = () => Promise.resolve();
 			pasteTerminalTextRef.current = () => {};
 			cancelTerminalPasteRef.current = () => {};
+			resumeTerminalInputRef.current = () => false;
 			retryServerAttachmentRef.current = () => {};
 			rebindServerAttachmentRef.current = () => {};
 			terminalPresentationControllerRef.current = false;
@@ -3289,6 +3297,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				>
 					Copy
 				</button>
+			) : null}
+			{terminalInputNotice ? (
+				<div className="terminal-input-notice" role="alert">
+					<span>{terminalInputNotice.message}</span>
+					<button type="button" onClick={() => {
+						if (terminalInputNotice.kind === 'overflow' && !resumeTerminalInputRef.current()) return;
+						setTerminalInputNotice(null);
+						terminalRef.current?.focus();
+					}}>{terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
+				</div>
 			) : null}
 			{terminalPasteProgress ? (
 				<div className="terminal-paste-progress">

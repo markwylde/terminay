@@ -65,32 +65,36 @@ const operationPattern = /^[a-z][a-z0-9._:-]{0,255}$/;
 const scopeSet = new Set<AuthScope>(["none", "read", "write", "admin"]);
 const errorCodes = new Set(["validation", "unauthorized", "forbidden", "not_found", "conflict", "cancelled", "deadline", "resource", "unavailable", "incompatible", "internal"]);
 
+const schemas: Record<Envelope["type"], string[]> = {
+  client_hello: ["type", "protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"],
+  server_hello: ["type", "protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"],
+  capabilities: ["type", "capabilities", "limits"], incompatible_version: ["type", "supportedMin", "supportedMax", "requestedMin", "requestedMax", "error"],
+  query: ["type", "queryId", "operation", "payload", "deadlineMs"], query_result: ["type", "queryId", "ok", "result", "error", "bodyLength"],
+  command: ["type", "commandId", "correlationId", "operation", "payload", "expectedRevision", "deadlineMs"], command_result: ["type", "commandId", "correlationId", "ok", "result", "error", "revision"],
+  event: ["type", "subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["type", "subscriptionId", "revision", "cursor", "snapshot"], stream_open: ["type", "streamId", "sessionId", "position", "contentType"],
+  stream_chunk: ["type", "streamId", "position", "final"], stream_ack: ["type", "streamId", "position"], stream_close: ["type", "streamId", "position", "error"],
+  binary_start: ["type", "transferId", "size", "contentType", "checksum"], binary_chunk: ["type", "transferId", "position", "final"],
+  binary_ack: ["type", "transferId", "position"], binary_complete: ["type", "transferId", "position", "checksum"], binary_failure: ["type", "transferId", "position", "error"],
+  cancel: ["type", "correlationId", "reason"], error: ["type", "correlationId", "error"],
+};
+
+const required: Record<string, string[]> = {
+  client_hello: ["protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"], server_hello: ["protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"], capabilities: ["capabilities", "limits"],
+  incompatible_version: ["supportedMin", "supportedMax", "error"], query: ["queryId", "operation", "payload"], query_result: ["queryId", "ok"], command: ["commandId", "correlationId", "operation", "payload"], command_result: ["commandId", "correlationId", "ok"], event: ["subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["subscriptionId", "revision", "cursor"],
+  stream_open: ["streamId", "sessionId", "position"], stream_chunk: ["streamId", "position"], stream_ack: ["streamId", "position"], stream_close: ["streamId", "position"], binary_start: ["transferId", "contentType"], binary_chunk: ["transferId", "position"], binary_ack: ["transferId", "position"], binary_complete: ["transferId", "position"], binary_failure: ["transferId", "position", "error"], cancel: ["correlationId"], error: ["error"],
+};
+
+const allowedFields = new Map(Object.entries(schemas).map(([type, fields]) => [type, new Set(fields)]));
+
 export function validateEnvelope(value: unknown): Envelope {
   if (!isRecord(value) || typeof value.type !== "string" || !envelopeTypes.has(value.type as Envelope["type"])) throw new TypeError("unknown envelope type");
   const type = value.type as Envelope["type"];
-  const schemas: Record<Envelope["type"], string[]> = {
-    client_hello: ["type", "protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"],
-    server_hello: ["type", "protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"],
-    capabilities: ["type", "capabilities", "limits"], incompatible_version: ["type", "supportedMin", "supportedMax", "requestedMin", "requestedMax", "error"],
-    query: ["type", "queryId", "operation", "payload", "deadlineMs"], query_result: ["type", "queryId", "ok", "result", "error", "bodyLength"],
-    command: ["type", "commandId", "correlationId", "operation", "payload", "expectedRevision", "deadlineMs"], command_result: ["type", "commandId", "correlationId", "ok", "result", "error", "revision"],
-    event: ["type", "subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["type", "subscriptionId", "revision", "cursor", "snapshot"], stream_open: ["type", "streamId", "sessionId", "position", "contentType"],
-    stream_chunk: ["type", "streamId", "position", "final"], stream_ack: ["type", "streamId", "position"], stream_close: ["type", "streamId", "position", "error"],
-    binary_start: ["type", "transferId", "size", "contentType", "checksum"], binary_chunk: ["type", "transferId", "position", "final"],
-    binary_ack: ["type", "transferId", "position"], binary_complete: ["type", "transferId", "position", "checksum"], binary_failure: ["type", "transferId", "position", "error"],
-    cancel: ["type", "correlationId", "reason"], error: ["type", "correlationId", "error"],
-  };
-  const allowed = new Set(schemas[type]); for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`unknown ${type} field ${key}`);
+  const allowed = allowedFields.get(type)!; for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`unknown ${type} field ${key}`);
   checkCommon(value, type);
   return value as unknown as Envelope;
 }
 
 function checkCommon(value: Record<string, unknown>, type: Envelope["type"]): void {
-  const required: Record<string, string[]> = {
-    client_hello: ["protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"], server_hello: ["protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"], capabilities: ["capabilities", "limits"],
-    incompatible_version: ["supportedMin", "supportedMax", "error"], query: ["queryId", "operation", "payload"], query_result: ["queryId", "ok"], command: ["commandId", "correlationId", "operation", "payload"], command_result: ["commandId", "correlationId", "ok"], event: ["subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["subscriptionId", "revision", "cursor"],
-    stream_open: ["streamId", "sessionId", "position"], stream_chunk: ["streamId", "position"], stream_ack: ["streamId", "position"], stream_close: ["streamId", "position"], binary_start: ["transferId", "contentType"], binary_chunk: ["transferId", "position"], binary_ack: ["transferId", "position"], binary_complete: ["transferId", "position"], binary_failure: ["transferId", "position", "error"], cancel: ["correlationId"], error: ["error"],
-  };
   for (const key of required[type]) if (!(key in value)) throw new TypeError(`${type} missing ${key}`);
   for (const key of ["clientId", "serverId", "queryId", "commandId", "correlationId", "subscriptionId", "streamId", "sessionId", "transferId"]) if (key in value) checkId(value[key], key);
   for (const key of ["revision", "expectedRevision", "position", "size", "bodyLength", "protocolMin", "protocolMax", "protocolVersion", "supportedMin", "supportedMax", "requestedMin", "requestedMax"]) if (key in value) checkUInt(value[key], key);

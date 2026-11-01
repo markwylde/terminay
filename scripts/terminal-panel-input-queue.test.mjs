@@ -19,6 +19,7 @@ await build({
 const {
   MAX_PANEL_INPUT_QUEUE_BYTES,
   MAX_PANEL_PASTE_CHUNK_BYTES,
+  MAX_PANEL_PENDING_PASTE_BYTES,
   ServerTerminalInputQueue,
 } = await import(
   pathToFileURL(join(outputDirectory, 'terminalPanelInputQueue.js')).href,
@@ -476,7 +477,8 @@ test('a write the replaced attachment refused before the PTY is sent once by the
 
 test('a write whose outcome is unknown on the replaced attachment is never sent twice', async () => {
   const errors = []
-  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  const notices = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error), undefined, notice => notices.push(notice))
   const old = heldAttachment()
   queue.attach(old.attachment)
   queue.enqueue('a')
@@ -490,7 +492,13 @@ test('a write whose outcome is unknown on the replaced attachment is never sent 
   old.settleNext(failWith('unknown_command_outcome'))
   await tick()
 
-  assert.deepEqual(replacement.writes, ['b'])
+  assert.deepEqual(replacement.writes, [])
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].kind, 'unknown_outcome')
+  assert.equal(queue.isClosed, false)
+  queue.enqueue('new-input')
+  await tick()
+  assert.deepEqual(replacement.writes, ['new-input'])
   assert.deepEqual(errors, [])
 })
 
@@ -585,7 +593,7 @@ for (const code of [undefined, 'terminal_attachment_replaced', 'unknown_command_
     assert.deepEqual(replacement.writes, [])
     old.settleNext(code === undefined ? undefined : failWith(code))
     await tick()
-    assert.deepEqual(replacement.writes, code === 'terminal_attachment_replaced' ? [bytes, 'k'] : ['k'])
+    assert.deepEqual(replacement.writes, code === 'terminal_attachment_replaced' ? [bytes, 'k'] : code === 'unknown_command_outcome' ? [] : ['k'])
     assert.deepEqual(errors, [])
     queue.close()
   })
@@ -604,3 +612,89 @@ test('lease loss discards pending binary reports and prevents later writes on th
   assert.equal(queue.enqueue(Uint8Array.of(128)), false)
   queue.close()
 })
+
+
+test('overflow pauses only input, reports a notice, and requires explicit continuation', async () => {
+  const notices = []; const errors = []; const writes = [];
+  const queue = new ServerTerminalInputQueue(error => errors.push(error), undefined, notice => notices.push(notice));
+  queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+  assert.equal(queue.enqueue('overflow'), false);
+  assert.equal(notices[0].kind, 'overflow');
+  assert.equal(queue.isClosed, false);
+  assert.equal(queue.enqueue('still-paused'), false);
+  queue.attach({ write: async data => writes.push(data), detach: async () => {} });
+  assert.equal(queue.resumeInput(), true);
+  queue.enqueue('fresh'); await tick();
+  assert.deepEqual(writes, ['fresh']); assert.deepEqual(errors, []);
+  queue.close();
+});
+
+test('unknown handoff outcome cancels a paste and refuses input until replacement hydration', async () => {
+  const notices = []; const progress = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment);
+  queue.enqueuePaste('paste'.repeat(20000), next => progress.push(next));
+  queue.enqueue('submit\r'); queue.handoff();
+  old.settleNext(failWith('unknown_command_outcome')); await tick();
+  assert.equal(progress.at(-1).status, 'cancelled');
+  assert.equal(notices[0].kind, 'unknown_outcome');
+  assert.equal(queue.enqueue('before-hydration'), false);
+  const replacement = recordingAttachment(); queue.attach(replacement.attachment);
+  assert.equal(queue.enqueue('before-role'), false);
+  queue.setPresentationRole('controller');
+  assert.equal(queue.enqueue('after-hydration'), true); await tick();
+  assert.deepEqual(replacement.writes, ['after-hydration']);
+  assert.equal(queue.retainedPasteBytes, 0); queue.close();
+});
+
+test('large pastes have an aggregate retained-byte bound with visible overflow', () => {
+  const notices = []; const progress = [];
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  const paste = 'p'.repeat(6 * 1024 * 1024);
+  queue.enqueuePaste(paste, next => progress.push(next));
+  queue.enqueuePaste(paste, next => progress.push(next));
+  assert.equal(queue.retainedPasteBytes, 12 * 1024 * 1024);
+  queue.enqueuePaste(paste, next => progress.push(next));
+  assert.equal(notices[0].kind, 'overflow');
+  assert.ok(queue.retainedPasteBytes <= MAX_PANEL_PENDING_PASTE_BYTES);
+  assert.equal(queue.retainedPasteBytes, 0);
+  assert.equal(progress.filter(next => next.status === 'cancelled').length, 2);
+  queue.close();
+});
+
+test('cancelled in-flight paste remains charged until its write settles', async () => {
+  const old = heldAttachment(); const queue = new ServerTerminalInputQueue(() => {});
+  queue.attach(old.attachment);
+  const paste = 'p'.repeat(100000);
+  queue.enqueuePaste(paste, () => {});
+  queue.cancelPaste();
+  assert.equal(queue.retainedPasteBytes, paste.length);
+  old.settleNext(); await tick();
+  assert.equal(queue.retainedPasteBytes, 0); queue.close();
+});
+
+
+test('overflow followed by an uncertain handoff does not leave input silently paused', async () => {
+  const notices = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment); queue.enqueue('a');
+  queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+  assert.equal(notices.at(-1).kind, 'overflow');
+  queue.handoff(); const replacement = recordingAttachment();
+  queue.attach(replacement.attachment); queue.setPresentationRole('controller');
+  old.settleNext(failWith('unknown_command_outcome')); await tick();
+  assert.equal(notices.at(-1).kind, 'unknown_outcome');
+  assert.equal(queue.enqueue('fresh'), true); await tick();
+  assert.deepEqual(replacement.writes, ['fresh']); queue.close();
+});
+
+for (const failure of [new Error('transport ended'), failWith('unknown_command_outcome')]) {
+  test(`overflow does not hide a current-attachment failure (${failure.message})`, async () => {
+    const errors = []; const old = heldAttachment();
+    const queue = new ServerTerminalInputQueue(error => errors.push(error));
+    queue.attach(old.attachment); queue.enqueue('a');
+    queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+    old.settleNext(failure); await tick();
+    assert.equal(queue.isClosed, true); assert.deepEqual(errors, [failure]);
+  });
+}
