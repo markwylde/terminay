@@ -312,17 +312,39 @@ async function closeElectronAppGracefully(
 		// The app may already have exited during the test.
 	}
 
+	// Read before closing: the handle is gone once the app has closed.
+	let group: number | undefined;
+	try {
+		group = electronApp.process().pid;
+	} catch {
+		/* already closed */
+	}
+
 	try {
 		await raceWithTimeout(
 			electronApp.close(),
 			closeTimeoutMs,
 			'Timed out waiting for Electron to close gracefully.',
 		);
-		return;
 	} catch {
 		// A broken graceful-shutdown path must not consume the test timeout.
-		if (electronApp.process().exitCode === null) {
-			electronApp.process().kill('SIGKILL');
+		try {
+			if (electronApp.process().exitCode === null) {
+				electronApp.process().kill('SIGKILL');
+			}
+		} catch {
+			/* already closed */
+		}
+	}
+	// Playwright starts the app as its own process group. Anything left in it
+	// (Chromium helpers, engine CLIs the app spawned) holds the worker's pipes
+	// open, and the worker then cannot finish. Session holders start their own
+	// group, so this never reaches them.
+	if (group) {
+		try {
+			process.kill(-group, 'SIGKILL');
+		} catch {
+			/* the group is already empty */
 		}
 	}
 }
