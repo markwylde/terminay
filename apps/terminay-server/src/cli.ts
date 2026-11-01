@@ -32,6 +32,7 @@ import {
 	AutomationRepository,
 	AutomationRunLog,
 	agentHarnessSwitchesFromSettings,
+	agentChatProviderBridge,
 	agentIntegrationEnabledFromSettings,
 	backgroundTerminalLimitMs,
 	CanonicalProjectPathResolver,
@@ -1034,6 +1035,7 @@ async function createServerComposition(
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
 		capabilities: [
+			'agent-chat.v1',
 			FEATURE_CAPABILITIES.terminal,
 			FEATURE_CAPABILITIES.workspace,
 			FEATURE_CAPABILITIES.files,
@@ -1141,6 +1143,12 @@ async function createServerComposition(
 			watch: files.observations,
 		},
 		settings,
+		agentChat: {
+			providers: agentChatProviderBridge(extensions.hosts),
+			workRoot: join(options.dataRoot, 'agent-chat'),
+			projectExists: (projectId) =>
+				workspace.state.projects[projectId] !== undefined,
+		},
 		terminalProfiles: shellProfiles,
 		shellProfiles,
 		terminalLaunchEnvironment: {
