@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { serializeCheckpointMouseModes } from './checkpointMouseModes.js';
 import type {
 	TerminalDimensions,
 	TerminalIdentity,
@@ -264,7 +265,8 @@ export class TerminalPresentationCheckpointAuthority {
 		const serializer = new SerializeAddon();
 		terminal.loadAddon(serializer);
 		const initial = new TextEncoder().encode(
-			serializer.serialize({ scrollback: this.limits.maxScrollback }),
+			serializer.serialize({ scrollback: this.limits.maxScrollback }) +
+				serializeCheckpointMouseModes(terminal),
 		);
 		if (initial.byteLength > this.limits.maxSnapshotBytes)
 			throw error(
@@ -743,7 +745,8 @@ export class TerminalPresentationCheckpointAuthority {
 	private snapshot(session: MutableSession, throughSequence: number): void {
 		if (!session.safeScanner.safe) return;
 		const state = new TextEncoder().encode(
-			session.serializer.serialize({ scrollback: this.limits.maxScrollback }),
+			session.serializer.serialize({ scrollback: this.limits.maxScrollback }) +
+				serializeCheckpointMouseModes(session.terminal),
 		);
 		if (state.byteLength > this.limits.maxSnapshotBytes)
 			throw error(

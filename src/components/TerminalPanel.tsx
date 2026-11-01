@@ -2228,6 +2228,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			writePanelInput(data, pastingClipboardText);
 		});
 
+		const binaryDisposer = terminal.onBinary((data) => {
+			if (!useServerTerminal || serverAttachmentFailed) return;
+			serverInputQueue?.enqueue(
+				Uint8Array.from(data, (char) => char.charCodeAt(0)),
+			);
+		});
+
 		const resizeDisposer = props.api.onDidDimensionsChange(() => {
 			fitAndResize();
 		});
@@ -2825,6 +2832,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			resizeDisposer.dispose();
 			keyDisposer.dispose();
 			dataDisposer.dispose();
+			binaryDisposer.dispose();
 			panelEventDisposer?.();
 			if (presentationRenewTimer !== null)
 				window.clearTimeout(presentationRenewTimer);
