@@ -336,12 +336,15 @@ test('agent integration setting disables and restores session status', async ({
 		page: mainWindow,
 		sectionId: 'agent-integration',
 	});
-	const toggle = settingsWindow
-		.getByLabel('Agent status and sidebar')
-		.locator('input[type="checkbox"]');
+	const control = settingsWindow.getByLabel('Agent status and sidebar');
+	const toggle = control.locator('input[type="checkbox"]');
+	// The switch initially shows defaults while settings load. Observe the
+	// loaded value, and the completed save, before closing this window.
+	await expect(settingsWindow.locator('.settings-status')).toHaveText('Saved');
 	await expect(toggle).toBeChecked();
-	await toggle.evaluate((element) => (element as HTMLInputElement).click());
+	await control.click();
 	await expect(toggle).not.toBeChecked();
+	await expect(settingsWindow.locator('.settings-status')).toHaveText('Saved');
 	await settingsWindow.close();
 	await openFileExplorer(mainWindow);
 	await expect(mainWindow.getByRole('button', { name: /^Agents/ })).toHaveCount(
@@ -352,13 +355,15 @@ test('agent integration setting disables and restores session status', async ({
 		page: mainWindow,
 		sectionId: 'agent-integration',
 	});
-	const restoredToggle = restoredWindow
-		.getByLabel('Agent status and sidebar')
-		.locator('input[type="checkbox"]');
-	await restoredToggle.evaluate((element) =>
-		(element as HTMLInputElement).click(),
-	);
+	const restoredControl = restoredWindow.getByLabel('Agent status and sidebar');
+	const restoredToggle = restoredControl.locator('input[type="checkbox"]');
+	await expect(restoredWindow.locator('.settings-status')).toHaveText('Saved');
+	// Prove that disabling persisted before asking to enable it. A blind
+	// click on a still-loading default can disable the setting again.
+	await expect(restoredToggle).not.toBeChecked();
+	await restoredControl.click();
 	await expect(restoredToggle).toBeChecked();
+	await expect(restoredWindow.locator('.settings-status')).toHaveText('Saved');
 	await restoredWindow.close();
 	const sessionId = await getActiveSessionId(mainWindow);
 	await publish(mainWindow, [
