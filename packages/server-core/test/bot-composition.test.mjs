@@ -112,7 +112,20 @@ async function setup(t, options = {}) {
 		TERMINAY_FAKE_BUILD_FAIL: process.env.TERMINAY_FAKE_BUILD_FAIL,
 		TERMINAY_FAKE_BUILD_LOG_BYTES: process.env.TERMINAY_FAKE_BUILD_LOG_BYTES,
 		TERMINAY_FAKE_BOT_ROOT: process.env.TERMINAY_FAKE_BOT_ROOT,
+		DOCKER_HOST: process.env.DOCKER_HOST,
+		DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
+		CONTAINER_HOST: process.env.CONTAINER_HOST,
+		CONTAINER_CONNECTION: process.env.CONTAINER_CONNECTION,
 	};
+	// The fake engine stands in for the host's: a runner's own engine address
+	// (CI sets a TCP DOCKER_HOST) would be refused as remote.
+	for (const name of [
+		'DOCKER_HOST',
+		'DOCKER_CONTEXT',
+		'CONTAINER_HOST',
+		'CONTAINER_CONNECTION',
+	])
+		delete process.env[name];
 	process.env.PATH = `${bin}:${original.PATH}`;
 	process.env.TERMINAY_FAKE_BOT_ROOT = root;
 	const processes = new Set(),
