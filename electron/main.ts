@@ -1838,9 +1838,8 @@ const recordingService = new TerminalRecordingService({
 
 function handleServerTerminalEvent(event: TerminalEvent): void {
 	if (event.type === 'output') {
-		const data = new TextDecoder().decode(event.bytes);
 		try {
-			recordingService.appendOutput(event.sessionId, data);
+			recordingService.appendOutputBytes(event.sessionId, event.bytes);
 		} catch {
 			/* recording is optional */
 		}
@@ -2257,14 +2256,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				};
 				return {
 					target,
-					write: (_candidate, bytes) =>
-						terminalAuthority.service.input(target, bytes, authorization),
-					key: (_candidate, key) =>
-						terminalAuthority.service.input(
-							target,
-							embeddedMacroKeyBytes(key),
-							authorization,
-						),
+					write: async (_candidate, bytes) => {
+						await terminalAuthority.composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: bytes, authorization });
+					},
+					key: async (_candidate, key) => {
+						await terminalAuthority.composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: embeddedMacroKeyBytes(key), authorization });
+					},
 					waitForInactivity: (_candidate, milliseconds, signal) =>
 						terminalAuthority.service.waitForInactivity(target, milliseconds, {
 							authorization,

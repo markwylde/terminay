@@ -54,7 +54,10 @@ test("catalogue is read-authorized and redacts environment while detail requires
 test("create assigns an id from command identity and duplicate delivery is idempotent", async () => {
   const { dispatcher, settings } = await fixture();
   const first = await command(dispatcher, "shell-profiles.create", { profile: { ...profile, id: "client-controlled" } }, "same-command");
-  const second = await command(dispatcher, "shell-profiles.create", { profile: { ...profile, name: "Changed retry" } }, "same-command");
+  const second = await command(dispatcher, "shell-profiles.create", { profile: { ...profile, id: "client-controlled" } }, "same-command");
+  const conflicting = await command(dispatcher, "shell-profiles.create", { profile: { ...profile, name: "Changed retry" } }, "same-command");
+  assert.equal(conflicting.ok, false);
+  assert.equal(conflicting.error.code, "conflict");
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.equal(first.revision, second.revision);

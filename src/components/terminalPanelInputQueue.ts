@@ -2,6 +2,13 @@ import type { TerminalPanelAttachment } from '@terminay/client-core'
 
 export const MAX_PANEL_INPUT_QUEUE_BYTES = 64 * 1024
 export const MAX_PANEL_PASTE_CHUNK_BYTES = 16 * 1024
+export const MAX_PANEL_PENDING_PASTE_BYTES = 16 * 1024 * 1024
+
+export interface TerminalInputNotice {
+	readonly kind: 'overflow' | 'unknown_outcome'
+	readonly message: string
+	readonly canContinue: boolean
+}
 
 interface QueuedServerTerminalInput {
 	readonly data: string | Uint8Array
@@ -14,6 +21,8 @@ interface QueuedServerTerminalPaste {
 	readonly onProgress: (progress: TerminalPasteProgress) => void
 	offset: number
 	sentBytes: number
+	cancelled: boolean
+	released: boolean
 }
 
 type QueuedServerTerminalInputItem =
@@ -46,9 +55,9 @@ export type TerminalInputPresentationRole = 'controller' | 'pending' | 'read_onl
  * panel's attachment (congestion recovery, a refused resume, a rebind onto a
  * replacement connection) is a `handoff`: input already queued, and input
  * typed while the replacement is attaching, is held and then delivered in
- * order, once, by the replacement when it holds the presentation. Only a
- * definite read-only presentation refuses input, and only a transport failure
- * or the panel's disposal closes the queue.
+ * order, once, by the replacement when it holds the presentation. Unknown delivery outcomes discard successors; overflow pauses admission
+ * with a visible notice. A read-only presentation refuses input. Transport
+ * failure or disposal closes the queue.
  */
 export class ServerTerminalInputQueue {
 	private readonly encoder = new TextEncoder()
@@ -59,6 +68,11 @@ export class ServerTerminalInputQueue {
 	// it is attached to.
 	private role: TerminalInputPresentationRole = 'controller'
 	private queuedBytes = 0
+	private retainedPasteBytes = 0
+	private activeItem: QueuedServerTerminalInputItem | null = null
+	private overflowPaused = false
+	private waitingForHydration = false
+	private notice: Omit<TerminalInputNotice, 'canContinue'> | null = null
 	private attachmentGeneration = 0
 	private pumping = false
 	private closed = false
@@ -67,6 +81,7 @@ export class ServerTerminalInputQueue {
 		private readonly onError: (error: unknown) => void,
 		private readonly waitForNextPasteChunk: TerminalPasteChunkScheduler =
 			async () => {},
+		private readonly onNotice: (notice: TerminalInputNotice | null) => void = () => {},
 	) {}
 
 	get isClosed(): boolean {
@@ -75,7 +90,7 @@ export class ServerTerminalInputQueue {
 
 	/** Returns whether the input was accepted for delivery. */
 	enqueue(data: string | Uint8Array): boolean {
-		if (this.closed || this.role === 'read_only') {
+		if (this.closed || this.role === 'read_only' || this.overflowPaused || this.waitingForHydration) {
 			return false
 		}
 
@@ -83,6 +98,7 @@ export class ServerTerminalInputQueue {
 			? this.encoder.encode(data).byteLength
 			: data.byteLength
 		if (this.queuedBytes + byteLength > MAX_PANEL_INPUT_QUEUE_BYTES) {
+			this.interruptOverflow()
 			return false
 		}
 
@@ -104,11 +120,21 @@ export class ServerTerminalInputQueue {
 		data: string,
 		onProgress: (progress: TerminalPasteProgress) => void,
 	): void {
-		if (this.closed || this.role === 'read_only' || data.length === 0) return
+		if (this.closed || this.role === 'read_only' || this.overflowPaused || this.waitingForHydration || data.length === 0) return
+		// UTF-8 uses at least as many bytes as UTF-16 code units. Refuse an
+		// oversized string before allocating its encoded copy.
+		if (data.length > MAX_PANEL_PENDING_PASTE_BYTES - this.retainedPasteBytes) {
+			this.interruptOverflow()
+			return
+		}
 
 		const totalBytes = this.encoder.encode(data).byteLength
 		if (totalBytes <= MAX_PANEL_INPUT_QUEUE_BYTES) {
 			this.enqueue(data)
+			return
+		}
+		if (this.retainedPasteBytes + totalBytes > MAX_PANEL_PENDING_PASTE_BYTES) {
+			this.interruptOverflow()
 			return
 		}
 		const item: QueuedServerTerminalPaste = {
@@ -117,7 +143,10 @@ export class ServerTerminalInputQueue {
 			onProgress,
 			sentBytes: 0,
 			totalBytes,
+			cancelled: false,
+			released: false,
 		}
+		this.retainedPasteBytes += totalBytes
 		this.items.push(item)
 		onProgress({
 			completedBytes: 0,
@@ -135,6 +164,7 @@ export class ServerTerminalInputQueue {
 
 		this.attachment = attachment
 		this.attachmentGeneration += 1
+		this.resumeAfterHydration()
 		void this.pump()
 	}
 
@@ -149,6 +179,7 @@ export class ServerTerminalInputQueue {
 		this.attachment = null
 		this.attachmentGeneration += 1
 		this.role = 'pending'
+		this.publishNotice()
 	}
 
 	/**
@@ -160,6 +191,7 @@ export class ServerTerminalInputQueue {
 	setPresentationRole(role: 'controller' | 'read_only'): void {
 		if (this.closed) return
 		this.role = role
+		this.resumeAfterHydration()
 		if (role === 'read_only') {
 			this.discardItems()
 			this.queuedBytes = 0
@@ -170,6 +202,8 @@ export class ServerTerminalInputQueue {
 
 	close(): void {
 		this.closed = true
+		this.notice = null
+		this.onNotice(null)
 		this.attachmentGeneration += 1
 		this.attachment = null
 		this.discardItems()
@@ -183,6 +217,15 @@ export class ServerTerminalInputQueue {
 		this.queuedBytes = 0
 	}
 
+	/** Overflow does not interrupt output or replace a healthy attachment. */
+	resumeInput(): boolean {
+		if (this.closed || this.attachment === null || this.role !== 'controller' || this.waitingForHydration) return false
+		this.overflowPaused = false
+		this.notice = null
+		void this.pump()
+		return true
+	}
+
 	/**
 	 * Stops the unsent portion of the active clipboard paste without throwing
 	 * away keyboard input that was queued after it. A write already handed to
@@ -194,6 +237,8 @@ export class ServerTerminalInputQueue {
 		if (index === -1) return
 		const [item] = this.items.splice(index, 1)
 		if (!item || !isQueuedPaste(item)) return
+		item.cancelled = true
+		this.releasePaste(item)
 		item.onProgress({
 			completedBytes: item.sentBytes,
 			status: 'cancelled',
@@ -202,7 +247,7 @@ export class ServerTerminalInputQueue {
 	}
 
 	private async pump(): Promise<void> {
-		if (this.pumping || this.closed) {
+		if (this.pumping || this.closed || this.overflowPaused || this.waitingForHydration) {
 			return
 		}
 
@@ -210,7 +255,7 @@ export class ServerTerminalInputQueue {
 		try {
 			while (!this.closed && this.items.length > 0) {
 				const attachment = this.attachment
-				if (attachment === null || this.role !== 'controller') {
+				if (attachment === null || this.role !== 'controller' || this.overflowPaused || this.waitingForHydration) {
 					return
 				}
 
@@ -230,6 +275,7 @@ export class ServerTerminalInputQueue {
 				}
 
 				let delivered = false
+				this.activeItem = item
 				try {
 					await attachment.write(chunk.data)
 					delivered = true
@@ -248,14 +294,22 @@ export class ServerTerminalInputQueue {
 						this.close()
 						this.onError(error)
 					} else if (isOutcomeUnknownWriteError(error)) {
-						// The attachment was replaced while this write was in flight and
-						// its outcome is unknown: it may already be in the PTY. Never
-						// send it twice; the input behind it goes on to the replacement.
-						delivered = true
+						// Hydrating a replacement cannot tell us whether the old write
+						// reached the PTY. Its successors could complete a different
+						// command, so none are sent. Keep healthy output streaming.
+						this.waitingForHydration = true
+						this.overflowPaused = false
+						this.discardPending()
+						this.resumeAfterHydration()
+						this.notice = { kind: 'unknown_outcome', message: 'Some input was not sent after the connection was interrupted. Check the command before continuing.' }
+						this.publishNotice()
 					}
 					// Otherwise the replaced attachment definitively refused the write
 					// before it reached the PTY. It stays first in line and is sent,
 					// once, by the replacement.
+				} finally {
+					this.activeItem = null
+					if (isQueuedPaste(item) && item.cancelled) this.releasePaste(item)
 				}
 				if (!delivered || this.items[0] !== item) continue
 
@@ -271,6 +325,7 @@ export class ServerTerminalInputQueue {
 					})
 					if (complete) {
 						this.items.shift()
+						this.releasePaste(item)
 					} else {
 						// Yield after each delivered frame so the renderer can paint the
 						// newly reported percentage before more input is buffered. Without
@@ -287,6 +342,8 @@ export class ServerTerminalInputQueue {
 			this.pumping = false
 			if (
 				!this.closed &&
+				!this.overflowPaused &&
+				!this.waitingForHydration &&
 				this.items.length > 0 &&
 				this.attachment !== null &&
 				this.role === 'controller'
@@ -299,6 +356,8 @@ export class ServerTerminalInputQueue {
 	private discardItems(): void {
 		for (const item of this.items) {
 			if (!isQueuedPaste(item)) continue
+			item.cancelled = true
+			this.releasePaste(item)
 			item.onProgress({
 				completedBytes: item.sentBytes,
 				status: 'cancelled',
@@ -306,6 +365,31 @@ export class ServerTerminalInputQueue {
 			})
 		}
 		this.items.length = 0
+	}
+
+	private releasePaste(item: QueuedServerTerminalPaste): void {
+		if (item.released || this.activeItem === item) return
+		item.released = true
+		this.retainedPasteBytes = Math.max(0, this.retainedPasteBytes - item.totalBytes)
+	}
+
+	private resumeAfterHydration(): void {
+		if (this.attachment !== null && this.role === 'controller') this.waitingForHydration = false
+		this.publishNotice()
+	}
+
+	private publishNotice(): void {
+		if (this.notice) this.onNotice(this.role === 'read_only' ? null : { ...this.notice, canContinue: !this.closed && this.attachment !== null && this.role === 'controller' && !this.waitingForHydration })
+	}
+
+	private interruptOverflow(): void {
+		this.overflowPaused = true
+		// Admission failure does not replace the attachment. A write already
+		// in flight must still report a real current-attachment failure.
+		this.discardItems()
+		this.queuedBytes = 0
+		this.notice = { kind: 'overflow', message: 'Input paused because delivery could not keep up. Pending input was not sent. Check the command before continuing.' }
+		this.publishNotice()
 	}
 }
 

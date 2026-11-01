@@ -131,6 +131,7 @@ import {
 import {
 	isTerminalPresentationOwnershipError,
 	ServerTerminalInputQueue,
+	type TerminalInputNotice,
 	type TerminalPasteProgress,
 } from './terminalPanelInputQueue';
 import type { TerminalClipboardContents } from './terminalPasteInteraction';
@@ -657,6 +658,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [serverTerminalError, setServerTerminalError] = useState<string | null>(
 		null,
 	);
+	const [terminalInputNotice, setTerminalInputNotice] = useState<TerminalInputNotice | null>(null);
+	const resumeTerminalInputRef = useRef<() => boolean>(() => false);
 	const [presentationUnavailable, setPresentationUnavailable] = useState(false);
 	// An exited or interrupted terminal has nothing to retry; a refused
 	// presentation does.
@@ -1202,6 +1205,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			setIsTerminalHydrating(false);
 		} else if (useServerTerminal) {
 			setServerTerminalError(null);
+			setTerminalInputNotice(null);
 			setPresentationUnavailable(false);
 			setTerminalSessionEnded(false);
 			setTerminalPresentation(null);
@@ -1277,6 +1281,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					toPosition: event.toPosition,
 					reason: event.reason,
 				});
+			},
+			onHydrationConvergenceExhausted: () => {
+				lastAttachRefused = true;
+				failServerTransport(new Error('Terminal presentation could not catch up. Retry the connection to continue.'));
 			},
 			onRecovered: (_attempt, durationMs) => {
 				reportTerminalRecovery('recovered', {
@@ -1712,6 +1720,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// replacement attach keeps what is queued and what is typed while
 				// it attaches; only a failure or disposal closes the queue.
 				if (serverInputQueue === null || serverInputQueue.isClosed) {
+					setTerminalInputNotice(null);
 					serverInputQueue = new ServerTerminalInputQueue(
 						// Only a write on the current attachment reports here; one
 						// that fails on a replaced attachment settles in the queue.
@@ -1720,11 +1729,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							new Promise((resolve) =>
 								window.requestAnimationFrame(() => resolve()),
 							),
+						setTerminalInputNotice,
 					);
 				} else {
 					serverInputQueue.handoff();
 				}
 				cancelTerminalPasteRef.current = () => serverInputQueue?.cancelPaste();
+				resumeTerminalInputRef.current = () => serverInputQueue?.resumeInput() ?? false;
 				const attachmentClient = client ?? currentAttachClient;
 				const nextRequest = {
 					...request,
@@ -1868,6 +1879,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						// delivered during binary hydration from overtaking the tail.
 						let terminalRenderQueue = Promise.resolve();
 						const renderServerEvent = (event: TerminalStreamEvent) => {
+							if (dataReplayDisposed || panelAttachment !== attachment || !bindingFence.isCurrent(binding)) return;
+							recoveryController.noteStreamProgress(event);
 							terminalRenderQueue = terminalRenderQueue
 								.then(async () => {
 									if (
@@ -2008,7 +2021,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 							// A hydrated display is the definition of a completed recovery,
 							// and the only thing that returns the controller to streaming.
-							recoveryController.noteAttached();
+							recoveryController.noteAttached({ freshPresentation });
 							lastAttachRefused = false;
 
 							serverInputQueue?.attach(attachment);
@@ -2119,7 +2132,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// connection is dead. Recovering the host transport remounts every
 				// terminal and can leave live shells unattached. Retry this panel.
 				serverAttachmentFailed = false;
-				recoveryController.reset();
+				recoveryController.reset({ renewConvergenceBudget: true });
 				recoveryStartedAt = 0;
 				recoveryFailureReason = 'attach-error';
 				serverInputQueue?.close();
@@ -2129,7 +2142,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// A position the server already refused is not worth asking for
 				// again; after a refusal Retry requests a fresh presentation.
 				const refused = lastAttachRefused;
-				lastAttachRefused = false;
 				attachServerTerminal({
 					client: currentAttachClient,
 					clientId: currentAttachClientId,
@@ -2163,11 +2175,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				setServerTerminalError(null);
 				setPresentationUnavailable(false);
 				setIsTerminalHydrating(true);
+				const refused = lastAttachRefused;
 				attachServerTerminal({
 					client: replacementClient,
 					clientId: replacementClientId,
-					fromPosition: renderedPositionRef.current ?? 0,
-					freshPresentation: false,
+					fromPosition: refused ? 0 : (renderedPositionRef.current ?? 0),
+					freshPresentation: refused,
 					forceResume: true,
 					recovery: false,
 				});
@@ -2851,6 +2864,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			terminalPresentationActionRef.current = () => Promise.resolve();
 			pasteTerminalTextRef.current = () => {};
 			cancelTerminalPasteRef.current = () => {};
+			resumeTerminalInputRef.current = () => false;
 			retryServerAttachmentRef.current = () => {};
 			rebindServerAttachmentRef.current = () => {};
 			terminalPresentationControllerRef.current = false;
@@ -3289,6 +3303,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				>
 					Copy
 				</button>
+			) : null}
+			{terminalInputNotice ? (
+				<div className="terminal-input-notice" role="alert">
+					<span>{terminalInputNotice.message}</span>
+					<button type="button" disabled={!terminalInputNotice.canContinue} onClick={() => {
+						if (!resumeTerminalInputRef.current()) return;
+						setTerminalInputNotice(null);
+						terminalRef.current?.focus();
+					}}>{!terminalInputNotice.canContinue ? 'Waiting for terminal' : terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
+				</div>
 			) : null}
 			{terminalPasteProgress ? (
 				<div className="terminal-paste-progress">

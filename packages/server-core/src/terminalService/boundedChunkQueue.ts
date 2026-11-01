@@ -11,11 +11,16 @@
  *
  * - `within-bound` never holds more than the bound. Whole chunks leave until
  *   the total fits, so the queue may hold slightly less than the bound.
+ * - `within-bound-keep-last` applies the same whole-chunk rule but always
+ *   retains the newest chunk, even when that chunk alone exceeds the bound.
  * - `cover-bound` always holds at least the most recent bytes up to the bound.
  *   A chunk leaves only once the chunks after it cover the bound on their own,
  *   and `readTail` trims the oldest survivor to return exactly those bytes.
  */
-export type BoundedChunkRetention = 'within-bound' | 'cover-bound';
+export type BoundedChunkRetention =
+	| 'within-bound'
+	| 'within-bound-keep-last'
+	| 'cover-bound';
 
 export interface ByteChunk {
 	readonly bytes: Uint8Array;
@@ -55,8 +60,9 @@ export class BoundedChunkQueue<T extends ByteChunk> implements Iterable<T> {
 	push(chunk: T): void {
 		this.chunks.push(chunk);
 		this.total += chunk.bytes.byteLength;
-		if (this.retention === 'within-bound') {
-			while (this.total > this.maxBytes && this.head < this.chunks.length)
+		if (this.retention !== 'cover-bound') {
+			const keep = this.retention === 'within-bound-keep-last' ? 1 : 0;
+			while (this.total > this.maxBytes && this.head < this.chunks.length - keep)
 				this.evict();
 		} else {
 			for (;;) {

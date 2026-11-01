@@ -1,12 +1,14 @@
+import { createHash } from 'node:crypto';
 import {
 	type AuthScope,
-	CommandLedger,
+	canonicalize,
 	type CommandResultEnvelope,
 	DEFAULT_PROTOCOL_LIMITS,
 	type JsonValue,
 	type ProtocolError,
 	type ProtocolId,
 	type QueryResultEnvelope,
+	validateEnvelope,
 } from '@terminay/protocol';
 import {
 	forbiddenError,
@@ -32,6 +34,23 @@ import type {
 export interface OperationDispatcher {
 	readonly query: (request: QueryRequest) => Promise<QueryDispatchResult>;
 	readonly command: (request: CommandRequest) => Promise<CommandResultEnvelope>;
+	readonly commandWithOutcome: (request: CommandRequest) => Promise<CommandDispatchResult>;
+}
+
+export interface CommandDispatchResult {
+	readonly envelope: CommandResultEnvelope;
+	/** Only the first execution may commit connection delivery side effects. */
+	readonly executed: boolean;
+}
+
+interface CommandEntry {
+	readonly fingerprint: string;
+	readonly completion: Promise<CommandResultEnvelope>;
+	result?: CommandResultEnvelope;
+}
+interface ConnectionCommandLedger {
+	readonly entries: Map<ProtocolId, CommandEntry>;
+	pending: number;
 }
 
 export interface QueryDispatchResult {
@@ -46,6 +65,8 @@ export interface OperationDispatcherOptions extends OperationRegistries {
 }
 
 const MAX_DISPATCHERS = 256;
+const MAX_COMMAND_OUTCOMES = 4096;
+const MAX_PENDING_COMMANDS = 64;
 
 /**
  * Create the canonical query/command dispatcher.  Transports provide only a
@@ -67,7 +88,7 @@ export function createOperationDispatcher(
 	const queryLookup = makeLookup<QueryHandler>(options.queries);
 	const commandLookup = makeLookup<CommandHandler>(options.commands);
 	const policyLookup = makeLookup<OperationPolicy>(options.policies);
-	const ledgers = new Map<ProtocolId, CommandLedger>();
+	const ledgers = new Map<ProtocolId, ConnectionCommandLedger>();
 
 	const query = async (request: QueryRequest): Promise<QueryDispatchResult> => {
 		const { envelope } = request;
@@ -136,85 +157,123 @@ export function createOperationDispatcher(
 		}
 	};
 
-	const command = async (
+	const commandWithOutcome = async (
 		request: CommandRequest,
-	): Promise<CommandResultEnvelope> => {
+	): Promise<CommandDispatchResult> => {
 		const { envelope } = request;
 		validateRequestContext(request.context);
-		if (request.body.byteLength > maxBodyBytes) {
-			return {
-				type: 'command_result',
-				commandId: envelope.commandId,
-				correlationId: envelope.correlationId,
-				ok: false,
-				error: resourceError('command body exceeds the server limit'),
-			};
-		}
+		const refused = (error: ProtocolError): CommandDispatchResult => ({
+			envelope: { type: 'command_result', commandId: envelope.commandId, correlationId: envelope.correlationId, ok: false, error },
+			executed: false,
+		});
+		if (request.body.byteLength > maxBodyBytes)
+			return refused(resourceError('command body exceeds the server limit'));
 		let ledger = ledgers.get(request.context.connectionId);
 		if (ledger === undefined) {
-			if (ledgers.size >= MAX_DISPATCHERS)
-				ledgers.delete(ledgers.keys().next().value as ProtocolId);
-			ledger = new CommandLedger();
+			if (ledgers.size >= MAX_DISPATCHERS) {
+				let retired: ProtocolId | undefined;
+				for (const [id, candidate] of ledgers) { if (candidate.pending === 0) { retired = id; break; } }
+				if (retired === undefined) return refused(resourceError('command ledger capacity reached'));
+				ledgers.delete(retired);
+			}
+			ledger = { entries: new Map(), pending: 0 };
 			ledgers.set(request.context.connectionId, ledger);
 		}
-		const prior = ledger.begin(envelope.commandId);
-		if (prior.kind === 'completed') return prior.result;
-		const policy = policyLookup(envelope.operation);
-		const handler = commandLookup(envelope.operation) ?? policy?.command;
-		let result: CommandResultEnvelope;
-		if (handler === undefined)
-			result = {
-				type: 'command_result',
-				commandId: envelope.commandId,
-				correlationId: envelope.correlationId,
-				ok: false,
-				error: unknownOperationError(envelope.operation),
-			};
-		else {
-			const required = policy?.scope ?? options.defaultCommandScope;
-			if (
-				required !== undefined &&
-				!scopeAllows(request.context.authScope, required)
-			)
+		const fingerprint = createHash('sha256').update(canonicalize({
+			operation: envelope.operation,
+			payload: envelope.payload ?? null,
+			expectedRevision: envelope.expectedRevision ?? null,
+		})).update(request.body).digest('hex');
+		const prior = ledger.entries.get(envelope.commandId);
+		if (prior !== undefined) {
+			if (prior.fingerprint !== fingerprint)
+				return refused({ code: 'conflict', message: 'command identity was reused with different contents', retryable: false });
+			try {
+				const result = prior.result ?? await invoke(
+					async () => await prior.completion as unknown as JsonValue,
+					request,
+				) as CommandResultEnvelope;
+				return { envelope: { ...result, correlationId: envelope.correlationId }, executed: false };
+			} catch (error) { return refused(dispatchError(error, 'command wait failed')); }
+		}
+		if (ledger.pending >= MAX_PENDING_COMMANDS)
+			return refused(resourceError('in-flight command limit reached'));
+		if (ledger.entries.size >= MAX_COMMAND_OUTCOMES) {
+			let retired: ProtocolId | undefined;
+			for (const [id, candidate] of ledger.entries) { if (candidate.result !== undefined) { retired = id; break; } }
+			if (retired === undefined) return refused(resourceError('command outcome capacity reached'));
+			ledger.entries.delete(retired);
+		}
+		let complete!: (result: CommandResultEnvelope) => void;
+		const entry: CommandEntry = { fingerprint, completion: new Promise(resolve => { complete = resolve; }) };
+		ledger.entries.set(envelope.commandId, entry);
+		ledger.pending++;
+		let result: CommandResultEnvelope = { type: 'command_result', commandId: envelope.commandId, correlationId: envelope.correlationId, ok: false, error: { code: 'internal', message: 'command handler boundary failed', retryable: false } };
+		try {
+			const policy = policyLookup(envelope.operation);
+			const handler = commandLookup(envelope.operation) ?? policy?.command;
+			if (handler === undefined)
 				result = {
 					type: 'command_result',
 					commandId: envelope.commandId,
 					correlationId: envelope.correlationId,
 					ok: false,
-					error: forbiddenError(envelope.operation, required),
+					error: unknownOperationError(envelope.operation),
 				};
 			else {
-				try {
-					const value = await invoke(handler, request);
-					const normalized = asHandlerResult(value);
-					result = {
-						type: 'command_result',
-						commandId: envelope.commandId,
-						correlationId: envelope.correlationId,
-						ok: true,
-						...(normalized.result === undefined
-							? {}
-							: { result: normalized.result }),
-						...(normalized.revision === undefined
-							? {}
-							: { revision: normalized.revision }),
-					};
-				} catch (error) {
+				const required = policy?.scope ?? options.defaultCommandScope;
+				if (
+					required !== undefined &&
+					!scopeAllows(request.context.authScope, required)
+				)
 					result = {
 						type: 'command_result',
 						commandId: envelope.commandId,
 						correlationId: envelope.correlationId,
 						ok: false,
-						error: dispatchError(error, 'command failed'),
+						error: forbiddenError(envelope.operation, required),
 					};
+				else {
+					try {
+						const value = await invoke(handler, request);
+						const normalized = asHandlerResult(value);
+						result = {
+							type: 'command_result',
+							commandId: envelope.commandId,
+							correlationId: envelope.correlationId,
+							ok: true,
+							...(normalized.result === undefined
+								? {}
+								: { result: normalized.result }),
+							...(normalized.revision === undefined
+								? {}
+								: { revision: normalized.revision }),
+						};
+					} catch (error) {
+						result = {
+							type: 'command_result',
+							commandId: envelope.commandId,
+							correlationId: envelope.correlationId,
+							ok: false,
+							error: dispatchError(error, 'command failed'),
+						};
+					}
 				}
 			}
+			try { validateEnvelope(result); } catch {
+				result = { type: 'command_result', commandId: envelope.commandId, correlationId: envelope.correlationId, ok: false, error: { code: 'validation', message: 'command returned an invalid result', retryable: false } };
+			}
+		} catch {
+			// Even an unexpected policy/registry error must settle deduplicated waiters.
+		} finally {
+			entry.result = result;
+			ledger.pending--;
+			complete(result);
 		}
-		ledger.complete(result);
-		return result;
+		return { envelope: result, executed: true };
 	};
 
-	return { query, command };
+	return { query, command: async request => (await commandWithOutcome(request)).envelope, commandWithOutcome };
 }
 
 function queryEnvelope(envelope: QueryResultEnvelope): QueryDispatchResult {

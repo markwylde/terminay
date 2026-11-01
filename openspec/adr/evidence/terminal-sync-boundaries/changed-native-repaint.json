@@ -1,0 +1,13 @@
+{
+  "seconds": 5,
+  "prefillBytes": 1300000,
+  "chunksPerSecond": 397,
+  "bytesPerSecond": 16464,
+  "mainCpuPercent": 3.2,
+  "userCpuPercent": 2.7,
+  "systemCpuPercent": 0.5,
+  "spawnsPerSecond": {
+    "git": 0,
+    "ps": 1.2
+  }
+}

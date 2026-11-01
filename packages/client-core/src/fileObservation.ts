@@ -1,3 +1,4 @@
+import { isClientConnectionLoss } from './connectionLoss.js';
 import type { JsonValue } from "@terminay/protocol";
 import type { QueryCommandTransport } from "./queryCommand.js";
 
@@ -73,7 +74,7 @@ export class FileObservationClient {
     try {
       await this.transport.command(FILE_OBSERVATION_OPERATIONS.watchStop, { subscriptionId: id(subscriptionId, "subscriptionId") });
     } catch (error) {
-      if (isExpectedDisconnect(error)) return;
+      if (isClientConnectionLoss(error)) return;
       throw error;
     }
   }
@@ -94,7 +95,7 @@ export class FileObservationClient {
     try {
       await this.transport.command(FILE_OBSERVATION_OPERATIONS.folderSizeCancel, { jobId: id(jobId, "jobId") });
     } catch (error) {
-      if (isExpectedDisconnect(error)) return;
+      if (isClientConnectionLoss(error)) return;
       throw error;
     }
   }
@@ -150,16 +151,3 @@ function id(value: unknown, name: string): string { if (typeof value !== "string
 function path(value: unknown): string { if (value === "") return ""; if (typeof value !== "string" || value.length > 4096 || value.startsWith("/") || value.includes("\\") || value.split("/").some((part) => part === "" || part === "." || part === "..")) throw new TypeError("resource is invalid"); return value; }
 function counter(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new TypeError(`${name} is invalid`); return value as number; }
 function boolean(value: unknown, name: string): boolean { if (typeof value !== "boolean") throw new TypeError(`${name} is invalid`); return value; }
-/** Feature transports wrap a transport failure in an operation error, so the
- * disconnect is looked for through the cause chain, not only on the surface. */
-function isExpectedDisconnect(error: unknown): boolean {
-  for (let source = error, depth = 0; source instanceof Error && depth < 4; source = source.cause, depth += 1) {
-    if (
-      source.name === "ClientDisconnectedError"
-      || source.name === "CommandOutcomeUnknownError"
-      || (source as { code?: unknown }).code === "disconnected"
-      || (source as { code?: unknown }).code === "unknown_command_outcome"
-    ) return true;
-  }
-  return false;
-}

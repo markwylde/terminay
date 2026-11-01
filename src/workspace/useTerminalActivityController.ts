@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { TerminalActivityEvaluation } from '../terminalActivityStore';
 import { requestFrameOrTimeout } from './frameOrTimeout';
+import { CoalescedSessionAcknowledgements } from './coalescedAcknowledgements';
 
 type TerminalActivityControllerOptions = {
-	acknowledgeAgent: (sessionId: string) => void;
-	acknowledgeServerActivity?: (sessionId: string) => void;
+	acknowledgeAgent: (sessionId: string) => unknown | Promise<unknown>;
+	acknowledgeServerActivity?: (sessionId: string) => unknown | Promise<unknown>;
 	applyPanelState: (
 		sessionId: string,
 		state: TerminalActivityEvaluation['state'],
@@ -39,6 +40,14 @@ export function useTerminalActivityController({
 }: TerminalActivityControllerOptions) {
 	const acknowledgeAgentRef = useRef(acknowledgeAgent);
 	const acknowledgeServerActivityRef = useRef(acknowledgeServerActivity);
+	const acknowledgementsRef = useRef<{
+		agent: CoalescedSessionAcknowledgements;
+		activity: CoalescedSessionAcknowledgements;
+	} | null>(null);
+	if (acknowledgementsRef.current === null) acknowledgementsRef.current = {
+		agent: new CoalescedSessionAcknowledgements(sessionId => acknowledgeAgentRef.current(sessionId)),
+		activity: new CoalescedSessionAcknowledgements(sessionId => acknowledgeServerActivityRef.current?.(sessionId)),
+	};
 	const applyPanelStateRef = useRef(applyPanelState);
 	const applyEvaluationRef = useRef<
 		(sessionId: string, evaluation: TerminalActivityEvaluation) => void
@@ -113,17 +122,19 @@ export function useTerminalActivityController({
 	const markViewed = useCallback((sessionId: string | null) => {
 		if (!sessionId) return;
 		const acknowledgeServer = acknowledgeServerActivityRef.current;
-		if (acknowledgeServer) acknowledgeServer(sessionId);
+		if (acknowledgeServer) acknowledgementsRef.current?.activity.acknowledge(sessionId);
 		else
 			applyEvaluationRef.current(
 				sessionId,
 				markLocalViewedRef.current(sessionId),
 			);
-		acknowledgeAgentRef.current(sessionId);
+		acknowledgementsRef.current?.agent.acknowledge(sessionId);
 	}, []);
 
 	useEffect(
 		() => () => {
+			acknowledgementsRef.current?.activity.clear();
+			acknowledgementsRef.current?.agent.clear();
 			clearDeferredTimer();
 			for (const timer of timersRef.current.values())
 				window.clearTimeout(timer);

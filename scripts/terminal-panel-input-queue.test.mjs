@@ -19,6 +19,7 @@ await build({
 const {
   MAX_PANEL_INPUT_QUEUE_BYTES,
   MAX_PANEL_PASTE_CHUNK_BYTES,
+  MAX_PANEL_PENDING_PASTE_BYTES,
   ServerTerminalInputQueue,
 } = await import(
   pathToFileURL(join(outputDirectory, 'terminalPanelInputQueue.js')).href,
@@ -476,7 +477,8 @@ test('a write the replaced attachment refused before the PTY is sent once by the
 
 test('a write whose outcome is unknown on the replaced attachment is never sent twice', async () => {
   const errors = []
-  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  const notices = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error), undefined, notice => notices.push(notice))
   const old = heldAttachment()
   queue.attach(old.attachment)
   queue.enqueue('a')
@@ -490,7 +492,13 @@ test('a write whose outcome is unknown on the replaced attachment is never sent 
   old.settleNext(failWith('unknown_command_outcome'))
   await tick()
 
-  assert.deepEqual(replacement.writes, ['b'])
+  assert.deepEqual(replacement.writes, [])
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].kind, 'unknown_outcome')
+  assert.equal(queue.isClosed, false)
+  queue.enqueue('new-input')
+  await tick()
+  assert.deepEqual(replacement.writes, ['new-input'])
   assert.deepEqual(errors, [])
 })
 
@@ -585,7 +593,7 @@ for (const code of [undefined, 'terminal_attachment_replaced', 'unknown_command_
     assert.deepEqual(replacement.writes, [])
     old.settleNext(code === undefined ? undefined : failWith(code))
     await tick()
-    assert.deepEqual(replacement.writes, code === 'terminal_attachment_replaced' ? [bytes, 'k'] : ['k'])
+    assert.deepEqual(replacement.writes, code === 'terminal_attachment_replaced' ? [bytes, 'k'] : code === 'unknown_command_outcome' ? [] : ['k'])
     assert.deepEqual(errors, [])
     queue.close()
   })
@@ -604,3 +612,185 @@ test('lease loss discards pending binary reports and prevents later writes on th
   assert.equal(queue.enqueue(Uint8Array.of(128)), false)
   queue.close()
 })
+
+
+test('overflow pauses only input, reports a notice, and requires explicit continuation', async () => {
+  const notices = []; const errors = []; const writes = [];
+  const queue = new ServerTerminalInputQueue(error => errors.push(error), undefined, notice => notices.push(notice));
+  queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+  assert.equal(queue.enqueue('overflow'), false);
+  assert.equal(notices[0].kind, 'overflow');
+  assert.equal(queue.isClosed, false);
+  assert.equal(queue.enqueue('still-paused'), false);
+  queue.attach({ write: async data => writes.push(data), detach: async () => {} });
+  assert.equal(queue.resumeInput(), true);
+  queue.enqueue('fresh'); await tick();
+  assert.deepEqual(writes, ['fresh']); assert.deepEqual(errors, []);
+  queue.close();
+});
+
+test('unknown handoff outcome cancels a paste and refuses input until replacement hydration', async () => {
+  const notices = []; const progress = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment);
+  queue.enqueuePaste('paste'.repeat(20000), next => progress.push(next));
+  queue.enqueue('submit\r'); queue.handoff();
+  old.settleNext(failWith('unknown_command_outcome')); await tick();
+  assert.equal(progress.at(-1).status, 'cancelled');
+  assert.equal(notices[0].kind, 'unknown_outcome');
+  assert.equal(queue.enqueue('before-hydration'), false);
+  const replacement = recordingAttachment(); queue.attach(replacement.attachment);
+  assert.equal(queue.enqueue('before-role'), false);
+  queue.setPresentationRole('controller');
+  assert.equal(queue.enqueue('after-hydration'), true); await tick();
+  assert.deepEqual(replacement.writes, ['after-hydration']);
+  assert.equal(queue.retainedPasteBytes, 0); queue.close();
+});
+
+test('large pastes have an aggregate retained-byte bound with visible overflow', () => {
+  const notices = []; const progress = [];
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  const paste = 'p'.repeat(6 * 1024 * 1024);
+  queue.enqueuePaste(paste, next => progress.push(next));
+  queue.enqueuePaste(paste, next => progress.push(next));
+  assert.equal(queue.retainedPasteBytes, 12 * 1024 * 1024);
+  queue.enqueuePaste(paste, next => progress.push(next));
+  assert.equal(notices[0].kind, 'overflow');
+  assert.ok(queue.retainedPasteBytes <= MAX_PANEL_PENDING_PASTE_BYTES);
+  assert.equal(queue.retainedPasteBytes, 0);
+  assert.equal(progress.filter(next => next.status === 'cancelled').length, 2);
+  queue.close();
+});
+
+test('cancelled in-flight paste remains charged until its write settles', async () => {
+  const old = heldAttachment(); const queue = new ServerTerminalInputQueue(() => {});
+  queue.attach(old.attachment);
+  const paste = 'p'.repeat(100000);
+  queue.enqueuePaste(paste, () => {});
+  queue.cancelPaste();
+  assert.equal(queue.retainedPasteBytes, paste.length);
+  old.settleNext(); await tick();
+  assert.equal(queue.retainedPasteBytes, 0); queue.close();
+});
+
+
+test('overflow followed by an uncertain handoff does not leave input silently paused', async () => {
+  const notices = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment); queue.enqueue('a');
+  queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+  assert.equal(notices.at(-1).kind, 'overflow');
+  queue.handoff(); const replacement = recordingAttachment();
+  queue.attach(replacement.attachment); queue.setPresentationRole('controller');
+  old.settleNext(failWith('unknown_command_outcome')); await tick();
+  assert.equal(notices.at(-1).kind, 'unknown_outcome');
+  assert.equal(queue.enqueue('fresh'), true); await tick();
+  assert.deepEqual(replacement.writes, ['fresh']); queue.close();
+});
+
+for (const failure of [new Error('transport ended'), failWith('unknown_command_outcome')]) {
+  test(`overflow does not hide a current-attachment failure (${failure.message})`, async () => {
+    const errors = []; const old = heldAttachment();
+    const queue = new ServerTerminalInputQueue(error => errors.push(error));
+    queue.attach(old.attachment); queue.enqueue('a');
+    queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES));
+    old.settleNext(failure); await tick();
+    assert.equal(queue.isClosed, true); assert.deepEqual(errors, [failure]);
+  });
+}
+
+for (const kind of ['overflow', 'unknown_outcome']) {
+ test(`${kind} notice waits through pending and read-only replacements`, async () => {
+  const notices = []; const errors = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(error => errors.push(error), undefined, notice => notices.push(notice));
+  queue.attach(old.attachment);
+  queue.enqueue('old');
+  if (kind === 'overflow') queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES + 1));
+  queue.handoff();
+  if (kind === 'unknown_outcome') old.settleNext(failWith('unknown_command_outcome'));
+  else old.settleNext();
+  await tick();
+  assert.equal(notices.at(-1).canContinue, false);
+  assert.equal(queue.resumeInput(), false);
+  const writes = [];
+  queue.setPresentationRole('read_only');
+  queue.attach({ write: async data => writes.push(data), detach: async () => {} });
+  assert.equal(notices.at(-1), null);
+  assert.equal(queue.resumeInput(), false);
+  assert.equal(queue.enqueue('ignored'), false);
+  queue.setPresentationRole('controller');
+  assert.equal(notices.at(-1).canContinue, true);
+  assert.equal(queue.resumeInput(), true);
+  queue.enqueue('new'); await tick();
+  assert.deepEqual(writes, ['new']); assert.deepEqual(errors, []);
+ });
+}
+
+test('a terminal write queued in SDK admission resends exactly once after replacement', async () => {
+ const transport = createDisconnectableTransport();
+ const client = new TerminayClient({ transport, clientId: 'queued-input' });
+ const connecting = client.connect();
+ transport.push({ type: 'server_hello', protocolVersion: 1, serverId: 'server-1', serverVersion: 'test', clientId: 'queued-input', capabilities: [], limits: DEFAULT_PROTOCOL_LIMITS, authScope: 'write' });
+ await connecting;
+ const held = Array.from({ length: 128 }, () => client.query('review.hold').catch(() => {}));
+ const errors = []; const writes = [];
+ const queue = new ServerTerminalInputQueue(error => errors.push(error));
+ queue.attach({ write: data => client.command('terminal.input', { data }), detach: async () => {} });
+ queue.enqueue('prefix'); queue.enqueue('suffix');
+ assert.equal(client.requestAdmission.waiting.length, 1);
+ assert.equal(transport.frames.filter(frame => frame.envelope.operation === 'terminal.input').length, 0);
+ queue.handoff(); transport.disconnect();
+ queue.attach({ write: async data => writes.push(data), detach: async () => {} });
+ queue.setPresentationRole('controller');
+ await tick(); await Promise.all(held); await tick();
+ assert.deepEqual(writes, ['prefix', 'suffix']);
+ assert.deepEqual(errors, []);
+ assert.equal(queue.isClosed, false);
+ queue.close(); await client.close();
+});
+
+test('abort after admission grants a slot but before send transmits nothing', async () => {
+ const transport = createDisconnectableTransport();
+ const client = new TerminayClient({ transport, clientId: 'admission-abort' });
+ const connecting = client.connect();
+ transport.push({ type: 'server_hello', protocolVersion: 1, serverId: 'server-1', serverVersion: 'test', clientId: 'admission-abort', capabilities: [], limits: DEFAULT_PROTOCOL_LIMITS, authScope: 'write' });
+ await connecting;
+ const held = Array.from({ length: 128 }, () => client.query('review.hold').catch(() => {}));
+ const controller = new AbortController();
+ const queued = client.command('review.never', {}, { signal: controller.signal });
+ const rejection = assert.rejects(queued, error => error.name === 'AbortError');
+ const first = transport.frames.find(frame => frame.envelope.type === 'query').envelope;
+ transport.push({ type: 'query_result', queryId: first.queryId, ok: true, result: null });
+ // Wait for admission's synchronous drain, before the granted continuation.
+ while (client.requestAdmission.waiting.length) await Promise.resolve();
+ controller.abort('after grant');
+ await rejection;
+ assert.equal(transport.frames.filter(frame => frame.envelope.operation === 'review.never').length, 0);
+ await client.close(); await Promise.all(held);
+});
+
+for (const kind of ['overflow', 'unknown_outcome']) {
+ test(`${kind} notice clears when its queue closes`, async () => {
+  const notices = []; const old = heldAttachment();
+  const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+  queue.attach(old.attachment); queue.enqueue('old');
+  if (kind === 'overflow') { queue.enqueue('x'.repeat(MAX_PANEL_INPUT_QUEUE_BYTES + 1)); old.settleNext(); }
+  else { queue.handoff(); old.settleNext(failWith('unknown_command_outcome')); }
+  await tick(); assert.equal(notices.at(-1).kind, kind);
+  queue.close(); assert.equal(notices.at(-1), null); assert.equal(queue.resumeInput(), false);
+ });
+}
+
+test('an unknown write settling after a read-only replacement keeps its warning hidden until control returns', async () => {
+ const notices = []; const old = heldAttachment(); const replacement = recordingAttachment();
+ const queue = new ServerTerminalInputQueue(() => {}, undefined, notice => notices.push(notice));
+ queue.attach(old.attachment); queue.enqueue('uncertain'); queue.enqueue('discard');
+ queue.handoff(); queue.setPresentationRole('read_only'); queue.attach(replacement.attachment);
+ old.settleNext(failWith('unknown_command_outcome')); await tick();
+ assert.equal(notices.at(-1), null); assert.equal(queue.enqueue('refused'), false);
+ queue.setPresentationRole('controller');
+ assert.equal(notices.at(-1).kind, 'unknown_outcome'); assert.equal(notices.at(-1).canContinue, true);
+ assert.deepEqual(replacement.writes, []);
+ assert.equal(queue.resumeInput(), true); queue.enqueue('fresh'); await tick();
+ assert.deepEqual(replacement.writes, ['fresh']); queue.close();
+});
