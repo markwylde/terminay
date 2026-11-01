@@ -16,6 +16,10 @@
 import type { TerminalActivityState } from '../components/TerminalTab';
 import type { AgentState } from '../types/agentStatus';
 import type {
+	WorktreeProperties,
+	WorktreePullRequestState,
+} from '../types/terminay';
+import type {
 	TerminalActivityOverviewItem,
 	TerminalActivityOverviewState,
 	TerminalPresentationActivityState,
@@ -105,6 +109,61 @@ export type WorkspaceInventoryPanelKind = 'terminal' | 'file' | 'folder';
 
 export type WorkspaceInventoryStatus = 'idle' | TerminalActivityOverviewState;
 
+/**
+ * The pull request and check counts of the worktree a panel's folder stands
+ * for — the facts its Folders row shows. Every panel in one folder carries the
+ * same facts. Check items are left out: a listing carries only the counts.
+ */
+export type WorkspaceInventoryWorktreeFacts = {
+	pullRequest?: {
+		number: number;
+		title: string;
+		state: WorktreePullRequestState;
+		mergeable?: boolean;
+	};
+	checks?: {
+		failed: number;
+		passed: number;
+		pending: number;
+		skipped: number;
+		total: number;
+	};
+};
+
+/** The facts a worktree's properties give its panels, or none. */
+export function worktreeFactsFromProperties(
+	properties: WorktreeProperties | undefined,
+): WorkspaceInventoryWorktreeFacts | undefined {
+	if (properties === undefined) return undefined;
+	const { pullRequest, checks } = properties;
+	if (pullRequest === undefined && checks === undefined) return undefined;
+	return {
+		...(pullRequest === undefined
+			? {}
+			: {
+					pullRequest: {
+						number: pullRequest.number,
+						title: pullRequest.title,
+						state: pullRequest.state,
+						...(pullRequest.mergeable === undefined
+							? {}
+							: { mergeable: pullRequest.mergeable }),
+					},
+				}),
+		...(checks === undefined
+			? {}
+			: {
+					checks: {
+						failed: checks.failed,
+						passed: checks.passed,
+						pending: checks.pending,
+						skipped: checks.skipped,
+						total: checks.total,
+					},
+				}),
+	};
+}
+
 export type WorkspaceInventoryEntry = {
 	/** Set only when an agent-owned terminal has finished and stays unread. */
 	agentUnread?: boolean;
@@ -142,6 +201,8 @@ export type WorkspaceInventoryEntry = {
 	 * the dashboard summary branch on this to place and count it.
 	 */
 	untracked?: true;
+	/** The pull request and checks of the folder's worktree, when it has any. */
+	worktree?: WorkspaceInventoryWorktreeFacts;
 };
 
 export type InventoryPanelParams = PanelTabAppearance & {

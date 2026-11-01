@@ -1,6 +1,9 @@
 import {
 	ChevronDown,
 	ChevronRight,
+	CircleCheck,
+	CircleDashed,
+	CircleX,
 	Columns3,
 	FileText,
 	Folder,
@@ -19,6 +22,14 @@ import {
 	useState,
 } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
+import {
+	type ChecksTone,
+	checksAccessibleName,
+	checksChip,
+	checksTone,
+	pullRequestChip,
+	pullRequestTitle,
+} from '../components/folders/worktreePropertyPresentation';
 import {
 	buildCrossServerDashboardGroups,
 	type DashboardServerSource,
@@ -56,6 +67,7 @@ import {
 	rememberDashboardBoardUntrackedCollapsed,
 	rememberDashboardViewMode,
 } from './localViewState';
+import type { WorkspaceInventoryWorktreeFacts } from './workspaceInventory';
 import './workspaceDashboard.css';
 
 /**
@@ -352,10 +364,82 @@ function PanelRow({
 			{detail ? (
 				<span className="workspace-dashboard__row-detail">{detail}</span>
 			) : null}
+			<WorktreeChips worktree={row.worktree} />
 			{serverLabel === undefined ? null : (
 				<span className="workspace-dashboard__server">{serverLabel}</span>
 			)}
 		</button>
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Worktree facts                                                             */
+/* -------------------------------------------------------------------------- */
+
+const CHECKS_ICON: Readonly<Record<ChecksTone, typeof CircleX>> = {
+	failed: CircleX,
+	pending: CircleDashed,
+	passed: CircleCheck,
+};
+
+/**
+ * The pull request and checks of the panel's folder, worded as its Folders row
+ * words them. Read-only: a card has one action, and it is activation.
+ */
+function WorktreeChips({
+	worktree,
+}: {
+	worktree: WorkspaceInventoryWorktreeFacts | undefined;
+}) {
+	if (worktree === undefined) return null;
+	const { pullRequest, checks } = worktree;
+	if (pullRequest === undefined && checks === undefined) return null;
+	return (
+		<span
+			className="workspace-dashboard__worktree"
+			data-terminay-dashboard-worktree=""
+		>
+			{pullRequest === undefined ? null : (
+				<PullRequestChip pullRequest={pullRequest} />
+			)}
+			{checks === undefined ? null : <ChecksChip checks={checks} />}
+		</span>
+	);
+}
+
+function PullRequestChip({
+	pullRequest,
+}: {
+	pullRequest: NonNullable<WorkspaceInventoryWorktreeFacts['pullRequest']>;
+}) {
+	const chip = pullRequestChip(pullRequest);
+	return (
+		<span
+			className={`workspace-dashboard__chip workspace-dashboard__pr workspace-dashboard__pr--${pullRequest.state}`}
+			title={pullRequestTitle(pullRequest)}
+		>
+			{chip.prefix} {chip.number}
+			{chip.state === undefined ? null : ` ${chip.state}`}
+		</span>
+	);
+}
+
+function ChecksChip({
+	checks,
+}: {
+	checks: NonNullable<WorkspaceInventoryWorktreeFacts['checks']>;
+}) {
+	const tone = checksTone(checks);
+	const chip = checksChip(checks);
+	const Icon = CHECKS_ICON[tone];
+	return (
+		<span
+			className={`workspace-dashboard__chip workspace-dashboard__checks workspace-dashboard__checks--${tone}`}
+			title={checksAccessibleName(checks).replace(/\. Show checks$/, '')}
+		>
+			<Icon aria-hidden="true" size={9} />
+			{chip.count} {chip.word}
+		</span>
 	);
 }
 
@@ -370,6 +454,7 @@ function AgentCard({
 	project,
 	serverLabel,
 	showProject,
+	worktree,
 }: {
 	agent: DashboardAgent;
 	now: number;
@@ -377,6 +462,8 @@ function AgentCard({
 	project: DashboardProjectRow;
 	serverLabel?: string;
 	showProject: boolean;
+	/** The facts of the folder the agent's terminal is in. */
+	worktree?: WorkspaceInventoryWorktreeFacts;
 }) {
 	return (
 		<button
@@ -414,6 +501,7 @@ function AgentCard({
 				<ProjectChip project={project} serverLabel={serverLabel} />
 			) : null}
 			<AgentDetail agent={agent} now={now} />
+			<WorktreeChips worktree={worktree} />
 		</button>
 	);
 }
@@ -469,6 +557,7 @@ function PanelCard({
 					{row.untracked ? 'untracked' : row.status}
 				</span>
 			</span>
+			<WorktreeChips worktree={row.worktree} />
 		</button>
 	);
 }
@@ -501,6 +590,7 @@ function BoardCard({
 				project={project}
 				serverLabel={serverLabel}
 				showProject={showProject}
+				worktree={panel?.worktree}
 			/>
 		);
 	}
@@ -865,6 +955,7 @@ function ProjectCard({
 								}
 								project={group.project}
 								showProject={false}
+								worktree={panel.worktree}
 							/>
 						))
 					),
