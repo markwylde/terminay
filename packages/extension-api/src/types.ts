@@ -1,3 +1,4 @@
+import type { BotAgentContribution, BotAgentRegistry } from './bots.js';
 import type {
 	AgentChatProviderContribution,
 	AgentChatProviderRegistry,
@@ -31,6 +32,7 @@ export type ExtensionPermission =
 	| 'mcp-registration'
 	| 'worktree-observation'
 	| 'agent-chat'
+	| 'agent-bots'
 	| 'agent-launch'
 	| 'terminal-command-defaults';
 
@@ -116,6 +118,7 @@ export interface TerminayExtensionManifest {
 		languageServers?: LanguageServerContribution[];
 		worktreeInsights?: WorktreeInsightSourceContribution[];
 		agentChatProviders?: AgentChatProviderContribution[];
+		botAgents?: BotAgentContribution[];
 		terminalLaunchers?: TerminalLauncherContribution[];
 		terminalCommandDefaults?: TerminalCommandDefaultContribution[];
 	};
@@ -242,9 +245,11 @@ export interface ExtensionContext {
 	/**
 	 * Session sources are available only to manifests granted
 	 * agent-observation, and chat providers only to manifests granted
-	 * agent-chat.
+	 * agent-chat, and bot agents only to manifests granted agent-bots.
 	 */
-	agents: AgentSessionSourceRegistry & AgentChatProviderRegistry;
+	agents: AgentSessionSourceRegistry &
+		AgentChatProviderRegistry &
+		BotAgentRegistry;
 	/** MCP install targets are available only to manifests granted mcp-registration. */
 	mcp: McpInstallTargetRegistry;
 	/** Worktree insight sources are available only to manifests granted worktree-observation. */

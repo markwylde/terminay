@@ -37,6 +37,8 @@ import {
 	backgroundTerminalLimitMs,
 	CanonicalProjectPathResolver,
 	createAutomationFileBackends,
+	createBotServerService,
+	installedBotAgentCatalog,
 	createNodePtyFactory,
 	createSessionHolderPtyFactory,
 	launchDetachedSessionHolder,
@@ -1032,7 +1034,20 @@ async function createServerComposition(
 			);
 		},
 	});
+	const bots = ['linux', 'darwin'].includes(process.platform)
+		? createBotServerService({
+				serverId: options.serverId,
+				dataRoot: options.dataRoot,
+				agents: extensions.hosts,
+				vault: vault.vault,
+				catalog: () => installedBotAgentCatalog(extensions.installer),
+				pty: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
+					resolveCwd: resolveTerminalProcessCwd,
+				}),
+			})
+		: undefined;
 	composition = createServerCoreComposition({
+		...(bots ? { bots } : {}),
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
 		capabilities: [

@@ -187,3 +187,6 @@ export * from './workspaceRecovery.js';
 export * from './workspaceRepository.js';
 export * from './gitTraceDirectory.js';
 export * from './worktreeCapture.js';
+
+export * from './scheduleEngine/index.js';
+export * from './botService/index.js';

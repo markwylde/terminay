@@ -1,8 +1,8 @@
 /**
  * The tabs Home holds.
  *
- * A Home tab is this device's view of something — a section, an automation,
- * an editor, a run, an automation terminal, a recording's replay. It is never a workspace panel: the
+ * A Home tab is this device's view of something — a section, a bot, an
+ * automation, an editor, a run, an automation terminal, a recording's replay. It is never a workspace panel: the
  * server does not know it exists, and closing one closes a view, not the thing
  * it shows (ADR-0040).
  *
@@ -38,7 +38,8 @@ export type HomeTabDescriptor =
 			serverId: string;
 			panelId: string;
 	  }>
-	| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>;
+	| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>
+	| Readonly<{ kind: 'bot'; serverId: string; botId: string }>;
 
 export type HomeTabKind = HomeTabDescriptor['kind'];
 
@@ -65,6 +66,8 @@ export function homeTabId(descriptor: HomeTabDescriptor): string {
 			return `automation-terminal:${encode(descriptor.serverId)}:${encode(descriptor.panelId)}`;
 		case 'recording':
 			return `recording:${encode(descriptor.serverId)}:${encode(descriptor.recordingId)}`;
+		case 'bot':
+			return `bot:${encode(descriptor.serverId)}:${encode(descriptor.botId)}`;
 	}
 }
 
@@ -120,6 +123,10 @@ export function parseHomeTabId(id: unknown): HomeTabDescriptor | undefined {
 			return parts.length === 2 && first !== undefined && second !== undefined
 				? { kind: 'recording', serverId: first, recordingId: second }
 				: undefined;
+		case 'bot':
+			return parts.length === 2 && first !== undefined && second !== undefined
+				? { kind: 'bot', serverId: first, botId: second }
+				: undefined;
 		default:
 			return undefined;
 	}
@@ -132,6 +139,8 @@ export function homeTabSection(descriptor: HomeTabDescriptor): HomeSection {
 			return descriptor.section;
 		case 'recording':
 			return 'recordings';
+		case 'bot':
+			return 'bots';
 		default:
 			return 'automations';
 	}
@@ -154,6 +163,8 @@ export function defaultHomeTabTitle(descriptor: HomeTabDescriptor): string {
 			return 'Automation terminal';
 		case 'recording':
 			return 'Recording';
+		case 'bot':
+			return 'Bot';
 	}
 }
 

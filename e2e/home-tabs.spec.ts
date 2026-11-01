@@ -21,7 +21,7 @@ const homeControl = (page: Page) =>
 	page.getByRole('button', { name: 'Home', exact: true });
 const sectionTab = (
 	page: Page,
-	section: 'home' | 'tabs' | 'automations' | 'recordings',
+	section: 'home' | 'tabs' | 'bots' | 'automations' | 'recordings',
 ) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
 const field = (page: Page, name: string) =>

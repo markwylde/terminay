@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Terminay session launcher. Runs as root inside a bot container.
+
+  terminay-run <sid> -- <cmd> [args...]   run cmd as `bot` under a root supervisor
+  terminay-run --kill <sid>               end that session's process group
+  terminay-run --kill-all                 end every recorded session (server restart)
+
+The supervisor leads the session's process group for the whole session and keeps a
+root-only record {pgid, start time, nonce} in /run/terminay/sessions/<sid>. The agent
+runs as `bot` with TERMINAY_SESSION_NONCE in its environment. When the agent exits,
+the supervisor ends the rest of its group and retires the record.
+
+--kill signals the group only while the recorded leader is alive with a matching
+start time. Otherwise it signals only processes in that group whose environment
+carries the nonce, so a reused group number never reaches unrelated work.
+"""
+import fcntl, json, os, pwd, re, secrets, selectors, signal, sys, termios, time
+
+SESSIONS = "/run/terminay/sessions"
+SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+TERM_GRACE = 5.0
+
+
+def log(msg):
+    print(f"terminay-run: {msg}", file=sys.stderr, flush=True)
+
+
+def start_time(pid):
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            data = f.read().decode("utf-8", "replace")
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    # comm may contain spaces; fields after the last ')' are fixed.
+    rest = data[data.rfind(")") + 2:].split()
+    return int(rest[19])  # field 22 overall: starttime
+
+
+def pgid_of(pid):
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            data = f.read().decode("utf-8", "replace")
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    rest = data[data.rfind(")") + 2:].split()
+    return int(rest[2])  # field 5: pgrp
+
+
+def has_nonce(pid, nonce):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read().split(b"\0")
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
+        return False
+    return f"TERMINAY_SESSION_NONCE={nonce}".encode() in env
+
+
+def all_pids():
+    return [int(p) for p in os.listdir("/proc") if p.isdigit()]
+
+
+def record_path(sid):
+    if not SID_RE.match(sid):
+        raise SystemExit(f"terminay-run: bad session id {sid!r}")
+    return os.path.join(SESSIONS, sid)
+
+
+def write_record(sid, rec):
+    path = record_path(sid)
+    tmp = path + "." + secrets.token_hex(8) + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(rec, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.rename(tmp, path)
+    fd = os.open(SESSIONS, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def read_record(sid):
+    try:
+        with open(record_path(sid)) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def retire(sid):
+    try:
+        os.unlink(record_path(sid))
+    except FileNotFoundError:
+        pass
+
+
+def running(pid):
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            data = f.read().decode("utf-8", "replace")
+        return data[data.rfind(")") + 2:].split()[0] not in ("Z", "X")
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
+def group_members(pgid, exclude=()):
+    return [p for p in all_pids() if p not in exclude and pgid_of(p) == pgid and running(p)]
+
+
+def wait_empty(pids_fn, seconds):
+    """Exit events plus one absolute deadline; never samples on a timer."""
+    deadline = time.monotonic() + seconds
+    while True:
+        pids = pids_fn()
+        if not pids:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        with selectors.DefaultSelector() as watcher:
+            descriptors = []
+            try:
+                for pid in pids:
+                    try:
+                        fd = os.pidfd_open(pid)
+                        descriptors.append(fd)
+                        watcher.register(fd, selectors.EVENT_READ)
+                    except ProcessLookupError:
+                        pass
+                if not descriptors:
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not watcher.select(remaining):
+                    return not pids_fn()
+            finally:
+                for fd in descriptors:
+                    os.close(fd)
+
+
+def signal_pids(pids_fn, signum):
+    for pid in pids_fn():
+        try:
+            fd = os.pidfd_open(pid)
+            try:
+                # Recheck ownership after opening: a recycled PID must never be hit.
+                if pid in pids_fn():
+                    signal.pidfd_send_signal(fd, signum)
+            finally:
+                os.close(fd)
+        except ProcessLookupError:
+            pass
+
+
+def end_pids(pids_fn):
+    signal_pids(pids_fn, signal.SIGTERM)
+    if wait_empty(pids_fn, TERM_GRACE):
+        return True
+    signal_pids(pids_fn, signal.SIGKILL)
+    return wait_empty(pids_fn, 2.0)
+
+
+def supervise(sid, argv):
+    os.makedirs(SESSIONS, mode=0o700, exist_ok=True)
+    pw = pwd.getpwnam("bot")
+    nonce = secrets.token_hex(16)
+    pid = os.fork()
+    if pid > 0:
+        # Outer process (outside the group) relays the supervisor's exit status.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        _, status = os.waitpid(pid, 0)
+        sys.exit(os.waitstatus_to_exitcode(status) if status else 0)
+
+    os.setsid()  # new session + process group; we are the leader
+    # An interactive Shell or sign-in runs on a terminal: make it this
+    # session's controlling terminal again so the shell has job control.
+    if os.isatty(0):
+        try:
+            fcntl.ioctl(0, termios.TIOCSCTTY, 1)
+        except OSError:
+            pass
+    me = os.getpid()
+    write_record(sid, {"pgid": me, "start": start_time(me), "nonce": nonce})
+
+    env = {k: v for k, v in os.environ.items() if k not in ("SUDO_USER", "TERMINAY_SESSION_NONCE")}
+    env.update({"HOME": pw.pw_dir, "USER": "bot", "LOGNAME": "bot", "TERMINAY_SESSION": sid,
+                "TERMINAY_SESSION_NONCE": nonce})
+    env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    # The bot's own desktop (Xvnc :1, watched live in Terminay).
+    env.setdefault("DISPLAY", ":1")
+
+    child = os.fork()
+    if child == 0:
+        try:
+            # The opt-in socket's gid is engine-side and may not exist in
+            # /etc/group. Keep it when the supervisor drops privileges.
+            try:
+                socket_gid = os.stat("/var/run/docker.sock").st_gid
+                os.setgroups([socket_gid])
+            except FileNotFoundError:
+                os.setgroups([])
+            os.setgid(pw.pw_gid)
+            os.setuid(pw.pw_uid)
+            os.chdir(pw.pw_dir)
+            os.execvpe(argv[0], argv, env)
+        except Exception as e:  # noqa: BLE001
+            log(f"exec failed: {e}")
+            os._exit(127)
+
+    class SessionEnding(Exception):
+        pass
+
+    def on_end(signum, frame):
+        raise SessionEnding()
+
+    signal.signal(signal.SIGTERM, on_end)
+    signal.signal(signal.SIGUSR1, on_end)
+    signal.signal(signal.SIGHUP, on_end)
+    code = 0
+    try:
+        _, status = os.waitpid(child, 0)
+        code = os.waitstatus_to_exitcode(status)
+    except (SessionEnding, ChildProcessError):
+        pass
+    # Cleanup cannot be reentered by another stop request.
+    for sig in (signal.SIGTERM, signal.SIGUSR1, signal.SIGHUP):
+        signal.signal(sig, signal.SIG_IGN)
+    if not end_pids(lambda: group_members(me, exclude=(me,))):
+        log("group did not exit; record retained")
+        os._exit(1)
+    # Reap anything we parented.
+    while True:
+        try:
+            if os.waitpid(-1, os.WNOHANG) == (0, 0):
+                break
+        except ChildProcessError:
+            break
+    retire(sid)
+    os._exit(code if code >= 0 else 128 - code)
+
+
+def kill_session(sid):
+    rec = read_record(sid)
+    if rec is None:
+        return 0
+    pgid, st, nonce = rec["pgid"], rec["start"], rec["nonce"]
+    def leader_alive():
+        return start_time(pgid) == st and pgid_of(pgid) == pgid and running(pgid)
+
+    def owned():
+        members = group_members(pgid)
+        return members if leader_alive() else [p for p in members if has_nonce(p, nonce)]
+
+    if leader_alive():
+        # The supervisor catches TERM, ends its children, then exits. The group
+        # signal also reaches every child immediately.
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    else:
+        signal_pids(owned, signal.SIGTERM)
+    if not wait_empty(owned, TERM_GRACE):
+        signal_pids(owned, signal.SIGKILL)
+        if not wait_empty(owned, 2.0):
+            log("group did not exit; record retained")
+            return 1
+    retire(sid)
+    return 0
+
+
+def main():
+    if os.geteuid() != 0:
+        log("must run as root")
+        sys.exit(1)
+    args = sys.argv[1:]
+    if args[:1] == ["--kill"] and len(args) == 2:
+        sys.exit(kill_session(args[1]))
+    if args == ["--kill-all"]:
+        if os.path.isdir(SESSIONS):
+            for name in os.listdir(SESSIONS):
+                if SID_RE.match(name):
+                    kill_session(name)
+        sys.exit(0)
+    if len(args) >= 3 and args[1] == "--":
+        record_path(args[0])
+        supervise(args[0], args[2:])
+    log("usage: terminay-run <sid> -- <cmd...> | --kill <sid> | --kill-all")
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

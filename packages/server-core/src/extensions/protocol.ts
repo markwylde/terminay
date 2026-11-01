@@ -40,6 +40,9 @@ export const HOST_FRAME_KINDS = [
 	'worktree.source.contexts',
 	'worktree.source.credential',
 	/** Availability, and the open, prompt, cancel, and close of one chat session. */
+	'agent.bot.models',
+	'agent.bot.status',
+	'agent.bot.launch',
 	'agent.chat.availability',
 	'agent.chat.open',
 	'agent.chat.prompt',
@@ -68,6 +71,7 @@ export const CHILD_FRAME_KINDS = [
 	'worktree.source.disposed',
 	/** Text, tool activity, failure, or exit from one open chat session. */
 	'agent.chat.event',
+	'agent.bot.disposed',
 	'fatal',
 ] as const;
 export type ChildFrameKind = (typeof CHILD_FRAME_KINDS)[number];

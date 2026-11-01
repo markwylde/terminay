@@ -1,4 +1,5 @@
 import type {
+	BotAgentContribution,
 	AgentChatProviderContribution,
 	AgentSessionSourceContribution,
 	ExtensionDependency,
@@ -18,6 +19,7 @@ export type ExtensionHostState =
 
 export interface ExtensionLaunchDescriptor {
 	readonly extensionId: string;
+	readonly extensionName?: string;
 	readonly packageRoot: string;
 	readonly entrypoint: string;
 	readonly configDirectory: string;
@@ -37,6 +39,7 @@ export interface ExtensionLaunchDescriptor {
 	readonly worktreeInsights?: readonly WorktreeInsightSourceContribution[];
 	/** Declared chat providers, checked the same way. */
 	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
+	readonly botAgents?: readonly BotAgentContribution[];
 	/** Declared terminal launchers, checked the same way. */
 	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 	/** Declared terminal command defaults, checked the same way. */
@@ -46,6 +49,7 @@ export interface ExtensionLaunchDescriptor {
 
 export interface ExtensionHostStatus {
 	readonly extensionId: string;
+	readonly extensionName?: string;
 	readonly state: ExtensionHostState;
 	readonly consecutiveCrashes: number;
 	readonly restartAt?: number;
@@ -55,6 +59,7 @@ export interface ExtensionHostStatus {
 	readonly languageServers?: readonly LanguageServerContribution[];
 	readonly worktreeInsightSources?: readonly WorktreeInsightSourceContribution[];
 	readonly agentChatProviders?: readonly AgentChatProviderContribution[];
+	readonly botAgents?: readonly BotAgentContribution[];
 	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 	readonly terminalCommandDefaults?: readonly TerminalCommandDefaultContribution[];
 }

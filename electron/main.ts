@@ -2150,6 +2150,9 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			isPackaged: app.isPackaged,
 			resourcesPath: process.resourcesPath,
 		}),
+		botImageContextPath: app.isPackaged
+			? path.join(process.resourcesPath, 'bot-image')
+			: path.join(process.env.APP_ROOT ?? process.cwd(), 'docker', 'terminay-bot'),
 		vault: embeddedVault,
 		parakeetRuntime,
 		defaultProjectRoot: () => app.getPath('home'),

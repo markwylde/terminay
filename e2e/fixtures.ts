@@ -403,6 +403,20 @@ export async function launchDesktopApp(options: {
 							].join(path.delimiter),
 						}
 					: {}),
+				// Bots run against a fake Docker whose containers host a fake ACP
+				// agent, so the suite needs no engine, image, or agent account.
+				...(path.basename(testInfo.file) === 'bots.spec.ts'
+					? {
+							PATH: [
+								path.resolve('e2e/fixtures/fake-bot-bin'),
+								process.env.PATH ?? '',
+							].join(path.delimiter),
+							TERMINAY_FAKE_BOT_ROOT: path.join(tempDir, 'fake-bots'),
+							// Nothing in the suite may read the runner's own agent
+							// logins under HOME.
+							HOME: tempDir,
+						}
+					: {}),
 				// The corrupted-data suite relaunches the app itself after a
 				// recovery choice, and reads the vault across launches.
 				...(path.basename(testInfo.file) === 'corrupt-state.spec.ts'

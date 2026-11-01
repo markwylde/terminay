@@ -22,6 +22,8 @@ const STORE_DESCRIPTIONS: Record<StateStoreName, string> = {
 	'connection-profiles': 'saved connections',
 	'window-layout': 'window layout',
 	extensions: 'extension choices',
+	bots: 'bots: their profiles and triggers',
+	'bot-sessions': 'bot sessions',
 };
 
 /** The recovery text for a corrupt store with no good copy. */

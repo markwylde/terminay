@@ -16,6 +16,7 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	settings: 'settings.v1',
 	macros: 'macros.v1',
 	automations: 'automations.v1',
+	bots: 'bots.v1',
 	/** Server-owned MCP permission approvals answered inline by clients. */
 	mcpApprovals: 'mcp-approvals.v1',
 	/** Server-owned app windows shown beside the terminal that opened them. */
@@ -95,6 +96,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.settings,
 			FEATURE_CAPABILITIES.macros,
 			FEATURE_CAPABILITIES.automations,
+			FEATURE_CAPABILITIES.bots,
 			FEATURE_CAPABILITIES.mcpApprovals,
 			FEATURE_CAPABILITIES.appWindows,
 			FEATURE_CAPABILITIES.appWindowMirror,

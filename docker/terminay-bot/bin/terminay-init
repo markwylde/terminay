@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""Terminay bot container entrypoint (PID 1, root).
+
+Fails closed: nothing but this process runs until the Terminay server delivers
+bootstrap material through a root-only FIFO. If none arrives within 30 seconds
+the container exits.
+
+  terminay-init               run as the container entrypoint
+  terminay-init --bootstrap   (via `docker exec -i -u root`) read one JSON
+                              document on stdin, hand it to PID 1, wait for ready
+
+Bootstrap document:
+  {"botId": "abc123def456", "vncPassword": "..."}
+"""
+import ctypes, json, os, select, signal, socket, stat, subprocess, sys, threading, time
+import secrets
+
+RUN = "/run/terminay"
+FIFO = RUN + "/bootstrap.fifo"
+READY = RUN + "/ready"
+VNC_DIR = RUN + "/vnc"
+SESSIONS = RUN + "/sessions"
+HOME = "/home/bot"
+BOOTSTRAP_TIMEOUT = 30.0
+MAX_DOC = 64 * 1024
+
+
+def log(msg):
+    print(f"terminay-init: {msg}", file=sys.stderr, flush=True)
+
+
+def bot_ids():
+    import pwd
+    pw = pwd.getpwnam("bot")
+    return pw.pw_uid, pw.pw_gid
+
+
+def prepare_dirs():
+    os.makedirs(RUN, mode=0o755, exist_ok=True)
+    os.chmod(RUN, 0o755)
+    for d in (VNC_DIR, SESSIONS):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        os.chmod(d, 0o700)
+    for stale in (FIFO, READY):
+        try:
+            os.unlink(stale)
+        except FileNotFoundError:
+            pass
+    os.mkfifo(FIFO, 0o600)
+
+
+def read_bootstrap():
+    # O_RDWR keeps the FIFO open without a writer so select() blocks properly.
+    fd = os.open(FIFO, os.O_RDWR | os.O_NONBLOCK)
+    deadline = time.monotonic() + BOOTSTRAP_TIMEOUT
+    buf = b""
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
+            r, _, _ = select.select([fd], [], [], left)
+            if not r:
+                return None
+            chunk = os.read(fd, 65536)
+            buf += chunk
+            if len(buf) > MAX_DOC:
+                return None
+            if b"\n" in buf:
+                line = buf.split(b"\n", 1)[0]
+                return json.loads(line.decode("utf-8"))
+    finally:
+        os.close(fd)
+        os.unlink(FIFO)
+
+
+def write_vnc_password(password):
+    if not isinstance(password, str) or not (6 <= len(password) <= 64):
+        raise ValueError("bad vnc password")
+    out = subprocess.run(["vncpasswd", "-f"], input=password.encode(), capture_output=True, check=True).stdout
+    path = VNC_DIR + "/passwd"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(out)
+    os.chmod(path, 0o600)
+    return path
+
+
+children = []
+
+
+def spawn(argv, uid=None, gid=None, env=None):
+    def demote():
+        if uid is not None:
+            try:
+                os.setgroups([os.stat("/var/run/docker.sock").st_gid])
+            except FileNotFoundError:
+                os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+    p = subprocess.Popen(argv, preexec_fn=demote if uid is not None else None, env=env,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    children.append(p)
+    return p
+
+
+def wait_path(path, deadline):
+    """Linux inotify plus a single deadline, without polling."""
+    parent = os.path.dirname(path)
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(os.O_CLOEXEC | os.O_NONBLOCK)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "inotify_init1")
+    try:
+        if libc.inotify_add_watch(fd, parent.encode(), 0x100 | 0x80 | 0x8 | 0x400 | 0x800) < 0:
+            raise OSError(ctypes.get_errno(), "inotify_add_watch")
+        while not os.path.exists(path):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                raise TimeoutError("init readiness deadline exceeded")
+            os.read(fd, 65536)
+    finally:
+        os.close(fd)
+
+
+def start_desktop(passwd_path, uid, gid, bot_id):
+    os.makedirs("/tmp/.X11-unix", mode=0o1777, exist_ok=True)
+    spawn(["Xvnc", ":1", "-rfbport", "5901", "-rfbauth", passwd_path, "-SecurityTypes", "VncAuth",
+           "-geometry", "1440x900", "-depth", "24", "-AlwaysShared", "-ac", "-localhost", "yes"])
+    wait_path("/tmp/.X11-unix/X1", time.monotonic() + 10)
+    env = {"HOME": HOME, "USER": "bot", "DISPLAY": ":1", "PATH": "/usr/local/bin:/usr/bin:/bin",
+           "TERMINAY_BOT_ID": bot_id, "LANG": "C.UTF-8"}
+    spawn(["openbox-session"], uid=uid, gid=gid, env=env)
+
+
+def main_tunnel(port):
+    if not port.isdecimal() or not 1 <= int(port) <= 65535:
+        raise ValueError("invalid tunnel port")
+    # Bounded blocking I/O supplies backpressure in both directions. Half-close
+    # stdin without discarding the peer's final response. Never bind a port.
+    with socket.create_connection(("127.0.0.1", int(port)), timeout=10) as peer:
+        peer.settimeout(None)
+
+        def upload():
+            try:
+                while True:
+                    chunk = os.read(sys.stdin.fileno(), 65536)
+                    if not chunk:
+                        peer.shutdown(socket.SHUT_WR)
+                        return
+                    peer.sendall(chunk)
+            except OSError:
+                peer.shutdown(socket.SHUT_RDWR)
+
+        threading.Thread(target=upload, daemon=True).start()
+        while True:
+            chunk = peer.recv(65536)
+            if not chunk:
+                return
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+
+
+def main_config():
+    data = sys.stdin.buffer.read(MAX_DOC + 1)
+    if len(data) > MAX_DOC:
+        raise ValueError("config too large")
+    files = json.loads(data)
+    if not isinstance(files, list) or len(files) > 32:
+        raise ValueError("bad config list")
+    uid, gid = bot_ids()
+    # Root never opens a bot-owned path. This process only restores fixed
+    # manifest content; it cannot run a command chosen by a bot.
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    root = os.open(HOME, flags)
+    try:
+        for item in files:
+            name, content = item["path"], item["content"]
+            parts = name.split("/")
+            if any(p in ("", ".", "..", "memories", ".terminay") for p in parts):
+                raise ValueError("invalid config path")
+            fd = os.dup(root)
+            try:
+                for part in parts[:-1]:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    next_fd = os.open(part, flags, dir_fd=fd)
+                    os.close(fd)
+                    fd = next_fd
+                try:
+                    existing = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
+                    if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
+                        raise ValueError("unsafe config target")
+                except FileNotFoundError:
+                    pass
+                temporary = ".terminay-config-" + secrets.token_hex(12)
+                out = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+                try:
+                    with os.fdopen(out, "wb") as stream:
+                        stream.write(content.encode("utf-8"))
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.rename(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
+                finally:
+                    try:
+                        os.unlink(temporary, dir_fd=fd)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(fd)
+    finally:
+        os.close(root)
+
+
+def main_init():
+    if os.getpid() != 1:
+        log("warning: not PID 1")
+    prepare_dirs()
+    doc = read_bootstrap()
+    if doc is None:
+        log("no bootstrap within 30s; exiting (fail closed)")
+        sys.exit(78)
+    uid, gid = bot_ids()
+    try:
+        bot_id = str(doc["botId"])
+        passwd = write_vnc_password(doc["vncPassword"])
+
+    except Exception as e:  # noqa: BLE001
+        log(f"bad bootstrap: {e}")
+        sys.exit(78)
+    start_desktop(passwd, uid, gid, bot_id)
+    doc.clear()
+    with open(READY, "w") as f:
+        f.write("ready\n")
+
+    stopping = False
+
+    def on_term(signum, frame):
+        nonlocal stopping
+        stopping = True
+        for p in children:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)
+    # Reap everything (we are PID 1) until asked to stop.
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, 0)
+        except ChildProcessError:
+            if stopping:
+                break
+            # Losing every desktop child is fatal; never poll for children.
+            sys.exit(0 if stopping else 78)
+        except InterruptedError:
+            continue
+        if stopping and all(p.poll() is not None for p in children):
+            break
+    sys.exit(0)
+
+
+def main_bootstrap():
+    data = sys.stdin.buffer.read(MAX_DOC + 1)
+    if len(data) > MAX_DOC:
+        log("bootstrap too large")
+        sys.exit(2)
+    doc = json.loads(data)
+    line = (json.dumps(doc, separators=(",", ":")) + "\n").encode()
+    wait_path(FIFO, time.monotonic() + 10)
+    # Opening a FIFO for writing waits for PID 1's reader. The alarm bounds
+    # that wait without retrying or polling the filesystem.
+    signal.setitimer(signal.ITIMER_REAL, 10)
+    fd = os.open(FIFO, os.O_WRONLY)
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    os.set_blocking(fd, False)
+    try:
+        # FIFO writes may be partial; wait for writable with one deadline.
+        deadline = time.monotonic() + 10
+        view = memoryview(line)
+        while view:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                raise TimeoutError("bootstrap write deadline exceeded")
+            try:
+                view = view[os.write(fd, view):]
+            except BlockingIOError:
+                continue
+    finally:
+        os.close(fd)
+    wait_path(READY, time.monotonic() + 30)
+    print("ready", flush=True)
+
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        log("must run as root")
+        sys.exit(1)
+    if sys.argv[1:] == ["--bootstrap"]:
+        main_bootstrap()
+    elif len(sys.argv) == 3 and sys.argv[1] == "--tunnel":
+        main_tunnel(sys.argv[2])
+    elif sys.argv[1:] == ["--config"]:
+        main_config()
+    elif not sys.argv[1:]:
+        main_init()
+    else:
+        log("invalid arguments")
+        sys.exit(2)

@@ -1,3 +1,7 @@
+import {
+	createBotServerService,
+	installedBotAgentCatalog,
+} from '../packages/server-core/src/botService/composition';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, watch as watchFileSystem } from 'node:fs';
@@ -284,6 +288,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly installerWorkerEntrypoint?: string;
 	/** Verified release resources, outside ASAR so extension children can run. */
 	readonly builtInExtensionArtifactRoot?: string;
+	/** The bot image's build context: release resources when packaged, the
+	 * repository's `docker/terminay-bot` otherwise. */
+	readonly botImageContextPath?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
 	/**
@@ -1058,7 +1065,30 @@ export class ServerTerminalAuthority {
 						resolveForegroundProcess: resolveTerminalForegroundProcess,
 					});
 		this.sessionHolder = sessionHolder;
+		const bots =
+			options.dataRoot && options.vault && extensionManagement &&
+			['linux', 'darwin'].includes(process.platform)
+				? createBotServerService({
+						serverId: options.serverId,
+						dataRoot: options.dataRoot,
+						agents: extensionManagement.hosts,
+						vault: options.vault.vault,
+						catalog: () => installedBotAgentCatalog(extensionManagement.installer),
+						pty: {
+							spawn: (request) => createNodePtyFactory(
+								require('node-pty') as NodePtyModule,
+								{
+									resolveCwd: resolveTerminalProcessCwd,
+									resolveForegroundProcess: resolveTerminalForegroundProcess,
+								},
+							).spawn(request),
+						},
+						imageContextPath:
+							options.botImageContextPath ?? resolve('docker/terminay-bot'),
+					})
+				: undefined;
 		this.composition = createServerCoreComposition({
+			...(bots ? { bots } : {}),
 			serverId: options.serverId,
 			serverVersion: 'desktop',
 			// Restart recovery is server policy and lives in server-core. Desktop

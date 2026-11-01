@@ -158,3 +158,36 @@ The session-source tests drive the library's own fixture drivers
 (`@markwylde/all-your-agents/testing`) through the public extension testing
 harness. The MCP tests write into temporary home directories. The packed test
 inspects the real npm tarball and activates it against a real process.
+
+## Bot adapters
+
+Bots use adapters installed only when the server builds its local bot image:
+
+- `@agentclientprotocol/codex-acp@2.5.0` (including its compatible Codex).
+- `@agentclientprotocol/claude-agent-acp@0.99.1` (including the Claude Agent SDK).
+
+No separate agent CLI is installed. The image exposes the adapter's Codex as
+`codex`. Models are selected through ACP session configuration; Default supplies
+no fallback launch arguments. Bot registrations are independent of observation,
+harness switches, terminal launchers, and chat providers.
+
+Every bot signs in with its own credential; nothing is shared with the server
+account's logins. Codex declares API-key authentication through ACP `api-key`,
+Autonomous-only operation, an ephemeral credential store with credential
+variables excluded from shell environments, and a device sign-in, **Sign in with
+ChatGPT** (`codex login --device-auth`, `codex logout`), whose own
+`.codex/config.toml` switches to `cli_auth_credentials_store = "file"` so the
+login is kept in that bot's home. Claude sets `CLAUDE_CODE_MAX_RETRIES=0` and
+accepts `claude setup-token` sign-in tokens or Anthropic API keys.
+
+Run the offline adapter checks with `TERMINAY_BOT_CONFORMANCE=1 npm run test:built-in-extensions`. They require
+an existing `terminay-bot:local` image with these exact adapters. Set
+`TERMINAY_BOT_ENGINE=podman` to use Podman instead of Docker. The checks run with
+network disabled and a fake endpoint inside the container. With no opt-in they
+skip without invoking an engine. They never build or pull an image.
+
+`npm run test:bots:credentials` is a separate opt-in owner check, excluded from
+CI. Its safety check requires a freshly created throwaway home below the system
+temporary directory and rejects real homes, aliases, and agent-home overrides.
+See `scripts/bot-credentials.mjs` for the required environment. Never use a
+personal CLI login; the refresh checks require dedicated test accounts.

@@ -1,0 +1,85 @@
+{
+	"name": "terminay-example-bot-agent",
+	"version": "1.0.0",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": "./extension.js"
+	},
+	"peerDependencies": {
+		"@terminay/extension-api": "^3.5.0"
+	},
+	"terminay": {
+		"manifestVersion": 1,
+		"id": "com.example.bot",
+		"displayName": "Example bot agent",
+		"api": "^3.5.0",
+		"engines": {
+			"terminay": ">=1.0.0",
+			"node": ">=24"
+		},
+		"entrypoint": "extension.js",
+		"permissions": [
+			"agent-bots"
+		],
+		"contributes": {
+			"botAgents": [
+				{
+					"id": "com.example.bot/example",
+					"displayName": "Example ACP agent",
+					"imageInstall": {
+						"npm": [
+							"@example/agent-acp@1.2.3"
+						]
+					},
+					"acpCommand": {
+						"executable": "example-agent-acp",
+						"args": []
+					},
+					"deviceSignIn": {
+						"command": {
+							"executable": "example-agent",
+							"args": [
+								"login",
+								"--device"
+							]
+						},
+						"label": "Sign in with Example",
+						"help": "Example shows a link and a code to approve in your browser.",
+						"signOutCommand": {
+							"executable": "example-agent",
+							"args": [
+								"logout"
+							]
+						},
+						"configFiles": [
+							{
+								"path": ".example/config.json",
+								"contents": "{\"credentialStore\":\"file\"}\n"
+							}
+						]
+					},
+					"credentialSecrets": [
+						{
+							"environmentVariable": "EXAMPLE_API_KEY",
+							"kind": "api-key",
+							"authenticateMethodId": "api-key",
+							"label": "Example API key",
+							"help": "Create an API key in your Example account."
+						}
+					],
+					"autonomousOnly": false,
+					"botConfigFiles": [
+						{
+							"path": ".example/config.json",
+							"contents": "{\"credentialStore\":\"ephemeral\"}\n"
+						}
+					],
+					"launchEnvironment": {
+						"EXAMPLE_MAX_RETRIES": "0"
+					}
+				}
+			]
+		}
+	}
+}

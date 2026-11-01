@@ -1,5 +1,7 @@
 import {
 	createServerCoreComposition,
+	createBotServerService,
+	type BotServerOptions,
 	type ServerCoreComposition,
 	type ServerCoreCompositionOptions,
 } from '@terminay/server-core';
@@ -12,10 +14,9 @@ import {
  * server package owns the terminal service, operation registry, event journal,
  * and connection cleanup; no Electron object crosses this boundary.
  */
-export type EmbeddedDesktopAuthorityOptions = Omit<
-	ServerCoreCompositionOptions,
-	'serverUpgrade'
->;
+export type EmbeddedDesktopAuthorityOptions = {
+	readonly botHost?: BotServerOptions;
+} & Omit<ServerCoreCompositionOptions, 'serverUpgrade'>;
 
 export function createEmbeddedDesktopAuthority(
 	options: EmbeddedDesktopAuthorityOptions,
@@ -25,5 +26,13 @@ export function createEmbeddedDesktopAuthority(
 	// it checks no release and offers no upgrade.
 	const { serverUpgrade: _serverUpgrade, ...embedded } =
 		options as ServerCoreCompositionOptions;
-	return createServerCoreComposition(embedded);
+	const bots =
+		options.bots ??
+		(options.botHost && ['linux', 'darwin'].includes(process.platform)
+			? createBotServerService(options.botHost)
+			: undefined);
+	return createServerCoreComposition({
+		...embedded,
+		...(bots ? { bots } : {}),
+	});
 }

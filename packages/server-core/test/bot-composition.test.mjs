@@ -1,0 +1,757 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import {
+	chmodSync,
+	copyFileSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import {
+	BotCredentialClient,
+	BotEngineClient,
+	BotEnvironmentClient,
+	BotIoClient,
+	BotsClient,
+	TerminayClient,
+	TerminayClientFacade,
+} from '@terminay/client-core';
+import { createInMemoryTransportPair } from '@terminay/protocol-conformance';
+import {
+	BotTokenService,
+	createBotServerService,
+	createServerCoreComposition,
+} from '../dist/index.js';
+import { until } from './fixtures/bot-test-runtime.mjs';
+
+const agent = {
+	id: 'fake/agent',
+	displayName: 'Fake agent',
+	imageInstall: { npm: ['fake-acp@1.0.0'] },
+	acpCommand: { executable: 'fake-acp', args: [] },
+	autonomousOnly: false,
+	deviceSignIn: {
+		command: { executable: 'codex', args: ['login', '--device-auth'] },
+		signOutCommand: { executable: 'codex-session', args: ['forget', '--all'] },
+		label: 'Sign in with ChatGPT',
+		help: 'Approve the code',
+		configFiles: [
+			{
+				path: '.codex/config.toml',
+				contents: 'cli_auth_credentials_store = "file"',
+			},
+		],
+	},
+	botConfigFiles: [
+		{
+			path: '.codex/config.toml',
+			contents: 'cli_auth_credentials_store = "ephemeral"',
+		},
+	],
+	credentialSecrets: [
+		{
+			environmentVariable: 'FAKE_KEY',
+			kind: 'api-key',
+			authenticateMethodId: 'api-key',
+			label: 'Fake key',
+			help: 'Use a fake key',
+		},
+	],
+};
+function vault() {
+	const values = new Map();
+	return {
+		values,
+		status: () => ({ entries: [...values.keys()].map((id) => ({ id })) }),
+		put: async ({ id, value }) => values.set(id, Buffer.from(value)),
+		replace: async ({ id, value }) => values.set(id, Buffer.from(value)),
+		remove: async (id) => values.delete(id),
+		withSecret: async (id, fn) => {
+			if (!values.has(id)) throw new Error('missing');
+			const v = Buffer.from(values.get(id));
+			try {
+				return await fn(v);
+			} finally {
+				v.fill(0);
+			}
+		},
+	};
+}
+async function setup(t, options = {}) {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), 'bots-composed-')));
+	const bin = join(root, 'bin');
+	mkdirSync(bin);
+	for (const name of [
+		'bot-composed-engine.mjs',
+		'bot-acp.mjs',
+		'bot-files-helper.mjs',
+	])
+		copyFileSync(
+			new URL(`./fixtures/${name}`, import.meta.url),
+			join(bin, name),
+		);
+	for (const name of ['docker', 'podman']) {
+		writeFileSync(
+			join(bin, name),
+			`#!${process.execPath}\nimport './bot-composed-engine.mjs';\n`,
+		);
+		chmodSync(join(bin, name), 0o700);
+	}
+	const original = {
+		PATH: process.env.PATH,
+		TERMINAY_FAKE_ENGINE_ID: process.env.TERMINAY_FAKE_ENGINE_ID,
+		TERMINAY_FAKE_CONTAINER_LOG_BYTES:
+			process.env.TERMINAY_FAKE_CONTAINER_LOG_BYTES,
+		TERMINAY_FAKE_BUILD_FAIL: process.env.TERMINAY_FAKE_BUILD_FAIL,
+		TERMINAY_FAKE_BUILD_LOG_BYTES: process.env.TERMINAY_FAKE_BUILD_LOG_BYTES,
+		TERMINAY_FAKE_BOT_ROOT: process.env.TERMINAY_FAKE_BOT_ROOT,
+	};
+	process.env.PATH = `${bin}:${original.PATH}`;
+	process.env.TERMINAY_FAKE_BOT_ROOT = root;
+	const processes = new Set(),
+		closed = new EventEmitter();
+	const pty = {
+		spawn: (request) => {
+			const child = spawn(request.shellPath, request.args, {
+				cwd: request.cwd,
+				env: request.env,
+				stdio: ['pipe', 'pipe', 'pipe'],
+			});
+			processes.add(child);
+			child.once('close', () => {
+				processes.delete(child);
+				closed.emit('changed');
+			});
+			child.stderr.resume();
+			return {
+				pid: child.pid,
+				write: (b) => {
+					child.stdin.write(b);
+				},
+				resize: () => {},
+				kill: () => {
+					child.kill('SIGKILL');
+				},
+				onData: (f) => {
+					child.stdout.on('data', f);
+					return () => child.stdout.off('data', f);
+				},
+				onExit: (f) => {
+					const exit = (exitCode, signal) => f({ exitCode, signal });
+					child.on('close', exit);
+					return () => child.off('close', exit);
+				},
+			};
+		},
+	};
+	const v = vault();
+	const tokens = new BotTokenService(v);
+	const agents = {
+		botAgentContributions: () => [
+			{
+				extensionId: 'fake',
+				extensionName: 'Fake extension',
+				contribution: agent,
+			},
+		],
+		botAgentInstalls: () => [
+			{ id: agent.id, install: { npm: agent.imageInstall.npm } },
+		],
+		botAgentModels: async () => ({
+			available: true,
+			value: [{ id: 'selected', displayName: 'Selected' }],
+		}),
+		botAgentStatus: async () => ({
+			available: true,
+			value: { state: 'ready' },
+		}),
+		botAgentLaunch: async () => ({
+			available: true,
+			value: { args: [], env: {} },
+		}),
+	};
+	const service = createBotServerService({
+		serverId: 'composed-bots',
+		dataRoot: root,
+		agents,
+		vault: v,
+		tokens,
+		pty,
+		platform: 'darwin',
+		...options,
+	});
+	const composition = createServerCoreComposition({
+		serverId: 'composed-bots',
+		serverVersion: 'test',
+		capabilities: [],
+		bots: service,
+		ptyFactory: pty,
+		allowUnresolvedTestSessions: true,
+	});
+	await composition.start();
+	const clients = [];
+	t.after(async () => {
+		for (const c of clients) await c.close();
+		await composition.shutdown();
+		for (const child of processes) child.kill('SIGKILL');
+		for (const [k, value] of Object.entries(original)) {
+			if (value === undefined) delete process.env[k];
+			else process.env[k] = value;
+		}
+		rmSync(root, { recursive: true, force: true });
+	});
+	const connect = async (
+		identity = { clientId: 'writer', authScope: 'write' },
+	) => {
+		const pair = createInMemoryTransportPair();
+		const connection = composition.core.accept(pair.server, {
+			authenticatedClient: identity,
+		});
+		const task = connection.start();
+		const client = new TerminayClient({
+			transport: pair.client,
+			clientId: identity.clientId,
+		});
+		clients.push(client);
+		await pair.open();
+		const hello = await client.connect();
+		const facade = new TerminayClientFacade(client);
+		return {
+			client,
+			connection,
+			task,
+			hello,
+			bots: new BotsClient(facade),
+			engine: new BotEngineClient(facade),
+			credentials: new BotCredentialClient(facade),
+			io: new BotIoClient(facade),
+		};
+	};
+	return {
+		root,
+		agents,
+		tokens,
+		service,
+		composition,
+		v,
+		connect,
+		processes,
+		closed,
+		calls: () =>
+			readFileSync(join(root, 'calls.jsonl'), 'utf8')
+				.trim()
+				.split('\n')
+				.map(JSON.parse),
+	};
+}
+
+test('composed Bots server: engine, image, message, Files, Shell, tokens and revocation over the client connection', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	assert.ok(c.hello.capabilities.includes('bots.v1'));
+	const events = await c.client.subscribe('bots.engine.changed');
+	const invalidations = [];
+	events.onEvent((e) => invalidations.push(e.payload));
+	assert.equal((await c.engine.status()).image.state, 'missing');
+	await c.engine.build();
+	assert.equal((await c.engine.status()).image.state, 'current');
+	const before = invalidations.length;
+	await c.engine.status();
+	await c.engine.status();
+	assert.equal(
+		invalidations.length,
+		before,
+		'reading status must not cause an invalidation/refetch loop',
+	);
+	assert.match(await c.engine.log(), /pinned fake adapter/);
+	assert.ok(invalidations.length > 0);
+	assert.ok(
+		invalidations.every((e) => Object.keys(e).join(',') === 'revision'),
+	);
+	assert.equal((await c.bots.agents())[0].extensionName, 'Fake extension');
+	const bot = await c.bots.save({
+		name: 'Bird',
+		agentId: agent.id,
+		signIn: { kind: 'token', environmentVariable: 'FAKE_KEY' },
+	});
+	const token = Buffer.from('secret');
+	await c.credentials.save(bot.id, 'FAKE_KEY', token);
+	assert.ok(token.every((v) => v === 0));
+	assert.ok(
+		!JSON.stringify(await c.credentials.options(bot.id)).includes('secret'),
+	);
+	const sent = await c.bots.send(bot.id, 'normal');
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(sent.sessionId).state === 'completed',
+	);
+	const session = await c.bots.session(bot.id, sent.sessionId);
+	assert.ok(session.updates.length > 0);
+	assert.ok(!JSON.stringify(session).includes('secret'));
+	assert.match(JSON.stringify(session), /redacted/);
+	assert.equal(r.tokens.retainedCount(bot.id), 1);
+	await c.bots.control(bot.id, sent.sessionId, 'stop');
+	assert.equal(r.tokens.retainedCount(bot.id), 0);
+	process.env.TERMINAY_FAKE_CONTAINER_LOG_BYTES = '300000';
+	const environment = new BotEnvironmentClient(
+		new TerminayClientFacade(c.client),
+	);
+	const overview = await environment.overview(bot.id);
+	assert.equal(Buffer.byteLength(overview.log), 256 * 1024);
+	assert.ok(!overview.log.includes('secret'));
+	assert.match(overview.log, /redacted/);
+	assert.equal(r.tokens.retainedCount(bot.id), 0);
+	const siblingId = 'a'.repeat(64);
+	writeFileSync(
+		join(r.root, `container-${siblingId}.json`),
+		JSON.stringify({
+			Id: siblingId,
+			Name: 'sibling',
+			Config: { Labels: { 'terminay.bot': bot.id }, Image: 'fake' },
+			State: { Running: true, Status: 'running' },
+		}),
+	);
+	const siblingLog = await environment.containerAction(
+		bot.id,
+		siblingId,
+		'logs',
+	);
+	assert.equal(Buffer.byteLength(siblingLog), 256 * 1024);
+	assert.ok(!siblingLog.includes('secret'));
+
+	assert.ok(r.calls().some((c) => c.args?.[2] === 'exec' && c.keyPresent));
+	assert.ok(!JSON.stringify(r.calls()).includes('secret'));
+	assert.equal((await c.engine.status()).botContainers, 1);
+	const files = await c.io.files(bot.id, 1);
+	assert.equal((await files.list('.')).entries[0].name, 'hello');
+	await files.close();
+	const shell = await c.io.shell(bot.id, 1, 80, 24);
+	await shell.write(Buffer.from('whoami\n'));
+	const next = shell.read()[Symbol.asyncIterator]();
+	assert.match(Buffer.from((await next.next()).value).toString(), /bot/);
+	await shell.close();
+	await until(r.closed, 'changed', () => r.processes.size === 0);
+	const revoked = await c.io.shell(bot.id, 2, 80, 24);
+	assert.equal(r.processes.size, 1);
+	await c.connection.close({ code: 'unauthorized', message: 'revoked' });
+	await c.task;
+	await until(r.closed, 'changed', () => r.processes.size === 0);
+	await revoked.close();
+});
+
+test('every composed operation family refuses restricted clients; a second device sees queue ids and cancels', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	await c.engine.build();
+	const bot = await c.bots.save({
+		name: 'Queue',
+		agentId: agent.id,
+		signIn: { kind: 'token', environmentVariable: 'FAKE_KEY' },
+	});
+	await c.credentials.save(bot.id, 'FAKE_KEY', Buffer.from('secret'));
+	const sent = await c.bots.send(bot.id, 'hold');
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(sent.sessionId).state === 'running',
+	);
+	const queued = await c.bots.send(bot.id, 'next', sent.sessionId);
+	const other = await r.connect({ clientId: 'second', authScope: 'write' });
+	assert.equal((await other.bots.queue(bot.id)).items[0].id, queued.queueId);
+	assert.equal(
+		(await other.bots.session(bot.id, sent.sessionId)).queuedMessage.id,
+		queued.queueId,
+	);
+	await other.bots.cancelQueued(bot.id, queued.queueId);
+	assert.deepEqual((await c.bots.queue(bot.id)).items, []);
+	for (const identity of [
+		{ clientId: 'read', authScope: 'read' },
+		{ clientId: 'bound', authScope: 'write', claims: { capabilityId: 'cap' } },
+	]) {
+		const restricted = await r.connect(identity);
+		for (const [op, payload] of [
+			['bots.engine.status', {}],
+			['bots.agents', {}],
+			['bots.queue', { botId: bot.id }],
+			['bots.environment.overview', { botId: bot.id }],
+			['bots.environment.settings', { botId: bot.id }],
+			['bots.credentials.options', { botId: bot.id }],
+			['bots.files.list', { botId: bot.id }],
+			['bots.io.read', { botId: bot.id }],
+		])
+			await assert.rejects(
+				restricted.client.query(op, payload),
+				(e) => e.code === 'forbidden',
+			);
+		for (const op of [
+			'bots.environment.set-settings',
+			'bots.engine.check',
+			'bots.image.build',
+			'bots.shell.open',
+			'bots.desktop.open',
+			'bots.files.open',
+			'bots.credentials.save',
+		])
+			await assert.rejects(
+				restricted.client.command(op, {
+					botId: bot.id,
+					generation: 1,
+					cols: 80,
+					rows: 24,
+				}),
+				(e) => e.code === 'forbidden',
+			);
+		await assert.rejects(
+			restricted.client.subscribe('bots.engine.changed'),
+			(e) => e.code === 'forbidden',
+		);
+	}
+	await c.bots.control(bot.id, sent.sessionId, 'stop');
+});
+
+test('engine pin changes require confirmation; builds serialize, bound output and preserve the previous image on failure', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	process.env.TERMINAY_FAKE_ENGINE_ID = 'replacement-engine';
+	assert.equal((await c.engine.status()).reason, 'engine-changed');
+	await assert.rejects(c.engine.use('docker', 'unix:///fake/bots.sock'));
+	await c.engine.use('docker', 'unix:///fake/bots.sock', true);
+	assert.equal((await c.engine.status()).available, true);
+	process.env.TERMINAY_FAKE_BUILD_LOG_BYTES = '300000';
+	await Promise.all([c.engine.build(), c.engine.build()]);
+	assert.ok(r.calls().filter((call) => call.args?.[2] === 'build').length >= 1);
+	assert.equal(Buffer.byteLength(await c.engine.log()), 256 * 1024);
+	const image = (await c.engine.status()).image;
+	process.env.TERMINAY_FAKE_BUILD_FAIL = '1';
+	await assert.rejects(c.engine.build());
+	const failed = (await c.engine.status()).image;
+	assert.equal(failed.state, 'failed');
+	assert.equal(failed.fingerprint, image.fingerprint);
+	delete process.env.TERMINAY_FAKE_BUILD_FAIL;
+	await c.engine.build();
+	assert.equal((await c.engine.status()).image.state, 'current');
+});
+
+test('agent picker retains disabled declarations and exposes per-bot sign-in methods', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t, {
+		catalog: async () => [
+			{
+				extensionId: 'fake',
+				extensionName: 'Fake extension',
+				contribution: agent,
+				enabled: true,
+			},
+			{
+				extensionId: 'disabled',
+				extensionName: 'Disabled extension',
+				contribution: { ...agent, id: 'disabled/agent' },
+				enabled: false,
+			},
+		],
+	});
+	const c = await r.connect();
+	await c.engine.build();
+	r.agents.botAgentStatus = async () => ({
+		available: true,
+		value: { state: 'not_signed_in' },
+	});
+	const agents = await c.bots.agents();
+	assert.deepEqual(agents[0].status, { state: 'ready' });
+	assert.deepEqual(agents[0].signInMethods, ['device', 'token']);
+	assert.deepEqual(agents[1].status, {
+		state: 'unavailable',
+		action: { label: 'Enable extension', kind: 'enable-extension' },
+	});
+});
+
+test('an uncomposed Bots capability is omitted from server hello capabilities', async () => {
+	const composition = createServerCoreComposition({
+		serverId: 'without-bots',
+		serverVersion: 'test',
+		capabilities: ['bots.v1'],
+		allowUnresolvedTestSessions: true,
+		ptyFactory: {
+			spawn: () => {
+				throw new Error('unused');
+			},
+		},
+	});
+	assert.ok(!composition.coreOptions.capabilities.includes('bots.v1'));
+	await composition.shutdown();
+});
+
+test('environment settings over the connection deliver typed refusals and bots.changed invalidations', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	const bot = await c.bots.save({ name: 'Settings', agentId: agent.id });
+	const environment = new BotEnvironmentClient(
+		new TerminayClientFacade(c.client),
+	);
+	const before = await environment.settings(bot.id);
+	assert.equal(before.idleStopMs, 1800000);
+	const subscription = await c.client.subscribe('bots.changed');
+	t.after(() => subscription.unsubscribe());
+	const events = [];
+	subscription.onEvent((event) => events.push(event.payload));
+	await assert.rejects(
+		environment.setSettings({ botId: bot.id, shareEngineSocket: true }),
+		(e) =>
+			e.cause.code === 'forbidden' &&
+			e.cause.details.reason === 'confirmation-required' &&
+			e.cause.details.socketWarning === 'engine-control',
+	);
+	const saved = await environment.setSettings({
+		botId: bot.id,
+		idleStopMs: null,
+		expectedRevision: before.revision,
+	});
+	assert.equal(saved.revision, before.revision + 1);
+	assert.equal(saved.idleStopMs, null);
+	await assert.rejects(
+		environment.setSettings({
+			botId: bot.id,
+			idleStopMs: 300000,
+			expectedRevision: before.revision,
+		}),
+		(e) => e.cause.code === 'conflict' && e.cause.details.reason === 'conflict',
+	);
+	assert.equal(events.length, 1);
+	assert.deepEqual(Object.keys(events[0]).sort(), ['botId', 'revision']);
+	assert.equal(events[0].botId, bot.id);
+});
+
+const terminalText = async (terminal) => {
+	let text = '';
+	for await (const bytes of terminal.read())
+		text += Buffer.from(bytes).toString();
+	return text;
+};
+const deviceMode = (r, mode) =>
+	writeFileSync(join(r.root, 'device-mode-next.json'), JSON.stringify(mode));
+
+test('9.4 unsigned messages and trigger firings fail before sessions, helpers or containers', {
+	timeout: 10000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	const bot = await c.bots.save({ name: 'Unsigned', agentId: agent.id });
+	assert.deepEqual(bot.signIn, { kind: 'none' });
+	const before = r.calls().length;
+	await assert.rejects(c.bots.send(bot.id, 'normal'), (e) => {
+		assert.equal(e.code, 'unavailable');
+		assert.match(e.message, /Configure › Profile › Sign-in/);
+		return true;
+	});
+	const trigger = r.service.triggers.create(bot.id, {
+		name: 'Tick',
+		prompt: 'normal',
+		condition: { kind: 'every', intervalMs: 300000 },
+		enabled: true,
+	});
+	const firing = await r.service.triggers.runNow(bot.id, trigger.id);
+	assert.equal(firing.outcome, 'failed');
+	assert.equal(firing.sessionId, null);
+	assert.match(firing.reason, /Configure › Profile › Sign-in/);
+	assert.deepEqual(r.service.sessions.list(bot.id), []);
+	assert.equal(r.calls().length, before);
+});
+
+test('9.3/9.4 device terminal prints a URL/code, records success, restores config per session and signs out while stopped', {
+	timeout: 15000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	await c.engine.build();
+	const bot = await c.bots.save({ name: 'Device', agentId: agent.id });
+	await assert.rejects(c.bots.save({ ...bot, signIn: { kind: 'device' } }));
+	const terminal = await c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in');
+	assert.match(
+		await terminalText(terminal),
+		/https:\/\/example.invalid\/device.*TEST-CODE/,
+	);
+	assert.deepEqual((await c.bots.get(bot.id)).signIn, { kind: 'device' });
+	assert.equal((await c.credentials.options(bot.id)).device.signedIn, true);
+	const start = r
+		.calls()
+		.find((call) => call.args?.some((arg) => arg.startsWith('signin-')));
+	assert.ok(start.args.includes('HOME=/home/bot'));
+	assert.deepEqual(start.args.slice(-3), ['codex', 'login', '--device-auth']);
+	const sent = await c.bots.send(bot.id, 'normal');
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(sent.sessionId).state === 'completed',
+	);
+	assert.match(
+		r.calls().find((call) => call.agent).config[0].content,
+		/"file"/,
+	);
+	assert.equal(r.calls().find((call) => call.agent).keyPresent, false);
+	await c.bots.control(bot.id, sent.sessionId, 'stop');
+	writeFileSync(
+		join(r.root, `config-terminay-bot-${bot.id}.json`),
+		JSON.stringify([{ path: '.codex/config.toml', content: 'tampered' }]),
+	);
+	await c.bots.send(bot.id, 'normal', sent.sessionId);
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(sent.sessionId).state === 'completed',
+	);
+	assert.match(
+		r
+			.calls()
+			.filter((call) => call.agent)
+			.at(-1).config[0].content,
+		/"file"/,
+	);
+	await c.bots.control(bot.id, sent.sessionId, 'end');
+	// Token sessions must restore the default even after a device session.
+	await c.credentials.save(bot.id, 'FAKE_KEY', Buffer.from('secret'));
+	await c.bots.save({
+		...(await c.bots.get(bot.id)),
+		signIn: { kind: 'token', environmentVariable: 'FAKE_KEY' },
+	});
+	const token = await c.bots.send(bot.id, 'normal');
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(token.sessionId).state === 'completed',
+	);
+	assert.match(
+		r
+			.calls()
+			.filter((call) => call.agent)
+			.at(-1).config[0].content,
+		/"ephemeral"/,
+	);
+	await c.bots.control(bot.id, token.sessionId, 'stop');
+	const again = await c.io.shell(bot.id, 2, 80, 24, {}, 'sign-in');
+	await terminalText(again);
+	const environment = new BotEnvironmentClient(
+		new TerminayClientFacade(c.client),
+	);
+	await environment.lifecycle(bot.id, 'stop');
+	await c.credentials.deviceSignOut(bot.id);
+	assert.deepEqual((await c.bots.get(bot.id)).signIn, { kind: 'none' });
+	assert.equal((await c.credentials.options(bot.id)).device.signedIn, false);
+	const signOut = r
+		.calls()
+		.find((call) => call.args?.some((arg) => arg.startsWith('signout-')));
+	assert.deepEqual(signOut.args.slice(-3), [
+		'codex-session',
+		'forget',
+		'--all',
+	]);
+});
+
+for (const mode of ['fail', 'wait']) {
+	test(`9.4 device ${mode === 'fail' ? 'failed exit' : 'abandoned terminal'} keeps the bot unsigned`, {
+		timeout: 10000,
+	}, async (t) => {
+		const r = await setup(t),
+			c = await r.connect();
+		await c.engine.build();
+		const bot = await c.bots.save({ name: mode, agentId: agent.id });
+		deviceMode(r, mode);
+		const terminal = await c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in');
+		if (mode === 'fail') await terminalText(terminal);
+		else {
+			const reader = terminal.read()[Symbol.asyncIterator]();
+			assert.match(
+				Buffer.from((await reader.next()).value).toString(),
+				/TEST-CODE/,
+			);
+			await terminal.close();
+			await reader.return();
+		}
+		assert.deepEqual((await c.bots.get(bot.id)).signIn, { kind: 'none' });
+		await until(r.closed, 'changed', () => r.processes.size === 0);
+	});
+}
+
+test('9.3 device operations refuse restricted clients and agents without device sign-in', {
+	timeout: 15000,
+}, async (t) => {
+	const r = await setup(t),
+		owner = await r.connect();
+	await owner.engine.build();
+	const bot = await owner.bots.save({ name: 'Authority', agentId: agent.id });
+	for (const identity of [
+		{ clientId: 'read-only', authScope: 'read' },
+		{ clientId: 'capability', authScope: 'write', claims: { sessionId: 's' } },
+	]) {
+		const c = await r.connect(identity);
+		await assert.rejects(c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in'));
+		await assert.rejects(c.credentials.deviceSignOut(bot.id));
+	}
+	const { deviceSignIn, ...tokenAgent } = agent;
+	r.agents.botAgentContributions = () => [
+		{ extensionId: 'fake', contribution: tokenAgent },
+	];
+	assert.equal((await owner.credentials.options(bot.id)).device, null);
+	await assert.rejects(owner.io.shell(bot.id, 1, 80, 24, {}, 'sign-in'));
+	await assert.rejects(owner.credentials.deviceSignOut(bot.id));
+	assert.deepEqual((await owner.bots.get(bot.id)).signIn, { kind: 'none' });
+});
+
+test('9.4 failed sign-out retains the device state', {
+	timeout: 10000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	await c.engine.build();
+	const bot = await c.bots.save({ name: 'Signout failure', agentId: agent.id });
+	await terminalText(await c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in'));
+	deviceMode(r, 'fail-signout');
+	await assert.rejects(c.credentials.deviceSignOut(bot.id));
+	assert.deepEqual((await c.bots.get(bot.id)).signIn, { kind: 'device' });
+});
+
+test('9.3 sign-in stream rechecks connection, bot, generation and revocation', {
+	timeout: 15000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect(),
+		other = await r.connect({ clientId: 'other', authScope: 'write' });
+	await c.engine.build();
+	const bot = await c.bots.save({ name: 'Bound device', agentId: agent.id });
+	deviceMode(r, 'wait');
+	const terminal = await c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in');
+	const reader = terminal.read()[Symbol.asyncIterator]();
+	assert.match(
+		Buffer.from((await reader.next()).value).toString(),
+		/TEST-CODE/,
+	);
+	await assert.rejects(
+		other.client.queryWithBody('bots.io.read', { ...terminal.handle }),
+	);
+	for (const patch of [{ botId: 'abc123def456' }, { generation: 2 }])
+		await assert.rejects(
+			c.client.queryWithBody('bots.io.read', { ...terminal.handle, ...patch }),
+		);
+	await terminal.resize(100, 40);
+	await c.connection.close({ code: 'unauthorized', message: 'revoked' });
+	await c.task;
+	await until(r.closed, 'changed', () => r.processes.size === 0);
+	assert.deepEqual(r.service.bots.get(bot.id).signIn, { kind: 'none' });
+	await reader.return();
+});

@@ -1,0 +1,732 @@
+/**
+ * A bot's environment: Overview, Files, Shell, Desktop, and Containers.
+ */
+
+import type {
+	BotEnvironmentOverview,
+	BotProfile,
+	BotSiblingContainer,
+} from '@terminay/protocol';
+import {
+	ChevronDown,
+	FolderOpen,
+	Monitor,
+	RefreshCw,
+	SquareTerminal,
+} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { BotDesktopView } from './BotDesktopView';
+import {
+	EnvironmentSettingsCard,
+} from './BotEnvironmentSettings';
+import { BotFilesView } from './BotFilesView';
+import { BotShellView } from './BotShellView';
+import {
+	ENVIRONMENT_LABELS,
+	SESSION_STATE_LABELS,
+	sessionTitle,
+	shortAge,
+} from './botsModel';
+import { refusalText, type ServerBots } from './useServerBots';
+
+export const BOT_ENVIRONMENT_TABS = [
+	'overview',
+	'files',
+	'shell',
+	'desktop',
+	'containers',
+] as const;
+export type BotEnvironmentSubTab = (typeof BOT_ENVIRONMENT_TABS)[number];
+const TAB_LABELS: Readonly<Record<BotEnvironmentSubTab, string>> = {
+	overview: 'Overview',
+	files: 'Files',
+	shell: 'Shell',
+	desktop: 'Desktop',
+	containers: 'Containers',
+};
+
+export function formatBytes(bytes: number | null): string {
+	if (bytes === null) return '—';
+	const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+export function formatUptime(ms: number): string {
+	if (ms <= 0) return '—';
+	const m = Math.floor(ms / 60_000);
+	if (m < 60) return `${m}m`;
+	const h = Math.floor(m / 60);
+	if (h < 48) return `${h}h ${m % 60}m`;
+	return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+export function BotEnvironmentPanel({
+	server,
+	bot,
+	tab,
+	onTabChange,
+	visible,
+}: Readonly<{
+	server: ServerBots;
+	bot: BotProfile;
+	tab: BotEnvironmentSubTab;
+	onTabChange: (tab: BotEnvironmentSubTab) => void;
+	visible: boolean;
+}>) {
+	return (
+		<div className="bots-env" data-terminay-bot-panel="environment">
+			<div className="bots-env__nav">
+				<div className="bots-seg" role="tablist" aria-label="Environment">
+				{BOT_ENVIRONMENT_TABS.map((key) => (
+					<button
+						key={key}
+						type="button"
+						role="tab"
+						aria-selected={tab === key}
+						className={tab === key ? 'bots-seg--on' : ''}
+						onClick={() => onTabChange(key)}
+						data-terminay-bot-env-tab={key}
+					>
+						{TAB_LABELS[key]}
+					</button>
+				))}
+				</div>
+			</div>
+			<div className="bots-env__body">
+				{tab === 'overview' ? (
+					<OverviewView server={server} bot={bot} onTabChange={onTabChange} />
+				) : tab === 'files' ? (
+					<BotFilesView server={server} bot={bot} />
+				) : tab === 'shell' ? (
+					<BotShellView server={server} bot={bot} visible={visible} />
+				) : tab === 'desktop' ? (
+					<BotDesktopView server={server} bot={bot} visible={visible} />
+				) : (
+					<ContainersView
+						server={server}
+						bot={bot}
+						onOverview={() => onTabChange('overview')}
+					/>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function OverviewView({
+	server,
+	bot,
+	onTabChange,
+}: Readonly<{
+	server: ServerBots;
+	bot: BotProfile;
+	onTabChange: (tab: BotEnvironmentSubTab) => void;
+}>) {
+	const [menu, setMenu] = useState(false);
+	const [details, setDetails] = useState(false);
+	const [overview, setOverview] = useState<BotEnvironmentOverview>();
+	const [error, setError] = useState<string>();
+	const [busy, setBusy] = useState<string>();
+	const [confirm, setConfirm] = useState<'stop' | 'recreate'>();
+	const sessions = server.sessions.get(bot.id) ?? [];
+	const running = sessions.some(
+		(s) => s.state === 'running' || s.state === 'needs-you',
+	);
+
+	// Usage is read when the Overview opens and on Refresh, never on a timer.
+	const load = useCallback(() => {
+		server.environment
+			.overview(bot.id)
+			.then((next) => {
+				setOverview(next);
+				setError(undefined);
+			})
+			.catch((cause: unknown) => setError(refusalText(cause)));
+	}, [server.environment, bot.id]);
+	useEffect(load, [load]);
+
+	// Lifecycle changes move the projection's environment state.
+	const projected = server.environments.get(bot.id);
+	useEffect(() => {
+		if (overview !== undefined && projected !== overview.state) load();
+	}, [projected]);
+
+	const lifecycle = (
+		action: 'start' | 'stop' | 'restart' | 'recreate',
+		confirmed = false,
+	) => {
+		setBusy(action);
+		setError(undefined);
+		server.environment
+			.lifecycle(bot.id, action, { confirmed })
+			.then(() => {
+				server.refreshBot(bot.id);
+				load();
+			})
+			.catch((cause: unknown) => setError(refusalText(cause)))
+			.finally(() => setBusy(undefined));
+	};
+	const ask = (action: 'stop' | 'recreate') =>
+		running ? setConfirm(action) : lifecycle(action, true);
+
+	if (overview === undefined)
+		return (
+			<div className="bots-cpad">
+				{error ? (
+					<div className="bots-note bots-note--error">{error}</div>
+				) : (
+					<p className="bots-faint">Reading the environment…</p>
+				)}
+			</div>
+		);
+
+	const state = overview.state;
+	const up = state === 'running';
+	const activity = [...sessions]
+		.sort((a, b) => b.startedAt - a.startedAt)
+		.slice(0, 6);
+	return (
+		<div className="bots-scroll bots-cpad" data-terminay-bot-env-state={state}>
+			<div className="bots-hero">
+				<div className={`bots-hero__icon bots-env-state--${state}`}>
+					<Monitor size={24} aria-hidden="true" />
+				</div>
+				<div className="bots-grow">
+					<h3 className="bots-hero__title">
+						{bot.name}’s machine is{' '}
+						{up ? 'running' : ENVIRONMENT_LABELS[state].toLowerCase()}
+					</h3>
+					<p className="bots-faint">
+						{up
+							? `Up ${formatUptime(overview.uptimeMs)} · ${
+									overview.cpuPercent === null
+										? '—'
+										: `${overview.cpuPercent.toFixed(0)}%`
+								} CPU · ${formatBytes(overview.memoryBytes)} memory`
+							: state === 'starting' || state === 'building'
+								? 'Getting ready…'
+								: 'Start it to use the desktop and shell. Files work while it is stopped.'}
+					</p>
+				</div>
+				<div className="bots-row-actions">
+					{up ? (
+						<button
+							type="button"
+							className="bots-btn"
+							disabled={busy !== undefined}
+							onClick={() => ask('stop')}
+							data-terminay-bot-env-action="stop"
+						>
+							Stop
+						</button>
+					) : (
+						<button
+							type="button"
+							className="bots-btn bots-btn--primary"
+							disabled={
+								busy !== undefined ||
+								state === 'starting' ||
+								state === 'building'
+							}
+							onClick={() => lifecycle('start')}
+							data-terminay-bot-env-action="start"
+						>
+							Start
+						</button>
+					)}
+					<div className="bots-menuwrap">
+						<button
+							type="button"
+							className="bots-btn"
+							aria-expanded={menu}
+							aria-haspopup="menu"
+							onClick={() => setMenu((open) => !open)}
+							data-terminay-bot-env-actions="true"
+						>
+							Actions <ChevronDown size={12} aria-hidden="true" />
+						</button>
+						{menu ? (
+							<div className="bots-menu" role="menu">
+								<button
+									type="button"
+									role="menuitem"
+									disabled={busy !== undefined || !up}
+									onClick={() => {
+										setMenu(false);
+										lifecycle('restart', true);
+									}}
+									data-terminay-bot-env-action="restart"
+								>
+									Restart
+								</button>
+								<button
+									type="button"
+									role="menuitem"
+									disabled={busy !== undefined || state === 'not-created'}
+									onClick={() => {
+										setMenu(false);
+										ask('recreate');
+									}}
+									data-terminay-bot-env-action="recreate"
+								>
+									Recreate
+								</button>
+								<button
+									type="button"
+									role="menuitem"
+									onClick={() => {
+										setMenu(false);
+										onTabChange('containers');
+									}}
+								>
+									Containers
+								</button>
+							</div>
+						) : null}
+					</div>
+				</div>
+			</div>
+			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
+			{!overview.current && state !== 'not-created' ? (
+				<div
+					className="bots-note bots-note--warn"
+					data-terminay-bot-env-outdated="true"
+				>
+					The container was made from an older image or settings.{' '}
+					<button
+						type="button"
+						className="bots-link"
+						onClick={() => ask('recreate')}
+					>
+						Recreate to update
+					</button>
+					. The home volume is kept.
+				</div>
+			) : null}
+			{overview.socketChangePending || overview.limitsChangePending ? (
+				<div
+					className="bots-note bots-note--warn"
+					data-terminay-bot-env-pending="true"
+				>
+					{overview.socketChangePending && overview.limitsChangePending
+						? 'The Share engine socket and limits changes apply'
+						: overview.socketChangePending
+							? 'The Share engine socket change applies'
+							: 'The new limits apply'}{' '}
+					when the container is recreated.{' '}
+					<button
+						type="button"
+						className="bots-link"
+						onClick={() => ask('recreate')}
+					>
+						Recreate now
+					</button>
+				</div>
+			) : null}
+			<div className="bots-ovgrid">
+				<section>
+					<h3 className="bots-lab">Use it</h3>
+					<div className="bots-usegrid">
+						<button
+							type="button"
+							className="bots-usecard"
+							disabled={!up}
+							onClick={() => onTabChange('desktop')}
+							data-terminay-bot-env-use="desktop"
+						>
+							<Monitor size={18} aria-hidden="true" />
+							<strong>Watch the desktop</strong>
+							<span className="bots-faint">
+								{up ? 'See what the bot sees.' : 'Runs while the machine runs.'}
+							</span>
+						</button>
+						<button
+							type="button"
+							className="bots-usecard"
+							onClick={() => onTabChange('shell')}
+							data-terminay-bot-env-use="shell"
+						>
+							<SquareTerminal size={18} aria-hidden="true" />
+							<strong>Open a shell</strong>
+							<span className="bots-faint">
+								{up ? 'A terminal inside the machine.' : 'Starts the machine.'}
+							</span>
+						</button>
+						<button
+							type="button"
+							className="bots-usecard"
+							onClick={() => onTabChange('files')}
+							data-terminay-bot-env-use="files"
+						>
+							<FolderOpen size={18} aria-hidden="true" />
+							<strong>Browse files</strong>
+							<span className="bots-faint">The bot’s home folder.</span>
+						</button>
+					</div>
+				</section>
+				<aside>
+					<h3 className="bots-lab">Activity</h3>
+					{activity.length === 0 ? (
+						<p className="bots-faint">Nothing yet.</p>
+					) : (
+						<ol className="bots-tline">
+							{activity.map((session) => (
+								<li
+									key={session.id}
+									className={`bots-tline__item bots-tline--${session.state}`}
+								>
+									<span className="bots-tline__text">
+										{sessionTitle(session)}
+									</span>
+									<span className="bots-faint">
+										{SESSION_STATE_LABELS[session.state]} ·{' '}
+										{shortAge(session.startedAt, Date.now())} ago
+									</span>
+								</li>
+							))}
+						</ol>
+					)}
+				</aside>
+			</div>
+			<div className="bots-envfoot">
+				<span>
+					{overview.limits.cpus} CPU · {formatBytes(overview.limits.memoryBytes)}{' '}
+					· {overview.image || 'terminay-bot:local'} · {formatBytes(overview.homeBytes)}{' '}
+					home
+				</span>
+				<button
+					type="button"
+					className="bots-link"
+					aria-expanded={details}
+					onClick={() => setDetails((open) => !open)}
+					data-terminay-bot-env-details="true"
+				>
+					Machine details &amp; settings{' '}
+					<ChevronDown
+						size={12}
+						aria-hidden="true"
+						style={{ transform: details ? 'rotate(180deg)' : undefined }}
+					/>
+				</button>
+			</div>
+			{details ? (
+			<div className="bots-ovgrid bots-ovgrid--details">
+				<div>
+					<section className="bots-card bots-kvcard">
+						<div className="bots-kv">
+							<span>Image</span>
+							<span className="bots-mono">
+								{overview.image || '—'}
+								{overview.current ? '' : ' · out of date'}
+							</span>
+						</div>
+						<div className="bots-kv">
+							<span>Home volume</span>
+							<span className="bots-mono">{overview.homeVolume}</span>
+						</div>
+						<div className="bots-kv">
+							<span>Limits</span>
+							<span>
+								{overview.limits.cpus} CPU ·{' '}
+								{formatBytes(overview.limits.memoryBytes)} ·{' '}
+								{overview.limits.pids} processes
+								{overview.limitsEnforced
+									? ''
+									: ' (not enforced by this engine)'}
+							</span>
+						</div>
+						<div className="bots-kv">
+							<span>Engine socket</span>
+							<span>
+								{overview.shareEngineSocket ? 'Shared' : 'Not shared'}
+							</span>
+						</div>
+					</section>
+					<h3 className="bots-lab bots-mt">Recent log</h3>
+					<pre className="bots-term" data-terminay-bot-env-log="true">
+						{overview.log.length === 0 ? 'No output yet.' : overview.log}
+					</pre>
+				</div>
+				<aside>
+					<section className="bots-card bots-kvcard">
+						<div className="bots-kv">
+							<span>CPU</span>
+							<span>
+								{overview.cpuPercent === null
+									? '—'
+									: `${overview.cpuPercent.toFixed(1)}%`}
+							</span>
+						</div>
+						<div className="bots-kv">
+							<span>Memory</span>
+							<span>{formatBytes(overview.memoryBytes)}</span>
+						</div>
+						<div className="bots-kv">
+							<span>Home size</span>
+							<span>{formatBytes(overview.homeBytes)}</span>
+						</div>
+						<div className="bots-kv">
+							<span className="bots-faint">
+								Read{' '}
+								{new Date(overview.sampledAt).toLocaleTimeString(undefined, {
+									hour: '2-digit',
+									minute: '2-digit',
+									second: '2-digit',
+								})}
+							</span>
+							<button
+								type="button"
+								className="bots-btn bots-btn--sm"
+								onClick={load}
+								data-terminay-bot-env-refresh="true"
+							>
+								<RefreshCw size={12} aria-hidden="true" /> Refresh
+							</button>
+						</div>
+					</section>
+					<EnvironmentSettingsCard
+						server={server}
+						bot={bot}
+						reloadKey={overview.sampledAt}
+						onSaved={load}
+					/>
+				</aside>
+			</div>
+			) : null}
+			{confirm !== undefined ? (
+				<div className="bots-modal" role="presentation">
+					<div
+						className="bots-dialog"
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="bots-env-confirm"
+					>
+						<h2 id="bots-env-confirm">
+							{confirm === 'stop'
+								? `Stop ${bot.name}?`
+								: `Recreate ${bot.name}?`}
+						</h2>
+						<p>
+							A session is running.{' '}
+							{confirm === 'stop' ? 'Stopping' : 'Recreating'} ends it, and ends
+							every process in the container.
+							{confirm === 'recreate' ? ' The home volume is kept.' : ''}
+						</p>
+						<footer className="bots-dialog__foot">
+							<button
+								type="button"
+								className="bots-btn"
+								onClick={() => setConfirm(undefined)}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="bots-btn bots-btn--danger"
+								onClick={() => {
+									const action = confirm;
+									setConfirm(undefined);
+									lifecycle(action, true);
+								}}
+							>
+								{confirm === 'stop' ? 'Stop' : 'Recreate'}
+							</button>
+						</footer>
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function ContainersView({
+	server,
+	bot,
+	onOverview,
+}: Readonly<{ server: ServerBots; bot: BotProfile; onOverview: () => void }>) {
+	const [list, setList] = useState<readonly BotSiblingContainer[]>();
+	const [shared, setShared] = useState<boolean>();
+	const [error, setError] = useState<string>();
+	const [logs, setLogs] = useState<{ name: string; text: string }>();
+	const [confirmRemove, setConfirmRemove] = useState<string>();
+
+	const load = useCallback(() => {
+		Promise.all([
+			server.environment.containers(bot.id),
+			server.environment.overview(bot.id),
+		])
+			.then(([containers, overview]) => {
+				setList(containers);
+				setShared(overview.shareEngineSocket);
+				setError(undefined);
+			})
+			.catch((cause: unknown) => setError(refusalText(cause)));
+	}, [server.environment, bot.id]);
+	useEffect(load, [load]);
+
+	const act = (
+		container: BotSiblingContainer,
+		action: 'start' | 'stop' | 'restart' | 'logs' | 'remove',
+	) => {
+		setError(undefined);
+		server.environment
+			.containerAction(bot.id, container.id, action, action === 'remove')
+			.then((result) => {
+				if (action === 'logs')
+					setLogs({ name: container.name, text: result ?? '' });
+				else load();
+			})
+			.catch((cause: unknown) => setError(refusalText(cause)));
+	};
+
+	return (
+		<div
+			className="bots-scroll bots-cpad"
+			data-terminay-bot-env-containers="true"
+		>
+			<div className="bots-toolbar">
+				<div>
+					<h3 className="bots-h3">Containers</h3>
+					<p className="bots-faint">
+						Containers this bot started through the engine socket. Containers
+						started without the bot’s <span className="bots-mono">docker</span>{' '}
+						command may not carry its label.
+					</p>
+				</div>
+				<button type="button" className="bots-btn bots-btn--sm" onClick={load}>
+					<RefreshCw size={12} aria-hidden="true" /> Refresh
+				</button>
+			</div>
+			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
+			{shared === false ? (
+				<div
+					className="bots-card bots-explain"
+					data-terminay-bot-socket-off="true"
+				>
+					<b>Share engine socket is off</b>
+					<span>
+						With it on, the bot can run containers of its own, such as a
+						database for its work, and they are listed here. It is off by
+						default because the bot then controls the engine’s containers.
+					</span>
+					<button
+						type="button"
+						className="bots-btn bots-btn--sm"
+						onClick={onOverview}
+					>
+						Engine socket settings
+					</button>
+				</div>
+			) : null}
+			{list === undefined ? (
+				<p className="bots-faint">Loading containers…</p>
+			) : list.length === 0 ? (
+				<p className="bots-faint">No containers.</p>
+			) : (
+				<table className="bots-tbl">
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Image</th>
+							<th>State</th>
+							<th>Ports</th>
+							<th>Created</th>
+							<th>
+								<span className="bots-sr">Actions</span>
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{list.map((container) => (
+							<tr key={container.id} data-terminay-bot-sibling={container.id}>
+								<td>{container.name}</td>
+								<td className="bots-mono">{container.image}</td>
+								<td>{container.state}</td>
+								<td className="bots-mono">{container.ports || '—'}</td>
+								<td>{container.createdAt}</td>
+								<td>
+									<div className="bots-row-actions">
+										{container.state === 'running' ? (
+											<>
+												<button
+													type="button"
+													className="bots-btn bots-btn--sm"
+													onClick={() => act(container, 'stop')}
+												>
+													Stop
+												</button>
+												<button
+													type="button"
+													className="bots-btn bots-btn--sm"
+													onClick={() => act(container, 'restart')}
+												>
+													Restart
+												</button>
+											</>
+										) : (
+											<button
+												type="button"
+												className="bots-btn bots-btn--sm"
+												onClick={() => act(container, 'start')}
+											>
+												Start
+											</button>
+										)}
+										<button
+											type="button"
+											className="bots-btn bots-btn--sm"
+											onClick={() => act(container, 'logs')}
+										>
+											Logs
+										</button>
+										{confirmRemove === container.id ? (
+											<button
+												type="button"
+												className="bots-btn bots-btn--sm bots-btn--danger"
+												onClick={() => {
+													setConfirmRemove(undefined);
+													act(container, 'remove');
+												}}
+											>
+												Confirm remove
+											</button>
+										) : (
+											<button
+												type="button"
+												className="bots-btn bots-btn--sm bots-btn--danger"
+												onClick={() => setConfirmRemove(container.id)}
+											>
+												Remove
+											</button>
+										)}
+									</div>
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+			{logs !== undefined ? (
+				<section className="bots-mt">
+					<div className="bots-toolbar">
+						<h3 className="bots-lab">Logs · {logs.name}</h3>
+						<button
+							type="button"
+							className="bots-link"
+							onClick={() => setLogs(undefined)}
+						>
+							Close
+						</button>
+					</div>
+					<pre className="bots-term">{logs.text || 'No output.'}</pre>
+				</section>
+			) : null}
+		</div>
+	);
+}

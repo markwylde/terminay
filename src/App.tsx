@@ -437,6 +437,11 @@ import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
 } from './workspace/automations/useServerAutomations';
+import { BotTab } from './workspace/bots/BotTab';
+import { BotsSection } from './workspace/bots/BotsSection';
+import { BotTabIcon, BotsSidebarList } from './workspace/bots/BotsSidebarList';
+import { requestNewBot } from './workspace/bots/botFocus';
+import { useServerBots } from './workspace/bots/useServerBots';
 import {
 	HomeOverview,
 	type HomeOverviewAutomationTarget,
@@ -8737,6 +8742,7 @@ function App({
 		[connections, primary, primaryClientContext],
 	);
 	const serverAutomations = useServerAutomations(automationEntries);
+	const serverBots = useServerBots(automationEntries);
 	// One projection per server; every terminal pane and tab reads its own
 	// pending approvals from it.
 	const serverMcpApprovals = useServerMcpApprovals(automationEntries);
@@ -10672,6 +10678,34 @@ function App({
 						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
 						onSidebarWidthCommit={setHomeSidebarWidth}
 						renderSection={renderHomeSection}
+						renderBots={(host) => (
+							<BotsSection servers={serverBots} host={host} />
+						)}
+						renderBot={(target, host) => (
+							<BotTab
+								server={serverBots.get(target.serverId)}
+								botId={target.botId}
+								host={host}
+							/>
+						)}
+						renderSidebarBots={({ activeBot, openBot, openBots }) => (
+							<BotsSidebarList
+								servers={serverBots}
+								activeBot={activeBot}
+								onOpenBot={openBot}
+								onNewBot={() => {
+									openBots();
+									requestNewBot();
+								}}
+							/>
+						)}
+						renderBotIcon={(target) =>
+							serverBots.get(target.serverId)?.bots.some(
+								(bot) => bot.id === target.botId,
+							) ? (
+								<BotTabIcon servers={serverBots} target={target} />
+							) : undefined
+						}
 						sidebarWidth={homeSidebarWidth}
 					/>
 					) : null}
