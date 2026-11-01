@@ -17,12 +17,12 @@
 
 ## 4. End-to-end mouse and tab return journeys
 
-- [ ] 4.1 Add a synthetic raw-input terminal program with long history and received-report markers to the Electron E2E suite; verify clicks, releases, wheel, and keyboard input reach the same PTY before and after a forced checkpoint-backed fresh attachment and recovery, for SGR and default encoding including high coordinate bytes.
+- [x] 4.1 Add a synthetic raw-input terminal program with long history and received-report markers to the Electron E2E suite; verify clicks, releases, wheel, and keyboard input reach the same PTY before and after a forced checkpoint-backed fresh attachment and recovery, for SGR and default encoding including high coordinate bytes.
 - [x] 4.2 Add project/terminal tab away-and-return coverage independent of forced restoration; verify the session id is unchanged and click, wheel, and keyboard markers continue. If it fails without restoration, capture the actual input/attachment state and resolve that cause before claiming the reported journey is fixed.
 - [x] 4.3 Verify disabling mouse tracking restores drag selection and viewport scrolling through retained history, including checkpoint restoration over previously active tracking; retain coverage that non-finite synthetic gesture coordinates never reach the PTY.
-- [ ] 4.4 Run the focused Electron journeys only through npm run test:e2e and retain their results; completion requires passing actual PTY-observation assertions, not only screenshots or emulator modes.
+- [x] 4.4 Run the focused Electron journeys only through npm run test:e2e and retain their results; completion requires passing actual PTY-observation assertions, not only screenshots or emulator modes.
 
 ## 5. Final checks
 
 - [ ] 5.1 Run the affected server-core checkpoint/adapter/holder suites, renderer input queue tests, relevant client-core tests, workspace typechecks, and lint for changed files; verify all required checks pass and report any platform test that could not run.
-- [ ] 5.2 Run openspec validate --all --archived and validate this change; verify the change passes, distinguish unrelated existing failures, and confirm the final diff stays within the proposed terminal mouse repair and tests.
+- [x] 5.2 Run openspec validate --all --archived and validate this change; verify the change passes, distinguish unrelated existing failures, and confirm the final diff stays within the proposed terminal mouse repair and tests.
