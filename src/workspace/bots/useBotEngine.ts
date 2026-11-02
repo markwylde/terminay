@@ -51,15 +51,36 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 		[transport],
 	);
 
+	// One read at a time. Changes that arrive during a read ask for one more
+	// read after it, however many there were, so a burst of events can never
+	// queue a burst of requests.
+	// Kept per client, so a new connection never waits on the old one's read.
+	const reading = useMemo(
+		() => ({ client, running: false, again: false }),
+		[client],
+	);
 	const load = useCallback(async () => {
 		if (client === undefined) return;
-		try {
-			setStatus(await client.status());
-			setError(undefined);
-		} catch (cause) {
-			setError(refusalText(cause));
+		const state = reading;
+		if (state.running) {
+			state.again = true;
+			return;
 		}
-	}, [client]);
+		state.running = true;
+		try {
+			do {
+				state.again = false;
+				try {
+					setStatus(await client.status());
+					setError(undefined);
+				} catch (cause) {
+					setError(refusalText(cause));
+				}
+			} while (state.again);
+		} finally {
+			state.running = false;
+		}
+	}, [client, reading]);
 
 	useEffect(() => {
 		if (client === undefined) return;
