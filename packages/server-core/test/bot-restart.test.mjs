@@ -55,7 +55,8 @@ test('5.6 kill the server mid-turn, restart: kill-all, interrupted approvals, no
 	const active = restored.sessions.find((s) => s.id === ready.active);
 	assert.equal(active.state, 'interrupted');
 	assert.equal(active.permission, null);
-	assert.equal(active.queuedMessage.status, 'not-sent');
+	assert.equal(active.queuedMessage,null);
+    assert.equal(active.open,false);
 	const trigger = restored.sessions.find((s) => s.origin.kind === 'trigger');
 	assert.equal(trigger.firing, 'skipped');
 	assert.equal(trigger.reason, 'server restarted');

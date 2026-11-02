@@ -1,5 +1,7 @@
 // No provider, network or credentials. The parent owns this fake process.
 
+import { connect } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { MessageChannel } from 'node:worker_threads';
@@ -12,6 +14,12 @@ const lines = createInterface({ input: process.stdin });
 const send = (value) =>
 	process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`);
 let sid = 'fake-session';
+let mcp;
+async function postReply(){
+ if(!mcp)return;
+ const env=Object.fromEntries(mcp.env.map(e=>[e.name,e.value]));
+ await new Promise((resolve,reject)=>{const socket=connect(env.TERMINAY_RUNTIME_SOCKET);socket.on('error',reject);socket.on('connect',()=>socket.write(JSON.stringify({token:env.TERMINAY_RUNTIME_TOKEN,message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'chat_post',arguments:{text:'secret',key:'fixture-reply'}}}})+'\n'));socket.once('data',()=>{socket.end();resolve();});});
+}
 let turn;
 let permission;
 let late = false;
@@ -30,7 +38,7 @@ const config = [
 ];
 const update = (value) =>
 	send({ method: 'session/update', params: { sessionId: sid, update: value } });
-lines.on('line', (line) => {
+lines.on('line', async (line) => {
 	const message = JSON.parse(line);
 	const { method, id, params } = message;
 	if (!method) {
@@ -74,7 +82,9 @@ lines.on('line', (line) => {
 			break;
 		case 'session/new':
 		case 'session/load':
-			if (method === 'session/load') sid = params.sessionId;
+			mcp=params.mcpServers?.find(server=>server.name==='terminay_bot');
+            if(mcp)sid=randomUUID();
+            if (method === 'session/load') sid = params.sessionId;
 			send({
 				id,
 				result: {
@@ -92,7 +102,8 @@ lines.on('line', (line) => {
 			break;
 		case 'session/prompt': {
 			turn = id;
-			const prompt = params.prompt.map((p) => p.text).join('');
+			let prompt = params.prompt.map((p) => p.text).join('');
+            if(mcp){const briefing=prompt.split('\n').find(line=>line.startsWith('{"executionId":'));if(briefing)prompt=JSON.parse(briefing).triggerMessage?.text??prompt;}
 			ignoreCancel = prompt.includes('ignore-cancel');
 			if (prompt.includes('permission')) {
 				late = prompt.includes('late');
@@ -163,6 +174,7 @@ lines.on('line', (line) => {
 				});
 			}
 			if (prompt.includes('hold')) break;
+            await postReply();
 			send({ id, result: { stopReason: 'end_turn' } });
 			turn = undefined;
 			break;

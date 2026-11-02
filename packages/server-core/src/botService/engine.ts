@@ -1,10 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
 	type EngineCallOptions,
 	EngineCommandError,
 	EngineProcess,
-	type PipedProcess,
 } from './process.js';
+import {
+	discoverSockets,
+	localPodmanConnection,
+	unixSocketPath,
+} from './socketDiscovery.js';
+import { SocketDriver } from './socketDriver.js';
+import { type EngineStream, SocketTransport } from './socketTransport.js';
 
 export type EngineKind = 'docker' | 'podman';
 export type EngineUnavailableReason =
@@ -16,6 +23,7 @@ export type EngineUnavailableReason =
 	| 'unsupported-platform'
 	| 'engine-changed';
 export interface EnginePin {
+	readonly version?: 2;
 	readonly kind: EngineKind;
 	readonly address: string;
 	readonly identity: string;
@@ -71,7 +79,7 @@ export interface EngineDriver {
 		options?: EngineCallOptions & {
 			readonly user?: string;
 			readonly tty?: boolean;
-			readonly env?: NodeJS.ProcessEnv;
+			readonly env?: Readonly<Record<string, string | undefined>>;
 			readonly environmentNames?: readonly string[];
 		},
 	): Promise<string>;
@@ -81,165 +89,17 @@ export interface EngineDriver {
 		options?: {
 			readonly user?: string;
 			readonly tty?: boolean;
-			readonly env?: NodeJS.ProcessEnv;
+			readonly env?: Readonly<Record<string, string | undefined>>;
 			readonly environmentNames?: readonly string[];
 			readonly signal?: AbortSignal;
 		},
-	): PipedProcess;
-	stream(args: readonly string[], options?: EngineCallOptions): PipedProcess;
+	): EngineStream;
+	stream(args: readonly string[], options?: EngineCallOptions): EngineStream;
 	events(
 		onEvent: (event: Record<string, unknown>) => void,
 		onEnd: () => void,
 	): () => void;
 }
-
-abstract class CliDriver implements EngineDriver {
-	constructor(
-		readonly details: EngineDetails,
-		protected readonly processRunner = new EngineProcess(),
-	) {}
-	protected get prefix(): string[] {
-		return engineAddressArgs(this.details.pin);
-	}
-	run(args: readonly string[], options?: EngineCallOptions): Promise<string> {
-		return this.processRunner.run(
-			this.details.pin.kind,
-			[...this.prefix, ...args],
-			options,
-		);
-	}
-	async json<T>(
-		args: readonly string[],
-		options?: EngineCallOptions,
-	): Promise<T> {
-		return JSON.parse(await this.run(args, options)) as T;
-	}
-	async inspect(
-		kind: 'container' | 'volume' | 'network' | 'image',
-		name: string,
-	): Promise<EngineResource | undefined> {
-		try {
-			return (await this.json<EngineResource[]>([kind, 'inspect', name]))[0];
-		} catch (error) {
-			if (error instanceof EngineCommandError && error.code === 'not-found')
-				return undefined;
-			throw error;
-		}
-	}
-	exec(
-		container: string,
-		command: readonly string[],
-		options: EngineCallOptions & {
-			readonly user?: string;
-			readonly tty?: boolean;
-			readonly env?: NodeJS.ProcessEnv;
-			readonly environmentNames?: readonly string[];
-		} = {},
-	): Promise<string> {
-		return this.run(
-			[
-				'exec',
-				'-i',
-				...(options.tty ? ['-t'] : []),
-				'-u',
-				options.user ?? 'bot',
-				'-w',
-				'/home/bot',
-				...environmentArgs(options.environmentNames),
-				container,
-				...command,
-			],
-			options,
-		);
-	}
-	execStream(
-		container: string,
-		command: readonly string[],
-		options: {
-			readonly user?: string;
-			readonly tty?: boolean;
-			readonly env?: NodeJS.ProcessEnv;
-			readonly environmentNames?: readonly string[];
-			readonly signal?: AbortSignal;
-		} = {},
-	): PipedProcess {
-		// Session/PTY owners close this event-driven stream; one-shot calls use exec().
-		return this.processRunner.stream(
-			this.details.pin.kind,
-			[
-				...this.prefix,
-				'exec',
-				'-i',
-				...(options.tty ? ['-t'] : []),
-				'-u',
-				options.user ?? 'bot',
-				'-w',
-				'/home/bot',
-				...environmentArgs(options.environmentNames),
-				container,
-				...command,
-			],
-			options,
-		);
-	}
-	stream(args: readonly string[], options?: EngineCallOptions): PipedProcess {
-		return this.processRunner.stream(
-			this.details.pin.kind,
-			[...this.prefix, ...args],
-			options,
-		);
-	}
-	events(
-		onEvent: (event: Record<string, unknown>) => void,
-		onEnd: () => void,
-	): () => void {
-		const child = this.processRunner.stream(this.details.pin.kind, [
-			...this.prefix,
-			'events',
-			'--format',
-			'{{json .}}',
-		]);
-		let pending = '';
-		let ended = false;
-		const end = () => {
-			if (!ended) {
-				ended = true;
-				onEnd();
-			}
-		};
-		child.stdin.end();
-		child.stderr.on('data', () => undefined);
-		child.stdout.on('data', (chunk: Buffer | string) => {
-			pending += chunk.toString();
-			if (pending.length > 1024 * 1024) {
-				child.kill('SIGKILL');
-				end();
-				return;
-			}
-			let newline = pending.indexOf('\n');
-			while (newline >= 0) {
-				const line = pending.slice(0, newline);
-				pending = pending.slice(newline + 1);
-				try {
-					if (line.trim()) onEvent(JSON.parse(line));
-				} catch {
-					child.kill('SIGKILL');
-					end();
-					return;
-				}
-				newline = pending.indexOf('\n');
-			}
-		});
-		child.once('error', end);
-		child.once('close', end);
-		return () => {
-			ended = true;
-			child.kill('SIGKILL');
-		};
-	}
-}
-export class DockerDriver extends CliDriver {}
-export class PodmanDriver extends CliDriver {}
 
 export function ownedResource(
 	resource: EngineResource,
@@ -261,26 +121,8 @@ export interface EnginePinStore {
 	load(): Promise<EnginePin | undefined>;
 	save(pin: EnginePin): Promise<void>;
 }
-interface Connection {
-	Name: string;
-	URI: string;
-	Default?: boolean;
-}
-interface Machine {
-	Name: string;
-	Running?: boolean;
-	SSHConfig?: { Port?: number; RemoteUsername?: string };
-}
-
-/** The caller persists pins with the server's durable state backend. No timer probes. */
-/** The bot runs as the server account's id on Linux, so home files share its
- * owner, but never as root: a root server account gets the default 1000. */
-export function botId(serverAccountId: number | undefined): number {
-	return serverAccountId && serverAccountId > 0 ? serverAccountId : 1000;
-}
-
 export class BotEngine extends EventEmitter {
-	private driverValue?: EngineDriver;
+	private driverValue?: SocketDriver;
 	private endEvents?: () => void;
 	availability: EngineAvailability = {
 		available: false,
@@ -298,243 +140,263 @@ export class BotEngine extends EventEmitter {
 			throw new Error('bot engine unavailable');
 		return this.driverValue;
 	}
+	private async probe(
+		address: string,
+	): Promise<{
+		details: EngineDetails;
+		transport: SocketTransport;
+		legacyIdentity?: string;
+	}> {
+		const transport = new SocketTransport(unixSocketPath(address));
+		const version = await transport.negotiate();
+		const info = await transport.json<{
+			SecurityOptions?: unknown;
+			ID?: string;
+		}>('GET', '/info');
+		const kind: EngineKind = /podman/i.test(
+			JSON.stringify([version.Components, version.Platform]),
+		)
+			? 'podman'
+			: 'docker';
+		let native:
+			| {
+					host?: {
+						security?: { rootless?: boolean };
+						id?: string;
+						machineID?: string;
+						hostname?: string;
+						cgroupVersion?: string;
+						cgroupControllers?: string[];
+						remoteSocket?: { path?: string };
+					};
+			  }
+			| undefined;
+		if (kind === 'podman')
+			native = await transport.json('GET', '/v4.0.0/libpod/info');
+		const host = native?.host;
+		if (kind === 'podman' && typeof host?.security?.rootless !== 'boolean')
+			throw new EngineCommandError(
+				'unsupported-engine-mode',
+				'Podman capability metadata unavailable',
+			);
+		const rootless =
+			kind === 'podman'
+				? host?.security?.rootless === true
+				: JSON.stringify(info.SecurityOptions ?? []).includes('rootless');
+		if (kind === 'docker' && rootless)
+			throw new EngineCommandError(
+				'unsupported-engine-mode',
+				'rootless Docker refused',
+			);
+		let marker: EngineResource | undefined;
+		try {
+			marker = await transport.json('GET', `/volumes/${ENGINE_MARKER}`);
+		} catch (error) {
+			if (!(error instanceof EngineCommandError && error.code === 'not-found'))
+				throw error;
+		}
+		const identity =
+			marker?.Labels?.[ENGINE_ID_LABEL] ?? `unselected:${address}`;
+		const rawSocket =
+			kind === 'docker' ? '/var/run/docker.sock' : host?.remoteSocket?.path;
+		const socketPath =
+			typeof rawSocket === 'string'
+				? rawSocket.replace(/^unix:\/\//, '')
+				: this.platform === 'linux'
+					? unixSocketPath(address)
+					: '';
+		if (socketPath && (!socketPath.startsWith('/') || /[,\0]/.test(socketPath)))
+			throw new EngineCommandError(
+				'unsupported-engine-mode',
+				'invalid daemon socket path',
+			);
+		return {
+			transport,
+			legacyIdentity:
+				kind === 'docker'
+					? info.ID
+					: (host?.id ?? host?.machineID ?? host?.hostname),
+			details: {
+				pin: { version: 2, kind, address, connection: false, identity },
+				rootless,
+				platform: this.platform,
+				socketPath,
+				limitsEnforced:
+					!rootless ||
+					(host?.cgroupVersion === 'v2' &&
+						['cpu', 'memory', 'pids'].every((c) =>
+							host?.cgroupControllers?.includes(c),
+						)),
+				botUid: this.platform === 'linux' ? botId(process.getuid?.()) : 1000,
+				botGid: this.platform === 'linux' ? botId(process.getgid?.()) : 1000,
+			},
+		};
+	}
 	async detect(kind: EngineKind, pin?: EnginePin): Promise<EngineDetails> {
 		if (this.platform !== 'linux' && this.platform !== 'darwin')
 			throw new EngineCommandError(
 				'unsupported-platform',
 				'bots require macOS or Linux',
 			);
-		if (!pin && kind === 'docker') {
-			const version = await this.runner.run('docker', ['--version']);
-			if (/podman/i.test(version) || /^docker version /.test(version))
-				return this.detect('podman');
-		}
-		let address = pin?.address;
-		let connection = pin?.connection ?? false;
-		let machineName: string | undefined;
-		if (!address && kind === 'docker') {
-			address = this.runner.env.DOCKER_HOST;
-			if (!address) {
-				const contexts = JSON.parse(
-					await this.runner.run('docker', ['context', 'inspect']),
-				) as { Endpoints?: { docker?: { Host?: string } } }[];
-				address = contexts[0]?.Endpoints?.docker?.Host;
-			}
-		}
-		if (kind === 'podman') {
-			const connections = JSON.parse(
-				await this.runner.run('podman', [
-					'system',
-					'connection',
-					'list',
-					'--format',
-					'json',
-				]),
-			) as Connection[];
-			const selected = pin
-				? pin.connection
-					? connections.find((item) => item.Name === pin.address)
-					: undefined
-				: this.runner.env.CONTAINER_HOST
-					? undefined
-					: (connections.find(
-							(item) => item.Name === this.runner.env.CONTAINER_CONNECTION,
-						) ??
-						(!this.runner.env.CONTAINER_HOST
-							? connections.find((item) => item.Default)
-							: undefined));
-			if (selected) {
-				address = selected.Name;
-				connection = true;
-			}
-			const uri =
-				selected?.URI ??
-				(connection ? undefined : (address ?? this.runner.env.CONTAINER_HOST));
-			if (uri?.startsWith('ssh://')) {
-				const url = new URL(uri);
-				const machines = JSON.parse(
-					await this.runner.run('podman', [
-						'machine',
-						'list',
-						'--format',
-						'json',
-					]),
-				) as Machine[];
-				const machine = machines.find(
-					(item) =>
-						selected?.Name === item.Name ||
-						selected?.Name === `${item.Name}-root`,
-				);
-				if (
-					!machine ||
-					!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-				)
-					throw new EngineCommandError(
-						'remote-engine',
-						'remote engine refused',
-					);
-				const inspected = JSON.parse(
-					await this.runner.run('podman', ['machine', 'inspect', machine.Name]),
-				) as Machine[];
-				if (Number(url.port) !== inspected[0]?.SSHConfig?.Port)
-					throw new EngineCommandError(
-						'remote-engine',
-						'connection does not belong to local machine',
-					);
-				machineName = machine.Name;
-			} else if (uri && !uri.startsWith('unix://'))
-				throw new EngineCommandError('remote-engine', 'remote engine refused');
-			if (connection && !selected)
-				throw new EngineCommandError(
-					'not-running',
-					'pinned connection missing',
-				);
-			address ??= uri;
-			if (!address && this.platform === 'linux') {
-				const uid = process.getuid?.() ?? 0;
-				const runtime = this.runner.env.XDG_RUNTIME_DIR;
-				if (uid !== 0 && (!runtime?.startsWith('/') || runtime.includes(',')))
-					throw new EngineCommandError(
-						'not-running',
-						'rootless Podman runtime directory missing',
-					);
-				address =
-					uid === 0
-						? 'unix:///run/podman/podman.sock'
-						: `unix://${runtime}/podman/podman.sock`;
-			}
-		}
-		if (kind === 'docker' && !address?.startsWith('unix://'))
-			throw new EngineCommandError(
-				'remote-engine',
-				'local unix socket required',
-			);
-		if (!address)
-			throw new EngineCommandError('not-running', 'engine address missing');
-		if (kind === 'podman' && !connection && this.platform !== 'linux')
-			throw new EngineCommandError(
-				'unsupported-engine-mode',
-				'native Podman URL requires Linux',
-			);
-		const prefix = engineAddressArgs({ kind, address, connection });
-		const info = JSON.parse(
-			await this.runner.run(kind, [...prefix, 'info', '--format', 'json']),
-		) as Record<string, unknown>;
-		if (kind === 'docker' && info.host) return this.detect('podman'); // shim prints "docker version <Podman version>"
-		const host = info.host as Record<string, unknown> | undefined;
-		const security = host?.security as { rootless?: boolean } | undefined;
-		const rootless =
-			kind === 'docker'
-				? JSON.stringify(info.SecurityOptions ?? []).includes('rootless')
-				: security?.rootless === true;
-		if (kind === 'docker' && rootless)
-			throw new EngineCommandError(
-				'unsupported-engine-mode',
-				'rootless Docker refused',
-			);
-		const identity =
-			kind === 'docker'
-				? info.ID
-				: (host?.id ?? host?.machineID ?? host?.hostname);
-		if (typeof identity !== 'string' || !identity)
-			throw new EngineCommandError('not-running', 'engine identity missing');
-		const remoteSocket = host?.remoteSocket as { path?: string } | undefined;
-		return {
-			pin: {
-				kind,
-				address,
-				connection,
-				identity:
-					kind === 'docker'
-						? identity
-						: `${address}:${machineName ?? 'host'}:${identity}`,
-			},
-			rootless,
-			platform: this.platform,
-			limitsEnforced:
-				kind === 'docker' ||
-				!rootless ||
-				(host?.cgroupVersion === 'v2' &&
-					Array.isArray(host?.cgroupControllers) &&
-					['cpu', 'memory', 'pids'].every((c) =>
-						(host.cgroupControllers as unknown[]).includes(c),
-					)),
-			socketPath:
-				kind === 'docker'
-					? '/var/run/docker.sock'
-					: (remoteSocket?.path ??
-						(connection
-							? '/run/podman/podman.sock'
-							: address.slice('unix://'.length))),
-			botUid: this.platform === 'linux' ? botId(process.getuid?.()) : 1000,
-			botGid: this.platform === 'linux' ? botId(process.getgid?.()) : 1000,
-		};
+		if (pin) return (await this.probe(pin.address)).details;
+		const candidates = await this.discover();
+		const found = candidates.find(
+			(c) => c.available && c.details.pin.kind === kind,
+		);
+		if (found?.available) return found.details;
+		throw new EngineCommandError(
+			candidates.find(
+				(
+					c,
+				): c is {
+					available: false;
+					reason: EngineUnavailableReason;
+					kind: EngineKind;
+				} => !c.available,
+			)?.reason ?? 'not-installed',
+			'engine unavailable',
+		);
 	}
 	async discover(): Promise<
-		readonly (EngineAvailability & { readonly kind: EngineKind })[]
+		readonly (EngineAvailability & { kind: EngineKind })[]
 	> {
-		const choices = await Promise.all(
-			['docker', 'podman'].map(async (kind) => {
-				try {
-					return {
-						kind: kind as EngineKind,
-						available: true as const,
-						details: await this.detect(kind as EngineKind),
-					};
-				} catch (error) {
-					return {
-						kind: kind as EngineKind,
-						available: false as const,
-						reason: reason(error),
-					};
-				}
-			}),
-		);
-		return choices.filter(
-			(choice, index) =>
-				!choice.available ||
-				choices.findIndex(
-					(other) =>
-						other.available &&
-						other.details.pin.kind === choice.details.pin.kind,
-				) === index,
-		);
+		try {
+			const sockets = await discoverSockets(
+				this.runner.env,
+				this.platform,
+				this.runner,
+			);
+			if (!sockets.length)
+				return [{ kind: 'docker', available: false, reason: 'not-installed' }];
+			const choices = await Promise.all(
+				sockets.map(async ({ address }) => {
+					try {
+						const { details } = await this.probe(address);
+						return {
+							kind: details.pin.kind,
+							available: true as const,
+							details,
+						};
+					} catch (error) {
+						return {
+							kind: 'docker' as const,
+							available: false as const,
+							reason: reason(error),
+						};
+					}
+				}),
+			);
+			const seen = new Set<string>();
+			return choices.filter((choice) => {
+				if (!choice.available) return true;
+				const key = choice.details.pin.identity;
+				if (seen.has(key)) return false;
+				seen.add(key);
+				return true;
+			});
+		} catch (error) {
+			return [{ kind: 'docker', available: false, reason: reason(error) }];
+		}
+	}
+	private async verifiedLegacyPin(
+		pin: EnginePin,
+	): Promise<EnginePin | undefined> {
+		try {
+			let address = pin.address,
+				machineName: string | undefined;
+			if (pin.kind === 'podman' && pin.connection) {
+				const connection = await localPodmanConnection(
+					pin.address,
+					this.runner,
+				);
+				address = connection.address;
+				machineName = connection.machineName;
+			} else if (pin.connection) return undefined;
+			const { details, legacyIdentity } = await this.probe(address);
+			const expected =
+				pin.kind === 'docker'
+					? legacyIdentity
+					: `${pin.address}:${machineName ?? 'host'}:${legacyIdentity}`;
+			return details.pin.kind === pin.kind &&
+				legacyIdentity &&
+				pin.identity === expected
+				? details.pin
+				: undefined;
+		} catch {
+			return undefined;
+		}
 	}
 	async check(
 		kind?: EngineKind,
 		acceptChanged = false,
 		selection?: EnginePin,
 	): Promise<EngineAvailability> {
-		this.endEvents?.();
-		this.endEvents = undefined;
 		try {
 			const pin = await this.store.load();
 			if (!pin && !kind)
 				throw new EngineCommandError('not-running', 'choose an engine');
-			const details = await this.detect(
-				kind ?? pin!.kind,
+			const upgraded =
+				pin && pin.version !== 2 && !acceptChanged
+					? await this.verifiedLegacyPin(pin)
+					: undefined;
+			if (pin && pin.version !== 2 && !acceptChanged && !upgraded)
+				throw new EngineCommandError(
+					'engine-changed',
+					'saved engine could not be verified',
+				);
+			const candidate =
 				selection ??
-					(acceptChanged || (kind && kind !== pin?.kind) ? undefined : pin),
+				upgraded ??
+				(pin && !acceptChanged ? pin : await this.detect(kind ?? pin!.kind));
+			let { details, transport } = await this.probe(
+				'pin' in candidate ? candidate.pin.address : candidate.address,
 			);
-			if (pin && !acceptChanged && !samePin(details.pin, pin))
+			if (pin && !acceptChanged && !upgraded && !samePin(details.pin, pin))
 				throw new EngineCommandError(
 					'engine-changed',
 					'engine identity changed',
 				);
+			if (details.pin.identity.startsWith('unselected:')) {
+				const identity = randomUUID();
+				try {
+					await transport.json('POST', '/volumes/create', {
+						Name: ENGINE_MARKER,
+						Labels: { [ENGINE_ID_LABEL]: identity },
+					});
+				} catch (error) {
+					if (
+						!(error instanceof EngineCommandError && error.code === 'conflict')
+					)
+						throw error;
+				}
+
+				({ details, transport } = await this.probe(details.pin.address));
+				if (details.pin.identity.startsWith('unselected:'))
+					throw new EngineCommandError(
+						'not-running',
+						'engine identity unavailable',
+					);
+			}
+			if (
+				!this.availability.available ||
+				!samePin(this.availability.details.pin, details.pin) ||
+				!this.driverValue
+			) {
+				this.close();
+				this.driverValue = new SocketDriver(details, transport);
+				this.endEvents = this.driverValue.events(
+					(event) => this.emit('container-event', event),
+					() => {
+						this.availability = { available: false, reason: 'not-running' };
+						this.emit('availability', this.availability);
+					},
+				);
+			}
+			this.driverValue.details = details;
 			await this.store.save(details.pin);
-			this.driverValue =
-				details.pin.kind === 'docker'
-					? new DockerDriver(details, this.runner)
-					: new PodmanDriver(details, this.runner);
 			this.availability = { available: true, details };
-			this.endEvents = this.driverValue.events(
-				(event) => this.emit('container-event', event),
-				() => {
-					this.availability = { available: false, reason: 'not-running' };
-					this.emit('availability', this.availability);
-				},
-			);
 		} catch (error) {
+			this.close();
 			this.availability = { available: false, reason: reason(error) };
 		}
 		this.emit('availability', this.availability);
@@ -545,6 +407,8 @@ export class BotEngine extends EventEmitter {
 		this.endEvents = undefined;
 	}
 }
+export const ENGINE_MARKER = 'terminay-engine-identity';
+export const ENGINE_ID_LABEL = 'terminay.engine.identity';
 function reason(error: unknown): EngineUnavailableReason {
 	return error instanceof EngineCommandError &&
 		[
@@ -560,21 +424,6 @@ function reason(error: unknown): EngineUnavailableReason {
 		: 'not-running';
 }
 
-/** Reused by the PTY host. Every engine call addresses its pin explicitly. */
-export function engineAddressArgs(
-	pin: Pick<EnginePin, 'kind' | 'address' | 'connection'>,
-): string[] {
-	return [
-		pin.kind === 'docker'
-			? '--host'
-			: pin.connection
-				? '--connection'
-				: '--url',
-		pin.address,
-	];
-}
-function environmentArgs(names: readonly string[] = []): string[] {
-	if (names.some((name) => !/^[A-Z][A-Z0-9_]*$/.test(name)))
-		throw new TypeError('invalid exec environment variable');
-	return names.flatMap((name) => ['-e', name]);
+export function botId(id: number | undefined): number {
+	return id && id > 0 ? id : 1000;
 }

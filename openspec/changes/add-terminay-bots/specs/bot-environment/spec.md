@@ -2,7 +2,7 @@
 
 ### Requirement: A container engine is required and detected
 
-Bots SHALL run on a container engine on the server's machine, either **Docker** or **Podman**, driven through that engine's own command line. The server SHALL report whether an engine is available. When none is, the server SHALL name the reason:
+Bots SHALL run on a container engine on the server's machine, either **Docker** or **Podman**, accessed through the Docker-compatible local socket API as specified by bot-container-engine. The server SHALL report whether an engine is available. When none is, the server SHALL name the reason:
 
 - not installed;
 - not running;
@@ -42,19 +42,19 @@ The server SHALL support these engines:
 - **Docker**, running rootful, on a local Unix socket. This covers Docker Desktop and OrbStack on macOS, and Docker on Linux.
 - **Podman**, rootful or rootless. This covers Podman on Linux, and the local Podman machine on macOS.
 
-A Podman machine's connection SHALL count as local, even though it is reached over SSH, when it names a machine that `podman machine list` reports on the same computer. The server SHALL refuse:
+A Podman machine SHALL count as local when accessed through its forwarded host Unix socket. The server SHALL refuse:
 
 - any other SSH or TCP connection;
 - rootless Docker;
 - Windows servers.
 
-When Docker and Podman are both available, the user SHALL choose one in the Bots section. A `docker` command that is Podman's compatibility shim SHALL be treated as Podman.
+When Docker and Podman are both available, the user SHALL choose one in the Bots section. The engine kind SHALL be identified from the server API, independently of installed CLI names. Aliases of one engine SHALL appear as one candidate.
 
 On first use, the server SHALL record:
 
 - the engine kind;
 - its endpoint or connection;
-- its identity, which is Docker's engine id, or for Podman the connection plus the machine or host identity.
+- its stable engine-local identity marker, as specified by bot-container-engine.
 
 The server SHALL address that recorded engine explicitly on every later call.
 
@@ -65,7 +65,7 @@ The server SHALL address that recorded engine explicitly on every later call.
 #### Scenario: Podman machine on macOS
 
 - **WHEN** the server runs on macOS where `docker` is Podman's shim and the default Podman machine is running
-- **THEN** the server selects Podman through that machine's connection, and bots run there
+- **THEN** the server selects Podman through that machine's forwarded local socket, and bots run there
 
 #### Scenario: Context switched while running
 
@@ -99,6 +99,8 @@ The image SHALL contain:
 - the `docker` command line;
 - the Terminay session launcher and home-volume helper;
 - the pinned ACP adapter of every bot agent contributed by an installed extension.
+
+The desktop SHALL open Chromium automatically on its own display when it starts, as the unprivileged `bot` user with the browser sandbox enabled. The browser SHALL be owned by the desktop lifecycle, independently of agent sessions and tool commands. A new browser profile SHALL open a blank page without first-run prompts.
 
 On Linux, the image's `bot` user SHALL have the user and group ids of the server account.
 
@@ -284,40 +286,34 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 - **WHEN** a process on the server machine, or in another bot, tries to connect to a bot's desktop
 - **THEN** there is no published port to connect to, and inside the bot's own container the VNC service still requires the password
 
-### Requirement: Sharing the engine socket
+### Requirement: Shared engine proxy
 
-Each bot SHALL have a **Share engine socket** setting, which SHALL be off by default. Turning it on SHALL require confirmation, and the confirmation SHALL state what the bot will control:
+Every bot SHALL receive the pinned engine through a container-owned proxy at /var/run/docker.sock, as specified by bot-engine-proxy. The proxy SHALL attribute newly created workloads without filtering engine access. Docker CLI and Compose SHALL be installed. The environment SHALL describe default proxy access without a socket-sharing toggle.
 
-- with rootful Docker or rootful Podman, every container of that engine, which on Linux is equivalent to root on the server machine;
-- with rootless Podman, every container of the server account.
-
-When the setting is on, the engine's Docker-compatible API socket SHALL be mounted at `/var/run/docker.sock` in the bot's container, and the `bot` user SHALL be able to use it. The image's `docker` command SHALL add `terminay.bot=<bot id>` to every container it creates. A change to the setting SHALL apply when the container is next recreated, and the Overview SHALL say so.
-
-#### Scenario: Off by default
-
-- **WHEN** a new bot runs `docker ps` in its shell
-- **THEN** the command fails, because the bot has no engine
-
-#### Scenario: Turning it on
-
-- **WHEN** a user turns on Share engine socket and confirms the warning
-- **THEN** after the container is recreated, `docker ps` in the bot's shell lists the engine's containers
+#### Scenario: New bot uses Compose
+- **WHEN** a newly started bot runs docker compose up with valid configuration
+- **THEN** it can reach the engine and created containers carry the bot's ownership labels
 
 ### Requirement: Containers
 
-Environment › Containers SHALL list every container that carries `terminay.bot=<bot id>`, other than the bot's own container. For each, it SHALL show the name, image, state, ports, and age, and SHALL offer start, stop, restart, view logs, and remove. Remove SHALL require confirmation.
+Environment › Containers SHALL list workload containers that carry `terminay.bot=<bot id>`. It SHALL exclude the bot's own container and Terminay infrastructure. A `terminay.workload=1` marker SHALL identify attributed workloads independently of inherited image labels. The same exclusion SHALL apply to container actions. For each workload, it SHALL show the name, image, state, ports, and age, and SHALL offer start, stop, restart, view logs, and remove. Remove SHALL require confirmation.
 
-The list SHALL say that containers started without the bot's `docker` command may not carry the label. When the bot does not share the engine socket, the tab SHALL explain the setting and offer it.
+The list SHALL say that workloads are attributed by the bot's engine proxy and that the bot can control the shared engine. Resources created outside its proxy SHALL not be attributed automatically.
 
 #### Scenario: Bot starts a database
 
 - **WHEN** a bot that shares the engine socket runs `docker run -d postgres`
 - **THEN** that container appears in the bot's Containers tab
 
-#### Scenario: Socket not shared
+#### Scenario: Shared engine control
 
-- **WHEN** a user opens Containers for a bot that does not share the engine socket
-- **THEN** the tab explains Share engine socket and offers to turn it on
+- **WHEN** a user opens Containers
+- **THEN** the tab lists that bot's attributed workloads while stating that engine access is shared
+
+#### Scenario: Internal helpers share the bot label
+
+- **WHEN** Terminay creates a Files helper or temporary probe carrying the bot's label
+- **THEN** it does not appear in Containers and cannot be targeted through that tab's actions
 
 ### Requirement: Bot sign-in choice
 
@@ -332,7 +328,7 @@ A bot SHALL sign in only with its own credential. Terminay SHALL NOT read, detec
 - sending it a message, or a trigger firing for it, SHALL be refused with `unavailable` and a message that names Configure › Profile › Sign-in;
 - no session SHALL be created and no agent SHALL start.
 
-A change of sign-in SHALL apply to sessions that start after it. A session SHALL record its sign-in. A session whose sign-in differs from the bot's current one SHALL NOT be continued, and Continue SHALL give that reason.
+A change of sign-in SHALL apply to sessions that start after it. A session SHALL record its sign-in. Each user message SHALL start a fresh execution using the current sign-in; earlier execution diagnostics SHALL retain their original sign-in metadata.
 
 #### Scenario: New bot is not signed in
 

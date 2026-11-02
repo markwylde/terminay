@@ -74,6 +74,7 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 					setStatus(await client.status());
 					setError(undefined);
 				} catch (cause) {
+					setStatus(undefined);
 					setError(refusalText(cause));
 				}
 			} while (state.again);

@@ -24,6 +24,11 @@ import {
 export interface BotIoProtocolHooks {
 	/** Supply connection-lifetime revocation and a live authorization check. */
 	readonly authority: (context: RequestContext) => BotStreamAuthority;
+	readonly image?: (
+		botId: string,
+		path: unknown,
+		signal: AbortSignal,
+	) => Promise<{ mime: string; bytes: Uint8Array }>;
 	readonly files: BotFilesService;
 	readonly shells: BotShellService;
 	readonly desktops: BotDesktopService;
@@ -143,6 +148,17 @@ export class BotIoProtocol {
 				Object.values(op).map((name) => [name, { scope: 'write' as const }]),
 			),
 			queries: {
+				[op.image]: async (request) => {
+					const p = this.payload(request);
+					if (!this.hooks.image) throw new Error('Image reading unavailable');
+					const image = await this.hooks.image(
+						String(p.botId),
+						p.path,
+						request.context.signal,
+					);
+					assertBotStreamAuthority(this.hooks.authority(request.context));
+					return { result: { mime: image.mime }, body: image.bytes };
+				},
 				[op.filesList]: async (request) => {
 					const { view, p } = this.files(request);
 					return json(await view.list(text(p.path), request.context.signal));

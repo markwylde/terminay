@@ -179,7 +179,7 @@ test('4.3 adoption refuses another server and reconciliation follows external re
 	assert.equal(service.state(botId), 'failed');
 });
 
-test('4.7 socket disabled by default, engine-side socket and gid for Docker/rootful/rootless Podman, changes apply on recreate', async (t) => {
+test('4.7 default proxy uses the private engine-side socket and gid for Docker/rootful/rootless Podman', async (t) => {
 	for (const options of [
 		{ kind: 'docker', socket: '/var/run/docker.sock' },
 		{ kind: 'podman', socket: '/run/podman/podman.sock' },
@@ -195,27 +195,14 @@ test('4.7 socket disabled by default, engine-side socket and gid for Docker/root
 			let create = driver.calls.find(
 				(args) => args[1] === 'create' && args[0] === 'container',
 			);
-			assert.equal(create.includes('--group-add'), false);
-			service.register({ id: botId, shareEngineSocket: true });
-			assert.equal((await service.overview(botId)).socketChangePending, true);
-			assert.equal((await service.overview(botId)).shareEngineSocket, false);
-			await service.recreate(botId);
-			create = driver.calls.findLast(
-				(args) => args[1] === 'create' && args[0] === 'container',
-			);
 			assert.ok(
 				create.includes(
-					`type=bind,source=${options.socket},target=/var/run/docker.sock`,
+					`type=bind,source=${options.socket},target=/run/terminay-engine/engine.sock`,
 				),
 			);
 			assert.equal(create[create.indexOf('--group-add') + 1], '999');
 			const overview = await service.overview(botId);
-			assert.equal(overview.socketChangePending, false);
-			assert.equal(overview.shareEngineSocket, true);
-			assert.equal(
-				overview.socketWarning,
-				options.rootless ? 'server-account' : 'root-equivalent',
-			);
+			assert.equal(overview.engineSocket, 'proxy');
 			assert.equal(create.includes('--userns'), Boolean(options.rootless));
 			if (options.rootless)
 				assert.ok(create.includes('keep-id:uid=501,gid=20'));
@@ -299,7 +286,7 @@ test('4.12 Overview reads figures on demand and Refresh rereads without creating
 	assert.equal(log.finish(), '[redacted][redacted]');
 });
 
-test('4.13 sibling list excludes bot and unlabelled containers; actions recheck label and removal confirmation', async (t) => {
+test('4.13 workload list and actions exclude bot, helpers, probes and other bots', async (t) => {
 	const { service, driver } = setup(t);
 	await service.start(botId);
 	const sibling = {
@@ -311,16 +298,40 @@ test('4.13 sibling list excludes bot and unlabelled containers; actions recheck 
 		Created: '2026-11-01',
 	};
 	driver.resources.set('container:database', sibling);
+	driver.resources.set('container:workload-with-image-labels', {
+		...sibling,
+		Id: 'd'.repeat(64), Name: '/workload-with-image-labels',
+		Config: {Labels: {'terminay.bot':botId,'terminay.workload':'1','terminay.managed':'0','terminay.helper':'inherited-image-label'}},
+	});
 	driver.resources.set('container:other', {
 		...sibling,
 		Id: 'e'.repeat(64),
 		Config: { Labels: { 'terminay.bot': 'other' } },
 	});
+	const internal = [
+		{ 'terminay.managed': '1', 'terminay.helper': botId },
+		{ 'terminay.managed': '1' },
+		{ 'terminay.helper': '' },
+	].map((labels, i) => ({
+		...sibling,
+		Id: String(i + 1).repeat(64),
+		Name: `/helper-${i}`,
+		Config: { Labels: { 'terminay.bot': botId, ...labels } },
+	}));
+	for (const container of internal)
+		driver.resources.set(`container:${container.Name}`, container);
 	const list = await service.containers(botId);
-	assert.equal(list.length, 1);
+	assert.equal(list.length, 2);
+	assert.ok(list.some(container=>container.name==='workload-with-image-labels'));
 	assert.equal(list[0].name, 'database');
 	assert.equal(list[0].image, 'postgres');
 	assert.match(list[0].ports, /5432/);
+	for (const container of internal)
+		for (const action of ['start', 'stop', 'restart', 'logs', 'remove'])
+			await assert.rejects(
+				service.containerAction(botId, container.Id, action, true),
+				/does not belong/,
+			);
 	for (const action of ['start', 'stop', 'restart', 'logs'])
 		await service.containerAction(botId, sibling.Id, action);
 	await assert.rejects(
@@ -409,7 +420,7 @@ test('4.7 discovers socket gid inside the engine namespace using a bounded local
 		socket: '/run/user/501/podman/podman.sock',
 	});
 	hooks.socketGid = undefined;
-	service.register({ id: botId, shareEngineSocket: true });
+	service.register({ id: botId });
 	await service.start(botId);
 	const helper = driver.calls.find(
 		(args) => args[0] === 'run' && args.includes('stat'),

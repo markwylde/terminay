@@ -33,63 +33,19 @@ test('5.2 agent launch names credential variables for the tool shell, never valu
 		assert.ok(!env.TERMINAY_CREDENTIAL_VARIABLES.includes('secret'));
 	}
 });
-test('5.4 idle chat yields to trigger; next message reloads same ACP session; profile inputs stay snapshotted', async (t) => {
-	const r = await setup(t);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await completed(r, first.sessionId);
-	await r.service.save({
-		...r.bot,
-		instructions: 'new instructions',
-		modelId: 'selected',
-	});
-	const trigger = await r.service.send(r.bot.id, 'normal', undefined, {
-		kind: 'trigger',
-		triggerId: 'trigger',
-		triggerName: 'Tick',
-		fireTime: 1,
-	});
-	await completed(r, trigger.sessionId);
-	assert.equal(r.sessions.get(first.sessionId).state, 'suspended');
-	const again = await r.service.send(r.bot.id, 'normal', first.sessionId);
-	await completed(r, again.sessionId);
-	assert.equal(again.sessionId, first.sessionId);
-	assert.equal(r.sessions.get(first.sessionId).snapshot.instructions, '');
-	assert.equal(r.sessions.get(first.sessionId).snapshot.modelId, null);
-	assert.ok(r.sessions.get(first.sessionId).updates.length > 0);
+test('each message starts a fresh provider execution and uses the current profile',async t=>{
+ const r=await setup(t);const first=await r.service.send(r.bot.id,'normal');await completed(r,first.sessionId);
+ await r.service.save({...r.bot,instructions:'new instructions',modelId:'selected'});
+ const again=await r.service.send(r.bot.id,'normal',first.sessionId);await completed(r,again.sessionId);
+ assert.notEqual(again.sessionId,first.sessionId);assert.notEqual(r.sessions.get(again.sessionId).acpSessionId,r.sessions.get(first.sessionId).acpSessionId);
+ assert.equal(r.sessions.get(first.sessionId).snapshot.instructions,'');assert.equal(r.sessions.get(again.sessionId).snapshot.instructions,'new instructions');
+ assert.equal(r.sessions.get(first.sessionId).open,false);assert.equal(r.sessions.get(again.sessionId).open,false);
+ assert.equal(r.service.messages.list(r.bot.id).total,4);
 });
-test('5.3 Stop always ends acknowledged agent group and next message reloads, keeping session open', async (t) => {
-	const r = await setup(t);
-	const first = await r.service.send(r.bot.id, 'hold');
-	await until(r.service, 'changed', () =>
-		r.sessions
-			.get(first.sessionId)
-			.updates.some((u) => u.sessionUpdate === 'plan'),
-	);
-	const child = r.children.get(first.sessionId);
-	await r.service.stop(r.bot.id, first.sessionId);
-	assert.ok(child.exitCode !== null || child.signalCode !== null);
-	assert.ok(r.calls.some((c) => c[0] === 'terminay-run' && c[1] === '--kill'));
-	assert.equal(r.sessions.get(first.sessionId).state, 'stopped');
-	assert.equal(r.sessions.get(first.sessionId).open, true);
-	await r.service.send(r.bot.id, 'normal', first.sessionId);
-	await completed(r, first.sessionId);
-});
-test('5.4 same-session simultaneous messages queue once; stopping unblocks waiting work', async (t) => {
-	const r = await setup(t);
-	const first = await r.service.send(r.bot.id, 'hold');
-	await until(r.service, 'changed', () =>
-		r.sessions
-			.get(first.sessionId)
-			.updates.some((u) => u.sessionUpdate === 'plan'),
-	);
-	const sends = await Promise.allSettled([
-		r.service.send(r.bot.id, 'one', first.sessionId),
-		r.service.send(r.bot.id, 'two', first.sessionId),
-	]);
-	assert.equal(sends.filter((s) => s.status === 'fulfilled').length, 1);
-	assert.equal(sends.filter((s) => s.status === 'rejected').length, 1);
-	await r.service.stop(r.bot.id, first.sessionId);
-	await completed(r, first.sessionId);
+test('a second user message starts while older work runs; stopping ends the old process',async t=>{
+ const r=await setup(t);const first=await r.service.send(r.bot.id,'hold');await until(r.service,'changed',()=>r.sessions.get(first.sessionId).updates.some(u=>u.sessionUpdate==='plan'));
+ const child=r.children.get(first.sessionId);const second=await r.service.send(r.bot.id,'normal');await completed(r,second.sessionId);
+ assert.equal(r.sessions.get(first.sessionId).state,'running');await r.service.stop(r.bot.id,first.sessionId);assert.ok(child.exitCode!==null||child.signalCode!==null);assert.equal(r.sessions.get(first.sessionId).open,false);
 });
 test('5.3 timeout rejects approval and closes the process before releasing activity', async (t) => {
 	const r = await setup(t);
@@ -118,7 +74,7 @@ test('5.2 model launch fallback is used only if ACP config is absent; no-load St
 	assert.equal(r.sessions.get(first.sessionId).open, false);
 	assert.throws(
 		() => r.service.continue(r.bot.id, first.sessionId),
-		/cannot load/,
+		/immutable diagnostics/,
 	);
 });
 test('5.4 a session started with another sign-in cannot continue', async (t) => {
@@ -132,7 +88,7 @@ test('5.4 a session started with another sign-in cannot continue', async (t) => 
 	});
 	assert.throws(
 		() => r.service.continue(r.bot.id, first.sessionId),
-		/different sign-in/,
+		/immutable diagnostics/,
 	);
 });
 test('5.3 cancel acknowledgement cannot leave a tool child running', async (t) => {
@@ -167,57 +123,8 @@ test('5.3 an ignored cancel is killed after the 10-second deadline', {
 	assert.ok(Date.now() - start >= 9900);
 	assert.equal(r.sessions.get(first.sessionId).state, 'stopped');
 });
-test('5.4 a suspended conversation on an adapter without load starts a new session with a notice', async (t) => {
-	const r = await setup(t, { env: { FAKE_NO_LOAD: '1' } });
-	const first = await r.service.send(r.bot.id, 'normal');
-	await completed(r, first.sessionId);
-	const trigger = await r.service.send(r.bot.id, 'normal', undefined, {
-		kind: 'trigger',
-		triggerId: 't',
-		triggerName: 'T',
-		fireTime: 1,
-	});
-	await completed(r, trigger.sessionId);
-	const next = await r.service.send(r.bot.id, 'normal', first.sessionId);
-	assert.notEqual(next.sessionId, first.sessionId);
-	assert.match(r.sessions.get(first.sessionId).reason, /starts a new session/);
-	await completed(r, next.sessionId);
-});
-test('5.4 two devices sending without a session id share the current chat; New chat ends it before new inputs are snapshotted', async (t) => {
-	const r = await setup(t);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await completed(r, first.sessionId);
-	const second = await r.service.send(r.bot.id, 'normal');
-	await completed(r, second.sessionId);
-	assert.equal(second.sessionId, first.sessionId);
-	await r.service.save({ ...r.bot, instructions: 'new context' });
-	await r.service.newChat(r.bot.id);
-	assert.equal(r.sessions.get(first.sessionId).open, false);
-	const next = await r.service.send(r.bot.id, 'normal');
-	assert.notEqual(next.sessionId, first.sessionId);
-	assert.equal(
-		r.sessions.get(next.sessionId).snapshot.instructions,
-		'new context',
-	);
-	await completed(r, next.sessionId);
-});
-test('5.4 continuing a trigger session queues a chat turn while preserving the trigger origin in history', async (t) => {
-	const r = await setup(t);
-	const trigger = await r.service.send(r.bot.id, 'normal', undefined, {
-		kind: 'trigger',
-		triggerId: 't',
-		triggerName: 'Tick',
-		fireTime: 1,
-	});
-	await completed(r, trigger.sessionId);
-	// Completion is committed before the group closes. Wait for the queue's lease to leave.
-	await until(r.service, 'changed', () => r.activity.at(-1)?.[1] === 0);
-	r.service.continue(r.bot.id, trigger.sessionId);
-	const next = await r.service.send(r.bot.id, 'normal');
-	assert.equal(next.sessionId, trigger.sessionId);
-	await completed(r, next.sessionId);
-	assert.equal(r.sessions.get(next.sessionId).origin.kind, 'trigger');
-	assert.equal(r.sessions.get(next.sessionId).open, true);
+test('simultaneous devices create independent executions; explicit retry is idempotent',async t=>{
+ const r=await setup(t);const [a,b]=await Promise.all([r.service.postUserMessage(r.bot.id,'normal','device-a'),r.service.postUserMessage(r.bot.id,'normal','device-b')]);assert.notEqual(a.sessionId,b.sessionId);await completed(r,a.sessionId);await completed(r,b.sessionId);const retry=await r.service.postUserMessage(r.bot.id,'normal','device-a');assert.equal(retry.sessionId,a.sessionId);
 });
 test('5.1 bot records remain editable without an engine, and 5.6 records reconcile without launching processes', async (t) => {
 	const options = { engineAvailable: false };
@@ -226,7 +133,7 @@ test('5.1 bot records remain editable without an engine, and 5.6 records reconci
 	assert.equal(bots.list().length, 1);
 	await service.save({ ...r.bot, name: 'Offline Bird' });
 	assert.equal(bots.get(r.bot.id).name, 'Offline Bird');
-	await assert.rejects(service.send(r.bot.id, 'normal'), /reconciliation/);
+	await assert.rejects(service.send(r.bot.id, 'normal'), /execution could not start/);
 	const previous = sessions.create(
 		r.bot.id,
 		{ kind: 'chat' },
@@ -259,11 +166,13 @@ test('5.1 saving a profile preserves environment limits, idle stop and socket co
 		...r.environment.definition(r.bot.id),
 		limits: { cpus: 3, memoryBytes: 8 * 1024 ** 3, pids: 100 },
 		idleStopMs: null,
-		shareEngineSocket: true,
 	});
 	await r.service.save({ ...r.bot, description: 'updated' });
 	const env = r.environment.definition(r.bot.id);
 	assert.equal(env.limits.cpus, 3);
 	assert.equal(env.idleStopMs, null);
-	assert.equal(env.shareEngineSocket, true);
+	assert.equal('shareEngineSocket' in env, false);
 });
+test('restart marks accepted but undispatched messages failed without replaying actions',async t=>{const r=await setup(t);const pending=r.service.messages.post(r.bot.id,'user','Pending action',null,'pending-crash');const count=r.sessions.list(r.bot.id).length;await r.service.reconcile();const restored=r.service.messages.get(r.bot.id,pending.id);assert.equal(restored.dispatch.state,'failed');assert.equal(r.sessions.list(r.bot.id).length,count);const retry=await r.service.postUserMessage(r.bot.id,'Pending action','pending-crash');assert.equal(retry.sessionId,undefined);assert.ok(retry.error);});
+test('a correction accepted while a reply is redacted prevents a stale post',async t=>{const r=await setup(t);const active=await r.service.send(r.bot.id,'hold');await until(r.service,'changed',()=>r.sessions.get(active.sessionId).updates.some(u=>u.sessionUpdate==='plan'));const record=r.sessions.create(r.bot.id,{kind:'chat'},r.sessions.get(active.sessionId).snapshot);r.service.runtime.register(record.id);r.sessions.patch(record.id,{state:'running'});let enter,release;const entered=new Promise(resolve=>enter=resolve),gate=new Promise(resolve=>release=resolve);const original=r.service.redactMessage.bind(r.service);r.service.redactMessage=async(id,text)=>{if(text==='late result'){enter();await gate;}return original(id,text);};const posting=r.service.postBotMessage(active.sessionId,'late result','reply');await entered;await r.service.runtime.call(record.id,'sessions_post',{sessionId:active.sessionId,text:'Destination changed',key:'correction'});release();await assert.rejects(posting,/inbox corrections/);assert.equal(r.service.messages.list(r.bot.id).items.filter(m=>m.author==='bot').length,0);});
+test('clearing an accepted message during dispatch cannot return a deleted row as a new post',async t=>{const r=await setup(t);let enter,release;const entered=new Promise(resolve=>enter=resolve),gate=new Promise(resolve=>release=resolve);r.service.dispatchExecution=async()=>{enter();await gate;throw new Error('message was cleared');};const posting=r.service.postUserMessage(r.bot.id,'normal','clear-race');await entered;await r.service.clearMessages(r.bot.id);release();await assert.rejects(posting,/message log changed/);assert.equal(r.service.messages.list(r.bot.id).total,0);});

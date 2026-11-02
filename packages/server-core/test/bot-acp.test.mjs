@@ -135,66 +135,31 @@ test('5.2 session/load restores an existing ACP id and unknown client requests g
 		),
 	);
 });
-test('5.2 agent exec uses explicit engine address, root supervisor and environment names without secret arguments', () => {
+test('5.2 credentials and extension environment reach only the pinned socket exec body', () => {
 	let call;
-	const fake = {
-		stream: (...args) => {
-			call = args;
-			return {};
-		},
-	};
-	spawnBotAgent(
-		{
-			details: {
-				pin: { kind: 'docker', address: 'unix:///pinned', connection: false },
-			},
-		},
-		'abc123def456',
-		['terminay-run', 'session', '--', 'agent'],
-		{ FAKE_KEY: 'secret' },
-		fake,
-	);
-	assert.deepEqual(call[1].slice(0, 7), [
-		'--host',
-		'unix:///pinned',
-		'exec',
-		'-i',
-		'-u',
-		'root',
-		'-w',
-	]);
-	assert.ok(call[1].includes('FAKE_KEY'));
-	assert.ok(!call[1].includes('secret'));
-	assert.equal(call[2].env.FAKE_KEY, 'secret');
-});
-test('5.2 extension launch settings affect only the container, never the host CLI environment', () => {
-	let call;
-	const runner = {
-		stream: (...args) => {
-			call = args;
-			return {};
-		},
-	};
 	const driver = {
-		details: {
-			pin: { kind: 'docker', address: 'unix:///pinned', connection: false },
+		execStream: (...args) => {
+			call = args;
+			return {};
 		},
 	};
 	spawnBotAgent(
 		driver,
 		'abc123def456',
-		['terminay-run', 'sid', '--', 'agent'],
+		['terminay-run', 'session', '--', 'agent'],
 		{ FAKE_KEY: 'secret' },
-		runner,
 		{ PATH: '/agent/bin', NODE_OPTIONS: '--agent-only' },
 	);
-	assert.equal(call[2].env.PATH, undefined);
-	assert.equal(call[2].env.NODE_OPTIONS, undefined);
-	assert.ok(call[1].includes('PATH=/agent/bin'));
-	assert.ok(!call[1].includes('secret'));
+	assert.equal(call[0], 'terminay-bot-abc123def456');
+	assert.deepEqual(call[1], ['terminay-run', 'session', '--', 'agent']);
+	assert.equal(call[2].env.FAKE_KEY, 'secret');
+	assert.equal(call[2].env.PATH, '/agent/bin');
+	assert.equal(call[2].env.NODE_OPTIONS, '--agent-only');
+	assert.equal(call[2].user, 'root');
+	assert.ok(!JSON.stringify(call.slice(0, 2)).includes('secret'));
 	assert.throws(
-		() => spawnBotAgent(driver, 'abc123def456', [], { PATH: 'secret' }, runner),
-		/host engine process/,
+		() => spawnBotAgent(driver, 'abc123def456', [], { PATH: 'secret' }),
+		/reserved/,
 	);
 });
 test('5.2 Ask me can approve once, and a second device cannot replace its answer', async (t) => {

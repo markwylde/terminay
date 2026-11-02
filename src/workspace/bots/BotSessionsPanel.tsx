@@ -1,6 +1,7 @@
+import { PermissionPrompt } from './BotPermissionPrompt';
 /**
  * A bot's sessions: filter, search, and read any of them, with Stop on a
- * running session and Continue on an ended one.
+ * running execution. Completed executions remain diagnostic records.
  */
 
 import type {
@@ -39,12 +40,6 @@ const OUTCOMES: readonly OutcomeFilter[] = [
 	'failed',
 	'interrupted',
 ];
-const LIVE: ReadonlySet<BotSessionState> = new Set([
-	'running',
-	'needs-you',
-	'queued',
-	'suspended',
-]);
 
 export function formatDuration(ms: number): string {
 	const s = Math.round(ms / 1000);
@@ -54,23 +49,13 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-/** Why Continue is unavailable for an ended session, if it is. */
-export function continueBlocker(
-	record: BotSessionRecord,
-	bot: Pick<BotProfile, 'signIn'>,
-): string | undefined {
-	if (LIVE.has(record.state)) return 'This session is still open.';
-	if (!record.canLoad) return 'This agent cannot resume its sessions.';
-	if (record.snapshot.signIn.kind !== bot.signIn.kind)
-		return 'The bot’s sign-in changed since this session ran.';
-	return undefined;
-}
-
 export function BotSessionsPanel({
 	server,
 	bot,
 	onOpenInChat,
+	selectedId,
 }: Readonly<{
+	selectedId?: string;
 	server: ServerBots;
 	bot: BotProfile;
 	onOpenInChat: (sessionId: string) => void;
@@ -82,6 +67,9 @@ export function BotSessionsPanel({
 	const [query, setQuery] = useState('');
 	const [list, setList] = useState<readonly BotSessionRecord[]>();
 	const [selected, setSelected] = useState<string>();
+	useEffect(() => {
+		if (selectedId) setSelected(selectedId);
+	}, [selectedId]);
 	const [error, setError] = useState<string>();
 	const recent = server.sessions.get(bot.id);
 
@@ -189,9 +177,13 @@ export function BotSessionsPanel({
 								<span className="bots-srow__body">
 									<span className="bots-stitle">{sessionTitle(s)}</span>
 									<span className="bots-smeta">
-										<span className="bots-tchip">{ORIGIN_CHIPS[s.origin.kind]}</span>
+										<span className="bots-tchip">
+											{ORIGIN_CHIPS[s.origin.kind]}
+										</span>
 										<span>
-											{s.durationMs > 0 ? `${formatDuration(s.durationMs)} · ` : ''}
+											{s.durationMs > 0
+												? `${formatDuration(s.durationMs)} · `
+												: ''}
 											{shortAge(s.startedAt, now)} ago
 										</span>
 									</span>
@@ -231,7 +223,9 @@ const STATE_GLYPHS: Readonly<Record<BotSessionRecord['state'], string>> = {
 	suspended: '–',
 	'timed-out': '✕',
 };
-const ORIGIN_CHIPS: Readonly<Record<BotSessionRecord["origin"]["kind"], string>> = {
+const ORIGIN_CHIPS: Readonly<
+	Record<BotSessionRecord['origin']['kind'], string>
+> = {
 	chat: 'Message',
 	'run-now': 'Manual',
 	trigger: 'Trigger',
@@ -255,8 +249,7 @@ function SessionDetail({
 	);
 	const [error, setError] = useState<string>();
 	const running = record.state === 'running' || record.state === 'needs-you';
-	const blocker = continueBlocker(record, bot);
-	const ended = !LIVE.has(record.state);
+
 	const act = (work: Promise<unknown>, then?: () => void) => {
 		setError(undefined);
 		work
@@ -298,38 +291,16 @@ function SessionDetail({
 							<Square size={12} aria-hidden="true" /> Stop
 						</button>
 					) : null}
-					{record.open && !ended ? (
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							onClick={() => onOpenInChat(record.id)}
-						>
-							Open in Chat
-						</button>
-					) : null}
-					{ended ? (
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm bots-btn--primary"
-							disabled={blocker !== undefined}
-							title={blocker}
-							onClick={() =>
-								act(server.client.control(bot.id, record.id, 'continue'), () =>
-									onOpenInChat(record.id),
-								)
-							}
-							data-terminay-bot-session-continue="true"
-						>
-							Continue
-						</button>
-					) : null}
+					<button
+						type="button"
+						className="bots-btn bots-btn--sm"
+						onClick={() => onOpenInChat(record.id)}
+					>
+						Back to messages
+					</button>
 				</div>
 			</div>
-			{ended && blocker !== undefined ? (
-				<p className="bots-faint" data-terminay-bot-continue-blocked="true">
-					Continue is unavailable: {blocker}
-				</p>
-			) : null}
+
 			{record.state === 'interrupted' ? (
 				<div className="bots-note bots-note--warn">
 					The server restarted during this session. Its processes were ended and
@@ -372,6 +343,21 @@ function SessionDetail({
 					</b>
 				</div>
 			</div>
+			{record.permission ? (
+				<PermissionPrompt
+					permission={record.permission}
+					onDecide={(optionId) =>
+						act(
+							server.client.decide(
+								bot.id,
+								record.id,
+								record.permission!.id,
+								optionId,
+							),
+						)
+					}
+				/>
+			) : null}
 			{record.reason ? (
 				<p className="bots-note bots-note--warn">Reason: {record.reason}</p>
 			) : null}
@@ -385,7 +371,14 @@ function SessionDetail({
 				) : items.length === 0 ? (
 					<p className="bots-faint">No messages.</p>
 				) : (
-					<BotTranscript items={items} bot={bot} />
+					<BotTranscript
+						transport={server.transport}
+						items={items}
+						bot={bot}
+						active={
+							session.state === 'running' || session.state === 'needs-you'
+						}
+					/>
 				)}
 			</div>
 			<details className="bots-runner" data-terminay-bot-runner="true">

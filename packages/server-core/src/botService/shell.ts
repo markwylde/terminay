@@ -5,11 +5,10 @@ import {
 	botStreamGeneration,
 } from '@terminay/protocol';
 import type {
-	PtyFactory,
 	PtyProcess,
 	TerminalDimensions,
 } from '../terminalService/types.js';
-import { type EngineDriver, engineAddressArgs } from './engine.js';
+import { type EngineDriver } from './engine.js';
 import {
 	assertBotStreamAuthority,
 	type BotStreamAuthority,
@@ -18,9 +17,6 @@ import {
 export interface BotShellHooks {
 	readonly engine: () => Promise<EngineDriver>;
 	readonly start: (id: string) => Promise<void>;
-	readonly pty: PtyFactory;
-	readonly cwd: string;
-	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly activity: (id: string, delta: 1 | -1) => void;
 	/** The agent's declared device sign-in, run as the bot user in /home/bot. */
 	readonly signIn?: {
@@ -39,8 +35,8 @@ export interface BotShellStream {
 	resume(): void;
 	close(): Promise<void>;
 }
-/** The existing privileged PTY host owns the engine CLI's real TTY. Resize on
- * that PTY propagates through exec -it to the container; no host shell runs. */
+/** The engine owns the TTY. The server relays its socket exec stream and
+ * resizes it through the API, with no host CLI or PTY process. */
 export class BotShellService {
 	private readonly generations = new Map<string, number>();
 	private readonly streams = new Map<string, BotShellStream>();
@@ -75,33 +71,68 @@ export class BotShellService {
 			throw new Error('stale shell generation');
 		const driver = await this.hooks.engine();
 		const sid = `${purpose === 'sign-in' ? 'signin' : 'shell'}-${randomUUID()}`;
-		const args = [
-			...engineAddressArgs(driver.details.pin),
-			'exec',
-			'-it',
-			'-u',
-			'root',
-			'-w',
-			'/home/bot',
-			...(purpose === 'sign-in' ? ['-e', 'HOME=/home/bot'] : []),
+		let currentDimensions = dimensions;
+		const child = driver.execStream(
 			`terminay-bot-${botId}`,
-			'terminay-run',
-			sid,
-			'--',
-			...(signInCommand ?? ['/bin/bash', '-i']),
-		];
-		const spawn =
-			typeof this.hooks.pty === 'function'
-				? this.hooks.pty
-				: this.hooks.pty.spawn.bind(this.hooks.pty);
-		const pty: PtyProcess = await spawn({
-			shell: driver.details.pin.kind,
-			shellPath: driver.details.pin.kind,
-			args,
-			cwd: this.hooks.cwd,
-			env: this.hooks.environment,
-			...dimensions,
-			name: 'xterm-256color',
+			['terminay-run', sid, '--', ...(signInCommand ?? ['/bin/bash', '-i'])],
+			{
+				user: 'root',
+				tty: true,
+				env: { HOME: '/home/bot', TERM: 'xterm-256color' },
+			},
+		);
+		const pty: PtyProcess = {
+			write: async (bytes) => {
+				if (!child.stdin.write(bytes))
+					await new Promise<void>((resolve, reject) => {
+						const clean = () => {
+							child.stdin.off('drain', drained);
+							child.stdin.off('close', failed);
+						};
+						const drained = () => {
+								clean();
+								resolve();
+							},
+							failed = () => {
+								clean();
+								reject(new Error('shell closed'));
+							};
+						child.stdin.once('drain', drained);
+						child.stdin.once('close', failed);
+					});
+			},
+			resize: async (size) => child.resize(size.cols, size.rows),
+			kill: async () => {
+				child.kill();
+			},
+			pause: () => {
+				child.stdout.pause();
+			},
+			resume: () => {
+				child.stdout.resume();
+			},
+			onData: (callback) => {
+				const listener = (bytes: Buffer) => callback(bytes);
+				child.stdout.on('data', listener);
+				return () => child.stdout.off('data', listener);
+			},
+			onExit: (callback) => {
+				const listener = (code: number | null) =>
+					callback({ exitCode: code ?? 1 });
+				child.once('close', listener);
+				return () => child.off('close', listener);
+			},
+		};
+		child.stderr.on('data', () => {});
+		child.once('error', () => {
+			void close().catch(() => undefined);
+		});
+		child.once('ready', () => {
+			void child
+				.resize(currentDimensions.cols, currentDimensions.rows)
+				.catch(() => {
+					void close().catch(() => undefined);
+				});
 		});
 		let closing: Promise<void> | undefined;
 		let closed = false;
@@ -153,6 +184,7 @@ export class BotShellService {
 			resize: async (size) => {
 				check();
 				validateDimensions(size);
+				currentDimensions = size;
 				await pty.resize(size);
 			},
 			pause: () => {
@@ -172,7 +204,6 @@ export class BotShellService {
 			throw new Error('shell open superseded');
 		}
 		const data = pty.onData((bytes) => {
-			
 			try {
 				check();
 				output(bytes);

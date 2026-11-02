@@ -152,63 +152,32 @@ The context rail SHALL be shown only in Chat mode. A bot tab SHALL keep its mode
 
 ### Requirement: Chatting with a bot
 
-Sending a message in Chat mode SHALL continue the bot's current chat session, or start one if there is none. **New chat** SHALL start a new session on the next message. Starting a session SHALL start the bot's container if it is stopped, and SHALL show that progress in the chat.
+Each bot SHALL have one durable shared message log independent of executions. Every user post SHALL start a fresh provider execution, including when another execution is active. Only explicit bot-runtime chat posts SHALL appear as replies; provider output, thoughts, tools and plans SHALL remain execution diagnostics. The bot SHALL start its container on demand. The complete bounded communication and coordination contract is specified by `bot-message-log`.
 
-While a session runs:
+#### Scenario: A correction arrives during work
 
-- the reply SHALL stream into the chat;
-- tool activity SHALL be shown as expandable entries;
-- the agent's plan SHALL be shown as a checklist;
-- a running turn SHALL offer **Stop**.
+- **WHEN** a user asks for BBC News and then corrects that request to BBC Sport while the first execution runs
+- **THEN** the correction starts another execution with bounded recent messages and active execution summaries, and it can supersede the first execution before taking ownership of shared work
 
-#### Scenario: Container starts on demand
+### Requirement: Bounded concurrent execution admission
 
-- **WHEN** a user sends a message to a bot whose container is stopped
-- **THEN** the chat shows the container starting, then the agent's streamed reply
+The server SHALL admit four work executions and one reserved user-message coordination execution per bot, with at most twenty waiting executions. Each trigger SHALL have at most one pending firing. Shared shell and desktop work SHALL require exclusive bot-scoped ownership independently of admission. Instructions, pinned memories, agent, model, sign-in and approval mode SHALL be snapshotted per execution. Completed providers SHALL close rather than remaining idle for later messages.
 
-#### Scenario: New chat
+#### Scenario: Coordination while work capacity is full
 
-- **WHEN** a user chooses New chat and sends a message
-- **THEN** a new session starts, and the previous session is listed in Sessions as ended
+- **WHEN** four work executions run and a user posts a correction
+- **THEN** a reserved coordination execution can inspect, message or replace older work without first acquiring shared desktop ownership
 
-### Requirement: One turn at a time per bot
+#### Scenario: Profile edited during work
 
-A bot SHALL run at most one turn at a time. Only the session whose turn is running, or whose turn is waiting on a permission decision, SHALL hold the bot. Between turns, a chat session SHALL keep its agent running only while no other work waits for the bot. When other work is queued, the chat session SHALL be **suspended** before that work starts: its agent process is closed and the session stays open. The next message to a suspended session SHALL resume the agent's session where the agent supports resuming. Where it does not, that message SHALL start a new session, and the chat SHALL say so.
-
-The server SHALL arbitrate all of a bot's work:
-
-- A message sent during a turn of the same session SHALL be queued, up to one per session, from any device. A further message SHALL be refused as busy.
-- Each trigger SHALL have at most one pending firing.
-- A bot SHALL hold at most 20 queued items. Work beyond that SHALL be refused as busy.
-- When only one kind of work is queued, it SHALL run in order: chat messages by arrival, then trigger firings by fire time. When both kinds are queued, they SHALL alternate, one chat turn and then the oldest trigger firing, so that neither can starve the other.
-- A user SHALL be able to cancel any queued item.
-- A session's instructions, pinned memories, agent, model, sign-in, and approval mode SHALL be fixed when the session starts.
-
-#### Scenario: Idle chat does not block triggers
-
-- **WHEN** a chat session is between turns and a trigger fires
-- **THEN** the chat session is suspended, the trigger session runs, and the user's next chat message resumes the chat
-
-#### Scenario: Chat while a trigger runs
-
-- **WHEN** a user sends a message while the bot runs a trigger session's turn
-- **THEN** the message is queued, the chat shows the bot busy with that trigger, and the message is sent when that turn ends
-
-#### Scenario: Two devices send at once
-
-- **WHEN** two devices each send a message during the same running turn
-- **THEN** the first is queued, the second is refused as busy, and both devices show the same queue
-
-#### Scenario: Profile edited mid-session
-
-- **WHEN** a user edits a bot's instructions while a session runs
-- **THEN** that session keeps the instructions it started with, and the next session uses the new ones
+- **WHEN** a user edits the bot's instructions during an execution
+- **THEN** that execution retains its snapshot and subsequent executions use the revised profile
 
 ### Requirement: Stopping a turn and closing an agent
 
 **Stop** SHALL ask the agent to cancel the running turn. It SHALL then end the session's process group, so that no command the turn started keeps running: once the agent acknowledges the cancel, or after 10 seconds if it does not, first with a termination signal and then, 5 seconds later, with a kill signal. The turn SHALL be marked stopped, and the agent closed.
 
-The session SHALL stay open after Stop. The user's next message SHALL start the agent again and reload the session, for an agent that advertises session loading. For an agent that does not, Stop SHALL end the session, and the next message SHALL start a new one.
+Stop SHALL revoke the execution capability, close the execution and retain its diagnostics. The next user message SHALL start a fresh execution.
 
 An agent SHALL be closed whenever its session ends, is suspended, or times out, and whenever its bot stops. Closing SHALL first close the agent's input, then end its process group after 5 seconds. An agent SHALL count as closed only once its process group is confirmed gone.
 
@@ -219,7 +188,7 @@ Each turn SHALL have a maximum duration, settable per bot and 30 minutes by defa
 #### Scenario: Agent honours cancel, but its command keeps running
 
 - **WHEN** a user chooses Stop while the agent runs `sleep 300`, and the agent acknowledges the cancel at once
-- **THEN** the session's process group is ended, `sleep 300` no longer runs, the turn is marked stopped, and the user's next message continues the same session on a reloaded agent
+- **THEN** the session's process group is ended, `sleep 300` no longer runs, the turn is marked stopped, and the user's next message starts a fresh execution
 
 #### Scenario: Agent ignores cancel
 
@@ -241,7 +210,7 @@ When the server starts, it SHALL:
 - mark its queued messages as not sent;
 - record pending trigger firings as skipped, with the reason that the server restarted.
 
-An interrupted session SHALL offer Continue, as an ended session does.
+Interrupted executions SHALL remain available as diagnostics. They SHALL NOT be resumed automatically or offer conversation continuation.
 
 #### Scenario: Server crashes mid-turn
 
@@ -272,7 +241,7 @@ The first answer from any device SHALL decide a request. Later answers SHALL rec
 #### Scenario: Ask me
 
 - **WHEN** an Ask me bot's agent asks permission to edit a file
-- **THEN** the bot's card shows needs you, and the chat shows the request with the agent's options until a user chooses one
+- **THEN** the bot's card shows needs you, and the execution details show the request with the agent's options until a user chooses one
 
 #### Scenario: Two devices answer
 
@@ -281,7 +250,7 @@ The first answer from any device SHALL decide a request. Later answers SHALL rec
 
 ### Requirement: Sessions
 
-Every chat conversation and every trigger run SHALL be a session of exactly one bot. A session SHALL record:
+Every user-message execution and every trigger run SHALL be a session of exactly one bot. A session SHALL record:
 
 - its origin: chat, trigger (naming the trigger), or Run now;
 - the agent and model it ran with;
@@ -295,22 +264,17 @@ The Sessions tab SHALL:
 - filter them by origin and by outcome, and search them by text;
 - show a selected session's transcript and its runner output;
 - offer Stop on a running session;
-- offer **Continue** on an ended session. Continue reopens the session in Chat and resumes the agent's own session when the agent supports resuming. When the agent does not, Continue is unavailable and the reason is shown.
+- offer a return to the shared message log without resuming the selected execution.
 
 #### Scenario: Trigger run is a session
 
 - **WHEN** a schedule trigger fires
 - **THEN** a session with origin trigger, naming that trigger, appears in the bot's Sessions tab and recent sessions
 
-#### Scenario: Resuming unsupported
+#### Scenario: Reading an ended execution
 
-- **WHEN** the agent of an ended session does not support resuming
-- **THEN** Continue is unavailable and the reason is shown
-
-#### Scenario: Filter
-
-- **WHEN** a user filters Sessions to failed trigger runs
-- **THEN** only sessions whose origin is a trigger and whose outcome is failed are listed
+- **WHEN** a user opens an ended execution
+- **THEN** its diagnostics are shown independently of the shared chat, and sending another message creates a fresh execution
 
 ### Requirement: Session storage bounds and redaction
 

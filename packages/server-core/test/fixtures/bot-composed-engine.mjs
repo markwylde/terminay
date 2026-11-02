@@ -137,6 +137,8 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 	}
 } else if (action === 'rm') {
 	fs.rmSync(file(kind, args.at(-1)), { force: true });
+} else if (kind === 'run' && args.includes('stat')) {
+ process.stdout.write('999\n');
 } else if (kind === 'run' && args.includes('terminay-files')) {
 	await import('./bot-files-helper.mjs');
 } else if (kind === 'exec') {
@@ -166,7 +168,9 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 	} else if (command[0] === 'terminay-run') {
 		const sid = command[1];
 		fs.writeFileSync(path.join(root, `pid-${sid}`), String(process.pid));
-		if (sid.startsWith('signin-')) {
+		if (sid.startsWith('mcp-')) {
+            process.execve('/usr/bin/env',['env','python3',new URL('../../../../docker/terminay-bot/bin/terminay-mcp-relay',import.meta.url).pathname,sid.slice(4)],process.env);
+        } else if (sid.startsWith('signin-')) {
 			const config = read('config', args[index]);
 			if (!config?.some((f) => f.content.includes('"file"'))) process.exit(3);
 			out('Open https://example.invalid/device and enter TEST-CODE');

@@ -1,3 +1,11 @@
+import {
+	openBotRuntimeBridge,
+	type BotRuntimeBridge,
+} from './runtimeBridge.js';
+import { BotExecutionRuntime } from './runtime.js';
+import type { BotMessage } from '@terminay/protocol';
+import { join } from 'node:path';
+import { BotMessageStore } from './messages.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type {
@@ -16,6 +24,7 @@ import type {
 	BotSessionSnapshot,
 	JsonValue,
 } from '@terminay/protocol';
+import { foldTranscript } from '@terminay/protocol';
 import type { OperationRegistries, RequestContext } from '../types.js';
 import type { BotAcpClient, BotCredentialLease } from './acp.js';
 import {
@@ -49,6 +58,7 @@ export interface BotAgents {
 	): Promise<BotAgentResult<BotAgentLaunch>>;
 }
 export interface BotServiceHooks {
+	readonly serverId?: string;
 	readonly closeConnection?: (connectionId: string) => void;
 	readonly agents: BotAgents;
 	readonly environment: Pick<
@@ -103,6 +113,12 @@ export function botAgentConfigFiles(
 
 /** The server owns profiles, arbitration, ACP, permissions and all stored content. */
 export class BotService extends EventEmitter {
+	readonly messages: BotMessageStore;
+	readonly runtime: BotExecutionRuntime;
+	private readonly messageDispatches = new Map<
+		string,
+		Promise<{ sessionId: string; queueId: string }>
+	>();
 	readonly queue: BotTurnQueue;
 	readonly triggers: BotTriggers;
 	readonly connections = new BotConnectionResources((id) =>
@@ -132,6 +148,19 @@ export class BotService extends EventEmitter {
 	) {
 		super();
 		this.now = hooks.now ?? Date.now;
+		this.messages = new BotMessageStore(
+			join(sessions.root, '..', 'messages'),
+			this.now,
+		);
+		const messageChanged = (botId: string) => {
+			this.emit('messages-changed', {
+				botId,
+				sequence: this.messages.sequence(botId),
+			});
+			this.changed(botId);
+		};
+		this.messages.on('changed', messageChanged);
+		this.detach.push(() => this.messages.off('changed', messageChanged));
 		this.triggers = new BotTriggers(this, bots, this.now);
 		this.queue = new BotTurnQueue({
 			run: (item) => this.run(item),
@@ -142,6 +171,10 @@ export class BotService extends EventEmitter {
 					queuedMessage: r.queuedMessage
 						? { ...r.queuedMessage, status: 'not-sent' }
 						: null,
+					state: 'stopped',
+					open: false,
+					endedAt: this.now(),
+					reason,
 					...(r.origin.kind === 'chat'
 						? {}
 						: { firing: 'skipped', state: 'stopped', open: false, reason }),
@@ -158,12 +191,43 @@ export class BotService extends EventEmitter {
 				});
 			},
 		});
+		this.runtime = new BotExecutionRuntime(
+			this,
+			() => this.driverForRuntime(),
+			hooks.serverId ?? 'server',
+		);
 		for (const source of [bots, sessions, memories]) {
 			const changed = ({ botId }: { botId: string }) => this.changed(botId);
 			source.on('changed', changed);
 			this.detach.push(() => source.off('changed', changed));
 		}
-		for (const bot of bots.list()) this.register(bot);
+		for (const bot of bots.list()) {
+			this.register(bot);
+			this.importMessages(bot.id);
+		}
+	}
+	private importMessages(botId: string): void {
+		if (this.messages.imported(botId)) return;
+		for (const session of [...this.sessions.list(botId)]
+			.filter((s) => s.origin.kind === 'chat')
+			.sort((a, b) => a.startedAt - b.startedAt)) {
+			for (const item of foldTranscript(this.sessions.get(session.id).updates))
+				if (item.kind === 'user' || item.kind === 'agent') {
+					const message = this.messages.post(
+						botId,
+						item.kind === 'user' ? 'user' : 'bot',
+						item.text,
+						item.kind === 'agent' ? session.id : null,
+						`import:${session.id}:${item.key}`,
+					);
+					if (item.kind === 'user')
+						this.messages.setDispatch(botId, message.id, {
+							state: 'started',
+							executionId: session.id,
+						});
+				}
+		}
+		this.messages.markImported(botId);
 	}
 	async watchMemories(botId: string, context: RequestContext): Promise<string> {
 		assertBotAuthority(context);
@@ -359,10 +423,163 @@ export class BotService extends EventEmitter {
 		this.triggers.removeBot(botId);
 		await this.hooks.removeTriggers?.(botId);
 		this.sessions.removeBot(botId);
+		this.messages.removeBot(botId);
 		this.bots.remove(botId);
 		this.currentChats.delete(botId);
 	}
+	driverForRuntime(): Promise<EngineDriver> {
+		return this.hooks.driver();
+	}
+	async redactMessage(botId: string, value: string): Promise<string> {
+		const bot = this.bots.get(botId);
+		value = this.runtime.sanitizeSecrets(botId, value);
+		const snapshot = { ...bot, context: '', signIn: bot.signIn };
+		let lease: BotCredentialLease | undefined;
+		try {
+			lease = await this.hooks.credentials.acquire(botId, snapshot);
+			return lease.redact(value);
+		} catch {
+			if (bot.signIn.kind === 'none') return value;
+			throw new BotError(
+				'unavailable',
+				'Unable to safely persist message with the current sign-in',
+			);
+		} finally {
+			lease?.release();
+		}
+	}
+	async postUserMessage(
+		botId: string,
+		body: string,
+		key: string,
+	): Promise<{
+		message: BotMessage;
+		sessionId?: string;
+		queueId?: string;
+		error?: string;
+	}> {
+		text(body, 65536, 'message');
+		const message = await this.serialize(botId, async () => {
+			this.bots.get(botId);
+			this.importMessages(botId);
+			const safe = await this.redactMessage(botId, body),
+				safeKey = await this.redactMessage(botId, key);
+			return this.messages.post(botId, 'user', safe, null, safeKey);
+		});
+		if (message.dispatch?.state === 'started' && message.dispatch.executionId)
+			return { message, sessionId: message.dispatch.executionId };
+		if (message.dispatch?.state === 'failed')
+			return { message, error: message.dispatch.error };
+		let work = this.messageDispatches.get(message.id);
+		if (!work) {
+			work = this.dispatchExecution(botId, message.text, undefined, {
+				kind: 'chat',
+				messageId: message.id,
+			});
+			this.messageDispatches.set(message.id, work);
+		}
+		try {
+			const sent = await work;
+			this.messages.setDispatch(botId, message.id, {
+				state: 'started',
+				executionId: sent.sessionId,
+			});
+			return { message: this.messages.get(botId, message.id), ...sent };
+		} catch {
+			const error =
+				this.bots.get(botId).signIn.kind === 'none'
+					? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
+					: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
+			try {
+				this.messages.setDispatch(botId, message.id, {
+					state: 'failed',
+					executionId: null,
+					error,
+				});
+			} catch {
+				throw new BotError(
+					'conflict',
+					'The message log changed before this post could start',
+				);
+			}
+			return { message: this.messages.get(botId, message.id), error };
+		} finally {
+			if (this.messageDispatches.get(message.id) === work)
+				this.messageDispatches.delete(message.id);
+		}
+	}
+	async postBotMessage(
+		executionId: string,
+		body: string,
+		key: string,
+		captured: readonly { name: string; bytes: Uint8Array }[] = [],
+	): Promise<BotMessage> {
+		this.runtime.assertPosting(executionId);
+		const record = this.sessions.get(executionId);
+		const safe = await this.redactMessage(record.botId, body),
+			safeKey = await this.redactMessage(record.botId, key);
+		const files = await Promise.all(
+			captured.map(async (file) => ({
+				...file,
+				name: await this.redactMessage(record.botId, file.name),
+			})),
+		);
+		this.runtime.assertPosting(executionId);
+		try {
+			const attachments = files.map((file) =>
+				this.messages.putAttachment(record.botId, file.name, file.bytes),
+			);
+			return this.messages.post(
+				record.botId,
+				'bot',
+				safe,
+				executionId,
+				safeKey,
+				attachments,
+			);
+		} catch (error) {
+			this.messages.pruneAttachments(record.botId);
+			throw error;
+		}
+	}
+
+	async clearMessages(botId: string): Promise<void> {
+		await this.serialize(botId, async () => {
+			this.bots.get(botId);
+			for (const r of this.sessions.list(botId))
+				if (['queued', 'running', 'needs-you'].includes(r.state))
+					this.runtime.revoke(r.id);
+			await this.stopBot(botId);
+			this.messages.clear(botId);
+		});
+	}
 	async send(
+		botId: string,
+		prompt: string,
+		id?: string,
+		origin: BotSessionOrigin = { kind: 'chat' },
+		accept: () => boolean = () => true,
+	): Promise<{ sessionId: string; queueId: string }> {
+		if (origin.kind === 'chat' && !origin.messageId) {
+			if (id) this.ownedSession(botId, id);
+			const result = await this.postUserMessage(
+				botId,
+				prompt,
+				randomBytes(12).toString('hex'),
+			);
+			if (!result.sessionId)
+				throw new BotError(
+					'unavailable',
+					result.error ?? 'Execution did not start',
+				);
+			return {
+				sessionId: result.sessionId,
+				queueId: result.queueId ?? result.sessionId,
+			};
+		}
+		return this.dispatchExecution(botId, prompt, id, origin, accept);
+	}
+	private async dispatchExecution(
 		botId: string,
 		prompt: string,
 		id?: string,
@@ -381,50 +598,11 @@ export class BotService extends EventEmitter {
 				throw new BotError('busy', 'bot is stopping');
 			this.queue.unblock(botId);
 			const bot = this.bots.get(botId);
+			if (origin.kind === 'chat' && origin.messageId)
+				this.messages.get(botId, origin.messageId);
 			this.requireSignIn(bot.signIn);
-			if (!id && origin.kind === 'chat') {
-				const current = this.currentChats.get(botId);
-				if (
-					current &&
-					this.sessions.list(botId).some((s) => s.id === current && s.open)
-				)
-					id = current;
-				else
-					id = this.sessions
-						.list(botId)
-						.filter((s) => s.origin.kind === 'chat' && s.open)
-						.sort(
-							(a, b) =>
-								b.startedAt + b.durationMs - (a.startedAt + a.durationMs),
-						)[0]?.id;
-			}
-			let record: BotSessionRecord | undefined = id
-				? this.sessions.get(id)
-				: undefined;
-			if (record && record.botId !== botId)
-				throw new BotError('not_found', 'session not found');
-			if (
-				record &&
-				JSON.stringify(record.snapshot.signIn) !== JSON.stringify(bot.signIn)
-			)
-				throw new BotError('conflict', 'session used a different sign-in');
-			if (record && !record.open)
-				throw new BotError('conflict', 'continue this session before sending');
-			if (
-				record &&
-				!this.live.has(record.id) &&
-				record.acpSessionId &&
-				!record.canLoad
-			) {
-				this.sessions.patch(record.id, {
-					open: false,
-					state: 'completed',
-					endedAt: this.now(),
-					reason:
-						'agent cannot load sessions; next message starts a new session',
-				});
-				record = undefined;
-			}
+			if (id) this.ownedSession(botId, id);
+			let record: BotSessionRecord | undefined;
 			const waiting = this.queue.list(botId);
 			if (
 				waiting.length >= 20 ||
@@ -497,6 +675,7 @@ export class BotService extends EventEmitter {
 					});
 				throw new BotError('conflict', 'firing cancelled');
 			}
+			this.runtime.register(record.id);
 			const queueId = randomBytes(12).toString('hex');
 			this.sessions.patch(record.id, {
 				queuedMessage: { id: queueId, text: safe, status: 'queued' },
@@ -505,37 +684,35 @@ export class BotService extends EventEmitter {
 				{ id: queueId, botId, sessionId: record.id, origin, prompt: safe },
 				this.now(),
 			);
-			if (origin.kind === 'chat') this.currentChats.set(botId, record.id);
+
 			return { sessionId: record.id, queueId: item.id };
 		});
 	}
+	async reviseMessage(..._args: unknown[]): Promise<{ sessionId: string }> {
+		throw new BotError(
+			'validation',
+			'Edit the shared message log instead of an execution transcript',
+		);
+	}
+	async clearChat(..._args: unknown[]): Promise<void> {
+		throw new BotError(
+			'validation',
+			'Clear the shared message log instead of an execution transcript',
+		);
+	}
 	async newChat(botId: string): Promise<void> {
-		await this.serialize(botId, async () => {
-			this.bots.get(botId);
-			const current =
-				this.currentChats.get(botId) ??
-				this.sessions
-					.list(botId)
-					.find((s) => s.origin.kind === 'chat' && s.open)?.id;
-			if (current) await this.end(botId, current);
-			this.currentChats.delete(botId);
-		});
+		this.bots.get(botId);
+		throw new BotError(
+			'validation',
+			'Bots use one shared message log; send a message to start a fresh execution',
+		);
 	}
 	continue(botId: string, id: string): void {
-		const bot = this.bots.get(botId);
-		const record = this.ownedSession(botId, id);
-		if (!record.canLoad || !record.acpSessionId)
-			throw new BotError('unavailable', 'agent cannot load sessions');
-		if (JSON.stringify(record.snapshot.signIn) !== JSON.stringify(bot.signIn))
-			throw new BotError('conflict', 'session used a different sign-in');
-		if (this.live.has(id))
-			throw new BotError('busy', 'session is already open');
-		this.sessions.patch(id, {
-			open: true,
-			endedAt: null,
-			durationMs: Math.max(0, this.now() - record.startedAt),
-		});
-		this.currentChats.set(botId, id);
+		this.ownedSession(botId, id);
+		throw new BotError(
+			'unavailable',
+			'Executions are immutable diagnostics; send a new message instead',
+		);
 	}
 	private ownedSession(botId: string, id: string): BotSessionRecord {
 		const record = this.sessions.get(id);
@@ -545,7 +722,11 @@ export class BotService extends EventEmitter {
 	}
 	async stop(botId: string, id: string): Promise<void> {
 		this.ownedSession(botId, id);
+		this.runtime.revoke(id);
+		for (const item of this.queue.list(botId))
+			if (item.sessionId === id) this.queue.cancel(botId, item.id);
 		await this.closeLive(id, 'stop');
+		this.runtime.release(id);
 	}
 	async end(botId: string, id: string): Promise<void> {
 		this.ownedSession(botId, id);
@@ -599,6 +780,8 @@ export class BotService extends EventEmitter {
 	private async run(item: BotQueuedTurn): Promise<void> {
 		const record = this.sessions.get(item.sessionId);
 		let live = this.live.get(record.id);
+		let bridge: BotRuntimeBridge | undefined;
+		let pendingCredential: BotCredentialLease | undefined;
 		this.sessions.patch(record.id, {
 			state: 'running',
 			queuedMessage: null,
@@ -607,6 +790,7 @@ export class BotService extends EventEmitter {
 			permissions: [],
 			reason: null,
 		});
+		this.runtime.changed(record.id, 'execution.running');
 		let failureReason = 'agent not ready';
 		this.starting.add(record.id);
 		try {
@@ -649,8 +833,22 @@ export class BotService extends EventEmitter {
 					record.botId,
 					record.snapshot,
 				);
+				pendingCredential = credential;
 				if (this.cancelledStarts.delete(record.id)) {
 					credential.release();
+					pendingCredential = undefined;
+					return;
+				}
+				bridge = await openBotRuntimeBridge(
+					driver,
+					record.botId,
+					record.id,
+					this.runtime,
+				);
+				if (this.cancelledStarts.delete(record.id)) {
+					await bridge.close();
+					credential.release();
+					pendingCredential = undefined;
 					return;
 				}
 				const runner = (this.hooks.process ?? ((o) => new BotAgentProcess(o)))({
@@ -659,8 +857,10 @@ export class BotService extends EventEmitter {
 					sessionId: record.id,
 					snapshot: record.snapshot,
 					agent,
-					sessionEnvironment: sessionEnvironment ?? {},
-					credential,
+					sessionEnvironment: { ...sessionEnvironment, ...bridge.environment },
+					credential: bridge.wrapCredential(credential),
+					mcpServers: bridge.servers,
+					cleanupRuntime: () => bridge!.close(),
 					loadId: record.acpSessionId,
 					launch: async (modelId) => {
 						const launch = await this.hooks.agents.botAgentLaunch(agent.id, {
@@ -673,6 +873,7 @@ export class BotService extends EventEmitter {
 					onClient: (client) => this.bindClient(record.id, client),
 				});
 				live = { runner, closing: false, turn: true };
+				pendingCredential = undefined;
 				this.live.set(record.id, live);
 				const client = await runner.open();
 				live.client = client;
@@ -694,7 +895,7 @@ export class BotService extends EventEmitter {
 			this.sessions.append(record.id, { kind: 'user', text: item.prompt });
 			const first = record.acpSessionId === null;
 			await live.runner.client.prompt(
-				`${first ? `${record.snapshot.context}\n\n` : ''}${item.prompt}`,
+				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
 				record.snapshot.maxTurnMs,
 			);
 			if (!live.closing)
@@ -704,7 +905,7 @@ export class BotService extends EventEmitter {
 					permission: null,
 					permissions: [],
 					...(item.origin.kind === 'chat'
-						? {}
+						? { open: false, endedAt: this.now() }
 						: { open: false, endedAt: this.now() }),
 				});
 		} catch (error) {
@@ -725,11 +926,20 @@ export class BotService extends EventEmitter {
 			}
 		} finally {
 			this.starting.delete(record.id);
+			if (!live) {
+				try {
+					await bridge?.close();
+				} finally {
+					pendingCredential?.release();
+				}
+			}
 			if (live?.timer) clearTimeout(live.timer);
 			if (live) live.turn = false;
 			if (live?.closing) await live.stop;
-			else if (item.origin.kind !== 'chat' && live)
-				await this.closeLive(record.id, 'end');
+			else if (live) await this.closeLive(record.id, 'end');
+			this.runtime.revoke(record.id);
+			this.runtime.release(record.id);
+			this.runtime.changed(record.id, 'execution.finished');
 			this.sessions.commit(record.id);
 			this.sessions.retain(record.botId);
 		}
@@ -777,6 +987,11 @@ export class BotService extends EventEmitter {
 		id: string,
 		reason: 'stop' | 'end' | 'suspend' | 'timeout' | 'bot-stop' | 'failure',
 	): Promise<void> {
+		try {
+			this.runtime.revoke(id);
+		} catch {
+			this.emit('cleanup-failed', { botId: this.sessions.get(id).botId });
+		}
 		const live = this.live.get(id);
 		if (!live) {
 			const record = this.sessions.get(id);
@@ -799,7 +1014,7 @@ export class BotService extends EventEmitter {
 				this.cancelledStarts.add(id);
 				this.sessions.patch(id, {
 					state: reason === 'timeout' ? 'timed-out' : 'stopped',
-					open: record.canLoad,
+					open: false,
 					permission: null,
 					permissions: [],
 					endedAt: this.now(),
@@ -812,6 +1027,7 @@ export class BotService extends EventEmitter {
 		if (live.timer) clearTimeout(live.timer);
 		live.stop = (async () => {
 			await live.runner.close(reason === 'failure' ? 'end' : reason);
+			this.runtime.release(id);
 			this.live.delete(id);
 			const record = this.sessions.get(id);
 			const state =
@@ -824,8 +1040,7 @@ export class BotService extends EventEmitter {
 							: reason === 'end'
 								? 'completed'
 								: 'stopped';
-			const open =
-				reason === 'suspend' || (reason === 'stop' && record.canLoad);
+			const open = false;
 			this.sessions.patch(id, {
 				state,
 				permission: null,
@@ -908,6 +1123,28 @@ export class BotService extends EventEmitter {
 				cleaned = false;
 			}
 		}
+		for (const bot of this.bots.list())
+			for (const message of this.messages.pending(bot.id)) {
+				const execution = this.sessions
+					.list(bot.id)
+					.find(
+						(record) =>
+							record.origin.kind === 'chat' &&
+							record.origin.messageId === message.id,
+					);
+				this.messages.setDispatch(
+					bot.id,
+					message.id,
+					execution
+						? { state: 'started', executionId: execution.id }
+						: {
+								state: 'failed',
+								executionId: null,
+								error:
+									'Server restarted before this message started. Send a new message to retry.',
+							},
+				);
+			}
 		this.initialized = cleaned;
 	}
 

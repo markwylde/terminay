@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -67,11 +67,11 @@ test('environment settings validate all bounds and flags without changing durabl
 	);
 	assert.deepEqual(initial, {
 		botId: f.botId,
-		shareEngineSocket: false,
+
 		idleStopMs: 1800000,
 		limits: { cpus: 2, memoryBytes: 4294967296, pids: 1024 },
 		limitsEnforced: true,
-		socketWarning: 'root-equivalent',
+
 		revision: 0,
 	});
 	for (const patch of [
@@ -104,56 +104,19 @@ test('environment settings validate all bounds and flags without changing durabl
 	}
 });
 
-test('socket confirmation returns a typed warning for each engine; stale revision wins and refuses atomically', async (t) => {
-	for (const options of [
-		{},
-		{ kind: 'podman', rootless: true },
-		{ platform: 'darwin' },
-	]) {
-		const f = setup(t, options);
-		if (options.platform) f.driver.details.platform = options.platform;
-		const warning = options.rootless
-			? 'server-account'
-			: options.platform
-				? 'engine-control'
-				: 'root-equivalent';
-		await assert.rejects(
-			f.set({ shareEngineSocket: true, idleStopMs: null }),
-			(e) => {
-				assert.equal(e.code, 'forbidden');
-				assert.deepEqual(e.details, {
-					reason: 'confirmation-required',
-					socketWarning: warning,
-				});
-				return true;
-			},
-		);
-		assert.equal(f.store.environmentSettings(f.botId).idleStopMs, 1800000);
-		const changed = [];
-		f.store.on('changed', (event) => changed.push(event));
-		assert.equal(
-			(
-				await f.set({
-					shareEngineSocket: true,
-					confirmed: true,
-					expectedRevision: 0,
-				})
-			).result.revision,
-			1,
-		);
-		assert.equal(changed[0].botId, f.botId);
-		await assert.rejects(
-			f.set({ idleStopMs: null, expectedRevision: 0 }),
-			(e) => e.code === 'conflict' && e.details.reason === 'conflict',
-		);
-		assert.equal(changed.length, 1);
-		await f.set({ shareEngineSocket: true }); // Already enabled does not prompt again.
-		await f.set({ shareEngineSocket: false });
-		await assert.rejects(
-			f.set({ shareEngineSocket: true }),
-			(e) => e.details.reason === 'confirmation-required',
-		);
-	}
+test('settings changes use revisions and obsolete sharing flags cannot change default proxy access', async (t) => {
+ const f = setup(t);
+ for (const shareEngineSocket of [true, false]) await assert.rejects(f.set({shareEngineSocket}), e=>e.code==='validation');
+ const saved=await f.set({idleStopMs:null,expectedRevision:0});
+ assert.equal(saved.result.revision,1);
+ await assert.rejects(f.set({idleStopMs:300000,expectedRevision:0}),e=>e.code==='conflict');
+ assert.equal(f.store.environmentSettings(f.botId).idleStopMs,null);
+ const old=JSON.parse(readFileSync(f.path,'utf8'));
+ old.environments[f.botId].shareEngineSocket=false;
+ writeFileSync(f.path,JSON.stringify(old));
+ const restored=new BotStore(f.path);
+ assert.equal(restored.environmentSettings(f.botId).idleStopMs,null);
+ assert.equal('shareEngineSocket' in restored.environmentSettings(f.botId),false);
 });
 
 test('settings persist through a new store/environment and profile saves; pending flags survive restart until recreate', async (t) => {
@@ -161,13 +124,12 @@ test('settings persist through a new store/environment and profile saves; pendin
 	await f.service.start(f.botId);
 	const limits = { cpus: 3, memoryBytes: 2147483648, pids: 512 };
 	await f.set({
-		shareEngineSocket: true,
-		confirmed: true,
+
 		limits,
 		idleStopMs: null,
 	});
 	const before = await f.service.overview(f.botId);
-	assert.equal(before.socketChangePending, true);
+	assert.equal(before.engineSocket, 'proxy');
 	assert.equal(before.limitsChangePending, true);
 	await f.service.restart(f.botId);
 	assert.equal((await f.service.overview(f.botId)).limitsChangePending, true);
@@ -183,12 +145,12 @@ test('settings persist through a new store/environment and profile saves; pendin
 	assert.equal(settings.idleStopMs, null);
 	assert.deepEqual(settings.limits, limits);
 	assert.equal(settings.revision, 1);
-	assert.equal((await restarted.overview(f.botId)).socketChangePending, true);
+	assert.equal((await restarted.overview(f.botId)).engineSocket, 'proxy');
 	assert.equal((await restarted.overview(f.botId)).limitsChangePending, true);
 	assert.ok(readFileSync(`${f.path}.previous`, 'utf8'));
 	await restarted.recreate(f.botId);
 	const after = await restarted.overview(f.botId);
-	assert.equal(after.socketChangePending, false);
+	assert.equal(after.engineSocket, 'proxy');
 	assert.equal(after.limitsChangePending, false);
 	const create = f.driver.calls.findLast(
 		(args) => args[0] === 'container' && args[1] === 'create',

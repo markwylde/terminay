@@ -24,6 +24,8 @@ export const BOT_OPERATIONS = Object.freeze({
 	stop: 'bots.stop',
 	end: 'bots.end',
 	newChat: 'bots.new-chat',
+	reviseMessage: 'bots.chat.revise-message',
+	clearChat: 'bots.chat.clear',
 	continue: 'bots.continue',
 	cancelQueued: 'bots.cancel-queued',
 	decide: 'bots.decide',
@@ -78,7 +80,7 @@ export type BotSessionState =
 	| 'failed'
 	| 'interrupted';
 export type BotSessionOrigin =
-	| { readonly kind: 'chat' }
+	| { readonly kind: 'chat'; readonly messageId?: string }
 	| {
 			readonly kind: 'trigger' | 'run-now';
 			readonly triggerId: string;
@@ -103,7 +105,25 @@ export interface BotPermission {
 	}[];
 	readonly toolCall: JsonValue;
 }
+export interface BotExecutionInboxMessage {
+	readonly id: string;
+	readonly from: string;
+	readonly text: string;
+	readonly status: 'accepted' | 'consumed';
+	readonly createdAt: number;
+}
+export interface BotExecutionRuntimeState {
+	readonly revision: number;
+	readonly epoch: string;
+	readonly order: number;
+	readonly triggerMessageId: string | null;
+	readonly revoked: boolean;
+	readonly supersededBy: string | null;
+	readonly inbox: readonly BotExecutionInboxMessage[];
+	readonly keys: Readonly<Record<string, JsonValue>>;
+}
 export interface BotSessionRecord {
+	readonly runtime?: BotExecutionRuntimeState;
 	readonly id: string;
 	readonly botId: string;
 	readonly origin: BotSessionOrigin;
@@ -227,7 +247,10 @@ export interface BotAgent {
 	readonly canLoad: boolean;
 	readonly signInMethods: readonly ('device' | 'token')[];
 	/** The agent's device sign-in, when it declares one. */
-	readonly deviceSignIn: { readonly label: string; readonly help: string } | null;
+	readonly deviceSignIn: {
+		readonly label: string;
+		readonly help: string;
+	} | null;
 	readonly status: {
 		readonly state: 'ready' | 'not-signed-in' | 'not-installed' | 'unavailable';
 		readonly detail?: string;

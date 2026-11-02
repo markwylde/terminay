@@ -1754,6 +1754,8 @@ export function createServerCoreComposition(
 		eventJournal.publishTransient('bots.changed', { botId, revision });
 	};
 	options.bots?.on('changed', botChanged);
+    const botMessagesChanged=({botId,sequence}:{botId:string;sequence:number})=>eventJournal.publishTransient('bots.messages.changed',{botId,sequence});
+    options.bots?.on('messages-changed',botMessagesChanged);
  const botEngineChanged = ({ revision }: { revision: number }) => { eventJournal.publishTransient('bots.engine.changed', { revision }); };
  options.bots?.on('engine-changed', botEngineChanged);
 	const operations = mergeOperationRegistries(
@@ -2171,6 +2173,7 @@ export function createServerCoreComposition(
 			await attempt(() => automationOperations?.dispose());
 			await attempt(async () => {
 				options.bots?.off('changed', botChanged);
+                options.bots?.off('messages-changed',botMessagesChanged);
  options.bots?.off('engine-changed', botEngineChanged);
 				await options.bots?.shutdown();
 			});

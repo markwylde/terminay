@@ -233,6 +233,26 @@ export class BotFilesClient {
 export class BotIoClient {
 	private generation = 0;
 	constructor(private readonly transport: BotIoTransport) {}
+	async image(
+		botId: string,
+		path: string,
+		options: QueryOptions = {},
+	): Promise<{ mime: string; bytes: Uint8Array }> {
+		const { result, body } = await this.transport.queryWithBody(
+			op.image,
+			{ botId, path },
+			options,
+		);
+		const data = record(result);
+		if (
+			!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
+				String(data.mime),
+			) ||
+			body.length > 2 * 1024 * 1024
+		)
+			throw new TypeError('Invalid bot image');
+		return { mime: String(data.mime), bytes: body };
+	}
 	async files(
 		botId: string,
 		options: CommandOptions = {},

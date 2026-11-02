@@ -7,7 +7,7 @@ export interface EngineCallOptions {
 	readonly deadlineMs?: number;
 	readonly signal?: AbortSignal;
 	readonly input?: string | Buffer;
-	readonly env?: NodeJS.ProcessEnv;
+	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly cwd?: string;
 	readonly maxBytes?: number;
 	readonly tail?: boolean;

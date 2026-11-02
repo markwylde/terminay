@@ -119,7 +119,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 		!['chat', 'trigger', 'run-now'].includes(String(origin.kind)) ||
 		typeof snapshot.agentId !== 'string' ||
 		typeof snapshot.context !== 'string' ||
-		Buffer.byteLength(snapshot.context) > 49 * 1024 ||
+		Buffer.byteLength(snapshot.context) > 256 * 1024 ||
 		!Number.isSafeInteger(snapshot.maxTurnMs) ||
 		(snapshot.maxTurnMs as number) < 1
 	)
@@ -148,6 +148,37 @@ function parseRecord(value: unknown): BotSessionRecord {
 		(typeof d.acpSessionId !== 'string' || d.acpSessionId.length > 256)
 	)
 		throw new Error('invalid ACP session');
+	if (d.runtime !== undefined) {
+		const r = object(d.runtime);
+		if (
+			!Number.isSafeInteger(r.revision) ||
+			Number(r.revision) < 1 ||
+			!Number.isSafeInteger(r.order) ||
+			Number(r.order) < 0 ||
+			typeof r.epoch !== 'string' ||
+			!/^([a-f0-9]{32})$/.test(r.epoch) ||
+			typeof r.revoked !== 'boolean' ||
+			!Array.isArray(r.inbox) ||
+			r.inbox.length > 100
+		)
+			throw new Error('invalid execution runtime');
+		if (r.triggerMessageId !== null) sessionId(r.triggerMessageId);
+		if (r.supersededBy !== null) sessionId(r.supersededBy);
+		const keys = object(r.keys);
+		if (Object.keys(keys).length > 256)
+			throw new Error('invalid execution retry state');
+		for (const raw of r.inbox) {
+			const message = object(raw);
+			sessionId(message.id);
+			sessionId(message.from);
+			text(message.text, 2048, 'inbox text');
+			if (
+				!['accepted', 'consumed'].includes(String(message.status)) ||
+				!Number.isFinite(message.createdAt)
+			)
+				throw new Error('invalid execution inbox');
+		}
+	}
 	assertJsonValue(d);
 	return structuredClone(d) as unknown as BotSessionRecord;
 }
@@ -155,7 +186,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 export class BotSessionStore extends EventEmitter {
 	private readonly entries = new Map<string, Entry>();
 	constructor(
-		private readonly root: string,
+		readonly root: string,
 		private readonly clock = timers,
 		private readonly now = Date.now,
 	) {
@@ -366,7 +397,7 @@ export class BotSessionStore extends EventEmitter {
 	close(): void {
 		for (const id of this.entries.keys()) this.commit(id);
 	}
-	private remove(id: string): void {
+	remove(id: string): void {
 		const e = this.entry(id);
 		if (e.timer !== undefined) this.clock.clearTimeout(e.timer);
 		rmSync(join(this.root, id), { recursive: true, force: true });

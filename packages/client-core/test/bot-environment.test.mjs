@@ -13,10 +13,10 @@ const overview = {
 	homeVolume: `terminay-bot-${botId}-home`,
 	limits: { cpus: 2, memoryBytes: 4294967296, pids: 1024 },
 	limitsEnforced: true,
-	shareEngineSocket: false,
-	socketChangePending: false,
+
+	engineSocket: 'proxy',
 	limitsChangePending: false,
-	socketWarning: 'root-equivalent',
+
 	cpuPercent: 1,
 	memoryBytes: 1000,
 	homeBytes: 2000,
@@ -78,15 +78,15 @@ test('bot environment facade validates ids and bounded results', async () => {
 	await assert.rejects(client.lifecycle(botId, 'shell command'), /lifecycle/);
 });
 
-test('settings facade validates request/result shapes and forwards revision and confirmation', async () => {
+test('settings facade validates request/result shapes and forwards revisions', async () => {
 	const calls = [];
 	const settings = {
 		botId,
-		shareEngineSocket: false,
+
 		idleStopMs: 1800000,
 		limits: overview.limits,
 		limitsEnforced: true,
-		socketWarning: 'root-equivalent',
+
 		revision: 0,
 	};
 	const client = new BotEnvironmentClient({
@@ -102,9 +102,8 @@ test('settings facade validates request/result shapes and forwards revision and 
 	assert.deepEqual(await client.settings(botId), settings);
 	const patch = {
 		botId,
-		shareEngineSocket: true,
+
 		idleStopMs: null,
-		confirmed: true,
 		expectedRevision: 0,
 	};
 	assert.equal((await client.setSettings(patch)).revision, 1);

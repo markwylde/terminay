@@ -1,9 +1,6 @@
+import { foldTranscript } from '@terminay/protocol';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { EventEmitter } from 'node:events';
 import {
-	chmodSync,
-	copyFileSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -29,6 +26,7 @@ import {
 	createBotServerService,
 	createServerCoreComposition,
 } from '../dist/index.js';
+import { startBotSocketServer } from './fixtures/bot-socket-server.mjs';
 import { until } from './fixtures/bot-test-runtime.mjs';
 
 const agent = {
@@ -84,26 +82,8 @@ function vault() {
 		},
 	};
 }
-async function setup(t, options = {}) {
+async function setup(t, { legacyPin = false, ...options } = {}) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), 'bots-composed-')));
-	const bin = join(root, 'bin');
-	mkdirSync(bin);
-	for (const name of [
-		'bot-composed-engine.mjs',
-		'bot-acp.mjs',
-		'bot-files-helper.mjs',
-	])
-		copyFileSync(
-			new URL(`./fixtures/${name}`, import.meta.url),
-			join(bin, name),
-		);
-	for (const name of ['docker', 'podman']) {
-		writeFileSync(
-			join(bin, name),
-			`#!${process.execPath}\nimport './bot-composed-engine.mjs';\n`,
-		);
-		chmodSync(join(bin, name), 0o700);
-	}
 	const original = {
 		PATH: process.env.PATH,
 		TERMINAY_FAKE_ENGINE_ID: process.env.TERMINAY_FAKE_ENGINE_ID,
@@ -126,42 +106,24 @@ async function setup(t, options = {}) {
 		'CONTAINER_CONNECTION',
 	])
 		delete process.env[name];
-	process.env.PATH = `${bin}:${original.PATH}`;
 	process.env.TERMINAY_FAKE_BOT_ROOT = root;
-	const processes = new Set(),
-		closed = new EventEmitter();
+	const api = await startBotSocketServer(root);
+	if (legacyPin) {
+		mkdirSync(join(root, 'bots'), { recursive: true });
+		writeFileSync(
+			join(root, 'bots', 'engine.json'),
+			JSON.stringify({
+				kind: 'docker',
+				address: `unix://${api.socketPath}`,
+				connection: false,
+				identity: 'fake-bot-engine',
+			}),
+		);
+	}
+	process.env.DOCKER_HOST = `unix://${api.socketPath}`;
 	const pty = {
-		spawn: (request) => {
-			const child = spawn(request.shellPath, request.args, {
-				cwd: request.cwd,
-				env: request.env,
-				stdio: ['pipe', 'pipe', 'pipe'],
-			});
-			processes.add(child);
-			child.once('close', () => {
-				processes.delete(child);
-				closed.emit('changed');
-			});
-			child.stderr.resume();
-			return {
-				pid: child.pid,
-				write: (b) => {
-					child.stdin.write(b);
-				},
-				resize: () => {},
-				kill: () => {
-					child.kill('SIGKILL');
-				},
-				onData: (f) => {
-					child.stdout.on('data', f);
-					return () => child.stdout.off('data', f);
-				},
-				onExit: (f) => {
-					const exit = (exitCode, signal) => f({ exitCode, signal });
-					child.on('close', exit);
-					return () => child.off('close', exit);
-				},
-			};
+		spawn: () => {
+			throw new Error('Bots must not spawn a host PTY');
 		},
 	};
 	const v = vault();
@@ -213,11 +175,11 @@ async function setup(t, options = {}) {
 	t.after(async () => {
 		for (const c of clients) await c.close();
 		await composition.shutdown();
-		for (const child of processes) child.kill('SIGKILL');
 		for (const [k, value] of Object.entries(original)) {
 			if (value === undefined) delete process.env[k];
 			else process.env[k] = value;
 		}
+		await api.close();
 		rmSync(root, { recursive: true, force: true });
 	});
 	const connect = async (
@@ -238,6 +200,7 @@ async function setup(t, options = {}) {
 		const facade = new TerminayClientFacade(client);
 		return {
 			client,
+            transport:facade,
 			connection,
 			task,
 			hello,
@@ -255,8 +218,9 @@ async function setup(t, options = {}) {
 		composition,
 		v,
 		connect,
-		processes,
-		closed,
+		processes: api.terminals,
+		closed: api.closed,
+		api,
 		calls: () =>
 			readFileSync(join(root, 'calls.jsonl'), 'utf8')
 				.trim()
@@ -342,7 +306,7 @@ test('composed Bots server: engine, image, message, Files, Shell, tokens and rev
 	assert.equal(Buffer.byteLength(siblingLog), 256 * 1024);
 	assert.ok(!siblingLog.includes('secret'));
 
-	assert.ok(r.calls().some((c) => c.args?.[2] === 'exec' && c.keyPresent));
+	assert.ok(r.calls().some((c) => c.args?.[0] === 'exec' && c.keyPresent));
 	assert.ok(!JSON.stringify(r.calls()).includes('secret'));
 	assert.equal((await c.engine.status()).botContainers, 1);
 	const files = await c.io.files(bot.id, 1);
@@ -355,7 +319,7 @@ test('composed Bots server: engine, image, message, Files, Shell, tokens and rev
 	await shell.close();
 	await until(r.closed, 'changed', () => r.processes.size === 0);
 	const revoked = await c.io.shell(bot.id, 2, 80, 24);
-	assert.equal(r.processes.size, 1);
+	await until(r.closed, 'changed', () => r.processes.size >= 1);
 	await c.connection.close({ code: 'unauthorized', message: 'revoked' });
 	await c.task;
 	await until(r.closed, 'changed', () => r.processes.size === 0);
@@ -380,15 +344,14 @@ test('every composed operation family refuses restricted clients; a second devic
 		'changed',
 		() => r.service.sessions.get(sent.sessionId).state === 'running',
 	);
-	const queued = await c.bots.send(bot.id, 'next', sent.sessionId);
-	const other = await r.connect({ clientId: 'second', authScope: 'write' });
-	assert.equal((await other.bots.queue(bot.id)).items[0].id, queued.queueId);
-	assert.equal(
-		(await other.bots.session(bot.id, sent.sessionId)).queuedMessage.id,
-		queued.queueId,
-	);
-	await other.bots.cancelQueued(bot.id, queued.queueId);
-	assert.deepEqual((await c.bots.queue(bot.id)).items, []);
+	await assert.rejects(c.bots.reviseMessage(bot.id,sent.sessionId,'user:0','hold','changed'),/shared message log/);
+	await assert.rejects(c.bots.clearChat(bot.id,sent.sessionId),/shared message log/);
+    for(let n=0;n<4;n++)await c.bots.send(bot.id,'hold');
+    const queued=await c.bots.send(bot.id,'next');
+    const other=await r.connect({clientId:'second',authScope:'write'});
+    assert.equal((await other.bots.queue(bot.id)).items[0].id,queued.queueId);
+    await other.bots.cancelQueued(bot.id,queued.queueId);
+    assert.deepEqual((await c.bots.queue(bot.id)).items,[]);
 	for (const identity of [
 		{ clientId: 'read', authScope: 'read' },
 		{ clientId: 'bound', authScope: 'write', claims: { capabilityId: 'cap' } },
@@ -439,14 +402,19 @@ test('engine pin changes require confirmation; builds serialize, bound output an
 }, async (t) => {
 	const r = await setup(t),
 		c = await r.connect();
-	process.env.TERMINAY_FAKE_ENGINE_ID = 'replacement-engine';
+	await writeFileSync(
+		join(r.root, 'volume-terminay-engine-identity.json'),
+		JSON.stringify({
+			Labels: { 'terminay.engine.identity': 'replacement-engine' },
+		}),
+	);
 	assert.equal((await c.engine.status()).reason, 'engine-changed');
 	await assert.rejects(c.engine.use('docker', 'unix:///fake/bots.sock'));
-	await c.engine.use('docker', 'unix:///fake/bots.sock', true);
+	await c.engine.use('docker', process.env.DOCKER_HOST, true);
 	assert.equal((await c.engine.status()).available, true);
 	process.env.TERMINAY_FAKE_BUILD_LOG_BYTES = '300000';
 	await Promise.all([c.engine.build(), c.engine.build()]);
-	assert.ok(r.calls().filter((call) => call.args?.[2] === 'build').length >= 1);
+	assert.ok(r.calls().filter((call) => call.args?.[0] === 'build').length >= 1);
 	assert.equal(Buffer.byteLength(await c.engine.log()), 256 * 1024);
 	const image = (await c.engine.status()).image;
 	process.env.TERMINAY_FAKE_BUILD_FAIL = '1';
@@ -524,13 +492,6 @@ test('environment settings over the connection deliver typed refusals and bots.c
 	t.after(() => subscription.unsubscribe());
 	const events = [];
 	subscription.onEvent((event) => events.push(event.payload));
-	await assert.rejects(
-		environment.setSettings({ botId: bot.id, shareEngineSocket: true }),
-		(e) =>
-			e.cause.code === 'forbidden' &&
-			e.cause.details.reason === 'confirmation-required' &&
-			e.cause.details.socketWarning === 'engine-control',
-	);
 	const saved = await environment.setSettings({
 		botId: bot.id,
 		idleStopMs: null,
@@ -605,7 +566,9 @@ test('9.3/9.4 device terminal prints a URL/code, records success, restores confi
 	const start = r
 		.calls()
 		.find((call) => call.args?.some((arg) => arg.startsWith('signin-')));
-	assert.ok(start.args.includes('HOME=/home/bot'));
+	assert.ok(
+		r.api.calls.some((call) => call.body?.Env?.includes('HOME=/home/bot')),
+	);
 	assert.deepEqual(start.args.slice(-3), ['codex', 'login', '--device-auth']);
 	const sent = await c.bots.send(bot.id, 'normal');
 	await until(
@@ -767,4 +730,34 @@ test('9.3 sign-in stream rechecks connection, bot, generation and revocation', {
 	await until(r.closed, 'changed', () => r.processes.size === 0);
 	assert.deepEqual(r.service.bots.get(bot.id).signIn, { kind: 'none' });
 	await reader.return();
+});
+
+test('an existing saved engine pin opens the dashboard without another selection and still builds the bot image', async (t) => {
+	const r = await setup(t, { legacyPin: true }),
+		client = await r.connect();
+	const status = await client.engine.status();
+	assert.equal(status.available, true);
+	assert.equal(status.engine, 'docker');
+	assert.equal(status.reason, null);
+	assert.equal(
+		JSON.parse(readFileSync(join(r.root, 'bots', 'engine.json'), 'utf8'))
+			.version,
+		2,
+	);
+	await client.engine.build();
+	assert.equal((await client.engine.status()).image.state, 'current');
+});
+
+test('shared message APIs persist communication, enforce authority and preserve execution diagnostics', {timeout:30000}, async t => {
+ const r=await setup(t),c=await r.connect();await c.engine.build();
+ const bot=await c.bots.save({name:'Editable',agentId:agent.id,signIn:{kind:'token',environmentVariable:'FAKE_KEY'}});await c.credentials.save(bot.id,'FAKE_KEY',Buffer.from('secret'));
+
+ const sent=await r.service.postUserMessage(bot.id,'normal','first');await until(r.service,'changed',()=>r.service.sessions.get(sent.sessionId).state==='completed');
+ const user=r.service.messages.list(bot.id).items.find(m=>m.author==='user');assert.ok(user);const original=r.service.sessions.get(sent.sessionId);
+ await assert.rejects(c.transport.command('bots.messages.edit',{botId:bot.id,messageId:user.id,revision:0,text:'stale'}));
+ const reader=await r.connect({clientId:'reader-edit',authScope:'read'});await assert.rejects(reader.transport.command('bots.messages.edit',{botId:bot.id,messageId:user.id,revision:1,text:'denied'}));
+ await c.transport.command('bots.messages.edit',{botId:bot.id,messageId:user.id,revision:1,text:'updated secret'});assert.equal(r.service.messages.get(bot.id,user.id).text,'updated [redacted]');assert.deepEqual(r.service.sessions.get(sent.sessionId).updates,original.updates);
+ const page=await c.transport.query('bots.messages.list',{botId:bot.id,limit:1});assert.equal(page.items.length,1);assert.equal('text' in page.items[0],false);
+ await c.transport.command('bots.messages.remove',{botId:bot.id,messageId:user.id,revision:2});assert.throws(()=>r.service.messages.get(bot.id,user.id));
+ await c.transport.command('bots.messages.clear',{botId:bot.id,confirmed:true});assert.equal(r.service.messages.list(bot.id).total,0);assert.ok(r.service.sessions.get(sent.sessionId));
 });

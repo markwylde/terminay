@@ -1,0 +1,9 @@
+# Sourced by non-interactive Bash tool commands, including Codex exec_command.
+# Same-bot agents are cooperative peers; the container remains the trust boundary.
+if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
+    /usr/local/bin/terminay-bot-mcp --check-work || exit 1
+fi
+for terminay_credential_name in $TERMINAY_CREDENTIAL_VARIABLES; do
+    unset "$terminay_credential_name"
+done
+unset terminay_credential_name TERMINAY_CREDENTIAL_VARIABLES TERMINAY_RUNTIME_TOKEN BASH_ENV

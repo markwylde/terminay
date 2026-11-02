@@ -19,6 +19,7 @@ import {
 	type Page,
 	type TestInfo,
 } from '@playwright/test';
+import { startBotSocketServer } from '../packages/server-core/test/fixtures/bot-socket-server.mjs';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
 import {
 	openChildWindow,
@@ -383,6 +384,8 @@ export async function launchDesktopApp(options: {
 		const staticServer = await createStaticServer(
 			rendererArtifact.rootDirectory,
 		);
+		const botApi = path.basename(testInfo.file) === 'bots.spec.ts'
+			? await startBotSocketServer(path.join(tempDir, 'fake-bots')) : undefined;
 		const electronApp = await electron.launch({
 			args: ['.'],
 			env: {
@@ -425,15 +428,13 @@ export async function launchDesktopApp(options: {
 							].join(path.delimiter),
 						}
 					: {}),
-				// Bots run against a fake Docker whose containers host a fake ACP
+				// Bots use a socket API fixture whose containers host a fake ACP
 				// agent, so the suite needs no engine, image, or agent account.
 				...(path.basename(testInfo.file) === 'bots.spec.ts'
 					? {
-							PATH: [
-								path.resolve('e2e/fixtures/fake-bot-bin'),
-								process.env.PATH ?? '',
-							].join(path.delimiter),
 							TERMINAY_FAKE_BOT_ROOT: path.join(tempDir, 'fake-bots'),
+							DOCKER_HOST: `unix://${botApi!.socketPath}`,
+							DOCKER_CONTEXT: '',
 							// Nothing in the suite may read the runner's own agent
 							// logins under HOME.
 							HOME: tempDir,
@@ -502,6 +503,7 @@ export async function launchDesktopApp(options: {
 				closed = true;
 				await closeElectronAppGracefully(electronApp);
 				await staticServer.close();
+				await botApi?.close();
 				await rendererArtifact.assertUnchanged();
 				await rm(rendererArtifactParent, { recursive: true, force: true });
 			},

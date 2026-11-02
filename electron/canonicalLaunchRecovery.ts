@@ -23,6 +23,7 @@ const STORE_DESCRIPTIONS: Record<StateStoreName, string> = {
 	'window-layout': 'window layout',
 	extensions: 'extension choices',
 	bots: 'bots: their profiles and triggers',
+	'bot-messages': 'Bot message history',
 	'bot-sessions': 'bot sessions',
 };
 
@@ -45,7 +46,10 @@ function boundedLaunchError(error: unknown, limit: number): string {
 		.slice(0, limit);
 }
 
-function launchRecoveryDocument(message: string, offerStartFresh: boolean): string {
+function launchRecoveryDocument(
+	message: string,
+	offerStartFresh: boolean,
+): string {
 	const escaped = message
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')
@@ -98,7 +102,10 @@ export async function showCanonicalLaunchRecovery(
 		: undefined;
 	const message =
 		unreadable === undefined
-			? boundedLaunchError(options.error, options.messageLimit ?? DEFAULT_MESSAGE_LIMIT)
+			? boundedLaunchError(
+					options.error,
+					options.messageLimit ?? DEFAULT_MESSAGE_LIMIT,
+				)
 			: stateUnreadableMessage(unreadable.store);
 	// Diagnostics are evidence, never a prerequisite for a usable recovery
 	// document. In particular, a full or unavailable diagnostics volume must not

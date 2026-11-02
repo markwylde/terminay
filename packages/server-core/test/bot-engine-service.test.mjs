@@ -17,7 +17,11 @@ async function noEngine(t) {
 	const store = { load: async () => undefined, save: async () => {} };
 	const engine = new BotEngine(
 		store,
-		new EngineProcess({ PATH: empty, HOME: empty }),
+		new EngineProcess({
+			PATH: empty,
+			HOME: empty,
+			DOCKER_HOST: `unix://${empty}/missing.sock`,
+		}),
 		'linux',
 	);
 	const service = new BotEngineService(engine, store, empty, () => [], 'srv');

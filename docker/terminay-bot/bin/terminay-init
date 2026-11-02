@@ -131,6 +131,10 @@ def start_desktop(passwd_path, uid, gid, bot_id):
     env = {"HOME": HOME, "USER": "bot", "DISPLAY": ":1", "PATH": "/usr/local/bin:/usr/bin:/bin",
            "TERMINAY_BOT_ID": bot_id, "LANG": "C.UTF-8"}
     spawn(["openbox-session"], uid=uid, gid=gid, env=env)
+    # The desktop owns the browser, independently of agent/tool process groups.
+    # Keep Chromium's sandbox enabled; it runs as the unprivileged bot user.
+    spawn(["terminay-browser"], uid=uid, gid=gid, env=env)
+    wait_path("/tmp/terminay-browser.sock", time.monotonic() + 10)
 
 
 def main_tunnel(port):
@@ -228,10 +232,28 @@ def main_init():
     uid, gid = bot_ids()
     try:
         bot_id = str(doc["botId"])
+        server_id = str(doc["serverId"])
         passwd = write_vnc_password(doc["vncPassword"])
 
     except Exception as e:  # noqa: BLE001
         log(f"bad bootstrap: {e}")
+        sys.exit(78)
+    proxy_ready = "/run/terminay-engine/ready"
+    try:
+        os.unlink(proxy_ready)
+    except FileNotFoundError:
+        pass
+    proxy = spawn(["node", "/usr/local/bin/terminay-engine-proxy.mjs", bot_id, server_id, str(uid), str(gid)])
+    try:
+        wait_path(proxy_ready, time.monotonic() + 10)
+        if proxy.poll() is not None:
+            raise RuntimeError("proxy exited during startup")
+    except Exception:
+        log("engine proxy failed to start")
+        try:
+            os.killpg(proxy.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
         sys.exit(78)
     start_desktop(passwd, uid, gid, bot_id)
     doc.clear()
@@ -262,6 +284,10 @@ def main_init():
             sys.exit(0 if stopping else 78)
         except InterruptedError:
             continue
+        if pid == proxy.pid and not stopping:
+            log("engine proxy exited; stopping container")
+            on_term(signal.SIGTERM, None)
+            sys.exit(78)
         if stopping and all(p.poll() is not None for p in children):
             break
     sys.exit(0)

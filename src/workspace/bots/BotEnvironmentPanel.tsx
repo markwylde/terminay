@@ -11,14 +11,17 @@ import {
 	ChevronDown,
 	FolderOpen,
 	Monitor,
+	Play,
 	RefreshCw,
+	RotateCw,
+	ScrollText,
+	Square,
 	SquareTerminal,
+	Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BotDesktopView } from './BotDesktopView';
-import {
-	EnvironmentSettingsCard,
-} from './BotEnvironmentSettings';
+import { EnvironmentSettingsCard } from './BotEnvironmentSettings';
 import { BotFilesView } from './BotFilesView';
 import { BotShellView } from './BotShellView';
 import {
@@ -66,6 +69,40 @@ export function formatUptime(ms: number): string {
 	return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
+/** The protocol carries the engine's port bindings as JSON. Never display that wire format. */
+function containerPorts(value: string): string[] {
+	try {
+		const ports: unknown = JSON.parse(value || '{}');
+		if (!ports || typeof ports !== 'object' || Array.isArray(ports)) return [];
+		const result = new Set<string>();
+		for (const [port, bindings] of Object.entries(ports)) {
+			const target = port.replace(/\/tcp$/, '');
+			if (!Array.isArray(bindings) || bindings.length === 0) {
+				result.add(`${port} (internal)`);
+				continue;
+			}
+			for (const binding of bindings) {
+				if (!binding || typeof binding.HostPort !== 'string') continue;
+				const ip = typeof binding.HostIp === 'string' ? binding.HostIp : '';
+				const host = ['', '0.0.0.0', '::'].includes(ip)
+					? binding.HostPort
+					: `${ip.includes(':') ? `[${ip}]` : ip}:${binding.HostPort}`;
+				result.add(`${host} → ${target}`);
+			}
+		}
+		return [...result];
+	} catch {
+		return ['Unavailable'];
+	}
+}
+
+function containerAge(createdAt: string): string {
+	const date = Date.parse(createdAt);
+	if (!Number.isFinite(date)) return 'Unknown';
+	const age = shortAge(date, Date.now());
+	return age === 'now' ? 'Just now' : `${age} ago`;
+}
+
 export function BotEnvironmentPanel({
 	server,
 	bot,
@@ -83,19 +120,19 @@ export function BotEnvironmentPanel({
 		<div className="bots-env" data-terminay-bot-panel="environment">
 			<div className="bots-env__nav">
 				<div className="bots-seg" role="tablist" aria-label="Environment">
-				{BOT_ENVIRONMENT_TABS.map((key) => (
-					<button
-						key={key}
-						type="button"
-						role="tab"
-						aria-selected={tab === key}
-						className={tab === key ? 'bots-seg--on' : ''}
-						onClick={() => onTabChange(key)}
-						data-terminay-bot-env-tab={key}
-					>
-						{TAB_LABELS[key]}
-					</button>
-				))}
+					{BOT_ENVIRONMENT_TABS.map((key) => (
+						<button
+							key={key}
+							type="button"
+							role="tab"
+							aria-selected={tab === key}
+							className={tab === key ? 'bots-seg--on' : ''}
+							onClick={() => onTabChange(key)}
+							data-terminay-bot-env-tab={key}
+						>
+							{TAB_LABELS[key]}
+						</button>
+					))}
 				</div>
 			</div>
 			<div className="bots-env__body">
@@ -309,17 +346,12 @@ function OverviewView({
 					. The home volume is kept.
 				</div>
 			) : null}
-			{overview.socketChangePending || overview.limitsChangePending ? (
+			{overview.limitsChangePending ? (
 				<div
 					className="bots-note bots-note--warn"
 					data-terminay-bot-env-pending="true"
 				>
-					{overview.socketChangePending && overview.limitsChangePending
-						? 'The Share engine socket and limits changes apply'
-						: overview.socketChangePending
-							? 'The Share engine socket change applies'
-							: 'The new limits apply'}{' '}
-					when the container is recreated.{' '}
+					The new limits apply when the container is recreated.{' '}
 					<button
 						type="button"
 						className="bots-link"
@@ -396,9 +428,10 @@ function OverviewView({
 			</div>
 			<div className="bots-envfoot">
 				<span>
-					{overview.limits.cpus} CPU · {formatBytes(overview.limits.memoryBytes)}{' '}
-					· {overview.image || 'terminay-bot:local'} · {formatBytes(overview.homeBytes)}{' '}
-					home
+					{overview.limits.cpus} CPU ·{' '}
+					{formatBytes(overview.limits.memoryBytes)} ·{' '}
+					{overview.image || 'terminay-bot:local'} ·{' '}
+					{formatBytes(overview.homeBytes)} home
 				</span>
 				<button
 					type="button"
@@ -416,88 +449,92 @@ function OverviewView({
 				</button>
 			</div>
 			{details ? (
-			<div className="bots-ovgrid bots-ovgrid--details">
-				<div>
-					<section className="bots-card bots-kvcard">
-						<div className="bots-kv">
-							<span>Image</span>
-							<span className="bots-mono">
-								{overview.image || '—'}
-								{overview.current ? '' : ' · out of date'}
-							</span>
-						</div>
-						<div className="bots-kv">
-							<span>Home volume</span>
-							<span className="bots-mono">{overview.homeVolume}</span>
-						</div>
-						<div className="bots-kv">
-							<span>Limits</span>
-							<span>
-								{overview.limits.cpus} CPU ·{' '}
-								{formatBytes(overview.limits.memoryBytes)} ·{' '}
-								{overview.limits.pids} processes
-								{overview.limitsEnforced
-									? ''
-									: ' (not enforced by this engine)'}
-							</span>
-						</div>
-						<div className="bots-kv">
-							<span>Engine socket</span>
-							<span>
-								{overview.shareEngineSocket ? 'Shared' : 'Not shared'}
-							</span>
-						</div>
-					</section>
-					<h3 className="bots-lab bots-mt">Recent log</h3>
-					<pre className="bots-term" data-terminay-bot-env-log="true">
-						{overview.log.length === 0 ? 'No output yet.' : overview.log}
-					</pre>
+				<div className="bots-ovgrid bots-ovgrid--details">
+					<div>
+						<section className="bots-card bots-kvcard">
+							<div className="bots-kv">
+								<span>Image</span>
+								<span className="bots-mono">
+									{overview.image || '—'}
+									{overview.current ? '' : ' · out of date'}
+								</span>
+							</div>
+							<div className="bots-kv">
+								<span>Home volume</span>
+								<span className="bots-mono">{overview.homeVolume}</span>
+							</div>
+							<div className="bots-kv">
+								<span>Limits</span>
+								<span>
+									{overview.limits.cpus} CPU ·{' '}
+									{formatBytes(overview.limits.memoryBytes)} ·{' '}
+									{overview.limits.pids} processes
+									{overview.limitsEnforced
+										? ''
+										: ' (not enforced by this engine)'}
+								</span>
+							</div>
+							<div className="bots-kv">
+								<span>Engine socket</span>
+								<span>
+									{overview.engineSocket === 'proxy'
+										? 'Proxied'
+										: overview.engineSocket === 'not-created'
+											? 'Available when started'
+											: 'Recreate to enable proxy'}
+								</span>
+							</div>
+						</section>
+						<h3 className="bots-lab bots-mt">Recent log</h3>
+						<pre className="bots-term" data-terminay-bot-env-log="true">
+							{overview.log.length === 0 ? 'No output yet.' : overview.log}
+						</pre>
+					</div>
+					<aside>
+						<section className="bots-card bots-kvcard">
+							<div className="bots-kv">
+								<span>CPU</span>
+								<span>
+									{overview.cpuPercent === null
+										? '—'
+										: `${overview.cpuPercent.toFixed(1)}%`}
+								</span>
+							</div>
+							<div className="bots-kv">
+								<span>Memory</span>
+								<span>{formatBytes(overview.memoryBytes)}</span>
+							</div>
+							<div className="bots-kv">
+								<span>Home size</span>
+								<span>{formatBytes(overview.homeBytes)}</span>
+							</div>
+							<div className="bots-kv">
+								<span className="bots-faint">
+									Read{' '}
+									{new Date(overview.sampledAt).toLocaleTimeString(undefined, {
+										hour: '2-digit',
+										minute: '2-digit',
+										second: '2-digit',
+									})}
+								</span>
+								<button
+									type="button"
+									className="bots-btn bots-btn--sm"
+									onClick={load}
+									data-terminay-bot-env-refresh="true"
+								>
+									<RefreshCw size={12} aria-hidden="true" /> Refresh
+								</button>
+							</div>
+						</section>
+						<EnvironmentSettingsCard
+							server={server}
+							bot={bot}
+							reloadKey={overview.sampledAt}
+							onSaved={load}
+						/>
+					</aside>
 				</div>
-				<aside>
-					<section className="bots-card bots-kvcard">
-						<div className="bots-kv">
-							<span>CPU</span>
-							<span>
-								{overview.cpuPercent === null
-									? '—'
-									: `${overview.cpuPercent.toFixed(1)}%`}
-							</span>
-						</div>
-						<div className="bots-kv">
-							<span>Memory</span>
-							<span>{formatBytes(overview.memoryBytes)}</span>
-						</div>
-						<div className="bots-kv">
-							<span>Home size</span>
-							<span>{formatBytes(overview.homeBytes)}</span>
-						</div>
-						<div className="bots-kv">
-							<span className="bots-faint">
-								Read{' '}
-								{new Date(overview.sampledAt).toLocaleTimeString(undefined, {
-									hour: '2-digit',
-									minute: '2-digit',
-									second: '2-digit',
-								})}
-							</span>
-							<button
-								type="button"
-								className="bots-btn bots-btn--sm"
-								onClick={load}
-								data-terminay-bot-env-refresh="true"
-							>
-								<RefreshCw size={12} aria-hidden="true" /> Refresh
-							</button>
-						</div>
-					</section>
-					<EnvironmentSettingsCard
-						server={server}
-						bot={bot}
-						reloadKey={overview.sampledAt}
-						onSaved={load}
-					/>
-				</aside>
-			</div>
 			) : null}
 			{confirm !== undefined ? (
 				<div className="bots-modal" role="presentation">
@@ -551,10 +588,15 @@ function ContainersView({
 	onOverview,
 }: Readonly<{ server: ServerBots; bot: BotProfile; onOverview: () => void }>) {
 	const [list, setList] = useState<readonly BotSiblingContainer[]>();
-	const [shared, setShared] = useState<boolean>();
+	const [socketMode, setSocketMode] =
+		useState<BotEnvironmentOverview['engineSocket']>();
 	const [error, setError] = useState<string>();
 	const [logs, setLogs] = useState<{ name: string; text: string }>();
 	const [confirmRemove, setConfirmRemove] = useState<string>();
+	const removeDialog = useRef<HTMLDialogElement>(null);
+	useEffect(() => {
+		if (confirmRemove) removeDialog.current?.showModal();
+	}, [confirmRemove]);
 
 	const load = useCallback(() => {
 		Promise.all([
@@ -563,7 +605,7 @@ function ContainersView({
 		])
 			.then(([containers, overview]) => {
 				setList(containers);
-				setShared(overview.shareEngineSocket);
+				setSocketMode(overview.engineSocket);
 				setError(undefined);
 			})
 			.catch((cause: unknown) => setError(refusalText(cause)));
@@ -594,9 +636,8 @@ function ContainersView({
 				<div>
 					<h3 className="bots-h3">Containers</h3>
 					<p className="bots-faint">
-						Containers this bot started through the engine socket. Containers
-						started without the bot’s <span className="bots-mono">docker</span>{' '}
-						command may not carry its label.
+						Containers created through this bot’s engine proxy. The bot can also
+						control other containers on the shared engine.
 					</p>
 				</div>
 				<button type="button" className="bots-btn bots-btn--sm" onClick={load}>
@@ -604,23 +645,22 @@ function ContainersView({
 				</button>
 			</div>
 			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
-			{shared === false ? (
+			{socketMode === 'recreate-required' ? (
 				<div
 					className="bots-card bots-explain"
-					data-terminay-bot-socket-off="true"
+					data-terminay-bot-proxy-pending="true"
 				>
-					<b>Share engine socket is off</b>
+					<b>Recreate to enable the engine proxy</b>
 					<span>
-						With it on, the bot can run containers of its own, such as a
-						database for its work, and they are listed here. It is off by
-						default because the bot then controls the engine’s containers.
+						This container needs an update before it can use the shared engine
+						with automatic workload attribution. Its home and sign-in are kept.
 					</span>
 					<button
 						type="button"
 						className="bots-btn bots-btn--sm"
 						onClick={onOverview}
 					>
-						Engine socket settings
+						Open environment overview
 					</button>
 				</div>
 			) : null}
@@ -629,89 +669,152 @@ function ContainersView({
 			) : list.length === 0 ? (
 				<p className="bots-faint">No containers.</p>
 			) : (
-				<table className="bots-tbl">
-					<thead>
-						<tr>
-							<th>Name</th>
-							<th>Image</th>
-							<th>State</th>
-							<th>Ports</th>
-							<th>Created</th>
-							<th>
-								<span className="bots-sr">Actions</span>
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{list.map((container) => (
-							<tr key={container.id} data-terminay-bot-sibling={container.id}>
-								<td>{container.name}</td>
-								<td className="bots-mono">{container.image}</td>
-								<td>{container.state}</td>
-								<td className="bots-mono">{container.ports || '—'}</td>
-								<td>{container.createdAt}</td>
-								<td>
-									<div className="bots-row-actions">
-										{container.state === 'running' ? (
-											<>
-												<button
-													type="button"
-													className="bots-btn bots-btn--sm"
-													onClick={() => act(container, 'stop')}
+				<div className="bots-containers">
+					<div className="bots-containers__head" aria-hidden="true">
+						<span>Container</span>
+						<span>Status</span>
+						<span>Ports</span>
+						<span>Created</span>
+						<span />
+					</div>
+					<ul className="bots-containers__list" aria-label="Bot containers">
+						{list.map((container) => {
+							const ports = containerPorts(container.ports);
+							const running = container.state === 'running';
+							return (
+								<li
+									key={container.id}
+									className="bots-container"
+									data-terminay-bot-sibling={container.id}
+								>
+									<div className="bots-container__identity">
+										<strong title={container.name}>{container.name}</strong>
+										<span className="bots-mono" title={container.image}>
+											{container.image}
+										</span>
+									</div>
+									<span
+										className={`bots-state bots-container__state${running ? ' bots-state--completed' : ''}`}
+									>
+										{container.state.charAt(0).toUpperCase() +
+											container.state.slice(1)}
+									</span>
+									<div className="bots-container__ports">
+										<span className="bots-container__label">Ports</span>
+										{ports.length ? (
+											ports.map((port) => (
+												<span
+													key={port}
+													className="bots-container__port bots-mono"
+													title="Host → container"
 												>
-													Stop
-												</button>
-												<button
-													type="button"
-													className="bots-btn bots-btn--sm"
-													onClick={() => act(container, 'restart')}
-												>
-													Restart
-												</button>
-											</>
+													{port}
+												</span>
+											))
 										) : (
-											<button
-												type="button"
-												className="bots-btn bots-btn--sm"
-												onClick={() => act(container, 'start')}
-											>
-												Start
-											</button>
+											<span className="bots-faint">None published</span>
 										)}
+									</div>
+									<time
+										className="bots-container__created"
+										dateTime={container.createdAt || undefined}
+										title={
+											Number.isFinite(Date.parse(container.createdAt))
+												? new Date(container.createdAt).toLocaleString()
+												: undefined
+										}
+									>
+										<span className="bots-container__label">Created</span>{' '}
+										{containerAge(container.createdAt)}
+									</time>
+									<div className="bots-container__actions">
 										<button
 											type="button"
 											className="bots-btn bots-btn--sm"
+											onClick={() => act(container, running ? 'stop' : 'start')}
+										>
+											{running ? (
+												<Square size={12} aria-hidden="true" />
+											) : (
+												<Play size={12} aria-hidden="true" />
+											)}{' '}
+											{running ? 'Stop' : 'Start'}
+										</button>
+										{running ? (
+											<button
+												type="button"
+												className="bots-btn bots-btn--sm bots-container__icon"
+												aria-label={`Restart ${container.name}`}
+												title="Restart"
+												onClick={() => act(container, 'restart')}
+											>
+												<RotateCw size={15} aria-hidden="true" />
+											</button>
+										) : null}
+										<button
+											type="button"
+											className="bots-btn bots-btn--sm bots-container__icon"
+											aria-label={`Logs for ${container.name}`}
+											title="View logs"
 											onClick={() => act(container, 'logs')}
 										>
-											Logs
+											<ScrollText size={15} aria-hidden="true" />
 										</button>
-										{confirmRemove === container.id ? (
-											<button
-												type="button"
-												className="bots-btn bots-btn--sm bots-btn--danger"
-												onClick={() => {
-													setConfirmRemove(undefined);
-													act(container, 'remove');
-												}}
-											>
-												Confirm remove
-											</button>
-										) : (
-											<button
-												type="button"
-												className="bots-btn bots-btn--sm bots-btn--danger"
-												onClick={() => setConfirmRemove(container.id)}
-											>
-												Remove
-											</button>
-										)}
+										<button
+											type="button"
+											className="bots-btn bots-btn--sm bots-container__icon"
+											aria-label={`Remove ${container.name}`}
+											title="Remove container"
+											onClick={() => setConfirmRemove(container.id)}
+										>
+											<Trash2 size={15} aria-hidden="true" />
+										</button>
 									</div>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
+								</li>
+							);
+						})}
+					</ul>
+				</div>
 			)}
+			{confirmRemove ? (
+				<dialog
+					ref={removeDialog}
+					className="bots-dialog bots-container-remove"
+					role="alertdialog"
+					aria-labelledby="bots-container-remove-title"
+					onCancel={() => setConfirmRemove(undefined)}
+				>
+					<h2 id="bots-container-remove-title">Remove container?</h2>
+					<p>
+						<strong>
+							{list?.find((container) => container.id === confirmRemove)?.name}
+						</strong>{' '}
+						will be removed. This cannot be undone.
+					</p>
+					<footer className="bots-dialog__foot">
+						<button
+							type="button"
+							className="bots-btn"
+							onClick={() => setConfirmRemove(undefined)}
+						>
+							Cancel
+						</button>
+						<button
+							type="button"
+							className="bots-btn bots-btn--danger"
+							onClick={() => {
+								const container = list?.find(
+									(item) => item.id === confirmRemove,
+								);
+								setConfirmRemove(undefined);
+								if (container) act(container, 'remove');
+							}}
+						>
+							Remove container
+						</button>
+					</footer>
+				</dialog>
+			) : null}
 			{logs !== undefined ? (
 				<section className="bots-mt">
 					<div className="bots-toolbar">

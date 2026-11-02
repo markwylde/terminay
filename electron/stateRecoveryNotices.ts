@@ -21,7 +21,9 @@ const NOTICE_KINDS = new Set(['restored', 'started-fresh', 'secret-reset']);
 export function carryStateRecoveryNotices(file: string): void {
 	const notices = takeStateRecoveryNotices();
 	if (notices.length === 0) return;
-	writeFileDurablySync(file, JSON.stringify({ version: 1, notices }), { mode: 0o600 });
+	writeFileDurablySync(file, JSON.stringify({ version: 1, notices }), {
+		mode: 0o600,
+	});
 }
 
 /** At startup: queue notices carried over a relaunch, then drop the file. */
@@ -59,6 +61,7 @@ const STORE_WORDS: Record<StateStoreName, string> = {
 	'window-layout': 'window layout',
 	extensions: 'extension choices',
 	bots: 'bots',
+	'bot-messages': 'Bot message history',
 	'bot-sessions': 'bot sessions',
 };
 
@@ -79,19 +82,25 @@ export function stateRecoveryNoticeText(
 		...new Set(
 			notices
 				.filter((notice) => notice.kind === 'restored')
-				.map((notice) => STORE_WORDS[notice.store as StateStoreName] ?? 'state'),
+				.map(
+					(notice) => STORE_WORDS[notice.store as StateStoreName] ?? 'state',
+				),
 		),
 	];
 	const fresh = [
 		...new Set(
 			notices
 				.filter((notice) => notice.kind === 'started-fresh')
-				.map((notice) => STORE_WORDS[notice.store as StateStoreName] ?? 'state'),
+				.map(
+					(notice) => STORE_WORDS[notice.store as StateStoreName] ?? 'state',
+				),
 		),
 	];
 	const reset = [
 		...new Set(
-			notices.filter((notice) => notice.kind === 'secret-reset').map((notice) => notice.store),
+			notices
+				.filter((notice) => notice.kind === 'secret-reset')
+				.map((notice) => notice.store),
 		),
 	];
 	if (restored.length + fresh.length + reset.length === 0) return undefined;

@@ -132,6 +132,7 @@ declare module 'node:fs' {
 		isFile(): boolean;
 	}
 	interface Stats {
+		isSocket(): boolean;
 		readonly dev: number;
 		readonly ino: number;
 		readonly nlink: number;
@@ -187,6 +188,7 @@ declare module 'node:fs' {
 
 declare module 'node:fs/promises' {
 	interface Stats {
+		isSocket(): boolean;
 		readonly dev: number;
 		readonly ino: number;
 		readonly nlink: number;

@@ -26,36 +26,22 @@ export interface BotResourceLimits {
 	readonly memoryBytes: number;
 	readonly pids: number;
 }
-export type BotSocketWarning =
-	| 'root-equivalent'
-	| 'server-account'
-	| 'engine-control';
 export interface BotEnvironmentSettings {
 	readonly botId: string;
-	readonly shareEngineSocket: boolean;
 	readonly idleStopMs: number | null;
 	readonly limits: BotResourceLimits;
 	readonly limitsEnforced: boolean;
-	readonly socketWarning: BotSocketWarning;
 	/** Per-bot environment revision, independent of the bots.changed revision. */
 	readonly revision: number;
 }
 export interface BotEnvironmentSetSettings {
 	readonly botId: string;
-	readonly shareEngineSocket?: boolean;
 	readonly idleStopMs?: number | null;
 	readonly limits?: BotResourceLimits;
-	readonly confirmed?: boolean;
 	readonly expectedRevision?: number;
 }
-/** Refusal in ProtocolError.details; confirmation uses code `forbidden`,
- * stale revisions use code `conflict`. */
-export type BotEnvironmentSettingsRefusal =
-	| {
-			readonly reason: 'confirmation-required';
-			readonly socketWarning: BotSocketWarning;
-	  }
-	| { readonly reason: 'conflict' };
+/** Stale environment settings are refused before mutation. */
+export type BotEnvironmentSettingsRefusal = { readonly reason: 'conflict' };
 export const DEFAULT_BOT_RESOURCE_LIMITS: BotResourceLimits = Object.freeze({
 	cpus: 2,
 	memoryBytes: 4 * 1024 ** 3,
@@ -79,32 +65,15 @@ export function parseBotEnvironmentSetSettings(
 	const record = object(value);
 	const result: {
 		botId: string;
-		shareEngineSocket?: boolean;
 		idleStopMs?: number | null;
 		limits?: BotResourceLimits;
-		confirmed?: boolean;
 		expectedRevision?: number;
 	} = {
 		botId: botEnvironmentId(record.botId),
 	};
 	for (const key of Object.keys(record))
-		if (
-			![
-				'botId',
-				'shareEngineSocket',
-				'idleStopMs',
-				'limits',
-				'confirmed',
-				'expectedRevision',
-			].includes(key)
-		)
+		if (!['botId', 'idleStopMs', 'limits', 'expectedRevision'].includes(key))
 			throw new TypeError('unknown bot settings field');
-	for (const key of ['shareEngineSocket', 'confirmed'] as const)
-		if (record[key] !== undefined) {
-			if (typeof record[key] !== 'boolean')
-				throw new TypeError('invalid bot settings flag');
-			result[key] = record[key];
-		}
 	if (record.idleStopMs !== undefined)
 		result.idleStopMs = botIdleStopMs(record.idleStopMs);
 	if (record.limits !== undefined)
@@ -124,26 +93,14 @@ export function parseBotEnvironmentSettings(
 	botEnvironmentId(record.botId);
 	botIdleStopMs(record.idleStopMs);
 	botResourceLimits(object(record.limits) as unknown as BotResourceLimits);
-	if (
-		typeof record.shareEngineSocket !== 'boolean' ||
-		typeof record.limitsEnforced !== 'boolean'
-	)
+	if (typeof record.limitsEnforced !== 'boolean')
 		throw new TypeError('invalid bot settings flag');
-	socketWarning(record.socketWarning);
 	revision(record.revision);
 	return structuredClone(record) as unknown as BotEnvironmentSettings;
 }
 function revision(value: unknown): void {
 	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
 		throw new TypeError('invalid bot settings revision');
-}
-function socketWarning(value: unknown): void {
-	if (
-		!['root-equivalent', 'server-account', 'engine-control'].includes(
-			String(value),
-		)
-	)
-		throw new TypeError('invalid socket warning');
 }
 export type BotContainerAction =
 	| 'start'
@@ -169,13 +126,8 @@ export interface BotEnvironmentOverview {
 	readonly homeVolume: string;
 	readonly limits: BotResourceLimits;
 	readonly limitsEnforced: boolean;
-	readonly shareEngineSocket: boolean;
-	readonly socketChangePending: boolean;
+	readonly engineSocket: 'proxy' | 'recreate-required' | 'not-created';
 	readonly limitsChangePending: boolean;
-	readonly socketWarning:
-		| 'root-equivalent'
-		| 'server-account'
-		| 'engine-control';
 	readonly cpuPercent: number | null;
 	readonly memoryBytes: number | null;
 	readonly homeBytes: number | null;
@@ -222,24 +174,18 @@ export function parseBotEnvironmentOverview(
 	for (const key of ['uptimeMs', 'sampledAt']) nonnegative(record[key]);
 	for (const key of ['cpuPercent', 'memoryBytes', 'homeBytes'])
 		if (record[key] !== null) nonnegative(record[key]);
-	for (const key of [
-		'current',
-		'limitsEnforced',
-		'shareEngineSocket',
-		'socketChangePending',
-		'limitsChangePending',
-	])
+	for (const key of ['current', 'limitsEnforced', 'limitsChangePending'])
 		if (typeof record[key] !== 'boolean')
 			throw new TypeError('invalid bot environment flag');
 	for (const key of ['image', 'fingerprint', 'homeVolume'])
 		boundedText(record[key], 2048);
 	boundedText(record.log, 256 * 1024);
 	if (
-		!['root-equivalent', 'server-account', 'engine-control'].includes(
-			String(record.socketWarning),
+		!['proxy', 'recreate-required', 'not-created'].includes(
+			String(record.engineSocket),
 		)
 	)
-		throw new TypeError('invalid socket warning');
+		throw new TypeError('invalid engine socket mode');
 	botResourceLimits(object(record.limits) as unknown as BotResourceLimits);
 	return structuredClone(record) as unknown as BotEnvironmentOverview;
 }

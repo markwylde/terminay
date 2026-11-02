@@ -47,3 +47,4 @@ export * from './botCredentials.js';
 export * from './bots.js';
 
 export * from './botEngine.js';
+export * from './botMessages.js';

@@ -1,3 +1,4 @@
+import { createBotMessageOperations } from './messageProtocol.js';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,12 +21,13 @@ import { BotEngineService, validateEnginePin } from './engineService.js';
 import { BotEnvironmentService } from './environment.js';
 import { BotFilesService } from './files.js';
 import type { BotAgentInstall } from './image.js';
+import { readBotImage } from './images.js';
 import { BotIoProtocol } from './ioProtocol.js';
 import { BotMemories, type BotMemoryHelper } from './memories.js';
 import { EngineProcess } from './process.js';
 import { createBotEnvironmentOperations } from './protocol.js';
 import { BotDesktopService } from './rfb.js';
-import { type BotAgents, botAgentConfigFiles, BotService } from './service.js';
+import { type BotAgents, BotService, botAgentConfigFiles } from './service.js';
 import { BotSessionStore } from './sessions.js';
 import { BotShellService } from './shell.js';
 import { BotError, BotStore } from './store.js';
@@ -231,9 +233,6 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const shells = new BotShellService({
 		engine: () => images.driver(),
 		start: (id) => environment.start(id),
-		pty: options.pty,
-		cwd: options.dataRoot,
-		environment: process.env,
 		activity: (id, delta) => streamActivity(id, 'shells', delta),
 		signIn: {
 			command: (id) => {
@@ -255,6 +254,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const memories = new BotMemories(memoryHelper(files), bots);
 	const detachEnvironment = environment.follow(engine);
 	service = new BotService(bots, sessions, memories, {
+		serverId: options.serverId,
 		closeConnection: (id) => {
 			void io
 				.closeConnection(id)
@@ -361,7 +361,10 @@ export function createBotServerService(options: BotServerOptions): BotService {
 					images.operations(),
 				),
 				mergeOperationRegistries(
-					io.operations(),
+					mergeOperationRegistries(
+						io.operations(),
+						createBotMessageOperations(service),
+					),
 					createBotCredentialOperations({
 						authority: (context) => service.connections.authority(context),
 						agent: (id) => agent(bots.get(id).agentId),
@@ -412,6 +415,16 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		},
 	});
 	io = new BotIoProtocol({
+		image: async (id, path, signal) => {
+			service.bots.get(id);
+			return readBotImage(
+				await images.driver(),
+				options.serverId,
+				id,
+				path,
+				signal,
+			);
+		},
 		authority: (context) => service.connections.authority(context),
 		files,
 		shells,
