@@ -34,17 +34,17 @@ export function terminalTitleDraft(
 }
 
 /**
- * What submitting the name field sends and shows. An empty name takes the
- * tab's name away, returning it to its automatic title.
+ * What submitting the name field sends. A server that distinguishes title
+ * sources also owns the displayed title; its live title event may arrive
+ * before the save reply, so the editor must not overwrite it on completion.
  */
 export function terminalTitleSubmission(
 	draft: TerminalTitleDraft,
 	entered: string,
 	shownTitle: string,
-): Readonly<{ patchTitle: string; shownTitle: string }> {
+): Readonly<{ patchTitle: string; shownTitle?: string }> {
 	const name = entered.trim();
-	if (name.length > 0) return { patchTitle: name, shownTitle: name };
-	return draft.automaticTitle === undefined
-		? { patchTitle: shownTitle, shownTitle }
-		: { patchTitle: '', shownTitle: draft.automaticTitle };
+	if (draft.automaticTitle !== undefined) return { patchTitle: name };
+	const title = name || shownTitle;
+	return { patchTitle: title, shownTitle: title };
 }

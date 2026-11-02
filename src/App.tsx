@@ -3544,7 +3544,10 @@ const ProjectWorkspace = memo(forwardRef<
 						});
 					}
 
-					panel.api.setTitle(nextTitle);
+					// The title stream may already have delivered the resolved title
+					// while updatePanel was in flight. Only older servers without
+					// title sources need the editor's local display fallback.
+					if (nextTitle !== undefined) panel.api.setTitle(nextTitle);
 					panel.api.updateParameters({
 						activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 						emoji: nextEmoji,
