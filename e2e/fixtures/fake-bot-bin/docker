@@ -1,0 +1,7 @@
+#!/bin/sh
+# A fake rootful Docker for the Bots suite: no daemon, no containers. State
+# lives under TERMINAY_FAKE_BOT_ROOT; the agent inside "containers" is a fake
+# ACP agent, so no provider or account is involved.
+set -eu
+mkdir -p "$TERMINAY_FAKE_BOT_ROOT"
+exec node "$(dirname "$0")/../../../packages/server-core/test/fixtures/bot-composed-engine.mjs" "$@"

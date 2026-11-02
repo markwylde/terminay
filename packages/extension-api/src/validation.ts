@@ -1,3 +1,4 @@
+import { validateBotAgentContribution } from './bots.js';
 import type { AgentChatProviderContribution } from './chat.js';
 import {
 	ENVIRONMENT_VARIABLE_NAME_PATTERN,
@@ -58,6 +59,7 @@ const permissions = new Set<ExtensionPermission>([
 	'mcp-registration',
 	'worktree-observation',
 	'agent-chat',
+	'agent-bots',
 	'agent-launch',
 	'terminal-command-defaults',
 ]);
@@ -249,6 +251,7 @@ export function validateExtensionManifest(
 				'languageServers',
 				'worktreeInsights',
 				'agentChatProviders',
+				'botAgents',
 				'terminalLaunchers',
 				'terminalCommandDefaults',
 			]),
@@ -262,6 +265,7 @@ export function validateExtensionManifest(
 			languageServers,
 			worktreeInsights,
 			agentChatProviders,
+			botAgents,
 			terminalLaunchers,
 			terminalCommandDefaults,
 		} = value.contributes;
@@ -271,6 +275,7 @@ export function validateExtensionManifest(
 			languageServers === undefined &&
 			worktreeInsights === undefined &&
 			agentChatProviders === undefined &&
+			botAgents === undefined &&
 			terminalLaunchers === undefined &&
 			terminalCommandDefaults === undefined
 		) {
@@ -318,6 +323,15 @@ export function validateExtensionManifest(
 				validateAgentChatProviderContribution,
 				out,
 			);
+		if (botAgents !== undefined)
+			validateNamespacedContributions(
+				botAgents,
+				'botAgents',
+				EXTENSION_LIMITS.botAgents,
+				extensionId,
+				validateBotAgentContribution,
+				out,
+			);
 		if (terminalLaunchers !== undefined) {
 			const harnesses = declaredHarnesses(agentSessionSources);
 			validateNamespacedContributions(
@@ -341,6 +355,17 @@ export function validateExtensionManifest(
 				out,
 			);
 		}
+		if (
+			Array.isArray(botAgents) &&
+			botAgents.length > 0 &&
+			Array.isArray(value.permissions) &&
+			!value.permissions.includes('agent-bots')
+		)
+			out.push({
+				path: '$.permissions',
+				code: 'missing_permission',
+				message: 'Bot agents require agent-bots',
+			});
 		// The permission array validator reports a malformed array itself.
 		if (Array.isArray(value.permissions)) {
 			if (
@@ -662,6 +687,7 @@ function validateNamespacedContributions(
 		| 'mcpInstallTargets'
 		| 'worktreeInsights'
 		| 'agentChatProviders'
+		| 'botAgents'
 		| 'terminalLaunchers'
 		| 'terminalCommandDefaults',
 	maximum: number,

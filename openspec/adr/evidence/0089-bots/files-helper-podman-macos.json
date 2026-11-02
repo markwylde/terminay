@@ -1,0 +1,69 @@
+{
+ "list": [
+  {
+   "name": "esc",
+   "kind": "link",
+   "size": 4,
+   "mtime": 1793545637
+  },
+  {
+   "name": "inside-link",
+   "kind": "link",
+   "size": 4,
+   "mtime": 1793545637
+  },
+  {
+   "name": "lnk",
+   "kind": "link",
+   "size": 11,
+   "mtime": 1793545637
+  },
+  {
+   "name": "real",
+   "kind": "dir",
+   "size": 42,
+   "mtime": 1793545637
+  }
+ ],
+ "read_regular": true,
+ "read_through_dir_link_refused": true,
+ "read_file_link_refused": true,
+ "read_inside_home_link_refused": true,
+ "list_through_link_refused": true,
+ "write_through_link_refused": true,
+ "write_over_link_refused": true,
+ "etc_passwd_untouched": true,
+ "write_regular": {
+  "id": 9,
+  "ok": true,
+  "size": 3
+ },
+ "written_owner": "bot 644",
+ "rename_onto_existing_refused": true,
+ "delete_dir_link_deletes_link_only": [
+  {
+   "id": 11,
+   "ok": true
+  },
+  "etc-ok"
+ ],
+ "protected_read_refused": true,
+ "protected_delete_refused": true,
+ "protected_rename_refused": true,
+ "delete_parent_of_protected_refused": true,
+ "race": {
+  "attempts": 3000,
+  "leaked_etc_passwd": 0,
+  "refused": 1645,
+  "read_safe": 1355
+ },
+ "helper_limits": {
+  "network": "none",
+  "read_only": true,
+  "cap_drop_all": true,
+  "memory": 268435456,
+  "pids": 64,
+  "nano_cpus": 500000000,
+  "user": "bot"
+ }
+}

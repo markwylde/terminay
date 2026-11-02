@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs an agent's tool command without the bot's credential variables.
+# TERMINAY_CREDENTIAL_VARIABLES lists variable names only, never values.
+for name in $TERMINAY_CREDENTIAL_VARIABLES; do
+	unset "$name"
+done
+unset TERMINAY_CREDENTIAL_VARIABLES
+exec /bin/bash -c "$1"

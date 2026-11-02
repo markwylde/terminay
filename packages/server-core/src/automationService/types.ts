@@ -1,23 +1,16 @@
 import type { ProtocolId } from '@terminay/protocol';
 import type { MacroFieldValue } from '../macroService/types.js';
+import type {
+	TriggerEventContext,
+	TriggerEventKind,
+	TriggerSubject,
+} from '../scheduleEngine/types.js';
 
 export const AUTOMATION_SCHEMA_VERSION = 1;
 export const AUTOMATION_RUN_LOG_SCHEMA_VERSION = 1;
 
-/** Terminay events an automation can be triggered by. */
-export const AUTOMATION_EVENT_KINDS = Object.freeze([
-	'agent.finished',
-	'agent.needsInput',
-	'agent.blocked',
-	'terminal.needsAttention',
-	'terminal.commandFinished',
-	'terminal.idle',
-	'project.opened',
-	'project.closed',
-	'device.connected',
-] as const);
-
-export type AutomationEventKind = (typeof AUTOMATION_EVENT_KINDS)[number];
+export { TRIGGER_EVENT_KINDS as AUTOMATION_EVENT_KINDS } from '../scheduleEngine/types.js';
+export type AutomationEventKind = TriggerEventKind;
 
 /** Events whose subject is a terminal, and so can serve a subject action. */
 export const AUTOMATION_TERMINAL_SUBJECT_EVENTS: ReadonlySet<AutomationEventKind> =
@@ -188,29 +181,7 @@ export const AUTOMATION_OUTPUT_TAIL_BYTES = 16 * 1024;
  * live-terminal cap). The newest are kept. */
 export const AUTOMATION_RUN_OPENED_SESSIONS_LIMIT = 50;
 
-export type AutomationSubject =
-	| {
-			readonly kind: 'terminal';
-			readonly serverId: string;
-			readonly projectId: string;
-			readonly sessionId: string;
-			/** The subject session's incarnation (its `createdAt`) when the event
-			 * was observed. The executor refuses to act when the live session's
-			 * incarnation differs, so a replaced terminal is never "closest match". */
-			readonly sessionCreatedAt?: number;
-			readonly title?: string;
-			readonly projectTitle?: string;
-	  }
-	| {
-			readonly kind: 'project';
-			readonly projectId: string;
-			readonly title?: string;
-	  }
-	| {
-			readonly kind: 'device';
-			readonly deviceId: string;
-			readonly name?: string;
-	  };
+export type AutomationSubject = TriggerSubject;
 
 export type AutomationRunStatus = 'running' | 'finished';
 
@@ -308,14 +279,7 @@ export type AutomationRetentionResolver = (
 
 /** Event facts passed to a run as bounded `TERMINAY_*` context. Never a
  * token, secret, terminal output, or provider journal content. */
-export interface AutomationEventContext {
-	readonly agentProvider?: string;
-	readonly agentState?: string;
-	/** Agent completion outcome: success | error | cancelled. */
-	readonly agentOutcome?: string;
-	/** Structured command completion exit code. */
-	readonly exitCode?: number;
-}
+export type AutomationEventContext = TriggerEventContext;
 
 export interface AutomationRunStartRequest {
 	/** The definition snapshot the run executes under. Later edits never

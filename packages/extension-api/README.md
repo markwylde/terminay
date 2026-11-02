@@ -261,3 +261,42 @@ secret bytes. Secret bytes must never be returned or included in extension
 state, UI DTOs, logs, or errors. See the
 [scoped brokers reference](https://terminay.com/developers/reference/scoped-brokers)
 for cancellation, zeroization, pending removal, and crash-cleanup obligations.
+
+## Bot agents (API 3.5)
+
+Declare `contributes.botAgents` and require `agent-bots`. Each contribution has
+`id`, `displayName`, `imageInstall: { npm, debian? }` (exact npm versions only),
+`acpCommand: { executable, args }`, and `autonomousOnly`. Optional fields are
+`deviceSignIn`, `credentialSecrets`, `botConfigFiles`, and `launchEnvironment`.
+See the complete [bot agent author example](examples/bot-agent).
+
+A device sign-in declares `command: { executable, args }`, `signOutCommand:
+{ executable, args }`, `label`, `help`, and optional `configFiles`, which the host
+writes before sign-in and before each session, overriding the agent's default
+files at matching paths while the bot signs in that way. Both commands are
+required. Paths must be relative to `/home/bot` and cannot contain `..`. The host runs the command inside the bot's container as `bot`
+with `HOME=/home/bot`; the login it saves stays in the bot's home, and the host
+never reads it. Config paths cannot use `memories/` or host-reserved `.terminay/`.
+Credential metadata declares `environmentVariable`, `kind` (`sign-in-token` or
+`api-key`), optional `authenticateMethodId`, `label`, and `help`. Credential
+values have no manifest or runtime field. Neither fixed nor runtime environment
+may set declared credential variables; the host supplies them.
+
+Register with `context.agents.registerBotAgent(id, runtime)` during activation.
+`models(signal)` returns up to 64 `{ id, displayName }` entries and is cached
+per activation. `status(signal)` returns `{ state: 'ready' }` or
+`{ state: 'not_signed_in', detail? }`. `launch({ modelId }, signal)` receives
+`null` for Default and returns `{ args, env }`. It supplies only the fallback
+when ACP session configuration cannot select the model. Every result is closed
+and bounded. A failed or timed-out call makes the registration unavailable for
+that activation. Disposal or deactivation aborts outstanding calls and clears
+the model cache. `createAgentExtensionHarness` drives all three methods and
+accepts `botAgentDeadlineMs` to test deadlines. The harness rejects invalid bot
+declarations before activating the extension.
+
+The permission grants description and registration only. Bots, containers,
+images, ACP, sessions, transcripts, credential sharing and injection, and UI
+belong to the host. The extension receives no bot or session input and no bot
+credential, even when it has other secret permissions. Only the host may place
+a bot credential in the engine client's environment, passing its name rather
+than its value in arguments. This exception adds no extension broker operation.

@@ -1,0 +1,70 @@
+{
+ "host_codex": "codex-cli 0.166.0",
+ "host_login": 0,
+ "validation": {
+  "canonical_inside_home": true,
+  "no_link_components": true,
+  "regular": true,
+  "nlink": 1
+ },
+ "bot_link": "-> /run/terminay/host-auth/codex/auth.json",
+ "1_bot_sees_host_login": true,
+ "2_masks": {
+  "sessions_listing": [],
+  "skills_listing": [],
+  "config_toml_bytes": 0,
+  "history_bytes": 0,
+  "write_masked_dir": false,
+  "write_masked_file": false,
+  "bot_own_codex_dir_is_separate": [
+   "auth.json"
+  ],
+  "can_create_new_top_level_entry": true,
+  "can_replace_auth_with_link": true
+ },
+ "3_host_relogin_seen_by_bots": true,
+ "4_bot_login_writes_host_file": {
+  "exit": 0,
+  "host_sees": true,
+  "other_bot_sees": true,
+  "link_still_link": true,
+  "host_validation": {
+   "canonical_inside_home": true,
+   "no_link_components": true,
+   "regular": true,
+   "nlink": 1
+  }
+ },
+ "5_host_logout": {
+  "bot_key": null,
+  "bot_status": "Not logged in"
+ },
+ "6_host_login_again_seen_without_recreate": true,
+ "7_bot_logout": {
+  "exit": 0,
+  "out": "Successfully logged out",
+  "bot_link_present": false,
+  "host_file_present": true
+ },
+ "8_concurrent_logins": {
+  "final_valid_json": true,
+  "validation": {
+   "canonical_inside_home": true,
+   "no_link_components": true,
+   "regular": true,
+   "nlink": 1
+  },
+  "leftover_temp_files": [],
+  "bots_agree_with_host": true
+ },
+ "visibility_lag_seconds": [
+  0.1,
+  0.1,
+  0.1,
+  0.1,
+  0.1,
+  2.7,
+  0.1,
+  0.1
+ ]
+}

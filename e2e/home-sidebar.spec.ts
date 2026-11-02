@@ -10,7 +10,7 @@ import {
 import { createStartedProject } from './support/project-start';
 
 /**
- * Home's sidebar: Home, Tabs, Automations, and Recordings, each opening as a
+ * Home's sidebar: Home, Tabs, Bots, Automations, and Recordings, each opening as a
  * Home tab. Its
  * visibility, and the tabs it opened, belong to this device and to no project.
  */
@@ -21,7 +21,7 @@ const sidebarToggle = (page: Page) => page.getByLabel('Toggle file explorer');
 const homeView = activeHome;
 const homeSidebar = (page: Page) =>
 	page.locator('[data-terminay-home-sidebar]');
-type Section = 'home' | 'tabs' | 'automations' | 'recordings';
+type Section = 'home' | 'tabs' | 'bots' | 'automations' | 'recordings';
 
 const sectionTab = (page: Page, section: Section) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
@@ -77,9 +77,9 @@ test.describe('Home sidebar', () => {
 		await expect(homeSidebar(mainWindow)).toBeVisible();
 		await expectSection(mainWindow, 'home');
 
-		// Exactly four sections, in order, and the one in front is current.
+		// Exactly five sections, in order, and the one in front is current.
 		const items = homeSidebar(mainWindow).getByRole('tab');
-		await expect(items).toHaveText(['Home', 'Tabs', 'Automations', 'Recordings']);
+		await expect(items).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Recordings']);
 		await expect(sectionTab(mainWindow, 'home')).toHaveAttribute(
 			'aria-selected',
 			'true',
@@ -244,7 +244,7 @@ test.describe('Home sidebar', () => {
 		const empty = mainWindow.locator('[data-terminay-home-empty]');
 		await expect(
 			empty.locator('[data-terminay-home-empty-section]'),
-		).toHaveText(['Home', 'Tabs', 'Automations', 'Recordings']);
+		).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Recordings']);
 		await empty.locator('[data-terminay-home-empty-section="automations"]').click();
 		await expectSection(mainWindow, 'automations');
 		await expect(homeTabChips(mainWindow)).toHaveText(['Automations']);

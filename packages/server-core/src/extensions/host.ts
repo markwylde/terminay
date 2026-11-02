@@ -3,6 +3,12 @@ import { fileURLToPath } from 'node:url';
 import {
 	type AgentChatAvailability,
 	type AgentChatEvent,
+	type BotAgentContribution,
+	type BotAgentLaunch,
+	type BotAgentLaunchRequest,
+	type BotAgentModel,
+	type BotAgentResult,
+	type BotAgentStatus,
 	type AgentChatProviderContribution,
 	type AgentChatSessionRequest,
 	type AgentSessionSourceContribution,
@@ -26,6 +32,7 @@ import {
 	validateTerminalLauncherResolution,
 	type WorktreeInsightSourceContribution,
 } from '@terminay/extension-api';
+import { BotAgentRuntimeHost } from '@terminay/extension-api/testing';
 import { validateExtensionLaunchDescriptor } from './descriptor.js';
 import {
 	type ExtensionErrorDetail,
@@ -201,6 +208,8 @@ export class ExtensionHost {
 		Object.freeze([]);
 	private agentChatProviders: readonly AgentChatProviderContribution[] =
 		Object.freeze([]);
+	private botAgents: readonly BotAgentContribution[] = Object.freeze([]);
+	private botRuntime = new BotAgentRuntimeHost([], false);
 	private terminalLaunchers: readonly TerminalLauncherContribution[] =
 		Object.freeze([]);
 	private terminalCommandDefaults: readonly TerminalCommandDefaultContribution[] =
@@ -237,11 +246,13 @@ export class ExtensionHost {
 	status(): ExtensionHostStatus {
 		return Object.freeze({
 			...this.state,
+ extensionName: this.descriptor?.extensionName,
 			agentSessionSources: this.agentSessionSources,
 			mcpInstallTargets: this.mcpInstallTargets,
 			languageServers: this.languageServers,
 			worktreeInsightSources: this.worktreeInsightSources,
 			agentChatProviders: this.agentChatProviders,
+			botAgents: this.botAgents,
 			terminalLaunchers: this.terminalLaunchers,
 			terminalCommandDefaults: this.terminalCommandDefaults,
 		});
@@ -330,6 +341,8 @@ export class ExtensionHost {
 						this.descriptor.agentChatProviders === undefined
 							? []
 							: structuredClone(this.descriptor.agentChatProviders),
+					botAgents: structuredClone(this.descriptor.botAgents ?? []),
+					botAgentDeadlineMs: this.limits.invocationTimeoutMs,
 					terminalLaunchers:
 						this.descriptor.terminalLaunchers === undefined
 							? []
@@ -375,6 +388,44 @@ export class ExtensionHost {
 				'agent-chat',
 				'chat provider',
 			);
+			this.botAgents = validateRegistrations(
+				record(activated)?.botAgents,
+				this.descriptor.botAgents ?? [],
+				this.descriptor,
+				'agent-bots',
+				'bot agent',
+			);
+			this.botRuntime.deactivate();
+			this.botRuntime = new BotAgentRuntimeHost(
+				this.botAgents,
+				this.descriptor.permissions.includes('agent-bots'),
+				this.limits.invocationTimeoutMs,
+			);
+			for (const agent of this.botAgents) {
+				this.botRuntime.registerBotAgent(agent.id, {
+					models: async (signal) =>
+						(await this.call(
+							'agent.bot.models',
+							{ agentId: agent.id },
+							this.limits.invocationTimeoutMs,
+							signal,
+						)) as BotAgentModel[],
+					status: async (signal) =>
+						(await this.call(
+							'agent.bot.status',
+							{ agentId: agent.id },
+							this.limits.invocationTimeoutMs,
+							signal,
+						)) as BotAgentStatus,
+					launch: async (request, signal) =>
+						(await this.call(
+							'agent.bot.launch',
+							{ agentId: agent.id, request },
+							this.limits.invocationTimeoutMs,
+							signal,
+						)) as BotAgentLaunch,
+				});
+			}
 			this.terminalLaunchers = validateRegistrations(
 				record(activated)?.terminalLaunchers,
 				this.descriptor.terminalLaunchers ?? [],
@@ -492,6 +543,8 @@ export class ExtensionHost {
 		this.languageServers = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
+		this.botAgents = Object.freeze([]);
+		this.botRuntime.deactivate();
 		this.terminalLaunchers = Object.freeze([]);
 		this.terminalCommandDefaults = Object.freeze([]);
 	}
@@ -601,6 +654,21 @@ export class ExtensionHost {
 		return this.worktreeInsightSources;
 	}
 
+	botAgentContributions(): readonly BotAgentContribution[] {
+		return this.botAgents;
+	}
+	botAgentModels(agentId: string): Promise<BotAgentResult<BotAgentModel[]>> {
+		return this.botRuntime.models(agentId);
+	}
+	botAgentStatus(agentId: string): Promise<BotAgentResult<BotAgentStatus>> {
+		return this.botRuntime.status(agentId);
+	}
+	botAgentLaunch(
+		agentId: string,
+		request: BotAgentLaunchRequest,
+	): Promise<BotAgentResult<BotAgentLaunch>> {
+		return this.botRuntime.launch(agentId, request);
+	}
 	chatProviderContributions(): readonly AgentChatProviderContribution[] {
 		return this.agentChatProviders;
 	}
@@ -1200,6 +1268,16 @@ export class ExtensionHost {
 			this.handleWorktreeInsightFrame(message);
 			return;
 		}
+		if (message.kind === 'agent.bot.disposed') {
+			const agentId = boundedId(record(message.payload)?.agentId);
+			if (agentId !== undefined) {
+				this.botAgents = Object.freeze(
+					this.botAgents.filter((agent) => agent.id !== agentId),
+				);
+				this.botRuntime.remove(agentId);
+			}
+			return;
+		}
 		if (message.kind === 'agent.chat.event') {
 			this.handleChatEvent(message);
 			return;
@@ -1425,6 +1503,8 @@ export class ExtensionHost {
 	): Promise<unknown> {
 		if (this.options.secrets === undefined || this.descriptor === undefined)
 			throw new Error('extension secret broker is unavailable');
+		if (!this.descriptor.permissions.includes('secrets:resolve'))
+			throw new Error('extension secret access is denied');
 		if (signal.aborted) throw new Error('extension secret access cancelled');
 		const request = record(input);
 		const profileId = boundedId(request?.profileId);
@@ -1641,6 +1721,8 @@ export class ExtensionHost {
 		this.mcpInstallTargets = Object.freeze([]);
 		this.worktreeInsightSources = Object.freeze([]);
 		this.agentChatProviders = Object.freeze([]);
+		this.botAgents = Object.freeze([]);
+		this.botRuntime.deactivate();
 		this.terminalLaunchers = Object.freeze([]);
 		this.terminalCommandDefaults = Object.freeze([]);
 		// The child's own report is the only account of what actually threw; the

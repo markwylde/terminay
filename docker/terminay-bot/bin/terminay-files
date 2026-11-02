@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""Confined file helper for a bot's home volume.
+
+Run as `bot`, in a helper container that mounts only the home volume:
+  docker run --rm -i --network none --read-only --cap-drop ALL ... \
+    --entrypoint terminay-files terminay-bot:local [--protect PATH ...]
+
+JSON lines on stdin/stdout. Every request has an "id"; every response echoes it.
+Paths are relative to /home/bot. Every component is opened with O_NOFOLLOW from a
+descriptor for /home/bot, so symbolic links are never followed, even one swapped in
+mid-operation. Protected paths (declared auth links), their ancestors and the agent
+homes cannot be opened, renamed or deleted.
+
+Requests:
+  {"id":1,"op":"list","path":"."}                       -> {"id":1,"entries":[...],"truncated":false}
+  {"id":2,"op":"stat","path":"a.txt"}
+  {"id":3,"op":"read","path":"a.txt"}                   -> {"id":3,"chunk":"<b64>"}... {"id":3,"done":true}
+  {"id":3,"op":"credit","n":4}                          (reads send one chunk per credit; 4 to start)
+  {"id":4,"op":"write-begin","path":"up.bin","size":N}  -> {"id":4,"ok":true}
+  {"id":4,"op":"write-chunk","data":"<b64>"}            -> {"id":4,"credit":1}
+  {"id":4,"op":"write-commit"}                          -> {"id":4,"ok":true}
+  {"id":5,"op":"mkdir","path":"dir"}
+  {"id":6,"op":"rename","from":"a","to":"b"}
+  {"id":7,"op":"delete","path":"dir"}
+  {"id":8,"op":"watch","paths":["memories","."]}        -> {"id":8,"event":{...}}...
+  {"id":9,"op":"cancel","target":3}
+"""
+import base64, json, os, stat, subprocess, sys, threading, secrets
+
+HOME = "/home/bot"
+CHUNK = 1024 * 1024
+MAX_UPLOAD = 1024 * 1024 * 1024
+MAX_LIST = 10000
+MAX_LINE = 2 * 1024 * 1024
+AGENT_HOMES = {".codex", ".claude"}
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+out_lock = threading.Lock()
+
+
+def send(obj):
+    line = json.dumps(obj, separators=(",", ":")) + "\n"
+    with out_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+
+class Refused(Exception):
+    pass
+
+
+def split(rel):
+    if not isinstance(rel, str) or "\0" in rel:
+        raise Refused("bad path")
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts) or rel.startswith("/"):
+        raise Refused("outside home")
+    return parts
+
+
+class Home:
+    def __init__(self, protect):
+        self.root = os.open(HOME, DIR_FLAGS)
+        self.protect = set()
+        self.ancestors = set()
+        for p in protect:
+            parts = tuple(split(p))
+            self.protect.add(parts)
+            for i in range(1, len(parts)):
+                self.ancestors.add(parts[:i])
+        for h in AGENT_HOMES:
+            self.ancestors.add((h,))
+
+    def guard(self, parts, mutate):
+        t = tuple(parts)
+        if t in self.protect:
+            raise Refused("credential path")
+        if mutate and (t in self.ancestors or not t):
+            raise Refused("protected directory")
+
+    def parent_fd(self, parts):
+        """Open the directory containing parts[-1] without following links."""
+        fd = os.dup(self.root)
+        try:
+            for p in parts[:-1]:
+                nfd = os.open(p, DIR_FLAGS, dir_fd=fd)
+                os.close(fd)
+                fd = nfd
+            return fd
+        except OSError as e:
+            os.close(fd)
+            if e.errno in (40, 20):  # ELOOP, ENOTDIR: a link or non-directory in the way
+                raise Refused("link or non-directory in path")
+            raise
+
+    def dir_fd(self, parts):
+        if not parts:
+            return os.dup(self.root)
+        pfd = self.parent_fd(parts)
+        try:
+            return os.open(parts[-1], DIR_FLAGS, dir_fd=pfd)
+        except OSError as e:
+            if e.errno in (40, 20):
+                raise Refused("not a directory, or a link")
+            raise
+        finally:
+            os.close(pfd)
+
+
+def entry(name, st):
+    kind = "link" if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode) else \
+        "file" if stat.S_ISREG(st.st_mode) else "other"
+    return {"name": name, "kind": kind, "size": st.st_size, "mtime": int(st.st_mtime)}
+
+
+class Server:
+    def __init__(self, home):
+        self.h = home
+        self.credits = {}
+        self.cancelled = set()
+        self.cv = threading.Condition()
+        self.writes = {}
+        self.watches = {}
+
+    def op_list(self, req):
+        parts = split(req.get("path", "."))
+        self.h.guard(parts, False)
+        fd = self.h.dir_fd(parts)
+        out, truncated = [], False
+        try:
+            for name in sorted(os.listdir(fd)):
+                if len(out) >= MAX_LIST:
+                    truncated = True
+                    break
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                e = entry(name, st)
+                t = tuple(parts + [name])
+                if t in self.h.protect:
+                    e["kind"] = "credential-link"
+                out.append(e)
+        finally:
+            os.close(fd)
+        send({"id": req["id"], "entries": out, "truncated": truncated})
+
+    def op_stat(self, req):
+        parts = split(req["path"])
+        self.h.guard(parts, False)
+        pfd = self.h.parent_fd(parts) if parts else os.dup(self.h.root)
+        try:
+            st = os.stat(parts[-1], dir_fd=pfd, follow_symlinks=False) if parts else os.fstat(pfd)
+        finally:
+            os.close(pfd)
+        send({"id": req["id"], "stat": entry(parts[-1] if parts else ".", st)})
+
+    def op_read(self, req):
+        rid = req["id"]
+        parts = split(req["path"])
+        self.h.guard(parts, False)
+        if not parts:
+            raise Refused("not a file")
+        pfd = self.h.parent_fd(parts)
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
+        except OSError as e:
+            if e.errno == 40:
+                raise Refused("link")
+            raise
+        finally:
+            os.close(pfd)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise Refused("not a regular file")
+        with self.cv:
+            self.credits.setdefault(rid, 4)
+
+        def pump():
+            try:
+                while True:
+                    with self.cv:
+                        while self.credits.get(rid, 0) <= 0 and rid not in self.cancelled:
+                            self.cv.wait()
+                        if rid in self.cancelled:
+                            send({"id": rid, "cancelled": True})
+                            return
+                        self.credits[rid] -= 1
+                    data = os.read(fd, CHUNK)
+                    if not data:
+                        send({"id": rid, "done": True})
+                        return
+                    send({"id": rid, "chunk": base64.b64encode(data).decode()})
+            finally:
+                os.close(fd)
+                with self.cv:
+                    self.credits.pop(rid, None)
+                    self.cancelled.discard(rid)
+        threading.Thread(target=pump, daemon=True).start()
+
+    def op_credit(self, req):
+        with self.cv:
+            if req["id"] in self.credits:
+                self.credits[req["id"]] += max(0, min(int(req.get("n", 1)), 64))
+                self.cv.notify_all()
+
+    def op_cancel(self, req):
+        with self.cv:
+            if req["target"] in self.credits:
+                self.cancelled.add(req["target"])
+            self.cv.notify_all()
+        watch = self.watches.pop(req["target"], None)
+        if watch:
+            watch.terminate()
+        w = self.writes.pop(req["target"], None)
+        if w:
+            self._abort(w)
+        send({"id": req["id"], "ok": True})
+
+    def op_write_begin(self, req):
+        parts = split(req["path"])
+        self.h.guard(parts, True)
+        size = int(req.get("size", 0))
+        if not parts or size < 0 or size > MAX_UPLOAD:
+            raise Refused("upload too large")
+        pfd = self.h.parent_fd(parts)
+        tmp = f".terminay-upload-{secrets.token_hex(6)}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=pfd)
+        self.writes[req["id"]] = {"pfd": pfd, "fd": fd, "tmp": tmp, "name": parts[-1], "left": size, "written": 0}
+        send({"id": req["id"], "ok": True, "credit": 4})
+
+    def _abort(self, w):
+        try:
+            os.close(w["fd"])
+            os.unlink(w["tmp"], dir_fd=w["pfd"])
+        except OSError:
+            pass
+        os.close(w["pfd"])
+
+    def op_write_chunk(self, req):
+        w = self.writes.get(req["id"])
+        if not w:
+            raise Refused("no upload")
+        data = base64.b64decode(req["data"])
+        if len(data) > CHUNK or w["written"] + len(data) > min(MAX_UPLOAD, w["left"]):
+            self._abort(self.writes.pop(req["id"]))
+            raise Refused("chunk too large")
+        view = memoryview(data)
+        while view:
+            view = view[os.write(w["fd"], view):]
+        w["written"] += len(data)
+        send({"id": req["id"], "credit": 1})
+
+    def op_write_commit(self, req):
+        w = self.writes.pop(req["id"], None)
+        if not w:
+            raise Refused("no upload")
+        if w["written"] != w["left"]:
+            self._abort(w)
+            raise Refused("incomplete upload")
+        try:
+            os.fsync(w["fd"])
+            os.close(w["fd"])
+            # Refuse to replace a directory or a link; rename itself never follows links.
+            try:
+                st = os.stat(w["name"], dir_fd=w["pfd"], follow_symlinks=False)
+                if not stat.S_ISREG(st.st_mode):
+                    os.unlink(w["tmp"], dir_fd=w["pfd"])
+                    raise Refused("target is not a regular file")
+            except FileNotFoundError:
+                pass
+            os.rename(w["tmp"], w["name"], src_dir_fd=w["pfd"], dst_dir_fd=w["pfd"])
+        finally:
+            os.close(w["pfd"])
+        send({"id": req["id"], "ok": True, "size": w["written"]})
+
+    def op_mkdir(self, req):
+        parts = split(req["path"])
+        self.h.guard(parts, True)
+        pfd = self.h.parent_fd(parts)
+        try:
+            os.mkdir(parts[-1], 0o755, dir_fd=pfd)
+        finally:
+            os.close(pfd)
+        send({"id": req["id"], "ok": True})
+
+    def op_rename(self, req):
+        src, dst = split(req["from"]), split(req["to"])
+        self.h.guard(src, True)
+        self.h.guard(dst, True)
+        if not src or not dst:
+            raise Refused("cannot rename home")
+        spfd, dpfd = self.h.parent_fd(src), self.h.parent_fd(dst)
+        try:
+            if os.path.lexists(f"/proc/self/fd/{dpfd}/{dst[-1]}"):
+                raise Refused("target exists")
+            os.rename(src[-1], dst[-1], src_dir_fd=spfd, dst_dir_fd=dpfd)
+        finally:
+            os.close(spfd)
+            os.close(dpfd)
+        send({"id": req["id"], "ok": True})
+
+    def _rm_tree(self, pfd, name):
+        st = os.stat(name, dir_fd=pfd, follow_symlinks=False)
+        if not stat.S_ISDIR(st.st_mode):
+            os.unlink(name, dir_fd=pfd)
+            return
+        fd = os.open(name, DIR_FLAGS, dir_fd=pfd)
+        try:
+            for child in os.listdir(fd):
+                self._rm_tree(fd, child)
+        finally:
+            os.close(fd)
+        os.rmdir(name, dir_fd=pfd)
+
+    def op_delete(self, req):
+        parts = split(req["path"])
+        self.h.guard(parts, True)
+        # A recursive delete must not remove a protected path below it.
+        t = tuple(parts)
+        if any(p[:len(t)] == t for p in self.h.protect):
+            raise Refused("contains a credential path")
+        pfd = self.h.parent_fd(parts)
+        try:
+            self._rm_tree(pfd, parts[-1])
+        finally:
+            os.close(pfd)
+        send({"id": req["id"], "ok": True})
+
+    def op_watch(self, req):
+        rid = req["id"]
+        paths = req.get("paths", ["."])
+        if not isinstance(paths, list) or not 1 <= len(paths) <= 16:
+            raise Refused("bad watch paths")
+        # inotify attaches to descriptors, not a bot-writable pathname that
+        # can be swapped for a link between validation and watch creation.
+        descriptors, directories = [], []
+        try:
+            for p in paths:
+                parts = split(p)
+                self.h.guard(parts, False)
+                fd = self.h.dir_fd(parts)
+                descriptors.append(fd)
+                directories.append("/proc/self/fd/" + str(fd))
+            proc = subprocess.Popen(["inotifywait", "-m", "-q", "--format", "%e", "-e",
+                                     "create,delete,modify,move,close_write,delete_self,move_self", "--", *directories],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    stdin=subprocess.DEVNULL, text=True, pass_fds=descriptors)
+            self.watches[rid] = proc
+        finally:
+            for fd in descriptors:
+                os.close(fd)
+
+        def pump():
+            try:
+                for line in proc.stdout:
+                    if self.watches.get(rid) is not proc:
+                        return
+                    # Only invalidations leave the watch. Listing is an
+                    # authorized, separately bounded request.
+                    send({"id": rid, "event": {"kind": "changed"}})
+            finally:
+                if self.watches.pop(rid, None) is proc:
+                    send({"id": rid, "error": "watch-ended"})
+                proc.stdout.close()
+                proc.wait()
+        send({"id": rid, "ok": True})
+        threading.Thread(target=pump, daemon=True).start()
+
+    def handle(self, req):
+        op = req.get("op")
+        fn = getattr(self, "op_" + str(op).replace("-", "_"), None)
+        if fn is None:
+            raise Refused("unknown op")
+        fn(req)
+
+
+def main():
+    protect = []
+    args = sys.argv[1:]
+    while args:
+        if args[0] == "--protect" and len(args) > 1:
+            protect.append(args[1])
+            args = args[2:]
+        else:
+            print(f"terminay-files: bad argument {args[0]!r}", file=sys.stderr)
+            sys.exit(2)
+    srv = Server(Home(protect))
+    send({"ready": True})
+    for raw in sys.stdin.buffer:
+        if len(raw) > MAX_LINE:
+            send({"error": "line too long"})
+            continue
+        try:
+            req = json.loads(raw)
+            if not isinstance(req, dict) or "id" not in req:
+                raise Refused("bad request")
+            srv.handle(req)
+        except Refused as e:
+            send({"id": req.get("id") if isinstance(req, dict) else None, "error": "refused", "reason": str(e)})
+        except FileNotFoundError:
+            send({"id": req.get("id"), "error": "not-found"})
+        except Exception as e:  # noqa: BLE001
+            send({"id": req.get("id") if isinstance(req, dict) else None, "error": "failed", "reason": type(e).__name__})
+
+
+if __name__ == "__main__":
+    main()

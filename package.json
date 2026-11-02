@@ -71,7 +71,7 @@
 		"test:linked-folders:layout": "node --test scripts/workspace-split-layout-folders.test.mjs",
 		"test:workspaces": "turbo run test:ci --concurrency=1",
 		"test:ci": "npm run smoke && npm run test:workspaces && npm run test:workspace-models && npm run test:release-evidence",
-		"test:workspace-models": "node --test --experimental-strip-types src/workspace/workspaceView.test.ts src/workspace/elsewhereTerminals.test.ts scripts/automations-model.test.mjs scripts/workspace-projection.test.mjs scripts/terminal-title-store.test.mjs src/workspace/unchangedPresentation.test.ts src/components/settings/settingsCategoryGroups.test.ts src/components/settings/settingsSelection.test.ts src/shared/deviceDisplayName.test.ts",
+		"test:workspace-models": "node --test --experimental-strip-types src/workspace/homeTabs.test.ts src/workspace/bots/botsModel.test.ts src/workspace/bots/triggersModel.test.ts src/workspace/workspaceView.test.ts src/workspace/elsewhereTerminals.test.ts scripts/automations-model.test.mjs scripts/workspace-projection.test.mjs scripts/terminal-title-store.test.mjs src/workspace/unchangedPresentation.test.ts src/components/settings/settingsCategoryGroups.test.ts src/components/settings/settingsSelection.test.ts src/shared/deviceDisplayName.test.ts",
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
 		"test:e2e": "sh scripts/run-e2e-container.sh",
@@ -173,7 +173,9 @@
 		"test:spike-production-headless-webrtc-secure-werift": "node --test scripts/production-headless-webrtc-secure-werift.test.mjs",
 		"preview": "vite preview",
 		"smoke:daemon-cli": "node scripts/daemon-cli-smoke.mjs",
-		"test:daemon-cli-smoke": "node --test scripts/daemon-cli-smoke.test.mjs scripts/published-udp-port.test.mjs scripts/advertised-ice-reachability.test.mjs"
+		"test:daemon-cli-smoke": "node --test scripts/daemon-cli-smoke.test.mjs scripts/published-udp-port.test.mjs scripts/advertised-ice-reachability.test.mjs",
+		"test:bots:credentials": "node extensions/builtin-agents/scripts/bot-credentials.mjs",
+		"test:bots-ui": "node --test --test-concurrency=1 scripts/bots-ui.test.mjs"
 	},
 	"dependencies": {
 		"@fontsource/open-sans": "^5.3.0",
@@ -183,6 +185,7 @@
 		"@mdxeditor/editor": "^4.2.1",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@monaco-editor/react": "^4.7.0",
+		"@novnc/novnc": "1.7.0",
 		"@npmcli/arborist": "10.0.4",
 		"@tabler/icons-react": "^3.44.0",
 		"@terminay/client-core": "1.0.0",

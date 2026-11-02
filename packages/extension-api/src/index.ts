@@ -1,3 +1,4 @@
+export * from './bots.js';
 export * from './agent.js';
 export * from './chat.js';
 export * from './constants.js';

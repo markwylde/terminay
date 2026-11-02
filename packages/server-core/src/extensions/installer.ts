@@ -574,6 +574,7 @@ export class ExtensionInstaller {
 			mcpInstallTargets: readonly import('@terminay/extension-api').McpInstallTargetContribution[];
 			languageServers: readonly import('@terminay/extension-api').LanguageServerContribution[];
 			worktreeInsights: readonly import('@terminay/extension-api').WorktreeInsightSourceContribution[];
+			botAgents: readonly import('@terminay/extension-api').BotAgentContribution[];
 			agentChatProviders: readonly import('@terminay/extension-api').AgentChatProviderContribution[];
 			terminalLaunchers: readonly import('@terminay/extension-api').TerminalLauncherContribution[];
 			terminalCommandDefaults: readonly import('@terminay/extension-api').TerminalCommandDefaultContribution[];
@@ -609,6 +610,9 @@ export class ExtensionInstaller {
 				structuredClone(
 					slot.receipt.manifest.contributes.worktreeInsights ?? [],
 				),
+			),
+			botAgents: Object.freeze(
+				structuredClone(slot.receipt.manifest.contributes.botAgents ?? []),
 			),
 			agentChatProviders: Object.freeze(
 				structuredClone(

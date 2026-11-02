@@ -337,6 +337,8 @@ export type StateStoreName =
 	| 'remote-access-settings'
 	| 'macros'
 	| 'automations'
+	| 'bots'
+	| 'bot-sessions'
 	| 'connected-servers'
 	| 'connection-profiles'
 	| 'window-layout'

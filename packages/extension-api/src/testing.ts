@@ -1,5 +1,14 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import type {
+	BotAgentLaunch,
+	BotAgentLaunchRequest,
+	BotAgentModel,
+	BotAgentResult,
+	BotAgentStatus,
+} from './bots.js';
+import { validateBotAgentContribution } from './bots.js';
+import { BotAgentRuntimeHost } from './botRuntime.js';
 import {
 	type AgentChatAvailability,
 	type AgentChatEvent,
@@ -55,6 +64,8 @@ import {
 	validateProviderVaultRemoveRequest,
 	validateProviderVaultWithSecretRequest,
 } from './validation.js';
+
+export { BotAgentRuntimeHost } from './botRuntime.js';
 
 interface FixtureVaultEntry {
 	binding: ProviderVaultBinding;
@@ -234,6 +245,7 @@ export interface HarnessViolation {
 }
 
 export interface AgentExtensionHarnessOptions {
+	botAgentDeadlineMs?: number;
 	/** When given, registration is checked against its declared contributions. */
 	manifest?: TerminayExtensionManifest;
 }
@@ -288,6 +300,13 @@ export interface AgentExtensionHarness {
 	): Promise<McpInstallTargetActionResult>;
 	/** Chat provider ids the extension registered, in registration order. */
 	registeredChatProviderIds(): readonly string[];
+	registeredBotAgentIds(): readonly string[];
+	botAgentModels(agentId: string): Promise<BotAgentResult<BotAgentModel[]>>;
+	botAgentStatus(agentId: string): Promise<BotAgentResult<BotAgentStatus>>;
+	botAgentLaunch(
+		agentId: string,
+		request: BotAgentLaunchRequest,
+	): Promise<BotAgentResult<BotAgentLaunch>>;
 	chatAvailability(providerId: string): Promise<AgentChatAvailability>;
 	/**
 	 * Opens a provider session as the host does and records every event it
@@ -371,6 +390,13 @@ export async function createAgentExtensionHarness(
 	options: AgentExtensionHarnessOptions = {},
 ): Promise<AgentExtensionHarness> {
 	const manifest = options.manifest;
+	for (const declaration of manifest?.contributes.botAgents ?? []) {
+		const validation = validateBotAgentContribution(declaration, manifest!.id);
+		if (!validation.ok)
+			throw new Error(
+				`Invalid bot agent declaration: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`,
+			);
+	}
 	const sourceDeclarations = new Map(
 		(manifest?.contributes.agentSessionSources ?? []).map((source) => [
 			source.id,
@@ -400,6 +426,11 @@ export async function createAgentExtensionHarness(
 	const sources = new Map<string, AgentSessionSourceRuntime>();
 	const targets = new Map<string, McpInstallTargetRuntime>();
 	const chatProviders = new Map<string, AgentChatProviderRuntime>();
+	const botAgents = new BotAgentRuntimeHost(
+		manifest?.contributes.botAgents ?? [],
+		manifest?.permissions.includes('agent-bots') ?? false,
+		options.botAgentDeadlineMs,
+	);
 	const openChats = new Set<AgentChatSession>();
 	const running = new Map<string, RunningSource>();
 	const subscriptions: Disposable[] = [];
@@ -428,6 +459,7 @@ export async function createAgentExtensionHarness(
 			cache: '/fixture/cache',
 		},
 		agents: {
+			registerBotAgent: botAgents.registerBotAgent.bind(botAgents),
 			registerSessionSource(sourceId, runtime) {
 				if (released) throw new Error('extension is deactivated');
 				if (manifest && !sourceDeclarations.has(sourceId))
@@ -626,6 +658,7 @@ export async function createAgentExtensionHarness(
 	async function release(reason: ExtensionReleaseReason): Promise<void> {
 		void reason;
 		released = true;
+		botAgents.deactivate();
 		for (const state of running.values()) state.controller.abort();
 		running.clear();
 		for (const session of [...openChats]) await session.close();
@@ -764,6 +797,18 @@ export async function createAgentExtensionHarness(
 				(runtime, request) => runtime.uninstall(request),
 				validateMcpInstallTargetActionResult,
 			);
+		},
+		registeredBotAgentIds() {
+			return botAgents.ids();
+		},
+		botAgentModels(agentId) {
+			return botAgents.models(agentId);
+		},
+		botAgentStatus(agentId) {
+			return botAgents.status(agentId);
+		},
+		botAgentLaunch(agentId, request) {
+			return botAgents.launch(agentId, request);
 		},
 		registeredChatProviderIds() {
 			return [...chatProviders.keys()];
@@ -910,6 +955,9 @@ export async function createLanguageServerExtensionHarness(
 				throw new Error(
 					'this harness serves language servers; use createAgentExtensionHarness',
 				);
+			},
+			registerBotAgent() {
+				throw new Error('this harness serves language servers');
 			},
 			registerChatProvider() {
 				throw new Error(

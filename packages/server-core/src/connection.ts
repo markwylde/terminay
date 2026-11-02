@@ -16,6 +16,7 @@ import {
 	validateEnvelope,
 } from '@terminay/protocol';
 import { authError, validateIdentity } from './auth.js';
+import { canReadBotEvents } from './botService/authority.js';
 import {
 	createOperationDispatcher,
 	type OperationDispatcher,
@@ -677,6 +678,14 @@ export class ServerConnection implements ServerConnectionLike {
 				? undefined
 				: payload.event;
 		if (
+			typeof event === 'string' &&
+			event.startsWith('bots.') &&
+			!canReadBotEvents(this.authenticatedClient)
+		)
+			return commandError(
+				command, 'forbidden', 'bots require terminal-create authority',
+			);
+		if (
 			event !== undefined &&
 			(typeof event !== 'string' || event.length === 0 || event.length > 256)
 		)
@@ -1041,6 +1050,10 @@ export class ServerConnection implements ServerConnectionLike {
 	}
 
 	private projectEvent(event: OrderedEvent): OrderedEvent | undefined {
+		if (
+			event.event.startsWith('bots.') &&
+			!canReadBotEvents(this.authenticatedClient)
+		) return undefined;
 		return this.options.projectEvent === undefined
 			? event
 			: this.options.projectEvent(event, this.authenticatedClient, {

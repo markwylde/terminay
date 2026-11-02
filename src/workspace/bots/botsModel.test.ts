@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
+import {
+	type BotEntry,
+	botActivity,
+	filterCounts,
+	initials,
+	needsYou,
+	shortAge,
+	visibleBots,
+} from './botsModel.ts';
+
+const bot = (id: string, name: string): BotProfile => ({
+	id,
+	name,
+	avatar: '',
+	colour: '#7cc4f5',
+	description: `${name} helps`,
+	instructions: '',
+	agentId: 'com.terminay.builtin-agents/codex',
+	modelId: null,
+	signIn: { kind: 'device' },
+	approvalMode: 'ask',
+	maxTurnMs: 600_000,
+	pinnedMemories: [],
+	createdAt: 0,
+	updatedAt: 0,
+});
+
+const session = (
+	id: string,
+	state: BotSessionRecord['state'],
+	extra: Partial<BotSessionRecord> = {},
+): BotSessionRecord => ({
+	id,
+	botId: 'b',
+	origin: { kind: 'chat' },
+	snapshot: {
+		agentId: 'a',
+		modelId: null,
+		signIn: { kind: 'none' },
+		approvalMode: 'ask',
+		instructions: '',
+		context: '',
+		maxTurnMs: 1,
+	},
+	state,
+	startedAt: 100,
+	endedAt: null,
+	durationMs: 0,
+	open: true,
+	acpSessionId: null,
+	canLoad: true,
+	segments: 1,
+	transcriptBytes: 0,
+	truncated: false,
+	runnerOutput: '',
+	permission: null,
+	permissions: [],
+	queuedMessage: null,
+	firing: null,
+	reason: null,
+	recoveryMayHaveLostUpdates: false,
+	...extra,
+});
+
+const entry = (
+	name: string,
+	sessions: BotSessionRecord[],
+	environment: BotEntry['environment'] = 'running',
+): BotEntry => ({
+	serverId: 'local',
+	serverLabel: 'Local',
+	bot: bot(name.toLowerCase().padEnd(12, 'x').slice(0, 12), name),
+	sessions,
+	environment,
+});
+
+test('activity: needs you outranks working, which outranks queued and stopped', () => {
+	assert.equal(
+		botActivity(
+			[session('1', 'running'), session('2', 'needs-you')],
+			'running',
+		),
+		'needs-you',
+	);
+	assert.equal(botActivity([session('1', 'running')], 'running'), 'working');
+	assert.equal(botActivity([session('1', 'queued')], 'stopped'), 'queued');
+	assert.equal(botActivity([session('1', 'completed')], 'stopped'), 'stopped');
+	assert.equal(botActivity([], 'not-created'), 'stopped');
+	assert.equal(botActivity([session('1', 'completed')], 'running'), 'idle');
+});
+
+test('a pending permission counts as needing the user', () => {
+	const asking = session('1', 'running', {
+		permission: {
+			id: 'p',
+			options: [],
+			toolCall: { title: 'git push origin main' },
+		},
+	});
+	assert.equal(botActivity([asking], 'running'), 'needs-you');
+	const [item] = needsYou([entry('Site', [asking])]);
+	assert.equal(item?.summary, 'Wants to run: git push origin main');
+	assert.equal(item?.sessionId, '1');
+});
+
+test('filters and search narrow the fleet, and counts match each filter', () => {
+	const fleet = [
+		entry('Bird', [session('1', 'running')]),
+		entry('Sway', [], 'stopped'),
+		entry('Gauge', [session('2', 'needs-you')]),
+		entry('Frame', []),
+	];
+	const names = (filter: Parameters<typeof visibleBots>[1], search = '') =>
+		visibleBots(fleet, filter, search).map((e) => e.bot.name);
+	assert.deepEqual(names('all'), ['Bird', 'Frame', 'Gauge', 'Sway']);
+	assert.deepEqual(names('working'), ['Bird']);
+	assert.deepEqual(names('needs-you'), ['Gauge']);
+	assert.deepEqual(names('stopped'), ['Sway']);
+	assert.deepEqual(names('all', 'gau'), ['Gauge']);
+	assert.deepEqual(names('all', 'LOCAL'), ['Bird', 'Frame', 'Gauge', 'Sway']);
+	assert.deepEqual(filterCounts(fleet), {
+		all: 4,
+		working: 1,
+		'needs-you': 1,
+		stopped: 1,
+	});
+});
+
+test('needs you lists every waiting session across bots, oldest first', () => {
+	const fleet = [
+		entry('Bird', [session('late', 'needs-you', { startedAt: 300 })]),
+		entry('Gauge', [session('early', 'needs-you', { startedAt: 200 })]),
+	];
+	assert.deepEqual(
+		needsYou(fleet).map((n) => n.sessionId),
+		['early', 'late'],
+	);
+});
+
+test('initials and ages are short enough for a card', () => {
+	assert.equal(initials('Site Submitter'), 'SS');
+	assert.equal(initials('bird'), 'B');
+	assert.equal(initials('  '), '?');
+	assert.equal(shortAge(0, 30_000), 'now');
+	assert.equal(shortAge(0, 4 * 60_000), '4m');
+	assert.equal(shortAge(0, 3 * 3_600_000), '3h');
+	assert.equal(shortAge(0, 72 * 3_600_000), '3d');
+});
