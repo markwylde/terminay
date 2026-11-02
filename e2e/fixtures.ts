@@ -312,17 +312,39 @@ async function closeElectronAppGracefully(
 		// The app may already have exited during the test.
 	}
 
+	// Read before closing: the handle is gone once the app has closed.
+	let group: number | undefined;
+	try {
+		group = electronApp.process().pid;
+	} catch {
+		/* already closed */
+	}
+
 	try {
 		await raceWithTimeout(
 			electronApp.close(),
 			closeTimeoutMs,
 			'Timed out waiting for Electron to close gracefully.',
 		);
-		return;
 	} catch {
 		// A broken graceful-shutdown path must not consume the test timeout.
-		if (electronApp.process().exitCode === null) {
-			electronApp.process().kill('SIGKILL');
+		try {
+			if (electronApp.process().exitCode === null) {
+				electronApp.process().kill('SIGKILL');
+			}
+		} catch {
+			/* already closed */
+		}
+	}
+	// Playwright starts the app as its own process group. Anything left in it
+	// (Chromium helpers, engine CLIs the app spawned) holds the worker's pipes
+	// open, and the worker then cannot finish. Session holders start their own
+	// group, so this never reaches them.
+	if (group) {
+		try {
+			process.kill(-group, 'SIGKILL');
+		} catch {
+			/* the group is already empty */
 		}
 	}
 }
@@ -401,6 +423,20 @@ export async function launchDesktopApp(options: {
 								path.resolve('e2e/fixtures/fake-codex-bin'),
 								process.env.PATH ?? '',
 							].join(path.delimiter),
+						}
+					: {}),
+				// Bots run against a fake Docker whose containers host a fake ACP
+				// agent, so the suite needs no engine, image, or agent account.
+				...(path.basename(testInfo.file) === 'bots.spec.ts'
+					? {
+							PATH: [
+								path.resolve('e2e/fixtures/fake-bot-bin'),
+								process.env.PATH ?? '',
+							].join(path.delimiter),
+							TERMINAY_FAKE_BOT_ROOT: path.join(tempDir, 'fake-bots'),
+							// Nothing in the suite may read the runner's own agent
+							// logins under HOME.
+							HOME: tempDir,
 						}
 					: {}),
 				// The corrupted-data suite relaunches the app itself after a

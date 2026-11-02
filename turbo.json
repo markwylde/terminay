@@ -12,6 +12,16 @@
       "outputs": ["dist/**", "*.tsbuildinfo"],
       "env": ["NODE_ENV"]
     },
+    "@terminay/server-core#build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docker/terminay-bot/**",
+        "$TURBO_ROOT$/scripts/stage-bot-image.mjs"
+      ],
+      "outputs": ["dist/**", "*.tsbuildinfo"],
+      "env": ["NODE_ENV"]
+    },
     "typecheck": {
       "dependsOn": ["^build", "build"],
       "outputs": [],

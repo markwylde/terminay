@@ -1,5 +1,6 @@
 import type { TerminayExtension } from '@terminay/extension-api';
 import { defineExtension } from '@terminay/extension-api';
+import { BOT_AGENT_IDS, createBotAgent } from './bots/index.js';
 import type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
 import { createClaudeCodeChatProvider } from './chat/claudeCode.js';
 import type { CodexChatOptions } from './chat/codex.js';
@@ -18,6 +19,7 @@ import type { SessionSourceOptions } from './source.js';
 import { createSessionSource } from './source.js';
 
 export const EXTENSION_ID = 'com.terminay.builtin-agents';
+export { BOT_AGENT_IDS, createBotAgent } from './bots/index.js';
 export const SESSION_SOURCE_ID = `${EXTENSION_ID}/agents`;
 export const CLAUDE_CODE_CHAT_PROVIDER_ID = `${EXTENSION_ID}/claude-code`;
 export const CODEX_CHAT_PROVIDER_ID = `${EXTENSION_ID}/codex`;
@@ -37,7 +39,11 @@ export {
 	createCodexChatProvider,
 } from './chat/codex.js';
 export type { AgentLocator, LocatorOptions } from './chat/locate.js';
-export type { CodexCommandDefaultOptions, HelpProbe } from './commandDefaults.js';
+export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
+export type {
+	CodexCommandDefaultOptions,
+	HelpProbe,
+} from './commandDefaults.js';
 export {
 	CODEX_NO_DAEMON_ARGS,
 	COMMAND_DEFAULT_LOCAL_IDS,
@@ -45,7 +51,6 @@ export {
 	readHelp,
 } from './commandDefaults.js';
 export { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
-export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
 
 export type {
 	McpInstallTargetDefinition,
@@ -74,6 +79,14 @@ export function createBuiltInAgentsExtension(
 ): TerminayExtension {
 	return defineExtension({
 		activate(context) {
+			for (const agent of ['claude', 'codex'] as const) {
+				context.subscriptions.add(
+					context.agents.registerBotAgent(
+						BOT_AGENT_IDS[agent],
+						createBotAgent(agent),
+					),
+				);
+			}
 			context.subscriptions.add(
 				context.agents.registerSessionSource(
 					SESSION_SOURCE_ID,

@@ -2,8 +2,10 @@ import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import {
 	EXTENSION_API_VERSION,
+	EXTENSION_LIMITS,
 	parseExtensionManifest,
 	type TerminayExtensionManifest,
+	validateBotAgentContribution,
 } from '@terminay/extension-api';
 import type { ExtensionLaunchDescriptor } from './types.js';
 
@@ -44,6 +46,7 @@ export async function extensionLaunchDescriptor(
 	);
 	const descriptor = await validateExtensionLaunchDescriptor({
 		extensionId: manifest.id,
+		extensionName: manifest.displayName,
 		packageRoot: input.packageRoot,
 		entrypoint: manifest.entrypoint,
 		configDirectory: input.configDirectory,
@@ -55,6 +58,7 @@ export async function extensionLaunchDescriptor(
 		languageServers: manifest.contributes.languageServers ?? [],
 		worktreeInsights: manifest.contributes.worktreeInsights ?? [],
 		agentChatProviders: manifest.contributes.agentChatProviders ?? [],
+		botAgents: manifest.contributes.botAgents ?? [],
 		terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 		terminalCommandDefaults: manifest.contributes.terminalCommandDefaults ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
@@ -134,6 +138,22 @@ function compare(left: readonly number[], right: readonly number[]): number {
 export async function validateExtensionLaunchDescriptor(
 	descriptor: ExtensionLaunchDescriptor,
 ): Promise<ExtensionLaunchDescriptor> {
+	if (descriptor.botAgents !== undefined) {
+		if (
+			!Array.isArray(descriptor.botAgents) ||
+			descriptor.botAgents.length > EXTENSION_LIMITS.botAgents ||
+			(descriptor.botAgents.length > 0 &&
+				!descriptor.permissions.includes('agent-bots')) ||
+			new Set(descriptor.botAgents.map((c) => c.id)).size !==
+				descriptor.botAgents.length ||
+			descriptor.botAgents.some(
+				(c) => !validateBotAgentContribution(c, descriptor.extensionId).ok,
+			)
+		)
+			throw new TypeError(
+				'invalid bot agent declarations or missing agent-bots permission',
+			);
+	}
 	if (!EXTENSION_ID.test(descriptor.extensionId))
 		throw new TypeError('invalid extension id');
 	if (isAbsolute(descriptor.entrypoint) || descriptor.entrypoint.includes('\0'))
