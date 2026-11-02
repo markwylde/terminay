@@ -92,18 +92,16 @@ export function createBotOperations(service: BotService): OperationRegistries {
 					service.bots.get(botId);
 					return json({
 						botId,
-						items: service.queue
-							.list(botId)
-							.map((i) => ({
-								id: i.id,
-								kind: i.origin.kind === 'chat' ? 'chat' : 'trigger',
-								sessionId: i.sessionId,
-								triggerId: i.origin.kind === 'chat' ? null : i.origin.triggerId,
-								triggerName:
-									i.origin.kind === 'chat' ? null : i.origin.triggerName,
-								fireTime: i.origin.kind === 'chat' ? null : i.origin.fireTime,
-								enqueuedAt: i.arrival,
-							})),
+						items: service.queue.list(botId).map((i) => ({
+							id: i.id,
+							kind: i.origin.kind === 'chat' ? 'chat' : 'trigger',
+							sessionId: i.sessionId,
+							triggerId: i.origin.kind === 'chat' ? null : i.origin.triggerId,
+							triggerName:
+								i.origin.kind === 'chat' ? null : i.origin.triggerName,
+							fireTime: i.origin.kind === 'chat' ? null : i.origin.fireTime,
+							enqueuedAt: i.arrival,
+						})),
 					});
 				},
 				[op.get]: (request) => json(service.bots.get(bot(payload(request)))),
@@ -260,6 +258,20 @@ export function createBotOperations(service: BotService): OperationRegistries {
 				),
 			),
 			[op.stop]: command((d) => service.stop(bot(d), id(d))),
+			[op.reviseMessage]: command((d) =>
+				service.reviseMessage(
+					bot(d),
+					id(d),
+					text(d.key, 256, 'message key'),
+					text(d.expected, 64 * 1024, 'expected message', true),
+					d.replacement === null
+						? null
+						: text(d.replacement, 64 * 1024, 'message'),
+				),
+			),
+			[op.clearChat]: command((d) =>
+				service.clearChat(bot(d), id(d), d.confirmed === true),
+			),
 			[op.newChat]: command((d) => service.newChat(bot(d))),
 			[op.end]: command((d) => service.end(bot(d), id(d))),
 			[op.continue]: command((d) => service.continue(bot(d), id(d))),

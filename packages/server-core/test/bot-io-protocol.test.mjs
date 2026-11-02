@@ -7,7 +7,7 @@ import { BOT_IO_OPERATIONS as op } from '../../protocol/dist/index.js';
 import { BotFilesService, BotIoProtocol } from '../dist/botService/index.js';
 import { botId, fakeDriver } from './fixtures/bot-driver.mjs';
 
-async function fixture(t) {
+async function fixture(t, image) {
 	const driver = fakeDriver();
 	driver.resources.set('image:terminay-bot:local', {});
 	driver.stream = () =>
@@ -32,6 +32,7 @@ async function fixture(t) {
 		signal: new AbortController().signal,
 	};
 	const io = new BotIoProtocol({
+ image,
 		authority: (c) => ({
 			...c,
 			signal: controller.signal,
@@ -140,4 +141,14 @@ test('every I/O request revalidates authority, connection, bot and generation; r
 	);
 	f.controller.abort();
 	await assert.rejects(view.list('.'));
+});
+
+test('container image queries use the canonical client and revalidate authority after reads',async t=>{
+ let started,finish;
+ const pending=new Promise(resolve=>{finish=resolve;});
+ const began=new Promise(resolve=>{started=resolve;});
+ const f=await fixture(t,async(id,path,signal)=>{assert.equal(id,botId);assert.equal(path,'/tmp/screen.png');assert.equal(signal,f.context.signal);started();await pending;return {mime:'image/png',bytes:new Uint8Array([137,80,78,71])};});
+ const read=f.client.image(botId,'/tmp/screen.png');await began;f.context.authScope='read';finish();await assert.rejects(read,/authority/);
+ f.context.authScope='write';const result=await f.client.image(botId,'/tmp/screen.png');assert.equal(result.mime,'image/png');assert.equal(result.bytes.length,4);
+ f.context.authScope='read';await assert.rejects(f.client.image(botId,'/tmp/screen.png'));
 });

@@ -7,8 +7,8 @@ import { prepareWindow } from './support/app';
 import { activeHome, frontHomeTab } from './support/home-tabs';
 
 /**
- * Home › Bots, end to end. The suite runs against a fake `docker` on PATH
- * (`e2e/fixtures/fake-bot-bin`) whose containers host a fake ACP agent, so it
+ * Home › Bots, end to end. The suite runs against a Docker-compatible socket API fixture
+ * whose containers host a fake ACP agent, so it
  * needs no container engine, image, or agent account. Writing `engine-down`
  * into the fake root makes the engine unreachable. A message containing
  * `hold` keeps its turn open until it is
@@ -185,9 +185,7 @@ test.describe('Home › Bots', () => {
 			await expect(stop).toBeVisible({ timeout: 30_000 });
 			await stop.click();
 			await expect(stop).toHaveCount(0, { timeout: 30_000 });
-			await expect(
-				tab.locator('[data-terminay-bot-notice="stopped"]'),
-			).toBeVisible();
+            await expect(tab.locator('.bots-sess__m').first()).toContainText('Stopped');
 		}
 		// No session process is left behind in the fake engine.
 		await expect
@@ -229,7 +227,7 @@ test.describe('Home › Bots', () => {
 		).toHaveCount(0);
 		expect(existsSync(home)).toBe(true);
 	});
-	test('Run now fires a trigger, which suspends an idle chat until its next message', async ({
+	test('Run now and later messages use separate executions with one shared log', async ({
 		mainWindow,
 		tempDir,
 	}) => {
@@ -257,44 +255,19 @@ test.describe('Home › Bots', () => {
 		);
 
 		await chat(tab);
-		await expect(
-			tab.locator('[data-terminay-bot-notice="suspended"]'),
-		).toBeVisible();
-		await send(tab, 'again');
-		await expect(
-			tab.locator('[data-terminay-bot-notice="suspended"]'),
-		).toHaveCount(0, {
-			timeout: 30_000,
-		});
+        await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('hello');
+        await send(tab,'again');
+        await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('again');
+        await expect(tab.locator('.bots-sess')).toHaveCount(3);
+
 	});
 
-	test('a chat holds one queued message; another is refused until it is sent', async ({
-		mainWindow,
-		tempDir,
-	}) => {
-		await setEngineDown(tempDir, false);
-		await engineReady(mainWindow);
-		const tab = await chat(await createBot(mainWindow, 'Wagtail'));
-		await send(tab, 'hold');
-		await expect(tab.locator('[data-terminay-bot-stop]')).toBeVisible({
-			timeout: 30_000,
-		});
-		await send(tab, 'next');
-		await expect(
-			tab.locator('[data-terminay-bot-queued="queued"]'),
-		).toBeVisible();
-		await send(tab, 'and another');
-		await expect(tab.getByRole('alert')).toContainText(/queue/);
-		// Cancelling keeps the message on screen, marked as not sent.
-		await tab
-			.locator('[data-terminay-bot-queued="queued"]')
-			.getByRole('button', { name: 'Cancel' })
-			.click();
-		await expect(
-			tab.locator('[data-terminay-bot-queued="not-sent"]'),
-		).toBeVisible();
-		await tab.locator('[data-terminay-bot-stop]').click();
-	});
+    test('a new message completes while an older execution is held',async({mainWindow,tempDir})=>{
+        await setEngineDown(tempDir,false);await engineReady(mainWindow);const tab=await chat(await createBot(mainWindow,'Wagtail'));
+        await send(tab,'hold');await expect(tab.locator('[data-terminay-bot-stop]')).toBeVisible({timeout:30000});
+        await send(tab,'next');await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('secret',{timeout:30000});
+        await expect(tab.locator('.bots-sess')).toHaveCount(2);await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(1);await tab.locator('[data-terminay-bot-stop]').click();
+    });
 
 	test('a turn running when Terminay is killed comes back interrupted', async ({
 		electronApp,

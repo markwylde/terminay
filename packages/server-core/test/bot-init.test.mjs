@@ -20,6 +20,59 @@ function python(code) {
 	assert.equal(result.status, 0, result.stderr);
 }
 
+test('engine proxy readiness gates desktop startup and a missing proxy fails the container', () => {
+	python(`
+with tempfile.TemporaryDirectory() as d:
+    m.prepare_dirs=lambda: None
+    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password'}
+    m.bot_ids=lambda: (1000,1000)
+    m.write_vnc_password=lambda p: '/private/password'
+    calls=[]
+    class Proxy:
+        pid=777
+        def poll(self): return None
+    m.spawn=lambda args: (calls.append(args) or Proxy())
+    m.start_desktop=lambda *args: calls.append('desktop')
+    m.os.killpg=lambda pid,sig: calls.append(('kill',pid))
+    def absent(*args): raise TimeoutError('missing')
+    m.wait_path=absent
+    try:
+        m.main_init()
+        raise AssertionError('startup succeeded without proxy')
+    except SystemExit as e:
+        assert e.code==78
+    assert calls[0]==['node','/usr/local/bin/terminay-engine-proxy.mjs','abc123def456','server-test','1000','1000']
+    assert 'desktop' not in calls
+    assert ('kill',777) in calls
+`);
+});
+
+test('unexpected engine proxy exit is fatal after startup and never silently respawns', () => {
+	python(`
+with tempfile.TemporaryDirectory() as d:
+    m.READY=d+'/ready'
+    m.prepare_dirs=lambda: None
+    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password'}
+    m.bot_ids=lambda: (1000,1000)
+    m.write_vnc_password=lambda p: '/private/password'
+    order=[]
+    class Proxy:
+        pid=777
+        def poll(self): return None
+    m.spawn=lambda args: (order.append('proxy') or Proxy())
+    m.wait_path=lambda *args: order.append('proxy-ready')
+    m.start_desktop=lambda *args: order.append('desktop')
+    m.os.waitpid=lambda *args: (777,0)
+    m.os.killpg=lambda *args: None
+    try:
+        m.main_init()
+        raise AssertionError('kept running without proxy')
+    except SystemExit as e:
+        assert e.code==78
+    assert order==['proxy','proxy-ready','desktop']
+`);
+});
+
 test('4.4 bootstrap fails closed at deadline and creates a private FIFO/password; desktop is loopback-only', () => {
 	python(`
 with tempfile.TemporaryDirectory() as d:
@@ -49,6 +102,22 @@ with tempfile.TemporaryDirectory() as d:
     m.start_desktop(passwd, os.getuid(), os.getgid(), 'abc123def456')
     assert calls[0][calls[0].index('-localhost')+1]=='yes'
     assert calls[0][calls[0].index('-SecurityTypes')+1]=='VncAuth'
+`);
+});
+
+test('the desktop owns an unprivileged sandboxed Chromium on the VNC display', () => {
+	python(`
+calls=[]
+m.spawn=lambda args, **kwargs: calls.append((args,kwargs))
+m.wait_path=lambda *args: None
+m.start_desktop('/private/password', 1000, 1000, 'abc123def456')
+args, options=calls[2]
+assert args==['terminay-browser']
+assert '--no-sandbox' not in args
+assert '--disable-dev-shm-usage' in open(os.path.join(os.path.dirname(m.__file__), 'terminay-browser')).read()
+assert options['uid']==1000 and options['gid']==1000
+assert options['env']['DISPLAY']==':1' and options['env']['HOME']=='/home/bot'
+assert not any('API_KEY' in key for key in options['env'])
 `);
 });
 
@@ -199,4 +268,55 @@ test('4.4 shipped init has no polling sleeps or published desktop port', async (
 		),
 		/^EXPOSE/m,
 	);
+});
+
+test('browser opens once, remains closed, and launches only on validated URL requests', () => {
+ python(`
+import pathlib, subprocess, select, signal, socket
+with tempfile.TemporaryDirectory() as d:
+    control=socket.socket(socket.AF_UNIX)
+    control.bind(d+'/events.sock')
+    control.listen(4)
+    control.settimeout(5)
+    fake=pathlib.Path(d)/'chromium'
+    fake.write_text('#!/usr/bin/env python3\\nimport socket,os,sys\\ns=socket.socket(socket.AF_UNIX)\\ns.connect(os.environ["BROWSER_TEST_EVENTS"])\\ns.sendall((sys.argv[-1]+"\\\\n").encode())\\ns.recv(1)\\n')
+    fake.chmod(0o755)
+    profile=pathlib.Path(d)/'.config/chromium'
+    profile.mkdir(parents=True)
+    (profile/'Preferences').write_text('keep me')
+    for name in ('SingletonLock','SingletonSocket','SingletonCookie'):
+        (profile/name).symlink_to('old-container-548')
+    env=dict(os.environ,PATH=d+':'+os.environ['PATH'],HOME=d,BROWSER_TEST_EVENTS=d+'/events.sock')
+    launcher=os.path.join(os.path.dirname(m.__file__),'terminay-browser')
+    code="import importlib.machinery; m=importlib.machinery.SourceFileLoader('browser',"+repr(launcher)+").load_module(); m.SOCKET="+repr(d+'/browser.sock')+"; m.serve()"
+    p=subprocess.Popen(['python3','-c',code],env=env,start_new_session=True)
+    def request(value):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(5)
+            client.connect(d+'/browser.sock')
+            client.sendall((json.dumps({'url':value})+'\\n').encode())
+            client.shutdown(socket.SHUT_WR)
+            return client.recv(1024)
+    try:
+        browser,_=control.accept()
+        assert browser.recv(1024)==b'about:blank\\n'
+        assert not any(os.path.lexists(profile/name) for name in ('SingletonLock','SingletonSocket','SingletonCookie'))
+        assert (profile/'Preferences').read_text()=='keep me'
+        browser.sendall(b'x')
+        browser.close()
+        assert not select.select([control],[],[],0.3)[0], 'closed browser was reopened automatically'
+        for bad in ['file:///etc/passwd','--no-sandbox','javascript:alert(1)','https://example.com/\\n','https://'+('a'*9000)]:
+            assert request(bad)==b'refused\\n'
+        assert not select.select([control],[],[],0)[0]
+        assert request('https://example.com/')==b'accepted\\n'
+        browser,_=control.accept()
+        assert browser.recv(1024)==b'https://example.com/\\n'
+        browser.sendall(b'x')
+        browser.close()
+        assert not select.select([control],[],[],0.3)[0]
+    finally:
+        os.killpg(p.pid,signal.SIGTERM)
+        p.wait(timeout=5)
+        control.close()
+`);
 });

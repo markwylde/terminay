@@ -14,89 +14,53 @@ function authority(controller = new AbortController()) {
 		assertCurrent: () => {},
 	};
 }
-test('4.10 shell uses privileged PTY host, pinned engine, root supervisor and bot home; resize and revocation reach process', async () => {
-	let spawned, data, exit;
-	const writes = [],
-		sizes = [],
-		kills = [],
+test('4.10 socket TTY resize, supervision, activity and revocation', async () => {
+	const { SocketProcess } = await import('../dist/botService/index.js');
+	const child = new SocketProcess(),
 		commands = [],
-		activity = [];
-	const pty = {
-		write: (bytes) => writes.push(Buffer.from(bytes).toString()),
-		resize: (d) => sizes.push(d),
-		kill: (s) => kills.push(s),
-		onData: (fn) => {
-			data = fn;
-			return () => {
-				data = undefined;
-			};
-		},
-		onExit: (fn) => {
-			exit = fn;
-			return () => {
-				exit = undefined;
-			};
-		},
-	};
+		activity = [],
+		sizes = [],
+		output = [],
+		writes = [];
+	child.stdin.on('data', (bytes) => writes.push(bytes.toString()));
+	child.resizeHandler = async (cols, rows) => sizes.push({ cols, rows });
+	let call;
 	const driver = {
-		details: {
-			pin: {
-				kind: 'podman',
-				address: 'unix:///run/podman/podman.sock',
-				connection: false,
-			},
+		execStream: (...args) => {
+			call = args;
+			return child;
 		},
-		exec: async (...a) => commands.push(a),
+		exec: async (...args) => commands.push(args),
 	};
 	const service = new BotShellService({
 		engine: async () => driver,
 		start: async () => {},
-		pty: {
-			spawn: async (options) => {
-				spawned = options;
-				return pty;
-			},
-		},
-		cwd: '/tmp',
-		environment: { PATH: process.env.PATH },
 		activity: (_id, delta) => activity.push(delta),
 	});
-	const controller = new AbortController(),
-		output = [];
+	const controller = new AbortController();
 	const shell = await service.open(
 		authority(controller),
 		id,
 		1,
 		{ cols: 80, rows: 24 },
-		(b) => output.push(Buffer.from(b).toString()),
+		(bytes) => output.push(Buffer.from(bytes).toString()),
 		() => {},
 	);
-	assert.deepEqual(spawned.args.slice(0, 9), [
-		'--url',
-		'unix:///run/podman/podman.sock',
-		'exec',
-		'-it',
-		'-u',
-		'root',
-		'-w',
-		'/home/bot',
-		`terminay-bot-${id}`,
-	]);
-	assert.ok(spawned.args.includes('terminay-run'));
-	assert.equal(spawned.shellPath, 'podman');
+	child.emit('ready');
+	assert.equal(call[0], `terminay-bot-${id}`);
+	assert.equal(call[1][0], 'terminay-run');
+	assert.equal(call[2].tty, true);
+	assert.equal(call[2].user, 'root');
 	await shell.write(Buffer.from('whoami\r'));
-	data(Buffer.from('bot\r\n'));
-	assert.deepEqual(output, ['bot\r\n']);
+	child.stdout.write('bot\r\n');
 	assert.deepEqual(writes, ['whoami\r']);
+	assert.deepEqual(output, ['bot\r\n']);
 	await shell.resize({ cols: 100, rows: 40 });
-	assert.deepEqual(sizes, [{ cols: 100, rows: 40 }]);
+	assert.deepEqual(sizes.at(-1), { cols: 100, rows: 40 });
 	await assert.rejects(shell.resize({ cols: 0, rows: 40 }));
 	controller.abort();
 	await shell.close();
 	assert.ok(commands[0][1].includes('--kill'));
-	assert.equal(kills[0], 'SIGKILL');
-	assert.equal(data, undefined);
-	assert.equal(exit, undefined);
 	assert.deepEqual(activity, [1, -1]);
 	await assert.rejects(shell.write(Buffer.from('late')));
 	await assert.rejects(

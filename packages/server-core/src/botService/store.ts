@@ -144,18 +144,16 @@ function profile(value: unknown): BotProfile {
 }
 type StoredEnvironmentSettings = Pick<
 	BotEnvironmentSettings,
-	'shareEngineSocket' | 'idleStopMs' | 'limits' | 'revision'
+	'idleStopMs' | 'limits' | 'revision'
 >;
 function environmentSettings(value: unknown): StoredEnvironmentSettings {
 	const d = object(value);
 	if (
-		typeof d.shareEngineSocket !== 'boolean' ||
 		!Number.isSafeInteger(d.revision) ||
 		(d.revision as number) < 0
 	)
 		throw new TypeError('invalid stored bot environment settings');
 	return {
-		shareEngineSocket: d.shareEngineSocket,
 		idleStopMs: botIdleStopMs(d.idleStopMs),
 		limits: botResourceLimits(object(d.limits) as unknown as BotResourceLimits),
 		revision: d.revision as number,
@@ -267,7 +265,6 @@ export class BotStore extends EventEmitter {
 		this.get(id);
 		return structuredClone(
 			this.current.environments[id] ?? {
-				shareEngineSocket: false,
 				idleStopMs: DEFAULT_BOT_IDLE_STOP_MS,
 				limits: DEFAULT_BOT_RESOURCE_LIMITS,
 				revision: 0,
@@ -285,7 +282,6 @@ export class BotStore extends EventEmitter {
 		)
 			throw new BotError('conflict', 'bot environment revision changed');
 		const next = {
-			shareEngineSocket: patch.shareEngineSocket ?? previous.shareEngineSocket,
 			idleStopMs:
 				patch.idleStopMs === undefined ? previous.idleStopMs : patch.idleStopMs,
 			limits: patch.limits ?? previous.limits,

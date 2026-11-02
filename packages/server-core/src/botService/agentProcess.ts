@@ -2,14 +2,13 @@ import type {
 	BotAgentContribution,
 	BotAgentLaunch,
 } from '@terminay/extension-api';
-import type { BotSessionSnapshot } from '@terminay/protocol';
+import type { JsonValue, BotSessionSnapshot } from '@terminay/protocol';
 import {
 	BotAcpClient,
 	type BotAcpProcess,
 	type BotCredentialLease,
 } from './acp.js';
 import type { EngineDriver } from './engine.js';
-import { EngineProcess } from './process.js';
 import { BotError } from './store.js';
 
 /** Read by the bot image's `terminay-tool-shell`. */
@@ -31,6 +30,8 @@ export interface BotAgentProcessOptions {
 	) => BotAcpProcess;
 	readonly onClient: (client: BotAcpClient) => void;
 	readonly released?: () => void;
+	readonly mcpServers?: readonly JsonValue[];
+	readonly cleanupRuntime?: () => Promise<void>;
 }
 async function deadline<T>(
 	promise: Promise<T>,
@@ -65,12 +66,16 @@ export class BotAgentProcess {
 		const o = this.options;
 		try {
 			let client = await this.connect(null, o.loadId);
-			const configurable = await client.open(o.loadId, o.snapshot.modelId);
+			const configurable = await client.open(
+				o.loadId,
+				o.snapshot.modelId,
+				o.mcpServers,
+			);
 			if (o.snapshot.modelId !== null && !configurable) {
 				const load = client.canLoad ? client.session : null;
 				await this.endProcess(false);
 				client = await this.connect(o.snapshot.modelId, load);
-				await client.open(load, o.snapshot.modelId);
+				await client.open(load, o.snapshot.modelId, o.mcpServers);
 			}
 			return client;
 		} catch (error) {
@@ -113,7 +118,6 @@ export class BotAgentProcess {
 					o.botId,
 					command,
 					o.credential.environment,
-					new EngineProcess(),
 					publicEnvironment,
 				);
 		this.spawned = true;
@@ -145,6 +149,7 @@ export class BotAgentProcess {
 					10_000,
 				);
 			await this.endProcess(reason !== 'stop' && reason !== 'timeout');
+			await this.options.cleanupRuntime?.();
 			if (!this.released) {
 				this.released = true;
 				this.options.credential.release();
@@ -173,23 +178,15 @@ export class BotAgentProcess {
 		this.spawned = false;
 	}
 }
-/** Pinned engine. Credential values occur only in its environment. Extension
- * metadata is passed to the container, never applied to the host CLI process. */
+/** The pinned socket receives credentials only in the exec request body.
+ * Extension launch settings apply only inside the container. */
 export function spawnBotAgent(
 	driver: EngineDriver,
 	botId: string,
 	command: readonly string[],
 	environment: Readonly<Record<string, string>>,
-	runner = new EngineProcess(),
 	containerEnvironment: Readonly<Record<string, string>> = {},
 ): BotAcpProcess {
-	const pin = driver.details.pin;
-	const flag =
-		pin.kind === 'docker'
-			? '--host'
-			: pin.connection
-				? '--connection'
-				: '--url';
 	const names = Object.keys(environment);
 	if (
 		[...names, ...Object.keys(containerEnvironment)].some(
@@ -206,26 +203,13 @@ export function spawnBotAgent(
 	)
 		throw new BotError(
 			'validation',
-			'credential variable would alter the host engine process',
+			'credential variable is reserved for the container runtime',
 		);
-	return runner.stream(
-		pin.kind,
-		[
-			flag,
-			pin.address,
-			'exec',
-			'-i',
-			'-u',
-			'root',
-			'-w',
-			'/home/bot',
-			...Object.entries(containerEnvironment)
-				.filter(([name]) => !names.includes(name))
-				.flatMap(([name, value]) => ['-e', `${name}=${value}`]),
-			...names.flatMap((name) => ['-e', name]),
-			`terminay-bot-${botId}`,
-			...command,
+	return driver.execStream(`terminay-bot-${botId}`, command, {
+		user: 'root',
+		env: { ...containerEnvironment, ...environment },
+		environmentNames: [
+			...new Set([...Object.keys(containerEnvironment), ...names]),
 		],
-		{ env: { ...environment } as NodeJS.ProcessEnv },
-	) as BotAcpProcess;
+	}) as BotAcpProcess;
 }

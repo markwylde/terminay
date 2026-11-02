@@ -487,10 +487,26 @@ button.bots-chip.bots-chip--on {
 	gap: 20px;
 }
 .bots-engine {
+	min-width: 0;
 	padding: 4px 12px 12px;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+.bots-engine__candidate {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	min-width: 0;
+	gap: 8px;
+}
+.bots-engine__candidate > span {
+	min-width: 0;
+	max-width: 100%;
+}
+.bots-engine__address {
+	display: block;
+	overflow-wrap: anywhere;
 }
 .bots-engine__actions {
 	display: flex;
@@ -639,3 +655,59 @@ button.bots-chip.bots-chip--on {
 		transition: none;
 	}
 }
+
+.bots-ui.bots-chat-overlays {
+	position: fixed;
+	inset: 0;
+	height: auto;
+	z-index: 1000;
+	pointer-events: none;
+	background: transparent;
+}
+.bots-chat-overlays > * {
+	pointer-events: auto;
+}
+.bots-chat-modal {
+	position: fixed;
+}
+.bots-message-editor {
+	width: min(520px, 100%);
+}
+.bots-message-editor h2 {
+	font-size: 16px;
+	line-height: 1.4;
+}
+.bots-message-editor p {
+	line-height: 1.6;
+}
+.bots-composer__actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.bots-message-editor textarea {
+	width: 100%;
+	min-height: 180px;
+	padding: 10px;
+	background: #17191d;
+	color: var(--bots-fg);
+	border: 1px solid var(--bots-line);
+	border-radius: 6px;
+	resize: vertical;
+}
+
+.bots-inline-image {
+	display: block;
+	max-width: 100%;
+	max-height: 70vh;
+	width: auto;
+	height: auto;
+	border-radius: 6px;
+	margin: 10px 0;
+	object-fit: contain;
+}
+
+/* Execution controls remain alongside their summary in the context rail. */
+.bots-sesslist > li { display: flex; align-items: center; gap: 8px; }
+.bots-sesslist .bots-sess { flex: 1; min-width: 0; }

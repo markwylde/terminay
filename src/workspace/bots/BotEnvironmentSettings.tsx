@@ -1,11 +1,4 @@
-/**
- * Environment › Overview: the bot's environment settings (Share engine socket,
- * limits, idle stop).
- *
- * Socket and limit changes apply when the container is next recreated; idle
- * stop applies at once. Turning the socket on asks first, in the words the
- * server chose for this engine.
- */
+/** Environment settings: shared engine access, limits and idle stop. */
 
 import type {
 	BotEnvironmentSettings,
@@ -31,16 +24,6 @@ export const IDLE_STOP_CHOICES: readonly Readonly<{
 	{ label: '1 day', value: 1440 * MINUTE },
 	{ label: 'Never', value: null },
 ];
-
-export const SOCKET_CONFIRM: Readonly<
-	Record<BotEnvironmentSettings['socketWarning'], string>
-> = {
-	'root-equivalent':
-		'The bot will control every container of this engine. On Linux that is the same as root on this machine.',
-	'server-account':
-		'The bot will control every container of the account the server runs as.',
-	'engine-control': 'The bot will control this engine’s containers.',
-};
 
 /** The refusal code a server error carries, through any wrapping. */
 export function refusalCode(error: unknown): string | undefined {
@@ -101,7 +84,6 @@ export function EnvironmentSettingsCard({
 	const [draft, setDraft] = useState<LimitsDraft>();
 	const [error, setError] = useState<string>();
 	const [busy, setBusy] = useState(false);
-	const [confirmSocket, setConfirmSocket] = useState(false);
 
 	const load = useCallback(() => {
 		server.environment
@@ -112,7 +94,6 @@ export function EnvironmentSettingsCard({
 			})
 			.catch((cause: unknown) => setError(refusalText(cause)));
 	}, [server.environment, bot.id]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey is the cue to read again.
 	useEffect(load, [load, reloadKey]);
 
 	const save = (
@@ -164,28 +145,14 @@ export function EnvironmentSettingsCard({
 			data-terminay-bot-env-settings={settings.revision}
 		>
 			<h3 className="bots-lab">Settings</h3>
-			<div className="bots-kv">
+			<div className="bots-kv" data-terminay-bot-engine-access="proxy">
 				<span>
-					Share engine socket
+					Shared container engine
 					<span className="bots-faint bots-block">
-						Lets the bot run containers of its own. Applies when the container
-						is recreated.
+						New containers are labelled for this bot. It can also control other
+						containers on the engine.
 					</span>
 				</span>
-				<button
-					type="button"
-					role="switch"
-					aria-checked={settings.shareEngineSocket}
-					aria-label="Share engine socket"
-					className="bots-toggle"
-					disabled={busy}
-					onClick={() =>
-						settings.shareEngineSocket
-							? save({ shareEngineSocket: false })
-							: setConfirmSocket(true)
-					}
-					data-terminay-bot-env-socket={settings.shareEngineSocket}
-				></button>
 			</div>
 			<div className="bots-kv">
 				<label htmlFor={`bots-idle-${bot.id}`}>
@@ -288,46 +255,6 @@ export function EnvironmentSettingsCard({
 				) : null}
 			</form>
 			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
-			{confirmSocket ? (
-				<div className="bots-modal" role="presentation">
-					<div
-						className="bots-dialog"
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="bots-socket-confirm"
-					>
-						<h2 id="bots-socket-confirm">
-							Share the engine socket with {bot.name}?
-						</h2>
-						<p data-terminay-bot-socket-warning={settings.socketWarning}>
-							{SOCKET_CONFIRM[settings.socketWarning]}
-						</p>
-						<p className="bots-faint">
-							It applies when the container is next recreated.
-						</p>
-						<footer className="bots-dialog__foot">
-							<button
-								type="button"
-								className="bots-btn"
-								onClick={() => setConfirmSocket(false)}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								className="bots-btn bots-btn--danger"
-								onClick={() => {
-									setConfirmSocket(false);
-									save({ shareEngineSocket: true, confirmed: true });
-								}}
-								data-terminay-bot-socket-confirm="true"
-							>
-								Share the socket
-							</button>
-						</footer>
-					</div>
-				</div>
-			) : null}
 		</section>
 	);
 }

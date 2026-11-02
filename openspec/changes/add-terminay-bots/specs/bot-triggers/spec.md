@@ -2,6 +2,8 @@
 
 ### Requirement: Bot trigger definition
 
+The bot SHALL be able to manage its own triggers through authenticated runtime tools as specified by bot-message-log. Agent operations SHALL use the same validation, persistence and scheduler as the user interface, and SHALL not grant access to another bot's triggers.
+
 A bot SHALL have at most 50 triggers. Each trigger SHALL have:
 
 - a name;
@@ -77,7 +79,7 @@ The session SHALL receive the event's context as a bounded block after the promp
 
 ### Requirement: Busy, overlapping, and missed firings
 
-- **Bot busy.** A trigger that fires while its bot runs another turn SHALL be queued. A chat session that is between turns SHALL be suspended so the firing can run.
+- **Bot busy.** A trigger SHALL start a fresh execution while work capacity is available and otherwise wait in the bounded execution queue. Completed providers SHALL not be retained.
 - **Queue full.** If the bot's queue already holds 20 items, the firing SHALL be skipped, with the reason "bot busy".
 - **Trigger disabled or deleted.** Disabling or deleting a trigger SHALL remove its pending firing.
 - **Already pending.** If the same trigger already has a pending firing, the new firing SHALL be skipped and recorded with the reason "bot busy".
@@ -87,7 +89,7 @@ The session SHALL receive the event's context as a bounded block after the promp
 #### Scenario: Bot busy
 
 - **WHEN** a trigger comes due while its bot runs a chat turn
-- **THEN** the firing is queued, the chat session is suspended when that turn ends, and the trigger's session starts
+- **THEN** the firing starts an independent execution if work capacity permits, otherwise it waits until capacity becomes available
 
 #### Scenario: Second firing while pending
 
@@ -111,6 +113,13 @@ The Triggers tab SHALL list a bot's triggers. For each, it SHALL show the kind, 
 Each trigger SHALL offer edit, enable or disable, delete, and **Run now**. Run now SHALL queue a session whose origin is Run now, whether or not the trigger is enabled.
 
 The context rail of the bot tab SHALL show the next three upcoming firings.
+
+The Triggers page SHALL use the available panel width, retaining the panel's standard padding. Its toolbar, trigger list and empty state SHALL not be constrained by a fixed maximum content width.
+
+#### Scenario: Wide bot panel
+
+- **WHEN** a user opens Triggers in a wide bot panel
+- **THEN** its toolbar and list or empty state span the available width inside the standard padding
 
 #### Scenario: Run now
 

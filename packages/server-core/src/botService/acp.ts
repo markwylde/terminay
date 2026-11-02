@@ -1,4 +1,3 @@
-import type { ChildProcessByStdio } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Readable, Writable } from 'node:stream';
@@ -11,7 +10,12 @@ import {
 } from '@terminay/protocol';
 import { BotError, object, text } from './store.js';
 
-export type BotAcpProcess = ChildProcessByStdio<Writable, Readable, Readable>;
+export interface BotAcpProcess extends EventEmitter {
+	readonly stdin: Writable;
+	readonly stdout: Readable;
+	readonly stderr: Readable;
+	kill(signal?: string): boolean;
+}
 export interface BotTextRedactor {
 	push(chunk: string): string;
 	finish(): string;
@@ -142,14 +146,14 @@ export class BotAcpClient extends EventEmitter {
 			});
 		}
 	}
-	async open(loadId: string | null, modelId: string | null): Promise<boolean> {
+	async open(loadId: string | null, modelId: string | null, mcpServers:readonly JsonValue[]=[]): Promise<boolean> {
 		if (loadId && !this.canLoad)
 			throw new BotError('unavailable', 'agent cannot load sessions');
 		const result = object(
 			await this.request(loadId ? 'session/load' : 'session/new', {
 				...(loadId ? { sessionId: loadId } : {}),
 				cwd: '/home/bot',
-				mcpServers: [],
+				mcpServers:[...mcpServers],
 			}),
 		);
 		this.acpId = loadId ?? text(result.sessionId, 256, 'ACP session id');

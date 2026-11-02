@@ -16,7 +16,8 @@ if (process.argv[3] === 'first') {
 		'changed',
 		() => r.sessions.get(active.sessionId).state === 'needs-you',
 	);
-	await r.service.send(bot.id, 'queued message', active.sessionId);
+	for(let n=0;n<3;n++)await r.service.send(bot.id,'hold');
+    await r.service.send(bot.id,'queued message');
 	await r.service.send(bot.id, 'trigger prompt', undefined, {
 		kind: 'trigger',
 		triggerId: 'tick',

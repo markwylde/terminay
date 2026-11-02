@@ -339,6 +339,7 @@ export type StateStoreName =
 	| 'automations'
 	| 'bots'
 	| 'bot-sessions'
+	| 'bot-messages'
 	| 'connected-servers'
 	| 'connection-profiles'
 	| 'window-layout'

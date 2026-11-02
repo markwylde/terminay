@@ -1,4 +1,5 @@
 export const BOT_IO_OPERATIONS = Object.freeze({
+	image: 'bots.image.read',
 	filesOpen: 'bots.files.open',
 	filesList: 'bots.files.list',
 	filesStat: 'bots.files.stat',

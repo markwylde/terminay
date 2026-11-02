@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Container-local socket multiplexed over its supervised engine exec stream."""
+import json, os, re, selectors, signal, socket, sys
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+MAX_LINE = 131072
+sid = sys.argv[1] if len(sys.argv)==2 else ''
+if not re.fullmatch('[a-f0-9]{24}',sid): raise SystemExit('Invalid relay identity')
+path = '/tmp/terminay-mcp-'+sid+'.sock'
+selector = selectors.DefaultSelector()
+listener = socket.socket(socket.AF_UNIX)
+listener.bind(path)
+os.chmod(path,0o600)
+listener.listen(8)
+selector.register(listener,selectors.EVENT_READ,'accept')
+selector.register(sys.stdin.fileno(),selectors.EVENT_READ,'host')
+clients = {}
+buffers = {'host':b''}
+next_id = 0
+print('{"ready":true}',flush=True)
+def send(value):
+    line=(json.dumps(value,separators=(',',':'))+'\n').encode()
+    if len(line)>MAX_LINE: raise ValueError('Relay frame exceeds limit')
+    sys.stdout.buffer.write(line)
+    sys.stdout.buffer.flush()
+def close_client(cid):
+    client=clients.pop(cid,None)
+    buffers.pop(cid,None)
+    if client:
+        selector.unregister(client)
+        client.close()
+try:
+    while True:
+        for key,_ in selector.select():
+            if key.data=='accept':
+                client,_=listener.accept()
+                client.settimeout(2)
+                if len(clients)>=8: client.close();continue
+                next_id+=1;clients[next_id]=client;buffers[next_id]=b''
+                selector.register(client,selectors.EVENT_READ,next_id)
+                continue
+            source=key.data
+            chunk=os.read(sys.stdin.fileno(),65536) if source=='host' else key.fileobj.recv(65536)
+            if not chunk:
+                if source=='host': raise SystemExit(0)
+                close_client(source);continue
+            buffers[source]+=chunk
+            while b'\n' in buffers.get(source,b''):
+                line,buffers[source]=buffers[source].split(b'\n',1)
+                try:
+                    if len(line)>MAX_LINE: raise ValueError('Relay frame exceeds limit')
+                    value=json.loads(line)
+                    if source=='host':
+                        target=clients.get(value.get('connection'))
+                        if target:target.sendall((json.dumps(value['message'],separators=(',',':'))+'\n').encode())
+                    else:
+                        send({'connection':source,'token':value.get('token'),'message':value.get('message')})
+                except (ValueError,TypeError,KeyError,OSError):
+                    if source!='host':close_client(source)
+                    break
+            if len(buffers.get(source,b''))>MAX_LINE:
+                if source=='host':raise ValueError('Host frame exceeds limit')
+                close_client(source)
+finally:
+    for cid in list(clients):close_client(cid)
+    listener.close()
+    try:os.unlink(path)
+    except FileNotFoundError:pass

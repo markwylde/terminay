@@ -1,96 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BotTurnQueue } from '../dist/botService/index.js';
-
-const botId = 'abc123def456';
-const chat = (id) => ({
-	botId,
-	sessionId: id,
-	origin: { kind: 'chat' },
-	prompt: id,
-});
-const trigger = (id, fireTime = 0) => ({
-	botId,
-	sessionId: id,
-	origin: { kind: 'trigger', triggerId: id, triggerName: id, fireTime },
-	prompt: id,
-});
-const flush = () => new Promise((resolve) => setImmediate(resolve));
-function queue() {
-	const runs = [],
-		suspended = [],
-		cancelled = [];
-	let finish;
-	const q = new BotTurnQueue({
-		run: async (item) => {
-			runs.push(item);
-			await new Promise((r) => {
-				finish = r;
-			});
-		},
-		suspend: async (id) => suspended.push(id),
-		cancelled: (...a) => cancelled.push(a),
-		changed() {},
-		failure() {},
-	});
-	return { q, runs, suspended, cancelled, finish: () => finish() };
-}
-test('5.4 one queued message per session across devices, input snapshots and cap of twenty', () => {
-	const { q } = queue();
-	q.enqueue(chat('active'));
-	const input = chat('same');
-	q.enqueue(input);
-	input.prompt = 'mutated';
-	assert.equal(q.list(botId)[0].prompt, 'same');
-	assert.throws(() => q.enqueue(chat('same')), /already queued/);
-	for (let n = 0; n < 19; n++) q.enqueue(chat(`q${n}`));
-	assert.equal(q.list(botId).length, 20);
-	assert.throws(() => q.enqueue(chat('overflow')), /queue is full/);
-});
-test('5.4 idle chat suspends before another turn; chat and triggers alternate with time ordering', async () => {
-	const { q, runs, suspended, finish } = queue();
-	q.enqueue(chat('initial'));
-	q.enqueue(trigger('later', 20));
-	q.enqueue(trigger('earlier', 10));
-	q.enqueue(chat('one'));
-	q.enqueue(chat('two'));
-	finish();
-	await flush();
-	assert.equal(runs[1].sessionId, 'earlier');
-	assert.deepEqual(suspended, ['initial']);
-	finish();
-	await flush();
-	assert.equal(runs[2].sessionId, 'one');
-	finish();
-	await flush();
-	assert.equal(runs[3].sessionId, 'later');
-	finish();
-	await flush();
-	assert.equal(runs[4].sessionId, 'two');
-	finish();
-	await flush();
-});
-test('5.4 one pending firing per trigger, cancel queued items, disable removes the pending firing', () => {
-	const { q, cancelled } = queue();
-	q.enqueue(chat('active'));
-	const item = q.enqueue(chat('queued'));
-	q.cancel(botId, item.id);
-	assert.equal(cancelled.length, 1);
-	q.enqueue(trigger('t'));
-	assert.throws(() => q.enqueue(trigger('t')), /already queued/);
-	q.disableTrigger(botId, 't');
-	assert.equal(q.list(botId).length, 0);
-});
-test('5.4 between-turn chat keeps its process only until work waits', async () => {
-	const { q, runs, suspended, finish } = queue();
-	q.enqueue(chat('chat'));
-	finish();
-	await flush();
-	assert.deepEqual(suspended, []);
-	q.enqueue(trigger('t'));
-	await flush();
-	assert.deepEqual(suspended, ['chat']);
-	assert.equal(runs[1].sessionId, 't');
-	finish();
-	await flush();
-});
+import {BotTurnQueue} from '../dist/botService/index.js';
+const botId='abc123def456';
+const item=(id,kind='chat')=>({botId,sessionId:id,origin:kind==='chat'?{kind}:{kind:'trigger',triggerId:id,triggerName:id,fireTime:0},prompt:id});
+function fixture(){const runs=[],ends=new Map(),cancelled=[];const q=new BotTurnQueue({run:async i=>{runs.push(i);await new Promise((resolve,reject)=>ends.set(i.sessionId,{resolve,reject}));},suspend:async()=>assert.fail('No idle execution retention'),cancelled:i=>cancelled.push(i),changed(){},failure(){}});return {q,runs,ends,cancelled};}
+const flush=()=>new Promise(r=>setImmediate(r));
+test('four work executions leave one reserved user-message coordination slot',async()=>{const {q,runs,ends}=fixture();for(let n=0;n<4;n++)q.enqueue(item(`work${n}`,'trigger'));q.enqueue(item('waiting','trigger'));q.enqueue(item('correction'));assert.equal(runs.length,5);assert.equal(runs[4].coordinationOnly,true);assert.equal(q.promote(botId,'correction'),false);ends.get('work0').resolve();await flush();assert.equal(q.promote(botId,'correction'),false);assert.equal(runs[5].sessionId,'waiting');for(const end of ends.values())end.resolve();await flush();});
+test('waiting admission is bounded, copied, cancellable and trigger disable scoped',async()=>{const {q,cancelled,ends}=fixture();for(let n=0;n<5;n++)q.enqueue(item(`active${n}`));const input=item('waiting');q.enqueue(input);input.prompt='mutated';assert.equal(q.list(botId)[0].prompt,'waiting');assert.throws(()=>q.enqueue(item('waiting')),/full or blocked/);for(let n=0;n<19;n++)q.enqueue(item(`queued${n}`));assert.throws(()=>q.enqueue(item('overflow')),/full or blocked/);q.cancel(botId,q.list(botId)[0].id);assert.equal(cancelled.length,1);await q.block(botId);assert.equal(q.list(botId).length,0);for(const end of ends.values())end.resolve();await flush();});
+test('cleanup failure blocks admission until reconciliation resets the lane',async()=>{const {q,ends}=fixture();q.enqueue(item('bad'));ends.get('bad').reject(new Error('cleanup failed'));await flush();assert.throws(()=>q.enqueue(item('new')),/blocked/);assert.throws(()=>q.unblock(botId),/reconciled/);q.unblock(botId,true);q.enqueue(item('new'));ends.get('new').resolve();await flush();});
+test('replacement reserves freed admission for the correction before unrelated queued work',async()=>{const {q,runs,ends}=fixture();for(let n=0;n<4;n++)q.enqueue(item(`work${n}`,'trigger'));q.enqueue(item('waiting','trigger'));q.enqueue(item('correction'));const release=q.reservePromotion(botId,'correction','work0');ends.get('work0').resolve();await flush();assert.equal(runs.length,5);assert.equal(q.promote(botId,'correction','work0'),true);release();assert.equal(runs.length,5);ends.get('correction').resolve();await flush();assert.equal(runs.at(-1).sessionId,'waiting');for(const end of ends.values())end.resolve();await flush();});

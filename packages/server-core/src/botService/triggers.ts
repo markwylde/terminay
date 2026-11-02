@@ -130,7 +130,17 @@ export class BotTriggers {
 	}
 	private patch(id: string, patch: Partial<BotTrigger>): void {
 		const t = this.find(id);
-		if (t) this.store.putTrigger({ ...t, ...patch });
+		if (t) {
+			this.store.putTrigger({ ...t, ...patch });
+			if (Object.keys(patch).some((key) => key !== 'evaluatedThrough'))
+				this.changed(t.botId, id, 'trigger.updated');
+		}
+	}
+	private changed(botId: string, id: string, type: string): void {
+		this.service.messages.emitEvent(botId, type, id, this.store.revision);
+	}
+	get timeZoneName(): string {
+		return this.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 	}
 	list(botId: string): { revision: number; triggers: BotTrigger[] } {
 		this.store.get(botId);
@@ -191,6 +201,7 @@ export class BotTriggers {
 		};
 		this.store.putTrigger(t, expectedRevision);
 		if (!t.enabled) this.cancelPending(botId, t.id);
+		this.changed(botId, t.id, id ? 'trigger.updated' : 'trigger.created');
 		return t;
 	}
 	enable(
@@ -217,10 +228,12 @@ export class BotTriggers {
 			expectedRevision,
 		);
 		if (!enabled) this.cancelPending(botId, id);
+		this.changed(botId, id, 'trigger.updated');
 	}
 	remove(botId: string, id: string, expectedRevision?: number): void {
 		this.store.removeTrigger(botId, triggerId(id), expectedRevision);
 		this.cancelPending(botId, id);
+		this.changed(botId, id, 'trigger.deleted');
 	}
 	private cancelPending(botId: string, id: string): void {
 		const token = this.pending.get(id);
@@ -233,6 +246,7 @@ export class BotTriggers {
 	dismissMissed(botId: string, id: string): void {
 		const t = this.store.trigger(botId, triggerId(id));
 		this.store.putTrigger({ ...t, missedCount: 0, missedLatest: null });
+		this.changed(botId, id, 'trigger.updated');
 	}
 	firings(botId: string, id?: string): BotTriggerFiring[] {
 		this.store.get(botId);

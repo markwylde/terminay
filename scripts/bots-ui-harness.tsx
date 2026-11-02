@@ -1,3 +1,4 @@
+import { foldTranscript } from '../src/workspace/bots/transcriptModel';
 /**
  * Home › Bots components against a fake server projection, for
  * scripts/bots-ui.test.mjs. The fake records every call in `window.__calls`
@@ -6,8 +7,11 @@
 
 import type {
 	BotProfile,
+	BotMessage,
+	BotRuntimeEvent,
 	BotSession,
 	BotSessionRecord,
+	BotSiblingContainer,
 } from '@terminay/protocol';
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -31,10 +35,14 @@ type Scenario = {
 	agents: BotAgentOption[];
 	signIn?: Record<string, unknown>;
 	files?: unknown[];
+	containers?: BotSiblingContainer[];
 	socketShared?: boolean;
 	limitsChangePending?: boolean;
 	settingsRefusal?: string;
 	sendRefusal?: string;
+	postDelayMs?: number;
+	imageDelayMs?: number;
+	imageSize?: { width: number; height: number };
 };
 
 declare global {
@@ -51,6 +59,13 @@ declare global {
 	}
 }
 
+if (!crypto.randomUUID)
+	Object.defineProperty(crypto, 'randomUUID', {
+		value: () =>
+			Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+				b.toString(16).padStart(2, '0'),
+			).join(''),
+	});
 const scenario = window.__scenario;
 window.__calls = [];
 window.__opened = [];
@@ -69,6 +84,48 @@ let sessionsNow = new Map<string, BotSessionRecord[]>(
 	Object.entries(scenario.sessions),
 );
 
+const messageRows = new Map<string, BotMessage[]>();
+const messageEvents: (BotRuntimeEvent & { botId: string })[] = [];
+const messageListeners = new Set<() => void>();
+for (const [botId, rows] of sessionsNow) {
+	const items = rows.flatMap((row) =>
+		foldTranscript(transcripts.get(row.id) ?? []).filter(
+			(item) => item.kind === 'user' || item.kind === 'agent',
+		),
+	);
+	messageRows.set(
+		botId,
+		items.map((item, index) => ({
+			id: item.key,
+			botId,
+			sequence: index + 1,
+			revision: 1,
+			author: item.kind === 'user' ? 'user' : 'bot',
+			executionId: null,
+			createdAt: 0,
+			updatedAt: 0,
+			text: item.text,
+			attachments: [],
+		})),
+	);
+}
+const emitMessage = (
+	botId: string,
+	type: string,
+	id: string,
+	revision: number,
+) => {
+	messageEvents.push({
+		sequence: messageEvents.length + 1,
+		type,
+		subjectId: id,
+		revision,
+		at: Date.now(),
+		botId,
+	});
+	for (const listener of messageListeners) listener();
+};
+
 const engineStatus = scenario.engine ?? {
 	engine: 'podman',
 	available: true,
@@ -83,6 +140,53 @@ const engineStatus = scenario.engine ?? {
 
 const transport = {
 	query: record('transport.query', (op, payload) => {
+		const args = payload as {
+			botId: string;
+			messageId: string;
+			cursor?: string;
+			limit?: number;
+			revision: number;
+			text: string;
+		};
+		if (op === 'bots.messages.list') {
+			const rows = [...(messageRows.get(args.botId) ?? [])].reverse();
+			const offset = Number(args.cursor ?? 0),
+				items = rows.slice(offset, offset + (args.limit ?? 10));
+			return {
+				items: items.map(({ text, attachments, ...rest }) => ({
+					...rest,
+					excerpt: text.slice(0, 256),
+					textBytes: text.length,
+					attachmentCount: attachments.length,
+				})),
+				nextCursor:
+					offset + items.length < rows.length
+						? String(offset + items.length)
+						: null,
+				eventsCursor: String(messageEvents.length),
+				total: rows.length,
+				truncated: false,
+			};
+		}
+		if (op === 'bots.messages.get') {
+			const row = messageRows
+				.get(args.botId)
+				?.find((m) => m.id === args.messageId);
+			if (!row) throw new Error('Message missing');
+			const { text, ...message } = row;
+			return { message, text, nextCursor: null, truncated: false };
+		}
+		if (op === 'bots.messages.events') {
+			const items = messageEvents.filter(
+				(e) => e.botId === args.botId && e.sequence > Number(args.cursor ?? 0),
+			);
+			return {
+				items,
+				nextCursor: String(messageEvents.length),
+				gap: false,
+				hasMore: false,
+			};
+		}
 		switch (op) {
 			case 'bots.engine.status':
 				return engineStatus;
@@ -94,7 +198,60 @@ const transport = {
 				return null;
 		}
 	}),
-	command: record('transport.command', (op) => {
+	command: record('transport.command', (op, payload) => {
+		const a = payload as {
+			botId: string;
+			messageId: string;
+			cursor?: string;
+			limit?: number;
+			revision: number;
+			text: string;
+		};
+		const rows = messageRows.get(a.botId) ?? [];
+		if (op === 'bots.messages.post') {
+			if (scenario.sendRefusal) throw new Error(scenario.sendRefusal);
+			const message = {
+				id: crypto.randomUUID(),
+				botId: a.botId,
+				sequence: rows.length + 1,
+				revision: 1,
+				author: 'user',
+				executionId: null,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				text: a.text,
+				attachments: [],
+			};
+			messageRows.set(a.botId, [...rows, message]);
+			emitMessage(a.botId, 'message.posted', message.id, 1);
+			const result = { message, sessionId: crypto.randomUUID() };
+			return scenario.postDelayMs
+				? new Promise((resolve) =>
+						setTimeout(() => resolve(result), scenario.postDelayMs),
+					)
+				: result;
+		}
+		if (op === 'bots.messages.edit') {
+			const row = rows.find((m) => m.id === a.messageId);
+			if (!row || row.revision !== a.revision) throw new Error('Stale message');
+			Object.assign(row, { text: a.text, revision: row.revision + 1 });
+			emitMessage(a.botId, 'message.edited', row.id, row.revision);
+			return null;
+		}
+		if (op === 'bots.messages.remove') {
+			messageRows.set(
+				a.botId,
+				rows.filter((m) => m.id !== a.messageId),
+			);
+			emitMessage(a.botId, 'message.deleted', a.messageId, a.revision + 1);
+			return null;
+		}
+		if (op === 'bots.messages.clear') {
+			messageRows.set(a.botId, []);
+			emitMessage(a.botId, 'messages.cleared', '', 0);
+			return null;
+		}
+
 		if (
 			op === 'bots.files.open' ||
 			op === 'bots.shell.open' ||
@@ -110,11 +267,41 @@ const transport = {
 		return null;
 	}),
 	commandWithBody: record('transport.commandWithBody', () => null),
-	queryWithBody: record('transport.queryWithBody', () => ({
-		result: { done: true },
-		body: new Uint8Array(),
-	})),
-	subscribe: () => () => {},
+	queryWithBody: record(
+		'transport.queryWithBody',
+		async (op: unknown, payload: { path?: string }) => {
+			if (op === 'bots.image.read' || op === 'bots.messages.attachment') {
+				if (payload.path === '/tmp/missing.png')
+					throw new Error('missing image');
+				if (scenario.imageDelayMs)
+					await new Promise((resolve) =>
+						setTimeout(resolve, scenario.imageDelayMs),
+					);
+				let base64 =
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD0kAAAAASUVORK5CYII=';
+				if (scenario.imageSize) {
+					const canvas = document.createElement('canvas');
+					canvas.width = scenario.imageSize.width;
+					canvas.height = scenario.imageSize.height;
+					const context = canvas.getContext('2d')!;
+					context.fillStyle = '#4488aa';
+					context.fillRect(0, 0, canvas.width, canvas.height);
+					base64 = canvas.toDataURL('image/png').split(',')[1]!;
+				}
+				return {
+					result: { mime: 'image/png' },
+					body: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+				};
+			}
+			return { result: { done: true }, body: new Uint8Array() };
+		},
+	),
+	subscribe: (event: string, listener: (value: unknown) => void) => {
+		if (event !== 'bots.messages.changed') return () => {};
+		const notify = () => listener({ botId: scenario.bots[0]?.id });
+		messageListeners.add(notify);
+		return () => messageListeners.delete(notify);
+	},
 };
 
 const session = (botId: string, id: string): BotSession => {
@@ -141,6 +328,43 @@ const client = {
 		};
 	}),
 	newChat: record('newChat'),
+	reviseMessage: record(
+		'reviseMessage',
+		(botId, id, key, expected, replacement) => {
+			const items = [...foldTranscript(transcripts.get(String(id)) ?? [])];
+			const index = items.findIndex((item) => item.key === key);
+			if (
+				index < 0 ||
+				!('text' in items[index]!) ||
+				items[index]!.text !== expected
+			)
+				throw new Error('stale message');
+			if (replacement === null) items.splice(index, 1);
+			else
+				items[index] = {
+					...items[index]!,
+					text: String(replacement),
+				} as (typeof items)[number];
+			window.__harness.setTranscript(
+				String(id),
+				items.map((item) => ({ kind: 'transcript-item', item })),
+			);
+			window.__harness.setSessions(
+				String(botId),
+				(sessionsNow.get(String(botId)) ?? []).map((s) =>
+					s.id === id ? { ...s, transcriptBytes: s.transcriptBytes + 1 } : s,
+				),
+			);
+			return { sessionId: String(id) };
+		},
+	),
+	clearChat: record('clearChat', (botId, id) => {
+		window.__harness.setSessions(
+			String(botId),
+			(sessionsNow.get(String(botId)) ?? []).filter((s) => s.id !== id),
+		);
+		transcripts.delete(String(id));
+	}),
 	control: record('control'),
 	cancelQueued: record('cancelQueued'),
 	decide: record('decide'),
@@ -195,11 +419,11 @@ const client = {
 
 let settingsNow = {
 	botId: '',
-	shareEngineSocket: scenario.socketShared === true,
-	idleStopMs: 30 * 60_000 as number | null,
+
+	idleStopMs: (30 * 60_000) as number | null,
 	limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3, pids: 512 },
 	limitsEnforced: true,
-	socketWarning: 'root-equivalent',
+
 	revision: 1,
 };
 
@@ -214,10 +438,10 @@ const environment = {
 		homeVolume: `terminay-bot-${botId}-home`,
 		limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3, pids: 512 },
 		limitsEnforced: true,
-		shareEngineSocket: scenario.socketShared === true,
-		socketChangePending: false,
+
+		engineSocket: 'proxy',
 		limitsChangePending: scenario.limitsChangePending === true,
-		socketWarning: 'server-account',
+
 		cpuPercent: 12.5,
 		memoryBytes: 512 * 1024 ** 2,
 		homeBytes: 80 * 1024 ** 2,
@@ -231,11 +455,20 @@ const environment = {
 			scenario.settingsRefusal = undefined;
 			throw Object.assign(new Error('stale revision'), { code: 'conflict' });
 		}
-		const { botId: _b, confirmed: _c, expectedRevision: _r, ...patch } = request;
-		settingsNow = { ...settingsNow, ...patch, revision: settingsNow.revision + 1 };
+		const {
+			botId: _b,
+			confirmed: _c,
+			expectedRevision: _r,
+			...patch
+		} = request;
+		settingsNow = {
+			...settingsNow,
+			...patch,
+			revision: settingsNow.revision + 1,
+		};
 		return settingsNow;
 	}),
-	containers: record('containers', () => []),
+	containers: record('containers', () => scenario.containers ?? []),
 	lifecycle: record('lifecycle'),
 	remove: record('remove-env'),
 	containerAction: record('containerAction', () => null),

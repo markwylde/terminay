@@ -9,6 +9,7 @@
 import { MessageSquare, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { BotAvatar } from './BotAvatar';
+import { subscribeNewBot } from './botFocus';
 import {
 	BOT_ACTIVITY_LABELS,
 	BOT_FILTER_LABELS,
@@ -25,7 +26,6 @@ import {
 	shortAge,
 	visibleBots,
 } from './botsModel';
-import { subscribeNewBot } from './botFocus';
 import type { BotTabHost } from './botTabHost';
 import { NewBotDialog } from './NewBotDialog';
 import {
@@ -399,7 +399,8 @@ function EngineSummary({
 						(candidate) =>
 							candidate.available &&
 							candidate.address !== null &&
-							(status.pinned === null ||
+							(!status.available ||
+								status.pinned === null ||
 								candidate.kind !== status.pinned.kind ||
 								candidate.address !== status.pinned.address),
 					)
@@ -408,11 +409,13 @@ function EngineSummary({
 						const kindName = candidate.kind === 'podman' ? 'Podman' : 'Docker';
 						return (
 							<div key={key}>
-								<div className="bots-kv">
+								<div
+									className="bots-engine__candidate"
+									data-terminay-bots-engine-candidate
+								>
 									<span>
 										{kindName} found
-										<span className="bots-faint bots-mono">
-											{' '}
+										<span className="bots-engine__address bots-faint bots-mono">
 											{candidate.address}
 										</span>
 									</span>

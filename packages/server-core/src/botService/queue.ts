@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { BotSessionOrigin } from '@terminay/protocol';
 import { BotError } from './store.js';
-
 export interface BotQueuedTurn {
 	readonly id: string;
 	readonly botId: string;
@@ -9,27 +8,34 @@ export interface BotQueuedTurn {
 	readonly origin: BotSessionOrigin;
 	readonly prompt: string;
 	readonly arrival: number;
+	coordinationOnly?: boolean;
 }
 interface Lane {
-	active?: BotQueuedTurn;
-	idleSession?: string;
 	waiting: BotQueuedTurn[];
-	last?: 'chat' | 'trigger';
-	dispatching: boolean;
+	active: Map<string, BotQueuedTurn>;
 	stopped: boolean;
 	failed: boolean;
+	reservation?: { source: string; target: string };
 }
 export interface BotQueueHooks {
 	run(item: BotQueuedTurn): Promise<void>;
 	suspend(sessionId: string): Promise<void>;
 	cancelled(item: BotQueuedTurn, reason: string): void;
-	changed(botId: string, active: number, queued: number): void;
+	changed(botId: string, running: number, queued: number): void;
 	failure(item: BotQueuedTurn): void;
 }
-/** Only turns hold the lease. Between-turn chat processes yield before other work. */
+/** Four work executions and one user-message coordination slot. No idle provider is retained. */
 export class BotTurnQueue {
-	private readonly lanes = new Map<string, Lane>();
+	private lanes = new Map<string, Lane>();
 	constructor(private readonly hooks: BotQueueHooks) {}
+	private lane(id: string): Lane {
+		let lane = this.lanes.get(id);
+		if (!lane) {
+			lane = { waiting: [], active: new Map(), stopped: false, failed: false };
+			this.lanes.set(id, lane);
+		}
+		return lane;
+	}
 	enqueue(
 		input: Omit<BotQueuedTurn, 'id' | 'arrival'> & { id?: string },
 		now = Date.now(),
@@ -38,17 +44,9 @@ export class BotTurnQueue {
 		if (
 			lane.stopped ||
 			lane.waiting.length >= 20 ||
-			lane.waiting.some((i) =>
-				input.origin.kind === 'chat'
-					? i.sessionId === input.sessionId
-					: i.origin.kind !== 'chat' &&
-						i.origin.triggerId === input.origin.triggerId,
-			)
+			lane.waiting.some((i) => i.sessionId === input.sessionId)
 		)
-			throw new BotError(
-				'busy',
-				'bot queue is full or this work is already queued',
-			);
+			throw new BotError('busy', 'Bot execution queue is full or blocked');
 		const item = structuredClone({
 			...input,
 			id: input.id ?? randomBytes(12).toString('hex'),
@@ -56,16 +54,54 @@ export class BotTurnQueue {
 		});
 		lane.waiting.push(item);
 		this.changed(input.botId, lane);
-		void this.dispatch(input.botId, lane);
+		this.dispatch(input.botId, lane);
 		return structuredClone(item);
 	}
 	list(botId: string): BotQueuedTurn[] {
 		return structuredClone(this.lane(botId).waiting);
 	}
+	active(botId: string): BotQueuedTurn[] {
+		return structuredClone([...this.lane(botId).active.values()]);
+	}
+	reservePromotion(botId: string, source: string, target: string): () => void {
+		const lane = this.lane(botId),
+			active = [...lane.active.values()];
+		if (
+			active.find((i) => i.sessionId === source)?.coordinationOnly &&
+			active.some((i) => i.sessionId === target && !i.coordinationOnly)
+		)
+			lane.reservation = { source, target };
+		return () => {
+			if (lane.reservation?.source === source) delete lane.reservation;
+			this.dispatch(botId, lane);
+		};
+	}
+	promote(botId: string, sessionId: string, retiredId?: string): boolean {
+		const lane = this.lane(botId),
+			item = [...lane.active.values()].find((i) => i.sessionId === sessionId);
+		if (!item) return false;
+		if (!item.coordinationOnly) return true;
+		if (
+			lane.reservation?.source === sessionId &&
+			lane.reservation.target === retiredId
+		) {
+			const retired = [...lane.active.values()].find(
+				(i) => i.sessionId === retiredId,
+			);
+			if (retired) retired.coordinationOnly = true;
+		}
+		if (
+			[...lane.active.values()].filter((i) => !i.coordinationOnly).length >= 4
+		)
+			return false;
+		item.coordinationOnly = false;
+		return true;
+	}
 	cancel(botId: string, id: string): void {
-		const lane = this.lane(botId);
-		const index = lane.waiting.findIndex((i) => i.id === id);
-		if (index < 0) throw new BotError('not_found', 'queued item not found');
+		const lane = this.lane(botId),
+			index = lane.waiting.findIndex((i) => i.id === id);
+		if (index < 0)
+			throw new BotError('not_found', 'Queued execution not found');
 		const [item] = lane.waiting.splice(index, 1);
 		this.hooks.cancelled(item!, 'cancelled');
 		this.changed(botId, lane);
@@ -80,83 +116,51 @@ export class BotTurnQueue {
 		lane.stopped = true;
 		for (const item of lane.waiting.splice(0))
 			this.hooks.cancelled(item, 'bot stopped');
-		if (lane.idleSession) {
-			await this.hooks.suspend(lane.idleSession);
-			lane.idleSession = undefined;
-		}
 		this.changed(botId, lane);
 	}
 	unblock(botId: string, reset = false): void {
 		const lane = this.lane(botId);
 		if (lane.failed && !reset)
-			throw new BotError('unavailable', 'bot cleanup must be reconciled');
+			throw new BotError('unavailable', 'Bot cleanup must be reconciled');
 		lane.stopped = false;
-		if (reset) {
-			lane.failed = false;
-			lane.active = undefined;
-		}
-	}
-	private lane(botId: string): Lane {
-		let lane = this.lanes.get(botId);
-		if (!lane) {
-			lane = { waiting: [], dispatching: false, stopped: false, failed: false };
-			this.lanes.set(botId, lane);
-		}
-		return lane;
+		if (reset) lane.failed = false;
+		this.dispatch(botId, lane);
 	}
 	private changed(id: string, lane: Lane): void {
-		this.hooks.changed(
-			id,
-			lane.active || lane.dispatching ? 1 : 0,
-			lane.waiting.length,
-		);
+		this.hooks.changed(id, lane.active.size, lane.waiting.length);
 	}
-	private async dispatch(botId: string, lane: Lane): Promise<void> {
-		if (lane.active || lane.dispatching || lane.stopped || !lane.waiting.length)
-			return;
-		lane.dispatching = true;
-		let item: BotQueuedTurn | undefined;
-		try {
-			const chats = lane.waiting
-				.filter((i) => i.origin.kind === 'chat')
-				.sort((a, b) => a.arrival - b.arrival);
-			const triggers = lane.waiting
-				.filter((i) => i.origin.kind !== 'chat')
-				.sort(
-					(a, b) =>
-						(a.origin.kind === 'chat' ? 0 : a.origin.fireTime) -
-						(b.origin.kind === 'chat' ? 0 : b.origin.fireTime),
-				);
-			item =
-				chats.length && triggers.length
-					? lane.last === 'chat'
-						? triggers[0]
-						: chats[0]
-					: (chats[0] ?? triggers[0]);
-			if (!item) return;
-			if (lane.idleSession && lane.idleSession !== item.sessionId) {
-				await this.hooks.suspend(lane.idleSession);
-				lane.idleSession = undefined;
-			}
-			// Cancellation during asynchronous suspension must not dispatch removed work.
-			if (lane.stopped || !lane.waiting.some((i) => i.id === item!.id)) return;
-			lane.waiting = lane.waiting.filter((i) => i.id !== item!.id);
-			lane.idleSession = undefined;
-			lane.active = item;
-			lane.last = item.origin.kind === 'chat' ? 'chat' : 'trigger';
-			this.changed(botId, lane);
-			await this.hooks.run(item);
-			lane.idleSession =
-				item.origin.kind === 'chat' ? item.sessionId : undefined;
-		} catch {
-			lane.stopped = true;
-			lane.failed = true;
-			if (item) this.hooks.failure(item);
-		} finally {
-			if (!lane.failed) lane.active = undefined;
-			lane.dispatching = false;
-			this.changed(botId, lane);
-			if (!lane.stopped && lane.waiting.length) void this.dispatch(botId, lane);
+	private dispatch(id: string, lane: Lane): void {
+		if (lane.stopped || lane.reservation) return;
+		while (lane.waiting.length) {
+			const work = [...lane.active.values()].filter(
+				(i) => !i.coordinationOnly,
+			).length;
+			const coordination = work >= 4;
+			if (
+				coordination &&
+				[...lane.active.values()].some((i) => i.coordinationOnly)
+			)
+				break;
+			const index = coordination
+				? lane.waiting.findIndex((i) => i.origin.kind === 'chat')
+				: 0;
+			if (index < 0) break;
+			const [item] = lane.waiting.splice(index, 1);
+			item!.coordinationOnly = coordination;
+			lane.active.set(item!.id, item!);
+			this.changed(id, lane);
+			void this.hooks
+				.run(item!)
+				.catch(() => {
+					lane.failed = true;
+					lane.stopped = true;
+					this.hooks.failure(item!);
+				})
+				.finally(() => {
+					lane.active.delete(item!.id);
+					this.changed(id, lane);
+					this.dispatch(id, lane);
+				});
 		}
 	}
 }

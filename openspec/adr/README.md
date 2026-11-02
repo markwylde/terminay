@@ -112,6 +112,9 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0086](./0086-a-windows-pipe-admits-only-the-users-principals-and-a-peer-that-proves-the-credential.md) | A Windows pipe admits only the user's principals for writing, and serves only a peer that proves its credential | accepted, supersedes 0083 | 2026-10-30 |
 | [0087](./0087-terminay-keeps-powershells-process-directory-in-step-with-its-location-on-windows.md) | Terminay keeps PowerShell's process directory in step with its location on Windows | accepted | 2026-10-30 |
 | [0088](./0088-terminay-state-files-are-replaced-durably-and-recovered-by-kind.md) | Terminay's state files are replaced durably and recovered according to their kind | accepted | 2026-10-31 |
-| [0089](./0089-bots-run-agents-in-their-own-container-over-acp.md) | Bots run their agents inside their own container, over ACP, as an owner-approved exception | accepted | 2026-11-01 |
+| [0089](./0089-bots-run-agents-in-their-own-container-over-acp.md) | Bots run their agents inside their own container, over ACP, as an owner-approved exception | accepted (superseded by 0092) | 2026-11-01 |
 | [0090](./0090-bots-share-only-the-hosts-auth-file-or-use-a-token.md) | Bots share only the host's own auth file, or use a token | accepted (superseded by 0091) | 2026-11-01 |
 | [0091](./0091-bots-sign-in-with-their-own-credential.md) | Each bot signs in with its own credential, and nothing is shared with the host | accepted, supersedes 0090 | 2026-11-01 |
+| [0092](./0092-bots-use-the-local-docker-compatible-socket.md) | Bots use one local Docker-compatible socket transport | accepted, supersedes 0089 (transport only) | 2026-11-02 |
+| [0093](./0093-bots-communicate-through-a-durable-message-log.md) | Bots communicate through a durable message log and scoped runtime tools | accepted, supersedes 0089 (execution and communication only) | 2026-11-02 |
+| [0094](./0094-bots-attribute-engine-workloads-through-per-bot-proxies.md) | Bots attribute engine workloads through per-bot socket proxies | accepted, supersedes 0089 and 0092 (socket exposure and attribution only) | 2026-11-02 |

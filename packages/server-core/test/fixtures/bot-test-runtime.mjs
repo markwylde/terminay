@@ -160,6 +160,11 @@ export async function runtime(root, options = {}) {
 				connection: false,
 			},
 		},
+		execStream(_container, args) {
+            const sid=args[1];
+            const child=spawn('python3',[new URL('../../../../docker/terminay-bot/bin/terminay-mcp-relay',import.meta.url).pathname,sid.slice(4)],{stdio:['pipe','pipe','pipe'],detached:true});
+            children.set(sid,child);writeFileSync(join(records,sid),String(child.pid));return child;
+        },
 		async exec(_container, args) {
 			calls.push(args);
 			if (args[0] === 'terminay-run') {

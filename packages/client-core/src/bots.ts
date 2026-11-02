@@ -3,11 +3,11 @@ import {
 	BOT_EVENTS,
 	BOTS_CAPABILITY,
 	type BotAgent,
-	type BotQueue,
 	type BotDraft,
 	type BotInvalidation,
 	type BotMemory,
 	type BotProfile,
+	type BotQueue,
 	type BotSession,
 	type BotSessionRecord,
 	type BotTrigger,
@@ -477,6 +477,32 @@ export class BotsClient {
 		if (typeof r.sessionId !== 'string' || typeof r.queueId !== 'string')
 			throw new TypeError('invalid queued message');
 		return { sessionId: r.sessionId, queueId: r.queueId };
+	}
+	async reviseMessage(
+		botId: string,
+		sessionId: string,
+		key: string,
+		expected: string,
+		replacement: string | null,
+	): Promise<{ sessionId: string }> {
+		const result = await this.transport.command(op.reviseMessage, {
+			botId,
+			sessionId,
+			key,
+			expected,
+			replacement,
+		});
+		const value = result as { sessionId?: unknown };
+		if (typeof value?.sessionId !== 'string')
+			throw new TypeError('invalid revised chat');
+		return { sessionId: value.sessionId };
+	}
+	async clearChat(botId: string, sessionId: string): Promise<void> {
+		await this.transport.command(op.clearChat, {
+			botId,
+			sessionId,
+			confirmed: true,
+		});
 	}
 	async newChat(botId: string, options: CommandOptions = {}): Promise<void> {
 		await this.transport.command(op.newChat, { botId }, options);

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { Duplex } from 'node:stream';
 import test from 'node:test';
 import {
 	BotTokenRedactor,
 	BotTokenService,
-	DockerDriver,
-	EngineProcess,
+	SocketDriver,
 } from '../dist/botService/index.js';
 
 const id = 'abc123def456',
@@ -75,23 +74,37 @@ test('4.6 bot-owned vault entries, explicit copying, ACP method hook and last-le
 	);
 	copy.release();
 });
-test('4.6 client environment carries token while argv names only -e NAME', async () => {
+test('4.6 socket exec snapshots credentials into the body before the lease environment is cleared', async () => {
 	const service = new BotTokenService(vault());
 	await service.save(id, 'CODEX_API_KEY', Buffer.from('fake-secret'));
 	const lease = await service.acquire(id, [declaration]);
 	let observed;
-	const runner = new EngineProcess({ PATH: process.env.PATH });
-	runner.stream = (_executable, args, options) => {
-		observed = { args, env: options.env };
-		return spawn(
-			process.execPath,
-			['-e', 'process.stdout.write(process.env.CODEX_API_KEY)'],
-			{ env: options.env, stdio: ['pipe', 'pipe', 'pipe'] },
-		);
+	const transport = {
+		json: async (method, route, body) => {
+			if (route.endsWith('/exec')) {
+				observed = { method, route, body };
+				return { Id: 'exec' };
+			}
+			return { ExitCode: 0 };
+		},
+		subscribe: async () =>
+			new Duplex({
+				read() {
+					const text = Buffer.from('fake-secret'),
+						header = Buffer.alloc(8);
+					header[0] = 1;
+					header.writeUInt32BE(text.length, 4);
+					this.push(Buffer.concat([header, text]));
+					this.push(null);
+				},
+				write(_c, _e, cb) {
+					cb();
+				},
+			}),
 	};
-	const driver = new DockerDriver(
+	const driver = new SocketDriver(
 		{ pin: { kind: 'docker', address: 'unix:///fake', connection: false } },
-		runner,
+		transport,
 	);
 	let child;
 	await lease.withEnvironment(async (env) => {
@@ -100,9 +113,9 @@ test('4.6 client environment carries token while argv names only -e NAME', async
 			environmentNames: lease.environmentNames,
 		});
 	});
-	assert.ok(!observed.args.some((a) => a.includes('fake-secret')));
-	assert.ok(observed.args.includes('CODEX_API_KEY'));
-	assert.ok(!observed.args.includes('CODEX_API_KEY=fake-secret'));
+	assert.ok(observed.body.Env.includes('CODEX_API_KEY=fake-secret'));
+	assert.ok(!observed.route.includes('fake-secret'));
+	assert.ok(!observed.body.Cmd.includes('fake-secret'));
 	let output = '';
 	child.stdout.on('data', (b) => (output += b));
 	child.stdin.end();

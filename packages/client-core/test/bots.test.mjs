@@ -99,3 +99,7 @@ test('trigger facade rejects malformed definitions, outcomes and upcoming cursor
 	])
 		await assert.rejects(read(new BotsClient(transport(value))), /invalid/);
 });
+test('message client sends bounded page options without undefined values and fetches binary attachments separately',async()=>{
+ const {BotMessagesClient}=await import('../dist/index.js');const calls=[];const wire={query:async(op,payload)=>{calls.push({op,payload});return {items:[],nextCursor:null,eventsCursor:'events',total:0,truncated:false};},command:async()=>null,queryWithBody:async()=>({result:{mime:'image/png'},body:new Uint8Array([1,2,3])}),subscribe:()=>()=>{}};
+ const client=new BotMessagesClient(wire);await client.list(profile.id,{cursor:undefined,limit:10});assert.deepEqual(calls[0].payload,{botId:profile.id,limit:10});const attachment=await client.attachment(profile.id,'a'.repeat(24));assert.equal(attachment.bytes.length,3);assert.equal(attachment.mime,'image/png');
+});

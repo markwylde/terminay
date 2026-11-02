@@ -25,6 +25,7 @@ import {
 export class BotEngineService extends EventEmitter {
 	private candidates: Awaited<ReturnType<BotEngine['discover']>> = [];
 	private plan?: BotImagePlan;
+	private imageProbeFailed = false;
 	private buildTask?: Promise<void>;
 	private checkTask?: Promise<void>;
 	private image: BotEngineStatus['image'] = {
@@ -155,20 +156,35 @@ export class BotEngineService extends EventEmitter {
 		this.changed();
 	}
 	private async refreshImage(driver: EngineDriver): Promise<void> {
-		this.plan = await planBotImage(
-			this.contextPath,
-			this.installs(),
-			driver.details.botUid,
-			driver.details.botGid,
-		);
-		if (this.buildTask) return;
-		const resource = await driver.inspect('image', BOT_IMAGE);
+		let resource: Awaited<ReturnType<EngineDriver['inspect']>>;
+		try {
+			this.plan = await planBotImage(
+				this.contextPath,
+				this.installs(),
+				driver.details.botUid,
+				driver.details.botGid,
+			);
+			if (this.buildTask) return;
+			resource = await driver.inspect('image', BOT_IMAGE);
+		} catch {
+			this.imageProbeFailed = true;
+			this.image = {
+				state: 'failed',
+				fingerprint: null,
+				builtAt: null,
+				error:
+					'Could not inspect the bot image. Check engine access and try again.',
+			};
+			return;
+		}
+		const recoveringProbe = this.imageProbeFailed;
+		this.imageProbeFailed = false;
 		const fingerprint =
 			resource?.Config?.Labels?.['terminay.fingerprint'] ?? null;
 		const created = Date.parse(String(resource?.Created ?? ''));
 		this.image = {
 			state:
-				this.image.state === 'failed'
+				this.image.state === 'failed' && !recoveringProbe
 					? 'failed'
 					: !resource
 						? 'missing'
@@ -177,7 +193,7 @@ export class BotEngineService extends EventEmitter {
 							: 'outdated',
 			fingerprint,
 			builtAt: Number.isFinite(created) ? created : null,
-			error: this.image.error,
+			error: recoveringProbe ? null : this.image.error,
 		};
 	}
 	async status(): Promise<BotEngineStatus> {
@@ -232,12 +248,20 @@ export class BotEngineService extends EventEmitter {
 								'The pinned engine identity changed; choose Use this engine',
 						}[a.reason],
 			pinned: pin ? { kind: pin.kind, address: pin.address } : null,
-			candidates: this.candidates.map((c) => ({
-				kind: c.available ? c.details.pin.kind : c.kind,
-				address: c.available ? c.details.pin.address : null,
-				available: c.available,
-				reason: c.available ? null : c.reason,
-			})),
+			candidates: this.candidates
+				.filter(
+					(c) =>
+						!a.available ||
+						!c.available ||
+						c.details.pin.identity !== a.details.pin.identity ||
+						c.details.pin.address === a.details.pin.address,
+				)
+				.map((c) => ({
+					kind: c.available ? c.details.pin.kind : c.kind,
+					address: c.available ? c.details.pin.address : null,
+					available: c.available,
+					reason: c.available ? null : c.reason,
+				})),
 			runningContainers,
 			botContainers,
 			image: { ...this.image },
@@ -338,7 +362,7 @@ export class BotEngineService extends EventEmitter {
 	}
 	async close(): Promise<void> {
 		await this.buildTask?.catch(() => undefined);
-		this.engine.off('availability', this.changed);
+		this.engine.off('availability', this.availabilityChanged);
 		this.engine.off('container-event', this.containerChanged);
 		this.engine.close();
 	}
@@ -353,7 +377,9 @@ export function validateEnginePin(value: unknown): EnginePin {
 		!p.address ||
 		typeof p.identity !== 'string' ||
 		!p.identity ||
-		typeof p.connection !== 'boolean'
+		typeof p.connection !== 'boolean' ||
+		(p.version !== undefined && p.version !== 2) ||
+		(p.version === 2 && (!p.address.startsWith('unix:///') || p.connection))
 	)
 		throw new TypeError('invalid engine pin');
 	return {
@@ -361,5 +387,6 @@ export function validateEnginePin(value: unknown): EnginePin {
 		address: p.address,
 		identity: p.identity,
 		connection: p.connection,
+		...(p.version === 2 ? { version: 2 as const } : {}),
 	};
 }

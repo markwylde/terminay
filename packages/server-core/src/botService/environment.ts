@@ -33,7 +33,6 @@ export interface BotConfigFile {
 export interface BotEnvironmentDefinition {
 	readonly id: string;
 	readonly limits?: BotResourceLimits;
-	readonly shareEngineSocket?: boolean;
 	readonly idleStopMs?: number | null;
 	readonly configFiles?: readonly BotConfigFile[];
 }
@@ -117,7 +116,6 @@ export class BotEnvironmentService extends EventEmitter {
 		const bot = this.definition(id);
 		return {
 			botId: id,
-			shareEngineSocket: bot.shareEngineSocket ?? false,
 			idleStopMs:
 				bot.idleStopMs === undefined
 					? DEFAULT_BOT_IDLE_STOP_MS
@@ -125,7 +123,6 @@ export class BotEnvironmentService extends EventEmitter {
 			limits: bot.limits ?? defaults,
 			revision: this.hooks.settings?.environmentSettings(id).revision ?? 0,
 			limitsEnforced: driver.details.limitsEnforced,
-			socketWarning: this.socketWarning(driver),
 		};
 	}
 	setSettings(
@@ -144,34 +141,10 @@ export class BotEnvironmentService extends EventEmitter {
 				throw protocolError('conflict', 'bot environment revision changed', {
 					details: { reason: 'conflict' },
 				});
-			if (
-				patch.shareEngineSocket === true &&
-				!previous.shareEngineSocket &&
-				patch.confirmed !== true
-			)
-				throw protocolError(
-					'forbidden',
-					'engine socket sharing requires confirmation',
-					{
-						details: {
-							reason: 'confirmation-required',
-							socketWarning: this.socketWarning(driver),
-						},
-					},
-				);
 			this.hooks.settings.setEnvironmentSettings(patch);
 			this.armIdle(patch.botId);
 			return this.readSettings(patch.botId, driver);
 		});
-	}
-	private socketWarning(
-		driver: EngineDriver,
-	): BotEnvironmentSettings['socketWarning'] {
-		return driver.details.rootless
-			? 'server-account'
-			: driver.details.platform === 'linux'
-				? 'root-equivalent'
-				: 'engine-control';
 	}
 	state(id: string): BotEnvironmentState {
 		this.definition(id);
@@ -255,7 +228,7 @@ export class BotEnvironmentService extends EventEmitter {
 			'--label',
 			`terminay.fingerprint=${fingerprint}`,
 			'--label',
-			`terminay.socket=${bot.shareEngineSocket === true}`,
+			'terminay.socket=proxy',
 			'--label',
 			`terminay.limits=${JSON.stringify(limits)}`,
 			'--mount',
@@ -270,6 +243,10 @@ export class BotEnvironmentService extends EventEmitter {
 			String(limits.pids),
 			'--env',
 			`TERMINAY_BOT_ID=${bot.id}`,
+			'--env',
+			'DOCKER_HOST=unix:///var/run/docker.sock',
+			'--env',
+			'CONTAINER_HOST=unix:///var/run/docker.sock',
 			'--entrypoint',
 			'terminay-init',
 		];
@@ -280,7 +257,13 @@ export class BotEnvironmentService extends EventEmitter {
 				'--userns',
 				`keep-id:uid=${driver.details.botUid},gid=${driver.details.botGid}`,
 			);
-		if (bot.shareEngineSocket) {
+		{
+			if (!driver.details.socketPath.startsWith('/'))
+				throw new Error(
+					'The engine did not report a socket that can be shared',
+				);
+			if (driver.details.pin.kind === 'podman')
+				args.push('--security-opt', 'label=disable');
 			const gid = this.hooks.socketGid
 				? await this.hooks.socketGid(driver)
 				: await this.socketGid(driver, bot.id);
@@ -288,7 +271,7 @@ export class BotEnvironmentService extends EventEmitter {
 				throw new Error('invalid engine socket gid');
 			args.push(
 				'--mount',
-				`type=bind,source=${driver.details.socketPath},target=/var/run/docker.sock`,
+				`type=bind,source=${driver.details.socketPath},target=/run/terminay-engine/engine.sock`,
 				'--group-add',
 				String(gid),
 			);
@@ -328,6 +311,8 @@ export class BotEnvironmentService extends EventEmitter {
 				'--userns',
 				`keep-id:uid=${driver.details.botUid},gid=${driver.details.botGid}`,
 			);
+		if (driver.details.pin.kind === 'podman')
+			args.push('--security-opt', 'label=disable');
 		args.push(BOT_IMAGE, '-c', '%g', '/run/engine.sock');
 		const value = (await driver.run(args)).trim();
 		if (!/^\d+$/.test(value)) throw new Error('engine socket gid unavailable');
@@ -366,7 +351,11 @@ export class BotEnvironmentService extends EventEmitter {
 				const bootstrap = await this.hooks.bootstrap(id);
 				await driver.exec(name, ['terminay-init', '--bootstrap'], {
 					user: 'root',
-					input: JSON.stringify({ ...bootstrap, botId: id }),
+					input: JSON.stringify({
+						...bootstrap,
+						botId: id,
+						serverId: this.serverId,
+					}),
 					deadlineMs: 40_000,
 				});
 				await this.restoreConfig(driver, bot);
@@ -545,58 +534,63 @@ export class BotEnvironmentService extends EventEmitter {
 		let memoryBytes: number | null = null;
 		// Usage figures are best-effort: a failed read leaves them blank rather
 		// than failing the whole overview.
-		if (owned?.State?.Running) try {
-			const raw = await driver.run([
-				'stats',
-				'--no-stream',
-				'--format',
-				'json',
-				name,
-			]);
-			const parsed = JSON.parse(raw) as
-				| Record<string, unknown>
-				| Record<string, unknown>[];
-			const usage = Array.isArray(parsed) ? parsed[0] : parsed;
-			cpuPercent = parsePercent(usage?.CPUPerc ?? usage?.cpu_percent ?? usage?.CPU);
-			memoryBytes = parseMemory(
-				String(usage?.MemUsage ?? usage?.mem_usage ?? usage?.MemUsageBytes ?? '').split('/')[0] ??
-					'',
-			);
-		} catch {
-			// Left blank.
-		}
+		if (owned?.State?.Running)
+			try {
+				const raw = await driver.run([
+					'stats',
+					'--no-stream',
+					'--format',
+					'json',
+					name,
+				]);
+				const parsed = JSON.parse(raw) as
+					| Record<string, unknown>
+					| Record<string, unknown>[];
+				const usage = Array.isArray(parsed) ? parsed[0] : parsed;
+				cpuPercent = parsePercent(
+					usage?.CPUPerc ?? usage?.cpu_percent ?? usage?.CPU,
+				);
+				memoryBytes = parseMemory(
+					String(
+						usage?.MemUsage ?? usage?.mem_usage ?? usage?.MemUsageBytes ?? '',
+					).split('/')[0] ?? '',
+				);
+			} catch {
+				// Left blank.
+			}
 		let homeBytes: number | null = null;
 		// Read on demand: the Overview asks only when it opens and on Refresh.
-		if (await this.owned(driver, 'volume', `${name}-home`, id)) try {
-			const size = await driver.run([
-				'run',
-				'--rm',
-				'--pull',
-				'never',
-				'--network',
-				'none',
-				...this.labels(id),
-				'--cpus',
-				'0.25',
-				'--memory',
-				'134217728',
-				'--pids-limit',
-				'64',
-				'--user',
-				'bot',
-				'--mount',
-				`type=volume,source=${name}-home,target=/home/bot,readonly`,
-				'--entrypoint',
-				'du',
-				BOT_IMAGE,
-				'-sk',
-				'/home/bot',
-			]);
-			const kib = Number(size.trim().split(/\s+/)[0]);
-			if (Number.isFinite(kib) && kib >= 0) homeBytes = kib * 1024;
-		} catch {
-			// Left blank.
-		}
+		if (await this.owned(driver, 'volume', `${name}-home`, id))
+			try {
+				const size = await driver.run([
+					'run',
+					'--rm',
+					'--pull',
+					'never',
+					'--network',
+					'none',
+					...this.labels(id),
+					'--cpus',
+					'0.25',
+					'--memory',
+					'134217728',
+					'--pids-limit',
+					'64',
+					'--user',
+					'bot',
+					'--mount',
+					`type=volume,source=${name}-home,target=/home/bot,readonly`,
+					'--entrypoint',
+					'du',
+					BOT_IMAGE,
+					'-sk',
+					'/home/bot',
+				]);
+				const kib = Number(size.trim().split(/\s+/)[0]);
+				if (Number.isFinite(kib) && kib >= 0) homeBytes = kib * 1024;
+			} catch {
+				// Left blank.
+			}
 		const log = owned
 			? await this.readLogs(driver, name, id).catch(() => '')
 			: '';
@@ -624,17 +618,16 @@ export class BotEnvironmentService extends EventEmitter {
 			homeVolume: `${name}-home`,
 			limits: bot.limits ?? defaults,
 			limitsEnforced: driver.details.limitsEnforced,
-			shareEngineSocket: owned?.Config?.Labels?.['terminay.socket'] === 'true',
-			socketChangePending:
-				Boolean(owned) &&
-				(owned?.Config?.Labels?.['terminay.socket'] === 'true') !==
-					Boolean(bot.shareEngineSocket),
+			engineSocket: !owned
+				? 'not-created'
+				: owned.Config?.Labels?.['terminay.socket'] === 'proxy'
+					? 'proxy'
+					: 'recreate-required',
 			limitsChangePending:
 				Boolean(owned) &&
 				(owned?.Config?.Labels?.['terminay.limits'] ??
 					JSON.stringify(defaults)) !==
 					JSON.stringify(botResourceLimits(bot.limits ?? defaults)),
-			socketWarning: this.socketWarning(driver),
 			cpuPercent,
 			memoryBytes,
 			homeBytes,
@@ -676,10 +669,14 @@ export class BotEnvironmentService extends EventEmitter {
 		const containers: BotSiblingContainer[] = [];
 		for (const containerId of ids.trim().split(/\s+/).filter(Boolean)) {
 			const container = await driver.inspect('container', containerId);
+			const labels = container?.Config?.Labels;
 			if (
 				!container ||
 				container.Name?.replace(/^\//, '') === nameFor(id) ||
-				container.Config?.Labels?.['terminay.bot'] !== id
+				labels?.['terminay.bot'] !== id ||
+				(labels['terminay.workload'] !== '1' &&
+					(labels['terminay.managed'] === '1' ||
+						labels['terminay.helper'] !== undefined))
 			)
 				continue;
 			containers.push({

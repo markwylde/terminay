@@ -77,7 +77,8 @@ export function BotTab({
 		return subscribeBotFocus(server.serverId, botId, (target) => {
 			if (target.mode !== undefined) setMode(target.mode);
 			if (target.sessionId !== undefined) {
-				setMode('chat');
+				setMode('configure');
+				setConfigTab('sessions');
 				setChatSessionId(target.sessionId);
 			}
 		});
@@ -217,6 +218,7 @@ export function BotTab({
 							<BotTriggersPanel server={server} bot={bot} />
 						) : (
 							<BotSessionsPanel
+								selectedId={chatSessionId}
 								server={server}
 								bot={bot}
 								onOpenInChat={(sessionId) => {
@@ -243,26 +245,28 @@ function useTabCounts(
 	active: boolean,
 	sessions: readonly unknown[],
 ): Partial<Record<BotConfigTab, number>> {
-	const [counts, setCounts] = useState<{ memories?: number; triggers?: number }>(
-		{},
-	);
+	const [counts, setCounts] = useState<{
+		memories?: number;
+		triggers?: number;
+	}>({});
 	const client = server?.client;
 	useEffect(() => {
 		if (client === undefined || !active) return;
 		let live = true;
-		void Promise.allSettled([client.memories(botId, ''), client.triggers(botId)]).then(
-			([memories, triggers]) => {
-				if (!live) return;
-				setCounts({
-					memories:
-						memories.status === 'fulfilled' ? memories.value.length : undefined,
-					triggers:
-						triggers.status === 'fulfilled'
-							? triggers.value.triggers.length
-							: undefined,
-				});
-			},
-		);
+		void Promise.allSettled([
+			client.memories(botId, ''),
+			client.triggers(botId),
+		]).then(([memories, triggers]) => {
+			if (!live) return;
+			setCounts({
+				memories:
+					memories.status === 'fulfilled' ? memories.value.length : undefined,
+				triggers:
+					triggers.status === 'fulfilled'
+						? triggers.value.triggers.length
+						: undefined,
+			});
+		});
 		return () => {
 			live = false;
 		};
