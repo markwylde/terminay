@@ -42,14 +42,22 @@ export class BotEngineService extends EventEmitter {
 		this.eventRevision++;
 		this.changed();
 	};
-	private readonly changed = () => {
-		const signature = JSON.stringify([
+	/** Set while a check runs; its intermediate states are never published. */
+	private checking = false;
+	private currentSignature(): string {
+		return JSON.stringify([
 			this.engine.availability,
 			this.candidates,
 			this.image,
 			this.outputRevision,
 			this.eventRevision,
 		]);
+	}
+	private readonly availabilityChanged = () => {
+		if (!this.checking) this.changed();
+	};
+	private readonly changed = () => {
+		const signature = this.currentSignature();
 		if (signature === this.signature) return;
 		this.signature = signature;
 		this.emit('changed', { revision: ++this.revision });
@@ -62,7 +70,7 @@ export class BotEngineService extends EventEmitter {
 		private readonly serverId: string,
 	) {
 		super();
-		engine.on('availability', this.changed);
+		engine.on('availability', this.availabilityChanged);
 		engine.on('container-event', this.containerChanged);
 	}
 	get fingerprint(): string {
@@ -72,9 +80,18 @@ export class BotEngineService extends EventEmitter {
 		if (!this.engine.availability.available) await this.check();
 		return this.engine.driver;
 	}
-	check(): Promise<void> {
+	/** An explicit check: what it finds is published to every watcher. */
+	async check(): Promise<void> {
+		await this.probe();
+		this.changed();
+	}
+	/** Checks without publishing. Overlapping calls share one probe, and only
+	 * its final state is ever compared or published. */
+	private probe(): Promise<void> {
 		if (this.checkTask) return this.checkTask;
+		this.checking = true;
 		this.checkTask = this.checkNow().finally(() => {
+			this.checking = false;
 			this.checkTask = undefined;
 		});
 		return this.checkTask;
@@ -83,22 +100,30 @@ export class BotEngineService extends EventEmitter {
 		this.candidates = await this.engine.discover();
 		const available = this.candidates.filter((c) => c.available);
 		const pin = await this.pins.load();
-		await this.engine.check(
-			!pin && available.length === 1 && available[0]?.available
+		const only =
+			available.length === 1 && available[0]?.available
 				? available[0].details.pin.kind
-				: undefined,
-		);
-		if (!pin && available.length === 0) {
+				: undefined;
+		if (pin || only) await this.engine.check(only && !pin ? only : undefined);
+		else {
+			// Nothing is pinned and there is no single engine to pin: say why,
+			// in one state, without asking the engine for a pin it does not have.
 			const failure =
 				this.candidates.find(
 					(c) => !c.available && c.reason !== 'not-installed',
-				) ?? this.candidates[0];
-			if (failure && !failure.available)
-				this.engine.availability = { available: false, reason: failure.reason };
+				) ?? this.candidates.find((c) => !c.available);
+			this.engine.close();
+			this.engine.availability = {
+				available: false,
+				// Several engines are up: the dashboard asks which one to use.
+				reason:
+					available.length === 0 && failure && !failure.available
+						? failure.reason
+						: 'not-running',
+			};
 		}
 		if (this.engine.availability.available)
 			await this.refreshImage(this.engine.driver);
-		this.changed();
 	}
 	async use(
 		kind: unknown,
@@ -156,8 +181,10 @@ export class BotEngineService extends EventEmitter {
 		};
 	}
 	async status(): Promise<BotEngineStatus> {
-		// Opening the dashboard is an explicit availability check, never a timer.
-		await this.check();
+		// Opening the dashboard checks availability, never a timer. The reader
+		// gets the result in this reply, so the check publishes nothing: a
+		// watcher that rereads status on every change could otherwise never stop.
+		await this.probe();
 		const pin = await this.pins.load();
 		const a = this.engine.availability;
 		let runningContainers = 0,
