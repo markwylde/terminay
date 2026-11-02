@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 export interface EngineCallOptions {
@@ -30,10 +32,56 @@ export type PipedProcess = SpawnedProcess & {
 	readonly stderr: NonNullable<SpawnedProcess['stderr']>;
 };
 
+/** Where Docker, Podman and their helpers install. An app started from the
+ * Dock or Finder inherits launchd's `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`),
+ * which holds none of them. */
+export function engineSearchPath(
+	current: string | undefined,
+	home: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	const common = [
+		'/opt/podman/bin',
+		'/opt/homebrew/bin',
+		'/usr/local/bin',
+		...(platform === 'darwin'
+			? ['/Applications/Docker.app/Contents/Resources/bin']
+			: []),
+		...(home
+			? [
+					join(home, 'bin'),
+					join(home, '.local', 'bin'),
+					join(home, '.docker', 'bin'),
+					join(home, '.rd', 'bin'),
+				]
+			: []),
+		'/usr/bin',
+		'/bin',
+		'/usr/sbin',
+		'/sbin',
+	];
+	// The inherited entries keep their precedence; the common ones only fill gaps.
+	const entries = [...(current ?? '').split(delimiter), ...common].filter(
+		Boolean,
+	);
+	return [...new Set(entries)].join(delimiter);
+}
+
+/** The server's environment, with a `PATH` that finds the engine CLIs. */
+export function engineEnvironment(
+	env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+	return { ...env, PATH: engineSearchPath(env.PATH, env.HOME ?? homedir()) };
+}
+
 /** No shell, no argument interpolation, bounded output, and an absolute deadline.
  * Errors deliberately omit argv, environment and engine diagnostics. */
 export class EngineProcess {
-	constructor(readonly env: NodeJS.ProcessEnv = process.env) {}
+	/** Without `env`, each call reads the server's environment as it is then. */
+	constructor(private readonly fixedEnv?: NodeJS.ProcessEnv) {}
+	get env(): NodeJS.ProcessEnv {
+		return this.fixedEnv ?? engineEnvironment(process.env);
+	}
 
 	stream(
 		executable: string,
