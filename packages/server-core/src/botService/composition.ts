@@ -104,7 +104,10 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		() => options.agents.botAgentInstalls(),
 		options.serverId,
 	);
-	const deletions = new BotDeletions(join(root, 'deletions.json'), options.serverId);
+	const deletions = new BotDeletions(
+		join(root, 'deletions.json'),
+		options.serverId,
+	);
 	const bots = new BotStore(join(root, 'bots.json'));
 	const sessions = new BotSessionStore(join(root, 'sessions'));
 	const tokens = options.tokens ?? new BotTokenService(options.vault);
@@ -427,6 +430,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		dispose: async () => {
 			engine.off('availability', cleanup);
 			images.off('changed', cleanup);
+			await cleaning;
 			detachEnvironment();
 			await io.close();
 			await shells.close();

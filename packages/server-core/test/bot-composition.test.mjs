@@ -586,11 +586,11 @@ test('9.3/9.4 device terminal prints a URL/code, records success, restores confi
 		join(r.root, `config-terminay-bot-${bot.id}.json`),
 		JSON.stringify([{ path: '.codex/config.toml', content: 'tampered' }]),
 	);
-	await c.bots.send(bot.id, 'normal', sent.sessionId);
+	const fresh = await c.bots.send(bot.id, 'normal', sent.sessionId);
 	await until(
 		r.service,
 		'changed',
-		() => r.service.sessions.get(sent.sessionId).state === 'completed',
+		() => r.service.sessions.get(fresh.sessionId).state === 'completed',
 	);
 	assert.match(
 		r
@@ -599,7 +599,7 @@ test('9.3/9.4 device terminal prints a URL/code, records success, restores confi
 			.at(-1).config[0].content,
 		/"file"/,
 	);
-	await c.bots.control(bot.id, sent.sessionId, 'end');
+	await c.bots.control(bot.id, fresh.sessionId, 'end');
 	// Token sessions must restore the default even after a device session.
 	await c.credentials.save(bot.id, 'FAKE_KEY', Buffer.from('secret'));
 	await c.bots.save({
@@ -794,4 +794,22 @@ test('overview helper events settle with two bots across the wire', {timeout:300
  // A later state query round trip establishes that the emitted frames have drained.
  for(const bot of bots) assert.equal(await env.state(bot.id),'running');
  assert.equal(changes.length,before);
+});
+
+test('pending deletion completes on server restart when the original verified engine returns', {timeout:30000}, async t=>{
+ const r=await setup(t),c=await r.connect();await c.engine.build();
+ const bot=await c.bots.save({name:'Restart cleanup',agentId:agent.id,signIn:{kind:'none'}});
+ await new BotEnvironmentClient(c.transport).lifecycle(bot.id,'start');
+ const marker=await r.api.read('volume','terminay-engine-identity');
+ await r.api.put('volume','terminay-engine-identity',{...marker,Labels:{'terminay.engine.identity':'reset'}});
+ await c.engine.check();assert.ok((await c.bots.remove(bot.id,true,true)).warning);
+ await r.composition.shutdown();
+ await r.api.put('volume','terminay-engine-identity',marker);
+ const restarted=createBotServerService({serverId:'composed-bots',dataRoot:r.root,agents:r.agents,vault:r.v,platform:'darwin',pty:{spawn(){throw new Error('no host PTY');}}});
+ try {
+  await restarted.reconcile();
+  for(let attempt=0;attempt<100&&JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length;attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length,0);
+  assert.equal(await r.api.read('volume',`terminay-bot-${bot.id}-home`),undefined);
+ } finally {await restarted.shutdown();}
 });
