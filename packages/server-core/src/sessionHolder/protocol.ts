@@ -18,7 +18,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * `welcome` is the same in both.
  */
 
-export const SESSION_HOLDER_PROTOCOL_VERSIONS: readonly number[] = [1, 2];
+export const SESSION_HOLDER_PROTOCOL_VERSIONS: readonly number[] = [1, 2, 3];
 
 /**
  * Versions from which both ends prove the credential to each other instead of
@@ -48,7 +48,10 @@ export function holderHandshakeProof(
 }
 
 /** Constant-time comparison of two hex proofs. */
-export function holderProofMatches(offered: unknown, expected: string): boolean {
+export function holderProofMatches(
+	offered: unknown,
+	expected: string,
+): boolean {
 	if (typeof offered !== 'string') return false;
 	const left = Buffer.from(offered, 'utf8');
 	const right = Buffer.from(expected, 'utf8');
@@ -156,7 +159,9 @@ export function parseHolderCloseNotice(
 	)
 		return undefined;
 	const text = (field: unknown): string | undefined =>
-		typeof field === 'string' ? field.slice(0, MAX_CLOSE_NOTICE_TEXT) : undefined;
+		typeof field === 'string'
+			? field.slice(0, MAX_CLOSE_NOTICE_TEXT)
+			: undefined;
 	const signal = text(notice.signal);
 	const error = text(notice.error);
 	return {
@@ -238,7 +243,7 @@ export type HolderClientMessage =
 	| { readonly type: 'setLimit'; readonly limitMs: number | null }
 	| { readonly type: 'drain' };
 
-/** Holder to server. */
+/** Holder to server. Version 3 adds bounded binary presentation chunks. */
 export type HolderServerMessage =
 	/** The holder's answer to a `challenge`: its nonce and its proof. */
 	| {
@@ -266,6 +271,12 @@ export type HolderServerMessage =
 			readonly ok: boolean;
 			readonly value?: unknown;
 			readonly error?: string;
+	  }
+	| {
+			readonly type: 'presentation';
+			readonly sessionId: string;
+			readonly offset: number;
+			readonly total: number;
 	  }
 	| {
 			readonly type: 'data';
@@ -375,12 +386,14 @@ export class HolderFrameDecoder {
 				throw new HolderProtocolError('holder frame header has no type');
 			frames.push({
 				message: message as HolderMessage,
-				payload: this.buffered.slice(payloadStart, payloadStart + payloadLength),
+				payload: this.buffered.slice(
+					payloadStart,
+					payloadStart + payloadLength,
+				),
 			});
 			offset = payloadStart + payloadLength;
 		}
-		this.buffered =
-			offset === 0 ? this.buffered : this.buffered.slice(offset);
+		this.buffered = offset === 0 ? this.buffered : this.buffered.slice(offset);
 		return frames;
 	}
 

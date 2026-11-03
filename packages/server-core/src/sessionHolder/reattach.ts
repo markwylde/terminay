@@ -6,10 +6,7 @@ import type {
 	WorkspaceState,
 	WorkspaceStore,
 } from '../workspace.js';
-import type {
-	HeldSessionSummary,
-	SessionHolderPtyFactory,
-} from './factory.js';
+import type { HeldSessionSummary, SessionHolderPtyFactory } from './factory.js';
 
 /**
  * Restart recovery when a session holder keeps PTYs running (ADR-0035).
@@ -113,6 +110,8 @@ export async function reattachHeldSessions(
 					rows: taken.record.rows,
 					process: taken.process,
 					outputPosition: taken.from,
+					presentationRecovery: taken.presentationRecovery,
+					presentationError: taken.presentationError,
 				});
 				adopted.push(sessionId);
 			} catch {
@@ -141,11 +140,7 @@ export async function reattachHeldSessions(
 		if (session.status !== 'exited' && tail?.exit?.exitCode != null)
 			exitedWhileAway.set(session.id, tail.exit.exitCode);
 	}
-	workspace.reconcileHeldTerminalSessions(
-		reattachable,
-		exitedWhileAway,
-		now(),
-	);
+	workspace.reconcileHeldTerminalSessions(reattachable, exitedWhileAway, now());
 
 	const adopted: string[] = [];
 	const ended: string[] = [];
@@ -170,6 +165,8 @@ export async function reattachHeldSessions(
 							? taken.process
 							: withoutPid(taken.process),
 					outputPosition: taken.from,
+					presentationRecovery: taken.presentationRecovery,
+					presentationError: taken.presentationError,
 				});
 				(taken.record.exit === undefined ? adopted : ended).push(session.id);
 				continue;

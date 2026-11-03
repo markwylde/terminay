@@ -1,3 +1,8 @@
+import {
+	decodePresentationRecovery,
+	encodePresentationRecovery,
+	type TerminalPresentationRecovery,
+} from './presentationRecovery.js';
 import { createRequire } from 'node:module';
 import { serializeCheckpointMouseModes } from './checkpointMouseModes.js';
 import type {
@@ -298,6 +303,45 @@ export class TerminalPresentationCheckpointAuthority {
 			safeScanner: new SafeBoundaryScanner(),
 			queue: Promise.resolve(),
 		});
+	}
+
+	/** Install a trusted host snapshot without inventing raw output bytes. */
+	restoreSession(
+		identity: TerminalIdentity,
+		recovery: TerminalPresentationRecovery,
+	): void {
+		const value = decodePresentationRecovery(
+			encodePresentationRecovery(recovery),
+			identity.sessionId,
+		);
+		this.createSession(identity, value.checkpointDimensions, value.position);
+		const session = this.requireSession(identity);
+		// The raw decoder and safe-boundary scanner start at C, not at the
+		// beginning of the serialized restoration stream.
+		void this.enqueue(session, async () => {
+			if (value.state.byteLength > this.limits.maxSnapshotBytes)
+				throw error(
+					'checkpoint_limit',
+					'recovered terminal state exceeds its limit',
+				);
+			await writeTerminal(
+				session.terminal,
+				new TextDecoder('utf-8', { fatal: true }).decode(value.state),
+			);
+			session.checkpointState = new Uint8Array(value.state);
+		}).catch(() => {});
+		for (const event of value.tail) {
+			if (event.type === 'output')
+				void this.ingestOutput(identity, event.position, event.bytes).catch(
+					() => {},
+				);
+			else void this.ingestResize(identity, event.dimensions).catch(() => {});
+		}
+	}
+
+	/** A failed host recovery must not become a successful default screen. */
+	invalidateSession(identity: TerminalIdentity): void {
+		this.requireSession(identity).unavailable = true;
 	}
 
 	/** Admit exact PTY bytes in raw-byte order. Callers may deliberately not await it. */

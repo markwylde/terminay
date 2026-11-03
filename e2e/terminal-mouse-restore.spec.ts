@@ -170,3 +170,88 @@ for (const sgr of [true, false]) {
 		await mainWindow.keyboard.press('Control+c');
 	});
 }
+
+// Match Codex's alternate-screen pointer modes. Setup is emitted only once:
+// returning to the window must preserve capture without help from the program.
+test('Codex-style wheel capture survives window activation and terminal switching', async ({
+	mainWindow,
+	electronApp,
+}) => {
+	test.setTimeout(90_000);
+	// Playwright emulates an always-focused page by default, masking real
+	// window blur/focus events even when Electron hides the native window.
+	const cdp = await mainWindow.context().newCDPSession(mainWindow);
+	await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+	const sessionId = await activeTerminalSessionId(mainWindow);
+	const panel = mainWindow.locator(
+		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+	);
+	const tabId = await mainWindow
+		.locator('.terminal-tab-content--active:visible')
+		.getAttribute('data-panel-id');
+	expect(tabId).toBeTruthy();
+	const source = `
+process.stdin.setRawMode(true); process.stdin.resume();
+for(let i=0;i<300;i++)process.stdout.write('shell-history-'+i+'\\r\\n');
+process.stdout.write('\\x1b[?1049h\\x1b[?1007l\\x1b[?1000h\\x1b[?1002h\\x1b[?1003h\\x1b[?1006h\\x1b[?1004h');
+let pending='', wheels=0, clicks=0;
+function draw(){process.stdout.write('\\x1b[H\\x1b[2Jcapture-ready wheels='+wheels+' clicks='+clicks+'\\r\\n');}
+draw();
+process.stdin.on('data',chunk=>{
+ pending+=chunk.toString();
+ while(pending.length){
+  if(pending[0]==='\\x03'){process.stdout.write('\\x1b[?1003l\\x1b[?1002l\\x1b[?1000l\\x1b[?1006l\\x1b[?1004l\\x1b[?1049l');process.exit(0);}
+  const report=/^\\x1b\\[<(\\d+);\\d+;\\d+([Mm])/.exec(pending);
+  if(report){const button=Number(report[1]);if(button===64||button===65)wheels++;if(button===0&&report[2]==='M')clicks++;pending=pending.slice(report[0].length);draw();continue;}
+  const focus=/^\\x1b\\[[IO]/.exec(pending);
+  if(focus){pending=pending.slice(focus[0].length);draw();continue;}
+  if(pending[0]==='\\x1b')break;
+  pending=pending.slice(1);
+ }
+});`;
+	await submitTerminalCommand(mainWindow, `node -e ${quote(source)}`, panel);
+	await expect(panel).toContainText('capture-ready wheels=0 clicks=0');
+	let wheels = 0;
+	let clicks = 0;
+	const verifyCapture = async () => {
+		await expect(panel).toBeVisible();
+		await expect(panel.locator('.terminal-panel-loading')).toHaveCount(0);
+		const box = await panel.locator('.xterm-screen').boundingBox();
+		if (!box) throw new Error('Terminal screen unavailable');
+		await mainWindow.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+		await expect(panel).toContainText(`wheels=${wheels} clicks=${++clicks}`);
+		await mainWindow.mouse.wheel(0, -100);
+		await expect(panel).toContainText(`wheels=${++wheels} clicks=${clicks}`);
+	};
+	await verifyCapture();
+	for (let cycle = 0; cycle < 3; cycle++) {
+		// Exercise native Electron activation, not synthetic DOM focus events.
+		await electronApp.evaluate(({ BrowserWindow }) => {
+			BrowserWindow.getAllWindows()[0]!.hide();
+		});
+		await expect
+			.poll(() => mainWindow.evaluate(() => document.hasFocus()))
+			.toBe(false);
+		await electronApp.evaluate(({ BrowserWindow }) => {
+			const workspace = BrowserWindow.getAllWindows()[0]!;
+			workspace.show();
+			workspace.focus();
+		});
+		await expect
+			.poll(() => mainWindow.evaluate(() => document.hasFocus()))
+			.toBe(true);
+		await verifyCapture();
+		await createTerminal(mainWindow);
+		await mainWindow
+			.locator(`.terminal-tab-content[data-panel-id="${tabId}"]:visible`)
+			.click();
+		await verifyCapture();
+	}
+	// A renderer replacement also tests restoring modes from the checkpoint.
+	await mainWindow.reload();
+	await mainWindow.waitForLoadState('domcontentloaded');
+	await expect(panel).toBeVisible({ timeout: 30_000 });
+	await verifyCapture();
+	await panel.locator('.xterm-helper-textarea').focus();
+	await mainWindow.keyboard.press('Control+c');
+});

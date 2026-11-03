@@ -1,3 +1,8 @@
+import {
+	decodePresentationRecovery,
+	MAX_PRESENTATION_RECOVERY_BYTES,
+	type TerminalPresentationRecovery,
+} from '../terminalService/presentationRecovery.js';
 import { randomBytes } from 'node:crypto';
 import { connect, type Socket } from 'node:net';
 import type { SessionHolderRecordFile } from './holder.js';
@@ -43,14 +48,15 @@ export interface HolderSessionStream {
 	readonly onData: (
 		listener: (position: number, bytes: Uint8Array) => void,
 	) => () => void;
-	readonly onExit: (
-		listener: (exit: HolderExitRecord) => void,
-	) => () => void;
+	readonly onExit: (listener: (exit: HolderExitRecord) => void) => () => void;
 	/** Stop receiving this session's events. The session keeps running. */
 	readonly release: () => void;
 }
 
 interface StreamState {
+	readonly allowPresentation: boolean;
+	presentationTransfer?: { bytes: Uint8Array; received: number };
+	presentationRecovery?: TerminalPresentationRecovery;
 	readonly dataListeners: Set<(position: number, bytes: Uint8Array) => void>;
 	readonly exitListeners: Set<(exit: HolderExitRecord) => void>;
 	readonly pendingData: Array<{ position: number; bytes: Uint8Array }>;
@@ -58,7 +64,9 @@ interface StreamState {
 	/** One past the last output position received for this session. */
 	received: number;
 	/** Waiting for retained output to arrive up to a position. */
-	caughtUp: { readonly position: number; readonly resolve: () => void } | undefined;
+	caughtUp:
+		| { readonly position: number; readonly resolve: () => void }
+		| undefined;
 }
 
 interface PendingRequest {
@@ -164,7 +172,11 @@ export class SessionHolderClient {
 				socket.write(
 					encodeHolderFrame(
 						mutual
-							? { type: 'challenge', versions: proofVersions, nonce: serverNonce }
+							? {
+									type: 'challenge',
+									versions: proofVersions,
+									nonce: serverNonce,
+								}
 							: {
 									type: 'hello',
 									credential: record.credential,
@@ -199,11 +211,18 @@ export class SessionHolderClient {
 				for (const frame of decoded) {
 					const message = frame.message as HolderServerMessage;
 					if (client !== undefined) {
-						client.receive(message, frame.payload);
+						try {
+							client.receive(message, frame.payload);
+						} catch {
+							socket.destroy();
+							return;
+						}
 						continue;
 					}
 					if (message.type === 'refuse') {
-						fail(new SessionHolderRefusedError(message.reason, message.versions));
+						fail(
+							new SessionHolderRefusedError(message.reason, message.versions),
+						);
 						return;
 					}
 					if (mutual && !proven) {
@@ -307,24 +326,65 @@ export class SessionHolderClient {
 		from: number,
 	): Promise<{
 		readonly record: HolderSessionRecord;
+		readonly presentationRecovery?: TerminalPresentationRecovery;
+		readonly presentationError?: string;
 		/** First position that will be delivered. */
 		readonly from: number;
 		readonly stream: HolderSessionStream;
 	}> {
-		const stream = this.openStream(sessionId);
+		const stream = this.openStream(sessionId, true);
 		try {
 			const value = (await this.request('attach', {
 				type: 'attach',
 				sessionId,
 				from,
-			})) as HolderSessionRecord & { from: number };
-			const { from: start, ...record } = value;
+			})) as HolderSessionRecord & { from: number; presentationError?: string };
+			const { from: start, presentationError, ...record } = value;
+			const state = this.streams.get(sessionId);
+			const recovery = state?.presentationRecovery;
+			if (
+				!Number.isSafeInteger(start) ||
+				start < from ||
+				start > record.outputPosition ||
+				record.sessionId !== sessionId
+			)
+				throw new Error('invalid holder recovery position');
+			if (
+				this.version >= 3 &&
+				presentationError === undefined &&
+				recovery === undefined
+			)
+				throw new Error('missing holder presentation');
+			if (
+				recovery !== undefined &&
+				(recovery.headPosition !== record.outputPosition ||
+					recovery.dimensions.cols !== record.cols ||
+					recovery.dimensions.rows !== record.rows)
+			)
+				throw new Error('holder presentation head mismatch');
+			if (state?.presentationTransfer !== undefined)
+				throw new Error('incomplete holder presentation');
+			if (
+				presentationError !== undefined &&
+				typeof presentationError !== 'string'
+			)
+				throw new Error('invalid holder presentation failure');
 			// The holder sends the retained output straight after its answer. It
 			// is held here until a listener attaches, so by the time this resolves
 			// a caller that subscribes synchronously sees every retained byte
 			// before anything else can ask for a position.
-			await this.retainedOutputReceived(sessionId, start, record.outputPosition);
-			return { record, from: start, stream };
+			await this.retainedOutputReceived(
+				sessionId,
+				start,
+				record.outputPosition,
+			);
+			return {
+				record,
+				from: start,
+				stream,
+				presentationRecovery: recovery,
+				presentationError,
+			};
 		} catch (error) {
 			stream.release();
 			throw error;
@@ -399,8 +459,12 @@ export class SessionHolderClient {
 		});
 	}
 
-	private openStream(sessionId: string): HolderSessionStream {
+	private openStream(
+		sessionId: string,
+		allowPresentation = false,
+	): HolderSessionStream {
 		const state: StreamState = {
+			allowPresentation,
 			dataListeners: new Set(),
 			exitListeners: new Set(),
 			pendingData: [],
@@ -487,12 +551,55 @@ export class SessionHolderClient {
 				else pending.reject(new Error(message.error ?? 'request failed'));
 				return;
 			}
+			case 'presentation': {
+				const state = this.streams.get(message.sessionId);
+				if (
+					this.version < 3 ||
+					!state?.allowPresentation ||
+					state.presentationRecovery !== undefined ||
+					!Number.isSafeInteger(message.total) ||
+					message.total < 4 ||
+					message.total > MAX_PRESENTATION_RECOVERY_BYTES ||
+					!Number.isSafeInteger(message.offset) ||
+					message.offset < 0 ||
+					payload.byteLength === 0
+				)
+					throw new Error('unexpected holder presentation');
+				if (state.presentationTransfer === undefined) {
+					if (message.offset !== 0)
+						throw new Error('holder presentation offset');
+					state.presentationTransfer = {
+						bytes: new Uint8Array(message.total),
+						received: 0,
+					};
+				}
+				const transfer = state.presentationTransfer;
+				if (
+					message.total !== transfer.bytes.byteLength ||
+					message.offset !== transfer.received ||
+					message.offset + payload.byteLength > message.total
+				)
+					throw new Error('holder presentation sequence');
+				transfer.bytes.set(payload, message.offset);
+				transfer.received += payload.byteLength;
+				if (transfer.received === transfer.bytes.byteLength) {
+					state.presentationRecovery = decodePresentationRecovery(
+						transfer.bytes,
+						message.sessionId,
+					);
+					state.presentationTransfer = undefined;
+				}
+				return;
+			}
 			case 'data': {
 				const state = this.streams.get(message.sessionId);
 				if (state === undefined) return;
 				state.received = message.position + payload.byteLength;
 				if (state.dataListeners.size === 0)
-					state.pendingData.push({ position: message.position, bytes: payload });
+					state.pendingData.push({
+						position: message.position,
+						bytes: payload,
+					});
 				else
 					for (const listener of [...state.dataListeners])
 						listener(message.position, payload);
@@ -545,6 +652,14 @@ export class SessionHolderClient {
 		const error = new Error('session holder connection closed');
 		for (const pending of this.requests.values()) pending.reject(error);
 		this.requests.clear();
+		for (const state of this.streams.values()) {
+			state.presentationTransfer = undefined;
+			state.presentationRecovery = undefined;
+			state.pendingData.length = 0;
+			state.dataListeners.clear();
+			state.exitListeners.clear();
+		}
+		this.streams.clear();
 		for (const listener of [...this.closeListeners]) {
 			try {
 				listener();
