@@ -39,7 +39,12 @@ export class BotEngineService extends EventEmitter {
 	private signature = '';
 	private eventRevision = 0;
 	private outputRevision = 0;
-	private readonly containerChanged = () => {
+	private readonly containerChanged = (event: Record<string, unknown> = {}) => {
+		const attributes =
+			(event.Actor as { Attributes?: Record<string, string> } | undefined)
+				?.Attributes ??
+			(event.Attributes as Record<string, string> | undefined);
+		if (attributes?.['terminay.role'] === 'helper') return;
 		this.eventRevision++;
 		this.changed();
 	};

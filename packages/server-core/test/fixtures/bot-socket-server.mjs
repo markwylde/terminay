@@ -16,6 +16,7 @@ export async function startBotSocketServer(root, options = {}) {
 	const execs = new Map(),
 		children = new Set(),
 		sockets = new Set();
+	const eventResponses = new Set();
 	const config = { kind: 'docker', ...options };
 	const terminals = new Set();
 	const calls = [],
@@ -124,6 +125,8 @@ export async function startBotSocketServer(root, options = {}) {
 			if (p[0] === 'events') {
 				res.writeHead(200, { 'Content-Type': 'application/json' });
 				res.flushHeaders();
+				eventResponses.add(res);
+				res.once('close', () => eventResponses.delete(res));
 				return;
 			}
 			if (p[0] === 'build') {
@@ -299,7 +302,8 @@ export async function startBotSocketServer(root, options = {}) {
 				);
 				args = ['exec', spec.container, ...spec.Cmd];
 			} else {
-				const config = spec.Config;
+				const eventResponses = new Set();
+	const config = spec.Config;
 				args = [
 					'run',
 					'--entrypoint',
@@ -353,6 +357,7 @@ export async function startBotSocketServer(root, options = {}) {
 	});
 	return {
 		socketPath,
+		emitEvent: event => { for (const response of eventResponses) response.write(JSON.stringify(event) + '\n'); },
 		config,
 		calls,
 		root,

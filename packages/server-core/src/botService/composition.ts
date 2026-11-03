@@ -1,3 +1,4 @@
+import { BotDeletions } from './deletions.js';
 import { createBotMessageOperations } from './messageProtocol.js';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
@@ -103,6 +104,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		() => options.agents.botAgentInstalls(),
 		options.serverId,
 	);
+	const deletions = new BotDeletions(join(root, 'deletions.json'), options.serverId);
 	const bots = new BotStore(join(root, 'bots.json'));
 	const sessions = new BotSessionStore(join(root, 'sessions'));
 	const tokens = options.tokens ?? new BotTokenService(options.vault);
@@ -262,6 +264,24 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		},
 		agents: options.agents,
 		environment,
+		deletion: {
+			begin: (id, deleteHome) => deletions.begin(id, deleteHome, pin),
+			cleanup: async (id, deleteHome) => {
+				try {
+					if (deletions.list().find((e) => e.botId === id)?.pin === null) {
+						deletions.complete(id);
+						return true;
+					}
+					const driver = await images.driver();
+					if (!deletions.matches(id, driver.details.pin)) return false;
+					await environment.cleanupDeleted(driver, id, deleteHome);
+					deletions.complete(id);
+					return true;
+				} catch {
+					return false;
+				}
+			},
+		},
 		driver: () => images.driver(),
 		removeHelpers: () => files.reconcile(),
 		activity: (id, runningSessions, queuedSessions) =>
@@ -405,6 +425,8 @@ export function createBotServerService(options: BotServerOptions): BotService {
 				),
 			),
 		dispose: async () => {
+			engine.off('availability', cleanup);
+			images.off('changed', cleanup);
 			detachEnvironment();
 			await io.close();
 			await shells.close();
@@ -430,6 +452,34 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		shells,
 		desktops,
 	});
+	let cleaning: Promise<void> | undefined;
+	const cleanup = () => {
+		if (!engine.availability.available || cleaning) return;
+		const driver = engine.driver;
+		cleaning = (async () => {
+			for (const intent of [...deletions.list()]) {
+				if (!deletions.matches(intent.botId, driver.details.pin)) continue;
+				try {
+					if (bots.list().some((b) => b.id === intent.botId)) {
+						await service.remove(intent.botId, intent.deleteHome, true);
+					} else {
+						await environment.cleanupDeleted(
+							driver,
+							intent.botId,
+							intent.deleteHome,
+						);
+						deletions.complete(intent.botId);
+					}
+				} catch {
+					/* Durable intent remains for the next explicit engine check. */
+				}
+			}
+		})().finally(() => {
+			cleaning = undefined;
+		});
+	};
+	engine.on('availability', cleanup);
+	images.on('changed', cleanup);
 	environment.on('changed', ({ botId }) => service.invalidate(botId));
 	images.on('changed', (event) => service.emit('engine-changed', event));
 	return service;

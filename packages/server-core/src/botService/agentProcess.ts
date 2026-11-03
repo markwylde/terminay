@@ -79,7 +79,7 @@ export class BotAgentProcess {
 			}
 			return client;
 		} catch (error) {
-			await this.close('end');
+			await this.close('end').catch(() => undefined);
 			throw error;
 		}
 	}

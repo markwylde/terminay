@@ -1,6 +1,7 @@
 /** Server-owned bot environment operations. Every operation needs terminal-create
  * authority; payloads never accept engine arguments or host paths. */
 export const BOT_ENVIRONMENT_OPERATIONS = Object.freeze({
+	state: 'bots.environment.state',
 	overview: 'bots.environment.overview',
 	settings: 'bots.environment.settings',
 	setSettings: 'bots.environment.set-settings',
@@ -219,4 +220,21 @@ function boundedText(value: unknown, limit: number): void {
 		new TextEncoder().encode(value).length > limit
 	)
 		throw new TypeError('invalid bot environment text');
+}
+
+/** Cheap state response, independent of engine statistics and home measurements. */
+export function parseBotEnvironmentState(value: unknown): BotEnvironmentState {
+	if (
+		![
+			'not-created',
+			'building',
+			'starting',
+			'running',
+			'stopping',
+			'stopped',
+			'failed',
+		].includes(String(value))
+	)
+		throw new TypeError('invalid bot environment state');
+	return value as BotEnvironmentState;
 }
