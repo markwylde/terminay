@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -17,6 +18,13 @@ export async function startBotSocketServer(root, options = {}) {
 		children = new Set(),
 		sockets = new Set();
 	const eventResponses = new Set();
+	const emitEvent = event => { for (const response of eventResponses) response.write(JSON.stringify(event) + '\n'); };
+	const lifecycleEvent = (action, name, resource) => {
+		if (!options.emitLifecycleEvents) return;
+		const event = { Type: 'container', Action: action, Actor: { ID: name, Attributes: { ...(resource?.Config?.Labels ?? resource?.Labels ?? {}), name } } };
+		appendFileSync(path.join(root, 'events.jsonl'), JSON.stringify(event) + '\n');
+		emitEvent(event);
+	};
 	const config = { kind: 'docker', ...options };
 	const terminals = new Set();
 	const calls = [],
@@ -158,6 +166,7 @@ export async function startBotSocketServer(root, options = {}) {
 					State: { Running: false, Status: 'created', ExitCode: 0 },
 				};
 				await put('container', name, resource);
+				lifecycleEvent('create', name, resource);
 				await writeFile(
 					path.join(root, 'calls.jsonl'),
 					JSON.stringify({
@@ -211,6 +220,7 @@ export async function startBotSocketServer(root, options = {}) {
 				['start', 'stop', 'restart'].includes(p[2])
 			) {
 				await invoke(['container', p[2], p[1]]);
+				lifecycleEvent(p[2], p[1], await read('container', p[1]));
 				return send(undefined, 204);
 			}
 			if (p[0] === 'containers' && p[2] === 'wait') {
@@ -257,7 +267,9 @@ export async function startBotSocketServer(root, options = {}) {
 				);
 			}
 			if (kind && req.method === 'DELETE') {
+				const resource = kind === 'container' ? await read(kind, p[1]) : undefined;
 				await invoke([kind, 'rm', '-f', p[1]]);
+				if (kind === 'container') lifecycleEvent('destroy', p[1], resource);
 				return send(undefined, 204);
 			}
 			send({ message: 'unsupported fixture route' }, 404);
@@ -302,8 +314,9 @@ export async function startBotSocketServer(root, options = {}) {
 				);
 				args = ['exec', spec.container, ...spec.Cmd];
 			} else {
-				const eventResponses = new Set();
-	const config = spec.Config;
+				const config = spec.Config;
+				lifecycleEvent('init', p[1], spec);
+				lifecycleEvent('attach', p[1], spec);
 				args = [
 					'run',
 					'--entrypoint',
@@ -341,6 +354,7 @@ export async function startBotSocketServer(root, options = {}) {
 			child.stdout.on('data', (c) => socket.write(tty ? c : frame(c)));
 			child.stderr.on('data', (c) => socket.write(tty ? c : frame(c, true)));
 			child.once('close', () => {
+				if (p[0] !== 'exec') lifecycleEvent('die', p[1], spec);
 				children.delete(child);
 				closed.emit('changed');
 				socket.end();
@@ -357,7 +371,7 @@ export async function startBotSocketServer(root, options = {}) {
 	});
 	return {
 		socketPath,
-		emitEvent: event => { for (const response of eventResponses) response.write(JSON.stringify(event) + '\n'); },
+		emitEvent,
 		config,
 		calls,
 		root,

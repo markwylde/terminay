@@ -385,7 +385,7 @@ export async function launchDesktopApp(options: {
 			rendererArtifact.rootDirectory,
 		);
 		const botApi = path.basename(testInfo.file) === 'bots.spec.ts'
-			? await startBotSocketServer(path.join(tempDir, 'fake-bots')) : undefined;
+			? await startBotSocketServer(path.join(tempDir, 'fake-bots'), { emitLifecycleEvents: true }) : undefined;
 		const electronApp = await electron.launch({
 			args: ['.'],
 			env: {

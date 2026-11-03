@@ -41,7 +41,7 @@ export function BotRecovery({
 			{problem || engine.error ? (
 				<details open>
 					<summary>Container engine and recovery</summary>
-					<EngineSummary engine={engine} label={undefined} />
+					<EngineSummary engine={engine} label={undefined} compact />
 				</details>
 			) : null}
 			{engine.status?.available ? (

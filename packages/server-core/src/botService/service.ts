@@ -400,6 +400,8 @@ export class BotService extends EventEmitter {
 				`Use ${agent.deviceSignIn?.label ?? 'the agent’s sign-in'} to sign this bot in.`,
 			);
 		await this.hooks.validateSignIn?.(draft, signIn, agent);
+		if (draft.id && this.deleting.has(draft.id))
+			throw new BotError('conflict', 'This bot is being deleted.');
 		const bot = this.bots.save(
 			{
 				...draft,
@@ -453,12 +455,15 @@ export class BotService extends EventEmitter {
 		for (const record of this.sessions.list(botId))
 			this.runtime.revoke(record.id);
 		await this.stopBot(botId).catch(() => undefined);
+		await this.mutations.get(botId)?.catch(() => undefined);
 		// An unreachable engine cannot confirm process cleanup, but local ACP
 		// observations must settle before their diagnostic records are removed.
-		await Promise.allSettled(this.sessions.list(botId).map(async record => {
-			this.live.get(record.id)?.client?.dispose();
-			await this.closeLive(record.id, 'bot-stop');
-		}));
+		await Promise.allSettled(
+			this.sessions.list(botId).map(async (record) => {
+				this.live.get(record.id)?.client?.dispose();
+				await this.closeLive(record.id, 'bot-stop');
+			}),
+		);
 		await Promise.allSettled(
 			[...this.activeRuns.values()]
 				.filter((r) => r.botId === botId)
@@ -514,6 +519,8 @@ export class BotService extends EventEmitter {
 	}> {
 		text(body, 65536, 'message');
 		const message = await this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			this.bots.get(botId);
 			this.importMessages(botId);
 			const safe = await this.redactMessage(botId, body),
@@ -648,6 +655,8 @@ export class BotService extends EventEmitter {
 			);
 		text(prompt, 64 * 1024, 'message');
 		return this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			if (this.stoppingBots.has(botId))
 				throw new BotError('busy', 'bot is stopping');
 			this.queue.unblock(botId);
@@ -705,6 +714,8 @@ export class BotService extends EventEmitter {
 			} finally {
 				credential.release();
 			}
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			const queued = this.queue.list(botId);
 			if (
 				queued.length >= 20 ||
