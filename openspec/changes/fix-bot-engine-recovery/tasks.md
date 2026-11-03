@@ -42,4 +42,6 @@
 - [x] 7.1 Permit only the exact Terminay MCP stdio command through the Claude shell prefix before work acquisition, preserving its runtime token while stripping provider credentials; retain work gating and token stripping for shell commands and near matches.
 - [x] 7.2 Require authenticated MCP initialization and catalog loading by the agent before an execution can complete; report missing startup in Runner output and Failed status.
 - [x] 7.3 Reproduce the old prefix failure and exercise the actual Claude contribution launch environment in required container CI, checking real MCP catalog connection and tool calls, bootstrap failure diagnostics, and gated shell actions.
-- [ ] 7.4 Run focused server and Docker Electron tests, record evidence and limitations, and deliver a mergeable PR with every final-head CI check passing.
+- [x] 7.4 Run focused server and Docker Electron tests and record verification evidence and live-model limitations.
+
+PR handoff remains gated on reading every final-head CI status and confirming the PR is mergeable.
