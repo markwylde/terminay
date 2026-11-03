@@ -71,3 +71,11 @@ Failures starting a Terminay-owned MCP relay or adapter SHALL produce bounded sa
 #### Scenario: Required real-container CI coverage
 - **WHEN** pull-request CI runs
 - **THEN** a required job builds the production bot image and verifies socket ownership, distinct root/bot process identities, runtime tool calls, and permission-failure reporting without skipping the container tests
+
+#### Scenario: Claude launches the MCP server through its shell prefix
+- **WHEN** Claude starts Terminay's exact MCP stdio command before acquiring shared work
+- **THEN** the adapter starts with its execution token and without provider credentials, connects and loads tools, while shell commands and command variants remain subject to work acquisition and lose the runtime token
+
+#### Scenario: Provider silently tolerates MCP startup failure
+- **WHEN** a provider completes a turn without authenticated initialization and tool catalog loading on its Terminay MCP connection
+- **THEN** the execution is Failed and Runner output identifies missing MCP startup rather than showing a silent Completed chat

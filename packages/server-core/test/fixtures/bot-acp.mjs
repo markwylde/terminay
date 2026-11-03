@@ -15,10 +15,59 @@ const send = (value) =>
 	process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`);
 let sid = 'fake-session';
 let mcp;
-async function postReply(){
- if(!mcp)return;
- const env=Object.fromEntries(mcp.env.map(e=>[e.name,e.value]));
- await new Promise((resolve,reject)=>{const socket=connect(env.TERMINAY_RUNTIME_SOCKET);socket.on('error',reject);socket.on('connect',()=>socket.write(JSON.stringify({token:env.TERMINAY_RUNTIME_TOKEN,message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'chat_post',arguments:{text:'secret',key:'fixture-reply'}}}})+'\n'));socket.once('data',()=>{socket.end();resolve();});});
+async function postReply() {
+	if (!mcp || process.env.FAKE_MCP_DISCONNECTED === '1') return;
+	const env = Object.fromEntries(mcp.env.map((e) => [e.name, e.value]));
+	await new Promise((resolve, reject) => {
+		const socket = connect(env.TERMINAY_RUNTIME_SOCKET);
+		const requests = [
+			{
+				method: 'initialize',
+				params: {
+					protocolVersion: '2025-03-26',
+					clientInfo: { name: 'fixture', version: '1' },
+					capabilities: {},
+				},
+			},
+			{ method: 'tools/list' },
+			{
+				method: 'tools/call',
+				params: {
+					name: 'chat_post',
+					arguments: { text: 'secret', key: 'fixture-reply' },
+				},
+			},
+		];
+		let index = 0,
+			buffer = '';
+		const next = () =>
+			socket.write(
+				JSON.stringify({
+					token: env.TERMINAY_RUNTIME_TOKEN,
+					message: { jsonrpc: '2.0', id: index + 1, ...requests[index] },
+				}) + '\n',
+			);
+		socket.on('error', reject);
+		socket.on('connect', next);
+		socket.on('data', (chunk) => {
+			buffer += chunk;
+			let at = buffer.indexOf('\n');
+			while (at >= 0) {
+				const result = JSON.parse(buffer.slice(0, at));
+				buffer = buffer.slice(at + 1);
+				if (result.error) {
+					socket.destroy();
+					reject(Error(result.error.message));
+					return;
+				}
+				if (++index === requests.length) {
+					socket.end();
+					resolve();
+				} else next();
+				at = buffer.indexOf('\n');
+			}
+		});
+	});
 }
 let turn;
 let permission;

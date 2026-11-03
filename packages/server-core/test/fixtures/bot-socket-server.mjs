@@ -318,6 +318,7 @@ export async function startBotSocketServer(root, options = {}) {
 						return [e.slice(0, n), e.slice(n + 1)];
 					}),
 				);
+				if (await read('mcp-state', 'silent')) extra.FAKE_MCP_DISCONNECTED = '1';
 				args = ['exec', spec.container, ...spec.Cmd];
 			} else {
 				const config = spec.Config;
