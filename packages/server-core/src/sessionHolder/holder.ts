@@ -1,3 +1,5 @@
+import { TerminalPresentationCheckpointAuthority } from '../terminalService/presentationCheckpoint.js';
+import { encodePresentationRecovery } from '../terminalService/presentationRecovery.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -124,6 +126,12 @@ interface RingChunk {
 }
 
 interface HeldSession {
+	presentationError?: string;
+	presentationQueue: Promise<void>;
+	presentationBytes: number;
+	presentationPaused: boolean;
+	recovering: boolean;
+	recoveryFinished?: Promise<void>;
 	readonly sessionId: string;
 	readonly projectId: string | undefined;
 	readonly shellPath: string;
@@ -176,6 +184,9 @@ export class SessionHolder {
 	private readonly server: Server;
 	private readonly pending = new Set<Socket>();
 	private attached: Socket | undefined;
+	private attachedVersion = 1;
+	private readonly presentations =
+		new TerminalPresentationCheckpointAuthority();
 	private limitMs: number | null;
 	private limitTimer: unknown;
 	private readonly startedAt: number;
@@ -214,7 +225,10 @@ export class SessionHolder {
 	}
 
 	static async start(options: SessionHolderOptions): Promise<SessionHolder> {
-		if (!Number.isSafeInteger(options.maxBufferBytes ?? 1) || (options.maxBufferBytes ?? 1) <= 0)
+		if (
+			!Number.isSafeInteger(options.maxBufferBytes ?? 1) ||
+			(options.maxBufferBytes ?? 1) <= 0
+		)
 			throw new TypeError('maxBufferBytes must be a positive safe integer');
 		const directory = sessionHolderDirectory(options.dataRoot);
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -224,7 +238,13 @@ export class SessionHolder {
 		// On Windows the launching server has already closed the directory to
 		// other users; modes mean nothing there.
 		const windows = holder.addressing.platform === 'win32';
-		if (!sessionHolderAddressFits(options.dataRoot, options.generation, holder.addressing))
+		if (
+			!sessionHolderAddressFits(
+				options.dataRoot,
+				options.generation,
+				holder.addressing,
+			)
+		)
 			throw new Error('session holder socket path is too long');
 		if (!windows) rmSync(holder.socketPath, { force: true });
 		server.on('connection', (socket) => holder.accept(socket));
@@ -285,6 +305,7 @@ export class SessionHolder {
 			await this.endLiveSessions();
 			for (const session of this.sessions.values()) this.release(session);
 			this.sessions.clear();
+			this.presentations.close();
 			const attached = this.attached;
 			if (attached !== undefined && !attached.destroyed)
 				// Let an acknowledgement already written reach the server first.
@@ -548,6 +569,7 @@ export class SessionHolder {
 		}
 		this.pending.delete(socket);
 		this.attached = socket;
+		this.attachedVersion = version;
 		this.attachCount += 1;
 		this.lastAttachAt = this.now();
 		this.clearLimitTimer();
@@ -575,7 +597,24 @@ export class SessionHolder {
 				this.result(message.id, this.spawn(message));
 				return;
 			case 'attach':
-				this.attach(message.id, message.sessionId, message.from);
+				if (this.attachedVersion >= 3) {
+					const socket = this.attached;
+					void this.attachPresentation(
+						message.id,
+						message.sessionId,
+						message.from,
+						socket,
+					).catch((error) => {
+						if (socket === this.attached)
+							this.send({
+								type: 'result',
+								id: message.id,
+								ok: false,
+								error:
+									error instanceof Error ? error.message : 'recovery failed',
+							});
+					});
+				} else this.attach(message.id, message.sessionId, message.from);
 				return;
 			case 'write':
 				this.live(message.sessionId).child.write(Buffer.from(payload));
@@ -587,6 +626,12 @@ export class SessionHolder {
 				session.child.resize(message.cols, message.rows);
 				session.cols = message.cols;
 				session.rows = message.rows;
+				this.observePresentation(session, 0, () =>
+					this.presentations.ingestResize(this.presentationIdentity(session), {
+						cols: message.cols,
+						rows: message.rows,
+					}),
+				);
 				return;
 			}
 			case 'signal':
@@ -603,13 +648,13 @@ export class SessionHolder {
 			case 'pause': {
 				const session = this.live(message.sessionId);
 				session.serverPaused = true;
-				session.child.pause?.();
+				this.syncFlow(session);
 				return;
 			}
 			case 'resume': {
 				const session = this.live(message.sessionId);
 				session.serverPaused = false;
-				if (!this.flowPaused) session.child.resume?.();
+				this.syncFlow(session);
 				return;
 			}
 			case 'foreground': {
@@ -658,13 +703,20 @@ export class SessionHolder {
 			...(request.env === undefined ? {} : { env: request.env }),
 		});
 		const session: HeldSession = {
+			presentationQueue: Promise.resolve(),
+			presentationBytes: 0,
+			presentationPaused: false,
+			recovering: false,
 			sessionId: request.sessionId,
 			projectId: request.projectId,
 			shellPath: request.shellPath,
 			cwd: request.cwd,
 			createdAt: this.now(),
 			child,
-			ring: new BoundedChunkQueue(this.maxBufferBytes, 'within-bound-keep-last'),
+			ring: new BoundedChunkQueue(
+				this.maxBufferBytes,
+				'within-bound-keep-last',
+			),
 			cols: request.cols,
 			rows: request.rows,
 			ringBytes: 0,
@@ -677,6 +729,14 @@ export class SessionHolder {
 			exitSubscription: undefined,
 		};
 		this.sessions.set(session.sessionId, session);
+		try {
+			this.presentations.createSession(this.presentationIdentity(session), {
+				cols: session.cols,
+				rows: session.rows,
+			});
+		} catch (error) {
+			session.presentationError = String(error);
+		}
 		// A session replaces whatever an earlier one of the same id left behind.
 		deleteSessionTail(this.dataRoot, session.sessionId);
 		session.dataSubscription = child.onData((data) =>
@@ -690,6 +750,173 @@ export class SessionHolder {
 			}),
 		);
 		return recordOf(session);
+	}
+
+	private presentationIdentity(session: HeldSession) {
+		return {
+			serverId: 'session-holder',
+			projectId: 'held',
+			sessionId: session.sessionId,
+		};
+	}
+
+	private syncFlow(session: HeldSession): void {
+		if (session.exit !== undefined) return;
+		if (
+			session.serverPaused ||
+			this.flowPaused ||
+			session.presentationPaused ||
+			session.recovering
+		)
+			session.child.pause?.();
+		else session.child.resume?.();
+	}
+
+	private observePresentation(
+		session: HeldSession,
+		bytes: number,
+		observe: () => Promise<void>,
+	): void {
+		if (session.presentationError !== undefined) return;
+		session.presentationBytes += bytes;
+		if (
+			session.presentationBytes >= 256 * 1024 &&
+			!session.presentationPaused
+		) {
+			session.presentationPaused = true;
+			this.syncFlow(session);
+		}
+		let work: Promise<void>;
+		try {
+			work = observe();
+		} catch (error) {
+			work = Promise.reject(error);
+		}
+		const settled = work
+			.catch((error) => {
+				session.presentationError = String(error);
+			})
+			.finally(() => {
+				session.presentationBytes -= bytes;
+				if (
+					session.presentationPaused &&
+					session.presentationBytes <= 64 * 1024
+				) {
+					session.presentationPaused = false;
+					this.syncFlow(session);
+				}
+			});
+		// Work is already serialized by the shared authority. Track its latest
+		// completion for a stable recovery cut without scanning retained output.
+		session.presentationQueue = settled;
+	}
+
+	private async attachPresentation(
+		id: number,
+		sessionId: string,
+		from: number,
+		socket: Socket | undefined,
+	): Promise<void> {
+		const session = this.sessions.get(sessionId);
+		if (
+			!session ||
+			!Number.isSafeInteger(from) ||
+			from < 0 ||
+			from > session.outputPosition
+		)
+			throw new Error('invalid recovery request');
+		while (session.recoveryFinished !== undefined)
+			await session.recoveryFinished;
+		if (
+			socket !== this.attached ||
+			socket?.destroyed ||
+			this.sessions.get(sessionId) !== session
+		)
+			return;
+		let finishRecovery = () => {};
+		session.recoveryFinished = new Promise<void>((resolve) => {
+			finishRecovery = resolve;
+		});
+		session.recovering = true;
+		session.streaming = false;
+		this.syncFlow(session);
+		try {
+			let pending: Promise<void>;
+			do {
+				pending = session.presentationQueue;
+				await pending;
+			} while (pending !== session.presentationQueue);
+			let recovery: Uint8Array | undefined;
+			let presentationError = session.presentationError;
+			if (presentationError === undefined) {
+				const scope = {
+					...this.presentationIdentity(session),
+					clientId: 'server',
+					attachmentId: 'recovery',
+				};
+				try {
+					const metadata = await this.presentations.pin(scope);
+					try {
+						const value = this.presentations.read({
+							...scope,
+							checkpointId: metadata.checkpointId,
+						});
+						if (value.headPosition !== session.outputPosition)
+							throw new Error('holder presentation cut changed');
+						recovery = encodePresentationRecovery(value);
+					} finally {
+						this.presentations.release(metadata.checkpointId, scope);
+					}
+				} catch (error) {
+					presentationError = String(error);
+				}
+			}
+			if (
+				socket !== this.attached ||
+				socket?.destroyed ||
+				this.sessions.get(sessionId) !== session
+			)
+				return;
+			if (recovery !== undefined) {
+				for (
+					let offset = 0;
+					offset < recovery.byteLength;
+					offset += DATA_FRAME_BYTES
+				) {
+					this.send(
+						{
+							type: 'presentation',
+							sessionId,
+							offset,
+							total: recovery.byteLength,
+						},
+						recovery.subarray(offset, offset + DATA_FRAME_BYTES),
+					);
+				}
+			}
+			const start = Math.max(from, session.bufferedFrom);
+			this.result(id, {
+				...recordOf(session),
+				from: start,
+				...(presentationError === undefined ? {} : { presentationError }),
+			});
+			for (const chunk of session.ring) {
+				const skip = Math.max(0, start - chunk.position);
+				if (skip < chunk.bytes.byteLength)
+					this.sendData(
+						session,
+						chunk.position + skip,
+						chunk.bytes.subarray(skip),
+					);
+			}
+			session.streaming = true;
+			if (session.exit !== undefined) this.sendExit(session, session.exit);
+		} finally {
+			session.recovering = false;
+			session.recoveryFinished = undefined;
+			finishRecovery();
+			this.syncFlow(session);
+		}
 	}
 
 	private attach(id: number, sessionId: string, from: number): void {
@@ -716,6 +943,7 @@ export class SessionHolder {
 		deleteSessionTail(this.dataRoot, sessionId);
 		if (session === undefined) return;
 		this.sessions.delete(sessionId);
+		this.presentations.closeSession(this.presentationIdentity(session));
 		if (session.exit === undefined) {
 			this.terminate(session);
 			return;
@@ -752,12 +980,23 @@ export class SessionHolder {
 
 	private output(session: HeldSession, bytes: Uint8Array): void {
 		if (bytes.byteLength === 0) return;
-		for (let offset = 0; offset < bytes.byteLength; offset += DATA_FRAME_BYTES) {
+		for (
+			let offset = 0;
+			offset < bytes.byteLength;
+			offset += DATA_FRAME_BYTES
+		) {
 			const part = bytes.slice(
 				offset,
 				Math.min(bytes.byteLength, offset + DATA_FRAME_BYTES),
 			);
 			const position = session.outputPosition;
+			this.observePresentation(session, part.byteLength, () =>
+				this.presentations.ingestOutput(
+					this.presentationIdentity(session),
+					position,
+					part,
+				),
+			);
 			session.ring.push({ position, bytes: part });
 			session.ringBytes = session.ring.byteLength;
 			session.outputPosition = position + part.byteLength;
@@ -792,7 +1031,7 @@ export class SessionHolder {
 			session.serverPaused = false;
 			if (session.exit === undefined) {
 				try {
-					session.child.resume?.();
+					this.syncFlow(session);
 				} catch {
 					/* exit wins */
 				}
@@ -916,10 +1155,7 @@ export class SessionHolder {
 		position: number,
 		bytes: Uint8Array,
 	): void {
-		this.send(
-			{ type: 'data', sessionId: session.sessionId, position },
-			bytes,
-		);
+		this.send({ type: 'data', sessionId: session.sessionId, position }, bytes);
 	}
 
 	private sendExit(session: HeldSession, exit: HolderExitRecord): void {
@@ -947,8 +1183,7 @@ export class SessionHolder {
 		if (!this.flowPaused) return;
 		this.flowPaused = false;
 		for (const session of this.sessions.values())
-			if (session.exit === undefined && !session.serverPaused)
-				session.child.resume?.();
+			if (session.exit === undefined) this.syncFlow(session);
 	}
 }
 
@@ -958,7 +1193,9 @@ function recordOf(session: HeldSession): HolderSessionRecord {
 		...(session.projectId === undefined
 			? {}
 			: { projectId: session.projectId }),
-		...(typeof session.child.pid === 'number' ? { pid: session.child.pid } : {}),
+		...(typeof session.child.pid === 'number'
+			? { pid: session.child.pid }
+			: {}),
 		shellPath: session.shellPath,
 		cwd: session.cwd,
 		cols: session.cols,

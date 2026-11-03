@@ -52,7 +52,7 @@ interface ManifestEntry {
  * replaced, so a holder run from the installation would block every update,
  * and the installer kills processes by Terminay's name. The copy holds the
  * executable and its runtime files, the holder bundle, and the unpacked
- * `node-pty`. One copy serves every holder of a build; it is made beside its
+ * `node-pty` and the headless presentation packages. One copy serves every holder of a build; it is made beside its
  * final name and renamed into place, so a half-made copy is never run.
  */
 export function prepareHolderRuntime(options: HolderRuntimeOptions): HolderRuntime {
@@ -241,9 +241,11 @@ function copyHolderRuntime(options: HolderRuntimeOptions, target: string): void 
 	cpSync(join(unpacked, 'dist-electron'), join(app, 'dist-electron'), {
 		recursive: true,
 	})
-	cpSync(
-		join(unpacked, 'node_modules', 'node-pty'),
-		join(app, 'node_modules', 'node-pty'),
-		{ recursive: true },
-	)
+	for (const dependency of ['node-pty', '@xterm/headless', '@xterm/addon-serialize']) {
+		cpSync(
+			join(unpacked, 'node_modules', dependency),
+			join(app, 'node_modules', dependency),
+			{ recursive: true },
+		)
+	}
 }

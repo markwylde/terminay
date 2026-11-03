@@ -1,3 +1,5 @@
+import { holderHandshakeProof } from '../dist/sessionHolder/protocol.js';
+import { encodePresentationRecovery, MAX_PRESENTATION_RECOVERY_BYTES } from '../dist/terminalService/presentationRecovery.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { connect, createServer } from "node:net";
@@ -182,3 +184,27 @@ test("a challenge never negotiates the version that presents the credential", as
     (error) => error instanceof SessionHolderRefusedError && error.reason === "version",
   );
 });
+
+for (const fault of ['wrong-session', 'offset', 'oversize', 'truncated', 'invalid-body', 'valid-fragmented']) {
+ test(`version 3 validates presentation transfer: ${fault}`, async t => {
+  const credential = 'a'.repeat(64), nonce = 'b'.repeat(64);
+  const recovery = encodePresentationRecovery({ sessionId: 'terminal', formatVersion: 1, position: 100, headPosition: 100, checkpointDimensions: { cols: 80, rows: 24 }, dimensions: { cols: 80, rows: 24 }, state: new TextEncoder().encode('abc'), tail: [] });
+  const fake = await impostor(t, (socket, message) => {
+   if (message.type === 'challenge') socket.write(encodeHolderFrame({ type: 'proof', version: 3, nonce, proof: holderHandshakeProof(credential, 'holder', nonce, message.nonce) }));
+   if (message.type === 'prove') socket.write(encodeHolderFrame({ type: 'welcome', version: 3, generation: GENERATION, buildId: 'test', pid: 1, draining: false }));
+   if (message.type !== 'attach') return;
+   const frame = { type: 'presentation', sessionId: fault === 'wrong-session' ? 'other' : 'terminal', offset: fault === 'offset' ? 1 : 0, total: fault === 'oversize' ? MAX_PRESENTATION_RECOVERY_BYTES + 1 : recovery.length };
+   if (fault === 'valid-fragmented') {
+    for (let offset = 0; offset < recovery.length; offset += 3) socket.write(encodeHolderFrame({ ...frame, offset }, recovery.subarray(offset, offset + 3)));
+   } else if (fault === 'invalid-body') socket.write(encodeHolderFrame({ ...frame, total: 4 }, new Uint8Array(4)));
+   else socket.write(encodeHolderFrame(frame, recovery.subarray(0, 1)));
+   socket.write(encodeHolderFrame({ type: 'result', id: message.id, ok: true, value: { sessionId: 'terminal', from: 100, outputPosition: 100, cols: 80, rows: 24 } }));
+  });
+  const client = await SessionHolderClient.connect({ socketPath: fake.socketPath, credential, versions: [3] });
+  t.after(() => client.close());
+  if (fault === 'valid-fragmented') {
+   const value = await client.attach('terminal', 0);
+   assert.equal(new TextDecoder().decode(value.presentationRecovery.state), 'abc');
+  } else await assert.rejects(client.attach('terminal', 0));
+ });
+}
