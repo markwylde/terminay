@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
+import { submitTerminalCommand } from './support/terminal';
 import { settledTerminalSessionId } from './support/terminal-session';
 import { contextMenuItem } from './support/ui';
 import { createStartedProject } from './support/project-start';
@@ -381,3 +382,121 @@ test('a terminal that ended while Terminay was closed comes back with its last o
 		}
 	}
 });
+
+// A TUI enables its input modes once, then emits enough redraws that its
+// startup bytes leave the holder's 1 MiB raw replay window. Recovering that
+// process must preserve capture, rather than turn subsequent wheel gestures
+// into ordinary terminal scrollback while the TUI keeps drawing.
+for (const frames of [1, 80]) {
+	test(`TUI retains mouse capture after held-session recovery (${frames === 1 ? 'startup retained' : 'startup evicted'})`, async ({
+		electronApp,
+		mainWindow,
+		tempDir,
+		userDataDir,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		let relaunched: Awaited<ReturnType<typeof launchDesktopApp>> | undefined;
+		const sessionId = await settledTerminalSessionId(
+			mainWindow.locator('.terminal-panel:visible'),
+		);
+		const panelFor = (page: Page) =>
+			page.locator(
+				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+			);
+		const program = `
+process.stdin.setRawMode(true);process.stdin.resume();
+process.stdout.write('\\x1b[?1049h\\x1b[?1007l\\x1b[?1000h\\x1b[?1002h\\x1b[?1003h\\x1b[?1006h\\x1b[?2004h\\x1b[?1004h');
+let pending='',wheels=0,keys=0,mode=0;
+function draw(){process.stdout.write('\\x1b[H\\x1b[2Jtui-'+ 'ready wheels='+wheels+' keys='+keys+' pid='+process.pid+' mode='+mode+'\\r\\n');}
+let frames=0;const timer=setInterval(()=>{
+ process.stdout.write(('redraw-content-'.repeat(64)+'\\r\\n').repeat(32));
+ if(++frames===${frames}){clearInterval(timer);draw();process.stdout.write('\\x1b[?1003$p');}
+},10);
+process.stdin.on('data',chunk=>{
+ pending+=chunk.toString();
+ while(pending.length){
+  if(pending[0]==='\\x03'){process.stdout.write('\\x1b[?1003l\\x1b[?1002l\\x1b[?1000l\\x1b[?1006l\\x1b[?1004l\\x1b[?2004l\\x1b[?1049l');process.exit(0);}
+  const mouse=/^\\x1b\\[<(\\d+);\\d+;\\d+[Mm]/.exec(pending);
+  if(mouse){if(Number(mouse[1])===64||Number(mouse[1])===65)wheels++;pending=pending.slice(mouse[0].length);draw();continue;}
+  const modeReport=/^\\x1b\\[\\?1003;(\\d)\\$y/.exec(pending);
+  if(modeReport){mode=Number(modeReport[1]);pending=pending.slice(modeReport[0].length);draw();continue;}
+  const focus=/^\\x1b\\[[IO]/.exec(pending);
+  if(focus){pending=pending.slice(focus[0].length);continue;}
+  if(pending[0]==='\\x1b')break;
+  pending=pending.slice(1);keys++;draw();process.stdout.write('\\x1b[?1003$p');
+ }
+});`;
+		const command = `node -e '${program.replaceAll("'", `'"'"'`)}'`;
+		try {
+			const initial = panelFor(mainWindow);
+			await submitTerminalCommand(mainWindow, command, initial);
+			await expect(initial).toContainText('tui-ready wheels=0 keys=0', {
+				timeout: 20_000,
+			});
+			await expect(initial).toContainText('mode=1');
+			const originalPid = /pid=(\d+)/.exec((await initial.textContent()) ?? '')?.[1];
+			expect(originalPid).toBeTruthy();
+			const box = await initial.locator('.xterm-screen').boundingBox();
+			if (!box) throw new Error('Terminal screen unavailable');
+			await mainWindow.mouse.move(
+				box.x + box.width / 2,
+				box.y + box.height / 2,
+			);
+			await mainWindow.mouse.wheel(0, -100);
+			await expect(initial).toContainText('tui-ready wheels=1 keys=0');
+			await expect.poll(() => holderRecords(userDataDir).length).toBe(1);
+			const [holder] = holderRecords(userDataDir);
+			await quitChoosing(electronApp, 'keep');
+			expect(isAlive(holder.pid)).toBe(true);
+			relaunched = await launchDesktopApp({ tempDir, userDataDir, testInfo });
+			const window = await prepareWindow(
+				await relaunched.electronApp.firstWindow(),
+			);
+			const restored = panelFor(window);
+			await expect(restored).toBeVisible({ timeout: 20_000 });
+			await expect(restored).toContainText('tui-ready wheels=1 keys=0', {
+				timeout: 20_000,
+			});
+			await expect(restored).toContainText(`pid=${originalPid}`);
+			// A normal key proves the same live process is still accepting input
+			// and redrawing. No setup sequence is emitted by this response.
+			await restored.locator('.xterm-helper-textarea').focus();
+			await window.keyboard.type('x');
+			await expect(restored).toContainText('tui-ready wheels=1 keys=1');
+			const restoredBox = await restored.locator('.xterm-screen').boundingBox();
+			if (!restoredBox) throw new Error('Restored terminal screen unavailable');
+			await window.mouse.move(
+				restoredBox.x + restoredBox.width / 2,
+				restoredBox.y + restoredBox.height / 2,
+			);
+			const beforeWheel = await restored.locator('.xterm-rows').textContent();
+			await window.mouse.wheel(0, -100);
+			try {
+				await expect(restored).toContainText('tui-ready wheels=2 keys=1');
+			} finally {
+				await testInfo.attach('mouse-capture-recovery-evidence', {
+					contentType: 'application/json',
+					body: JSON.stringify(
+						{
+							frames,
+							originalPid,
+							beforeWheel,
+							afterWheel: await restored.locator('.xterm-rows').textContent(),
+						},
+						null,
+						2,
+					),
+				});
+			}
+		} finally {
+			await relaunched?.close().catch(() => undefined);
+			for (const record of holderRecords(userDataDir)) {
+				try {
+					process.kill(record.pid, 'SIGKILL');
+				} catch {
+					/* already gone */
+				}
+			}
+		}
+	});
+}
