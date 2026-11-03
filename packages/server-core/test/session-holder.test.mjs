@@ -137,7 +137,7 @@ test("the holder directory, socket, and credential file are owner-only", async (
   const record = JSON.parse(readFileSync(recordPath, "utf8"));
   assert.equal(record.credential, holder.credential);
   assert.equal(record.generation, GENERATION);
-  assert.deepEqual(record.versions, [1, 2]);
+  assert.deepEqual(record.versions, [1, 2, 3]);
 });
 
 test("a peer without the credential is closed and learns nothing", async (t) => {
@@ -536,4 +536,117 @@ test("a corrupt saved tail is set aside, kept with its panel, and never read aga
   } finally {
     rmSync(dataRoot, { recursive: true, force: true });
   }
+});
+
+for (const version of [1, 2, 3]) {
+ test(`holder protocol ${version} keeps raw offsets and only v3 recovers evicted modes`, async t => {
+  const { holder, pty } = await startHolder(t, { maxBufferBytes: 128 });
+  const connection = { ...recordOf(holder), versions: [1, 2, 3] };
+  const first = await SessionHolderClient.connect(connection, { versions: [version] });
+  await first.spawn(spawnRequest('presentation'));
+  pty.children[0].emitData('\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1004h');
+  await first.close(); await settle();
+  // The holder must follow output with no server present. No mode enables
+  // survive in its raw ring, and query replies must not reach the PTY.
+  for (let i = 0; i < 4; i++) pty.children[0].emitData('history\r\n'.repeat(20));
+  pty.children[0].emitData('\x1b[H\x1b[2Jwhile-detached\x1b[?1003$p');
+  const second = await SessionHolderClient.connect(connection, { versions: [version] });
+  t.after(() => second.close());
+  const recovered = await second.attach('presentation', 0);
+  assert.ok(recovered.from > 0);
+  assert.equal(recovered.record.pid, 9000);
+  const raw = collect(recovered.stream);
+  assert.doesNotMatch(raw.text(), /\x1b\[\?1003h/u);
+  assert.deepEqual(pty.children[0].writes, []);
+  assert.equal(recovered.presentationError, undefined);
+  assert.equal(recovered.presentationRecovery !== undefined, version === 3);
+  if (version === 3) {
+   const { TerminalPresentationCheckpointAuthority } = await import('../dist/terminalService/presentationCheckpoint.js');
+   const authority = new TerminalPresentationCheckpointAuthority();
+   const scope = { serverId: 'server', projectId: 'project', sessionId: 'presentation', clientId: 'client', attachmentId: 'view' };
+   try {
+    authority.restoreSession(scope, recovered.presentationRecovery);
+    const view = await authority.readPresentation(scope, { format: 'ansi', maxBytes: 65536 });
+    assert.match(view.ansi, /\x1b\[\?1003h/u);
+    assert.match(view.ansi, /\x1b\[\?1049h/u);
+    assert.match(view.ansi, /while-detached/u);
+    assert.equal(view.outputPosition, recovered.record.outputPosition);
+   } finally { authority.close(); }
+  }
+ });
+}
+
+test('detached mode and buffer changes survive output beyond the raw ring', async t => {
+ const { holder, pty } = await startHolder(t, { maxBufferBytes: 128 });
+ const record = { ...recordOf(holder), versions: [3] };
+ const first = await SessionHolderClient.connect(record);
+ await first.spawn(spawnRequest('changes'));
+ pty.children[0].emitData('\x1b[?1049h\x1b[?1003h\x1b[?1006h');
+ await first.close(); await settle();
+ pty.children[0].emitData('\x1b[?1003l\x1b[?1006l\x1b[?1049l');
+ for (let i = 0; i < 64; i++) {
+  pty.children[0].emitData('detached-output\r\n'.repeat(2048));
+  // The fake does not implement OS backpressure; wait for the actual
+  // parser completion before emitting the next chunk.
+  await holder.sessions.get('changes').presentationQueue;
+ }
+ pty.children[0].emitData('\x1b[H\x1b[2Jlatest-normal-screen');
+ const second = await SessionHolderClient.connect(record); t.after(() => second.close());
+ const recovered = await second.attach('changes', 0);
+ assert.equal(recovered.presentationError, undefined);
+ assert.ok(recovered.record.outputPosition > 1024 * 1024);
+ assert.ok(recovered.presentationRecovery);
+ const state = text(recovered.presentationRecovery.state);
+ assert.doesNotMatch(state, /\x1b\[\?1049h/u);
+ assert.doesNotMatch(state, /\x1b\[\?1003h/u);
+ assert.match(state, /latest-normal-screen/u);
+ assert.deepEqual(pty.children[0].writes, []);
+});
+
+test('parser exhaustion refuses presentation without ending the process or its live byte stream', async t => {
+ const { holder, pty } = await startHolder(t, { maxBufferBytes: 128 });
+ const record = { ...recordOf(holder), versions: [3] };
+ const client = await SessionHolderClient.connect(record); t.after(() => client.close());
+ const spawned = await client.spawn(spawnRequest('exhausted'));
+ const raw = collect(spawned.stream);
+ pty.children[0].emitData('x'.repeat(2 * 1024 * 1024));
+ await settle();
+ assert.equal(raw.text().length, 2 * 1024 * 1024);
+ spawned.stream.release();
+ const recovered = await client.attach('exhausted', 0);
+ assert.match(recovered.presentationError, /backlog|unavailable/u);
+ assert.equal(recovered.presentationRecovery, undefined);
+ assert.deepEqual(pty.children[0].kills, []);
+ assert.deepEqual(pty.children[0].writes, []);
+ assert.ok(pty.children[0].resumes > 0);
+});
+
+test('a disconnected snapshot cannot send into a later connection and recovery catches up output once', async t => {
+ const { holder, pty } = await startHolder(t);
+ const record = { ...recordOf(holder), versions: [3] };
+ const first = await SessionHolderClient.connect(record);
+ await first.spawn(spawnRequest('race'));
+ pty.children[0].emitData('before');
+ await first.close(); await settle();
+ const pin = holder.presentations.pin.bind(holder.presentations);
+ let release, entered;
+ const gate = new Promise(resolve => { release = resolve; });
+ const started = new Promise(resolve => { entered = resolve; });
+ holder.presentations.pin = async scope => { entered(); await gate; return pin(scope); };
+ const old = await SessionHolderClient.connect(record);
+ const interrupted = old.attach('race', 0).then(() => assert.fail('old attach completed'), () => {});
+ await started;
+ await old.close(); await settle();
+ const current = await SessionHolderClient.connect(record); t.after(() => current.close());
+ const attaching = current.attach('race', 0);
+ pty.children[0].emitData('-during');
+ release(); await interrupted;
+ const recovered = await attaching;
+ assert.equal(recovered.presentationError, undefined);
+ assert.equal(recovered.presentationRecovery.headPosition, 'before-during'.length);
+ const raw = collect(recovered.stream);
+ assert.equal(raw.text(), 'before-during');
+ pty.children[0].emitData('-live'); await settle();
+ assert.equal(raw.text(), 'before-during-live');
+ assert.deepEqual(pty.children[0].kills, []);
 });

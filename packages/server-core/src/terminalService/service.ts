@@ -85,6 +85,7 @@ interface CheckpointOutputChunk {
 }
 
 interface MutableSession {
+	presentationSeedThrough?: number;
 	/** Replaced, never edited, when the terminal's panel moves project. */
 	identity: TerminalIdentity;
 	readonly cwd: string;
@@ -989,7 +990,21 @@ export class TerminalService {
 			}
 		}
 		this.sessionsById.set(identity.sessionId, mutable);
-		this.startPresentationCheckpoint(mutable);
+		if (
+			options.presentationRecovery !== undefined &&
+			this.presentationCheckpoints !== undefined
+		) {
+			this.presentationCheckpoints.restoreSession(
+				identity,
+				options.presentationRecovery,
+			);
+			mutable.presentationSeedThrough =
+				options.presentationRecovery.headPosition;
+		} else {
+			this.startPresentationCheckpoint(mutable);
+			if (options.presentationError !== undefined)
+				this.presentationCheckpoints?.invalidateSession(identity);
+		}
 		this.attachProcess(mutable, options.process);
 		// The process has just delivered everything the holder retained. Until
 		// the checkpoint authority has taken it all in, no checkpoint shows the
@@ -1659,7 +1674,17 @@ export class TerminalService {
 			mutable.replayFrom =
 				mutable.replay.first?.position ?? mutable.outputPosition;
 			const event = outputEvent(mutable, chunk, position, false);
-			this.observePresentationOutput(mutable, position, chunkBytes);
+			// Raw history already represented by the host seed stays raw; it must
+			// not reset the restored emulator by being interpreted twice.
+			const seedThrough = mutable.presentationSeedThrough ?? 0;
+			if (nextPosition > seedThrough) {
+				const skip = Math.max(0, seedThrough - position);
+				this.observePresentationOutput(
+					mutable,
+					position + skip,
+					chunkBytes.subarray(skip),
+				);
+			}
 			this.emit(event);
 			for (const subscription of [...mutable.subscribers])
 				subscription.deliverEvent(event);

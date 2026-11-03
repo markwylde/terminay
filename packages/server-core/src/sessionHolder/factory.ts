@@ -1,3 +1,4 @@
+import type { TerminalPresentationRecovery } from '../terminalService/presentationRecovery.js';
 import { type ChildProcess, spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { connect as connectSocket, type Socket } from 'node:net';
@@ -164,6 +165,8 @@ export interface SessionHolderPtyFactory {
 		readonly record: HolderSessionRecord;
 		/** Output position of the first byte `process` will deliver. */
 		readonly from: number;
+		readonly presentationRecovery?: TerminalPresentationRecovery;
+		readonly presentationError?: string;
 	}>;
 	/** End one session and forget it, wherever it is held. */
 	readonly end: (sessionId: string) => Promise<void>;
@@ -408,7 +411,8 @@ export function createSessionHolderPtyFactory(
 							// A holder saves a tail with an exit only for a session that
 							// ended with no server watching it.
 							session.exit !== undefined &&
-								readSessionTail(dataRoot, session.sessionId)?.exit !== undefined,
+								readSessionTail(dataRoot, session.sessionId)?.exit !==
+									undefined,
 						);
 					}
 					const liveSessions = liveSessionsOf(client);
@@ -511,8 +515,7 @@ export function createSessionHolderPtyFactory(
 		// Without a pid-based resolver the holder is the only place that can read
 		// the PTY's foreground title, so it is asked rather than inspected.
 		const resolveForeground =
-			options.resolveForegroundProcess ??
-			(() => client.foreground(sessionId));
+			options.resolveForegroundProcess ?? (() => client.foreground(sessionId));
 		const foreground = createForegroundObserver(
 			{ ...(pid === undefined ? {} : { pid }) },
 			shellName(record.shellPath),
@@ -528,8 +531,8 @@ export function createSessionHolderPtyFactory(
 			// which took the shell with it.
 			if (detaching || exited || disposed) return;
 			exited = true;
+			// Not a clean exit: nothing may treat this as a shell that finished.
 			for (const listener of [...exitListeners])
-				// Not a clean exit: nothing may treat this as a shell that finished.
 				listener({ exitCode: 1, signal: null, at: Date.now() });
 		});
 		const ended = (): void => {
@@ -580,8 +583,7 @@ export function createSessionHolderPtyFactory(
 			},
 			...(pid !== undefined && options.resolveCwd !== undefined
 				? {
-						getCwd: (signal?: AbortSignal) =>
-							options.resolveCwd!(pid, signal),
+						getCwd: (signal?: AbortSignal) => options.resolveCwd!(pid, signal),
 					}
 				: {}),
 			onForegroundProcess: foreground.subscribe,
@@ -628,7 +630,8 @@ export function createSessionHolderPtyFactory(
 			await start();
 			const client = owners.get(sessionId);
 			if (client === undefined) throw new Error('session is not held');
-			const { record, from, stream } = await client.attach(sessionId, 0);
+			const { record, from, stream, presentationRecovery, presentationError } =
+				await client.attach(sessionId, 0);
 			const session = observed.get(sessionId);
 			if (record.exit !== undefined && session !== undefined) {
 				if (session.endedUnattached)
@@ -642,7 +645,13 @@ export function createSessionHolderPtyFactory(
 				session.reported = true;
 				session.live = false;
 			}
-			return { process: processFor(client, record, stream), record, from };
+			return {
+				process: processFor(client, record, stream),
+				record,
+				from,
+				presentationRecovery,
+				presentationError,
+			};
 		},
 		async end(sessionId) {
 			await start();
@@ -909,7 +918,10 @@ export function launchSessionHolder(
 	if (
 		options.addressing?.platform === 'win32' &&
 		(userSid === undefined ||
-			!(options.protectDirectory ?? protectWindowsDirectory)(directory, userSid))
+			!(options.protectDirectory ?? protectWindowsDirectory)(
+				directory,
+				userSid,
+			))
 	)
 		return Promise.reject(
 			new Error('session holder directory could not be protected'),

@@ -170,3 +170,26 @@ test('an adopted terminal first presents the screen it was left on', async () =>
 		await service.stop?.();
 	}
 });
+
+test('adoption keeps raw history at real offsets without parsing seeded bytes twice', async () => {
+ const source = new TerminalPresentationCheckpointAuthority();
+ const target = new TerminalPresentationCheckpointAuthority();
+ const scope = { ...identity, clientId: 'host', attachmentId: 'recovery' };
+ const bytes = new TextEncoder().encode('abc');
+ let service;
+ try {
+  source.createSession(identity, { cols: 80, rows: 24 });
+  await source.ingestOutput(identity, 0, bytes);
+  const pin = await source.pin(scope);
+  const seed = source.fetch({ ...scope, checkpointId: pin.checkpointId });
+  service = new TerminalService({ serverId: SERVER_ID, ptyFactory: { spawn() { assert.fail('must not spawn'); } }, presentationCheckpoints: target });
+  service.adoptSession({ identity, cwd: '/tmp', createdAt: 0, cols: 80, rows: 24, process: heldProcess([bytes.subarray(2)]), outputPosition: 2, presentationRecovery: seed });
+  // Replaying "c" into the seed would produce "abcc".
+  const view = await target.readPresentation(identity, { format: 'text', maxBytes: 65536 });
+  assert.equal(view.rows.filter(row => row.length > 0).join('\n'), 'abc');
+  assert.equal(view.outputPosition, 3);
+  const raw = service.readRetainedOutput(identity.sessionId, { authorization: { ...identity, scope: 'read', clientId: 'raw-reader' }, fromPosition: 2, maxBytes: 100 });
+  assert.equal(new TextDecoder().decode(raw.bytes), 'c');
+  assert.equal(raw.fromPosition, 2);
+ } finally { await service?.shutdown(); source.close(); target.close(); }
+});

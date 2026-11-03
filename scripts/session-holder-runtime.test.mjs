@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,12 @@ function installation(t) {
 	writeFileSync(join(resources, 'app.asar'), 'asar');
 	writeFileSync(join(unpacked, 'dist-electron', 'sessionHolderEntry.js'), 'entry');
 	writeFileSync(join(unpacked, 'node_modules', 'node-pty', 'build', 'Release', 'conpty.dll'), 'conpty');
+	for (const name of ['headless', 'addon-serialize']) {
+		const directory = join(unpacked, 'node_modules', '@xterm', name);
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: `@xterm/${name}`, main: 'index.cjs' }));
+		writeFileSync(join(directory, 'index.cjs'), `module.exports = { name: '${name}' };`);
+	}
 	return {
 		executablePath: join(install, 'Terminay.exe'),
 		resourcesPath: resources,
@@ -100,4 +107,15 @@ test('a copy whose manifest names another build is not trusted', (t) => {
 	const host = installation(t);
 	const runtime = prepareHolderRuntime({ ...host, buildId: '3.0.0:1' });
 	assert.equal(verifyHolderRuntime(join(runtime.executablePath, '..'), '3.0.0:2'), false);
+});
+
+
+test('the copied holder resolves its presentation dependencies after the installation is removed', t => {
+	const host = installation(t);
+	const runtime = prepareHolderRuntime({ ...host, buildId: 'presentation' });
+	rmSync(join(host.resourcesPath, '..'), { recursive: true, force: true });
+	const require = createRequire(runtime.entryPath);
+	assert.equal(require('@xterm/headless').name, 'headless');
+	assert.equal(require('@xterm/addon-serialize').name, 'addon-serialize');
+	assert.equal(verifyHolderRuntime(join(runtime.executablePath, '..'), 'presentation'), true);
 });

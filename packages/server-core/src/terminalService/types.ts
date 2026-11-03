@@ -1,3 +1,4 @@
+import type { TerminalPresentationRecovery } from './presentationRecovery.js';
 /**
  * Transport and host neutral terminal service contracts.
  *
@@ -454,6 +455,8 @@ export interface TerminalRestoreEndedOptions extends TerminalDimensions {
 
 /** A process another server process started and this one is taking over. */
 export interface TerminalAdoptOptions extends TerminalDimensions {
+	readonly presentationRecovery?: TerminalPresentationRecovery;
+	readonly presentationError?: string;
 	readonly identity: TerminalIdentity;
 	readonly cwd: string;
 	readonly createdAt: number;
