@@ -481,6 +481,22 @@
 	gap: 14px;
 	line-height: 1.55;
 }
+.bots-emptychat {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	max-width: 520px;
+	line-height: 1.55;
+}
+.bots-emptychat b {
+	color: var(--bots-strong);
+	font-size: 14px;
+	font-weight: 600;
+}
+.bots-emptychat span {
+	color: var(--bots-muted);
+	font-size: 13px;
+}
 .bots-tx {
 	display: flex;
 	flex-direction: column;
