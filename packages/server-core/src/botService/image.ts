@@ -92,6 +92,11 @@ export function agentLayer(agents: readonly BotAgentInstall[]): string {
 					'RUN ln -s /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex && codex --version',
 				]
 			: []),
+		...(npm.has('@agentclientprotocol/claude-agent-acp')
+			? [
+					'RUN node /usr/local/lib/terminay/install-claude.cjs && claude --version && claude auth login --help && claude auth logout --help',
+				]
+			: []),
 		'',
 	].join('\n');
 }

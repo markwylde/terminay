@@ -64,7 +64,16 @@ test('3.1 manifest validates and README records exact adapter pins', async () =>
 		codex.deviceSignIn.configFiles[0].contents,
 		/exclude = \["CODEX_API_KEY", "OPENAI_API_KEY"\]/,
 	);
-	assert.equal(claude.deviceSignIn, undefined);
+	assert.deepEqual(claude.deviceSignIn.command, {
+		executable: 'claude',
+		args: ['auth', 'login', '--claudeai'],
+	});
+	assert.deepEqual(claude.deviceSignIn.signOutCommand, {
+		executable: 'claude',
+		args: ['auth', 'logout'],
+	});
+	assert.equal(claude.deviceSignIn.label, 'Sign in with Claude');
+	assert.match(claude.deviceSignIn.help, /paste.*authorization code/);
 	assert.match(claude.credentialSecrets[0].help, /claude setup-token/);
 });
 

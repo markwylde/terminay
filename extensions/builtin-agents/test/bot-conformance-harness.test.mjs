@@ -19,7 +19,7 @@ test('conformance opt-in runs the pinned image offline and cleans it, with fake 
 		const executable = path.join(directory, engine);
 		await writeFile(
 			executable,
-			`#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nappendFileSync(${JSON.stringify(log)},JSON.stringify({args,hasProviderKey:!!process.env.OPENAI_API_KEY})+'\\n');\nif(args[0]==='exec') console.log('credential confinement passed; device sign-in URL and code passed');\n`,
+			`#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nappendFileSync(${JSON.stringify(log)},JSON.stringify({args,hasProviderKey:!!process.env.OPENAI_API_KEY})+'\\n');\nif(args[0]==='exec') console.log('credential confinement passed; device sign-in URL and code passed; saved login, API key and setup token selection passed');\n`,
 		);
 		await chmod(executable, 0o755);
 		const testPath = fileURLToPath(
@@ -44,7 +44,7 @@ test('conformance opt-in runs the pinned image offline and cleans it, with fake 
 			.split('\n')
 			.map((line) => JSON.parse(line));
 		assert.ok(calls.every((call) => !call.hasProviderKey));
-		assert.equal(calls.filter((call) => call.args[0] === 'run').length, 2);
+		assert.equal(calls.filter((call) => call.args[0] === 'run').length, 3);
 		for (const { args } of calls.filter((call) => call.args[0] === 'run')) {
 			assert.ok(args.includes('--pull=never'));
 			assert.equal(args[args.indexOf('--network') + 1], 'none');

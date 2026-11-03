@@ -172,9 +172,16 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
             process.execve('/usr/bin/env',['env','python3',new URL('./bot-relay-host.py',import.meta.url).pathname,sid.slice(4)],process.env);
         } else if (sid.startsWith('signin-')) {
 			const config = read('config', args[index]);
-			if (!config?.some((f) => f.content.includes('"file"'))) process.exit(3);
+			const claude = JSON.stringify(command.slice(3)) === JSON.stringify(['claude', 'auth', 'login', '--claudeai']);
+			if (!claude && !config?.some((f) => f.content.includes('"file"'))) process.exit(3);
 			out('Open https://example.invalid/device and enter TEST-CODE');
 			const mode = read('device-mode', 'next') ?? 'success';
+			if (claude && mode === 'success') {
+				out('Paste code here:');
+				for await (const line of readline.createInterface({ input: process.stdin })) {
+					process.exit(line.trim() === 'TEST-CODE' ? 0 : 1);
+				}
+			}
 			if (mode === 'wait')
 				await new Promise(() => {
 					process.stdin.resume();
@@ -185,7 +192,8 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 			const signOut = JSON.stringify(command.slice(3));
 			if (
 				signOut !== JSON.stringify(['codex-session', 'forget', '--all']) &&
-				signOut !== JSON.stringify(['codex', 'logout'])
+				signOut !== JSON.stringify(['codex', 'logout']) &&
+				signOut !== JSON.stringify(['claude', 'auth', 'logout'])
 			)
 				process.exit(2);
 			if (read('device-mode', 'next') === 'fail-signout') process.exit(1);

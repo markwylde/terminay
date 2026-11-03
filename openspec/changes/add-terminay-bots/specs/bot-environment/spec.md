@@ -338,7 +338,7 @@ A change of sign-in SHALL apply to sessions that start after it. A session SHALL
 #### Scenario: Claude Code options
 
 - **WHEN** a user opens Sign-in for a Claude Code bot on any platform
-- **THEN** it offers a sign-in token from `claude setup-token` and an API key
+- **THEN** it offers Sign in with Claude through its own sign-in terminal, a sign-in token from `claude setup-token`, and an API key
 
 #### Scenario: Server account already signed in
 

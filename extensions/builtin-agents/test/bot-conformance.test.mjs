@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 const enabled = process.env.TERMINAY_BOT_CONFORMANCE === '1';
+const image = process.env.TERMINAY_BOT_CONFORMANCE_IMAGE ?? 'terminay-bot:local';
 for (const agent of ['codex', 'claude-code']) {
 	test(`3.3 ${agent}: pinned adapter in offline bot image`, {
 		skip: !enabled,
@@ -36,12 +37,17 @@ for (const agent of ['codex', 'claude-code']) {
 			return t.skip('container engine unavailable');
 		}
 		try {
-			await run(['image', 'inspect', 'terminay-bot:local']);
+			await run(['image', 'inspect', image]);
 		} catch {
 			return t.skip('build the pinned bot image first');
 		}
 		const name = `terminay-bot-conformance-${randomUUID()}`;
-		t.after(() => run(['rm', '-fv', name]).catch(() => {}));
+		const homeVolume = `${name}-home`;
+		t.after(async () => {
+			await run(['rm', '-fv', name]).catch(() => {});
+			if (agent === 'claude-code')
+				await run(['volume', 'rm', homeVolume]).catch(() => {});
+		});
 		await run([
 			'run',
 			'-d',
@@ -50,9 +56,12 @@ for (const agent of ['codex', 'claude-code']) {
 			name,
 			'--network',
 			'none',
+			...(agent === 'claude-code'
+				? ['--mount', `type=volume,source=${homeVolume},target=/home/bot`]
+				: []),
 			'--entrypoint',
 			'sleep',
-			'terminay-bot:local',
+			image,
 			'infinity',
 		]);
 		await run([
@@ -81,8 +90,38 @@ for (const agent of ['codex', 'claude-code']) {
 			],
 			200_000,
 		);
+		if (agent === 'claude-code') {
+			await run(['stop', name]);
+			await run(['start', name]);
+			const checkHome = `const fs=require('node:fs');const assert=require('node:assert/strict');const p='/home/bot/.claude/.credentials.json';assert.equal(fs.statSync(p).mode&511,384);assert.equal(JSON.parse(fs.readFileSync(p)).claudeAiOauth.accessToken,'synthetic-saved-login');`;
+			await run(['exec', '-u', 'bot', name, 'node', '-e', checkHome]);
+			await run(['stop', name]);
+			// A fresh container mounts the retained home, then the CLI removes its login.
+			await run([
+				'run',
+				'--rm',
+				'--pull=never',
+				'--network',
+				'none',
+				'--mount',
+				`type=volume,source=${homeVolume},target=/home/bot`,
+				'--user',
+				'bot',
+				'--env',
+				'HOME=/home/bot',
+				'--entrypoint',
+				'node',
+				image,
+				'-e',
+				`${checkHome}require('node:child_process').execFileSync('claude',['auth','logout'],{stdio:'pipe'});assert.equal(fs.existsSync(p),false);`,
+			]);
+		}
 		assert.match(stdout, /credential confinement passed/);
-		if (agent === 'codex')
-			assert.match(stdout, /device sign-in URL and code passed/);
+		assert.match(stdout, /device sign-in URL and code passed/);
+		if (agent === 'claude-code')
+			assert.match(
+				stdout,
+				/saved login, API key and setup token selection passed/,
+			);
 	});
 }

@@ -27,5 +27,7 @@ RUN mkdir -m 0700 /run/terminay-engine
 COPY bin/terminay-shell-env bin/terminay-bot-mcp bin/terminay-mcp-relay bin/terminay-browser bin/terminay-init bin/terminay-run bin/terminay-files bin/terminay-tool-shell bin/terminay-engine-proxy.mjs /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/terminay-shell-env /usr/local/bin/terminay-bot-mcp /usr/local/bin/terminay-mcp-relay /usr/local/bin/terminay-browser /usr/local/bin/terminay-init /usr/local/bin/terminay-run /usr/local/bin/terminay-files /usr/local/bin/terminay-tool-shell /usr/local/bin/terminay-engine-proxy.mjs
 
+COPY install-claude.cjs /usr/local/lib/terminay/install-claude.cjs
+
 WORKDIR /home/bot
 ENTRYPOINT ["/usr/local/bin/terminay-init"]

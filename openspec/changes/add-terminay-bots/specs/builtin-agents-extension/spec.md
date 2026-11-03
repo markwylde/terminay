@@ -7,6 +7,7 @@ The extension SHALL contribute two bot agents:
 - **Claude Code** (`claude-code`):
   - its image install step SHALL pin `@agentclientprotocol/claude-agent-acp` to an exact version;
   - its ACP command SHALL be that adapter;
+  - its device sign-in SHALL be labelled **Sign in with Claude**, running the adapter SDK’s compatible native `claude auth login --claudeai` and `claude auth logout` in the bot’s home; the terminal SHALL show the browser URL and accept a returned authorization code, and Claude SHALL own saved-login refresh;
   - its credential secrets SHALL be a sign-in token, `CLAUDE_CODE_OAUTH_TOKEN`, whose help text names `claude setup-token`, and an API key, `ANTHROPIC_API_KEY`;
   - it SHALL be able to ask permission;
   - its launch environment SHALL set `CLAUDE_CODE_MAX_RETRIES` low enough that a rejected credential is reported within seconds, and SHALL set `CLAUDE_CODE_SHELL_PREFIX` to the image's `terminay-tool-shell`, so that tool commands run without the bot's credential variables.
@@ -41,7 +42,7 @@ The bot agents SHALL NOT depend on the session source, on any harness switch, or
 #### Scenario: Claude Code sign-in
 
 - **WHEN** a user opens Sign-in for a Claude Code bot, on any platform
-- **THEN** it offers a sign-in token from `claude setup-token` and an API key, and nothing else
+- **THEN** it offers Sign in with Claude through its own sign-in terminal, a sign-in token from `claude setup-token`, and an API key
 
 #### Scenario: Codex bot with an API key
 
