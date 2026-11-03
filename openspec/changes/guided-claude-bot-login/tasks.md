@@ -1,6 +1,6 @@
 ## 1. Verify the pinned runtime
 
-- [ ] 1.1 Resolve the native Claude executable installed by ACP 0.99.1 / SDK 0.3.312 on Linux amd64 and arm64; verify version, subscription auth-login help and auth-logout help in the bot image. Record results; revise design if the SDK binary lacks these commands.
+- [x] 1.1 Resolve the native Claude executable installed by ACP 0.99.1 / SDK 0.3.312 on Linux amd64 and arm64; verify version, subscription auth-login help and auth-logout help in the bot image. Record results; revise design if the SDK binary lacks these commands.
 - [x] 1.2 Verify the container’s browser URL and authorization-code fallback without a loopback port forward. Use a dedicated test account for live approval; record any unavailable live verification explicitly.
 
 ## 2. Add guided sign-in
@@ -20,4 +20,4 @@
 - [x] 4.1 Update built-in adapter documentation and reconcile the older active bot-change Claude-only-token scenarios with this contract; verify no accepted ADR is edited and all affected specs validate.
 - [x] 4.2 Run relevant server-core and built-in extension checks plus guided-login UI coverage through `npm run test:e2e` in Docker. Record results and any limitations; run `openspec validate --all` and `openspec validate --all --archived`.
 
-Verification results and live-account limitations are recorded in [verification.md](verification.md). Task 1.1 awaits the native AMD64 CI production-image build; local ARM64 and both resolver fixtures pass.
+Verification results and live-account limitations are recorded in [verification.md](verification.md). Native AMD64 production-image version/login/logout checks passed in Gitea run 23189, job 69075; local ARM64 and both resolver fixtures pass.

@@ -31,7 +31,7 @@ The bot agents SHALL NOT depend on the session source, on any harness switch, or
 - model selection;
 - cancellation;
 - loading a session after the process restarts, where the adapter supports it;
-- that the declared device sign-in command prints a URL and a code, and that the bot config file still behaves as declared;
+- that the declared sign-in command prints a browser URL and guides approval through a device code or a browser-returned authorization code, and that the bot config file still behaves as declared;
 - that a credential secret reaches neither the bot's disk nor a tool shell's environment.
 
 #### Scenario: Codex bot signs in with ChatGPT
