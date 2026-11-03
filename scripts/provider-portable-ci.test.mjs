@@ -34,12 +34,16 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
   );
   // The official image is built and paired with on every pull request, by the
   // same client code Desktop ships, before a release can publish it.
   assert.match(job(giteaCi, "container-image-smoke"), /docker build[\s\S]*--file \.\/Dockerfile/u);
   assert.match(job(giteaCi, "container-image-smoke"), /node scripts\/container-image-smoke\.mjs/u);
+  const botMcp = job(giteaCi, "bot-mcp-runtime");
+  assert.match(botMcp, /run: npm run test:bots:mcp-real/u);
+  assert.doesNotMatch(botMcp, /^ {4}if:|continue-on-error/mu,
+    "bot ownership coverage must not be conditional or allowed to fail");
   // Every case runs: a job that named cases with --only could drop the control.
   assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /--only/u);
   assert.match(job(giteaCi, "container-image-smoke"), /prune-ci-docker-images\.sh/u);
@@ -110,7 +114,7 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
     (giteaCi.match(/uses: actions\/setup-node@/gu) ?? []).length,
     (giteaCi.match(/^ {10}package-manager-cache: false$/gmu) ?? []).length,
   );
-  assert.equal((giteaCi.match(/npm_config_cache: \$\{\{ runner\.tool_cache \}\}\/npm-cache/gu) ?? []).length, 5);
+  assert.equal((giteaCi.match(/npm_config_cache: \$\{\{ runner\.tool_cache \}\}\/npm-cache/gu) ?? []).length, 6);
   assert.match(job(giteaCi, "e2e-test"), /needs: e2e-image/u);
   assert.equal((giteaCi.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
   assert.equal((giteaCi.match(/x86_64\|amd64/g) ?? []).length, 2);

@@ -302,6 +302,12 @@ export async function startBotSocketServer(root, options = {}) {
 			socket.write(
 				'HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n',
 			);
+			if (p[0] === 'exec' && spec.Cmd?.[0] === '/usr/local/bin/terminay-bot-mcp' && spec.Cmd?.[1] === '--check-runtime' && await read('mcp-state', 'denied')) {
+				spec.running = false;
+				spec.exitCode = 1;
+				socket.end(frame(Buffer.from('terminay-bot-mcp: runtime socket permission denied\n'), true));
+				return;
+			}
 			const tty = spec.Tty ?? false;
 			let args,
 				extra = {};

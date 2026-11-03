@@ -34,5 +34,5 @@
 
 - [x] 6.1 Assign a root-created relay socket to the image's bot account while retaining mode 0600; verify both supervisor and direct-root launch in real containers with distinct process users.
 - [x] 6.2 Verify bot-user preflight rejects an inaccessible socket and preserves permission-denied stderr; verify a chat startup failure cannot be marked Completed.
-- [ ] 6.3 Build the production bot image with its pinned Claude adapter in a required Gitea job, run real ownership/tool-posting tests without the optional-test skip, and verify the job passes.
-- [ ] 6.4 Run relevant unit and Docker-isolated Electron tests, update verification evidence, and read all final PR statuses before handoff.
+- [x] 6.3 Build the production bot image with its pinned Claude adapter in a required Gitea job, run real ownership/tool-posting tests without the optional-test skip, and verify the job passes.
+- [x] 6.4 Run relevant unit and Docker-isolated Electron tests, update verification evidence, and read all final PR statuses before handoff.
