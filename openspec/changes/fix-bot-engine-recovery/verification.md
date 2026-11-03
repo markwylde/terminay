@@ -46,3 +46,25 @@ Host-only framing fixtures are explicitly synthetic account tests, separate from
 
 
 The required Gitea job ran on PR #482 (run 23125, job 68712): all three real-container tests passed, zero failed and zero skipped. The Electron suite now includes a 13th case that injects EACCES through the Docker-compatible exec API and asserts that the built/bundled application's Chat path records Failed, displays the MCP cause and adapter stderr, and never launches the agent. All 13 Electron tests pass in Docker. The workflow policy tests now require the bot ownership job and prohibit making it conditional or allowed to fail. The final PR head is checked again before handoff.
+
+## Claude shell-prefix follow-up
+
+The prior container test launched Claude without its contributed launchEnvironment and counted arbitrary runtime assertions as connection evidence. A failed runtime/check-work could therefore satisfy it. Direct adapter preflight and socket ownership did not establish the agent's launch path. The ticket identifies a separate deterministic bootstrap cycle and token stripping in terminay-tool-shell.
+
+The prefix now execs only the exact fixed no-argument adapter command (including whole-string single/double quoting) before work acquisition. It strips provider credentials and BASH_ENV but retains the execution token for that adapter. Other commands, suffixes, metacharacters and extra arguments remain gated; allowed shell commands still lose credentials and runtime tokens. The bot service injects only terminay_bot, and no arbitrary stdio server command gains an exemption.
+
+The bridge requires authenticated initialize and tools/list on the same connection before an execution can be Completed. Direct preflight and work checks do not satisfy this requirement. A missing handshake becomes an actionable Failed session with Runner output; empty adapter stderr no longer produces an empty startup diagnostic.
+
+Local verification on rootful Podman:
+
+- `TERMINAY_BOT_MCP_DAEMON_SOCKET=/run/podman/podman.sock npm run test:bots:mcp-real`: 6 passed, 0 failed, 0 skipped. The image is built from the server's staged/shipped context and its fingerprint must match source. The actual pinned Claude contribution, BotAgentProcess, ACP/SDK, shell prefix, Python adapter, relay and bot service are exercised.
+- The complete chat case sends hi through BotService, performs Claude ToolSearch discovery when offered, calls chat_list and work_acquire, runs Bash with stripped credentials, calls chat_post, verifies a durable bot reply and Completed state, and checks the transcript for startup errors. Only the model HTTP responses and lifecycle preparation of the already-created test container are fixture-controlled; tools and message persistence are real.
+- The negative control restores the original pre-fix shell gate inside a disposable container. Direct runtime preflight succeeds, actual provider startup invokes the real work gate, and provider completion is converted to Failed with MCP diagnostics. This verifies this ticket's failure, not an unrelated forced process exit.
+- Exact-command tests cover unquoted/single/double-quoted adapter launches, retained token, stripped provider credentials, work acquisition remaining unclaimed during bootstrap, denied ordinary/near-match/extra-argument commands, and successful stripped shell execution after acquisition.
+- `node --test packages/server-core/test/bot*.test.mjs`: 212 passed, 0 failed, 12 optional cases skipped. The mandatory container command above runs all 6 real cases without skipping.
+- `npm run test:e2e -- e2e/bots.spec.ts`: 14 passed in Docker, including the bundled UI showing Failed and actionable Runner output when a provider silently completes without MCP tools.
+- `npm run lint`: no errors. Active OpenSpec validation: 104 passed, 0 failed. Archived validation: 204 passed, 4 existing incomplete-task failures, unchanged from the prior follow-up.
+
+No live Anthropic account was used: `claude auth status` reports loggedIn false. The deterministic model endpoint allows complete real-adapter/tool/chat coverage in required CI without external credentials; this is not a claim that a live model response was verified.
+
+Final Gitea statuses are read back on the PR head before handoff.

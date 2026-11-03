@@ -1,12 +1,23 @@
 #!/bin/sh
 # Runs an agent's tool command without the bot's credential variables.
 # TERMINAY_CREDENTIAL_VARIABLES lists variable names only, never values.
-if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
-    /usr/local/bin/terminay-bot-mcp --check-work || exit 1
-fi
 for name in $TERMINAY_CREDENTIAL_VARIABLES; do
 	unset "$name"
 done
 unset TERMINAY_CREDENTIAL_VARIABLES
+# Claude also prefixes MCP stdio launches. Bootstrap only our fixed, no-argument
+# adapter: it must supply work_acquire before ordinary commands can pass the gate.
+# Never evaluate this command string or allow extra arguments/metacharacters.
+if [ "$#" -eq 1 ]; then
+    case "$1" in
+        /usr/local/bin/terminay-bot-mcp|\"/usr/local/bin/terminay-bot-mcp\"|\'/usr/local/bin/terminay-bot-mcp\')
+            unset BASH_ENV
+            exec /usr/local/bin/terminay-bot-mcp
+            ;;
+    esac
+fi
+if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
+    /usr/local/bin/terminay-bot-mcp --check-work || exit 1
+fi
 unset TERMINAY_RUNTIME_TOKEN BASH_ENV
 exec /bin/bash -c "$1"

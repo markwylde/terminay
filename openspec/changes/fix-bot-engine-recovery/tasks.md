@@ -36,3 +36,10 @@
 - [x] 6.2 Verify bot-user preflight rejects an inaccessible socket and preserves permission-denied stderr; verify a chat startup failure cannot be marked Completed.
 - [x] 6.3 Build the production bot image with its pinned Claude adapter in a required Gitea job, run real ownership/tool-posting tests without the optional-test skip, and verify the job passes.
 - [x] 6.4 Run relevant unit and Docker-isolated Electron tests, update verification evidence, and read all final PR statuses before handoff.
+
+## 7. Claude MCP launch follow-up
+
+- [x] 7.1 Permit only the exact Terminay MCP stdio command through the Claude shell prefix before work acquisition, preserving its runtime token while stripping provider credentials; retain work gating and token stripping for shell commands and near matches.
+- [x] 7.2 Require authenticated MCP initialization and catalog loading by the agent before an execution can complete; report missing startup in Runner output and Failed status.
+- [x] 7.3 Reproduce the old prefix failure and exercise the actual Claude contribution launch environment in required container CI, checking real MCP catalog connection and tool calls, bootstrap failure diagnostics, and gated shell actions.
+- [ ] 7.4 Run focused server and Docker Electron tests, record evidence and limitations, and deliver a mergeable PR with every final-head CI check passing.

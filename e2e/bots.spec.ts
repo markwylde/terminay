@@ -290,6 +290,32 @@ test.describe('Home › Bots', () => {
 		expect(calls.filter(call => call.agent)).toEqual([]);
 	});
 
+	test('provider completion without MCP tools shows Failed and actionable Runner output', async ({
+		mainWindow,
+		tempDir,
+	}) => {
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'MCP silent failure'));
+		await writeFile(
+			path.join(fakeRoot(tempDir), 'mcp-state-silent.json'),
+			'true',
+		);
+		await send(tab, 'hi');
+		await expect(tab.locator('.bots-sess__m').first()).toContainText('Failed', {
+			timeout: 30_000,
+		});
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-session-row]').first().click();
+		await expect(tab.locator('[data-terminay-bot-session]')).toContainText(
+			'did not connect to terminay_bot',
+		);
+		await tab.locator('[data-terminay-bot-runner] summary').click();
+		await expect(tab.locator('[data-terminay-bot-runner]')).toContainText(
+			'MCP startup details',
+		);
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,

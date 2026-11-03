@@ -10,6 +10,7 @@ import { BotError, object } from './store.js';
 export interface BotRuntimeBridge {
 	readonly servers: readonly JsonValue[];
 	readonly environment: Readonly<Record<string, string>>;
+	assertConnected(): void;
 	wrapCredential(credential: BotCredentialLease): BotCredentialLease;
 	close(): Promise<void>;
 }
@@ -48,6 +49,8 @@ export async function openBotRuntimeBridge(
 		closed = false,
 		closeTask: Promise<void> | undefined;
 	const requests = new Map<string, AbortController>();
+	const initialized = new Set<number>();
+	let connected = false;
 	const lifetime = new AbortController();
 	let readyResolve: () => void, readyReject: (e: Error) => void;
 	const ready = new Promise<void>((resolve, reject) => {
@@ -137,6 +140,9 @@ export async function openBotRuntimeBridge(
 			)
 				return;
 			if (request.method === 'initialize') {
+				if (initialized.size >= 8)
+					initialized.delete(initialized.values().next().value!);
+				initialized.add(Number(connection));
 				const params = object(request.params ?? {});
 				const version = ['2024-11-05', '2025-03-26', '2025-06-18'].includes(
 					String(params.protocolVersion),
@@ -155,6 +161,12 @@ export async function openBotRuntimeBridge(
 				return;
 			}
 			if (request.method === 'tools/list') {
+				if (initialized.has(Number(connection)) && !connected) {
+					connected = true;
+					onDiagnostic?.(
+						'Agent connected to terminay_bot and loaded its tools.',
+					);
+				}
 				reply({ tools: BOT_RUNTIME_TOOLS });
 				return;
 			}
@@ -280,7 +292,7 @@ export async function openBotRuntimeBridge(
 					],
 					deadlineMs: 10000,
 					onOutput: (chunk, source) => {
-						if (source === 'stderr')
+						if (source === 'stderr' && chunk.trim())
 							onDiagnostic?.(diagnostic(`Adapter startup: ${chunk}`));
 					},
 				},
@@ -325,6 +337,13 @@ export async function openBotRuntimeBridge(
 		],
 		environment,
 		close,
+		assertConnected: () => {
+			if (!connected)
+				throw new BotError(
+					'unavailable',
+					'The agent did not connect to terminay_bot and load its tools. Rebuild the bot image and recreate the environment; see Runner output for MCP startup details.',
+				);
+		},
 		wrapCredential: (credential) => ({
 			...credential,
 			redact: (value) =>
