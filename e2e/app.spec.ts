@@ -264,7 +264,9 @@ test('runs customized app shortcuts from the keyboard', async ({ appHarness, mai
 test('opens Settings at Macros', async ({ appHarness, mainWindow }) => {
   const macrosWindow = await appHarness.openMacrosSettings(mainWindow)
 
-  await expect(macrosWindow.getByRole('heading', { name: 'Macros', exact: true })).toBeVisible()
+  await expect(
+    macrosWindow.getByRole('region', { name: 'Macros', exact: true }).getByRole('heading', { name: 'Macros', exact: true }),
+  ).toBeVisible()
   await expect(macrosWindow.getByRole('button', { name: 'New macro', exact: true })).toBeVisible()
   await expect(macrosWindow.getByLabel('Filter macros')).toBeVisible()
   await expect(macrosWindow.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
