@@ -493,3 +493,24 @@ test('cheap state query validates bot authority without engine or measurement wo
  await assert.rejects(handler({...request,context:{...request.context,authScope:'read'}}),e=>e.code==='forbidden');
  await assert.rejects(handler({...request,envelope:{payload:{botId:'fed654cba321'}}}),/not found/);
 });
+
+test('a stopped container whose home was lost is recreated with an owned home before session startup', async t => {
+ const {service,driver}=setup(t);await service.start(botId);await service.stop(botId);
+ driver.resources.delete(`volume:${name}-home`);
+ await service.prepareSession(botId);
+ assert.equal(driver.resources.get(`volume:${name}-home`).Labels['terminay.bot'],botId);
+ assert.equal(service.state(botId),'running');
+ assert.ok(driver.calls.some(c=>c[0]==='container'&&c[1]==='rm'));
+});
+
+test('disposing an event follower and closing environments cancels pending repair and cannot rearm idle', async t => {
+ const {service,driver,clock}=setup(t);
+ const engine=new EventEmitter();engine.availability={available:true};const detach=service.follow(engine);
+ let release;driver.inspect=async()=>new Promise(resolve=>{release=resolve;});
+ let changed=0;service.on('changed',()=>changed++);
+ engine.emit('container-event',{Actor:{Attributes:{name}}});
+ await new Promise(setImmediate);detach();service.close();
+ release({Config:{Labels:{'terminay.server':'server','terminay.bot':botId,'terminay.managed':'1'}},State:{Running:true}});
+ await new Promise(setImmediate);engine.emit('container-event',{Actor:{Attributes:{name}}});
+ assert.equal(changed,0);assert.equal(clock.timers.size,0);
+});

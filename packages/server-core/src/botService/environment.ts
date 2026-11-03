@@ -73,6 +73,7 @@ const nameFor = (id: string) => `terminay-bot-${botEnvironmentId(id)}`;
 /** Bot definitions can be registered while the engine is absent. Resources are
  * touched only on demand. Per-bot queues serialize lifecycle and event repair. */
 export class BotEnvironmentService extends EventEmitter {
+	private closed = false;
 	private readonly bots = new Map<string, BotEnvironmentDefinition>();
 	private readonly states = new Map<string, BotEnvironmentState>();
 	private readonly queues = new Map<string, Promise<unknown>>();
@@ -151,7 +152,8 @@ export class BotEnvironmentService extends EventEmitter {
 		return this.states.get(id) ?? 'not-created';
 	}
 	private setState(id: string, state: BotEnvironmentState): void {
-		if (!this.bots.has(id) || this.states.get(id) === state) return;
+		if (this.closed || !this.bots.has(id) || this.states.get(id) === state)
+			return;
 		this.states.set(id, state);
 		this.armIdle(id);
 		this.emit('changed', { botId: id });
@@ -160,7 +162,11 @@ export class BotEnvironmentService extends EventEmitter {
 		this.definition(id);
 		const result = (this.queues.get(id) ?? Promise.resolve())
 			.catch(() => undefined)
-			.then(() => { this.definition(id); return work(); });
+			.then(() => {
+				if (this.closed) throw new Error('bot environments closed');
+				this.definition(id);
+				return work();
+			});
 		this.queues.set(id, result);
 		void result
 			.finally(() => {
@@ -328,6 +334,16 @@ export class BotEnvironmentService extends EventEmitter {
 			const bot = this.definition(id);
 			const name = nameFor(id);
 			let container = await this.owned(driver, 'container', name, id);
+			if (
+				container &&
+				!container.State?.Running &&
+				!(await this.owned(driver, 'volume', `${name}-home`, id))
+			) {
+				// Recreate before start so an engine cannot implicitly make an
+				// unlabelled replacement volume for a stale container mount.
+				await this.removeResources(driver, id, false);
+				container = undefined;
+			}
 			if (container?.State?.Running) {
 				this.setState(id, 'running');
 				return;
@@ -558,7 +574,7 @@ export class BotEnvironmentService extends EventEmitter {
 		this.armIdle(id);
 	}
 	private armIdle(id: string): void {
-		if (!this.bots.has(id)) return;
+		if (this.closed || !this.bots.has(id)) return;
 		const bot = this.definition(id);
 		let deadline = this.deadlines.get(id);
 		if (!deadline) {
@@ -784,6 +800,7 @@ export class BotEnvironmentService extends EventEmitter {
 		return null;
 	}
 	close(): void {
+		this.closed = true;
 		for (const timer of this.deadlines.values()) timer.close();
 		this.deadlines.clear();
 	}

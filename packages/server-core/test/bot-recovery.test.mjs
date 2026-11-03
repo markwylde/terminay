@@ -52,3 +52,14 @@ test('confirmed deletion removes local records and messages during an engine out
  const result=await r.service.remove(r.bot.id,true,true);assert.match(result.warning,/Removal is pending/);
  assert.equal(r.bots.list().length,0);assert.equal(r.sessions.list(r.bot.id).length,0);assert.equal(r.service.messages.list(r.bot.id).total,0);assert.equal(pending.list()[0].deleteHome,true);
 });
+
+test('deletion settles local observations even when active process cleanup cannot reach the engine', {timeout:15000}, async t=>{
+ const r=await setup(t);const driver=await r.hooks.driver();
+ const {sessionId}=await r.service.send(r.bot.id,'hold');
+ await until(r.service,'changed',()=>r.sessions.get(sessionId).updates.some(u=>u.sessionUpdate==='plan'));
+ driver.exec=async()=>{throw new EngineCommandError('not-running','engine is down');};
+ r.hooks.deletion={begin(){},cleanup:async()=>false};
+ const result=await r.service.remove(r.bot.id,true,true);
+ assert.match(result.warning,/Removal is pending/);assert.equal(r.bots.list().length,0);
+ assert.equal(r.sessions.list(r.bot.id).length,0);
+});
