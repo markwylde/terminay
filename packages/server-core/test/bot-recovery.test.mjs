@@ -74,3 +74,23 @@ test('new messages and profile writes cannot restart work while confirmed deleti
  } finally {finish(false);await deleting;}
  assert.equal(r.bots.list().length,0);
 });
+
+test('chat MCP permission failure is Failed with adapter stderr, never Completed', async t=>{
+ const r=await setup(t);const driver=await r.hooks.driver();const exec=driver.exec;
+ let launches=0;
+ driver.exec=async(container,command,options)=>{
+  if(command[0]==='/usr/local/bin/terminay-bot-mcp') {
+   assert.equal(options.user,'bot');
+   options.onOutput?.('terminay-bot-mcp: runtime socket permission denied\n','stderr');
+   throw new EngineCommandError('not-running','container process failed');
+  }
+  return exec(container,command,options);
+ };
+ r.hooks.process=()=>{launches++;throw new Error('agent must not launch after failed MCP preflight');};
+ const {sessionId}=await r.service.send(r.bot.id,'hello');
+ await until(r.service,'changed',()=>r.sessions.get(sessionId).state==='failed');
+ const session=r.sessions.get(sessionId);
+ assert.match(session.reason,/MCP adapter could not connect/);
+ assert.match(session.runnerOutput,/runtime socket permission denied/);
+ assert.equal(launches,0);
+});
