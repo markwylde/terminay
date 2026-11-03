@@ -1,12 +1,13 @@
 // Executed as bot inside a network-disabled image, never on the server account.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Acp } from './acp.mjs';
 import { fakeModel } from './model.mjs';
 import { checkDevicePrompt } from './device.mjs';
+import { checkClaudePrompt, checkClaudeCredentials } from './claude-login.mjs';
 
 const exec = promisify(execFile);
 const agent = process.argv[2];
@@ -59,7 +60,9 @@ if (declaration.deviceSignIn) {
 		await writeFile(target, file.contents);
 	}
 	const loginEnv = { PATH: env.PATH, HOME: env.HOME, LANG: env.LANG };
-	await checkDevicePrompt(declaration.deviceSignIn, loginEnv);
+	if (agent === 'codex')
+		await checkDevicePrompt(declaration.deviceSignIn, loginEnv);
+	else await checkClaudePrompt(declaration.deviceSignIn, loginEnv);
 	await exec(
 		declaration.deviceSignIn.signOutCommand.executable,
 		declaration.deviceSignIn.signOutCommand.args,
@@ -191,6 +194,14 @@ try {
 	});
 	fake.next('text');
 	assert.equal((await prompt(sid)).stopReason, 'end_turn');
+	if (agent === 'claude-code') {
+		await client.close();
+		client = null;
+		await checkClaudeCredentials(declaration, env);
+		console.log(
+			'claude-code: saved login, API key and setup token selection passed',
+		);
+	}
 	console.log(
 		`${agent}: initialize, new, stream, tool, permission, model, cancel, restart/load, credential confinement passed`,
 	);

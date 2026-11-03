@@ -34,7 +34,7 @@ Rebuild the fingerprinted bot image with the executable exposure. Existing token
 
 ## Open Questions
 
-The exact native SDK auth command availability and headless code-paste behaviour require verification against the pinned Linux runtime; this is the first implementation task. ADR-0091’s supported-Claude-method restriction is superseded only if this proposed decision is accepted. The older active bot-change scenarios must be reconciled before archive.
+The ARM64 SDK executable supports both auth commands and prints the headless code-paste prompt; native AMD64 help checks run in the PR production-image build. See verification.md for recorded results and live-account limits. ADR-0091’s supported-Claude-method restriction is superseded only if this proposed decision is accepted. The older active bot-change scenarios must be reconciled before archive.
 
 ## Sources
 
