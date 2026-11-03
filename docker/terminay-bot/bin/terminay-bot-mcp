@@ -11,15 +11,15 @@ def main():
     with socket.socket(socket.AF_UNIX) as peer:
         peer.settimeout(10)
         peer.connect(path)
-        if sys.argv[1:] == ['--check-work']:
-            peer.sendall((json.dumps({'token': token, 'message': {'jsonrpc':'2.0','id':1,'method':'runtime/check-work'}})+'\n').encode())
+        if sys.argv[1:] in (['--check-work'], ['--check-runtime']):
+            peer.sendall((json.dumps({'token': token, 'message': {'jsonrpc':'2.0','id':1,'method':'runtime/check-work' if sys.argv[1:] == ['--check-work'] else 'initialize'}})+'\n').encode())
             data = b''
             while b'\n' not in data and len(data) <= MAX_LINE:
                 chunk = peer.recv(65536)
                 if not chunk: raise ValueError('Bot runtime disconnected')
                 data += chunk
             result = json.loads(data)
-            if 'error' in result: raise ValueError('Shared work is not owned; call work_acquire before shell commands')
+            if 'error' in result: raise ValueError('Bot runtime capability refused')
             return
         if sys.argv[1:]: raise ValueError('Invalid adapter arguments')
         peer.settimeout(None)
@@ -46,6 +46,7 @@ def main():
 
 if __name__ == '__main__':
     try: main()
-    except (OSError, ValueError, TypeError):
-        print('terminay-bot-mcp: runtime request failed or capability revoked',file=sys.stderr)
+    except (OSError, ValueError, TypeError) as error:
+        reason = {2: 'runtime socket is missing', 13: 'runtime socket permission denied', 61: 'runtime connection refused', 111: 'runtime connection refused'}.get(getattr(error, 'errno', None), 'runtime request failed or capability revoked')
+        print('terminay-bot-mcp: '+reason,file=sys.stderr)
         sys.exit(1)

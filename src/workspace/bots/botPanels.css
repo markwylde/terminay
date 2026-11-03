@@ -2227,3 +2227,8 @@
 	position: absolute;
 	inset: 0;
 }
+
+.bots-recovery { flex: 0 0 auto; max-height: 42%; overflow: auto; padding: 0 16px; }
+.bots-recovery:empty { display: none; }
+.bots-recovery summary { cursor: pointer; padding: 8px 0; }
+.bots-recovery .bots-engine { padding: 10px; }

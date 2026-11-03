@@ -1177,3 +1177,31 @@ test('a delayed image does not pull readers away from older messages',async()=>{
  const page=await open(TAB({imageDelayMs:700,imageSize:{width:1440,height:900},transcripts:{s1:imageHistory()}}));
  try{await page.getByText('Earlier request 19',{exact:true}).waitFor();await page.locator('.bots-msgs').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});await page.waitForFunction(()=>{const el=document.querySelector('.bots-msgs');return el.querySelector('img')?.naturalWidth===1440&&el.scrollHeight-el.clientHeight-el.scrollTop<=1;});await page.getByRole('heading',{name:'Recent sessions',exact:true}).waitFor();}finally{await page.close();}
  });
+
+for (const reason of ['not-running','engine-changed']) test(`individual bot shows actionable ${reason} recovery across Chat and Configure`, async () => {
+ const engine={engine:'podman',available:false,reason,detail:'',pinned:{kind:'podman',address:'unix:///tmp/podman.sock'},candidates:[{kind:'podman',address:'unix:///tmp/podman.sock',available:reason==='engine-changed',reason:null}],runningContainers:0,botContainers:0,image:{state:'missing',fingerprint:null,builtAt:null,error:null}};
+ const page=await open(TAB({engine}));
+ try {
+  const recovery=page.locator('[data-terminay-bot-recovery]');
+  await recovery.locator(`[data-terminay-bots-engine-reason="${reason}"]`).waitFor();
+  assert.match(await recovery.innerText(),reason==='not-running'?/Start it/:/Use this engine/);
+  await recovery.getByRole('button',{name:'Check again'}).click();
+  await page.getByRole('button',{name:'Configure',exact:true}).click();
+  for(const tab of ['environment','sessions']) {
+   await page.locator(`[data-terminay-bot-config-tab="${tab}"]`).click();
+   assert.equal(await recovery.isVisible(),true);
+  }
+  if(reason==='engine-changed') {
+   await recovery.getByRole('button',{name:'Use this engine'}).click();
+   assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.engine.use').length,0);
+   await recovery.locator('[data-terminay-bots-engine-confirm]').click();
+   assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.engine.use').length,1);
+  }
+ } finally {await page.close();}
+});
+
+test('bot summary refresh source uses the cheap state API and no overview measurements', async () => {
+ const source=await readFile('src/workspace/bots/useServerBots.ts','utf8');
+ assert.ok(source.includes('environment.state(botId)'));
+ assert.ok(!source.includes('environment.overview('));
+});

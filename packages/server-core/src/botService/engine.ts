@@ -137,12 +137,13 @@ export class BotEngine extends EventEmitter {
 	}
 	get driver(): EngineDriver {
 		if (!this.availability.available || !this.driverValue)
-			throw new Error('bot engine unavailable');
+			throw new EngineCommandError(
+				this.availability.available ? 'not-running' : this.availability.reason,
+				'bot engine unavailable',
+			);
 		return this.driverValue;
 	}
-	private async probe(
-		address: string,
-	): Promise<{
+	private async probe(address: string): Promise<{
 		details: EngineDetails;
 		transport: SocketTransport;
 		legacyIdentity?: string;

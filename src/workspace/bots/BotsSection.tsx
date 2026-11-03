@@ -138,6 +138,17 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 			</header>
 			<div className="bots-dbody">
 				<div className="bots-scroll bots-dmain">
+					{[...servers.values()]
+						.filter((s) => s.warning)
+						.map((s) => (
+							<p
+								role="status"
+								className="bots-note bots-note--warn"
+								key={s.serverId}
+							>
+								{s.warning}
+							</p>
+						))}
 					{errors.map((server) => (
 						<div className="bots-note bots-note--warn" key={server.serverId}>
 							{server.label}: {server.error}{' '}
@@ -309,7 +320,7 @@ function BotCard({
 	);
 }
 
-function EngineSummary({
+export function EngineSummary({
 	engine,
 	label,
 }: Readonly<{ engine: BotEngineView; label: string | undefined }>) {

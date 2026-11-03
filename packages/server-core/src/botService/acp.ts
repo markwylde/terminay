@@ -146,14 +146,18 @@ export class BotAcpClient extends EventEmitter {
 			});
 		}
 	}
-	async open(loadId: string | null, modelId: string | null, mcpServers:readonly JsonValue[]=[]): Promise<boolean> {
+	async open(
+		loadId: string | null,
+		modelId: string | null,
+		mcpServers: readonly JsonValue[] = [],
+	): Promise<boolean> {
 		if (loadId && !this.canLoad)
 			throw new BotError('unavailable', 'agent cannot load sessions');
 		const result = object(
 			await this.request(loadId ? 'session/load' : 'session/new', {
 				...(loadId ? { sessionId: loadId } : {}),
 				cwd: '/home/bot',
-				mcpServers:[...mcpServers],
+				mcpServers: [...mcpServers],
 			}),
 		);
 		this.acpId = loadId ?? text(result.sessionId, 256, 'ACP session id');
@@ -298,9 +302,18 @@ export class BotAcpClient extends EventEmitter {
 		if (!pending) return;
 		clearTimeout(pending.timer);
 		this.pending.delete(message.id);
-		if (message.error)
-			pending.reject(new BotError('unavailable', 'ACP request failed'));
-		else pending.resolve(message.result);
+		if (message.error) {
+			const safe = this.credential.redact(
+				JSON.stringify(message.error).slice(0, 8192),
+			);
+			this.emit('runner', `ACP request failed: ${safe}\n`);
+			pending.reject(
+				new BotError(
+					'unavailable',
+					'The agent could not start or complete the request. See Runner output for details.',
+				),
+			);
+		} else pending.resolve(message.result);
 	}
 	private update(update: Record<string, unknown>): void {
 		assertJsonValue(update);

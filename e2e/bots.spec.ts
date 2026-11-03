@@ -171,6 +171,25 @@ test.describe('Home › Bots', () => {
 		expect(await mainWindow.content()).not.toContain(TOKEN);
 	});
 
+	test('a bot explains an engine outage in place and can still be deleted with its home', async ({ mainWindow, tempDir }) => {
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Recoverable');
+		await setEngineDown(tempDir, true);
+		const dashboard = await openBots(mainWindow);
+		await dashboard.getByRole('button', { name: 'Check again' }).click();
+		await expect(dashboard.locator('[data-terminay-bots-engine-reason="not-running"]')).toBeVisible();
+		await mainWindow.locator('[data-terminay-home-tab^="bot:"]').click();
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('not running');
+		await chat(tab);
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('Check again');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-delete]').click();
+		await tab.locator('[data-terminay-bot-delete-home]').check();
+		await tab.locator('[data-terminay-bot-delete-confirm]').click();
+		await expect(await openBots(mainWindow)).toContainText('Removal is pending');
+		await expect((await openBots(mainWindow)).locator('[data-terminay-bot-card]')).toHaveCount(0);
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,

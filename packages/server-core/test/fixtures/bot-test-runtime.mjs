@@ -249,6 +249,7 @@ export async function runtime(root, options = {}) {
 	const service = new BotService(bots, sessions, memories, hooks);
 	await service.reconcile();
 	return {
+		hooks,
 		service,
 		spawnedEnvironments,
 		environment,

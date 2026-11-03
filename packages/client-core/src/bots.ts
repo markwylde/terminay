@@ -427,12 +427,17 @@ export class BotsClient {
 		deleteHome = false,
 		confirmed = false,
 		options: CommandOptions = {},
-	): Promise<void> {
-		await this.transport.command(
+	): Promise<{ warning: string | null }> {
+		const result = await this.transport.command(
 			op.remove,
 			{ botId, deleteHome, confirmed },
 			options,
 		);
+		if (result === null) return { warning: null };
+		const value = record(result);
+		if (value.warning !== null && typeof value.warning !== 'string')
+			throw new TypeError('invalid bot deletion result');
+		return { warning: value.warning };
 	}
 	async sessions(
 		botId: string,

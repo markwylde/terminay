@@ -549,8 +549,8 @@ test('6.1 Run now starts disabled triggers with run-now origin and leaves them d
 
 for (const [failure, reason] of [
 	['engine', 'container engine unavailable'],
-	['agent', 'agent not ready'],
-	['image', 'image out of date and building failed'],
+	['agent', 'The bot agent is not ready. Check its sign-in and rebuild the bot image.'],
+	['image', 'The bot image could not be built. Open Build image to inspect the build log and retry.'],
 ])
 	test(`6.1 startup failure is recorded: ${failure}`, async (t) => {
 		const r = await setup(t);
