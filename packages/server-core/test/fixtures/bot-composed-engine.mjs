@@ -169,7 +169,7 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 		const sid = command[1];
 		fs.writeFileSync(path.join(root, `pid-${sid}`), String(process.pid));
 		if (sid.startsWith('mcp-')) {
-            process.execve('/usr/bin/env',['env','python3',new URL('../../../../docker/terminay-bot/bin/terminay-mcp-relay',import.meta.url).pathname,sid.slice(4)],process.env);
+            process.execve('/usr/bin/env',['env','python3',new URL('./bot-relay-host.py',import.meta.url).pathname,sid.slice(4)],process.env);
         } else if (sid.startsWith('signin-')) {
 			const config = read('config', args[index]);
 			if (!config?.some((f) => f.content.includes('"file"'))) process.exit(3);

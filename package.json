@@ -174,6 +174,7 @@
 		"preview": "vite preview",
 		"smoke:daemon-cli": "node scripts/daemon-cli-smoke.mjs",
 		"test:daemon-cli-smoke": "node --test scripts/daemon-cli-smoke.test.mjs scripts/published-udp-port.test.mjs scripts/advertised-ice-reachability.test.mjs",
+		"test:bots:mcp-real": "npm run build:shared && node scripts/run-bot-mcp-real-tests.mjs",
 		"test:bots:credentials": "node extensions/builtin-agents/scripts/bot-credentials.mjs",
 		"test:bots-ui": "node --test --test-concurrency=1 scripts/bots-ui.test.mjs"
 	},

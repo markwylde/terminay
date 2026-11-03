@@ -30,3 +30,19 @@ Deletion rejects new messages and profile changes while confirmed removal is pen
 The first PR run exposed an existing device-sign-in test waiting on the old completed execution after sending a new message. It now waits for the returned fresh execution before checking restored credential configuration. This preserves the message-log contract and removes the race.
 
 Final required Gitea statuses are read from the PR head before handoff.
+
+
+## Socket ownership follow-up
+
+The prior real-container check was optional in workspace CI and asserted neither socket ownership nor actual numeric process users. The earlier green CI result did not establish this boundary.
+
+The follow-up explicitly assigns a root-created socket to pwd.getpwnam('bot'), keeps 0600, and rejects a privileged bot account. Root-owned supervisor process-group bookkeeping is preserved. The diagnostic for failed adapter preflight instructs rebuilding the image and recreating the environment.
+
+The new real test fails against the original `terminay-bot:local` image in its direct-root case with an MCP adapter connection failure. Against an image generated afresh by planBotImage from the production Dockerfile, current scripts and pinned Claude contribution, all three cases pass: supervised relay ownership and real Claude ACP startup, direct-root relay ownership and bot-user chat_list/chat_post calls, and a deliberately root-only socket rejected by bot-user preflight with permission-denied stderr. Numeric kernel users and mode are asserted; these are not mocked ownership checks. The required command completes with three passes and zero skips.
+
+`npm run test:bots:mcp-real` builds that complete image and a bundled test harness, mounts the daemon-side Unix socket into the harness, and sets both the image and REQUIRED flag. Missing image configuration cannot silently skip the required tests. On local rootful Podman the invocation uses `TERMINAY_BOT_MCP_DAEMON_SOCKET=/run/podman/podman.sock`; Docker CI uses /var/run/docker.sock, including when the job's Docker CLI uses a TCP daemon connection.
+
+Host-only framing fixtures are explicitly synthetic account tests, separate from the required real-container ownership tests. A chat execution regression injects a permission failure into the preflight and asserts Failed state, adapter stderr, and no agent launch. The Docker-isolated Electron Bots suite passes all 12 tests. Gitea adds the unconditional Bot MCP real-container ownership job; its result is verified before handoff.
+
+
+The required Gitea job ran on PR #482 (run 23125, job 68712): all three real-container tests passed, zero failed and zero skipped. The Electron suite now includes a 13th case that injects EACCES through the Docker-compatible exec API and asserts that the built/bundled application's Chat path records Failed, displays the MCP cause and adapter stderr, and never launches the agent. All 13 Electron tests pass in Docker. The workflow policy tests now require the bot ownership job and prohibit making it conditional or allowed to fail. The final PR head is checked again before handoff.
