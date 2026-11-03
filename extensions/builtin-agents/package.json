@@ -218,6 +218,25 @@
 						"executable": "claude-agent-acp",
 						"args": []
 					},
+					"deviceSignIn": {
+						"command": {
+							"executable": "claude",
+							"args": [
+								"auth",
+								"login",
+								"--claudeai"
+							]
+						},
+						"label": "Sign in with Claude",
+						"help": "Sign in with your Claude subscription. Open the link shown below in your browser, then paste the returned authorization code into this terminal if prompted.",
+						"signOutCommand": {
+							"executable": "claude",
+							"args": [
+								"auth",
+								"logout"
+							]
+						}
+					},
 					"credentialSecrets": [
 						{
 							"environmentVariable": "CLAUDE_CODE_OAUTH_TOKEN",

@@ -338,7 +338,7 @@ A change of sign-in SHALL apply to sessions that start after it. A session SHALL
 #### Scenario: Claude Code options
 
 - **WHEN** a user opens Sign-in for a Claude Code bot on any platform
-- **THEN** it offers a sign-in token from `claude setup-token` and an API key
+- **THEN** it offers Sign in with Claude through its own sign-in terminal, a sign-in token from `claude setup-token`, and an API key
 
 #### Scenario: Server account already signed in
 
@@ -347,7 +347,7 @@ A change of sign-in SHALL apply to sessions that start after it. A session SHALL
 
 ### Requirement: Device sign-in runs in the bot's own container
 
-When the user chooses an agent's device sign-in, the server SHALL start the bot's container if it is stopped, and SHALL run the declared sign-in command in it as `bot`, with `HOME=/home/bot` and in `/home/bot`. The command SHALL run in a terminal shown in the Sign-in section, so the user sees its URL and one-time code and approves them in their own browser.
+When the user chooses an agent's device sign-in, the server SHALL start the bot's container if it is stopped, and SHALL run the declared sign-in command in it as `bot`, with `HOME=/home/bot` and in `/home/bot`. The command SHALL run in a terminal shown in the Sign-in section, so the user sees its browser URL and either approves its device code in their browser or pastes the browser-returned authorization code into the terminal.
 
 - **Config.** Before running the command, and before each session while the bot's sign-in is `device`, the host SHALL write the device sign-in's own bot config files in place of the agent's files of the same path.
 - **The login stays in the bot.** The login the command saves SHALL stay in the bot's home volume. Terminay SHALL NEVER read, copy, or display it, and SHALL NOT pass it to any other bot.

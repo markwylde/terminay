@@ -167,7 +167,8 @@ Bots use adapters installed only when the server builds its local bot image:
 - `@agentclientprotocol/claude-agent-acp@0.99.1` (including the Claude Agent SDK).
 
 No separate agent CLI is installed. The image exposes the adapter's Codex as
-`codex`. Models are selected through ACP session configuration; Default supplies
+`codex` and resolves its Claude Agent SDK's native Linux executable as `claude`
+for both amd64 and arm64. Image builds verify the Claude login/logout commands. Models are selected through ACP session configuration; Default supplies
 no fallback launch arguments. Bot registrations are independent of observation,
 harness switches, terminal launchers, and chat providers.
 
@@ -178,13 +179,24 @@ variables excluded from shell environments, and a device sign-in, **Sign in with
 ChatGPT** (`codex login --device-auth`, `codex logout`), whose own
 `.codex/config.toml` switches to `cli_auth_credentials_store = "file"` so the
 login is kept in that bot's home. Claude sets `CLAUDE_CODE_MAX_RETRIES=0` and
-accepts `claude setup-token` sign-in tokens or Anthropic API keys.
+offers **Sign in with Claude** (`claude auth login --claudeai`, `claude auth
+logout`), as well as `claude setup-token` sign-in tokens and Anthropic API keys.
+The sign-in terminal shows a browser URL and accepts the authorization code
+returned by the browser; no container callback port needs forwarding. Claude
+keeps its login in `/home/bot/.claude/.credentials.json` with mode `0600` on the
+bot's persistent home volume. Claude owns refresh and locking across the bot's
+executions. An idle inference process is not retained for this purpose, and an
+expired or revoked login can require signing in again. The bot and its tools can
+read its saved login. Each bot signs in independently; no host login is copied.
+The selected credential method governs each new execution, even when another
+credential remains saved.
 
 Run the offline adapter checks with `TERMINAY_BOT_CONFORMANCE=1 npm run test:built-in-extensions`. They require
 an existing `terminay-bot:local` image with these exact adapters. Set
 `TERMINAY_BOT_ENGINE=podman` to use Podman instead of Docker. The checks run with
 network disabled and a fake endpoint inside the container. With no opt-in they
-skip without invoking an engine. They never build or pull an image.
+skip without invoking an engine. Set `TERMINAY_BOT_CONFORMANCE_IMAGE` to test a
+separately tagged freshly built image without replacing the default bot image. They never build or pull an image.
 
 `npm run test:bots:credentials` is a separate opt-in owner check, excluded from
 CI. Its safety check requires a freshly created throwaway home below the system
