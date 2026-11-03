@@ -209,6 +209,7 @@ async function setup(t, options = {}) {
 			return {
 				client,
 				async open() {
+					driver.connect(o.sessionId,o.mcpServers);
 					o.onClient(client);
 					return client;
 				},

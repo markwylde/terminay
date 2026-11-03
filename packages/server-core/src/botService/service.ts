@@ -980,6 +980,7 @@ export class BotService extends EventEmitter {
 				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
 				record.snapshot.maxTurnMs,
 			);
+			if (!live.closing) bridge?.assertConnected();
 			if (!live.closing)
 				this.sessions.patch(record.id, {
 					state: 'completed',

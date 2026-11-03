@@ -28,13 +28,40 @@ try {
 		(agent) => agent.acpCommand.executable === 'claude-agent-acp',
 	);
 	if (!agent) throw new Error('pinned Claude bot contribution is required');
-	const source = path.join(root, 'docker/terminay-bot');
+	const source = path.join(
+		root,
+		'packages/server-core/dist/botService/image-context',
+	);
 	const plan = await planBotImage(
 		source,
-		[{ id: agent.id, install: { npm: agent.imageInstall.npm, apt: agent.imageInstall.debian ?? [] } }],
+		[
+			{
+				id: agent.id,
+				install: {
+					npm: agent.imageInstall.npm,
+					apt: agent.imageInstall.debian ?? [],
+				},
+			},
+		],
 		1000,
 		1000,
 	);
+	const sourcePlan = await planBotImage(
+		path.join(root, 'docker/terminay-bot'),
+		[
+			{
+				id: agent.id,
+				install: {
+					npm: agent.imageInstall.npm,
+					apt: agent.imageInstall.debian ?? [],
+				},
+			},
+		],
+		1000,
+		1000,
+	);
+	if (sourcePlan.fingerprint !== plan.fingerprint)
+		throw new Error('the shipped bot image context is stale');
 	const botContext = path.join(context, 'bot');
 	await cp(source, botContext, { recursive: true });
 	await writeFile(path.join(botContext, 'Dockerfile'), plan.dockerfile);
@@ -88,7 +115,7 @@ try {
 	);
 } finally {
 	try {
-		docker('image', 'rm', harness, image);
+		docker('image', 'rm', '--no-prune', harness, image);
 	} catch {
 		/* Keep the test's failure. */
 	}
