@@ -11,7 +11,7 @@ import {runtime,until} from './fixtures/bot-test-runtime.mjs';
 
 const pin={version:2,kind:'podman',address:'unix:///tmp/podman.sock',identity:'original',connection:false};
 function directory(t){const root=mkdtempSync(join(tmpdir(),'bot-recovery-'));t.after(()=>rmSync(root,{recursive:true,force:true}));return root;}
-async function setup(t){const root=mkdtempSync(join(tmpdir(),'bot-recovery-'));const r=await runtime(root);t.after(async()=>{await r.service.shutdown();await r.kill();rmSync(root,{recursive:true,force:true});});const bot=await r.service.save({name:'Recovery',agentId:'fake.agent',signIn:{kind:'token',environmentVariable:'FAKE_KEY'}});return {...r,root,bot};}
+async function setup(t,options={}){const root=mkdtempSync(join(tmpdir(),'bot-recovery-'));const r=await runtime(root,options);t.after(async()=>{await r.service.shutdown();await r.kill();rmSync(root,{recursive:true,force:true});});const bot=await r.service.save({name:'Recovery',agentId:'fake.agent',signIn:{kind:'token',environmentVariable:'FAKE_KEY'}});return {...r,root,bot};}
 
 test('engine and image failures have actionable messages and structured causes without daemon diagnostics',()=>{
  for(const code of ['not-running','engine-changed','permission-denied','not-installed']){
@@ -93,4 +93,24 @@ test('chat MCP permission failure is Failed with adapter stderr, never Completed
  assert.match(session.reason,/MCP adapter could not connect/);
  assert.match(session.runnerOutput,/runtime socket permission denied/);
  assert.equal(launches,0);
+});
+
+test('provider completion without an MCP catalog handshake fails chat visibly', async (t) => {
+	const r = await setup(t, { env: { FAKE_MCP_DISCONNECTED: '1' } });
+	const { sessionId } = await r.service.send(r.bot.id, 'hi');
+	await until(r.service, 'changed', () =>
+		['failed', 'completed'].includes(r.sessions.get(sessionId).state),
+	);
+	const session = r.sessions.get(sessionId);
+	assert.equal(session.state, 'failed');
+	assert.match(
+		session.reason,
+		/did not connect to terminay_bot and load its tools/,
+	);
+	assert.match(session.runnerOutput, /MCP startup details/);
+	assert.equal(
+		r.service.messages.list(r.bot.id).items.filter((m) => m.author === 'bot')
+			.length,
+		0,
+	);
 });
