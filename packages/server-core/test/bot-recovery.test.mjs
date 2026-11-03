@@ -63,3 +63,14 @@ test('deletion settles local observations even when active process cleanup canno
  assert.match(result.warning,/Removal is pending/);assert.equal(r.bots.list().length,0);
  assert.equal(r.sessions.list(r.bot.id).length,0);
 });
+
+test('new messages and profile writes cannot restart work while confirmed deletion is pending', async t=>{
+ const r=await setup(t);let entered,finish;const ready=new Promise(resolve=>{entered=resolve;});
+ r.hooks.deletion={begin(){},cleanup:async()=>{entered();return new Promise(resolve=>{finish=resolve;});}};
+ const deleting=r.service.remove(r.bot.id,true,true);await ready;
+ try {
+  await assert.rejects(r.service.send(r.bot.id,'normal'),/being deleted/);
+  await assert.rejects(r.service.save({...r.bot,name:'Late edit'}),/being deleted/);
+ } finally {finish(false);await deleting;}
+ assert.equal(r.bots.list().length,0);
+});
