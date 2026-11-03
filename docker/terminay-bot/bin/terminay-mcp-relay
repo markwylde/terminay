@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """Container-local socket multiplexed over its supervised engine exec stream."""
-import json, os, re, selectors, signal, socket, sys
+import json, os, pwd, re, selectors, signal, socket, sys
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 MAX_LINE = 131072
 sid = sys.argv[1] if len(sys.argv)==2 else ''
 if not re.fullmatch('[a-f0-9]{24}',sid): raise SystemExit('Invalid relay identity')
 path = '/tmp/terminay-mcp-'+sid+'.sock'
 selector = selectors.DefaultSelector()
+# Resolve the owner before creating an endpoint. Missing/privileged bot accounts
+# fail startup, and no world-accessible socket is ever used as a workaround.
+owner = None
+if os.geteuid() == 0:
+    owner = pwd.getpwnam('bot')
+    if owner.pw_uid == 0:
+        raise SystemExit('Bot MCP relay requires an unprivileged bot account')
 listener = socket.socket(socket.AF_UNIX)
 listener.bind(path)
+if owner is not None:
+    os.chown(path, owner.pw_uid, owner.pw_gid)
 os.chmod(path,0o600)
 listener.listen(8)
 selector.register(listener,selectors.EVENT_READ,'accept')

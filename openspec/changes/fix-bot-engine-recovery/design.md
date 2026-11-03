@@ -40,3 +40,8 @@ Add the query and command result across server, client and UI together. Preserve
 ## Open Questions
 
 The independent MCP startup failure is unconfirmed. Reproduce after eliminating the feedback loop, capture adapter notifications and relay stderr, and fix the evidenced path. No in-force ADR needs supersession for this change.
+
+
+## MCP ownership follow-up (2026-11-03)
+
+A relay invoked by root assigns its socket to pwd.getpwnam('bot') and retains 0600. The supervisor remains privileged for process-group cleanup; the agent and adapter remain unprivileged. A missing bot account fails startup rather than creating a usable root-owned endpoint. Tests assert actual numeric users and ownership, including a deliberately direct-root launch and an inaccessible socket. Host-only relay framing fixtures explicitly adapt their synthetic account; they are not evidence of container ownership. A required CI job builds the complete production image, installs the pinned Claude ACP contribution, and invokes the real test with its image variable set. Preflight rejection is tested through the chat execution path as well as the real engine transport.
