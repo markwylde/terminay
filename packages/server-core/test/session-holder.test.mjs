@@ -556,7 +556,7 @@ for (const version of [1, 2, 3]) {
   assert.ok(recovered.from > 0);
   assert.equal(recovered.record.pid, 9000);
   const raw = collect(recovered.stream);
-  assert.doesNotMatch(raw.text(), /\x1b\[\?1003h/u);
+  assert.equal(raw.text().includes('\x1b[?1003h'), false);
   assert.deepEqual(pty.children[0].writes, []);
   assert.equal(recovered.presentationError, undefined);
   assert.equal(recovered.presentationRecovery !== undefined, version === 3);
@@ -567,8 +567,8 @@ for (const version of [1, 2, 3]) {
    try {
     authority.restoreSession(scope, recovered.presentationRecovery);
     const view = await authority.readPresentation(scope, { format: 'ansi', maxBytes: 65536 });
-    assert.match(view.ansi, /\x1b\[\?1003h/u);
-    assert.match(view.ansi, /\x1b\[\?1049h/u);
+    assert.ok(view.ansi.includes('\x1b[?1003h'));
+    assert.ok(view.ansi.includes('\x1b[?1049h'));
     assert.match(view.ansi, /while-detached/u);
     assert.equal(view.outputPosition, recovered.record.outputPosition);
    } finally { authority.close(); }
@@ -597,8 +597,8 @@ test('detached mode and buffer changes survive output beyond the raw ring', asyn
  assert.ok(recovered.record.outputPosition > 1024 * 1024);
  assert.ok(recovered.presentationRecovery);
  const state = text(recovered.presentationRecovery.state);
- assert.doesNotMatch(state, /\x1b\[\?1049h/u);
- assert.doesNotMatch(state, /\x1b\[\?1003h/u);
+ assert.equal(state.includes('\x1b[?1049h'), false);
+ assert.equal(state.includes('\x1b[?1003h'), false);
  assert.match(state, /latest-normal-screen/u);
  assert.deepEqual(pty.children[0].writes, []);
 });

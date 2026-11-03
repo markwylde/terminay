@@ -434,7 +434,7 @@ process.stdin.on('data',chunk=>{
 				timeout: 20_000,
 			});
 			await expect(initial).toContainText('mode=1');
-			const originalPid = /pid=(\d+)/.exec(await initial.innerText())?.[1];
+			const originalPid = /pid=(\d+)/.exec((await initial.textContent()) ?? '')?.[1];
 			expect(originalPid).toBeTruthy();
 			const box = await initial.locator('.xterm-screen').boundingBox();
 			if (!box) throw new Error('Terminal screen unavailable');
@@ -469,7 +469,7 @@ process.stdin.on('data',chunk=>{
 				restoredBox.x + restoredBox.width / 2,
 				restoredBox.y + restoredBox.height / 2,
 			);
-			const beforeWheel = await restored.locator('.xterm-rows').innerText();
+			const beforeWheel = await restored.locator('.xterm-rows').textContent();
 			await window.mouse.wheel(0, -100);
 			try {
 				await expect(restored).toContainText('tui-ready wheels=2 keys=1');
@@ -481,7 +481,7 @@ process.stdin.on('data',chunk=>{
 							frames,
 							originalPid,
 							beforeWheel,
-							afterWheel: await restored.locator('.xterm-rows').innerText(),
+							afterWheel: await restored.locator('.xterm-rows').textContent(),
 						},
 						null,
 						2,
