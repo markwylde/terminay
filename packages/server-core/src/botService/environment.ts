@@ -73,6 +73,7 @@ const nameFor = (id: string) => `terminay-bot-${botEnvironmentId(id)}`;
 /** Bot definitions can be registered while the engine is absent. Resources are
  * touched only on demand. Per-bot queues serialize lifecycle and event repair. */
 export class BotEnvironmentService extends EventEmitter {
+	private closed = false;
 	private readonly bots = new Map<string, BotEnvironmentDefinition>();
 	private readonly states = new Map<string, BotEnvironmentState>();
 	private readonly queues = new Map<string, Promise<unknown>>();
@@ -151,6 +152,8 @@ export class BotEnvironmentService extends EventEmitter {
 		return this.states.get(id) ?? 'not-created';
 	}
 	private setState(id: string, state: BotEnvironmentState): void {
+		if (this.closed || !this.bots.has(id) || this.states.get(id) === state)
+			return;
 		this.states.set(id, state);
 		this.armIdle(id);
 		this.emit('changed', { botId: id });
@@ -159,7 +162,11 @@ export class BotEnvironmentService extends EventEmitter {
 		this.definition(id);
 		const result = (this.queues.get(id) ?? Promise.resolve())
 			.catch(() => undefined)
-			.then(work);
+			.then(() => {
+				if (this.closed) throw new Error('bot environments closed');
+				this.definition(id);
+				return work();
+			});
 		this.queues.set(id, result);
 		void result
 			.finally(() => {
@@ -327,6 +334,16 @@ export class BotEnvironmentService extends EventEmitter {
 			const bot = this.definition(id);
 			const name = nameFor(id);
 			let container = await this.owned(driver, 'container', name, id);
+			if (
+				container &&
+				!container.State?.Running &&
+				!(await this.owned(driver, 'volume', `${name}-home`, id))
+			) {
+				// Recreate before start so an engine cannot implicitly make an
+				// unlabelled replacement volume for a stale container mount.
+				await this.removeResources(driver, id, false);
+				container = undefined;
+			}
 			if (container?.State?.Running) {
 				this.setState(id, 'running');
 				return;
@@ -419,13 +436,25 @@ export class BotEnvironmentService extends EventEmitter {
 			await this.hooks.stopSessions(id);
 			await this.removeResources(driver, id, deleteHome);
 			this.setState(id, 'not-created');
-			this.deadlines.get(id)?.close();
-			this.deadlines.delete(id);
-			this.bots.delete(id);
-			this.activity.delete(id);
-			this.states.delete(id);
+			this.forget(id);
 		});
 	}
+	/** Local registration can be removed even when the engine is unreachable. */
+	forget(id: string): void {
+		this.deadlines.get(id)?.close();
+		this.deadlines.delete(id);
+		this.bots.delete(id);
+		this.activity.delete(id);
+		this.states.delete(id);
+	}
+	async cleanupDeleted(
+		driver: EngineDriver,
+		id: string,
+		deleteHome: boolean,
+	): Promise<void> {
+		await this.removeResources(driver, id, deleteHome);
+	}
+
 	/** Called after acquiring the turn lease: the container runs and the agent's
 	 * own config files are in place. */
 	prepareSession(id: string): Promise<Readonly<Record<string, string>>> {
@@ -470,11 +499,57 @@ export class BotEnvironmentService extends EventEmitter {
 		await Promise.all([...this.bots.keys()].map((id) => this.reconcile(id)));
 	}
 	follow(engine: BotEngine): () => void {
-		const reconcile = () => {
-			void this.reconcileAll().catch(() => undefined);
+		let disposed = false;
+		const pending = new Map<string, { again: boolean }>();
+		const reconcile = (event: Record<string, unknown>) => {
+			if (disposed) return;
+			const actor = event.Actor as
+				| { Attributes?: Record<string, string> }
+				| undefined;
+			const attributes =
+				actor?.Attributes ??
+				(event.Attributes as Record<string, string> | undefined);
+			const name = String(
+				attributes?.name ?? event.Name ?? event.name ?? '',
+			).replace(/^\//, '');
+			const id = name.startsWith('terminay-bot-')
+				? name.slice('terminay-bot-'.length)
+				: '';
+			if (!this.bots.has(id) || name !== nameFor(id)) return;
+			if (
+				attributes &&
+				((attributes['terminay.server'] !== undefined &&
+					attributes['terminay.server'] !== this.serverId) ||
+					(attributes['terminay.bot'] !== undefined &&
+						attributes['terminay.bot'] !== id) ||
+					attributes['terminay.role'] === 'helper' ||
+					attributes['terminay.workload'] === '1')
+			)
+				return;
+			const existing = pending.get(id);
+			if (existing) {
+				existing.again = true;
+				return;
+			}
+			const state = { again: false };
+			pending.set(id, state);
+			void (async () => {
+				try {
+					do {
+						state.again = false;
+						if (disposed || !this.bots.has(id)) return;
+						await this.reconcile(id);
+					} while (state.again && !disposed);
+				} catch {
+					/* Availability is reported by the engine. */
+				} finally {
+					pending.delete(id);
+				}
+			})();
 		};
 		const unavailable = () => {
-			if (engine.availability.available) reconcile();
+			if (engine.availability.available)
+				void this.reconcileAll().catch(() => undefined);
 			else
 				for (const id of this.bots.keys()) {
 					this.setState(id, 'failed');
@@ -484,6 +559,7 @@ export class BotEnvironmentService extends EventEmitter {
 		engine.on('container-event', reconcile);
 		engine.on('availability', unavailable);
 		return () => {
+			disposed = true;
 			engine.off('container-event', reconcile);
 			engine.off('availability', unavailable);
 		};
@@ -498,7 +574,7 @@ export class BotEnvironmentService extends EventEmitter {
 		this.armIdle(id);
 	}
 	private armIdle(id: string): void {
-		if (!this.bots.has(id)) return;
+		if (this.closed || !this.bots.has(id)) return;
 		const bot = this.definition(id);
 		let deadline = this.deadlines.get(id);
 		if (!deadline) {
@@ -570,6 +646,8 @@ export class BotEnvironmentService extends EventEmitter {
 					'--network',
 					'none',
 					...this.labels(id),
+					'--label',
+					'terminay.role=helper',
 					'--cpus',
 					'0.25',
 					'--memory',
@@ -722,6 +800,7 @@ export class BotEnvironmentService extends EventEmitter {
 		return null;
 	}
 	close(): void {
+		this.closed = true;
 		for (const timer of this.deadlines.values()) timer.close();
 		this.deadlines.clear();
 	}

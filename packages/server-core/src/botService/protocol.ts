@@ -42,6 +42,8 @@ export function createBotEnvironmentOperations(
 			]),
 		),
 		queries: {
+			[op.state]: async (request) =>
+				service.state(botEnvironmentId(payload(request).botId)),
 			[op.settings]: async (request) => {
 				const value = await service.settings(
 					botEnvironmentId(payload(request).botId),

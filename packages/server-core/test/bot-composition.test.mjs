@@ -586,11 +586,11 @@ test('9.3/9.4 device terminal prints a URL/code, records success, restores confi
 		join(r.root, `config-terminay-bot-${bot.id}.json`),
 		JSON.stringify([{ path: '.codex/config.toml', content: 'tampered' }]),
 	);
-	await c.bots.send(bot.id, 'normal', sent.sessionId);
+	const fresh = await c.bots.send(bot.id, 'normal', sent.sessionId);
 	await until(
 		r.service,
 		'changed',
-		() => r.service.sessions.get(sent.sessionId).state === 'completed',
+		() => r.service.sessions.get(fresh.sessionId).state === 'completed',
 	);
 	assert.match(
 		r
@@ -599,7 +599,7 @@ test('9.3/9.4 device terminal prints a URL/code, records success, restores confi
 			.at(-1).config[0].content,
 		/"file"/,
 	);
-	await c.bots.control(bot.id, sent.sessionId, 'end');
+	await c.bots.control(bot.id, fresh.sessionId, 'end');
 	// Token sessions must restore the default even after a device session.
 	await c.credentials.save(bot.id, 'FAKE_KEY', Buffer.from('secret'));
 	await c.bots.save({
@@ -760,4 +760,56 @@ test('shared message APIs persist communication, enforce authority and preserve 
  const page=await c.transport.query('bots.messages.list',{botId:bot.id,limit:1});assert.equal(page.items.length,1);assert.equal('text' in page.items[0],false);
  await c.transport.command('bots.messages.remove',{botId:bot.id,messageId:user.id,revision:2});assert.throws(()=>r.service.messages.get(bot.id,user.id));
  await c.transport.command('bots.messages.clear',{botId:bot.id,confirmed:true});assert.equal(r.service.messages.list(bot.id).total,0);assert.ok(r.service.sessions.get(sent.sessionId));
+});
+
+test('wire errors explain engine identity changes and deletion remains usable with deferred owned resource removal', {timeout:30000},async t=>{
+ const r=await setup(t),c=await r.connect();await c.engine.build();
+ const bot=await c.bots.save({name:'Recoverable',agentId:agent.id,signIn:{kind:'none'}});
+ const env=new BotEnvironmentClient(c.transport);await env.lifecycle(bot.id,'start');
+ const pin=JSON.parse(readFileSync(join(r.root,'bots','engine.json'),'utf8'));
+ const home=`terminay-bot-${bot.id}-home`;
+ const marker=await r.api.read('volume','terminay-engine-identity');
+ await r.api.put('volume','terminay-engine-identity',{...marker,Labels:{'terminay.engine.identity':'different-engine'}});
+ await c.engine.check();assert.equal((await c.engine.status()).reason,'engine-changed');
+ await assert.rejects(env.overview(bot.id),error=>error.details?.reason==='engine-changed'&&/Use this engine/.test(error.message));
+ const result=await c.bots.remove(bot.id,true,true);assert.match(result.warning,/Removal is pending/);
+ assert.equal((await c.bots.list()).bots.length,0);assert.ok(await r.api.read('volume',home));
+ const pending=JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8'));assert.equal(pending.entries[0].pin.identity,pin.identity);
+ // Explicit adoption of another identity must not apply the old deletion intent.
+ const status=await c.engine.status();const candidate=status.candidates.find(c=>c.available);await c.engine.use(candidate.kind,candidate.address,true);
+ assert.ok(await r.api.read('volume',home));
+ // Re-adopt the original identity; only now can its pending owned home be removed.
+ await r.api.put('volume','terminay-engine-identity',marker);await c.engine.check();await c.engine.use(candidate.kind,candidate.address,true);
+ for(let attempt=0;attempt<100 && JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length;attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length,0);
+ assert.equal(await r.api.read('volume',home),undefined);
+});
+
+test('overview helper events settle with two bots across the wire', {timeout:30000},async t=>{
+ const r=await setup(t),c=await r.connect();await c.engine.build();const env=new BotEnvironmentClient(c.transport);
+ const bots=[];for(const name of ['One','Two']){const bot=await c.bots.save({name,agentId:agent.id,signIn:{kind:'none'}});bots.push(bot);await env.lifecycle(bot.id,'start');}
+ const events=await c.client.subscribe('bots.changed');const changes=[];events.onEvent(e=>changes.push(e));
+ await env.overview(bots[0].id);const before=changes.length;
+ for(const action of ['create','init','attach','start','die','destroy'])r.api.emitEvent({Type:'container',Action:action,Actor:{Attributes:{name:'random-helper','terminay.server':'composed-bots','terminay.bot':bots[0].id,'terminay.role':'helper'}}});
+ // A later state query round trip establishes that the emitted frames have drained.
+ for(const bot of bots) assert.equal(await env.state(bot.id),'running');
+ assert.equal(changes.length,before);
+});
+
+test('pending deletion completes on server restart when the original verified engine returns', {timeout:30000}, async t=>{
+ const r=await setup(t),c=await r.connect();await c.engine.build();
+ const bot=await c.bots.save({name:'Restart cleanup',agentId:agent.id,signIn:{kind:'none'}});
+ await new BotEnvironmentClient(c.transport).lifecycle(bot.id,'start');
+ const marker=await r.api.read('volume','terminay-engine-identity');
+ await r.api.put('volume','terminay-engine-identity',{...marker,Labels:{'terminay.engine.identity':'reset'}});
+ await c.engine.check();assert.ok((await c.bots.remove(bot.id,true,true)).warning);
+ await r.composition.shutdown();
+ await r.api.put('volume','terminay-engine-identity',marker);
+ const restarted=createBotServerService({serverId:'composed-bots',dataRoot:r.root,agents:r.agents,vault:r.v,platform:'darwin',pty:{spawn(){throw new Error('no host PTY');}}});
+ try {
+  await restarted.reconcile();
+  for(let attempt=0;attempt<100&&JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length;attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(JSON.parse(readFileSync(join(r.root,'bots','deletions.json'),'utf8')).entries.length,0);
+  assert.equal(await r.api.read('volume',`terminay-bot-${bot.id}-home`),undefined);
+ } finally {await restarted.shutdown();}
 });

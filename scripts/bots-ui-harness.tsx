@@ -39,6 +39,7 @@ type Scenario = {
 	socketShared?: boolean;
 	limitsChangePending?: boolean;
 	settingsRefusal?: string;
+	deleteWarning?: string;
 	sendRefusal?: string;
 	postDelayMs?: number;
 	imageDelayMs?: number;
@@ -317,7 +318,7 @@ const client = {
 		...(draft as object),
 		updatedAt: Date.now(),
 	})),
-	remove: record('remove'),
+	remove: record('remove', () => ({ warning: scenario.deleteWarning ?? null })),
 	sessions: record('sessions', (botId) => sessionsNow.get(String(botId)) ?? []),
 	session: record('session', (botId, id) => session(String(botId), String(id))),
 	send: record('send', (botId) => {
@@ -493,6 +494,7 @@ function makeServer(
 		) as ServerBots['environments'],
 		upcoming: new Map(),
 		agents: scenario.agents,
+		reportWarning: (warning: string) => window.__calls.push({ op: 'warning', args: [warning] }),
 		refresh: () => window.__calls.push({ op: 'refresh', args: [] }),
 		refreshBot: (botId) =>
 			window.__calls.push({ op: 'refreshBot', args: [botId] }),

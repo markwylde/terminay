@@ -1,3 +1,4 @@
+import { botFailure } from './failure.js';
 import {
 	openBotRuntimeBridge,
 	type BotRuntimeBridge,
@@ -41,7 +42,7 @@ import type {
 import type { BotMemories } from './memories.js';
 import { type BotQueuedTurn, BotTurnQueue } from './queue.js';
 import { BotSessionStore } from './sessions.js';
-import { BotError, BotImageBuildError, BotStore, text } from './store.js';
+import { BotError, BotStore, text } from './store.js';
 import { BotTriggers } from './triggers.js';
 
 export interface BotAgents {
@@ -65,8 +66,12 @@ export interface BotServiceHooks {
 		BotEnvironmentService,
 		'register' | 'prepareSession' | 'remove' | 'stop' | 'reconcileAll' | 'state'
 	> &
-		Partial<Pick<BotEnvironmentService, 'definition'>>;
+		Partial<Pick<BotEnvironmentService, 'definition' | 'forget'>>;
 	readonly driver: () => Promise<EngineDriver>;
+	readonly deletion?: {
+		begin(botId: string, deleteHome: boolean): void;
+		cleanup(botId: string, deleteHome: boolean): Promise<boolean>;
+	};
 	readonly credentials: {
 		acquire(
 			botId: string,
@@ -130,6 +135,14 @@ export class BotService extends EventEmitter {
 	>();
 	private readonly currentChats = new Map<string, string>();
 	private readonly live = new Map<string, Live>();
+	private readonly activeRuns = new Map<
+		string,
+		{ botId: string; task: Promise<void> }
+	>();
+	private readonly deleting = new Map<
+		string,
+		Promise<{ warning: string | null }>
+	>();
 	private readonly mutations = new Map<string, Promise<unknown>>();
 	private readonly now: () => number;
 	private revision = 0;
@@ -387,6 +400,8 @@ export class BotService extends EventEmitter {
 				`Use ${agent.deviceSignIn?.label ?? 'the agent’s sign-in'} to sign this bot in.`,
 			);
 		await this.hooks.validateSignIn?.(draft, signIn, agent);
+		if (draft.id && this.deleting.has(draft.id))
+			throw new BotError('conflict', 'This bot is being deleted.');
 		const bot = this.bots.save(
 			{
 				...draft,
@@ -411,21 +426,65 @@ export class BotService extends EventEmitter {
 		this.register(saved);
 		this.changed(botId);
 	}
-	async remove(
+	remove(
 		botId: string,
 		deleteHome: boolean,
 		confirmed: boolean,
-	): Promise<void> {
+	): Promise<{ warning: string | null }> {
+		if (!confirmed)
+			return Promise.reject(
+				new BotError('validation', 'deleting a bot requires confirmation'),
+			);
+		const existing = this.deleting.get(botId);
+		if (existing) return existing;
+		const task = this.removeNow(botId, deleteHome, confirmed);
+		this.deleting.set(botId, task);
+		void task.finally(() => this.deleting.delete(botId)).catch(() => undefined);
+		return task;
+	}
+	private async removeNow(
+		botId: string,
+		deleteHome: boolean,
+		confirmed: boolean,
+	): Promise<{ warning: string | null }> {
 		if (!confirmed)
 			throw new BotError('validation', 'deleting a bot requires confirmation');
-		await this.stopBot(botId);
-		await this.hooks.environment.remove(botId, deleteHome);
+		this.bots.get(botId);
+		this.hooks.deletion?.begin(botId, deleteHome);
+		// Revocation happens before any engine-dependent process cleanup.
+		for (const record of this.sessions.list(botId))
+			this.runtime.revoke(record.id);
+		await this.stopBot(botId).catch(() => undefined);
+		await this.mutations.get(botId)?.catch(() => undefined);
+		// An unreachable engine cannot confirm process cleanup, but local ACP
+		// observations must settle before their diagnostic records are removed.
+		await Promise.allSettled(
+			this.sessions.list(botId).map(async (record) => {
+				this.live.get(record.id)?.client?.dispose();
+				await this.closeLive(record.id, 'bot-stop');
+			}),
+		);
+		await Promise.allSettled(
+			[...this.activeRuns.values()]
+				.filter((r) => r.botId === botId)
+				.map((r) => r.task),
+		);
+		let removed = true;
+		if (this.hooks.deletion)
+			removed = await this.hooks.deletion.cleanup(botId, deleteHome);
+		else await this.hooks.environment.remove(botId, deleteHome);
+		this.hooks.environment.forget?.(botId);
 		this.triggers.removeBot(botId);
 		await this.hooks.removeTriggers?.(botId);
 		this.sessions.removeBot(botId);
 		this.messages.removeBot(botId);
 		this.bots.remove(botId);
 		this.currentChats.delete(botId);
+		return {
+			warning: removed
+				? null
+				: 'Bot deleted. Container resources could not be removed because the original engine is unavailable or could not complete removal. Removal is pending until that engine returns.',
+		};
 	}
 	driverForRuntime(): Promise<EngineDriver> {
 		return this.hooks.driver();
@@ -460,6 +519,8 @@ export class BotService extends EventEmitter {
 	}> {
 		text(body, 65536, 'message');
 		const message = await this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			this.bots.get(botId);
 			this.importMessages(botId);
 			const safe = await this.redactMessage(botId, body),
@@ -594,6 +655,8 @@ export class BotService extends EventEmitter {
 			);
 		text(prompt, 64 * 1024, 'message');
 		return this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			if (this.stoppingBots.has(botId))
 				throw new BotError('busy', 'bot is stopping');
 			this.queue.unblock(botId);
@@ -651,6 +714,8 @@ export class BotService extends EventEmitter {
 			} finally {
 				credential.release();
 			}
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
 			const queued = this.queue.list(botId);
 			if (
 				queued.length >= 20 ||
@@ -777,7 +842,15 @@ export class BotService extends EventEmitter {
 				'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.',
 			);
 	}
-	private async run(item: BotQueuedTurn): Promise<void> {
+	private run(item: BotQueuedTurn): Promise<void> {
+		const task = this.runNow(item);
+		this.activeRuns.set(item.sessionId, { botId: item.botId, task });
+		void task
+			.finally(() => this.activeRuns.delete(item.sessionId))
+			.catch(() => undefined);
+		return task;
+	}
+	private async runNow(item: BotQueuedTurn): Promise<void> {
 		const record = this.sessions.get(item.sessionId);
 		let live = this.live.get(record.id);
 		let bridge: BotRuntimeBridge | undefined;
@@ -797,20 +870,20 @@ export class BotService extends EventEmitter {
 			this.requireSignIn(this.bots.get(record.botId).signIn);
 			if (!live) {
 				const agent = this.agent(record.snapshot.agentId);
-				if (item.origin.kind !== 'chat') {
-					const status = await this.hooks.agents.botAgentStatus(agent.id);
-					if (!status.available || record.snapshot.signIn.kind === 'none')
-						throw new BotError('unavailable', 'agent not ready');
-				}
 				failureReason = 'container engine unavailable';
-				let driver: EngineDriver | undefined;
-				if (item.origin.kind !== 'chat') driver = await this.hooks.driver();
+				let driver: EngineDriver | undefined = await this.hooks.driver();
 				const sessionEnvironment = await this.hooks.environment.prepareSession(
 					record.botId,
 				);
 				if (this.cancelledStarts.delete(record.id)) return;
 				driver ??= await this.hooks.driver();
 				failureReason = 'agent not ready';
+				const status = await this.hooks.agents.botAgentStatus(agent.id);
+				if (!status.available)
+					throw new BotError(
+						'unavailable',
+						'The bot agent is not ready. Check its sign-in and rebuild the bot image.',
+					);
 				const configFiles = botAgentConfigFiles(
 					agent,
 					record.snapshot.signIn.kind === 'device',
@@ -839,11 +912,18 @@ export class BotService extends EventEmitter {
 					pendingCredential = undefined;
 					return;
 				}
+				failureReason =
+					'The terminay_bot MCP relay could not start. See Runner output for details.';
 				bridge = await openBotRuntimeBridge(
 					driver,
 					record.botId,
 					record.id,
 					this.runtime,
+					(value) =>
+						this.sessions.runner(
+							record.id,
+							`Bot MCP: ${credential.redact(value)}\n`,
+						),
 				);
 				if (this.cancelledStarts.delete(record.id)) {
 					await bridge.close();
@@ -851,6 +931,8 @@ export class BotService extends EventEmitter {
 					pendingCredential = undefined;
 					return;
 				}
+				failureReason =
+					'The agent process failed. See Runner output for details.';
 				const runner = (this.hooks.process ?? ((o) => new BotAgentProcess(o)))({
 					driver,
 					botId: record.botId,
@@ -910,14 +992,25 @@ export class BotService extends EventEmitter {
 				});
 		} catch (error) {
 			if (!live?.closing) {
+				const cause = error instanceof Error ? error.message : failureReason;
+				const detail = await this.redactMessage(
+					record.botId,
+					cause.slice(0, 8192),
+				).catch(
+					() =>
+						'Startup diagnostics unavailable: sign-in could not be read safely.',
+				);
+				const reason = await this.redactMessage(
+					record.botId,
+					botFailure(error)?.message ?? failureReason,
+				).catch(() => failureReason);
+				this.sessions.runner(
+					record.id,
+					`\nBot execution failed: ${reason}\n${detail}\n`,
+				);
 				this.sessions.patch(record.id, {
 					state: 'failed',
-					reason:
-						item.origin.kind === 'chat'
-							? 'agent process failed'
-							: error instanceof BotImageBuildError
-								? 'image out of date and building failed'
-								: failureReason,
+					reason,
 					endedAt: this.now(),
 					permission: null,
 					permissions: [],

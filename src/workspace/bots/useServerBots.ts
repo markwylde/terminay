@@ -73,6 +73,8 @@ export type ServerBots = Readonly<{
 	transport: TerminayClientFacade;
 	status: 'loading' | 'ready' | 'error';
 	error?: string;
+	warning?: string;
+	reportWarning?: (warning: string) => void;
 	revision: number;
 	bots: readonly BotProfile[];
 	/** Newest first, per bot id. */
@@ -150,8 +152,7 @@ function parseAgents(value: unknown): BotAgentOption[] {
 			canLoad: r.canLoad === true,
 			signInMethods: Array.isArray(r.signInMethods)
 				? r.signInMethods.filter(
-						(m): m is 'device' | 'token' =>
-							m === 'device' || m === 'token',
+						(m): m is 'device' | 'token' => m === 'device' || m === 'token',
 					)
 				: [],
 			modelsAvailable: models?.available === true,
@@ -211,7 +212,7 @@ function startController(
 		const [profile, sessions, overview, upcoming] = await Promise.allSettled([
 			client.get(botId),
 			client.sessions(botId),
-			environment.overview(botId),
+			environment.state(botId),
 			client.upcomingTriggers(botId, now, now + UPCOMING_WINDOW_MS, {
 				limit: UPCOMING_COUNT,
 			}),
@@ -240,12 +241,7 @@ function startController(
 			// A failed read keeps the last known state, so views that depend on
 			// it (the live desktop) do not unmount and reconnect.
 			if (overview.status === 'fulfilled')
-				environmentMap.set(
-					botId,
-					environmentSummary(
-						(overview.value as unknown as Record<string, unknown>).state,
-					),
-				);
+				environmentMap.set(botId, environmentSummary(overview.value));
 			else if (!environmentMap.has(botId)) environmentMap.set(botId, 'unknown');
 		}
 		set({
@@ -302,6 +298,7 @@ function startController(
 		environments: new Map(),
 		upcoming: new Map(),
 		agents: Object.freeze([]),
+		reportWarning: (warning) => set({ warning }),
 		refresh: () => void loadAll(),
 		refreshBot: (botId: string) => void loadBot(botId),
 		refreshAgents: () => loadAgents(),
