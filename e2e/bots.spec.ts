@@ -534,6 +534,53 @@ test.describe('Home › Bots', () => {
 		);
 	});
 
+	test('a Claude bot signs in with Claude in its own container, and signs out', async ({
+		mainWindow,
+		tempDir,
+	}) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const dashboard = await openBots(mainWindow);
+		await dashboard.locator('[data-terminay-bots-new]').first().click();
+		const dialog = mainWindow.locator('[data-terminay-bots-new-dialog]');
+		await dialog.locator('[data-terminay-bots-new-name]').fill('Claudia');
+		await dialog.locator('[data-terminay-bots-new-agent]').selectOption(CLAUDE);
+		await dialog.locator('[data-terminay-bots-new-create]').click();
+		const tab = frontHomeTab(mainWindow);
+		const device = tab.locator('[data-terminay-bot-device]');
+		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out');
+
+		// The fake Claude CLI waits for the browser authorization code.
+		await tab.locator('[data-terminay-bot-device-start]').click();
+		await expect(tab.locator('[data-terminay-bot-device-terminal]')).toContainText(
+			'TEST-CODE',
+			{ timeout: 30_000 },
+		);
+		await expect(tab.locator('[data-terminay-bot-device-terminal]')).toContainText('Paste code here:');
+		const codeInput = tab.locator('[data-terminay-bot-device-terminal] .xterm-helper-textarea');
+		await codeInput.pressSequentially('TEST-CODE');
+		await codeInput.press('Enter');
+		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-in', {
+			timeout: 30_000,
+		});
+		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
+			'data-terminay-bot-signin',
+			'device',
+		);
+		await tab
+			.locator('[data-terminay-bot-device-terminal] button', { hasText: 'Close' })
+			.click();
+
+		await tab.locator('[data-terminay-bot-device-signout]').click();
+		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out', {
+			timeout: 30_000,
+		});
+		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
+			'data-terminay-bot-signin',
+			'none',
+		);
+	});
+
 	test('a bot that is not signed in refuses a message and links to Sign-in', async ({
 		mainWindow,
 		tempDir,

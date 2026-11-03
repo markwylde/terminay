@@ -13,7 +13,25 @@ export async function fakeModel({ listen = true } = {}) {
 			response.writeHead(400).end();
 			return;
 		}
-		state.requests.push({ path: request.url, model: data.model });
+		state.requests.push({
+			path: request.url,
+			model: data.model,
+			authorization: request.headers?.authorization,
+			apiKey: request.headers?.['x-api-key'],
+		});
+		if (state.rejectAuth) {
+			response.writeHead(401, { 'content-type': 'application/json' });
+			response.end(
+				JSON.stringify({
+					type: 'error',
+					error: {
+						type: 'authentication_error',
+						message: 'Synthetic invalid API key',
+					},
+				}),
+			);
+			return;
+		}
 		const anthropic = request.url.split('?')[0].endsWith('/messages');
 		const responses = request.url.split('?')[0].endsWith('/responses');
 		if (!anthropic && !responses) {

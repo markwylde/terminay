@@ -176,3 +176,55 @@ test('validated botAgent manifests feed the image layer without unrelated metada
 	});
 	assert.deepEqual(manager.botAgentInstalls(), []);
 });
+
+test('Claude sign-in resolves the adapter SDK native runtime for both Linux architectures', async (t) => {
+	const { createRequire } = await import('node:module');
+	const require = createRequire(import.meta.url);
+	const {
+		claudeExecutable,
+	} = require('../../../docker/terminay-bot/install-claude.cjs');
+	const directory = await mkdtemp(path.join(tmpdir(), 'bot-claude-runtime-'));
+	t.after(() => rm(directory, { force: true, recursive: true }));
+	const { mkdir, realpath } = await import('node:fs/promises');
+	const adapter = path.join(directory, 'package.json');
+	await writeFile(adapter, '{}');
+	const sdk = path.join(
+		directory,
+		'node_modules/@anthropic-ai/claude-agent-sdk',
+	);
+	await mkdir(sdk, { recursive: true });
+	await writeFile(
+		path.join(sdk, 'package.json'),
+		JSON.stringify({ main: 'sdk.mjs' }),
+	);
+	await writeFile(path.join(sdk, 'sdk.mjs'), '');
+	for (const arch of ['arm64', 'x64']) {
+		const native = path.join(
+			directory,
+			`node_modules/@anthropic-ai/claude-agent-sdk-linux-${arch}`,
+		);
+		await mkdir(native, { recursive: true });
+		await writeFile(path.join(native, 'claude'), 'native fixture');
+		assert.equal(
+			claudeExecutable(adapter, arch),
+			await realpath(path.join(native, 'claude')),
+		);
+	}
+	assert.throws(() => claudeExecutable(adapter, 'riscv64'), /Unsupported/);
+	await rm(path.join(directory, 'node_modules'), { recursive: true });
+	assert.throws(
+		() => claudeExecutable(path.join(directory, 'missing/package.json')),
+		/Cannot find module/,
+	);
+	const layer = agentLayer([
+		{
+			id: 'builtin/claude',
+			install: { npm: ['@agentclientprotocol/claude-agent-acp@0.99.1'] },
+		},
+	]);
+	assert.match(
+		layer,
+		/install-claude.cjs && claude --version && claude auth login --help && claude auth logout --help/,
+	);
+	assert.doesNotMatch(agentLayer([agent]), /install-claude/);
+});
