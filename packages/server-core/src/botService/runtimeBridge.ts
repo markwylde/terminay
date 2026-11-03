@@ -19,14 +19,30 @@ export async function openBotRuntimeBridge(
 	botId: string,
 	sessionId: string,
 	runtime: BotExecutionRuntime,
+	onDiagnostic?: (value: string) => void,
 ): Promise<BotRuntimeBridge> {
 	const token = randomBytes(32).toString('hex'),
 		socket = `/tmp/terminay-mcp-${sessionId}.sock`,
 		supervisor = `mcp-${sessionId}`;
 	const unbind = runtime.bindSecret(sessionId, token);
-    let stream:ReturnType<EngineDriver['execStream']>;
-    try {stream=driver.execStream(`terminay-bot-${botId}`,['terminay-run',supervisor,'--','terminay-mcp-relay',sessionId],{user:'root'});}catch(error){unbind();throw error;}
+	let stream: ReturnType<EngineDriver['execStream']>;
+	try {
+		stream = driver.execStream(
+			`terminay-bot-${botId}`,
+			['terminay-run', supervisor, '--', 'terminay-mcp-relay', sessionId],
+			{ user: 'root' },
+		);
+	} catch (error) {
+		unbind();
+		throw error;
+	}
 
+	const diagnostic = (value: string) =>
+		runtime
+			.sanitizeSecrets(botId, value.split(token).join('[redacted]'))
+			.slice(-8192);
+	let stderr = '';
+	const stderrDecoder = new StringDecoder('utf8');
 	const decoder = new StringDecoder('utf8');
 	let buffer = '',
 		closed = false,
@@ -53,12 +69,19 @@ export async function openBotRuntimeBridge(
 	const finish = () => {
 		lifetime.abort();
 		for (const controller of requests.values()) controller.abort();
-		readyReject(new Error('Bot MCP relay closed'));
+		readyReject(
+			new Error(
+				'Bot MCP relay closed before readiness' +
+					(stderr ? `: ${diagnostic(stderr)}` : ''),
+			),
+		);
 	};
 	stream.once('error', finish);
 	stream.once('close', finish);
 	stream.stdin.on('error', finish);
-	stream.stderr.resume();
+	stream.stderr.on('data', (chunk: Buffer) => {
+		stderr = (stderr + stderrDecoder.write(chunk)).slice(-8192);
+	});
 	const handle = async (raw: unknown) => {
 		const frame = object(raw);
 		if (frame.ready === true) {
@@ -217,23 +240,64 @@ export async function openBotRuntimeBridge(
 		unbind();
 		closeTask = (async () => {
 			stream.stdin.end();
-			await driver.exec(
-				`terminay-bot-${botId}`,
-				['terminay-run', '--kill', supervisor],
-				{ user: 'root', deadlineMs: 20000 },
-			);
-			stream.kill();
+			try {
+				await driver.exec(
+					`terminay-bot-${botId}`,
+					['terminay-run', '--kill', supervisor],
+					{ user: 'root', deadlineMs: 20000 },
+				);
+			} finally {
+				stream.kill();
+			}
 		})();
 		return closeTask;
 	};
 	const timer = setTimeout(
-		() => readyReject(new Error('Bot MCP relay readiness deadline')),
+		() =>
+			readyReject(
+				new Error(
+					'Bot MCP relay readiness deadline' +
+						(stderr ? `: ${diagnostic(stderr)}` : ''),
+				),
+			),
 		10000,
 	);
 	try {
 		await ready;
+		try {
+			await driver.exec(
+				`terminay-bot-${botId}`,
+				['/usr/local/bin/terminay-bot-mcp', '--check-runtime'],
+				{
+					user: 'bot',
+					env: {
+						TERMINAY_RUNTIME_SOCKET: socket,
+						TERMINAY_RUNTIME_TOKEN: token,
+					},
+					environmentNames: [
+						'TERMINAY_RUNTIME_SOCKET',
+						'TERMINAY_RUNTIME_TOKEN',
+					],
+					deadlineMs: 10000,
+					onOutput: (chunk, source) => {
+						if (source === 'stderr')
+							onDiagnostic?.(diagnostic(`Adapter startup: ${chunk}`));
+					},
+				},
+			);
+		} catch {
+			throw new BotError(
+				'unavailable',
+				'The terminay_bot MCP adapter could not connect to its runtime. See Runner output for details.',
+			);
+		}
 	} catch (error) {
-		await close();
+		onDiagnostic?.(
+			diagnostic(
+				error instanceof Error ? error.message : 'Bot MCP relay startup failed',
+			),
+		);
+		await close().catch(() => undefined);
 		throw error;
 	} finally {
 		clearTimeout(timer);
@@ -249,7 +313,11 @@ export async function openBotRuntimeBridge(
 				name: 'terminay_bot',
 				command: '/usr/local/bin/terminay-bot-mcp',
 				args: [],
-				env: Object.entries(environment).map(([name, value]) => ({
+				env: Object.entries({
+					BASH_ENV: '',
+					TERMINAY_RUNTIME_SOCKET: socket,
+					TERMINAY_RUNTIME_TOKEN: token,
+				}).map(([name, value]) => ({
 					name,
 					value,
 				})),

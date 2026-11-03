@@ -1,3 +1,4 @@
+import { BotRecovery } from './BotRecovery';
 /**
  * One bot's tab: Chat, or Configure with its Profile, Environment, Memories,
  * Triggers, and Sessions. The tab reads the same per-server projection as the
@@ -160,6 +161,7 @@ export function BotTab({
 					</button>
 				</fieldset>
 			</header>
+			<BotRecovery server={server} botId={bot.id} />
 			{mode === 'chat' ? (
 				<BotChat
 					server={server}
@@ -202,7 +204,7 @@ export function BotTab({
 							<BotProfilePanel
 								server={server}
 								bot={bot}
-								onDeleted={() => host.close()}
+								onDeleted={(warning) => host.close(warning)}
 							/>
 						) : configTab === 'environment' ? (
 							<BotEnvironmentPanel

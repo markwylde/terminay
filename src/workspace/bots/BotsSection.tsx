@@ -138,6 +138,17 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 			</header>
 			<div className="bots-dbody">
 				<div className="bots-scroll bots-dmain">
+					{[...servers.values()]
+						.filter((s) => s.warning)
+						.map((s) => (
+							<p
+								role="status"
+								className="bots-note bots-note--warn"
+								key={s.serverId}
+							>
+								{s.warning}
+							</p>
+						))}
 					{errors.map((server) => (
 						<div className="bots-note bots-note--warn" key={server.serverId}>
 							{server.label}: {server.error}{' '}
@@ -309,10 +320,15 @@ function BotCard({
 	);
 }
 
-function EngineSummary({
+export function EngineSummary({
 	engine,
 	label,
-}: Readonly<{ engine: BotEngineView; label: string | undefined }>) {
+	compact = false,
+}: Readonly<{
+	engine: BotEngineView;
+	label: string | undefined;
+	compact?: boolean;
+}>) {
 	const { status } = engine;
 	const [switching, setSwitching] = useState<string>();
 	const name =
@@ -323,9 +339,11 @@ function EngineSummary({
 				: 'No engine';
 	return (
 		<section data-terminay-bots-engine={status?.available ? 'ready' : 'setup'}>
-			<h3 className="bots-lab">
-				Container engine{label === undefined ? '' : ` · ${label}`}
-			</h3>
+			{!compact ? (
+				<h3 className="bots-lab">
+					Container engine{label === undefined ? '' : ` · ${label}`}
+				</h3>
+			) : null}
 			<div className="bots-card bots-engine">
 				<div className="bots-kv">
 					<span>Engine</span>
@@ -338,37 +356,41 @@ function EngineSummary({
 								: ' · unavailable'}
 					</span>
 				</div>
-				<div className="bots-kv">
-					<span>Containers</span>
-					<span className="bots-mono">
-						{status?.runningContainers ?? 0} / {status?.botContainers ?? 0}{' '}
-						running
-					</span>
-				</div>
-				<div className="bots-kv">
-					<span>Image</span>
-					<span data-terminay-bots-image={status?.image.state ?? 'unknown'}>
-						{status === undefined
-							? '—'
-							: {
-									missing: 'Not built',
-									building: 'Building…',
-									current: 'Built and current',
-									outdated: 'Out of date',
-									failed: 'Build failed',
-								}[status.image.state]}
-					</span>
-				</div>
+				{!compact ? (
+					<div className="bots-kv">
+						<span>Containers</span>
+						<span className="bots-mono">
+							{status?.runningContainers ?? 0} / {status?.botContainers ?? 0}{' '}
+							running
+						</span>
+					</div>
+				) : null}
+				{!compact || status?.available ? (
+					<div className="bots-kv">
+						<span>Image</span>
+						<span data-terminay-bots-image={status?.image.state ?? 'unknown'}>
+							{status === undefined
+								? '—'
+								: {
+										missing: 'Not built',
+										building: 'Building…',
+										current: 'Built and current',
+										outdated: 'Out of date',
+										failed: 'Build failed',
+									}[status.image.state]}
+						</span>
+					</div>
+				) : null}
 				{status?.reason ? (
 					<p
 						className="bots-note bots-note--warn"
 						data-terminay-bots-engine-reason={status.reason}
 					>
 						{ENGINE_REASON_TEXT[status.reason]}
-						{status.detail ? ` ${status.detail}` : ''}
+						{!compact && status.detail ? ` ${status.detail}` : ''}
 					</p>
 				) : null}
-				{status?.image.error ? (
+				{status?.available && status.image.error ? (
 					<p className="bots-note bots-note--warn">{status.image.error}</p>
 				) : null}
 				{engine.error ? (

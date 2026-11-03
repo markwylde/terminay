@@ -7,6 +7,7 @@ import {
 	type BotSiblingContainer,
 	botEnvironmentId,
 	BOT_ENVIRONMENT_OPERATIONS as op,
+	parseBotEnvironmentState,
 	parseBotEnvironmentOverview,
 	parseBotEnvironmentSetSettings,
 	parseBotEnvironmentSettings,
@@ -25,6 +26,15 @@ export class BotEnvironmentClient {
 		private readonly transport: QueryCommandTransport &
 			Partial<BinaryQueryTransport>,
 	) {}
+	async state(botId: string, options: QueryOptions = {}) {
+		return parseBotEnvironmentState(
+			await this.transport.query(
+				op.state,
+				{ botId: botEnvironmentId(botId) },
+				options,
+			),
+		);
+	}
 	async settings(
 		botId: string,
 		options: QueryOptions = {},

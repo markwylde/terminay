@@ -121,7 +121,7 @@ export function BotProfilePanel({
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
-	onDeleted: () => void;
+	onDeleted: (warning?: string) => void;
 }>) {
 	const [form, setForm] = useState<ProfileForm>(() => formFromBot(bot));
 	const [base, setBase] = useState(bot);
@@ -320,7 +320,9 @@ export function BotProfilePanel({
 							<fieldset className="bots-seg" aria-label="Approval mode">
 								<button
 									type="button"
-									className={approvalMode === 'autonomous' ? 'bots-seg--on' : ''}
+									className={
+										approvalMode === 'autonomous' ? 'bots-seg--on' : ''
+									}
 									aria-pressed={approvalMode === 'autonomous'}
 									onClick={() => update({ approvalMode: 'autonomous' })}
 									data-terminay-bot-approval="autonomous"
@@ -586,7 +588,7 @@ function DeleteBot({
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
-	onDeleted: () => void;
+	onDeleted: (warning?: string) => void;
 }>) {
 	const [confirming, setConfirming] = useState(false);
 	const [deleteHome, setDeleteHome] = useState(false);
@@ -667,9 +669,11 @@ function DeleteBot({
 									setBusy(true);
 									server.client
 										.remove(bot.id, deleteHome, true)
-										.then(() => {
-											server.refresh();
+										.then((result) => {
+											if (result?.warning)
+												server.reportWarning?.(result.warning);
 											onDeleted();
+											server.refresh();
 										})
 										.catch((cause: unknown) => {
 											setError(refusalText(cause));

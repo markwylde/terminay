@@ -135,3 +135,10 @@ test('overview parser validates the pending limits', async () => {
 		await assert.rejects(client.overview(botId), TypeError);
 	}
 });
+
+test('state reads use only the cheap typed query and reject invalid responses', async () => {
+ const calls=[];let state='stopped';const c=new BotEnvironmentClient({query:async(op,payload)=>{calls.push([op,payload]);return state;}});
+ assert.equal(await c.state(botId),'stopped');
+ assert.deepEqual(calls,[['bots.environment.state',{botId}]]);
+ state={state:'stopped'};await assert.rejects(c.state(botId),/invalid bot environment state/);
+});

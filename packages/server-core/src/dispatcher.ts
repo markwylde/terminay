@@ -1,3 +1,4 @@
+import { botFailure } from './botService/failure.js';
 import { createHash } from 'node:crypto';
 import {
 	type AuthScope,
@@ -395,6 +396,8 @@ function deadlineError(): ProtocolError {
 }
 
 function dispatchError(error: unknown, fallback: string): ProtocolError {
+	const bot = botFailure(error);
+	if (bot) return bot;
 	if (isProtocolError(error))
 		return {
 			code: error.code,

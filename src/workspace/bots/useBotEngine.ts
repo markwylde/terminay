@@ -25,7 +25,7 @@ export const ENGINE_REASON_TEXT: Readonly<Record<BotEngineReason, string>> = {
 		'This engine mode is not supported. Rootless Docker is not supported: use rootful Docker or Podman.',
 	'unsupported-platform': 'Bots are not supported on this platform.',
 	'engine-changed':
-		'The engine connection changed. Bots stay on the engine they were created on until you choose another.',
+		'The engine connection changed or its identity marker is missing. Choose Use this engine and confirm to recover.',
 };
 
 export type BotEngineView = Readonly<{
