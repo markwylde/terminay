@@ -7,7 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {createInterface} from 'node:readline';
 import {openBotRuntimeBridge} from '../dist/botService/runtimeBridge.js';
 import test from 'node:test';
-const relay=fileURLToPath(new URL('../../../docker/terminay-bot/bin/terminay-mcp-relay',import.meta.url));
+const relay=fileURLToPath(new URL('./fixtures/bot-relay-host.py',import.meta.url));
 const adapter=fileURLToPath(new URL('../../../docker/terminay-bot/bin/terminay-bot-mcp',import.meta.url));
 test('private MCP relay serves only scoped tools, preserves framing, redacts token and cleans up', {timeout:15000},async t=>{
  const sid=randomBytes(12).toString('hex'),socket='/tmp/terminay-mcp-'+sid+'.sock';t.after(()=>rmSync(socket,{force:true}));let child,active=true,ownsWork=false,unbound=false,calls=0;const killed=[];

@@ -274,6 +274,22 @@ test.describe('Home › Bots', () => {
 		await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(1);
 	});
 
+	test('MCP permission failure in the bundled chat path fails visibly before agent launch', async ({ mainWindow, tempDir }) => {
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'MCP denied'));
+		await writeFile(path.join(fakeRoot(tempDir), 'mcp-state-denied.json'), 'true');
+		await send(tab, 'hello');
+		await expect(tab.locator('.bots-sess__m').first()).toContainText('Failed', { timeout: 30_000 });
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-session-row]').first().click();
+		await expect(tab.locator('[data-terminay-bot-session]')).toContainText('MCP adapter could not connect');
+		await tab.locator('[data-terminay-bot-runner] summary').click();
+		await expect(tab.locator('[data-terminay-bot-runner]')).toContainText('runtime socket permission denied');
+		const calls = (await readFile(path.join(fakeRoot(tempDir), 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+		expect(calls.filter(call => call.agent)).toEqual([]);
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,

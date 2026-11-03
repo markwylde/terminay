@@ -288,7 +288,7 @@ export async function openBotRuntimeBridge(
 		} catch {
 			throw new BotError(
 				'unavailable',
-				'The terminay_bot MCP adapter could not connect to its runtime. See Runner output for details.',
+				'The terminay_bot MCP adapter could not connect to its runtime. Rebuild the bot image and recreate the environment; see Runner output for details.',
 			);
 		}
 	} catch (error) {

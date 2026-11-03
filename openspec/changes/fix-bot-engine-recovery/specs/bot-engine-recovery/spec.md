@@ -62,3 +62,12 @@ Failures starting a Terminay-owned MCP relay or adapter SHALL produce bounded sa
 #### Scenario: Adapter cannot connect
 - **WHEN** the Terminay MCP adapter cannot connect with its execution environment
 - **THEN** the session diagnostics identify that connection failure without revealing its socket capability token
+
+
+#### Scenario: Relay is launched by root
+- **WHEN** a privileged supervisor or root process launches a bot execution relay
+- **THEN** the socket belongs to the image's unprivileged bot account with mode 0600, the bot-user adapter can connect and call runtime tools, and a root-only socket causes startup to fail with its sanitized diagnostic
+
+#### Scenario: Required real-container CI coverage
+- **WHEN** pull-request CI runs
+- **THEN** a required job builds the production bot image and verifies socket ownership, distinct root/bot process identities, runtime tool calls, and permission-failure reporting without skipping the container tests
