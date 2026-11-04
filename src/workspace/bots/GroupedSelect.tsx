@@ -85,18 +85,20 @@ export function GroupedSelect<V extends string>({
 		const flip = below < wanted && roomAbove > below;
 		setAbove(flip);
 		setMaxHeight(Math.max(140, Math.min(360, flip ? roomAbove : below)));
-		panel.current
-			.querySelector<HTMLElement>('[aria-selected="true"]')
-			?.scrollIntoView({ block: 'nearest' });
+		revealIn(
+			panel.current,
+			panel.current.querySelector<HTMLElement>('[aria-selected="true"]'),
+		);
 	}, [open]);
 
 	useEffect(() => {
 		if (!open || active === undefined) return;
-		panel.current
-			?.querySelector<HTMLElement>(
+		revealIn(
+			panel.current,
+			panel.current?.querySelector<HTMLElement>(
 				`[data-grouped-select-value="${CSS.escape(active)}"]`,
-			)
-			?.scrollIntoView({ block: 'nearest' });
+			),
+		);
 	}, [open, active]);
 
 	const show = () => {
@@ -282,4 +284,17 @@ function scrollBounds(el: HTMLElement): { top: number; bottom: number } {
 		}
 	}
 	return { top: 0, bottom: window.innerHeight };
+}
+
+/** Scrolls only the list so the option shows; never the page around it. */
+function revealIn(
+	list: HTMLElement | null,
+	option: HTMLElement | null | undefined,
+): void {
+	if (!list || !option) return;
+	const top = option.offsetTop;
+	const bottom = top + option.offsetHeight;
+	if (top < list.scrollTop) list.scrollTop = top - 4;
+	else if (bottom > list.scrollTop + list.clientHeight)
+		list.scrollTop = bottom - list.clientHeight + 4;
 }
