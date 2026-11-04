@@ -111,6 +111,9 @@ export class BotTurnQueue {
 			if (item.origin.kind !== 'chat' && item.origin.triggerId === triggerId)
 				this.cancel(botId, item.id);
 	}
+	pause(botId: string): void {
+		this.lane(botId).stopped = true;
+	}
 	async block(botId: string): Promise<void> {
 		const lane = this.lane(botId);
 		lane.stopped = true;

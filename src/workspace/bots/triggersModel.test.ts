@@ -29,22 +29,22 @@ test('intervals read in hours when whole, else minutes', () => {
 	);
 	assert.equal(
 		describeCondition({ kind: 'event', event: 'agent.needsInput' }),
-		'When: Agent needs input',
+		'Unsupported project event; choose a source',
 	);
 });
 
-test('an interval under 5 minutes is refused, naming the minimum', () => {
+test('an interval under 1 minute is refused, naming the minimum', () => {
 	const form = {
 		...emptyTriggerForm(NOW),
 		name: 'Poll',
 		prompt: 'Check',
 		kind: 'every' as const,
-		every: '2',
+		every: '0.5',
 		everyUnit: 'minutes' as const,
 	};
 	const result = formToDraft(form);
 	assert.equal(result.ok, false);
-	assert.match(result.ok ? '' : result.problem, /5 minutes/);
+	assert.match(result.ok ? '' : result.problem, /1 minute/);
 	assert.equal(formToDraft({ ...form, every: '5' }).ok, true);
 });
 
@@ -73,6 +73,7 @@ test('a trigger round-trips through the form', () => {
 			name: 'Nightly',
 			enabled: false,
 			prompt: 'Summarise failures',
+			recovery: 'skip',
 			condition: { kind: 'every', intervalMs: 3 * 3_600_000 },
 		},
 	});

@@ -60,6 +60,7 @@ export interface BotAgents {
 	): Promise<BotAgentResult<BotAgentLaunch>>;
 }
 export interface BotServiceHooks {
+	readonly sources?: import('./sourceRunner.js').BotSourceRunner;
 	readonly serverId?: string;
 	readonly closeConnection?: (connectionId: string) => void;
 	readonly agents: BotAgents;
@@ -195,7 +196,11 @@ export class BotService extends EventEmitter {
 				});
 			},
 			changed: (id, active, queued) => {
-				this.hooks.activity(id, active, queued);
+				this.hooks.activity(
+					id,
+					active,
+					this.bots.get(id).enabled === false ? 0 : queued,
+				);
 				this.changed(id);
 			},
 			failure: (item) => {
@@ -205,6 +210,8 @@ export class BotService extends EventEmitter {
 				});
 			},
 		});
+		for (const bot of bots.list())
+			if (bot.enabled === false) this.queue.pause(bot.id);
 		this.runtime = new BotExecutionRuntime(
 			this,
 			() => this.driverForRuntime(),
@@ -412,6 +419,11 @@ export class BotService extends EventEmitter {
 			expectedRevision,
 		);
 		this.register(bot);
+		if (previous && previous.enabled !== bot.enabled) {
+			this.triggers.availability(bot.id, bot.enabled !== false);
+			if (bot.enabled === false) this.queue.pause(bot.id);
+			else this.queue.unblock(bot.id);
+		}
 		return bot;
 	}
 	/** Record (or forget) the device sign-in now held in the bot's own home. */
@@ -487,6 +499,28 @@ export class BotService extends EventEmitter {
 				: 'Bot deleted. Container resources could not be removed because the original engine is unavailable or could not complete removal. Removal is pending until that engine returns.',
 		};
 	}
+	get sourceRunner() {
+		return this.hooks.sources;
+	}
+	assertEnabled(botId: string): void {
+		if (this.bots.get(botId).enabled === false)
+			throw new BotError(
+				'unavailable',
+				'Bot is disabled. Enable bot to run it.',
+			);
+	}
+	enableBot(botId: string, enabled: boolean, revision?: number): void {
+		if (typeof enabled !== 'boolean')
+			throw new BotError('validation', 'enabled must be boolean');
+		const bot = this.bots.get(botId);
+		this.bots.save({ ...bot, enabled }, revision);
+		this.triggers.availability(botId, enabled);
+		if (enabled) this.queue.unblock(botId);
+		else {
+			this.queue.pause(botId);
+			this.hooks.activity(botId, this.queue.active(botId).length, 0);
+		}
+	}
 	driverForRuntime(): Promise<EngineDriver> {
 		return this.hooks.driver();
 	}
@@ -518,6 +552,7 @@ export class BotService extends EventEmitter {
 		queueId?: string;
 		error?: string;
 	}> {
+		this.assertEnabled(botId);
 		text(body, 65536, 'message');
 		const message = await this.serialize(botId, async () => {
 			if (this.deleting.has(botId))
@@ -621,6 +656,7 @@ export class BotService extends EventEmitter {
 		id?: string,
 		origin: BotSessionOrigin = { kind: 'chat' },
 		accept: () => boolean = () => true,
+		reservedId?: string,
 	): Promise<{ sessionId: string; queueId: string }> {
 		if (origin.kind === 'chat' && !origin.messageId) {
 			if (id) this.ownedSession(botId, id);
@@ -639,7 +675,14 @@ export class BotService extends EventEmitter {
 				queueId: result.queueId ?? result.sessionId,
 			};
 		}
-		return this.dispatchExecution(botId, prompt, id, origin, accept);
+		return this.dispatchExecution(
+			botId,
+			prompt,
+			id,
+			origin,
+			accept,
+			reservedId,
+		);
 	}
 	private async dispatchExecution(
 		botId: string,
@@ -647,6 +690,7 @@ export class BotService extends EventEmitter {
 		id?: string,
 		origin: BotSessionOrigin = { kind: 'chat' },
 		accept: () => boolean = () => true,
+		reservedId?: string,
 	): Promise<{ sessionId: string; queueId: string }> {
 		if (!this.initialized) await this.reconcile();
 		if (!this.initialized)
@@ -654,27 +698,33 @@ export class BotService extends EventEmitter {
 				'unavailable',
 				'bot restart reconciliation is not complete',
 			);
-		text(prompt, 64 * 1024, 'message');
+		this.assertEnabled(botId);
+		text(prompt, (origin.kind === 'chat' ? 64 : 80) * 1024, 'message');
 		return this.serialize(botId, async () => {
 			if (this.deleting.has(botId))
 				throw new BotError('conflict', 'This bot is being deleted.');
 			if (this.stoppingBots.has(botId))
 				throw new BotError('busy', 'bot is stopping');
+			this.assertEnabled(botId);
 			this.queue.unblock(botId);
 			const bot = this.bots.get(botId);
 			if (origin.kind === 'chat' && origin.messageId)
 				this.messages.get(botId, origin.messageId);
 			this.requireSignIn(bot.signIn);
 			if (id) this.ownedSession(botId, id);
-			let record: BotSessionRecord | undefined;
+			let record:BotSessionRecord|undefined;
+   if(reservedId){
+    const existing=this.sessions.list(botId).find(r=>r.id===reservedId);
+    if(existing){
+     if(existing.state!=='queued'||[...this.queue.list(botId),...this.queue.active(botId)].some(i=>i.sessionId===reservedId))return {sessionId:existing.id,queueId:existing.queuedMessage?.id??existing.id};
+     record=existing;
+    }
+   }
 			const waiting = this.queue.list(botId);
 			if (
 				waiting.length >= 20 ||
 				waiting.some((i) =>
-					origin.kind === 'chat'
-						? i.sessionId === id
-						: i.origin.kind !== 'chat' &&
-							i.origin.triggerId === origin.triggerId,
+					origin.kind === 'chat' ? i.sessionId === id : false,
 				)
 			)
 				throw new BotError(
@@ -694,11 +744,16 @@ export class BotService extends EventEmitter {
 				};
 				const lease = await this.hooks.credentials.acquire(botId, snapshot);
 				try {
-					record = this.sessions.create(botId, origin, {
-						...snapshot,
-						instructions: lease.redact(snapshot.instructions),
-						context: lease.redact(snapshot.context),
-					});
+					record = this.sessions.create(
+						botId,
+						origin,
+						{
+							...snapshot,
+							instructions: lease.redact(snapshot.instructions),
+							context: lease.redact(snapshot.context),
+						},
+						reservedId,
+					);
 				} finally {
 					lease.release();
 				}
@@ -721,17 +776,14 @@ export class BotService extends EventEmitter {
 			if (
 				queued.length >= 20 ||
 				queued.some((i) =>
-					origin.kind === 'chat'
-						? i.sessionId === record!.id
-						: i.origin.kind !== 'chat' &&
-							i.origin.triggerId === origin.triggerId,
+					origin.kind === 'chat' ? i.sessionId === record!.id : false,
 				)
 			)
 				throw new BotError(
 					'busy',
 					'bot queue is full or this work is already queued',
 				);
-			if (!accept()) {
+			if (!accept() || this.bots.get(botId).enabled === false) {
 				if (origin.kind !== 'chat')
 					this.sessions.patch(record.id, {
 						state: 'stopped',
@@ -822,7 +874,7 @@ export class BotService extends EventEmitter {
 	async stopBot(botId: string): Promise<void> {
 		this.stoppingBots.add(botId);
 		try {
-			await this.queue.block(botId);
+			if(this.bots.get(botId).enabled===false)this.queue.pause(botId);else await this.queue.block(botId);
 			for (const record of this.sessions.list(botId))
 				if (
 					this.live.has(record.id) ||
@@ -1177,6 +1229,7 @@ export class BotService extends EventEmitter {
 		let cleaned = !!driver;
 		for (const bot of this.bots.list()) {
 			for (const r of this.sessions.list(bot.id)) {
+				if(r.state==='queued'&&r.origin.kind!=='chat'&&this.triggers.observations.pending(bot.id).some(e=>e.sessionId===r.id))continue;
 				const interrupted = ['running', 'suspended', 'needs-you'].includes(
 					r.state,
 				);
@@ -1207,6 +1260,7 @@ export class BotService extends EventEmitter {
 						);
 					this.hooks.activity(bot.id, 0, 0);
 					this.queue.unblock(bot.id, true);
+					if(bot.enabled===false)this.queue.pause(bot.id);
 				} catch {
 					cleaned = false;
 				}
@@ -1247,6 +1301,7 @@ export class BotService extends EventEmitter {
 
 	async shutdown(): Promise<void> {
 		this.triggers.stop();
+		await this.triggers.idle();
 		this.initialized = false;
 		for (const bot of this.bots.list()) await this.stopBot(bot.id);
 		this.connections.close();

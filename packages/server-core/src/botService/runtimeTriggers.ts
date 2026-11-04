@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import type { BotTrigger, BotTriggerDraft } from '@terminay/protocol';
-import { TRIGGER_EVENT_KINDS } from '../scheduleEngine/types.js';
 import type { BotService } from './service.js';
 import { BotError, object, text } from './store.js';
 import { triggerId } from './triggerState.js';
@@ -16,6 +15,28 @@ const schema = (
 	required,
 	additionalProperties: false,
 });
+const match = {
+	type: 'object',
+	properties: {
+		kind: { enum: ['changed', 'contains', 'regex', 'exit', 'items'] },
+		text: string,
+		repeat: { type: 'boolean' },
+		code: { type: 'integer' },
+		items: string,
+		identity: string,
+		initial: { enum: ['process', 'baseline'] },
+	},
+	required: ['kind'],
+	additionalProperties: false,
+};
+const network = {
+	url: string,
+	headers: { type: 'object', additionalProperties: { type: 'string' } },
+};
+const periodic = {
+	intervalMs: { type: 'integer', minimum: 60000 },
+	timeoutMs: { type: 'integer', minimum: 1000, maximum: 300000 },
+};
 const condition = {
 	oneOf: [
 		schema(
@@ -32,7 +53,7 @@ const condition = {
 		schema(
 			{
 				kind: { const: 'every' },
-				intervalMs: { type: 'integer', minimum: 300000 },
+				intervalMs: { type: 'integer', minimum: 60000 },
 			},
 			['kind', 'intervalMs'],
 		),
@@ -48,19 +69,86 @@ const condition = {
 		),
 		schema(
 			{
-				kind: { const: 'event' },
-				event: { type: 'string', enum: TRIGGER_EVENT_KINDS },
+				kind: { const: 'command' },
+				command: string,
+				cwd: string,
+				...periodic,
+				match,
 			},
-			['kind', 'event'],
+			['kind', 'command', 'intervalMs', 'match'],
+		),
+		schema(
+			{
+				kind: { const: 'http' },
+				...network,
+				...periodic,
+				select: string,
+				match,
+			},
+			['kind', 'url', 'intervalMs'],
+		),
+		schema({ kind: { const: 'sse' }, ...network, eventName: string }, [
+			'kind',
+			'url',
+		]),
+		schema(
+			{
+				kind: { const: 'files' },
+				path: string,
+				recursive: { type: 'boolean' },
+				include: string,
+				exclude: string,
+				debounceMs: { type: 'integer', minimum: 0, maximum: 60000 },
+			},
+			['kind', 'path'],
 		),
 	],
 };
 const draft = schema(
-	{ name: string, enabled: { type: 'boolean' }, prompt: string, condition },
+	{
+		recovery: {
+			enum: ['skip', 'once', 'replay', 'ignore-gap', 'recover-available'],
+		},
+		name: string,
+		enabled: { type: 'boolean' },
+		prompt: string,
+		condition,
+	},
 	['name', 'enabled', 'prompt', 'condition'],
 );
 
 export const BOT_TRIGGER_TOOLS = [
+	{
+		name: 'triggers_test',
+		description:
+			'Execute a source test in your container, without AI sessions or changing observation memory. Commands may have side effects.',
+		inputSchema: schema({ condition, triggerId: string }, ['condition']),
+	},
+	{
+		name: 'triggers_memory',
+		description: 'Read up to 25 remembered item IDs; offset pagination.',
+		inputSchema: schema(
+			{ triggerId: string, offset: { type: 'integer', minimum: 0 } },
+			['triggerId'],
+		),
+	},
+	{
+		name: 'triggers_reset',
+		description:
+			'Reset observation memory. Explicit confirmed=true required: existing items may run again.',
+		inputSchema: schema(
+			{ triggerId: string, confirmed: { type: 'boolean' }, revision },
+			['triggerId', 'confirmed', 'revision'],
+		),
+	},
+	{
+		name: 'triggers_retry',
+		description: 'Retry a failed/blocked source or event dispatch.',
+		inputSchema: schema({ triggerId: string, revision }, [
+			'triggerId',
+			'revision',
+		]),
+	},
 	{
 		name: 'triggers_list',
 		description:
@@ -80,7 +168,7 @@ export const BOT_TRIGGER_TOOLS = [
 	{
 		name: 'triggers_create',
 		description:
-			'Create a trigger for your bot using the current server revision. Maximum 50 triggers; intervals must be at least 5 minutes.',
+			'Create a trigger for your bot using the current server revision. Maximum 50 triggers; intervals must be at least 1 minute.',
 		inputSchema: schema({ revision, draft }, ['revision', 'draft']),
 	},
 	{
@@ -139,6 +227,7 @@ function exact(
 }
 function parseCondition(value: unknown): unknown {
 	const c = object(value);
+	if (['command', 'http', 'sse', 'files'].includes(String(c.kind))) return c;
 	const keys =
 		c.kind === 'once'
 			? ['kind', 'at']
@@ -150,7 +239,13 @@ function parseCondition(value: unknown): unknown {
 	return exact(c, keys);
 }
 function parseDraft(value: unknown): BotTriggerDraft {
-	const d = exact(value, ['name', 'enabled', 'prompt', 'condition']);
+	const d = exact(value, [
+		'name',
+		'enabled',
+		'prompt',
+		'condition',
+		'recovery',
+	]);
 	parseCondition(d.condition);
 	// BotTriggers owns all value validation and normalization, shared with the UI.
 	return d as unknown as BotTriggerDraft;
@@ -172,6 +267,14 @@ export async function callTriggerTool(
 	a: Record<string, unknown>,
 ): Promise<unknown> {
 	const triggers = service.triggers;
+	if (name === 'triggers_test')
+		return triggers.test(botId, a.condition, a.triggerId as string | undefined);
+	if (name === 'triggers_memory')
+		return triggers.memory(
+			botId,
+			triggerId(a.triggerId),
+			a.offset as number | undefined,
+		);
 	if (name === 'triggers_preview')
 		return {
 			next: triggers.preview(parseCondition(a.condition)),
@@ -242,8 +345,9 @@ export async function callTriggerTool(
 			'Trigger server revision changed; re-read triggers before changing them',
 		);
 	if (name === 'triggers_create') {
-		const created = triggers.create(
+		const created = await triggers.prepare(
 			botId,
+			undefined,
 			parseDraft(a.draft),
 			snapshot.revision,
 		);
@@ -251,8 +355,14 @@ export async function callTriggerTool(
 	}
 	const trigger = get();
 	switch (name) {
+		case 'triggers_reset':
+			triggers.reset(botId, triggerId(a.triggerId), a.confirmed === true);
+			return context();
+		case 'triggers_retry':
+			triggers.retry(botId, triggerId(a.triggerId));
+			return context();
 		case 'triggers_update': {
-			const updated = triggers.update(
+			const updated = await triggers.prepare(
 				botId,
 				trigger.id,
 				parseDraft(a.draft),

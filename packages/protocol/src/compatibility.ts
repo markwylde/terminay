@@ -17,6 +17,7 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	macros: 'macros.v1',
 	automations: 'automations.v1',
 	bots: 'bots.v1',
+	botSources: 'bots.sources.v1',
 	/** Server-owned MCP permission approvals answered inline by clients. */
 	mcpApprovals: 'mcp-approvals.v1',
 	/** Server-owned app windows shown beside the terminal that opened them. */
@@ -97,6 +98,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.macros,
 			FEATURE_CAPABILITIES.automations,
 			FEATURE_CAPABILITIES.bots,
+			FEATURE_CAPABILITIES.botSources,
 			FEATURE_CAPABILITIES.mcpApprovals,
 			FEATURE_CAPABILITIES.appWindows,
 			FEATURE_CAPABILITIES.appWindowMirror,
@@ -114,7 +116,11 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 	});
 
 export type ConnectionCompatibility =
-	| Readonly<{ state: 'compatible'; serverVersion: string; capabilities: readonly string[] }>
+	| Readonly<{
+			state: 'compatible';
+			serverVersion: string;
+			capabilities: readonly string[];
+	  }>
 	| Readonly<{
 			state: 'degraded';
 			serverVersion: string;
@@ -142,14 +148,23 @@ export function parseServerCompatibilityRequirements(
 	const record = value as Record<string, unknown>;
 	const protocol = record.protocol;
 	if (
-		typeof protocol !== 'object' || protocol === null || Array.isArray(protocol)
-		|| !isVersion((protocol as Record<string, unknown>).minimum)
-		|| !isVersion((protocol as Record<string, unknown>).maximum)
-		|| ((protocol as Record<string, number>).minimum as number) > ((protocol as Record<string, number>).maximum as number)
+		typeof protocol !== 'object' ||
+		protocol === null ||
+		Array.isArray(protocol) ||
+		!isVersion((protocol as Record<string, unknown>).minimum) ||
+		!isVersion((protocol as Record<string, unknown>).maximum) ||
+		((protocol as Record<string, number>).minimum as number) >
+			((protocol as Record<string, number>).maximum as number)
 	)
 		throw new TypeError('invalid server compatibility protocol range');
-	const required = capabilityList(record.requiredCapabilities, 'requiredCapabilities');
-	const optional = capabilityList(record.optionalCapabilities, 'optionalCapabilities');
+	const required = capabilityList(
+		record.requiredCapabilities,
+		'requiredCapabilities',
+	);
+	const optional = capabilityList(
+		record.optionalCapabilities,
+		'optionalCapabilities',
+	);
 	if (required.some((capability) => optional.includes(capability)))
 		throw new TypeError('a capability cannot be both required and optional');
 	return Object.freeze({
@@ -169,33 +184,50 @@ export function evaluateServerCompatibility(
 	hello: ServerHello | IncompatibleVersionEnvelope,
 ): ConnectionCompatibility {
 	if (hello.type === 'incompatible_version') {
-		const serverProtocol = { minimum: hello.supportedMin, maximum: hello.supportedMax };
-		const upgrade = hello.supportedMax < requirements.protocol.minimum ? 'server' : 'client';
+		const serverProtocol = {
+			minimum: hello.supportedMin,
+			maximum: hello.supportedMax,
+		};
+		const upgrade =
+			hello.supportedMax < requirements.protocol.minimum ? 'server' : 'client';
 		return Object.freeze({
 			state: 'incompatible',
 			reason: 'protocol',
 			upgrade,
 			serverProtocol,
-			message: upgrade === 'server'
-				? `This server speaks protocol ${hello.supportedMin}–${hello.supportedMax}; this Terminay needs at least ${requirements.protocol.minimum}. Update the server.`
-				: `This server needs protocol ${hello.supportedMin}–${hello.supportedMax}; this Terminay speaks up to ${requirements.protocol.maximum}. Update Terminay.`,
+			message:
+				upgrade === 'server'
+					? `This server speaks protocol ${hello.supportedMin}–${hello.supportedMax}; this Terminay needs at least ${requirements.protocol.minimum}. Update the server.`
+					: `This server needs protocol ${hello.supportedMin}–${hello.supportedMax}; this Terminay speaks up to ${requirements.protocol.maximum}. Update Terminay.`,
 		});
 	}
-	if (hello.protocolVersion < requirements.protocol.minimum || hello.protocolVersion > requirements.protocol.maximum) {
-		const upgrade = hello.protocolVersion < requirements.protocol.minimum ? 'server' : 'client';
+	if (
+		hello.protocolVersion < requirements.protocol.minimum ||
+		hello.protocolVersion > requirements.protocol.maximum
+	) {
+		const upgrade =
+			hello.protocolVersion < requirements.protocol.minimum
+				? 'server'
+				: 'client';
 		return Object.freeze({
 			state: 'incompatible',
 			reason: 'protocol',
 			upgrade,
 			serverVersion: hello.serverVersion,
-			serverProtocol: { minimum: hello.protocolVersion, maximum: hello.protocolVersion },
-			message: upgrade === 'server'
-				? `Server ${hello.serverVersion} speaks protocol ${hello.protocolVersion}; this Terminay needs at least ${requirements.protocol.minimum}. Update the server.`
-				: `Server ${hello.serverVersion} speaks protocol ${hello.protocolVersion}; this Terminay speaks up to ${requirements.protocol.maximum}. Update Terminay.`,
+			serverProtocol: {
+				minimum: hello.protocolVersion,
+				maximum: hello.protocolVersion,
+			},
+			message:
+				upgrade === 'server'
+					? `Server ${hello.serverVersion} speaks protocol ${hello.protocolVersion}; this Terminay needs at least ${requirements.protocol.minimum}. Update the server.`
+					: `Server ${hello.serverVersion} speaks protocol ${hello.protocolVersion}; this Terminay speaks up to ${requirements.protocol.maximum}. Update Terminay.`,
 		});
 	}
 	const advertised = new Set(hello.capabilities);
-	const missingRequired = requirements.requiredCapabilities.filter((capability) => !advertised.has(capability));
+	const missingRequired = requirements.requiredCapabilities.filter(
+		(capability) => !advertised.has(capability),
+	);
 	if (missingRequired.length > 0) {
 		return Object.freeze({
 			state: 'incompatible',
@@ -206,7 +238,9 @@ export function evaluateServerCompatibility(
 			message: `Server ${hello.serverVersion} does not provide ${missingRequired.join(', ')}. Update the server.`,
 		});
 	}
-	const missingOptional = requirements.optionalCapabilities.filter((capability) => !advertised.has(capability));
+	const missingOptional = requirements.optionalCapabilities.filter(
+		(capability) => !advertised.has(capability),
+	);
 	if (missingOptional.length > 0) {
 		return Object.freeze({
 			state: 'degraded',
@@ -215,19 +249,31 @@ export function evaluateServerCompatibility(
 			missingOptionalCapabilities: Object.freeze(missingOptional),
 		});
 	}
-	return Object.freeze({ state: 'compatible', serverVersion: hello.serverVersion, capabilities: Object.freeze([...hello.capabilities]) });
+	return Object.freeze({
+		state: 'compatible',
+		serverVersion: hello.serverVersion,
+		capabilities: Object.freeze([...hello.capabilities]),
+	});
 }
 
 function isVersion(value: unknown): value is number {
-	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 65_535;
+	return (
+		typeof value === 'number' &&
+		Number.isSafeInteger(value) &&
+		value >= 0 &&
+		value <= 65_535
+	);
 }
 
 function capabilityList(value: unknown, field: string): string[] {
-	if (!Array.isArray(value) || value.length > 256) throw new TypeError(`invalid ${field}`);
+	if (!Array.isArray(value) || value.length > 256)
+		throw new TypeError(`invalid ${field}`);
 	const list = value.map((entry) => {
-		if (typeof entry !== 'string' || !CAPABILITY.test(entry)) throw new TypeError(`invalid ${field}`);
+		if (typeof entry !== 'string' || !CAPABILITY.test(entry))
+			throw new TypeError(`invalid ${field}`);
 		return entry;
 	});
-	if (new Set(list).size !== list.length) throw new TypeError(`duplicate ${field}`);
+	if (new Set(list).size !== list.length)
+		throw new TypeError(`duplicate ${field}`);
 	return list;
 }

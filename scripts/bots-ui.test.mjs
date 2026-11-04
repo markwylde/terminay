@@ -27,7 +27,9 @@ await build({
 });
 const css = [
 	await readFile('src/workspace/bots/bots.css', 'utf8'),
- (await readFile('src/App.css','utf8')).slice((await readFile('src/App.css','utf8')).indexOf('.context-menu {')), 
+	(await readFile('src/App.css', 'utf8')).slice(
+		(await readFile('src/App.css', 'utf8')).indexOf('.context-menu {'),
+	),
 	await readFile('src/workspace/bots/botPanels.css', 'utf8'),
 ].join('\n');
 const browser = await chromium.launch({ headless: true });
@@ -382,10 +384,36 @@ const TAB = (patch = {}) => ({
 	...patch,
 });
 
-test('shared chat shows communication without provider traces; sessions open separate diagnostics',async()=>{
- const page=await open(TAB());try{await page.getByText('Looking now.',{exact:true}).waitFor();assert.equal(await page.locator('[data-terminay-bot-tool]').count(),0);assert.equal(await page.locator('[data-terminay-bot-new-chat]').count(),0);await page.locator('.bots-sess').first().click();await page.locator('[data-terminay-bot-session]').waitFor();await page.locator('[data-terminay-bot-tool="t1"]').waitFor();}finally{await page.close();}
+test('shared chat shows communication without provider traces; sessions open separate diagnostics', async () => {
+	const page = await open(TAB());
+	try {
+		await page.getByText('Looking now.', { exact: true }).waitFor();
+		assert.equal(await page.locator('[data-terminay-bot-tool]').count(), 0);
+		assert.equal(await page.locator('[data-terminay-bot-new-chat]').count(), 0);
+		await page.locator('.bots-sess').first().click();
+		await page.locator('[data-terminay-bot-session]').waitFor();
+		await page.locator('[data-terminay-bot-tool="t1"]').waitFor();
+	} finally {
+		await page.close();
+	}
 });
-test('sending remains available while another execution is running',async()=>{const page=await open(TAB({sessions:{[BIRD]:[session('s1',BIRD,{state:'running'})]}}));try{await page.locator('[data-terminay-bot-composer]').fill('New correction');await page.locator('[data-terminay-bot-send]').click();await page.getByText('New correction',{exact:true}).waitFor();const posted=(await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.messages.post');assert.equal(posted.length,1);assert.equal(posted[0].args[1].text,'New correction');}finally{await page.close();}});
+test('sending remains available while another execution is running', async () => {
+	const page = await open(
+		TAB({ sessions: { [BIRD]: [session('s1', BIRD, { state: 'running' })] } }),
+	);
+	try {
+		await page.locator('[data-terminay-bot-composer]').fill('New correction');
+		await page.locator('[data-terminay-bot-send]').click();
+		await page.getByText('New correction', { exact: true }).waitFor();
+		const posted = (await calls(page, 'transport.command')).filter(
+			(c) => c.args[0] === 'bots.messages.post',
+		);
+		assert.equal(posted.length, 1);
+		assert.equal(posted[0].args[1].text, 'New correction');
+	} finally {
+		await page.close();
+	}
+});
 
 test('the tab keeps its mode, configure tab, and unsent text', async () => {
 	const page = await open(TAB());
@@ -590,7 +618,9 @@ test('a new bot shows Not signed in, and has no shared-login option', async () =
 			0,
 		);
 		assert.equal(
-			await page.locator('[data-terminay-bot-signin-option="device"]').isDisabled(),
+			await page
+				.locator('[data-terminay-bot-signin-option="device"]')
+				.isDisabled(),
 			true,
 		);
 	} finally {
@@ -617,7 +647,9 @@ test('device sign-in opens an inline terminal for the sign-in command, and Close
 		);
 		assert.equal(open.args[1].purpose, 'sign-in');
 		await page
-			.locator('[data-terminay-bot-device-terminal] button', { hasText: 'Close' })
+			.locator('[data-terminay-bot-device-terminal] button', {
+				hasText: 'Close',
+			})
 			.click();
 		assert.equal(
 			await page.locator('[data-terminay-bot-device-terminal]').count(),
@@ -641,7 +673,9 @@ test('a device-signed-in bot can choose it and sign out', async () => {
 	try {
 		await page.locator('[data-terminay-bot-device="signed-in"]').waitFor();
 		assert.equal(
-			await page.locator('[data-terminay-bot-signin-option="device"]').isChecked(),
+			await page
+				.locator('[data-terminay-bot-signin-option="device"]')
+				.isChecked(),
 			true,
 		);
 		await page.locator('[data-terminay-bot-device-signout]').click();
@@ -702,9 +736,16 @@ test('Environment › Overview settings: default proxy, limits and idle stop sav
 			/new limits apply when the container is recreated/,
 		);
 
-		await settings.locator('[data-terminay-bot-engine-access="proxy"]').waitFor();
-		assert.equal(await settings.getByRole('switch', {name:'Share engine socket'}).count(),0);
-		assert.equal((await calls(page,'setSettings')).length,0);
+		await settings
+			.locator('[data-terminay-bot-engine-access="proxy"]')
+			.waitFor();
+		assert.equal(
+			await settings
+				.getByRole('switch', { name: 'Share engine socket' })
+				.count(),
+			0,
+		);
+		assert.equal((await calls(page, 'setSettings')).length, 0);
 
 		// Limits: invalid input is explained, valid input saves.
 		const cpus = settings.locator('[data-terminay-bot-env-limit="cpus"]');
@@ -728,7 +769,10 @@ test('Environment › Overview settings: default proxy, limits and idle stop sav
 		await page.waitForFunction(
 			() => window.__calls.filter((c) => c.op === 'setSettings').length === 2,
 		);
-		assert.equal((await calls(page, 'setSettings'))[1].args[0].idleStopMs, null);
+		assert.equal(
+			(await calls(page, 'setSettings'))[1].args[0].idleStopMs,
+			null,
+		);
 		await shot(page, 'environment-settings');
 	} finally {
 		await page.close();
@@ -824,13 +868,21 @@ test('Environment › Desktop opens view-only, and Control opens a new stream', 
 });
 
 test('Environment › Containers explains proxy attribution without an opt-in setting', async () => {
- const page=await environment('containers');
- try {
-  const panel=page.locator('[data-terminay-bot-env-containers]');
-  assert.match(await panel.innerText(),/created through this bot’s engine proxy/);
-  assert.match(await panel.innerText(),/control other containers/);
-  assert.equal(await page.locator('[data-terminay-bot-socket-off]').count(),0);
- } finally {await page.close();}
+	const page = await environment('containers');
+	try {
+		const panel = page.locator('[data-terminay-bot-env-containers]');
+		assert.match(
+			await panel.innerText(),
+			/created through this bot’s engine proxy/,
+		);
+		assert.match(await panel.innerText(), /control other containers/);
+		assert.equal(
+			await page.locator('[data-terminay-bot-socket-off]').count(),
+			0,
+		);
+	} finally {
+		await page.close();
+	}
 });
 
 const WORKLOAD = {
@@ -839,66 +891,148 @@ const WORKLOAD = {
 	image: 'docker.io/library/python:3.13-alpine',
 	state: 'running',
 	ports: JSON.stringify({
-		'8080/tcp': [{HostIp:'0.0.0.0',HostPort:'8080'}, {HostIp:'::',HostPort:'8080'}],
+		'8080/tcp': [
+			{ HostIp: '0.0.0.0', HostPort: '8080' },
+			{ HostIp: '::', HostPort: '8080' },
+		],
 	}),
 	createdAt: new Date(NOW - 120_000).toISOString(),
 };
 
 test('Containers presents readable workloads without overflow or stacked actions at wide and narrow sizes', async () => {
-	const page = await environment('containers', {containers: [WORKLOAD, {
-		...WORKLOAD, id:'b'.repeat(64), name:'database', state:'exited', ports:'{}', createdAt:'',
-	}, {
-		...WORKLOAD, id:'c'.repeat(64), name:'dns',
-		ports: JSON.stringify({'53/udp':[{HostIp:'127.0.0.1',HostPort:'5353'}], '9000/tcp':null}),
-	}]});
+	const page = await environment('containers', {
+		containers: [
+			WORKLOAD,
+			{
+				...WORKLOAD,
+				id: 'b'.repeat(64),
+				name: 'database',
+				state: 'exited',
+				ports: '{}',
+				createdAt: '',
+			},
+			{
+				...WORKLOAD,
+				id: 'c'.repeat(64),
+				name: 'dns',
+				ports: JSON.stringify({
+					'53/udp': [{ HostIp: '127.0.0.1', HostPort: '5353' }],
+					'9000/tcp': null,
+				}),
+			},
+		],
+	});
 	try {
 		const row = page.locator(`[data-terminay-bot-sibling="${WORKLOAD.id}"]`);
 		await row.waitFor();
-		assert.equal(await row.locator('.bots-container__port').count(),1);
-		assert.equal(await row.locator('.bots-container__port').innerText(),'8080 → 8080');
-		assert.match(await row.locator('time').innerText(),/2m ago/);
+		assert.equal(await row.locator('.bots-container__port').count(), 1);
+		assert.equal(
+			await row.locator('.bots-container__port').innerText(),
+			'8080 → 8080',
+		);
+		assert.match(await row.locator('time').innerText(), /2m ago/);
 		assert.ok(await row.locator('time').getAttribute('title'));
-		assert.match(await page.locator(`[data-terminay-bot-sibling="${'b'.repeat(64)}"]`).innerText(),/None published/);
-		assert.match(await page.locator(`[data-terminay-bot-sibling="${'b'.repeat(64)}"] time`).innerText(),/Unknown/);
+		assert.match(
+			await page
+				.locator(`[data-terminay-bot-sibling="${'b'.repeat(64)}"]`)
+				.innerText(),
+			/None published/,
+		);
+		assert.match(
+			await page
+				.locator(`[data-terminay-bot-sibling="${'b'.repeat(64)}"] time`)
+				.innerText(),
+			/Unknown/,
+		);
 		const dns = page.locator(`[data-terminay-bot-sibling="${'c'.repeat(64)}"]`);
-		assert.match(await dns.innerText(),/127.0.0.1:5353 → 53\/udp/);
-		assert.match(await dns.innerText(),/9000\/tcp \(internal\)/);
-		for (const width of [1920,1000,760,480]) {
-			await page.setViewportSize({width,height:900});
-			const layout = await row.evaluate(node => {
-				const bounds=node.getBoundingClientRect();
-				const actions=[...node.querySelectorAll('.bots-container__actions button')].map(button=>button.getBoundingClientRect());
-				return {overflow:node.scrollWidth > node.clientWidth, actions:actions.map(a=>({top:a.top,right:a.right})),right:bounds.right};
+		assert.match(await dns.innerText(), /127.0.0.1:5353 → 53\/udp/);
+		assert.match(await dns.innerText(), /9000\/tcp \(internal\)/);
+		for (const width of [1920, 1000, 760, 480]) {
+			await page.setViewportSize({ width, height: 900 });
+			const layout = await row.evaluate((node) => {
+				const bounds = node.getBoundingClientRect();
+				const actions = [
+					...node.querySelectorAll('.bots-container__actions button'),
+				].map((button) => button.getBoundingClientRect());
+				return {
+					overflow: node.scrollWidth > node.clientWidth,
+					actions: actions.map((a) => ({ top: a.top, right: a.right })),
+					right: bounds.right,
+				};
 			});
-			assert.equal(layout.overflow,false,`row overflow at ${width}`);
-			assert.ok(layout.actions.every(a=>Math.abs(a.top-layout.actions[0].top)<1),`stacked actions at ${width}`);
-			assert.ok(layout.actions.every(a=>a.right<=layout.right),`clipped actions at ${width}`);
-			assert.equal(await row.locator('.bots-container__identity strong').getAttribute('title'),WORKLOAD.name);
-			await shot(page,`containers-${width}`);
+			assert.equal(layout.overflow, false, `row overflow at ${width}`);
+			assert.ok(
+				layout.actions.every(
+					(a) => Math.abs(a.top - layout.actions[0].top) < 1,
+				),
+				`stacked actions at ${width}`,
+			);
+			assert.ok(
+				layout.actions.every((a) => a.right <= layout.right),
+				`clipped actions at ${width}`,
+			);
+			assert.equal(
+				await row
+					.locator('.bots-container__identity strong')
+					.getAttribute('title'),
+				WORKLOAD.name,
+			);
+			await shot(page, `containers-${width}`);
 		}
-	} finally {await page.close();}
+	} finally {
+		await page.close();
+	}
 });
 
 test('Containers keeps actions scoped and removal uses a cancelable native confirmation', async () => {
-	const page = await environment('containers',{containers:[WORKLOAD]});
+	const page = await environment('containers', { containers: [WORKLOAD] });
 	try {
-		const row=page.locator(`[data-terminay-bot-sibling="${WORKLOAD.id}"]`);
-		await row.getByRole('button',{name:'Stop',exact:true}).click();
-		await row.getByRole('button',{name:`Restart ${WORKLOAD.name}`,exact:true}).click();
-		await row.getByRole('button',{name:`Logs for ${WORKLOAD.name}`,exact:true}).click();
-		await row.getByRole('button',{name:`Remove ${WORKLOAD.name}`,exact:true}).click();
-		const dialog=page.getByRole('alertdialog');
+		const row = page.locator(`[data-terminay-bot-sibling="${WORKLOAD.id}"]`);
+		await row.getByRole('button', { name: 'Stop', exact: true }).click();
+		await row
+			.getByRole('button', { name: `Restart ${WORKLOAD.name}`, exact: true })
+			.click();
+		await row
+			.getByRole('button', { name: `Logs for ${WORKLOAD.name}`, exact: true })
+			.click();
+		await row
+			.getByRole('button', { name: `Remove ${WORKLOAD.name}`, exact: true })
+			.click();
+		const dialog = page.getByRole('alertdialog');
 		await dialog.waitFor();
-		assert.equal(await dialog.evaluate(node=>node.matches(':modal')),true);
-		assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(node=>node===document.activeElement),true);
-		await shot(page,'containers-remove-dialog');
-		assert.deepEqual((await calls(page,'containerAction')).map(c=>c.args.slice(1,3)),[[WORKLOAD.id,'stop'],[WORKLOAD.id,'restart'],[WORKLOAD.id,'logs']]);
+		assert.equal(await dialog.evaluate((node) => node.matches(':modal')), true);
+		assert.equal(
+			await dialog
+				.getByRole('button', { name: 'Cancel', exact: true })
+				.evaluate((node) => node === document.activeElement),
+			true,
+		);
+		await shot(page, 'containers-remove-dialog');
+		assert.deepEqual(
+			(await calls(page, 'containerAction')).map((c) => c.args.slice(1, 3)),
+			[
+				[WORKLOAD.id, 'stop'],
+				[WORKLOAD.id, 'restart'],
+				[WORKLOAD.id, 'logs'],
+			],
+		);
 		await page.keyboard.press('Escape');
-		await dialog.waitFor({state:'detached'});
-		await row.getByRole('button',{name:`Remove ${WORKLOAD.name}`,exact:true}).click();
-		await dialog.getByRole('button',{name:'Remove container',exact:true}).click();
-		assert.deepEqual((await calls(page,'containerAction')).at(-1).args,[BIRD,WORKLOAD.id,'remove',true]);
-	} finally {await page.close();}
+		await dialog.waitFor({ state: 'detached' });
+		await row
+			.getByRole('button', { name: `Remove ${WORKLOAD.name}`, exact: true })
+			.click();
+		await dialog
+			.getByRole('button', { name: 'Remove container', exact: true })
+			.click();
+		assert.deepEqual((await calls(page, 'containerAction')).at(-1).args, [
+			BIRD,
+			WORKLOAD.id,
+			'remove',
+			true,
+		]);
+	} finally {
+		await page.close();
+	}
 });
 
 async function configure(tab, patch = {}) {
@@ -938,21 +1072,37 @@ test('Triggers shows plain words, missed firings, upcoming, and Run now on a dis
 		await row.waitFor();
 		for (const width of [1920, 760]) {
 			await page.setViewportSize({ width, height: 900 });
-			const layout = await page.locator('[data-terminay-bot-panel="triggers"]').evaluate((panel) => {
-				const style = getComputedStyle(panel);
-				const content = panel.querySelector('.bots-trigpage').getBoundingClientRect();
-				const button = panel.querySelector('[data-terminay-bot-trigger-new]').getBoundingClientRect();
-				const bounds = panel.getBoundingClientRect();
-				return {
-					available: panel.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
-					content: content.width,
-					buttonRight: button.right,
-					right: bounds.left + panel.clientWidth - parseFloat(style.paddingRight),
-					overflow: panel.scrollWidth > panel.clientWidth,
-				};
-			});
-			assert.ok(Math.abs(layout.content - layout.available) < 1, `Triggers fills a ${width}px panel`);
-			assert.ok(Math.abs(layout.buttonRight - layout.right) < 1, 'New trigger aligns with the panel right padding');
+			const layout = await page
+				.locator('[data-terminay-bot-panel="triggers"]')
+				.evaluate((panel) => {
+					const style = getComputedStyle(panel);
+					const content = panel
+						.querySelector('.bots-trigpage')
+						.getBoundingClientRect();
+					const button = panel
+						.querySelector('[data-terminay-bot-trigger-new]')
+						.getBoundingClientRect();
+					const bounds = panel.getBoundingClientRect();
+					return {
+						available:
+							panel.clientWidth -
+							parseFloat(style.paddingLeft) -
+							parseFloat(style.paddingRight),
+						content: content.width,
+						buttonRight: button.right,
+						right:
+							bounds.left + panel.clientWidth - parseFloat(style.paddingRight),
+						overflow: panel.scrollWidth > panel.clientWidth,
+					};
+				});
+			assert.ok(
+				Math.abs(layout.content - layout.available) < 1,
+				`Triggers fills a ${width}px panel`,
+			);
+			assert.ok(
+				Math.abs(layout.buttonRight - layout.right) < 1,
+				'New trigger aligns with the panel right padding',
+			);
 			assert.equal(layout.overflow, false);
 		}
 		await page.setViewportSize({ width: 1280, height: 820 });
@@ -968,15 +1118,17 @@ test('Triggers shows plain words, missed firings, upcoming, and Run now on a dis
 			/Nightly build/,
 		);
 		await page.locator('[data-terminay-bot-trigger-new]').click();
-		await page.locator('[data-terminay-bot-trigger-kind="every"]').click();
-		await page.locator('[data-terminay-bot-trigger-field="every"]').fill('2');
+		await page
+			.locator('[data-terminay-bot-trigger-type]')
+			.selectOption('every');
+		await page.locator('[data-terminay-bot-trigger-field="every"]').fill('0.5');
 		await page
 			.locator('select')
-			.filter({ hasText: 'minutes' })
+			.filter({ hasText: 'Minutes' })
 			.selectOption('minutes');
 		assert.match(
 			await page.locator('[data-terminay-bot-trigger-preview]').innerText(),
-			/at least 5 minutes/,
+			/at least 1 minute/,
 		);
 		await shot(page, 'triggers');
 	} finally {
@@ -1002,7 +1154,10 @@ test('Sessions filters and reads diagnostics without conversation continuation',
 	});
 	try {
 		await page.locator('[data-terminay-bot-session="s2"]').waitFor();
-		assert.equal(await page.locator('[data-terminay-bot-session-continue]').count(),0);
+		assert.equal(
+			await page.locator('[data-terminay-bot-session-continue]').count(),
+			0,
+		);
 		await page.locator('[data-terminay-bot-runner] summary').click();
 		assert.match(
 			await page.locator('[data-terminay-bot-runner]').innerText(),
@@ -1082,126 +1237,474 @@ test('Use this engine asks before replacing a pinned engine', async () => {
 });
 
 test('changed engine at the same long socket address keeps its recovery action visible inside the rail', async () => {
- const address = `unix:///private/var/folders/${'long-machine-socket-path-'.repeat(8)}/podman-machine-default-api.sock`;
- const page = await open({...FLEET,engine:{engine:'podman',available:false,reason:'engine-changed',detail:'Select the engine again',pinned:{kind:'podman',address},candidates:[{kind:'podman',address,available:true,reason:null}],runningContainers:0,botContainers:0,image:{state:'missing',fingerprint:null,builtAt:null,error:null}}});
- try {
-  const use=page.getByRole('button',{name:'Use this engine'});await use.waitFor({state:'visible'});
-  const box=await use.boundingBox(),rail=await page.locator('.bots-rail').boundingBox();assert.ok(box && rail);assert.ok(box.x>=rail.x && box.x+box.width<=rail.x+rail.width,'button stays inside rail');
-  const overflow=await page.locator('.bots-rail').evaluate(el=>el.scrollWidth>el.clientWidth);assert.equal(overflow,false,'socket path cannot force horizontal scrolling');
-  await use.click();await page.getByRole('alertdialog',{name:'Switch to Podman?'}).waitFor();
-  await shot(page,'engine-pin-recovery-long-socket');
- } finally {await page.close();}
+	const address = `unix:///private/var/folders/${'long-machine-socket-path-'.repeat(8)}/podman-machine-default-api.sock`;
+	const page = await open({
+		...FLEET,
+		engine: {
+			engine: 'podman',
+			available: false,
+			reason: 'engine-changed',
+			detail: 'Select the engine again',
+			pinned: { kind: 'podman', address },
+			candidates: [{ kind: 'podman', address, available: true, reason: null }],
+			runningContainers: 0,
+			botContainers: 0,
+			image: {
+				state: 'missing',
+				fingerprint: null,
+				builtAt: null,
+				error: null,
+			},
+		},
+	});
+	try {
+		const use = page.getByRole('button', { name: 'Use this engine' });
+		await use.waitFor({ state: 'visible' });
+		const box = await use.boundingBox(),
+			rail = await page.locator('.bots-rail').boundingBox();
+		assert.ok(box && rail);
+		assert.ok(
+			box.x >= rail.x && box.x + box.width <= rail.x + rail.width,
+			'button stays inside rail',
+		);
+		const overflow = await page
+			.locator('.bots-rail')
+			.evaluate((el) => el.scrollWidth > el.clientWidth);
+		assert.equal(
+			overflow,
+			false,
+			'socket path cannot force horizontal scrolling',
+		);
+		await use.click();
+		await page
+			.getByRole('alertdialog', { name: 'Switch to Podman?' })
+			.waitFor();
+		await shot(page, 'engine-pin-recovery-long-socket');
+	} finally {
+		await page.close();
+	}
 });
-
 
 test('right-click edits user messages, deletes assistant messages, and clear chat confirms or cancels', async () => {
- const page=await open(TAB({sessions:{[BIRD]:[session('s1',BIRD,{state:'completed'})]}}));
- try {
-  // Match Dockview's offset, transformed pane, which creates a fixed-position containing block.
-  await page.locator('.bots-tab').evaluate(el=>{el.style.transform='translate(70px, 35px)';el.style.width='calc(100% - 140px)';el.style.height='calc(100% - 70px)';});
-  const target=await page.locator('[data-terminay-message-key="user:0"]').boundingBox();
-  const pointer={x:target.x+35,y:target.y+20};
-  await page.mouse.click(pointer.x,pointer.y,{button:'right'});
-  const menuBox=await page.locator('.context-menu').boundingBox();
-  assert.ok(Math.abs(menuBox.x-pointer.x)<2 && Math.abs(menuBox.y-pointer.y)<2,'menu opens at the pointer even inside an offset transformed pane');
-  await page.getByRole('button',{name:'Edit message'}).click();
-  const editor=page.getByRole('dialog',{name:'Edit message'});await editor.getByRole('textbox',{name:'Message text'}).fill('Updated request');
-  await editor.getByRole('button',{name:'Save message'}).click();await page.getByText('Updated request',{exact:true}).waitFor();
-  assert.equal((await calls(page,'transport.command')).find(c=>c.args[0]==='bots.messages.edit').args[1].text,'Updated request');
-  await page.locator('[data-terminay-message-key="agent:1"]').click({button:'right'});await page.getByRole('button',{name:'Delete message'}).click();
-  await page.waitForFunction(()=>!document.querySelector('[data-terminay-message-key="agent:1"]'));
-  assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.messages.remove').length,1);
-  await page.getByRole('button',{name:'Clear chat',exact:true}).click();
-  const dialogBox=await page.getByRole('alertdialog').boundingBox();
-  const viewport=page.viewportSize();assert.ok(Math.abs(dialogBox.x+dialogBox.width/2-viewport.width/2)<2,'dialog centers in the viewport');
-  assert.equal(await page.getByRole('alertdialog').evaluate(el=>getComputedStyle(el).gap),'14px');
-  await page.getByRole('alertdialog').getByRole('button',{name:'Cancel'}).click();assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.messages.clear').length,0);
-  await page.getByRole('button',{name:'Clear chat',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Clear chat',exact:true}).click();
-  await page.locator('[data-terminay-bot-chat="empty"]').waitFor();assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.messages.clear').length,1);
- } finally {await page.close();}
+	const page = await open(
+		TAB({
+			sessions: { [BIRD]: [session('s1', BIRD, { state: 'completed' })] },
+		}),
+	);
+	try {
+		// Match Dockview's offset, transformed pane, which creates a fixed-position containing block.
+		await page.locator('.bots-tab').evaluate((el) => {
+			el.style.transform = 'translate(70px, 35px)';
+			el.style.width = 'calc(100% - 140px)';
+			el.style.height = 'calc(100% - 70px)';
+		});
+		const target = await page
+			.locator('[data-terminay-message-key="user:0"]')
+			.boundingBox();
+		const pointer = { x: target.x + 35, y: target.y + 20 };
+		await page.mouse.click(pointer.x, pointer.y, { button: 'right' });
+		const menuBox = await page.locator('.context-menu').boundingBox();
+		assert.ok(
+			Math.abs(menuBox.x - pointer.x) < 2 &&
+				Math.abs(menuBox.y - pointer.y) < 2,
+			'menu opens at the pointer even inside an offset transformed pane',
+		);
+		await page.getByRole('button', { name: 'Edit message' }).click();
+		const editor = page.getByRole('dialog', { name: 'Edit message' });
+		await editor
+			.getByRole('textbox', { name: 'Message text' })
+			.fill('Updated request');
+		await editor.getByRole('button', { name: 'Save message' }).click();
+		await page.getByText('Updated request', { exact: true }).waitFor();
+		assert.equal(
+			(await calls(page, 'transport.command')).find(
+				(c) => c.args[0] === 'bots.messages.edit',
+			).args[1].text,
+			'Updated request',
+		);
+		await page
+			.locator('[data-terminay-message-key="agent:1"]')
+			.click({ button: 'right' });
+		await page.getByRole('button', { name: 'Delete message' }).click();
+		await page.waitForFunction(
+			() => !document.querySelector('[data-terminay-message-key="agent:1"]'),
+		);
+		assert.equal(
+			(await calls(page, 'transport.command')).filter(
+				(c) => c.args[0] === 'bots.messages.remove',
+			).length,
+			1,
+		);
+		await page.getByRole('button', { name: 'Clear chat', exact: true }).click();
+		const dialogBox = await page.getByRole('alertdialog').boundingBox();
+		const viewport = page.viewportSize();
+		assert.ok(
+			Math.abs(dialogBox.x + dialogBox.width / 2 - viewport.width / 2) < 2,
+			'dialog centers in the viewport',
+		);
+		assert.equal(
+			await page
+				.getByRole('alertdialog')
+				.evaluate((el) => getComputedStyle(el).gap),
+			'14px',
+		);
+		await page
+			.getByRole('alertdialog')
+			.getByRole('button', { name: 'Cancel' })
+			.click();
+		assert.equal(
+			(await calls(page, 'transport.command')).filter(
+				(c) => c.args[0] === 'bots.messages.clear',
+			).length,
+			0,
+		);
+		await page.getByRole('button', { name: 'Clear chat', exact: true }).click();
+		await page
+			.getByRole('alertdialog')
+			.getByRole('button', { name: 'Clear chat', exact: true })
+			.click();
+		await page.locator('[data-terminay-bot-chat="empty"]').waitFor();
+		assert.equal(
+			(await calls(page, 'transport.command')).filter(
+				(c) => c.args[0] === 'bots.messages.clear',
+			).length,
+			1,
+		);
+	} finally {
+		await page.close();
+	}
 });
 
- test('completed turns keep unreported tool outcomes neutral instead of spinning or claiming success', async()=>{
- for(const state of ['running','completed','stopped','failed']) {
- const page=await open(TAB({sessions:{[BIRD]:[session('s1',BIRD,{state})]},transcripts:{s1:[{kind:'user',text:'Open browser'},{sessionUpdate:'tool_call',toolCallId:'browser',title:'chromium',status:'in_progress'}]}}));
- try {await page.locator('.bots-sess').first().click();const tool=page.locator('[data-terminay-bot-tool="browser"]');await tool.waitFor();assert.equal(await tool.locator('.bots-spin').count(),state==='running'?1:0);if(state!=='running')await tool.getByText('chromium · No final status reported',{exact:true}).waitFor();}finally{await page.close();}
- }
- });
+test('completed turns keep unreported tool outcomes neutral instead of spinning or claiming success', async () => {
+	for (const state of ['running', 'completed', 'stopped', 'failed']) {
+		const page = await open(
+			TAB({
+				sessions: { [BIRD]: [session('s1', BIRD, { state })] },
+				transcripts: {
+					s1: [
+						{ kind: 'user', text: 'Open browser' },
+						{
+							sessionUpdate: 'tool_call',
+							toolCallId: 'browser',
+							title: 'chromium',
+							status: 'in_progress',
+						},
+					],
+				},
+			}),
+		);
+		try {
+			await page.locator('.bots-sess').first().click();
+			const tool = page.locator('[data-terminay-bot-tool="browser"]');
+			await tool.waitFor();
+			assert.equal(
+				await tool.locator('.bots-spin').count(),
+				state === 'running' ? 1 : 0,
+			);
+			if (state !== 'running')
+				await tool
+					.getByText('chromium · No final status reported', { exact: true })
+					.waitFor();
+		} finally {
+			await page.close();
+		}
+	}
+});
 
- test('chat renders container screenshots inline and blocks remote images and host paths',async()=>{
- const page=await open(TAB({sessions:{[BIRD]:[session('s1',BIRD,{state:'completed'})]},transcripts:{s1:[{kind:'user',text:'Show screenshot'},{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'![BBC screenshot](/tmp/desktop-after.png)\n![Missing](/tmp/missing.png)\n![Remote](https://example.com/track.png)\n![Host](/etc/secret.png)'}}]}}));
- try {
- const image=page.getByRole('img',{name:'BBC screenshot',exact:true});await image.waitFor();await page.waitForFunction(()=>document.querySelector('.bots-inline-image')?.naturalWidth===1);
- assert.ok((await image.getAttribute('src')).startsWith('blob:'));
- await page.getByText('Image unavailable: Missing',{exact:true}).waitFor();
- assert.equal(await page.locator('img[src^="https://"]').count(),0);
- const requests=(await calls(page,'transport.queryWithBody')).filter(c=>c.args[0]==='bots.image.read');assert.deepEqual(requests.map(c=>c.args[1].path).sort(),['/tmp/desktop-after.png','/tmp/missing.png']);
- }finally{await page.close();}
- });
-test('shared history loads older messages on demand without rendering provider traces',async()=>{const entries=Array.from({length:60},(_,i)=>({kind:'user',text:`Historical message ${i}`}));const page=await open(TAB({transcripts:{s1:entries}}));try{await page.getByText('Historical message 59',{exact:true}).waitFor();assert.equal(await page.locator('[data-terminay-message-key]').count(),25);assert.equal(await page.getByText('Historical message 0',{exact:true}).count(),0);await page.getByRole('button',{name:'Load older messages'}).click();await page.getByText('Historical message 10',{exact:true}).waitFor();assert.equal(await page.locator('[data-terminay-message-key]').count(),50);await page.evaluate(()=>window.__harness.setTranscript('s1',[{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Private live output'}}]));assert.equal(await page.getByText('Private live output',{exact:true}).count(),0);}finally{await page.close();}});
-test('a pending post preserves text typed for the next message',async()=>{const page=await open(TAB({postDelayMs:400}));try{const composer=page.locator('[data-terminay-bot-composer]');await composer.fill('First message');await page.locator('[data-terminay-bot-send]').click();await composer.fill('Second message still being written');await page.getByRole('button',{name:'Send',exact:true}).waitFor();assert.equal(await composer.inputValue(),'Second message still being written');await page.getByText('First message',{exact:true}).waitFor();}finally{await page.close();}});
+test('chat renders container screenshots inline and blocks remote images and host paths', async () => {
+	const page = await open(
+		TAB({
+			sessions: { [BIRD]: [session('s1', BIRD, { state: 'completed' })] },
+			transcripts: {
+				s1: [
+					{ kind: 'user', text: 'Show screenshot' },
+					{
+						sessionUpdate: 'agent_message_chunk',
+						content: {
+							type: 'text',
+							text: '![BBC screenshot](/tmp/desktop-after.png)\n![Missing](/tmp/missing.png)\n![Remote](https://example.com/track.png)\n![Host](/etc/secret.png)',
+						},
+					},
+				],
+			},
+		}),
+	);
+	try {
+		const image = page.getByRole('img', {
+			name: 'BBC screenshot',
+			exact: true,
+		});
+		await image.waitFor();
+		await page.waitForFunction(
+			() => document.querySelector('.bots-inline-image')?.naturalWidth === 1,
+		);
+		assert.ok((await image.getAttribute('src')).startsWith('blob:'));
+		await page
+			.getByText('Image unavailable: Missing', { exact: true })
+			.waitFor();
+		assert.equal(await page.locator('img[src^="https://"]').count(), 0);
+		const requests = (await calls(page, 'transport.queryWithBody')).filter(
+			(c) => c.args[0] === 'bots.image.read',
+		);
+		assert.deepEqual(requests.map((c) => c.args[1].path).sort(), [
+			'/tmp/desktop-after.png',
+			'/tmp/missing.png',
+		]);
+	} finally {
+		await page.close();
+	}
+});
+test('shared history loads older messages on demand without rendering provider traces', async () => {
+	const entries = Array.from({ length: 60 }, (_, i) => ({
+		kind: 'user',
+		text: `Historical message ${i}`,
+	}));
+	const page = await open(TAB({ transcripts: { s1: entries } }));
+	try {
+		await page.getByText('Historical message 59', { exact: true }).waitFor();
+		assert.equal(await page.locator('[data-terminay-message-key]').count(), 25);
+		assert.equal(
+			await page.getByText('Historical message 0', { exact: true }).count(),
+			0,
+		);
+		await page.getByRole('button', { name: 'Load older messages' }).click();
+		await page.getByText('Historical message 10', { exact: true }).waitFor();
+		assert.equal(await page.locator('[data-terminay-message-key]').count(), 50);
+		await page.evaluate(() =>
+			window.__harness.setTranscript('s1', [
+				{
+					sessionUpdate: 'agent_message_chunk',
+					content: { type: 'text', text: 'Private live output' },
+				},
+			]),
+		);
+		assert.equal(
+			await page.getByText('Private live output', { exact: true }).count(),
+			0,
+		);
+	} finally {
+		await page.close();
+	}
+});
+test('a pending post preserves text typed for the next message', async () => {
+	const page = await open(TAB({ postDelayMs: 400 }));
+	try {
+		const composer = page.locator('[data-terminay-bot-composer]');
+		await composer.fill('First message');
+		await page.locator('[data-terminay-bot-send]').click();
+		await composer.fill('Second message still being written');
+		await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
+		assert.equal(
+			await composer.inputValue(),
+			'Second message still being written',
+		);
+		await page.getByText('First message', { exact: true }).waitFor();
+	} finally {
+		await page.close();
+	}
+});
 
 const imageHistory = () => [
- ...Array.from({length:20},(_,i)=>({kind:'user',text:`Earlier request ${i}`})),
- {sessionUpdate:'agent_message_chunk',content:{type:'text',text:'![Delayed screenshot](/tmp/late.png)'}},
+	...Array.from({ length: 20 }, (_, i) => ({
+		kind: 'user',
+		text: `Earlier request ${i}`,
+	})),
+	{
+		sessionUpdate: 'agent_message_chunk',
+		content: { type: 'text', text: '![Delayed screenshot](/tmp/late.png)' },
+	},
 ];
-const atChatBottom = page => page.waitForFunction(()=>{const el=document.querySelector('.bots-msgs');const image=el?.querySelector('img');return image?.naturalHeight===1200&&el.scrollHeight-el.clientHeight-el.scrollTop<=1;});
-test('Chat opens at the bottom without animation and follows delayed image layout on re-entry',async()=>{
- const page=await open(TAB({imageDelayMs:350,imageSize:{width:800,height:1200},transcripts:{s1:imageHistory()}}));
- try{
-  await atChatBottom(page);
-  assert.equal(await page.locator('.bots-msgs').evaluate(el=>getComputedStyle(el).scrollBehavior),'auto');
-  await page.locator('.bots-msgs').evaluate(el=>el.scrollTop=0);
-  await page.locator('[data-terminay-bot-mode-button="configure"]').click();
-  await page.locator('[data-terminay-bot-mode-button="chat"]').click();
-  await atChatBottom(page);
-  // Returning from a hidden Home tab also starts at the latest message.
-  await page.locator('.bots-msgs').evaluate(el=>el.scrollTop=0);
-  await page.evaluate(()=>window.__harness.setVisible(false));
-  await page.evaluate(()=>window.__harness.setVisible(true));
-  await atChatBottom(page);
- }finally{await page.close();}
+const atChatBottom = (page) =>
+	page.waitForFunction(() => {
+		const el = document.querySelector('.bots-msgs');
+		const image = el?.querySelector('img');
+		return (
+			image?.naturalHeight === 1200 &&
+			el.scrollHeight - el.clientHeight - el.scrollTop <= 1
+		);
+	});
+test('Chat opens at the bottom without animation and follows delayed image layout on re-entry', async () => {
+	const page = await open(
+		TAB({
+			imageDelayMs: 350,
+			imageSize: { width: 800, height: 1200 },
+			transcripts: { s1: imageHistory() },
+		}),
+	);
+	try {
+		await atChatBottom(page);
+		assert.equal(
+			await page
+				.locator('.bots-msgs')
+				.evaluate((el) => getComputedStyle(el).scrollBehavior),
+			'auto',
+		);
+		await page.locator('.bots-msgs').evaluate((el) => (el.scrollTop = 0));
+		await page.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await page.locator('[data-terminay-bot-mode-button="chat"]').click();
+		await atChatBottom(page);
+		// Returning from a hidden Home tab also starts at the latest message.
+		await page.locator('.bots-msgs').evaluate((el) => (el.scrollTop = 0));
+		await page.evaluate(() => window.__harness.setVisible(false));
+		await page.evaluate(() => window.__harness.setVisible(true));
+		await atChatBottom(page);
+	} finally {
+		await page.close();
+	}
 });
-test('a delayed image does not pull readers away from older messages',async()=>{
- const page=await open(TAB({imageDelayMs:700,imageSize:{width:800,height:1200},transcripts:{s1:imageHistory()}}));
- try{
-  await page.getByText('Earlier request 19',{exact:true}).waitFor();
-  await page.locator('.bots-msgs').hover();await page.mouse.wheel(0,-10000);await page.waitForFunction(()=>document.querySelector('.bots-msgs').scrollTop===0);
-  await page.waitForFunction(()=>document.querySelector('.bots-inline-image')?.naturalHeight===1200);
-  await page.waitForFunction(()=>document.querySelector('.bots-msgs').scrollTop===0);
-  assert.equal(await page.locator('.bots-msgs').evaluate(el=>el.scrollTop),0);
- }finally{await page.close();}
+test('a delayed image does not pull readers away from older messages', async () => {
+	const page = await open(
+		TAB({
+			imageDelayMs: 700,
+			imageSize: { width: 800, height: 1200 },
+			transcripts: { s1: imageHistory() },
+		}),
+	);
+	try {
+		await page.getByText('Earlier request 19', { exact: true }).waitFor();
+		await page.locator('.bots-msgs').hover();
+		await page.mouse.wheel(0, -10000);
+		await page.waitForFunction(
+			() => document.querySelector('.bots-msgs').scrollTop === 0,
+		);
+		await page.waitForFunction(
+			() =>
+				document.querySelector('.bots-inline-image')?.naturalHeight === 1200,
+		);
+		await page.waitForFunction(
+			() => document.querySelector('.bots-msgs').scrollTop === 0,
+		);
+		assert.equal(
+			await page.locator('.bots-msgs').evaluate((el) => el.scrollTop),
+			0,
+		);
+	} finally {
+		await page.close();
+	}
 });
 
- test('layout scroll events before a delayed screenshot do not disable bottom following',async()=>{
- const page=await open(TAB({imageDelayMs:700,imageSize:{width:1440,height:900},transcripts:{s1:imageHistory()}}));
- try{await page.getByText('Earlier request 19',{exact:true}).waitFor();await page.locator('.bots-msgs').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});await page.waitForFunction(()=>{const el=document.querySelector('.bots-msgs');return el.querySelector('img')?.naturalWidth===1440&&el.scrollHeight-el.clientHeight-el.scrollTop<=1;});await page.getByRole('heading',{name:'Recent sessions',exact:true}).waitFor();}finally{await page.close();}
- });
-
-for (const reason of ['not-running','engine-changed']) test(`individual bot shows actionable ${reason} recovery across Chat and Configure`, async () => {
- const engine={engine:'podman',available:false,reason,detail:'',pinned:{kind:'podman',address:'unix:///tmp/podman.sock'},candidates:[{kind:'podman',address:'unix:///tmp/podman.sock',available:reason==='engine-changed',reason:null}],runningContainers:0,botContainers:0,image:{state:'missing',fingerprint:null,builtAt:null,error:null}};
- const page=await open(TAB({engine}));
- try {
-  const recovery=page.locator('[data-terminay-bot-recovery]');
-  await recovery.locator(`[data-terminay-bots-engine-reason="${reason}"]`).waitFor();
-  assert.match(await recovery.innerText(),reason==='not-running'?/Start it/:/Use this engine/);
-  await recovery.getByRole('button',{name:'Check again'}).click();
-  await page.getByRole('button',{name:'Configure',exact:true}).click();
-  for(const tab of ['environment','sessions']) {
-   await page.locator(`[data-terminay-bot-config-tab="${tab}"]`).click();
-   assert.equal(await recovery.isVisible(),true);
-  }
-  if(reason==='engine-changed') {
-   await recovery.getByRole('button',{name:'Use this engine'}).click();
-   assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.engine.use').length,0);
-   await recovery.locator('[data-terminay-bots-engine-confirm]').click();
-   assert.equal((await calls(page,'transport.command')).filter(c=>c.args[0]==='bots.engine.use').length,1);
-  }
- } finally {await page.close();}
+test('layout scroll events before a delayed screenshot do not disable bottom following', async () => {
+	const page = await open(
+		TAB({
+			imageDelayMs: 700,
+			imageSize: { width: 1440, height: 900 },
+			transcripts: { s1: imageHistory() },
+		}),
+	);
+	try {
+		await page.getByText('Earlier request 19', { exact: true }).waitFor();
+		await page.locator('.bots-msgs').evaluate((el) => {
+			el.scrollTop = 0;
+			el.dispatchEvent(new Event('scroll'));
+		});
+		await page.waitForFunction(() => {
+			const el = document.querySelector('.bots-msgs');
+			return (
+				el.querySelector('img')?.naturalWidth === 1440 &&
+				el.scrollHeight - el.clientHeight - el.scrollTop <= 1
+			);
+		});
+		await page
+			.getByRole('heading', { name: 'Recent sessions', exact: true })
+			.waitFor();
+	} finally {
+		await page.close();
+	}
 });
+
+for (const reason of ['not-running', 'engine-changed'])
+	test(`individual bot shows actionable ${reason} recovery across Chat and Configure`, async () => {
+		const engine = {
+			engine: 'podman',
+			available: false,
+			reason,
+			detail: '',
+			pinned: { kind: 'podman', address: 'unix:///tmp/podman.sock' },
+			candidates: [
+				{
+					kind: 'podman',
+					address: 'unix:///tmp/podman.sock',
+					available: reason === 'engine-changed',
+					reason: null,
+				},
+			],
+			runningContainers: 0,
+			botContainers: 0,
+			image: {
+				state: 'missing',
+				fingerprint: null,
+				builtAt: null,
+				error: null,
+			},
+		};
+		const page = await open(TAB({ engine }));
+		try {
+			const recovery = page.locator('[data-terminay-bot-recovery]');
+			await recovery
+				.locator(`[data-terminay-bots-engine-reason="${reason}"]`)
+				.waitFor();
+			assert.match(
+				await recovery.innerText(),
+				reason === 'not-running' ? /Start it/ : /Use this engine/,
+			);
+			await recovery.getByRole('button', { name: 'Check again' }).click();
+			await page
+				.getByRole('button', { name: 'Configure', exact: true })
+				.click();
+			for (const tab of ['environment', 'sessions']) {
+				await page.locator(`[data-terminay-bot-config-tab="${tab}"]`).click();
+				assert.equal(await recovery.isVisible(), true);
+			}
+			if (reason === 'engine-changed') {
+				await recovery.getByRole('button', { name: 'Use this engine' }).click();
+				assert.equal(
+					(await calls(page, 'transport.command')).filter(
+						(c) => c.args[0] === 'bots.engine.use',
+					).length,
+					0,
+				);
+				await recovery.locator('[data-terminay-bots-engine-confirm]').click();
+				assert.equal(
+					(await calls(page, 'transport.command')).filter(
+						(c) => c.args[0] === 'bots.engine.use',
+					).length,
+					1,
+				);
+			}
+		} finally {
+			await page.close();
+		}
+	});
 
 test('bot summary refresh source uses the cheap state API and no overview measurements', async () => {
- const source=await readFile('src/workspace/bots/useServerBots.ts','utf8');
- assert.ok(source.includes('environment.state(botId)'));
- assert.ok(!source.includes('environment.overview('));
+	const source = await readFile('src/workspace/bots/useServerBots.ts', 'utf8');
+	assert.ok(source.includes('environment.state(botId)'));
+	assert.ok(!source.includes('environment.overview('));
+});
+
+test('generic source editor groups fields, preserves a narrow draft, and tests without starting AI', async () => {
+ const page=await configure('triggers');
+ try {
+  await page.setViewportSize({width:760,height:900});
+  await page.locator('[data-terminay-bot-trigger-new]').click();
+  const editor=page.locator('[data-terminay-bot-trigger-editor]');
+  await editor.getByLabel('Name',{exact:true}).fill('Incoming items');
+  await editor.getByLabel('Source group',{exact:true}).selectOption('Commands');
+  await editor.getByLabel('Command / shell script').fill('list --json');
+  await editor.getByLabel('Check every',{exact:true}).fill('1');await editor.getByLabel('Unit',{exact:true}).selectOption('minutes');
+  await editor.getByLabel('Fire when',{exact:true}).selectOption('items');
+  await editor.getByLabel('Prompt',{exact:true}).fill('Inspect risks in this item.');
+  assert.equal(await editor.getByLabel('If Terminay Server was offline').inputValue(),'once');
+  assert.equal(await editor.getByLabel('First successful check').inputValue(),'process');
+  await editor.getByRole('button',{name:'Back to list'}).click();
+  await page.locator('[data-terminay-bot-trigger-new]').click();
+  assert.equal(await editor.getByLabel('Command / shell script').inputValue(),'list --json');
+  await editor.getByRole('button',{name:'Test source',exact:true}).click();
+  await page.getByText('1 event would fire',{exact:true}).waitFor();
+  assert.equal((await calls(page,'send')).length,0);
+  await shot(page,'command-source');
+  await editor.locator('[data-terminay-bot-trigger-save]').click();
+  const created=(await calls(page,'createTrigger'))[0].args[1];
+  assert.equal(created.condition.kind,'command');assert.equal(created.condition.intervalMs,60000);assert.equal(created.condition.match.identity,'/id');assert.equal(created.recovery,'once');
+ } finally {await page.close();}
 });

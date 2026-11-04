@@ -3,6 +3,7 @@ export * from './botEngine.js';
 export * from './botEnvironment.js';
 export * from './botIo.js';
 export * from './botMessages.js';
+export * from './botSources.js';
 export * from './botStreams.js';
 export * from './bots.js';
 export * from './botTranscript.js';

@@ -187,7 +187,41 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 			fs.rmSync(path.join(root, `pid-${sid}`), { force: true });
 			fs.rmSync(path.join(root, `owner-${sid}`), { force: true });
 		});
-		if (sid.startsWith('mcp-')) {
+		if (sid.startsWith('source-')) {
+			// Simulated container source, never execute a user script on the test host.
+			const { createInterface } = await import('node:readline');
+			const lines = createInterface({ input: process.stdin });
+			let configured = false;
+			for await (const line of lines) {
+				if (configured) continue;
+				configured = true;
+				const { source } = JSON.parse(line);
+				if (source.kind === 'command') {
+					out(
+						JSON.stringify({
+							stdout:
+								source.command === 'fixture-items'
+									? '[{"id":"one"},{"id":"two"}]'
+									: 'unchanged',
+							stderr: '',
+							exitCode: 0,
+						}),
+					);
+					process.exit(0);
+				}
+				if (source.kind === 'http') {
+					out(JSON.stringify({ body: '{"status":"ready"}' }));
+					process.exit(0);
+				}
+				if (source.kind === 'sse') {
+					out(JSON.stringify({ status: 'connected' }));
+					out(JSON.stringify({ eventId: 'fixture-1', data: { id: 'one' } }));
+				}
+				if (source.kind === 'files') {
+					out(JSON.stringify({ snapshot: {}, status: 'watching' }));
+				}
+			}
+		} else if (sid.startsWith('mcp-')) {
 			process.execve(
 				'/usr/bin/env',
 				[

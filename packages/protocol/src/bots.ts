@@ -1,9 +1,19 @@
+import type {
+	BotObservationSource,
+	BotRecoveryPolicy,
+	BotSourceHealth,
+} from './botSources.js';
 import type { JsonValue } from './errors.js';
 
 export const BOTS_CAPABILITY = 'bots.v1';
 export const BOT_EVENTS = { changed: 'bots.changed' } as const;
 export const BOT_OPERATIONS = Object.freeze({
 	triggers: 'bots.triggers.list',
+	testSource: 'bots.triggers.test',
+	sourceMemory: 'bots.triggers.memory',
+	resetSource: 'bots.triggers.reset',
+	retrySource: 'bots.triggers.retry',
+	enableBot: 'bots.enable',
 	createTrigger: 'bots.triggers.create',
 	updateTrigger: 'bots.triggers.update',
 	deleteTrigger: 'bots.triggers.delete',
@@ -52,6 +62,7 @@ export type BotSignIn =
 	| { readonly kind: 'none' };
 export type BotApprovalMode = 'autonomous' | 'ask';
 export interface BotProfile {
+	readonly enabled?: boolean;
 	readonly id: string;
 	readonly name: string;
 	readonly avatar: string;
@@ -186,9 +197,11 @@ export type BotTriggerEventKind =
 	| 'device.connected';
 export type BotTriggerCondition =
 	| BotTriggerSchedule
-	| { readonly kind: 'event'; readonly event: BotTriggerEventKind };
+	| { readonly kind: 'event'; readonly event: BotTriggerEventKind }
+	| BotObservationSource;
 /** Anchors are server-owned and reset on save or enable. */
 export interface BotTriggerDraft {
+	readonly recovery?: BotRecoveryPolicy;
 	readonly name: string;
 	readonly enabled: boolean;
 	readonly prompt: string;
@@ -197,6 +210,9 @@ export interface BotTriggerDraft {
 		| { readonly kind: 'every'; readonly intervalMs: number };
 }
 export interface BotTrigger extends Omit<BotTriggerDraft, 'condition'> {
+	readonly generation?: string;
+	readonly health?: BotSourceHealth;
+	readonly unsupported?: string;
 	readonly id: string;
 	readonly botId: string;
 	readonly condition: BotTriggerCondition;
