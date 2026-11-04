@@ -33,6 +33,7 @@ import { DockTabChrome } from './DockTabChrome';
 import { TerminalPanelClientContext } from './TerminalPanel';
 import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
 import { TerminalAppWindowBadge } from '../workspace/appWindows/AppWindowBadge';
+import { TerminalWorkflowBadge } from '../workspace/workflows/WorkflowTabBadge';
 import { trackedTerminalTabAgentState, visibleTerminalTabAgentState } from './terminalTabAgentPresentation';
 
 export type TerminalTabMacroRunStep = {
@@ -708,6 +709,10 @@ export function TerminalTab(
 				afterTitle={
 					<>
 						<TerminalAppWindowBadge
+							serverId={terminalClientContext?.serverId}
+							sessionId={params?.sessionId}
+						/>
+						<TerminalWorkflowBadge
 							serverId={terminalClientContext?.serverId}
 							sessionId={params?.sessionId}
 						/>

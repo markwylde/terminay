@@ -612,6 +612,22 @@ export function serverControlError(error: unknown): ControlEndpointError {
 		(error as { reason?: unknown } | null)?.reason ??
 		(isRecord(record?.details) ? record.details.reason : undefined);
 	const detail = typeof reason === 'string' ? ` (${reason})`.slice(0, 64) : '';
+	// A workflow refusal reaches the agent as its own code, carrying the id it
+	// names, and with its message as written (ADR-0097).
+	if (
+		reason === 'workflow_exists' ||
+		reason === 'no_workflow' ||
+		reason === 'step_not_found' ||
+		reason === 'step_active'
+	) {
+		const details = isRecord(record?.details) ? record.details : {};
+		const named = details.workflowId ?? details.stepId;
+		return new ControlEndpointError(
+			reason,
+			message.slice(0, 512),
+			typeof named === 'string' ? [named] : undefined,
+		);
+	}
 	const bounded = `${message}${detail}`.slice(0, 512);
 	// A protocol refusal carries a code; the start chooser's folder refusal
 	// carries only its reason.

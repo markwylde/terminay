@@ -1,0 +1,326 @@
+/* The workflow panel sits in the padding a terminal pane reserves at its
+   right edge, so the terminal fits what is left (ADR-0097). */
+.workflow-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary, #e6e6e6);
+  background: rgb(0 0 0 / 0.22);
+  border-left: 1px solid rgb(255 255 255 / 0.08);
+  font-size: 12px;
+}
+
+.workflow-panel--collapsed {
+  width: 28px;
+}
+
+.workflow-panel--expanded {
+  width: 264px;
+}
+
+.workflow-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.workflow-toggle:hover,
+.workflow-toggle:focus-visible {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.workflow-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.workflow-rail-steps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The line that joins the markers. */
+.workflow-rail-steps::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  background: rgb(255 255 255 / 0.18);
+  transform: translateX(-50%);
+}
+
+.workflow-rail-step {
+  position: relative;
+}
+
+.workflow-marker {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--workflow-tone);
+  border-radius: 50%;
+  color: var(--workflow-tone);
+  background: var(--terminal-panel-surface, #111316);
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.workflow-marker--filled {
+  color: #0d0f12;
+  background: var(--workflow-tone);
+}
+
+.workflow-marker--done {
+  --workflow-tone: #3fb950;
+}
+
+.workflow-marker--running {
+  --workflow-tone: #d29922;
+}
+
+.workflow-marker--alert {
+  --workflow-tone: #f85149;
+}
+
+.workflow-marker--idle {
+  --workflow-tone: #6e7681;
+}
+
+.workflow-rail-step--active .workflow-marker,
+.workflow-step--active .workflow-marker {
+  box-shadow: 0 0 0 3px rgb(210 153 34 / 0.25);
+}
+
+.workflow-expanded {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.workflow-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.workflow-summary {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workflow-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.workflow-progress,
+.workflow-step-meta {
+  color: var(--text-secondary, #9aa4af);
+}
+
+.workflow-brief {
+  margin: 6px 8px 0;
+}
+
+.workflow-brief summary {
+  cursor: pointer;
+  color: var(--text-secondary, #9aa4af);
+}
+
+/* Agent and template text: always literal, never laid out as markup. */
+.workflow-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workflow-steps {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.workflow-step {
+  display: flex;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 4px;
+}
+
+.workflow-step--active {
+  background: rgb(210 153 34 / 0.12);
+}
+
+.workflow-step[data-status="needs_input"].workflow-step--active,
+.workflow-step[data-status="failed"] {
+  background: rgb(248 81 73 / 0.1);
+}
+
+.workflow-step-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workflow-step-title {
+  overflow-wrap: anywhere;
+}
+
+.workflow-step-note {
+  margin-top: 2px;
+}
+
+.workflow-unrestorable {
+  margin: 8px;
+}
+
+.workflow-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.workflow-footer button {
+  padding: 2px 8px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workflow-footer .workflow-remove {
+  border-color: #f85149;
+  color: #f85149;
+}
+
+.workflow-error {
+  color: #f85149;
+}
+
+/* In a narrow pane the expanded panel opens over the terminal instead. */
+.workflow-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(264px, 85vw);
+  background: var(--terminal-panel-surface, #111316);
+  border-left: 1px solid rgb(255 255 255 / 0.16);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.4);
+  outline: none;
+}
+
+/* The workflow marker on a terminal's tab. */
+.terminal-tab-workflow {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #9aa4af);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-tab-workflow-alert {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f85149;
+}
+
+/* Confirming a launch that replaces an unfinished workflow. */
+.workflow-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.workflow-confirm {
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  padding: 16px 18px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 10px;
+  color: var(--text-primary, #e6e6e6);
+  background: var(--terminal-panel-surface, #16181c);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
+}
+
+.workflow-confirm h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.workflow-confirm p {
+  margin: 0 0 14px;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 13px;
+}
+
+.workflow-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workflow-confirm-actions button {
+  padding: 5px 12px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workflow-confirm-actions .workflow-confirm-replace {
+  border-color: #f85149;
+  color: #fff;
+  background: #da3633;
+}

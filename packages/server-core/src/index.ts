@@ -148,6 +148,7 @@ export * from './gitService/index.js';
 export * from './worktreeInsights/index.js';
 export * from './languageService/index.js';
 export * from './macroService/index.js';
+export * from './workflowService/index.js';
 export * from './automationService/index.js';
 export * from './agentChat/index.js';
 export * from './pixel/index.js';

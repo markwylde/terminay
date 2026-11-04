@@ -73,6 +73,14 @@ import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpA
 import { McpApprovalStrip } from './McpApprovalStrip';
 import { registerAppWindowPane } from '../workspace/appWindows/appWindowPanes';
 import { appWindowPaneKey } from '../workspace/appWindows/useServerAppWindows';
+import { useTerminalWorkflow } from '../workspace/workflows/useServerWorkflows';
+import { WorkflowPanel } from '../workspace/workflows/WorkflowPanel';
+import {
+	panelMode,
+	reservedWidth,
+	WORKFLOW_RAIL_WIDTH,
+} from '../workspace/workflows/workflowPanelModel';
+import { useWorkflowPanelSetting } from '../workspace/workflows/workflowPanelSetting';
 import type { TerminalPanelParams } from './TerminalTab';
 import {
 	clearTerminalViewport,
@@ -557,6 +565,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		terminalClientContext?.serverId,
 		props.params.sessionId,
 	);
+	// The terminal's workflow, at the pane's right edge (ADR-0097). The pane
+	// reserves its strip and the terminal fits what is left.
+	const terminalWorkflow = useTerminalWorkflow(
+		terminalClientContext?.serverId,
+		props.params.sessionId,
+	);
+	const workflowSetting = useWorkflowPanelSetting();
+	const [workflowGeometry, setWorkflowGeometry] = useState<
+		{ readonly columnsBesideRail: number; readonly cellWidth: number } | undefined
+	>(undefined);
+	const workflowMode =
+		terminalWorkflow.view === undefined
+			? undefined
+			: panelMode(
+					workflowSetting,
+					workflowGeometry?.columnsBesideRail,
+					workflowGeometry?.cellWidth,
+				);
+	const workflowReserved = reservedWidth(workflowMode);
+	const workflowReservedRef = useRef(workflowReserved);
+	workflowReservedRef.current = workflowReserved;
 	// An attach or renewal that failed on the dying transport is the reconnect's
 	// story, and the workspace overlay is already telling it. The rebind onto
 	// the replacement connection clears the error either way.
@@ -1592,6 +1621,21 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			clearRemoteTerminalElementSize(root, terminal);
 			fitAddon.fit();
 			updateTerminalGridMetadata(root, terminal.cols, terminal.rows);
+			// How wide the terminal would be with only the workflow rail beside
+			// it, which decides whether the expanded panel fits.
+			const cellWidth = terminal.cols > 0 ? root.clientWidth / terminal.cols : 0;
+			if (cellWidth > 0) {
+				const columnsBesideRail = Math.floor(
+					(root.clientWidth + workflowReservedRef.current - WORKFLOW_RAIL_WIDTH) /
+						cellWidth,
+				);
+				setWorkflowGeometry((previous) =>
+					previous?.columnsBesideRail === columnsBesideRail &&
+					Math.abs(previous.cellWidth - cellWidth) < 0.01
+						? previous
+						: { columnsBesideRail, cellWidth },
+				);
+			}
 			if (
 				force ||
 				terminal.cols !== lastSentSize.cols ||
@@ -3109,6 +3153,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			props.params.color,
 		).background,
 		'--terminal-note-color': props.params.color || settings.theme.cursor,
+		...(workflowReserved > 0
+			? { paddingRight: `${workflowReserved}px`, boxSizing: 'border-box' }
+			: {}),
 	} as CSSProperties;
 
 	const copyTouchSelection = () => {
@@ -3301,6 +3348,23 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			<div className="terminal-panel-root" ref={xtermRootRef} />
 			{/* Reserved for minimised app-window tabs; zero height without one. */}
 			<div className="terminal-app-window-rail" aria-hidden="true" />
+			{terminalWorkflow.view === undefined ||
+			workflowMode === undefined ||
+			!terminalClientContext ? null : (
+				<WorkflowPanel
+					view={terminalWorkflow.view}
+					mode={workflowMode}
+					target={{
+						serverId: terminalClientContext.serverId,
+						projectId: terminalClientContext.projectId,
+						sessionId: props.params.sessionId,
+					}}
+					{...(terminalWorkflow.server === undefined
+						? {}
+						: { client: terminalWorkflow.server.client })}
+					focusTerminal={() => terminalRef.current?.focus()}
+				/>
+			)}
 			{touchSelectionCopy ? (
 				<button
 					type="button"

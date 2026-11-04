@@ -370,6 +370,7 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onAcceptedResize?: ServerTerminalHostObserver<ServerTerminalAcceptedResize>;
 	/** Optional server-owned macro protocol services supplied by the host. */
 	readonly macros?: ServerCoreCompositionOptions['macros'];
+	readonly workflows?: ServerCoreCompositionOptions['workflows'];
 	readonly automations?: ServerCoreCompositionOptions['automations'];
 	/** Compose MCP permission approvals; set by the host that serves MCP. */
 	readonly mcpApprovals?: boolean;
@@ -1397,6 +1398,9 @@ export class ServerTerminalAuthority {
 								: { resolveDefaultShell: options.resolveDefaultShell }),
 						},
 						...(options.macros === undefined ? {} : { macros: options.macros }),
+						...(options.workflows === undefined
+							? {}
+							: { workflows: options.workflows }),
 						...(options.automations === undefined
 							? {}
 							: { automations: options.automations }),
