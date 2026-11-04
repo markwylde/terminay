@@ -1,3 +1,4 @@
+import { containerSourceRunner } from './sourceRunner.js';
 import { BotDeletions } from './deletions.js';
 import { createBotMessageOperations } from './messageProtocol.js';
 import { randomBytes } from 'node:crypto';
@@ -260,6 +261,12 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const detachEnvironment = environment.follow(engine);
 	service = new BotService(bots, sessions, memories, {
 		serverId: options.serverId,
+		sources: containerSourceRunner({
+			driver: () => images.driver(),
+			start: (id) => environment.start(id),
+			activity: (id, delta) => streamActivity(id, 'shells', delta),
+			vault: options.vault,
+		}),
 		closeConnection: (id) => {
 			void io
 				.closeConnection(id)
@@ -429,6 +436,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			),
 		dispose: async () => {
 			engine.off('availability', cleanup);
+			engine.off('availability', resumeSources);
 			images.off('changed', cleanup);
 			await cleaning;
 			detachEnvironment();
@@ -482,6 +490,10 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			cleaning = undefined;
 		});
 	};
+	const resumeSources = () => {
+		if (engine.availability.available) service.triggers.resumeSources();
+	};
+	engine.on('availability', resumeSources);
 	engine.on('availability', cleanup);
 	images.on('changed', cleanup);
 	environment.on('changed', ({ botId }) => service.invalidate(botId));

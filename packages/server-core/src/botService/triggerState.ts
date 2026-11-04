@@ -4,6 +4,7 @@ import type {
 	BotTriggerFiring,
 } from '@terminay/protocol';
 import { previewSchedule } from '../scheduleEngine/scheduler.js';
+import { isObservation, observationSource, exact } from './sourceValidation.js';
 import { TRIGGER_EVENT_KINDS } from '../scheduleEngine/types.js';
 import { BotError, object, text } from './store.js';
 
@@ -26,6 +27,8 @@ export function triggerCondition(
 	anchor: number,
 ): BotTriggerCondition {
 	const d = object(value);
+	if (['command', 'http', 'sse', 'files'].includes(String(d.kind)))
+		return observationSource(d, anchor);
 	if (
 		d.kind === 'event' &&
 		TRIGGER_EVENT_KINDS.some((kind) => kind === d.event)
@@ -37,7 +40,15 @@ export function triggerCondition(
 				{ kind: 'event' }
 			>['event'],
 		};
-	let schedule: Exclude<BotTriggerCondition, { kind: 'event' }>;
+	exact(
+		d,
+		d.kind === 'cron'
+			? ['kind', 'cron']
+			: d.kind === 'once'
+				? ['kind', 'at']
+				: ['kind', 'intervalMs', 'anchor'],
+	);
+	let schedule: import('@terminay/protocol').BotTriggerSchedule;
 	if (d.kind === 'cron')
 		schedule = { kind: 'cron', cron: text(d.cron, 256, 'cron') };
 	else if (d.kind === 'once')
@@ -50,7 +61,7 @@ export function triggerCondition(
 		};
 	else throw new BotError('validation', 'invalid trigger condition');
 	try {
-		previewSchedule(schedule, anchor, 1);
+		previewSchedule(schedule, anchor, 1, undefined, 60000);
 	} catch (error) {
 		throw new BotError(
 			'validation',
@@ -68,16 +79,44 @@ export function storedTrigger(value: unknown): BotTrigger {
 	)
 		throw new BotError('validation', 'invalid trigger');
 	const raw = object(d.condition);
+	const condition = triggerCondition(
+		raw,
+		typeof raw.anchor === 'number' ? triggerTime(raw.anchor) : 0,
+	);
+	const continuous = condition.kind === 'sse' || condition.kind === 'files';
+	const recovery =
+		d.recovery ??
+		(isObservation(condition)
+			? continuous
+				? 'recover-available'
+				: 'once'
+			: 'skip');
+	if (
+		!(
+			continuous
+				? ['ignore-gap', 'recover-available']
+				: ['skip', 'once', 'replay']
+		).includes(String(recovery))
+	)
+		throw new BotError('validation', 'Invalid recovery policy');
 	return {
 		id: triggerId(d.id),
 		botId: text(d.botId, 12, 'bot id'),
 		name: text(d.name, 256, 'trigger name'),
-		enabled: d.enabled,
+		enabled: condition.kind === 'event' ? false : d.enabled,
+		recovery: recovery as import('@terminay/protocol').BotRecoveryPolicy,
+		generation:
+			typeof d.generation === 'string'
+				? triggerId(d.generation)
+				: triggerId(d.id),
+		...(condition.kind === 'event'
+			? {
+					unsupported:
+						'Project events are unsupported. Choose a container source.',
+				}
+			: {}),
 		prompt: text(d.prompt, 32 * 1024, 'prompt'),
-		condition: triggerCondition(
-			raw,
-			raw.kind === 'every' ? triggerTime(raw.anchor) : 0,
-		),
+		condition,
 		evaluatedThrough: triggerTime(d.evaluatedThrough),
 		missedCount: d.missedCount as number,
 		missedLatest: d.missedLatest === null ? null : triggerTime(d.missedLatest),

@@ -69,8 +69,20 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
  * unknown. Callers treat `undefined` as a composition error rather than as an
  * ungated operation.
  */
-export function capabilityOf(operation: string): OperationCapability | undefined {
+export function capabilityOf(
+	operation: string,
+): OperationCapability | undefined {
 	if (typeof operation !== 'string' || operation.length === 0) return undefined;
+	if (
+		[
+			'bots.triggers.test',
+			'bots.triggers.memory',
+			'bots.triggers.reset',
+			'bots.triggers.retry',
+			'bots.enable',
+		].includes(operation)
+	)
+		return FEATURE_CAPABILITIES.botSources;
 	// The server's own upgrade is a feature a server may not serve, so it is
 	// classified apart from the connection mechanics it shares a namespace with.
 	if (

@@ -1,3 +1,4 @@
+import './bot-sources-real.test.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';

@@ -382,6 +382,19 @@ const client = {
 	pinMemory: record('pinMemory'),
 	deleteMemory: record('deleteMemory'),
 	watchMemories: record('watchMemories', () => async () => {}),
+	enableBot: record('enableBot'),
+	testSource: record('testSource', () => ({
+		diagnostics: 'fixture check',
+		events: [{ id: 1 }],
+		wouldFire: 1,
+	})),
+	sourceMemory: record('sourceMemory', () => ({
+		total: 0,
+		ids: [],
+		next: null,
+	})),
+	resetSource: record('resetSource'),
+	retrySource: record('retrySource'),
 	triggers: record('triggers', () => ({
 		revision: 1,
 		triggers: [
@@ -494,7 +507,8 @@ function makeServer(
 		) as ServerBots['environments'],
 		upcoming: new Map(),
 		agents: scenario.agents,
-		reportWarning: (warning: string) => window.__calls.push({ op: 'warning', args: [warning] }),
+		reportWarning: (warning: string) =>
+			window.__calls.push({ op: 'warning', args: [warning] }),
 		refresh: () => window.__calls.push({ op: 'refresh', args: [] }),
 		refreshBot: (botId) =>
 			window.__calls.push({ op: 'refreshBot', args: [botId] }),

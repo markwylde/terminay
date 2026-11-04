@@ -1,0 +1,328 @@
+#!/usr/bin/python3
+"""Bounded outbound source worker. Configuration/acks use stdin; no listener.
+Runs as bot under terminay-run. Source data never becomes executable code.
+"""
+import ctypes
+import fnmatch
+import hashlib
+import json
+import os
+import select
+import selectors
+import signal
+import struct
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+LIMIT = 1024 * 1024
+MAX_FRAME = 20 * LIMIT
+CHILDREN = []
+# Reap ordinary grandchildren after terminating a command process group.
+ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+
+def cleanup(*_):
+    for child in CHILDREN:
+        if child.poll() is None:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGHUP, cleanup)
+
+def read_config():
+    line = sys.stdin.buffer.readline(128 * 1024 + 1)
+    if len(line) > 128 * 1024:
+        raise ValueError('Source configuration too large')
+    return json.loads(line)
+
+def emit(value, ack=False):
+    encoded = json.dumps(value, ensure_ascii=True, separators=(',', ':'))
+    if len(encoded) > MAX_FRAME:
+        raise ValueError('Source frame too large')
+    print(encoded, flush=True)
+    if ack and sys.stdin.buffer.readline(16).strip() != b'ack':
+        raise SystemExit(0)
+
+def command(c):
+    env = dict(os.environ)
+    for k in list(env):
+        if k.startswith('TERMINAY_RUNTIME_'):
+            del env[k]
+    env.pop('BASH_ENV', None)
+    child = subprocess.Popen(['/bin/bash', '-c', c['command']], cwd=c.get('cwd', '/home/bot'),
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    CHILDREN.append(child)
+    out, err = bytearray(), bytearray()
+    deadline = time.monotonic() + c.get('timeoutMs', 30000) / 1000
+    sel = selectors.DefaultSelector()
+    sel.register(child.stdout, selectors.EVENT_READ, out)
+    sel.register(child.stderr, selectors.EVENT_READ, err)
+    try:
+        while sel.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Command timed out')
+            for key, _ in sel.select(remaining):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                else:
+                    key.data.extend(chunk)
+                if len(out) + len(err) > LIMIT:
+                    raise ValueError('Command output exceeds 1 MiB')
+        code = child.wait(timeout=max(.01, deadline - time.monotonic()))
+        result = {'stdout': out.decode('utf-8', 'strict'), 'stderr': err.decode('utf-8', 'strict'), 'exitCode': code}
+        match = c.get('match', {})
+        if match.get('kind') == 'regex':
+            # Isolate backtracking. A pathological user pattern never blocks the server.
+            matcher = subprocess.Popen([sys.executable, '-c',
+                'import json,re,sys; d=json.load(sys.stdin); print(json.dumps(bool(re.search(d[0],d[1]))))'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+            CHILDREN.append(matcher)
+            try:
+                data, _ = matcher.communicate(json.dumps([match['text'], result['stdout']]).encode(), timeout=1)
+                if matcher.returncode:
+                    raise ValueError('Invalid regular expression')
+                result['matched'] = json.loads(data)
+            except subprocess.TimeoutExpired:
+                raise ValueError('Regular expression evaluation exceeded 1 second')
+        return result
+    finally:
+        sel.close()
+        for p in CHILDREN:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for p in CHILDREN:
+            p.wait()
+        # Every remaining ordinary child was killed with its command group.
+        until = time.monotonic() + 1
+        while time.monotonic() < until:
+            try:
+                pid, _ = os.waitpid(-1, os.WNOHANG)
+                if pid == 0:
+                    time.sleep(.01)
+            except ChildProcessError:
+                break
+
+class Redirect(urllib.request.HTTPRedirectHandler):
+    max_redirections = 5
+    max_repeats = 5
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        old_origin = urllib.parse.urlsplit(req.full_url)
+        new_origin = urllib.parse.urlsplit(newurl)
+        if new_origin.scheme not in ('http', 'https') or new_origin.username or new_origin.password:
+            raise ValueError('Invalid redirect URL')
+        if (old_origin.scheme, old_origin.hostname, old_origin.port) != (new_origin.scheme, new_origin.hostname, new_origin.port):
+            # Custom request headers may all carry credentials; forward none across origins.
+            new.headers.clear()
+            new.unredirected_hdrs.clear()
+        return new
+
+def response(c, cursor=None):
+    headers = dict(c.get('headers', {}))
+    if c['kind'] == 'sse':
+        headers['Accept'] = 'text/event-stream'
+        if cursor:
+            headers['Last-Event-ID'] = cursor
+    req = urllib.request.Request(c['url'], headers=headers, method='GET')
+    try:
+        return urllib.request.build_opener(Redirect()).open(req, timeout=c.get('timeoutMs', 30000) / 1000)
+    except urllib.error.HTTPError as error:
+        if error.code == 304:
+            return None
+        raise ValueError('HTTP status ' + str(error.code)) from None
+
+def http(c):
+    r = response(c)
+    if r is None:
+        return {'notModified': True}
+    with r:
+        body = r.read(LIMIT + 1)
+        if len(body) > LIMIT:
+            raise ValueError('HTTP body exceeds 1 MiB')
+        return {'body': body.decode('utf-8', 'strict')}
+
+def sse(c, options):
+    r = response(c, options.get('cursor'))
+    if r is None or r.headers.get_content_type() != 'text/event-stream':
+        raise ValueError('Expected text/event-stream')
+    # Connection establishment is bounded; an idle live stream is healthy.
+    r.fp.raw._sock.settimeout(None)
+    emit({'status': 'connected'})
+    data, name, event_id, size = [], '', None, 0
+    with r:
+        while True:
+            raw = r.readline(LIMIT + 1)
+            if not raw:
+                break
+            if len(raw) > LIMIT:
+                raise ValueError('SSE line too large')
+            line = raw.decode('utf-8', 'strict').rstrip('\r\n')
+            if not line:
+                if data:
+                    value = '\n'.join(data)
+                    try:
+                        value = json.loads(value)
+                    except ValueError:
+                        pass
+                    event = {'data': value, 'filtered': bool(c.get('eventName') and c['eventName'] != (name or 'message'))}
+                    if event_id is not None:
+                        event['eventId'] = event_id
+                    emit(event, ack=True)
+                data, name, event_id, size = [], '', None, 0
+            elif not line.startswith(':'):
+                field, _, value = line.partition(':')
+                if value.startswith(' '):
+                    value = value[1:]
+                size += len(raw)
+                if size > LIMIT:
+                    raise ValueError('SSE event too large')
+                if field == 'data':
+                    data.append(value)
+                elif field == 'event':
+                    name = value
+                elif field == 'id' and '\0' not in value:
+                    event_id = value
+    raise ValueError('SSE stream ended; history may require replay')
+
+def no_links(path):
+    current = '/'
+    for part in path.split('/'):
+        if not part:
+            continue
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            raise ValueError('Symbolic link path refused')
+
+def snapshot(c):
+    root = c['path']
+    no_links(root)
+    result = {}
+    def add(path):
+        st = os.lstat(path)
+        if os.path.islink(path):
+            return
+        key = os.path.relpath(path, root)
+        # Stat fingerprint is bounded; no file contents are read into snapshot state.
+        result[key] = ':'.join(str(v) for v in (st.st_mode, st.st_size, st.st_mtime_ns, st.st_ino))
+        if len(result) > 100000:
+            raise ValueError('File snapshot exceeds 100000 entries')
+    if os.path.lexists(root):
+        add(root)
+        if os.path.isdir(root) and not os.path.islink(root):
+            for directory, dirs, files in os.walk(root, followlinks=False):
+                dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(directory, d))]
+                for name in dirs + files:
+                    add(os.path.join(directory, name))
+                if not c.get('recursive', True):
+                    break
+    if len(json.dumps(result)) > 16 * LIMIT:
+        raise ValueError('File snapshot exceeds 16 MiB')
+    return result
+
+def files(c):
+    # Linux is the bot image platform on both local Docker and Podman engines.
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), 'Cannot establish file watch')
+    watches = {}
+    root = c['path']
+    mask = 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800
+    def watch(path):
+        if os.path.islink(path) or path in watches.values():
+            return
+        if len(watches) >= 100000:
+            raise ValueError('File watch limit reached')
+        wd = libc.inotify_add_watch(fd, os.fsencode(path), mask | 0x02000000)  # IN_DONT_FOLLOW
+        if wd < 0:
+            raise OSError(ctypes.get_errno(), 'Cannot establish file watch')
+        watches[wd] = path
+    def establish():
+        no_links(root)
+        existing = root
+        while not os.path.exists(existing):
+            existing = os.path.dirname(existing)
+        if os.path.islink(existing):
+            raise ValueError('Symbolic link watch target refused')
+        watch(os.path.dirname(existing))
+        watch(existing)
+        if os.path.isdir(root) and c.get('recursive', True):
+            for directory, dirs, _ in os.walk(root, followlinks=False):
+                dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(directory, d))]
+                watch(directory)
+    def matching(path):
+        relative = os.path.relpath(path, root)
+        return (path == root or path.startswith(root.rstrip('/') + '/')) and (not c.get('include') or fnmatch.fnmatch(relative, c['include'])) and (not c.get('exclude') or not fnmatch.fnmatch(relative, c['exclude']))
+    try:
+        establish()  # Watch before snapshot to retain races in kernel event queue.
+        before = snapshot(c)
+        emit({'snapshot': before, 'status': 'watching' if before else 'waiting'}, ack=True)
+        changed, first, last = set(), None, None
+        while True:
+            timeout = None
+            if first is not None:
+                timeout = max(0, min(last + c.get('debounceMs', 5000) / 1000, first + 30) - time.monotonic())
+            ready, _, _ = select.select([fd], [], [], timeout)
+            now = time.monotonic()
+            if ready:
+                raw = os.read(fd, 65536)
+                at = 0
+                while at < len(raw):
+                    wd, flags, cookie, length = struct.unpack_from('iIII', raw, at)
+                    name = raw[at+16:at+16+length].split(b'\0', 1)[0]
+                    at += 16 + length
+                    if flags & 0x4000:
+                        raise ValueError('File event overflow; intermediate changes unavailable')
+                    path = os.path.join(watches.get(wd, root), os.fsdecode(name)) if name else watches.get(wd, root)
+                    if flags & 0x8000:
+                        watches.pop(wd, None)
+                    if matching(path):
+                        changed.add(os.path.relpath(path, root))
+                        first = now if first is None else first
+                        last = now
+                establish()
+            if first is not None and now >= min(last + c.get('debounceMs', 5000) / 1000, first + 30):
+                after = snapshot(c)
+                # Include net differences to cover the watch/scan race and target recreation.
+                changed.update(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+                selected = sorted(p for p in changed if (not c.get('include') or fnmatch.fnmatch(p, c['include'])) and (not c.get('exclude') or not fnmatch.fnmatch(p, c['exclude'])))
+                emit({'snapshot': after, 'changes': selected[:1000], 'omitted': max(0,len(selected)-1000), 'status': 'watching' if after else 'waiting'}, ack=True)
+                before = after
+                changed, first, last = set(), None, None
+    finally:
+        os.close(fd)
+
+def main():
+    options = read_config()
+    c = options['source']
+    kind = c['kind']
+    if kind == 'command':
+        emit(command(c))
+    elif kind == 'http':
+        emit(http(c))
+    elif kind == 'sse':
+        sse(c, options)
+    elif kind == 'files':
+        files(c)
+    else:
+        raise ValueError('Unknown source kind')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        # No traceback/config/URL/header logging; the server applies redaction too.
+        message = str(error) if isinstance(error, (ValueError, TimeoutError)) else 'Source operation failed'
+        emit({'error': message[:1024]})
+        sys.exit(1)

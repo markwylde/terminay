@@ -48,6 +48,7 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 	const [filter, setFilter] = useState<BotFilter>('all');
 	const [search, setSearch] = useState('');
 	const [creating, setCreating] = useState(false);
+	const [availabilityError, setAvailabilityError] = useState<string>();
 	useEffect(() => subscribeNewBot(() => setCreating(true)), []);
 	const entries = useMemo(() => botEntries(servers), [servers]);
 	useEffect(() => {
@@ -81,6 +82,11 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 
 	return (
 		<div className="bots-ui bots-section" data-terminay-bots="dashboard">
+			{availabilityError ? (
+				<div role="alert" className="bots-note bots-note--error">
+					{availabilityError}
+				</div>
+			) : null}
 			<header className="bots-dhead">
 				<div className="bots-dhead__row">
 					<div className="bots-dhead__title">
@@ -168,6 +174,17 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 									key={`${entry.serverId}:${entry.bot.id}`}
 									entry={entry}
 									showServer={servers.size > 1}
+									onToggle={() => {
+										const server = servers.get(entry.serverId);
+										if (server)
+											void server.client
+												.enableBot(entry.bot.id, entry.bot.enabled === false)
+												.catch((e) =>
+													setAvailabilityError(
+														e instanceof Error ? e.message : String(e),
+													),
+												);
+									}}
 									now={now}
 									onOpen={(mode) =>
 										host.openBot({
@@ -246,11 +263,13 @@ function BotCard({
 	showServer,
 	now,
 	onOpen,
+	onToggle,
 }: Readonly<{
 	entry: BotEntry;
 	showServer: boolean;
 	now: number;
 	onOpen: (mode: 'chat' | 'configure') => void;
+	onToggle: () => void;
 }>) {
 	const { bot } = entry;
 	const activity = botActivity(entry.sessions, entry.environment);
@@ -280,7 +299,7 @@ function BotCard({
 			</button>
 			<div className="bots-acard__state">
 				<span className={`bots-chip bots-chip--small bots-chip--${activity}`}>
-					{BOT_ACTIVITY_LABELS[activity]}
+					{bot.enabled === false ? 'Disabled' : BOT_ACTIVITY_LABELS[activity]}
 					{live === undefined ? '' : ` · ${shortAge(live.startedAt, now)}`}
 				</span>
 				<span className="bots-acard__env">
@@ -301,6 +320,13 @@ function BotCard({
 				</span>
 			</div>
 			<div className="bots-acard__actions">
+				<button
+					type="button"
+					className="bots-btn bots-btn--sm"
+					onClick={onToggle}
+				>
+					{bot.enabled === false ? 'Enable bot' : 'Disable bot'}
+				</button>
 				<button
 					type="button"
 					className="bots-btn bots-btn--sm"
