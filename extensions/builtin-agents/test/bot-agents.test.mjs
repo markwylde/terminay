@@ -33,7 +33,8 @@ test('3.1 manifest validates and README records exact adapter pins', async () =>
 		executable: 'codex',
 		args: ['login', '--device-auth'],
 	});
-	assert.equal(codex.credentialSecrets[0].authenticateMethodId, 'api-key');
+	assert.equal(codex.nativeDriver, 'codex-cli');
+	assert.equal(codex.runtimeVersion, '0.165.0');
 	assert.equal(codex.autonomousOnly, true);
 	assert.match(
 		codex.botConfigFiles[0].contents,
@@ -78,23 +79,11 @@ test('3.1 manifest validates and README records exact adapter pins', async () =>
 });
 
 for (const agent of ['claude', 'codex']) {
-	test(`3.2 ${agent}: model list and launch use ACP configuration`, async () => {
+	test(`3.2 ${agent}: model list and launch use native configuration`, async () => {
 		const runtime = createBotAgent(agent);
 		const models = await runtime.models(signal());
 		assert.ok(models.length > 0 && models.length <= 64);
-		const gate = JSON.parse(
-			await readFile(
-				new URL(
-					'../../../openspec/adr/evidence/0089-bots/acp-docker-linux.json',
-					import.meta.url,
-				),
-				'utf8',
-			),
-		);
-		const accepted = gate[agent].config_options.find(
-			(o) => o.category === 'model',
-		).values;
-		assert.ok(models.every((m) => accepted.includes(m.id)));
+		assert.ok(models.every((m) => typeof m.id === 'string' && m.id.length > 0));
 		const first = models[0].id;
 		models[0].id = 'mutated';
 		assert.equal((await runtime.models(signal()))[0].id, first);

@@ -1,54 +1,11 @@
 // Runs only in a disposable bot container, through bot-credentials.mjs.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { Acp } from './acp.mjs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const key = process.env.OPENROUTER_API_KEY;
 assert.ok(key);
 assert.equal(process.env.HOME, '/home/bot');
-const run = (args, home, input) =>
-	new Promise((resolve, reject) => {
-		const child = spawn('codex', args, {
-			env: { PATH: process.env.PATH, HOME: home },
-			stdio: ['pipe', 'ignore', 'ignore'],
-		});
-		const timer = setTimeout(() => {
-			child.kill('SIGKILL');
-			reject(new Error('CLI deadline'));
-		}, 30_000);
-		child.once('error', () => {
-			clearTimeout(timer);
-			reject(new Error('CLI failed'));
-		});
-		child.once('exit', (code) => {
-			clearTimeout(timer);
-			code === 0 ? resolve() : reject(new Error('CLI failed'));
-		});
-		child.stdin.end(input);
-	});
-const host = '/run/test-host';
-const shared = `${host}/.codex/auth.json`;
-await run(['login', '--with-api-key'], host, `${key}\n`);
-for (const home of ['/tmp/test-bot-one', '/tmp/test-bot-two']) {
-	await mkdir(`${home}/.codex`, { recursive: true });
-	await symlink(shared, `${home}/.codex/auth.json`);
-}
-await Promise.all(
-	[host, '/tmp/test-bot-one', '/tmp/test-bot-two'].map((home) =>
-		run(['login', '--with-api-key'], home, `${key}\n`),
-	),
-);
-assert.equal(JSON.parse(await readFile(shared, 'utf8')).OPENAI_API_KEY, key);
-await run(['logout'], host);
-await assert.rejects(readFile('/tmp/test-bot-one/.codex/auth.json'));
-await run(['login', '--with-api-key'], host, `${key}\n`);
-assert.equal(
-	JSON.parse(await readFile('/tmp/test-bot-two/.codex/auth.json', 'utf8'))
-		.OPENAI_API_KEY,
-	key,
-);
-
 // Only the two cheap models approved by the feasibility gate.
 await mkdir('/home/bot/.codex', { recursive: true });
 await writeFile(
@@ -72,43 +29,45 @@ for (const agent of ['codex', 'claude']) {
 			CLAUDE_CODE_MAX_RETRIES: '0',
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 		});
-	const client = new Acp(
-		agent === 'codex' ? 'codex-acp' : 'claude-agent-acp',
-		env,
-	);
-	try {
-		await client.call('initialize', {
-			protocolVersion: 1,
-			clientCapabilities: {},
+	await new Promise((resolve, reject) => {
+		const command = agent === 'codex' ? 'codex' : 'claude';
+		const args =
+			agent === 'codex'
+				? [
+						'exec',
+						'--json',
+						'--skip-git-repo-check',
+						'--dangerously-bypass-approvals-and-sandbox',
+						'Reply with just the word credential-check-ok.',
+					]
+				: [
+						'-p',
+						'Reply with just the word credential-check-ok.',
+						'--output-format',
+						'stream-json',
+						'--verbose',
+						'--no-session-persistence',
+						'--tools',
+						'',
+					];
+		const child = spawn(command, args, {
+			env,
+			stdio: ['ignore', 'pipe', 'pipe'],
 		});
-		if (agent === 'codex')
-			await client.call('authenticate', { methodId: 'api-key' });
-		const session = await client.call('session/new', {
-			cwd: '/home/bot',
-			mcpServers: [],
+		let output = '';
+		child.stdout.on('data', (c) => (output += c));
+		child.stderr.resume();
+		const timer = setTimeout(() => {
+			child.kill('SIGKILL');
+			reject(new Error('Native CLI deadline'));
+		}, 30000);
+		child.once('error', reject);
+		child.once('close', (code) => {
+			clearTimeout(timer);
+			if (code === 0 && output.includes('credential-check-ok')) resolve();
+			else reject(new Error('Native credential check failed'));
 		});
-		if (agent === 'codex')
-			await client.call('session/set_config_option', {
-				sessionId: session.sessionId,
-				configId: 'mode',
-				value: 'agent-full-access',
-			});
-		const result = await client.call('session/prompt', {
-			sessionId: session.sessionId,
-			prompt: [
-				{ type: 'text', text: 'Reply with just the word credential-check-ok.' },
-			],
-		});
-		assert.equal(result.stopReason, 'end_turn');
-		// The reply streams in chunks; a word can be split across them.
-		const reply = client.updates
-			.filter((u) => u.sessionUpdate === 'agent_message_chunk')
-			.map((u) => u.content?.text ?? '')
-			.join('');
-		assert.ok(reply.includes('credential-check-ok'), `${agent} reply`);
-	} finally {
-		await client.close();
-	}
+	});
 }
 async function scan(directory) {
 	const { readdir } = await import('node:fs/promises');
@@ -124,4 +83,3 @@ async function scan(directory) {
 	}
 }
 await scan('/home/bot');
-await rm(shared, { force: true });

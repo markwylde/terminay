@@ -1,4 +1,3 @@
-import { relayDriver } from './fixtures/bot-runtime-relay.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
@@ -25,6 +24,7 @@ import {
 	eventBlock,
 	ScheduleEngine,
 } from '../dist/index.js';
+import { relayDriver } from './fixtures/bot-runtime-relay.mjs';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -95,7 +95,9 @@ const agent = {
 	id: 'fake.agent',
 	displayName: 'Fake',
 	autonomousOnly: false,
-	acpCommand: { executable: 'fake', args: [] },
+	runtimeProtocol: 'native-cli-v1',
+	nativeDriver: 'claude-code-cli',
+	runtimeVersion: '2.1.312',
 };
 async function setup(t, options = {}) {
 	const root = options.root ?? mkdtempSync(join(tmpdir(), 'bot-triggers-'));
@@ -344,7 +346,7 @@ test('runtime trigger reads paginate metadata, slice escaped UTF-8 prompts and r
 			r.bot.id,
 			draft(undefined, {
 				name: `Task ${i}`,
-				prompt: '😀\n"\\'.repeat(3000) + '\uFFFD',
+				prompt: `${'😀\n"\\'.repeat(3000)}\uFFFD`,
 			}),
 		);
 	const { sessionId } = await r.service.send(r.bot.id, 'Inspect my triggers');

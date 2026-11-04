@@ -13,6 +13,7 @@ import {
 	type BotAgentContribution,
 	validateBotAgentContribution,
 } from '@terminay/extension-api';
+import { BOT_BROWSER_SECCOMP } from './browserSandbox.js';
 import type { EngineDriver } from './engine.js';
 
 /** Image inputs copied from validated bot-agent declarations. */
@@ -86,17 +87,6 @@ export function agentLayer(agents: readonly BotAgentInstall[]): string {
 		...(npm.size
 			? [`RUN npm install -g -- ${[...npm.values()].sort().join(' ')}`]
 			: []),
-		// Expose the adapter's compatible Codex, without a separate CLI install.
-		...(npm.has('@agentclientprotocol/codex-acp')
-			? [
-					'RUN ln -s /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex && codex --version',
-				]
-			: []),
-		...(npm.has('@agentclientprotocol/claude-agent-acp')
-			? [
-					'RUN node /usr/local/lib/terminay/install-claude.cjs && claude --version && claude auth login --help && claude auth logout --help',
-				]
-			: []),
 		'',
 	].join('\n');
 }
@@ -117,6 +107,7 @@ export async function planBotImage(
 		throw new TypeError('bot uid and gid must be positive');
 	const layer = agentLayer(agents);
 	const hash = createHash('sha256');
+	hash.update(JSON.stringify(BOT_BROWSER_SECCOMP));
 	async function hashDirectory(relative: string): Promise<void> {
 		const entries = await readdir(path.join(contextPath, relative), {
 			withFileTypes: true,
@@ -158,12 +149,20 @@ export async function buildBotImage(
 	contextPath: string,
 	plan: BotImagePlan,
 	onOutput?: (chunk: string) => void,
+	onPhase?: (
+		id: string,
+		description: string,
+		state: 'running' | 'completed',
+	) => void,
+	onBuildEvent?: (event: Record<string, unknown>) => void,
 ): Promise<void> {
 	const directory = await mkdtemp(path.join(tmpdir(), 'terminay-bot-image-'));
 	const temporaryTag = `terminay-bot:build-${randomUUID()}`;
 	try {
 		await cp(contextPath, directory, { recursive: true });
 		await writeFile(path.join(directory, 'Dockerfile'), plan.dockerfile);
+		onPhase?.('prepare', 'Preparing image build', 'completed');
+		onPhase?.('build', 'Building the bot image', 'running');
 		await driver.run(
 			[
 				'build',
@@ -175,9 +174,18 @@ export async function buildBotImage(
 				`BOT_GID=${plan.gid}`,
 				directory,
 			],
-			{ deadlineMs: 15 * 60_000, onOutput, tail: true, maxBytes: 256 * 1024 },
+			{
+				deadlineMs: 15 * 60_000,
+				onOutput,
+				onBuildEvent,
+				tail: true,
+				maxBytes: 256 * 1024,
+			},
 		);
+		onPhase?.('build', 'Building the bot image', 'completed');
+		onPhase?.('publish', 'Publishing the local bot image', 'running');
 		await driver.run(['image', 'tag', temporaryTag, BOT_IMAGE]);
+		onPhase?.('publish', 'Publishing the local bot image', 'completed');
 	} finally {
 		await driver.run(['image', 'rm', temporaryTag]).catch(() => undefined);
 		await rm(directory, { recursive: true, force: true });

@@ -1,30 +1,33 @@
 import './bot-sources-real.test.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import test from 'node:test';
+import agentsPackage from '../../../extensions/builtin-agents/package.json' with {
+	type: 'json',
+};
+import { BotAgentProcess } from '../dist/botService/agentProcess.js';
+import { BOT_BROWSER_SECCOMP } from '../dist/botService/browserSandbox.js';
+import { BotEngine } from '../dist/botService/engine.js';
 import {
-	BotService,
-	BotStore,
-	BotSessionStore,
 	BotMemories,
+	BotService,
+	BotSessionStore,
+	BotStore,
 } from '../dist/botService/index.js';
 import {
 	modelServer,
 	preFixToolShell,
 } from './fixtures/bot-anthropic-model.mjs';
-import { randomBytes } from 'node:crypto';
-import test from 'node:test';
-import { BotEngine } from '../dist/botService/engine.js';
-import { BotAgentProcess } from '../dist/botService/agentProcess.js';
-import agentsPackage from '../../../extensions/builtin-agents/package.json' with {
-	type: 'json',
-};
+
 const claude = agentsPackage.terminay.contributes.botAgents.find(
-	(agent) => agent.acpCommand.executable === 'claude-agent-acp',
+	(agent) => agent.nativeDriver === 'claude-code-cli',
 );
+
 import { openBotRuntimeBridge } from '../dist/botService/runtimeBridge.js';
 
 const image = process.env.TERMINAY_BOT_MCP_SMOKE_IMAGE;
@@ -55,6 +58,9 @@ async function container(work) {
 	const botId = randomBytes(6).toString('hex'),
 		sessionId = randomBytes(12).toString('hex');
 	const name = `terminay-bot-${botId}`;
+	const profileRoot = await mkdtemp(join(tmpdir(), 'bot-sandbox-'));
+	const profilePath = join(profileRoot, 'seccomp.json');
+	await writeFile(profilePath, JSON.stringify(BOT_BROWSER_SECCOMP));
 	let pin;
 	const engine = new BotEngine({
 		load: async () => pin,
@@ -78,6 +84,9 @@ async function container(work) {
 				'-d',
 				'--network',
 				'none',
+				...(selected.details.pin.kind === 'docker'
+					? ['--security-opt', `seccomp=${profilePath}`]
+					: []),
 				'--cpus',
 				'2',
 				'--memory',
@@ -110,6 +119,7 @@ async function container(work) {
 		await work({ driver, botId, sessionId, name, botUid });
 	} finally {
 		engine.close();
+		await rm(profileRoot, { recursive: true, force: true });
 		try {
 			execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
 		} catch {

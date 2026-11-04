@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, writeFile, stat, access } from 'node:fs/promises';
-import { Acp } from './acp.mjs';
+import { access, mkdir, stat, writeFile } from 'node:fs/promises';
 import { fakeModel } from './model.mjs';
 
 /** Native CLI prompt, offline, with no browser or real credentials. */
@@ -42,8 +41,8 @@ export async function checkClaudePrompt(device, env) {
 	}
 }
 
-/** Synthetic credentials prove selection against the actual adapter without an account. */
-export async function checkClaudeCredentials(declaration, baseEnv) {
+/** Synthetic credentials prove selection against the actual native CLI without an account. */
+export async function checkClaudeCredentials(_declaration, baseEnv) {
 	const fake = await fakeModel();
 	try {
 		const login = 'synthetic-saved-login';
@@ -86,41 +85,49 @@ export async function checkClaudeCredentials(declaration, baseEnv) {
 			fake.state.rejectAuth = mode === 'key-rejected';
 			if (mode === 'token') env.CLAUDE_CODE_OAUTH_TOKEN = token;
 			const start = fake.state.requests.length;
-			const client = new Acp(declaration.acpCommand.executable, env);
-			try {
-				await client.call('initialize', {
-					protocolVersion: 1,
-					clientCapabilities: {},
-					clientInfo: { name: 'login-check', version: '1' },
-				});
-				const session = await client.call('session/new', {
-					cwd: '/home/bot',
-					mcpServers: [],
-				});
-				const prompting = client.call('session/prompt', {
-					sessionId: session.sessionId,
-					prompt: [{ type: 'text', text: 'Check selected authentication.' }],
-				});
-				if (mode === 'key-rejected') await assert.rejects(prompting);
-				else await prompting;
-				const requests = fake.state.requests
-					.slice(start)
-					.filter((r) => r.path.split('?')[0].endsWith('/messages'));
-				assert.ok(requests.length > 0);
-				for (const request of requests) {
-					if (mode.startsWith('key')) {
-						assert.equal(request.apiKey, key);
-						assert.equal(request.authorization, undefined);
-					} else {
-						assert.equal(
-							request.authorization,
-							`Bearer ${mode === 'token' ? token : login}`,
-						);
-						assert.equal(request.apiKey, undefined);
-					}
+			const child = spawn(
+				'claude',
+				[
+					'-p',
+					'Check selected authentication.',
+					'--output-format',
+					'stream-json',
+					'--verbose',
+					'--no-session-persistence',
+					'--model',
+					'fake/conformance',
+					'--setting-sources',
+					'',
+					'--tools',
+					'',
+					'--permission-prompts',
+					'none',
+					...(mode.startsWith('key') ? ['--bare'] : []),
+				],
+				{ cwd: '/home/bot', env, stdio: ['ignore', 'pipe', 'pipe'] },
+			);
+			let output = '';
+			child.stdout.on('data', (c) => (output += c));
+			child.stderr.resume();
+			const timer = setTimeout(() => child.kill('SIGKILL'), 15000);
+			const [code] = await once(child, 'exit');
+			clearTimeout(timer);
+			assert.equal(code === 0, mode !== 'key-rejected', output);
+			const requests = fake.state.requests
+				.slice(start)
+				.filter((r) => r.path.split('?')[0].endsWith('/messages'));
+			assert.ok(requests.length > 0);
+			for (const request of requests) {
+				if (mode.startsWith('key')) {
+					assert.equal(request.apiKey, key);
+					assert.equal(request.authorization, undefined);
+				} else {
+					assert.equal(
+						request.authorization,
+						`Bearer ${mode === 'token' ? token : login}`,
+					);
+					assert.equal(request.apiKey, undefined);
 				}
-			} finally {
-				await client.close();
 			}
 		}
 		await access('/home/bot/.claude/.credentials.json');

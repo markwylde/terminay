@@ -1,0 +1,36 @@
+{
+	"sourceProduct": "Atlas",
+	"revision": "1927383d62c5bf6d941c52bd26181e3bf3bcc9a0",
+	"files": [
+		{
+			"source": "docker/agent-browser/atlas-desktop-control.py",
+			"sourceSha256": "0c9d0e07532c4c7d40e1a9d3c083e5d31c7d6357421fff719e532053b8a6191b",
+			"destination": "docker/terminay-bot/bin/terminay-desktop-control.py"
+		},
+		{
+			"source": "docker/agent-shell/atlas-desktop-mcp.mjs",
+			"sourceSha256": "ec340d12967e99f9d7be149575e17214fced8223f6ad05f398717d8c3b0ed47c",
+			"destination": "docker/terminay-bot/bin/terminay-desktop-mcp.mjs"
+		},
+		{
+			"source": "docker/agent-browser/atlas-artcraft-install.sh",
+			"sourceSha256": "b8f7475abb386a3e0b7b8b8fabc60eb50cb817506f5a2255317e2aee46938482",
+			"destination": "docker/terminay-bot/bin/terminay-artcraft-install"
+		},
+		{
+			"source": "docker/agent-browser/atlas_desktop_control_test.py",
+			"sourceSha256": "9a242d2b09e14cd2b2bf80f1980af57a9f863386cb07ac4b917f87222f1de028",
+			"destination": "docker/terminay-bot/test_desktop_control.py"
+		}
+	],
+	"runnerSource": [
+		"packages/worker/src/codexRunner.ts",
+		"packages/worker/src/handlers/codexChat.ts",
+		"packages/worker/src/handlers/index.ts"
+	],
+	"adaptations": [
+		"Native execution inside existing supervised bot container",
+		"No private imports, services, images or runtime packages",
+		"Per-bot credentials and native permission control retained"
+	]
+}

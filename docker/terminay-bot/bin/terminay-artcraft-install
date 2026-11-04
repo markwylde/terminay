@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Installs the ArtCraft Crafting Apps (https://getartcraft.com) from their GitHub
+# release .debs. Run as root. Used by the agent-browser image build and copied onto
+# machine (VM) environments by the worker's bootstrap script, so both get the same
+# pinned versions. Apps already installed at the pinned version are skipped.
+set -euo pipefail
+
+ARTCRAFT_APPS="
+photocraft 0.17.0
+vectorcraft 0.18.0
+filmcraft 0.14.0
+lightcraft 0.15.0
+pdfcraft 0.15.0
+effectcraft 0.18.0
+designcraft 0.14.0
+figcraft 0.12.1
+wordcraft 0.12.0
+soundcraft 0.14.0
+deckcraft 0.12.0
+cadcraft 0.14.0
+gridcraft 0.13.0
+"
+
+case "$(dpkg --print-architecture)" in
+  amd64) arch=x86_64 ;;
+  arm64) arch=aarch64 ;;
+  *) echo "ArtCraft apps: unsupported architecture $(dpkg --print-architecture)" >&2; exit 1 ;;
+esac
+
+# Stage on the root disk: Debian 13 mounts /tmp as a tmpfs sized to half the RAM,
+# smaller than the ~1.4 GB of .debs on a 2 GB machine.
+workdir="$(mktemp -d /var/tmp/terminay-artcraft.XXXXXX)"
+trap 'rm -rf "${workdir:?}"' EXIT
+
+debs=()
+while read -r app version; do
+  [ -n "$app" ] || continue
+  installed="$(dpkg-query -W -f='${Version}' "$app" 2>/dev/null || true)"
+  case "$installed" in "$version" | "$version"-*) continue ;; esac
+  deb="$workdir/$app-$version-linux-$arch.deb"
+  printf 'TERMINAY_BUILD_STEP download-%s running Downloading %s %s\n' "$app" "$app" "$version"
+  curl -fsSL --retry 3 -o "$deb" \
+    "https://github.com/storytold/$app/releases/download/v$version/$app-$version-linux-$arch.deb"
+  printf 'TERMINAY_BUILD_STEP download-%s completed Downloading %s %s\n' "$app" "$app" "$version"
+  debs+=("$deb")
+done <<< "$ARTCRAFT_APPS"
+
+[ "${#debs[@]}" -gt 0 ] || exit 0
+
+# The apps render with wgpu (Vulkan, falling back to EGL/GL); Mesa's llvmpipe and
+# lavapipe drivers give them a software renderer on displays without a GPU.
+apt-get -o DPkg::Lock::Timeout=600 update
+printf 'TERMINAY_BUILD_STEP artcraft-install running Installing creative application packages\n'
+apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends \
+  libegl1 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers \
+  "${debs[@]}"
+
+printf 'TERMINAY_BUILD_STEP artcraft-install completed Installing creative application packages\n'

@@ -12,8 +12,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep python3 inotify-tools procps less openssh-client \
-      tigervnc-standalone-server tigervnc-tools openbox xterm x11-xserver-utils dbus-x11 fonts-dejavu-core \
-      chromium docker-cli docker-compose xdotool wmctrl scrot \
+      tigervnc-standalone-server tigervnc-tools xfwm4 xfce4-panel xfce4-settings xfce4-terminal xfdesktop4 x11-xserver-utils x11-apps dbus-x11 fonts-dejavu-core fonts-noto-color-emoji adwaita-icon-theme \
+      chromium chromium-sandbox docker-cli docker-compose xdotool wmctrl scrot \
+ && rm -rf /var/lib/apt/lists/*
+
+# Keep the large application layer independent of runtime helper changes.
+COPY bin/terminay-artcraft-install /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/terminay-artcraft-install \
+ && /usr/local/bin/terminay-artcraft-install \
+ && npm install -g chrome-devtools-mcp@1.1.1 \
  && rm -rf /var/lib/apt/lists/*
 
 # Replace the base image's `node` user with `bot`, at the server account's ids.
@@ -27,7 +34,10 @@ RUN mkdir -m 0700 /run/terminay-engine
 COPY bin/terminay-source bin/terminay-shell-env bin/terminay-bot-mcp bin/terminay-mcp-relay bin/terminay-browser bin/terminay-init bin/terminay-run bin/terminay-files bin/terminay-tool-shell bin/terminay-engine-proxy.mjs /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/terminay-source /usr/local/bin/terminay-shell-env /usr/local/bin/terminay-bot-mcp /usr/local/bin/terminay-mcp-relay /usr/local/bin/terminay-browser /usr/local/bin/terminay-init /usr/local/bin/terminay-run /usr/local/bin/terminay-files /usr/local/bin/terminay-tool-shell /usr/local/bin/terminay-engine-proxy.mjs
 
-COPY install-claude.cjs /usr/local/lib/terminay/install-claude.cjs
+COPY bin/terminay-desktop-session bin/terminay-desktop-control.py bin/terminay-desktop-mcp.mjs /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/terminay-desktop*
+RUN mkdir -p /etc/chromium/policies/managed \
+ && printf '%s\n' '{"DownloadDirectory":"/home/bot/Downloads","PromptForDownloadLocation":false,"DefaultBrowserSettingEnabled":false}' > /etc/chromium/policies/managed/terminay.json
 
 WORKDIR /home/bot
 ENTRYPOINT ["/usr/local/bin/terminay-init"]

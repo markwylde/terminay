@@ -9,7 +9,7 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * worktree insight sources. 3.2 added chat providers. 3.3 added terminal
  * launchers and the agent icon marks. 3.4 added terminal command defaults. 3.5 added bot agents.
  */
-export const EXTENSION_API_VERSION = '3.5.0' as const;
+export const EXTENSION_API_VERSION = '3.6.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,

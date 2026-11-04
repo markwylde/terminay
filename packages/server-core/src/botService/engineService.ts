@@ -6,6 +6,7 @@ import {
 } from '@terminay/protocol';
 import type { OperationRegistries } from '../types.js';
 import { assertBotAuthority } from './authority.js';
+import { BotBuildTracker } from './buildProgress.js';
 import {
 	BotEngine,
 	type EngineDriver,
@@ -27,6 +28,7 @@ export class BotEngineService extends EventEmitter {
 	private plan?: BotImagePlan;
 	private imageProbeFailed = false;
 	private buildTask?: Promise<void>;
+	private readonly buildTracker: BotBuildTracker;
 	private checkTask?: Promise<void>;
 	private image: BotEngineStatus['image'] = {
 		state: 'missing',
@@ -55,6 +57,7 @@ export class BotEngineService extends EventEmitter {
 			this.engine.availability,
 			this.candidates,
 			this.image,
+			this.buildTracker.revision,
 			this.outputRevision,
 			this.eventRevision,
 		]);
@@ -74,8 +77,11 @@ export class BotEngineService extends EventEmitter {
 		private readonly contextPath: string,
 		private readonly installs: () => readonly BotAgentInstall[],
 		private readonly serverId: string,
+		progressPath?: string,
 	) {
 		super();
+		this.buildTracker = new BotBuildTracker(progressPath);
+		this.output = Buffer.from(this.buildTracker.retainedOutput);
 		engine.on('availability', this.availabilityChanged);
 		engine.on('container-event', this.containerChanged);
 	}
@@ -230,6 +236,7 @@ export class BotEngineService extends EventEmitter {
 				]),
 			);
 		}
+		const build = this.buildTracker.snapshot;
 		return {
 			engine: a.available ? a.details.pin.kind : (pin?.kind ?? null),
 			available: a.available,
@@ -270,6 +277,9 @@ export class BotEngineService extends EventEmitter {
 			runningContainers,
 			botContainers,
 			image: { ...this.image },
+			build: build
+				? { ...build, steps: build.steps.map((step) => ({ ...step, log: '' })) }
+				: null,
 		};
 	}
 	build(): Promise<void> {
@@ -283,19 +293,36 @@ export class BotEngineService extends EventEmitter {
 				driver.details.botGid,
 			);
 			const plan = this.plan;
+			this.buildTracker.start(
+				driver.details.pin.identity,
+				plan.fingerprint,
+				!!this.image.fingerprint,
+			);
 			this.output = Buffer.alloc(0);
 			this.image = { ...this.image, state: 'building', error: null };
 			this.changed();
 			try {
-				await buildBotImage(driver, this.contextPath, plan, (chunk) => {
-					this.output = Buffer.from(
-						Buffer.concat([this.output, Buffer.from(chunk)]).subarray(
-							-256 * 1024,
-						),
-					);
-					this.outputRevision++;
-					this.changed();
-				});
+				await buildBotImage(
+					driver,
+					this.contextPath,
+					plan,
+					(chunk) => {
+						this.buildTracker.output(chunk);
+						this.output = Buffer.from(this.buildTracker.retainedOutput);
+						this.outputRevision++;
+						this.changed();
+					},
+					(id, description, state) => {
+						this.buildTracker.step(id, description, state);
+						this.changed();
+					},
+					(event) => {
+						this.buildTracker.event(event);
+						this.changed();
+					},
+				);
+				this.buildTracker.finish(true);
+				this.output = Buffer.from(this.buildTracker.retainedOutput);
 				this.image = {
 					state: 'current',
 					fingerprint: plan.fingerprint,
@@ -303,6 +330,8 @@ export class BotEngineService extends EventEmitter {
 					error: null,
 				};
 			} catch {
+				this.buildTracker.finish(false);
+				this.output = Buffer.from(this.buildTracker.retainedOutput);
 				this.image = {
 					...this.image,
 					state: 'failed',
@@ -331,6 +360,10 @@ export class BotEngineService extends EventEmitter {
 				Object.values(op).map((name) => [name, { scope: 'write' as const }]),
 			),
 			queries: {
+				[op.progress]: (r) => {
+					authorize(r.context);
+					return this.buildTracker.snapshot as unknown as JsonValue;
+				},
 				[op.status]: async (r) => {
 					authorize(r.context);
 					const result = await this.status();
