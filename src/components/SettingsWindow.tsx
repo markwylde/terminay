@@ -51,6 +51,10 @@ import {
 } from '../shared/SharedSettingsRouteBody';
 import { useMacroEditor } from './macros/useMacroEditor';
 import { MacrosCategory } from './settings/MacrosCategory';
+import { WorkflowsCategory } from './settings/WorkflowsCategory';
+import { useWorkflowEditor } from './workflows/useWorkflowEditor';
+import { useWorkflowSettingsClient } from './workflows/useWorkflowSettingsClient';
+import { templateSearchText } from './workflows/workflowLibraryModel';
 import { groupSettingsCategories } from './settings/settingsCategoryGroups';
 import {
 	type CollectionSelection,
@@ -107,11 +111,17 @@ type CategoryId =
 	| (typeof terminalSettingsCategories)[number]['id']
 	| 'extensions'
 	| 'diagnostics'
-	| 'macros';
+	| 'macros'
+	| 'workflows';
 
 const macrosSettingsCategory = Object.freeze({
 	id: 'macros' as const,
 	label: 'Macros',
+});
+
+const workflowsSettingsCategory = Object.freeze({
+	id: 'workflows' as const,
+	label: 'Workflows',
 });
 
 const extensionSettingsCategory = Object.freeze({
@@ -409,6 +419,18 @@ function getCategoryIcon(id: CategoryId) {
 					<path d="M12 14h5" />
 				</>,
 			);
+		case 'workflows':
+			return renderCategoryIcon(
+				'Workflows',
+				<>
+					<circle cx="6" cy="6" r="2" />
+					<circle cx="6" cy="18" r="2" />
+					<path d="M6 8v8" />
+					<path d="M11 6h9" />
+					<path d="M11 12h9" />
+					<path d="M11 18h9" />
+				</>,
+			);
 		case 'remote':
 			return renderCategoryIcon(
 				'Remote Access',
@@ -603,6 +625,7 @@ export function SettingsWindow({
 		initialSectionFromUrl === 'extensions' ||
 		initialSectionFromUrl === 'diagnostics' ||
 		initialSectionFromUrl === 'macros' ||
+		initialSectionFromUrl === 'workflows' ||
 		initialSectionFromUrl === 'remote'
 			? initialSectionFromUrl
 			: (terminalSettingsSections.find(
@@ -655,6 +678,12 @@ export function SettingsWindow({
 		macroSettingsClient ?? unavailableMacroSettingsClient,
 		activeCategoryId === 'macros',
 	);
+	// Workflows follow the server chosen in the selector, as macros do.
+	const workflowSettings = useWorkflowSettingsClient(applicationClient);
+	const workflowEditor = useWorkflowEditor(
+		workflowSettings.client,
+		activeCategoryId === 'workflows',
+	);
 	// A command can ask an open Settings for another category or item (⌘; while
 	// Settings shows Appearance). The first request is the initial state above.
 	const lastRequest = useRef({ section: initialSectionId, item: initialItemId });
@@ -668,6 +697,7 @@ export function SettingsWindow({
 			initialSectionId === 'extensions' ||
 			initialSectionId === 'diagnostics' ||
 			initialSectionId === 'macros' ||
+			initialSectionId === 'workflows' ||
 			initialSectionId === 'remote'
 				? initialSectionId
 				: terminalSettingsSections.find((section) => section.id === initialSectionId)
@@ -681,6 +711,7 @@ export function SettingsWindow({
 					macroEditor.selectMacro(initialItemId);
 				else pendingMacroId.current = initialItemId;
 			}
+			else if (categoryId === 'workflows') workflowEditor.select(initialItemId);
 			else setCollectionSelection((current) => rememberSelection(current, categoryId, initialItemId));
 		}
 		if (categoryId !== initialSectionId) {
@@ -710,11 +741,12 @@ export function SettingsWindow({
 		resolve: (proceed: boolean) => void;
 	} | null>(null);
 	const pendingLeave = useRef<Promise<boolean> | null>(null);
+	const anyEditorDirty = macroEditor.isDirty || workflowEditor.isDirty;
 	const confirmLeave = useCallback((): Promise<boolean> => {
-		if (!macroEditor.isDirty) return Promise.resolve(true);
+		if (!macroEditor.isDirty && !workflowEditor.isDirty) return Promise.resolve(true);
 		// A second close while the prompt is up waits on the same answer.
 		if (pendingLeave.current !== null) return pendingLeave.current;
-		setActiveCategoryId('macros');
+		setActiveCategoryId(macroEditor.isDirty ? 'macros' : 'workflows');
 		setQuery('');
 		const answer = new Promise<boolean>((resolve) =>
 			setLeaveRequest({ resolve }),
@@ -723,31 +755,34 @@ export function SettingsWindow({
 		});
 		pendingLeave.current = answer;
 		return answer;
-	}, [macroEditor.isDirty]);
+	}, [macroEditor.isDirty, workflowEditor.isDirty]);
 	useSettingsLeaveGuard(confirmLeave);
 	const settleLeave = async (choice: 'save' | 'discard' | 'keep') => {
 		const request = leaveRequest;
 		if (request === null) return;
 		if (choice === 'save') {
-			const saved = await macroEditor.save();
+			const saved = (await macroEditor.save()) && (await workflowEditor.save());
 			setLeaveRequest(null);
 			request.resolve(saved);
 			return;
 		}
-		if (choice === 'discard') macroEditor.discard();
+		if (choice === 'discard') {
+			macroEditor.discard();
+			workflowEditor.discard();
+		}
 		setLeaveRequest(null);
 		request.resolve(choice === 'discard');
 	};
 	// A native window cannot draw the prompt above; it asks the host instead.
 	useEffect(() => {
-		if (!macroEditor.isDirty) return undefined;
+		if (!anyEditorDirty) return undefined;
 		const onBeforeUnload = (event: BeforeUnloadEvent) => {
 			event.preventDefault();
 			event.returnValue = '';
 		};
 		window.addEventListener('beforeunload', onBeforeUnload);
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
-	}, [macroEditor.isDirty]);
+	}, [anyEditorDirty]);
 	const [diagnosticsAvailable, setDiagnosticsAvailable] = useState(false);
 	const [performanceLoggingEnabled, setPerformanceLoggingEnabled] =
 		useState(false);
@@ -1021,6 +1056,18 @@ export function SettingsWindow({
 				.includes(normalizedQuery),
 		);
 	}, [macroEditor.draft.macros, macrosAvailable, normalizedQuery]);
+	const workflowsAvailable = applicationClient !== undefined;
+	const workflowMatches = useMemo(() => {
+		if (!normalizedQuery || workflowSettings.unavailable !== undefined) return [];
+		return workflowEditor.draft.templates.filter((template) =>
+			`${template.name}\n${templateSearchText(template)}`
+				.toLowerCase()
+				.includes(normalizedQuery),
+		);
+	}, [workflowEditor.draft.templates, workflowSettings.unavailable, normalizedQuery]);
+	const workflowsQueryMatches =
+		'workflows automation steps goal'.includes(normalizedQuery) ||
+		workflowMatches.length > 0;
 	const serverMatches = useMemo(
 		() =>
 			!normalizedQuery || renderRemoteAccess === undefined
@@ -1048,6 +1095,7 @@ export function SettingsWindow({
 	const visibleCategories = useMemo(() => {
 		const extra = [
 			...(macrosAvailable ? [macrosSettingsCategory] : []),
+			...(workflowsAvailable ? [workflowsSettingsCategory] : []),
 			...(diagnosticsAvailable ? [diagnosticsSettingsCategory] : []),
 			extensionSettingsCategory,
 		];
@@ -1063,6 +1111,9 @@ export function SettingsWindow({
 		return [
 			...settingsCategories,
 			...(macrosAvailable && macrosQueryMatches ? [macrosSettingsCategory] : []),
+			...(workflowsAvailable && workflowsQueryMatches
+				? [workflowsSettingsCategory]
+				: []),
 			...(diagnosticsAvailable && diagnosticsQueryMatches
 				? [diagnosticsSettingsCategory]
 				: []),
@@ -1078,6 +1129,8 @@ export function SettingsWindow({
 		filteredSections,
 		macrosAvailable,
 		macrosQueryMatches,
+		workflowsAvailable,
+		workflowsQueryMatches,
 		normalizedQuery,
 		serverMatches.length,
 	]);
@@ -1094,6 +1147,9 @@ export function SettingsWindow({
 					...(macrosAvailable && macroEditor.isReady
 						? { macros: macroEditor.draft.macros.length }
 						: {}),
+					...(workflowEditor.isReady
+						? { workflows: workflowEditor.draft.templates.length }
+						: {}),
 					...(extensionCount === undefined ? {} : { extensions: extensionCount }),
 				},
 			),
@@ -1101,6 +1157,8 @@ export function SettingsWindow({
 			macroEditor.draft.macros.length,
 			macroEditor.isReady,
 			macrosAvailable,
+			workflowEditor.draft.templates.length,
+			workflowEditor.isReady,
 			extensionCount,
 			visibleCategories,
 		],
@@ -2410,12 +2468,26 @@ export function SettingsWindow({
 			<InPageWindow
 				kind={{ resizable: false, width: 420 }}
 				name="settings-leave"
-				title="Unsaved Macros"
+				title={macroEditor.isDirty ? 'Unsaved Macros' : 'Unsaved Workflows'}
 				onClose={() => void settleLeave('keep')}
 			>
 				<div className="settings-leave-prompt" role="alertdialog" aria-labelledby="settings-leave-title">
-					<h2 id="settings-leave-title">Save changes to your macros?</h2>
-					<p>{macroEditor.saveState}. Unsaved edits are lost if you leave now.</p>
+					<h2 id="settings-leave-title">
+						{macroEditor.isDirty && workflowEditor.isDirty
+							? 'Save changes to your macros and workflows?'
+							: macroEditor.isDirty
+								? 'Save changes to your macros?'
+								: 'Save changes to your workflows?'}
+					</h2>
+					<p>
+						{[
+							macroEditor.isDirty ? macroEditor.saveState : undefined,
+							workflowEditor.isDirty ? workflowEditor.saveState : undefined,
+						]
+							.filter((text) => text !== undefined)
+							.join('. ')}
+						. Unsaved edits are lost if you leave now.
+					</p>
 					<div className="settings-inline-actions settings-modal-actions">
 						<button
 							type="button"
@@ -2470,11 +2542,12 @@ export function SettingsWindow({
 
 	/** Opens a collection category with one of its items selected. */
 	const openCollectionItem = (
-		categoryId: 'macros' | 'remote' | 'extensions',
+		categoryId: 'macros' | 'workflows' | 'remote' | 'extensions',
 		itemId: string,
 	) => {
 		openCategory(categoryId);
 		if (categoryId === 'macros') macroEditor.selectMacro(itemId);
+		else if (categoryId === 'workflows') workflowEditor.select(itemId);
 		else selectCollectionItem(categoryId, itemId);
 	};
 
@@ -2496,6 +2569,7 @@ export function SettingsWindow({
 			onResetAll={
 				activeCategoryId === 'extensions' ||
 				activeCategoryId === 'macros' ||
+				activeCategoryId === 'workflows' ||
 				activeCategoryId === 'remote'
 					? undefined
 					: activeCategoryId === 'diagnostics'
@@ -2530,6 +2604,18 @@ export function SettingsWindow({
 			<MacrosCategory
 				editor={macroEditor}
 				render={({ detail, ...parts }) => renderShell(detail, parts, 'Macros')}
+			/>
+		);
+	}
+
+	if (!normalizedQuery && activeCategoryId === 'workflows' && workflowsAvailable) {
+		return (
+			<WorkflowsCategory
+				editor={workflowEditor}
+				{...(workflowSettings.unavailable === undefined
+					? {}
+					: { unavailable: workflowSettings.unavailable })}
+				render={({ detail, ...parts }) => renderShell(detail, parts, 'Workflows')}
 			/>
 		);
 	}
@@ -2603,6 +2689,7 @@ export function SettingsWindow({
 		<>
 			{normalizedQuery &&
 			(macroMatches.length > 0 ||
+				workflowMatches.length > 0 ||
 				serverMatches.length > 0 ||
 				extensionMatches.length > 0) ? (
 				<section className="settings-section" aria-label="Matching items">
@@ -2618,6 +2705,19 @@ export function SettingsWindow({
 								<span className="settings-row-info">
 									<span className="settings-row-label">{macro.title}</span>
 									<span className="settings-row-description">Macros</span>
+								</span>
+							</button>
+						))}
+						{workflowMatches.map((template) => (
+							<button
+								key={`workflow:${template.id}`}
+								type="button"
+								className="settings-row settings-row--button"
+								onClick={() => openCollectionItem('workflows', template.id)}
+							>
+								<span className="settings-row-info">
+									<span className="settings-row-label">{template.name}</span>
+									<span className="settings-row-description">Workflows</span>
 								</span>
 							</button>
 						))}
@@ -2692,7 +2792,7 @@ export function SettingsWindow({
 				/>
 			) : null}
 			{displayedCategories.map((cat) => {
-				if (cat.id === 'extensions' || cat.id === 'diagnostics' || cat.id === 'macros')
+				if (cat.id === 'extensions' || cat.id === 'diagnostics' || cat.id === 'macros' || cat.id === 'workflows')
 					return null;
 				const sections = filteredSections.filter(
 					(s) => s.categoryId === cat.id,

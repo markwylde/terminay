@@ -11,7 +11,7 @@ export const SETTINGS_CATEGORY_GROUPS = Object.freeze([
 		categoryIds: ['shell', 'cursor', 'interaction', 'scrolling'],
 	},
 	{ id: 'connections', label: 'Connections', categoryIds: ['remote'] },
-	{ id: 'automation', label: 'Automation', categoryIds: ['macros', 'recording'] },
+	{ id: 'automation', label: 'Automation', categoryIds: ['macros', 'workflows', 'recording'] },
 	{ id: 'extensions', label: 'Extensions', categoryIds: ['extensions'] },
 	{ id: 'system', label: 'System', categoryIds: ['updates', 'diagnostics'] },
 ] as const);

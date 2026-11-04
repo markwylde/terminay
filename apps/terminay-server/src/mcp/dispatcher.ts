@@ -46,6 +46,14 @@ import {
 	parseRunMacro,
 } from './macroTools.js';
 import {
+	isWorkflowParamFailure,
+	parseCreateWorkflow,
+	parseGetWorkflow,
+	parseUpdateWorkflowStep,
+	WORKFLOW_CONTROL_OPERATIONS,
+	type WorkflowControlAdapter,
+} from './workflowTools.js';
+import {
 	isSettingsParamFailure,
 	parseGetSettings,
 	parseListShellProfiles,
@@ -382,6 +390,9 @@ export interface ServerControlHandlers {
 	readonly listMacros?: OperationHandler;
 	readonly runMacro?: OperationHandler;
 	readonly cancelMacro?: OperationHandler;
+	readonly getWorkflow?: OperationHandler;
+	readonly createWorkflow?: OperationHandler;
+	readonly updateWorkflowStep?: OperationHandler;
 	readonly listNotifications?: OperationHandler;
 }
 
@@ -478,6 +489,9 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	list_macros: 'terminalsManage',
 	run_macro: 'terminalsManage',
 	cancel_macro: 'terminalsManage',
+	get_workflow: 'terminalsRead',
+	create_workflow: 'terminalsManage',
+	update_workflow_step: 'terminalsManage',
 	show_window: 'appWindows',
 	close_window: 'appWindows',
 	list_windows: 'appWindows',
@@ -698,6 +712,8 @@ export interface TerminalControlAdapterOptions {
 	readonly settings?: SettingsControlAdapter;
 	/** Host binding for the macro tools (ADR-0072). */
 	readonly macros?: MacroControlAdapter;
+	/** The workflow tools (ADR-0097); without it they are unavailable. */
+	readonly workflows?: WorkflowControlAdapter;
 	/**
 	 * The view of the client the agent is talking from (ADR-0070). With it,
 	 * `split_terminal`, `open_terminal`'s `split` and `focus`, and
@@ -783,6 +799,9 @@ const DEFAULT_SCOPES: Readonly<
 	list_macros: 'read',
 	run_macro: 'write',
 	cancel_macro: 'write',
+	get_workflow: 'read',
+	create_workflow: 'write',
+	update_workflow_step: 'write',
 	show_window: 'write',
 	close_window: 'write',
 	list_windows: 'read',
@@ -859,6 +878,9 @@ const HANDLER_BY_OPERATION: Readonly<
 	list_macros: 'listMacros',
 	run_macro: 'runMacro',
 	cancel_macro: 'cancelMacro',
+	get_workflow: 'getWorkflow',
+	create_workflow: 'createWorkflow',
+	update_workflow_step: 'updateWorkflowStep',
 	show_window: 'showWindow',
 	close_window: 'closeWindow',
 	list_windows: 'listWindows',
@@ -1228,6 +1250,9 @@ export function createTerminalControlAdapter(
 										? SETTINGS_CONTROL_OPERATIONS
 										: []),
 									...(options.macros === undefined ? MACRO_CONTROL_OPERATIONS : []),
+									...(options.workflows === undefined
+										? WORKFLOW_CONTROL_OPERATIONS
+										: []),
 									...(options.adapter.updateTerminal === undefined
 										? ['update_terminal']
 										: []),
@@ -1762,6 +1787,37 @@ export function createTerminalControlAdapter(
 					runMacro: macroHandler(parseRunMacro, (a, p, c, s) => a.runMacro(p, c, s)),
 					cancelMacro: macroHandler(parseCancelMacro, (a, p, c, s) => a.cancelMacro(p, c, s)),
 				};
+	const workflows = options.workflows;
+	const workflowHandler =
+		<P>(
+			parse: (params: Record<string, unknown>) => P | ControlFailure,
+			run: (
+				adapter: WorkflowControlAdapter,
+				parsed: P,
+				context: ControlRequestContext,
+				signal: AbortSignal,
+			) => unknown,
+		) =>
+		(
+			params: Record<string, unknown>,
+			context: ControlRequestContext,
+			signal: AbortSignal,
+		) =>
+			invoke(signal, () => {
+				const parsed = parse(params);
+				if (isWorkflowParamFailure(parsed)) return parsed;
+				return run(workflows!, parsed as P, context, signal);
+			});
+	const workflowHandlers: Partial<ServerControlHandlers> =
+		workflows === undefined
+			? {}
+			: {
+					getWorkflow: workflowHandler(parseGetWorkflow, (a, p, c, s) => a.getWorkflow(p, c, s)),
+					createWorkflow: workflowHandler(parseCreateWorkflow, (a, p, c, s) => a.createWorkflow(p, c, s)),
+					updateWorkflowStep: workflowHandler(parseUpdateWorkflowStep, (a, p, c, s) =>
+						a.updateWorkflowStep(p, c, s),
+					),
+				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
 		handlers: {
 			...handlers,
@@ -1772,6 +1828,7 @@ export function createTerminalControlAdapter(
 			...appControlHandlers,
 			...settingsHandlers,
 			...macroHandlers,
+			...workflowHandlers,
 		},
 		...(options.permissions === undefined
 			? {}
@@ -2001,6 +2058,10 @@ function publicControlError(error: unknown): ControlError {
 		out_of_scope:
 			'This operation needs workspace reach; an agent in a project terminal acts only on its own project.',
 		busy: 'A terminal is running a program.',
+		workflow_exists: 'This terminal already has an unfinished workflow.',
+		no_workflow: 'This terminal has no workflow.',
+		step_not_found: "That step is not in this terminal's workflow.",
+		step_active: 'Another step is still running or waiting on the user.',
 		internal: 'The control operation failed.',
 	};
 	return { code: publicCode, message: messageByCode[publicCode] };
@@ -2026,6 +2087,10 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'approval_queue_full' ||
 		value === 'out_of_scope' ||
 		value === 'busy' ||
+		value === 'workflow_exists' ||
+		value === 'no_workflow' ||
+		value === 'step_not_found' ||
+		value === 'step_active' ||
 		value === 'internal'
 	);
 }

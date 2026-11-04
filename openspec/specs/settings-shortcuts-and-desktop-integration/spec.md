@@ -88,9 +88,9 @@ Desktop Settings SHALL expose a **Diagnostics** category whose Performance loggi
 
 ### Requirement: Command Bar contents
 
-The Command Bar SHALL search built-in commands, saved macros, and places. Built-ins SHALL honour the active panel and project requirement and SHALL display user-configured shortcuts. Commands that act on the workspace view rather than a panel, including **Show Dashboard**, SHALL remain available when no panel or project is active.
+The Command Bar SHALL search built-in commands, saved macros, workflow templates, and places. While the active panel is a terminal whose workflow is unfinished, **Resume workflow** SHALL be listed above every workflow template. Built-ins SHALL honour the active panel and project requirement and SHALL display user-configured shortcuts. Commands that act on the workspace view rather than a panel, including **Show Dashboard**, SHALL remain available when no panel or project is active.
 
-Places SHALL be Home's sections and every project, tab, and agent of every attached connection, and every automation of every connection that serves automations. Place matching SHALL be case-insensitive substring matching over names, SHALL rank a match at the start of a name or word above one elsewhere, and SHALL return nothing for an empty search, so that the Command Bar opens showing commands and macros alone. Results SHALL be grouped, with commands and macros first and then places by kind — sections, projects, tabs, agents, automations — each kind bounded. Choosing a place SHALL go to it: a section opens as a Home tab, a project or tab is activated as a dashboard row is, an agent as a dashboard agent is, and an automation opens in its Home tab. With more than one connection attached, a place SHALL name the server it belongs to.
+Places SHALL be Home's sections and every project, tab, and agent of every attached connection, and every automation of every connection that serves automations. Place matching SHALL be case-insensitive substring matching over names, SHALL rank a match at the start of a name or word above one elsewhere, and SHALL return nothing for an empty search, so that the Command Bar opens showing commands, macros, and workflows alone. Results SHALL be grouped, with commands, macros, and workflows first and then places by kind — sections, projects, tabs, agents, automations — each kind bounded. Choosing a place SHALL go to it: a section opens as a Home tab, a project or tab is activated as a dashboard row is, an agent as a dashboard agent is, and an automation opens in its Home tab. With more than one connection attached, a place SHALL name the server it belongs to.
 
 The Command Bar SHALL open whichever view is selected, including Home and a window that holds no project. A command that requires a project SHALL be left out of the results when no project is in front: while Home is selected, and when the window holds no project.
 
@@ -122,7 +122,7 @@ The Command Bar SHALL open whichever view is selected, including Home and a wind
 #### Scenario: Opening with nothing typed
 
 - **WHEN** a user opens the Command Bar and has typed nothing
-- **THEN** commands and macros are listed and no places are
+- **THEN** commands, macros, and, while a terminal is active, workflow templates are listed and no places are
 
 #### Scenario: Opening on Home
 
@@ -133,6 +133,11 @@ The Command Bar SHALL open whichever view is selected, including Home and a wind
 
 - **WHEN** a user opens the Command Bar in a window that holds no project
 - **THEN** it opens, lists view-scoped commands and places, and lists no command that requires a project
+
+#### Scenario: Searching for a workflow
+
+- **WHEN** a user types part of a workflow template's name into the Command Bar while a terminal is active
+- **THEN** that template is listed in its category's workflow group
 
 ### Requirement: Semantic secondary-route presentation
 

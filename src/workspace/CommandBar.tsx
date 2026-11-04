@@ -54,6 +54,7 @@ const GROUP_ORDER: readonly string[] = [
 	'Terminal',
 	'Workspace',
 	'Macros',
+	'Workflows',
 	...Object.values(HOME_SEARCH_KIND_LABELS),
 ];
 
@@ -65,6 +66,16 @@ export type CommandBarGroup = Readonly<{
 
 const MACRO_GROUP_KEY_PREFIX = 'macro-category:';
 const UNCATEGORISED_MACROS_GROUP = 'Macros';
+
+/** A workflow group: Resume, a template category, or uncategorised templates. */
+function isWorkflowGroupKey(key: string): boolean {
+	return key === 'Workflows' || key === 'workflow-resume' || key.startsWith('workflow-category:');
+}
+
+/** Groups whose items keep their saved order when a search matches them. */
+function keepsSavedOrder(key: string): boolean {
+	return isMacroGroupKey(key) || isWorkflowGroupKey(key);
+}
 
 function isMacroGroupKey(key: string): boolean {
 	return key === UNCATEGORISED_MACROS_GROUP || key.startsWith(MACRO_GROUP_KEY_PREFIX);
@@ -127,9 +138,16 @@ export function groupCommandBarItems(
 		entry.items.push({ index, item });
 		groups.set(key, entry);
 	});
-	// Every macro group sits where "Macros" does, ahead of places.
+	// Every macro group sits where "Macros" does and every workflow group where
+	// "Workflows" does, ahead of places.
 	const rank = (key: string) => {
-		const at = GROUP_ORDER.indexOf(isMacroGroupKey(key) ? UNCATEGORISED_MACROS_GROUP : key);
+		const at = GROUP_ORDER.indexOf(
+			isMacroGroupKey(key)
+				? UNCATEGORISED_MACROS_GROUP
+				: isWorkflowGroupKey(key)
+					? 'Workflows'
+					: key,
+		);
 		return at === -1 ? GROUP_ORDER.length : at;
 	};
 	return [...groups.entries()]
@@ -222,9 +240,12 @@ export function filterCommandBarItems(
 				}))
 				.filter(({ score }) => score > 0)
 				.sort((left, right) => {
+					const leftKey = left.item.groupKey ?? left.item.group;
+					const rightKey = right.item.groupKey ?? right.item.group;
 					if (
-						isMacroGroupKey(left.item.groupKey ?? left.item.group) &&
-						isMacroGroupKey(right.item.groupKey ?? right.item.group)
+						keepsSavedOrder(leftKey) &&
+						keepsSavedOrder(rightKey) &&
+						isMacroGroupKey(leftKey) === isMacroGroupKey(rightKey)
 					) {
 						return left.index - right.index;
 					}

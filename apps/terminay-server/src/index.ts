@@ -20,6 +20,8 @@ export * from './mcp/appControlAdapter.js';
 export * from './mcp/appControlTools.js';
 export * from './mcp/macroAdapter.js';
 export * from './mcp/macroTools.js';
+export * from './mcp/workflowAdapter.js';
+export * from './mcp/workflowTools.js';
 export * from './mcp/settingsAdapter.js';
 export * from './mcp/settingsTools.js';
 export * from './mcp/terminalMetadataAdapter.js';
