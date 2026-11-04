@@ -183,6 +183,16 @@ export function describeChatMcpCall(
 			return `Attaching a workflow to ${terminal()}`;
 		case 'update_workflow_step':
 			return `Updating a workflow step in ${terminal()}`;
+		case 'list_workflow_templates':
+			return 'Looking at the workflow templates';
+		case 'get_workflow_template':
+			return 'Reading a workflow template';
+		case 'create_workflow_template':
+			return 'Saving a workflow template';
+		case 'update_workflow_template':
+			return 'Changing a workflow template';
+		case 'delete_workflow_template':
+			return 'Deleting a workflow template';
 		case 'list_notifications':
 			return 'Looking at notifications';
 		case 'dismiss_notification':

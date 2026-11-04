@@ -48,8 +48,12 @@ import {
 import {
 	isWorkflowParamFailure,
 	parseCreateWorkflow,
+	parseCreateWorkflowTemplate,
 	parseGetWorkflow,
+	parseListWorkflowTemplates,
+	parseTemplateId,
 	parseUpdateWorkflowStep,
+	parseUpdateWorkflowTemplate,
 	WORKFLOW_CONTROL_OPERATIONS,
 	type WorkflowControlAdapter,
 } from './workflowTools.js';
@@ -393,6 +397,11 @@ export interface ServerControlHandlers {
 	readonly getWorkflow?: OperationHandler;
 	readonly createWorkflow?: OperationHandler;
 	readonly updateWorkflowStep?: OperationHandler;
+	readonly listWorkflowTemplates?: OperationHandler;
+	readonly getWorkflowTemplate?: OperationHandler;
+	readonly createWorkflowTemplate?: OperationHandler;
+	readonly updateWorkflowTemplate?: OperationHandler;
+	readonly deleteWorkflowTemplate?: OperationHandler;
 	readonly listNotifications?: OperationHandler;
 }
 
@@ -492,6 +501,11 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	get_workflow: 'terminalsRead',
 	create_workflow: 'terminalsManage',
 	update_workflow_step: 'terminalsManage',
+	list_workflow_templates: 'terminalsRead',
+	get_workflow_template: 'terminalsRead',
+	create_workflow_template: 'workflowTemplates',
+	update_workflow_template: 'workflowTemplates',
+	delete_workflow_template: 'workflowTemplates',
 	show_window: 'appWindows',
 	close_window: 'appWindows',
 	list_windows: 'appWindows',
@@ -802,6 +816,11 @@ const DEFAULT_SCOPES: Readonly<
 	get_workflow: 'read',
 	create_workflow: 'write',
 	update_workflow_step: 'write',
+	list_workflow_templates: 'read',
+	get_workflow_template: 'read',
+	create_workflow_template: 'write',
+	update_workflow_template: 'write',
+	delete_workflow_template: 'write',
 	show_window: 'write',
 	close_window: 'write',
 	list_windows: 'read',
@@ -881,6 +900,11 @@ const HANDLER_BY_OPERATION: Readonly<
 	get_workflow: 'getWorkflow',
 	create_workflow: 'createWorkflow',
 	update_workflow_step: 'updateWorkflowStep',
+	list_workflow_templates: 'listWorkflowTemplates',
+	get_workflow_template: 'getWorkflowTemplate',
+	create_workflow_template: 'createWorkflowTemplate',
+	update_workflow_template: 'updateWorkflowTemplate',
+	delete_workflow_template: 'deleteWorkflowTemplate',
 	show_window: 'showWindow',
 	close_window: 'closeWindow',
 	list_windows: 'listWindows',
@@ -1817,6 +1841,21 @@ export function createTerminalControlAdapter(
 					updateWorkflowStep: workflowHandler(parseUpdateWorkflowStep, (a, p, c, s) =>
 						a.updateWorkflowStep(p, c, s),
 					),
+					listWorkflowTemplates: workflowHandler(parseListWorkflowTemplates, (a, p, c, s) =>
+						a.listWorkflowTemplates(p, c, s),
+					),
+					getWorkflowTemplate: workflowHandler(parseTemplateId, (a, p, c, s) =>
+						a.getWorkflowTemplate(p, c, s),
+					),
+					createWorkflowTemplate: workflowHandler(parseCreateWorkflowTemplate, (a, p, c, s) =>
+						a.createWorkflowTemplate(p, c, s),
+					),
+					updateWorkflowTemplate: workflowHandler(parseUpdateWorkflowTemplate, (a, p, c, s) =>
+						a.updateWorkflowTemplate(p, c, s),
+					),
+					deleteWorkflowTemplate: workflowHandler(parseTemplateId, (a, p, c, s) =>
+						a.deleteWorkflowTemplate(p, c, s),
+					),
 				};
 	const dispatcherOptions: ServerControlDispatcherOptions = {
 		handlers: {
@@ -2062,6 +2101,7 @@ function publicControlError(error: unknown): ControlError {
 		no_workflow: 'This terminal has no workflow.',
 		step_not_found: "That step is not in this terminal's workflow.",
 		step_active: 'Another step is still running or waiting on the user.',
+		template_not_found: 'No workflow template has that id.',
 		internal: 'The control operation failed.',
 	};
 	return { code: publicCode, message: messageByCode[publicCode] };
@@ -2091,6 +2131,7 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'no_workflow' ||
 		value === 'step_not_found' ||
 		value === 'step_active' ||
+		value === 'template_not_found' ||
 		value === 'internal'
 	);
 }

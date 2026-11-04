@@ -101,8 +101,12 @@ test("every operation but capability discovery has exactly one fixed permission 
     byGroup[group] = [...(byGroup[group] ?? []), op]
   }
   assert.deepEqual(byGroup.terminalsRead.sort(), [
-    "get_layout", "get_terminal_status", "get_workflow", "list_terminals", "read_terminal", "search_terminal",
+    "get_layout", "get_terminal_status", "get_workflow", "get_workflow_template", "list_terminals",
+    "list_workflow_templates", "read_terminal", "search_terminal",
     "wait_for_attention", "wait_for_command", "wait_for_idle",
+  ])
+  assert.deepEqual(byGroup.workflowTemplates.sort(), [
+    "create_workflow_template", "delete_workflow_template", "update_workflow_template",
   ])
   assert.deepEqual(byGroup.terminalsManage.sort(), [
     "arrange_tabs", "cancel_macro", "close_tab", "close_terminal", "create_folder", "create_workflow", "delete_folder",

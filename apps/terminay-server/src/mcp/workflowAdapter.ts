@@ -3,13 +3,18 @@ import {
 	type SessionWorkflowView,
 	WORKFLOW_OPERATIONS,
 	type Workflow,
+	type WorkflowTemplate,
+	type WorkflowTemplateState,
 } from '@terminay/server-core';
 import { serverControlError } from './appControlAdapter.js';
 import {
 	ControlEndpointError,
 	type ControlRequestContext,
 } from './controlEndpoint.js';
-import type { WorkflowControlAdapter } from './workflowTools.js';
+import type {
+	TemplateStepContent,
+	WorkflowControlAdapter,
+} from './workflowTools.js';
 
 /**
  * Binds the workflow tools (ADR-0097) to the server's workflow service, run
@@ -35,6 +40,8 @@ export interface WorkflowControlAdapterOptions {
 		operation: string,
 		payload: JsonValue,
 		signal: AbortSignal,
+		/** The revision the command was planned against; a stale one conflicts. */
+		expectedRevision?: number,
 	) => Promise<unknown>;
 	/**
 	 * A terminal the caller can address. Throws `terminal_not_found` for one
@@ -86,20 +93,26 @@ export function createWorkflowControlAdapter(
 		},
 		createWorkflow: async (params, context, signal) => {
 			const where = target(context, params.terminal);
+			const replace =
+				params.replaceWorkflowId === undefined
+					? {}
+					: { replaceWorkflowId: params.replaceWorkflowId };
+			const payload =
+				params.templateId !== undefined
+					? { target: { ...where }, templateId: params.templateId, ...replace }
+					: {
+							target: { ...where },
+							workflow: {
+								name: params.name,
+								openingPrompt: params.openingPrompt,
+								steps: params.steps.map((step) => ({ ...step })),
+							},
+							...replace,
+						};
 			const view = (await run(() =>
 				options.command(
 					WORKFLOW_OPERATIONS.create,
-					{
-						target: { ...where },
-						workflow: {
-							name: params.name,
-							openingPrompt: params.openingPrompt,
-							steps: params.steps.map((step) => ({ ...step })),
-						},
-						...(params.replaceWorkflowId === undefined
-							? {}
-							: { replaceWorkflowId: params.replaceWorkflowId }),
-					} as JsonValue,
+					payload as JsonValue,
 					signal,
 				),
 			)) as SessionWorkflowView;
@@ -120,6 +133,152 @@ export function createWorkflowControlAdapter(
 				),
 			)) as SessionWorkflowView;
 			return describe(where.sessionId, view);
+		},
+		listWorkflowTemplates: async (_params, _context, signal) => {
+			const state = await templates(signal);
+			return {
+				categories: [...state.categories],
+				templates: state.templates.map((template) => ({
+					id: template.id,
+					name: template.name,
+					...(template.description === ''
+						? {}
+						: { description: template.description }),
+					...(template.category === '' ? {} : { category: template.category }),
+					step_count: template.steps.length,
+				})),
+			};
+		},
+		getWorkflowTemplate: async (params, _context, signal) =>
+			describeTemplate(
+				existing(await templates(signal), params.templateId),
+			),
+		createWorkflowTemplate: async (params, _context, signal) => {
+			// No id: the server assigns the template's and every step's.
+			const state = (await run(() =>
+				options.command(
+					WORKFLOW_OPERATIONS.templatesUpsert,
+					{
+						template: {
+							name: params.name,
+							description: params.description,
+							category: params.category,
+							openingPrompt: params.openingPrompt,
+							steps: params.steps.map((step) => ({ ...step })),
+						},
+					} as JsonValue,
+					signal,
+				),
+			)) as WorkflowTemplateState;
+			const created = state.templates.at(-1);
+			if (created === undefined)
+				throw new ControlEndpointError(
+					'internal',
+					'The template was not saved.',
+				);
+			return describeTemplate(created);
+		},
+		updateWorkflowTemplate: async (params, _context, signal) =>
+			withRevision(signal, async (state) => {
+				const stored = existing(state, params.templateId);
+				const merged = {
+					id: stored.id,
+					name: params.name ?? stored.name,
+					description: params.description ?? stored.description,
+					category: params.category ?? stored.category,
+					openingPrompt: params.openingPrompt ?? stored.openingPrompt,
+					steps: (params.steps ?? stored.steps).map(
+						(step: TemplateStepContent) => ({ ...step }),
+					),
+				};
+				const next = (await options.command(
+					WORKFLOW_OPERATIONS.templatesUpsert,
+					{ template: merged } as JsonValue,
+					signal,
+					state.revision,
+				)) as WorkflowTemplateState;
+				return describeTemplate(existing(next, stored.id));
+			}),
+		deleteWorkflowTemplate: async (params, _context, signal) =>
+			withRevision(signal, async (state) => {
+				const stored = existing(state, params.templateId);
+				await options.command(
+					WORKFLOW_OPERATIONS.templatesRemove,
+					{ templateId: stored.id } as JsonValue,
+					signal,
+					state.revision,
+				);
+				return { deleted: stored.id, name: stored.name };
+			}),
+	};
+
+	async function templates(signal: AbortSignal): Promise<WorkflowTemplateState> {
+		return (await run(() =>
+			options.query(WORKFLOW_OPERATIONS.templatesGet, {}, signal),
+		)) as WorkflowTemplateState;
+	}
+
+	/**
+	 * Read, then write against the revision read, so a change another client
+	 * committed meanwhile is never overwritten and a template deleted
+	 * meanwhile is never re-created. A conflict is retried on a fresh read.
+	 */
+	async function withRevision<T>(
+		signal: AbortSignal,
+		work: (state: WorkflowTemplateState) => Promise<T>,
+	): Promise<T> {
+		for (let attempt = 1; ; attempt += 1) {
+			const state = await templates(signal);
+			try {
+				return await work(state);
+			} catch (error) {
+				const failure = serverControlError(error);
+				if (
+					failure.code !== 'conflict' ||
+					attempt >= TEMPLATE_WRITE_ATTEMPTS ||
+					signal.aborted
+				)
+					throw failure;
+			}
+		}
+	}
+}
+
+const TEMPLATE_WRITE_ATTEMPTS = 3;
+
+function existing(
+	state: WorkflowTemplateState,
+	templateId: string,
+): WorkflowTemplate {
+	const template = state.templates.find((item) => item.id === templateId);
+	if (template === undefined)
+		throw new ControlEndpointError(
+			'template_not_found',
+			'No workflow template has that id. List them with list_workflow_templates.',
+			[templateId],
+		);
+	return template;
+}
+
+/** A reusable workflow template, as an agent reads it. It has no status. */
+function describeTemplate(template: WorkflowTemplate): unknown {
+	return {
+		template: {
+			id: template.id,
+			name: template.name,
+			...(template.description === ''
+				? {}
+				: { description: template.description }),
+			...(template.category === '' ? {} : { category: template.category }),
+			...(template.openingPrompt === ''
+				? {}
+				: { opening_prompt: template.openingPrompt }),
+			steps: template.steps.map((step) => ({
+				id: step.id,
+				title: step.title,
+				...(step.prompt === '' ? {} : { prompt: step.prompt }),
+				...(step.icon === '' ? {} : { icon: step.icon }),
+			})),
 		},
 	};
 }
@@ -151,6 +310,7 @@ function describeWorkflow(workflow: Workflow): unknown {
 	return {
 		id: workflow.id,
 		name: workflow.name,
+		template_id: workflow.templateId,
 		...(workflow.openingPrompt === ''
 			? {}
 			: { opening_prompt: workflow.openingPrompt }),

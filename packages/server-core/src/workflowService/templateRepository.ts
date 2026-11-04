@@ -178,11 +178,27 @@ export class WorkflowTemplateRepository {
 			);
 		// A template saved under a category the list lacks adds it at the end,
 		// rather than silently losing its category.
-		if (command.type === 'upsert' || command.type === 'replace')
-			categories = normalizeCategoryList([
+		if (command.type === 'upsert' || command.type === 'replace') {
+			const wanted = [
 				...categories,
 				...templates.map((template) => template.category),
-			]);
+			];
+			const known = new Set(categories.map((name) => name.toLowerCase()));
+			for (const name of wanted) {
+				const key = name.trim().toLowerCase();
+				if (key === '' || known.has(key)) continue;
+				known.add(key);
+				// Refused, never silently dropped: a template would lose its
+				// category.
+				if (known.size > WORKFLOW_LIMITS.maxCategories)
+					throw new WorkflowServiceError(
+						'invalid_workflow',
+						`a server holds at most ${WORKFLOW_LIMITS.maxCategories} workflow categories`,
+						{ field: 'category', limit: WORKFLOW_LIMITS.maxCategories },
+					);
+			}
+			categories = normalizeCategoryList(wanted);
+		}
 		const revision = current.revision + 1;
 		const next: WorkflowTemplateState = {
 			schemaVersion: WORKFLOW_TEMPLATE_SCHEMA_VERSION,
