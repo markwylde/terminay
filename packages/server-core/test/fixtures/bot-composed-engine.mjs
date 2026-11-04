@@ -138,7 +138,7 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 } else if (action === 'rm') {
 	fs.rmSync(file(kind, args.at(-1)), { force: true });
 } else if (kind === 'run' && args.includes('stat')) {
- process.stdout.write('999\n');
+	process.stdout.write('999\n');
 } else if (kind === 'run' && args.includes('terminay-files')) {
 	await import('./bot-files-helper.mjs');
 } else if (kind === 'exec') {
@@ -168,17 +168,65 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 	} else if (command[0] === 'terminay-run') {
 		const sid = command[1];
 		fs.writeFileSync(path.join(root, `pid-${sid}`), String(process.pid));
-		if (sid.startsWith('mcp-')) {
-            process.execve('/usr/bin/env',['env','python3',new URL('./bot-relay-host.py',import.meta.url).pathname,sid.slice(4)],process.env);
-        } else if (sid.startsWith('signin-')) {
+		if (sid.startsWith('source-')) {
+			// Simulated container source, never execute a user script on the test host.
+			const { createInterface } = await import('node:readline');
+			const lines = createInterface({ input: process.stdin });
+			let configured = false;
+			for await (const line of lines) {
+				if (configured) continue;
+				configured = true;
+				const { source } = JSON.parse(line);
+				if (source.kind === 'command') {
+					out(
+						JSON.stringify({
+							stdout:
+								source.command === 'fixture-items'
+									? '[{"id":"one"},{"id":"two"}]'
+									: 'unchanged',
+							stderr: '',
+							exitCode: 0,
+						}),
+					);
+					process.exit(0);
+				}
+				if (source.kind === 'http') {
+					out(JSON.stringify({ body: '{"status":"ready"}' }));
+					process.exit(0);
+				}
+				if (source.kind === 'sse') {
+					out(JSON.stringify({ status: 'connected' }));
+					out(JSON.stringify({ eventId: 'fixture-1', data: { id: 'one' } }));
+				}
+				if (source.kind === 'files') {
+					out(JSON.stringify({ snapshot: {}, status: 'watching' }));
+				}
+			}
+		} else if (sid.startsWith('mcp-')) {
+			process.execve(
+				'/usr/bin/env',
+				[
+					'env',
+					'python3',
+					new URL('./bot-relay-host.py', import.meta.url).pathname,
+					sid.slice(4),
+				],
+				process.env,
+			);
+		} else if (sid.startsWith('signin-')) {
 			const config = read('config', args[index]);
-			const claude = JSON.stringify(command.slice(3)) === JSON.stringify(['claude', 'auth', 'login', '--claudeai']);
-			if (!claude && !config?.some((f) => f.content.includes('"file"'))) process.exit(3);
+			const claude =
+				JSON.stringify(command.slice(3)) ===
+				JSON.stringify(['claude', 'auth', 'login', '--claudeai']);
+			if (!claude && !config?.some((f) => f.content.includes('"file"')))
+				process.exit(3);
 			out('Open https://example.invalid/device and enter TEST-CODE');
 			const mode = read('device-mode', 'next') ?? 'success';
 			if (claude && mode === 'success') {
 				out('Paste code here:');
-				for await (const line of readline.createInterface({ input: process.stdin })) {
+				for await (const line of readline.createInterface({
+					input: process.stdin,
+				})) {
 					process.exit(line.trim() === 'TEST-CODE' ? 0 : 1);
 				}
 			}

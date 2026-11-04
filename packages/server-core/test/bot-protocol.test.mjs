@@ -150,7 +150,7 @@ test('5.8 invalidations carry only bot id/revision; revocation ends subscription
 	});
 	assert.ok(hello.capabilities.includes(FEATURE_CAPABILITIES.bots));
 	for (const operation of Object.values(op))
-		assert.equal(capabilityOf(operation), FEATURE_CAPABILITIES.bots);
+		assert.ok([FEATURE_CAPABILITIES.bots, FEATURE_CAPABILITIES.botSources].includes(capabilityOf(operation)));
 	const sub = await client.subscribe('bots.changed');
 	const events = [];
 	sub.onEvent((event) => events.push(event));

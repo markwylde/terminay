@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
 	type BotDraft,
@@ -96,7 +96,8 @@ function profile(value: unknown): BotProfile {
 	if ([...description].length > 200)
 		throw new BotError('validation', 'description exceeds 200 characters');
 	// Pre-release builds defaulted every bot to a robot; it shows the initial.
-	const avatar = d.avatar === '🤖' ? initialOf(name) : text(d.avatar, 64, 'avatar');
+	const avatar =
+		d.avatar === '🤖' ? initialOf(name) : text(d.avatar, 64, 'avatar');
 	if (
 		[
 			...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
@@ -127,6 +128,14 @@ function profile(value: unknown): BotProfile {
 			throw new BotError('validation', 'invalid timestamp');
 	return {
 		id: botEnvironmentId(d.id),
+		enabled:
+			d.enabled === undefined
+				? true
+				: typeof d.enabled === 'boolean'
+					? d.enabled
+					: (() => {
+							throw new Error('invalid bot enabled state');
+						})(),
 		name,
 		description,
 		avatar,
@@ -148,10 +157,7 @@ type StoredEnvironmentSettings = Pick<
 >;
 function environmentSettings(value: unknown): StoredEnvironmentSettings {
 	const d = object(value);
-	if (
-		!Number.isSafeInteger(d.revision) ||
-		(d.revision as number) < 0
-	)
+	if (!Number.isSafeInteger(d.revision) || (d.revision as number) < 0)
 		throw new TypeError('invalid stored bot environment settings');
 	return {
 		idleStopMs: botIdleStopMs(d.idleStopMs),
@@ -160,7 +166,7 @@ function environmentSettings(value: unknown): StoredEnvironmentSettings {
 	};
 }
 interface State {
-	version: 1;
+	version: 2;
 	revision: number;
 	bots: BotProfile[];
 	triggers: BotTrigger[];
@@ -170,7 +176,7 @@ interface State {
 function state(value: unknown): State {
 	const data = object(value);
 	if (
-		data.version !== 1 ||
+		(data.version !== 1 && data.version !== 2) ||
 		!Number.isSafeInteger(data.revision) ||
 		(data.revision as number) < 0 ||
 		!Array.isArray(data.bots)
@@ -222,7 +228,7 @@ function state(value: unknown): State {
 	)
 		throw new Error('invalid bot trigger ownership or limits');
 	return {
-		version: 1,
+		version: 2,
 		revision: data.revision as number,
 		bots,
 		triggers,
@@ -239,16 +245,42 @@ export class BotStore extends EventEmitter {
 	) {
 		super();
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+		let prior: Record<string, unknown> | undefined;
+		let raw: string | undefined;
+		try {
+			raw = readFileSync(path, 'utf8');
+			prior = JSON.parse(raw);
+		} catch {
+			/* Canonical recovery preserves invalid files. */
+		}
+		if (
+			prior &&
+			typeof prior.version === 'number' &&
+			prior.version !== 1 &&
+			prior.version !== 2
+		)
+			throw new BotError(
+				'unavailable',
+				'Unsupported bot state version; use a compatible Terminay Server',
+			);
 		this.current = loadCanonicalStateSync(path, 'bots', {
 			validate: state,
 		}) ?? {
-			version: 1,
+			version: 2,
 			revision: 0,
 			bots: [],
 			triggers: [],
 			firings: [],
 			environments: {},
 		};
+		if (prior?.version === 1) {
+			writeFileDurablySync(path + '.before-sources-v1', raw!);
+			const upgraded = JSON.stringify(this.current);
+			// Install a same-state v2 previous copy before upgrading the canonical file.
+			// An old decoder can never fall back to a stale v1 previous after upgrade.
+			writeFileDurablySync(path + '.previous', upgraded);
+			writeFileDurablySync(path, upgraded);
+		}
 	}
 	get revision(): number {
 		return this.current.revision;
@@ -410,7 +442,7 @@ export class BotStore extends EventEmitter {
 		const next: State = {
 			...this.current,
 			...patch,
-			version: 1,
+			version: 2,
 			revision: this.revision + 1,
 			bots,
 		};

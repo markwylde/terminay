@@ -31,7 +31,11 @@ import {
 	bindAgentChatApprovals,
 	createAgentChatOperationHandlers,
 } from './agentChat/index.js';
-import { PIXEL_EVENTS, PixelService, pixelSettingsFrom } from './pixel/index.js';
+import {
+	PIXEL_EVENTS,
+	PixelService,
+	pixelSettingsFrom,
+} from './pixel/index.js';
 import { bindLiveTerminalPanels } from './liveTerminalPanels.js';
 import { bindNotificationsToActivity } from './notifications/activityFeed.js';
 import { NotificationManager } from './notifications/manager.js';
@@ -325,7 +329,10 @@ export interface ServerCoreCompositionOptions
 		/** The sender's clock, for a host that runs notifications on its own
 		 * (as `notifications` does). The wall clock by default. */
 		readonly now?: () => number;
-		readonly setTimeout?: (handler: () => void, milliseconds: number) => unknown;
+		readonly setTimeout?: (
+			handler: () => void,
+			milliseconds: number,
+		) => unknown;
 		readonly clearTimeout?: (handle: unknown) => void;
 	};
 	/** The server's own upgrade (ADR-0062). A standalone host supplies the
@@ -439,7 +446,10 @@ export interface ServerCoreCompositionOptions
 		 */
 		readonly storeDirectory?: string;
 		/** A window record that could not be written, removed, or read back. */
-		readonly onStoreError?: (error: unknown, windowId: string | undefined) => void;
+		readonly onStoreError?: (
+			error: unknown,
+			windowId: string | undefined,
+		) => void;
 	};
 	/** Compose the registry of user-connected MCP servers (ADR-0037). The host
 	 * that serves MCP supplies where the list is kept and the vault that holds
@@ -1036,7 +1046,8 @@ export function createServerCoreComposition(
 			: createAutomationMcpOperations({
 					repository: options.automations.repository,
 					runLog: options.automations.runLog,
-					controller: composedAutomationController ?? unavailableAutomationRunController,
+					controller:
+						composedAutomationController ?? unavailableAutomationRunController,
 					timeZone: automationTimeZone,
 					...(automationAudit === undefined
 						? {}
@@ -1125,10 +1136,10 @@ export function createServerCoreComposition(
 					chats: agentChat,
 					settings: storedPixelSettings,
 					onChanged: (state) => {
-						eventJournal.publishTransient(
-							PIXEL_EVENTS.changed,
-							{ enabled: state.enabled, provider: state.provider },
-						);
+						eventJournal.publishTransient(PIXEL_EVENTS.changed, {
+							enabled: state.enabled,
+							provider: state.provider,
+						});
 					},
 				});
 	const removePixelSettingsObserver =
@@ -1190,19 +1201,26 @@ export function createServerCoreComposition(
 			authorization,
 		);
 		await terminalInputSources.write({
-			identity: { serverId: options.serverId, projectId: window.projectId, sessionId: window.terminalSessionId },
+			identity: {
+				serverId: options.serverId,
+				projectId: window.projectId,
+				sessionId: window.terminalSessionId,
+			},
 			clientId: 'app-window',
 			source: 'window_message',
 			data:
-			// Without bracketed paste every line break would submit a line
-			// of its own; a window message is submitted once.
-			commandSubmissionInput(
-				// A tab is a keystroke there too: a plain shell completes on it.
-				bracketed
-					? text
-					: text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ').trim(),
-				bracketed,
-			),
+				// Without bracketed paste every line break would submit a line
+				// of its own; a window message is submitted once.
+				commandSubmissionInput(
+					// A tab is a keystroke there too: a plain shell completes on it.
+					bracketed
+						? text
+						: text
+								.replace(/\s*\r?\n\s*/g, ' ')
+								.replace(/\t/g, ' ')
+								.trim(),
+					bracketed,
+				),
 			authorization,
 		});
 	};
@@ -1266,7 +1284,8 @@ export function createServerCoreComposition(
 			readonly projectId: string;
 			readonly chatId?: string;
 		}): WorkspaceViewTarget | undefined => {
-			if (caller.chatId !== undefined) return agentChat?.viewerOf(caller.chatId);
+			if (caller.chatId !== undefined)
+				return agentChat?.viewerOf(caller.chatId);
 			const holder = terminalOperations.presentationHolder({
 				projectId: caller.projectId,
 				sessionId: caller.terminalSessionId,
@@ -1398,7 +1417,9 @@ export function createServerCoreComposition(
 		...(automationSpace === undefined
 			? {}
 			: {
-					beforeSessionCreate: automationSpaceSessionGuard(automationSpace.workspace),
+					beforeSessionCreate: automationSpaceSessionGuard(
+						automationSpace.workspace,
+					),
 					isProjectHidden: automationSpace.visibility.isProjectHidden,
 				}),
 		// Which ended sessions may still be read. A kept automation terminal
@@ -1548,13 +1569,19 @@ export function createServerCoreComposition(
 						: {
 								untrackedSessionIds: () =>
 									untrackedTerminalSessionIds(workspaceForTracking.state),
-								subscribe: (listener) => workspaceForTracking.subscribe(listener),
+								subscribe: (listener) =>
+									workspaceForTracking.subscribe(listener),
 								acknowledge: (identity) => {
 									// The agent authority also marks its own entries read.
 									// Passive: it is not interaction, so what a process sent stays.
 									if (options.agents?.isSessionActive(identity) === true)
-										options.agents.acknowledge(identity, undefined, { passive: true });
-									else activity.acknowledge(identity, undefined, { passive: true });
+										options.agents.acknowledge(identity, undefined, {
+											passive: true,
+										});
+									else
+										activity.acknowledge(identity, undefined, {
+											passive: true,
+										});
 								},
 							},
 				);
@@ -1616,7 +1643,9 @@ export function createServerCoreComposition(
 					},
 				});
 	const pushOperations =
-		push === undefined ? undefined : createPushOperationRegistry({ sender: push });
+		push === undefined
+			? undefined
+			: createPushOperationRegistry({ sender: push });
 	const serverUpgrade =
 		options.serverUpgrade ??
 		new ServerUpgradeService({ serverVersion: options.serverVersion });
@@ -1749,15 +1778,35 @@ export function createServerCoreComposition(
 					},
 				});
 	const botOperations =
-		options.bots === undefined ? {} : mergeOperationRegistries(createBotOperations(options.bots), options.bots.additionalOperations());
-	const botChanged = ({ botId, revision }: { botId: string; revision: number }) => {
+		options.bots === undefined
+			? {}
+			: mergeOperationRegistries(
+					createBotOperations(options.bots),
+					options.bots.additionalOperations(),
+				);
+	const botChanged = ({
+		botId,
+		revision,
+	}: {
+		botId: string;
+		revision: number;
+	}) => {
 		eventJournal.publishTransient('bots.changed', { botId, revision });
 	};
 	options.bots?.on('changed', botChanged);
-    const botMessagesChanged=({botId,sequence}:{botId:string;sequence:number})=>eventJournal.publishTransient('bots.messages.changed',{botId,sequence});
-    options.bots?.on('messages-changed',botMessagesChanged);
- const botEngineChanged = ({ revision }: { revision: number }) => { eventJournal.publishTransient('bots.engine.changed', { revision }); };
- options.bots?.on('engine-changed', botEngineChanged);
+	const botMessagesChanged = ({
+		botId,
+		sequence,
+	}: {
+		botId: string;
+		sequence: number;
+	}) =>
+		eventJournal.publishTransient('bots.messages.changed', { botId, sequence });
+	options.bots?.on('messages-changed', botMessagesChanged);
+	const botEngineChanged = ({ revision }: { revision: number }) => {
+		eventJournal.publishTransient('bots.engine.changed', { revision });
+	};
+	options.bots?.on('engine-changed', botEngineChanged);
 	const operations = mergeOperationRegistries(
 		mergeOperationRegistries(
 			mergeOperationRegistries(
@@ -1765,7 +1814,10 @@ export function createServerCoreComposition(
 					mergeOperationRegistries(
 						mergeOperationRegistries(
 							mergeOperationRegistries(
-								mergeOperationRegistries(options.operations ?? {}, botOperations),
+								mergeOperationRegistries(
+									options.operations ?? {},
+									botOperations,
+								),
 								extensionOperations ?? {},
 							),
 							mergeOperationRegistries(
@@ -1894,9 +1946,7 @@ export function createServerCoreComposition(
 							: createFileObservationEventProjector,
 						automationSpace === undefined
 							? undefined
-							: createAutomationSpaceEventProjector(
-									automationSpace.visibility,
-								),
+							: createAutomationSpaceEventProjector(automationSpace.visibility),
 					),
 				}),
 		...optionalCoreOptions(options),
@@ -1952,7 +2002,11 @@ export function createServerCoreComposition(
 					await options.extensions?.activateEnabled?.();
 				}
 				await options.bots?.reconcile();
-				await options.bots?.triggers.start(scheduleEngine, eventFanout, automationTimeZone);
+				await options.bots?.triggers.start(
+					scheduleEngine,
+					eventFanout,
+					automationTimeZone,
+				);
 				await options.settings?.load();
 				// The unattached limit is a server setting; the holder is told it
 				// now and again whenever it changes.
@@ -2041,7 +2095,9 @@ export function createServerCoreComposition(
 				await appWindows?.restore({
 					runningProject: (sessionId) => {
 						const session = terminal.getSession(sessionId);
-						return session?.status === 'running' ? session.projectId : undefined;
+						return session?.status === 'running'
+							? session.projectId
+							: undefined;
 					},
 				});
 				// Startup restore and reattach change the workspace without
@@ -2173,8 +2229,8 @@ export function createServerCoreComposition(
 			await attempt(() => automationOperations?.dispose());
 			await attempt(async () => {
 				options.bots?.off('changed', botChanged);
-                options.bots?.off('messages-changed',botMessagesChanged);
- options.bots?.off('engine-changed', botEngineChanged);
+				options.bots?.off('messages-changed', botMessagesChanged);
+				options.bots?.off('engine-changed', botEngineChanged);
 				await options.bots?.shutdown();
 			});
 			await attempt(async () => {
@@ -2244,9 +2300,7 @@ export function createServerCoreComposition(
 		onConnectionAdmitted,
 		...(settingsOperations === undefined ? {} : { settingsOperations }),
 		...(shellProfileOperations === undefined ? {} : { shellProfileOperations }),
-		...(notificationOperations === undefined
-			? {}
-			: { notificationOperations }),
+		...(notificationOperations === undefined ? {} : { notificationOperations }),
 		start,
 		shutdown,
 		endAllTerminalSessions,
@@ -2488,7 +2542,12 @@ function uniqueCapabilities(
 ): readonly string[] {
 	return Object.freeze([
 		...new Set([
-			...options.capabilities.filter((capability) => capability !== FEATURE_CAPABILITIES.bots || options.bots !== undefined),
+			...options.capabilities.filter(
+				(capability) =>
+					(capability !== FEATURE_CAPABILITIES.bots &&
+						capability !== FEATURE_CAPABILITIES.botSources) ||
+					options.bots !== undefined,
+			),
 			FEATURE_CAPABILITIES.terminal,
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.
@@ -2514,7 +2573,9 @@ function uniqueCapabilities(
 			options.extensions?.hosts === undefined
 				? []
 				: [FEATURE_CAPABILITIES.terminalLaunchers]),
-			...(options.bots === undefined ? [] : [FEATURE_CAPABILITIES.bots]),
+			...(options.bots === undefined
+				? []
+				: [FEATURE_CAPABILITIES.bots, FEATURE_CAPABILITIES.botSources]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
 			...(options.automations === undefined
 				? []
@@ -2587,7 +2648,10 @@ function composeLanguageService(
 						? projects.get(projectId)
 						: (
 								language.projects as Readonly<
-									Record<string, { readonly resolver: { root(): Promise<string> } }>
+									Record<
+										string,
+										{ readonly resolver: { root(): Promise<string> } }
+									>
 								>
 							)[projectId];
 				if (project === undefined)
@@ -2708,7 +2772,8 @@ function entries<T>(
 /** A file size for a person to read. */
 function formatByteSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+	if (bytes < 1024 * 1024)
+		return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
 	if (bytes < 1024 * 1024 * 1024)
 		return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;

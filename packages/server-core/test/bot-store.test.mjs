@@ -69,3 +69,28 @@ test('5.1 corrupt canonical file is preserved and a previous committed copy rest
 	);
 	assert.equal(readFileSync(broken, 'utf8'), 'broken');
 });
+
+test('source upgrade preserves profiles and schedules and refuses future canonical versions', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-upgrade-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const first = new BotStore(path);
+	const bot = first.save({ name: 'Upgrade', agentId: 'fake.agent' });
+	const legacy = JSON.parse(readFileSync(path, 'utf8'));
+	legacy.version = 1;
+	delete legacy.bots[0].enabled;
+	writeFileSync(path, JSON.stringify(legacy));
+	const upgraded = new BotStore(path);
+	assert.equal(upgraded.get(bot.id).enabled, true);
+	assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 2);
+	assert.equal(
+		JSON.parse(readFileSync(path + '.before-sources-v1', 'utf8')).version,
+		1,
+	);
+	assert.deepEqual(new BotStore(path).list(), upgraded.list());
+	const future = { ...JSON.parse(readFileSync(path, 'utf8')), version: 999 };
+	const raw = JSON.stringify(future);
+	writeFileSync(path, raw);
+	assert.throws(() => new BotStore(path), /version/);
+	assert.equal(readFileSync(path, 'utf8'), raw);
+});

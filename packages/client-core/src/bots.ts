@@ -87,9 +87,16 @@ function trigger(value: unknown): BotTrigger {
 		typeof r.enabled !== 'boolean' ||
 		typeof r.prompt !== 'string' ||
 		!Number.isSafeInteger(r.missedCount) ||
-		!['event', 'cron', 'once', 'every'].includes(
-			String(record(r.condition).kind),
-		)
+		![
+			'event',
+			'cron',
+			'once',
+			'every',
+			'files',
+			'sse',
+			'http',
+			'command',
+		].includes(String(record(r.condition).kind))
 	)
 		throw new TypeError('invalid bot trigger');
 	return structuredClone(r) as unknown as BotTrigger;
@@ -157,6 +164,50 @@ export class BotsClient {
 		);
 		assertJsonValue(value);
 		return value;
+	}
+	async enableBot(
+		botId: string,
+		enabled: boolean,
+		options: CommandOptions = {},
+	): Promise<void> {
+		await this.transport.command(op.enableBot, { botId, enabled }, options);
+	}
+	async testSource(
+		botId: string,
+		condition: BotTriggerDraft['condition'],
+		triggerId?: string,
+		options: CommandOptions = {},
+	): Promise<import('@terminay/protocol').BotSourceTest> {
+		return (await this.transport.command(
+			op.testSource,
+			json({ botId, condition, ...(triggerId ? { triggerId } : {}) }),
+			options,
+		)) as unknown as import('@terminay/protocol').BotSourceTest;
+	}
+	async sourceMemory(
+		botId: string,
+		triggerId: string,
+		memoryOffset = 0,
+	): Promise<{ total: number; ids: string[]; next: number | null }> {
+		return (await this.read(
+			op.sourceMemory,
+			{ botId, triggerId, memoryOffset },
+			{},
+		)) as unknown as { total: number; ids: string[]; next: number | null };
+	}
+	async resetSource(
+		botId: string,
+		triggerId: string,
+		confirmed: boolean,
+	): Promise<void> {
+		await this.transport.command(
+			op.resetSource,
+			{ botId, triggerId, confirmed },
+			{},
+		);
+	}
+	async retrySource(botId: string, triggerId: string): Promise<void> {
+		await this.transport.command(op.retrySource, { botId, triggerId }, {});
 	}
 	async triggers(
 		botId: string,
@@ -240,15 +291,15 @@ export class BotsClient {
 		botId: string,
 		triggerId: string,
 		options: CommandOptions = {},
-	): Promise<BotTriggerFiring> {
-		return firing(
-			await this.transport.command(
-				op.runTrigger,
-				{ botId, triggerId },
-				options,
-			),
+	): Promise<BotTriggerFiring | null> {
+		const result = await this.transport.command(
+			op.runTrigger,
+			{ botId, triggerId },
+			options,
 		);
+		return result === null ? null : firing(result);
 	}
+
 	async previewTrigger(
 		botId: string,
 		condition: BotTriggerDraft['condition'],

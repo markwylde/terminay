@@ -14,18 +14,30 @@ import type {
 } from '@terminay/protocol';
 import { AUTOMATION_EVENT_LABELS } from '../automations/automationsModel.ts';
 
-export const MIN_INTERVAL_MS = 5 * 60 * 1000;
+export const MIN_INTERVAL_MS = 60 * 1000;
 export const MAX_PROMPT_BYTES = 32 * 1024;
 export const MAX_TRIGGERS = 50;
 export const UPCOMING_DAYS = 7;
 
-export type TriggerKind = 'cron' | 'every' | 'once' | 'event';
+export type TriggerKind =
+	| 'cron'
+	| 'every'
+	| 'once'
+	| 'event'
+	| 'command'
+	| 'http'
+	| 'sse'
+	| 'files';
 
 export const TRIGGER_KIND_LABELS: Readonly<Record<TriggerKind, string>> = {
 	cron: 'Schedule',
 	every: 'Interval',
 	once: 'Once',
-	event: 'Event',
+	event: 'Unsupported project event',
+	command: 'Command result',
+	http: 'HTTP response',
+	sse: 'SSE event',
+	files: 'File or folder changes',
 };
 
 export const BOT_EVENT_KINDS = Object.keys(
@@ -63,12 +75,41 @@ export function describeCondition(
 		case 'once':
 			return `Once, ${formatTime(condition.at)}`;
 		case 'event':
-			return `When: ${eventLabel(condition.event)}`;
+			return 'Unsupported project event; choose a source';
+		case 'command':
+			return `${describeInterval(condition.intervalMs)} · ${condition.command}`;
+		case 'http':
+			return `${describeInterval(condition.intervalMs)} · ${condition.url}`;
+		case 'sse':
+			return `Events from ${condition.url}`;
+		case 'files':
+			return `Changes in ${condition.path}`;
 	}
 }
 
 export type TriggerForm = Readonly<{
 	name: string;
+	recovery: import('@terminay/protocol').BotRecoveryPolicy;
+	command: string;
+	cwd: string;
+	url: string;
+	headers: string;
+	storedHeaders: Readonly<Record<string, string>>;
+	select: string;
+	eventName: string;
+	path: string;
+	recursive: boolean;
+	include: string;
+	exclude: string;
+	debounce: string;
+	timeout: string;
+	match: import('@terminay/protocol').BotSourceMatch['kind'];
+	matchText: string;
+	exitCode: string;
+	items: string;
+	identity: string;
+	initial: 'process' | 'baseline';
+	repeat: boolean;
 	enabled: boolean;
 	prompt: string;
 	kind: TriggerKind;
@@ -90,6 +131,27 @@ function localInput(at: number): string {
 export function emptyTriggerForm(now: number): TriggerForm {
 	return {
 		name: '',
+		recovery: 'skip',
+		command: '',
+		cwd: '/home/bot',
+		url: '',
+		headers: '{}',
+		storedHeaders: {},
+		select: '',
+		eventName: '',
+		path: '/home/bot',
+		recursive: true,
+		include: '',
+		exclude: '',
+		debounce: '5000',
+		timeout: '30000',
+		match: 'changed',
+		matchText: '',
+		exitCode: '0',
+		items: '',
+		identity: '/id',
+		initial: 'process',
+		repeat: false,
 		enabled: true,
 		prompt: '',
 		kind: 'cron',
@@ -110,6 +172,7 @@ export function formFromTrigger(trigger: BotTrigger, now: number): TriggerForm {
 		enabled: trigger.enabled,
 		prompt: trigger.prompt,
 		kind: condition.kind,
+		recovery: trigger.recovery ?? 'skip',
 	};
 	switch (condition.kind) {
 		case 'cron':
@@ -124,6 +187,61 @@ export function formFromTrigger(trigger: BotTrigger, now: number): TriggerForm {
 			return { ...shared, at: localInput(condition.at) };
 		case 'event':
 			return { ...shared, event: condition.event };
+		case 'files':
+			return {
+				...shared,
+				path: condition.path,
+				recursive: condition.recursive !== false,
+				include: condition.include ?? '',
+				exclude: condition.exclude ?? '',
+				debounce: String(condition.debounceMs ?? 5000),
+			};
+		case 'sse':
+			return {
+				...shared,
+				url: condition.url,
+				eventName: condition.eventName ?? '',
+				headers: JSON.stringify(
+					Object.fromEntries(
+						Object.keys(condition.headers ?? {}).map((k) => [k, '••••']),
+					),
+					null,
+					2,
+				),
+				storedHeaders: condition.headers ?? {},
+			};
+		case 'command':
+		case 'http': {
+			const match = condition.match ?? { kind: 'changed' };
+			return {
+				...shared,
+				every: String(condition.intervalMs / 60000),
+				everyUnit: 'minutes',
+				timeout: String(condition.timeoutMs ?? 30000),
+				match: match.kind,
+				matchText: 'text' in match ? match.text : '',
+				exitCode: 'code' in match ? String(match.code) : '0',
+				items: 'items' in match ? match.items : '',
+				identity: 'identity' in match ? match.identity : '/id',
+				initial:
+					match.kind === 'items' ? (match.initial ?? 'process') : 'process',
+				repeat: 'repeat' in match && match.repeat === true,
+				...(condition.kind === 'command'
+					? { command: condition.command, cwd: condition.cwd ?? '/home/bot' }
+					: {
+							url: condition.url,
+							select: condition.select ?? '',
+							headers: JSON.stringify(
+								Object.fromEntries(
+									Object.keys(condition.headers ?? {}).map((k) => [k, '••••']),
+								),
+								null,
+								2,
+							),
+							storedHeaders: condition.headers ?? {},
+						}),
+			};
+		}
 	}
 }
 
@@ -153,7 +271,7 @@ export function formCondition(
 			if (intervalMs < MIN_INTERVAL_MS)
 				return {
 					ok: false,
-					problem: 'An interval must be at least 5 minutes.',
+					problem: 'An interval must be at least 1 minute.',
 				};
 			return { ok: true, condition: { kind: 'every', intervalMs } };
 		}
@@ -164,7 +282,97 @@ export function formCondition(
 			return { ok: true, condition: { kind: 'once', at } };
 		}
 		case 'event':
-			return { ok: true, condition: { kind: 'event', event: form.event } };
+			return { ok: false, problem: 'Choose a container source.' };
+		case 'files':
+			return {
+				ok: true,
+				condition: {
+					kind: 'files',
+					path: form.path,
+					recursive: form.recursive,
+					include: form.include,
+					exclude: form.exclude,
+					debounceMs: Number(form.debounce),
+				},
+			};
+		case 'command':
+		case 'http':
+		case 'sse': {
+			try {
+				const headers: unknown = JSON.parse(form.headers);
+				if (
+					!headers ||
+					typeof headers !== 'object' ||
+					Array.isArray(headers) ||
+					Object.values(headers).some((v) => typeof v !== 'string')
+				)
+					throw new Error('Headers must be a JSON object of strings.');
+				const resolved = Object.fromEntries(
+					Object.entries(headers).map(([k, v]) => [
+						k,
+						v === '••••' ? (form.storedHeaders[k] ?? '') : v,
+					]),
+				) as Record<string, string>;
+				if (form.kind === 'sse')
+					return {
+						ok: true,
+						condition: {
+							kind: 'sse',
+							url: form.url,
+							headers: resolved,
+							eventName: form.eventName,
+						},
+					};
+				const intervalMs =
+					Number(form.every) * (form.everyUnit === 'hours' ? 3600000 : 60000);
+				if (!Number.isSafeInteger(intervalMs) || intervalMs < MIN_INTERVAL_MS)
+					throw new Error('An interval must be at least 1 minute.');
+				const match: import('@terminay/protocol').BotSourceMatch =
+					form.match === 'items'
+						? {
+								kind: 'items',
+								items: form.items,
+								identity: form.identity,
+								initial: form.initial,
+							}
+						: form.match === 'contains' || form.match === 'regex'
+							? { kind: form.match, text: form.matchText, repeat: form.repeat }
+							: form.match === 'exit'
+								? {
+										kind: 'exit',
+										code: Number(form.exitCode),
+										repeat: form.repeat,
+									}
+								: { kind: 'changed' };
+				return {
+					ok: true,
+					condition:
+						form.kind === 'command'
+							? {
+									kind: 'command',
+									command: form.command,
+									cwd: form.cwd,
+									intervalMs,
+									timeoutMs: Number(form.timeout),
+									match,
+								}
+							: {
+									kind: 'http',
+									url: form.url,
+									headers: resolved,
+									select: form.select,
+									intervalMs,
+									timeoutMs: Number(form.timeout),
+									match,
+								},
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					problem: error instanceof Error ? error.message : 'Invalid source',
+				};
+			}
+		}
 	}
 }
 
@@ -185,6 +393,7 @@ export function formToDraft(
 			name: form.name.trim(),
 			enabled: form.enabled,
 			prompt: form.prompt,
+			recovery: form.recovery,
 			condition: condition.condition,
 		},
 	};
@@ -240,3 +449,22 @@ export const FIRING_OUTCOME_LABELS: Readonly<
 	failed: 'Failed',
 	skipped: 'Skipped',
 };
+
+export type SourceGroup = 'Files' | 'Network' | 'Commands' | 'Time';
+export const SOURCE_GROUPS: Readonly<
+	Record<SourceGroup, readonly TriggerKind[]>
+> = {
+	Files: ['files'],
+	Network: ['sse', 'http'],
+	Commands: ['command'],
+	Time: ['cron', 'every', 'once'],
+};
+export function sourceGroup(kind: TriggerKind): SourceGroup {
+	return kind === 'files'
+		? 'Files'
+		: kind === 'sse' || kind === 'http'
+			? 'Network'
+			: kind === 'command'
+				? 'Commands'
+				: 'Time';
+}

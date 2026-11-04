@@ -67,6 +67,7 @@ const AGENT_STATES: readonly BotAgentState[] = [
 export type ServerBots = Readonly<{
 	serverId: string;
 	label: string;
+	sourcesSupported?: boolean;
 	client: BotsClient;
 	environment: BotEnvironmentClient;
 	/** The raw transport, for operation families this hook does not wrap. */
@@ -287,6 +288,7 @@ function startController(
 	};
 	current = Object.freeze({
 		serverId: entry.serverId,
+		sourcesSupported: entry.capabilities?.includes('bots.sources.v1') === true,
 		label: entry.label,
 		client,
 		environment,

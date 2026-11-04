@@ -53,6 +53,7 @@ export function BotTab({
 	const [envTab, setEnvTab] = useState<BotEnvironmentSubTab>('overview');
 	const [chatSessionId, setChatSessionId] = useState<string>();
 	const [draft, setDraft] = useState('');
+	const [availabilityError, setAvailabilityError] = useState<string>();
 	const bot = server?.bots.find((candidate) => candidate.id === botId);
 	useEffect(() => server?.wantAgents(), [server]);
 	const sessions = server?.sessions.get(botId) ?? [];
@@ -138,8 +139,27 @@ export function BotTab({
 					</span>
 				</div>
 				<span className={`bots-chip bots-chip--small bots-chip--${activity}`}>
-					{BOT_ACTIVITY_LABELS[activity]}
+					{bot.enabled === false ? 'Disabled' : BOT_ACTIVITY_LABELS[activity]}
 				</span>
+				{server.sourcesSupported !== false ? (
+					<button
+						type="button"
+						className="bots-btn bots-btn--sm"
+						onClick={() =>
+							void server.client
+								.enableBot(bot.id, bot.enabled === false)
+								.catch((e) =>
+									setAvailabilityError(
+										e instanceof Error
+											? e.message
+											: 'Could not change bot availability',
+									),
+								)
+						}
+					>
+						{bot.enabled === false ? 'Enable bot' : 'Disable bot'}
+					</button>
+				) : null}
 				<fieldset className="bots-seg" aria-label="Bot view">
 					<button
 						type="button"
@@ -162,6 +182,11 @@ export function BotTab({
 				</fieldset>
 			</header>
 			<BotRecovery server={server} botId={bot.id} />
+			{availabilityError ? (
+				<div role="alert" className="bots-note bots-note--error">
+					{availabilityError}
+				</div>
+			) : null}
 			{mode === 'chat' ? (
 				<BotChat
 					server={server}

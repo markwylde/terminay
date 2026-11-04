@@ -26,3 +26,5 @@ export * from './transportAuthentication.js';
 export * from './types.js';
 export * from './workspace.js';
 export * from './botMessages.js';
+
+export * from './botSources.js';
