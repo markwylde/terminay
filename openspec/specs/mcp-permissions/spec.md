@@ -9,8 +9,8 @@ Terminay lets the user decide, per kind of operation, what agents may do through
 
 Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly one permission group, fixed in the server's operation table:
 
-- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `get_layout`, `wait_for_idle`, `wait_for_command`, and `wait_for_attention`.
-- **Full Terminal Management**: `open_terminal`, `close_terminal`, `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `split_terminal`, `focus_tab`, `move_tab`, `resize_pane`, `arrange_tabs`, `focus_project`, `focus_home`, `select_folder`, `create_folder`, `rename_folder`, `delete_folder`, `reorder_folders`, `move_tab_to_folder`, `open_file`, `close_tab`, `list_macros`, `run_macro`, and `cancel_macro`.
+- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `get_layout`, `wait_for_idle`, `wait_for_command`, `wait_for_attention`, and `get_workflow`.
+- **Full Terminal Management**: `open_terminal`, `close_terminal`, `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `split_terminal`, `focus_tab`, `move_tab`, `resize_pane`, `arrange_tabs`, `focus_project`, `focus_home`, `select_folder`, `create_folder`, `rename_folder`, `delete_folder`, `reorder_folders`, `move_tab_to_folder`, `open_file`, `close_tab`, `list_macros`, `run_macro`, `cancel_macro`, `create_workflow`, and `update_workflow_step`.
 - **Read Automations**: `list_automations`, `get_automation`, and `list_automation_runs`.
 - **Full Automation Management**: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run`, `remove_automation_run`, `prune_automation_runs`, and `dismiss_missed_runs`.
 - **Projects & Windows**: `list_projects`, `create_project`, `update_project`, `move_project`, `close_project`, `list_workspace_windows`, `open_workspace_window`, `rename_workspace_window`, and `close_workspace_window`.
@@ -76,6 +76,16 @@ Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly on
 
 - **WHEN** Change Settings is Ask Permission and an agent in a project terminal calls `update_settings`
 - **THEN** the call fails with `out_of_scope` and no approval prompt appears
+
+#### Scenario: Reading a workflow
+
+- **WHEN** an agent calls `get_workflow`
+- **THEN** the server evaluates it under Read Terminals
+
+#### Scenario: Reporting a workflow step
+
+- **WHEN** an agent calls `update_workflow_step`
+- **THEN** the server evaluates it under Full Terminal Management
 
 ### Requirement: MCP permission policy settings
 

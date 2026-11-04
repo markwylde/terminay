@@ -47,6 +47,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	useCallback,
+	useContext,
 	useEffect,
 	useImperativeHandle,
 	useMemo,
@@ -433,6 +434,11 @@ import {
 	AppWindowsContext,
 	useServerAppWindows,
 } from './workspace/appWindows/useServerAppWindows';
+import { useWorkflowCommands } from './workspace/workflows/commandBarWorkflows';
+import {
+	useServerWorkflows,
+	WorkflowsContext,
+} from './workspace/workflows/useServerWorkflows';
 import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
@@ -3999,6 +4005,23 @@ const ProjectWorkspace = memo(forwardRef<
 			],
 		);
 
+		// The active terminal's server's workflow templates, and Resume.
+		const workflowServers = useContext(WorkflowsContext);
+		const reportWorkflowError = useCallback(
+			(message: string) => setErrorText(message),
+			[],
+		);
+		const workflowCommands = useWorkflowCommands({
+			servers: workflowServers,
+			serverId: terminalPanelClientContext?.serverId,
+			projectId: project.id,
+			isOpen: isMacroLauncherOpen,
+			getActiveSessionId,
+			close: closeMacroLauncher,
+			focusTerminal: focusActiveTerminal,
+			onError: reportWorkflowError,
+		});
+
 		const filteredMacros = useMemo(() => {
 			const commandItems: CommandBarItem[] = [
 				{
@@ -4341,6 +4364,7 @@ const ProjectWorkspace = memo(forwardRef<
 						onSelect: () => runMacro(macro),
 					}),
 				),
+				...workflowCommands.items,
 			];
 
 			// Places come after commands and macros, and only once something is
@@ -4380,6 +4404,7 @@ const ProjectWorkspace = memo(forwardRef<
 			searchPlaces,
 			startDictation,
 			toggleFileExplorerSidebar,
+			workflowCommands.items,
 		]);
 		const requestClosePanel = useCallback(
 			async (panelId: string, options?: { confirmed?: boolean }) => {
@@ -6008,6 +6033,7 @@ const ProjectWorkspace = memo(forwardRef<
 					query={macroQuery}
 					selectedIndex={selectedMacroIndex}
 				/>
+				{workflowCommands.dialog}
 
 				{isTerminalSwitcherOpen ? (
 					<div
@@ -8768,6 +8794,8 @@ function App({
 	// Likewise one projection of app windows per server; the host below lays
 	// them out over the terminal panes that own them.
 	const serverAppWindows = useServerAppWindows(automationEntries);
+	// Workflows and their templates, one projection per server (ADR-0097).
+	const serverWorkflows = useServerWorkflows(automationEntries);
 	// An MCP agent the user is talking to here reads and arranges this
 	// window's panes through the server (ADR-0070). The window is described
 	// afresh for each request, so a request always sees what is on screen.
@@ -10123,6 +10151,7 @@ function App({
 			value={terminalClientContext?.terminalTitleStore}
 		>
 		<AppWindowsContext.Provider value={serverAppWindows}>
+		<WorkflowsContext.Provider value={serverWorkflows}>
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}${isWindows && hasNativeWindowControls ? ' app-shell--windows' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
@@ -10868,6 +10897,7 @@ function App({
 				/>
 			) : null}
 		</div>
+		</WorkflowsContext.Provider>
 		</AppWindowsContext.Provider>
 		</TerminalTitleStoreContext.Provider>
 	);

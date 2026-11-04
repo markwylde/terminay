@@ -101,15 +101,15 @@ test("every operation but capability discovery has exactly one fixed permission 
     byGroup[group] = [...(byGroup[group] ?? []), op]
   }
   assert.deepEqual(byGroup.terminalsRead.sort(), [
-    "get_layout", "get_terminal_status", "list_terminals", "read_terminal", "search_terminal",
+    "get_layout", "get_terminal_status", "get_workflow", "list_terminals", "read_terminal", "search_terminal",
     "wait_for_attention", "wait_for_command", "wait_for_idle",
   ])
   assert.deepEqual(byGroup.terminalsManage.sort(), [
-    "arrange_tabs", "cancel_macro", "close_tab", "close_terminal", "create_folder", "delete_folder",
+    "arrange_tabs", "cancel_macro", "close_tab", "close_terminal", "create_folder", "create_workflow", "delete_folder",
     "focus_home", "focus_project", "focus_tab", "focus_terminal", "list_macros", "move_tab",
     "move_tab_to_folder", "move_terminal_to_project", "open_file", "open_terminal",
     "rename_folder", "rename_terminal", "reorder_folders", "resize_pane", "run_command", "run_macro",
-    "select_folder", "split_terminal", "update_terminal", "write_terminal",
+    "select_folder", "split_terminal", "update_terminal", "update_workflow_step", "write_terminal",
   ])
   assert.deepEqual(byGroup.automationsRead.sort(), ["get_automation", "list_automation_runs", "list_automations"])
   assert.deepEqual(byGroup.automationsManage.sort(), [

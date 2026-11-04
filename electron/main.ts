@@ -69,6 +69,8 @@ import {
 	createAppControlAdapter,
 	createAppWindowControlAdapter,
 	createMacroControlAdapter,
+	createWorkflowControlAdapter,
+	type WorkflowControlAdapter,
 	createSettingsControlAdapter,
 	createTerminalMetadataAdapter,
 	describeSettingsUpdate,
@@ -134,6 +136,11 @@ import {
 	agentIntegrationEnabledFromSettings,
 } from '../packages/server-core/src/extensions/sessionSources';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { WORKFLOW_RECORDS_DIRECTORY } from '../packages/server-core/src/workflowService/store';
+import {
+	createWorkflowTemplateFileBackend,
+	WorkflowTemplateRepository,
+} from '../packages/server-core/src/workflowService/templateRepository';
 import {
 	mcpPrincipalCommandRequest,
 	mcpPrincipalQueryRequest,
@@ -2245,6 +2252,16 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			onStoreError: (error, windowId) =>
 				console.warn('[app-windows] record not kept', windowId ?? '', error),
 		},
+		// Workflow templates, and one file per terminal session (ADR-0097).
+		workflows: {
+			templates: new WorkflowTemplateRepository(
+				createWorkflowTemplateFileBackend(app.getPath('userData')),
+			),
+			directory: path.join(
+				app.getPath('userData'),
+				WORKFLOW_RECORDS_DIRECTORY,
+			),
+		},
 		macros: {
 			repository: embeddedMacros,
 			environmentFor: (request, target) => {
@@ -3435,6 +3452,7 @@ async function startMcpControlEndpoint(): Promise<void> {
 			appControl: createDesktopMcpAppControlAdapter(),
 			settings: createDesktopMcpSettingsAdapter(),
 			macros: createDesktopMcpMacroAdapter(),
+			workflows: createDesktopMcpWorkflowAdapter(),
 			takeModelContext: (context, maxBytes) =>
 				serverTerminalAuthority?.composition.appWindows?.takeModelContext(
 					context.terminalSessionId,
@@ -3703,7 +3721,11 @@ function createDesktopMcpAppControlAdapter(): AppControlAdapter {
 
 /** One composed part of the MCP authority, or `unsupported_op` without it. */
 function requireMcpComposition<
-	K extends 'settingsOperations' | 'shellProfileOperations' | 'macroOperations',
+	K extends
+		| 'settingsOperations'
+		| 'shellProfileOperations'
+		| 'macroOperations'
+		| 'workflowOperations',
 >(key: K): NonNullable<ServerTerminalAuthority['composition'][K]> {
 	const part = requireMcpAuthority().composition[key];
 	if (part === undefined)
@@ -3852,6 +3874,41 @@ function createDesktopMcpMacroAdapter(): MacroControlAdapter {
 		listMacros: (p, c, s) => bound().listMacros(p, c, s),
 		runMacro: (p, c, s) => bound().runMacro(p, c, s),
 		cancelMacro: (p, c, s) => bound().cancelMacro(p, c, s),
+	};
+}
+
+/** The workflow tools, bound to whichever authority is composed when called
+ * (ADR-0097). */
+function createDesktopMcpWorkflowAdapter(): WorkflowControlAdapter {
+	const bound = (): WorkflowControlAdapter =>
+		createWorkflowControlAdapter({
+			query: (operation, payload, signal) =>
+				runMcpRegistryQuery(
+					requireMcpComposition('workflowOperations').operations,
+					operation,
+					payload,
+					signal,
+				),
+			command: (operation, payload, signal) =>
+				runMcpRegistryCommand(
+					requireMcpComposition('workflowOperations').operations,
+					operation,
+					payload,
+					signal,
+				),
+			resolveTerminal: (context, reference) => {
+				const target = resolveMcpTerminal(context, reference);
+				return {
+					serverId: requireMcpAuthority().service.serverId,
+					projectId: target.projectId,
+					sessionId: target.id,
+				};
+			},
+		});
+	return {
+		getWorkflow: (p, c, s) => bound().getWorkflow(p, c, s),
+		createWorkflow: (p, c, s) => bound().createWorkflow(p, c, s),
+		updateWorkflowStep: (p, c, s) => bound().updateWorkflowStep(p, c, s),
 	};
 }
 
@@ -4200,6 +4257,13 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 	if (composition?.macroOperations === undefined)
 		for (const tool of ['list_macros', 'run_macro', 'cancel_macro'] as const)
 			unavailable.add(tool);
+	if (composition?.workflowOperations === undefined)
+		for (const tool of [
+			'get_workflow',
+			'create_workflow',
+			'update_workflow_step',
+		] as const)
+			unavailable.add(tool);
 	return CONTROL_TOOL_OPERATIONS.map((tool) => {
 		const group = CONTROL_PERMISSION_GROUPS[tool];
 		return {
@@ -4509,6 +4573,9 @@ async function describeMcpOperation(
 		const target = resolveMcpTerminal(context, reference);
 		return mcpTerminalTitle(target.id, target.projectId) ?? target.id;
 	};
+	// The workflow tools default to the calling terminal.
+	const workflowTerminal = () =>
+		params.terminal === undefined ? 'this terminal' : targetTitle();
 	switch (op) {
 		case 'create_automation':
 			return requireAutomationMcp().describe({
@@ -4734,6 +4801,26 @@ async function describeMcpOperation(
 			};
 		case 'cancel_macro':
 			return { summary: 'cancel a macro run', details: [] };
+		case 'get_workflow':
+			return { summary: `read the workflow of ${workflowTerminal()}`, details: [] };
+		case 'create_workflow':
+			return {
+				summary: `attach the workflow ${text(params.name)} to ${workflowTerminal()}`,
+				details: (Array.isArray(params.steps) ? params.steps : [])
+					.slice(0, 50)
+					.map((step, index) => ({
+						label: `Step ${index + 1}`,
+						value: text((step as { title?: unknown } | null)?.title),
+					})),
+			};
+		case 'update_workflow_step':
+			return {
+				summary: `mark a workflow step ${text(params.status)} in ${workflowTerminal()}`,
+				details:
+					typeof params.note === 'string' && params.note !== ''
+						? [{ label: 'Note', value: params.note }]
+						: [],
+			};
 		case 'update_terminal':
 			return {
 				summary: `change ${targetTitle()}`,

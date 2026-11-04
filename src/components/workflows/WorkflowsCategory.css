@@ -1,0 +1,125 @@
+/* Settings › Workflows: the step editor and launch preview. */
+.workflow-editor-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.5em;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.workflow-steps-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.workflow-step-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-step-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--settings-border, rgb(127 127 127 / 0.25));
+  border-radius: 6px;
+}
+
+.workflow-step-row--drop {
+  box-shadow: inset 0 2px 0 var(--settings-accent, #3b82f6);
+}
+
+.workflow-step-handle,
+.workflow-step-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.workflow-step-handle {
+  cursor: grab;
+}
+
+.workflow-step-handle:hover,
+.workflow-step-handle:focus-visible,
+.workflow-step-remove:hover,
+.workflow-step-remove:focus-visible {
+  opacity: 1;
+  background: rgb(127 127 127 / 0.15);
+}
+
+.workflow-step-number {
+  min-width: 1.5em;
+  padding-top: 3px;
+  text-align: right;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-step-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workflow-step-title-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.workflow-step-title-row .settings-input-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workflow-icon-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.workflow-icon-picker-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.workflow-launch-preview {
+  box-sizing: border-box;
+  max-height: 16em;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: rgb(127 127 127 / 0.1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.workflow-size--over {
+  color: #f85149;
+}

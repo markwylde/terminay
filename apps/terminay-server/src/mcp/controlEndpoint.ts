@@ -102,6 +102,9 @@ export const CONTROL_OPERATIONS = [
 	'list_macros',
 	'run_macro',
 	'cancel_macro',
+	'get_workflow',
+	'create_workflow',
+	'update_workflow_step',
 	'show_window',
 	'close_window',
 	'list_windows',
@@ -324,6 +327,10 @@ export type ControlErrorCode =
 	| 'approval_queue_full'
 	| 'out_of_scope'
 	| 'busy'
+	| 'workflow_exists'
+	| 'no_workflow'
+	| 'step_not_found'
+	| 'step_active'
 	| 'internal';
 
 export interface ControlError {
@@ -505,6 +512,10 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'approval_queue_full',
 	'out_of_scope',
 	'busy',
+	'workflow_exists',
+	'no_workflow',
+	'step_not_found',
+	'step_active',
 	'internal',
 ]);
 const CONTROL_ERROR_MESSAGE_BYTES = 4 * 1024;

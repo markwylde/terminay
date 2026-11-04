@@ -75,6 +75,12 @@ import {
 	LanguageSessionManager,
 } from './languageService/sessions.js';
 import type { MacroRepository, MacroRunner } from './macroService/index.js';
+import {
+	createWorkflowOperationRegistry,
+	type WorkflowOperationRegistry,
+	WorkflowStore,
+	type WorkflowTemplateRepository,
+} from './workflowService/index.js';
 // --- automations (home-sidebar-and-automations, task 4.4) ---
 import {
 	type AutomationOperationRegistry,
@@ -361,6 +367,12 @@ export interface ServerCoreCompositionOptions
 			target: MacroTarget,
 		) => MacroExecutionEnvironment;
 	};
+	/** Optional workflow templates and the per-session workflow files
+	 * (ADR-0097). Without `directory` workflows are kept in memory only. */
+	readonly workflows?: {
+		readonly templates: WorkflowTemplateRepository;
+		readonly directory?: string;
+	};
 	/** Optional server-owned automation definitions and run log. Without a
 	 * `controller`, "run now" is refused until an executor is composed. */
 	readonly automations?: {
@@ -561,6 +573,9 @@ export interface ServerCoreComposition {
 	readonly terminalTitles?: TerminalTitleService;
 	readonly terminalOperations: TerminalOperationRegistry;
 	readonly macroOperations?: MacroOperationRegistry;
+	readonly workflowOperations?: WorkflowOperationRegistry;
+	/** The workflows of terminal sessions, when composed. */
+	readonly workflowStore?: WorkflowStore;
 	readonly automationOperations?: AutomationOperationRegistry;
 	/** MCP's route to automations, behind the MCP permission gate. */
 	readonly automationMcp?: AutomationMcpOperations;
@@ -1224,6 +1239,63 @@ export function createServerCoreComposition(
 			authorization,
 		});
 	};
+	const runningProject = (sessionId: string): string | undefined => {
+		const session = terminal.getSession(sessionId);
+		return session?.status === 'running' ? session.projectId : undefined;
+	};
+	const workflowStore =
+		options.workflows === undefined
+			? undefined
+			: new WorkflowStore(
+					options.workflows.directory === undefined
+						? {}
+						: { directory: options.workflows.directory },
+				);
+	const workflowOperations =
+		options.workflows === undefined || workflowStore === undefined
+			? undefined
+			: createWorkflowOperationRegistry({
+					serverId: options.serverId,
+					templates: options.workflows.templates,
+					store: workflowStore,
+					eventJournal,
+					sessionProject: runningProject,
+					// The launch or resume text: one paste, submitted once, as a
+					// window message is (ADR-0097).
+					typeText: async (request, target, text) => {
+						const authorization = { ...target, scope: 'write' } as const;
+						const bracketed = await terminal.bracketedPasteMode(
+							target.sessionId,
+							authorization,
+						);
+						await terminalInputSources.write({
+							identity: {
+								serverId: target.serverId,
+								projectId: target.projectId,
+								sessionId: target.sessionId,
+							},
+							clientId: request.context.clientId,
+							source: 'workflow',
+							data: commandSubmissionInput(
+								bracketed
+									? text
+									: text
+											.replace(/\s*\r?\n\s*/g, ' ')
+											.replace(/\t/g, ' ')
+											.trim(),
+								bracketed,
+							),
+							authorization,
+						});
+					},
+				});
+	// A workflow lasts as long as its terminal session (ADR-0076, ADR-0097).
+	const removeWorkflowExitObserver =
+		workflowStore === undefined
+			? undefined
+			: terminal.onEvent((event) => {
+					if (event.type === 'exit') workflowStore.endSession(event.sessionId);
+				});
 	const appWindows =
 		options.appWindows === undefined || mcpApprovals === undefined
 			? undefined
@@ -1829,7 +1901,10 @@ export function createServerCoreComposition(
 					),
 					mergeOperationRegistries(
 						mergeOperationRegistries(
-							macroOperations?.operations ?? {},
+							mergeOperationRegistries(
+								macroOperations?.operations ?? {},
+								workflowOperations?.operations ?? {},
+							),
 							automationOperations?.operations ?? {},
 						),
 						mergeOperationRegistries(
@@ -2100,6 +2175,14 @@ export function createServerCoreComposition(
 							: undefined;
 					},
 				});
+				// So does each running session's workflow; the files of every
+				// other session are discarded.
+				workflowStore?.restore(
+					terminal
+						.listSessions()
+						.filter((session) => session.status === 'running')
+						.map((session) => session.sessionId),
+				);
 				// Startup restore and reattach change the workspace without
 				// notifying it, so what they left is looked at once here.
 				liveTerminalPanels?.check();
@@ -2242,6 +2325,13 @@ export function createServerCoreComposition(
 				removeMcpPolicyObserver?.();
 				mcpApprovals?.revokeAll();
 				removeAppWindowExitObserver?.();
+				removeWorkflowExitObserver?.();
+				workflowOperations?.dispose();
+				// With a session holder the workflow files stay for the next
+				// server; without one every session ends here, and so do they.
+				if (options.sessionHolder === undefined)
+					for (const view of workflowStore?.list() ?? [])
+						workflowStore?.endSession(view.sessionId);
 				// With a session holder the terminals go on running, and so do
 				// their windows: the next server restores them (ADR-0076).
 				if (options.sessionHolder === undefined) {
@@ -2283,6 +2373,8 @@ export function createServerCoreComposition(
 		terminalOperations,
 		...(terminalLaunchResolver === undefined ? {} : { terminalLaunchResolver }),
 		...(macroOperations === undefined ? {} : { macroOperations }),
+		...(workflowOperations === undefined ? {} : { workflowOperations }),
+		...(workflowStore === undefined ? {} : { workflowStore }),
 		...(automationOperations === undefined ? {} : { automationOperations }),
 		...(automationExecutor === undefined ? {} : { automationExecutor }),
 		...(automationMcp === undefined ? {} : { automationMcp }),
@@ -2577,6 +2669,9 @@ function uniqueCapabilities(
 				? []
 				: [FEATURE_CAPABILITIES.bots, FEATURE_CAPABILITIES.botSources]),
 			...(options.macros === undefined ? [] : [FEATURE_CAPABILITIES.macros]),
+			...(options.workflows === undefined
+				? []
+				: [FEATURE_CAPABILITIES.workflows]),
 			...(options.automations === undefined
 				? []
 				: [FEATURE_CAPABILITIES.automations]),

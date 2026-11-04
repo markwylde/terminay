@@ -15,6 +15,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	agents: 'agents.v1',
 	settings: 'settings.v1',
 	macros: 'macros.v1',
+	/** Workflow templates and the per-terminal workflows an agent reports
+	 * progress on (ADR-0097). */
+	workflows: 'workflows.v1',
 	automations: 'automations.v1',
 	bots: 'bots.v1',
 	botSources: 'bots.sources.v1',
