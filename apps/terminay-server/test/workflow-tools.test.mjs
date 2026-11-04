@@ -25,7 +25,10 @@ const {
   createTerminalControlAdapter,
   createWorkflowControlAdapter,
   parseCreateWorkflow,
+  parseCreateWorkflowTemplate,
   parseGetWorkflow,
+  parseTemplateId,
+  parseUpdateWorkflowTemplate,
   parseUpdateWorkflowStep,
   serializedSize,
   WORKFLOW_TOOL_LIMITS,
@@ -47,12 +50,13 @@ function context(overrides = {}) {
 }
 
 /** The workflow service, composed as a host composes it, and its MCP adapter. */
-function service() {
+function service({ beforeCommand } = {}) {
   const store = new WorkflowStore();
   const typed = [];
+  const templates = new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend());
   const registry = createWorkflowOperationRegistry({
     serverId: SERVER,
-    templates: new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend()),
+    templates,
     store,
     eventJournal: new OrderedEventJournal(),
     sessionProject: (sessionId) => sessions.get(sessionId),
@@ -63,8 +67,14 @@ function service() {
   const adapter = createWorkflowControlAdapter({
     query: async (operation, payload, signal) =>
       unwrap(await registry.operations.queries[operation](mcpPrincipalQueryRequest(operation, payload, signal))),
-    command: async (operation, payload, signal) =>
-      unwrap(await registry.operations.commands[operation](mcpPrincipalCommandRequest(operation, payload, signal))),
+    command: async (operation, payload, signal, expectedRevision) => {
+      await beforeCommand?.(operation);
+      return unwrap(
+        await registry.operations.commands[operation](
+          mcpPrincipalCommandRequest(operation, payload, signal, expectedRevision),
+        ),
+      );
+    },
     resolveTerminal: (ctx, reference) => {
       const projectId = sessions.get(reference);
       // Project reach: only the caller's own project.
@@ -78,7 +88,7 @@ function service() {
     workflows: adapter,
   });
   const call = (op, params = {}, ctx = context()) => dispatch({ id: "r", version: 1, op, params }, ctx);
-  return { store, typed, call, dispatch };
+  return { store, typed, call, dispatch, templates };
 }
 
 const steps = [{ title: "Propose" }, { title: "Apply", prompt: "Implement it.", icon: "wrench" }];
@@ -277,5 +287,174 @@ test("a workflow refusal reaches the agent through stdio with its code and id", 
     const exists = await client.callTool({ name: "create_workflow", arguments: { name: "Other", steps } });
     assert.match(exists.content[0].text, /^workflow_exists: /);
     assert.deepEqual(exists.structuredContent.error.candidates, [created.workflow.id]);
+  });
+});
+
+// Workflow templates over MCP (mcp-workflow-templates)
+
+const templateSteps = [{ title: "Review" }, { title: "Fix", prompt: "Fix the findings.", icon: "bug" }];
+
+test("the template parsers bound their fields and keep template_id apart from inline content", () => {
+  assert.equal(parseTemplateId({ template_id: "not an id" }).ok, false);
+  assert.deepEqual(parseTemplateId({ template_id: "tpl-1" }), { templateId: "tpl-1" });
+  assert.equal(parseCreateWorkflowTemplate({ name: "T", steps: [] }).ok, false);
+  assert.equal(parseCreateWorkflowTemplate({ name: "T", steps: templateSteps, category: "two\nlines" }).ok, false);
+  assert.equal(parseCreateWorkflowTemplate({ name: "T", steps: templateSteps, category: "c".repeat(65) }).ok, false);
+  assert.equal(parseCreateWorkflowTemplate({ name: "T", steps: templateSteps, description: "d".repeat(1025) }).ok, false);
+  assert.deepEqual(parseCreateWorkflowTemplate({ name: "T", steps: templateSteps, category: "  Shipping " }).category, "Shipping");
+  assert.equal(parseUpdateWorkflowTemplate({ template_id: "tpl-1" }).ok, false);
+  assert.deepEqual(parseUpdateWorkflowTemplate({ template_id: "tpl-1", description: "" }), { templateId: "tpl-1", description: "" });
+  assert.equal(parseUpdateWorkflowTemplate({ template_id: "tpl-1", steps: [{ id: "bad id", title: "x" }] }).ok, false);
+  assert.deepEqual(parseCreateWorkflow({ template_id: "tpl-1" }), { templateId: "tpl-1" });
+  assert.equal(parseCreateWorkflow({ template_id: "tpl-1", steps }).ok, false);
+  assert.equal(parseCreateWorkflow({ template_id: "tpl-1", name: "Flow" }).ok, false);
+});
+
+test("an agent creates, reads, updates, lists, and deletes a template, which never touches a terminal", async () => {
+  const { call, templates, typed, store } = service();
+  const created = await call("create_workflow_template", {
+    name: "Review",
+    category: "Quality",
+    description: "Review then fix.",
+    opening_prompt: "Review the branch.",
+    steps: templateSteps,
+  });
+  const id = created.template.id;
+  assert.match(id, /^tpl-/);
+  assert.equal(created.template.category, "Quality");
+  assert.deepEqual(created.template.steps.map((step) => step.title), ["Review", "Fix"]);
+  assert.equal("status" in created.template.steps[0], false);
+  assert.equal(store.get("session-a"), undefined);
+  assert.deepEqual(typed, []);
+
+  const listed = await call("list_workflow_templates");
+  assert.deepEqual(listed.categories, ["Quality"]);
+  assert.deepEqual(listed.templates, [{ id, name: "Review", description: "Review then fix.", category: "Quality", step_count: 2 }]);
+
+  // A partial update keeps every other field; a retitled step keeps its id.
+  const read = await call("get_workflow_template", { template_id: id });
+  const [review, fix] = read.template.steps;
+  const described = await call("update_workflow_template", { template_id: id, description: "Changed." });
+  assert.equal(described.template.description, "Changed.");
+  assert.equal(described.template.opening_prompt, "Review the branch.");
+  assert.deepEqual(described.template.steps.map((step) => step.id), [review.id, fix.id]);
+  const retitled = await call("update_workflow_template", {
+    template_id: id,
+    steps: [{ id: review.id, title: "Review" }, { id: fix.id, title: "Fix it", prompt: fix.prompt, icon: fix.icon }, { title: "Ship" }],
+  });
+  assert.deepEqual(retitled.template.steps.slice(0, 2).map((step) => step.id), [review.id, fix.id]);
+  assert.equal(retitled.template.steps[1].title, "Fix it");
+  assert.notEqual(retitled.template.steps[2].id, review.id);
+
+  // Categories are matched by name, ignoring case.
+  const moved = await call("update_workflow_template", { template_id: id, category: "quality" });
+  assert.equal(moved.template.category, "Quality");
+  assert.deepEqual((await templates.load()).categories, ["Quality"]);
+
+  const deleted = await call("delete_workflow_template", { template_id: id });
+  assert.deepEqual(deleted, { deleted: id, name: "Review" });
+  assert.deepEqual((await templates.load()).templates, []);
+  assert.deepEqual((await templates.load()).categories, ["Quality"]);
+});
+
+test("an unknown template id is template_not_found and creates nothing", async () => {
+  const { call, templates } = service();
+  for (const [op, params] of [
+    ["get_workflow_template", {}],
+    ["update_workflow_template", { name: "New" }],
+    ["delete_workflow_template", {}],
+    ["create_workflow", {}],
+  ]) {
+    const error = failure(await call(op, { template_id: "tpl-missing", ...params }), "template_not_found");
+    assert.deepEqual(error.candidates, ["tpl-missing"], op);
+  }
+  assert.deepEqual((await templates.load()).templates, []);
+});
+
+test("an invalid template is bad_request and nothing is saved", async () => {
+  const { call, templates } = service();
+  failure(await call("create_workflow_template", { name: "T", steps: [{ title: " " }] }), "bad_request");
+  assert.deepEqual((await templates.load()).templates, []);
+});
+
+test("an update retries over a concurrent edit and keeps both", async () => {
+  let interfere;
+  const { call, templates } = service({ beforeCommand: async () => { await interfere?.(); } });
+  const a = (await call("create_workflow_template", { name: "A", steps: templateSteps })).template;
+  const b = (await call("create_workflow_template", { name: "B", steps: templateSteps })).template;
+  // A user saves template A in Settings between the agent's read and write.
+  interfere = async () => {
+    interfere = undefined;
+    const stored = (await templates.load()).templates.find((item) => item.id === a.id);
+    await templates.apply({ command: { type: "upsert", template: { ...stored, name: "A from Settings" } } });
+  };
+  const updated = await call("update_workflow_template", { template_id: b.id, name: "B from agent" });
+  assert.equal(updated.template.name, "B from agent");
+  const names = (await templates.load()).templates.map((item) => item.name);
+  assert.deepEqual(names, ["A from Settings", "B from agent"]);
+});
+
+test("an update of a template deleted meanwhile does not re-create it", async () => {
+  let interfere;
+  const { call, templates } = service({ beforeCommand: async () => { await interfere?.(); } });
+  const a = (await call("create_workflow_template", { name: "A", steps: templateSteps })).template;
+  interfere = async () => {
+    interfere = undefined;
+    await templates.apply({ command: { type: "remove", templateId: a.id } });
+  };
+  failure(await call("update_workflow_template", { template_id: a.id, name: "Back" }), "template_not_found");
+  assert.deepEqual((await templates.load()).templates, []);
+});
+
+test("create_workflow copies a template into the terminal and types nothing", async () => {
+  const { call, typed, templates } = service();
+  const template = (await call("create_workflow_template", { name: "Review", opening_prompt: "Go.", steps: templateSteps })).template;
+  const created = await call("create_workflow", { template_id: template.id });
+  assert.equal(created.workflow.name, "Review");
+  assert.equal(created.workflow.opening_prompt, "Go.");
+  assert.equal(created.workflow.template_id, template.id);
+  assert.deepEqual(created.workflow.steps.map((step) => [step.title, step.status]), [["Review", "not_started"], ["Fix", "not_started"]]);
+  assert.equal(created.workflow.steps.some((step, index) => step.id === template.steps[index].id), false);
+  assert.deepEqual(typed, []);
+  // Later edits to the template leave the workflow alone, and step reports leave the template alone.
+  await call("update_workflow_template", { template_id: template.id, steps: [{ title: "Renamed" }] });
+  await call("update_workflow_step", { step_id: created.workflow.steps[0].id, status: "done" });
+  const read = await call("get_workflow");
+  assert.equal(read.workflow.steps[0].title, "Review");
+  assert.deepEqual((await templates.load()).templates[0].steps.map((step) => step.title), ["Renamed"]);
+  // An inline workflow records no template.
+  const inline = await call("create_workflow", { name: "Flow", steps, replace_workflow_id: created.workflow.id });
+  assert.equal(inline.workflow.template_id, null);
+  // template_id with steps is refused before anything changes.
+  failure(await call("create_workflow", { template_id: template.id, steps, replace_workflow_id: inline.workflow.id }), "bad_request");
+  assert.equal((await call("get_workflow")).workflow.id, inline.workflow.id);
+});
+
+test("template reads are Read Terminals and writes are Workflow Templates, from either reach", async () => {
+  for (const op of ["list_workflow_templates", "get_workflow_template"])
+    assert.equal(CONTROL_PERMISSION_GROUPS[op], "terminalsRead", op);
+  for (const op of ["create_workflow_template", "update_workflow_template", "delete_workflow_template"])
+    assert.equal(CONTROL_PERMISSION_GROUPS[op], "workflowTemplates", op);
+  const { call } = service();
+  // A project-reach terminal and a project chat may both save templates.
+  const created = await call("create_workflow_template", { name: "T", steps: templateSteps }, context({ reach: "project" }));
+  assert.match(created.template.id, /^tpl-/);
+  const chat = context({ terminalSessionId: "chat:c1", chat: { chatId: "c1" } });
+  assert.equal((await call("list_workflow_templates", {}, chat)).templates.length, 1);
+});
+
+test("template_not_found reaches the agent through stdio, and every description names its noun", async () => {
+  await withStdio(async (client) => {
+    const missing = await client.callTool({ name: "delete_workflow_template", arguments: { template_id: "tpl-gone" } });
+    assert.equal(missing.isError, true);
+    assert.match(missing.content[0].text, /^template_not_found: /);
+    assert.deepEqual(missing.structuredContent.error.candidates, ["tpl-gone"]);
+    const { tools } = await client.listTools();
+    const description = (name) => tools.find((tool) => tool.name === name).description;
+    for (const name of ["list_workflow_templates", "get_workflow_template", "create_workflow_template", "update_workflow_template", "delete_workflow_template"])
+      assert.match(description(name), /^A workflow template is a reusable definition/, name);
+    for (const name of ["get_workflow", "create_workflow", "update_workflow_step"])
+      assert.match(description(name), /^A workflow is the one checklist attached to a single terminal/, name);
+    assert.equal(tools.filter((tool) => /workflow/.test(tool.name) && !/workflow_template/.test(tool.name)).every((tool) => !/template/.test(tool.name)), true);
   });
 });

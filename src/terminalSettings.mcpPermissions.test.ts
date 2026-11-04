@@ -15,6 +15,7 @@ test('MCP permissions default to frictionless terminals and asking before managi
 		projectsWindows: 'allow',
 		settingsRead: 'allow',
 		settingsChange: 'ask',
+		workflowTemplates: 'ask',
 		appWindows: 'allow',
 		notifications: 'allow',
 		connectedServerTools: 'allow',
@@ -35,6 +36,7 @@ test('MCP permissions default to frictionless terminals and asking before managi
 		projectsWindows: 'allow',
 		settingsRead: 'allow',
 		settingsChange: 'ask',
+		workflowTemplates: 'ask',
 		appWindows: 'ask',
 		notifications: 'deny',
 		connectedServerTools: 'allow',
@@ -42,7 +44,7 @@ test('MCP permissions default to frictionless terminals and asking before managi
 	});
 });
 
-test('Settings > AI > Terminay MCP lists the ten permission groups and Window Messages with three choices each', () => {
+test('Settings > AI > Terminay MCP lists the eleven permission groups and Window Messages with three choices each', () => {
 	const section = terminalSettingsSections.find((candidate) => candidate.id === 'terminay-mcp');
 	assert.ok(section);
 	const rows = section.fields
@@ -57,6 +59,7 @@ test('Settings > AI > Terminay MCP lists the ten permission groups and Window Me
 		['Projects & Windows', 'select', choices],
 		['Read Settings', 'select', choices],
 		['Change Settings', 'select', choices],
+		['Workflow Templates', 'select', choices],
 		['App Windows', 'select', choices],
 		['Notifications', 'select', choices],
 		['Connected Server Tools', 'select', choices],
@@ -64,19 +67,20 @@ test('Settings > AI > Terminay MCP lists the ten permission groups and Window Me
 	]);
 });
 
-test('the ten groups default to Always Allow except the two that change automations and settings', () => {
+test('the eleven groups default to Always Allow except the three that change automations, settings, and workflow templates', () => {
 	const section = terminalSettingsSections.find((candidate) => candidate.id === 'terminay-mcp');
 	assert.ok(section);
 	const permissions = defaultTerminalSettings.terminayMcp.permissions as Record<string, string>;
 	const defaults = section.fields
 		.filter((field) => field.key.startsWith('terminayMcp.permissions.') && field.key !== 'terminayMcp.permissions.windowMessages')
 		.map((field) => [field.label, permissions[field.key.slice('terminayMcp.permissions.'.length)]]);
-	assert.equal(defaults.length, 10);
+	assert.equal(defaults.length, 11);
 	assert.deepEqual(
 		defaults.filter(([, policy]) => policy !== 'allow'),
 		[
 			['Full Automation Management', 'ask'],
 			['Change Settings', 'ask'],
+			['Workflow Templates', 'ask'],
 		],
 	);
 });

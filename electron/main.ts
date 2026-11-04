@@ -3889,12 +3889,13 @@ function createDesktopMcpWorkflowAdapter(): WorkflowControlAdapter {
 					payload,
 					signal,
 				),
-			command: (operation, payload, signal) =>
+			command: (operation, payload, signal, expectedRevision) =>
 				runMcpRegistryCommand(
 					requireMcpComposition('workflowOperations').operations,
 					operation,
 					payload,
 					signal,
+					expectedRevision,
 				),
 			resolveTerminal: (context, reference) => {
 				const target = resolveMcpTerminal(context, reference);
@@ -3909,6 +3910,14 @@ function createDesktopMcpWorkflowAdapter(): WorkflowControlAdapter {
 		getWorkflow: (p, c, s) => bound().getWorkflow(p, c, s),
 		createWorkflow: (p, c, s) => bound().createWorkflow(p, c, s),
 		updateWorkflowStep: (p, c, s) => bound().updateWorkflowStep(p, c, s),
+		listWorkflowTemplates: (p, c, s) => bound().listWorkflowTemplates(p, c, s),
+		getWorkflowTemplate: (p, c, s) => bound().getWorkflowTemplate(p, c, s),
+		createWorkflowTemplate: (p, c, s) =>
+			bound().createWorkflowTemplate(p, c, s),
+		updateWorkflowTemplate: (p, c, s) =>
+			bound().updateWorkflowTemplate(p, c, s),
+		deleteWorkflowTemplate: (p, c, s) =>
+			bound().deleteWorkflowTemplate(p, c, s),
 	};
 }
 
@@ -4262,6 +4271,11 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 			'get_workflow',
 			'create_workflow',
 			'update_workflow_step',
+			'list_workflow_templates',
+			'get_workflow_template',
+			'create_workflow_template',
+			'update_workflow_template',
+			'delete_workflow_template',
 		] as const)
 			unavailable.add(tool);
 	return CONTROL_TOOL_OPERATIONS.map((tool) => {
@@ -4576,6 +4590,22 @@ async function describeMcpOperation(
 	// The workflow tools default to the calling terminal.
 	const workflowTerminal = () =>
 		params.terminal === undefined ? 'this terminal' : targetTitle();
+	// A template is named by its name, with its id when it cannot be read.
+	const templateName = async (): Promise<string> => {
+		const id = text(params.template_id);
+		try {
+			const state = (await runMcpRegistryQuery(
+				requireMcpComposition('workflowOperations').operations,
+				'workflows.templates.get',
+				{},
+				new AbortController().signal,
+			)) as { templates?: readonly { id: string; name: string }[] };
+			const found = state.templates?.find((item) => item.id === id);
+			return found === undefined ? id : `${found.name} (${id})`;
+		} catch {
+			return id;
+		}
+	};
 	switch (op) {
 		case 'create_automation':
 			return requireAutomationMcp().describe({
@@ -4804,6 +4834,11 @@ async function describeMcpOperation(
 		case 'get_workflow':
 			return { summary: `read the workflow of ${workflowTerminal()}`, details: [] };
 		case 'create_workflow':
+			if (params.template_id !== undefined)
+				return {
+					summary: `attach a copy of the workflow template ${text(params.template_id)} to ${workflowTerminal()}`,
+					details: [],
+				};
 			return {
 				summary: `attach the workflow ${text(params.name)} to ${workflowTerminal()}`,
 				details: (Array.isArray(params.steps) ? params.steps : [])
@@ -4812,6 +4847,49 @@ async function describeMcpOperation(
 						label: `Step ${index + 1}`,
 						value: text((step as { title?: unknown } | null)?.title),
 					})),
+			};
+		case 'list_workflow_templates':
+			return { summary: 'list the workflow templates', details: [] };
+		case 'get_workflow_template':
+			return {
+				summary: `read the workflow template ${text(params.template_id)}`,
+				details: [],
+			};
+		case 'create_workflow_template':
+		case 'update_workflow_template': {
+			const steps = Array.isArray(params.steps) ? params.steps : undefined;
+			const fields: { label: string; value: string }[] = [];
+			if (params.name !== undefined)
+				fields.push({ label: 'Name', value: text(params.name) });
+			if (params.category !== undefined)
+				fields.push({
+					label: 'Category',
+					value: text(params.category) || 'None',
+				});
+			if (params.description !== undefined)
+				fields.push({ label: 'Description', value: text(params.description) });
+			if (params.opening_prompt !== undefined)
+				fields.push({
+					label: 'Opening prompt',
+					value: text(params.opening_prompt),
+				});
+			for (const [index, step] of (steps ?? []).slice(0, 50).entries())
+				fields.push({
+					label: `Step ${index + 1}`,
+					value: text((step as { title?: unknown } | null)?.title),
+				});
+			return {
+				summary:
+					op === 'create_workflow_template'
+						? `save the workflow template ${text(params.name)} for every project on this server`
+						: `change the workflow template ${await templateName()} for every project on this server`,
+				details: fields,
+			};
+		}
+		case 'delete_workflow_template':
+			return {
+				summary: `delete the workflow template ${await templateName()} for every project on this server`,
+				details: [],
 			};
 		case 'update_workflow_step':
 			return {

@@ -33,10 +33,12 @@ socket.on('data', (chunk) => {
 	if (end < 0) return;
 	const response = JSON.parse(buffer.slice(0, end));
 	const steps = response.ok ? (response.result.workflow?.steps ?? []) : [];
+	const template = response.ok ? response.result.template : undefined;
 	const summary = response.ok
 		? (response.result.workflow === null ? 'none' : steps.map((step) => step.status).join(','))
 		: response.error.code;
-	console.log(['RESULT', tag, op, summary || 'ok', steps.map((step) => step.id).join(',') || 'none', 'END'].join(' '));
+	const ids = template === undefined ? steps.map((step) => step.id) : [template.id];
+	console.log(['RESULT', tag, op, summary || 'ok', ids.join(',') || 'none', 'END'].join(' '));
 	socket.end();
 });
 socket.on('error', (error) => { console.error(error.message); process.exit(2); });
@@ -69,6 +71,7 @@ async function callWithIds(
 	userDataDir: string,
 	op: string,
 	params: Record<string, unknown>,
+	approve = false,
 ): Promise<{ summary: string; ids: string[] }> {
 	const script = path.join(userDataDir, 'workflow-e2e.mjs');
 	const file = path.join(userDataDir, `workflow-params-${++paramsSequence}.json`);
@@ -83,6 +86,12 @@ async function callWithIds(
 			ids: match[2] === 'none' || match[2] === undefined ? [] : match[2].split(','),
 		}));
 	await submitTerminalCommand(page, `clear; '${process.execPath}' '${script}' ${op} '${file}' ${tag}`, panelFor(page, sessionId));
+	if (approve) {
+		// The call waits on an inline approval in the calling terminal.
+		const strip = page.locator('.project-workspace--active .terminal-mcp-approval:visible');
+		await expect(strip).toContainText('Workflow Templates', { timeout: READY_TIMEOUT_MS });
+		await strip.getByRole('button', { name: 'Allow One Time' }).click();
+	}
 	await expect.poll(async () => (await results()).length).toBeGreaterThan(0);
 	return (await results()).at(-1) ?? { summary: '', ids: [] };
 }
@@ -260,6 +269,51 @@ test('a workflow made in Settings is launched, driven by MCP, survives a relaunc
 		await window.keyboard.press('Control+D');
 	} finally {
 		await relaunched?.close().catch(() => undefined);
+		killHolders(userDataDir);
+	}
+});
+
+test('an agent saves a workflow template over MCP, Settings lists it, and the agent starts a workflow from it', async ({
+	appHarness,
+	mainWindow,
+	userDataDir,
+}) => {
+	test.setTimeout(120_000);
+	try {
+		const sessionId = await settledTerminalSessionId(mainWindow.locator('.terminal-panel:visible'));
+
+		// Saving a template asks by default (Workflow Templates), and attaches nothing.
+		const saved = await callWithIds(
+			mainWindow,
+			sessionId,
+			userDataDir,
+			'create_workflow_template',
+			{
+				name: 'Agent template',
+				category: 'From agents',
+				opening_prompt: 'Saved by an agent.',
+				steps: [{ title: 'Plan', icon: 'lightbulb' }, { title: 'Do' }],
+			},
+			true,
+		);
+		expect(saved.summary).toBe('ok');
+		const [templateId] = saved.ids;
+		expect(templateId).toMatch(/^tpl-/u);
+		await expect(workflowPanel(mainWindow, sessionId)).toHaveCount(0);
+
+		const settings = await appHarness.openSettingsWindow({ sectionId: 'workflows' });
+		await expect(settings.getByText('From agents', { exact: false }).first()).toBeVisible({ timeout: READY_TIMEOUT_MS });
+		await expect(settings.getByText(/Agent template\s*·\s*2 steps/u)).toBeVisible();
+		await settings.close();
+
+		// The agent copies the template into its own terminal; nothing is typed.
+		const started = await callWithIds(mainWindow, sessionId, userDataDir, 'create_workflow', { template_id: templateId });
+		expect(started.summary).toBe('not_started,not_started');
+		await expect(markers(mainWindow, sessionId)).toHaveCount(2, { timeout: READY_TIMEOUT_MS });
+		expect(await callFrom(mainWindow, sessionId, userDataDir, 'get_workflow_template', { template_id: 'tpl-missing' })).toBe(
+			'template_not_found',
+		);
+	} finally {
 		killHolders(userDataDir);
 	}
 });

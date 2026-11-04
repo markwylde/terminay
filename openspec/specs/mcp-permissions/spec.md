@@ -9,8 +9,9 @@ Terminay lets the user decide, per kind of operation, what agents may do through
 
 Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly one permission group, fixed in the server's operation table:
 
-- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `get_layout`, `wait_for_idle`, `wait_for_command`, `wait_for_attention`, and `get_workflow`.
+- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `get_layout`, `wait_for_idle`, `wait_for_command`, `wait_for_attention`, `get_workflow`, `list_workflow_templates`, and `get_workflow_template`.
 - **Full Terminal Management**: `open_terminal`, `close_terminal`, `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `split_terminal`, `focus_tab`, `move_tab`, `resize_pane`, `arrange_tabs`, `focus_project`, `focus_home`, `select_folder`, `create_folder`, `rename_folder`, `delete_folder`, `reorder_folders`, `move_tab_to_folder`, `open_file`, `close_tab`, `list_macros`, `run_macro`, `cancel_macro`, `create_workflow`, and `update_workflow_step`.
+- **Workflow Templates**: `create_workflow_template`, `update_workflow_template`, and `delete_workflow_template`.
 - **Read Automations**: `list_automations`, `get_automation`, and `list_automation_runs`.
 - **Full Automation Management**: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run`, `remove_automation_run`, `prune_automation_runs`, and `dismiss_missed_runs`.
 - **Projects & Windows**: `list_projects`, `create_project`, `update_project`, `move_project`, `close_project`, `list_workspace_windows`, `open_workspace_window`, `rename_workspace_window`, and `close_workspace_window`.
@@ -87,14 +88,29 @@ Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly on
 - **WHEN** an agent calls `update_workflow_step`
 - **THEN** the server evaluates it under Full Terminal Management
 
+#### Scenario: Reading a workflow template
+
+- **WHEN** an agent calls `get_workflow_template`
+- **THEN** the server evaluates it under Read Terminals
+
+#### Scenario: Saving a workflow template
+
+- **WHEN** an agent calls `create_workflow_template`
+- **THEN** the server evaluates it under Workflow Templates
+
+#### Scenario: Starting a workflow from a template
+
+- **WHEN** an agent calls `create_workflow` with a `template_id`
+- **THEN** the server evaluates it under Full Terminal Management only
+
 ### Requirement: MCP permission policy settings
 
-Settings > AI > Terminay MCP SHALL list the ten permission groups and the Window Messages policy under the **Enable Terminay MCP server** switch, each with a choice of **Ask Permission**, **Always Allow**, or **Never Allow**. The defaults SHALL be Ask Permission for Full Automation Management and Change Settings, and Always Allow for every other group and for Window Messages. The policies SHALL be server-owned settings of the server that owns the MCP endpoint. They SHALL be the same for every project, terminal and chat on that server, and SHALL be shown and changed identically from desktop, web, and mobile clients. They SHALL be changeable only from Settings, never through MCP.
+Settings > AI > Terminay MCP SHALL list the eleven permission groups and the Window Messages policy under the **Enable Terminay MCP server** switch, each with a choice of **Ask Permission**, **Always Allow**, or **Never Allow**. The defaults SHALL be Ask Permission for Full Automation Management, Workflow Templates, and Change Settings, and Always Allow for every other group and for Window Messages. The policies SHALL be server-owned settings of the server that owns the MCP endpoint. They SHALL be the same for every project, terminal and chat on that server, and SHALL be shown and changed identically from desktop, web, and mobile clients. They SHALL be changeable only from Settings, never through MCP.
 
 #### Scenario: Fresh settings
 
 - **WHEN** a server starts with no stored MCP permission settings
-- **THEN** both terminal groups, Read Automations, Projects & Windows, Read Settings, App Windows, Notifications, Connected Server Tools, and Window Messages are Always Allow, and Full Automation Management and Change Settings are Ask Permission
+- **THEN** both terminal groups, Read Automations, Projects & Windows, Read Settings, App Windows, Notifications, Connected Server Tools, and Window Messages are Always Allow, and Full Automation Management, Workflow Templates, and Change Settings are Ask Permission
 
 #### Scenario: Changed from a browser client
 
@@ -125,6 +141,11 @@ Settings > AI > Terminay MCP SHALL list the ten permission groups and the Window
 
 - **WHEN** a Home terminal's agent calls `create_project` on a fresh server
 - **THEN** the project is created without an approval prompt
+
+#### Scenario: Saving a template asks by default
+
+- **WHEN** an agent in a project terminal calls `create_workflow_template` on a fresh server
+- **THEN** the calling terminal's pane shows an approval prompt naming the template and its step titles, and no template is saved until a user allows it
 
 ### Requirement: Server-side permission enforcement
 

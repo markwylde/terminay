@@ -618,10 +618,11 @@ export function serverControlError(error: unknown): ControlEndpointError {
 		reason === 'workflow_exists' ||
 		reason === 'no_workflow' ||
 		reason === 'step_not_found' ||
-		reason === 'step_active'
+		reason === 'step_active' ||
+		reason === 'template_not_found'
 	) {
 		const details = isRecord(record?.details) ? record.details : {};
-		const named = details.workflowId ?? details.stepId;
+		const named = details.workflowId ?? details.stepId ?? details.templateId;
 		return new ControlEndpointError(
 			reason,
 			message.slice(0, 512),
