@@ -1,0 +1,440 @@
+# Independent desktop release builds. GitHub release and update feeds are configured separately.
+name: Trigger Release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release version, e.g. v1.2.3 (builds selected main commit)
+        required: true
+        type: string
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: canonical-forge-release
+  cancel-in-progress: false
+jobs:
+  release:
+    name: Prepare verified release source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+      source_commit: ${{ steps.prepare.outputs.source_commit }}
+    steps:
+    - name: Check out code
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+      with:
+        node-version: 24.15.0
+        cache: npm
+    - name: Require main branch and immutable source
+      env:
+        SOURCE_COMMIT: ${{ github.sha }}
+        SOURCE_REF: ${{ github.ref }}
+      run: |
+        test "$SOURCE_REF" = refs/heads/main
+        test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+    - name: Install dependencies
+      run: |
+        mkdir -p "$HOME/.local"
+        npm install --global --prefix "$HOME/.local" npm@12.2.1
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        npm ci
+    - name: Test built-in extensions
+      run: npm run test:built-in-extensions
+    - name: Run smoke checks
+      run: npm run smoke
+    - name: Validate release evidence and production dependency audit
+      run: npm run test:release-evidence
+    - name: Prepare canonical-forge draft
+      id: prepare
+      env:
+        FORGE_SERVER_URL: ${{ github.server_url }}
+        FORGE_REPOSITORY: ${{ github.repository }}
+        FORGE_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ inputs.tag }}
+        RELEASE_COMMIT: ${{ github.sha }}
+      run: node scripts/forge-release.mjs prepare
+  build-binaries:
+    name: Build ${{ matrix.label }} Binary
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    needs: release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: macos
+          label: macOS
+          script: npm run build:mac
+          asset_templates: Terminay-Mac-%VERSION%-Installer.dmg Terminay-Mac-%VERSION%.zip Terminay-Mac-%VERSION%.zip.blockmap
+          update_payload: Terminay-Mac-%VERSION%.zip
+          update_metadata: latest-mac.yml
+          update_minimum_system_version: 22.0.0
+          platform: mac
+        - os: ubuntu-latest
+          label: Linux
+          script: sh scripts/run-in-linux-floor.sh --output release -- sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs
+            && npm run build:linux'
+          asset_templates: Terminay-Linux-%VERSION%.AppImage
+          update_payload: Terminay-Linux-%VERSION%.AppImage
+          update_metadata: latest-linux.yml
+          update_minimum_system_version: ''
+          platform: linux
+    steps:
+    - name: Check out code
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+        ref: ${{ needs.release.outputs.source_commit }}
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Set up Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+      with:
+        cache: npm
+        node-version: 24.15.0
+    - env:
+        EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+        TAG: ${{ needs.release.outputs.tag }}
+      name: Verify immutable release tag source
+      run: |
+        test -n "$TAG"
+        test -n "$EXPECTED_COMMIT"
+        TAG_COMMIT="$(git rev-parse "$TAG^{commit}")"
+        CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"
+        test "$TAG_COMMIT" = "$EXPECTED_COMMIT"
+        test "$CHECKED_OUT_COMMIT" = "$EXPECTED_COMMIT"
+    - name: Install dependencies
+      run: |
+        mkdir -p "$HOME/.local"
+        npm install --global --prefix "$HOME/.local" npm@12.2.1
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        npm ci
+    - env:
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_ID: ${{ vars.APPLE_ID }}
+        APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      if: matrix.os == 'macos'
+      name: Check macOS signing secrets
+      run: |
+        missing=""
+        for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          if [ -z "$(printenv "$name")" ]; then
+            missing="$missing $name"
+          fi
+        done
+        if [ -n "$missing" ]; then
+          echo "Refusing to publish an unsigned or unnotarized macOS release; missing:$missing" >&2
+          exit 1
+        fi
+    - if: matrix.os == 'macos'
+      name: Import Apple signing certificate
+      uses: apple-actions/import-codesign-certs@2dbeb2d7c37642111f938c56ef0feb5d51dad55d
+      with:
+        p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+        p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+    - env:
+        TAG: ${{ needs.release.outputs.tag }}
+      name: Sync package version to release tag
+      run: |
+        TARGET_VERSION="${TAG#v}"
+        node scripts/sync-package-version.mjs "$TARGET_VERSION"
+    - name: Assert native platform architecture
+      env:
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        if [ "$PLATFORM" = mac ]; then
+          test "$(node -p 'process.platform + ":" + process.arch')" = darwin:arm64
+          test "$(uname -m)" = arm64
+        else
+          test "$(node -p 'process.platform + ":" + process.arch')" = linux:x64
+          test "$(uname -m)" = x86_64
+        fi
+    - env:
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+        APPLE_ID: ${{ matrix.os == 'macos' && vars.APPLE_ID || '' }}
+        APPLE_TEAM_ID: ${{ matrix.os == 'macos' && vars.APPLE_TEAM_ID || '' }}
+        CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos' && 'true' || 'false' }}
+      name: Build packaged app
+      run: |
+        test ! -e release
+        node scripts/stage-selected-secure-werift-runtime.mjs
+        ${{ matrix.script }}
+    - env:
+        TAG: ${{ needs.release.outputs.tag }}
+      if: matrix.os == 'ubuntu-latest'
+      name: Check the Linux AppImage against the glibc floor and run terminals from it there
+      run: |
+        VERSION="${TAG#v}"
+        APPIMAGE="release/$VERSION/Terminay-Linux-$VERSION.AppImage"
+        node scripts/linux-glibc-floor.mjs check --target linux-x64 "$APPIMAGE"
+        sh scripts/probe-linux-glibc-floor.sh appimage "$APPIMAGE"
+    - env:
+        ASSET_TEMPLATES: ${{ matrix.asset_templates }}
+        TAG: ${{ needs.release.outputs.tag }}
+        UPDATE_METADATA: ${{ matrix.update_metadata }}
+      id: asset_selection
+      name: Verify exact release asset selection
+      run: |
+        if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Release tag is not a supported semantic version: $TAG" >&2
+          exit 1
+        fi
+
+        VERSION="${TAG#v}"
+        EXPECTED_FILES=""
+        for ASSET_TEMPLATE in $ASSET_TEMPLATES; do
+          EXPECTED_ASSET="${ASSET_TEMPLATE//%VERSION%/$VERSION}"
+          EXPECTED_FILE="release/$VERSION/$EXPECTED_ASSET"
+          test -f "$EXPECTED_FILE"
+          test ! -L "$EXPECTED_FILE"
+          EXPECTED_FILES="$EXPECTED_FILES$EXPECTED_FILE"$'\n'
+        done
+        EXPECTED_FILES="$(printf '%s' "$EXPECTED_FILES" | LC_ALL=C sort)"
+        EXPECTED_COUNT="$(printf '%s\n' "$EXPECTED_FILES" | wc -l | tr -d '[:space:]')"
+
+        # Every publishable payload electron-builder wrote must be one of the
+        # reviewed names: a stale or unexpected payload fails packaging. The
+        # unpacked app directories are not payloads and are not searched.
+        CANDIDATE_COUNT="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | wc -l | tr -d '[:space:]')"
+        test "$CANDIDATE_COUNT" = "$EXPECTED_COUNT"
+        ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | LC_ALL=C sort)"
+        test "$ACTUAL_FILES" = "$EXPECTED_FILES"
+
+        # Exactly one update-metadata file, for this lane's stable channel.
+        METADATA_FILE="release/$VERSION/$UPDATE_METADATA"
+        test -f "$METADATA_FILE"
+        test ! -L "$METADATA_FILE"
+        ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
+        test "$ACTUAL_METADATA" = "$METADATA_FILE"
+
+        {
+          echo "files=$(printf '%s' "$EXPECTED_FILES" | tr '\n' ' ')"
+          echo "metadata=$METADATA_FILE"
+          echo "artifact_paths<<TERMINAY_RELEASE_ASSET_PATHS"
+          for file in $EXPECTED_FILES; do
+            echo "$file"
+            echo "$file.sha256"
+          done
+          echo "TERMINAY_RELEASE_ASSET_PATHS"
+        } >> "$GITHUB_OUTPUT"
+    - env:
+        METADATA_FILE: ${{ steps.asset_selection.outputs.metadata }}
+        MINIMUM_SYSTEM_VERSION: ${{ matrix.update_minimum_system_version }}
+      if: matrix.update_minimum_system_version != ''
+      name: Declare the macOS floor in the update metadata
+      run: |
+        # A client below the floor keeps its installed version rather than
+        # updating to one it cannot launch.
+        node scripts/declare-update-minimum-system-version.mjs "$METADATA_FILE" "$MINIMUM_SYSTEM_VERSION"
+    - if: matrix.os == 'macos'
+      name: Verify macOS microphone entitlement
+      run: |
+        APP_BUNDLE="$(find release -name 'Terminay.app' -type d | head -n 1)"
+        if [ -z "$APP_BUNDLE" ]; then
+          echo "Terminay.app was not found in release output."
+          exit 1
+        fi
+
+        ENTITLEMENTS_PLIST="$RUNNER_TEMP/terminay-entitlements.plist"
+        codesign -d --entitlements :- "$APP_BUNDLE" > "$ENTITLEMENTS_PLIST" 2>/dev/null
+        /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PLIST" | grep -q true
+        MICROPHONE_USAGE_DESCRIPTION="$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP_BUNDLE/Contents/Info.plist")"
+        test -n "$(printf '%s' "$MICROPHONE_USAGE_DESCRIPTION" | tr -d '[:space:]')"
+    - env:
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_ID: ${{ vars.APPLE_ID }}
+        APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        TAG: ${{ needs.release.outputs.tag }}
+      if: matrix.os == 'macos'
+      name: Verify macOS signed and notarized release DMG
+      run: |
+        VERSION="${TAG#v}"
+        DMG="release/$VERSION/Terminay-Mac-$VERSION-Installer.dmg"
+        test -f "$DMG"
+
+        # electron-builder notarizes the application before it creates the
+        # DMG. Submit the final container separately so the exact published
+        # bytes receive a ticket that can be stapled and checked offline.
+        xcrun notarytool submit "$DMG" \
+          --apple-id "$APPLE_ID" \
+          --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+          --team-id "$APPLE_TEAM_ID" \
+          --wait
+        xcrun stapler staple "$DMG"
+
+        MOUNT_POINT="$RUNNER_TEMP/terminay-release-dmg"
+        mkdir -p "$MOUNT_POINT"
+        hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+        cleanup() {
+          hdiutil detach "$MOUNT_POINT" -force || true
+        }
+        trap cleanup EXIT
+
+        # The signed application must come from this exact, read-only DMG.
+        # Do not let a stale unpacked app or an ambiguous second bundle stand
+        # in for the payload that will be published.
+        APP_BUNDLE_COUNT="$(find "$MOUNT_POINT" -type d -name 'Terminay.app' -print | wc -l | tr -d '[:space:]')"
+        test "$APP_BUNDLE_COUNT" = 1
+        APP_BUNDLE="$(find "$MOUNT_POINT" -type d -name 'Terminay.app' -print)"
+        test ! -L "$APP_BUNDLE"
+        APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
+        test -f "$APP_EXECUTABLE"
+        test ! -L "$APP_EXECUTABLE"
+        codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+        codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+        spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+        xcrun stapler validate "$DMG"
+        cleanup
+        trap - EXIT
+
+        # Chromium aborts on quit when the bundle stays on the read-only DMG.
+        # Stage a writable copy of those exact signed bytes, then boot that.
+        STAGED_APP="$(bash scripts/stage-macos-app-from-dmg.sh "$DMG" "$RUNNER_TEMP/terminay-release-staged")"
+        codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+        codesign -dvv "$STAGED_APP" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+        spctl --assess --type execute --verbose=4 "$STAGED_APP"
+
+        export TERMINAY_PACKAGED_APP="$STAGED_APP"
+        export TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke"
+        bash scripts/run-packaged-macos-smoke.sh
+    - env:
+        APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        TAG: ${{ needs.release.outputs.tag }}
+      if: matrix.os == 'macos'
+      name: Verify macOS signed and notarized update zip
+      run: |
+        VERSION="${TAG#v}"
+        ZIP="release/$VERSION/Terminay-Mac-$VERSION.zip"
+        test -f "$ZIP"
+        test ! -L "$ZIP"
+
+        # Squirrel.Mac installs the app inside this zip. electron-builder
+        # notarizes and staples the app before archiving it, so the app that
+        # comes out of the published bytes must pass every Gatekeeper check
+        # the DMG's app passed.
+        EXTRACTED="$RUNNER_TEMP/terminay-release-zip"
+        test ! -e "$EXTRACTED"
+        mkdir -p "$EXTRACTED"
+        ditto -x -k "$ZIP" "$EXTRACTED"
+        APP_BUNDLE_COUNT="$(find "$EXTRACTED" -type d -name 'Terminay.app' -print | wc -l | tr -d '[:space:]')"
+        test "$APP_BUNDLE_COUNT" = 1
+        APP_BUNDLE="$EXTRACTED/Terminay.app"
+        test -d "$APP_BUNDLE"
+        test ! -L "$APP_BUNDLE"
+        APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
+        test -f "$APP_EXECUTABLE"
+        test ! -L "$APP_EXECUTABLE"
+        codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+        codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+        spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+        xcrun stapler validate "$APP_BUNDLE"
+    - env:
+        METADATA_FILE: ${{ steps.asset_selection.outputs.metadata }}
+        MINIMUM_SYSTEM_VERSION: ${{ matrix.update_minimum_system_version }}
+        TAG: ${{ needs.release.outputs.tag }}
+        UPDATE_PAYLOAD: ${{ matrix.update_payload }}
+      name: Verify generated update metadata
+      run: |
+        VERSION="${TAG#v}"
+        FLOOR_ARGS=()
+        if [ -n "$MINIMUM_SYSTEM_VERSION" ]; then
+          FLOOR_ARGS=(--minimum-system-version "$MINIMUM_SYSTEM_VERSION")
+        fi
+        # Runs after the DMG is stapled, so metadata that still described a
+        # rewritten payload would fail here rather than on a client.
+        node scripts/verify-update-metadata.mjs \
+          --metadata "$METADATA_FILE" \
+          --assets-dir "release/$VERSION" \
+          --version "$VERSION" \
+          --expect-file "${UPDATE_PAYLOAD//%VERSION%/$VERSION}" \
+          ${FLOOR_ARGS[@]+"${FLOOR_ARGS[@]}"}
+    - env:
+        ASSET_FILES: ${{ steps.asset_selection.outputs.files }}
+      name: Write release asset checksums
+      run: |
+        found=false
+        for file in $ASSET_FILES; do
+          test -f "$file"
+          test ! -L "$file"
+          # A stale sidecar must not be followed or replaced through a
+          # symlink when a runner retries packaging in its workspace.
+          test ! -e "$file.sha256"
+          test ! -L "$file.sha256"
+          # Sidecars are published next to their payload.  Do not embed the
+          # runner-local release/ path: downloaded release assets must be
+          # verifiable from any directory without recreating that path.
+          # Use the shared portable checksum implementation.
+          node scripts/release-checksum.mjs write "$file" "$file.sha256"
+          found=true
+        done
+        test "$found" = true
+    - env:
+        ASSET_FILES: ${{ steps.asset_selection.outputs.files }}
+      name: Verify release asset checksums before upload
+      run: |
+        found=false
+        for file in $ASSET_FILES; do
+          test -f "$file"
+          test -f "$file.sha256"
+          test ! -L "$file"
+          test ! -L "$file.sha256"
+          node scripts/release-checksum.mjs verify "$file" "$file.sha256"
+          found=true
+        done
+        test "$found" = true
+    - name: Attach verified binaries to canonical-forge draft
+      env:
+        FORGE_SERVER_URL: ${{ github.server_url }}
+        FORGE_REPOSITORY: ${{ github.repository }}
+        FORGE_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        RELEASE_COMMIT: ${{ needs.release.outputs.source_commit }}
+        PLATFORM: ${{ matrix.platform }}
+      run: node scripts/forge-release.mjs upload "$PLATFORM" "release/${RELEASE_TAG#v}"
+  publish:
+    name: Publish complete macOS and Linux release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+    - release
+    - build-binaries
+    permissions:
+      contents: write
+    steps:
+    - name: Check out code
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        ref: ${{ needs.release.outputs.source_commit }}
+        fetch-depth: 0
+        fetch-tags: true
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+      with:
+        node-version: 24.15.0
+        cache: npm
+    - name: Verify downloaded assets and publish release
+      env:
+        FORGE_SERVER_URL: ${{ github.server_url }}
+        FORGE_REPOSITORY: ${{ github.repository }}
+        FORGE_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        RELEASE_COMMIT: ${{ needs.release.outputs.source_commit }}
+      run: node scripts/forge-release.mjs publish
