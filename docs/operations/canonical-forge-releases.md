@@ -58,14 +58,17 @@ feed. After both jobs pass, the publisher downloads all eight attachments, verif
 their checksums and exact inventory, and publishes the draft with the source SHA
 and release notes.
 
-The publication job uses `scripts/generate-release-notes.mjs` and the shared
-`.github/prompts/github-create-release.md` prompt, matching GitHub’s AI notes. It
-sends the selected release range’s commit subjects, changed filenames and diff
-statistics to OpenRouter using the repository secret. If the key is absent or
-generation fails, `generate-fallback-release-notes.mjs --desktop-only` writes
-commit-based fallback notes instead. An AI outage does not block verified binaries;
-missing or blank notes do prevent publication. Existing published releases are
-not rewritten by the workflow.
+AI notes are generated immediately after checkout and source verification, before
+`npm ci`, smoke checks, draft creation, or either platform build. The workflow uses
+`scripts/prepare-forge-release-notes.mjs` to call the shared GitHub generator and
+prompt with the repository `OPENROUTER_API_KEY`. Missing credentials, HTTP 401,
+or any generation failure stop preparation immediately. The canonical workflow
+requires AI notes and does not silently fall back; GitHub retains its own fallback.
+
+Successful notes are stored in the draft body after the preparation checks pass.
+Publication reads that saved Markdown and does not call OpenRouter again. The
+selected release range’s commit subjects, changed filenames and diff statistics
+are sent to OpenRouter. Existing published releases are not rewritten.
 
 ## Failed runs and retries
 

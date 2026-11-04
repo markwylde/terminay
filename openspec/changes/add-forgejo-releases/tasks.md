@@ -31,4 +31,12 @@ Run 23419 passed preparation and created draft v6.0.0, then the macOS runner tra
 ## 6. AI release notes
 
 - [x] 6.1 Wire the shared AI generator and fallback into publication, enforce non-empty notes and retain provenance; verify publication content and missing-notes failure cases.
-- [ ] 6.2 Update operator notes and validate release tests, lint, OpenSpec and workflow syntax; create the follow-up PR and read back all CI statuses.
+- [x] 6.2 Update operator notes and validate release tests, lint, OpenSpec and workflow syntax; create the follow-up PR and read back all CI statuses.
+
+
+## 7. Early live AI preflight
+
+- [x] 7.1 Generate notes before dependencies/tests/builds, fail preparation on AI errors, and persist successful notes in the draft for publication; verify a real preflight process with mocked HTTP 401 and successful provider responses, plus saved-note publication tests.
+- [ ] 7.2 Validate the workflow ordering, release tests and lint, and push directly to origin/main as explicitly requested.
+
+PR #498 passed all 28 checks, including the workspace retry. Run 23448 exposed HTTP 401 only after its builds; this revision moves the actual credential request before that work.

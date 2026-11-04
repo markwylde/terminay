@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -137,6 +144,68 @@ test('missing, blank or oversized release notes cannot publish or mutate a draft
 		assert.equal(state.writes, writes);
 		assert.equal(state.release.draft, true);
 	}
+});
+
+test('publication consumes the exact notes saved before builds and refuses drafts without them', async (t) => {
+	const { client, state } = harness();
+	await client.prepare();
+	await assert.rejects(client.publishSavedNotes(), /no saved release notes/);
+	await client.saveNotes(notes);
+	const directory = await fixtures(t);
+	await client.upload('mac', directory);
+	await client.upload('linux', directory);
+	await client.publishSavedNotes();
+	assert.equal(state.release.draft, false);
+	assert.ok(state.release.body.includes(notes.trim()));
+});
+
+test('the actual preflight fails on HTTP 401 and saves Markdown only on provider success', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'forge-ai-preflight-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const execute = promisify(execFile);
+	const git = (...args) => execute('git', args, { cwd: directory });
+	await git('init');
+	await git('config', 'user.name', 'Release Test');
+	await git('config', 'user.email', 'release@example.test');
+	await git(
+		'-c',
+		'commit.gpgsign=false',
+		'commit',
+		'--allow-empty',
+		'-m',
+		'fix: verify the credential first',
+	);
+	const revision = (await git('rev-parse', 'HEAD')).stdout.trim();
+	await mkdir(join(directory, '.github/prompts'), { recursive: true });
+	await writeFile(
+		join(directory, '.github/prompts/github-create-release.md'),
+		'Generate release notes.',
+	);
+	const script = new URL('./prepare-forge-release-notes.mjs', import.meta.url)
+		.pathname;
+	const env = {
+		...process.env,
+		RELEASE_COMMIT: revision,
+		OPENROUTER_API_KEY: 'test-key',
+	};
+	const preload = (status) =>
+		`--import=data:text/javascript,${encodeURIComponent(`globalThis.fetch = async () => new Response(JSON.stringify({choices:[{message:{content:${JSON.stringify(notes)}}}]}), {status:${status}});`)}`;
+	await assert.rejects(
+		execute(process.execPath, [script], {
+			cwd: directory,
+			env: { ...env, NODE_OPTIONS: preload(401) },
+		}),
+		(error) => {
+			assert.match(error.stderr, /HTTP 401/);
+			return true;
+		},
+	);
+	await assert.rejects(readFile(join(directory, 'RELEASE.md')), /ENOENT/);
+	await execute(process.execPath, [script], {
+		cwd: directory,
+		env: { ...env, NODE_OPTIONS: preload(200) },
+	});
+	assert.equal(await readFile(join(directory, 'RELEASE.md'), 'utf8'), notes);
 });
 
 test('desktop fallback describes shipped downloads while preserving the GitHub default', async (t) => {
@@ -361,15 +430,13 @@ test('forge workflow retains platform verification and no Windows build or GitHu
 		forge,
 		/OPENROUTER_API_KEY: \$\{\{ secrets\.OPENROUTER_API_KEY \}\}/,
 	);
-	assert.match(forge, /continue-on-error: true/);
-	assert.match(forge, /steps\.generate_release_notes\.outcome != 'success'/);
-	assert.match(forge, /generate-release-notes\.mjs "\$TAG"/);
-	assert.match(
-		forge,
-		/generate-fallback-release-notes\.mjs "\$TAG" --desktop-only/,
-	);
+	assert.doesNotMatch(forge, /continue-on-error: true/);
+	assert.match(forge, /prepare-forge-release-notes\.mjs/);
+	assert.doesNotMatch(forge, /generate-fallback-release-notes\.mjs/);
 	assert.ok(
-		forge.indexOf('name: Generate AI release notes') <
-			forge.indexOf('name: Verify downloaded assets and publish release'),
+		forge.indexOf('name: Generate AI release notes before builds') <
+			forge.indexOf('name: Install dependencies'),
 	);
+	const publication = forge.slice(forge.indexOf('  publish:'));
+	assert.doesNotMatch(publication, /OPENROUTER_API_KEY|generate-release-notes/);
 });
