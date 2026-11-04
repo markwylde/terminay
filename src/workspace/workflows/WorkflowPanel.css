@@ -89,6 +89,15 @@
   position: relative;
 }
 
+/* A block box, so a marker's glyph never moves the line box it sits on:
+   an inline marker takes its baseline from its content, and the rail would
+   shift each time an empty marker gains a check. */
+.workflow-rail-step {
+  display: flex;
+  width: 22px;
+  height: 22px;
+}
+
 /* The line that joins each marker to the next, green once the step is done. */
 .workflow-rail-step:not(:last-child)::after {
   content: "";
