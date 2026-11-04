@@ -8,7 +8,7 @@ import { activeHome, frontHomeTab } from './support/home-tabs';
 
 /**
  * Home › Bots, end to end. The suite runs against a Docker-compatible socket API fixture
- * whose containers host a fake ACP agent, so it
+ * whose containers host a fake native agent, so it
  * needs no container engine, image, or agent account. Writing `engine-down`
  * into the fake root makes the engine unreachable. A message containing
  * `hold` keeps its turn open until it is
@@ -61,9 +61,7 @@ async function createBot(
 	await dashboard.locator('[data-terminay-bots-new]').first().click();
 	const dialog = page.locator('[data-terminay-bots-new-dialog]');
 	await dialog.locator('[data-terminay-bots-new-name]').fill(name);
-	await dialog
-		.locator('[data-terminay-bots-new-agent]')
-		.selectOption(CLAUDE);
+	await dialog.locator('[data-terminay-bots-new-agent]').selectOption(CLAUDE);
 	await dialog.locator('[data-terminay-bots-new-create]').click();
 	const tab = frontHomeTab(page);
 	await expect(
@@ -143,6 +141,72 @@ async function openBotChat(page: Page, name: string): Promise<Locator> {
 }
 
 test.describe('Home › Bots', () => {
+	test('image build opens a compact banner and a live step timeline with failure and retry', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await prepareWindow(mainWindow);
+		await mkdir(fakeRoot(tempDir), { recursive: true });
+		await writeFile(path.join(fakeRoot(tempDir), 'build-delay'), '2000');
+		await writeFile(path.join(fakeRoot(tempDir), 'build-fail'), '');
+		const dashboard = await openBots(mainWindow);
+		await dashboard.getByRole('button', { name: 'Check again' }).click();
+		await dashboard.getByRole('button', { name: 'Build image' }).click();
+		const banner = dashboard.locator('[data-terminay-build-banner]');
+		await expect(banner).toBeVisible();
+		expect((await banner.boundingBox())!.height).toBeLessThanOrEqual(40);
+		await banner.click();
+		const progress = mainWindow.locator('[data-terminay-build-page]');
+		await expect(
+			progress.getByRole('heading', { name: 'Building your bot environment' }),
+		).toBeVisible();
+		await expect(
+			progress.locator('[data-terminay-build-step="cached"]'),
+		).toBeVisible();
+		await expect(
+			progress.getByRole('heading', {
+				name: 'Image build failed',
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			progress.locator('[data-terminay-build-step="failed"]').first(),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-failed.png'),
+		});
+		await rm(path.join(fakeRoot(tempDir), 'build-fail'));
+		await writeFile(path.join(fakeRoot(tempDir), 'build-delay'), '6000');
+		await progress.getByRole('button', { name: 'Retry build' }).click();
+		await expect(
+			progress.getByRole('heading', { name: 'Building your bot environment' }),
+		).toBeVisible();
+		await progress.getByRole('button', { name: 'Back to Bots' }).click();
+		await expect(progress).toHaveCount(0);
+		await dashboard.locator('[data-terminay-build-banner]').click();
+		const buildId = await progress.getAttribute('data-terminay-build-id');
+		await mainWindow.reload();
+		await openBots(mainWindow);
+		await mainWindow.locator('[data-terminay-build-banner]').click();
+		await expect(progress).toHaveAttribute('data-terminay-build-id', buildId!);
+		await expect(
+			progress.getByRole('heading', { name: 'Your bot image is ready' }),
+		).toBeVisible({ timeout: 30000 });
+		await expect(
+			progress.getByRole('heading', { name: 'Publishing the local bot image' }),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-completed.png'),
+		});
+		await mainWindow.setViewportSize({ width: 430, height: 850 });
+		expect(
+			await progress.evaluate((el) => el.scrollWidth <= el.clientWidth),
+		).toBe(true);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-mobile.png'),
+		});
+	});
+
 	test('a bot is created while Docker is down, and chats once Docker is up', async ({
 		mainWindow,
 		tempDir,
@@ -171,99 +235,216 @@ test.describe('Home › Bots', () => {
 		expect(await mainWindow.content()).not.toContain(TOKEN);
 	});
 
-	test('a bot explains an engine outage in place and can still be deleted with its home', async ({ mainWindow, tempDir }) => {
+	test('a bot explains an engine outage in place and can still be deleted with its home', async ({
+		mainWindow,
+		tempDir,
+	}) => {
 		await engineReady(mainWindow);
 		const tab = await createBot(mainWindow, 'Recoverable');
 		await setEngineDown(tempDir, true);
 		const dashboard = await openBots(mainWindow);
 		await dashboard.getByRole('button', { name: 'Check again' }).click();
-		await expect(dashboard.locator('[data-terminay-bots-engine-reason="not-running"]')).toBeVisible();
+		await expect(
+			dashboard.locator('[data-terminay-bots-engine-reason="not-running"]'),
+		).toBeVisible();
 		await mainWindow.locator('[data-terminay-home-tab^="bot:"]').click();
-		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('not running');
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText(
+			'not running',
+		);
 		await chat(tab);
-		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('Check again');
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText(
+			'Check again',
+		);
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await tab.locator('[data-terminay-bot-delete]').click();
 		await tab.locator('[data-terminay-bot-delete-home]').check();
 		await tab.locator('[data-terminay-bot-delete-confirm]').click();
-		await expect(await openBots(mainWindow)).toContainText('Removal is pending');
-		await expect((await openBots(mainWindow)).locator('[data-terminay-bot-card]')).toHaveCount(0);
+		await expect(await openBots(mainWindow)).toContainText(
+			'Removal is pending',
+		);
+		await expect(
+			(await openBots(mainWindow)).locator('[data-terminay-bot-card]'),
+		).toHaveCount(0);
 	});
 
-	test('reset at the same socket shows recovery on old and new bots, then rebuilds in place', async ({ mainWindow, tempDir }, testInfo) => {
+	test('reset at the same socket shows recovery on old and new bots, then rebuilds in place', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
 		await engineReady(mainWindow);
 		let tab = await chat(await createBot(mainWindow, 'Before reset'));
 		await send(tab, 'before reset');
-		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('secret', { timeout: 30_000 });
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
 		await expect(tab.locator('[data-terminay-bot-typing]')).toHaveCount(0);
+		// Completion is visible before supervisor/relay cleanup finishes. Reset
+		// the fixture only after the original execution has released its processes.
+		await expect
+			.poll(
+				async () =>
+					(await readdir(fakeRoot(tempDir))).filter((n) => n.startsWith('pid-'))
+						.length,
+			)
+			.toBe(0);
 		await setEngineDown(tempDir, true);
 		for (const file of await readdir(fakeRoot(tempDir))) {
-			if (/^(container|volume|network|image)-/.test(file)) await rm(path.join(fakeRoot(tempDir), file));
+			if (/^(container|volume|network|image)-/.test(file))
+				await rm(path.join(fakeRoot(tempDir), file));
 		}
 		await setEngineDown(tempDir, false);
 		const dashboard = await openBots(mainWindow);
 		await dashboard.getByRole('button', { name: 'Check again' }).click();
-		await expect(dashboard.locator('[data-terminay-bots-engine-reason="engine-changed"]')).toBeVisible();
+		await expect(
+			dashboard.locator('[data-terminay-bots-engine-reason="engine-changed"]'),
+		).toBeVisible();
 		tab = await openBotChat(mainWindow, 'Before reset');
-		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('Use this engine');
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText(
+			'Use this engine',
+		);
 		tab = await createBot(mainWindow, 'After reset');
 		const recovery = tab.locator('[data-terminay-bot-recovery]');
 		await expect(recovery).toContainText('identity marker is missing');
-		await expect(recovery.getByRole('button', { name: 'Use this engine' })).toBeInViewport({ ratio: 1 });
-		await mainWindow.screenshot({ path: testInfo.outputPath('engine-reset-recovery.png') });
+		await expect(
+			recovery.getByRole('button', { name: 'Use this engine' }),
+		).toBeInViewport({ ratio: 1 });
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('engine-reset-recovery.png'),
+		});
 		await recovery.getByRole('button', { name: 'Use this engine' }).click();
 		await expect(recovery.getByRole('alertdialog')).toBeVisible();
 		await recovery.locator('[data-terminay-bots-engine-confirm]').click();
-		await expect(recovery.getByRole('button', { name: 'Build image' })).toBeVisible();
+		await expect(
+			recovery.getByRole('button', { name: 'Build image' }),
+		).toBeVisible();
 		await recovery.getByRole('button', { name: 'Build image' }).click();
-		await expect(recovery.locator('[data-terminay-bots-image="building"]')).toHaveCount(0);
-		await expect(recovery.getByRole('button', { name: 'Create environment' })).toBeVisible();
+		await expect(
+			recovery.locator('[data-terminay-bots-image="building"]'),
+		).toHaveCount(0);
+		await expect(
+			recovery.getByRole('button', { name: 'Create environment' }),
+		).toBeVisible();
 		await recovery.getByRole('button', { name: 'Create environment' }).click();
-		await chat(tab); await send(tab, 'after reset');
-		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('secret', { timeout: 30_000 });
+		await chat(tab);
+		await send(tab, 'after reset');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
 		tab = await openBotChat(mainWindow, 'Before reset');
 		await send(tab, 'old bot recovered');
-		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('old bot recovered');
-		await expect(tab.locator('.bots-sess__m').first()).toContainText('Completed', { timeout: 30_000 });
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'old bot recovered',
+		);
+		await expect(tab.locator('.bots-sess')).toHaveCount(2);
+		const recoveredOutcome = tab.locator('.bots-sess__m').first();
+		await expect(recoveredOutcome).toContainText(/Completed|Failed/, {
+			timeout: 30_000,
+		});
+		if ((await recoveredOutcome.textContent())?.includes('Failed')) {
+			await tab.locator('.bots-sess').first().click();
+			const detail = tab.locator('[data-terminay-bot-session]');
+			await expect(detail).toBeVisible();
+			throw new Error(
+				`Recovered execution failed: ${await detail.textContent()}`,
+			);
+		}
+		await expect(recoveredOutcome).toContainText('Completed');
 		expect(await mainWindow.content()).not.toContain('query failed');
-		await mainWindow.screenshot({ path: testInfo.outputPath('engine-reset-recovered.png') });
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('engine-reset-recovered.png'),
+		});
 	});
 
-	test('first chat builds a missing image and creates its environment without a dashboard build', async ({ mainWindow, tempDir }) => {
+	test('first chat builds a missing image and creates its environment without a dashboard build', async ({
+		mainWindow,
+		tempDir,
+	}) => {
 		const tab = await chat(await createBot(mainWindow, 'First start'));
-		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText('Build image');
-		expect((await readdir(fakeRoot(tempDir))).filter(file => file.startsWith('image-'))).toEqual([]);
+		await expect(tab.locator('[data-terminay-bot-recovery]')).toContainText(
+			'Build image',
+		);
+		expect(
+			(await readdir(fakeRoot(tempDir))).filter((file) =>
+				file.startsWith('image-'),
+			),
+		).toEqual([]);
 		await send(tab, 'build automatically');
-		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('secret', { timeout: 30_000 });
-		await expect(tab.locator('.bots-sess__m').first()).toContainText('Completed', { timeout: 30_000 });
-		expect((await readdir(fakeRoot(tempDir))).some(file => file.startsWith('image-'))).toBe(true);
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
+		await expect(tab.locator('.bots-sess__m').first()).toContainText(
+			'Completed',
+			{ timeout: 30_000 },
+		);
+		expect(
+			(await readdir(fakeRoot(tempDir))).some((file) =>
+				file.startsWith('image-'),
+			),
+		).toBe(true);
 	});
 
-	test('two bots stay responsive and Overview helper lifecycle events do not refetch or spawn more helpers', async ({ mainWindow, tempDir }) => {
+	test('two bots stay responsive and Overview helper lifecycle events do not refetch or spawn more helpers', async ({
+		mainWindow,
+		tempDir,
+	}) => {
 		test.setTimeout(60_000);
 		await engineReady(mainWindow);
 		for (const name of ['Loop One', 'Loop Two']) {
-			const tab = await chat(await createBot(mainWindow, name)); await send(tab, 'hello');
-			await expect(tab.locator('.bots-sess__m').first()).toContainText('Completed', { timeout: 30_000 });
+			const tab = await chat(await createBot(mainWindow, name));
+			await send(tab, 'hello');
+			await expect(tab.locator('.bots-sess__m').first()).toContainText(
+				'Completed',
+				{ timeout: 30_000 },
+			);
 			await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		}
-		const helperCount = async () => (await readFile(path.join(fakeRoot(tempDir), 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(call => call.args?.[0] === 'container' && call.args?.[1] === 'create' && String(call.args?.[3]).startsWith('helper-') && call.args.includes('terminay.role=helper')).length;
+		const helperCount = async () =>
+			(await readFile(path.join(fakeRoot(tempDir), 'calls.jsonl'), 'utf8'))
+				.trim()
+				.split('\n')
+				.map((line) => JSON.parse(line))
+				.filter(
+					(call) =>
+						call.args?.[0] === 'container' &&
+						call.args?.[1] === 'create' &&
+						String(call.args?.[3]).startsWith('helper-') &&
+						call.args.includes('terminay.role=helper'),
+				).length;
 		for (let pass = 0; pass < 3; pass++) {
 			const dashboard = await openBots(mainWindow);
-			await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(2);
+			await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(
+				2,
+			);
 			await dashboard.locator('[data-terminay-bots-search]').fill('Loop');
-			await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(2);
+			await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(
+				2,
+			);
 		}
 		expect(await helperCount()).toBe(0);
 		const tab = await openBotChat(mainWindow, 'Loop One');
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
-		await expect(tab.locator('[data-terminay-bot-env-state="running"]')).toBeVisible();
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible();
 		await expect.poll(helperCount).toBe(1);
 		await tab.locator('[data-terminay-bot-env-details]').click();
 		await tab.locator('[data-terminay-bot-env-refresh]').click();
 		await expect.poll(helperCount).toBe(2);
-		await expect.poll(async () => (await readFile(path.join(fakeRoot(tempDir), 'events.jsonl'), 'utf8')).split('\n').filter(line => line.includes('terminay.role') && line.includes('destroy')).length).toBe(2);
+		await expect
+			.poll(
+				async () =>
+					(await readFile(path.join(fakeRoot(tempDir), 'events.jsonl'), 'utf8'))
+						.split('\n')
+						.filter(
+							(line) =>
+								line.includes('terminay.role') && line.includes('destroy'),
+						).length,
+			)
+			.toBe(2);
 		await openBots(mainWindow);
 		// Observe longer than several renderer debounce windows: the old loop
 		// repeatedly created helpers throughout this idle period.
@@ -274,20 +455,37 @@ test.describe('Home › Bots', () => {
 		await expect(dashboard.locator('[data-terminay-bot-card]')).toHaveCount(1);
 	});
 
-	test('MCP permission failure in the bundled chat path fails visibly before agent launch', async ({ mainWindow, tempDir }) => {
+	test('MCP permission failure in the bundled chat path fails visibly before agent launch', async ({
+		mainWindow,
+		tempDir,
+	}) => {
 		await engineReady(mainWindow);
 		const tab = await chat(await createBot(mainWindow, 'MCP denied'));
-		await writeFile(path.join(fakeRoot(tempDir), 'mcp-state-denied.json'), 'true');
+		await writeFile(
+			path.join(fakeRoot(tempDir), 'mcp-state-denied.json'),
+			'true',
+		);
 		await send(tab, 'hello');
-		await expect(tab.locator('.bots-sess__m').first()).toContainText('Failed', { timeout: 30_000 });
+		await expect(tab.locator('.bots-sess__m').first()).toContainText('Failed', {
+			timeout: 30_000,
+		});
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
 		await tab.locator('[data-terminay-bot-session-row]').first().click();
-		await expect(tab.locator('[data-terminay-bot-session]')).toContainText('MCP adapter could not connect');
+		await expect(tab.locator('[data-terminay-bot-session]')).toContainText(
+			'MCP adapter could not connect',
+		);
 		await tab.locator('[data-terminay-bot-runner] summary').click();
-		await expect(tab.locator('[data-terminay-bot-runner]')).toContainText('runtime socket permission denied');
-		const calls = (await readFile(path.join(fakeRoot(tempDir), 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-		expect(calls.filter(call => call.agent)).toEqual([]);
+		await expect(tab.locator('[data-terminay-bot-runner]')).toContainText(
+			'runtime socket permission denied',
+		);
+		const calls = (
+			await readFile(path.join(fakeRoot(tempDir), 'calls.jsonl'), 'utf8')
+		)
+			.trim()
+			.split('\n')
+			.map((line) => JSON.parse(line));
+		expect(calls.filter((call) => call.agent)).toEqual([]);
 	});
 
 	test('provider completion without MCP tools shows Failed and actionable Runner output', async ({
@@ -330,7 +528,9 @@ test.describe('Home › Bots', () => {
 			await expect(stop).toBeVisible({ timeout: 30_000 });
 			await stop.click();
 			await expect(stop).toHaveCount(0, { timeout: 30_000 });
-            await expect(tab.locator('.bots-sess__m').first()).toContainText('Stopped');
+			await expect(tab.locator('.bots-sess__m').first()).toContainText(
+				'Stopped',
+			);
 		}
 		// No session process is left behind in the fake engine.
 		await expect
@@ -400,19 +600,36 @@ test.describe('Home › Bots', () => {
 		);
 
 		await chat(tab);
-        await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('hello');
-        await send(tab,'again');
-        await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('again');
-        await expect(tab.locator('.bots-sess')).toHaveCount(3);
-
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'hello',
+		);
+		await send(tab, 'again');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'again',
+		);
+		await expect(tab.locator('.bots-sess')).toHaveCount(3);
 	});
 
-    test('a new message completes while an older execution is held',async({mainWindow,tempDir})=>{
-        await setEngineDown(tempDir,false);await engineReady(mainWindow);const tab=await chat(await createBot(mainWindow,'Wagtail'));
-        await send(tab,'hold');await expect(tab.locator('[data-terminay-bot-stop]')).toBeVisible({timeout:30000});
-        await send(tab,'next');await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText('secret',{timeout:30000});
-        await expect(tab.locator('.bots-sess')).toHaveCount(2);await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(1);await tab.locator('[data-terminay-bot-stop]').click();
-    });
+	test('a new message completes while an older execution is held', async ({
+		mainWindow,
+		tempDir,
+	}) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Wagtail'));
+		await send(tab, 'hold');
+		await expect(tab.locator('[data-terminay-bot-stop]')).toBeVisible({
+			timeout: 30000,
+		});
+		await send(tab, 'next');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30000 },
+		);
+		await expect(tab.locator('.bots-sess')).toHaveCount(2);
+		await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(1);
+		await tab.locator('[data-terminay-bot-stop]').click();
+	});
 
 	test('a turn running when Terminay is killed comes back interrupted', async ({
 		electronApp,
@@ -505,29 +722,41 @@ test.describe('Home › Bots', () => {
 		await dialog.locator('[data-terminay-bots-new-create]').click();
 		const tab = frontHomeTab(mainWindow);
 		const device = tab.locator('[data-terminay-bot-device]');
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out');
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-out',
+		);
 
 		// The fake `codex login --device-auth` prints its code and succeeds.
 		await tab.locator('[data-terminay-bot-device-start]').click();
-		await expect(tab.locator('[data-terminay-bot-device-terminal]')).toContainText(
-			'TEST-CODE',
-			{ timeout: 30_000 },
+		await expect(
+			tab.locator('[data-terminay-bot-device-terminal]'),
+		).toContainText('TEST-CODE', { timeout: 30_000 });
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-in',
+			{
+				timeout: 30_000,
+			},
 		);
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-in', {
-			timeout: 30_000,
-		});
 		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
 			'data-terminay-bot-signin',
 			'device',
 		);
 		await tab
-			.locator('[data-terminay-bot-device-terminal] button', { hasText: 'Close' })
+			.locator('[data-terminay-bot-device-terminal] button', {
+				hasText: 'Close',
+			})
 			.click();
 
 		await tab.locator('[data-terminay-bot-device-signout]').click();
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out', {
-			timeout: 30_000,
-		});
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-out',
+			{
+				timeout: 30_000,
+			},
+		);
 		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
 			'data-terminay-bot-signin',
 			'none',
@@ -548,33 +777,49 @@ test.describe('Home › Bots', () => {
 		await dialog.locator('[data-terminay-bots-new-create]').click();
 		const tab = frontHomeTab(mainWindow);
 		const device = tab.locator('[data-terminay-bot-device]');
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out');
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-out',
+		);
 
 		// The fake Claude CLI waits for the browser authorization code.
 		await tab.locator('[data-terminay-bot-device-start]').click();
-		await expect(tab.locator('[data-terminay-bot-device-terminal]')).toContainText(
-			'TEST-CODE',
-			{ timeout: 30_000 },
+		await expect(
+			tab.locator('[data-terminay-bot-device-terminal]'),
+		).toContainText('TEST-CODE', { timeout: 30_000 });
+		await expect(
+			tab.locator('[data-terminay-bot-device-terminal]'),
+		).toContainText('Paste code here:');
+		const codeInput = tab.locator(
+			'[data-terminay-bot-device-terminal] .xterm-helper-textarea',
 		);
-		await expect(tab.locator('[data-terminay-bot-device-terminal]')).toContainText('Paste code here:');
-		const codeInput = tab.locator('[data-terminay-bot-device-terminal] .xterm-helper-textarea');
 		await codeInput.pressSequentially('TEST-CODE');
 		await codeInput.press('Enter');
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-in', {
-			timeout: 30_000,
-		});
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-in',
+			{
+				timeout: 30_000,
+			},
+		);
 		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
 			'data-terminay-bot-signin',
 			'device',
 		);
 		await tab
-			.locator('[data-terminay-bot-device-terminal] button', { hasText: 'Close' })
+			.locator('[data-terminay-bot-device-terminal] button', {
+				hasText: 'Close',
+			})
 			.click();
 
 		await tab.locator('[data-terminay-bot-device-signout]').click();
-		await expect(device).toHaveAttribute('data-terminay-bot-device', 'signed-out', {
-			timeout: 30_000,
-		});
+		await expect(device).toHaveAttribute(
+			'data-terminay-bot-device',
+			'signed-out',
+			{
+				timeout: 30_000,
+			},
+		);
 		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
 			'data-terminay-bot-signin',
 			'none',
@@ -592,7 +837,9 @@ test.describe('Home › Bots', () => {
 		const note = tab.locator('[data-terminay-bot-chat-error]');
 		await expect(note).toContainText('not signed in');
 		await tab.locator('[data-terminay-bot-open-signin]').click();
-		await expect(tab.locator('[data-terminay-bot-panel="profile"]')).toBeVisible();
+		await expect(
+			tab.locator('[data-terminay-bot-panel="profile"]'),
+		).toBeVisible();
 		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
 			'data-terminay-bot-signin',
 			'none',

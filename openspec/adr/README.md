@@ -118,3 +118,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0092](./0092-bots-use-the-local-docker-compatible-socket.md) | Bots use one local Docker-compatible socket transport | accepted, supersedes 0089 (transport only) | 2026-11-02 |
 | [0093](./0093-bots-communicate-through-a-durable-message-log.md) | Bots communicate through a durable message log and scoped runtime tools | accepted, supersedes 0089 (execution and communication only) | 2026-11-02 |
 | [0094](./0094-bots-attribute-engine-workloads-through-per-bot-proxies.md) | Bots attribute engine workloads through per-bot socket proxies | accepted, supersedes 0089 and 0092 (socket exposure and attribution only) | 2026-11-02 |
+| [0096](./0096-bots-use-terminay-owned-native-cli-drivers.md) | Bots use Terminay-owned native CLI drivers adapted from Atlas | accepted, supersedes ACP and adapter installation choices in part | 2026-11-04 |

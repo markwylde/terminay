@@ -16,7 +16,7 @@ Claude Code bots SHALL offer **Sign in with Claude** in Configure › Profile �
 
 ### Requirement: Claude owns its persistent login and refresh
 
-The saved Claude login SHALL remain in that bot’s persistent home volume, available to its Claude adapter after container stop and restart or recreation that retains the home. Claude SHALL own credential storage, refresh and refresh coordination. Terminay SHALL NOT read, copy, display or distribute the saved credential, access the host account’s login, introduce a refresh daemon, or require an idle inference process to keep the bot signed in. Separate bots SHALL have separate homes and sign-ins. The UI SHALL NOT promise perpetual login validity.
+The saved Claude login SHALL remain in that bot’s persistent home volume, available to its pinned native Claude CLI after container stop and restart or recreation that retains the home. Claude SHALL own credential storage, refresh and refresh coordination. Terminay SHALL NOT read, copy, display or distribute the saved credential, access the host account’s login, introduce a refresh daemon, or require an idle inference process to keep the bot signed in. Separate bots SHALL have separate homes and sign-ins. The UI SHALL NOT promise perpetual login validity.
 
 #### Scenario: Container restarts with retained home
 

@@ -216,7 +216,11 @@ export type StateFileRead<T> =
 	| { readonly status: 'ok'; readonly value: T }
 	| { readonly status: 'missing' }
 	/** The target was corrupt and the previous committed copy was loaded. */
-	| { readonly status: 'restored'; readonly value: T; readonly preservedAs: string }
+	| {
+			readonly status: 'restored';
+			readonly value: T;
+			readonly preservedAs: string;
+	  }
 	/** Nothing usable; every corrupt file was kept under `preservedAs`. */
 	| { readonly status: 'corrupt'; readonly preservedAs: readonly string[] };
 
@@ -235,7 +239,8 @@ export interface ReadStateFileOptions<T> {
 	readonly acceptFresh?: boolean;
 }
 
-const parseJson = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
+const parseJson = (bytes: Buffer): unknown =>
+	JSON.parse(bytes.toString('utf8'));
 
 function decode<T>(
 	bytes: Buffer,
@@ -296,25 +301,38 @@ export function readStateFileSync<T = unknown>(
 		if (!decoded.ok)
 			return {
 				status: 'corrupt',
-				preservedAs: options.acceptFresh === true ? [preserveCorruptFile(previousPath)] : [],
+				preservedAs:
+					options.acceptFresh === true
+						? [preserveCorruptFile(previousPath)]
+						: [],
 			};
 		writeFileDurablySync(path, previous, { mode: options.mode });
-		return { status: 'restored', value: decoded.value, preservedAs: previousPath };
+		return {
+			status: 'restored',
+			value: decoded.value,
+			preservedAs: previousPath,
+		};
 	}
 	const decoded = decode(bytes, options);
 	if (decoded.ok) return { status: 'ok', value: decoded.value };
 	if (options.kind !== 'canonical')
 		return { status: 'corrupt', preservedAs: [preserveCorruptFile(path)] };
 	const previous = readOptional(previousPath);
-	const fallback = previous === undefined ? undefined : decode(previous, options);
+	const fallback =
+		previous === undefined ? undefined : decode(previous, options);
 	if (previous !== undefined && fallback?.ok === true) {
 		const preservedTarget = preserveCorruptFile(path);
 		writeFileDurablySync(path, previous, { mode: options.mode });
-		return { status: 'restored', value: fallback.value, preservedAs: preservedTarget };
+		return {
+			status: 'restored',
+			value: fallback.value,
+			preservedAs: preservedTarget,
+		};
 	}
 	// No good copy: the user decides. Until they choose to start fresh, both
 	// files stay exactly where they are.
-	if (options.acceptFresh !== true) return { status: 'corrupt', preservedAs: [] };
+	if (options.acceptFresh !== true)
+		return { status: 'corrupt', preservedAs: [] };
 	const preserved = [preserveCorruptFile(path)];
 	if (previous !== undefined) preserved.push(preserveCorruptFile(previousPath));
 	return { status: 'corrupt', preservedAs: preserved };
@@ -340,6 +358,7 @@ export type StateStoreName =
 	| 'bots'
 	| 'bot-sessions'
 	| 'bot-messages'
+	| 'bot-builds'
 	| 'connected-servers'
 	| 'connection-profiles'
 	| 'window-layout'
@@ -368,7 +387,9 @@ export class StateUnreadableError extends Error {
 	}
 }
 
-export function isStateUnreadableError(error: unknown): error is StateUnreadableError {
+export function isStateUnreadableError(
+	error: unknown,
+): error is StateUnreadableError {
 	return (
 		error instanceof StateUnreadableError ||
 		(typeof error === 'object' &&
@@ -386,7 +407,9 @@ export type StateRecoveryNotice =
 
 const pendingNotices: StateRecoveryNotice[] = [];
 const freshStartAccepted = new Set<StateStoreName>();
-let rebuildObserver: ((store: string, preservedAs: readonly string[]) => void) | undefined;
+let rebuildObserver:
+	| ((store: string, preservedAs: readonly string[]) => void)
+	| undefined;
 
 /** The host records the user's choice to start a store fresh. */
 export function acceptFreshStateStart(store: StateStoreName): void {
@@ -407,7 +430,9 @@ export function queueStateRecoveryNotices(
 
 /** Diagnostics hook for silently rebuilt state. */
 export function observeRebuiltState(
-	observer: ((store: string, preservedAs: readonly string[]) => void) | undefined,
+	observer:
+		| ((store: string, preservedAs: readonly string[]) => void)
+		| undefined,
 ): void {
 	rebuildObserver = observer;
 }
@@ -430,7 +455,11 @@ export function loadCanonicalStateSync<T>(
 	options: KindLoadOptions<T> = {},
 ): T | undefined {
 	const acceptFresh = freshStartAccepted.has(store);
-	const result = readStateFileSync<T>(path, { ...options, kind: 'canonical', acceptFresh });
+	const result = readStateFileSync<T>(path, {
+		...options,
+		kind: 'canonical',
+		acceptFresh,
+	});
 	switch (result.status) {
 		case 'ok':
 			return result.value;
@@ -463,7 +492,8 @@ export function loadSecretStateSync<T>(
 ): T | undefined {
 	const result = readStateFileSync<T>(path, { ...options, kind: 'secret' });
 	if (result.status === 'ok') return result.value;
-	if (result.status === 'corrupt') pendingNotices.push({ kind: 'secret-reset', store: label });
+	if (result.status === 'corrupt')
+		pendingNotices.push({ kind: 'secret-reset', store: label });
 	return undefined;
 }
 
@@ -481,7 +511,10 @@ export function loadRebuildableStateSync<T>(
 	label: string,
 	options: KindLoadOptions<T> = {},
 ): T | undefined {
-	const result = readStateFileSync<T>(path, { ...options, kind: 'rebuildable' });
+	const result = readStateFileSync<T>(path, {
+		...options,
+		kind: 'rebuildable',
+	});
 	if (result.status === 'ok') return result.value;
 	if (result.status === 'corrupt') rebuildObserver?.(label, result.preservedAs);
 	return undefined;
@@ -501,11 +534,16 @@ export async function loadRebuildableState<T>(
  * process or after a relaunch, finds no file and begins with first-run state.
  * Only the privileged host calls this, and only from that user choice.
  */
-export function startStateFresh(error: StateUnreadableError): readonly string[] {
+export function startStateFresh(
+	error: StateUnreadableError,
+): readonly string[] {
 	acceptFreshStateStart(error.store);
 	const preserved: string[] = [];
 	if (error.statePath === undefined) return preserved;
-	for (const path of [error.statePath, `${error.statePath}${PREVIOUS_SUFFIX}`]) {
+	for (const path of [
+		error.statePath,
+		`${error.statePath}${PREVIOUS_SUFFIX}`,
+	]) {
 		if (fs.existsSync(path)) preserved.push(preserveCorruptFile(path));
 	}
 	pendingNotices.push({ kind: 'started-fresh', store: error.store });

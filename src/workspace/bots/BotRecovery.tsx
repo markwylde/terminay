@@ -38,13 +38,13 @@ export function BotRecovery({
 	};
 	return (
 		<div className="bots-recovery" data-terminay-bot-recovery>
-			{problem || engine.error ? (
-				<details open>
-					<summary>Container engine and recovery</summary>
-					<EngineSummary engine={engine} label={undefined} compact />
-				</details>
-			) : null}
-			{engine.status?.available ? (
+			<EngineSummary
+				engine={engine}
+				label={undefined}
+				compact
+				hideReady={!problem && !engine.error}
+			/>
+			{engine.status?.available && engine.status.image.state !== 'building' ? (
 				<div className="bots-engine__actions">
 					{state === 'not-created' || state === 'failed' ? (
 						<button

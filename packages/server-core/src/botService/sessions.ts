@@ -70,6 +70,13 @@ function parseRecord(value: unknown): BotSessionRecord {
 		Buffer.byteLength(d.runnerOutput) > BOT_RUNNER_LIMIT
 	)
 		throw new Error('invalid session metadata');
+	if (
+		d.runtimeDriver !== undefined &&
+		!['codex-cli', 'claude-code-cli'].includes(String(d.runtimeDriver))
+	)
+		throw new Error('invalid runtime driver');
+	if (d.runtimeVersion !== undefined)
+		text(d.runtimeVersion, 128, 'runtime version');
 	const snapshot = object(d.snapshot);
 	text(snapshot.agentId, 256, 'agent id');
 	text(snapshot.instructions, 32 * 1024, 'instructions', true);
