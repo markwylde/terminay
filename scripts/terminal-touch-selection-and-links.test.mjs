@@ -368,3 +368,29 @@ test('the platform browser handoff URL escapes the in-app sheet on iOS and Andro
   assert.equal(handoff('file:///etc/passwd', 'android'), null)
   assert.equal(handoff('not a url', 'ios'), null)
 })
+
+test('a non-link TUI tap uses xterm primary mouse events at the release coordinates', async () => {
+  const { touchSelection } = await loadModules()
+  fakeMouseEvent()
+  const events = []
+  const screenElement = {
+    dispatchEvent: event => { events.push(['screen', event]); return true },
+    ownerDocument: { dispatchEvent: event => { events.push(['document', event]); return true } },
+  }
+  assert.equal(touchSelection.activateTerminalTuiAtTouch({
+    screenElement, terminal: { modes: { mouseTrackingMode: 'vt200' } }, point: point(42, 63),
+  }), true)
+  assert.deepEqual(events.map(([target, e]) => [target, e.type, e.button, e.buttons, e.clientX, e.clientY]), [
+    ['screen', 'mousedown', 0, 1, 42, 63],
+    ['document', 'mouseup', 0, 0, 42, 63],
+  ])
+})
+
+test('a plain terminal tap never synthesizes a mouse press', async () => {
+  const { touchSelection } = await loadModules()
+  const { element, dispatched } = recordingElement()
+  assert.equal(touchSelection.activateTerminalTuiAtTouch({
+    screenElement: element, terminal: { modes: { mouseTrackingMode: 'none' } }, point: point(42, 63),
+  }), false)
+  assert.deepEqual(dispatched, [])
+})
