@@ -1,8 +1,10 @@
 import {
 	BOT_ENGINE_CHANGED,
-	BOT_ENGINE_OPERATIONS as op,
+	type BotBuildProgress,
 	type BotEngineKind,
 	type BotEngineStatus,
+	BOT_ENGINE_OPERATIONS as op,
+	parseBotBuildProgress,
 	parseBotEngineStatus,
 } from '@terminay/protocol';
 import type { BotTransport } from './bots.js';
@@ -31,6 +33,11 @@ export class BotEngineClient {
 			op.build,
 			{},
 			{ deadlineMs: 16 * 60_000, ...options },
+		);
+	}
+	async progress(options: QueryOptions = {}): Promise<BotBuildProgress | null> {
+		return parseBotBuildProgress(
+			await this.transport.query(op.progress, {}, options),
 		);
 	}
 	async log(options: QueryOptions = {}): Promise<string> {

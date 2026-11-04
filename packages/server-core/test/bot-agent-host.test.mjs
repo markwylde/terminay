@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { validManifestFixture } from '@terminay/extension-api';
 import {
 	ExtensionHost,
 	ExtensionHostManager,
 	ExtensionSecretBroker,
 	extensionLaunchDescriptor,
 } from '../dist/index.js';
-import { validManifestFixture } from '@terminay/extension-api';
 
 const extensionId = 'example.bots';
 const agentId = `${extensionId}/example`;
@@ -17,7 +17,9 @@ const contribution = {
 	id: agentId,
 	displayName: 'Example',
 	imageInstall: { npm: ['example-acp@1.2.3'] },
-	acpCommand: { executable: 'example-acp', args: [] },
+	runtimeProtocol: 'native-cli-v1',
+	nativeDriver: 'claude-code-cli',
+	runtimeVersion: '2.1.312',
 	autonomousOnly: false,
 	credentialSecrets: [
 		{

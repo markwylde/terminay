@@ -98,7 +98,7 @@ The image SHALL contain:
 - common developer tools;
 - the `docker` command line;
 - the Terminay session launcher and home-volume helper;
-- the pinned ACP adapter of every bot agent contributed by an installed extension.
+- the pinned native CLI of every contributed bot agent supported by the server native-driver contract.
 
 The desktop SHALL open Chromium automatically on its own display when it starts, as the unprivileged `bot` user with the browser sandbox enabled. The browser SHALL be owned by the desktop lifecycle, independently of agent sessions and tool commands. A new browser profile SHALL open a blank page without first-run prompts.
 
@@ -118,7 +118,7 @@ The image SHALL carry a fingerprint of its inputs. Build progress and the build 
 
 #### Scenario: Build fails
 
-- **WHEN** an image rebuild fails while installing a bot agent's adapter
+- **WHEN** an image rebuild fails while installing a bot agent's native CLI
 - **THEN** the previous image is kept and the build log shows the failing step
 
 ### Requirement: Containers follow the current image

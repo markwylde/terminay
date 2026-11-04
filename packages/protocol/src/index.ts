@@ -1,6 +1,8 @@
+export * from './botBuild.js';
 export * from './botEngine.js';
 export * from './botEnvironment.js';
 export * from './botIo.js';
+export * from './botMessages.js';
 export * from './botStreams.js';
 export * from './bots.js';
 export * from './botTranscript.js';
@@ -25,4 +27,3 @@ export * from './transport.js';
 export * from './transportAuthentication.js';
 export * from './types.js';
 export * from './workspace.js';
-export * from './botMessages.js';

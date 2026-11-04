@@ -7,9 +7,10 @@ import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 const enabled = process.env.TERMINAY_BOT_CONFORMANCE === '1';
-const image = process.env.TERMINAY_BOT_CONFORMANCE_IMAGE ?? 'terminay-bot:local';
+const image =
+	process.env.TERMINAY_BOT_CONFORMANCE_IMAGE ?? 'terminay-bot:local';
 for (const agent of ['codex', 'claude-code']) {
-	test(`3.3 ${agent}: pinned adapter in offline bot image`, {
+	test(`3.3 ${agent}: pinned native CLI in offline bot image`, {
 		skip: !enabled,
 		timeout: 240_000,
 	}, async (t) => {

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import example from '../examples/bot-agent/extension.js';
 import {
 	assertManifestMatchesPackage,
 	createAgentExtensionHarness,
 	validateExtensionManifest,
 } from '../dist/index.js';
+import example from '../examples/bot-agent/extension.js';
 
 test('the bot agent author example conforms without starting a process or reading a credential', async () => {
 	const pkg = JSON.parse(
@@ -26,7 +26,7 @@ test('the bot agent author example conforms without starting a process or readin
 		assert.deepEqual(harness.registeredBotAgentIds(), [id]);
 		assert.deepEqual(await harness.botAgentModels(id), {
 			available: true,
-			value: [{ id: 'small', displayName: 'Small' }],
+			value: [{ id: 'gpt-6-luna', displayName: 'GPT-6 Luna' }],
 		});
 		assert.equal(
 			(await harness.botAgentStatus(id)).value.state,
@@ -34,7 +34,7 @@ test('the bot agent author example conforms without starting a process or readin
 		);
 		assert.deepEqual(await harness.botAgentLaunch(id, { modelId: 'small' }), {
 			available: true,
-			value: { args: ['--model', 'small'], env: {} },
+			value: { args: [], env: {} },
 		});
 		assert.deepEqual(await harness.botAgentLaunch(id, { modelId: null }), {
 			available: true,

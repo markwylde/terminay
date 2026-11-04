@@ -2,13 +2,10 @@ import type {
 	BotAgentContribution,
 	BotAgentLaunch,
 } from '@terminay/extension-api';
-import type { JsonValue, BotSessionSnapshot } from '@terminay/protocol';
-import {
-	BotAcpClient,
-	type BotAcpProcess,
-	type BotCredentialLease,
-} from './acp.js';
+import type { BotSessionSnapshot, JsonValue } from '@terminay/protocol';
+import { type BotAgentStream, type BotCredentialLease } from './credentials.js';
 import type { EngineDriver } from './engine.js';
+import { BotNativeClient, nativeArguments } from './native.js';
 import { BotError } from './store.js';
 
 /** Read by the bot image's `terminay-tool-shell`. */
@@ -27,8 +24,8 @@ export interface BotAgentProcessOptions {
 	readonly spawn?: (
 		command: readonly string[],
 		environment: Readonly<Record<string, string>>,
-	) => BotAcpProcess;
-	readonly onClient: (client: BotAcpClient) => void;
+	) => BotAgentStream;
+	readonly onClient: (client: BotNativeClient) => void;
 	readonly released?: () => void;
 	readonly mcpServers?: readonly JsonValue[];
 	readonly cleanupRuntime?: () => Promise<void>;
@@ -51,90 +48,89 @@ async function deadline<T>(
 }
 /** A lease is released only after the root supervisor confirms its group is empty. */
 export class BotAgentProcess {
-	private clientValue?: BotAcpClient;
+	private clientValue?: BotNativeClient;
 	private closing?: Promise<void>;
 	private closedProcess: Promise<void> = Promise.resolve();
 	private released = false;
 	private spawned = false;
 	constructor(private readonly options: BotAgentProcessOptions) {}
-	get client(): BotAcpClient {
+	get client(): BotNativeClient {
 		if (!this.clientValue)
 			throw new BotError('unavailable', 'agent is not open');
 		return this.clientValue;
 	}
-	async open(): Promise<BotAcpClient> {
+	async open(): Promise<BotNativeClient> {
 		const o = this.options;
 		try {
-			let client = await this.connect(null, o.loadId);
-			const configurable = await client.open(
-				o.loadId,
+			const launch = await o.launch(o.snapshot.modelId);
+			if (launch.args.length)
+				throw new BotError(
+					'validation',
+					'Native bot launch arguments are host-owned; use the declared model',
+				);
+			const publicEnvironment = {
+				...o.agent.launchEnvironment,
+				...launch.env,
+				...o.sessionEnvironment,
+				[CREDENTIAL_VARIABLES]: (o.agent.credentialSecrets ?? [])
+					.map((s) => s.environmentVariable)
+					.join(' '),
+			};
+			const environment: Record<string, string> = {
+				...publicEnvironment,
+				...o.credential.environment,
+			};
+			const args = nativeArguments(
+				o.agent.nativeDriver,
 				o.snapshot.modelId,
-				o.mcpServers,
+				o.snapshot.approvalMode,
+				o.mcpServers ?? [],
+				!!environment.ANTHROPIC_API_KEY ||
+					(o.agent.nativeDriver === 'codex-cli' && !!environment.CODEX_API_KEY),
 			);
-			if (o.snapshot.modelId !== null && !configurable) {
-				const load = client.canLoad ? client.session : null;
-				await this.endProcess(false);
-				client = await this.connect(o.snapshot.modelId, load);
-				await client.open(load, o.snapshot.modelId, o.mcpServers);
-			}
+			const command = [
+				'terminay-run',
+				o.sessionId,
+				'--',
+				o.agent.nativeDriver === 'codex-cli' ? 'codex' : 'claude',
+				...args,
+			];
+			const child = o.spawn
+				? o.spawn(command, environment)
+				: spawnBotAgent(
+						o.driver,
+						o.botId,
+						command,
+						o.credential.environment,
+						publicEnvironment,
+					);
+			this.spawned = true;
+			this.closedProcess = new Promise((resolve) => {
+				child.once('close', () => resolve());
+				child.once('error', () => resolve());
+			});
+			const client = new BotNativeClient(
+				child,
+				o.credential,
+				o.agent.nativeDriver,
+				o.snapshot.approvalMode,
+				async () => {
+					await o.driver.exec(
+						`terminay-bot-${o.botId}`,
+						['terminay-run', '--interrupt', o.sessionId],
+						{ user: 'root', deadlineMs: 5000 },
+					);
+				},
+			);
+			this.clientValue = client;
+			o.onClient(client);
+			await client.initialize();
+			await client.open(null, o.snapshot.modelId);
 			return client;
 		} catch (error) {
 			await this.close('end').catch(() => undefined);
 			throw error;
 		}
-	}
-	private async connect(
-		model: string | null,
-		_load: string | null,
-	): Promise<BotAcpClient> {
-		const o = this.options;
-		const launch = await o.launch(model);
-		// Names only, never values: the image's terminay-tool-shell unsets these
-		// before an agent's tool command runs.
-		const publicEnvironment = {
-			...o.agent.launchEnvironment,
-			...launch.env,
-			...o.sessionEnvironment,
-			[CREDENTIAL_VARIABLES]: (o.agent.credentialSecrets ?? [])
-				.map((secret) => secret.environmentVariable)
-				.join(' '),
-		};
-		const environment = {
-			...publicEnvironment,
-			...o.credential.environment,
-		};
-		const command = [
-			'terminay-run',
-			o.sessionId,
-			'--',
-			o.agent.acpCommand.executable,
-			...o.agent.acpCommand.args,
-			...launch.args,
-		];
-		const child = o.spawn
-			? o.spawn(command, environment)
-			: spawnBotAgent(
-					o.driver,
-					o.botId,
-					command,
-					o.credential.environment,
-					publicEnvironment,
-				);
-		this.spawned = true;
-		this.closedProcess = new Promise((resolve) => {
-			child.once('close', () => resolve());
-			child.once('error', () => resolve());
-		});
-		const client = new BotAcpClient(
-			child,
-			o.credential,
-			o.snapshot.approvalMode,
-			o.agent.autonomousOnly,
-		);
-		this.clientValue = client;
-		o.onClient(client);
-		await client.initialize();
-		return client;
 	}
 	close(
 		reason: 'stop' | 'end' | 'suspend' | 'timeout' | 'bot-stop',
@@ -186,7 +182,7 @@ export function spawnBotAgent(
 	command: readonly string[],
 	environment: Readonly<Record<string, string>>,
 	containerEnvironment: Readonly<Record<string, string>> = {},
-): BotAcpProcess {
+): BotAgentStream {
 	const names = Object.keys(environment);
 	if (
 		[...names, ...Object.keys(containerEnvironment)].some(
@@ -211,5 +207,5 @@ export function spawnBotAgent(
 		environmentNames: [
 			...new Set([...Object.keys(containerEnvironment), ...names]),
 		],
-	}) as BotAcpProcess;
+	}) as BotAgentStream;
 }
