@@ -151,9 +151,13 @@ export function BotTriggerEditor({
 		next: number | null;
 	}>();
 	const testingAbort = useRef<AbortController | undefined>(undefined);
+	// Problems are not shown on a form the user has not touched yet.
+	const [touched, setTouched] = useState(false);
 	const update = (patch: Partial<TriggerForm>) => {
 		testingAbort.current?.abort();
 		setTest(undefined);
+		setTouched(true);
+		setError(undefined);
 		setForm((v) => ({ ...v, ...patch }));
 	};
 	const condition = useMemo(() => formCondition(form), [form]);
@@ -175,8 +179,10 @@ export function BotTriggerEditor({
 					.then((v) => {
 						if (live) setPreview(v);
 					})
-					.catch((e) => {
-						if (live) setError(refusalText(e));
+					// A preview that cannot be computed yet is not an error; the
+					// server validates again on save.
+					.catch(() => {
+						if (live) setPreview([]);
 					});
 		}, 250);
 		return () => {
@@ -228,6 +234,7 @@ export function BotTriggerEditor({
 	};
 	const save = async () => {
 		const result = formToDraft(form);
+		setTouched(true);
 		if (!result.ok) {
 			setError(result.problem);
 			return;
@@ -279,411 +286,441 @@ export function BotTriggerEditor({
 					<X size={16} aria-hidden="true" />
 				</button>
 			</header>
-			{!condition.ok ? (
-				<div
-					className="bots-note bots-note--warn"
-					data-terminay-bot-trigger-preview="true"
-				>
-					{condition.problem}
-				</div>
-			) : null}
-			{error ? (
-				<div role="alert" className="bots-note bots-note--error">
-					{error}
-				</div>
-			) : null}
-			{field('Name', 'name', 'text', { maxLength: 80 })}
-			<section className="bots-source-section" aria-label="When">
-				<h4 className="bots-lab">When</h4>
-				<SelectField<TriggerKind>
-					label="Source"
-					value={form.kind}
-					groups={sourceGroups(form.kind === 'event')}
-					onChange={switchKind}
-					data={{ 'data-terminay-bot-trigger-type': 'true' }}
-				/>
-				{form.kind === 'command' ? (
-					<>
-						{field('Command / shell script', 'command')}
-						{field('Working directory', 'cwd')}
-					</>
-				) : null}
-				{form.kind === 'http' || form.kind === 'sse' ? (
-					<>
-						{field('URL', 'url', 'url')}
-						{form.kind === 'sse'
-							? field('Event name (optional)', 'eventName')
-							: field('Response JSON Pointer (optional)', 'select')}
-						<details>
-							<summary>
-								Headers ({Object.keys(form.storedHeaders).length || 'optional'})
-							</summary>
-							<label className="bots-field">
-								<span>Headers as JSON — stored values are masked</span>
-								<textarea
-									value={form.headers}
-									onChange={(e) => update({ headers: e.target.value })}
-									spellCheck={false}
-									rows={4}
-								/>
-							</label>
-							<p className="bots-faint">
-								Values are kept in the server vault. Leave •••• to keep a stored
-								value.
-							</p>
-						</details>
-					</>
-				) : null}
-				{form.kind === 'files' ? (
-					<>
-						{field('File or folder path', 'path')}
-						<label className="bots-check">
-							<input
-								type="checkbox"
-								checked={form.recursive}
-								onChange={(e) => update({ recursive: e.target.checked })}
-							/>{' '}
-							Include subfolders
-						</label>
-						{field('Debounce (milliseconds)', 'debounce', 'number', {
-							min: 0,
-							max: 60000,
-						})}
-						<details>
-							<summary>File filters</summary>
-							{field('Include pattern (optional)', 'include')}
-							{field('Exclude pattern (optional)', 'exclude')}
-						</details>
-					</>
-				) : null}
-				{form.kind === 'cron' ? (
-					<>
-						{field('Cron expression', 'cron')}
-						<p className="bots-faint">
-							Five fields, in the server’s time zone. Example: 0 9 * * 1-5.
-						</p>
-					</>
-				) : null}
-				{form.kind === 'once'
-					? field('Date and time', 'at', 'datetime-local')
-					: null}
-				{periodic ? (
-					<div className="bots-two">
-						{field('Check every', 'every', 'number', { min: 1 })}
-						<SelectField<'minutes' | 'hours'>
-							label="Unit"
-							value={form.everyUnit}
-							onChange={(everyUnit) => update({ everyUnit })}
-							groups={plainOptions([
-								{ value: 'minutes', label: 'Minutes' },
-								{ value: 'hours', label: 'Hours' },
-							])}
-						/>
-					</div>
-				) : null}
-				{form.kind === 'command' || form.kind === 'http' ? (
-					<>
-						<SelectField<TriggerForm['match']>
-							label="Fire when"
-							value={form.match}
-							onChange={(match) => update({ match })}
-							groups={plainOptions([
-								{
-									value: 'changed',
-									label: 'Output changes',
-									description: 'Any difference from the previous check',
-								},
-								{
-									value: 'items',
-									label: 'New JSON items appear',
-									description: 'Each new item starts its own session',
-								},
-								{ value: 'contains', label: 'Text contains' },
-								...(form.kind === 'command'
-									? [
-											{
-												value: 'regex' as const,
-												label: 'Text matches a regular expression',
-											},
-											{ value: 'exit' as const, label: 'Exit code equals' },
-										]
-									: []),
-							])}
-						/>
-						{form.match === 'contains' || form.match === 'regex'
-							? field('Text to match', 'matchText')
-							: null}
-						{form.match === 'exit'
-							? field('Exit code', 'exitCode', 'number', { min: 0, max: 255 })
-							: null}
-						{['contains', 'regex', 'exit'].includes(form.match) ? (
+			<div className="bots-source-editor__body">
+				{field('Name', 'name', 'text', { maxLength: 80, autoFocus: !trigger })}
+				<section className="bots-source-section" aria-label="When">
+					<h4 className="bots-lab">When</h4>
+					<SelectField<TriggerKind>
+						label="Source"
+						value={form.kind}
+						groups={sourceGroups(form.kind === 'event')}
+						onChange={switchKind}
+						data={{ 'data-terminay-bot-trigger-type': 'true' }}
+					/>
+					{form.kind === 'command' ? (
+						<>
+							{field('Command / shell script', 'command')}
+							{field('Working directory', 'cwd')}
+						</>
+					) : null}
+					{form.kind === 'http' || form.kind === 'sse' ? (
+						<>
+							{field('URL', 'url', 'url')}
+							{form.kind === 'sse'
+								? field('Event name (optional)', 'eventName')
+								: field('Response JSON Pointer (optional)', 'select')}
+							<details>
+								<summary>
+									Headers (
+									{Object.keys(form.storedHeaders).length || 'optional'})
+								</summary>
+								<label className="bots-field">
+									<span>Headers as JSON — stored values are masked</span>
+									<textarea
+										value={form.headers}
+										onChange={(e) => update({ headers: e.target.value })}
+										spellCheck={false}
+										rows={4}
+									/>
+								</label>
+								<p className="bots-faint">
+									Values are kept in the server vault. Leave •••• to keep a
+									stored value.
+								</p>
+							</details>
+						</>
+					) : null}
+					{form.kind === 'files' ? (
+						<>
+							{field('File or folder path', 'path')}
 							<label className="bots-check">
 								<input
 									type="checkbox"
-									checked={form.repeat}
-									onChange={(e) => update({ repeat: e.target.checked })}
+									checked={form.recursive}
+									onChange={(e) => update({ recursive: e.target.checked })}
 								/>{' '}
-								Fire on every matching check (otherwise, when it becomes
-								matching)
+								Include subfolders
 							</label>
-						) : null}
-						{form.match === 'items' ? (
-							<>
-								<div className="bots-two">
-									{field('Items JSON Pointer (blank = root array)', 'items')}
-									{field('Item identity JSON Pointer', 'identity')}
-								</div>
-								<SelectField<'process' | 'baseline'>
-									label="First successful check"
-									value={form.initial}
-									onChange={(initial) => update({ initial })}
+							{field('Debounce (milliseconds)', 'debounce', 'number', {
+								min: 0,
+								max: 60000,
+							})}
+							<details>
+								<summary>File filters</summary>
+								{field('Include pattern (optional)', 'include')}
+								{field('Exclude pattern (optional)', 'exclude')}
+							</details>
+						</>
+					) : null}
+					{form.kind === 'cron' ? (
+						<>
+							{field('Cron expression', 'cron')}
+							<p className="bots-faint">
+								Five fields, in the server’s time zone. Example: 0 9 * * 1-5.
+							</p>
+						</>
+					) : null}
+					{form.kind === 'once'
+						? field('Date and time', 'at', 'datetime-local')
+						: null}
+					{periodic ? (
+						<div className="bots-two">
+							{field('Check every', 'every', 'number', { min: 1 })}
+							<SelectField<'minutes' | 'hours'>
+								label="Unit"
+								value={form.everyUnit}
+								onChange={(everyUnit) => update({ everyUnit })}
+								groups={plainOptions([
+									{ value: 'minutes', label: 'Minutes' },
+									{ value: 'hours', label: 'Hours' },
+								])}
+							/>
+						</div>
+					) : null}
+					{form.kind === 'command' || form.kind === 'http' ? (
+						<>
+							<SelectField<TriggerForm['match']>
+								label="Fire when"
+								value={form.match}
+								onChange={(match) => update({ match })}
+								groups={plainOptions([
+									{
+										value: 'changed',
+										label: 'Output changes',
+										description: 'Any difference from the previous check',
+									},
+									{
+										value: 'items',
+										label: 'New JSON items appear',
+										description: 'Each new item starts its own session',
+									},
+									{ value: 'contains', label: 'Text contains' },
+									...(form.kind === 'command'
+										? [
+												{
+													value: 'regex' as const,
+													label: 'Text matches a regular expression',
+												},
+												{ value: 'exit' as const, label: 'Exit code equals' },
+											]
+										: []),
+								])}
+							/>
+							{form.match === 'contains' || form.match === 'regex'
+								? field('Text to match', 'matchText')
+								: null}
+							{form.match === 'exit'
+								? field('Exit code', 'exitCode', 'number', { min: 0, max: 255 })
+								: null}
+							{['contains', 'regex', 'exit'].includes(form.match) ? (
+								<SelectField<'edge' | 'every'>
+									label="Fire"
+									value={form.repeat ? 'every' : 'edge'}
+									onChange={(v) => update({ repeat: v === 'every' })}
 									groups={plainOptions([
-										{ value: 'process', label: 'Process existing items' },
 										{
-											value: 'baseline',
-											label: 'Remember existing items without running',
+											value: 'edge',
+											label: 'When it starts matching',
+											description:
+												'Once per change from not matching to matching. A check that keeps matching does not fire again.',
+										},
+										{
+											value: 'every',
+											label: 'On every matching check',
+											description: 'Each check that matches starts a session.',
 										},
 									])}
 								/>
-								<p className="bots-faint">
-									Each new identity starts a separate session. Your script
-									handles pagination.
-								</p>
-							</>
-						) : null}
-						<details>
-							<summary>Execution limit</summary>
-							{field('Timeout (milliseconds)', 'timeout', 'number', {
-								min: 1000,
-								max: 300000,
-							})}
-						</details>
-					</>
-				) : null}
-				<SelectField<BotRecoveryPolicy>
-					label="If Terminay Server was offline"
-					value={form.recovery}
-					onChange={(recovery) => update({ recovery })}
-					groups={plainOptions(
-						continuous
-							? [
-									{
-										value: 'recover-available',
-										label: 'Recover available changes / events',
-										description: 'Catch up on what the source still has',
-									},
-									{
-										value: 'ignore-gap',
-										label: 'Ignore the gap and resume watching',
-									},
-								]
-							: [
-									{
-										value: 'skip',
-										label: 'Skip missed runs',
-										description: 'Carry on from the next occurrence',
-									},
-									{
-										value: 'once',
-										label: 'Run once on return',
-										description: 'One catch-up run for everything missed',
-									},
-									{
-										value: 'replay',
-										label: 'Run each missed occurrence',
-									},
-								],
-					)}
-					hint={
-						continuous
-							? 'Recovery depends on the source: file rescans find net changes; SSE replay needs event IDs and server support.'
-							: form.recovery === 'replay' &&
-									form.kind !== 'cron' &&
-									form.kind !== 'every' &&
-									form.kind !== 'once'
-								? 'Replayed checks read current state; they cannot reconstruct historical responses.'
-								: 'Missed work is measured on the server, independently of connected clients.'
-					}
-				/>
-				{condition.ok && preview.length ? (
-					<div
-						className="bots-runpreview"
-						data-terminay-bot-trigger-preview="true"
-					>
-						<div className="bots-runpreview__head">
-							<CalendarClock size={14} aria-hidden="true" />
-							<b>
-								{condition.ok ? describeCondition(condition.condition) : ''}
-							</b>
-						</div>
-						<span className="bots-lab">
-							Next{' '}
-							{form.kind === 'command' || form.kind === 'http'
-								? 'checks'
-								: 'runs'}
-						</span>
-						<ul className="bots-runpreview__list">
-							{preview.map((at) => (
-								<li key={at} className="bots-mono">
-									{formatRun(at)}
-								</li>
-							))}
-						</ul>
-					</div>
-				) : null}
-			</section>
-			<section className="bots-source-section">
-				<h4 className="bots-lab">Then ask the bot</h4>
-				<label className="bots-field">
-					<span>Prompt</span>
-					<textarea
-						value={form.prompt}
-						onChange={(e) => update({ prompt: e.target.value })}
-						rows={5}
-						data-terminay-bot-trigger-field="prompt"
-					/>
-				</label>
-				<p className="bots-faint">
-					The source event is attached as data. Runs inside {bot.name}’s
-					container.{continuous ? ' Continuous watching keeps it running.' : ''}
-				</p>
-			</section>
-			{trigger ? (
-				<section className="bots-source-section">
-					<h4 className="bots-lab">Observation memory</h4>
-					<p className="bots-faint">
-						{trigger.health?.remembered ?? 0} identities remembered across
-						restarts.
-					</p>
-					<div className="bots-inline">
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							onClick={() =>
-								void server.client
-									.sourceMemory(bot.id, trigger.id)
-									.then(setMemory)
-									.catch((e) => setError(refusalText(e)))
-							}
-						>
-							View remembered IDs
-						</button>
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							onClick={() => setConfirmReset(true)}
-						>
-							Reset memory…
-						</button>
-					</div>
-					{memory ? (
-						<>
-							<pre className="bots-source-result">
-								{memory.ids.join('\n') || 'No remembered IDs'}
-							</pre>
-							{memory.next !== null ? (
-								<button
-									type="button"
-									className="bots-link"
-									onClick={() =>
-										void server.client
-											.sourceMemory(bot.id, trigger.id, memory.next!)
-											.then(setMemory)
-									}
-								>
-									Next IDs
-								</button>
 							) : null}
+							{form.match === 'items' ? (
+								<>
+									<div className="bots-two">
+										{field('Items JSON Pointer (blank = root array)', 'items')}
+										{field('Item identity JSON Pointer', 'identity')}
+									</div>
+									<SelectField<'process' | 'baseline'>
+										label="First successful check"
+										value={form.initial}
+										onChange={(initial) => update({ initial })}
+										groups={plainOptions([
+											{ value: 'process', label: 'Process existing items' },
+											{
+												value: 'baseline',
+												label: 'Remember existing items without running',
+											},
+										])}
+									/>
+									<p className="bots-faint">
+										Each new identity starts a separate session. Your script
+										handles pagination.
+									</p>
+								</>
+							) : null}
+							<details>
+								<summary>Execution limit</summary>
+								{field('Timeout (milliseconds)', 'timeout', 'number', {
+									min: 1000,
+									max: 300000,
+								})}
+							</details>
 						</>
 					) : null}
-					{confirmReset ? (
-						<div className="bots-note bots-note--warn">
-							Resetting can process existing items again.{' '}
+					<SelectField<BotRecoveryPolicy>
+						label="If Terminay Server was offline"
+						value={form.recovery}
+						onChange={(recovery) => update({ recovery })}
+						groups={plainOptions(
+							continuous
+								? [
+										{
+											value: 'recover-available',
+											label: 'Recover available changes / events',
+											description: 'Catch up on what the source still has',
+										},
+										{
+											value: 'ignore-gap',
+											label: 'Ignore the gap and resume watching',
+										},
+									]
+								: [
+										{
+											value: 'skip',
+											label: 'Skip missed runs',
+											description: 'Carry on from the next occurrence',
+										},
+										{
+											value: 'once',
+											label: 'Run once on return',
+											description: 'One catch-up run for everything missed',
+										},
+										{
+											value: 'replay',
+											label: 'Run each missed occurrence',
+										},
+									],
+						)}
+						hint={
+							continuous
+								? 'Recovery depends on the source: file rescans find net changes; SSE replay needs event IDs and server support.'
+								: form.recovery === 'replay' &&
+										form.kind !== 'cron' &&
+										form.kind !== 'every' &&
+										form.kind !== 'once'
+									? 'Replayed checks read current state; they cannot reconstruct historical responses.'
+									: 'Missed work is measured on the server, independently of connected clients.'
+						}
+					/>
+					{touched && !condition.ok ? (
+						<p
+							className="bots-source-hint"
+							data-terminay-bot-trigger-preview="true"
+						>
+							{condition.problem}
+						</p>
+					) : null}
+					{condition.ok && preview.length ? (
+						<div
+							className="bots-runpreview"
+							data-terminay-bot-trigger-preview="true"
+						>
+							<div className="bots-runpreview__head">
+								<CalendarClock size={14} aria-hidden="true" />
+								<b>
+									{condition.ok ? describeCondition(condition.condition) : ''}
+								</b>
+							</div>
+							<span className="bots-lab">
+								Next{' '}
+								{form.kind === 'command' || form.kind === 'http'
+									? 'checks'
+									: 'runs'}
+							</span>
+							<ul className="bots-runpreview__list">
+								{preview.map((at) => (
+									<li key={at} className="bots-mono">
+										{formatRun(at)}
+									</li>
+								))}
+							</ul>
+						</div>
+					) : null}
+				</section>
+				<section className="bots-source-section">
+					<h4 className="bots-lab">Then ask the bot</h4>
+					<label className="bots-field">
+						<span>Prompt</span>
+						<textarea
+							value={form.prompt}
+							onChange={(e) => update({ prompt: e.target.value })}
+							rows={5}
+							data-terminay-bot-trigger-field="prompt"
+						/>
+					</label>
+					<p className="bots-faint">
+						The source event is attached as data. Runs inside {bot.name}’s
+						container.
+						{continuous ? ' Continuous watching keeps it running.' : ''}
+					</p>
+				</section>
+				{trigger ? (
+					<section className="bots-source-section">
+						<h4 className="bots-lab">Observation memory</h4>
+						<p className="bots-faint">
+							{trigger.health?.remembered ?? 0} identities remembered across
+							restarts.
+						</p>
+						<div className="bots-inline">
 							<button
 								type="button"
 								className="bots-btn bots-btn--sm"
 								onClick={() =>
 									void server.client
-										.resetSource(bot.id, trigger.id, true)
-										.then(() => {
-											setConfirmReset(false);
-											setMemory(undefined);
-										})
+										.sourceMemory(bot.id, trigger.id)
+										.then(setMemory)
 										.catch((e) => setError(refusalText(e)))
 								}
 							>
-								Confirm reset
+								View remembered IDs
 							</button>
 							<button
 								type="button"
-								className="bots-link"
-								onClick={() => setConfirmReset(false)}
+								className="bots-btn bots-btn--sm"
+								onClick={() => setConfirmReset(true)}
 							>
-								Cancel
+								Reset memory…
 							</button>
 						</div>
-					) : null}
-				</section>
-			) : null}
-			{!['cron', 'every', 'once', 'event'].includes(form.kind) ? (
-				<section className="bots-source-section">
-					<button
-						type="button"
-						className="bots-btn"
-						disabled={testing || bot.enabled === false}
-						onClick={() => void runTest()}
-					>
-						{testing ? 'Testing…' : 'Test source'}
-					</button>
-					{testing ? (
-						<button
-							type="button"
-							className="bots-link"
-							onClick={() => {
-								testingAbort.current?.abort();
-								setTesting(false);
-							}}
-						>
-							Cancel test
-						</button>
-					) : null}
-					<p className="bots-faint">
-						Executes the configured command/request; it can have side effects.
-						No AI session starts and live memory is unchanged.
-					</p>
-					{test ? (
-						<>
-							<b>
-								{test.wouldFire} event{test.wouldFire === 1 ? '' : 's'} would
-								fire
-							</b>
-							<pre className="bots-source-result">{test.diagnostics}</pre>
-						</>
-					) : null}
-				</section>
-			) : null}
-			{trigger?.health ? (
-				<div className="bots-faint">
-					<div>Last checked: {stamp(trigger.health.lastAttempt)}</div>
-					<div>Last successful check: {stamp(trigger.health.lastSuccess)}</div>
-					<div>Last fired: {stamp(trigger.health.lastFired)}</div>
-					<div>Next check: {stamp(trigger.health.nextCheck)}</div>
-					<div>Next retry: {stamp(trigger.health.nextRetry)}</div>
-					{trigger.health.error ? <div>{trigger.health.error}</div> : null}
-					{trigger.health.gap ? <div>{trigger.health.gap}</div> : null}
-				</div>
-			) : null}
-			{trigger &&
-			JSON.stringify(trigger.condition, (k, v) => (k === 'anchor' ? 0 : v)) !==
-				JSON.stringify(condition.ok ? condition.condition : null, (k, v) =>
+						{memory ? (
+							<>
+								<pre className="bots-source-result">
+									{memory.ids.join('\n') || 'No remembered IDs'}
+								</pre>
+								{memory.next !== null ? (
+									<button
+										type="button"
+										className="bots-link"
+										onClick={() =>
+											void server.client
+												.sourceMemory(bot.id, trigger.id, memory.next!)
+												.then(setMemory)
+										}
+									>
+										Next IDs
+									</button>
+								) : null}
+							</>
+						) : null}
+						{confirmReset ? (
+							<div className="bots-note bots-note--warn">
+								Resetting can process existing items again.{' '}
+								<button
+									type="button"
+									className="bots-btn bots-btn--sm"
+									onClick={() =>
+										void server.client
+											.resetSource(bot.id, trigger.id, true)
+											.then(() => {
+												setConfirmReset(false);
+												setMemory(undefined);
+											})
+											.catch((e) => setError(refusalText(e)))
+									}
+								>
+									Confirm reset
+								</button>
+								<button
+									type="button"
+									className="bots-link"
+									onClick={() => setConfirmReset(false)}
+								>
+									Cancel
+								</button>
+							</div>
+						) : null}
+					</section>
+				) : null}
+				{!['cron', 'every', 'once', 'event'].includes(form.kind) ? (
+					<section className="bots-source-section" aria-label="Test">
+						<h4 className="bots-lab">Try it</h4>
+						<div className="bots-source-test">
+							<button
+								type="button"
+								className="bots-btn bots-btn--sm"
+								disabled={testing || bot.enabled === false}
+								onClick={() => void runTest()}
+							>
+								{testing ? 'Testing…' : 'Test source'}
+							</button>
+							{testing ? (
+								<button
+									type="button"
+									className="bots-link"
+									onClick={() => {
+										testingAbort.current?.abort();
+										setTesting(false);
+									}}
+								>
+									Cancel test
+								</button>
+							) : null}
+							<span className="bots-faint">
+								Runs the command or request once. It can have side effects; no
+								AI session starts.
+							</span>
+						</div>
+						{test ? (
+							<>
+								<b>
+									{test.wouldFire} event{test.wouldFire === 1 ? '' : 's'} would
+									fire
+								</b>
+								<pre className="bots-source-result">{test.diagnostics}</pre>
+							</>
+						) : null}
+					</section>
+				) : null}
+				{trigger?.health ? (
+					<section className="bots-source-section" aria-label="Health">
+						<h4 className="bots-lab">Health</h4>
+						<dl className="bots-source-health">
+							<dt>Last checked</dt>
+							<dd>{stamp(trigger.health.lastAttempt)}</dd>
+							<dt>Last successful check</dt>
+							<dd>{stamp(trigger.health.lastSuccess)}</dd>
+							<dt>Last fired</dt>
+							<dd>{stamp(trigger.health.lastFired)}</dd>
+							<dt>Next check</dt>
+							<dd>{stamp(trigger.health.nextCheck)}</dd>
+							<dt>Next retry</dt>
+							<dd>{stamp(trigger.health.nextRetry)}</dd>
+						</dl>
+						{trigger.health.error ? (
+							<p className="bots-source-hint">{trigger.health.error}</p>
+						) : null}
+						{trigger.health.gap ? (
+							<p className="bots-faint">{trigger.health.gap}</p>
+						) : null}
+					</section>
+				) : null}
+				{trigger &&
+				JSON.stringify(trigger.condition, (k, v) =>
 					k === 'anchor' ? 0 : v,
-				) ? (
-				<p className="bots-note bots-note--warn">
-					Changing source settings resets comparison memory. Changing only the
-					name or prompt preserves it.
-				</p>
-			) : null}
+				) !==
+					JSON.stringify(condition.ok ? condition.condition : null, (k, v) =>
+						k === 'anchor' ? 0 : v,
+					) ? (
+					<p className="bots-note bots-note--warn">
+						Changing source settings resets comparison memory. Changing only the
+						name or prompt preserves it.
+					</p>
+				) : null}
+			</div>
 			<footer className="bots-source-editor__footer">
+				{error ? (
+					<p role="alert" className="bots-source-editor__error">
+						{error}
+					</p>
+				) : null}
 				<label className="bots-check">
 					<input
 						type="checkbox"
