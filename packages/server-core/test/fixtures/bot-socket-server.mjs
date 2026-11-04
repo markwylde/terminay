@@ -1,7 +1,7 @@
-import { appendFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { appendFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 // Docker-compatible API fixture. Container-side programs are simulated by the
 // existing composed engine fixture; production never spawns an engine CLI.
@@ -18,11 +18,27 @@ export async function startBotSocketServer(root, options = {}) {
 		children = new Set(),
 		sockets = new Set();
 	const eventResponses = new Set();
-	const emitEvent = event => { for (const response of eventResponses) response.write(JSON.stringify(event) + '\n'); };
+	const emitEvent = (event) => {
+		for (const response of eventResponses)
+			response.write(`${JSON.stringify(event)}\n`);
+	};
 	const lifecycleEvent = (action, name, resource) => {
 		if (!options.emitLifecycleEvents) return;
-		const event = { Type: 'container', Action: action, Actor: { ID: name, Attributes: { ...(resource?.Config?.Labels ?? resource?.Labels ?? {}), name } } };
-		appendFileSync(path.join(root, 'events.jsonl'), JSON.stringify(event) + '\n');
+		const event = {
+			Type: 'container',
+			Action: action,
+			Actor: {
+				ID: name,
+				Attributes: {
+					...(resource?.Config?.Labels ?? resource?.Labels ?? {}),
+					name,
+				},
+			},
+		};
+		appendFileSync(
+			path.join(root, 'events.jsonl'),
+			`${JSON.stringify(event)}\n`,
+		);
 		emitEvent(event);
 	};
 	const config = { kind: 'docker', ...options };
@@ -143,14 +159,39 @@ export async function startBotSocketServer(root, options = {}) {
 				await writeFile(archive, bytes);
 				await extract({ file: archive, cwd: build });
 				const args = ['build', '--tag', url.searchParams.get('t'), build];
-				const result = await invoke(args);
 				res.setHeader('Content-Type', 'application/json');
+				res.write(
+					`${JSON.stringify({
+						stream:
+							'Step 1/3 : FROM public-base\n ---> Using cache\nStep 2/3 : RUN install creative applications\n',
+					})}\n`,
+				);
+				let fail = false;
+				try {
+					const delay = Number(
+						await readFile(path.join(root, 'build-delay'), 'utf8'),
+					);
+					if (Number.isFinite(delay) && delay > 0)
+						await new Promise((resolve) =>
+							setTimeout(resolve, Math.min(delay, 10000)),
+						);
+				} catch {}
+				try {
+					await readFile(path.join(root, 'build-fail'));
+					fail = true;
+				} catch {}
+				const result = await invoke(
+					args,
+					'',
+					fail ? { TERMINAY_FAKE_BUILD_FAIL: '1' } : {},
+				);
+
 				res.end(
-					JSON.stringify(
+					`${JSON.stringify(
 						result.code
 							? { errorDetail: { message: 'fixture build failed' } }
 							: { stream: result.text },
-					) + '\n',
+					)}\n`,
 				);
 				await rm(build, { recursive: true, force: true });
 				return;
@@ -169,7 +210,7 @@ export async function startBotSocketServer(root, options = {}) {
 				lifecycleEvent('create', name, resource);
 				await writeFile(
 					path.join(root, 'calls.jsonl'),
-					JSON.stringify({
+					`${JSON.stringify({
 						args: [
 							'container',
 							'create',
@@ -180,7 +221,7 @@ export async function startBotSocketServer(root, options = {}) {
 								`${k}=${v}`,
 							]),
 						],
-					}) + '\n',
+					})}\n`,
 					{ flag: 'a' },
 				);
 				return send({ Id: name }, 201);
@@ -267,7 +308,8 @@ export async function startBotSocketServer(root, options = {}) {
 				);
 			}
 			if (kind && req.method === 'DELETE') {
-				const resource = kind === 'container' ? await read(kind, p[1]) : undefined;
+				const resource =
+					kind === 'container' ? await read(kind, p[1]) : undefined;
 				await invoke([kind, 'rm', '-f', p[1]]);
 				if (kind === 'container') lifecycleEvent('destroy', p[1], resource);
 				return send(undefined, 204);
@@ -302,10 +344,20 @@ export async function startBotSocketServer(root, options = {}) {
 			socket.write(
 				'HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n',
 			);
-			if (p[0] === 'exec' && spec.Cmd?.[0] === '/usr/local/bin/terminay-bot-mcp' && spec.Cmd?.[1] === '--check-runtime' && await read('mcp-state', 'denied')) {
+			if (
+				p[0] === 'exec' &&
+				spec.Cmd?.[0] === '/usr/local/bin/terminay-bot-mcp' &&
+				spec.Cmd?.[1] === '--check-runtime' &&
+				(await read('mcp-state', 'denied'))
+			) {
 				spec.running = false;
 				spec.exitCode = 1;
-				socket.end(frame(Buffer.from('terminay-bot-mcp: runtime socket permission denied\n'), true));
+				socket.end(
+					frame(
+						Buffer.from('terminay-bot-mcp: runtime socket permission denied\n'),
+						true,
+					),
+				);
 				return;
 			}
 			const tty = spec.Tty ?? false;
@@ -318,7 +370,8 @@ export async function startBotSocketServer(root, options = {}) {
 						return [e.slice(0, n), e.slice(n + 1)];
 					}),
 				);
-				if (await read('mcp-state', 'silent')) extra.FAKE_MCP_DISCONNECTED = '1';
+				if (await read('mcp-state', 'silent'))
+					extra.FAKE_MCP_DISCONNECTED = '1';
 				args = ['exec', spec.container, ...spec.Cmd];
 			} else {
 				const config = spec.Config;

@@ -63,6 +63,7 @@ const STORE_WORDS: Record<StateStoreName, string> = {
 	bots: 'bots',
 	'bot-messages': 'Bot message history',
 	'bot-sessions': 'bot sessions',
+	'bot-builds': 'bot image build progress',
 };
 
 function list(items: readonly string[]): string {

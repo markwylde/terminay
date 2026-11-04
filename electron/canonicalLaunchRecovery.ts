@@ -25,6 +25,7 @@ const STORE_DESCRIPTIONS: Record<StateStoreName, string> = {
 	bots: 'bots: their profiles and triggers',
 	'bot-messages': 'Bot message history',
 	'bot-sessions': 'bot sessions',
+	'bot-builds': 'bot image build progress',
 };
 
 /** The recovery text for a corrupt store with no good copy. */

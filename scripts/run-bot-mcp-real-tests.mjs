@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
+import { BOT_BROWSER_SECCOMP } from '../packages/server-core/dist/botService/browserSandbox.js';
 import { planBotImage } from '../packages/server-core/dist/botService/image.js';
 
 // Exercise the same Dockerfile generator, scripts, IDs and pinned contribution
@@ -17,6 +19,25 @@ const harness = `terminay-bot-mcp-harness:${suffix}`;
 const docker = (...args) =>
 	execFileSync('docker', args, { stdio: 'inherit', cwd: root });
 try {
+	execFileSync(
+		process.execPath,
+		['--test', 'scripts/bot-runtime-public-inputs.test.mjs'],
+		{ stdio: 'inherit', cwd: root },
+	);
+	execFileSync(
+		'python3',
+		[
+			'-B',
+			'-m',
+			'unittest',
+			'discover',
+			'-s',
+			'docker/terminay-bot',
+			'-p',
+			'test_desktop_control.py',
+		],
+		{ stdio: 'inherit', cwd: root },
+	);
 	docker('info');
 	const pkg = JSON.parse(
 		await readFile(
@@ -24,9 +45,8 @@ try {
 			'utf8',
 		),
 	);
-	const agent = pkg.terminay.contributes.botAgents.find(
-		(agent) => agent.acpCommand.executable === 'claude-agent-acp',
-	);
+	const agents = pkg.terminay.contributes.botAgents;
+	const agent = agents.find((a) => a.nativeDriver === 'claude-code-cli');
 	if (!agent) throw new Error('pinned Claude bot contribution is required');
 	const source = path.join(
 		root,
@@ -34,29 +54,19 @@ try {
 	);
 	const plan = await planBotImage(
 		source,
-		[
-			{
-				id: agent.id,
-				install: {
-					npm: agent.imageInstall.npm,
-					apt: agent.imageInstall.debian ?? [],
-				},
-			},
-		],
+		agents.map((a) => ({
+			id: a.id,
+			install: { npm: a.imageInstall.npm, apt: a.imageInstall.debian ?? [] },
+		})),
 		1000,
 		1000,
 	);
 	const sourcePlan = await planBotImage(
 		path.join(root, 'docker/terminay-bot'),
-		[
-			{
-				id: agent.id,
-				install: {
-					npm: agent.imageInstall.npm,
-					apt: agent.imageInstall.debian ?? [],
-				},
-			},
-		],
+		agents.map((a) => ({
+			id: a.id,
+			install: { npm: a.imageInstall.npm, apt: a.imageInstall.debian ?? [] },
+		})),
 		1000,
 		1000,
 	);
@@ -85,11 +95,54 @@ try {
 		format: 'esm',
 		outfile: path.join(runnerContext, 'test.mjs'),
 	});
+	await cp(
+		path.join(root, 'extensions/builtin-agents/test/bots'),
+		path.join(runnerContext, 'bots'),
+		{ recursive: true },
+	);
+	await cp(
+		path.join(root, 'extensions/builtin-agents/package.json'),
+		path.join(runnerContext, 'bots/package.json'),
+	);
 	await writeFile(
 		path.join(runnerContext, 'Dockerfile'),
-		`FROM ${image}\nCOPY test.mjs /test.mjs\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
+		`FROM ${image}\nCOPY test.mjs /test.mjs\nCOPY bots /tmp/bots\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
 	);
 	docker('build', '-t', harness, runnerContext);
+	const seccompPath = path.join(context, 'browser-seccomp.json');
+	await writeFile(seccompPath, JSON.stringify(BOT_BROWSER_SECCOMP));
+	for (const agent of ['codex', 'claude-code'])
+		docker(
+			'run',
+			'--rm',
+			'--network',
+			'none',
+			'--user',
+			'bot',
+			'--env',
+			'HOME=/home/bot',
+			'--entrypoint',
+			'node',
+			harness,
+			'/tmp/bots/run.mjs',
+			agent,
+		);
+	docker(
+		'run',
+		'--rm',
+		'--network',
+		'none',
+		'--user',
+		'bot',
+		'--env',
+		'HOME=/home/bot',
+		'--security-opt',
+		`seccomp=${seccompPath}`,
+		'--entrypoint',
+		'bash',
+		harness,
+		'/tmp/bots/desktop-gate.sh',
+	);
 	// The source is daemon-side, which also works when the CI job reaches its
 	// Docker daemon over TCP. The code under test only receives a local socket.
 	const socket =

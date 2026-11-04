@@ -1,14 +1,6 @@
-import { botFailure } from './failure.js';
-import {
-	openBotRuntimeBridge,
-	type BotRuntimeBridge,
-} from './runtimeBridge.js';
-import { BotExecutionRuntime } from './runtime.js';
-import type { BotMessage } from '@terminay/protocol';
-import { join } from 'node:path';
-import { BotMessageStore } from './messages.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { join } from 'node:path';
 import type {
 	BotAgentContribution,
 	BotAgentLaunch,
@@ -19,6 +11,7 @@ import type {
 import type {
 	BotAgent,
 	BotDraft,
+	BotMessage,
 	BotProfile,
 	BotSessionOrigin,
 	BotSessionRecord,
@@ -27,20 +20,28 @@ import type {
 } from '@terminay/protocol';
 import { foldTranscript } from '@terminay/protocol';
 import type { OperationRegistries, RequestContext } from '../types.js';
-import type { BotAcpClient, BotCredentialLease } from './acp.js';
 import {
 	BotAgentProcess,
 	type BotAgentProcessOptions,
 } from './agentProcess.js';
 import { assertBotAuthority } from './authority.js';
 import { BotConnectionResources } from './connections.js';
+import type { BotCredentialLease } from './credentials.js';
 import type { EngineDriver } from './engine.js';
 import type {
 	BotEnvironmentDefinition,
 	BotEnvironmentService,
 } from './environment.js';
+import { botFailure } from './failure.js';
 import type { BotMemories } from './memories.js';
+import { BotMessageStore } from './messages.js';
+import type { BotNativeClient } from './native.js';
 import { type BotQueuedTurn, BotTurnQueue } from './queue.js';
+import { BotExecutionRuntime } from './runtime.js';
+import {
+	type BotRuntimeBridge,
+	openBotRuntimeBridge,
+} from './runtimeBridge.js';
 import { BotSessionStore } from './sessions.js';
 import { BotError, BotStore, text } from './store.js';
 import { BotTriggers } from './triggers.js';
@@ -95,7 +96,7 @@ export interface BotServiceHooks {
 }
 interface Live {
 	runner: BotAgentProcess;
-	client?: BotAcpClient;
+	client?: BotNativeClient;
 	stop?: Promise<void>;
 	closing: boolean;
 	timer?: ReturnType<typeof setTimeout>;
@@ -961,6 +962,8 @@ export class BotService extends EventEmitter {
 				live.client = client;
 				this.sessions.patch(record.id, {
 					acpSessionId: client.session,
+					runtimeDriver: agent.nativeDriver,
+					runtimeVersion: agent.runtimeVersion,
 					canLoad: client.canLoad,
 				});
 			}
@@ -1038,7 +1041,7 @@ export class BotService extends EventEmitter {
 			this.sessions.retain(record.botId);
 		}
 	}
-	private bindClient(id: string, client: BotAcpClient): void {
+	private bindClient(id: string, client: BotNativeClient): void {
 		client.on('update', (update: JsonValue) =>
 			this.sessions.append(id, update),
 		);

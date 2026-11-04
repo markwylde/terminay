@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	createAgentExtensionHarness,
 	EXTENSION_API_VERSION,
 	EXTENSION_LIMITS,
-	createAgentExtensionHarness,
-	validManifestFixture,
-	validateExtensionManifest,
 	validateBotAgentContribution,
-	validateBotAgentModels,
-	validateBotAgentStatus,
 	validateBotAgentLaunch,
 	validateBotAgentLaunchRequest,
+	validateBotAgentModels,
+	validateBotAgentStatus,
+	validateExtensionManifest,
+	validManifestFixture,
 } from '../dist/index.js';
 
 const agentId = `${validManifestFixture.id}/bot`;
@@ -18,7 +18,9 @@ const contribution = {
 	id: agentId,
 	displayName: 'Example bot',
 	imageInstall: { npm: ['@example/acp@1.2.3'], debian: ['git'] },
-	acpCommand: { executable: 'example-acp', args: [] },
+	runtimeProtocol: 'native-cli-v1',
+	nativeDriver: 'claude-code-cli',
+	runtimeVersion: '2.1.312',
 	deviceSignIn: {
 		command: { executable: 'example', args: ['login', '--device'] },
 		signOutCommand: { executable: 'example', args: ['logout'] },
@@ -32,7 +34,6 @@ const contribution = {
 		{
 			environmentVariable: 'EXAMPLE_API_KEY',
 			kind: 'api-key',
-			authenticateMethodId: 'api-key',
 			label: 'API key',
 			help: 'Create a key in your account.',
 		},
@@ -48,7 +49,7 @@ const contribution = {
 };
 const manifest = {
 	...validManifestFixture,
-	api: '^3.5.0',
+	api: '^3.6.0',
 	permissions: ['agent-bots'],
 	contributes: { botAgents: [contribution] },
 };
@@ -63,7 +64,7 @@ const runtime = (overrides = {}) => ({
 });
 
 test('API 3.5 accepts a bot-only manifest, with or without a device sign-in', () => {
-	assert.equal(EXTENSION_API_VERSION, '3.5.0');
+	assert.equal(EXTENSION_API_VERSION, '3.6.0');
 	assert.deepEqual(validateExtensionManifest(manifest), {
 		ok: true,
 		value: manifest,
@@ -199,9 +200,9 @@ const badDeclarations = [
 	[
 		'shell command',
 		(a) => {
-			a.acpCommand.executable = 'example | sh';
+			a.nativeDriver = 'example | sh';
 		},
-		/executable name/,
+		/supported native CLI driver/,
 	],
 	[
 		'host operation',

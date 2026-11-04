@@ -1,43 +1,43 @@
 {
-  "name": "@terminay/extension-api",
-  "version": "3.5.0",
-  "description": "Public authoring contract for Terminay coding-agent and language server extensions.",
-  "type": "module",
-  "license": "MIT",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js",
-      "default": "./dist/testing.js"
-    }
-  },
-  "bin": {
-    "terminay-extension-conformance": "./dist/conformance.js"
-  },
-  "files": [
-    "dist",
-    "fixtures",
-    "examples",
-    "templates",
-    "scripts",
-    "README.md"
-  ],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "test:ci": "node --test test/*.test.mjs",
-    "verify:release": "node scripts/verify-release.mjs"
-  },
-  "engines": {
-    "node": ">=22"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0"
-  }
+	"name": "@terminay/extension-api",
+	"version": "3.6.0",
+	"description": "Public authoring contract for Terminay coding-agent and language server extensions.",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing.d.ts",
+			"import": "./dist/testing.js",
+			"default": "./dist/testing.js"
+		}
+	},
+	"bin": {
+		"terminay-extension-conformance": "./dist/conformance.js"
+	},
+	"files": [
+		"dist",
+		"fixtures",
+		"examples",
+		"templates",
+		"scripts",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "npm run build && node --test test/*.test.mjs",
+		"test:ci": "node --test test/*.test.mjs",
+		"verify:release": "node scripts/verify-release.mjs"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0"
+	}
 }

@@ -19,13 +19,14 @@ export const agent = {
 	id: 'fake.agent',
 	displayName: 'Fake',
 	imageInstall: { npm: ['fake-acp@1.0.0'] },
-	acpCommand: { executable: 'fake-acp', args: [] },
+	runtimeProtocol: 'native-cli-v1',
+	nativeDriver: 'claude-code-cli',
+	runtimeVersion: '2.1.312',
 	autonomousOnly: false,
 	credentialSecrets: [
 		{
 			environmentVariable: 'FAKE_KEY',
 			kind: 'api-key',
-			authenticateMethodId: 'api-key',
 			label: 'Fake',
 			help: 'Fake',
 		},
@@ -34,7 +35,6 @@ export const agent = {
 export function credential(secret = 'secret', released = () => {}) {
 	return {
 		environment: { FAKE_KEY: secret },
-		authenticateMethodId: 'api-key',
 		redact: (value) => value.split(secret).join('[redacted]'),
 		release: released,
 		stream: () => {
@@ -161,10 +161,19 @@ export async function runtime(root, options = {}) {
 			},
 		},
 		execStream(_container, args) {
-            const sid=args[1];
-            const child=spawn('python3',[new URL('./bot-relay-host.py',import.meta.url).pathname,sid.slice(4)],{stdio:['pipe','pipe','pipe'],detached:true});
-            children.set(sid,child);writeFileSync(join(records,sid),String(child.pid));return child;
-        },
+			const sid = args[1];
+			const child = spawn(
+				'python3',
+				[
+					new URL('./bot-relay-host.py', import.meta.url).pathname,
+					sid.slice(4),
+				],
+				{ stdio: ['pipe', 'pipe', 'pipe'], detached: true },
+			);
+			children.set(sid, child);
+			writeFileSync(join(records, sid), String(child.pid));
+			return child;
+		},
 		async exec(_container, args) {
 			calls.push(args);
 			if (args[0] === 'terminay-run') {
@@ -233,7 +242,7 @@ export async function runtime(root, options = {}) {
 					spawnedEnvironments.push(env);
 					const child = spawn(
 						process.execPath,
-						[new URL('./bot-acp.mjs', import.meta.url).pathname],
+						[new URL('./bot-native.mjs', import.meta.url).pathname],
 						{
 							env: { ...process.env, ...env, ...options.env },
 							stdio: ['pipe', 'pipe', 'pipe'],

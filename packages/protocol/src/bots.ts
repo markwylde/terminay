@@ -123,6 +123,8 @@ export interface BotExecutionRuntimeState {
 	readonly keys: Readonly<Record<string, JsonValue>>;
 }
 export interface BotSessionRecord {
+	readonly runtimeDriver?: 'codex-cli' | 'claude-code-cli';
+	readonly runtimeVersion?: string;
 	readonly runtime?: BotExecutionRuntimeState;
 	readonly id: string;
 	readonly botId: string;

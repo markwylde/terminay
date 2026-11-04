@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 export interface EngineCallOptions {
+	readonly onBuildEvent?: (event: Record<string, unknown>) => void;
 	readonly deadlineMs?: number;
 	readonly signal?: AbortSignal;
 	readonly input?: string | Buffer;
