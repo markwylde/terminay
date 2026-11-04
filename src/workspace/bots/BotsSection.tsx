@@ -230,6 +230,7 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 					<EngineSummary
 						engine={engine}
 						label={servers.size > 1 ? primary?.label : undefined}
+						visible={host.isVisible}
 					/>
 					<NeedsYouList
 						entries={waiting}
@@ -352,11 +353,13 @@ export function EngineSummary({
 	label,
 	compact = false,
 	hideReady = false,
+	visible = true,
 }: Readonly<{
 	engine: BotEngineView;
 	label: string | undefined;
 	compact?: boolean;
 	hideReady?: boolean;
+	visible?: boolean;
 }>) {
 	const { status } = engine;
 	const [switching, setSwitching] = useState<string>();
@@ -370,7 +373,7 @@ export function EngineSummary({
 				: 'No engine';
 	return (
 		<section data-terminay-bots-engine={status?.available ? 'ready' : 'setup'}>
-			<BuildBanner engine={engine} label={label} />
+			<BuildBanner engine={engine} label={label} visible={visible} />
 			{!compact && !building ? (
 				<h3 className="bots-lab">
 					Container engine{label === undefined ? '' : ` · ${label}`}

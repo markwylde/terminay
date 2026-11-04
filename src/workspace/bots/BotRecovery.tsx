@@ -8,9 +8,11 @@ import { refusalText, type ServerBots } from './useServerBots';
 export function BotRecovery({
 	server,
 	botId,
+	visible = true,
 }: {
 	server: ServerBots;
 	botId: string;
+	visible?: boolean;
 }) {
 	const engine = useBotEngine(server);
 	const [error, setError] = useState<string>();
@@ -43,6 +45,7 @@ export function BotRecovery({
 				label={undefined}
 				compact
 				hideReady={!problem && !engine.error}
+				visible={visible}
 			/>
 			{engine.status?.available && engine.status.image.state !== 'building' ? (
 				<div className="bots-engine__actions">
