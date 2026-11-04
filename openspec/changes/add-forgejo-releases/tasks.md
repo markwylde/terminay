@@ -19,3 +19,10 @@ Verification on 2026-11-04: `npm run test:release-config` passes all 45 tests; B
 
 - [x] 4.1 Remove version input and reuse the existing semantic-version helper, preserving draft retries and published no-ops; verify feature, fix, breaking-change and retry cases.
 - [ ] 4.2 Update operator instructions, run release tests and lint, and validate the OpenSpec change and workflow; verify the follow-up PR checks pass.
+
+
+## 5. macOS release runner compatibility
+
+- [ ] 5.1 Replace setup-node on the macOS VM with a checksum-pinned shell installation of Node 24.15.0, retaining Linux setup-node and existing signing checks; verify shell/workflow syntax, release tests, direct execution on macOS, and the packaged macOS PR check using the same installer script.
+
+Run 23419 passed preparation and created draft v6.0.0, then the macOS runner transport failed with `write |1: broken pipe` while starting actions/setup-node. No macOS build or publication occurred.
