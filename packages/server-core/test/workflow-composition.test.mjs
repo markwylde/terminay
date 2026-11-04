@@ -56,9 +56,14 @@ const template = {
   ],
 };
 
-async function composed({ directory } = {}) {
+async function composed({ directory, templateRead } = {}) {
   const templates = new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend());
   await templates.apply({ command: { type: "upsert", template } });
+  if (templateRead !== undefined) {
+    // Holds every template read until the test lets it go.
+    const read = templates.template.bind(templates);
+    templates.template = async (id) => { await templateRead; return read(id); };
+  }
   const pty = recordingPty();
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
@@ -232,6 +237,24 @@ test("a change reaches a client that can see the terminal and no workflow reache
     const late = await server.connect("laptop");
     const listed = await late.client.query(WORKFLOW_OPERATIONS.list, {});
     assert.equal(listed.workflows[0].workflow.id, launched.workflow.id);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a terminal that moves to another project while its launch reads the template is refused, and nothing changes", async () => {
+  let release;
+  const templateRead = new Promise((resolve) => { release = resolve; });
+  const server = await composed({ templateRead });
+  try {
+    const { client } = await server.connect("desktop");
+    const launch = client.command(WORKFLOW_OPERATIONS.launch, { templateId: template.id, target });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    server.composition.terminal.rehomeSession(identity.sessionId, "project-b");
+    release();
+    await rejectsWith(launch, "not_found");
+    assert.equal((await client.query(WORKFLOW_OPERATIONS.get, { terminalSessionId: identity.sessionId })).state, "none");
+    assert.deepEqual(server.process().writes, []);
   } finally {
     await server.close();
   }

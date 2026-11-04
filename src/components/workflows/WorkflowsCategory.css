@@ -123,3 +123,11 @@
 .workflow-size--over {
   color: #f85149;
 }
+
+/* Holds the editor; disabled while a save is in flight. */
+.workflow-editor-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

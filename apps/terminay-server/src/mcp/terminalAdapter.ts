@@ -45,6 +45,7 @@ import {
 } from './workspaceReach.js';
 import { APP_CONTROL_OPERATIONS } from './appControlTools.js';
 import { MACRO_CONTROL_OPERATIONS } from './macroTools.js';
+import { WORKFLOW_CONTROL_OPERATIONS } from './workflowTools.js';
 import { SETTINGS_CONTROL_OPERATIONS } from './settingsTools.js';
 
 export interface ServerTerminalControlAdapterOptions {
@@ -203,6 +204,7 @@ const SEPARATELY_BOUND_TOOLS: readonly string[] = [
 	...APP_CONTROL_OPERATIONS,
 	...SETTINGS_CONTROL_OPERATIONS,
 	...MACRO_CONTROL_OPERATIONS,
+	...WORKFLOW_CONTROL_OPERATIONS,
 	'update_terminal',
 	'move_terminal_to_project',
 ];

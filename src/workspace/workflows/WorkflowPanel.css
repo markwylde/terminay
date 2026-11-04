@@ -47,9 +47,29 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 4px 0;
+  flex: 1 1 auto;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 4px 0 10px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+/* The name runs up the foot of the rail, below the markers, and gives way
+   to them when the rail is short. */
+.workflow-rail-name {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin-top: auto;
+  overflow: hidden;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
 }
 
 .workflow-rail-steps {

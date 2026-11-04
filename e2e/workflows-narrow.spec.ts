@@ -83,6 +83,15 @@ test('in a narrow pane the expanded panel opens over the terminal and gives the 
 		const window = BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible());
 		window?.setSize(560, 640);
 	});
+	// With the setting collapsed, expanding a narrow pane opens the overlay at
+	// once and leaves the setting alone.
+	await expect(workflowPanel(mainWindow, sessionId)).toHaveAttribute('data-workflow-mode', 'forced-collapsed', { timeout: READY_TIMEOUT_MS });
+	await workflowPanel(mainWindow, sessionId).getByRole('button', { name: 'Expand workflow' }).click();
+	await expect(workflowPanel(mainWindow, sessionId).getByRole('dialog', { name: 'Workflow' })).toBeFocused();
+	await mainWindow.keyboard.press('Escape');
+	await expect(workflowPanel(mainWindow, sessionId).getByRole('dialog', { name: 'Workflow' })).toHaveCount(0);
+	expect(await mainWindow.evaluate(() => localStorage.getItem('terminay.workflowPanel.v1'))).toBeNull();
+
 	await mainWindow.evaluate(() => localStorage.setItem('terminay.workflowPanel.v1', 'expanded'));
 	await mainWindow.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'terminay.workflowPanel.v1' })));
 	await expect(workflowPanel(mainWindow, sessionId)).toHaveAttribute('data-workflow-mode', 'forced-collapsed', { timeout: READY_TIMEOUT_MS });

@@ -134,7 +134,11 @@ function describe(
 			'no_workflow',
 			'This terminal had a workflow that could not be restored. The user can remove it from the workflow panel.',
 		);
-	if (view.state !== 'attached') return { terminal, workflow: null };
+	if (view.state !== 'attached')
+		throw new ControlEndpointError(
+			'no_workflow',
+			'This terminal has no workflow. Create one with create_workflow.',
+		);
 	return {
 		terminal,
 		workflow: describeWorkflow(view.workflow),
@@ -154,8 +158,15 @@ function describeWorkflow(workflow: Workflow): unknown {
 			id: step.id,
 			title: step.title,
 			...(step.prompt === '' ? {} : { prompt: step.prompt }),
+			...(step.icon === '' ? {} : { icon: step.icon }),
 			status: step.status,
 			...(step.note === '' ? {} : { note: step.note }),
+			started_at: isoTime(step.startedAt),
+			ended_at: isoTime(step.endedAt),
 		})),
 	};
+}
+
+function isoTime(time: number | null): string | null {
+	return time === null ? null : new Date(time).toISOString();
 }

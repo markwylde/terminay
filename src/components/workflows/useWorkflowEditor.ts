@@ -142,7 +142,11 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 	);
 	const problems = useMemo(() => draft.templates.flatMap(templateProblems), [draft.templates]);
 
+	// While a save is in flight the draft is what was sent: an edit now would
+	// be replaced by the saved state when it returns, so none is taken.
+	const savingRef = useRef(false);
 	const change = (update: (current: WorkflowDraft) => WorkflowDraft) => {
+		if (savingRef.current) return;
 		setSavedNotice(false);
 		setDraft(update);
 	};
@@ -258,6 +262,7 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 			setErrorText(refused.join(' '));
 			return false;
 		}
+		savingRef.current = true;
 		setIsSaving(true);
 		setErrorText(null);
 		try {
@@ -274,6 +279,7 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 			setErrorText(describeSaveError(error));
 			return false;
 		} finally {
+			savingRef.current = false;
 			setIsSaving(false);
 		}
 	}, [adopt, base.revision, client, draft, isReady, isSaving]);

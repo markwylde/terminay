@@ -243,6 +243,9 @@ export function createWorkflowOperationRegistry(
 				'workflow id',
 			);
 			const template = await templates.template(templateId);
+			// The terminal may have moved, or ended, while the template was read:
+			// authorise it again before anything changes.
+			target(request);
 			if (template === undefined)
 				throw new WorkflowServiceError(
 					'template_not_found',

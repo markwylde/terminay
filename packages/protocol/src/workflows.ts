@@ -16,7 +16,7 @@ export const WORKFLOW_LAUNCH_INSTRUCTION = [
 export const WORKFLOW_RESUME_INSTRUCTION = [
 	'Resume the Terminay workflow attached to this terminal.',
 	'Call the Terminay MCP tool get_workflow and treat it as the source of truth for what is done.',
-	'Continue from its resume point (resumeStepId), then every later step that is not done, in order.',
+	'Continue from its resume point (resume_step_id), then every later step that is not done, in order.',
 	'Before starting a step, call update_workflow_step to set it to running; when it is finished, set it to done with a one-line note, or to failed with the reason.',
 	'If a step needs me, set it to needs_input with a one-line question and wait for me.',
 ].join(' ');
